@@ -1,6 +1,6 @@
 # ChatAgent
 
-A powerful CLI chat agent with tools and Claude Skills support. Built with Python and designed to work with any OpenAI-compatible API.
+A powerful CLI chat agent with tools and skills support. Built with Python and designed to work with any OpenAI-compatible API.
 
 ## Features
 
@@ -8,17 +8,19 @@ A powerful CLI chat agent with tools and Claude Skills support. Built with Pytho
 - Multi-turn conversations with context
 - Function calling for tool usage
 - Smart tool selection and execution
-- Memory system for saving important information
+- **Context window management** - automatic sliding-window compression with LLM summarization
+- **Dynamic memory recall** - Agentic RAG (no vector DB) recalls relevant memories per message
+- **Live thinking display** - shows LLM reasoning and tool calls in real time
 - **Complete logging** of all LLM interactions to `chatagent.log`
 - **Auto-loading of project instructions** from `CHATAGENT.md` at startup
-- **🔒 Tool confirmation** - User confirmation required for Shell & Web tools
-- **📅 Current date context** - System prompt includes current date and time
+- **Tool confirmation** - user confirmation required for Shell, Web, and destructive Memory tools
+- **Current date context** - system prompt includes current date and time
 
 ### 🛠️ Comprehensive Tools
 
 **File Operations:**
 - `read_file` - Read file contents
-- `write_file` - Write content to files
+- `write_file` - Write content to files (requires confirmation)
 - `replace` - Edit files by replacing text
 - `list_directory` - List directory contents
 
@@ -28,37 +30,60 @@ A powerful CLI chat agent with tools and Claude Skills support. Built with Pytho
 - `codebase_investigator` - Analyze project structure
 
 **Shell & Web:**
-- `run_shell_command` - Execute shell commands
-- `web_fetch` - Fetch and extract content from URLs
-- `google_web_search` - Search the web (uses DuckDuckGo)
+- `run_shell_command` - Execute shell commands (requires confirmation)
+- `web_fetch` - Fetch and extract content from URLs (requires confirmation)
+- `google_web_search` - Search the web via DuckDuckGo (requires confirmation)
+
+**Memory:**
+- `save_memory` - Save important information persistently
+- `search_memory` - Full-text search across keys, tags, and values
+- `list_memories` - List all saved memories with tag summary
+- `filter_memory_by_tag` - Filter memories by tag
+- `delete_memory` - Delete a specific memory (requires confirmation)
+- `clear_all_memories` - Clear all memories (requires confirmation)
 
 **Special Features:**
-- `save_memory` - Save important information for future reference
-- `activate_skill` - Activate Claude skills for specialized tasks
+- `activate_skill` - Activate specialized skills for specific tasks
 - `cli_help` - Get help with CLI usage
+
+### 🧠 Context Window Management
+
+ChatAgent automatically manages long conversations to stay within LLM context limits:
+
+- **Token estimation** - tracks approximate token usage (characters ÷ 4)
+- **Sliding window compression** - when context exceeds 65% of the limit, early messages are summarized by the LLM and replaced with a compact `[Conversation Summary]` block
+- **Auto-save summaries** - compression summaries are saved to memory with tag `conversation_summary` for future reference
+- **Graceful degradation** - if compression fails, the original messages are preserved unchanged
+- **Overflow recovery** - if the API returns a context-too-long error, compression is forced and the request is retried automatically
+
+Default context limit is 200K tokens. Override with `CHATAGENT_CONTEXT_TOKENS` environment variable.
+
+### 💾 Memory Recall (Agentic RAG)
+
+Before each response, ChatAgent automatically identifies and injects memories relevant to your question — no vector database required:
+
+1. All saved memories are listed for the LLM
+2. The LLM returns a JSON array of relevant memory keys
+3. You are shown the recalled memories and asked whether to inject them (single-key confirmation)
+4. Confirmed memories are added to the system prompt for that turn
+
+This means important context you've saved (preferences, facts, project details) surfaces automatically when relevant, without you having to ask.
+
+### 💡 Live Thinking Display
+
+The spinner updates in real time to show what the agent is doing:
+
+- **"Thinking..."** - waiting for LLM response
+- **"⚙ tool_name (arg)"** - executing a specific tool
+- **Reasoning text** - LLM's step-by-step reasoning is printed (in blue) before tool calls when the LLM chooses to share it
 
 ### 🎯 Dynamic Skills System
 
-**17 skills automatically loaded** from the `skills/` directory:
-- **pdf** - PDF processing and manipulation
-- **xlsx** - Excel and spreadsheet operations
-- **pptx** - PowerPoint presentations
-- **docx** - Word document handling
-- **doc-coauthoring** - Structured documentation workflow
-- **frontend-design** - Create web interfaces
-- **algorithmic-art** - Generate algorithmic art
-- **mcp-builder** - Build MCP servers
-- **webapp-testing** - Test web applications
-- **theme-factory** - Style artifacts with themes
-- **canvas-design** - Create visual art
-- **brand-guidelines** - Anthropic brand styling
-- **slack-gif-creator** - Create Slack GIFs
-- **internal-comms** - Internal communications
-- **web-artifacts-builder** - Build HTML artifacts
-- **skill-creator** - Create new skills
-- **research-wbs-review** - Review WBS structures
+Skills are auto-discovered from the `skills/` directory. Each subdirectory contains a `SKILL.md` file with YAML frontmatter. Skills are listed in the system prompt and can be activated with the `activate_skill` tool.
 
-Skills are loaded dynamically from `SKILL.md` files in subdirectories. Add new skills by creating a directory with a `SKILL.md` file!
+Add new skills by creating a directory with a `SKILL.md` file — no code changes needed.
+
+---
 
 ## Installation
 
@@ -69,124 +94,33 @@ Skills are loaded dynamically from `SKILL.md` files in subdirectories. Add new s
 
 ### Quick Start with uv (Recommended)
 
-uv is a fast Python package manager. If you don't have it, install it first:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 Then set up ChatAgent:
 
-1. Navigate to the project directory:
 ```bash
 cd chatagent
-```
-
-2. Sync dependencies (uv will create a virtual environment automatically):
-```bash
 uv sync
-```
-
-3. Configure your API credentials:
-```bash
 cp .env.example .env
 # Edit .env and add your API key
 ```
 
-### Alternative: Setup with pip
-
-If you prefer using pip:
+### Alternative: pip
 
 ```bash
-# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
 pip install -e .
-
-# Configure API
 cp .env.example .env
-# Edit .env and add your API key
 ```
 
-## Project Instructions
-
-ChatAgent automatically loads project-specific instructions from `CHATAGENT.md` if it exists in the current directory. This file is injected into the system prompt at the start of each session, allowing you to define:
-
-- Code style and conventions
-- Project structure and patterns
-- Development workflows
-- Testing approaches
-- Common commands and best practices
-
-The `CHATAGENT.md` file is automatically detected and loaded when the agent starts. If the file doesn't exist, the agent continues to work normally with its default instructions.
-
-See the included `CHATAGENT.md` for an example of project-specific instructions for this codebase.
-
-## Tool Confirmation (Safety Feature)
-
-For security, ChatAgent requires user confirmation before executing potentially dangerous tools:
-
-**Tools requiring confirmation:**
-- 🔧 **`run_shell_command`** - Shell command execution
-- 🌐 **`web_fetch`** - Fetching web content
-- 🌐 **`google_web_search`** - Web search
-
-**How it works:**
-1. When the agent wants to use these tools, execution pauses
-2. You see a menu with tool details and confirmation options
-3. Press a single key to choose (no Enter needed):
-   - **1** - Yes, execute this tool once
-   - **2** - Yes to all, execute and allow all tools for this session
-   - **3** - No, cancel execution
-   - **Esc** - Cancel execution
-4. If denied, the agent is notified and can try alternative approaches
-
-**Example:**
-```
-⚠️  Tool Confirmation Required
-Tool: run_shell_command
-Description: Execute a shell command and return its output
-Arguments:
-  • command: ls -la
-  • working_directory: .
-
-Choose an option:
- 1. Yes
- 2. Yes, allow all tools during this session
- 3. No
-
-Press 1, 2, or 3 (single key, no Enter needed) · Esc to cancel
-```
-
-**Single-key input** - Just press the number, no need to press Enter!
-
-**Additional features:**
-- Use `/status` to check if "allow all" mode is enabled
-- Use `/reset-confirm` to reset to prompt mode (keeps conversation history)
-- Use `/clear` to clear conversation AND reset confirmation mode (fresh start)
-
-This prevents accidental or malicious:
-- Destructive shell commands
-- Unintended web requests
-- Exposure of sensitive information
-
-## Current Date Context
-
-ChatAgent automatically includes the current date and time in the system prompt, helping the AI understand temporal context for:
-
-- **Date-aware tasks**: Creating files with timestamps, scheduling, deadlines
-- **Time-sensitive queries**: "What happened today?", "Recent changes"
-- **Log analysis**: Understanding when events occurred
-- **File organization**: Sorting by date, finding recent files
-
-**Format**: `Current Date and Time: 2026-02-11 14:40:58 (Wednesday)`
-
-This information is updated with each new conversation, ensuring the AI always has accurate temporal context.
+---
 
 ## Configuration
 
-Edit the `.env` file with your settings:
+Edit `.env` with your settings:
 
 ```env
 # Required: Your API key
@@ -197,6 +131,9 @@ OPENAI_API_KEY=your-api-key-here
 
 # Optional: Model name
 # OPENAI_MODEL=gpt-4-turbo-preview
+
+# Optional: Context window limit in tokens (default: 200000)
+# CHATAGENT_CONTEXT_TOKENS=200000
 ```
 
 ### Using with Different Providers
@@ -207,384 +144,220 @@ OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4-turbo-preview
 ```
 
-**Azure OpenAI:**
+**Anthropic (via compatible endpoint):**
 ```env
-OPENAI_API_KEY=your-azure-key
-OPENAI_BASE_URL=https://your-resource.openai.azure.com/openai/deployments/your-deployment
-OPENAI_MODEL=gpt-4
+OPENAI_API_KEY=your-key
+OPENAI_BASE_URL=https://...
+OPENAI_MODEL=claude-sonnet-4-5
 ```
 
-**Other OpenAI-compatible APIs:**
+**DeepSeek / other OpenAI-compatible APIs:**
 ```env
 OPENAI_API_KEY=your-api-key
 OPENAI_BASE_URL=https://api.your-provider.com/v1
 OPENAI_MODEL=your-model-name
 ```
 
+---
+
 ## Usage
 
 ### Starting the Agent
 
-**With uv (recommended):**
 ```bash
-# Quick start - run directly
+# Quick start
+uv run chatagent
+
+# Or via Python
 uv run python main.py
 
-# Or use the convenience script
+# Or via convenience script
 ./run.sh
-
-# Or use the installed command
-uv run chatagent
-```
-
-**With pip:**
-```bash
-# Activate virtual environment first
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Then run
-chatagent
-# or
-python main.py
 ```
 
 ### Commands
 
 All commands start with `/`:
 
-- `/help` - Show help message
-- `/model` - List available models or switch model
-  - `/model` - Show current model and list available models
-  - `/model <name>` - Switch to specified model (e.g., `/model gpt-4`)
-  - See [MODEL_SWITCHING.md](MODEL_SWITCHING.md) for detailed guide
-- `/clear` - Clear conversation history
-- `/status` - Show conversation status (includes current model)
-- `/skills` - List available skills
-- `/memory` - Show saved memories
-- `/exit` or `/quit` - Exit the program
+| Command | Description |
+|---------|-------------|
+| `/help` | Show help message |
+| `/clear` | Clear conversation history and reset confirmation mode |
+| `/status` | Show message count, model, active skills, memory count, context usage |
+| `/model` | List available models |
+| `/model <name>` | Switch to specified model (e.g., `/model gpt-4`) |
+| `/skills` | List available and active skills |
+| `/memory` | List all saved memories with tag summary |
+| `/memory search <query>` | Search memories (searches keys, tags, and values) |
+| `/memory tag <tag>` | Filter memories by tag |
+| `/memory delete <key>` | Delete a specific memory |
+| `/memory clear` | Clear all memories (with confirmation) |
+| `/context` | Show current context window usage (tokens and %) |
+| `/context limit <n>` | Set context window limit (e.g., `/context limit 100000`) |
+| `/reset-confirm` | Reset "allow all tools" mode (keeps conversation history) |
+| `/exit` or `/quit` | Exit the program |
 
-**Note**: Regular messages (without `/`) are sent to the AI agent. All interactions are automatically logged to `chatagent.log` for debugging and analysis.
+### Tool Confirmation (Safety Feature)
 
-### Switching Models
+ChatAgent requires user confirmation before executing potentially dangerous tools:
 
-ChatAgent supports switching between different LLM models mid-conversation:
+**Tools requiring confirmation:**
+- `run_shell_command` - Shell command execution
+- `web_fetch` - Fetching web content
+- `google_web_search` - Web search
+- `write_file` - Writing/overwriting files
+- `delete_memory` - Deleting a saved memory
+- `clear_all_memories` - Clearing all memories
 
-```bash
-You: /model                    # Show available models
-You: /model gpt-4              # Switch to GPT-4
-You: /model claude-sonnet-4-5  # Switch to Claude Sonnet
-```
+**How it works:**
 
-Supported models include:
-- **Claude**: opus-4, sonnet-4-5, sonnet-4, haiku-4
-- **OpenAI**: gpt-4-turbo, gpt-4, gpt-3.5-turbo
-- **DeepSeek**: deepseek-chat, deepseek-coder
+1. Execution pauses and you see a menu with tool details
+2. Press a single key (no Enter needed):
+   - **1** - Yes, execute this tool once
+   - **2** - Yes to all, allow all tools for this session
+   - **3** - No, cancel execution
+   - **Esc** - Cancel execution
 
-See [MODEL_SWITCHING.md](MODEL_SWITCHING.md) for complete documentation.
+### Memory Recall Confirmation
+
+When relevant memories are recalled before a response:
+
+1. A list of recalled memories is shown (key: value format)
+2. Press a single key:
+   - **1** - Inject these memories into the system prompt
+   - **2** or **Esc** - Skip (memories are not injected)
+
+When "allow all tools" is active, memory recall is auto-confirmed.
 
 ### Example Interactions
 
 **Reading and analyzing files:**
 ```
 You: Read the file main.py and explain what it does
-
 You: Search for all Python files in this directory
-
 You: Find all TODO comments in the codebase
 ```
 
 **Working with code:**
 ```
 You: Create a new Python file called utils.py with helper functions
-
 You: Replace the old function in utils.py with an improved version
-
 You: Run the tests using pytest
 ```
 
 **Web and search:**
 ```
 You: Fetch the content from https://example.com
-
 You: Search for Python best practices
-
-You: Find information about async/await in Python
 ```
 
-**Using commands:**
+**Memory:**
 ```
-You: /model           (show current model and available models)
+You: Remember that I prefer tabs over spaces for indentation
+You: Save this API endpoint URL for future use
+You: What do you remember about my preferences?
+```
 
-You: /model gpt-4     (switch to GPT-4)
-
-You: /skills          (list all available skills)
-
-You: /memory          (show saved memories)
-
-You: /status          (show conversation status and current model)
-
-You: /help            (show help message)
+**Context management:**
+```
+You: /context                     (check current token usage)
+You: /context limit 100000        (set a lower context limit)
+You: /status                      (see memory count and context %)
 ```
 
 **Using skills:**
 ```
 You: Activate the pdf skill to help me merge PDF files
-
 You: Use the xlsx skill to analyze this spreadsheet
-
-You: I need to create a presentation with the pptx skill
 ```
 
-## Skills System
+---
 
-### Overview
+## Project Instructions (CHATAGENT.md)
 
-ChatAgent features a **dynamic skills system** that loads skill definitions from the `skills/` directory. Each skill is defined in its own subdirectory with a `SKILL.md` file containing documentation and metadata.
+ChatAgent automatically loads project-specific instructions from `CHATAGENT.md` if it exists in the current working directory. This file is injected into the system prompt at startup, allowing you to define:
 
-### Available Skills (17 Total)
+- Code style and conventions
+- Project structure and patterns
+- Development workflows and testing approaches
+- Common commands and best practices
 
-Skills are automatically discovered and loaded at startup. Current skills include:
+If the file doesn't exist, the agent works normally with its default instructions.
 
-| Skill | Description |
-|-------|-------------|
-| **pdf** | PDF processing (merge, split, extract, OCR) |
-| **xlsx** | Excel/CSV spreadsheet operations |
-| **pptx** | PowerPoint presentation creation and editing |
-| **docx** | Word document handling |
-| **doc-coauthoring** | Structured documentation workflow |
-| **frontend-design** | Production-grade web interfaces |
-| **algorithmic-art** | Generative art with p5.js |
-| **mcp-builder** | Build MCP servers |
-| **webapp-testing** | Test web apps with Playwright |
-| **theme-factory** | Style artifacts with themes |
-| **canvas-design** | Create visual art (PNG/PDF) |
-| **brand-guidelines** | Anthropic brand styling |
-| **slack-gif-creator** | Create animated GIFs for Slack |
-| **internal-comms** | Write internal communications |
-| **web-artifacts-builder** | Build HTML artifacts |
-| **skill-creator** | Guide for creating new skills |
-| **research-wbs-review** | Review WBS structures |
-
-### Using Skills
-
-List available skills:
-```
-You: skills
-```
-
-Activate a skill:
-```
-You: Activate the pdf skill to merge multiple PDFs
-```
-
-The agent automatically uses the appropriate skill based on your request and the skill's trigger conditions.
-
-### Adding New Skills
-
-1. Create a directory in `skills/`:
-   ```bash
-   mkdir skills/my-new-skill
-   ```
-
-2. Create `SKILL.md` with YAML frontmatter:
-   ```markdown
-   ---
-   name: my-new-skill
-   description: Use this skill when...
-   ---
-
-   # My New Skill
-
-   Documentation here...
-   ```
-
-3. Restart ChatAgent to load the new skill
-
-See [SKILLS_GUIDE.md](SKILLS_GUIDE.md) for detailed documentation on creating and managing skills.
-
-**Saving information:**
-```
-You: Remember that I prefer tabs over spaces for indentation
-
-You: Save this API endpoint URL for future use
-```
-
-## Logging System
-
-### Overview
-
-ChatAgent automatically logs **all interactions with the LLM** to `chatagent.log`, providing complete visibility into requests and responses.
-
-### What's Logged
-
-- ✅ **Complete message content** - No truncation, full text recorded
-- ✅ **All tool calls** - Function names and full arguments (formatted JSON)
-- ✅ **Tool results** - Complete output from tool executions
-- ✅ **Token usage** - Prompt, completion, and total tokens
-- ✅ **Request metadata** - Model, temperature, timestamps
-- ✅ **Response details** - Finish reason, full assistant replies
-
-### Viewing Logs
-
-```bash
-# Real-time monitoring
-tail -f chatagent.log
-
-# View full log
-cat chatagent.log
-
-# Search for specific requests
-grep "req_5" chatagent.log
-
-# Find errors
-grep "ERROR" chatagent.log
-```
-
-### Benefits
-
-- **Debugging** - Track exactly what was sent and received
-- **Cost Analysis** - Monitor token usage over time
-- **Audit Trail** - Complete record of all interactions
-- **Development** - Understand tool calling behavior
-
-See [LOGGING.md](LOGGING.md) for complete documentation.
+---
 
 ## Project Structure
 
 ```
 chatagent/
 ├── main.py                  # Entry point
-├── pyproject.toml          # Project configuration
-├── .env                    # Configuration (create from .env.example)
-├── .env.example            # Configuration template
-├── README.md               # This file
-├── tests/                  # Test files
-│   ├── __init__.py
-│   ├── README.md           # Test documentation
-│   └── test_*.py           # Individual test files
-├── docs/                   # Documentation
-│   ├── README.md           # Documentation index
-│   ├── features/           # Feature documentation
-│   └── updates/            # Update logs
+├── pyproject.toml           # Project configuration
+├── .env                     # Configuration (create from .env.example)
+├── .env.example             # Configuration template
+├── CHATAGENT.md             # Project-specific agent instructions
+├── README.md                # This file
+├── tests/                   # Test files
+│   ├── test_context_manager.py   # ContextManager tests (22 tests, mock LLM)
+│   ├── test_memory_management.py # Memory tool tests
+│   └── test_*.py            # Other feature tests
+├── docs/                    # Documentation
+│   ├── features/            # Feature documentation
+│   └── updates/             # Update logs
 └── chatagent/
-    ├── __init__.py
-    ├── cli.py              # CLI interface
-    ├── agent.py            # Main agent logic
+    ├── agent.py             # Core orchestration
+    ├── cli.py               # CLI interface (Rich)
+    ├── context_manager.py   # Context window management + Agentic RAG
     ├── llm/
-    │   ├── __init__.py
-    │   └── client.py       # LLM client
+    │   └── client.py        # OpenAI-compatible LLM client
     ├── tools/
-    │   ├── __init__.py
-    │   ├── base.py         # Tool base classes
-    │   ├── file_ops.py     # File operation tools
-    │   ├── search.py       # Search tools
-    │   ├── shell.py        # Shell command tool
-    │   ├── web.py          # Web tools
-    │   ├── memory.py       # Memory tool
-    │   ├── agents.py       # Agent tools
-    │   └── skill.py        # Skill activation
+    │   ├── base.py          # Tool base class + registry
+    │   ├── file_ops.py      # Read, write, edit, list
+    │   ├── search.py        # Glob, grep
+    │   ├── shell.py         # Shell execution
+    │   ├── web.py           # Fetch, search
+    │   ├── memory.py        # Persistent memory (6 tools)
+    │   ├── agents.py        # Helper agents
+    │   └── skill.py         # Skill activation
     └── skills/
-        ├── __init__.py
-        └── manager.py      # Skills manager
+        └── manager.py       # Skill loading and management
 ```
+
+---
 
 ## Testing
 
-ChatAgent includes comprehensive tests for all major features.
-
-### Running Tests
-
-**Run all tests:**
 ```bash
-uv run python -m pytest tests/
+# Run all tests
+uv run python -m pytest tests/ -v
+
+# Run specific test files
+uv run python -m pytest tests/test_context_manager.py -v
+uv run python -m pytest tests/test_memory_management.py -v
 ```
 
-**Run a specific test file:**
+Tests use `unittest.mock.Mock` for the LLM client — no real API calls required.
+
+---
+
+## Logging
+
+All LLM interactions are logged to `chatagent.log`:
+
 ```bash
-uv run python tests/test_imports.py
+tail -f chatagent.log    # Real-time monitoring
+grep "ERROR" chatagent.log
 ```
 
-**Run with pytest (if installed):**
-```bash
-uv run pytest tests/ -v
-```
+Logged data includes: full message content, tool calls with arguments, tool results, token usage, and timestamps.
 
-### Test Categories
-
-- **Core functionality** - Imports, logging, multi-turn conversations
-- **Features** - CHATAGENT.md loading, tool confirmation, date context
-- **Skills** - Skills loading, activation, prompt integration
-- **Commands** - CLI commands like `/model`, `/status`, `/clear`
-
-See [tests/README.md](tests/README.md) for detailed test documentation.
-
-## Documentation
-
-Comprehensive documentation is available in the `docs/` directory:
-
-### Feature Documentation
-Detailed design and implementation docs for major features:
-- [CHATAGENT.md Auto-loading](docs/features/CHATAGENT_MD_FEATURE.md)
-- [Tool Confirmation System](docs/features/TOOL_CONFIRMATION_FEATURE.md)
-- [Date Context Injection](docs/features/DATE_CONTEXT_FEATURE.md)
-
-### Update Logs
-Detailed change logs for specific updates:
-- [Skills System](docs/updates/SKILLS_UPDATE.md)
-- [Logging Improvements](docs/updates/LOGGING_UPDATE.md)
-- [CLI Commands](docs/updates/COMMANDS_UPDATE.md)
-- [Model Switching](docs/updates/MODEL_COMMAND_UPDATE.md)
-- [Skills Prompt Integration](docs/updates/SKILLS_PROMPT_UPDATE.md)
-- [Menu Confirmation](docs/updates/MENU_CONFIRMATION_UPDATE.md)
-
-See [docs/README.md](docs/README.md) for the complete documentation index.
-
-## Advanced Usage
-
-### Tool Usage
-
-The agent automatically selects and uses appropriate tools based on your request. You can also explicitly request tool usage:
-
-```
-You: Use the glob tool to find all JavaScript files
-
-You: Search for "function" in all Python files using search_file_content
-
-You: Use the shell tool to check git status
-```
-
-### Memory System
-
-The agent can save important information to memory:
-
-```
-You: Remember that this project uses Python 3.12
-
-You: Save my preference for using black for code formatting
-
-You: What do you remember about my preferences?
-```
-
-Memories are saved to `.chatagent_memory.json` in the current directory.
-
-### Skills
-
-Skills provide specialized capabilities for specific domains:
-
-```
-You: Activate the pdf skill
-Assistant: [Activates PDF skill]
-
-You: Now merge these three PDF files
-
-You: Activate the xlsx skill to help me analyze sales data
-```
+---
 
 ## Development
 
-### Adding New Tools
+### Adding a Tool
 
-1. Create a new tool class in `chatagent/tools/`:
+1. Create a tool class in `chatagent/tools/`:
+
 ```python
 from .base import Tool
 
@@ -595,59 +368,66 @@ class MyTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Description of what this tool does"
+        return "Description for LLM"
 
     @property
     def parameters(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "param1": {
-                    "type": "string",
-                    "description": "Parameter description",
-                }
+                "param": {"type": "string", "description": "..."}
             },
-            "required": ["param1"],
+            "required": ["param"],
         }
 
-    def execute(self, param1: str) -> str:
-        # Tool implementation
-        return f"Result: {param1}"
+    @property
+    def requires_confirmation(self) -> bool:
+        return False  # Set True for dangerous operations
+
+    def execute(self, param: str) -> str:
+        return f"Result: {param}"
 ```
 
-2. Register the tool in `agent.py`:
+2. Register in `agent.py::_register_tools()`:
+
 ```python
-self.tools.register(MyTool())
+tools_to_register.append(MyTool())
 ```
 
-### Adding New Skills
+### Adding a Skill
 
-Skills are managed by the `SkillManager`. To add a new skill, update the `AVAILABLE_SKILLS` dictionary in `chatagent/skills/manager.py`.
+1. Create `skills/my-skill/SKILL.md`:
+
+```yaml
+---
+name: my-skill
+description: Use when... (trigger conditions for LLM)
+---
+
+# My Skill
+
+Documentation here...
+```
+
+2. Restart ChatAgent — skills are auto-discovered.
+
+---
 
 ## Troubleshooting
 
-### API Key Issues
-- Make sure your `.env` file exists and contains a valid API key
-- Check that the API key has the correct permissions
-- Verify the base URL is correct for your provider
+**API Key Issues:** Verify `.env` exists and contains a valid key with correct permissions.
 
-### Connection Issues
-- Check your internet connection
-- Verify the API endpoint is accessible
-- Check for firewall or proxy issues
+**Context Too Long Errors:** ChatAgent handles these automatically (force-compresses and retries). If they persist, lower the limit with `/context limit <n>` or `CHATAGENT_CONTEXT_TOKENS`.
 
-### Tool Execution Errors
-- Ensure you have necessary permissions for file operations
-- Check file paths are correct and accessible
-- For shell commands, verify the command is valid for your OS
+**Memory Recall Not Working:** Check that memories exist (`/memory`). Recall requires at least one memory saved. The LLM judges relevance — unrelated memories won't be recalled.
+
+**Tool Execution Errors:** Check file permissions, path correctness, and that shell commands are valid for your OS.
+
+---
 
 ## License
 
 This project is open source. Feel free to use and modify as needed.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues or pull requests.
 
 ## Acknowledgments
 
