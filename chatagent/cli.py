@@ -1,6 +1,7 @@
 """CLI interface for ChatAgent."""
 
 import os
+import select
 import sys
 from typing import Optional
 
@@ -331,12 +332,6 @@ The agent has access to the following tools:
 - `run_shell_command` - Execute shell commands
 - `web_fetch` - Fetch web content
 - `google_web_search` - Search the web
-- `save_memory` - Save important information
-- `search_memory` - Search saved memories (key, value, tags)
-- `list_memories` - List all saved memories
-- `delete_memory` - Delete a specific memory (requires confirmation)
-- `clear_all_memories` - Clear all memories (requires confirmation)
-- `filter_memory_by_tag` - Filter memories by tag
 - `activate_skill` - Activate Claude skills
 - `cli_help` - Get CLI help
 - `codebase_investigator` - Investigate codebases
@@ -566,6 +561,31 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         else:
             console.print("\n[error]Usage: /context  OR  /context limit <n>[/error]\n")
 
+    def _get_user_input(self) -> str:
+        """Read user input, collecting all lines when multi-line text is pasted.
+
+        When text is pasted from clipboard, the terminal writes all characters
+        (including newlines) into stdin at once. After Prompt.ask() returns the
+        first line, select.select() detects remaining buffered data and collects
+        the rest, returning the full multi-line string.
+        """
+        first_line = Prompt.ask("\n[bold cyan]You[/bold cyan]")
+
+        # Check if more data is buffered in stdin (multi-line paste scenario)
+        extra_lines = []
+        try:
+            while select.select([sys.stdin], [], [], 0.05)[0]:
+                line = sys.stdin.readline()
+                if not line:
+                    break
+                extra_lines.append(line.rstrip("\n"))
+        except Exception:
+            pass  # select not available or stdin is not a real fd (e.g. in tests)
+
+        if extra_lines:
+            return first_line + "\n" + "\n".join(extra_lines)
+        return first_line
+
     def run(self):
         """Run the CLI."""
         self.print_welcome()
@@ -573,7 +593,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         while True:
             try:
                 # Get user input
-                user_input = Prompt.ask("\n[bold cyan]You[/bold cyan]")
+                user_input = self._get_user_input()
 
                 if not user_input.strip():
                     continue

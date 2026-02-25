@@ -15,6 +15,7 @@ A powerful CLI chat agent with tools and skills support. Built with Python and d
 - **Auto-loading of project instructions** from `CHATAGENT.md` at startup
 - **Tool confirmation** - user confirmation required for Shell, Web, and destructive Memory tools
 - **Current date context** - system prompt includes current date and time
+- **Multi-line paste support** - paste multi-line text and it's sent as one complete message
 
 ### 🛠️ Comprehensive Tools
 
@@ -33,14 +34,6 @@ A powerful CLI chat agent with tools and skills support. Built with Python and d
 - `run_shell_command` - Execute shell commands (requires confirmation)
 - `web_fetch` - Fetch and extract content from URLs (requires confirmation)
 - `google_web_search` - Search the web via DuckDuckGo (requires confirmation)
-
-**Memory:**
-- `save_memory` - Save important information persistently
-- `search_memory` - Full-text search across keys, tags, and values
-- `list_memories` - List all saved memories with tag summary
-- `filter_memory_by_tag` - Filter memories by tag
-- `delete_memory` - Delete a specific memory (requires confirmation)
-- `clear_all_memories` - Clear all memories (requires confirmation)
 
 **Special Features:**
 - `activate_skill` - Activate specialized skills for specific tasks
