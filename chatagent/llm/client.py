@@ -148,6 +148,11 @@ class LLMClient:
             else:
                 self.logger.info(f"    Content: {content}")
 
+            # Note if reasoning_content is preserved (thinking-enabled APIs)
+            if 'reasoning_content' in msg:
+                rc = msg['reasoning_content']
+                self.logger.info(f"    Reasoning Content ({len(rc)} chars): [preserved]")
+
             # Log tool calls if present
             if 'tool_calls' in msg:
                 self.logger.info(f"    Tool Calls: {len(msg['tool_calls'])}")
@@ -224,6 +229,13 @@ class LLMClient:
             self.logger.info(f"\nAssistant Response ({len(content)} chars):")
             # Log full content line by line
             for line in content.split('\n'):
+                self.logger.info(f"  {line}")
+
+        # Log reasoning_content if present (thinking-enabled APIs)
+        reasoning_content = getattr(message, "reasoning_content", None)
+        if reasoning_content:
+            self.logger.info(f"\nReasoning Content ({len(reasoning_content)} chars):")
+            for line in reasoning_content.split('\n'):
                 self.logger.info(f"  {line}")
 
         # Log tool calls if present

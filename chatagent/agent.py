@@ -395,13 +395,21 @@ Always be helpful, accurate, and efficient."""
             if assistant_message.tool_calls:
                 self.llm.logger.info(f"Processing {len(assistant_message.tool_calls)} tool call(s) in iteration {iteration}")
 
-                # Show LLM reasoning text (content before tool calls) if present
+                # Extract reasoning_content (thinking-enabled APIs like DeepSeek Reasoner)
+                reasoning_content = getattr(assistant_message, "reasoning_content", None)
+
+                # Show reasoning_content via thinking_callback if present
+                if reasoning_content and self.thinking_callback:
+                    self.thinking_callback(reasoning_content)
+
+                # Show LLM content text (content before tool calls) if present
+                # When reasoning_content is present, content usually lacks thinking text
                 reasoning = (assistant_message.content or "").strip()
                 if reasoning and self.thinking_callback:
                     self.thinking_callback(reasoning)
 
-                # Add assistant message with tool calls
-                self.messages.append({
+                # Build assistant message with tool calls
+                assistant_msg: Dict[str, Any] = {
                     "role": "assistant",
                     "content": assistant_message.content or "",
                     "tool_calls": [
@@ -415,7 +423,13 @@ Always be helpful, accurate, and efficient."""
                         }
                         for tc in assistant_message.tool_calls
                     ],
-                })
+                }
+
+                # Preserve reasoning_content so API accepts this message in subsequent calls
+                if reasoning_content is not None:
+                    assistant_msg["reasoning_content"] = reasoning_content
+
+                self.messages.append(assistant_msg)
 
                 # Execute tool calls
                 for tool_call in assistant_message.tool_calls:
@@ -482,14 +496,22 @@ Always be helpful, accurate, and efficient."""
                 # No more tool calls, we have the final response
                 self.llm.logger.info(f"Reached final response in iteration {iteration}")
                 assistant_content = assistant_message.content or ""
-                self.add_message("assistant", assistant_content)
+                reasoning_content = getattr(assistant_message, "reasoning_content", None)
+                final_msg: Dict[str, Any] = {"role": "assistant", "content": assistant_content}
+                if reasoning_content is not None:
+                    final_msg["reasoning_content"] = reasoning_content
+                self.messages.append(final_msg)
                 self._try_save_memories(user_message, assistant_content)
                 return assistant_content
 
         # If we hit max iterations, return what we have
         self.llm.logger.warning(f"Maximum tool call iterations ({max_iterations}) reached")
         assistant_content = assistant_message.content or "Maximum tool call iterations reached."
-        self.add_message("assistant", assistant_content)
+        reasoning_content = getattr(assistant_message, "reasoning_content", None)
+        final_msg = {"role": "assistant", "content": assistant_content}
+        if reasoning_content is not None:
+            final_msg["reasoning_content"] = reasoning_content
+        self.messages.append(final_msg)
         self._try_save_memories(user_message, assistant_content)
         return assistant_content
 
