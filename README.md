@@ -44,10 +44,11 @@ A powerful CLI chat agent with tools and skills support. Built with Python and d
 ChatAgent automatically manages long conversations to stay within LLM context limits:
 
 - **Token estimation** - tracks approximate token usage (characters ÷ 4)
-- **Sliding window compression** - when context exceeds 65% of the limit, early messages are summarized by the LLM and replaced with a compact `[Conversation Summary]` block
+- **Sliding window compression** - when context exceeds 65% of the limit, early messages are summarized by the LLM and replaced with a compact `[Conversation Summary]` block; the split point always aligns to a `user` turn boundary so tool call sequences are never split mid-flight
+- **Tool result truncation** - tool outputs larger than 80K characters (~20K tokens) are truncated before being added to messages, preventing a single large response (e.g. reading a big file) from consuming the entire context window
 - **Auto-save summaries** - compression summaries are saved to memory with tag `conversation_summary` for future reference
 - **Graceful degradation** - if compression fails, the original messages are preserved unchanged
-- **Overflow recovery** - if the API returns a context-too-long error, compression is forced and the request is retried automatically
+- **Three-tier overflow recovery** - if the API returns a context-too-long error: (1) force-compress and retry; (2) if still too long, keep only the last 2 messages and retry; (3) only surfaces an error to the user if all three tiers fail
 
 Default context limit is 200K tokens. Override with `CHATAGENT_CONTEXT_TOKENS` environment variable.
 
@@ -410,7 +411,7 @@ Documentation here...
 
 **API Key Issues:** Verify `.env` exists and contains a valid key with correct permissions.
 
-**Context Too Long Errors:** ChatAgent handles these automatically (force-compresses and retries). If they persist, lower the limit with `/context limit <n>` or `CHATAGENT_CONTEXT_TOKENS`.
+**Context Too Long Errors:** ChatAgent handles these automatically with three-tier recovery (compress → minimal history → error). Common causes: very large tool results (e.g. reading huge files) or extremely long conversations. If errors persist, lower the limit with `/context limit <n>` or `CHATAGENT_CONTEXT_TOKENS`.
 
 **Memory Recall Not Working:** Check that memories exist (`/memory`). Recall requires at least one memory saved. The LLM judges relevance — unrelated memories won't be recalled.
 

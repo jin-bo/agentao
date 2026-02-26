@@ -18,17 +18,15 @@ from .tools import (
     WebFetchTool,
     GoogleSearchTool,
     SaveMemoryTool,
-    SearchMemoryTool,
-    DeleteMemoryTool,
-    ClearMemoryTool,
-    FilterMemoryByTagTool,
-    ListMemoryTool,
     CLIHelpAgentTool,
     CodebaseInvestigatorTool,
     ActivateSkillTool,
 )
 from .skills import SkillManager
 from .context_manager import ContextManager, is_context_too_long_error
+
+
+MAX_TOOL_RESULT_CHARS = 80_000  # ~20K tokens per tool result
 
 
 class ChatAgent:
@@ -116,12 +114,6 @@ class ChatAgent:
             ShellTool(),
             WebFetchTool(),
             GoogleSearchTool(),
-            self.memory_tool,
-            SearchMemoryTool(self.memory_tool),
-            DeleteMemoryTool(self.memory_tool),
-            ClearMemoryTool(self.memory_tool),
-            FilterMemoryByTagTool(self.memory_tool),
-            ListMemoryTool(self.memory_tool),
             CLIHelpAgentTool(),
             CodebaseInvestigatorTool(),
             ActivateSkillTool(self.skill_manager),
@@ -270,6 +262,33 @@ Always be helpful, accurate, and efficient."""
             self.llm.logger.warning(f"Memory recall failed: {e}")
             return None
 
+    def _try_save_memories(self, user_message: str, assistant_response: str) -> None:
+        """Analyze the conversation turn and auto-save important memories.
+
+        Called after each complete chat() turn. Uses LLM to extract
+        valuable long-term information. Saves silently; logs to chatagent.log.
+        """
+        # Skip trivial responses
+        if not assistant_response or len(assistant_response.strip()) < 20:
+            return
+
+        try:
+            all_memories = self.memory_tool.get_all_memories()
+            memories_to_save = self.context_manager.extract_memories_to_save(
+                user_message, assistant_response, all_memories
+            )
+
+            for mem in memories_to_save:
+                self.memory_tool.execute(
+                    key=mem["key"],
+                    value=mem["value"],
+                    tags=mem.get("tags", ["auto"]),
+                )
+                self.llm.logger.info(f"[Auto-Memory] Saved: {mem['key']} = {mem['value'][:80]}")
+
+        except Exception as e:
+            self.llm.logger.warning(f"Auto-memory save failed: {e}")
+
     def clear_history(self):
         """Clear conversation history and deactivate all skills."""
         self.messages = []
@@ -327,16 +346,27 @@ Always be helpful, accurate, and efficient."""
             try:
                 response = self.llm.chat(messages=messages_with_system, tools=tools)
             except Exception as e:
-                if is_context_too_long_error(e):
-                    self.llm.logger.warning(f"Context overflow from API, forcing compression: {e}")
-                    self.messages = self.context_manager.compress_messages(self.messages)
-                    system_prompt = self._build_system_prompt()
-                    messages_with_system = [
-                        {"role": "system", "content": system_prompt}
-                    ] + self.messages
-                    response = self.llm.chat(messages=messages_with_system, tools=tools)
-                else:
+                if not is_context_too_long_error(e):
                     raise
+                self.llm.logger.warning(f"Context overflow from API, forcing compression: {e}")
+                self.messages = self.context_manager.compress_messages(self.messages)
+                system_prompt = self._build_system_prompt()
+                messages_with_system = [
+                    {"role": "system", "content": system_prompt}
+                ] + self.messages
+                try:
+                    response = self.llm.chat(messages=messages_with_system, tools=tools)
+                except Exception as e2:
+                    if is_context_too_long_error(e2):
+                        # System prompt alone may be too large; keep only the last 2 messages
+                        self.llm.logger.warning("Context still too long after compression, keeping minimal history")
+                        self.messages = self.messages[-2:]
+                        messages_with_system = [
+                            {"role": "system", "content": system_prompt}
+                        ] + self.messages
+                        response = self.llm.chat(messages=messages_with_system, tools=tools)
+                    else:
+                        raise
 
             # Process response
             assistant_message = response.choices[0].message
@@ -401,6 +431,17 @@ Always be helpful, accurate, and efficient."""
                     except Exception as e:
                         result = f"Error executing {function_name}: {str(e)}"
 
+                    # Truncate oversized tool results to avoid context overflow
+                    if isinstance(result, str) and len(result) > MAX_TOOL_RESULT_CHARS:
+                        truncated = len(result) - MAX_TOOL_RESULT_CHARS
+                        result = (
+                            result[:MAX_TOOL_RESULT_CHARS]
+                            + f"\n\n[... {truncated} characters truncated to fit context window ...]"
+                        )
+                        self.llm.logger.warning(
+                            f"Tool result from {function_name} truncated: {truncated} chars removed"
+                        )
+
                     # Add tool result to messages
                     self.messages.append({
                         "role": "tool",
@@ -422,12 +463,14 @@ Always be helpful, accurate, and efficient."""
                 self.llm.logger.info(f"Reached final response in iteration {iteration}")
                 assistant_content = assistant_message.content or ""
                 self.add_message("assistant", assistant_content)
+                self._try_save_memories(user_message, assistant_content)
                 return assistant_content
 
         # If we hit max iterations, return what we have
         self.llm.logger.warning(f"Maximum tool call iterations ({max_iterations}) reached")
         assistant_content = assistant_message.content or "Maximum tool call iterations reached."
         self.add_message("assistant", assistant_content)
+        self._try_save_memories(user_message, assistant_content)
         return assistant_content
 
     def get_conversation_summary(self) -> str:

@@ -87,8 +87,19 @@ class ContextManager:
             return messages
 
         keep_count = max(4, int(len(messages) * self.KEEP_RECENT_RATIO))
-        to_summarize = messages[:-keep_count]
-        to_keep = messages[-keep_count:]
+        split_index = len(messages) - keep_count
+
+        # Advance split_index to the next 'user' message boundary to avoid
+        # orphaning tool results from their preceding assistant tool_calls.
+        while split_index < len(messages) - 1 and messages[split_index].get("role") != "user":
+            split_index += 1
+
+        # Safety: if no user message found, keep everything
+        if messages[split_index].get("role") != "user":
+            return messages
+
+        to_summarize = messages[:split_index]
+        to_keep = messages[split_index:]
 
         if not to_summarize:
             return messages
@@ -230,6 +241,76 @@ class ContextManager:
         except Exception as e:
             try:
                 self.llm_client.logger.warning(f"Memory recall failed: {e}")
+            except Exception:
+                pass
+            return []
+
+    def extract_memories_to_save(
+        self,
+        user_message: str,
+        assistant_response: str,
+        existing_memories: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Use LLM to extract important long-term memories from a conversation turn.
+
+        Conservative strategy: only extract clearly valuable information.
+
+        Returns:
+            List of {key, value, tags} dicts to save, or [] if nothing worth saving.
+        """
+        existing_summary = "\n".join(
+            f"- [{m['key']}]: {m['value'][:80]}"
+            for m in existing_memories[:30]
+        ) if existing_memories else "(none)"
+
+        extract_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a memory extractor. Analyze this conversation turn and extract "
+                    "ONLY clearly important information worth remembering for FUTURE conversations.\n\n"
+                    "Save: user preferences, personal info, project facts, key decisions, work context.\n"
+                    "Do NOT save: temporary info, vague observations, or anything already in existing memories.\n\n"
+                    "Return a JSON array: [{\"key\": \"...\", \"value\": \"...\", \"tags\": [\"...\"]}]\n"
+                    "Return [] if nothing important. Keys should be short snake_case identifiers."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"User message: {user_message}\n\n"
+                    f"Assistant response: {assistant_response[:1000]}\n\n"
+                    f"Existing memories (do not duplicate):\n{existing_summary}\n\n"
+                    "Extract memories to save. Return JSON array only."
+                ),
+            },
+        ]
+
+        try:
+            response = self.llm_client.chat(messages=extract_messages, tools=None)
+            content = (response.choices[0].message.content or "[]").strip()
+
+            # Extract JSON array (handle surrounding text)
+            start = content.find("[")
+            end = content.rfind("]")
+            if start == -1 or end == -1:
+                return []
+            content = content[start:end + 1]
+
+            result = json.loads(content)
+            if not isinstance(result, list):
+                return []
+
+            # Validate structure
+            valid = []
+            for item in result:
+                if isinstance(item, dict) and "key" in item and "value" in item:
+                    valid.append(item)
+            return valid
+
+        except Exception as e:
+            try:
+                self.llm_client.logger.warning(f"Memory extraction failed: {e}")
             except Exception:
                 pass
             return []
