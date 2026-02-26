@@ -122,6 +122,20 @@ class ChatAgent:
         for tool in tools_to_register:
             self.tools.register(tool)
 
+    def _build_reliability_section(self) -> str:
+        """Return reliability principles injected unconditionally into every system prompt."""
+        return (
+            "\n\n=== Reliability Principles ===\n"
+            "1. Only assert facts about files or code after reading them with a tool. "
+            "Do not state what a file contains without first using read_file or search_file_content.\n"
+            "2. When a tool result differs from what you expected, state the discrepancy "
+            "explicitly before continuing.\n"
+            "3. When a tool returns an error, reason about the cause before retrying "
+            "with a different approach.\n"
+            "4. Distinguish verified information (from tool output) from inferences. "
+            "Use 'the file shows...' for facts, 'I expect...' for inferences."
+        )
+
     def _build_system_prompt(self, recalled_context: Optional[str] = None) -> str:
         """Build system prompt for the agent.
 
@@ -164,10 +178,11 @@ You can help users with:
 - Investigating codebases and project structures
 
 When users ask you to do something:
-1. Think about which tools would be helpful
-2. Use the appropriate tools to complete the task
-3. Provide clear and concise responses
-4. If you need more information, ask the user
+1. Identify which tools are needed and what you expect to find
+2. Use tools; treat results as ground truth, not as confirmation of prior assumptions
+3. If results are unexpected, re-evaluate your understanding before proceeding
+4. Provide responses grounded in tool output, not in prior assumptions
+5. If you need more information, ask the user
 
 Be proactive in using tools when they would be helpful. For example:
 - If asked about a file, use read_file to view it
@@ -197,13 +212,18 @@ Always be helpful, accurate, and efficient."""
         if skills_context:
             prompt += "\n\n" + skills_context
 
+        # Inject reliability principles unconditionally
+        prompt += self._build_reliability_section()
+
         # Instruct LLM to show reasoning when thinking_callback is active
         if self.thinking_callback:
             prompt += (
                 "\n\n=== Reasoning Requirement ===\n"
-                "Before each tool call (or set of tool calls), write 1-3 sentences explaining "
-                "your reasoning: what you are doing and why. Be concise and direct. "
-                "This reasoning will be shown to the user as your thought process."
+                "Before each set of tool calls, write 2-3 sentences in this structure:\n"
+                "- Action: What tool you are calling and with what input.\n"
+                "- Expectation: What you expect to find or what the result should confirm.\n"
+                "- If wrong: What you will do if the result contradicts your expectation.\n"
+                "Be specific and falsifiable. This reasoning is shown to the user."
             )
 
         # Inject recalled memories if provided
