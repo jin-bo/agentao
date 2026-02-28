@@ -27,6 +27,7 @@ from .context_manager import ContextManager, is_context_too_long_error
 
 
 MAX_TOOL_RESULT_CHARS = 80_000  # ~20K tokens per tool result
+MAX_REASONING_HISTORY_CHARS = 500  # Truncate reasoning_content in history to ~125 tokens
 
 
 class ChatAgent:
@@ -425,9 +426,13 @@ Always be helpful, accurate, and efficient."""
                     ],
                 }
 
-                # Preserve reasoning_content so API accepts this message in subsequent calls
+                # Preserve reasoning_content so API accepts this message in subsequent calls.
+                # Truncate to avoid context bloat (already shown live via thinking_callback).
                 if reasoning_content is not None:
-                    assistant_msg["reasoning_content"] = reasoning_content
+                    stored = reasoning_content[:MAX_REASONING_HISTORY_CHARS]
+                    if len(reasoning_content) > MAX_REASONING_HISTORY_CHARS:
+                        stored += "..."
+                    assistant_msg["reasoning_content"] = stored
 
                 self.messages.append(assistant_msg)
 
@@ -499,7 +504,10 @@ Always be helpful, accurate, and efficient."""
                 reasoning_content = getattr(assistant_message, "reasoning_content", None)
                 final_msg: Dict[str, Any] = {"role": "assistant", "content": assistant_content}
                 if reasoning_content is not None:
-                    final_msg["reasoning_content"] = reasoning_content
+                    stored = reasoning_content[:MAX_REASONING_HISTORY_CHARS]
+                    if len(reasoning_content) > MAX_REASONING_HISTORY_CHARS:
+                        stored += "..."
+                    final_msg["reasoning_content"] = stored
                 self.messages.append(final_msg)
                 self._try_save_memories(user_message, assistant_content)
                 return assistant_content
@@ -510,7 +518,10 @@ Always be helpful, accurate, and efficient."""
         reasoning_content = getattr(assistant_message, "reasoning_content", None)
         final_msg = {"role": "assistant", "content": assistant_content}
         if reasoning_content is not None:
-            final_msg["reasoning_content"] = reasoning_content
+            stored = reasoning_content[:MAX_REASONING_HISTORY_CHARS]
+            if len(reasoning_content) > MAX_REASONING_HISTORY_CHARS:
+                stored += "..."
+            final_msg["reasoning_content"] = stored
         self.messages.append(final_msg)
         self._try_save_memories(user_message, assistant_content)
         return assistant_content
@@ -565,25 +576,17 @@ Always be helpful, accurate, and efficient."""
         return f"Model changed from {old_model} to {model}"
 
     def list_available_models(self) -> List[str]:
-        """List commonly available models.
+        """List models available via the API.
 
         Returns:
-            List of model names
+            Sorted list of model IDs from the configured endpoint
+
+        Raises:
+            RuntimeError: If the API call fails
         """
-        return [
-            # Claude models
-            "claude-opus-4",
-            "claude-sonnet-4-5",
-            "claude-sonnet-4",
-            "claude-haiku-4",
-            # OpenAI models
-            "gpt-4-turbo-preview",
-            "gpt-4-turbo",
-            "gpt-4",
-            "gpt-4-32k",
-            "gpt-3.5-turbo",
-            "gpt-3.5-turbo-16k",
-            # Other common models
-            "deepseek-chat",
-            "deepseek-coder",
-        ]
+        try:
+            models_page = self.llm.client.models.list()
+            return sorted([m.id for m in models_page.data])
+        except Exception as e:
+            self.llm.logger.warning(f"Failed to fetch models from API: {e}")
+            raise RuntimeError(f"Could not fetch model list: {e}") from e

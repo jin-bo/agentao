@@ -491,9 +491,14 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         if not args:
             # Show current model and available models
             current = self.agent.get_current_model()
-            available = self.agent.list_available_models()
-
             console.print(f"\n[info]Current Model:[/info] [cyan]{current}[/cyan]\n")
+            try:
+                with console.status("[dim]Fetching available models…[/dim]"):
+                    available = self.agent.list_available_models()
+            except RuntimeError as e:
+                console.print(f"[error]Failed to list models: {e}[/error]\n")
+                return
+
             console.print("[info]Available Models:[/info]\n")
 
             # Group by provider

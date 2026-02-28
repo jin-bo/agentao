@@ -179,7 +179,7 @@ All commands start with `/`:
 | `/help` | Show help message |
 | `/clear` | Clear conversation history and reset confirmation mode |
 | `/status` | Show message count, model, active skills, memory count, context usage |
-| `/model` | List available models |
+| `/model` | Fetch and list available models from the configured API endpoint |
 | `/model <name>` | Switch to specified model (e.g., `/model gpt-4`) |
 | `/skills` | List available and active skills |
 | `/memory` | List all saved memories with tag summary |
@@ -412,6 +412,8 @@ Documentation here...
 ---
 
 ## Troubleshooting
+
+**Model List Not Loading:** `/model` queries the live API endpoint. If it fails (invalid key, unreachable endpoint, no `models` endpoint), a clear error is shown. Verify your `OPENAI_API_KEY` and `OPENAI_BASE_URL` settings.
 
 **API Key Issues:** Verify `.env` exists and contains a valid key with correct permissions.
 
