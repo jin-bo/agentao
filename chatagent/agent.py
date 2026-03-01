@@ -148,10 +148,15 @@ class ChatAgent:
         """
         # Get current date and time
         now = datetime.now()
-        current_date = now.strftime("%Y-%m-%d")
-        current_time = now.strftime("%H:%M:%S")
         current_datetime = now.strftime("%Y-%m-%d %H:%M:%S")
         day_of_week = now.strftime("%A")
+
+        agent_instructions = f"""You are ChatAgent, a helpful AI assistant with access to various tools and skills.
+
+Current Date and Time: {current_datetime} ({day_of_week})
+Current Working Directory: {Path.cwd()}
+
+Use tools proactively whenever they provide ground truth. If you need clarification, ask the user."""
 
         # Start with project-specific instructions if available
         if self.project_instructions:
@@ -161,38 +166,9 @@ class ChatAgent:
 
 === Agent Instructions ===
 
-You are ChatAgent, a helpful AI assistant with access to various tools and skills.
-
-Current Date and Time: {current_datetime} ({day_of_week})"""
+{agent_instructions}"""
         else:
-            prompt = f"""You are ChatAgent, a helpful AI assistant with access to various tools and skills.
-
-Current Date and Time: {current_datetime} ({day_of_week})
-
-You can help users with:
-- Reading, writing, and editing files
-- Searching for files and text content
-- Executing shell commands
-- Fetching web content and searching the web
-- Saving important information to memory
-- Activating specialized skills for specific tasks
-- Investigating codebases and project structures
-
-When users ask you to do something:
-1. Identify which tools are needed and what you expect to find
-2. Use tools; treat results as ground truth, not as confirmation of prior assumptions
-3. If results are unexpected, re-evaluate your understanding before proceeding
-4. Provide responses grounded in tool output, not in prior assumptions
-5. If you need more information, ask the user
-
-Be proactive in using tools when they would be helpful. For example:
-- If asked about a file, use read_file to view it
-- If asked to search for something in code, use search_file_content
-- If asked to create or modify files, use write_file or replace
-- If asked to fetch web content, use web_fetch
-- For specialized tasks, check if there's an appropriate skill to activate
-
-Always be helpful, accurate, and efficient."""
+            prompt = agent_instructions
 
         # Add available skills section
         available_skills = self.skill_manager.list_available_skills()
