@@ -178,6 +178,29 @@ uv run python main.py
 ./run.sh
 ```
 
+### Non-Interactive (Print) Mode
+
+Use `-p` / `--print` to send a single prompt, get a plain-text response on stdout, and exit — no UI, no confirmations. Useful for scripting and pipes.
+
+```bash
+# Basic usage
+chatagent -p "What is 2+2?"
+
+# Read from stdin
+echo "Summarize this: hello world" | chatagent -p
+
+# Combine -p argument with stdin (both are joined and sent as one prompt)
+echo "Some context" | chatagent -p "Summarize the stdin"
+
+# Pipe output to a file
+chatagent -p "List 3 prime numbers" > output.txt
+
+# Use in a pipeline
+chatagent -p "Translate to French: Good morning" | pbcopy
+```
+
+In print mode all tools are auto-confirmed (no interactive prompts). The exit code is `0` on success and `1` on error.
+
 ### Commands
 
 All commands start with `/`. Type `/` and press **Tab** for autocomplete.

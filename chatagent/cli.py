@@ -770,6 +770,23 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 continue
 
 
+def run_print_mode(prompt: str) -> int:
+    """Non-interactive print mode: send prompt, print response, exit. Returns exit code."""
+    load_dotenv()
+    agent = ChatAgent(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        base_url=os.getenv("OPENAI_BASE_URL"),
+        model=os.getenv("OPENAI_MODEL"),
+    )
+    try:
+        response = agent.chat(prompt)
+        print(response)
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def main():
     """Main entry point."""
     try:
@@ -783,5 +800,21 @@ def main():
         sys.exit(1)
 
 
+def entrypoint():
+    """Unified entry point: -p for print mode, otherwise interactive."""
+    import argparse
+    parser = argparse.ArgumentParser(prog="chatagent", add_help=False)
+    parser.add_argument("-p", "--print", dest="prompt", nargs="?", const="", default=None)
+    args, _ = parser.parse_known_args()
+
+    if args.prompt is not None:
+        stdin_text = "" if sys.stdin.isatty() else sys.stdin.read()
+        parts = [p for p in [args.prompt.strip(), stdin_text.strip()] if p]
+        full_prompt = "\n".join(parts)
+        sys.exit(run_print_mode(full_prompt))
+    else:
+        main()
+
+
 if __name__ == "__main__":
-    main()
+    entrypoint()

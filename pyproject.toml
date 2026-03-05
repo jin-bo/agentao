@@ -12,10 +12,12 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "pygments>=2.16.0",
     "readchar>=4.2.1",
+    "prompt-toolkit>=3.0.52",
+    "pymupdf>=1.27.1",
 ]
 
 [project.scripts]
-chatagent = "chatagent.cli:main"
+chatagent = "chatagent.cli:entrypoint"
 
 [build-system]
 requires = ["hatchling"]
