@@ -167,6 +167,51 @@ class ChatAgent:
             "Use 'the file shows...' for facts, 'I expect...' for inferences."
         )
 
+    def _build_operational_guidelines(self) -> str:
+        """Return operational guidelines injected unconditionally into every system prompt."""
+        return (
+            "\n\n=== Operational Guidelines ===\n\n"
+
+            "## Tone and Style\n"
+            "- Concise & Direct: fewer than 3 lines of text per response (excluding tool use/code) when practical.\n"
+            "- No Chitchat: omit preambles ('Okay, I will now...') and postambles ('I have finished...') "
+            "unless explaining intent before a modifying command.\n"
+            "- Tools vs. Text: use tools for actions, text only for communication. "
+            "No explanatory comments inside tool calls.\n"
+            "- Formatting: GitHub-flavored Markdown; responses render in monospace.\n"
+            "- Clarity over Brevity: when a request is ambiguous or explanation is essential, prioritize clarity.\n\n"
+
+            "## Shell Command Efficiency\n"
+            "IT IS CRITICAL TO FOLLOW THESE TO AVOID EXCESSIVE TOKEN CONSUMPTION.\n"
+            "- Prefer quiet/silent flags: e.g. `npm install --silent`, `pip install -q`, "
+            "`git --no-pager`, `PAGER=cat`.\n"
+            "- For commands with potentially long or unpredictable output, redirect to temp files:\n"
+            "  `command > /tmp/out.log 2> /tmp/err.log`\n"
+            "  Then inspect with `grep`/`tail`/`head`. Remove temp files when done.\n"
+            "- Exception: if the command's full output is essential for understanding, "
+            "avoid aggressive quieting.\n\n"
+
+            "## Tool Usage\n"
+            "- Parallelism: execute independent tool calls in parallel in a single response when feasible.\n"
+            "- Interactive commands: always prefer non-interactive flags "
+            "(e.g. `--ci`, `--no-pager`, `--yes`, `--non-interactive`) "
+            "unless a persistent process is specifically required.\n"
+            "- Background processes: set `is_background=true` for commands that will not stop on their own "
+            "(servers, file watchers).\n"
+            "- Respect cancellations: if a user cancels a tool call, do not retry it in the same turn. "
+            "Ask if they prefer an alternative approach.\n"
+            "- Remembering facts: use save_memory only for user-specific facts or preferences "
+            "(e.g. preferred coding style, common project paths, personal aliases) "
+            "when the user explicitly asks or clearly states something that would help personalize "
+            "future interactions. Do NOT use it for general project context. "
+            "If unsure whether to save something, ask: 'Should I remember that for you?'\n\n"
+
+            "## Security\n"
+            "- Before running shell commands that modify the filesystem, codebase, or system state, "
+            "briefly state the command's purpose and potential impact.\n"
+            "- Never write code that exposes, logs, or commits secrets, API keys, or sensitive information."
+        )
+
     def _build_system_prompt(self) -> str:
         """Build system prompt for the agent.
 
@@ -218,6 +263,9 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
 
         # Inject reliability principles unconditionally
         prompt += self._build_reliability_section()
+
+        # Inject operational guidelines unconditionally
+        prompt += self._build_operational_guidelines()
 
         # Instruct LLM to show reasoning when thinking_callback is active
         if self.thinking_callback:
