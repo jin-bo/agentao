@@ -61,6 +61,33 @@ class LLMClient:
 
         self.logger.info(f"LLMClient initialized with model: {self.model}")
 
+    def reconfigure(
+        self,
+        api_key: str,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> None:
+        """Reinitialize the OpenAI client with new provider credentials.
+
+        Args:
+            api_key: New API key
+            base_url: New base URL (None keeps existing)
+            model: New model name (None keeps existing)
+        """
+        self.api_key = api_key
+        if base_url is not None:
+            self.base_url = base_url
+        if model is not None:
+            self.model = model
+
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+        )
+        self.logger.info(
+            f"LLMClient reconfigured: model={self.model}, base_url={self.base_url}"
+        )
+
     def chat(
         self,
         messages: List[Dict[str, Any]],
@@ -100,8 +127,18 @@ class LLMClient:
         self._log_request(request_id, kwargs)
 
         try:
-            # Make API call
-            response = self.client.chat.completions.create(**kwargs)
+            # Make API call, capturing raw HTTP body for diagnosis
+            raw = self.client.chat.completions.with_raw_response.create(**kwargs)
+
+            # Log raw HTTP body when tool calls present (helps locate thought_signature)
+            try:
+                raw_text = raw.text
+                if '"tool_calls"' in raw_text:
+                    self.logger.info(f"[{request_id}] RAW HTTP RESPONSE (has tool_calls): {raw_text}")
+            except Exception:
+                pass
+
+            response = raw.parse()
 
             # Log response
             self._log_response(request_id, response)
@@ -171,6 +208,10 @@ class LLMClient:
                             self.logger.info(f"          {line}")
                     except json.JSONDecodeError:
                         self.logger.info(f"          {func_args}")
+                    # Note if thought_signature is preserved (Gemini thinking-enabled APIs)
+                    if tc.get('function', {}).get('thought_signature') is not None:
+                        sig = tc['function']['thought_signature']
+                        self.logger.info(f"        Thought Signature ({len(str(sig))} chars): [preserved]")
 
             # Log tool results if present
             if msg.get('role') == 'tool':
@@ -255,5 +296,19 @@ class LLMClient:
                     self.logger.info(f"  Arguments:\n{args_str}")
                 except json.JSONDecodeError:
                     self.logger.info(f"  Arguments (raw): {func_args}")
+
+                # Dump all Pydantic extra fields to locate thought_signature
+                tc_extra = getattr(tc, "model_extra", None)
+                fn_extra = getattr(tc.function, "model_extra", None)
+                if tc_extra:
+                    self.logger.info(f"  TC model_extra: {tc_extra}")
+                if fn_extra:
+                    self.logger.info(f"  Function model_extra: {fn_extra}")
+                try:
+                    dump = tc.model_dump() if hasattr(tc, "model_dump") else {}
+                    if dump:
+                        self.logger.info(f"  TC model_dump: {json.dumps(dump, ensure_ascii=False)}")
+                except Exception:
+                    pass
 
         self.logger.info("=" * 80 + "\n")

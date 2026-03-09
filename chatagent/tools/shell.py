@@ -1,5 +1,7 @@
 """Shell command execution tool."""
 
+import os
+import signal
 import subprocess
 import threading
 import time
@@ -47,13 +49,34 @@ class ShellTool(Tool):
 
     @property
     def description(self) -> str:
+        background_instructions = (
+            "To run a command in the background, set is_background=true. "
+            "The command will start, run briefly to check for immediate errors, "
+            "then detach. The returned PGID can be used to stop it later."
+        )
+        efficiency_guidelines = (
+            "\n\nEfficiency Guidelines:\n"
+            "- Quiet flags: prefer silent/quiet flags to reduce output volume "
+            "(e.g. `npm install --silent`, `git --no-pager`, `pip install -q`).\n"
+            "- Pagination: always disable terminal pagination so commands terminate "
+            "(e.g. `git --no-pager`, `PAGER=cat`)."
+        )
+        returned_info = (
+            "\n\nThe following information is returned:\n"
+            "- Output: stdout and stderr (shown separately). "
+            "Can be empty or partial on timeout.\n"
+            "- Exit code: only included if non-zero (command failed).\n"
+            "- Signal: only included if the process was killed by a signal.\n"
+            "- Background PGID: only included when is_background=true."
+        )
         return (
-            "Execute a shell command and return its output. "
-            "Each call runs in a fresh stateless bash session; there is no shared state between calls. "
-            "The timeout is inactivity-based: it resets whenever the command produces output, "
-            "so a command that prints steadily can run longer than the timeout value. "
-            "For fire-and-forget tasks (servers, watchers), set is_background=true to detach "
-            "the process and return its PID immediately."
+            "This tool executes a given shell command as `bash -c <command>`. "
+            f"{background_instructions} "
+            "Command is executed as a subprocess that leads its own process group. "
+            "Command process group can be terminated as `kill -- -PGID` or "
+            "signaled as `kill -s SIGNAL -- -PGID`."
+            f"{efficiency_guidelines}"
+            f"{returned_info}"
         )
 
     @property
@@ -63,13 +86,20 @@ class ShellTool(Tool):
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The bash command to execute.",
+                    "description": "Exact bash command to execute as `bash -c <command>`.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "Brief description of what this command does, shown to the user "
+                        "in the confirmation prompt and progress indicator. "
+                        "Be specific and concise. Ideally one sentence, no line breaks."
+                    ),
                 },
                 "working_directory": {
                     "type": "string",
                     "description": (
-                        "Working directory for the command. "
-                        "Must be an existing directory. "
+                        "Directory to run the command in. Must be an existing directory. "
                         "Defaults to the current working directory."
                     ),
                 },
@@ -85,9 +115,10 @@ class ShellTool(Tool):
                 "is_background": {
                     "type": "boolean",
                     "description": (
-                        "If true, start the command detached from the terminal and return its PID "
-                        "immediately without waiting for it to finish. stdout/stderr are discarded. "
-                        "Useful for long-running servers or file watchers."
+                        "If true, the command is started, allowed to run briefly to catch immediate errors, "
+                        "then detached to the background. Returns the process group ID (PGID) immediately; "
+                        "stdout/stderr are discarded. "
+                        "Use for long-running servers or file watchers."
                     ),
                     "default": False,
                 },
@@ -102,6 +133,7 @@ class ShellTool(Tool):
     def execute(
         self,
         command: str,
+        description: str = "",
         working_directory: str = ".",
         timeout: float = 120,
         is_background: bool = False,
@@ -127,7 +159,7 @@ class ShellTool(Tool):
     # ------------------------------------------------------------------
 
     def _run_background(self, command: str, cwd: Path) -> str:
-        """Start command detached; return PID immediately."""
+        """Start command detached; return PID and PGID immediately."""
         try:
             proc = subprocess.Popen(
                 command,
@@ -135,13 +167,16 @@ class ShellTool(Tool):
                 cwd=cwd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True,  # detach from parent process group
+                preexec_fn=os.setsid,  # become process group leader
             )
+            pgid = os.getpgid(proc.pid)
             return (
                 f"Background process started.\n"
                 f"PID: {proc.pid}\n"
+                f"PGID: {pgid}\n"
                 f"Command: {command}\n"
-                f"Working directory: {cwd}"
+                f"Working directory: {cwd}\n"
+                f"To stop: kill -- -{pgid}"
             )
         except Exception as e:
             return f"Error starting background command: {e}"
@@ -159,6 +194,7 @@ class ShellTool(Tool):
                 cwd=cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                preexec_fn=os.setsid,  # become process group leader
             )
         except Exception as e:
             return f"Error starting command: {e}"
@@ -182,7 +218,10 @@ class ShellTool(Tool):
         while proc.poll() is None:
             if time.monotonic() - last_activity[0] > timeout:
                 timed_out[0] = True
-                proc.kill()
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    proc.kill()
                 break
             time.sleep(0.05)
 
@@ -234,8 +273,8 @@ class ShellTool(Tool):
             parts.append(f"STDERR:\n{stderr_str}")
 
         if returncode < 0:
-            parts.append(f"Exit: killed by signal {-returncode}")
-        else:
+            parts.append(f"Signal: {-returncode}")
+        elif returncode != 0:
             parts.append(f"Exit code: {returncode}")
 
-        return "\n\n".join(parts) if parts else f"Command completed with no output.\n\nExit code: {returncode}"
+        return "\n\n".join(parts) if parts else "Command completed with no output."

@@ -29,7 +29,7 @@ custom_theme = Theme({
 console = Console(theme=custom_theme)
 
 # Tool argument keys to display in the thinking step (priority order)
-_TOOL_SUMMARY_KEYS = ("path", "file_path", "query", "command", "url", "key", "pattern", "tag")
+_TOOL_SUMMARY_KEYS = ("path", "file_path", "query", "description", "command", "url", "key", "pattern", "tag")
 
 
 def _tool_args_summary(tool_name: str, args: dict) -> str:
@@ -254,8 +254,9 @@ class ChatAgentCLI:
         if self.current_status:
             self.current_status.stop()
         try:
-            console.print(f"\n[bold cyan]? {question}[/bold cyan]")
-            response = input("> ").strip()
+            console.print(f"\n[bold yellow]🤔 Agent Question[/bold yellow]")
+            console.print(f"[yellow]{question}[/yellow]")
+            response = console.input("[bold yellow]▶ [/bold yellow]").strip()
             return response if response else "(no response)"
         except (EOFError, KeyboardInterrupt):
             return "(user interrupted)"

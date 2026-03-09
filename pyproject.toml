@@ -14,6 +14,11 @@ dependencies = [
     "readchar>=4.2.1",
     "prompt-toolkit>=3.0.52",
     "pymupdf>=1.27.1",
+    "pdfplumber>=0.11.9",
+    "pycryptodome>=3.23.0",
+    "pandas>=3.0.1",
+    "openpyxl>=3.1.5",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]

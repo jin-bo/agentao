@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import yaml
+
 
 class SkillManager:
     """Manager for Claude skills."""
@@ -54,21 +56,15 @@ class SkillManager:
         if len(parts) < 3:
             return {}, content
 
-        frontmatter_text = parts[1].strip()
+        frontmatter_text = parts[1]
         remaining_content = parts[2].strip()
 
-        # Parse YAML frontmatter (simple key: value format)
-        frontmatter = {}
-        for line in frontmatter_text.split('\n'):
-            line = line.strip()
-            if ':' in line:
-                key, value = line.split(':', 1)
-                key = key.strip()
-                value = value.strip()
-                # Remove quotes if present
-                if value.startswith('"') and value.endswith('"'):
-                    value = value[1:-1]
-                frontmatter[key] = value
+        try:
+            frontmatter = yaml.safe_load(frontmatter_text) or {}
+            # Ensure all values are strings
+            frontmatter = {k: str(v).strip() if v is not None else "" for k, v in frontmatter.items()}
+        except yaml.YAMLError:
+            frontmatter = {}
 
         return frontmatter, remaining_content
 
