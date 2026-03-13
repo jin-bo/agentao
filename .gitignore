@@ -40,6 +40,8 @@ env/
 .chatagent_memory.json
 chatagent.log
 *.log
+.chatagent/
+examples/
 
 # OS
 .DS_Store
