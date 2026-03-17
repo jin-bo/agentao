@@ -34,7 +34,7 @@ A powerful CLI chat agent with tools and skills support. Built with Python and d
 
 **Shell & Web:**
 - `run_shell_command` - Execute shell commands (requires confirmation)
-- `web_fetch` - Fetch and extract content from URLs (requires confirmation)
+- `web_fetch` - Fetch and extract content from URLs (requires confirmation); uses [Crawl4AI](https://github.com/unclecode/crawl4ai) for clean Markdown output if installed, otherwise falls back to plain text extraction
 - `google_web_search` - Search the web via DuckDuckGo (requires confirmation)
 
 **Agents & Skills:**
@@ -239,7 +239,10 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/context limit <n>` | Set context window limit (e.g., `/context limit 100000`) |
 | `/agent` | List available sub-agents |
 | `/agent <name> <task>` | Run a sub-agent directly (e.g., `/agent codebase-investigator find all API endpoints`) |
-| `/reset-confirm` | Reset "allow all tools" mode (keeps conversation history) |
+| `/confirm` | Show current tool confirmation mode |
+| `/confirm all` | Enable allow-all mode (tools execute without prompting) |
+| `/confirm prompt` | Restore prompt mode (ask before each tool) |
+| `/reset-confirm` | Reset "allow all tools" mode — legacy alias for `/confirm prompt` |
 | `/exit` or `/quit` | Exit the program |
 
 ### Tool Confirmation (Safety Feature)
@@ -520,4 +523,5 @@ This project is open source. Feel free to use and modify as needed.
 - Built with [OpenAI Python SDK](https://github.com/openai/openai-python)
 - CLI interface powered by [Rich](https://github.com/Textualize/rich)
 - Input handling powered by [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit)
+- Optional enhanced web fetching via [Crawl4AI](https://github.com/unclecode/crawl4ai)
 - Inspired by [Claude Code](https://github.com/anthropics/claude-code)

@@ -42,6 +42,8 @@ chatagent.log
 *.log
 .chatagent/
 examples/
+skills/funds-data-cleaning/
+skills/funds-data-exam/
 
 # OS
 .DS_Store

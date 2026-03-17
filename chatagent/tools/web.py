@@ -1,5 +1,6 @@
 """Web-related tools."""
 
+import asyncio
 import json
 from typing import Any, Dict
 from urllib.parse import quote_plus
@@ -8,6 +9,18 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .base import Tool
+
+try:
+    from crawl4ai import AsyncWebCrawler
+    _CRAWL4AI_AVAILABLE = True
+except ImportError:
+    _CRAWL4AI_AVAILABLE = False
+
+
+async def _fetch_with_crawl4ai(url: str) -> str:
+    async with AsyncWebCrawler() as crawler:
+        result = await crawler.arun(url=url)
+        return result.markdown or ""
 
 
 class WebFetchTool(Tool):
@@ -19,7 +32,7 @@ class WebFetchTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Fetch content from a URL and extract text. Returns the page content as text."
+        return "Fetch content from a URL. Uses Crawl4AI (if installed) to return clean Markdown; otherwise falls back to plain text extraction."
 
     @property
     def parameters(self) -> Dict[str, Any]:
@@ -46,6 +59,22 @@ class WebFetchTool(Tool):
 
     def execute(self, url: str, extract_text: bool = True) -> str:
         """Fetch web content."""
+        if _CRAWL4AI_AVAILABLE:
+            try:
+                try:
+                    markdown = asyncio.run(_fetch_with_crawl4ai(url))
+                except RuntimeError:
+                    loop = asyncio.get_event_loop()
+                    markdown = loop.run_until_complete(_fetch_with_crawl4ai(url))
+
+                if not markdown:
+                    markdown = "[No content extracted]"
+                if len(markdown) > 20000:
+                    markdown = markdown[:20000] + "\n\n[Content truncated...]"
+                return f"URL: {url}\n\n{markdown}"
+            except Exception:
+                pass
+
         try:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"

@@ -51,7 +51,8 @@ def _tool_args_summary(tool_name: str, args: dict) -> str:
 
 
 _SLASH_COMMANDS = [
-    '/agent', '/clear', '/context', '/context limit', '/exit', '/help',
+    '/agent', '/clear', '/confirm', '/confirm all', '/confirm prompt',
+    '/context', '/context limit', '/exit', '/help',
     '/memory', '/memory clear', '/memory delete', '/memory list',
     '/memory search', '/memory tag', '/model', '/provider', '/quit',
     '/reset-confirm', '/skills', '/status',
@@ -322,8 +323,11 @@ All commands start with `/`:
   - `/memory clear` - Clear all memories (requires confirmation)
 - `/context` - Show context window token usage and limit
   - `/context limit <n>` - Set max context tokens (default: 200,000)
-- `/reset-confirm` - Reset tool confirmation to prompt mode
-  - Use this if you enabled "allow all" mode (without clearing history)
+- `/confirm [all|prompt]` - Set tool confirmation mode
+  - `/confirm` - Show current mode
+  - `/confirm all` - Enable allow-all mode (skip prompts)
+  - `/confirm prompt` - Restore prompt mode (ask each time)
+- `/reset-confirm` - Reset tool confirmation to prompt mode (legacy alias)
 - `/exit` or `/quit` - Exit the program
 
 **Available Tools:**
@@ -758,6 +762,20 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
                     elif command == "agent":
                         self.handle_agent_command(args)
+                        continue
+
+                    elif command == "confirm":
+                        if args == "all":
+                            self.allow_all_tools = True
+                            console.print("\n[green]✓ Allow-all mode enabled. Tools will execute without prompting.[/green]\n")
+                        elif args == "prompt":
+                            self.allow_all_tools = False
+                            console.print("\n[success]Prompt mode enabled. Will ask before each tool.[/success]\n")
+                        elif args == "":
+                            mode = "allow-all" if self.allow_all_tools else "prompt"
+                            console.print(f"\n[info]Tool confirmation mode: {mode}[/info]\n")
+                        else:
+                            console.print("\n[warning]Usage: /confirm [all|prompt][/warning]\n")
                         continue
 
                     elif command == "reset-confirm":
