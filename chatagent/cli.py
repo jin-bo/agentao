@@ -56,9 +56,11 @@ def _tool_args_summary(tool_name: str, args: dict) -> str:
 _SLASH_COMMANDS = [
     '/agent', '/clear', '/confirm', '/confirm all', '/confirm prompt',
     '/context', '/context limit', '/exit', '/help',
+    '/mcp', '/mcp add', '/mcp list', '/mcp remove',
     '/memory', '/memory clear', '/memory delete', '/memory list',
     '/memory search', '/memory tag', '/model', '/provider', '/quit',
-    '/reset-confirm', '/skills', '/status',
+    '/reset-confirm', '/skills', '/skills disable', '/skills enable',
+    '/skills reload', '/status',
 ]
 
 
@@ -82,14 +84,15 @@ class ChatAgentCLI:
         # Track session-wide confirmation preferences
         self.allow_all_tools = False  # "Yes to all" mode
         self.current_status = None  # Track active status context
-        self.current_provider = "OPENAI"  # Track active provider name
+        provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
+        self.current_provider = provider  # Track active provider name
 
         context_limit = int(os.getenv("CHATAGENT_CONTEXT_TOKENS", "200000"))
 
         self.agent = ChatAgent(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            base_url=os.getenv("OPENAI_BASE_URL"),
-            model=os.getenv("OPENAI_MODEL"),
+            api_key=os.getenv(f"{provider}_API_KEY"),
+            base_url=os.getenv(f"{provider}_BASE_URL"),
+            model=os.getenv(f"{provider}_MODEL"),
             confirmation_callback=self.confirm_tool_execution,
             max_context_tokens=context_limit,
             step_callback=self.on_tool_step,
@@ -281,6 +284,7 @@ A CLI chat agent with tools and skills support.
 - `/status` - Show conversation status (memory count, context usage)
 - `/skills` - List available skills
 - `/memory [subcommand]` - Manage saved memories
+- `/mcp` - List MCP servers and tools
 - `/context` - Show context window usage
 - `/context limit <n>` - Set context token limit
 - `/reset-confirm` - Reset tool confirmation only
@@ -326,6 +330,10 @@ All commands start with `/`:
   - `/memory clear` - Clear all memories (requires confirmation)
 - `/context` - Show context window token usage and limit
   - `/context limit <n>` - Set max context tokens (default: 200,000)
+- `/mcp [subcommand]` - Manage MCP servers
+  - `/mcp` or `/mcp list` - List MCP servers with status and tools
+  - `/mcp add <name> <command|url>` - Add an MCP server
+  - `/mcp remove <name>` - Remove an MCP server
 - `/confirm [all|prompt]` - Set tool confirmation mode
   - `/confirm` - Show current mode
   - `/confirm all` - Enable allow-all mode (skip prompts)
@@ -335,9 +343,9 @@ All commands start with `/`:
 
 **Available Tools:**
 The agent has access to the following tools:
-- `read_file` - Read file contents
-- `write_file` - Write content to files
-- `replace` - Edit files by replacing text
+- `read_file` - Read file contents with line numbers (supports offset/limit)
+- `write_file` - Write/append content to files
+- `replace` - Edit files by replacing text (supports replace_all)
 - `list_directory` - List directory contents
 - `glob` - Find files matching patterns
 - `search_file_content` - Search text in files
@@ -362,20 +370,29 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         console.print(Markdown(help_text))
 
     def list_skills(self):
-        """List available skills."""
-        skills = self.agent.skill_manager.list_available_skills()
+        """List available, disabled, and active skills."""
+        sm = self.agent.skill_manager
+        available = sm.list_available_skills()
+        disabled = sorted(sm.disabled_skills & set(sm.available_skills.keys()))
 
-        console.print(f"\n[info]Available Skills ({len(skills)} loaded):[/info]\n")
-        for skill_name in sorted(skills):
-            skill_info = self.agent.skill_manager.get_skill_info(skill_name)
+        console.print(f"\n[info]Available Skills ({len(available)}):[/info]\n")
+        for skill_name in sorted(available):
+            skill_info = sm.get_skill_info(skill_name)
             title = skill_info.get('title', skill_name) if skill_info else skill_name
             desc = skill_info.get('description', 'No description')[:100] if skill_info else 'No description'
             console.print(f"  • [cyan]{skill_name}[/cyan] - {title}")
             if desc:
                 console.print(f"    {desc}...")
 
+        if disabled:
+            console.print(f"\n[info]Disabled Skills ({len(disabled)}):[/info]\n")
+            for skill_name in disabled:
+                skill_info = sm.get_skill_info(skill_name)
+                title = skill_info.get('title', skill_name) if skill_info else skill_name
+                console.print(f"  • [dim]{skill_name}[/dim] - {title}")
+
         console.print("\n[info]Active Skills:[/info]")
-        active = self.agent.skill_manager.get_active_skills()
+        active = sm.get_active_skills()
         if active:
             for skill, info in active.items():
                 console.print(f"  • [success]{skill}[/success]: {info['task']}")
@@ -680,6 +697,97 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         else:
             console.print("\n[error]Usage: /context  OR  /context limit <n>[/error]\n")
 
+    def handle_mcp_command(self, args: str):
+        """Handle /mcp command for MCP server management.
+
+        Args:
+            args: Subcommand and arguments
+        """
+        from .mcp.config import load_mcp_config, save_mcp_config, _load_json_file
+        from pathlib import Path
+
+        args = args.strip()
+        parts = args.split(None, 1) if args else []
+        sub = parts[0] if parts else "list"
+        sub_args = parts[1] if len(parts) > 1 else ""
+
+        if sub == "list":
+            manager = self.agent.mcp_manager
+            if not manager or not manager.clients:
+                console.print("\n[warning]No MCP servers configured.[/warning]")
+                console.print("[info]Add servers to .chatagent/mcp.json or use /mcp add[/info]\n")
+                return
+
+            statuses = manager.get_server_status()
+            console.print(f"\n[info]MCP Servers ({len(statuses)}):[/info]\n")
+            for s in statuses:
+                color = "green" if s["status"] == "connected" else "red"
+                trust_marker = " [dim](trusted)[/dim]" if s["trusted"] else ""
+                console.print(
+                    f"  [{color}]●[/{color}] [cyan]{s['name']}[/cyan] "
+                    f"[dim]{s['transport']}[/dim] — "
+                    f"[{color}]{s['status']}[/{color}], "
+                    f"{s['tools']} tool(s){trust_marker}"
+                )
+                if s["error"]:
+                    console.print(f"    [red]{s['error']}[/red]")
+            console.print()
+
+        elif sub == "add":
+            # /mcp add <name> <command|url> [args...]
+            add_parts = sub_args.split(None, 1) if sub_args else []
+            if len(add_parts) < 2:
+                console.print("\n[error]Usage: /mcp add <name> <command|url> [args...][/error]")
+                console.print("[info]Examples:[/info]")
+                console.print("  /mcp add github npx -y @modelcontextprotocol/server-github")
+                console.print("  /mcp add remote https://api.example.com/sse\n")
+                return
+
+            name = add_parts[0]
+            endpoint = add_parts[1]
+
+            # Determine transport from endpoint
+            if endpoint.startswith("http://") or endpoint.startswith("https://"):
+                server_cfg = {"url": endpoint}
+            else:
+                # Stdio: split into command + args
+                cmd_parts = endpoint.split()
+                server_cfg = {"command": cmd_parts[0]}
+                if len(cmd_parts) > 1:
+                    server_cfg["args"] = cmd_parts[1:]
+
+            # Load current project config and add
+            project_path = Path.cwd() / ".chatagent" / "mcp.json"
+            existing = _load_json_file(project_path)
+            servers = existing.get("mcpServers", {})
+            servers[name] = server_cfg
+            saved_path = save_mcp_config(servers)
+
+            console.print(f"\n[success]Added MCP server '{name}' to {saved_path}[/success]")
+            console.print("[info]Restart chatagent to connect to the new server.[/info]\n")
+
+        elif sub == "remove":
+            name = sub_args.strip()
+            if not name:
+                console.print("\n[error]Usage: /mcp remove <name>[/error]\n")
+                return
+
+            project_path = Path.cwd() / ".chatagent" / "mcp.json"
+            existing = _load_json_file(project_path)
+            servers = existing.get("mcpServers", {})
+            if name not in servers:
+                console.print(f"\n[warning]Server '{name}' not found in config.[/warning]\n")
+                return
+
+            del servers[name]
+            save_mcp_config(servers)
+            console.print(f"\n[success]Removed MCP server '{name}'.[/success]")
+            console.print("[info]Restart chatagent to apply changes.[/info]\n")
+
+        else:
+            console.print(f"\n[error]Unknown subcommand: {sub}[/error]")
+            console.print("[info]Available: /mcp list, /mcp add, /mcp remove[/info]\n")
+
     def _get_user_input(self) -> str:
         """Read user input using prompt_toolkit.
 
@@ -737,7 +845,30 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                         continue
 
                     elif command == "skills":
-                        self.list_skills()
+                        if not args:
+                            self.list_skills()
+                        else:
+                            sub_parts = args.split(maxsplit=1)
+                            sub_cmd = sub_parts[0]
+                            sub_arg = sub_parts[1].strip() if len(sub_parts) > 1 else ""
+                            if sub_cmd == "disable":
+                                if not sub_arg:
+                                    console.print("[warning]Usage: /skills disable <skill_name>[/warning]")
+                                else:
+                                    result = self.agent.skill_manager.disable_skill(sub_arg)
+                                    console.print(f"\n{result}\n")
+                            elif sub_cmd == "enable":
+                                if not sub_arg:
+                                    console.print("[warning]Usage: /skills enable <skill_name>[/warning]")
+                                else:
+                                    result = self.agent.skill_manager.enable_skill(sub_arg)
+                                    console.print(f"\n{result}\n")
+                            elif sub_cmd == "reload":
+                                self.agent.skill_manager.reload_skills()
+                                count = len(self.agent.skill_manager.list_available_skills())
+                                console.print(f"\n[success]Skills reloaded. {count} available.[/success]\n")
+                            else:
+                                console.print(f"[warning]Unknown subcommand '{sub_cmd}'. Use: disable, enable, reload[/warning]")
                         continue
 
                     elif command == "memory":
@@ -761,6 +892,10 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
                     elif command == "context":
                         self.handle_context_command(args)
+                        continue
+
+                    elif command == "mcp":
+                        self.handle_mcp_command(args)
                         continue
 
                     elif command == "agent":

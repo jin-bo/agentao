@@ -178,9 +178,55 @@ User commands (start with `/`):
 - `/model [name]` - List models or switch to specified model
 - `/skills` - List available/active skills
 - `/memory` - Show saved memories
+- `/mcp` - List MCP servers and tools
 - `/help` - Show help
 
 Session state `allow_all_tools` persists across tool confirmations within one session.
+
+### MCP (Model Context Protocol) System
+
+ChatAgent supports connecting to external MCP servers that provide additional tools.
+
+**Configuration**: `.chatagent/mcp.json` (project) and `~/.chatagent/mcp.json` (global):
+```json
+{
+  "mcpServers": {
+    "server-name": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"],
+      "env": { "TOKEN": "$MY_TOKEN" },
+      "trust": false
+    },
+    "remote-server": {
+      "url": "https://api.example.com/sse",
+      "headers": { "Authorization": "Bearer $API_KEY" },
+      "timeout": 30
+    }
+  }
+}
+```
+
+**Transport types**: `command` (stdio subprocess) or `url` (SSE).
+
+**Tool naming**: MCP tools are registered as `mcp_{server}_{tool}` (e.g. `mcp_github_create_issue`).
+
+**Architecture**:
+```
+.chatagent/mcp.json → McpConfig → McpClientManager → McpClient (per server)
+                                                          ↓
+                                                   list_tools() / call_tool()
+                                                          ↓
+                                                   McpTool(Tool) → ToolRegistry
+```
+
+**Key files**:
+- `chatagent/mcp/config.py` - Config loading, env var expansion
+- `chatagent/mcp/client.py` - McpClient (single server), McpClientManager (multi-server)
+- `chatagent/mcp/tool.py` - McpTool wrapper adapting MCP tools to Tool base class
+
+**Async bridge**: MCP SDK is async-only; McpClientManager uses a dedicated event loop with `run_until_complete()` to bridge into sync ChatAgent code.
+
+**CLI**: `/mcp list`, `/mcp add <name> <command|url>`, `/mcp remove <name>`
 
 ## Adding New Components
 
@@ -295,6 +341,10 @@ chatagent/
 │   │   ├── memory.py   # Persistent memory
 │   │   ├── agents.py   # Helper agents
 │   │   └── skill.py    # Skill activation
+│   ├── mcp/            # MCP (Model Context Protocol) support
+│   │   ├── config.py   # Config loading + env var expansion
+│   │   ├── client.py   # McpClient + McpClientManager
+│   │   └── tool.py     # McpTool wrapper for Tool interface
 │   └── skills/
 │       └── manager.py  # Skill loading + management
 ├── skills/             # Skill definitions (SKILL.md files)
@@ -317,3 +367,4 @@ chatagent/
 - `httpx` - HTTP client for web tools
 - `beautifulsoup4` - HTML parsing
 - `python-dotenv` - Environment configuration
+- `mcp` - Model Context Protocol client SDK

@@ -24,6 +24,7 @@ from .tools import (
 from .agents import AgentManager, TaskComplete
 from .skills import SkillManager
 from .context_manager import ContextManager, is_context_too_long_error
+from .mcp import load_mcp_config, McpClientManager, McpTool
 
 
 MAX_TOOL_RESULT_CHARS = 80_000  # ~20K tokens per tool result
@@ -113,6 +114,9 @@ class ChatAgent:
         self.tools = ToolRegistry()
         self._register_tools()
 
+        # Initialize MCP (Model Context Protocol) support
+        self.mcp_manager = self._init_mcp()
+
         # Initialize agent manager and register agent tools
         self.agent_manager = AgentManager()
         self._register_agent_tools()
@@ -160,6 +164,41 @@ class ChatAgent:
 
         for tool in tools_to_register:
             self.tools.register(tool)
+
+    def _init_mcp(self) -> Optional[McpClientManager]:
+        """Load MCP config, connect servers, and register discovered tools."""
+        try:
+            configs = load_mcp_config()
+        except Exception as e:
+            self.llm.logger.warning(f"Failed to load MCP config: {e}")
+            return None
+
+        if not configs:
+            return None
+
+        manager = McpClientManager(configs)
+        try:
+            manager.connect_all()
+        except Exception as e:
+            self.llm.logger.warning(f"MCP connection error: {e}")
+
+        # Register discovered tools
+        for server_name, mcp_tool_def in manager.get_all_tools():
+            client = manager.get_client(server_name)
+            trusted = client.is_trusted if client else False
+            tool = McpTool(
+                server_name=server_name,
+                mcp_tool=mcp_tool_def,
+                call_fn=manager.call_tool,
+                trusted=trusted,
+            )
+            self.tools.register(tool)
+            self.llm.logger.info(f"Registered MCP tool: {tool.name}")
+
+        count = sum(1 for _ in manager.get_all_tools())
+        if count:
+            self.llm.logger.info(f"MCP: {count} tools from {len(manager.clients)} server(s)")
+        return manager
 
     def _register_agent_tools(self):
         """Register agent tools (after base tools are registered)."""
@@ -227,6 +266,22 @@ class ChatAgent:
             "future interactions. Do NOT use it for general project context. "
             "If unsure whether to save something, ask: 'Should I remember that for you?'\n\n"
 
+            "## Code Conventions\n"
+            "- Follow the existing code style, conventions, and file structure of the project.\n"
+            "- Minimize comments: only add them where the logic is non-obvious. "
+            "Do not add docstrings to unchanged functions.\n"
+            "- After making code changes, run the project's linter or type checker if one exists "
+            "(e.g. `mypy`, `ruff`, `eslint`).\n"
+            "- Use absolute file paths in all file tool calls.\n"
+            "- Verify that any library or framework you reference actually exists in the project "
+            "before using it.\n\n"
+
+            "## Task Completion\n"
+            "- Work autonomously until the task is fully resolved before yielding back to the user.\n"
+            "- If a fix introduces a new error, keep iterating rather than stopping and reporting the error.\n"
+            "- Only stop and ask when you are genuinely blocked on missing information "
+            "you cannot discover with tools.\n\n"
+
             "## Security\n"
             "- Before running shell commands that modify the filesystem, codebase, or system state, "
             "briefly state the command's purpose and potential impact.\n"
@@ -263,13 +318,15 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
         else:
             prompt = agent_instructions
 
-        # Add available skills section
+        # Add available skills section (excluding already-active skills to save tokens)
         available_skills = self.skill_manager.list_available_skills()
-        if available_skills:
+        active_names = set(self.skill_manager.get_active_skills().keys())
+        inactive_skills = [s for s in available_skills if s not in active_names]
+        if inactive_skills:
             prompt += "\n\n=== Available Skills ===\n"
             prompt += "You have access to specialized skills. Use the 'activate_skill' tool to activate them when needed.\n\n"
 
-            for skill_name in sorted(available_skills):
+            for skill_name in sorted(inactive_skills):
                 skill_info = self.skill_manager.get_skill_info(skill_name)
                 if skill_info:
                     description = skill_info.get('description', 'No description available')
@@ -559,6 +616,13 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
         summary += f"Model: {self.llm.model}\n"
         summary += f"Active skills: {len(self.skill_manager.get_active_skills())}\n"
         summary += f"Saved memories: {memory_count}\n"
+
+        # MCP server info
+        if self.mcp_manager:
+            statuses = self.mcp_manager.get_server_status()
+            connected = sum(1 for s in statuses if s["status"] == "connected")
+            total_tools = sum(s["tools"] for s in statuses)
+            summary += f"MCP servers: {connected}/{len(statuses)} connected, {total_tools} tools\n"
         summary += (
             f"Context: ~{stats['estimated_tokens']:,} / {stats['max_tokens']:,} tokens "
             f"({stats['usage_percent']:.1f}%)"
