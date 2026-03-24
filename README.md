@@ -42,6 +42,11 @@ A powerful CLI chat agent with tools and skills support. Built with Python and d
 - `agent_generalist` - Delegate complex multi-step tasks to a sub-agent
 - `activate_skill` - Activate specialized skills for specific tasks
 
+**MCP Tools:**
+- Dynamically discovered from connected MCP servers
+- Named `mcp_{server}_{tool}` (e.g. `mcp_filesystem_read_file`)
+- Require confirmation unless server is trusted
+
 ### 🧠 Context Window Management
 
 ChatAgent automatically manages long conversations to stay within LLM context limits:
@@ -87,6 +92,17 @@ ChatAgent can delegate tasks to independent sub-agents, each running its own LLM
 2. **User-driven** — use `/agent <name> <task>` to call an agent directly
 
 **Custom agents:** create `.chatagent/agents/my-agent.md` with YAML frontmatter (`name`, `description`, `tools`, `max_turns`) — auto-discovered at startup.
+
+### 🔌 MCP (Model Context Protocol) Support
+
+Connect to external MCP tool servers to dynamically extend the agent's capabilities:
+
+- **Stdio transport** — spawn a local subprocess (e.g. `npx @modelcontextprotocol/server-filesystem`)
+- **SSE transport** — connect to remote HTTP/SSE endpoints
+- **Auto-discovery** — tools are discovered on startup and registered as `mcp_{server}_{tool}`
+- **Confirmation** — MCP tools require user confirmation unless the server is marked `"trust": true`
+- **Env var expansion** — `$VAR` and `${VAR}` syntax in config values
+- **Two-level config** — project `.chatagent/mcp.json` overrides global `~/.chatagent/mcp.json`
 
 ### 🎯 Dynamic Skills System
 
@@ -146,6 +162,45 @@ OPENAI_API_KEY=your-api-key-here
 # Optional: Context window limit in tokens (default: 200000)
 # CHATAGENT_CONTEXT_TOKENS=200000
 ```
+
+### MCP Server Configuration
+
+Create `.chatagent/mcp.json` in your project (or `~/.chatagent/mcp.json` for global servers):
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
+      "trust": true
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "$GITHUB_TOKEN" }
+    },
+    "remote-api": {
+      "url": "https://api.example.com/sse",
+      "headers": { "Authorization": "Bearer $API_KEY" },
+      "timeout": 30
+    }
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `command` | Executable for stdio transport |
+| `args` | Command-line arguments |
+| `env` | Extra environment variables (supports `$VAR` / `${VAR}` expansion) |
+| `cwd` | Working directory for subprocess |
+| `url` | SSE endpoint URL |
+| `headers` | HTTP headers for SSE transport |
+| `timeout` | Connection timeout in seconds (default: 60) |
+| `trust` | Skip confirmation for this server's tools (default: false) |
+
+MCP servers connect automatically on startup. Use `/mcp list` to check status.
 
 ### Using with Different Providers
 
@@ -235,6 +290,9 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/memory tag <tag>` | Filter memories by tag |
 | `/memory delete <key>` | Delete a specific memory |
 | `/memory clear` | Clear all memories (with confirmation) |
+| `/mcp` | List MCP servers with status and tool counts |
+| `/mcp add <name> <cmd\|url>` | Add an MCP server to project config |
+| `/mcp remove <name>` | Remove an MCP server from project config |
 | `/context` | Show current context window usage (tokens and %) |
 | `/context limit <n>` | Set context window limit (e.g., `/context limit 100000`) |
 | `/agent` | List available sub-agents |
@@ -256,6 +314,7 @@ ChatAgent requires user confirmation before executing potentially dangerous tool
 - `write_file` - Writing/overwriting files
 - `delete_memory` - Deleting a saved memory
 - `clear_all_memories` - Clearing all memories
+- `mcp_*` - All MCP server tools (unless server has `"trust": true`)
 
 **How it works:**
 
@@ -321,6 +380,13 @@ You: Analyze the project structure and find all API endpoints
 /agent generalist refactor the logging module to use structured output
 ```
 
+**Using MCP tools:**
+```
+/mcp list                   (check connected servers and tools)
+/mcp add fs npx -y @modelcontextprotocol/server-filesystem /tmp
+You: List all files in the project     (LLM may use MCP filesystem tools)
+```
+
 **Using skills:**
 ```
 You: Activate the pdf skill to help me merge PDF files
@@ -375,6 +441,11 @@ chatagent/
     │   └── definitions/     # Built-in agent definitions (.md with YAML frontmatter)
     │       ├── codebase-investigator.md
     │       └── generalist.md
+    ├── mcp/
+    │   ├── __init__.py      # MCP package exports
+    │   ├── config.py        # Config loading + env var expansion
+    │   ├── client.py        # McpClient + McpClientManager
+    │   └── tool.py          # McpTool wrapper for Tool interface
     ├── tools/
     │   ├── base.py          # Tool base class + registry
     │   ├── file_ops.py      # Read, write, edit, list
@@ -510,6 +581,8 @@ Documentation here...
 
 **Memory Recall Not Working:** Check that memories exist (`/memory`). Recall requires at least one memory saved. The LLM judges relevance — unrelated memories won't be recalled.
 
+**MCP Server Not Connecting:** Run `/mcp list` to see status and error messages. Verify the command exists and is executable, or that the SSE URL is reachable. Check `chatagent.log` for detailed connection errors.
+
 **Tool Execution Errors:** Check file permissions, path correctness, and that shell commands are valid for your OS.
 
 ---
@@ -524,4 +597,6 @@ This project is open source. Feel free to use and modify as needed.
 - CLI interface powered by [Rich](https://github.com/Textualize/rich)
 - Input handling powered by [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit)
 - Optional enhanced web fetching via [Crawl4AI](https://github.com/unclecode/crawl4ai)
+- MCP support via [Model Context Protocol SDK](https://github.com/modelcontextprotocol/python-sdk)
+- MCP architecture inspired by [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 - Inspired by [Claude Code](https://github.com/anthropics/claude-code)
