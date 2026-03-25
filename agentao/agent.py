@@ -1,11 +1,13 @@
-"""Main agent logic for ChatAgent."""
+"""Main agent logic for Agentao."""
 
 import json
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .llm import LLMClient
+from .permissions import PermissionDecision, PermissionEngine
 from .tools import (
     ToolRegistry,
     ReadFileTool,
@@ -58,7 +60,7 @@ def _serialize_tool_call(tc) -> dict:
     return entry
 
 
-class ChatAgent:
+class Agentao:
     """Main chat agent with tool and skill support."""
 
     def __init__(
@@ -73,6 +75,9 @@ class ChatAgent:
         ask_user_callback: Optional[Callable[[str], str]] = None,
         output_callback: Optional[Callable[[str, str], None]] = None,
         tool_complete_callback: Optional[Callable[[str, int], None]] = None,
+        llm_text_callback: Optional[Callable[[str], None]] = None,
+        permission_engine: Optional[PermissionEngine] = None,
+        on_max_iterations_callback: Optional[Callable[[int, list], dict]] = None,
     ):
         """Initialize chat agent.
 
@@ -93,6 +98,10 @@ class ChatAgent:
                              Takes (tool_name, text_chunk).
             tool_complete_callback: Optional callback called after tool execution completes.
                                     Takes (tool_name, returncode).
+            on_max_iterations_callback: Optional callback when max tool iterations is reached.
+                                        Takes (max_iterations, pending_tool_calls) and returns
+                                        dict with "action": "continue"|"stop"|"new_instruction"
+                                        and optional "message" for new_instruction action.
         """
         self.llm = LLMClient(api_key=api_key, base_url=base_url, model=model)
         self.skill_manager = SkillManager()
@@ -103,6 +112,9 @@ class ChatAgent:
         self.ask_user_callback = ask_user_callback
         self.output_callback = output_callback
         self.tool_complete_callback = tool_complete_callback
+        self.llm_text_callback = llm_text_callback
+        self.permission_engine = permission_engine
+        self.on_max_iterations_callback = on_max_iterations_callback
 
         # Save LLM config for sub-agent creation
         self._llm_config = {
@@ -136,20 +148,20 @@ class ChatAgent:
         self.project_instructions = self._load_project_instructions()
 
     def _load_project_instructions(self) -> Optional[str]:
-        """Load project-specific instructions from CHATAGENT.md.
+        """Load project-specific instructions from AGENTAO.md.
 
         Returns:
             Project instructions content or None if file doesn't exist
         """
         try:
-            # Look for CHATAGENT.md in current directory
-            chatagent_md = Path.cwd() / "CHATAGENT.md"
-            if chatagent_md.exists():
-                content = chatagent_md.read_text(encoding='utf-8')
-                self.llm.logger.info(f"Loaded project instructions from {chatagent_md}")
+            # Look for AGENTAO.md in current directory
+            agentao_md = Path.cwd() / "AGENTAO.md"
+            if agentao_md.exists():
+                content = agentao_md.read_text(encoding='utf-8')
+                self.llm.logger.info(f"Loaded project instructions from {agentao_md}")
                 return content
         except Exception as e:
-            self.llm.logger.warning(f"Could not load CHATAGENT.md: {e}")
+            self.llm.logger.warning(f"Could not load AGENTAO.md: {e}")
 
         return None
 
@@ -217,6 +229,10 @@ class ChatAgent:
             llm_config=self._llm_config,
             confirmation_callback=self.confirmation_callback,
             step_callback=self.step_callback,
+            output_callback=self.output_callback,
+            tool_complete_callback=self.tool_complete_callback,
+            ask_user_callback=self.ask_user_callback,
+            max_context_tokens=self.context_manager.max_tokens,
         )
         for agent_tool in agent_tools:
             self.tools.register(agent_tool)
@@ -307,7 +323,7 @@ class ChatAgent:
         current_datetime = now.strftime("%Y-%m-%d %H:%M:%S")
         day_of_week = now.strftime("%A")
 
-        agent_instructions = f"""You are ChatAgent, a helpful AI assistant with access to various tools and skills.
+        agent_instructions = f"""You are Agentao, a helpful AI assistant with access to various tools and skills.
 
 Current Date and Time: {current_datetime} ({day_of_week})
 Current Working Directory: {Path.cwd()}
@@ -392,6 +408,16 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
 
         return prompt
 
+    def _llm_call(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Any:
+        """Dispatch to streaming or non-streaming LLM call based on llm_text_callback."""
+        if self.llm_text_callback:
+            return self.llm.chat_stream(
+                messages=messages,
+                tools=tools,
+                on_text_chunk=self.llm_text_callback,
+            )
+        return self.llm.chat(messages=messages, tools=tools)
+
     def add_message(self, role: str, content: str):
         """Add a message to conversation history.
 
@@ -430,9 +456,42 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
         # Get tools in OpenAI format
         tools = self.tools.to_openai_format()
 
+        # Doom-loop detection: track (tool_name, raw_args) call counts per chat() invocation
+        _doom_loop_counter: Counter = Counter()
+
+        # System prompt dirty-flag: only rebuild when skills or memories change
+        _current_active_skills = frozenset(self.skill_manager.get_active_skills().keys())
+        _current_memory_count = len(self.memory_tool.get_all_memories())
+
         # Call LLM and handle multiple rounds of tool calls
         iteration = 0
-        while iteration < max_iterations:
+        assistant_message = None
+        while True:
+            # Check if max iterations reached; ask user what to do if callback is set
+            if iteration >= max_iterations:
+                pending = []
+                if assistant_message and getattr(assistant_message, "tool_calls", None):
+                    for tc in assistant_message.tool_calls:
+                        pending.append({"name": tc.function.name, "args": tc.function.arguments})
+
+                if self.on_max_iterations_callback:
+                    result = self.on_max_iterations_callback(max_iterations, pending)
+                    action = result.get("action", "stop")
+                    if action == "continue":
+                        iteration = 0
+                    elif action == "new_instruction":
+                        iteration = 0
+                        new_msg = result.get("message", "")
+                        if new_msg:
+                            self.messages.append({"role": "user", "content": new_msg})
+                            messages_with_system = [
+                                {"role": "system", "content": system_prompt}
+                            ] + self.messages
+                    else:  # "stop"
+                        break
+                else:
+                    break
+
             iteration += 1
             self.llm.logger.info(f"LLM iteration {iteration}/{max_iterations}")
 
@@ -453,7 +512,7 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
 
             # Call LLM — catch context-overflow errors and force-compress once before giving up
             try:
-                response = self.llm.chat(messages=messages_with_system, tools=tools)
+                response = self._llm_call(messages_with_system, tools)
             except Exception as e:
                 if not is_context_too_long_error(e):
                     raise
@@ -464,7 +523,7 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                     {"role": "system", "content": system_prompt}
                 ] + self.messages
                 try:
-                    response = self.llm.chat(messages=messages_with_system, tools=tools)
+                    response = self._llm_call(messages_with_system, tools)
                 except Exception as e2:
                     if is_context_too_long_error(e2):
                         # System prompt alone may be too large; keep only the last 2 messages
@@ -473,7 +532,7 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                         messages_with_system = [
                             {"role": "system", "content": system_prompt}
                         ] + self.messages
-                        response = self.llm.chat(messages=messages_with_system, tools=tools)
+                        response = self._llm_call(messages_with_system, tools)
                     else:
                         raise
 
@@ -518,9 +577,32 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                 self.messages.append(assistant_msg)
 
                 # Execute tool calls
+                _doom_loop_triggered = False
                 for tool_call in assistant_message.tool_calls:
                     function_name = tool_call.function.name
-                    function_args = json.loads(tool_call.function.arguments)
+                    function_args_raw = tool_call.function.arguments  # raw JSON string
+
+                    # --- Doom-loop detection ---
+                    _doom_key = (function_name, function_args_raw)
+                    _doom_loop_counter[_doom_key] += 1
+                    if _doom_loop_counter[_doom_key] >= 3:
+                        self.llm.logger.warning(
+                            f"Doom-loop detected: {function_name} called 3+ times with identical args"
+                        )
+                        self.messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "name": function_name,
+                            "content": (
+                                f"[Doom-loop detected] Tool '{function_name}' was called 3 times "
+                                f"with identical arguments. Execution stopped to prevent an infinite loop. "
+                                f"Please try a different approach or tool."
+                            ),
+                        })
+                        _doom_loop_triggered = True
+                        break
+
+                    function_args = json.loads(function_args_raw)
 
                     # Execute tool
                     try:
@@ -534,24 +616,52 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                         if self.output_callback and hasattr(tool, 'output_callback'):
                             tool.output_callback = lambda chunk, _fn=function_name: self.output_callback(_fn, chunk)
 
-                        # Check if tool requires confirmation
-                        if tool.requires_confirmation and self.confirmation_callback:
-                            self.llm.logger.info(f"Tool {function_name} requires confirmation")
-                            confirmed = self.confirmation_callback(
-                                function_name,
-                                tool.description,
-                                function_args
+                        # Determine permission: engine rules take priority over tool.requires_confirmation
+                        if self.permission_engine:
+                            engine_decision = self.permission_engine.decide(function_name, function_args)
+                            if engine_decision == PermissionDecision.ALLOW:
+                                raw_decision = PermissionDecision.ALLOW
+                            elif engine_decision == PermissionDecision.DENY:
+                                raw_decision = PermissionDecision.DENY
+                            else:
+                                # No matching rule — fall back to tool's own setting
+                                raw_decision = (
+                                    PermissionDecision.ASK
+                                    if tool.requires_confirmation
+                                    else PermissionDecision.ALLOW
+                                )
+                        else:
+                            raw_decision = (
+                                PermissionDecision.ASK
+                                if tool.requires_confirmation
+                                else PermissionDecision.ALLOW
                             )
 
-                            if not confirmed:
-                                self.llm.logger.info(f"Tool {function_name} execution cancelled by user")
-                                result = f"Tool execution cancelled by user. The user declined to execute {function_name}."
-                            else:
-                                self.llm.logger.info(f"Tool {function_name} execution confirmed by user")
-                                result = tool.execute(**function_args)
-                        else:
-                            # No confirmation needed or no callback provided
+                        if raw_decision == PermissionDecision.DENY:
+                            self.llm.logger.info(f"Tool {function_name} denied by permission engine")
+                            result = (
+                                f"Tool execution denied: '{function_name}' is not permitted "
+                                f"by the current permission rules."
+                            )
+                        elif raw_decision == PermissionDecision.ALLOW:
                             result = tool.execute(**function_args)
+                        else:  # ASK
+                            if self.confirmation_callback:
+                                self.llm.logger.info(f"Tool {function_name} requires confirmation")
+                                confirmed = self.confirmation_callback(
+                                    function_name,
+                                    tool.description,
+                                    function_args,
+                                )
+                                if not confirmed:
+                                    self.llm.logger.info(f"Tool {function_name} execution cancelled by user")
+                                    result = f"Tool execution cancelled by user. The user declined to execute {function_name}."
+                                else:
+                                    self.llm.logger.info(f"Tool {function_name} execution confirmed by user")
+                                    result = tool.execute(**function_args)
+                            else:
+                                result = tool.execute(**function_args)
+
                     except TaskComplete as tc:
                         result = tc.result
                     except Exception as e:
@@ -582,9 +692,18 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                         "content": result,
                     })
 
-                # Update messages for next iteration
-                # Rebuild system prompt in case skills were activated
-                system_prompt = self._build_system_prompt()
+                # Break outer loop if doom-loop was triggered
+                if _doom_loop_triggered:
+                    break
+
+                # Update messages for next iteration.
+                # Only rebuild system prompt if skills or memories changed (dirty flag).
+                new_active_skills = frozenset(self.skill_manager.get_active_skills().keys())
+                new_memory_count = len(self.memory_tool.get_all_memories())
+                if new_active_skills != _current_active_skills or new_memory_count != _current_memory_count:
+                    _current_active_skills = new_active_skills
+                    _current_memory_count = new_memory_count
+                    system_prompt = self._build_system_prompt()
                 messages_with_system = [
                     {"role": "system", "content": system_prompt}
                 ] + self.messages

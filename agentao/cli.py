@@ -57,6 +57,7 @@ _SLASH_COMMANDS = [
     '/agent', '/clear', '/confirm', '/confirm all', '/confirm prompt',
     '/context', '/context limit', '/exit', '/help',
     '/mcp', '/mcp add', '/mcp list', '/mcp remove',
+    '/markdown',
     '/memory', '/memory clear', '/memory delete', '/memory list',
     '/memory search', '/memory tag', '/model', '/permission', '/provider', '/quit',
     '/reset-confirm', '/sessions', '/sessions delete', '/sessions delete all', '/sessions list', '/sessions resume',
@@ -87,6 +88,8 @@ class AgentaoCLI:
         self.current_status = None  # Track active status context
         self._streaming_output = False  # Track if we're in streaming shell output mode
         self._llm_streamed = False  # Track if LLM response text was already streamed
+        self.markdown_mode = True  # Render responses as Markdown (toggle with /markdown)
+        self._streamed_buffer: str = ""  # Accumulate streaming chunks for final Markdown render
         provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
         self.current_provider = provider  # Track active provider name
 
@@ -108,6 +111,7 @@ class AgentaoCLI:
             tool_complete_callback=self.on_tool_complete,
             llm_text_callback=self.on_llm_text,
             permission_engine=self.permission_engine,
+            on_max_iterations_callback=self.on_max_iterations,
         )
 
         # prompt_toolkit session: multiline=True captures full paste; Enter submits
@@ -290,25 +294,77 @@ class AgentaoCLI:
         if self.current_status:
             self.current_status.start()
 
+    def on_max_iterations(self, max_iterations: int, pending_tools: list) -> dict:
+        """Called when tool call loop reaches max iterations. Asks user how to proceed.
+
+        Args:
+            max_iterations: The iteration limit that was reached
+            pending_tools: List of dicts with "name" and "args" for pending tool calls
+
+        Returns:
+            dict with "action": "continue"|"stop"|"new_instruction" and optional "message"
+        """
+        if self.current_status:
+            self.current_status.stop()
+        try:
+            console.print(f"\n[bold yellow]⚠️  已达到最大工具调用次数 ({max_iterations})[/bold yellow]")
+
+            if pending_tools:
+                console.print("[dim]待执行的工具调用：[/dim]")
+                for tc in pending_tools:
+                    try:
+                        args = json.loads(tc["args"]) if isinstance(tc["args"], str) else tc["args"]
+                        args_str = ", ".join(f"{k}={repr(v)}" for k, v in list(args.items())[:3])
+                    except Exception:
+                        args_str = str(tc["args"])[:80]
+                    console.print(f"  • [cyan]{tc['name']}[/cyan]({args_str})")
+            else:
+                console.print("[dim]无待执行的工具调用。[/dim]")
+
+            console.print("\n[bold]选择操作：[/bold]")
+            console.print(" [green]1[/green]. 继续（重置计数器，再执行 100 次）")
+            console.print(" [red]2[/red]. 停止")
+            console.print(" [yellow]3[/yellow]. 输入新的工作指令后继续")
+            console.print("\n[dim]按 1、2 或 3（单键，无需回车）· Esc 停止[/dim]", end=" ")
+
+            while True:
+                try:
+                    key = readchar.readkey()
+                    if key == "1":
+                        console.print("\n[green]✓ 继续执行[/green]")
+                        return {"action": "continue"}
+                    elif key == "2" or key in (readchar.key.ESC, readchar.key.CTRL_C):
+                        console.print("\n[red]✗ 停止[/red]")
+                        return {"action": "stop"}
+                    elif key == "3":
+                        console.print()
+                        new_msg = console.input("[bold yellow]▶ 新指令：[/bold yellow]").strip()
+                        if not new_msg:
+                            new_msg = "继续"
+                        return {"action": "new_instruction", "message": new_msg}
+                    else:
+                        continue
+                except KeyboardInterrupt:
+                    console.print("\n[red]✗ 停止[/red]")
+                    return {"action": "stop"}
+        finally:
+            if self.current_status:
+                self.current_status.start()
+
     def on_llm_text(self, chunk: str) -> None:
-        """Display a streamed LLM text chunk in real-time.
+        """Accumulate a streamed LLM text chunk.
 
         Called for each text delta from the LLM during the final response.
-        Stops the spinner on first chunk and prints chunks as plain text.
+        Chunks are buffered silently; the full response is rendered after
+        agent.chat() returns.
 
         Args:
             chunk: Text chunk from LLM stream
         """
         if not chunk:
             return
-
-        if not self._llm_streamed:
-            self._llm_streamed = True
-            # Stop spinner before printing streamed text
-            if self.current_status:
-                self.current_status.stop()
-
-        console.print(chunk, end="", markup=False, highlight=False)
+        self._llm_streamed = True
+        self._streamed_buffer += chunk
 
     def ask_user(self, question: str) -> str:
         """Pause spinner, display question, read free-form user response, resume spinner.
@@ -408,6 +464,7 @@ All commands start with `/`:
   - `/confirm all` - Enable allow-all mode (skip prompts)
   - `/confirm prompt` - Restore prompt mode (ask each time)
 - `/reset-confirm` - Reset tool confirmation to prompt mode (legacy alias)
+- `/markdown` - Toggle Markdown rendering ON/OFF (default: ON)
 - `/exit` or `/quit` - Exit the program
 
 **Available Tools:**
@@ -479,6 +536,10 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             console.print("[info]Tool Confirmation:[/info] [green]Allow all mode enabled[/green]")
         else:
             console.print("[info]Tool Confirmation:[/info] [yellow]Prompt for each tool[/yellow]")
+
+        # Show markdown mode
+        md_state = "[green]ON[/green]" if self.markdown_mode else "[yellow]OFF[/yellow]"
+        console.print(f"[info]Markdown Rendering:[/info] {md_state}")
         console.print()
 
     def show_memories(self, subcommand: str = "", arg: str = ""):
@@ -1139,6 +1200,12 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                             console.print("\n[info]Tool confirmation is already in prompt mode.[/info]\n")
                         continue
 
+                    elif command == "markdown":
+                        self.markdown_mode = not self.markdown_mode
+                        state = "ON" if self.markdown_mode else "OFF"
+                        console.print(f"\n[cyan]Markdown rendering: {state}[/cyan]\n")
+                        continue
+
                     elif command == "permission":
                         self.handle_permission_command(args)
                         continue
@@ -1159,20 +1226,19 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 # Process with agent
                 console.rule("[bold green]Assistant[/bold green]", style="green")
                 self._llm_streamed = False
+                self._streamed_buffer = ""
                 self.current_status = console.status("[bold yellow]Thinking...", spinner="dots")
                 with self.current_status:
                     response = self.agent.chat(user_input)
 
-                # Display response:
-                # - If text was streamed in real-time, just add a trailing newline.
-                # - Otherwise render as markdown.
-                if self._llm_streamed:
-                    console.print()
-                    console.print()
-                    self._llm_streamed = False
-                else:
-                    console.print()
+                # Render response based on markdown_mode setting
+                console.print()
+                if self.markdown_mode:
                     console.print(Markdown(response))
+                else:
+                    console.print(response)
+                self._llm_streamed = False
+                self._streamed_buffer = ""
 
             except KeyboardInterrupt:
                 console.print("\n\n[warning]Interrupted. Type '/exit' to quit.[/warning]")
@@ -1186,15 +1252,27 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 def run_print_mode(prompt: str) -> int:
     """Non-interactive print mode: send prompt, print response, exit. Returns exit code."""
     load_dotenv()
+    max_iterations_reached = [False]
+
+    def _on_max_iterations(max_iterations: int, pending_tools: list) -> dict:
+        max_iterations_reached[0] = True
+        print(
+            f"Warning: reached max tool call iterations ({max_iterations}), "
+            "stopping. Response may be incomplete.",
+            file=sys.stderr,
+        )
+        return {"action": "stop"}
+
     agent = Agentao(
         api_key=os.getenv("OPENAI_API_KEY"),
         base_url=os.getenv("OPENAI_BASE_URL"),
         model=os.getenv("OPENAI_MODEL"),
+        on_max_iterations_callback=_on_max_iterations,
     )
     try:
         response = agent.chat(prompt)
         print(response)
-        return 0
+        return 2 if max_iterations_reached[0] else 0
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
