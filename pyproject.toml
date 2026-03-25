@@ -1,6 +1,6 @@
 [project]
-name = "chatagent"
-version = "0.1.2"
+name = "agentao"
+version = "0.1.3"
 description = "A CLI chat agent with tools and skills support"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -26,7 +26,7 @@ dependencies = [
 crawl4ai = ["crawl4ai>=0.8.0"]
 
 [project.scripts]
-chatagent = "chatagent.cli:entrypoint"
+agentao = "agentao.cli:entrypoint"
 
 [build-system]
 requires = ["hatchling"]
