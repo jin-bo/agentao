@@ -1,4 +1,7 @@
-# ChatAgent
+# Agentao (Agent + Tao)
+
+> **Agentao: The invisible path of intelligence.**
+> （Agentao：智能的无形之道。）
 
 A powerful CLI chat agent with tools and skills support. Built with Python and designed to work with any OpenAI-compatible API.
 
@@ -12,8 +15,8 @@ A powerful CLI chat agent with tools and skills support. Built with Python and d
 - **Dynamic memory recall** - Agentic RAG (no vector DB) recalls relevant memories per message
 - **Live thinking display** - shows LLM reasoning and tool calls in real time with Rule separators
 - **Streaming shell output** - shell command stdout displayed in real-time as it executes
-- **Complete logging** of all LLM interactions to `chatagent.log`
-- **Auto-loading of project instructions** from `CHATAGENT.md` at startup
+- **Complete logging** of all LLM interactions to `agentao.log`
+- **Auto-loading of project instructions** from `AGENTAO.md` at startup
 - **Tool confirmation** - user confirmation required for Shell, Web, and destructive Memory tools
 - **Current date context** - system prompt includes current date and time
 - **Multi-line paste support** - paste multi-line text and the entire content enters the input buffer as one unit (prompt_toolkit native; no timing hacks); press Alt+Enter to insert a manual newline, Enter to submit
@@ -50,7 +53,7 @@ A powerful CLI chat agent with tools and skills support. Built with Python and d
 
 ### 🧠 Context Window Management
 
-ChatAgent automatically manages long conversations to stay within LLM context limits:
+Agentao automatically manages long conversations to stay within LLM context limits:
 
 - **Token estimation** - tracks approximate token usage (characters ÷ 4)
 - **Sliding window compression** - when context exceeds 65% of the limit, early messages are summarized by the LLM and replaced with a compact `[Conversation Summary]` block; the split point always aligns to a `user` turn boundary so tool call sequences are never split mid-flight
@@ -59,11 +62,11 @@ ChatAgent automatically manages long conversations to stay within LLM context li
 - **Graceful degradation** - if compression fails, the original messages are preserved unchanged
 - **Three-tier overflow recovery** - if the API returns a context-too-long error: (1) force-compress and retry; (2) if still too long, keep only the last 2 messages and retry; (3) only surfaces an error to the user if all three tiers fail
 
-Default context limit is 200K tokens. Override with `CHATAGENT_CONTEXT_TOKENS` environment variable.
+Default context limit is 200K tokens. Override with `AGENTAO_CONTEXT_TOKENS` environment variable.
 
 ### 💾 Memory Recall (Agentic RAG)
 
-Before each response, ChatAgent automatically identifies and injects memories relevant to your question — no vector database required:
+Before each response, Agentao automatically identifies and injects memories relevant to your question — no vector database required:
 
 1. All saved memories are listed for the LLM
 2. The LLM returns a JSON array of relevant memory keys
@@ -96,7 +99,7 @@ drwxr-xr-x  5 user staff  160 Mar 24 10:00 .
 
 ### 🤖 SubAgent System
 
-ChatAgent can delegate tasks to independent sub-agents, each running its own LLM loop with scoped tools and turn limits. Inspired by [Gemini CLI](https://github.com/google-gemini/gemini-cli)'s "agent as tool" pattern.
+Agentao can delegate tasks to independent sub-agents, each running its own LLM loop with scoped tools and turn limits. Inspired by [Gemini CLI](https://github.com/google-gemini/gemini-cli)'s "agent as tool" pattern.
 
 **Built-in agents:**
 - `codebase-investigator` — read-only codebase exploration (find files, search patterns, analyze structure)
@@ -106,7 +109,7 @@ ChatAgent can delegate tasks to independent sub-agents, each running its own LLM
 1. **LLM-driven** — the parent LLM decides to delegate via `agent_codebase_investigator` / `agent_generalist` tools
 2. **User-driven** — use `/agent <name> <task>` to call an agent directly
 
-**Custom agents:** create `.chatagent/agents/my-agent.md` with YAML frontmatter (`name`, `description`, `tools`, `max_turns`) — auto-discovered at startup.
+**Custom agents:** create `.agentao/agents/my-agent.md` with YAML frontmatter (`name`, `description`, `tools`, `max_turns`) — auto-discovered at startup.
 
 ### 🔌 MCP (Model Context Protocol) Support
 
@@ -117,7 +120,7 @@ Connect to external MCP tool servers to dynamically extend the agent's capabilit
 - **Auto-discovery** — tools are discovered on startup and registered as `mcp_{server}_{tool}`
 - **Confirmation** — MCP tools require user confirmation unless the server is marked `"trust": true`
 - **Env var expansion** — `$VAR` and `${VAR}` syntax in config values
-- **Two-level config** — project `.chatagent/mcp.json` overrides global `~/.chatagent/mcp.json`
+- **Two-level config** — project `.agentao/mcp.json` overrides global `~/.agentao/mcp.json`
 
 ### 🎯 Dynamic Skills System
 
@@ -140,10 +143,10 @@ Add new skills by creating a directory with a `SKILL.md` file — no code change
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Then set up ChatAgent:
+Then set up Agentao:
 
 ```bash
-cd chatagent
+cd agentao
 uv sync
 cp .env.example .env
 # Edit .env and add your API key
@@ -175,12 +178,12 @@ OPENAI_API_KEY=your-api-key-here
 # OPENAI_MODEL=gpt-4-turbo-preview
 
 # Optional: Context window limit in tokens (default: 200000)
-# CHATAGENT_CONTEXT_TOKENS=200000
+# AGENTAO_CONTEXT_TOKENS=200000
 ```
 
 ### MCP Server Configuration
 
-Create `.chatagent/mcp.json` in your project (or `~/.chatagent/mcp.json` for global servers):
+Create `.agentao/mcp.json` in your project (or `~/.agentao/mcp.json` for global servers):
 
 ```json
 {
@@ -219,7 +222,7 @@ MCP servers connect automatically on startup. Use `/mcp list` to check status.
 
 ### Using with Different Providers
 
-ChatAgent supports switching between providers at runtime with `/provider`. Add credentials for each provider to your `.env` (or `~/.env`) using the naming convention `<NAME>_API_KEY`, `<NAME>_BASE_URL`, and `<NAME>_MODEL`:
+Agentao supports switching between providers at runtime with `/provider`. Add credentials for each provider to your `.env` (or `~/.env`) using the naming convention `<NAME>_API_KEY`, `<NAME>_BASE_URL`, and `<NAME>_MODEL`:
 
 ```env
 # OpenAI (default)
@@ -254,7 +257,7 @@ The `/provider` command detects any `*_API_KEY` entry already loaded into the en
 
 ```bash
 # Quick start
-uv run chatagent
+uv run agentao
 
 # Or via Python
 uv run python main.py
@@ -269,19 +272,19 @@ Use `-p` / `--print` to send a single prompt, get a plain-text response on stdou
 
 ```bash
 # Basic usage
-chatagent -p "What is 2+2?"
+agentao -p "What is 2+2?"
 
 # Read from stdin
-echo "Summarize this: hello world" | chatagent -p
+echo "Summarize this: hello world" | agentao -p
 
 # Combine -p argument with stdin (both are joined and sent as one prompt)
-echo "Some context" | chatagent -p "Summarize the stdin"
+echo "Some context" | agentao -p "Summarize the stdin"
 
 # Pipe output to a file
-chatagent -p "List 3 prime numbers" > output.txt
+agentao -p "List 3 prime numbers" > output.txt
 
 # Use in a pipeline
-chatagent -p "Translate to French: Good morning" | pbcopy
+agentao -p "Translate to French: Good morning" | pbcopy
 ```
 
 In print mode all tools are auto-confirmed (no interactive prompts). The exit code is `0` on success and `1` on error.
@@ -320,7 +323,7 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 
 ### Tool Confirmation (Safety Feature)
 
-ChatAgent requires user confirmation before executing potentially dangerous tools:
+Agentao requires user confirmation before executing potentially dangerous tools:
 
 **Tools requiring confirmation:**
 - `run_shell_command` - Shell command execution
@@ -410,9 +413,9 @@ You: Use the xlsx skill to analyze this spreadsheet
 
 ---
 
-## Project Instructions (CHATAGENT.md)
+## Project Instructions (AGENTAO.md)
 
-ChatAgent automatically loads project-specific instructions from `CHATAGENT.md` if it exists in the current working directory. This file is injected into the system prompt at startup, allowing you to define:
+Agentao automatically loads project-specific instructions from `AGENTAO.md` if it exists in the current working directory. This file is injected into the system prompt at startup, allowing you to define:
 
 - Code style and conventions
 - Project structure and patterns
@@ -421,19 +424,19 @@ ChatAgent automatically loads project-specific instructions from `CHATAGENT.md` 
 
 If the file doesn't exist, the agent works normally with its default instructions.
 
-Project instructions are injected at the top of the system prompt, before built-in agent instructions — making them the highest-priority guidance for the LLM. A good `CHATAGENT.md` includes code-style conventions, testing commands, and reliability rules such as requiring the agent to cite file and line number when making factual claims about the codebase.
+Project instructions are injected at the top of the system prompt, before built-in agent instructions — making them the highest-priority guidance for the LLM. A good `AGENTAO.md` includes code-style conventions, testing commands, and reliability rules such as requiring the agent to cite file and line number when making factual claims about the codebase.
 
 ---
 
 ## Project Structure
 
 ```
-chatagent/
+agentao/
 ├── main.py                  # Entry point
 ├── pyproject.toml           # Project configuration
 ├── .env                     # Configuration (create from .env.example)
 ├── .env.example             # Configuration template
-├── CHATAGENT.md             # Project-specific agent instructions
+├── AGENTAO.md             # Project-specific agent instructions
 ├── README.md                # This file
 ├── tests/                   # Test files
 │   ├── test_context_manager.py      # ContextManager tests (22 tests, mock LLM)
@@ -443,7 +446,7 @@ chatagent/
 ├── docs/                    # Documentation
 │   ├── features/            # Feature documentation
 │   └── updates/             # Update logs
-└── chatagent/
+└── agentao/
     ├── agent.py             # Core orchestration
     ├── cli.py               # CLI interface (Rich)
     ├── context_manager.py   # Context window management + Agentic RAG
@@ -492,11 +495,11 @@ Tests use `unittest.mock.Mock` for the LLM client — no real API calls required
 
 ## Logging
 
-All LLM interactions are logged to `chatagent.log`:
+All LLM interactions are logged to `agentao.log`:
 
 ```bash
-tail -f chatagent.log    # Real-time monitoring
-grep "ERROR" chatagent.log
+tail -f agentao.log    # Real-time monitoring
+grep "ERROR" agentao.log
 ```
 
 Logged data includes: full message content, tool calls with arguments, tool results, token usage, and timestamps.
@@ -507,7 +510,7 @@ Logged data includes: full message content, tool calls with arguments, tool resu
 
 ### Adding a Tool
 
-1. Create a tool class in `chatagent/tools/`:
+1. Create a tool class in `agentao/tools/`:
 
 ```python
 from .base import Tool
@@ -547,7 +550,7 @@ tools_to_register.append(MyTool())
 
 ### Adding an Agent
 
-Create a Markdown file with YAML frontmatter. Built-in agents go in `chatagent/agents/definitions/`, project-level agents go in `.chatagent/agents/`.
+Create a Markdown file with YAML frontmatter. Built-in agents go in `agentao/agents/definitions/`, project-level agents go in `.agentao/agents/`.
 
 ```yaml
 ---
@@ -563,7 +566,7 @@ You are a specialized agent. Instructions for the sub-agent go here.
 When finished, call complete_task to return your result.
 ```
 
-Restart ChatAgent — agents are auto-discovered and registered as `agent_my_agent` tools.
+Restart Agentao — agents are auto-discovered and registered as `agent_my_agent` tools.
 
 ### Adding a Skill
 
@@ -580,7 +583,7 @@ description: Use when... (trigger conditions for LLM)
 Documentation here...
 ```
 
-2. Restart ChatAgent — skills are auto-discovered.
+2. Restart Agentao — skills are auto-discovered.
 
 ---
 
@@ -592,11 +595,11 @@ Documentation here...
 
 **API Key Issues:** Verify `.env` exists and contains a valid key with correct permissions.
 
-**Context Too Long Errors:** ChatAgent handles these automatically with three-tier recovery (compress → minimal history → error). Common causes: very large tool results (e.g. reading huge files) or extremely long conversations. If errors persist, lower the limit with `/context limit <n>` or `CHATAGENT_CONTEXT_TOKENS`.
+**Context Too Long Errors:** Agentao handles these automatically with three-tier recovery (compress → minimal history → error). Common causes: very large tool results (e.g. reading huge files) or extremely long conversations. If errors persist, lower the limit with `/context limit <n>` or `AGENTAO_CONTEXT_TOKENS`.
 
 **Memory Recall Not Working:** Check that memories exist (`/memory`). Recall requires at least one memory saved. The LLM judges relevance — unrelated memories won't be recalled.
 
-**MCP Server Not Connecting:** Run `/mcp list` to see status and error messages. Verify the command exists and is executable, or that the SSE URL is reachable. Check `chatagent.log` for detailed connection errors.
+**MCP Server Not Connecting:** Run `/mcp list` to see status and error messages. Verify the command exists and is executable, or that the SSE URL is reachable. Check `agentao.log` for detailed connection errors.
 
 **Tool Execution Errors:** Check file permissions, path correctness, and that shell commands are valid for your OS.
 

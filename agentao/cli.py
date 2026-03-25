@@ -1,4 +1,4 @@
-"""CLI interface for ChatAgent."""
+"""CLI interface for Agentao."""
 
 import warnings
 warnings.filterwarnings("ignore", message="urllib3.*or chardet.*doesn't match")
@@ -19,7 +19,7 @@ from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
 from dotenv import load_dotenv
 
-from .agent import ChatAgent
+from .agent import Agentao
 
 # Custom theme for the CLI
 custom_theme = Theme({
@@ -58,9 +58,9 @@ _SLASH_COMMANDS = [
     '/context', '/context limit', '/exit', '/help',
     '/mcp', '/mcp add', '/mcp list', '/mcp remove',
     '/memory', '/memory clear', '/memory delete', '/memory list',
-    '/memory search', '/memory tag', '/model', '/provider', '/quit',
-    '/reset-confirm', '/skills', '/skills disable', '/skills enable',
-    '/skills reload', '/status',
+    '/memory search', '/memory tag', '/model', '/permission', '/provider', '/quit',
+    '/reset-confirm', '/sessions', '/sessions delete', '/sessions delete all', '/sessions list', '/sessions resume',
+    '/skills', '/skills disable', '/skills enable', '/skills reload', '/status',
 ]
 
 
@@ -74,8 +74,8 @@ class _SlashCompleter(Completer):
                 yield Completion(cmd, start_position=-len(text))
 
 
-class ChatAgentCLI:
-    """CLI interface for ChatAgent."""
+class AgentaoCLI:
+    """CLI interface for Agentao."""
 
     def __init__(self):
         """Initialize CLI."""
@@ -85,12 +85,16 @@ class ChatAgentCLI:
         self.allow_all_tools = False  # "Yes to all" mode
         self.current_status = None  # Track active status context
         self._streaming_output = False  # Track if we're in streaming shell output mode
+        self._llm_streamed = False  # Track if LLM response text was already streamed
         provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
         self.current_provider = provider  # Track active provider name
 
-        context_limit = int(os.getenv("CHATAGENT_CONTEXT_TOKENS", "200000"))
+        context_limit = int(os.getenv("AGENTAO_CONTEXT_TOKENS", "200000"))
 
-        self.agent = ChatAgent(
+        from .permissions import PermissionEngine
+        self.permission_engine = PermissionEngine()
+
+        self.agent = Agentao(
             api_key=os.getenv(f"{provider}_API_KEY"),
             base_url=os.getenv(f"{provider}_BASE_URL"),
             model=os.getenv(f"{provider}_MODEL"),
@@ -101,6 +105,8 @@ class ChatAgentCLI:
             ask_user_callback=self.ask_user,
             output_callback=self.on_tool_output,
             tool_complete_callback=self.on_tool_complete,
+            llm_text_callback=self.on_llm_text,
+            permission_engine=self.permission_engine,
         )
 
         # prompt_toolkit session: multiline=True captures full paste; Enter submits
@@ -283,6 +289,26 @@ class ChatAgentCLI:
         if self.current_status:
             self.current_status.start()
 
+    def on_llm_text(self, chunk: str) -> None:
+        """Display a streamed LLM text chunk in real-time.
+
+        Called for each text delta from the LLM during the final response.
+        Stops the spinner on first chunk and prints chunks as plain text.
+
+        Args:
+            chunk: Text chunk from LLM stream
+        """
+        if not chunk:
+            return
+
+        if not self._llm_streamed:
+            self._llm_streamed = True
+            # Stop spinner before printing streamed text
+            if self.current_status:
+                self.current_status.stop()
+
+        console.print(chunk, end="", markup=False, highlight=False)
+
     def ask_user(self, question: str) -> str:
         """Pause spinner, display question, read free-form user response, resume spinner.
 
@@ -309,7 +335,7 @@ class ChatAgentCLI:
         """Print welcome message."""
         current_model = self.agent.get_current_model()
         welcome = f"""
-# ChatAgent
+# Agentao
 
 A CLI chat agent with tools and skills support.
 
@@ -327,6 +353,8 @@ A CLI chat agent with tools and skills support.
 - `/context` - Show context window usage
 - `/context limit <n>` - Set context token limit
 - `/reset-confirm` - Reset tool confirmation only
+- `/sessions` - List, resume, or delete saved sessions (`/sessions delete all` to wipe all)
+- `/permission` - Show active permission rules
 - `/exit` or `/quit` - Exit the program
 
 **Features:**
@@ -344,7 +372,7 @@ Type your message to start chatting, or `/help` for more information!
     def print_help(self):
         """Print help message."""
         help_text = """
-# ChatAgent Help
+# Agentao Help
 
 **Available Commands:**
 All commands start with `/`:
@@ -754,7 +782,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             manager = self.agent.mcp_manager
             if not manager or not manager.clients:
                 console.print("\n[warning]No MCP servers configured.[/warning]")
-                console.print("[info]Add servers to .chatagent/mcp.json or use /mcp add[/info]\n")
+                console.print("[info]Add servers to .agentao/mcp.json or use /mcp add[/info]\n")
                 return
 
             statuses = manager.get_server_status()
@@ -796,14 +824,14 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                     server_cfg["args"] = cmd_parts[1:]
 
             # Load current project config and add
-            project_path = Path.cwd() / ".chatagent" / "mcp.json"
+            project_path = Path.cwd() / ".agentao" / "mcp.json"
             existing = _load_json_file(project_path)
             servers = existing.get("mcpServers", {})
             servers[name] = server_cfg
             saved_path = save_mcp_config(servers)
 
             console.print(f"\n[success]Added MCP server '{name}' to {saved_path}[/success]")
-            console.print("[info]Restart chatagent to connect to the new server.[/info]\n")
+            console.print("[info]Restart agentao to connect to the new server.[/info]\n")
 
         elif sub == "remove":
             name = sub_args.strip()
@@ -811,7 +839,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 console.print("\n[error]Usage: /mcp remove <name>[/error]\n")
                 return
 
-            project_path = Path.cwd() / ".chatagent" / "mcp.json"
+            project_path = Path.cwd() / ".agentao" / "mcp.json"
             existing = _load_json_file(project_path)
             servers = existing.get("mcpServers", {})
             if name not in servers:
@@ -821,11 +849,123 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             del servers[name]
             save_mcp_config(servers)
             console.print(f"\n[success]Removed MCP server '{name}'.[/success]")
-            console.print("[info]Restart chatagent to apply changes.[/info]\n")
+            console.print("[info]Restart agentao to apply changes.[/info]\n")
 
         else:
             console.print(f"\n[error]Unknown subcommand: {sub}[/error]")
             console.print("[info]Available: /mcp list, /mcp add, /mcp remove[/info]\n")
+
+    def handle_permission_command(self, args: str):
+        """Handle /permission command — show active permission rules."""
+        console.print(f"\n{self.permission_engine.get_rules_display()}\n")
+
+    def handle_sessions_command(self, args: str):
+        """Handle /sessions command.
+
+        Args:
+            args: Subcommand: list | resume <id> | delete <id>
+        """
+        from .session import list_sessions, delete_session, delete_all_sessions
+
+        args = args.strip()
+        parts = args.split(None, 1) if args else []
+        sub = parts[0] if parts else "list"
+        sub_arg = parts[1].strip() if len(parts) > 1 else ""
+
+        if sub in ("", "list"):
+            sessions = list_sessions()
+            if not sessions:
+                console.print("\n[warning]No saved sessions found.[/warning]\n")
+                return
+            console.print(f"\n[info]Saved Sessions ({len(sessions)}):[/info]\n")
+            for s in sessions:
+                console.print(f"  • [cyan]{s['id']}[/cyan]")
+                console.print(f"    Model: [dim]{s['model']}[/dim]  Messages: {s['message_count']}")
+                console.print(f"    Saved: {s['timestamp']}")
+                if s["active_skills"]:
+                    console.print(f"    Skills: {', '.join(s['active_skills'])}")
+                console.print()
+            console.print("[info]Usage:[/info] /sessions resume <id>  or  /sessions delete <id>  or  /sessions delete all\n")
+
+        elif sub == "resume":
+            self.resume_session(sub_arg or None)
+
+        elif sub == "delete":
+            if sub_arg == "all":
+                sessions = list_sessions()
+                if not sessions:
+                    console.print("\n[warning]No saved sessions to delete.[/warning]\n")
+                    return
+                console.print(f"\n[warning]Delete all {len(sessions)} session(s)? Press 1 to confirm, any other key to cancel.[/warning]")
+                import readchar
+                key = readchar.readkey()
+                if key == "1":
+                    count = delete_all_sessions()
+                    console.print(f"\n[success]Deleted {count} session(s).[/success]\n")
+                else:
+                    console.print("\n[info]Cancelled.[/info]\n")
+                return
+            if not sub_arg:
+                console.print("\n[error]Usage: /sessions delete <session-id>  or  /sessions delete all[/error]\n")
+                return
+            if delete_session(sub_arg):
+                console.print(f"\n[success]Session '{sub_arg}' deleted.[/success]\n")
+            else:
+                console.print(f"\n[warning]Session '{sub_arg}' not found.[/warning]\n")
+
+        else:
+            console.print(f"\n[error]Unknown subcommand: {sub}[/error]")
+            console.print("[info]Available: /sessions list | /sessions resume <id> | /sessions delete <id> | /sessions delete all[/info]\n")
+
+    def resume_session(self, session_id: Optional[str] = None):
+        """Load a previously saved session into the current agent.
+
+        Args:
+            session_id: Timestamp prefix to identify session, or None for latest.
+        """
+        from .session import load_session
+
+        try:
+            messages, model, active_skills = load_session(session_id)
+        except FileNotFoundError as e:
+            console.print(f"\n[error]Could not resume session: {e}[/error]\n")
+            return
+
+        self.agent.messages = messages
+        if model:
+            try:
+                self.agent.set_model(model)
+            except Exception:
+                pass
+        for skill_name in active_skills:
+            try:
+                self.agent.skill_manager.activate_skill(skill_name, "Restored from session")
+            except Exception:
+                pass
+
+        msg_count = len(messages)
+        console.print(f"\n[success]Session resumed: {msg_count} messages loaded.[/success]")
+        if model:
+            console.print(f"[dim]Model: {model}[/dim]")
+        if active_skills:
+            console.print(f"[dim]Active skills: {', '.join(active_skills)}[/dim]")
+        console.print()
+
+    def _save_session_on_exit(self):
+        """Save current session to disk if there are messages."""
+        if not self.agent.messages:
+            return
+        from .session import save_session
+        try:
+            active_skills = list(self.agent.skill_manager.get_active_skills().keys())
+            session_file = save_session(
+                messages=self.agent.messages,
+                model=self.agent.get_current_model(),
+                active_skills=active_skills,
+            )
+            console.print(f"[dim]Session saved → {session_file}[/dim]")
+        except Exception:
+            pass  # Non-critical
 
     def _get_user_input(self) -> str:
         """Read user input using prompt_toolkit.
@@ -859,6 +999,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                     args = parts[1] if len(parts) > 1 else ""
 
                     if command in ["exit", "quit"]:
+                        self._save_session_on_exit()
                         console.print("\n[success]Goodbye![/success]\n")
                         break
 
@@ -963,6 +1104,14 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                             console.print("\n[info]Tool confirmation is already in prompt mode.[/info]\n")
                         continue
 
+                    elif command == "permission":
+                        self.handle_permission_command(args)
+                        continue
+
+                    elif command == "sessions":
+                        self.handle_sessions_command(args)
+                        continue
+
                     else:
                         console.print(f"\n[error]Unknown command: /{command}[/error]")
                         console.print("Type [cyan]/help[/cyan] for available commands.\n")
@@ -970,13 +1119,21 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
                 # Process with agent
                 console.rule("[bold green]Assistant[/bold green]", style="green")
+                self._llm_streamed = False
                 self.current_status = console.status("[bold yellow]Thinking...", spinner="dots")
                 with self.current_status:
                     response = self.agent.chat(user_input)
 
-                # Display response (blank line separates tool output from final answer)
-                console.print()
-                console.print(Markdown(response))
+                # Display response:
+                # - If text was streamed in real-time, just add a trailing newline.
+                # - Otherwise render as markdown.
+                if self._llm_streamed:
+                    console.print()
+                    console.print()
+                    self._llm_streamed = False
+                else:
+                    console.print()
+                    console.print(Markdown(response))
 
             except KeyboardInterrupt:
                 console.print("\n\n[warning]Interrupted. Type '/exit' to quit.[/warning]")
@@ -990,7 +1147,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 def run_print_mode(prompt: str) -> int:
     """Non-interactive print mode: send prompt, print response, exit. Returns exit code."""
     load_dotenv()
-    agent = ChatAgent(
+    agent = Agentao(
         api_key=os.getenv("OPENAI_API_KEY"),
         base_url=os.getenv("OPENAI_BASE_URL"),
         model=os.getenv("OPENAI_MODEL"),
@@ -1004,10 +1161,13 @@ def run_print_mode(prompt: str) -> int:
         return 1
 
 
-def main():
+def main(resume_session: Optional[str] = None):
     """Main entry point."""
     try:
-        cli = ChatAgentCLI()
+        cli = AgentaoCLI()
+        if resume_session is not None:
+            # Empty string means "latest session"; non-empty is a session ID prefix
+            cli.resume_session(resume_session if resume_session else None)
         cli.run()
     except KeyboardInterrupt:
         console.print("\n\n[success]Goodbye![/success]\n")
@@ -1018,10 +1178,19 @@ def main():
 
 
 def entrypoint():
-    """Unified entry point: -p for print mode, otherwise interactive."""
+    """Unified entry point: -p for print mode, --resume for session restore, otherwise interactive."""
     import argparse
-    parser = argparse.ArgumentParser(prog="chatagent", add_help=False)
+    parser = argparse.ArgumentParser(prog="agentao", add_help=False)
     parser.add_argument("-p", "--print", dest="prompt", nargs="?", const="", default=None)
+    parser.add_argument(
+        "--resume",
+        dest="resume",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="SESSION_ID",
+        help="Resume a saved session. Omit SESSION_ID to resume the latest.",
+    )
     args, _ = parser.parse_known_args()
 
     if args.prompt is not None:
@@ -1030,7 +1199,7 @@ def entrypoint():
         full_prompt = "\n".join(parts)
         sys.exit(run_print_mode(full_prompt))
     else:
-        main()
+        main(resume_session=args.resume)
 
 
 if __name__ == "__main__":
