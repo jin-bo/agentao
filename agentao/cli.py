@@ -3,14 +3,17 @@
 import warnings
 warnings.filterwarnings("ignore", message="urllib3.*or chardet.*doesn't match")
 
+import atexit
 import os
 import sys
+import termios
 from typing import Optional
 
 import readchar
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.markdown import Markdown
@@ -66,11 +69,34 @@ _SLASH_COMMANDS = [
 ]
 
 
+_SLASH_COMMAND_HINTS = {
+    '/model': '<model-name>',
+    '/provider': '<provider-name>',
+    '/memory search': '<keyword>',
+    '/memory delete': '<key>',
+    '/memory tag': '<tag>',
+    '/skills enable': '<skill-name>',
+    '/skills disable': '<skill-name>',
+    '/context limit': '<tokens>',
+    '/sessions resume': '<session-id>',
+    '/sessions delete': '<session-id>',
+    '/mcp add': '<name> <command|url>',
+    '/mcp remove': '<name>',
+}
+
+
 class _SlashCompleter(Completer):
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
         if not text.startswith('/'):
             return
+        # If the typed text exactly matches a command, show its argument hint
+        stripped = text.rstrip()
+        if stripped in _SLASH_COMMAND_HINTS:
+            hint = _SLASH_COMMAND_HINTS[stripped]
+            yield Completion(f' {hint}', start_position=0, display_meta='arg')
+            return
+        # Prefix completion for command names
         for cmd in _SLASH_COMMANDS:
             if cmd.startswith(text):
                 yield Completion(cmd, start_position=-len(text))
@@ -125,7 +151,10 @@ class AgentaoCLI:
         def _pt_newline(event):
             event.current_buffer.insert_text('\n')
 
+        _history_file = os.path.expanduser("~/.agentao/history")
+        os.makedirs(os.path.dirname(_history_file), exist_ok=True)
         self._prompt_session = PromptSession(
+            history=FileHistory(_history_file),
             key_bindings=_kb,
             multiline=True,
             prompt_continuation='',
@@ -275,8 +304,11 @@ class AgentaoCLI:
                 self.current_status.stop()
             console.rule("[dim]output[/dim]", style="dim")
 
-        # Print raw chunk without Rich markup processing
-        console.print(chunk, end="", markup=False, highlight=False)
+        # Write chunk directly to stdout so the terminal handles \r natively.
+        # This allows progress bars (curl, pip, tqdm, etc.) to overwrite the
+        # current line instead of stacking as separate lines.
+        sys.stdout.write(chunk)
+        sys.stdout.flush()
 
     def on_tool_complete(self, tool_name: str) -> None:
         """Called after a tool finishes execution.
@@ -1058,6 +1090,13 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         """Run the CLI."""
         self.print_welcome()
 
+        try:
+            self._run_loop()
+        finally:
+            self.agent.close()
+
+    def _run_loop(self):
+        """Main input loop."""
         while True:
             try:
                 # Get user input
@@ -1263,6 +1302,46 @@ def run_print_mode(prompt: str) -> int:
 
 def main(resume_session: Optional[str] = None):
     """Main entry point."""
+    # Save terminal state before prompt_toolkit/readchar alter it.
+    # Restored on every exit path via atexit (normal, exception, sys.exit).
+    _saved_tc = None
+    _tty_fd = None
+    try:
+        # Open /dev/tty directly — more reliable than sys.stdin.fileno() in
+        # atexit handlers when stdin may already be partially torn down.
+        _tty_fd = os.open('/dev/tty', os.O_RDWR | os.O_NOCTTY)
+        _saved_tc = termios.tcgetattr(_tty_fd)
+    except Exception:
+        # Fallback: try sys.stdin
+        if _tty_fd is not None:
+            try:
+                os.close(_tty_fd)
+            except Exception:
+                pass
+            _tty_fd = None
+        try:
+            if sys.stdin.isatty():
+                _saved_tc = termios.tcgetattr(sys.stdin.fileno())
+        except Exception:
+            pass
+
+    def _restore_terminal():
+        if _saved_tc is None:
+            return
+        # Use TCSANOW so the change is applied immediately without waiting for
+        # output to drain — TCSADRAIN can block or silently fail in atexit.
+        fd = _tty_fd if _tty_fd is not None else (
+            sys.stdin.fileno() if sys.stdin.isatty() else None
+        )
+        if fd is None:
+            return
+        try:
+            termios.tcsetattr(fd, termios.TCSANOW, _saved_tc)
+        except Exception:
+            pass
+
+    atexit.register(_restore_terminal)
+
     try:
         cli = AgentaoCLI()
         if resume_session is not None:

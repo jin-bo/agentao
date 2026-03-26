@@ -1,7 +1,9 @@
 """Main agent logic for Agentao."""
 
 import json
+import threading
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -219,6 +221,15 @@ class Agentao:
         if count:
             self.llm.logger.info(f"MCP: {count} tools from {len(manager.clients)} server(s)")
         return manager
+
+    def close(self) -> None:
+        """Clean up resources (MCP connections, event loops)."""
+        if self.mcp_manager is not None:
+            try:
+                self.mcp_manager.disconnect_all()
+            except Exception as e:
+                self.llm.logger.warning(f"Error disconnecting MCP: {e}")
+            self.mcp_manager = None
 
     def _register_agent_tools(self):
         """Register agent tools (after base tools are registered)."""
@@ -576,13 +587,16 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
 
                 self.messages.append(assistant_msg)
 
-                # Execute tool calls
+                # Execute tool calls — three phases: pre-process, confirm, parallel execute.
                 _doom_loop_triggered = False
+
+                # --- Phase 1: Pre-process (sequential) ---
+                # Doom-loop detection + permission decisions; no I/O yet.
+                _plans: List[Dict[str, Any]] = []
                 for tool_call in assistant_message.tool_calls:
                     function_name = tool_call.function.name
-                    function_args_raw = tool_call.function.arguments  # raw JSON string
+                    function_args_raw = tool_call.function.arguments
 
-                    # --- Doom-loop detection ---
                     _doom_key = (function_name, function_args_raw)
                     _doom_loop_counter[_doom_key] += 1
                     if _doom_loop_counter[_doom_key] >= 3:
@@ -599,102 +613,149 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                                 f"Please try a different approach or tool."
                             ),
                         })
+                        # Placeholder results for already-queued plans so message
+                        # state stays consistent across conversation turns.
+                        for _p in _plans:
+                            self.messages.append({
+                                "role": "tool",
+                                "tool_call_id": _p["tool_call"].id,
+                                "name": _p["function_name"],
+                                "content": "Tool not executed (halted by doom-loop detection).",
+                            })
                         _doom_loop_triggered = True
                         break
 
                     function_args = json.loads(function_args_raw)
+                    tool = self.tools.get(function_name)
 
-                    # Execute tool
-                    try:
-                        tool = self.tools.get(function_name)
-
-                        # Notify step callback (for live thinking display)
-                        if self.step_callback:
-                            self.step_callback(function_name, function_args)
-
-                        # Wire output callback for streaming display
-                        if self.output_callback and hasattr(tool, 'output_callback'):
-                            tool.output_callback = lambda chunk, _fn=function_name: self.output_callback(_fn, chunk)
-
-                        # Determine permission: engine rules take priority over tool.requires_confirmation
-                        if self.permission_engine:
-                            engine_decision = self.permission_engine.decide(function_name, function_args)
-                            if engine_decision == PermissionDecision.ALLOW:
-                                raw_decision = PermissionDecision.ALLOW
-                            elif engine_decision == PermissionDecision.DENY:
-                                raw_decision = PermissionDecision.DENY
-                            else:
-                                # No matching rule — fall back to tool's own setting
-                                raw_decision = (
-                                    PermissionDecision.ASK
-                                    if tool.requires_confirmation
-                                    else PermissionDecision.ALLOW
-                                )
+                    if self.permission_engine:
+                        engine_decision = self.permission_engine.decide(function_name, function_args)
+                        if engine_decision == PermissionDecision.ALLOW:
+                            raw_decision = PermissionDecision.ALLOW
+                        elif engine_decision == PermissionDecision.DENY:
+                            raw_decision = PermissionDecision.DENY
                         else:
+                            # No matching rule — fall back to tool's own setting
                             raw_decision = (
                                 PermissionDecision.ASK
                                 if tool.requires_confirmation
                                 else PermissionDecision.ALLOW
                             )
-
-                        if raw_decision == PermissionDecision.DENY:
-                            self.llm.logger.info(f"Tool {function_name} denied by permission engine")
-                            result = (
-                                f"Tool execution denied: '{function_name}' is not permitted "
-                                f"by the current permission rules."
-                            )
-                        elif raw_decision == PermissionDecision.ALLOW:
-                            result = tool.execute(**function_args)
-                        else:  # ASK
-                            if self.confirmation_callback:
-                                self.llm.logger.info(f"Tool {function_name} requires confirmation")
-                                confirmed = self.confirmation_callback(
-                                    function_name,
-                                    tool.description,
-                                    function_args,
-                                )
-                                if not confirmed:
-                                    self.llm.logger.info(f"Tool {function_name} execution cancelled by user")
-                                    result = f"Tool execution cancelled by user. The user declined to execute {function_name}."
-                                else:
-                                    self.llm.logger.info(f"Tool {function_name} execution confirmed by user")
-                                    result = tool.execute(**function_args)
-                            else:
-                                result = tool.execute(**function_args)
-
-                    except TaskComplete as tc:
-                        result = tc.result
-                    except Exception as e:
-                        result = f"Error executing {function_name}: {str(e)}"
-                    finally:
-                        # Clear output callback and notify completion
-                        if hasattr(tool, 'output_callback'):
-                            tool.output_callback = None
-                        if self.tool_complete_callback:
-                            self.tool_complete_callback(function_name)
-
-                    # Truncate oversized tool results to avoid context overflow
-                    if isinstance(result, str) and len(result) > MAX_TOOL_RESULT_CHARS:
-                        truncated = len(result) - MAX_TOOL_RESULT_CHARS
-                        result = (
-                            result[:MAX_TOOL_RESULT_CHARS]
-                            + f"\n\n[... {truncated} characters truncated to fit context window ...]"
-                        )
-                        self.llm.logger.warning(
-                            f"Tool result from {function_name} truncated: {truncated} chars removed"
+                    else:
+                        raw_decision = (
+                            PermissionDecision.ASK
+                            if tool.requires_confirmation
+                            else PermissionDecision.ALLOW
                         )
 
-                    # Add tool result to messages
-                    self.messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": function_name,
-                        "content": result,
+                    _plans.append({
+                        "tool_call": tool_call,
+                        "function_name": function_name,
+                        "function_args": function_args,
+                        "tool": tool,
+                        "decision": raw_decision,
                     })
 
-                # Break outer loop if doom-loop was triggered
+                # Break outer iteration loop if doom-loop was triggered
                 if _doom_loop_triggered:
                     break
+
+                # --- Phase 2: Confirmation (sequential, interactive) ---
+                # All user-facing prompts happen here before any execution starts.
+                for _plan in _plans:
+                    if _plan["decision"] == PermissionDecision.ASK:
+                        _fn = _plan["function_name"]
+                        if self.confirmation_callback:
+                            self.llm.logger.info(f"Tool {_fn} requires confirmation")
+                            _confirmed = self.confirmation_callback(
+                                _fn,
+                                _plan["tool"].description,
+                                _plan["function_args"],
+                            )
+                            if not _confirmed:
+                                self.llm.logger.info(f"Tool {_fn} execution cancelled by user")
+                                _plan["decision"] = "CANCELLED"
+                            else:
+                                self.llm.logger.info(f"Tool {_fn} execution confirmed by user")
+                                _plan["decision"] = PermissionDecision.ALLOW
+                        else:
+                            _plan["decision"] = PermissionDecision.ALLOW
+
+                # --- Phase 3: Parallel execution ---
+                # Independent tools run concurrently; results collected by tool_call.id.
+                _tool_cb_lock = threading.Lock()
+
+                def _execute_one(_plan: Dict[str, Any]) -> tuple:
+                    _fn = _plan["function_name"]
+                    _args = _plan["function_args"]
+                    _tool = _plan["tool"]
+                    _tc = _plan["tool_call"]
+                    _decision = _plan["decision"]
+
+                    if self.step_callback:
+                        self.step_callback(_fn, _args)
+
+                    if _decision == PermissionDecision.DENY:
+                        self.llm.logger.info(f"Tool {_fn} denied by permission engine")
+                        _result = (
+                            f"Tool execution denied: '{_fn}' is not permitted "
+                            f"by the current permission rules."
+                        )
+                    elif _decision == "CANCELLED":
+                        _result = (
+                            f"Tool execution cancelled by user. "
+                            f"The user declined to execute {_fn}."
+                        )
+                    else:  # ALLOW
+                        if self.output_callback and hasattr(_tool, 'output_callback'):
+                            with _tool_cb_lock:
+                                _tool.output_callback = (
+                                    lambda chunk, _name=_fn: self.output_callback(_name, chunk)
+                                )
+                        try:
+                            _result = _tool.execute(**_args)
+                        except TaskComplete as _tc_exc:
+                            _result = _tc_exc.result
+                        except Exception as _e:
+                            _result = f"Error executing {_fn}: {str(_e)}"
+                        finally:
+                            if hasattr(_tool, 'output_callback'):
+                                with _tool_cb_lock:
+                                    _tool.output_callback = None
+                            if self.tool_complete_callback:
+                                self.tool_complete_callback(_fn)
+
+                    return _tc.id, _fn, _result
+
+                _exec_results: Dict[str, tuple] = {}
+                with ThreadPoolExecutor(max_workers=8) as _executor:
+                    _futures = {_executor.submit(_execute_one, p): p for p in _plans}
+                    for _future in as_completed(_futures):
+                        _call_id, _fn_name, _res = _future.result()
+                        _exec_results[_call_id] = (_fn_name, _res)
+
+                # --- Phase 4: Append results in original order ---
+                for _plan in _plans:
+                    _tc = _plan["tool_call"]
+                    _fn_name, _result = _exec_results[_tc.id]
+
+                    # Truncate oversized tool results to avoid context overflow
+                    if isinstance(_result, str) and len(_result) > MAX_TOOL_RESULT_CHARS:
+                        _truncated = len(_result) - MAX_TOOL_RESULT_CHARS
+                        _result = (
+                            _result[:MAX_TOOL_RESULT_CHARS]
+                            + f"\n\n[... {_truncated} characters truncated to fit context window ...]"
+                        )
+                        self.llm.logger.warning(
+                            f"Tool result from {_fn_name} truncated: {_truncated} chars removed"
+                        )
+
+                    self.messages.append({
+                        "role": "tool",
+                        "tool_call_id": _tc.id,
+                        "name": _fn_name,
+                        "content": _result,
+                    })
 
                 # Update messages for next iteration.
                 # Only rebuild system prompt if skills or memories changed (dirty flag).
