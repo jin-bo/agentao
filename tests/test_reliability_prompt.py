@@ -64,8 +64,10 @@ def test_reasoning_structure_absent_without_thinking_callback():
 
 
 def test_reliability_before_memories():
-    """Reliability Principles section appears before the Memories section."""
+    """Reliability Principles section appears before the Memories section (when memories exist)."""
     agent = _make_agent()
+    # Inject a memory so the Memories section is rendered
+    agent.memory_tool.execute(key="test_key", value="test_value")
     prompt = agent._build_system_prompt()
     rel_idx = prompt.find("=== Reliability Principles ===")
     mem_idx = prompt.find("=== Memories ===")

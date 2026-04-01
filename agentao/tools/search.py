@@ -17,6 +17,10 @@ class FindFilesTool(Tool):
     """Tool for finding files using glob patterns."""
 
     @property
+    def is_read_only(self) -> bool:
+        return True
+
+    @property
     def name(self) -> str:
         return "glob"
 
@@ -88,6 +92,10 @@ class FindFilesTool(Tool):
 
 class SearchTextTool(Tool):
     """Tool for searching text content in files."""
+
+    @property
+    def is_read_only(self) -> bool:
+        return True
 
     @property
     def name(self) -> str:

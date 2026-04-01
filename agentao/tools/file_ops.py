@@ -18,6 +18,10 @@ class ReadFileTool(Tool):
     """Tool for reading file contents with line numbers."""
 
     @property
+    def is_read_only(self) -> bool:
+        return True
+
+    @property
     def name(self) -> str:
         return "read_file"
 
@@ -301,6 +305,10 @@ class EditTool(Tool):
 
 class ReadFolderTool(Tool):
     """Tool for listing directory contents."""
+
+    @property
+    def is_read_only(self) -> bool:
+        return True
 
     @property
     def name(self) -> str:

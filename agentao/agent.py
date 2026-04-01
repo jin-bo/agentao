@@ -73,7 +73,7 @@ class Agentao:
         thinking_callback: Optional[Callable[[str], None]] = None,
         ask_user_callback: Optional[Callable[[str], str]] = None,
         output_callback: Optional[Callable[[str, str], None]] = None,
-        tool_complete_callback: Optional[Callable[[str, int], None]] = None,
+        tool_complete_callback: Optional[Callable[[str], None]] = None,
         llm_text_callback: Optional[Callable[[str], None]] = None,
         permission_engine: Optional[PermissionEngine] = None,
         on_max_iterations_callback: Optional[Callable[[int, list], dict]] = None,
@@ -96,7 +96,7 @@ class Agentao:
             output_callback: Optional callback for streaming tool output.
                              Takes (tool_name, text_chunk).
             tool_complete_callback: Optional callback called after tool execution completes.
-                                    Takes (tool_name, returncode).
+                                    Takes (tool_name,).
             on_max_iterations_callback: Optional callback when max tool iterations is reached.
                                         Takes (max_iterations, pending_tool_calls) and returns
                                         dict with "action": "continue"|"stop"|"new_instruction"
@@ -305,11 +305,11 @@ class Agentao:
             "(servers, file watchers).\n"
             "- Respect cancellations: if a user cancels a tool call, do not retry it in the same turn. "
             "Ask if they prefer an alternative approach.\n"
-            "- Remembering facts: use save_memory only for user-specific facts or preferences "
-            "(e.g. preferred coding style, common project paths, personal aliases) "
-            "when the user explicitly asks or clearly states something that would help personalize "
-            "future interactions. Do NOT use it for general project context. "
-            "If unsure whether to save something, ask: 'Should I remember that for you?'\n\n"
+            "- Remembering facts: call save_memory when the user explicitly asks, or when the user "
+            "clearly states a durable preference or fact useful across sessions "
+            "(e.g. preferred coding style, common project paths, personal aliases). "
+            "Do NOT save ephemeral details or general project context. "
+            "If unsure, ask first: 'Should I remember that?'\n\n"
 
             "## Code Conventions\n"
             "- Follow the existing code style, conventions, and file structure of the project.\n"
@@ -339,14 +339,8 @@ class Agentao:
         Returns:
             System prompt string
         """
-        # Get current date and time
-        now = datetime.now()
-        current_datetime = now.strftime("%Y-%m-%d %H:%M:%S")
-        day_of_week = now.strftime("%A")
-
         agent_instructions = f"""You are Agentao, a helpful AI assistant with access to various tools and skills.
 
-Current Date and Time: {current_datetime} ({day_of_week})
 Current Working Directory: {Path.cwd()}
 
 Use tools proactively whenever they provide ground truth. If you need clarification, ask the user."""
@@ -375,7 +369,10 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                 skill_info = self.skill_manager.get_skill_info(skill_name)
                 if skill_info:
                     description = skill_info.get('description', 'No description available')
+                    when_to_use = skill_info.get('when_to_use', '')
                     prompt += f"• {skill_name}: {description}\n"
+                    if when_to_use:
+                        prompt += f"  Activate when: {when_to_use}\n"
 
             prompt += "\nWhen the user's request matches a skill's description, use the activate_skill tool before proceeding with the task."
 
@@ -422,7 +419,7 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                 prompt += f"- {icon} [{todo['status']}] {todo['content']}\n"
             prompt += "\nUpdate task statuses with todo_write as you complete each step."
 
-        # Inject all saved memories
+        # Inject all saved memories (omit section entirely when empty to save tokens)
         memories = self.memory_tool.get_all_memories()
         if memories:
             prompt += "\n\n=== Memories ===\n"
@@ -433,9 +430,6 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                     line += f" [tags: {', '.join(m['tags'])}]"
                 prompt += line + "\n"
             prompt += "\nWhen you learn new durable facts, call save_memory to preserve them."
-        else:
-            prompt += "\n\n=== Memories ===\n"
-            prompt += "No memories saved yet. Call save_memory when you learn durable facts about the user or project."
 
         return prompt
 
@@ -475,8 +469,15 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
         Returns:
             Assistant's response
         """
-        # Add user message
-        self.add_message("user", user_message)
+        # Prepend volatile context (date/time) as <system-reminder> so the system prompt
+        # itself stays stable and benefits from prompt cache across turns.
+        now = datetime.now()
+        system_reminder = (
+            f"<system-reminder>\n"
+            f"Current Date/Time: {now.strftime('%Y-%m-%d %H:%M:%S')} ({now.strftime('%A')})\n"
+            f"</system-reminder>\n"
+        )
+        self.add_message("user", system_reminder + user_message)
 
         # Build system prompt (injects all memories)
         system_prompt = self._build_system_prompt()

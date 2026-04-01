@@ -1,5 +1,6 @@
 """Tool execution pipeline for Agentao."""
 
+import json
 import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -31,7 +32,7 @@ class ToolRunner:
         confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]],
         step_callback: Optional[Callable[[Optional[str], Dict[str, Any]], None]],
         output_callback: Optional[Callable[[str, str], None]],
-        tool_complete_callback: Optional[Callable[[str, int], None]],
+        tool_complete_callback: Optional[Callable[[str], None]],  # Fix #2: was Callable[[str, int], None]
         logger,
     ):
         self._tools = tools
@@ -59,12 +60,10 @@ class ToolRunner:
             - tool_result_messages: List of {"role": "tool", ...} dicts to append to
               self.messages. Includes placeholder messages if doom-loop was triggered.
         """
-        import json
-
         result_messages: List[Dict[str, Any]] = []
 
         # --- Phase 1: Pre-process (sequential) ---
-        # Doom-loop detection + permission decisions; no I/O yet.
+        # Doom-loop detection + JSON parsing + permission decisions; no I/O yet.
         _plans: List[Dict[str, Any]] = []
         for tool_call in tool_calls:
             function_name = tool_call.function.name
@@ -96,8 +95,36 @@ class ToolRunner:
                     })
                 return True, result_messages
 
-            function_args = json.loads(function_args_raw)
-            tool = self._tools.get(function_name)
+            # Fix #3: guard against malformed JSON from the LLM
+            try:
+                function_args = json.loads(function_args_raw)
+            except json.JSONDecodeError as exc:
+                self._logger.warning(
+                    f"Tool '{function_name}' received invalid JSON arguments: {exc}"
+                )
+                result_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": function_name,
+                    "content": (
+                        f"Error: could not parse arguments for '{function_name}': {exc}. "
+                        f"Please retry with valid JSON."
+                    ),
+                })
+                continue
+
+            # Fix #4 is in ToolRegistry.get() — KeyError now includes available tools
+            try:
+                tool = self._tools.get(function_name)
+            except KeyError as exc:
+                self._logger.warning(str(exc))
+                result_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": function_name,
+                    "content": str(exc),
+                })
+                continue
 
             if self._permission_engine:
                 engine_decision = self._permission_engine.decide(function_name, function_args)
@@ -127,6 +154,9 @@ class ToolRunner:
                 "decision": raw_decision,
             })
 
+        if not _plans:
+            return False, result_messages
+
         # --- Phase 2: Confirmation (sequential, interactive) ---
         # All user-facing prompts happen here before any execution starts.
         for _plan in _plans:
@@ -149,8 +179,14 @@ class ToolRunner:
                     _plan["decision"] = PermissionDecision.ALLOW
 
         # --- Phase 3: Parallel execution ---
-        # Independent tools run concurrently; results collected by tool_call.id.
-        _tool_cb_lock = threading.Lock()
+        # Fix #1: per-tool-instance lock prevents concurrent calls to the same tool
+        # from corrupting shared state (e.g. output_callback).  Different tool
+        # instances still run in parallel.
+        _tool_locks: Dict[int, threading.Lock] = {}
+        for _p in _plans:
+            _tid = id(_p["tool"])
+            if _tid not in _tool_locks:
+                _tool_locks[_tid] = threading.Lock()
 
         def _execute_one(_plan: Dict[str, Any]) -> tuple:
             _fn = _plan["function_name"]
@@ -174,32 +210,40 @@ class ToolRunner:
                     f"The user declined to execute {_fn}."
                 )
             else:  # ALLOW
-                if self._output_callback and hasattr(_tool, 'output_callback'):
-                    with _tool_cb_lock:
+                # Acquire the per-tool lock to serialize concurrent calls to the
+                # same tool instance, protecting output_callback assignment.
+                with _tool_locks[id(_tool)]:
+                    if self._output_callback and hasattr(_tool, "output_callback"):
                         _tool.output_callback = (
                             lambda chunk, _name=_fn: self._output_callback(_name, chunk)
                         )
-                try:
-                    _result = _tool.execute(**_args)
-                except TaskComplete as _tc_exc:
-                    _result = _tc_exc.result
-                except Exception as _e:
-                    _result = f"Error executing {_fn}: {str(_e)}"
-                finally:
-                    if hasattr(_tool, 'output_callback'):
-                        with _tool_cb_lock:
+                    try:
+                        _result = _tool.execute(**_args)
+                    except TaskComplete as _tc_exc:
+                        _result = _tc_exc.result
+                    except Exception as _e:
+                        _result = f"Error executing {_fn}: {str(_e)}"
+                    finally:
+                        if hasattr(_tool, "output_callback"):
                             _tool.output_callback = None
-                    if self._tool_complete_callback:
-                        self._tool_complete_callback(_fn)
+                        # Fix #2: callback signature is (tool_name,) — no returncode
+                        if self._tool_complete_callback:
+                            self._tool_complete_callback(_fn)
 
             return _tc.id, _fn, _result
 
         _exec_results: Dict[str, tuple] = {}
-        with ThreadPoolExecutor(max_workers=8) as _executor:
-            _futures = {_executor.submit(_execute_one, p): p for p in _plans}
-            for _future in as_completed(_futures):
-                _call_id, _fn_name, _res = _future.result()
-                _exec_results[_call_id] = (_fn_name, _res)
+
+        # Fix #6: skip ThreadPoolExecutor overhead for the common single-tool case
+        if len(_plans) == 1:
+            _call_id, _fn_name, _res = _execute_one(_plans[0])
+            _exec_results[_call_id] = (_fn_name, _res)
+        else:
+            with ThreadPoolExecutor(max_workers=8) as _executor:
+                _futures = {_executor.submit(_execute_one, p): p for p in _plans}
+                for _future in as_completed(_futures):
+                    _call_id, _fn_name, _res = _future.result()
+                    _exec_results[_call_id] = (_fn_name, _res)
 
         # --- Phase 4: Append results in original order ---
         for _plan in _plans:

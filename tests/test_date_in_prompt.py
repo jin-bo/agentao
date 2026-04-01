@@ -1,114 +1,97 @@
-"""Test that current date is included in system prompt."""
+"""Test that current date is injected into user messages as <system-reminder>."""
 
+import re
 from datetime import datetime
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 
 
-def test_date_in_system_prompt():
-    """Test that system prompt includes current date information."""
-
-    # Mock the LLMClient
-    with patch('agentao.agent.LLMClient') as mock_llm_client:
-        mock_logger = Mock()
-        mock_llm_client.return_value.logger = mock_logger
-        mock_llm_client.return_value.model = "gpt-4"
-
+def _make_agent():
+    with patch('agentao.agent.LLMClient') as mock_llm_class:
+        mock_llm = Mock()
+        mock_llm.logger = Mock()
+        mock_llm.model = "gpt-4"
+        mock_llm_class.return_value = mock_llm
         from agentao.agent import Agentao
-
-        # Create agent
-        agent = Agentao()
-
-        # Get system prompt
-        system_prompt = agent._build_system_prompt()
-
-        # Check that it contains date information
-        assert "Current Date and Time:" in system_prompt, "System prompt should contain 'Current Date and Time:'"
-
-        # Check format - should contain year
-        now = datetime.now()
-        current_year = str(now.year)
-        assert current_year in system_prompt, f"System prompt should contain current year {current_year}"
-
-        # Check that day of week is present
-        day_of_week = now.strftime("%A")
-        assert day_of_week in system_prompt, f"System prompt should contain day of week: {day_of_week}"
-
-        print(f"✅ System prompt includes current date: {now.strftime('%Y-%m-%d %H:%M:%S')} ({day_of_week})")
-
-        # Print a snippet of the prompt to verify
-        lines = system_prompt.split('\n')
-        for i, line in enumerate(lines):
-            if "Current Date and Time:" in line:
-                print(f"✅ Date line found: {line}")
-                break
+        return Agentao()
 
 
-def test_date_format():
-    """Test that date is formatted correctly."""
+def test_date_not_in_system_prompt():
+    """Date should no longer be in the system prompt (moved to user message)."""
+    agent = _make_agent()
+    system_prompt = agent._build_system_prompt()
 
-    with patch('agentao.agent.LLMClient') as mock_llm_client:
-        mock_logger = Mock()
-        mock_llm_client.return_value.logger = mock_logger
-        mock_llm_client.return_value.model = "gpt-4"
+    assert "Current Date and Time:" not in system_prompt, (
+        "Date should NOT be in system prompt — it is now injected as <system-reminder> in user messages"
+    )
+    print("✅ Date correctly absent from system prompt")
 
-        from agentao.agent import Agentao
 
-        agent = Agentao()
-        system_prompt = agent._build_system_prompt()
+def test_date_injected_into_user_message():
+    """chat() should prepend <system-reminder> with date/time to the user message."""
+    agent = _make_agent()
 
-        # Check date format: YYYY-MM-DD HH:MM:SS
-        import re
-        date_pattern = r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'
-        assert re.search(date_pattern, system_prompt), "System prompt should contain date in format YYYY-MM-DD HH:MM:SS"
+    # Stub LLM to return a canned response without tool calls
+    fake_response = MagicMock()
+    fake_response.choices[0].message.tool_calls = None
+    fake_response.choices[0].message.content = "Hello!"
+    fake_response.choices[0].message.reasoning_content = None
+    agent.llm.chat = Mock(return_value=fake_response)
 
-        print("✅ Date format is correct (YYYY-MM-DD HH:MM:SS)")
+    agent.chat("Say hello")
+
+    # The first (and only) user message in history should contain system-reminder + date
+    user_msgs = [m for m in agent.messages if m["role"] == "user"]
+    assert user_msgs, "Should have at least one user message"
+    content = user_msgs[0]["content"]
+
+    assert "<system-reminder>" in content, "User message should contain <system-reminder>"
+    assert "Current Date/Time:" in content, "User message should contain 'Current Date/Time:'"
+    assert "Say hello" in content, "User message should still contain the original text"
+
+    # Verify date format
+    date_pattern = r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'
+    assert re.search(date_pattern, content), "Date should be in YYYY-MM-DD HH:MM:SS format"
+
+    now = datetime.now()
+    assert now.strftime("%A") in content, "Day of week should be present"
+    print("✅ Date correctly injected as <system-reminder> in user message")
 
 
 def test_date_with_project_instructions():
-    """Test that date is included even with project instructions."""
+    """Date is absent from system prompt even when project instructions are loaded."""
+    agent = _make_agent()
+    agent.project_instructions = "Use uv for packages."
 
-    with patch('agentao.agent.LLMClient') as mock_llm_client:
-        mock_logger = Mock()
-        mock_llm_client.return_value.logger = mock_logger
-        mock_llm_client.return_value.model = "gpt-4"
+    system_prompt = agent._build_system_prompt()
 
-        from agentao.agent import Agentao
-
-        # Create agent (should load CHATAGENT.md if it exists)
-        agent = Agentao()
-
-        # Get system prompt
-        system_prompt = agent._build_system_prompt()
-
-        # Check that date is present
-        assert "Current Date and Time:" in system_prompt, "Date should be present even with project instructions"
-
-        # Check if project instructions are loaded
-        if agent.project_instructions:
-            assert "=== Project Instructions ===" in system_prompt
-            print("✅ Date included with project instructions")
-        else:
-            print("✅ Date included without project instructions")
+    assert "Current Date and Time:" not in system_prompt, (
+        "Date should NOT be in system prompt even with project instructions"
+    )
+    assert "=== Project Instructions ===" in system_prompt
+    print("✅ Date absent from system prompt with project instructions")
 
 
 if __name__ == "__main__":
-    print("Testing date in system prompt...")
+    print("Testing date injection behaviour...")
     print()
 
-    try:
-        test_date_in_system_prompt()
-        print()
-        test_date_format()
-        print()
-        test_date_with_project_instructions()
-        print()
-        print("=" * 50)
-        print("✅ All tests passed!")
-    except AssertionError as e:
-        print(f"❌ Test failed: {e}")
-        exit(1)
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-        exit(1)
+    tests = [
+        test_date_not_in_system_prompt,
+        test_date_injected_into_user_message,
+        test_date_with_project_instructions,
+    ]
+    passed = 0
+    for t in tests:
+        try:
+            t()
+            passed += 1
+            print()
+        except AssertionError as e:
+            print(f"❌ {t.__name__}: {e}")
+        except Exception as e:
+            import traceback
+            print(f"❌ {t.__name__}: unexpected error")
+            traceback.print_exc()
+
+    print("=" * 50)
+    print(f"{'✅ All' if passed == len(tests) else f'❌ {passed}/{len(tests)}'} tests passed!")

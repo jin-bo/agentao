@@ -149,6 +149,9 @@ class SkillManager:
                 # Extract description from frontmatter
                 description = frontmatter.get("description", "")
 
+                # Extract when-to-use hint (model-facing activation guidance)
+                when_to_use = frontmatter.get("when-to-use", "")
+
                 # Extract first heading from body as title if available
                 title_match = re.search(r'^#\s+(.+)$', body_content, re.MULTILINE)
                 title = title_match.group(1) if title_match else skill_name
@@ -158,6 +161,7 @@ class SkillManager:
                     "name": skill_name,
                     "title": title,
                     "description": description,
+                    "when_to_use": when_to_use,
                     "path": str(skill_md_path),
                     "content": body_content[:500],  # Store first 500 chars as preview
                     "frontmatter": frontmatter,

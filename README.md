@@ -52,7 +52,7 @@ A disciplined agent that acts deliberately, not impulsively:
 - **Reliability principles** — system prompt enforces read-before-assert, discrepancy reporting, and fact/inference distinction on every turn
 - **Operational guidelines** — tone & style rules, shell command efficiency patterns, tool parallelism, non-interactive flags, and explain-before-act security rules
 - **Auto-loading of project instructions** from `AGENTAO.md` at startup
-- **Current date context** — system prompt includes current date and time
+- **Current date context** — injected as `<system-reminder>` into each user message rather than the system prompt, keeping the system prompt stable across turns for prompt cache efficiency
 - **Live thinking display** — shows LLM reasoning and tool calls in real time with Rule separators
 - **Streaming shell output** — shell command stdout displayed in real-time as it executes
 - **Complete logging** of all LLM interactions to `agentao.log`

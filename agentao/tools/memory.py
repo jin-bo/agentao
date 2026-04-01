@@ -34,9 +34,11 @@ class SaveMemoryTool(Tool):
     def description(self) -> str:
         return (
             "Save important information to long-term memory for future conversations. "
-            "Call this proactively when you learn durable facts about the user or project: "
-            "preferences, names, key decisions, recurring workflows. "
-            "Do NOT save ephemeral or session-specific details. "
+            "Call this when the user explicitly asks to remember something, OR when the user "
+            "clearly states a durable fact or preference that would be useful across sessions "
+            "(e.g. preferred language, coding style, recurring workflow). "
+            "If unsure whether something is worth saving, ask first: 'Should I remember that?' "
+            "Do NOT save ephemeral or session-specific details, or general project context. "
             "Use descriptive snake_case keys like 'user_preferred_language'."
         )
 

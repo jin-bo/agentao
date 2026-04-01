@@ -64,7 +64,8 @@ _SLASH_COMMANDS = [
     '/memory', '/memory clear', '/memory delete', '/memory list',
     '/memory search', '/memory tag', '/model', '/permission', '/provider', '/quit',
     '/reset-confirm', '/sessions', '/sessions delete', '/sessions delete all', '/sessions list', '/sessions resume',
-    '/skills', '/skills disable', '/skills enable', '/skills reload', '/status', '/stream', '/temperature',
+    '/skills', '/skills activate', '/skills deactivate',
+    '/skills disable', '/skills enable', '/skills reload', '/status', '/stream', '/temperature',
     '/todos', '/tools',
 ]
 
@@ -75,6 +76,8 @@ _SLASH_COMMAND_HINTS = {
     '/memory search': '<keyword>',
     '/memory delete': '<key>',
     '/memory tag': '<tag>',
+    '/skills activate': '<skill-name>',
+    '/skills deactivate': '<skill-name>',
     '/skills enable': '<skill-name>',
     '/skills disable': '<skill-name>',
     '/context limit': '<tokens>',
@@ -1202,7 +1205,30 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                             sub_parts = args.split(maxsplit=1)
                             sub_cmd = sub_parts[0]
                             sub_arg = sub_parts[1].strip() if len(sub_parts) > 1 else ""
-                            if sub_cmd == "disable":
+                            if sub_cmd == "activate":
+                                if not sub_arg:
+                                    console.print("[warning]Usage: /skills activate <skill_name>[/warning]")
+                                else:
+                                    result = self.agent.skill_manager.activate_skill(
+                                        sub_arg, "Manually activated via /skills activate"
+                                    )
+                                    if result.startswith("Error"):
+                                        console.print(f"\n[warning]{result}[/warning]\n")
+                                    else:
+                                        console.print(f"\n[success]Skill '{sub_arg}' activated.[/success]\n")
+                            elif sub_cmd == "deactivate":
+                                if not sub_arg:
+                                    console.print("[warning]Usage: /skills deactivate <skill_name>[/warning]")
+                                elif sub_arg not in self.agent.skill_manager.available_skills:
+                                    available = ", ".join(sorted(self.agent.skill_manager.list_available_skills()))
+                                    console.print(f"[warning]Unknown skill '{sub_arg}'. Available: {available}[/warning]")
+                                else:
+                                    deactivated = self.agent.skill_manager.deactivate_skill(sub_arg)
+                                    if deactivated:
+                                        console.print(f"\n[success]Skill '{sub_arg}' deactivated.[/success]\n")
+                                    else:
+                                        console.print(f"\n[info]Skill '{sub_arg}' is not currently active.[/info]\n")
+                            elif sub_cmd == "disable":
                                 if not sub_arg:
                                     console.print("[warning]Usage: /skills disable <skill_name>[/warning]")
                                 else:
@@ -1219,7 +1245,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                                 count = len(self.agent.skill_manager.list_available_skills())
                                 console.print(f"\n[success]Skills reloaded. {count} available.[/success]\n")
                             else:
-                                console.print(f"[warning]Unknown subcommand '{sub_cmd}'. Use: disable, enable, reload[/warning]")
+                                console.print(f"[warning]Unknown subcommand '{sub_cmd}'. Use: activate, deactivate, disable, enable, reload[/warning]")
                         continue
 
                     elif command == "memory":
