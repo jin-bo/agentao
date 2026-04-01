@@ -21,6 +21,7 @@ from .tools import (
     SaveMemoryTool,
     ActivateSkillTool,
     AskUserTool,
+    TodoWriteTool,
 )
 from .agents import AgentManager
 from .skills import SkillManager
@@ -104,6 +105,7 @@ class Agentao:
         self.llm = LLMClient(api_key=api_key, base_url=base_url, model=model)
         self.skill_manager = SkillManager()
         self.memory_tool = SaveMemoryTool()
+        self.todo_tool = TodoWriteTool()
         self.confirmation_callback = confirmation_callback
         self.step_callback = step_callback
         self.thinking_callback = thinking_callback
@@ -189,6 +191,7 @@ class Agentao:
             self.memory_tool,
             ActivateSkillTool(self.skill_manager),
             AskUserTool(ask_user_callback=self.ask_user_callback),
+            self.todo_tool,
         ]
 
         for tool in tools_to_register:
@@ -409,6 +412,16 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                 "Be specific and falsifiable. This reasoning is shown to the user."
             )
 
+        # Inject current task list if any todos exist
+        todos = self.todo_tool.get_todos()
+        if todos:
+            _icons = {"pending": "○", "in_progress": "◉", "completed": "✓"}
+            prompt += "\n\n=== Current Task List ===\n"
+            for todo in todos:
+                icon = _icons.get(todo["status"], "○")
+                prompt += f"- {icon} [{todo['status']}] {todo['content']}\n"
+            prompt += "\nUpdate task statuses with todo_write as you complete each step."
+
         # Inject all saved memories
         memories = self.memory_tool.get_all_memories()
         if memories:
@@ -447,9 +460,10 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
         self.messages.append({"role": role, "content": content})
 
     def clear_history(self):
-        """Clear conversation history and deactivate all skills."""
+        """Clear conversation history, deactivate all skills, and reset todos."""
         self.messages = []
         self.skill_manager.clear_active_skills()
+        self.todo_tool.clear()
 
     def chat(self, user_message: str, max_iterations: int = 100) -> str:
         """Process user message and generate response.
@@ -661,6 +675,10 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
         summary += f"Temperature: {self.llm.temperature}\n"
         summary += f"Active skills: {len(self.skill_manager.get_active_skills())}\n"
         summary += f"Saved memories: {memory_count}\n"
+        todos = self.todo_tool.get_todos()
+        if todos:
+            done = sum(1 for t in todos if t["status"] == "completed")
+            summary += f"Task list: {done}/{len(todos)} completed\n"
 
         # MCP server info
         if self.mcp_manager:

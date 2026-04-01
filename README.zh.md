@@ -105,6 +105,26 @@ drwxr-xr-x  5 user staff  160 Mar 24 10:00 .
 - **思考展示** — LLM 推理以暗淡斜体风格展示在 `─── Thinking ───` 分隔线下
 - **结构化推理** — 每组工具调用前，智能体打印其**行动**、**预期**和**若有偏差**的计划——可与实际工具结果核对的可证伪预测
 
+### ✅ 会话任务追踪
+
+对于多步骤任务，Agentao 维护一个实时任务清单，LLM 在执行过程中持续更新：
+
+```
+/todos
+
+Task List（2/4 已完成）:
+
+  ✓ 读取现有代码            completed
+  ✓ 设计新模块结构          completed
+  ◉ 编写新模块              in_progress
+  ○ 运行测试                pending
+```
+
+- **LLM 自主管理** — 处理复杂任务时，智能体调用 `todo_write` 创建清单，并在每步完成后更新状态（`pending` → `in_progress` → `completed`）
+- **始终可见** — 当前任务列表注入系统提示词，LLM 随时掌握自身进度
+- **会话级生命周期** — 执行 `/clear` 时自动清空；不持久化到磁盘（不同于记忆）
+- **`/status` 摘要** — 有任务时显示 `Task list: 2/4 completed`
+
 ### 🤖 子智能体系统
 
 Agentao 可将任务委托给独立的子智能体，每个子智能体运行自己的 LLM 循环，具有范围化的工具集和轮次限制。灵感来自 [Gemini CLI](https://github.com/google-gemini/gemini-cli) 的"智能体即工具"模式。
@@ -162,10 +182,14 @@ graph LR
 - `web_fetch` — 抓取并提取 URL 内容（需确认）；若已安装 [Crawl4AI](https://github.com/unclecode/crawl4ai) 则输出干净的 Markdown，否则回退为纯文本提取
 - `google_web_search` — 通过 DuckDuckGo 搜索（需确认）
 
+**任务追踪：**
+- `todo_write` — 更新会话任务清单（pending → in_progress → completed）；使用 `/todos` 查看
+
 **智能体与技能：**
 - `agent_codebase_investigator` — 将只读代码库探索委托给子智能体
 - `agent_generalist` — 将复杂多步任务委托给通用子智能体
 - `activate_skill` — 激活特定任务的专用技能
+- `ask_user` — 任务执行中途暂停并向用户提问
 
 **MCP 工具：**
 - 从已连接的 MCP 服务器动态发现
@@ -377,6 +401,7 @@ agentao -p "翻译成法语：早上好" | pbcopy
 | `/sessions resume <id>` | 恢复指定会话 |
 | `/sessions delete <id>` | 删除指定会话 |
 | `/sessions delete all` | 删除所有已保存的会话（需确认） |
+| `/todos` | 显示当前会话任务清单（带状态图标） |
 | `/tools` | 列出所有已注册工具及描述 |
 | `/tools <name>` | 显示指定工具的参数 schema |
 | `/exit` 或 `/quit` | 退出程序 |
@@ -465,6 +490,14 @@ Agentao 在执行潜在危险工具前需要用户确认：
 你：列出项目中所有文件     （LLM 可能使用 MCP 文件系统工具）
 ```
 
+**任务追踪：**
+```
+你：将日志模块重构为结构化输出
+     （LLM 自动创建任务清单并在执行中更新状态）
+/todos                          （随时查看当前任务列表）
+/status                         （显示"Task list: 3/5 completed"）
+```
+
 **使用技能：**
 ```
 你：激活 pdf 技能帮我合并 PDF 文件
@@ -536,7 +569,9 @@ agentao/
     │   ├── shell.py         # Shell 执行
     │   ├── web.py           # 抓取、搜索
     │   ├── memory.py        # 持久化记忆（6 个工具）
-    │   └── skill.py         # 技能激活
+    │   ├── skill.py         # 技能激活
+    │   ├── ask_user.py      # 任务中途向用户提问
+    │   └── todo.py          # 会话任务清单
     └── skills/
         └── manager.py       # 技能加载与管理
 ```

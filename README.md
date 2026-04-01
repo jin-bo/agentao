@@ -105,6 +105,26 @@ drwxr-xr-x  5 user staff  160 Mar 24 10:00 .
 - **Thinking display** — LLM reasoning is shown in dim italic style under a `─── Thinking ───` separator
 - **Structured reasoning** — before each set of tool calls the agent prints its **Action**, **Expectation**, and **If wrong** plan — a falsifiable prediction you can verify against the actual tool result
 
+### ✅ Session Task Tracking
+
+For multi-step tasks, Agentao maintains a live task checklist that the LLM updates as it works:
+
+```
+/todos
+
+Task List (2/4 completed):
+
+  ✓ Read existing code           completed
+  ✓ Design new module structure  completed
+  ◉ Write new module             in_progress
+  ○ Run tests                    pending
+```
+
+- **LLM-managed** — the agent calls `todo_write` at the start of complex tasks and updates statuses as each step completes (`pending` → `in_progress` → `completed`)
+- **Always visible** — current task list is injected into the system prompt so the LLM always knows its own progress
+- **Session-scoped** — cleared automatically on `/clear`; not persisted to disk (unlike memory)
+- **`/status` summary** — shows `Task list: 2/4 completed` when tasks are active
+
 ### 🤖 SubAgent System
 
 Agentao can delegate tasks to independent sub-agents, each running its own LLM loop with scoped tools and turn limits. Inspired by [Gemini CLI](https://github.com/google-gemini/gemini-cli)'s "agent as tool" pattern.
@@ -162,10 +182,14 @@ Add new skills by creating a directory with a `SKILL.md` file — no code change
 - `web_fetch` - Fetch and extract content from URLs (requires confirmation); uses [Crawl4AI](https://github.com/unclecode/crawl4ai) for clean Markdown output if installed, otherwise falls back to plain text extraction
 - `google_web_search` - Search the web via DuckDuckGo (requires confirmation)
 
+**Task Tracking:**
+- `todo_write` - Update the session task checklist (pending → in_progress → completed); use `/todos` to view
+
 **Agents & Skills:**
 - `agent_codebase_investigator` - Delegate read-only codebase exploration to a sub-agent
 - `agent_generalist` - Delegate complex multi-step tasks to a sub-agent
 - `activate_skill` - Activate specialized skills for specific tasks
+- `ask_user` - Pause and ask the user a clarifying question mid-task
 
 **MCP Tools:**
 - Dynamically discovered from connected MCP servers
@@ -385,6 +409,7 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/sessions resume <id>` | Resume a saved session |
 | `/sessions delete <id>` | Delete a specific session |
 | `/sessions delete all` | Delete all saved sessions (with confirmation) |
+| `/todos` | Show the current session task list with status icons |
 | `/tools` | List all registered tools with descriptions |
 | `/tools <name>` | Show parameter schema for a specific tool |
 | `/exit` or `/quit` | Exit the program |
@@ -473,6 +498,14 @@ You: Analyze the project structure and find all API endpoints
 You: List all files in the project     (LLM may use MCP filesystem tools)
 ```
 
+**Task tracking:**
+```
+You: Refactor the logging module to use structured output
+     (LLM creates a task list, updates statuses as it works)
+/todos                          (view current task list at any time)
+/status                         (shows "Task list: 3/5 completed")
+```
+
 **Using skills:**
 ```
 You: Activate the pdf skill to help me merge PDF files
@@ -547,7 +580,9 @@ agentao/
     │   ├── shell.py         # Shell execution
     │   ├── web.py           # Fetch, search
     │   ├── memory.py        # Persistent memory (6 tools)
-    │   └── skill.py         # Skill activation
+    │   ├── skill.py         # Skill activation
+    │   ├── ask_user.py      # Mid-task user clarification
+    │   └── todo.py          # Session task checklist
     └── skills/
         └── manager.py       # Skill loading and management
 ```

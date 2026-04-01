@@ -65,7 +65,7 @@ _SLASH_COMMANDS = [
     '/memory search', '/memory tag', '/model', '/permission', '/provider', '/quit',
     '/reset-confirm', '/sessions', '/sessions delete', '/sessions delete all', '/sessions list', '/sessions resume',
     '/skills', '/skills disable', '/skills enable', '/skills reload', '/status', '/stream', '/temperature',
-    '/tools',
+    '/todos', '/tools',
 ]
 
 
@@ -560,6 +560,33 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         # Show stream mode
         stream_state = "[green]ON[/green]" if self.stream_mode else "[yellow]OFF[/yellow]"
         console.print(f"[info]LLM Streaming:[/info] {stream_state}")
+
+        # Show task list summary if any todos exist
+        todos = self.agent.todo_tool.get_todos()
+        if todos:
+            done = sum(1 for t in todos if t["status"] == "completed")
+            console.print(f"[info]Task List:[/info] {done}/{len(todos)} completed (use /todos for details)")
+        console.print()
+
+    def handle_todos_command(self, args: str = "") -> None:
+        """Display the current task list."""
+        todos = self.agent.todo_tool.get_todos()
+        if not todos:
+            console.print(
+                "\n[info]No tasks.[/info] [dim]The LLM will create tasks automatically "
+                "when handling complex multi-step requests.[/dim]\n"
+            )
+            return
+
+        done = sum(1 for t in todos if t["status"] == "completed")
+        console.print(f"\n[info]Task List ({done}/{len(todos)} completed):[/info]\n")
+        _icons = {"pending": "○", "in_progress": "◉", "completed": "✓"}
+        _colors = {"pending": "white", "in_progress": "yellow", "completed": "green"}
+        for todo in todos:
+            status = todo["status"]
+            icon = _icons.get(status, "○")
+            color = _colors.get(status, "white")
+            console.print(f"  [{color}]{icon}[/{color}] {todo['content']} [dim]{status}[/dim]")
         console.print()
 
     def show_memories(self, subcommand: str = "", arg: str = ""):
@@ -1274,6 +1301,10 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
                     elif command == "temperature":
                         self.handle_temperature_command(args)
+                        continue
+
+                    elif command == "todos":
+                        self.handle_todos_command(args)
                         continue
 
                     elif command == "tools":
