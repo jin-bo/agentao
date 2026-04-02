@@ -64,8 +64,13 @@ agentao -p "列出这里所有的 Python 文件，并概括每个文件的作用
 Agentao 自动管理长对话，以保持在 LLM 上下文限制内：
 
 - **Token 估算** — 追踪近似 token 用量（字符数 ÷ 4）
-- **滑动窗口压缩** — 当上下文超过限制的 65% 时，将早期消息通过 LLM 摘要压缩为 `[Conversation Summary]` 块；分割点始终对齐到 `user` 轮次边界，确保工具调用序列不被截断
-- **工具结果截断** — 超过 80K 字符（约 20K token）的工具输出在加入消息前被截断，防止单个大响应（如读取大文件）占满整个上下文窗口
+- **两级压缩** — 用量达 55% 时触发*微压缩*，无需 LLM 调用，直接截断旧的超大工具结果；达 65% 时触发完整 LLM 摘要压缩，将早期消息替换为结构化的 `[Conversation Summary]` 块
+- **结构化 9 节摘要** — LLM 摘要生成涵盖：任务意图、关键技术概念、涉及文件、错误与修复、问题解决、用户消息、待办任务、当前状态和下一步行动——完整保留对话连贯性
+- **部分压缩** — 保留最近 20 条消息原文；分割点前进至下一个 `user` 轮次边界，确保工具调用序列不被截断
+- **边界标记 + 文件提示** — 压缩历史前置 `[Compact Boundary]` 标记和最近读取的文件列表，供智能体按需重读
+- **固定消息** — 以 `[PIN]` 开头的消息始终原文保留，不参与摘要
+- **熔断器** — 连续压缩失败 3 次后自动禁用压缩，避免无限重试循环（`/context` 显示失败次数）
+- **工具结果截断** — 超过 80K 字符（约 20K token）的工具输出在加入消息前被截断
 - **自动保存摘要** — 压缩摘要以 `conversation_summary` 标签保存至记忆，供未来参考
 - **优雅降级** — 压缩失败时保留原始消息不变
 - **三级溢出恢复** — 当 API 返回上下文过长错误时：① 强制压缩后重试；② 仍过长则仅保留最后 2 条消息后重试；③ 三级均失败才向用户报错
@@ -134,8 +139,22 @@ Agentao 可将任务委托给独立的子智能体，每个子智能体运行自
 - `generalist` — 通用智能体，可访问所有工具，适用于复杂多步任务
 
 **两种触发方式：**
-1. **LLM 驱动** — 父 LLM 通过 `agent_codebase_investigator` / `agent_generalist` 工具决定委托
-2. **用户驱动** — 使用 `/agent <name> <task>` 直接调用智能体
+1. **LLM 驱动** — 父 LLM 通过 `agent_codebase_investigator` / `agent_generalist` 工具决定委托；支持可选的 `run_in_background=true` 参数实现异步执行
+2. **用户驱动** — `/agent <name> <task>` 前台运行，`/agent bg <name> <task>` 后台运行，`/agent status` 查询结果
+
+**视觉边界** — 前台子智能体使用青色分隔线标记，与主智能体输出清晰区分：
+```
+──────────── ▶ [generalist]: 任务描述 ────────────
+  ⚙ [generalist 1/20] read_file (src/main.py)
+  ⚙ [generalist 2/20] run_shell_command (pytest)
+──────── ◀ [generalist] 3 turns · 8 tool calls · ~4,200 tokens · 12s ────
+```
+
+**确认隔离：**
+- 前台子智能体：确认对话框显示 `[agent_name] tool_name`，清楚标明是哪个子智能体在请求权限
+- 后台子智能体：所有工具自动允许（后台线程不发起交互提示，避免干扰终端输入）
+
+**父上下文注入** — 子智能体接收最近 10 条父消息作为上下文，以理解更宏观的任务背景
 
 **自定义智能体：** 创建 `.agentao/agents/my-agent.md`，包含 YAML frontmatter（`name`、`description`、`tools`、`max_turns`）— 启动时自动发现。
 
@@ -186,8 +205,9 @@ graph LR
 - `todo_write` — 更新会话任务清单（pending → in_progress → completed）；使用 `/todos` 查看
 
 **智能体与技能：**
-- `agent_codebase_investigator` — 将只读代码库探索委托给子智能体
-- `agent_generalist` — 将复杂多步任务委托给通用子智能体
+- `agent_codebase_investigator` — 将只读代码库探索委托给子智能体（支持 `run_in_background`）
+- `agent_generalist` — 将复杂多步任务委托给通用子智能体（支持 `run_in_background`）
+- `check_background_agent` — 按 ID 查询后台子智能体状态；传空字符串列出所有任务
 - `activate_skill` — 激活特定任务的专用技能
 - `ask_user` — 任务执行中途暂停并向用户提问
 
@@ -394,7 +414,11 @@ agentao -p "翻译成法语：早上好" | pbcopy
 | `/context` | 显示当前上下文窗口用量（token 数及百分比） |
 | `/context limit <n>` | 设置上下文窗口限制（如 `/context limit 100000`） |
 | `/agent` | 列出可用子智能体 |
-| `/agent <name> <task>` | 直接运行子智能体（如 `/agent codebase-investigator 查找所有 API 端点`） |
+| `/agent list` | 同 `/agent` |
+| `/agent <name> <task>` | 前台运行子智能体（带 ▶/◀ 视觉边界） |
+| `/agent bg <name> <task>` | 后台运行子智能体（立即返回 agent ID） |
+| `/agent status` | 查看所有后台任务（状态、耗时、任务预览） |
+| `/agent status <id>` | 查看指定后台任务的完整结果或错误 |
 | `/confirm` | 显示当前工具确认模式 |
 | `/confirm all` | 启用全允许模式（工具无需提示直接执行） |
 | `/confirm prompt` | 恢复提示模式（每次工具调用前询问） |
@@ -482,6 +506,10 @@ Agentao 在执行潜在危险工具前需要用户确认：
      （LLM 可能自动委托给 codebase-investigator）
 /agent codebase-investigator 查找项目中所有 TODO 注释
 /agent generalist 将日志模块重构为结构化输出
+
+/agent bg generalist 运行完整测试套件并总结失败项
+/agent status                  （查看所有后台任务）
+/agent status a1b2c3d4         （查看指定后台任务结果）
 ```
 
 **使用 MCP 工具：**

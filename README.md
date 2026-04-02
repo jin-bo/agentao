@@ -64,8 +64,13 @@ A disciplined agent that acts deliberately, not impulsively:
 Agentao automatically manages long conversations to stay within LLM context limits:
 
 - **Token estimation** — tracks approximate token usage (characters ÷ 4)
-- **Sliding window compression** — when context exceeds 65% of the limit, early messages are summarized by the LLM and replaced with a compact `[Conversation Summary]` block; the split point always aligns to a `user` turn boundary so tool call sequences are never split mid-flight
-- **Tool result truncation** — tool outputs larger than 80K characters (~20K tokens) are truncated before being added to messages, preventing a single large response (e.g. reading a big file) from consuming the entire context window
+- **Two-tier compression** — at 55% usage, *microcompaction* cheaply truncates old oversized tool results (no LLM call); at 65% usage, full LLM summarization kicks in and replaces early messages with a structured `[Conversation Summary]` block
+- **Structured 9-section summary** — LLM summarization produces a detailed summary covering: intent, key concepts, files touched, errors & fixes, problem solving, user messages, pending tasks, current work, and next step — preserving full continuity
+- **Partial compaction** — keeps the most recent 20 messages verbatim; split point advances to the next `user` boundary so tool call sequences are never split mid-flight
+- **Boundary marker + file hints** — compressed history is preceded by a `[Compact Boundary]` header and a list of recently-read files so the agent knows where to re-read for details
+- **Pinned messages** — messages starting with `[PIN]` are always kept verbatim and never summarized
+- **Circuit breaker** — after 3 consecutive compression failures, auto-compact is disabled to prevent infinite retry loops (`/context` shows failure count)
+- **Tool result truncation** — tool outputs larger than 80K characters (~20K tokens) are truncated before being added to messages
 - **Auto-save summaries** — compression summaries are saved to memory with tag `conversation_summary` for future reference
 - **Graceful degradation** — if compression fails, the original messages are preserved unchanged
 - **Three-tier overflow recovery** — if the API returns a context-too-long error: (1) force-compress and retry; (2) if still too long, keep only the last 2 messages and retry; (3) only surfaces an error to the user if all three tiers fail
@@ -134,8 +139,22 @@ Agentao can delegate tasks to independent sub-agents, each running its own LLM l
 - `generalist` — general-purpose agent with access to all tools for complex multi-step tasks
 
 **Two trigger paths:**
-1. **LLM-driven** — the parent LLM decides to delegate via `agent_codebase_investigator` / `agent_generalist` tools
-2. **User-driven** — use `/agent <name> <task>` to call an agent directly
+1. **LLM-driven** — the parent LLM decides to delegate via `agent_codebase_investigator` / `agent_generalist` tools; supports optional `run_in_background=true` for async fire-and-forget
+2. **User-driven** — use `/agent <name> <task>` to run a sub-agent directly, `/agent bg <name> <task>` for background, `/agent status` to poll results
+
+**Visual framing** — foreground sub-agents are wrapped with cyan rule separators so their output is clearly distinct from the main agent:
+```
+──────────── ▶ [generalist]: task description ────────────
+  ⚙ [generalist 1/20] read_file (src/main.py)
+  ⚙ [generalist 2/20] run_shell_command (pytest)
+──────── ◀ [generalist] 3 turns · 8 tool calls · ~4,200 tokens · 12s ────
+```
+
+**Confirmation isolation:**
+- Foreground sub-agents: confirmation dialog shows `[agent_name] tool_name` so you know which sub-agent is requesting permission
+- Background sub-agents: all tools auto-approved (no interactive prompts from background threads, which would corrupt the terminal)
+
+**Parent context injection** — sub-agents receive the last 10 parent messages as context so they understand the broader task
 
 **Custom agents:** create `.agentao/agents/my-agent.md` with YAML frontmatter (`name`, `description`, `tools`, `max_turns`) — auto-discovered at startup.
 
@@ -186,8 +205,9 @@ Add new skills by creating a directory with a `SKILL.md` file — no code change
 - `todo_write` - Update the session task checklist (pending → in_progress → completed); use `/todos` to view
 
 **Agents & Skills:**
-- `agent_codebase_investigator` - Delegate read-only codebase exploration to a sub-agent
-- `agent_generalist` - Delegate complex multi-step tasks to a sub-agent
+- `agent_codebase_investigator` - Delegate read-only codebase exploration to a sub-agent (supports `run_in_background`)
+- `agent_generalist` - Delegate complex multi-step tasks to a sub-agent (supports `run_in_background`)
+- `check_background_agent` - Poll the status of a background sub-agent by ID; pass empty string to list all
 - `activate_skill` - Activate specialized skills for specific tasks
 - `ask_user` - Pause and ask the user a clarifying question mid-task
 
@@ -401,7 +421,11 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/context` | Show current context window usage (tokens and %) |
 | `/context limit <n>` | Set context window limit (e.g., `/context limit 100000`) |
 | `/agent` | List available sub-agents |
-| `/agent <name> <task>` | Run a sub-agent directly (e.g., `/agent codebase-investigator find all API endpoints`) |
+| `/agent list` | Same as `/agent` |
+| `/agent <name> <task>` | Run a sub-agent in foreground (with ▶/◀ visual boundary) |
+| `/agent bg <name> <task>` | Run a sub-agent in background (returns agent ID immediately) |
+| `/agent status` | Show all background agent tasks (status, elapsed time, task preview) |
+| `/agent status <id>` | Show full result or error for a specific background agent |
 | `/confirm` | Show current tool confirmation mode |
 | `/confirm all` | Enable allow-all mode (tools execute without prompting) |
 | `/confirm prompt` | Restore prompt mode (ask before each tool) |
@@ -490,6 +514,10 @@ You: Analyze the project structure and find all API endpoints
      (LLM may auto-delegate to codebase-investigator)
 /agent codebase-investigator find all TODO comments in this project
 /agent generalist refactor the logging module to use structured output
+
+/agent bg generalist run the full test suite and summarize failures
+/agent status                  (check all background agents)
+/agent status a1b2c3d4         (get result of a specific background agent)
 ```
 
 **Using MCP tools:**
