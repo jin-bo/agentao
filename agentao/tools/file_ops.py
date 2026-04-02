@@ -10,6 +10,8 @@ from .base import Tool
 
 # Maximum lines to show without explicit limit
 MAX_LINES_DEFAULT = 2000
+# Maximum characters per line before truncating (prevents minified JS / base64 blobs)
+MAX_LINE_LENGTH = 2000
 # Bytes to check for binary detection
 BINARY_CHECK_SIZE = 8192
 
@@ -91,9 +93,13 @@ class ReadFileTool(Tool):
 
             # Build output with line numbers (cat -n format)
             output_lines = []
+            long_lines = 0
             for i in range(start_idx, end_idx):
                 line_num = i + 1
                 line = all_lines[i].rstrip("\n")
+                if len(line) > MAX_LINE_LENGTH:
+                    long_lines += 1
+                    line = line[:MAX_LINE_LENGTH] + f"[+{len(line) - MAX_LINE_LENGTH} chars]"
                 output_lines.append(f"{line_num:6d}\t{line}")
 
             header = f"File: {file_path} ({total_lines} lines)"
@@ -101,9 +107,14 @@ class ReadFileTool(Tool):
 
             result = header + "\n" + "\n".join(output_lines)
 
-            # Add truncation warning
+            # Add truncation warnings
             if limit == 0 and total_lines - start_idx > MAX_LINES_DEFAULT:
-                result += f"\n\n[Truncated: showing {MAX_LINES_DEFAULT} of {total_lines - start_idx} lines. Use offset/limit to read more.]"
+                result += (
+                    f"\n\n[Truncated: showing lines {start}–{end_line} of {total_lines} total. "
+                    f"Use offset={end_line + 1} to continue reading.]"
+                )
+            if long_lines:
+                result += f"\n[{long_lines} line(s) truncated to {MAX_LINE_LENGTH} chars per line]"
 
             return result
         except UnicodeDecodeError:

@@ -2,15 +2,60 @@
 
 import json
 import threading
+import time
+import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .permissions import PermissionDecision, PermissionEngine
 from .agents import TaskComplete
 from .tools import ToolRegistry
 
-MAX_TOOL_RESULT_CHARS = 80_000  # ~20K tokens per tool result
+# Tool outputs larger than this are saved to disk; a head+tail excerpt stays in context.
+TOOL_OUTPUT_SAVE_THRESHOLD = 40_000   # chars  (~10K tokens)
+# Fraction of the threshold kept from the beginning of the output (error context, args)
+TOOL_OUTPUT_HEAD_RATIO = 0.2          # 20% head, 80% tail (errors/results tend to be at end)
+# Directory for saved full outputs (relative to cwd)
+_TOOL_OUTPUT_DIR = Path(".agentao") / "tool-outputs"
+
+# Legacy hard cap for results that fail the file-save path (e.g. write errors)
+MAX_TOOL_RESULT_CHARS = 80_000
+
+
+def _save_and_truncate(content: str, tool_name: str, logger=None) -> str:
+    """Save large tool output to .agentao/tool-outputs/ and return a head+tail excerpt.
+
+    The full content is preserved on disk so the LLM can read_file it later.
+    In context only the first 20% and last 80% of TOOL_OUTPUT_SAVE_THRESHOLD chars are kept.
+    """
+    head_chars = int(TOOL_OUTPUT_SAVE_THRESHOLD * TOOL_OUTPUT_HEAD_RATIO)
+    tail_chars = TOOL_OUTPUT_SAVE_THRESHOLD - head_chars
+    total = len(content)
+    omitted = total - TOOL_OUTPUT_SAVE_THRESHOLD
+
+    # Attempt to persist full output
+    file_ref = ""
+    try:
+        _TOOL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        ts = int(time.time())
+        uid = uuid.uuid4().hex[:6]
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in tool_name)
+        out_file = _TOOL_OUTPUT_DIR / f"{safe_name}_{ts}_{uid}.txt"
+        out_file.write_text(content, encoding="utf-8")
+        file_ref = f"\nFull output saved to: {out_file}  (use read_file to access)"
+    except Exception as exc:
+        if logger:
+            logger.warning(f"Could not save tool output to file: {exc}")
+
+    return (
+        f"[Output truncated: {total:,} chars total, showing first {head_chars:,} "
+        f"and last {tail_chars:,} chars.{file_ref}]\n\n"
+        + content[:head_chars]
+        + f"\n\n[… {omitted:,} chars omitted …]\n\n"
+        + content[total - tail_chars :]
+    )
 
 
 class ToolRunner:
@@ -250,15 +295,23 @@ class ToolRunner:
             _tc = _plan["tool_call"]
             _fn_name, _result = _exec_results[_tc.id]
 
-            # Truncate oversized tool results to avoid context overflow
-            if isinstance(_result, str) and len(_result) > MAX_TOOL_RESULT_CHARS:
+            # Save large outputs to disk and put a head+tail excerpt in context.
+            # This prevents context explosion while keeping full data accessible.
+            if isinstance(_result, str) and len(_result) > TOOL_OUTPUT_SAVE_THRESHOLD:
+                self._logger.warning(
+                    f"Tool result from {_fn_name} is {len(_result):,} chars — "
+                    f"saving to file and truncating context copy"
+                )
+                _result = _save_and_truncate(_result, _fn_name, self._logger)
+            elif isinstance(_result, str) and len(_result) > MAX_TOOL_RESULT_CHARS:
+                # Fallback hard cap (should rarely be reached after file-save path)
                 _truncated = len(_result) - MAX_TOOL_RESULT_CHARS
                 _result = (
                     _result[:MAX_TOOL_RESULT_CHARS]
-                    + f"\n\n[... {_truncated} characters truncated to fit context window ...]"
+                    + f"\n\n[... {_truncated:,} characters truncated ...]"
                 )
                 self._logger.warning(
-                    f"Tool result from {_fn_name} truncated: {_truncated} chars removed"
+                    f"Tool result from {_fn_name} hard-truncated: {_truncated:,} chars removed"
                 )
 
             result_messages.append({

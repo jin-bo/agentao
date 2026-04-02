@@ -76,15 +76,24 @@ class ContextManager:
     # Microcompaction — cheap pass, no LLM call
     # -----------------------------------------------------------------------
 
+    # Fraction of MICROCOMPACT_TOOL_LIMIT kept from the start of old tool results.
+    # 20% head (command invoked, initial output) + 80% tail (errors, final results).
+    MICROCOMPACT_HEAD_RATIO = 0.2
+
     def microcompact_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Truncate large tool results without calling the LLM.
 
         Keeps the most recent MICROCOMPACT_PRESERVE_RECENT tool results at full
-        fidelity and truncates older ones to MICROCOMPACT_TOOL_LIMIT chars.
+        fidelity; older ones exceeding MICROCOMPACT_TOOL_LIMIT are shortened using
+        a head+tail strategy: 20% from the start (command context) and 80% from
+        the end (errors and final output tend to appear last).
         Returns a new list; does not mutate the original.
         """
         tool_indices = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
         preserve = set(tool_indices[-self.MICROCOMPACT_PRESERVE_RECENT:])
+
+        head_chars = int(self.MICROCOMPACT_TOOL_LIMIT * self.MICROCOMPACT_HEAD_RATIO)
+        tail_chars = self.MICROCOMPACT_TOOL_LIMIT - head_chars
 
         result = []
         mutated = 0
@@ -93,10 +102,11 @@ class ContextManager:
                 content = msg.get("content", "")
                 if isinstance(content, str) and len(content) > self.MICROCOMPACT_TOOL_LIMIT:
                     msg = dict(msg)
-                    trimmed = len(content) - self.MICROCOMPACT_TOOL_LIMIT
+                    omitted = len(content) - self.MICROCOMPACT_TOOL_LIMIT
                     msg["content"] = (
-                        content[:self.MICROCOMPACT_TOOL_LIMIT]
-                        + f"\n[… {trimmed} chars removed by microcompact]"
+                        content[:head_chars]
+                        + f"\n[… {omitted:,} chars omitted by microcompact …]\n"
+                        + content[len(content) - tail_chars:]
                     )
                     mutated += 1
             result.append(msg)
