@@ -24,6 +24,8 @@ from .tools import (
     TodoWriteTool,
 )
 from .agents import AgentManager
+from .agents.tools import drain_bg_notifications
+from .cancellation import CancellationToken, AgentCancelledError
 from .skills import SkillManager
 from .context_manager import ContextManager, is_context_too_long_error
 from .mcp import load_mcp_config, McpClientManager, McpTool
@@ -143,6 +145,9 @@ class Agentao:
         self.agent_manager = AgentManager()
         self._register_agent_tools()
 
+        # Per-turn cancellation token (set at the start of each chat() call)
+        self._current_token: Optional[CancellationToken] = None
+
         # Conversation history
         self.messages: List[Dict[str, Any]] = []
 
@@ -257,6 +262,7 @@ class Agentao:
             ask_user_callback=self.ask_user_callback,
             max_context_tokens=self.context_manager.max_tokens,
             parent_messages_getter=lambda: self.messages,
+            cancellation_token_getter=lambda: self._current_token,
         )
         for agent_tool in agent_tools:
             self.tools.register(agent_tool)
@@ -436,7 +442,8 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
 
         return prompt
 
-    def _llm_call(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Any:
+    def _llm_call(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]],
+                  cancellation_token: Optional[CancellationToken] = None) -> Any:
         """Dispatch to streaming or non-streaming LLM call based on llm_text_callback."""
         if self.llm_text_callback:
             return self.llm.chat_stream(
@@ -444,6 +451,7 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                 tools=tools,
                 max_tokens=self.llm.max_tokens,
                 on_text_chunk=self.llm_text_callback,
+                cancellation_token=cancellation_token,
             )
         return self.llm.chat(messages=messages, tools=tools, max_tokens=self.llm.max_tokens)
 
@@ -462,16 +470,37 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
         self.skill_manager.clear_active_skills()
         self.todo_tool.clear()
 
-    def chat(self, user_message: str, max_iterations: int = 100) -> str:
+    def chat(self, user_message: str, max_iterations: int = 100,
+             cancellation_token: Optional[CancellationToken] = None) -> str:
         """Process user message and generate response.
 
         Args:
             user_message: User's message
             max_iterations: Maximum number of tool call iterations to prevent infinite loops
+            cancellation_token: Optional token to cancel this chat() call. If not provided,
+                                 a fresh token is created. Pass a shared token to propagate
+                                 cancellation from a parent agent (Gemini CLI pattern).
 
         Returns:
             Assistant's response
         """
+        token = cancellation_token or CancellationToken()
+        self._current_token = token
+        try:
+            return self._chat_inner(user_message, max_iterations, token)
+        except KeyboardInterrupt:
+            token.cancel("user-cancel")
+            self.messages.append({"role": "assistant", "content": "[Interrupted]"})
+            return "[Interrupted by user]"
+        except AgentCancelledError as e:
+            self.messages.append({"role": "assistant", "content": f"[Cancelled: {e.reason}]"})
+            return f"[Cancelled: {e.reason}]"
+        finally:
+            self._current_token = None
+
+    def _chat_inner(self, user_message: str, max_iterations: int,
+                    token: CancellationToken) -> str:
+        """Inner chat loop — called by chat(). Raises AgentCancelledError on cancellation."""
         # Prepend volatile context (date/time) as <system-reminder> so the system prompt
         # itself stays stable and benefits from prompt cache across turns.
         now = datetime.now()
@@ -550,16 +579,42 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                 ] + self.messages
                 self.llm.logger.info(f"Context compressed to {len(self.messages)} messages")
 
+            # Inject background-agent completion notifications so the LLM is
+            # automatically informed without having to poll check_background_agent.
+            _bg_notes = drain_bg_notifications()
+            if _bg_notes:
+                note_content = "\n\n".join(_bg_notes)
+                self.messages.append({
+                    "role": "user",
+                    "content": (
+                        f"<system-reminder>\n"
+                        f"Background agent update:\n{note_content}\n"
+                        f"</system-reminder>"
+                    ),
+                })
+                messages_with_system = [
+                    {"role": "system", "content": system_prompt}
+                ] + self.messages
+
+            # Check cancellation before each LLM call (e.g. Ctrl+C fired during
+            # tool execution of the previous iteration).
+            token.check()
+
             # Reset step display before each LLM call
             if self.step_callback:
                 self.step_callback(None, {})
 
             # Call LLM — catch context-overflow errors and force-compress once before giving up
             try:
-                response = self._llm_call(messages_with_system, tools)
+                response = self._llm_call(messages_with_system, tools, token)
             except Exception as e:
                 if not is_context_too_long_error(e):
-                    raise
+                    # Non-context errors (content filter, rate limit, streaming error, etc.):
+                    # log and return a clean inline error so conversation state stays valid.
+                    err_msg = f"[LLM API error: {e}]"
+                    self.llm.logger.error(f"LLM call failed: {e}")
+                    self.messages.append({"role": "assistant", "content": err_msg})
+                    return err_msg
                 self.llm.logger.warning(f"Context overflow from API, forcing compression: {e}")
                 self.messages = self.context_manager.compress_messages(self.messages)
                 system_prompt = self._build_system_prompt()
@@ -567,7 +622,7 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                     {"role": "system", "content": system_prompt}
                 ] + self.messages
                 try:
-                    response = self._llm_call(messages_with_system, tools)
+                    response = self._llm_call(messages_with_system, tools, token)
                 except Exception as e2:
                     if is_context_too_long_error(e2):
                         # System prompt alone may be too large; keep only the last 2 messages
@@ -576,9 +631,18 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                         messages_with_system = [
                             {"role": "system", "content": system_prompt}
                         ] + self.messages
-                        response = self._llm_call(messages_with_system, tools)
+                        try:
+                            response = self._llm_call(messages_with_system, tools, token)
+                        except Exception as e3:
+                            err_msg = f"[LLM API error: {e3}]"
+                            self.llm.logger.error(f"LLM call failed after compression: {e3}")
+                            self.messages.append({"role": "assistant", "content": err_msg})
+                            return err_msg
                     else:
-                        raise
+                        err_msg = f"[LLM API error: {e2}]"
+                        self.llm.logger.error(f"LLM call failed after compression: {e2}")
+                        self.messages.append({"role": "assistant", "content": err_msg})
+                        return err_msg
 
             # Process response
             assistant_message = response.choices[0].message
@@ -622,11 +686,14 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
 
                 # Execute tool calls via ToolRunner (4-phase pipeline).
                 doom_triggered, tool_results = self.tool_runner.execute(
-                    assistant_message.tool_calls
+                    assistant_message.tool_calls,
+                    cancellation_token=token,
                 )
                 self.messages.extend(tool_results)
                 if doom_triggered:
                     break
+                if token.is_cancelled:
+                    raise AgentCancelledError(token.reason)
 
                 # Update messages for next iteration.
                 # Only rebuild system prompt if skills or memories changed (dirty flag).

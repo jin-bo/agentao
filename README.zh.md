@@ -156,6 +156,10 @@ Agentao 可将任务委托给独立的子智能体，每个子智能体运行自
 
 **父上下文注入** — 子智能体接收最近 10 条父消息作为上下文，以理解更宏观的任务背景
 
+**取消传播** — 按下 Ctrl+C 会干净地停止当前智能体及正在进行的前台子智能体（二者共享同一 `CancellationToken`）。后台智能体不受影响，会独立运行至完成。
+
+**后台完成推送** — 后台智能体完成时，父 LLM 会在下一轮开始时通过 `<system-reminder>` 消息自动收到通知，无需主动轮询 `check_background_agent`。
+
 **自定义智能体：** 创建 `.agentao/agents/my-agent.md`，包含 YAML frontmatter（`name`、`description`、`tools`、`max_turns`）— 启动时自动发现。
 
 ### 🔌 MCP（模型上下文协议）支持

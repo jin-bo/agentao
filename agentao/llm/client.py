@@ -367,6 +367,7 @@ class LLMClient:
         tools: Optional[List[Dict[str, Any]]] = None,
         max_tokens: Optional[int] = None,
         on_text_chunk: Optional[Any] = None,
+        cancellation_token: Optional[Any] = None,
     ) -> Any:
         """Streaming variant of chat(). Calls on_text_chunk(chunk) for each text delta.
 
@@ -426,6 +427,8 @@ class LLMClient:
             response_model = self.model
 
             for chunk in stream:
+                if cancellation_token and cancellation_token.is_cancelled:
+                    break
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]

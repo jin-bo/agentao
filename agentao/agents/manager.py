@@ -91,6 +91,7 @@ class AgentManager:
         ask_user_callback: Optional[Callable] = None,
         max_context_tokens: Optional[int] = None,
         parent_messages_getter: Optional[Callable] = None,
+        cancellation_token_getter: Optional[Callable] = None,
     ) -> List[Tool]:
         """Create an AgentToolWrapper for each agent definition plus CheckBackgroundAgentTool."""
         wrappers = [
@@ -105,6 +106,7 @@ class AgentManager:
                 ask_user_callback=ask_user_callback,
                 max_context_tokens=max_context_tokens,
                 parent_messages_getter=parent_messages_getter,
+                cancellation_token_getter=cancellation_token_getter,
             )
             for defn in self.definitions.values()
         ]

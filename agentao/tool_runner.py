@@ -93,7 +93,7 @@ class ToolRunner:
         """Reset doom-loop counter. Call at the start of each chat() invocation."""
         self._doom_counter.clear()
 
-    def execute(self, tool_calls) -> Tuple[bool, List[Dict[str, Any]]]:
+    def execute(self, tool_calls, cancellation_token=None) -> Tuple[bool, List[Dict[str, Any]]]:
         """Run the 4-phase tool execution pipeline.
 
         Args:
@@ -255,6 +255,16 @@ class ToolRunner:
                     f"The user declined to execute {_fn}."
                 )
             else:  # ALLOW
+                # Propagate cancellation token to AgentToolWrapper so it can pass
+                # it down to nested sub-agent chat() calls.
+                if cancellation_token and hasattr(_tool, "_cancellation_token"):
+                    _tool._cancellation_token = cancellation_token
+
+                # Pre-execution cancellation check (e.g. Ctrl+C fired while
+                # other parallel tools were executing).
+                if cancellation_token and cancellation_token.is_cancelled:
+                    return _tc.id, _fn, f"[Operation Cancelled] {cancellation_token.reason}"
+
                 # Acquire the per-tool lock to serialize concurrent calls to the
                 # same tool instance, protecting output_callback assignment.
                 with _tool_locks[id(_tool)]:

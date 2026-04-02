@@ -280,7 +280,7 @@ class AgentaoCLI:
             tool_name: Name of the tool being called, or None to reset
             tool_args: Arguments passed to the tool
         """
-        from .agents.tools import AgentToolWrapper
+        from .agents.tools import AgentToolWrapper, SubagentProgress
 
         if tool_name is None:
             # Reset to thinking state
@@ -291,8 +291,11 @@ class AgentaoCLI:
         if tool_name == AgentToolWrapper._AGENT_START:
             if self.current_status:
                 self.current_status.stop()
-            name = tool_args.get("name", "agent")
-            task = tool_args.get("task", "")
+            if isinstance(tool_args, SubagentProgress):
+                name, task = tool_args.agent_name, tool_args.task
+            else:
+                name = tool_args.get("name", "agent")
+                task = tool_args.get("task", "")
             task_preview = f": [dim]{task}[/dim]" if task else ""
             console.rule(f"[bold cyan]▶ [{name}]{task_preview}[/bold cyan]", style="cyan")
             if self.current_status:
@@ -303,11 +306,18 @@ class AgentaoCLI:
         if tool_name == AgentToolWrapper._AGENT_END:
             if self.current_status:
                 self.current_status.stop()
-            name = tool_args.get("name", "agent")
-            turns = tool_args.get("turns", 0)
-            tool_calls = tool_args.get("tool_calls", 0)
-            tokens = tool_args.get("tokens", 0)
-            ms = tool_args.get("duration_ms", 0)
+            if isinstance(tool_args, SubagentProgress):
+                name = tool_args.agent_name
+                turns = tool_args.turns
+                tool_calls = tool_args.tool_calls
+                tokens = tool_args.tokens
+                ms = tool_args.duration_ms
+            else:
+                name = tool_args.get("name", "agent")
+                turns = tool_args.get("turns", 0)
+                tool_calls = tool_args.get("tool_calls", 0)
+                tokens = tool_args.get("tokens", 0)
+                ms = tool_args.get("duration_ms", 0)
             console.rule(
                 f"[bold cyan]◀ [{name}] {turns} turns · {tool_calls} tool calls"
                 f" · ~{tokens:,} tokens · {ms}ms[/bold cyan]",
@@ -1497,8 +1507,16 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 self._llm_streamed = False
                 self._streamed_buffer = ""
                 self.current_status = console.status("[bold yellow]Thinking...", spinner="dots")
-                with self.current_status:
+                self.current_status.start()
+                try:
                     response = self.agent.chat(user_input)
+                finally:
+                    # Explicitly stop the spinner — Rich's Status.__exit__ can lose
+                    # track of the live display when start()/stop() are called manually
+                    # inside the block (e.g. by on_tool_step for tool/agent display).
+                    if self.current_status:
+                        self.current_status.stop()
+                    self.current_status = None
 
                 # Render response based on markdown_mode setting
                 console.print()
@@ -1510,6 +1528,9 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 self._streamed_buffer = ""
 
             except KeyboardInterrupt:
+                if self.current_status:
+                    self.current_status.stop()
+                    self.current_status = None
                 console.print("\n\n[warning]Interrupted. Type '/exit' to quit.[/warning]")
                 continue
 

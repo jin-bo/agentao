@@ -4,9 +4,34 @@ import os
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..tools.base import Tool, ToolRegistry
+
+
+# ---------------------------------------------------------------------------
+# SubagentProgress — structured sub-agent lifecycle event
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SubagentProgress:
+    """Structured sub-agent lifecycle event, passed via step_callback.
+
+    Replaces plain-text sentinel strings (_AGENT_START / _AGENT_END).
+    The step_callback receives (sentinel_name, SubagentProgress) where
+    sentinel_name is AgentToolWrapper._AGENT_START or _AGENT_END.
+    """
+    agent_name: str
+    state: str          # "running" | "completed" | "error" | "cancelled"
+    task: str = ""
+    max_turns: int = 0
+    turns: int = 0
+    tool_calls: int = 0
+    tokens: int = 0
+    duration_ms: int = 0
+    result: Optional[str] = None
+    error: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +83,24 @@ class CompleteTaskTool(Tool):
 _bg_tasks: Dict[str, Dict[str, Any]] = {}   # agent_id → task record
 _bg_lock = threading.Lock()
 
+# Completion notification queue: background agents push here when done;
+# the parent agent drains this before each LLM call.
+_bg_notifications: List[str] = []
+_bg_notify_lock = threading.Lock()
+
+
+def _push_bg_notification(msg: str) -> None:
+    with _bg_notify_lock:
+        _bg_notifications.append(msg)
+
+
+def drain_bg_notifications() -> List[str]:
+    """Drain and return all pending background-agent completion notifications."""
+    with _bg_notify_lock:
+        msgs = list(_bg_notifications)
+        _bg_notifications.clear()
+        return msgs
+
 
 def _register_bg_task(agent_id: str, agent_name: str, task_summary: str) -> None:
     with _bg_lock:
@@ -74,6 +117,7 @@ def _register_bg_task(agent_id: str, agent_name: str, task_summary: str) -> None
 
 def _update_bg_task(agent_id: str, *, status: str, result: Optional[str] = None,
                     error: Optional[str] = None) -> None:
+    agent_name: Optional[str] = None
     with _bg_lock:
         rec = _bg_tasks.get(agent_id)
         if rec:
@@ -81,6 +125,21 @@ def _update_bg_task(agent_id: str, *, status: str, result: Optional[str] = None,
             rec["result"] = result
             rec["error"] = error
             rec["finished_at"] = time.time()
+            agent_name = rec["agent_name"]
+
+    if agent_name is None:
+        return
+
+    # Push completion notification outside the lock to avoid lock ordering issues.
+    if status == "completed" and result is not None:
+        preview = result[:300] + "…" if len(result) > 300 else result
+        _push_bg_notification(
+            f"Background agent '{agent_name}' (ID: {agent_id}) completed.\n{preview}"
+        )
+    elif status == "failed":
+        _push_bg_notification(
+            f"Background agent '{agent_name}' (ID: {agent_id}) failed: {error}"
+        )
 
 
 def get_bg_task(agent_id: str) -> Optional[Dict[str, Any]]:
@@ -186,6 +245,7 @@ class AgentToolWrapper(Tool):
         ask_user_callback: Optional[Callable] = None,
         max_context_tokens: Optional[int] = None,
         parent_messages_getter: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+        cancellation_token_getter: Optional[Callable] = None,
     ):
         self._definition = definition
         self._all_tools = all_tools
@@ -197,6 +257,9 @@ class AgentToolWrapper(Tool):
         self._ask_user_callback = ask_user_callback
         self._max_context_tokens = max_context_tokens
         self._parent_messages_getter = parent_messages_getter
+        self._cancellation_token_getter = cancellation_token_getter
+        # Set by ToolRunner just before execute() to propagate the per-turn token
+        self._cancellation_token: Optional[Any] = None
 
     @property
     def name(self) -> str:
@@ -239,6 +302,14 @@ class AgentToolWrapper(Tool):
     def execute(self, task: str, run_in_background: bool = False) -> str:
         parent_context = self._build_parent_context()
 
+        # Resolve the current cancellation token: prefer the one injected by
+        # ToolRunner (set just before this call), fall back to the getter.
+        token = self._cancellation_token or (
+            self._cancellation_token_getter() if self._cancellation_token_getter else None
+        )
+        # Reset per-call injected token so it doesn't linger across calls.
+        self._cancellation_token = None
+
         if run_in_background:
             return self._launch_background(task, parent_context)
 
@@ -249,23 +320,26 @@ class AgentToolWrapper(Tool):
         if self._step_callback:
             self._step_callback(
                 self._AGENT_START,
-                {"name": agent_name, "task": task[:80]},
+                SubagentProgress(agent_name=agent_name, state="running",
+                                 task=task[:80], max_turns=max_turns),
             )
 
-        result, stats = self._run_sync(task, parent_context)
+        result, stats = self._run_sync(task, parent_context, cancellation_token=token)
 
         # Signal sub-agent end to the CLI
         if self._step_callback:
             self._step_callback(
                 self._AGENT_END,
-                {
-                    "name": agent_name,
-                    "turns": stats["turns"],
-                    "tool_calls": stats["tool_calls"],
-                    "tokens": stats["tokens"],
-                    "duration_ms": stats["duration_ms"],
-                    "max_turns": max_turns,
-                },
+                SubagentProgress(
+                    agent_name=agent_name,
+                    state="completed",
+                    task=task[:80],
+                    max_turns=max_turns,
+                    turns=stats["turns"],
+                    tool_calls=stats["tool_calls"],
+                    tokens=stats["tokens"],
+                    duration_ms=stats["duration_ms"],
+                ),
             )
 
         return self._format_result(result, stats)
@@ -320,7 +394,8 @@ class AgentToolWrapper(Tool):
     # ------------------------------------------------------------------
 
     def _run_sync(
-        self, task: str, parent_context: str = "", suppress_output: bool = False
+        self, task: str, parent_context: str = "", suppress_output: bool = False,
+        cancellation_token: Optional[Any] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Create and run a sub-agent. Returns (result, stats).
 
@@ -401,7 +476,14 @@ class AgentToolWrapper(Tool):
 
         t0 = time.monotonic()
         try:
-            result = sub_agent.chat(full_task, max_iterations=max_turns)
+            # Foreground sub-agents share the parent's cancellation token so
+            # Ctrl+C propagates into nested chat() loops (Gemini CLI pattern).
+            # Background agents always receive None (fire-and-forget).
+            result = sub_agent.chat(
+                full_task,
+                max_iterations=max_turns,
+                cancellation_token=None if suppress_output else cancellation_token,
+            )
         except TaskComplete as tc:
             result = tc.result
 

@@ -154,7 +154,11 @@ Agentao can delegate tasks to independent sub-agents, each running its own LLM l
 - Foreground sub-agents: confirmation dialog shows `[agent_name] tool_name` so you know which sub-agent is requesting permission
 - Background sub-agents: all tools auto-approved (no interactive prompts from background threads, which would corrupt the terminal)
 
-**Parent context injection** — sub-agents receive the last 10 parent messages as context so they understand the broader task
+**Cancellation propagation** — pressing Ctrl+C cleanly stops the current agent and any foreground sub-agent in progress (they share the same `CancellationToken`). Background agents are unaffected — they run to completion independently.
+
+**Background completion push** — when a background agent finishes, the parent LLM is automatically notified at the start of the next turn via a `<system-reminder>` message, without needing to poll `check_background_agent`.
+
+**Parent context injection** — sub-agents receive the last 10 parent messages as context so they understand the broader task.
 
 **Custom agents:** create `.agentao/agents/my-agent.md` with YAML frontmatter (`name`, `description`, `tools`, `max_turns`) — auto-discovered at startup.
 
