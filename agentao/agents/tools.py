@@ -360,14 +360,26 @@ class AgentToolWrapper(Tool):
         )
 
         max_turns = self._definition.get("max_turns", 15)
+        agent_name = self._definition["name"]
         step_cb = None if suppress_output else self._make_prefixed_step_callback(max_turns)
+
+        # Background agents: pass None so tool_runner auto-approves (no stdin reads
+        # from background threads, which would corrupt the terminal raw mode).
+        # Foreground agents: wrap the callback to prepend "[agent_name]" to the
+        # tool_name so the user knows which sub-agent is requesting permission.
+        if suppress_output or not self._confirmation_callback:
+            confirm_cb = None
+        else:
+            _parent_cb = self._confirmation_callback
+            def confirm_cb(tool_name: str, tool_desc: str, tool_args: dict) -> bool:
+                return _parent_cb(f"[{agent_name}] {tool_name}", tool_desc, tool_args)
 
         sub_agent = Agentao(
             api_key=api_key,
             base_url=base_url,
             model=model_name,
             temperature=temperature,
-            confirmation_callback=self._confirmation_callback,
+            confirmation_callback=confirm_cb,
             step_callback=step_cb,
             output_callback=None if suppress_output else self._output_callback,
             tool_complete_callback=None if suppress_output else self._tool_complete_callback,
