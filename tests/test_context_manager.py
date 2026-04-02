@@ -146,8 +146,11 @@ def test_compress_messages_prepends_summary_system_msg():
         original = _make_messages(20)
         compressed = cm.compress_messages(original)
 
+        # compressed[0] is the compact boundary marker; [1] is the summary
         assert compressed[0]["role"] == "system"
-        assert "[Conversation Summary]" in compressed[0]["content"]
+        assert "[Compact Boundary" in compressed[0]["content"]
+        assert compressed[1]["role"] == "system"
+        assert "[Conversation Summary]" in compressed[1]["content"]
     finally:
         Path(tmp).unlink(missing_ok=True)
 

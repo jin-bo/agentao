@@ -531,11 +531,18 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
             iteration += 1
             self.llm.logger.info(f"LLM iteration {iteration}/{max_iterations}")
 
-            # Compress if the full message list (including system prompt) is too large.
+            # Microcompact (55-65%): cheaply strip large tool results, no LLM call.
+            if self.context_manager.needs_microcompaction(messages_with_system):
+                self.messages = self.context_manager.microcompact_messages(self.messages)
+                messages_with_system = [
+                    {"role": "system", "content": system_prompt}
+                ] + self.messages
+
+            # Full compress (>= 65%): LLM summarization of early messages.
             # Check happens every iteration so tool results that bloat context are caught.
             if self.context_manager.needs_compression(messages_with_system):
                 self.llm.logger.info("Context compression triggered inside loop")
-                self.messages = self.context_manager.compress_messages(self.messages)
+                self.messages = self.context_manager.compress_messages(self.messages, is_auto=True)
                 system_prompt = self._build_system_prompt()
                 messages_with_system = [
                     {"role": "system", "content": system_prompt}

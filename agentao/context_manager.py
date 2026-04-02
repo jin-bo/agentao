@@ -1,5 +1,7 @@
 """Context window management: compression, summarization, and memory recall."""
 
+import json
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -8,8 +10,12 @@ class ContextManager:
     """Manages context window size, compression, and memory recall."""
 
     DEFAULT_MAX_TOKENS = 200_000
-    COMPRESSION_THRESHOLD = 0.65  # Compress when exceeding 65% of max_tokens
-    KEEP_RECENT_RATIO = 0.60      # Keep the most recent 60% of messages
+    COMPRESSION_THRESHOLD = 0.65    # Full LLM compression at 65%
+    MICROCOMPACT_THRESHOLD = 0.55   # Cheap tool-result clearing at 55%
+    KEEP_RECENT_MESSAGES = 20       # Hard cap on verbatim-kept messages
+    CIRCUIT_BREAKER_LIMIT = 3       # Stop auto-compact after N consecutive failures
+    MICROCOMPACT_TOOL_LIMIT = 3_000 # Max chars kept from any old tool result in microcompact
+    MICROCOMPACT_PRESERVE_RECENT = 5  # Keep the most recent N tool results at full fidelity
 
     def __init__(self, llm_client, memory_tool, max_tokens: int = DEFAULT_MAX_TOKENS):
         """Initialize ContextManager.
@@ -23,25 +29,21 @@ class ContextManager:
         self.memory_tool = memory_tool
         self.max_tokens = max_tokens
 
+        # Circuit breaker: stop auto-compact after too many consecutive failures
+        self._consecutive_compact_failures: int = 0
+
+        # Stats from the last completed compaction (surfaced via get_usage_stats)
+        self._last_compact_stats: Optional[Dict[str, Any]] = None
+
+    # -----------------------------------------------------------------------
+    # Token estimation
+    # -----------------------------------------------------------------------
+
     def estimate_tokens(self, messages: List[Dict[str, Any]]) -> int:
-        """Estimate token count for a list of messages.
-
-        Uses character count / 4 as a rough approximation (~4 chars per token).
-        Handles str content, list content (multimodal), and tool_calls dicts.
-
-        Args:
-            messages: List of message dicts
-
-        Returns:
-            Estimated token count
-        """
-        total_chars = 0
-        for msg in messages:
-            total_chars += self._content_chars(msg)
-        return total_chars // 4
+        """Estimate token count for a list of messages (chars / 4)."""
+        return sum(self._content_chars(m) for m in messages) // 4
 
     def _content_chars(self, msg: Dict[str, Any]) -> int:
-        """Count characters in a message."""
         chars = 0
         content = msg.get("content", "")
         if isinstance(content, str):
@@ -54,48 +56,122 @@ class ContextManager:
             chars += len(str(msg["tool_calls"]))
         return chars
 
+    # -----------------------------------------------------------------------
+    # Threshold checks
+    # -----------------------------------------------------------------------
+
     def needs_compression(self, messages: List[Dict[str, Any]]) -> bool:
-        """Check if conversation needs compression.
-
-        Args:
-            messages: Current conversation messages
-
-        Returns:
-            True if estimated tokens exceed COMPRESSION_THRESHOLD * max_tokens
-        """
+        """Return True when full LLM compression is needed (>= 65%)."""
         return self.estimate_tokens(messages) > self.max_tokens * self.COMPRESSION_THRESHOLD
 
-    def compress_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Compress conversation history by summarizing early messages.
+    def needs_microcompaction(self, messages: List[Dict[str, Any]]) -> bool:
+        """Return True when cheap tool-result clearing is warranted (55-65%)."""
+        tokens = self.estimate_tokens(messages)
+        return (
+            tokens > self.max_tokens * self.MICROCOMPACT_THRESHOLD
+            and tokens <= self.max_tokens * self.COMPRESSION_THRESHOLD
+        )
+
+    # -----------------------------------------------------------------------
+    # Microcompaction — cheap pass, no LLM call
+    # -----------------------------------------------------------------------
+
+    def microcompact_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Truncate large tool results without calling the LLM.
+
+        Keeps the most recent MICROCOMPACT_PRESERVE_RECENT tool results at full
+        fidelity and truncates older ones to MICROCOMPACT_TOOL_LIMIT chars.
+        Returns a new list; does not mutate the original.
+        """
+        tool_indices = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+        preserve = set(tool_indices[-self.MICROCOMPACT_PRESERVE_RECENT:])
+
+        result = []
+        mutated = 0
+        for i, msg in enumerate(messages):
+            if msg.get("role") == "tool" and i not in preserve:
+                content = msg.get("content", "")
+                if isinstance(content, str) and len(content) > self.MICROCOMPACT_TOOL_LIMIT:
+                    msg = dict(msg)
+                    trimmed = len(content) - self.MICROCOMPACT_TOOL_LIMIT
+                    msg["content"] = (
+                        content[:self.MICROCOMPACT_TOOL_LIMIT]
+                        + f"\n[… {trimmed} chars removed by microcompact]"
+                    )
+                    mutated += 1
+            result.append(msg)
+
+        if mutated:
+            try:
+                self.llm_client.logger.info(
+                    f"Microcompaction: truncated {mutated} large tool result(s)"
+                )
+            except Exception:
+                pass
+        return result
+
+    # -----------------------------------------------------------------------
+    # Full compression
+    # -----------------------------------------------------------------------
+
+    def compress_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        is_auto: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Compress conversation history using partial compaction + structured summarization.
 
         Algorithm:
-        1. Keep the most recent 60% of messages (at least 4)
-        2. Summarize early messages with LLM
-        3. Save summary to memory
-        4. Prepend summary as a system message
+          1. Apply microcompact pass (strip oversized tool results cheaply)
+          2. Partial compaction: keep last N messages verbatim (never more than
+             KEEP_RECENT_MESSAGES or 60% of total, whichever is smaller)
+          3. Advance split point to next 'user' boundary (tool_use/tool_result safety)
+          4. Extract recently read file paths from the to-summarize window
+          5. Call LLM with structured 9-section prompt to summarize old messages
+          6. Save summary to memory
+          7. Build result: [boundary_marker, summary, file_hint?, pinned…, recent…]
 
-        On any error, returns original messages unchanged (graceful degradation).
+        Circuit breaker: after CIRCUIT_BREAKER_LIMIT consecutive failures this
+        method returns messages unchanged and logs a warning.
 
         Args:
-            messages: Current conversation messages
+            messages: Current conversation messages (without system prompt)
+            is_auto: True for threshold-triggered compression, False for manual
 
         Returns:
             Compressed messages list
         """
+        # --- Circuit breaker ------------------------------------------------
+        if self._consecutive_compact_failures >= self.CIRCUIT_BREAKER_LIMIT:
+            try:
+                self.llm_client.logger.warning(
+                    f"Compact circuit breaker open "
+                    f"({self._consecutive_compact_failures} consecutive failures) — skipping"
+                )
+            except Exception:
+                pass
+            return messages
+
         if len(messages) < 5:
             return messages
 
-        keep_count = max(4, int(len(messages) * self.KEEP_RECENT_RATIO))
+        # --- Step 1: microcompact (free) ------------------------------------
+        messages = self.microcompact_messages(messages)
+
+        # --- Step 2: partial compaction split -------------------------------
+        # Keep at most KEEP_RECENT_MESSAGES, but no more than 60% of total
+        keep_count = min(
+            self.KEEP_RECENT_MESSAGES,
+            max(4, int(len(messages) * 0.60)),
+        )
         split_index = len(messages) - keep_count
 
-        # Advance split_index to the next 'user' message boundary to avoid
-        # orphaning tool results from their preceding assistant tool_calls.
+        # Advance to next 'user' boundary to avoid orphaned tool results
         while split_index < len(messages) - 1 and messages[split_index].get("role") != "user":
             split_index += 1
 
-        # Safety: if no user message found, keep everything
         if messages[split_index].get("role") != "user":
-            return messages
+            return messages  # no safe split point found
 
         to_summarize = messages[:split_index]
         to_keep = messages[split_index:]
@@ -103,50 +179,176 @@ class ContextManager:
         if not to_summarize:
             return messages
 
-        # Extract [PIN] messages — they survive compression verbatim
+        # --- Step 3: extract pinned messages --------------------------------
         pinned = [
             m for m in to_summarize
             if isinstance(m.get("content"), str) and m["content"].startswith("[PIN]")
         ]
 
+        # --- Step 4: extract recently read files ----------------------------
+        recently_read = self._extract_recently_read_files(to_summarize)
+
+        # --- Step 5: LLM summarization --------------------------------------
+        pre_tokens = self.estimate_tokens(messages)
         summary = self._summarize_messages(to_summarize)
         if not summary:
-            return messages
+            self._consecutive_compact_failures += 1
+            return messages  # graceful degradation
 
-        # Save summary to memory
+        self._consecutive_compact_failures = 0  # reset on success
+
+        # --- Step 6: save to memory -----------------------------------------
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.memory_tool.execute(
-                key=f"conversation_summary_{timestamp}",
+                key=f"conversation_summary_{ts}",
                 value=summary,
                 tags=["auto", "conversation_summary"],
             )
         except Exception:
-            pass  # Non-critical, continue anyway
+            pass
+
+        # --- Step 7: assemble result ----------------------------------------
+        boundary_msg = {
+            "role": "system",
+            "content": (
+                f"[Compact Boundary | tokens_before={pre_tokens} | "
+                f"messages_summarized={len(to_summarize)} | "
+                f"messages_kept={len(to_keep)} | "
+                f"timestamp={datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
+                f"auto={is_auto}]"
+            ),
+        }
 
         summary_msg = {
             "role": "system",
             "content": f"[Conversation Summary]\n{summary}",
         }
-        # Pinned messages are prepended after the summary so they are always in context
-        return [summary_msg] + pinned + to_keep
 
-    # Tool names whose results should be preserved at higher fidelity during summarization
+        file_hint_msgs: List[Dict[str, Any]] = []
+        if recently_read:
+            file_list = "\n".join(f"  - {p}" for p in recently_read)
+            file_hint_msgs.append({
+                "role": "system",
+                "content": (
+                    "[Files accessed before this summary — re-read if details are needed:\n"
+                    f"{file_list}\n]"
+                ),
+            })
+
+        result = [boundary_msg, summary_msg] + file_hint_msgs + pinned + to_keep
+
+        post_tokens = self.estimate_tokens(result)
+        self._last_compact_stats = {
+            "timestamp": datetime.now().isoformat(),
+            "pre_compact_tokens": pre_tokens,
+            "post_compact_tokens": post_tokens,
+            "messages_summarized": len(to_summarize),
+            "messages_kept": len(to_keep),
+            "is_auto": is_auto,
+            "recently_read_files": recently_read,
+        }
+        try:
+            self.llm_client.logger.info(
+                f"Compression complete: {pre_tokens} → {post_tokens} tokens, "
+                f"{len(to_summarize)} messages summarized, {len(to_keep)} kept"
+            )
+        except Exception:
+            pass
+
+        return result
+
+    # -----------------------------------------------------------------------
+    # Recently read file extraction
+    # -----------------------------------------------------------------------
+
+    def _extract_recently_read_files(self, messages: List[Dict[str, Any]]) -> List[str]:
+        """Extract file paths from read_file tool calls in the given messages."""
+        seen: set = set()
+        result: List[str] = []
+
+        for msg in messages:
+            if msg.get("role") != "assistant":
+                continue
+            tool_calls = msg.get("tool_calls", [])
+            if not tool_calls:
+                continue
+            for tc in tool_calls:
+                # Handle both dict (serialized) and object forms
+                if isinstance(tc, dict):
+                    func = tc.get("function", {})
+                    name = func.get("name", "")
+                    raw_args = func.get("arguments", "{}")
+                else:
+                    func = getattr(tc, "function", None)
+                    name = getattr(func, "name", "") if func else ""
+                    raw_args = getattr(func, "arguments", "{}") if func else "{}"
+
+                if name != "read_file":
+                    continue
+                try:
+                    args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                    path = args.get("path") or args.get("file_path", "")
+                    if path and path not in seen:
+                        seen.add(path)
+                        result.append(path)
+                except Exception:
+                    pass
+
+        return result[-10:]  # most recent 10
+
+    # -----------------------------------------------------------------------
+    # Structured 9-section summarization
+    # -----------------------------------------------------------------------
+
     _HIGH_FIDELITY_TOOLS = {"write_file", "replace", "edit_file"}
-    _TOOL_RESULT_TRUNCATION = 200       # default tool result chars in summary
-    _HIGH_FIDELITY_TRUNCATION = 1000    # write_file / replace tool results
+    _TOOL_RESULT_TRUNCATION = 200
+    _HIGH_FIDELITY_TRUNCATION = 1_000
+
+    _SUMMARIZE_SYSTEM_PROMPT = (
+        "You are a conversation summarization assistant. Your task is to produce a "
+        "detailed, structured summary of the conversation history provided below.\n\n"
+        "CRITICAL: Do NOT call any tools. Respond with plain text only.\n\n"
+        "Step 1 — write your private analysis inside <analysis> tags: walk through "
+        "every message chronologically, identify all user requests, decisions made, "
+        "files touched, code snippets, error messages, and the precise state of work "
+        "at the end of the conversation.\n\n"
+        "Step 2 — write the final summary inside <summary> tags with EXACTLY these "
+        "9 sections (use the ## headings verbatim):\n\n"
+        "## 1. Primary Request and Intent\n"
+        "Every explicit goal, requirement, or task the user stated.\n\n"
+        "## 2. Key Technical Concepts\n"
+        "Frameworks, libraries, languages, APIs, patterns used or discussed.\n\n"
+        "## 3. Files and Code Sections\n"
+        "Every file examined, created, or modified. For each: filename, what changed, "
+        "and key code snippets (function names, class names, important lines). "
+        "Be thorough — this section is critical for seamless continuation.\n\n"
+        "## 4. Errors and Fixes\n"
+        "Every error encountered and how it was resolved. Quote error messages verbatim.\n\n"
+        "## 5. Problem Solving\n"
+        "Approaches tried, decisions made, and why. Both solved and unresolved issues.\n\n"
+        "## 6. User Messages\n"
+        "All non-trivial user messages (quote short ones exactly; paraphrase long ones).\n\n"
+        "## 7. Pending Tasks\n"
+        "Work explicitly requested but not yet completed.\n\n"
+        "## 8. Current Work\n"
+        "The precise state of work at the moment this summary was created: what was "
+        "being done, which file, which function, which step. Be as specific as possible.\n\n"
+        "## 9. Next Step\n"
+        "The single most logical next action, directly aligned with the user's latest request.\n\n"
+        "Sections 3, 4, and 8 are the most important — prioritize completeness there."
+    )
 
     def _summarize_messages(self, messages: List[Dict[str, Any]]) -> str:
-        """Call LLM (no tools) to summarize a list of messages.
+        """Call LLM to produce a structured 9-section summary.
 
-        Args:
-            messages: Messages to summarize
+        Uses an <analysis> thinking block (stripped from output) followed by
+        a <summary> block for the final result.
 
         Returns:
-            Summary text, or empty string on failure
+            Formatted summary text, or empty string on failure.
         """
         try:
-            # Filter out [PIN] messages from summarization — they are kept verbatim
             to_summarize = [
                 m for m in messages
                 if not (
@@ -156,29 +358,12 @@ class ContextManager:
             ]
             formatted = self._format_for_summary(to_summarize)
             recall_messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a summarization assistant. Produce a structured summary of "
-                        "the conversation below with exactly three sections:\n\n"
-                        "## Decisions Made\n"
-                        "Bullet list of decisions, conclusions, and user preferences established.\n\n"
-                        "## Files Modified\n"
-                        "For each file that was created or edited: filename, and its final known state "
-                        "or the nature of the change. Include key code snippets when relevant.\n\n"
-                        "## Context for Continuation\n"
-                        "What the assistant was doing, current goals, and any open questions. "
-                        "Include enough detail so the assistant can resume the task seamlessly.\n\n"
-                        "Be concise within each section. Do not add any other sections."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"Summarize this conversation:\n\n{formatted}",
-                },
+                {"role": "system", "content": self._SUMMARIZE_SYSTEM_PROMPT},
+                {"role": "user", "content": f"Summarize this conversation:\n\n{formatted}"},
             ]
             response = self.llm_client.chat(messages=recall_messages, tools=None)
-            return response.choices[0].message.content or ""
+            raw = response.choices[0].message.content or ""
+            return self._format_summary(raw)
         except Exception as e:
             try:
                 self.llm_client.logger.warning(f"Summarization failed: {e}")
@@ -186,15 +371,27 @@ class ContextManager:
                 pass
             return ""
 
+    @staticmethod
+    def _format_summary(raw: str) -> str:
+        """Strip <analysis> block and unwrap <summary> tags."""
+        # Remove analysis scratchpad
+        raw = re.sub(r"<analysis>.*?</analysis>", "", raw, flags=re.DOTALL).strip()
+        # Unwrap <summary>…</summary> if present
+        m = re.search(r"<summary>(.*?)</summary>", raw, re.DOTALL)
+        if m:
+            raw = m.group(1).strip()
+        return raw
+
     def _format_for_summary(self, messages: List[Dict[str, Any]]) -> str:
-        """Format messages as readable text for summarization."""
+        """Format messages as readable text for the summarization prompt."""
         lines = []
         for msg in messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             if isinstance(content, list):
                 content = " ".join(
-                    b.get("text", "") for b in content
+                    b.get("text", "")
+                    for b in content
                     if isinstance(b, dict) and b.get("type") == "text"
                 )
             if role == "tool":
@@ -209,23 +406,29 @@ class ContextManager:
                 lines.append(f"[{role.upper()}]: {str(content)[:500]}")
         return "\n".join(lines)
 
+    # -----------------------------------------------------------------------
+    # Usage stats
+    # -----------------------------------------------------------------------
+
     def get_usage_stats(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Return context window usage statistics.
 
-        Args:
-            messages: Current conversation messages
-
         Returns:
-            Dict with estimated_tokens, max_tokens, usage_percent, message_count
+            Dict with estimated_tokens, max_tokens, usage_percent, message_count,
+            circuit_breaker_failures, and (if available) last_compact metadata.
         """
         estimated = self.estimate_tokens(messages)
         usage_percent = (estimated / self.max_tokens * 100) if self.max_tokens > 0 else 0.0
-        return {
+        stats: Dict[str, Any] = {
             "estimated_tokens": estimated,
             "max_tokens": self.max_tokens,
             "usage_percent": round(usage_percent, 1),
             "message_count": len(messages),
+            "circuit_breaker_failures": self._consecutive_compact_failures,
         }
+        if self._last_compact_stats:
+            stats["last_compact"] = self._last_compact_stats
+        return stats
 
 
 def is_context_too_long_error(exc: Exception) -> bool:
@@ -237,6 +440,6 @@ def is_context_too_long_error(exc: Exception) -> bool:
         "maximum context length",
         "tokens > ",
         "reduce the length",
-        "range of input length",                   # DeepSeek / Qwen style
-        "internalerror.algo.invalidparameter",     # DeepSeek internal error class
+        "range of input length",
+        "internalerror.algo.invalidparameter",
     ])
