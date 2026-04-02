@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Optional
 import yaml
 
 from ..tools.base import Tool
-from .tools import AgentToolWrapper
+from .tools import AgentToolWrapper, CheckBackgroundAgentTool
 
 
 class AgentManager:
@@ -90,9 +90,10 @@ class AgentManager:
         tool_complete_callback: Optional[Callable] = None,
         ask_user_callback: Optional[Callable] = None,
         max_context_tokens: Optional[int] = None,
-    ) -> List[AgentToolWrapper]:
-        """Create an AgentToolWrapper for each agent definition."""
-        return [
+        parent_messages_getter: Optional[Callable] = None,
+    ) -> List[Tool]:
+        """Create an AgentToolWrapper for each agent definition plus CheckBackgroundAgentTool."""
+        wrappers = [
             AgentToolWrapper(
                 definition=defn,
                 all_tools=all_tools,
@@ -103,6 +104,8 @@ class AgentManager:
                 tool_complete_callback=tool_complete_callback,
                 ask_user_callback=ask_user_callback,
                 max_context_tokens=max_context_tokens,
+                parent_messages_getter=parent_messages_getter,
             )
             for defn in self.definitions.values()
         ]
+        return wrappers + [CheckBackgroundAgentTool()]

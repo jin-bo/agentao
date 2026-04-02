@@ -256,6 +256,7 @@ class Agentao:
             tool_complete_callback=self.tool_complete_callback,
             ask_user_callback=self.ask_user_callback,
             max_context_tokens=self.context_manager.max_tokens,
+            parent_messages_getter=lambda: self.messages,
         )
         for agent_tool in agent_tools:
             self.tools.register(agent_tool)
