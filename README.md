@@ -122,7 +122,7 @@ Task List (2/4 completed):
 
 - **LLM-managed** — the agent calls `todo_write` at the start of complex tasks and updates statuses as each step completes (`pending` → `in_progress` → `completed`)
 - **Always visible** — current task list is injected into the system prompt so the LLM always knows its own progress
-- **Session-scoped** — cleared automatically on `/clear`; not persisted to disk (unlike memory)
+- **Session-scoped** — cleared automatically on `/clear` or `/new`; not persisted to disk (unlike memory)
 - **`/status` summary** — shows `Task list: 2/4 completed` when tasks are active
 
 ### 🤖 SubAgent System
@@ -382,7 +382,8 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | Command | Description |
 |---------|-------------|
 | `/help` | Show help message |
-| `/clear` | Clear conversation history and reset confirmation mode |
+| `/clear` | Save current session, clear conversation history and all memories, start fresh |
+| `/new` | Alias for `/clear` |
 | `/status` | Show message count, model, active skills, memory count, context usage |
 | `/model` | Fetch and list available models from the configured API endpoint |
 | `/model <name>` | Switch to specified model (e.g., `/model gpt-4`) |

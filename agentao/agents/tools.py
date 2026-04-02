@@ -1,5 +1,6 @@
 """SubAgent tool wrappers — core components for the agent-as-tool pattern."""
 
+import os
 from typing import Any, Callable, Dict, Optional
 
 from ..tools.base import Tool, ToolRegistry
@@ -102,12 +103,36 @@ class AgentToolWrapper(Tool):
                 scoped_registry.register(tool)
         scoped_registry.register(CompleteTaskTool())
 
-        # 2. Create sub-agent Agentao — inherit parent's resource limits and callbacks
+        # 2. Resolve model / provider / temperature for this sub-agent.
+        #
+        # Frontmatter "model" field supports two forms:
+        #   "Provider/model-name"  — first "/" splits provider from model name;
+        #                            provider is used to look up env vars:
+        #                            {PROVIDER}_API_KEY and {PROVIDER}_BASE_URL
+        #   "model-name"           — no provider prefix; inherit parent credentials
+        #
+        # Absent field → inherit everything from parent.
         agent_name = self._definition["name"]
+        defn_model: Optional[str] = self._definition.get("model")
+        defn_temperature: Optional[float] = self._definition.get("temperature")
+
+        if defn_model and "/" in defn_model:
+            provider, model_name = defn_model.split("/", 1)
+            provider = provider.strip().upper()
+            api_key = os.getenv(f"{provider}_API_KEY") or self._llm_config["api_key"]
+            base_url = os.getenv(f"{provider}_BASE_URL") or self._llm_config.get("base_url")
+        else:
+            model_name = defn_model or self._llm_config.get("model")
+            api_key = self._llm_config["api_key"]
+            base_url = self._llm_config.get("base_url")
+
+        temperature = defn_temperature if defn_temperature is not None else self._llm_config.get("temperature")
+
         sub_agent = Agentao(
-            api_key=self._llm_config["api_key"],
-            base_url=self._llm_config.get("base_url"),
-            model=self._llm_config.get("model"),
+            api_key=api_key,
+            base_url=base_url,
+            model=model_name,
+            temperature=temperature,
             confirmation_callback=self._confirmation_callback,
             step_callback=self._make_prefixed_step_callback(),
             output_callback=self._output_callback,

@@ -1,9 +1,12 @@
 """Session persistence — save and restore conversation history."""
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+_SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 
 _SESSION_SUBDIR = ".agentao/sessions"
 _MAX_SESSIONS = 10
@@ -98,6 +101,8 @@ def list_sessions() -> List[Dict[str, Any]]:
                 (m.get("content", "") for m in messages if m.get("role") == "user"),
                 None,
             )
+            if first_user_msg:
+                first_user_msg = _SYSTEM_REMINDER_RE.sub("", first_user_msg).strip()
             if first_user_msg and len(first_user_msg) > 80:
                 first_user_msg = first_user_msg[:77] + "..."
             result.append({

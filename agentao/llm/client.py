@@ -81,6 +81,7 @@ class LLMClient:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: str = "claude-sonnet-4-5",
+        temperature: Optional[float] = None,
         log_file: str = "agentao.log",
     ):
         """Initialize LLM client.
@@ -95,9 +96,12 @@ class LLMClient:
         self.api_key = api_key or os.getenv(f"{provider}_API_KEY")
         self.base_url = base_url or os.getenv(f"{provider}_BASE_URL")
         self.model = model or os.getenv(f"{provider}_MODEL", "claude-sonnet-4-5")
-        self.temperature = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+        self.temperature = temperature if temperature is not None else float(os.getenv("LLM_TEMPERATURE", "0.2"))
         _max = os.getenv("LLM_MAX_TOKENS")
         self.max_tokens: Optional[int] = int(_max) if _max else 65536
+
+        # Set to True after detecting the model requires max_completion_tokens
+        self._use_max_completion_tokens: bool = False
 
         self.client = OpenAI(
             api_key=self.api_key,
@@ -195,7 +199,7 @@ class LLMClient:
             kwargs["tool_choice"] = "auto"
 
         if max_tokens:
-            kwargs["max_tokens"] = max_tokens
+            kwargs["max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"] = max_tokens
 
         # Log request
         self._log_request(request_id, kwargs)
@@ -211,6 +215,21 @@ class LLMClient:
             return response
 
         except Exception as e:
+            if not self._use_max_completion_tokens and "max_tokens" in str(e) and "max_completion_tokens" in str(e):
+                # Model requires max_completion_tokens; switch and retry
+                self._use_max_completion_tokens = True
+                self.logger.info("Switching to max_completion_tokens for this model")
+                if "max_tokens" in kwargs:
+                    kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+                try:
+                    raw = self.client.chat.completions.with_raw_response.create(**kwargs)
+                    response = raw.parse()
+                    self._log_response(request_id, response)
+                    return response
+                except Exception as retry_e:
+                    import traceback
+                    self.logger.error(f"[{request_id}] Retry failed: {str(retry_e)}\n{traceback.format_exc()}")
+                    raise retry_e
             import traceback
             self.logger.error(f"[{request_id}] API call failed: {str(e)}\n{traceback.format_exc()}")
             raise
@@ -392,7 +411,7 @@ class LLMClient:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
         if max_tokens:
-            kwargs["max_tokens"] = max_tokens
+            kwargs["max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"] = max_tokens
 
         # Log without the stream flag (matches non-streaming log format)
         log_kwargs = {k: v for k, v in kwargs.items() if k != "stream"}
@@ -454,6 +473,55 @@ class LLMClient:
             return response
 
         except Exception as e:
+            if not self._use_max_completion_tokens and "max_tokens" in str(e) and "max_completion_tokens" in str(e):
+                # Model requires max_completion_tokens; switch and retry via non-streaming fallback
+                self._use_max_completion_tokens = True
+                self.logger.info("Switching to max_completion_tokens for this model (stream retry)")
+                if "max_tokens" in kwargs:
+                    kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+                try:
+                    stream = self.client.chat.completions.create(**kwargs)
+                    content_parts2: List[str] = []
+                    tool_calls_data2: Dict[int, Dict[str, str]] = {}
+                    finish_reason2 = "stop"
+                    response_model2 = self.model
+                    for chunk in stream:
+                        if not chunk.choices:
+                            continue
+                        choice = chunk.choices[0]
+                        delta = choice.delta
+                        if delta and delta.content:
+                            content_parts2.append(delta.content)
+                            if on_text_chunk:
+                                on_text_chunk(delta.content)
+                        if delta and delta.tool_calls:
+                            for tc_delta in delta.tool_calls:
+                                idx = tc_delta.index
+                                if idx not in tool_calls_data2:
+                                    tool_calls_data2[idx] = {"id": "", "name": "", "arguments": ""}
+                                if tc_delta.id:
+                                    tool_calls_data2[idx]["id"] = tc_delta.id
+                                if tc_delta.function:
+                                    if tc_delta.function.name:
+                                        tool_calls_data2[idx]["name"] += tc_delta.function.name
+                                    if tc_delta.function.arguments:
+                                        tool_calls_data2[idx]["arguments"] += tc_delta.function.arguments
+                        if choice.finish_reason:
+                            finish_reason2 = choice.finish_reason
+                        if hasattr(chunk, "model") and chunk.model:
+                            response_model2 = chunk.model
+                    response = _StreamResponse(
+                        model=response_model2,
+                        content="".join(content_parts2) if content_parts2 else None,
+                        tool_calls_data=tool_calls_data2,
+                        finish_reason=finish_reason2,
+                    )
+                    self._log_response(request_id, response)
+                    return response
+                except Exception as retry_e:
+                    import traceback
+                    self.logger.error(f"[{request_id}] Stream retry failed: {str(retry_e)}\n{traceback.format_exc()}")
+                    raise retry_e
             import traceback
             self.logger.error(f"[{request_id}] Streaming API call failed: {str(e)}\n{traceback.format_exc()}")
             raise

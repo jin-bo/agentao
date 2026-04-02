@@ -58,6 +58,7 @@ def _tool_args_summary(tool_name: str, args: dict) -> str:
 
 _SLASH_COMMANDS = [
     '/agent', '/clear', '/confirm', '/confirm all', '/confirm prompt',
+    '/new',
     '/context', '/context limit', '/exit', '/help',
     '/mcp', '/mcp add', '/mcp list', '/mcp remove',
     '/markdown',
@@ -459,9 +460,10 @@ All commands start with `/`:
 - `/provider` - List or switch API providers
   - `/provider` - Show current provider and available providers
   - `/provider <NAME>` - Switch to provider (reads XXXX_API_KEY, XXXX_BASE_URL, XXXX_MODEL from env)
-- `/clear` - Clear conversation history and reset confirmation mode
-  - Also resets "allow all" mode to prompt for each tool
-  - `/clear all` - Also clear all saved memories
+- `/clear` - End current session (saves it) and start a new one
+  - Clears conversation history, all memories, and resets confirmation mode
+  - `/clear all` - Alias for `/clear` (backward compatible)
+- `/new` - Alias for `/clear`; start a fresh session
 - `/status` - Show conversation status
 - `/temperature [value]` - Show or set LLM temperature (0.0-2.0)
 - `/skills` - List available skills
@@ -1118,8 +1120,20 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             console.print(json.dumps(tool.parameters, indent=2, ensure_ascii=False))
             console.print()
 
-    def _save_session_on_exit(self):
-        """Save current session to disk if there are messages."""
+    def on_session_start(self) -> None:
+        """Hook called at the start of every session.
+
+        Override or extend in a subclass to add custom session-start behavior.
+        Default implementation does nothing.
+        """
+        pass
+
+    def on_session_end(self) -> None:
+        """Hook called at the end of every session (before /clear, /new, or exit).
+
+        Override or extend in a subclass to add custom session-end behavior.
+        Default implementation saves the current session to disk.
+        """
         if not self.agent.messages:
             return
         from .session import save_session
@@ -1133,6 +1147,10 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             console.print(f"[dim]Session saved → {session_file}[/dim]")
         except Exception:
             pass  # Non-critical
+
+    def _save_session_on_exit(self):
+        """Internal helper; delegates to on_session_end()."""
+        self.on_session_end()
 
     def _get_user_input(self) -> str:
         """Read user input using prompt_toolkit.
@@ -1154,6 +1172,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
     def _run_loop(self):
         """Main input loop."""
+        self.on_session_start()
         while True:
             try:
                 # Get user input
@@ -1181,17 +1200,15 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                         self.print_help()
                         continue
 
-                    elif command == "clear":
+                    elif command in ("clear", "new"):
+                        self.on_session_end()
                         self.agent.clear_history()
-                        self.allow_all_tools = False  # Reset confirmation mode
-                        if args == "all":
-                            mem_count = self.agent.memory_tool.clear_all_memories()
-                            console.print("\n[success]Conversation history cleared.[/success]")
-                            console.print(f"[success]Cleared {mem_count} memory(ies).[/success]")
-                            console.print("[info]Tool confirmation reset to prompt mode.[/info]\n")
-                        else:
-                            console.print("\n[success]Conversation history cleared.[/success]")
-                            console.print("[info]Tool confirmation reset to prompt mode.[/info]\n")
+                        self.agent.memory_tool.clear_all_memories()
+                        self.allow_all_tools = False
+                        self.on_session_start()
+                        console.print("\n[success]Session ended and new session started.[/success]")
+                        console.print("[info]Conversation history and memories cleared.[/info]")
+                        console.print("[info]Tool confirmation reset to prompt mode.[/info]\n")
                         continue
 
                     elif command == "status":

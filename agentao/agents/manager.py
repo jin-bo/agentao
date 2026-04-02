@@ -38,6 +38,11 @@ class AgentManager:
                 description = frontmatter.get("description", "")
                 tools_list = frontmatter.get("tools")  # None means all tools
                 max_turns = int(frontmatter.get("max_turns", 15))
+                # model: optional "Provider/model-name" or bare "model-name"; None = inherit parent
+                model = frontmatter.get("model") or None
+                # temperature: optional float; None = inherit parent
+                raw_temp = frontmatter.get("temperature")
+                temperature = float(raw_temp) if raw_temp is not None else None
 
                 # Parse tools as list if it's a string
                 if isinstance(tools_list, str):
@@ -49,6 +54,8 @@ class AgentManager:
                     "tools": tools_list,
                     "max_turns": max_turns,
                     "system_instructions": body.strip() or None,
+                    "model": model,
+                    "temperature": temperature,
                 }
             except Exception:
                 continue

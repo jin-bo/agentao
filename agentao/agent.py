@@ -67,6 +67,7 @@ class Agentao:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
+        temperature: Optional[float] = None,
         confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
         max_context_tokens: int = 200_000,
         step_callback: Optional[Callable[[Optional[str], Dict[str, Any]], None]] = None,
@@ -102,7 +103,7 @@ class Agentao:
                                         dict with "action": "continue"|"stop"|"new_instruction"
                                         and optional "message" for new_instruction action.
         """
-        self.llm = LLMClient(api_key=api_key, base_url=base_url, model=model)
+        self.llm = LLMClient(api_key=api_key, base_url=base_url, model=model, temperature=temperature)
         self.skill_manager = SkillManager()
         self.memory_tool = SaveMemoryTool()
         self.todo_tool = TodoWriteTool()
@@ -121,6 +122,7 @@ class Agentao:
             "api_key": api_key,
             "base_url": base_url,
             "model": model,
+            "temperature": self.llm.temperature,  # resolved value (explicit or from env)
         }
 
         # Initialize context manager
