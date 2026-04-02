@@ -271,15 +271,48 @@ class AgentaoCLI:
         """Display tool call step.
 
         Called with tool_name=None to reset back to "Thinking..." display.
+        Called with tool_name="__agent_start__" / "__agent_end__" for sub-agent lifecycle.
 
         Args:
             tool_name: Name of the tool being called, or None to reset
             tool_args: Arguments passed to the tool
         """
+        from .agents.tools import AgentToolWrapper
+
         if tool_name is None:
             # Reset to thinking state
             if self.current_status:
                 self.current_status.update("[bold yellow]Thinking...[/bold yellow]")
+            return
+
+        if tool_name == AgentToolWrapper._AGENT_START:
+            if self.current_status:
+                self.current_status.stop()
+            name = tool_args.get("name", "agent")
+            task = tool_args.get("task", "")
+            task_preview = f": [dim]{task}[/dim]" if task else ""
+            console.rule(f"[bold cyan]▶ [{name}]{task_preview}[/bold cyan]", style="cyan")
+            if self.current_status:
+                self.current_status.update(f"[bold cyan][{name}] Thinking...[/bold cyan]")
+                self.current_status.start()
+            return
+
+        if tool_name == AgentToolWrapper._AGENT_END:
+            if self.current_status:
+                self.current_status.stop()
+            name = tool_args.get("name", "agent")
+            turns = tool_args.get("turns", 0)
+            tool_calls = tool_args.get("tool_calls", 0)
+            tokens = tool_args.get("tokens", 0)
+            ms = tool_args.get("duration_ms", 0)
+            console.rule(
+                f"[bold cyan]◀ [{name}] {turns} turns · {tool_calls} tool calls"
+                f" · ~{tokens:,} tokens · {ms}ms[/bold cyan]",
+                style="cyan",
+            )
+            if self.current_status:
+                self.current_status.update("[bold yellow]Thinking...[/bold yellow]")
+                self.current_status.start()
             return
 
         # Stop spinner and print tool header as a visible line

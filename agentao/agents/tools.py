@@ -232,13 +232,42 @@ class AgentToolWrapper(Tool):
     # Public execute — dispatches sync vs background
     # ------------------------------------------------------------------
 
+    # Sentinel tool names used to signal sub-agent lifecycle to the step callback
+    _AGENT_START = "__agent_start__"
+    _AGENT_END   = "__agent_end__"
+
     def execute(self, task: str, run_in_background: bool = False) -> str:
         parent_context = self._build_parent_context()
 
         if run_in_background:
             return self._launch_background(task, parent_context)
 
+        agent_name = self._definition["name"]
+        max_turns  = self._definition.get("max_turns", 15)
+
+        # Signal sub-agent start to the CLI
+        if self._step_callback:
+            self._step_callback(
+                self._AGENT_START,
+                {"name": agent_name, "task": task[:80]},
+            )
+
         result, stats = self._run_sync(task, parent_context)
+
+        # Signal sub-agent end to the CLI
+        if self._step_callback:
+            self._step_callback(
+                self._AGENT_END,
+                {
+                    "name": agent_name,
+                    "turns": stats["turns"],
+                    "tool_calls": stats["tool_calls"],
+                    "tokens": stats["tokens"],
+                    "duration_ms": stats["duration_ms"],
+                    "max_turns": max_turns,
+                },
+            )
+
         return self._format_result(result, stats)
 
     # ------------------------------------------------------------------
@@ -291,9 +320,15 @@ class AgentToolWrapper(Tool):
     # ------------------------------------------------------------------
 
     def _run_sync(
-        self, task: str, parent_context: str = ""
+        self, task: str, parent_context: str = "", suppress_output: bool = False
     ) -> Tuple[str, Dict[str, Any]]:
-        """Create and run a sub-agent. Returns (result, stats)."""
+        """Create and run a sub-agent. Returns (result, stats).
+
+        Args:
+            suppress_output: When True (used for background agents), all live
+                display callbacks are suppressed so the background thread does
+                not interleave output with the foreground session.
+        """
         from ..agent import Agentao
         from ..skills import SkillManager
 
@@ -325,7 +360,7 @@ class AgentToolWrapper(Tool):
         )
 
         max_turns = self._definition.get("max_turns", 15)
-        step_cb = self._make_prefixed_step_callback(max_turns)
+        step_cb = None if suppress_output else self._make_prefixed_step_callback(max_turns)
 
         sub_agent = Agentao(
             api_key=api_key,
@@ -334,9 +369,9 @@ class AgentToolWrapper(Tool):
             temperature=temperature,
             confirmation_callback=self._confirmation_callback,
             step_callback=step_cb,
-            output_callback=self._output_callback,
-            tool_complete_callback=self._tool_complete_callback,
-            ask_user_callback=self._ask_user_callback,
+            output_callback=None if suppress_output else self._output_callback,
+            tool_complete_callback=None if suppress_output else self._tool_complete_callback,
+            ask_user_callback=None if suppress_output else self._ask_user_callback,
             max_context_tokens=self._max_context_tokens or 200_000,
             # thinking_callback intentionally omitted for sub-agents
         )
@@ -395,16 +430,14 @@ class AgentToolWrapper(Tool):
 
         def _run():
             try:
-                result, stats = self._run_sync(task, parent_context)
+                result, stats = self._run_sync(task, parent_context, suppress_output=True)
                 formatted = self._format_result(result, stats)
                 _update_bg_task(agent_id, status="completed", result=formatted)
             except Exception as exc:
                 _update_bg_task(agent_id, status="failed", error=str(exc))
 
-        # Suppress live display callbacks for background agents (avoid visual noise)
-        # by temporarily replacing them with no-ops inside the thread — the wrapper
-        # already captured them for the sync path; thread closure uses _run_sync which
-        # passes them through.  For simplicity we let background agents stream silently.
+        # Background agents run silently: suppress_output=True ensures no callbacks
+        # fire on the background thread, preventing interleaving with foreground output.
         t = threading.Thread(target=_run, daemon=True, name=f"bg-agent-{agent_id}")
         t.start()
 
