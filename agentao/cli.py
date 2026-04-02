@@ -57,7 +57,8 @@ def _tool_args_summary(tool_name: str, args: dict) -> str:
 
 
 _SLASH_COMMANDS = [
-    '/agent', '/clear', '/confirm', '/confirm all', '/confirm prompt',
+    '/agent', '/agent bg', '/agent list', '/agent status',
+    '/clear', '/confirm', '/confirm all', '/confirm prompt',
     '/new',
     '/context', '/context limit', '/exit', '/help',
     '/mcp', '/mcp add', '/mcp list', '/mcp remove',
@@ -72,6 +73,8 @@ _SLASH_COMMANDS = [
 
 
 _SLASH_COMMAND_HINTS = {
+    '/agent bg': '<agent-name> <task>',
+    '/agent status': '[agent-id]',
     '/model': '<model-name>',
     '/provider': '<provider-name>',
     '/memory search': '<keyword>',
@@ -850,13 +853,23 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
     def handle_agent_command(self, args: str):
         """Handle /agent command.
 
-        Args:
-            args: '<name> <task>' to run an agent, or empty to list agents
+        Subcommands:
+          /agent                   — list available agents
+          /agent list              — list available agents
+          /agent status [id]       — show background agent status (all or specific)
+          /agent <name> <task>     — run agent in foreground
+          /agent bg <name> <task>  — run agent in background
         """
-        args = args.strip()
+        from .agents.tools import list_bg_tasks, get_bg_task
+        import time as _time
 
-        if not args:
-            # List available agents
+        args = args.strip()
+        parts = args.split(None, 1)
+        sub = parts[0] if parts else ""
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        # ── /agent  or  /agent list ─────────────────────────────────────────
+        if not sub or sub == "list":
             if not self.agent.agent_manager:
                 console.print("\n[warning]No agent manager available.[/warning]\n")
                 return
@@ -866,20 +879,80 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 return
             console.print(f"\n[info]Available Agents ({len(agents)}):[/info]\n")
             for name, desc in agents.items():
-                console.print(f"  - [cyan]{name}[/cyan]: {desc}")
-            console.print("\n[info]Usage:[/info] /agent <name> <task>\n")
+                console.print(f"  [cyan]{name}[/cyan]  [dim]{desc}[/dim]")
+            console.print(
+                "\n[dim]Usage: /agent <name> <task>  |  /agent bg <name> <task>"
+                "  |  /agent status [id][/dim]\n"
+            )
             return
 
-        # Parse: first word is agent name, rest is the task
-        parts = args.split(None, 1)
-        agent_name = parts[0]
-        if len(parts) < 2:
+        # ── /agent status [id] ───────────────────────────────────────────────
+        if sub == "status":
+            agent_id = rest
+            if not agent_id:
+                tasks = list_bg_tasks()
+                if not tasks:
+                    console.print("\n[dim]No background agents in this session.[/dim]\n")
+                    return
+                console.print(f"\n[info]Background Agents ({len(tasks)}):[/info]\n")
+                for t in tasks:
+                    status = t["status"]
+                    color = "yellow" if status == "running" else "green" if status == "completed" else "red"
+                    if t.get("finished_at"):
+                        elapsed = f"{t['finished_at'] - t['started_at']:.1f}s"
+                    else:
+                        elapsed = f"{_time.time() - t['started_at']:.0f}s"
+                    console.print(
+                        f"  [{color}]{status:<10}[/{color}]  [cyan]{t['id']}[/cyan]"
+                        f"  [bold]{t['agent_name']}[/bold]  ({elapsed})"
+                        f"  [dim]{t['task'][:60]}[/dim]"
+                    )
+                console.print()
+            else:
+                rec = get_bg_task(agent_id)
+                if rec is None:
+                    console.print(f"\n[error]No background agent with ID: {agent_id}[/error]\n")
+                    return
+                status = rec["status"]
+                color = "yellow" if status == "running" else "green" if status == "completed" else "red"
+                console.print(f"\n[info]Agent:[/info] [bold]{rec['agent_name']}[/bold]  ID: [cyan]{agent_id}[/cyan]")
+                console.print(f"[info]Status:[/info] [{color}]{status}[/{color}]")
+                console.print(f"[info]Task:[/info]   {rec['task']}")
+                if rec.get("finished_at"):
+                    elapsed = rec["finished_at"] - rec["started_at"]
+                    console.print(f"[info]Time:[/info]   {elapsed:.1f}s")
+                if status == "completed" and rec.get("result"):
+                    console.print("\n[info]Result:[/info]")
+                    console.print(Markdown(rec["result"]))
+                elif status == "failed" and rec.get("error"):
+                    console.print(f"\n[error]Error:[/error] {rec['error']}")
+                console.print()
+            return
+
+        # ── /agent bg <name> <task> ──────────────────────────────────────────
+        if sub == "bg":
+            bg_parts = rest.split(None, 1)
+            if len(bg_parts) < 2:
+                console.print("\n[error]Usage: /agent bg <agent-name> <task>[/error]\n")
+                return
+            agent_name, task = bg_parts[0], bg_parts[1]
+            tool_name = f"agent_{agent_name.replace('-', '_')}"
+            try:
+                tool = self.agent.tools.get(tool_name)
+            except KeyError:
+                console.print(f"\n[error]Unknown agent: {agent_name}[/error]\n")
+                return
+            msg = tool.execute(task=task, run_in_background=True)
+            console.print(f"\n[cyan]{msg}[/cyan]\n")
+            return
+
+        # ── /agent <name> <task>  (foreground) ──────────────────────────────
+        agent_name = sub
+        if not rest:
             console.print(f"\n[error]Usage: /agent {agent_name} <task description>[/error]\n")
             return
 
-        task = parts[1]
         tool_name = f"agent_{agent_name.replace('-', '_')}"
-
         try:
             tool = self.agent.tools.get(tool_name)
         except KeyError:
@@ -888,12 +961,11 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             console.print(f"[info]Available: {available}[/info]\n")
             return
 
-        console.print(f"\n[bold green]Agent: {agent_name}[/bold green]")
         self.current_status = console.status(
-            f"[bold yellow][{agent_name}] Thinking...", spinner="dots"
+            f"[bold cyan][{agent_name}] Thinking...[/bold cyan]", spinner="dots"
         )
         with self.current_status:
-            result = tool.execute(task=task)
+            result = tool.execute(task=rest)
 
         console.print(Markdown(result))
 
