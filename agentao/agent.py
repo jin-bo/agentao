@@ -469,6 +469,10 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
         self.messages = []
         self.skill_manager.clear_active_skills()
         self.todo_tool.clear()
+        # Reset context and session token counters for the fresh session
+        self.context_manager._last_api_prompt_tokens = None
+        self.llm.total_prompt_tokens = 0
+        self.llm.total_completion_tokens = 0
 
     def chat(self, user_message: str, max_iterations: int = 100,
              cancellation_token: Optional[CancellationToken] = None) -> str:
@@ -573,6 +577,7 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
             if self.context_manager.needs_compression(messages_with_system):
                 self.llm.logger.info("Context compression triggered inside loop")
                 self.messages = self.context_manager.compress_messages(self.messages, is_auto=True)
+                self.context_manager._last_api_prompt_tokens = None  # stale after compression
                 system_prompt = self._build_system_prompt()
                 messages_with_system = [
                     {"role": "system", "content": system_prompt}
@@ -617,6 +622,7 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                     return err_msg
                 self.llm.logger.warning(f"Context overflow from API, forcing compression: {e}")
                 self.messages = self.context_manager.compress_messages(self.messages)
+                self.context_manager._last_api_prompt_tokens = None  # stale after compression
                 system_prompt = self._build_system_prompt()
                 messages_with_system = [
                     {"role": "system", "content": system_prompt}
