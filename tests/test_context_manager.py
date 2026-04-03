@@ -219,6 +219,8 @@ def test_get_usage_stats_structure():
     assert "max_tokens" in stats
     assert "usage_percent" in stats
     assert "message_count" in stats
+    assert "token_breakdown" in stats
+    assert "token_count_source" in stats
     assert stats["max_tokens"] == 10_000
     assert stats["message_count"] == 1
     assert 0.0 <= stats["usage_percent"] <= 100.0
@@ -227,7 +229,8 @@ def test_get_usage_stats_structure():
 def test_get_usage_stats_correct_percent():
     from agentao.context_manager import ContextManager
     cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
-    # 400 chars / 4 = 100 tokens = 10% of 1000
+    cm._encoding = None  # force CJK-aware heuristic for deterministic count
+    # 400 ASCII chars * 0.25 = 100 tokens = 10% of 1000
     msgs = [{"role": "user", "content": "x" * 400}]
     stats = cm.get_usage_stats(msgs)
     assert abs(stats["usage_percent"] - 10.0) < 0.1
@@ -240,6 +243,103 @@ def test_get_usage_stats_empty_messages():
     assert stats["estimated_tokens"] == 0
     assert stats["message_count"] == 0
     assert stats["usage_percent"] == 0.0
+
+
+def test_get_usage_stats_uses_api_tier1():
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=200_000)
+    cm.record_api_usage(9999)
+    msgs = [{"role": "user", "content": "x" * 400}]
+    stats = cm.get_usage_stats(msgs)
+    assert stats["estimated_tokens"] == 9999
+    assert stats["token_count_source"] == "api"
+    # breakdown is always local estimate
+    assert "token_breakdown" in stats
+
+
+def test_get_usage_stats_local_when_no_api():
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=200_000)
+    cm._encoding = None
+    msgs = [{"role": "user", "content": "x" * 400}]
+    stats = cm.get_usage_stats(msgs)
+    assert stats["token_count_source"] == "local"
+    bd = stats["token_breakdown"]
+    assert bd["total"] == stats["estimated_tokens"]
+
+
+# ---------------------------------------------------------------------------
+# Breakdown
+# ---------------------------------------------------------------------------
+
+def test_estimate_tokens_breakdown_structure():
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=200_000)
+    cm._encoding = None
+    msgs = [
+        {"role": "system", "content": "s" * 400},   # 100 tokens
+        {"role": "user", "content": "u" * 800},     # 200 tokens
+    ]
+    bd = cm.estimate_tokens_breakdown(msgs)
+    assert bd["system"] == 100
+    assert bd["messages"] == 200
+    assert bd["tools"] == 0
+    assert bd["total"] == 300
+
+
+def test_estimate_tokens_breakdown_with_tools():
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=200_000)
+    cm._encoding = None
+    tools = [{"type": "function", "function": {"name": "t", "description": "d"}}]
+    bd = cm.estimate_tokens_breakdown([], tools=tools)
+    assert bd["tools"] > 0
+    assert bd["total"] == bd["tools"]
+
+
+# ---------------------------------------------------------------------------
+# CJK heuristic
+# ---------------------------------------------------------------------------
+
+def test_heuristic_cjk_higher_than_ascii():
+    from agentao.context_manager import _heuristic_token_count
+    # "你好" (2 CJK chars at 1.3 each) >> "hi" (2 ASCII chars at 0.25 each)
+    assert _heuristic_token_count("你好") > _heuristic_token_count("hi")
+
+
+def test_heuristic_pure_ascii_equals_chars_over_4():
+    from agentao.context_manager import _heuristic_token_count
+    # For multiples of 4, should equal chars/4
+    assert _heuristic_token_count("a" * 400) == 100
+    assert _heuristic_token_count("x" * 800) == 200
+
+
+# ---------------------------------------------------------------------------
+# reasoning_content counted
+# ---------------------------------------------------------------------------
+
+def test_estimate_tokens_reasoning_content():
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=200_000)
+    cm._encoding = None
+    msgs = [{"role": "assistant", "content": "", "reasoning_content": "r" * 400}]
+    assert cm.estimate_tokens(msgs) == 100  # 400 * 0.25 = 100
+
+
+# ---------------------------------------------------------------------------
+# Tiktoken model mapping (skipped if tiktoken not installed)
+# ---------------------------------------------------------------------------
+
+def test_tiktoken_model_mapping():
+    import pytest
+    pytest.importorskip("tiktoken")
+    from agentao.context_manager import _get_tiktoken_encoding
+    assert _get_tiktoken_encoding("claude-sonnet-4-5") is not None   # cl100k_base
+    assert _get_tiktoken_encoding("gpt-4") is not None               # cl100k_base
+    assert _get_tiktoken_encoding("gpt-4o") is not None              # o200k_base
+    assert _get_tiktoken_encoding("deepseek-chat") is not None       # cl100k_base
+    assert _get_tiktoken_encoding("gemini-2.5-pro") is None          # no mapping
+    assert _get_tiktoken_encoding("unknown-model-xyz") is None       # no mapping
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +410,23 @@ if __name__ == "__main__":
     test_get_usage_stats_structure()
     test_get_usage_stats_correct_percent()
     test_get_usage_stats_empty_messages()
+    test_get_usage_stats_uses_api_tier1()
+    test_get_usage_stats_local_when_no_api()
     print("✓ Usage stats tests passed")
+
+    # Breakdown
+    test_estimate_tokens_breakdown_structure()
+    test_estimate_tokens_breakdown_with_tools()
+    print("✓ Breakdown tests passed")
+
+    # CJK heuristic
+    test_heuristic_cjk_higher_than_ascii()
+    test_heuristic_pure_ascii_equals_chars_over_4()
+    print("✓ CJK heuristic tests passed")
+
+    # reasoning_content
+    test_estimate_tokens_reasoning_content()
+    print("✓ reasoning_content test passed")
 
     # Integration
     test_full_flow_compress_saves_to_memory()

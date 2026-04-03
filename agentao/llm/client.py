@@ -51,9 +51,10 @@ class _StreamResponse:
         content: Optional[str],
         tool_calls_data: Dict[int, Dict[str, str]],
         finish_reason: str,
+        usage: Any = None,
     ):
         self.model = model
-        self.usage = None
+        self.usage = usage  # populated when provider supports stream_options include_usage
 
         tool_calls = None
         if tool_calls_data:
@@ -132,6 +133,9 @@ class LLMClient:
 
         # Request counter for tracking
         self.request_count = 0
+        # Cumulative token usage across all calls this session
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
         # Track how many messages have already been logged (for incremental logging)
         self._logged_message_count = 0
         # Track system prompt content to log full text on first call and diffs on changes
@@ -209,6 +213,11 @@ class LLMClient:
             raw = self.client.chat.completions.with_raw_response.create(**kwargs)
             response = raw.parse()
 
+            # Accumulate session token totals
+            if hasattr(response, "usage") and response.usage:
+                self.total_prompt_tokens += response.usage.prompt_tokens or 0
+                self.total_completion_tokens += response.usage.completion_tokens or 0
+
             # Log response
             self._log_response(request_id, response)
 
@@ -224,6 +233,9 @@ class LLMClient:
                 try:
                     raw = self.client.chat.completions.with_raw_response.create(**kwargs)
                     response = raw.parse()
+                    if hasattr(response, "usage") and response.usage:
+                        self.total_prompt_tokens += response.usage.prompt_tokens or 0
+                        self.total_completion_tokens += response.usage.completion_tokens or 0
                     self._log_response(request_id, response)
                     return response
                 except Exception as retry_e:
@@ -407,6 +419,7 @@ class LLMClient:
             "messages": messages,
             "temperature": self.temperature,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             kwargs["tools"] = tools
@@ -425,10 +438,14 @@ class LLMClient:
             tool_calls_data: Dict[int, Dict[str, str]] = {}
             finish_reason = "stop"
             response_model = self.model
+            usage_data = None
 
             for chunk in stream:
                 if cancellation_token and cancellation_token.is_cancelled:
                     break
+                # Capture usage from final usage-only chunk (stream_options include_usage)
+                if hasattr(chunk, "usage") and chunk.usage:
+                    usage_data = chunk.usage
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
@@ -464,12 +481,18 @@ class LLMClient:
                 if hasattr(chunk, "model") and chunk.model:
                     response_model = chunk.model
 
+            # Accumulate session token totals
+            if usage_data is not None:
+                self.total_prompt_tokens += getattr(usage_data, "prompt_tokens", 0) or 0
+                self.total_completion_tokens += getattr(usage_data, "completion_tokens", 0) or 0
+
             # Build a duck-type response that agent.py can consume like a ChatCompletion
             response = _StreamResponse(
                 model=response_model,
                 content="".join(content_parts) if content_parts else None,
                 tool_calls_data=tool_calls_data,
                 finish_reason=finish_reason,
+                usage=usage_data,
             )
 
             self._log_response(request_id, response)
@@ -488,7 +511,10 @@ class LLMClient:
                     tool_calls_data2: Dict[int, Dict[str, str]] = {}
                     finish_reason2 = "stop"
                     response_model2 = self.model
+                    usage_data2 = None
                     for chunk in stream:
+                        if hasattr(chunk, "usage") and chunk.usage:
+                            usage_data2 = chunk.usage
                         if not chunk.choices:
                             continue
                         choice = chunk.choices[0]
@@ -513,11 +539,15 @@ class LLMClient:
                             finish_reason2 = choice.finish_reason
                         if hasattr(chunk, "model") and chunk.model:
                             response_model2 = chunk.model
+                    if usage_data2 is not None:
+                        self.total_prompt_tokens += getattr(usage_data2, "prompt_tokens", 0) or 0
+                        self.total_completion_tokens += getattr(usage_data2, "completion_tokens", 0) or 0
                     response = _StreamResponse(
                         model=response_model2,
                         content="".join(content_parts2) if content_parts2 else None,
                         tool_calls_data=tool_calls_data2,
                         finish_reason=finish_reason2,
+                        usage=usage_data2,
                     )
                     self._log_response(request_id, response)
                     return response

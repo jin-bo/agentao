@@ -26,6 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 crawl4ai = ["crawl4ai>=0.8.0"]
+tokenizer = ["tiktoken>=0.7.0"]
 
 [project.scripts]
 agentao = "agentao.cli:entrypoint"

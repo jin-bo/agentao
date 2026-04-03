@@ -5,6 +5,54 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+try:
+    import tiktoken as _tiktoken
+    _TIKTOKEN_AVAILABLE = True
+except ImportError:
+    _tiktoken = None
+    _TIKTOKEN_AVAILABLE = False
+
+# Switch to fast len/4 approximation for very large strings (from gemini-cli)
+_FAST_PATH_CHARS = 100_000
+
+
+def _get_tiktoken_encoding(model: str):
+    """Return tiktoken Encoding for model, or None if unsupported/unavailable.
+
+    Mapping:
+      gpt-4o* / o1* / o3*                     -> o200k_base
+      gpt-4* / gpt-3.5* / claude* / deepseek* -> cl100k_base
+      gemini* / unknown                         -> None (CJK heuristic fallback)
+    """
+    if not _TIKTOKEN_AVAILABLE:
+        return None
+    m = model.lower()
+    try:
+        if any(m.startswith(p) for p in ("gpt-4o", "o1", "o3")):
+            return _tiktoken.get_encoding("o200k_base")
+        if any(m.startswith(p) for p in ("gpt-4", "gpt-3.5", "claude", "deepseek")):
+            return _tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        pass
+    return None
+
+
+def _heuristic_token_count(text: str) -> int:
+    """CJK-aware token estimation (adapted from gemini-cli tokenCalculation.ts).
+
+    Fast path for strings > 100K chars: len/4.
+    Otherwise char-by-char:
+      ASCII (0-127):    0.25 tokens/char
+      non-ASCII / CJK:  1.3  tokens/char
+    """
+    n = len(text)
+    if n > _FAST_PATH_CHARS:
+        return n // 4
+    tokens = 0.0
+    for ch in text:
+        tokens += 0.25 if ord(ch) < 128 else 1.3
+    return int(tokens)
+
 
 class ContextManager:
     """Manages context window size, compression, and memory recall."""
@@ -35,26 +83,87 @@ class ContextManager:
         # Stats from the last completed compaction (surfaced via get_usage_stats)
         self._last_compact_stats: Optional[Dict[str, Any]] = None
 
+        # Tier 1: last real prompt_tokens from API response (updated after each LLM call)
+        self._last_api_prompt_tokens: Optional[int] = None
+        # Tier 3: cached tiktoken encoding; None = CJK-aware heuristic fallback
+        self._encoding = _get_tiktoken_encoding(self.llm_client.model)
+
     # -----------------------------------------------------------------------
     # Token estimation
     # -----------------------------------------------------------------------
 
-    def estimate_tokens(self, messages: List[Dict[str, Any]]) -> int:
-        """Estimate token count for a list of messages (chars / 4)."""
-        return sum(self._content_chars(m) for m in messages) // 4
+    def record_api_usage(self, prompt_tokens: int) -> None:
+        """Store real prompt_tokens from the latest API response (Tier 1)."""
+        self._last_api_prompt_tokens = prompt_tokens
 
-    def _content_chars(self, msg: Dict[str, Any]) -> int:
-        chars = 0
+    def _count_tokens_in_text(self, text: str) -> int:
+        """Count tokens via tiktoken; fall back to CJK-aware heuristic."""
+        if self._encoding is not None:
+            try:
+                return len(self._encoding.encode(text, disallowed_special=()))
+            except Exception:
+                pass
+        return _heuristic_token_count(text)
+
+    def _count_message_tokens(self, msg: Dict[str, Any]) -> int:
+        """Return estimated token count for a single message dict."""
+        tokens = 0
         content = msg.get("content", "")
         if isinstance(content, str):
-            chars += len(content)
+            tokens += self._count_tokens_in_text(content)
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    chars += len(block.get("text", ""))
+                    tokens += self._count_tokens_in_text(block.get("text", ""))
+        # reasoning_content is truncated to MAX_REASONING_HISTORY_CHARS before storage
+        rc = msg.get("reasoning_content")
+        if isinstance(rc, str) and rc:
+            tokens += self._count_tokens_in_text(rc)
         if "tool_calls" in msg:
-            chars += len(str(msg["tool_calls"]))
-        return chars
+            tokens += self._count_tokens_in_text(str(msg["tool_calls"]))
+        return tokens
+
+    def estimate_tokens(self, messages: List[Dict[str, Any]]) -> int:
+        """Count tokens for a list of messages (local estimate).
+
+        Uses tiktoken when available (cl100k_base / o200k_base per model family);
+        falls back to CJK-aware heuristic (ASCII=0.25, non-ASCII=1.3 tok/char).
+        Used in hot-path threshold checks. Signature unchanged for compatibility.
+        """
+        return sum(self._count_message_tokens(m) for m in messages)
+
+    def estimate_tokens_breakdown(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, int]:
+        """Per-component token breakdown (always local estimate).
+
+        Returns dict with keys: system, messages, tools, total.
+        Only called at reporting time, not in hot-path threshold checks.
+        """
+        system_tokens = 0
+        message_tokens = 0
+        for msg in messages:
+            count = self._count_message_tokens(msg)
+            if msg.get("role") == "system":
+                system_tokens += count
+            else:
+                message_tokens += count
+        tools_tokens = 0
+        if tools is not None:
+            try:
+                tools_str = json.dumps(tools)
+            except Exception:
+                tools_str = str(tools)
+            tools_tokens = self._count_tokens_in_text(tools_str)
+        total = system_tokens + message_tokens + tools_tokens
+        return {
+            "system": system_tokens,
+            "messages": message_tokens,
+            "tools": tools_tokens,
+            "total": total,
+        }
 
     # -----------------------------------------------------------------------
     # Threshold checks
@@ -420,20 +529,39 @@ class ContextManager:
     # Usage stats
     # -----------------------------------------------------------------------
 
-    def get_usage_stats(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Return context window usage statistics.
+    def get_usage_stats(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Return context window usage statistics with token breakdown.
+
+        Args:
+            messages: Full message list (including system if present).
+            tools: Optional serialized tools schema for breakdown reporting.
 
         Returns:
-            Dict with estimated_tokens, max_tokens, usage_percent, message_count,
-            circuit_breaker_failures, and (if available) last_compact metadata.
+            Dict with estimated_tokens, token_count_source ("api"/"local"),
+            token_breakdown (system/messages/tools/total), max_tokens,
+            usage_percent, message_count, circuit_breaker_failures,
+            and (if available) last_compact metadata.
         """
-        estimated = self.estimate_tokens(messages)
+        breakdown = self.estimate_tokens_breakdown(messages, tools=tools)
+        # Tier 1: prefer real count from last API response
+        if self._last_api_prompt_tokens is not None:
+            estimated = self._last_api_prompt_tokens
+            source = "api"
+        else:
+            estimated = breakdown["total"]
+            source = "local"
         usage_percent = (estimated / self.max_tokens * 100) if self.max_tokens > 0 else 0.0
         stats: Dict[str, Any] = {
             "estimated_tokens": estimated,
+            "token_count_source": source,
             "max_tokens": self.max_tokens,
             "usage_percent": round(usage_percent, 1),
             "message_count": len(messages),
+            "token_breakdown": breakdown,
             "circuit_breaker_failures": self._consecutive_compact_failures,
         }
         if self._last_compact_stats:

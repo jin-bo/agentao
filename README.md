@@ -63,7 +63,8 @@ A disciplined agent that acts deliberately, not impulsively:
 
 Agentao automatically manages long conversations to stay within LLM context limits:
 
-- **Token estimation** — tracks approximate token usage (characters ÷ 4)
+- **Three-tier token counting** — (1) real `prompt_tokens` from provider API response after every LLM call; (2) provider `count_tokens` API (extension point); (3) local estimator: [tiktoken](https://github.com/openai/tiktoken) for GPT-4/Claude/DeepSeek families, CJK-aware character scan (ASCII = 0.25 tok/char, non-ASCII = 1.3 tok/char, adapted from [gemini-cli](https://github.com/google-gemini/gemini-cli)) as fallback. Install tiktoken with `uv sync --extra tokenizer`
+- **Token breakdown** — `/status` shows context split by component: system prompt / conversation messages / tools schema, plus session-total prompt and completion tokens
 - **Two-tier compression** — at 55% usage, *microcompaction* cheaply truncates old oversized tool results (no LLM call); at 65% usage, full LLM summarization kicks in and replaces early messages with a structured `[Conversation Summary]` block
 - **Structured 9-section summary** — LLM summarization produces a detailed summary covering: intent, key concepts, files touched, errors & fixes, problem solving, user messages, pending tasks, current work, and next step — preserving full continuity
 - **Partial compaction** — keeps the most recent 20 messages verbatim; split point advances to the next `user` boundary so tool call sequences are never split mid-flight
@@ -581,7 +582,7 @@ agentao/
 ├── AGENTAO.md             # Project-specific agent instructions
 ├── README.md                # This file
 ├── tests/                   # Test files
-│   ├── test_context_manager.py      # ContextManager tests (22 tests, mock LLM)
+│   ├── test_context_manager.py      # ContextManager tests (24 tests, mock LLM)
 │   ├── test_memory_management.py    # Memory tool tests
 │   ├── test_reliability_prompt.py   # Reliability principles in system prompt (6 tests)
 │   └── test_*.py                    # Other feature tests

@@ -27,7 +27,7 @@ from .agents import AgentManager
 from .agents.tools import drain_bg_notifications
 from .cancellation import CancellationToken, AgentCancelledError
 from .skills import SkillManager
-from .context_manager import ContextManager, is_context_too_long_error
+from .context_manager import ContextManager, is_context_too_long_error, _get_tiktoken_encoding
 from .mcp import load_mcp_config, McpClientManager, McpTool
 
 
@@ -644,6 +644,10 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                         self.messages.append({"role": "assistant", "content": err_msg})
                         return err_msg
 
+            # Tier 1 token count: record real prompt_tokens from API response
+            if getattr(response, "usage", None) and getattr(response.usage, "prompt_tokens", None):
+                self.context_manager.record_api_usage(response.usage.prompt_tokens)
+
             # Process response
             assistant_message = response.choices[0].message
 
@@ -741,7 +745,9 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
         Returns:
             Conversation summary
         """
-        stats = self.context_manager.get_usage_stats(self.messages)
+        tools_schema = self.tools.to_openai_format()
+        messages_with_system = [{"role": "system", "content": self._build_system_prompt()}] + self.messages
+        stats = self.context_manager.get_usage_stats(messages_with_system, tools=tools_schema)
         memory_count = len(self.memory_tool.get_all_memories())
 
         if not self.messages:
@@ -764,9 +770,16 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
             connected = sum(1 for s in statuses if s["status"] == "connected")
             total_tools = sum(s["tools"] for s in statuses)
             summary += f"MCP servers: {connected}/{len(statuses)} connected, {total_tools} tools\n"
+        bd = stats.get("token_breakdown", {})
+        source_label = " (api)" if stats.get("token_count_source") == "api" else ""
         summary += (
-            f"Context: ~{stats['estimated_tokens']:,} / {stats['max_tokens']:,} tokens "
-            f"({stats['usage_percent']:.1f}%)"
+            f"Context: ~{stats['estimated_tokens']:,}{source_label} / {stats['max_tokens']:,} tokens "
+            f"({stats['usage_percent']:.1f}%)\n"
+            f"  system: {bd.get('system', 0):,}  "
+            f"messages: {bd.get('messages', 0):,}  "
+            f"tools: {bd.get('tools', 0):,}\n"
+            f"Session: {self.llm.total_prompt_tokens:,} prompt / "
+            f"{self.llm.total_completion_tokens:,} completion tokens"
         )
 
         if self.skill_manager.get_active_skills():
@@ -803,6 +816,8 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
         """
         old_model = self.llm.model
         self.llm.model = model
+        self.context_manager._encoding = _get_tiktoken_encoding(model)
+        self.context_manager._last_api_prompt_tokens = None  # stale after model change
         self.llm.logger.info(f"Model changed from {old_model} to {model}")
         return f"Model changed from {old_model} to {model}"
 

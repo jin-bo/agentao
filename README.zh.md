@@ -63,7 +63,8 @@ agentao -p "列出这里所有的 Python 文件，并概括每个文件的作用
 
 Agentao 自动管理长对话，以保持在 LLM 上下文限制内：
 
-- **Token 估算** — 追踪近似 token 用量（字符数 ÷ 4）
+- **三层 Token 计数** — ① 每次 LLM 调用后从 provider API 响应中读取真实 `prompt_tokens`（最优）；② provider `count_tokens` API（次优，扩展点）；③ 本地估算兜底：支持 tiktoken（GPT-4 / Claude / DeepSeek 系列），回退时使用 CJK 感知字符扫描（ASCII = 0.25 tok/字符，非 ASCII = 1.3 tok/字符，参考 [gemini-cli](https://github.com/google-gemini/gemini-cli) 实现）。安装 tiktoken：`uv sync --extra tokenizer`
+- **Token 分项上报** — `/status` 展示上下文按组件拆分：系统提示词 / 对话消息 / 工具 Schema，以及本次会话累计 prompt 和 completion token 用量
 - **两级压缩** — 用量达 55% 时触发*微压缩*，无需 LLM 调用，直接截断旧的超大工具结果；达 65% 时触发完整 LLM 摘要压缩，将早期消息替换为结构化的 `[Conversation Summary]` 块
 - **结构化 9 节摘要** — LLM 摘要生成涵盖：任务意图、关键技术概念、涉及文件、错误与修复、问题解决、用户消息、待办任务、当前状态和下一步行动——完整保留对话连贯性
 - **部分压缩** — 保留最近 20 条消息原文；分割点前进至下一个 `user` 轮次边界，确保工具调用序列不被截断
@@ -574,7 +575,7 @@ agentao/
 ├── README.md                # 英文文档
 ├── README.zh.md             # 中文文档（本文件）
 ├── tests/                   # 测试文件
-│   ├── test_context_manager.py      # ContextManager 测试（22 个，mock LLM）
+│   ├── test_context_manager.py      # ContextManager 测试（24 个，mock LLM）
 │   ├── test_memory_management.py    # 记忆工具测试
 │   ├── test_reliability_prompt.py   # 可靠性原则测试（6 个）
 │   └── test_*.py                    # 其他功能测试
