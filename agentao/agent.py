@@ -752,12 +752,20 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
             Conversation summary
         """
         tools_schema = self.tools.to_openai_format()
-        # Headline count: self.messages only (no system-prompt overhead) so that
-        # a fresh session after /clear shows 0 when no API count is available.
-        # When Tier 1 API count is present it already includes all overhead.
+        # Headline count: self.messages only so a fresh session shows 0.
+        # When Tier 1 API count is present it already reflects all overhead.
         stats = self.context_manager.get_usage_stats(self.messages)
-        # Breakdown: compute separately to include tools schema for visibility
-        bd_full = self.context_manager.estimate_tokens_breakdown(self.messages, tools=tools_schema)
+        # Breakdown: include system prompt + tools only when there are messages,
+        # so that /new resets all three components to 0.
+        if self.messages:
+            messages_with_system = [
+                {"role": "system", "content": self._build_system_prompt()}
+            ] + self.messages
+            bd_full = self.context_manager.estimate_tokens_breakdown(
+                messages_with_system, tools=tools_schema
+            )
+        else:
+            bd_full = {"system": 0, "messages": 0, "tools": 0, "total": 0}
         stats["token_breakdown"] = bd_full
         memory_count = len(self.memory_tool.get_all_memories())
 
