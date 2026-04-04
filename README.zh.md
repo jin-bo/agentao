@@ -89,26 +89,38 @@ Agentao 自动管理长对话，以保持在 LLM 上下文限制内：
 
 你保存的重要上下文（偏好、事实、项目细节）会在相关时自动共鸣回来——无需主动检索。
 
-### 💡 实时展示与流式输出
+### 💡 语义展示引擎
 
-终端使用 Rich Rule 分隔线提供清晰的视觉结构：
+终端使用 Rich 格式提供简洁、低干扰的工具执行输出：
 
 ```
-──────────────── Assistant ────────────────
-⚙ run_shell_command (ls -la)
-─────────────── output ────────────────────
-total 48
-drwxr-xr-x  5 user staff  160 Mar 24 10:00 .
--rw-r--r--  1 user staff  234 Mar 24 09:55 cli.py
-───────────────────────────────────────────
+→ read  src/agent.py
+✓ read  src/agent.py  28ms
 
-目录下有 3 个文件...
+$ pytest tests/ -q
+  ...........
+  … +42 lines
+✓ $ pytest tests/ -q  3.1s
+
+← edit  src/agent.py
+  --- a/agent.py
+  +++ b/agent.py
+  @@ -12,3 +12,4 @@
+  -old line
+  +new line
+✓ edit  src/agent.py  12ms
 ```
 
-- **Rule 分隔线** — Assistant、Thinking 及 Shell 输出各节均以 `───` 线分隔
-- **Shell 输出流式展示** — Shell 命令执行时 stdout 实时打印（纯文本，无 Rich 标记——便于复制粘贴），stderr 在命令完成后显示
-- **工具步骤标题** — 每次工具调用打印可见的 `⚙ tool_name (arg)` 行，而非仅更新进度条
-- **思考展示** — LLM 推理以暗淡斜体风格展示在 `─── Thinking ───` 分隔线下
+- **语义工具标题** — 每次工具调用以有意义的图标和参数预览渲染：`→ read`  `← edit`  `$ shell`  `✱ search`  `↗ fetch`  `◈ remember`
+- **缓冲输出** — 所有输出（含 Shell）均缓冲后在完成时展示；防止刷屏，正确处理 `\r` 进度条、ANSI 颜色码和 `\r\n` 行尾
+- **尾部优先截断** — 长输出展示最后 8 行，超出部分折叠为 `… +N lines`；错误和结果通常在尾部，始终可见
+- **展开/折叠** — Shell 命令展示缓冲输出；读取/搜索/记忆工具默认折叠；折叠工具发生错误时，尾部输出自动浮现
+- **Diff 渲染** — `replace` 展示彩色 unified diff；`write_file` 展示语法高亮内容预览（前 16 行，自动检测文件类型）
+- **工具聚合** — 同一 LLM 轮次中并行调用的工具以 `  + header` 前缀标记，清楚呈现批量执行
+- **进度计时器** — 工具运行超过 0.5 秒后，进度条更新为 `tool  0.8s`
+- **完成状态** — `✓ read  32ms`  /  `✗ run_shell_command  1.2s  Permission denied`
+- **子智能体生命周期** — 前台子智能体用青色 `▶`/`◀` 分隔线包裹；完成时展示统计信息
+- **思考展示** — LLM 推理以暗淡斜体风格展示在分隔线下
 - **结构化推理** — 每组工具调用前，智能体打印其**行动**、**预期**和**若有偏差**的计划——可与实际工具结果核对的可证伪预测
 
 ### ✅ 会话任务追踪
@@ -141,7 +153,7 @@ Agentao 可将任务委托给独立的子智能体，每个子智能体运行自
 
 **两种触发方式：**
 1. **LLM 驱动** — 父 LLM 通过 `agent_codebase_investigator` / `agent_generalist` 工具决定委托；支持可选的 `run_in_background=true` 参数实现异步执行
-2. **用户驱动** — `/agent <name> <task>` 前台运行，`/agent bg <name> <task>` 后台运行，`/agent status` 查询结果
+2. **用户驱动** — `/agent <name> <task>` 前台运行，`/agent bg <name> <task>` 后台运行，`/agents` 查看实时仪表盘
 
 **视觉边界** — 前台子智能体使用青色分隔线标记，与主智能体输出清晰区分：
 ```
@@ -443,8 +455,10 @@ response = agent.chat("总结当前目录")
 | `/agent list` | 同 `/agent` |
 | `/agent <name> <task>` | 前台运行子智能体（带 ▶/◀ 视觉边界） |
 | `/agent bg <name> <task>` | 后台运行子智能体（立即返回 agent ID） |
-| `/agent status` | 查看所有后台任务（状态、耗时、任务预览） |
+| `/agent dashboard` | 后台智能体实时仪表盘（自动刷新） |
+| `/agent status` | 查看所有后台任务状态、耗时、统计 |
 | `/agent status <id>` | 查看指定后台任务的完整结果或错误 |
+| `/agents` | `/agent dashboard` 的简写 |
 | `/confirm` | 显示当前工具确认模式 |
 | `/confirm all` | 启用全允许模式（工具无需提示直接执行） |
 | `/confirm prompt` | 恢复提示模式（每次工具调用前询问） |
@@ -534,8 +548,8 @@ Agentao 在执行潜在危险工具前需要用户确认：
 /agent generalist 将日志模块重构为结构化输出
 
 /agent bg generalist 运行完整测试套件并总结失败项
-/agent status                  （查看所有后台任务）
-/agent status a1b2c3d4         （查看指定后台任务结果）
+/agents                        （实时仪表盘——智能体运行时自动刷新）
+/agent status a1b2c3d4         （查看指定后台任务完整结果）
 ```
 
 **使用 MCP 工具：**

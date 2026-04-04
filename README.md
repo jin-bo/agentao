@@ -89,26 +89,38 @@ Default context limit is 200K tokens. Override with `AGENTAO_CONTEXT_TOKENS` env
 
 This means important context you've saved (preferences, facts, project details) resonates back into the conversation when relevant — no manual retrieval needed.
 
-### 💡 Live Display & Streaming Output
+### 💡 Semantic Display Engine
 
-The terminal display uses Rich Rule separators for clear visual structure:
+The terminal display provides clean, low-noise tool execution output using Rich formatting:
 
 ```
-──────────────── Assistant ────────────────
-⚙ run_shell_command (ls -la)
-─────────────── output ────────────────────
-total 48
-drwxr-xr-x  5 user staff  160 Mar 24 10:00 .
--rw-r--r--  1 user staff  234 Mar 24 09:55 cli.py
-───────────────────────────────────────────
+→ read  src/agent.py
+✓ read  src/agent.py  28ms
 
-目录下有 3 个文件...
+$ pytest tests/ -q
+  ...........
+  … +42 lines
+✓ $ pytest tests/ -q  3.1s
+
+← edit  src/agent.py
+  --- a/agent.py
+  +++ b/agent.py
+  @@ -12,3 +12,4 @@
+  -old line
+  +new line
+✓ edit  src/agent.py  12ms
 ```
 
-- **Rule separators** — Assistant, Thinking, and shell output sections are visually separated with `───` lines
-- **Streaming shell output** — stdout from shell commands is printed in real-time as the command executes (raw text, no Rich markup — clean for copy-paste). stderr is shown after the command completes.
-- **Tool step headers** — each tool call prints a visible `⚙ tool_name (arg)` line instead of just updating a spinner
-- **Thinking display** — LLM reasoning is shown in dim italic style under a `─── Thinking ───` separator
+- **Semantic tool headers** — each tool call renders with a meaningful icon and argument preview: `→ read`  `← edit`  `$ shell`  `✱ search`  `↗ fetch`  `◈ remember`
+- **Buffered output** — all output (including shell) is buffered and shown at completion; prevents screen flooding and handles `\r` progress bars, ANSI codes, and `\r\n` line endings correctly
+- **Tail-biased truncation** — long output shows the last 8 lines with a `… +N lines` fold indicator; errors and results near the tail are always visible
+- **Expand / collapse** — shell commands show buffered output; read/search/memory tools collapse silently; errors on collapsed tools surface the tail retroactively
+- **Diff rendering** — `replace` shows a colored unified diff; `write_file` shows a syntax-highlighted content preview (first 16 lines, lexer auto-detected from extension)
+- **Tool aggregation** — parallel tools in the same LLM turn shown with `  + header` prefix to signal batching
+- **Live elapsed timer** — spinner updates to `tool  0.8s` for tools running longer than 0.5 s
+- **Completion status** — `✓ read  32ms`  /  `✗ run_shell_command  1.2s  Permission denied`
+- **Sub-agent lifecycle** — foreground sub-agents wrapped with cyan `▶`/`◀` rule separators; stats shown on completion
+- **Thinking display** — LLM reasoning shown in dim italic style under a separator
 - **Structured reasoning** — before each set of tool calls the agent prints its **Action**, **Expectation**, and **If wrong** plan — a falsifiable prediction you can verify against the actual tool result
 
 ### ✅ Session Task Tracking
@@ -141,7 +153,7 @@ Agentao can delegate tasks to independent sub-agents, each running its own LLM l
 
 **Two trigger paths:**
 1. **LLM-driven** — the parent LLM decides to delegate via `agent_codebase_investigator` / `agent_generalist` tools; supports optional `run_in_background=true` for async fire-and-forget
-2. **User-driven** — use `/agent <name> <task>` to run a sub-agent directly, `/agent bg <name> <task>` for background, `/agent status` to poll results
+2. **User-driven** — use `/agent <name> <task>` to run a sub-agent directly, `/agent bg <name> <task>` for background, `/agents` to view the live dashboard
 
 **Visual framing** — foreground sub-agents are wrapped with cyan rule separators so their output is clearly distinct from the main agent:
 ```
@@ -450,8 +462,10 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/agent list` | Same as `/agent` |
 | `/agent <name> <task>` | Run a sub-agent in foreground (with ▶/◀ visual boundary) |
 | `/agent bg <name> <task>` | Run a sub-agent in background (returns agent ID immediately) |
-| `/agent status` | Show all background agent tasks (status, elapsed time, task preview) |
+| `/agent dashboard` | Live auto-refreshing dashboard of all background agents |
+| `/agent status` | Show all background agent tasks (status, elapsed, stats) |
 | `/agent status <id>` | Show full result or error for a specific background agent |
+| `/agents` | Shorthand for `/agent dashboard` |
 | `/confirm` | Show current tool confirmation mode |
 | `/confirm all` | Enable allow-all mode (tools execute without prompting) |
 | `/confirm prompt` | Restore prompt mode (ask before each tool) |
@@ -541,8 +555,8 @@ You: Analyze the project structure and find all API endpoints
 /agent generalist refactor the logging module to use structured output
 
 /agent bg generalist run the full test suite and summarize failures
-/agent status                  (check all background agents)
-/agent status a1b2c3d4         (get result of a specific background agent)
+/agents                        (live dashboard — auto-refreshes while agents run)
+/agent status a1b2c3d4         (get full result of a specific background agent)
 ```
 
 **Using MCP tools:**
