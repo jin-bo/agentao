@@ -1,25 +1,38 @@
 """DisplayController — semantic, low-noise tool execution display for the CLI.
 
-Consumes structured AgentEvents and renders:
-  - Semantic tool headers:  → read src/agent.py  /  $ pytest tests/  /  ← write cli.py
+v1 features:
+  - Semantic tool headers  (→ read / $ shell / ← edit / ✱ search …)
   - Buffered output with tail-biased truncation and fold indicator
-  - Completion status:      ✓ read  0.03s   or   ✗ shell  1.2s  Permission denied
-  - Sub-agent lifecycle:    ▶ [codebase-investigator]: task…  /  ◀ … 3 turns · 5 tools
+  - 2-space indented output section
+  - Completion status:  ✓ read 32ms  /  ✗ shell 1.2s  Permission denied
+  - Sub-agent lifecycle: ▶ / ◀ rules
 
-Design rules (from spec):
-  - All output in this file must not raise; exceptions are swallowed.
-  - Does not participate in tool execution logic.
-  - Concurrent tools are tracked by call_id; outputs never cross-contaminate.
+v2 features (this file):
+  - 工具聚合  — parallel tools shown with `+` prefix; batch summary on completion
+  - 展开/折叠 — output collapsed by default for read/search/memory tools;
+                shell always expanded; write/edit show diff instead
+  - Diff 渲染 — replace: colored unified diff of old→new;
+                write_file: syntax-highlighted content preview (first N lines)
+  - 进度增强  — live elapsed counter on spinner for tools running > 0.5 s
+
+Design rules:
+  - Never raises. All exceptions are swallowed.
+  - Does not touch tool execution logic.
+  - Thread-safe: concurrent tools isolated by call_id.
 """
 
+import difflib
 import re
 import sys
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from time import monotonic
 from typing import Callable, Optional
 
 from rich.console import Console
+from rich.syntax import Syntax
+from rich.text import Text
 
 from .transport import AgentEvent, EventType
 
@@ -47,6 +60,16 @@ _SEMANTICS: dict[str, tuple[str, str, Optional[str], Optional[str]]] = {
     "check_background_agent": ("⟳", "agent status", "agent_id", None),
 }
 
+# Tools that stream raw output to the terminal (expanded by default)
+_OUTPUT_TOOLS: frozenset[str] = frozenset({"run_shell_command"})
+
+# Tools rendered via diff / preview instead of raw output
+_DIFF_TOOLS: frozenset[str] = frozenset({"replace", "write_file"})
+
+# Progress timer thresholds
+_PROGRESS_DELAY    = 0.5   # seconds before first elapsed update
+_PROGRESS_INTERVAL = 0.3   # seconds between updates
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mKHJABCDEF]")
 
 
@@ -55,10 +78,8 @@ def _strip_ansi(text: str) -> str:
 
 
 def _shorten(val: str, max_len: int = 60) -> str:
-    """Shorten a string; for paths keep head…tail; for others truncate tail."""
     if len(val) <= max_len:
         return val
-    # Path heuristic: contains / or \
     if "/" in val or "\\" in val:
         half = (max_len - 3) // 2
         return val[:half] + "…" + val[-half:]
@@ -66,62 +87,40 @@ def _shorten(val: str, max_len: int = 60) -> str:
 
 
 def _fmt_arg(val: object) -> str:
-    """Format an argument value for display in the header line."""
     if val is None:
         return ""
     s = str(val).strip()
     if not s:
         return ""
     s = _shorten(s)
-    # Quote strings that aren't paths/commands (contain spaces or look textual)
     if " " in s and "/" not in s and "\\" not in s:
         return f'"{s}"'
     return s
 
 
 def _build_header(tool: str, args: dict) -> str:
-    """Compose the one-line display header for a tool call.
-
-    Returns a plain string (no Rich markup) of the form:
-        → read src/agent.py
-        $ pytest tests/ -q
-        ✱ search "def chat"  agentao/agent.py
-        ▶ codebase-investigator
-        ⬡ filesystem.read_file
-    """
-    # Sub-agent tool family
     if tool.startswith("agent_"):
         agent_name = tool[len("agent_"):].replace("_", "-")
         task = _fmt_arg(args.get("task", args.get("description", "")))
         return f"▶ {agent_name}" + (f"  {task}" if task else "")
 
-    # MCP tool family: mcp_server_tool → server.tool
     if tool.startswith("mcp_"):
         rest = tool[4:]
-        # server name is everything up to the second underscore segment
         parts = rest.split("_", 1)
-        if len(parts) == 2:
-            label = f"{parts[0]}.{parts[1]}"
-        else:
-            label = rest
-        primary_key = next(
-            (k for k in ("path", "file_path", "query", "command", "url") if k in args), None
-        )
-        arg_str = _fmt_arg(args.get(primary_key)) if primary_key else ""
+        label = f"{parts[0]}.{parts[1]}" if len(parts) == 2 else rest
+        pk = next((k for k in ("path", "file_path", "query", "command", "url") if k in args), None)
+        arg_str = _fmt_arg(args.get(pk)) if pk else ""
         return f"⬡ {label}" + (f"  {arg_str}" if arg_str else "")
 
     sem = _SEMANTICS.get(tool)
     if sem is None:
-        # Unknown tool — neutral fallback
         first_val = next(iter(args.values()), None) if args else None
         arg_str = _fmt_arg(first_val) if first_val is not None else ""
         return f"⚙ {tool}" + (f"  {arg_str}" if arg_str else "")
 
     icon, verb, pk, sk = sem
-    # Primary arg
     pval = args.get(pk, "") if pk else ""
     arg_str = _fmt_arg(pval)
-    # Secondary arg (only if primary present and secondary key differs)
     if sk and sk != pk and arg_str:
         sval = args.get(sk, "")
         if sval:
@@ -141,68 +140,116 @@ def _fmt_duration(ms: int) -> str:
     return f"{ms / 1000:.1f}s"
 
 
+# ── Diff / preview rendering ──────────────────────────────────────────────────
+
+_DIFF_CONTEXT_LINES = 2
+_WRITE_PREVIEW_LINES = 16
+
+
+def _lexer_for(path: str) -> str:
+    """Guess Pygments lexer name from file extension."""
+    suffix = Path(path).suffix.lower()
+    return {
+        ".py": "python", ".js": "javascript", ".ts": "typescript",
+        ".json": "json", ".yaml": "yaml", ".yml": "yaml",
+        ".md": "markdown", ".sh": "bash", ".bash": "bash",
+        ".html": "html", ".css": "css", ".toml": "toml",
+        ".go": "go", ".rs": "rust", ".java": "java", ".c": "c",
+        ".cpp": "cpp", ".h": "c",
+    }.get(suffix, "text")
+
+
+def _render_replace_diff(console: Console, path: str, old: str, new: str) -> None:
+    """Print a colored unified diff for a replace operation."""
+    old_lines = (old or "").splitlines(keepends=True)
+    new_lines = (new or "").splitlines(keepends=True)
+    fname = Path(path).name if path else "file"
+    diff = list(difflib.unified_diff(
+        old_lines, new_lines,
+        fromfile=f"a/{fname}", tofile=f"b/{fname}",
+        n=_DIFF_CONTEXT_LINES,
+    ))
+    if not diff:
+        return
+    # Color each line manually (no Syntax block needed — diff is plain text)
+    for line in diff:
+        line_s = line.rstrip("\n")
+        if line_s.startswith("+++") or line_s.startswith("---"):
+            console.print(f"  [bold]{line_s}[/bold]")
+        elif line_s.startswith("+"):
+            console.print(f"  [green]{line_s}[/green]")
+        elif line_s.startswith("-"):
+            console.print(f"  [red]{line_s}[/red]")
+        elif line_s.startswith("@@"):
+            console.print(f"  [cyan]{line_s}[/cyan]")
+        else:
+            console.print(f"  [dim]{line_s}[/dim]")
+
+
+def _render_write_preview(console: Console, path: str, content: str) -> None:
+    """Print a syntax-highlighted preview of written content."""
+    if not content:
+        return
+    lines = content.splitlines()
+    preview = "\n".join(lines[:_WRITE_PREVIEW_LINES])
+    hidden = max(0, len(lines) - _WRITE_PREVIEW_LINES)
+    lexer = _lexer_for(path)
+    try:
+        syn = Syntax(preview, lexer, theme="monokai", line_numbers=False,
+                     background_color="default", indent_guides=False)
+        # Indent the syntax block by 2 spaces
+        console.print("  ", end="")
+        console.print(syn)
+    except Exception:
+        for line in lines[:_WRITE_PREVIEW_LINES]:
+            console.print(f"  [dim]{line}[/dim]")
+    if hidden > 0:
+        console.print(f"  [dim]… +{hidden} lines[/dim]")
+
+
 # ── Output buffer ─────────────────────────────────────────────────────────────
 
-_MAX_DISPLAY_LINES = 8    # tail lines shown inline
-_MAX_DISPLAY_CHARS = 1200  # safety cap
+_MAX_DISPLAY_LINES = 8
+_MAX_DISPLAY_CHARS = 1200
 
 
 @dataclass
 class _OutputBuffer:
-    """Accumulate streaming output chunks; produce a display-ready tail."""
-
     _lines: list[str] = field(default_factory=list)
-    _current: str = field(default="")    # partial last line (no newline yet)
-    _total_lines: int = field(default=0)  # total completed lines ever received
+    _current: str = field(default="")
+    _total_lines: int = field(default=0)
 
     def feed(self, chunk: str) -> None:
         if not chunk:
             return
         combined = self._current + chunk
-        # Handle \r (carriage return without newline): overwrite current line
-        # Split on \n first, then handle \r within each segment
         parts = combined.split("\n")
-        for i, part in enumerate(parts[:-1]):
-            # This segment ends with \n — it's a complete line
-            # Handle \r within the segment (take only last \r-separated piece)
-            line = part.split("\r")[-1]
-            self._lines.append(line)
+        for part in parts[:-1]:
+            self._lines.append(part.split("\r")[-1])
             self._total_lines += 1
-        # Last part has no trailing \n yet — handle \r to get current line state
         self._current = parts[-1].split("\r")[-1]
 
     def flush(self) -> None:
-        """Treat any pending partial line as a complete line."""
         if self._current:
             self._lines.append(self._current)
             self._total_lines += 1
             self._current = ""
 
     def render(self) -> tuple[str, int]:
-        """Return (visible_text, hidden_line_count).
-
-        Shows the last _MAX_DISPLAY_LINES lines (tail-biased, per spec §9).
-        hidden_line_count > 0 means output was folded.
-        """
         all_lines = list(self._lines)
         if self._current:
             all_lines.append(self._current)
-
         total = len(all_lines)
         if total == 0:
             return "", 0
-
         if total <= _MAX_DISPLAY_LINES:
-            visible = all_lines
-            hidden = 0
+            visible, hidden = all_lines, 0
         else:
             visible = all_lines[-_MAX_DISPLAY_LINES:]
             hidden = total - _MAX_DISPLAY_LINES
-
         text = "\n".join(visible)
-        # Safety cap on total characters
         if len(text) > _MAX_DISPLAY_CHARS:
-            text = "…" + text[-((_MAX_DISPLAY_CHARS - 1)):]
+            text = "…" + text[-(_MAX_DISPLAY_CHARS - 1):]
         return text, hidden
 
 
@@ -212,28 +259,29 @@ class _OutputBuffer:
 class _ToolState:
     tool: str
     call_id: str
-    header: str                           # rendered header line (no Rich markup)
+    header: str
     buffer: _OutputBuffer = field(default_factory=_OutputBuffer)
-    output_opened: bool = False            # True once we've opened the output section
+    output_opened: bool = False
     start_ts: float = field(default_factory=monotonic)
+    show_output: bool = True        # False → collapse raw output; diff/preview used instead
+    diff_context: dict = field(default_factory=dict)  # populated for replace/write_file
+    _timer: object = field(default=None, repr=False)  # threading.Timer | None
 
 
 # ── DisplayController ─────────────────────────────────────────────────────────
 
 class DisplayController:
-    """Consume AgentEvents and render a semantic, low-noise tool display.
-
-    Thread-safe: concurrent tool executions are isolated by call_id.
-    """
+    """Consume AgentEvents and render a semantic, low-noise tool display."""
 
     def __init__(
         self,
         console: Console,
-        get_status: Callable[[], object],  # returns current rich.Status or None
+        get_status: Callable[[], object],
     ) -> None:
         self._console = console
         self._get_status = get_status
-        self._states: dict[str, _ToolState] = {}  # call_id → _ToolState
+        self._states: dict[str, _ToolState] = {}
+        self._active_calls: set[str] = set()   # for tool aggregation
         self._lock = threading.Lock()
 
     # ── Public entry point ────────────────────────────────────────────────────
@@ -265,7 +313,7 @@ class DisplayController:
             elif t == EventType.AGENT_END:
                 self._on_agent_end(d)
         except Exception:
-            pass  # never let display errors crash the runtime
+            pass
 
     # ── Spinner helpers ───────────────────────────────────────────────────────
 
@@ -295,41 +343,107 @@ class DisplayController:
             except Exception:
                 pass
 
+    # ── Progress timer ────────────────────────────────────────────────────────
+
+    def _arm_progress_timer(self, call_id: str, header: str, start_ts: float) -> None:
+        """Start a daemon timer that updates the spinner with elapsed time."""
+        def _tick() -> None:
+            with self._lock:
+                if call_id not in self._states:
+                    return
+            elapsed = monotonic() - start_ts
+            self._update_spinner(f"[dim]{header}[/dim]  [dim]{elapsed:.1f}s[/dim]")
+            # Schedule next tick
+            t = threading.Timer(_PROGRESS_INTERVAL, _tick)
+            t.daemon = True
+            with self._lock:
+                state = self._states.get(call_id)
+                if state is not None:
+                    state._timer = t
+                    t.start()
+
+        t = threading.Timer(_PROGRESS_DELAY, _tick)
+        t.daemon = True
+        with self._lock:
+            state = self._states.get(call_id)
+            if state is not None:
+                state._timer = t
+        t.start()
+
+    def _cancel_progress_timer(self, state: _ToolState) -> None:
+        if state._timer is not None:
+            try:
+                state._timer.cancel()
+            except Exception:
+                pass
+            state._timer = None
+
     # ── Tool lifecycle ────────────────────────────────────────────────────────
 
     def _on_tool_start(self, tool: str, args: dict, call_id: str) -> None:
         header = _build_header(tool, args)
-        state = _ToolState(tool=tool, call_id=call_id, header=header)
+        show_output = tool in _OUTPUT_TOOLS
+
+        # Collect diff context for write/edit tools
+        diff_ctx: dict = {}
+        if tool == "replace":
+            diff_ctx = {
+                "kind": "replace",
+                "path": args.get("path", args.get("file_path", "")),
+                "old": args.get("old_string", ""),
+                "new": args.get("new_string", ""),
+            }
+        elif tool == "write_file":
+            diff_ctx = {
+                "kind": "write",
+                "path": args.get("path", args.get("file_path", "")),
+                "content": args.get("content", ""),
+            }
+
+        state = _ToolState(
+            tool=tool, call_id=call_id, header=header,
+            show_output=show_output, diff_context=diff_ctx,
+        )
 
         with self._lock:
+            is_parallel = len(self._active_calls) > 0
+            self._active_calls.add(call_id)
             self._states[call_id] = state
 
         self._stop_spinner()
-        self._console.print(f"[bold yellow]{header}[/bold yellow]")
+        if is_parallel:
+            # Secondary tool in a parallel batch — indent to signal grouping
+            self._console.print(f"  [dim]+ {header}[/dim]")
+        else:
+            self._console.print(f"[bold yellow]{header}[/bold yellow]")
         self._start_spinner()
+
+        # Arm progress timer (fires after _PROGRESS_DELAY seconds)
+        self._arm_progress_timer(call_id, header, state.start_ts)
 
     def _on_tool_output(self, chunk: str, call_id: str) -> None:
         with self._lock:
             state = self._states.get(call_id)
         if state is None:
-            # Unknown call_id — write directly as fallback
             sys.stdout.write(chunk)
             sys.stdout.flush()
             return
 
         state.buffer.feed(chunk)
 
+        if not state.show_output:
+            return  # collapsed — buffer silently, display diff/preview on complete
+
         if not state.output_opened:
             state.output_opened = True
             self._stop_spinner()
-            self._console.print()  # blank line before output
-
-        # Write new lines from buffer directly to stdout so \r progress bars work
-        visible, _ = state.buffer.render()
-        if visible:
-            # Only write the chunk directly; let the buffer track state
-            sys.stdout.write(chunk)
+            sys.stdout.write("  ")
             sys.stdout.flush()
+
+        # Indent each chunk; preserve \r (progress bar) semantics
+        indented = chunk.replace("\n", "\n  ").replace("\r", "\r  ")
+        sys.stdout.write(indented)
+        sys.stdout.flush()
 
     def _on_tool_complete(
         self,
@@ -340,36 +454,51 @@ class DisplayController:
     ) -> None:
         with self._lock:
             state = self._states.pop(call_id, None)
+            self._active_calls.discard(call_id)
 
         if state is None:
             self._start_spinner("[bold yellow]Thinking...[/bold yellow]")
             return
 
+        self._cancel_progress_timer(state)
+
+        # ── Close raw output section ──────────────────────────────────────────
         if state.output_opened:
-            # Flush any remaining partial line
             state.buffer.flush()
             _, hidden = state.buffer.render()
             if hidden > 0:
-                self._console.print(f"\n[dim]   … +{hidden} lines[/dim]")
+                self._console.print(f"\n  [dim]… +{hidden} lines[/dim]")
             else:
-                self._console.print()  # ensure newline after raw stdout
+                self._console.print()
 
+        # ── Diff / preview for write tools ────────────────────────────────────
+        if status == "ok" and state.diff_context:
+            ctx = state.diff_context
+            if ctx.get("kind") == "replace":
+                _render_replace_diff(self._console, ctx["path"], ctx["old"], ctx["new"])
+            elif ctx.get("kind") == "write":
+                _render_write_preview(self._console, ctx["path"], ctx["content"])
+
+        # ── Completion line ───────────────────────────────────────────────────
         dur_str = f"  [dim]{_fmt_duration(duration_ms)}[/dim]" if duration_ms > 0 else ""
 
         if status == "ok":
-            self._console.print(
-                f"[green]✓[/green] [dim]{state.header}[/dim]{dur_str}"
-            )
+            self._console.print(f"[green]✓[/green] [dim]{state.header}[/dim]{dur_str}")
         elif status == "cancelled":
             reason = f"  [dim]{error}[/dim]" if error else ""
-            self._console.print(
-                f"[yellow]✗[/yellow] [dim]{state.header}[/dim]{dur_str}{reason}"
-            )
+            self._console.print(f"[yellow]✗[/yellow] [dim]{state.header}[/dim]{dur_str}{reason}")
         else:  # error
+            # For errors on collapsed tools, show any buffered output
+            if not state.output_opened and status == "error":
+                state.buffer.flush()
+                visible, hidden = state.buffer.render()
+                if visible:
+                    for line in visible.splitlines():
+                        self._console.print(f"  [dim red]{line}[/dim red]")
+                    if hidden > 0:
+                        self._console.print(f"  [dim]… +{hidden} lines[/dim]")
             err_str = f"  [dim red]{_shorten(error or '', 80)}[/dim red]" if error else ""
-            self._console.print(
-                f"[red]✗[/red] [dim]{state.header}[/dim]{dur_str}{err_str}"
-            )
+            self._console.print(f"[red]✗[/red] [dim]{state.header}[/dim]{dur_str}{err_str}")
 
         self._start_spinner("[bold yellow]Thinking...[/bold yellow]")
 
@@ -380,9 +509,7 @@ class DisplayController:
         task = d.get("task", "")
         task_preview = f": [dim]{_shorten(task, 80)}[/dim]" if task else ""
         self._stop_spinner()
-        self._console.rule(
-            f"[bold cyan]▶ [{agent}]{task_preview}[/bold cyan]", style="cyan"
-        )
+        self._console.rule(f"[bold cyan]▶ [{agent}]{task_preview}[/bold cyan]", style="cyan")
         self._start_spinner(f"[bold cyan][{agent}] Thinking...[/bold cyan]")
 
     def _on_agent_end(self, d: dict) -> None:
@@ -398,9 +525,7 @@ class DisplayController:
         if error:
             stats += f" · {_shorten(error, 50)}"
 
-        style = "cyan" if state in ("completed",) else "red"
+        style = "cyan" if state == "completed" else "red"
         self._stop_spinner()
-        self._console.rule(
-            f"[bold {style}]◀ [{agent}]  {stats}[/bold {style}]", style=style
-        )
+        self._console.rule(f"[bold {style}]◀ [{agent}]  {stats}[/bold {style}]", style=style)
         self._start_spinner("[bold yellow]Thinking...[/bold yellow]")
