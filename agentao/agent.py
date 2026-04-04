@@ -140,10 +140,8 @@ class Agentao:
         self.llm_text_callback = llm_text_callback
         self.on_max_iterations_callback = on_max_iterations_callback
 
-        # Reasoning prompt is shown only when a thinking/reasoning sink is configured
-        self._has_thinking_handler = thinking_callback is not None or (
-            transport is not None and not isinstance(transport, NullTransport)
-        )
+        # Reasoning prompt is shown only when a dedicated thinking callback is registered
+        self._has_thinking_handler = thinking_callback is not None
 
         # Save LLM config for sub-agent creation
         self._llm_config = {
@@ -594,7 +592,8 @@ Use tools proactively only when they materially improve correctness or are neede
                     for tc in assistant_message.tool_calls:
                         pending.append({"name": tc.function.name, "args": tc.function.arguments})
 
-                result = self.transport.on_max_iterations(max_iterations, pending)
+                _handler = getattr(self.transport, "on_max_iterations", None)
+                result = _handler(max_iterations, pending) if callable(_handler) else {"action": "stop"}
                 action = result.get("action", "stop")
                 if action == "continue":
                     iteration = 0

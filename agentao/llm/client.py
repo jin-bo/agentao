@@ -499,7 +499,8 @@ class LLMClient:
             return response
 
         except Exception as e:
-            if not self._use_max_completion_tokens and "max_tokens" in str(e) and "max_completion_tokens" in str(e):
+            err_str = str(e).lower()
+            if not self._use_max_completion_tokens and "max_tokens" in err_str and "max_completion_tokens" in err_str:
                 # Model requires max_completion_tokens; switch and retry via non-streaming fallback
                 self._use_max_completion_tokens = True
                 self.logger.info("Switching to max_completion_tokens for this model (stream retry)")
@@ -555,6 +556,20 @@ class LLMClient:
                     import traceback
                     self.logger.error(f"[{request_id}] Stream retry failed: {str(retry_e)}\n{traceback.format_exc()}")
                     raise retry_e
+            # Provider doesn't support streaming — fall back to non-streaming chat()
+            if "stream" in err_str or "streaming" in err_str:
+                self.logger.info(f"[{request_id}] Streaming not supported by provider; falling back to non-streaming")
+                try:
+                    response = self.chat(messages, tools=tools, max_tokens=max_tokens)
+                    if on_text_chunk:
+                        content = response.choices[0].message.content
+                        if content:
+                            on_text_chunk(content)
+                    return response
+                except Exception as fallback_e:
+                    import traceback
+                    self.logger.error(f"[{request_id}] Non-streaming fallback also failed: {str(fallback_e)}\n{traceback.format_exc()}")
+                    raise fallback_e
             import traceback
             self.logger.error(f"[{request_id}] Streaming API call failed: {str(e)}\n{traceback.format_exc()}")
             raise
