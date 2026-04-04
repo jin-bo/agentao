@@ -107,6 +107,33 @@ def build_compat_transport(
         elif t == EventType.LLM_TEXT:
             if llm_text_callback:
                 llm_text_callback(d.get("chunk", ""))
+        elif t == EventType.AGENT_START:
+            # Map back to magic-string step_callback for legacy callers
+            if step_callback:
+                from ..agents.tools import SubagentProgress
+                step_callback("__agent_start__", SubagentProgress(
+                    agent_name=d.get("agent", ""),
+                    state="running",
+                    task=d.get("task", ""),
+                    max_turns=d.get("max_turns", 0),
+                    turns=0, tool_calls=0, tokens=0, duration_ms=0,
+                    result=None, error=None,
+                ))
+        elif t == EventType.AGENT_END:
+            if step_callback:
+                from ..agents.tools import SubagentProgress
+                step_callback("__agent_end__", SubagentProgress(
+                    agent_name=d.get("agent", ""),
+                    state=d.get("state", "completed"),
+                    task="",
+                    max_turns=0,
+                    turns=d.get("turns", 0),
+                    tool_calls=d.get("tool_calls", 0),
+                    tokens=d.get("tokens", 0),
+                    duration_ms=d.get("duration_ms", 0),
+                    result=None,
+                    error=d.get("error"),
+                ))
 
     def _confirm(name: str, desc: str, args: dict) -> bool:
         if confirmation_callback:

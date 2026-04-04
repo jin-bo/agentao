@@ -275,20 +275,39 @@ class Agentao:
         """Register agent tools (after base tools are registered)."""
         if self.agent_manager is None:
             return
+        def _agent_step_cb(name, args):
+            if name is None:
+                self.transport.emit(AgentEvent(EventType.TURN_START, {}))
+            elif name == "__agent_start__":
+                self.transport.emit(AgentEvent(EventType.AGENT_START, {
+                    "agent": args.agent_name,
+                    "task": args.task,
+                    "max_turns": args.max_turns,
+                }))
+            elif name == "__agent_end__":
+                self.transport.emit(AgentEvent(EventType.AGENT_END, {
+                    "agent": args.agent_name,
+                    "state": args.state,
+                    "turns": args.turns,
+                    "tool_calls": args.tool_calls,
+                    "tokens": args.tokens,
+                    "duration_ms": args.duration_ms,
+                    "error": args.error,
+                }))
+            else:
+                self.transport.emit(AgentEvent(EventType.TOOL_START, {"tool": name, "args": args}))
+
         agent_tools = self.agent_manager.create_agent_tools(
             all_tools=self.tools.tools,
             llm_config=self._llm_config,
             confirmation_callback=self.transport.confirm_tool,
-            step_callback=lambda name, args: (
-                self.transport.emit(AgentEvent(EventType.TURN_START, {}))
-                if name is None
-                else self.transport.emit(AgentEvent(EventType.TOOL_START, {"tool": name, "args": args}))
-            ),
+            step_callback=_agent_step_cb,
             output_callback=lambda name, chunk: self.transport.emit(
                 AgentEvent(EventType.TOOL_OUTPUT, {"tool": name, "chunk": chunk})
             ),
             tool_complete_callback=lambda name: self.transport.emit(
-                AgentEvent(EventType.TOOL_COMPLETE, {"tool": name})
+                AgentEvent(EventType.TOOL_COMPLETE, {"tool": name, "call_id": name,
+                                                      "status": "ok", "duration_ms": 0, "error": None})
             ),
             ask_user_callback=self.transport.ask_user,
             max_context_tokens=self.context_manager.max_tokens,

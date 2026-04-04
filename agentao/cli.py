@@ -23,6 +23,7 @@ from rich.theme import Theme
 from dotenv import load_dotenv
 
 from .agent import Agentao
+from .display import DisplayController
 from .transport import AgentEvent, EventType
 
 # Custom theme for the CLI
@@ -121,7 +122,7 @@ class AgentaoCLI:
         # Track session-wide confirmation preferences
         self.allow_all_tools = False  # "Yes to all" mode
         self.current_status = None  # Track active status context
-        self._streaming_output = False  # Track if we're in streaming shell output mode
+        self._streaming_output = False  # unused; kept for any external callers
         self.markdown_mode = True  # Render responses as Markdown (toggle with /markdown)
         provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
         self.current_provider = provider  # Track active provider name
@@ -161,25 +162,23 @@ class AgentaoCLI:
             completer=_SlashCompleter(),
         )
 
+        self.display = DisplayController(console, lambda: self.current_status)
+
     # ── Transport protocol implementation ────────────────────────────────────
 
     def emit(self, event: AgentEvent) -> None:
-        """Dispatch a runtime event to the appropriate CLI handler."""
+        """Dispatch a runtime event to the appropriate handler."""
         try:
             t = event.type
-            d = event.data
             if t == EventType.TURN_START:
-                self.on_tool_step(None, {})
-            elif t == EventType.TOOL_START:
-                self.on_tool_step(d.get("tool"), d.get("args", {}))
-            elif t == EventType.TOOL_OUTPUT:
-                self.on_tool_output(d.get("tool", ""), d.get("chunk", ""))
-            elif t == EventType.TOOL_COMPLETE:
-                self.on_tool_complete(d.get("tool", ""))
+                if self.current_status:
+                    self.current_status.update("[bold yellow]Thinking...[/bold yellow]")
             elif t == EventType.THINKING:
-                self.on_llm_thinking(d.get("text", ""))
+                self.on_llm_thinking(event.data.get("text", ""))
             elif t == EventType.LLM_TEXT:
-                self.on_llm_text(d.get("chunk", ""))
+                self.on_llm_text(event.data.get("chunk", ""))
+            else:
+                self.display.on_event(event)
         except Exception:
             pass  # never let a UI error crash the runtime
 
@@ -284,114 +283,6 @@ class AgentaoCLI:
         console.print()
 
         # Resume spinner
-        if self.current_status:
-            self.current_status.start()
-
-    def on_tool_step(self, tool_name: Optional[str], tool_args: dict) -> None:
-        """Display tool call step.
-
-        Called with tool_name=None to reset back to "Thinking..." display.
-        Called with tool_name="__agent_start__" / "__agent_end__" for sub-agent lifecycle.
-
-        Args:
-            tool_name: Name of the tool being called, or None to reset
-            tool_args: Arguments passed to the tool
-        """
-        from .agents.tools import AgentToolWrapper, SubagentProgress
-
-        if tool_name is None:
-            # Reset to thinking state
-            if self.current_status:
-                self.current_status.update("[bold yellow]Thinking...[/bold yellow]")
-            return
-
-        if tool_name == AgentToolWrapper._AGENT_START:
-            if self.current_status:
-                self.current_status.stop()
-            if isinstance(tool_args, SubagentProgress):
-                name, task = tool_args.agent_name, tool_args.task
-            else:
-                name = tool_args.get("name", "agent")
-                task = tool_args.get("task", "")
-            task_preview = f": [dim]{task}[/dim]" if task else ""
-            console.rule(f"[bold cyan]▶ [{name}]{task_preview}[/bold cyan]", style="cyan")
-            if self.current_status:
-                self.current_status.update(f"[bold cyan][{name}] Thinking...[/bold cyan]")
-                self.current_status.start()
-            return
-
-        if tool_name == AgentToolWrapper._AGENT_END:
-            if self.current_status:
-                self.current_status.stop()
-            if isinstance(tool_args, SubagentProgress):
-                name = tool_args.agent_name
-                turns = tool_args.turns
-                tool_calls = tool_args.tool_calls
-                tokens = tool_args.tokens
-                ms = tool_args.duration_ms
-            else:
-                name = tool_args.get("name", "agent")
-                turns = tool_args.get("turns", 0)
-                tool_calls = tool_args.get("tool_calls", 0)
-                tokens = tool_args.get("tokens", 0)
-                ms = tool_args.get("duration_ms", 0)
-            console.rule(
-                f"[bold cyan]◀ [{name}] {turns} turns · {tool_calls} tool calls"
-                f" · ~{tokens:,} tokens · {ms}ms[/bold cyan]",
-                style="cyan",
-            )
-            if self.current_status:
-                self.current_status.update("[bold yellow]Thinking...[/bold yellow]")
-                self.current_status.start()
-            return
-
-        # Stop spinner and print tool header as a visible line
-        if self.current_status:
-            self.current_status.stop()
-
-        summary = _tool_args_summary(tool_name, tool_args)
-        if summary:
-            console.print(f"[bold yellow]⚙ {tool_name}[/bold yellow] [dim]{summary}[/dim]")
-        else:
-            console.print(f"[bold yellow]⚙ {tool_name}[/bold yellow]")
-
-        # Restart spinner
-        if self.current_status:
-            self.current_status.start()
-
-    def on_tool_output(self, tool_name: str, chunk: str) -> None:
-        """Display streaming tool output in real-time.
-
-        Args:
-            tool_name: Name of the tool producing output
-            chunk: Text chunk from tool stdout
-        """
-        if not self._streaming_output:
-            self._streaming_output = True
-            # Stop spinner before printing output
-            if self.current_status:
-                self.current_status.stop()
-            console.rule("[dim]output[/dim]", style="dim")
-
-        # Write chunk directly to stdout so the terminal handles \r natively.
-        # This allows progress bars (curl, pip, tqdm, etc.) to overwrite the
-        # current line instead of stacking as separate lines.
-        sys.stdout.write(chunk)
-        sys.stdout.flush()
-
-    def on_tool_complete(self, tool_name: str) -> None:
-        """Called after a tool finishes execution.
-
-        Args:
-            tool_name: Name of the completed tool
-        """
-        if self._streaming_output:
-            # Ensure output ends with a newline before the closing rule
-            console.print()
-            console.rule(style="dim")
-            self._streaming_output = False
-
-        # Restart spinner for next tool or LLM call
         if self.current_status:
             self.current_status.start()
 

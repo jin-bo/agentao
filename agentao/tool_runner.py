@@ -236,8 +236,12 @@ class ToolRunner:
             _tool = _plan["tool"]
             _tc = _plan["tool_call"]
             _decision = _plan["decision"]
+            _call_id = _tc.id
+            _t0 = time.monotonic()
 
-            self._transport.emit(AgentEvent(EventType.TOOL_START, {"tool": _fn, "args": _args}))
+            self._transport.emit(AgentEvent(EventType.TOOL_START, {
+                "tool": _fn, "args": _args, "call_id": _call_id,
+            }))
 
             if _decision == PermissionDecision.DENY:
                 self._logger.info(f"Tool {_fn} denied by permission engine")
@@ -245,11 +249,19 @@ class ToolRunner:
                     f"Tool execution denied: '{_fn}' is not permitted "
                     f"by the current permission rules."
                 )
+                self._transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {
+                    "tool": _fn, "call_id": _call_id, "status": "cancelled",
+                    "duration_ms": 0, "error": "denied by permission engine",
+                }))
             elif _decision == "CANCELLED":
                 _result = (
                     f"Tool execution cancelled by user. "
                     f"The user declined to execute {_fn}."
                 )
+                self._transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {
+                    "tool": _fn, "call_id": _call_id, "status": "cancelled",
+                    "duration_ms": 0, "error": "cancelled by user",
+                }))
             else:  # ALLOW
                 # Propagate cancellation token to AgentToolWrapper so it can pass
                 # it down to nested sub-agent chat() calls.
@@ -263,11 +275,15 @@ class ToolRunner:
 
                 # Acquire the per-tool lock to serialize concurrent calls to the
                 # same tool instance, protecting output_callback assignment.
+                _errored = False
+                _error_msg = None
                 with _tool_locks[id(_tool)]:
                     if hasattr(_tool, "output_callback"):
                         _tool.output_callback = (
-                            lambda chunk, _name=_fn: self._transport.emit(
-                                AgentEvent(EventType.TOOL_OUTPUT, {"tool": _name, "chunk": chunk})
+                            lambda chunk, _name=_fn, _cid=_call_id: self._transport.emit(
+                                AgentEvent(EventType.TOOL_OUTPUT, {
+                                    "tool": _name, "chunk": chunk, "call_id": _cid,
+                                })
                             )
                         )
                     try:
@@ -275,11 +291,19 @@ class ToolRunner:
                     except TaskComplete as _tc_exc:
                         _result = _tc_exc.result
                     except Exception as _e:
+                        _errored = True
+                        _error_msg = str(_e)[:200]
                         _result = f"Error executing {_fn}: {str(_e)}"
                     finally:
                         if hasattr(_tool, "output_callback"):
                             _tool.output_callback = None
-                        self._transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {"tool": _fn}))
+                        self._transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {
+                            "tool": _fn,
+                            "call_id": _call_id,
+                            "status": "error" if _errored else "ok",
+                            "duration_ms": round((time.monotonic() - _t0) * 1000),
+                            "error": _error_msg,
+                        }))
 
             return _tc.id, _fn, _result
 
