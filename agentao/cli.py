@@ -59,7 +59,8 @@ def _tool_args_summary(tool_name: str, args: dict) -> str:
 
 
 _SLASH_COMMANDS = [
-    '/agent', '/agent bg', '/agent list', '/agent status',
+    '/agent', '/agent bg', '/agent dashboard', '/agent list', '/agent status',
+    '/agents',
     '/clear', '/confirm', '/confirm all', '/confirm prompt',
     '/new',
     '/context', '/context limit', '/exit', '/help',
@@ -751,15 +752,100 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         self.agent.llm.temperature = value
         console.print(f"\n[success]Temperature changed from {old} to {value}[/success]\n")
 
+    def _show_agents_dashboard(self) -> None:
+        """Render a live auto-refreshing table of all background agents."""
+        import time as _time
+        from rich.live import Live
+        from rich.table import Table
+        from rich import box as rich_box
+        from rich.text import Text
+        from rich.panel import Panel
+        from .agents.tools import list_bg_tasks
+
+        def _fmt_status(t: dict) -> Text:
+            status = t["status"]
+            if status == "running":
+                elapsed = _time.time() - t.get("started_at", _time.time())
+                return Text(f"○  {elapsed:.0f}s", style="yellow")
+            if status == "completed":
+                ms = t.get("duration_ms", 0)
+                turns = t.get("turns", 0)
+                calls = t.get("tool_calls", 0)
+                tok = t.get("tokens", 0)
+                tok_s = f"~{tok // 1000}k" if tok >= 1000 else str(tok)
+                dur_s = f"{ms / 1000:.1f}s" if ms >= 1000 else f"{ms}ms"
+                return Text(f"✓  {turns}t {calls}c {tok_s}  {dur_s}", style="green")
+            # failed
+            return Text("✗  failed", style="red")
+
+        def _make_panel() -> Panel:
+            tasks = list_bg_tasks()
+
+            n_run = sum(1 for t in tasks if t["status"] == "running")
+            n_ok  = sum(1 for t in tasks if t["status"] == "completed")
+            n_err = sum(1 for t in tasks if t["status"] == "failed")
+
+            tbl = Table(box=rich_box.SIMPLE, show_header=True, pad_edge=False,
+                        header_style="bold dim")
+            tbl.add_column("ID",     style="cyan",   width=9)
+            tbl.add_column("Agent",  style="bold",   min_width=22, no_wrap=True)
+            tbl.add_column("Status", min_width=22)
+            tbl.add_column("Task",   style="dim",    ratio=1)
+
+            for t in sorted(tasks, key=lambda x: x.get("started_at", 0), reverse=True):
+                status_cell = _fmt_status(t)
+                err_hint = ""
+                if t["status"] == "failed" and t.get("error"):
+                    err_hint = f"  [dim red]{str(t['error'])[:60]}[/dim red]"
+                task_cell = (t.get("task", "")[:55] or "") + err_hint
+                tbl.add_row(t["id"], t["agent_name"], status_cell, task_cell)
+
+            summary = (
+                f"[yellow]○ {n_run} running[/yellow]  "
+                f"[green]✓ {n_ok} completed[/green]  "
+                f"{'[red]' if n_err else '[dim]'}✗ {n_err} failed{'[/red]' if n_err else '[/dim]'}"
+            )
+            footer = "[dim]Press Ctrl+C to exit[/dim]" if n_run else ""
+            title = f"Background Agents  ·  {summary}"
+            return Panel(tbl, title=title, subtitle=footer, border_style="cyan")
+
+        tasks = list_bg_tasks()
+        if not tasks:
+            console.print("\n[dim]No background agents in this session.[/dim]\n")
+            return
+
+        has_running = any(t["status"] == "running" for t in tasks)
+        if not has_running:
+            console.print()
+            console.print(_make_panel())
+            console.print()
+            return
+
+        # Live view — auto-refreshes while agents are running
+        try:
+            with Live(_make_panel(), console=console, refresh_per_second=2,
+                      vertical_overflow="visible") as live:
+                while True:
+                    _time.sleep(0.5)
+                    live.update(_make_panel())
+                    if not any(t["status"] == "running" for t in list_bg_tasks()):
+                        _time.sleep(0.3)   # final render
+                        live.update(_make_panel())
+                        break
+        except KeyboardInterrupt:
+            pass
+        console.print()
+
     def handle_agent_command(self, args: str):
         """Handle /agent command.
 
         Subcommands:
-          /agent                   — list available agents
-          /agent list              — list available agents
-          /agent status [id]       — show background agent status (all or specific)
-          /agent <name> <task>     — run agent in foreground
-          /agent bg <name> <task>  — run agent in background
+          /agent                      — list available agents
+          /agent list                 — list available agents
+          /agent dashboard            — live background-agent dashboard
+          /agent status [id]          — show background agent status (all or specific)
+          /agent <name> <task>        — run agent in foreground
+          /agent bg <name> <task>     — run agent in background
         """
         from .agents.tools import list_bg_tasks, get_bg_task
         import time as _time
@@ -783,8 +869,13 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 console.print(f"  [cyan]{name}[/cyan]  [dim]{desc}[/dim]")
             console.print(
                 "\n[dim]Usage: /agent <name> <task>  |  /agent bg <name> <task>"
-                "  |  /agent status [id][/dim]\n"
+                "  |  /agent dashboard[/dim]\n"
             )
+            return
+
+        # ── /agent dashboard  (or /agents) ──────────────────────────────────
+        if sub in ("dashboard", "dash"):
+            self._show_agents_dashboard()
             return
 
         # ── /agent status [id] ───────────────────────────────────────────────
@@ -1328,6 +1419,11 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
                     elif command == "agent":
                         self.handle_agent_command(args)
+                        continue
+
+                    elif command == "agents":
+                        # /agents → shorthand for /agent dashboard
+                        self._show_agents_dashboard()
                         continue
 
                     elif command == "confirm":

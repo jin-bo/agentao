@@ -112,11 +112,25 @@ def _register_bg_task(agent_id: str, agent_name: str, task_summary: str) -> None
             "error": None,
             "started_at": time.time(),
             "finished_at": None,
+            # stats — populated on completion
+            "turns": 0,
+            "tool_calls": 0,
+            "tokens": 0,
+            "duration_ms": 0,
         }
 
 
-def _update_bg_task(agent_id: str, *, status: str, result: Optional[str] = None,
-                    error: Optional[str] = None) -> None:
+def _update_bg_task(
+    agent_id: str,
+    *,
+    status: str,
+    result: Optional[str] = None,
+    error: Optional[str] = None,
+    turns: int = 0,
+    tool_calls: int = 0,
+    tokens: int = 0,
+    duration_ms: int = 0,
+) -> None:
     agent_name: Optional[str] = None
     with _bg_lock:
         rec = _bg_tasks.get(agent_id)
@@ -125,6 +139,10 @@ def _update_bg_task(agent_id: str, *, status: str, result: Optional[str] = None,
             rec["result"] = result
             rec["error"] = error
             rec["finished_at"] = time.time()
+            rec["turns"] = turns
+            rec["tool_calls"] = tool_calls
+            rec["tokens"] = tokens
+            rec["duration_ms"] = duration_ms
             agent_name = rec["agent_name"]
 
     if agent_name is None:
@@ -526,7 +544,11 @@ class AgentToolWrapper(Tool):
             try:
                 result, stats = self._run_sync(task, parent_context, suppress_output=True)
                 formatted = self._format_result(result, stats)
-                _update_bg_task(agent_id, status="completed", result=formatted)
+                _update_bg_task(
+                    agent_id, status="completed", result=formatted,
+                    turns=stats["turns"], tool_calls=stats["tool_calls"],
+                    tokens=stats["tokens"], duration_ms=stats["duration_ms"],
+                )
             except Exception as exc:
                 _update_bg_task(agent_id, status="failed", error=str(exc))
 
