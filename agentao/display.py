@@ -23,7 +23,6 @@ Design rules:
 
 import difflib
 import re
-import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -217,37 +216,57 @@ _MAX_DISPLAY_CHARS = 1200
 class _OutputBuffer:
     _lines: list[str] = field(default_factory=list)
     _current: str = field(default="")
-    _total_lines: int = field(default=0)
 
     def feed(self, chunk: str) -> None:
+        """Accept a raw output chunk.
+
+        Handles: multi-chunk, empty chunks, incomplete newlines, bare \\r
+        (progress-bar overwrite), ANSI codes, \\r\\n Windows endings.
+        """
         if not chunk:
             return
+        # Normalize Windows CRLF → LF before bare-\r processing
+        chunk = chunk.replace("\r\n", "\n")
         combined = self._current + chunk
         parts = combined.split("\n")
         for part in parts[:-1]:
+            # Bare \r: carriage-return overwrite — keep only last segment
             self._lines.append(part.split("\r")[-1])
-            self._total_lines += 1
+        # Partial line: same \r semantics for any in-progress overwrite
         self._current = parts[-1].split("\r")[-1]
 
     def flush(self) -> None:
+        """Commit any partial line to _lines."""
         if self._current:
             self._lines.append(self._current)
-            self._total_lines += 1
             self._current = ""
 
     def render(self) -> tuple[str, int]:
+        """Return (visible_text, hidden_line_count) with tail-biased truncation.
+
+        - ANSI codes stripped for clean display
+        - Trailing blank lines removed
+        - Last _MAX_DISPLAY_LINES lines kept; earlier lines folded
+        - visible_text capped at _MAX_DISPLAY_CHARS chars
+        """
         all_lines = list(self._lines)
         if self._current:
             all_lines.append(self._current)
-        total = len(all_lines)
+        # Strip ANSI, then drop trailing blank lines
+        clean = [_strip_ansi(ln) for ln in all_lines]
+        while clean and not clean[-1].strip():
+            clean.pop()
+        total = len(clean)
         if total == 0:
             return "", 0
         if total <= _MAX_DISPLAY_LINES:
-            visible, hidden = all_lines, 0
+            text = "\n".join(clean)
+            hidden = 0
         else:
-            visible = all_lines[-_MAX_DISPLAY_LINES:]
+            # Tail-biased: errors/results typically appear at the end
+            visible = clean[-_MAX_DISPLAY_LINES:]
             hidden = total - _MAX_DISPLAY_LINES
-        text = "\n".join(visible)
+            text = "\n".join(visible)
         if len(text) > _MAX_DISPLAY_CHARS:
             text = "…" + text[-(_MAX_DISPLAY_CHARS - 1):]
         return text, hidden
@@ -261,9 +280,8 @@ class _ToolState:
     call_id: str
     header: str
     buffer: _OutputBuffer = field(default_factory=_OutputBuffer)
-    output_opened: bool = False
     start_ts: float = field(default_factory=monotonic)
-    show_output: bool = True        # False → collapse raw output; diff/preview used instead
+    show_output: bool = True   # True → render buffered output at completion
     diff_context: dict = field(default_factory=dict)  # populated for replace/write_file
     _timer: object = field(default=None, repr=False)  # threading.Timer | None
 
@@ -422,28 +440,13 @@ class DisplayController:
         self._arm_progress_timer(call_id, header, state.start_ts)
 
     def _on_tool_output(self, chunk: str, call_id: str) -> None:
+        # All output — including shell — is buffered and shown at completion.
+        # This prevents screen flooding and handles \r progress bars correctly.
         with self._lock:
             state = self._states.get(call_id)
-        if state is None:
-            sys.stdout.write(chunk)
-            sys.stdout.flush()
-            return
-
-        state.buffer.feed(chunk)
-
-        if not state.show_output:
-            return  # collapsed — buffer silently, display diff/preview on complete
-
-        if not state.output_opened:
-            state.output_opened = True
-            self._stop_spinner()
-            sys.stdout.write("  ")
-            sys.stdout.flush()
-
-        # Indent each chunk; preserve \r (progress bar) semantics
-        indented = chunk.replace("\n", "\n  ").replace("\r", "\r  ")
-        sys.stdout.write(indented)
-        sys.stdout.flush()
+        if state is not None:
+            state.buffer.feed(chunk)
+        # Orphaned chunks (no matching state) are silently discarded.
 
     def _on_tool_complete(
         self,
@@ -462,16 +465,22 @@ class DisplayController:
 
         self._cancel_progress_timer(state)
 
-        # ── Close raw output section ──────────────────────────────────────────
-        if state.output_opened:
-            state.buffer.flush()
-            _, hidden = state.buffer.render()
-            if hidden > 0:
-                self._console.print(f"\n  [dim]… +{hidden} lines[/dim]")
-            else:
+        # ── Flush buffer and decide what to show ──────────────────────────────
+        state.buffer.flush()
+        # show_output=True  → expanded tool (shell): always show tail
+        # show_output=False → collapsed tool: show tail only on error so the
+        #                     cause is visible; on success show diff/preview
+        render_buf = state.show_output or (status == "error")
+        if render_buf:
+            visible, hidden = state.buffer.render()
+            if visible:
                 self._console.print()
+                for line in visible.splitlines():
+                    self._console.print("  " + line, markup=False, highlight=False)
+                if hidden > 0:
+                    self._console.print(f"  [dim]… +{hidden} lines[/dim]")
 
-        # ── Diff / preview for write tools ────────────────────────────────────
+        # ── Diff / preview for write tools (success only) ─────────────────────
         if status == "ok" and state.diff_context:
             ctx = state.diff_context
             if ctx.get("kind") == "replace":
@@ -488,15 +497,6 @@ class DisplayController:
             reason = f"  [dim]{error}[/dim]" if error else ""
             self._console.print(f"[yellow]✗[/yellow] [dim]{state.header}[/dim]{dur_str}{reason}")
         else:  # error
-            # For errors on collapsed tools, show any buffered output
-            if not state.output_opened and status == "error":
-                state.buffer.flush()
-                visible, hidden = state.buffer.render()
-                if visible:
-                    for line in visible.splitlines():
-                        self._console.print(f"  [dim red]{line}[/dim red]")
-                    if hidden > 0:
-                        self._console.print(f"  [dim]… +{hidden} lines[/dim]")
             err_str = f"  [dim red]{_shorten(error or '', 80)}[/dim red]" if error else ""
             self._console.print(f"[red]✗[/red] [dim]{state.header}[/dim]{dur_str}{err_str}")
 
