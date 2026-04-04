@@ -400,6 +400,27 @@ agentao -p "Translate to French: Good morning" | pbcopy
 
 In print mode all tools are auto-confirmed (no interactive prompts). The exit code is `0` on success and `1` on error.
 
+### Headless / SDK Use
+
+Embed Agentao in your own Python code with no terminal UI:
+
+```python
+from agentao import Agentao
+from agentao.transport import SdkTransport
+
+events = []
+transport = SdkTransport(
+    on_event=events.append,           # receive typed AgentEvents
+    confirm_tool=lambda n, d, a: True,  # auto-approve all tools
+)
+agent = Agentao(transport=transport)
+response = agent.chat("Summarize the current directory")
+```
+
+`SdkTransport` accepts four optional callbacks: `on_event`, `confirm_tool`, `ask_user`, `on_max_iterations`. Omit any you don't need — unset ones fall back to safe defaults (auto-approve, sentinel for ask_user, stop on max iterations).
+
+For fully silent headless use with no callbacks, just `Agentao()` — it uses `NullTransport` automatically.
+
 ### Commands
 
 All commands start with `/`. Type `/` and press **Tab** for autocomplete.
@@ -434,7 +455,6 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/confirm` | Show current tool confirmation mode |
 | `/confirm all` | Enable allow-all mode (tools execute without prompting) |
 | `/confirm prompt` | Restore prompt mode (ask before each tool) |
-| `/stream` | Toggle LLM streaming mode ON/OFF (default: ON); disable when proxy/network drops streaming connections |
 | `/sessions` | List saved sessions |
 | `/sessions resume <id>` | Resume a saved session |
 | `/sessions delete <id>` | Delete a specific session |
@@ -585,6 +605,7 @@ agentao/
 │   ├── test_context_manager.py      # ContextManager tests (24 tests, mock LLM)
 │   ├── test_memory_management.py    # Memory tool tests
 │   ├── test_reliability_prompt.py   # Reliability principles in system prompt (6 tests)
+│   ├── test_transport.py            # Transport protocol tests (26 tests)
 │   └── test_*.py                    # Other feature tests
 ├── docs/                    # Documentation
 │   ├── features/            # Feature documentation
@@ -593,6 +614,11 @@ agentao/
     ├── agent.py             # Core orchestration
     ├── cli.py               # CLI interface (Rich)
     ├── context_manager.py   # Context window management + Agentic RAG
+    ├── transport/           # Transport protocol (decouple runtime from UI)
+    │   ├── events.py        # AgentEvent + EventType
+    │   ├── null.py          # NullTransport (headless / silent)
+    │   ├── sdk.py           # SdkTransport + build_compat_transport
+    │   └── base.py          # Transport Protocol definition
     ├── llm/
     │   └── client.py        # OpenAI-compatible LLM client
     ├── agents/

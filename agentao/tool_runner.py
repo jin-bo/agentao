@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from .permissions import PermissionDecision, PermissionEngine
 from .agents import TaskComplete
 from .tools import ToolRegistry
+from .transport import AgentEvent, EventType, NullTransport
 
 # Tool outputs larger than this are saved to disk; a head+tail excerpt stays in context.
 TOOL_OUTPUT_SAVE_THRESHOLD = 40_000   # chars  (~10K tokens)
@@ -74,18 +75,17 @@ class ToolRunner:
         self,
         tools: ToolRegistry,
         permission_engine: Optional[PermissionEngine],
-        confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]],
-        step_callback: Optional[Callable[[Optional[str], Dict[str, Any]], None]],
-        output_callback: Optional[Callable[[str, str], None]],
-        tool_complete_callback: Optional[Callable[[str], None]],  # Fix #2: was Callable[[str, int], None]
+        transport,  # Transport protocol instance
         logger,
+        # ── Deprecated: kept for backward compatibility ──────────────────────
+        confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
+        step_callback: Optional[Callable[[Optional[str], Dict[str, Any]], None]] = None,
+        output_callback: Optional[Callable[[str, str], None]] = None,
+        tool_complete_callback: Optional[Callable[[str], None]] = None,
     ):
         self._tools = tools
         self._permission_engine = permission_engine
-        self._confirmation_callback = confirmation_callback
-        self._step_callback = step_callback
-        self._output_callback = output_callback
-        self._tool_complete_callback = tool_complete_callback
+        self._transport = transport
         self._logger = logger
         self._doom_counter: Counter = Counter()
 
@@ -207,20 +207,17 @@ class ToolRunner:
         for _plan in _plans:
             if _plan["decision"] == PermissionDecision.ASK:
                 _fn = _plan["function_name"]
-                if self._confirmation_callback:
-                    self._logger.info(f"Tool {_fn} requires confirmation")
-                    _confirmed = self._confirmation_callback(
-                        _fn,
-                        _plan["tool"].description,
-                        _plan["function_args"],
-                    )
-                    if not _confirmed:
-                        self._logger.info(f"Tool {_fn} execution cancelled by user")
-                        _plan["decision"] = "CANCELLED"
-                    else:
-                        self._logger.info(f"Tool {_fn} execution confirmed by user")
-                        _plan["decision"] = PermissionDecision.ALLOW
+                self._logger.info(f"Tool {_fn} requires confirmation")
+                _confirmed = self._transport.confirm_tool(
+                    _fn,
+                    _plan["tool"].description,
+                    _plan["function_args"],
+                )
+                if not _confirmed:
+                    self._logger.info(f"Tool {_fn} execution cancelled by user")
+                    _plan["decision"] = "CANCELLED"
                 else:
+                    self._logger.info(f"Tool {_fn} execution confirmed by user")
                     _plan["decision"] = PermissionDecision.ALLOW
 
         # --- Phase 3: Parallel execution ---
@@ -240,8 +237,7 @@ class ToolRunner:
             _tc = _plan["tool_call"]
             _decision = _plan["decision"]
 
-            if self._step_callback:
-                self._step_callback(_fn, _args)
+            self._transport.emit(AgentEvent(EventType.TOOL_START, {"tool": _fn, "args": _args}))
 
             if _decision == PermissionDecision.DENY:
                 self._logger.info(f"Tool {_fn} denied by permission engine")
@@ -268,9 +264,11 @@ class ToolRunner:
                 # Acquire the per-tool lock to serialize concurrent calls to the
                 # same tool instance, protecting output_callback assignment.
                 with _tool_locks[id(_tool)]:
-                    if self._output_callback and hasattr(_tool, "output_callback"):
+                    if hasattr(_tool, "output_callback"):
                         _tool.output_callback = (
-                            lambda chunk, _name=_fn: self._output_callback(_name, chunk)
+                            lambda chunk, _name=_fn: self._transport.emit(
+                                AgentEvent(EventType.TOOL_OUTPUT, {"tool": _name, "chunk": chunk})
+                            )
                         )
                     try:
                         _result = _tool.execute(**_args)
@@ -281,9 +279,7 @@ class ToolRunner:
                     finally:
                         if hasattr(_tool, "output_callback"):
                             _tool.output_callback = None
-                        # Fix #2: callback signature is (tool_name,) — no returncode
-                        if self._tool_complete_callback:
-                            self._tool_complete_callback(_fn)
+                        self._transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {"tool": _fn}))
 
             return _tc.id, _fn, _result
 

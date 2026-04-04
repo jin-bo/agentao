@@ -393,6 +393,27 @@ agentao -p "翻译成法语：早上好" | pbcopy
 
 打印模式下所有工具自动确认（无交互提示）。成功退出码为 `0`，错误为 `1`。
 
+### 无 UI / SDK 集成
+
+在自己的 Python 代码中嵌入 Agentao，无需终端界面：
+
+```python
+from agentao import Agentao
+from agentao.transport import SdkTransport
+
+events = []
+transport = SdkTransport(
+    on_event=events.append,              # 接收类型化的 AgentEvent
+    confirm_tool=lambda n, d, a: True,   # 自动允许所有工具
+)
+agent = Agentao(transport=transport)
+response = agent.chat("总结当前目录")
+```
+
+`SdkTransport` 接受四个可选回调：`on_event`、`confirm_tool`、`ask_user`、`on_max_iterations`。未设置的回调使用安全默认值（自动允许、ask_user 返回提示信息、超出最大迭代次数时停止）。
+
+如需完全静默的无头模式，直接 `Agentao()` 即可——自动使用 `NullTransport`。
+
 ### 命令列表
 
 所有命令以 `/` 开头，输入 `/` 后按 **Tab** 自动补全。
@@ -578,6 +599,7 @@ agentao/
 │   ├── test_context_manager.py      # ContextManager 测试（24 个，mock LLM）
 │   ├── test_memory_management.py    # 记忆工具测试
 │   ├── test_reliability_prompt.py   # 可靠性原则测试（6 个）
+│   ├── test_transport.py            # Transport 协议测试（26 个）
 │   └── test_*.py                    # 其他功能测试
 ├── docs/                    # 文档
 │   ├── features/            # 功能文档
@@ -586,6 +608,11 @@ agentao/
     ├── agent.py             # 核心编排
     ├── cli.py               # CLI 界面（Rich）
     ├── context_manager.py   # 上下文窗口管理 + Agentic RAG
+    ├── transport/           # Transport 协议（运行时与 UI 解耦）
+    │   ├── events.py        # AgentEvent + EventType
+    │   ├── null.py          # NullTransport（无头 / 静默模式）
+    │   ├── sdk.py           # SdkTransport + build_compat_transport
+    │   └── base.py          # Transport Protocol 定义
     ├── llm/
     │   └── client.py        # OpenAI 兼容 LLM 客户端
     ├── agents/

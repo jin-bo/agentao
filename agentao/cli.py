@@ -23,6 +23,7 @@ from rich.theme import Theme
 from dotenv import load_dotenv
 
 from .agent import Agentao
+from .transport import AgentEvent, EventType
 
 # Custom theme for the CLI
 custom_theme = Theme({
@@ -67,7 +68,7 @@ _SLASH_COMMANDS = [
     '/memory search', '/memory tag', '/model', '/permission', '/provider', '/quit',
     '/reset-confirm', '/sessions', '/sessions delete', '/sessions delete all', '/sessions list', '/sessions resume',
     '/skills', '/skills activate', '/skills deactivate',
-    '/skills disable', '/skills enable', '/skills reload', '/status', '/stream', '/temperature',
+    '/skills disable', '/skills enable', '/skills reload', '/status', '/temperature',
     '/todos', '/tools',
 ]
 
@@ -121,10 +122,7 @@ class AgentaoCLI:
         self.allow_all_tools = False  # "Yes to all" mode
         self.current_status = None  # Track active status context
         self._streaming_output = False  # Track if we're in streaming shell output mode
-        self._llm_streamed = False  # Track if LLM response text was already streamed
         self.markdown_mode = True  # Render responses as Markdown (toggle with /markdown)
-        self.stream_mode = True  # LLM response streaming (toggle with /stream)
-        self._streamed_buffer: str = ""  # Accumulate streaming chunks for final Markdown render
         provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
         self.current_provider = provider  # Track active provider name
 
@@ -137,16 +135,9 @@ class AgentaoCLI:
             api_key=os.getenv(f"{provider}_API_KEY"),
             base_url=os.getenv(f"{provider}_BASE_URL"),
             model=os.getenv(f"{provider}_MODEL"),
-            confirmation_callback=self.confirm_tool_execution,
+            transport=self,
             max_context_tokens=context_limit,
-            step_callback=self.on_tool_step,
-            thinking_callback=self.on_llm_thinking,
-            ask_user_callback=self.ask_user,
-            output_callback=self.on_tool_output,
-            tool_complete_callback=self.on_tool_complete,
-            llm_text_callback=self.on_llm_text,
             permission_engine=self.permission_engine,
-            on_max_iterations_callback=self.on_max_iterations,
         )
 
         # prompt_toolkit session: multiline=True captures full paste; Enter submits
@@ -169,6 +160,32 @@ class AgentaoCLI:
             prompt_continuation='',
             completer=_SlashCompleter(),
         )
+
+    # ── Transport protocol implementation ────────────────────────────────────
+
+    def emit(self, event: AgentEvent) -> None:
+        """Dispatch a runtime event to the appropriate CLI handler."""
+        try:
+            t = event.type
+            d = event.data
+            if t == EventType.TURN_START:
+                self.on_tool_step(None, {})
+            elif t == EventType.TOOL_START:
+                self.on_tool_step(d.get("tool"), d.get("args", {}))
+            elif t == EventType.TOOL_OUTPUT:
+                self.on_tool_output(d.get("tool", ""), d.get("chunk", ""))
+            elif t == EventType.TOOL_COMPLETE:
+                self.on_tool_complete(d.get("tool", ""))
+            elif t == EventType.THINKING:
+                self.on_llm_thinking(d.get("text", ""))
+            elif t == EventType.LLM_TEXT:
+                self.on_llm_text(d.get("chunk", ""))
+        except Exception:
+            pass  # never let a UI error crash the runtime
+
+    def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
+        """Transport protocol method — delegates to confirm_tool_execution."""
+        return self.confirm_tool_execution(tool_name, description, args)
 
     def confirm_tool_execution(self, tool_name: str, tool_description: str, tool_args: dict) -> bool:
         """Prompt user to confirm tool execution with menu options.
@@ -436,19 +453,7 @@ class AgentaoCLI:
                 self.current_status.start()
 
     def on_llm_text(self, chunk: str) -> None:
-        """Accumulate a streamed LLM text chunk.
-
-        Called for each text delta from the LLM during the final response.
-        Chunks are buffered silently; the full response is rendered after
-        agent.chat() returns.
-
-        Args:
-            chunk: Text chunk from LLM stream
-        """
-        if not chunk:
-            return
-        self._llm_streamed = True
-        self._streamed_buffer += chunk
+        """No-op: LLM text is returned by agent.chat() and rendered after the call."""
 
     def ask_user(self, question: str) -> str:
         """Pause spinner, display question, read free-form user response, resume spinner.
@@ -531,7 +536,6 @@ All commands start with `/`:
   - `/confirm prompt` - Restore prompt mode (ask each time)
 - `/reset-confirm` - Reset tool confirmation to prompt mode (legacy alias)
 - `/markdown` - Toggle Markdown rendering ON/OFF (default: ON)
-- `/stream` - Toggle LLM streaming mode ON/OFF (default: ON)
 - `/exit` or `/quit` - Exit the program
 
 **Available Tools:**
@@ -607,10 +611,6 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         # Show markdown mode
         md_state = "[green]ON[/green]" if self.markdown_mode else "[yellow]OFF[/yellow]"
         console.print(f"[info]Markdown Rendering:[/info] {md_state}")
-
-        # Show stream mode
-        stream_state = "[green]ON[/green]" if self.stream_mode else "[yellow]OFF[/yellow]"
-        console.print(f"[info]LLM Streaming:[/info] {stream_state}")
 
         # Show task list summary if any todos exist
         todos = self.agent.todo_tool.get_todos()
@@ -1467,16 +1467,6 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                         console.print(f"\n[cyan]Markdown rendering: {state}[/cyan]\n")
                         continue
 
-                    elif command == "stream":
-                        self.stream_mode = not self.stream_mode
-                        if self.stream_mode:
-                            self.agent.llm_text_callback = self.on_llm_text
-                            console.print("\n[cyan]LLM streaming: ON[/cyan]\n")
-                        else:
-                            self.agent.llm_text_callback = None
-                            console.print("\n[cyan]LLM streaming: OFF[/cyan]\n")
-                        continue
-
                     elif command == "permission":
                         self.handle_permission_command(args)
                         continue
@@ -1504,8 +1494,6 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
                 # Process with agent
                 console.rule("[bold green]Assistant[/bold green]", style="green")
-                self._llm_streamed = False
-                self._streamed_buffer = ""
                 self.current_status = console.status("[bold yellow]Thinking...", spinner="dots")
                 self.current_status.start()
                 try:
@@ -1524,8 +1512,6 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                     console.print(Markdown(response))
                 else:
                     console.print(response)
-                self._llm_streamed = False
-                self._streamed_buffer = ""
 
             except KeyboardInterrupt:
                 if self.current_status:

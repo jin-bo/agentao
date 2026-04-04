@@ -29,6 +29,7 @@ from .cancellation import CancellationToken, AgentCancelledError
 from .skills import SkillManager
 from .context_manager import ContextManager, is_context_too_long_error, _get_tiktoken_encoding
 from .mcp import load_mcp_config, McpClientManager, McpTool
+from .transport import AgentEvent, EventType, NullTransport, build_compat_transport
 
 
 MAX_REASONING_HISTORY_CHARS = 500  # Truncate reasoning_content in history to ~125 tokens
@@ -70,6 +71,7 @@ class Agentao:
         base_url: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        # ── Deprecated callbacks — kept for backward compatibility ────────────
         confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
         max_context_tokens: int = 200_000,
         step_callback: Optional[Callable[[Optional[str], Dict[str, Any]], None]] = None,
@@ -80,35 +82,55 @@ class Agentao:
         llm_text_callback: Optional[Callable[[str], None]] = None,
         permission_engine: Optional[PermissionEngine] = None,
         on_max_iterations_callback: Optional[Callable[[int, list], dict]] = None,
+        transport=None,                   # Transport protocol instance (preferred)
     ):
         """Initialize chat agent.
 
         Args:
-            api_key: API key for LLM service
-            base_url: Base URL for API endpoint
-            model: Model name to use
-            confirmation_callback: Optional callback for tool confirmation.
-                                   Takes (tool_name, tool_description, tool_args) and returns bool
-            max_context_tokens: Maximum context window tokens (default 200K)
-            step_callback: Optional callback called before/after each tool execution.
-                           Takes (tool_name, tool_args); tool_name=None means reset to Thinking...
-            thinking_callback: Optional callback called when LLM produces reasoning text
-                               before tool calls. Takes the reasoning string.
-            ask_user_callback: Optional callback for ask_user tool. Takes (question) and returns
-                               the user's free-form text response.
-            output_callback: Optional callback for streaming tool output.
-                             Takes (tool_name, text_chunk).
-            tool_complete_callback: Optional callback called after tool execution completes.
-                                    Takes (tool_name,).
-            on_max_iterations_callback: Optional callback when max tool iterations is reached.
-                                        Takes (max_iterations, pending_tool_calls) and returns
-                                        dict with "action": "continue"|"stop"|"new_instruction"
-                                        and optional "message" for new_instruction action.
+            api_key: API key for LLM service.
+            base_url: Base URL for API endpoint.
+            model: Model name to use.
+            transport: A Transport instance that receives all runtime events and
+                       handles interactive requests (confirm_tool, ask_user, etc.).
+                       If omitted and no legacy callbacks are provided, a NullTransport
+                       is used (silent / headless mode).
+            max_context_tokens: Maximum context window tokens (default 200K).
+            permission_engine: Optional PermissionEngine for rule-based tool access.
+
+        Deprecated args (still accepted for backward compatibility):
+            confirmation_callback, step_callback, thinking_callback, ask_user_callback,
+            output_callback, tool_complete_callback, llm_text_callback,
+            on_max_iterations_callback.
         """
         self.llm = LLMClient(api_key=api_key, base_url=base_url, model=model, temperature=temperature)
         self.skill_manager = SkillManager()
         self.memory_tool = SaveMemoryTool()
         self.todo_tool = TodoWriteTool()
+        self.permission_engine = permission_engine
+
+        # Resolve transport: explicit > compat shim from old callbacks > NullTransport
+        _has_legacy = any([
+            confirmation_callback, step_callback, thinking_callback, ask_user_callback,
+            output_callback, tool_complete_callback, llm_text_callback,
+            on_max_iterations_callback,
+        ])
+        if transport is not None:
+            self.transport = transport
+        elif _has_legacy:
+            self.transport = build_compat_transport(
+                confirmation_callback=confirmation_callback,
+                step_callback=step_callback,
+                thinking_callback=thinking_callback,
+                ask_user_callback=ask_user_callback,
+                output_callback=output_callback,
+                tool_complete_callback=tool_complete_callback,
+                llm_text_callback=llm_text_callback,
+                on_max_iterations_callback=on_max_iterations_callback,
+            )
+        else:
+            self.transport = NullTransport()
+
+        # Store legacy callback attrs for backward compat (read-only; transport is the live wire)
         self.confirmation_callback = confirmation_callback
         self.step_callback = step_callback
         self.thinking_callback = thinking_callback
@@ -116,8 +138,12 @@ class Agentao:
         self.output_callback = output_callback
         self.tool_complete_callback = tool_complete_callback
         self.llm_text_callback = llm_text_callback
-        self.permission_engine = permission_engine
         self.on_max_iterations_callback = on_max_iterations_callback
+
+        # Reasoning prompt is shown only when a thinking/reasoning sink is configured
+        self._has_thinking_handler = thinking_callback is not None or (
+            transport is not None and not isinstance(transport, NullTransport)
+        )
 
         # Save LLM config for sub-agent creation
         self._llm_config = {
@@ -158,10 +184,7 @@ class Agentao:
         self.tool_runner = ToolRunner(
             tools=self.tools,
             permission_engine=self.permission_engine,
-            confirmation_callback=self.confirmation_callback,
-            step_callback=self.step_callback,
-            output_callback=self.output_callback,
-            tool_complete_callback=self.tool_complete_callback,
+            transport=self.transport,
             logger=self.llm.logger,
         )
 
@@ -197,7 +220,7 @@ class Agentao:
             GoogleSearchTool(),
             self.memory_tool,
             ActivateSkillTool(self.skill_manager),
-            AskUserTool(ask_user_callback=self.ask_user_callback),
+            AskUserTool(ask_user_callback=self.transport.ask_user),
             self.todo_tool,
         ]
 
@@ -255,11 +278,19 @@ class Agentao:
         agent_tools = self.agent_manager.create_agent_tools(
             all_tools=self.tools.tools,
             llm_config=self._llm_config,
-            confirmation_callback=self.confirmation_callback,
-            step_callback=self.step_callback,
-            output_callback=self.output_callback,
-            tool_complete_callback=self.tool_complete_callback,
-            ask_user_callback=self.ask_user_callback,
+            confirmation_callback=self.transport.confirm_tool,
+            step_callback=lambda name, args: (
+                self.transport.emit(AgentEvent(EventType.TURN_START, {}))
+                if name is None
+                else self.transport.emit(AgentEvent(EventType.TOOL_START, {"tool": name, "args": args}))
+            ),
+            output_callback=lambda name, chunk: self.transport.emit(
+                AgentEvent(EventType.TOOL_OUTPUT, {"tool": name, "chunk": chunk})
+            ),
+            tool_complete_callback=lambda name: self.transport.emit(
+                AgentEvent(EventType.TOOL_COMPLETE, {"tool": name})
+            ),
+            ask_user_callback=self.transport.ask_user,
             max_context_tokens=self.context_manager.max_tokens,
             parent_messages_getter=lambda: self.messages,
             cancellation_token_getter=lambda: self._current_token,
@@ -352,7 +383,7 @@ class Agentao:
 
 Current Working Directory: {Path.cwd()}
 
-Use tools proactively whenever they provide ground truth. If you need clarification, ask the user."""
+Use tools proactively only when they materially improve correctness or are needed to verify ground truth. Do not use tools for casual greetings, small talk, or obvious questions. If you need clarification, ask the user."""
 
         # Start with project-specific instructions if available
         if self.project_instructions:
@@ -407,8 +438,8 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
         # Inject operational guidelines unconditionally
         prompt += self._build_operational_guidelines()
 
-        # Instruct LLM to show reasoning when thinking_callback is active
-        if self.thinking_callback:
+        # Instruct LLM to show reasoning when a thinking/reasoning sink is active
+        if self._has_thinking_handler:
             prompt += (
                 "\n\n=== Reasoning Requirement ===\n"
                 "Before each set of tool calls, write 2-3 sentences in this structure:\n"
@@ -444,16 +475,16 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
 
     def _llm_call(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]],
                   cancellation_token: Optional[CancellationToken] = None) -> Any:
-        """Dispatch to streaming or non-streaming LLM call based on llm_text_callback."""
-        if self.llm_text_callback:
-            return self.llm.chat_stream(
-                messages=messages,
-                tools=tools,
-                max_tokens=self.llm.max_tokens,
-                on_text_chunk=self.llm_text_callback,
-                cancellation_token=cancellation_token,
-            )
-        return self.llm.chat(messages=messages, tools=tools, max_tokens=self.llm.max_tokens)
+        """Call LLM with streaming; emit LLM_TEXT events per chunk via transport."""
+        return self.llm.chat_stream(
+            messages=messages,
+            tools=tools,
+            max_tokens=self.llm.max_tokens,
+            on_text_chunk=lambda chunk: self.transport.emit(
+                AgentEvent(EventType.LLM_TEXT, {"chunk": chunk})
+            ),
+            cancellation_token=cancellation_token,
+        )
 
     def add_message(self, role: str, content: str):
         """Add a message to conversation history.
@@ -544,22 +575,19 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                     for tc in assistant_message.tool_calls:
                         pending.append({"name": tc.function.name, "args": tc.function.arguments})
 
-                if self.on_max_iterations_callback:
-                    result = self.on_max_iterations_callback(max_iterations, pending)
-                    action = result.get("action", "stop")
-                    if action == "continue":
-                        iteration = 0
-                    elif action == "new_instruction":
-                        iteration = 0
-                        new_msg = result.get("message", "")
-                        if new_msg:
-                            self.messages.append({"role": "user", "content": new_msg})
-                            messages_with_system = [
-                                {"role": "system", "content": system_prompt}
-                            ] + self.messages
-                    else:  # "stop"
-                        break
-                else:
+                result = self.transport.on_max_iterations(max_iterations, pending)
+                action = result.get("action", "stop")
+                if action == "continue":
+                    iteration = 0
+                elif action == "new_instruction":
+                    iteration = 0
+                    new_msg = result.get("message", "")
+                    if new_msg:
+                        self.messages.append({"role": "user", "content": new_msg})
+                        messages_with_system = [
+                            {"role": "system", "content": system_prompt}
+                        ] + self.messages
+                else:  # "stop"
                     break
 
             iteration += 1
@@ -605,9 +633,8 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
             # tool execution of the previous iteration).
             token.check()
 
-            # Reset step display before each LLM call
-            if self.step_callback:
-                self.step_callback(None, {})
+            # Signal transport to reset display before each LLM call
+            self.transport.emit(AgentEvent(EventType.TURN_START, {}))
 
             # Call LLM — catch context-overflow errors and force-compress once before giving up
             try:
@@ -664,15 +691,14 @@ Use tools proactively whenever they provide ground truth. If you need clarificat
                 # Extract reasoning_content (thinking-enabled APIs like DeepSeek Reasoner)
                 reasoning_content = getattr(assistant_message, "reasoning_content", None)
 
-                # Show reasoning_content via thinking_callback if present
-                if reasoning_content and self.thinking_callback:
-                    self.thinking_callback(reasoning_content)
+                # Show reasoning_content via transport if present
+                if reasoning_content:
+                    self.transport.emit(AgentEvent(EventType.THINKING, {"text": reasoning_content}))
 
                 # Show LLM content text (content before tool calls) if present
-                # When reasoning_content is present, content usually lacks thinking text
                 reasoning = (assistant_message.content or "").strip()
-                if reasoning and self.thinking_callback:
-                    self.thinking_callback(reasoning)
+                if reasoning:
+                    self.transport.emit(AgentEvent(EventType.THINKING, {"text": reasoning}))
 
                 # Build assistant message with tool calls
                 assistant_msg: Dict[str, Any] = {
