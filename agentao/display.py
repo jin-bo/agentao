@@ -30,6 +30,7 @@ from time import monotonic
 from typing import Callable, Optional
 
 from rich.console import Console
+from rich.padding import Padding
 from rich.syntax import Syntax
 from rich.text import Text
 
@@ -215,9 +216,7 @@ def _render_write_preview(console: Console, path: str, content: str) -> None:
     try:
         syn = Syntax(preview, lexer, theme="monokai", line_numbers=False,
                      background_color="default", indent_guides=False)
-        # Indent the syntax block by 2 spaces
-        console.print("  ", end="")
-        console.print(syn)
+        console.print(Padding(syn, (0, 0, 0, 2)))
     except Exception:
         for line in lines[:_WRITE_PREVIEW_LINES]:
             console.print(f"  [dim]{line}[/dim]")
@@ -495,7 +494,6 @@ class DisplayController:
         if render_buf:
             visible, hidden = state.buffer.render()
             if visible:
-                self._console.print()
                 for line in visible.splitlines():
                     self._console.print("  " + line, markup=False, highlight=False)
                 if hidden > 0:
