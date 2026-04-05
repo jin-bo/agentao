@@ -39,25 +39,25 @@ from .transport import AgentEvent, EventType
 # ── Tool semantics table ──────────────────────────────────────────────────────
 # (icon, verb, primary_arg_key, secondary_arg_key | None)
 _SEMANTICS: dict[str, tuple[str, str, Optional[str], Optional[str]]] = {
-    "read_file":              ("→", "read",     "path",        None),
-    "list_directory":         ("→", "list",     "path",        None),
-    "glob":                   ("✱", "glob",     "pattern",     None),
-    "search_file_content":    ("✱", "search",   "query",       "path"),
-    "write_file":             ("←", "write",    "path",        None),
-    "replace":                ("←", "edit",     "path",        None),
-    "run_shell_command":      ("$", "",         "command",     None),
-    "web_fetch":              ("↗", "fetch",    "url",         None),
-    "google_web_search":      ("↗", "search",   "query",       None),
-    "save_memory":            ("◈", "remember", "key",         None),
-    "search_memory":          ("◈", "recall",   "query",       None),
-    "delete_memory":          ("◈", "forget",   "key",         None),
-    "clear_all_memories":     ("◈", "clear memories", None,   None),
-    "filter_memory_by_tag":   ("◈", "filter",   "tag",         None),
-    "list_memories":          ("◈", "memories", None,          None),
-    "activate_skill":         ("◉", "skill",    "name",        None),
-    "ask_user":               ("?", "ask",      "question",    None),
-    "todo_write":             ("✔", "todos",    None,          None),
-    "check_background_agent": ("⟳", "agent status", "agent_id", None),
+    "read_file":              ("→", "read",     "file_path",       None),
+    "list_directory":         ("→", "list",     "directory_path",  None),
+    "glob":                   ("✱", "glob",     "pattern",         "directory"),
+    "search_file_content":    ("✱", "search",   "pattern",         "file_path"),
+    "write_file":             ("←", "write",    "file_path",       None),
+    "replace":                ("←", "edit",     "file_path",       None),
+    "run_shell_command":      ("$", "",         "command",         None),
+    "web_fetch":              ("↗", "fetch",    "url",             None),
+    "google_web_search":      ("↗", "search",   "query",           None),
+    "save_memory":            ("◈", "remember", "key",             None),
+    "search_memory":          ("◈", "recall",   "query",           None),
+    "delete_memory":          ("◈", "forget",   "key",             None),
+    "clear_all_memories":     ("◈", "clear memories", None,        None),
+    "filter_memory_by_tag":   ("◈", "filter",   "tag",             None),
+    "list_memories":          ("◈", "memories", None,              None),
+    "activate_skill":         ("◉", "skill",    "skill_name",      "task_description"),
+    "ask_user":               ("?", "ask",      "question",        None),
+    "todo_write":             ("✔", "todos",    None,              None),
+    "check_background_agent": ("⟳", "agent status", "agent_id",   None),
 }
 
 # Tools that stream raw output to the terminal (expanded by default)
@@ -78,10 +78,40 @@ _TASK_TEXT_MAX = 150   # sub-agent task description
 _PATH_TAIL_MAX =  55   # chars kept at tail of a path / URL (tail-preserve)
 _CMD_HEAD_MAX  =  80   # chars kept from start of shell command (head-first)
 _CMD_TAIL_MAX  =  18   # chars kept from end of shell command (context tail)
+_FAST_MS       = 2000  # completion footer suppressed for ok tools faster than this
+
+# Warning line prefixes that trigger consolidation in shell output
+_WARN_PREFIXES = (
+    "Warning:", "[warning]", "WARNING:",
+    "LaTeX Warning:", "Package ", "pdfTeX warning",
+    "Overfull ", "Underfull ",
+)
 
 
 def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
+
+
+def _consolidate_warnings(lines: list) -> list:
+    """Collapse runs of similar warning lines into a single summary line."""
+    result: list = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if any(stripped.startswith(p) for p in _WARN_PREFIXES):
+            group_key = stripped.split(":")[0] + ":"
+            j = i + 1
+            while j < len(lines) and lines[j].strip().startswith(group_key):
+                j += 1
+            result.append(lines[i])
+            count = j - i - 1
+            if count > 0:
+                result.append(f"  … +{count} similar warnings")
+            i = j
+        else:
+            result.append(lines[i])
+            i += 1
+    return result
 
 
 def _shorten(val: str, max_len: int = 60) -> str:
@@ -297,8 +327,9 @@ class _OutputBuffer:
         all_lines = list(self._lines)
         if self._current:
             all_lines.append(self._current)
-        # Strip ANSI, then drop trailing blank lines
+        # Strip ANSI, consolidate warnings, then drop trailing blank lines
         clean = [_strip_ansi(ln) for ln in all_lines]
+        clean = _consolidate_warnings(clean)
         while clean and not clean[-1].strip():
             clean.pop()
         total = len(clean)
@@ -518,6 +549,8 @@ class DisplayController:
         # show_output=False → collapsed tool: show tail only on error so the
         #                     cause is visible; on success show diff/preview
         render_buf = state.show_output or (status == "error")
+        visible = ""
+        hidden = 0
         if render_buf:
             visible, hidden = state.buffer.render()
             if visible:
@@ -527,7 +560,8 @@ class DisplayController:
                     self._console.print(f"  [dim]… +{hidden} lines[/dim]")
 
         # ── Diff / preview for write tools (success only) ─────────────────────
-        if status == "ok" and state.diff_context:
+        has_diff = bool(state.diff_context) and status == "ok"
+        if has_diff:
             ctx = state.diff_context
             if ctx.get("kind") == "replace":
                 _render_replace_diff(self._console, ctx["path"], ctx["old"], ctx["new"])
@@ -535,16 +569,24 @@ class DisplayController:
                 _render_write_preview(self._console, ctx["path"], ctx["content"])
 
         # ── Completion line ───────────────────────────────────────────────────
-        dur_str = f"  [dim]{_fmt_duration(duration_ms)}[/dim]" if duration_ms > 0 else ""
-
-        if status == "ok":
-            self._console.print(f"[green]✓[/green] [dim]{state.header}[/dim]{dur_str}")
-        elif status == "cancelled":
-            reason = f"  [dim]{error}[/dim]" if error else ""
-            self._console.print(f"[yellow]✗[/yellow] [dim]{state.header}[/dim]{dur_str}{reason}")
-        else:  # error
-            err_str = f"  [dim red]{_shorten(error or '', 80)}[/dim red]" if error else ""
-            self._console.print(f"[red]✗[/red] [dim]{state.header}[/dim]{dur_str}{err_str}")
+        # Suppress footer for fast, successful, silent tools — the header alone is enough.
+        has_visible_output = bool(visible)
+        show_footer = (
+            status != "ok"
+            or has_visible_output
+            or has_diff
+            or duration_ms >= _FAST_MS
+        )
+        if show_footer:
+            dur_str = f"  [dim]{_fmt_duration(duration_ms)}[/dim]" if duration_ms > 0 else ""
+            if status == "ok":
+                self._console.print(f"[green]✓[/green] [dim]{state.header}[/dim]{dur_str}")
+            elif status == "cancelled":
+                reason = f"  [dim]{error}[/dim]" if error else ""
+                self._console.print(f"[yellow]✗[/yellow] [dim]{state.header}[/dim]{dur_str}{reason}")
+            else:  # error
+                err_str = f"  [dim red]{_shorten(error or '', 80)}[/dim red]" if error else ""
+                self._console.print(f"[red]✗[/red] [dim]{state.header}[/dim]{dur_str}{err_str}")
 
         # Only restore "Thinking…" once the last tool in a parallel batch is done
         if not still_active:

@@ -1,7 +1,7 @@
 [project]
 name = "agentao"
 version = "0.1.11"
-description = "A CLI chat agent with tools and skills support"
+description = "An Eastern-philosophy-inspired CLI agent harness for personal research and data analysis assistance."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

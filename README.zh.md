@@ -94,13 +94,12 @@ Agentao 自动管理长对话，以保持在 LLM 上下文限制内：
 终端使用 Rich 格式提供简洁、低干扰的工具执行输出：
 
 ```
-→ read  src/agent.py
-✓ read  src/agent.py  28ms
+→ read  src/agent.py             ← 快速且无输出：仅显示标题行，无完成脚注
 
 $ pytest tests/ -q
   ...........
   … +42 lines
-✓ $ pytest tests/ -q  3.1s
+✓ $ pytest tests/ -q  3.1s      ← 耗时 ≥ 2s：显示完成脚注
 
 ← edit  src/agent.py
   --- a/agent.py
@@ -108,7 +107,12 @@ $ pytest tests/ -q
   @@ -12,3 +12,4 @@
   -old line
   +new line
-✓ edit  src/agent.py  12ms
+✓ edit  src/agent.py  12ms      ← 显示了 diff：显示完成脚注
+
+$ pandoc doc.md -o doc.pdf
+  [warning] Missing character: 'X'
+  … +14 similar warnings         ← 合并同类 warning
+✓ $ pandoc …  1.8s
 ```
 
 - **语义工具标题** — 每次工具调用以有意义的图标和参数预览渲染：`→ read`  `← edit`  `$ shell`  `✱ search`  `↗ fetch`  `◈ remember`
@@ -118,7 +122,8 @@ $ pytest tests/ -q
 - **Diff 渲染** — `replace` 展示彩色 unified diff；`write_file` 展示语法高亮内容预览（前 16 行，自动检测文件类型）
 - **工具聚合** — 同一 LLM 轮次中并行调用的工具以 `  + header` 前缀标记，清楚呈现批量执行
 - **进度计时器** — 工具运行超过 0.5 秒后，进度条更新为 `tool  0.8s`
-- **完成状态** — `✓ read  32ms`  /  `✗ run_shell_command  1.2s  Permission denied`
+- **条件性完成脚注** — 仅在有输出、有 diff、有错误或耗时 ≥ 2 s 时显示；快速且无输出的工具只显示标题行：`✓ read  32ms`  /  `✗ run_shell_command  1.2s  Permission denied`
+- **Warning 合并** — Shell 输出中连续出现的同类警告折叠为一条摘要：`… +N similar warnings`
 - **子智能体生命周期** — 前台子智能体用青色 `▶`/`◀` 分隔线包裹；完成时展示统计信息
 - **思考展示** — LLM 推理以暗淡斜体风格展示在分隔线下
 - **结构化推理** — 每组工具调用前，智能体打印其**行动**、**预期**和**若有偏差**的计划——可与实际工具结果核对的可证伪预测
@@ -489,7 +494,7 @@ Agentao 在执行潜在危险工具前需要用户确认：
 1. 执行暂停，显示包含工具详情的菜单
 2. 按单个键（无需回车）：
    - **1** — 是，执行本次工具
-   - **2** — 全部允许，本次会话允许所有工具
+   - **2** — 全部允许，本次会话允许所有工具（仅提示一次；后续工具静默执行）
    - **3** — 否，取消执行
    - **Esc** — 取消执行
 
@@ -508,41 +513,41 @@ Agentao 在执行潜在危险工具前需要用户确认：
 
 **读取和分析文件：**
 ```
-你：读取 main.py 并解释它的作用
-你：搜索此目录中所有 Python 文件
-你：查找代码库中所有 TODO 注释
+❯ 读取 main.py 并解释它的作用
+❯ 搜索此目录中所有 Python 文件
+❯ 查找代码库中所有 TODO 注释
 ```
 
 **处理代码：**
 ```
-你：创建一个名为 utils.py 的新 Python 文件，包含辅助函数
-你：用改进版本替换 utils.py 中的旧函数
-你：使用 pytest 运行测试
+❯ 创建一个名为 utils.py 的新 Python 文件，包含辅助函数
+❯ 用改进版本替换 utils.py 中的旧函数
+❯ 使用 pytest 运行测试
 ```
 
 **Web 与搜索：**
 ```
-你：抓取 https://example.com 的内容
-你：搜索 Python 最佳实践
+❯ 抓取 https://example.com 的内容
+❯ 搜索 Python 最佳实践
 ```
 
 **记忆：**
 ```
-你：记住我偏好缩进使用制表符而非空格
-你：保存这个 API 端点 URL 供以后使用
-你：你记得我的哪些偏好？
+❯ 记住我偏好缩进使用制表符而非空格
+❯ 保存这个 API 端点 URL 供以后使用
+❯ 你记得我的哪些偏好？
 ```
 
 **上下文管理：**
 ```
-你：/context                     （查看当前 token 用量）
-你：/context limit 100000        （设置更低的上下文限制）
-你：/status                      （查看记忆数量和上下文百分比）
+❯ /context                     （查看当前 token 用量）
+❯ /context limit 100000        （设置更低的上下文限制）
+❯ /status                      （查看记忆数量和上下文百分比）
 ```
 
 **使用智能体：**
 ```
-你：分析项目结构并找出所有 API 端点
+❯ 分析项目结构并找出所有 API 端点
      （LLM 可能自动委托给 codebase-investigator）
 /agent codebase-investigator 查找项目中所有 TODO 注释
 /agent generalist 将日志模块重构为结构化输出
@@ -556,12 +561,12 @@ Agentao 在执行潜在危险工具前需要用户确认：
 ```
 /mcp list                   （查看已连接的服务器和工具）
 /mcp add fs npx -y @modelcontextprotocol/server-filesystem /tmp
-你：列出项目中所有文件     （LLM 可能使用 MCP 文件系统工具）
+❯ 列出项目中所有文件     （LLM 可能使用 MCP 文件系统工具）
 ```
 
 **任务追踪：**
 ```
-你：将日志模块重构为结构化输出
+❯ 将日志模块重构为结构化输出
      （LLM 自动创建任务清单并在执行中更新状态）
 /todos                          （随时查看当前任务列表）
 /status                         （显示"Task list: 3/5 completed"）
@@ -569,8 +574,8 @@ Agentao 在执行潜在危险工具前需要用户确认：
 
 **使用技能：**
 ```
-你：激活 pdf 技能帮我合并 PDF 文件
-你：使用 xlsx 技能分析这个电子表格
+❯ 激活 pdf 技能帮我合并 PDF 文件
+❯ 使用 xlsx 技能分析这个电子表格
 ```
 
 **查看工具：**

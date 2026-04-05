@@ -200,8 +200,7 @@ class AgentaoCLI:
         """
         # If "allow all" mode is enabled, automatically approve
         if self.allow_all_tools:
-            console.print(f"[dim]✓ Auto-approved: {tool_name} (allow all mode)[/dim]")
-            return True
+            return True  # silent — activation message shown when user pressed "2"
 
         # Pause the "Thinking..." spinner during user confirmation
         if self.current_status:
@@ -1284,7 +1283,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         Enter submits; Meta/Alt+Enter inserts a literal newline.
         prompt_toolkit's wcwidth support correctly handles CJK characters on macOS.
         """
-        return self._prompt_session.prompt(ANSI("\n\033[1;36mYou\033[0m: "))
+        return self._prompt_session.prompt(ANSI("\n\033[1;36m❯\033[0m "))
 
     def run(self):
         """Run the CLI."""

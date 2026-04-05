@@ -94,13 +94,12 @@ This means important context you've saved (preferences, facts, project details) 
 The terminal display provides clean, low-noise tool execution output using Rich formatting:
 
 ```
-→ read  src/agent.py
-✓ read  src/agent.py  28ms
+→ read  src/agent.py             ← fast + silent: header only, no footer
 
 $ pytest tests/ -q
   ...........
   … +42 lines
-✓ $ pytest tests/ -q  3.1s
+✓ $ pytest tests/ -q  3.1s      ← slow (≥2s): footer shown
 
 ← edit  src/agent.py
   --- a/agent.py
@@ -108,7 +107,12 @@ $ pytest tests/ -q
   @@ -12,3 +12,4 @@
   -old line
   +new line
-✓ edit  src/agent.py  12ms
+✓ edit  src/agent.py  12ms      ← diff shown: footer shown
+
+$ pandoc doc.md -o doc.pdf
+  [warning] Missing character: 'X'
+  … +14 similar warnings         ← consolidated warnings
+✓ $ pandoc …  1.8s
 ```
 
 - **Semantic tool headers** — each tool call renders with a meaningful icon and argument preview: `→ read`  `← edit`  `$ shell`  `✱ search`  `↗ fetch`  `◈ remember`
@@ -118,7 +122,8 @@ $ pytest tests/ -q
 - **Diff rendering** — `replace` shows a colored unified diff; `write_file` shows a syntax-highlighted content preview (first 16 lines, lexer auto-detected from extension)
 - **Tool aggregation** — parallel tools in the same LLM turn shown with `  + header` prefix to signal batching
 - **Live elapsed timer** — spinner updates to `tool  0.8s` for tools running longer than 0.5 s
-- **Completion status** — `✓ read  32ms`  /  `✗ run_shell_command  1.2s  Permission denied`
+- **Conditional completion footer** — shown only when there is output, a diff, an error, or the tool takes ≥ 2 s; fast/silent tools display a single header line only: `✓ read  32ms`  /  `✗ run_shell_command  1.2s  Permission denied`
+- **Warning consolidation** — consecutive similar warnings in shell output are collapsed to a single summary: `… +N similar warnings`
 - **Sub-agent lifecycle** — foreground sub-agents wrapped with cyan `▶`/`◀` rule separators; stats shown on completion
 - **Thinking display** — LLM reasoning shown in dim italic style under a separator
 - **Structured reasoning** — before each set of tool calls the agent prints its **Action**, **Expectation**, and **If wrong** plan — a falsifiable prediction you can verify against the actual tool result
@@ -496,7 +501,7 @@ Agentao requires user confirmation before executing potentially dangerous tools:
 1. Execution pauses and you see a menu with tool details
 2. Press a single key (no Enter needed):
    - **1** - Yes, execute this tool once
-   - **2** - Yes to all, allow all tools for this session
+   - **2** - Yes to all, allow all tools for this session (one-time confirmation; subsequent tools execute silently)
    - **3** - No, cancel execution
    - **Esc** - Cancel execution
 
@@ -515,41 +520,41 @@ When "allow all tools" is active, memory recall is auto-confirmed.
 
 **Reading and analyzing files:**
 ```
-You: Read the file main.py and explain what it does
-You: Search for all Python files in this directory
-You: Find all TODO comments in the codebase
+❯ Read the file main.py and explain what it does
+❯ Search for all Python files in this directory
+❯ Find all TODO comments in the codebase
 ```
 
 **Working with code:**
 ```
-You: Create a new Python file called utils.py with helper functions
-You: Replace the old function in utils.py with an improved version
-You: Run the tests using pytest
+❯ Create a new Python file called utils.py with helper functions
+❯ Replace the old function in utils.py with an improved version
+❯ Run the tests using pytest
 ```
 
 **Web and search:**
 ```
-You: Fetch the content from https://example.com
-You: Search for Python best practices
+❯ Fetch the content from https://example.com
+❯ Search for Python best practices
 ```
 
 **Memory:**
 ```
-You: Remember that I prefer tabs over spaces for indentation
-You: Save this API endpoint URL for future use
-You: What do you remember about my preferences?
+❯ Remember that I prefer tabs over spaces for indentation
+❯ Save this API endpoint URL for future use
+❯ What do you remember about my preferences?
 ```
 
 **Context management:**
 ```
-You: /context                     (check current token usage)
-You: /context limit 100000        (set a lower context limit)
-You: /status                      (see memory count and context %)
+❯ /context                     (check current token usage)
+❯ /context limit 100000        (set a lower context limit)
+❯ /status                      (see memory count and context %)
 ```
 
 **Using agents:**
 ```
-You: Analyze the project structure and find all API endpoints
+❯ Analyze the project structure and find all API endpoints
      (LLM may auto-delegate to codebase-investigator)
 /agent codebase-investigator find all TODO comments in this project
 /agent generalist refactor the logging module to use structured output
@@ -563,12 +568,12 @@ You: Analyze the project structure and find all API endpoints
 ```
 /mcp list                   (check connected servers and tools)
 /mcp add fs npx -y @modelcontextprotocol/server-filesystem /tmp
-You: List all files in the project     (LLM may use MCP filesystem tools)
+❯ List all files in the project     (LLM may use MCP filesystem tools)
 ```
 
 **Task tracking:**
 ```
-You: Refactor the logging module to use structured output
+❯ Refactor the logging module to use structured output
      (LLM creates a task list, updates statuses as it works)
 /todos                          (view current task list at any time)
 /status                         (shows "Task list: 3/5 completed")
@@ -576,8 +581,8 @@ You: Refactor the logging module to use structured output
 
 **Using skills:**
 ```
-You: Activate the pdf skill to help me merge PDF files
-You: Use the xlsx skill to analyze this spreadsheet
+❯ Activate the pdf skill to help me merge PDF files
+❯ Use the xlsx skill to analyze this spreadsheet
 ```
 
 **Inspecting tools:**
