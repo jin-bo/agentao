@@ -49,6 +49,10 @@ class CompleteTaskTool(Tool):
     """Tool that sub-agents call to return their result."""
 
     @property
+    def is_read_only(self) -> bool:
+        return True
+
+    @property
     def name(self) -> str:
         return "complete_task"
 
@@ -178,6 +182,10 @@ class CheckBackgroundAgentTool(Tool):
     """Poll the status of a background sub-agent and retrieve its result."""
 
     @property
+    def is_read_only(self) -> bool:
+        return True
+
+    @property
     def name(self) -> str:
         return "check_background_agent"
 
@@ -251,6 +259,12 @@ class AgentToolWrapper(Tool):
     # How many recent parent messages to inject as context for sub-agents
     PARENT_CONTEXT_MESSAGES = 10
 
+    @property
+    def is_read_only(self) -> bool:
+        # The wrapper itself is always allowed; readonly enforcement is propagated
+        # into the sub-agent's own ToolRunner via readonly_mode_getter.
+        return True
+
     def __init__(
         self,
         definition: Dict[str, Any],
@@ -264,6 +278,8 @@ class AgentToolWrapper(Tool):
         max_context_tokens: Optional[int] = None,
         parent_messages_getter: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         cancellation_token_getter: Optional[Callable] = None,
+        readonly_mode_getter: Callable[[], bool] = lambda: False,
+        permission_mode_getter: Optional[Callable] = None,
     ):
         self._definition = definition
         self._all_tools = all_tools
@@ -276,6 +292,8 @@ class AgentToolWrapper(Tool):
         self._max_context_tokens = max_context_tokens
         self._parent_messages_getter = parent_messages_getter
         self._cancellation_token_getter = cancellation_token_getter
+        self._readonly_mode_getter = readonly_mode_getter
+        self._permission_mode_getter = permission_mode_getter
         # Set by ToolRunner just before execute() to propagate the per-turn token
         self._cancellation_token: Optional[Any] = None
 
@@ -485,6 +503,15 @@ class AgentToolWrapper(Tool):
         sub_agent.project_instructions = self._definition.get("system_instructions")
         sub_agent.skill_manager = SkillManager(skills_dir="/nonexistent")
         sub_agent.agent_manager = None  # prevent recursive spawning
+        if self._readonly_mode_getter():
+            sub_agent.tool_runner.set_readonly_mode(True)
+        if self._permission_mode_getter:
+            mode = self._permission_mode_getter()
+            if mode is not None:
+                from ..permissions import PermissionEngine
+                engine = PermissionEngine()
+                engine.set_mode(mode)
+                sub_agent.tool_runner._permission_engine = engine
 
         # Prepend parent context to the task
         if parent_context:

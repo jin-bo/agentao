@@ -88,6 +88,11 @@ class ToolRunner:
         self._transport = transport
         self._logger = logger
         self._doom_counter: Counter = Counter()
+        self.readonly_mode: bool = False
+
+    def set_readonly_mode(self, enabled: bool) -> None:
+        """Enable or disable readonly mode. When enabled, all non-read-only tools are denied."""
+        self.readonly_mode = enabled
 
     def reset(self) -> None:
         """Reset doom-loop counter. Call at the start of each chat() invocation."""
@@ -171,7 +176,10 @@ class ToolRunner:
                 })
                 continue
 
-            if self._permission_engine:
+            # Readonly mode: block all non-read-only tools before any other check.
+            if self.readonly_mode and not tool.is_read_only:
+                raw_decision = PermissionDecision.DENY
+            elif self._permission_engine:
                 engine_decision = self._permission_engine.decide(function_name, function_args)
                 if engine_decision == PermissionDecision.ALLOW:
                     raw_decision = PermissionDecision.ALLOW
@@ -244,11 +252,17 @@ class ToolRunner:
             }))
 
             if _decision == PermissionDecision.DENY:
-                self._logger.info(f"Tool {_fn} denied by permission engine")
-                _result = (
-                    f"Tool execution denied: '{_fn}' is not permitted "
-                    f"by the current permission rules."
-                )
+                self._logger.info(f"Tool {_fn} denied")
+                if self.readonly_mode and not _tool.is_read_only:
+                    _result = (
+                        f"[Readonly mode] Tool '{_fn}' is blocked — "
+                        f"only read-only tools are permitted in readonly mode."
+                    )
+                else:
+                    _result = (
+                        f"Tool execution denied: '{_fn}' is not permitted "
+                        f"by the current permission rules."
+                    )
                 self._transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {
                     "tool": _fn, "call_id": _call_id, "status": "cancelled",
                     "duration_ms": 0, "error": "denied by permission engine",

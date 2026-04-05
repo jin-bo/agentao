@@ -9,6 +9,10 @@ class CLIHelpAgentTool(Tool):
     """Tool for getting help with CLI usage."""
 
     @property
+    def is_read_only(self) -> bool:
+        return True
+
+    @property
     def name(self) -> str:
         return "cli_help"
 
@@ -70,6 +74,10 @@ For more detailed information, refer to the documentation or ask specific questi
 
 class CodebaseInvestigatorTool(Tool):
     """Tool for investigating codebase structure and content."""
+
+    @property
+    def is_read_only(self) -> bool:
+        return True
 
     @property
     def name(self) -> str:

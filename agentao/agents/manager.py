@@ -92,8 +92,11 @@ class AgentManager:
         max_context_tokens: Optional[int] = None,
         parent_messages_getter: Optional[Callable] = None,
         cancellation_token_getter: Optional[Callable] = None,
+        readonly_mode_getter: Optional[Callable[[], bool]] = None,
+        permission_mode_getter: Optional[Callable] = None,
     ) -> List[Tool]:
         """Create an AgentToolWrapper for each agent definition plus CheckBackgroundAgentTool."""
+        _readonly_getter = readonly_mode_getter or (lambda: False)
         wrappers = [
             AgentToolWrapper(
                 definition=defn,
@@ -107,6 +110,8 @@ class AgentManager:
                 max_context_tokens=max_context_tokens,
                 parent_messages_getter=parent_messages_getter,
                 cancellation_token_getter=cancellation_token_getter,
+                readonly_mode_getter=_readonly_getter,
+                permission_mode_getter=permission_mode_getter,
             )
             for defn in self.definitions.values()
         ]

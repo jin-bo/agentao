@@ -329,6 +329,8 @@ class Agentao:
             max_context_tokens=self.context_manager.max_tokens,
             parent_messages_getter=lambda: self.messages,
             cancellation_token_getter=lambda: self._current_token,
+            readonly_mode_getter=lambda: getattr(self, 'tool_runner', None) is not None and self.tool_runner.readonly_mode,
+            permission_mode_getter=lambda: getattr(self.tool_runner, '_permission_engine', None) and self.tool_runner._permission_engine.active_mode,
         )
         for agent_tool in agent_tools:
             self.tools.register(agent_tool)

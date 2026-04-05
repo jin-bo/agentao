@@ -4,9 +4,12 @@ import warnings
 warnings.filterwarnings("ignore", message="urllib3.*or chardet.*doesn't match")
 
 import atexit
+import json
 import os
 import sys
+import uuid as _uuid_mod
 import termios
+from pathlib import Path
 from typing import Optional
 
 import readchar
@@ -61,14 +64,13 @@ def _tool_args_summary(tool_name: str, args: dict) -> str:
 _SLASH_COMMANDS = [
     '/agent', '/agent bg', '/agent dashboard', '/agent list', '/agent status',
     '/agents',
-    '/clear', '/confirm', '/confirm all', '/confirm prompt',
-    '/new',
+    '/clear', '/new',
     '/context', '/context limit', '/exit', '/help',
     '/mcp', '/mcp add', '/mcp list', '/mcp remove',
     '/markdown',
     '/memory', '/memory clear', '/memory delete', '/memory list',
-    '/memory search', '/memory tag', '/model', '/permission', '/provider', '/quit',
-    '/reset-confirm', '/sessions', '/sessions delete', '/sessions delete all', '/sessions list', '/sessions resume',
+    '/memory search', '/memory tag', '/mode', '/model', '/permission', '/provider', '/quit',
+    '/sessions', '/sessions delete', '/sessions delete all', '/sessions list', '/sessions resume',
     '/skills', '/skills activate', '/skills deactivate',
     '/skills disable', '/skills enable', '/skills reload', '/status', '/temperature',
     '/todos', '/tools',
@@ -78,6 +80,7 @@ _SLASH_COMMANDS = [
 _SLASH_COMMAND_HINTS = {
     '/agent bg': '<agent-name> <task>',
     '/agent status': '[agent-id]',
+    '/mode': '[read-only|workspace-write|full-access]',
     '/model': '<model-name>',
     '/provider': '<provider-name>',
     '/memory search': '<keyword>',
@@ -120,8 +123,7 @@ class AgentaoCLI:
         """Initialize CLI."""
         load_dotenv()
 
-        # Track session-wide confirmation preferences
-        self.allow_all_tools = False  # "Yes to all" mode
+        self.current_session_id: Optional[str] = None  # Stable UUID of active session
         self.current_status = None  # Track active status context
         self._streaming_output = False  # unused; kept for any external callers
         self.markdown_mode = True  # Render responses as Markdown (toggle with /markdown)
@@ -130,8 +132,20 @@ class AgentaoCLI:
 
         context_limit = int(os.getenv("AGENTAO_CONTEXT_TOKENS", "200000"))
 
-        from .permissions import PermissionEngine
+        from .permissions import PermissionEngine, PermissionMode
         self.permission_engine = PermissionEngine()
+
+        # Derived state — kept for internal use; always in sync with current_mode
+        self.allow_all_tools = False  # unused after mode refactor; kept for safety
+        self.readonly_mode = False    # synced from current_mode via _apply_mode()
+
+        # Load persisted mode (defaults to workspace-write on first run)
+        from .permissions import PermissionMode as _PM
+        _saved = self._load_settings().get("mode", "workspace-write")
+        try:
+            self.current_mode: PermissionMode = _PM(_saved)
+        except ValueError:
+            self.current_mode = _PM.WORKSPACE_WRITE
 
         self.agent = Agentao(
             api_key=os.getenv(f"{provider}_API_KEY"),
@@ -164,6 +178,47 @@ class AgentaoCLI:
         )
 
         self.display = DisplayController(console, lambda: self.current_status)
+
+        # Apply the loaded mode (engine + ToolRunner) without saving again
+        self.permission_engine.set_mode(self.current_mode)
+        from .permissions import PermissionMode as _PM2
+        self.readonly_mode = (self.current_mode == _PM2.READ_ONLY)
+        self._apply_readonly_mode()
+
+    def _apply_readonly_mode(self) -> None:
+        """Sync self.readonly_mode into the ToolRunner."""
+        self.agent.tool_runner.set_readonly_mode(self.readonly_mode)
+
+    def _load_settings(self) -> dict:
+        """Load persisted settings from .agentao/settings.json."""
+        path = Path(".agentao") / "settings.json"
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                pass
+        return {}
+
+    def _save_settings(self) -> None:
+        """Persist current settings to .agentao/settings.json."""
+        path = Path(".agentao") / "settings.json"
+        path.parent.mkdir(exist_ok=True)
+        data = self._load_settings()
+        data["mode"] = self.current_mode.value
+        try:
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _apply_mode(self, mode) -> None:
+        """Switch permission mode, sync engine + ToolRunner, and persist."""
+        self.current_mode = mode
+        self.permission_engine.set_mode(mode)
+        from .permissions import PermissionMode
+        self.readonly_mode = (mode == PermissionMode.READ_ONLY)
+        self._apply_readonly_mode()
+        self.allow_all_tools = False
+        self._save_settings()
 
     # ── Transport protocol implementation ────────────────────────────────────
 
@@ -198,9 +253,12 @@ class AgentaoCLI:
         Returns:
             True if user confirms, False otherwise
         """
-        # If "allow all" mode is enabled, automatically approve
-        if self.allow_all_tools:
-            return True  # silent — activation message shown when user pressed "2"
+        # full-access mode: the engine returns ALLOW before this is ever called, but
+        # guard here too for callers that invoke confirm_tool_execution directly.
+        # Also honour the legacy allow_all_tools flag so external callers/tests work.
+        from .permissions import PermissionMode
+        if self.current_mode == PermissionMode.FULL_ACCESS or self.allow_all_tools:
+            return True
 
         # Pause the "Thinking..." spinner during user confirmation
         if self.current_status:
@@ -233,8 +291,17 @@ class AgentaoCLI:
                         console.print("\n[green]✓ Executing tool[/green]")
                         return True
                     elif key == "2":
+                        # Session-only escalation: switch engine to full-access in
+                        # memory and set allow_all_tools for legacy callers, but do
+                        # NOT persist so the next launch keeps the saved mode.
+                        from .permissions import PermissionMode
                         self.allow_all_tools = True
-                        console.print("\n[green]✓ Executing tool (allow all mode enabled for this session)[/green]")
+                        self.current_mode = PermissionMode.FULL_ACCESS
+                        self.permission_engine.set_mode(PermissionMode.FULL_ACCESS)
+                        # Clear readonly_mode so ToolRunner stops blocking writes.
+                        self.readonly_mode = False
+                        self._apply_readonly_mode()
+                        console.print("\n[green]✓ Executing tool (full-access mode enabled for this session)[/green]")
                         return True
                     elif key == "3":
                         console.print("\n[red]✗ Cancelled[/red]")
@@ -403,11 +470,16 @@ All commands start with `/`:
   - `/provider` - Show current provider and available providers
   - `/provider <NAME>` - Switch to provider (reads XXXX_API_KEY, XXXX_BASE_URL, XXXX_MODEL from env)
 - `/clear` - End current session (saves it) and start a new one
-  - Clears conversation history, all memories, and resets confirmation mode
+  - Clears conversation history, all memories, and resets permission mode to workspace-write
   - `/clear all` - Alias for `/clear` (backward compatible)
 - `/new` - Alias for `/clear`; start a fresh session
 - `/status` - Show conversation status
 - `/temperature [value]` - Show or set LLM temperature (0.0-2.0)
+- `/mode [read-only|workspace-write|full-access]` - Set permission mode
+  - `/mode` - Show current mode
+  - `/mode read-only` - Block all write & shell tools
+  - `/mode workspace-write` - Allow file writes & safe shell; ask for web (default)
+  - `/mode full-access` - Allow all tools without prompting
 - `/skills` - List available skills
 - `/memory [subcommand] [arg]` - Manage saved memories
   - `/memory` or `/memory list` - Show all saved memories (with tag summary)
@@ -421,11 +493,6 @@ All commands start with `/`:
   - `/mcp` or `/mcp list` - List MCP servers with status and tools
   - `/mcp add <name> <command|url>` - Add an MCP server
   - `/mcp remove <name>` - Remove an MCP server
-- `/confirm [all|prompt]` - Set tool confirmation mode
-  - `/confirm` - Show current mode
-  - `/confirm all` - Enable allow-all mode (skip prompts)
-  - `/confirm prompt` - Restore prompt mode (ask each time)
-- `/reset-confirm` - Reset tool confirmation to prompt mode (legacy alias)
 - `/markdown` - Toggle Markdown rendering ON/OFF (default: ON)
 - `/exit` or `/quit` - Exit the program
 
@@ -493,11 +560,15 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         summary = self.agent.get_conversation_summary()
         console.print(f"\n[info]Status:[/info]\n{summary}")
 
-        # Show tool confirmation status
-        if self.allow_all_tools:
-            console.print("[info]Tool Confirmation:[/info] [green]Allow all mode enabled[/green]")
-        else:
-            console.print("[info]Tool Confirmation:[/info] [yellow]Prompt for each tool[/yellow]")
+        # Show permission mode
+        from .permissions import PermissionMode
+        _mode_labels = {
+            PermissionMode.READ_ONLY:       ("[red]read-only[/red]",       "write & shell tools are blocked"),
+            PermissionMode.WORKSPACE_WRITE: ("[green]workspace-write[/green]", "file writes & safe shell allowed, web asks"),
+            PermissionMode.FULL_ACCESS:     ("[yellow]full-access[/yellow]",   "all tools allowed without prompting"),
+        }
+        _label, _desc = _mode_labels.get(self.current_mode, (self.current_mode.value, ""))
+        console.print(f"[info]Permission Mode:[/info] {_label}  [dim]({_desc})[/dim]")
 
         # Show markdown mode
         md_state = "[green]ON[/green]" if self.markdown_mode else "[yellow]OFF[/yellow]"
@@ -1137,13 +1208,18 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 return
             console.print(f"\n[info]Saved Sessions ({len(sessions)}):[/info]\n")
             for s in sessions:
-                console.print(f"  • [cyan]{s['id']}[/cyan]")
+                sid = s.get("session_id")
+                short_id = sid[:8] if sid else s["id"]
+                console.print(f"  • [cyan]{short_id}[/cyan]")
+                if s.get("title"):
+                    console.print(f"    [bold]{s['title']}[/bold]")
                 console.print(f"    Model: [dim]{s['model']}[/dim]  Messages: {s['message_count']}")
-                console.print(f"    Saved: {s['timestamp']}")
+                if s.get("created_at"):
+                    console.print(f"    Created: {s['created_at'][:19]}  Updated: {s.get('updated_at', '')[:19]}")
+                else:
+                    console.print(f"    Saved: {s['timestamp']}")
                 if s["active_skills"]:
                     console.print(f"    Skills: {', '.join(s['active_skills'])}")
-                if s.get("first_user_msg"):
-                    console.print(f"    [dim]» {s['first_user_msg']}[/dim]")
                 console.print()
             console.print("[info]Usage:[/info] /sessions resume <id>  or  /sessions delete <id>  or  /sessions delete all\n")
 
@@ -1181,12 +1257,31 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         """Load a previously saved session into the current agent.
 
         Args:
-            session_id: Timestamp prefix to identify session, or None for latest.
+            session_id: UUID (or prefix), timestamp prefix, or None for latest.
         """
-        from .session import load_session
+        from .session import list_sessions, load_session
+
+        # Resolve metadata first so we can display title and capture the stable UUID.
+        sessions = list_sessions()
+        if not sessions:
+            console.print("\n[error]No saved sessions found.[/error]\n")
+            return
+
+        if session_id:
+            match = next(
+                (s for s in sessions
+                 if (s.get("session_id") or "").startswith(session_id)
+                 or s["id"].startswith(session_id)),
+                None,
+            )
+            if not match:
+                console.print(f"\n[error]Session '{session_id}' not found.[/error]\n")
+                return
+        else:
+            match = sessions[0]  # newest
 
         try:
-            messages, model, active_skills = load_session(session_id)
+            messages, model, active_skills = load_session(match["id"])
         except FileNotFoundError as e:
             console.print(f"\n[error]Could not resume session: {e}[/error]\n")
             return
@@ -1203,8 +1298,14 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             except Exception:
                 pass
 
+        # For legacy sessions without a session_id, mint a new UUID so the resumed
+        # conversation gets a stable identity for subsequent saves.
+        self.current_session_id = match.get("session_id") or str(_uuid_mod.uuid4())
+        sid_display = self.current_session_id[:8]
+        title_display = f": {match['title']}" if match.get("title") else ""
         msg_count = len(messages)
-        console.print(f"\n[success]Session resumed: {msg_count} messages loaded.[/success]")
+        console.print(f"\n[success]↩ Resuming session {sid_display}{title_display}[/success]")
+        console.print(f"[dim]{msg_count} messages loaded.[/dim]")
         if model:
             console.print(f"[dim]Model: {model}[/dim]")
         if active_skills:
@@ -1263,12 +1364,14 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         from .session import save_session
         try:
             active_skills = list(self.agent.skill_manager.get_active_skills().keys())
-            session_file = save_session(
+            session_file, sid = save_session(
                 messages=self.agent.messages,
                 model=self.agent.get_current_model(),
                 active_skills=active_skills,
+                session_id=self.current_session_id,
             )
-            console.print(f"[dim]Session saved → {session_file}[/dim]")
+            self.current_session_id = sid
+            console.print(f"[dim]Session saved → {sid[:8]} ({session_file.name})[/dim]")
         except Exception:
             pass  # Non-critical
 
@@ -1283,7 +1386,12 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         Enter submits; Meta/Alt+Enter inserts a literal newline.
         prompt_toolkit's wcwidth support correctly handles CJK characters on macOS.
         """
-        return self._prompt_session.prompt(ANSI("\n\033[1;36m❯\033[0m "))
+        from .permissions import PermissionMode
+        if self.current_mode == PermissionMode.READ_ONLY:
+            prompt = ANSI("\n\033[1;31m[read-only]\033[0m \033[1;36m❯\033[0m ")
+        else:
+            prompt = ANSI("\n\033[1;36m❯\033[0m ")
+        return self._prompt_session.prompt(prompt)
 
     def run(self):
         """Run the CLI."""
@@ -1326,13 +1434,15 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
                     elif command in ("clear", "new"):
                         self.on_session_end()
+                        self.current_session_id = None
                         self.agent.clear_history()
                         self.agent.memory_tool.clear_all_memories()
-                        self.allow_all_tools = False
+                        from .permissions import PermissionMode
+                        self._apply_mode(PermissionMode.WORKSPACE_WRITE)
                         self.on_session_start()
                         console.print("\n[success]Session ended and new session started.[/success]")
                         console.print("[info]Conversation history and memories cleared.[/info]")
-                        console.print("[info]Tool confirmation reset to prompt mode.[/info]\n")
+                        console.print("[info]Permission mode reset to workspace-write.[/info]\n")
                         continue
 
                     elif command == "status":
@@ -1425,26 +1535,21 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                         self._show_agents_dashboard()
                         continue
 
-                    elif command == "confirm":
-                        if args == "all":
-                            self.allow_all_tools = True
-                            console.print("\n[green]✓ Allow-all mode enabled. Tools will execute without prompting.[/green]\n")
-                        elif args == "prompt":
-                            self.allow_all_tools = False
-                            console.print("\n[success]Prompt mode enabled. Will ask before each tool.[/success]\n")
-                        elif args == "":
-                            mode = "allow-all" if self.allow_all_tools else "prompt"
-                            console.print(f"\n[info]Tool confirmation mode: {mode}[/info]\n")
+                    elif command == "mode":
+                        from .permissions import PermissionMode
+                        _valid = {m.value: m for m in PermissionMode}
+                        if args == "":
+                            console.print(f"\n[info]Permission mode:[/info] {self.current_mode.value}\n")
+                        elif args in _valid:
+                            self._apply_mode(_valid[args])
+                            _descriptions = {
+                                "read-only":       "write & shell tools are blocked",
+                                "workspace-write": "file writes & safe shell allowed, web asks",
+                                "full-access":     "all tools allowed without prompting",
+                            }
+                            console.print(f"\n[green]✓ Permission mode: {args}[/green]  [dim]({_descriptions.get(args, '')})[/dim]\n")
                         else:
-                            console.print("\n[warning]Usage: /confirm [all|prompt][/warning]\n")
-                        continue
-
-                    elif command == "reset-confirm":
-                        if self.allow_all_tools:
-                            self.allow_all_tools = False
-                            console.print("\n[success]Tool confirmation reset. Will prompt for each tool.[/success]\n")
-                        else:
-                            console.print("\n[info]Tool confirmation is already in prompt mode.[/info]\n")
+                            console.print("\n[warning]Usage: /mode [read-only|workspace-write|full-access][/warning]\n")
                         continue
 
                     elif command == "markdown":

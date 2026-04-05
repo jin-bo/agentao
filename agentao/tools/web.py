@@ -87,6 +87,10 @@ class WebFetchTool(Tool):
     """Tool for fetching web content."""
 
     @property
+    def is_read_only(self) -> bool:
+        return True
+
+    @property
     def name(self) -> str:
         return "web_fetch"
 
@@ -177,6 +181,10 @@ class WebFetchTool(Tool):
 
 class GoogleSearchTool(Tool):
     """Tool for performing Google searches."""
+
+    @property
+    def is_read_only(self) -> bool:
+        return True
 
     @property
     def name(self) -> str:

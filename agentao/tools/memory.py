@@ -211,6 +211,10 @@ class SaveMemoryTool(Tool):
 class SearchMemoryTool(Tool):
     """Tool for searching memories."""
 
+    @property
+    def is_read_only(self) -> bool:
+        return True
+
     def __init__(self, memory_tool: SaveMemoryTool):
         """Initialize search memory tool.
 
@@ -353,6 +357,10 @@ class ClearMemoryTool(Tool):
 class FilterMemoryByTagTool(Tool):
     """Tool for filtering memories by tag."""
 
+    @property
+    def is_read_only(self) -> bool:
+        return True
+
     def __init__(self, memory_tool: SaveMemoryTool):
         """Initialize filter memory tool.
 
@@ -406,6 +414,10 @@ class FilterMemoryByTagTool(Tool):
 
 class ListMemoryTool(Tool):
     """Tool for listing all saved memories."""
+
+    @property
+    def is_read_only(self) -> bool:
+        return True
 
     def __init__(self, memory_tool: SaveMemoryTool):
         self.memory_tool = memory_tool

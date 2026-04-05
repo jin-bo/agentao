@@ -8,6 +8,10 @@ from .base import Tool
 class AskUserTool(Tool):
     """Tool that allows the LLM to ask the user a clarifying question."""
 
+    @property
+    def is_read_only(self) -> bool:
+        return True
+
     def __init__(self, ask_user_callback: Optional[Callable[[str], str]] = None):
         self._callback = ask_user_callback
 
