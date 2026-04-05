@@ -273,6 +273,12 @@ class Agentao:
         """Register agent tools (after base tools are registered)."""
         if self.agent_manager is None:
             return
+
+        # Maps sub-agent tool_name → call_id so TOOL_OUTPUT and TOOL_COMPLETE
+        # events can carry the same stable key as their TOOL_START.
+        # Keyed by name — works for serial and different-named parallel calls.
+        _subagent_call_ids: dict = {}
+
         def _agent_step_cb(name, args):
             if name is None:
                 self.transport.emit(AgentEvent(EventType.TURN_START, {}))
@@ -293,7 +299,13 @@ class Agentao:
                     "error": args.error,
                 }))
             else:
-                self.transport.emit(AgentEvent(EventType.TOOL_START, {"tool": name, "args": args}))
+                # Extract call_id injected by build_compat_transport; fall back to name.
+                _args = dict(args) if isinstance(args, dict) else {}
+                call_id = _args.pop("__call_id__", None) or name
+                _subagent_call_ids[name] = call_id
+                self.transport.emit(AgentEvent(EventType.TOOL_START, {
+                    "tool": name, "args": _args, "call_id": call_id,
+                }))
 
         agent_tools = self.agent_manager.create_agent_tools(
             all_tools=self.tools.tools,
@@ -301,11 +313,17 @@ class Agentao:
             confirmation_callback=self.transport.confirm_tool,
             step_callback=_agent_step_cb,
             output_callback=lambda name, chunk: self.transport.emit(
-                AgentEvent(EventType.TOOL_OUTPUT, {"tool": name, "chunk": chunk})
+                AgentEvent(EventType.TOOL_OUTPUT, {
+                    "tool": name, "chunk": chunk,
+                    "call_id": _subagent_call_ids.get(name, name),
+                })
             ),
             tool_complete_callback=lambda name: self.transport.emit(
-                AgentEvent(EventType.TOOL_COMPLETE, {"tool": name, "call_id": name,
-                                                      "status": "ok", "duration_ms": 0, "error": None})
+                AgentEvent(EventType.TOOL_COMPLETE, {
+                    "tool": name,
+                    "call_id": _subagent_call_ids.pop(name, name),
+                    "status": "ok", "duration_ms": 0, "error": None,
+                })
             ),
             ask_user_callback=self.transport.ask_user,
             max_context_tokens=self.context_manager.max_tokens,

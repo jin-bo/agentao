@@ -407,14 +407,14 @@ class DisplayController:
         if tool == "replace":
             diff_ctx = {
                 "kind": "replace",
-                "path": args.get("path", args.get("file_path", "")),
-                "old": args.get("old_string", ""),
-                "new": args.get("new_string", ""),
+                "path": args.get("file_path", ""),
+                "old": args.get("old_text", ""),
+                "new": args.get("new_text", ""),
             }
         elif tool == "write_file":
             diff_ctx = {
                 "kind": "write",
-                "path": args.get("path", args.get("file_path", "")),
+                "path": args.get("file_path", ""),
                 "content": args.get("content", ""),
             }
 
@@ -458,9 +458,11 @@ class DisplayController:
         with self._lock:
             state = self._states.pop(call_id, None)
             self._active_calls.discard(call_id)
+            still_active = len(self._active_calls) > 0
 
         if state is None:
-            self._start_spinner("[bold yellow]Thinking...[/bold yellow]")
+            if not still_active:
+                self._start_spinner("[bold yellow]Thinking...[/bold yellow]")
             return
 
         self._cancel_progress_timer(state)
@@ -500,7 +502,9 @@ class DisplayController:
             err_str = f"  [dim red]{_shorten(error or '', 80)}[/dim red]" if error else ""
             self._console.print(f"[red]✗[/red] [dim]{state.header}[/dim]{dur_str}{err_str}")
 
-        self._start_spinner("[bold yellow]Thinking...[/bold yellow]")
+        # Only restore "Thinking…" once the last tool in a parallel batch is done
+        if not still_active:
+            self._start_spinner("[bold yellow]Thinking...[/bold yellow]")
 
     # ── Sub-agent lifecycle ───────────────────────────────────────────────────
 

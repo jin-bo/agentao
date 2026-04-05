@@ -94,7 +94,14 @@ def build_compat_transport(
                 step_callback(None, {})
         elif t == EventType.TOOL_START:
             if step_callback:
-                step_callback(d.get("tool"), d.get("args", {}))
+                # Inject call_id into args under a private key so the parent
+                # agent's step_callback can recover it and emit a call_id-keyed
+                # TOOL_START event for the DisplayController.
+                _call_id = d.get("call_id")
+                _args = dict(d.get("args", {}))
+                if _call_id:
+                    _args["__call_id__"] = _call_id
+                step_callback(d.get("tool"), _args)
         elif t == EventType.TOOL_OUTPUT:
             if output_callback:
                 output_callback(d.get("tool", ""), d.get("chunk", ""))
