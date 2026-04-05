@@ -471,9 +471,10 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/agent status` | Show all background agent tasks (status, elapsed, stats) |
 | `/agent status <id>` | Show full result or error for a specific background agent |
 | `/agents` | Shorthand for `/agent dashboard` |
-| `/confirm` | Show current tool confirmation mode |
-| `/confirm all` | Enable allow-all mode (tools execute without prompting) |
-| `/confirm prompt` | Restore prompt mode (ask before each tool) |
+| `/mode` | Show current permission mode |
+| `/mode read-only` | Block all write and shell tools |
+| `/mode workspace-write` | Allow file writes and safe read-only shell; ask for web (default) |
+| `/mode full-access` | Allow all tools without prompting |
 | `/sessions` | List saved sessions |
 | `/sessions resume <id>` | Resume a saved session |
 | `/sessions delete <id>` | Delete a specific session |
@@ -483,27 +484,34 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/tools <name>` | Show parameter schema for a specific tool |
 | `/exit` or `/quit` | Exit the program |
 
-### Tool Confirmation (Safety Feature)
+### Permission Modes (Safety Feature)
 
-Agentao requires user confirmation before executing potentially dangerous tools:
+Agentao controls which tools execute automatically versus which require user confirmation via three named permission modes. Switch with `/mode` — the choice is persisted to `.agentao/settings.json` and restored on the next launch.
 
-**Tools requiring confirmation:**
-- `run_shell_command` - Shell command execution
-- `web_fetch` - Fetching web content
-- `google_web_search` - Web search
-- `write_file` - Writing/overwriting files
-- `delete_memory` - Deleting a saved memory
-- `clear_all_memories` - Clearing all memories
-- `mcp_*` - All MCP server tools (unless server has `"trust": true`)
+| Mode | Behavior |
+|------|----------|
+| `workspace-write` | **Default.** File writes (`write_file`, `replace`) and safe read-only shell commands (`git status/log/diff`, `ls`, `grep`, `cat`, etc.) execute automatically. Web access (`web_fetch`, `google_web_search`) asks. Unknown shell commands ask. Dangerous patterns (`rm -rf`, `sudo`) are blocked. |
+| `read-only` | All write and shell tools are blocked. Only read-only tools (`read_file`, `glob`, `grep`, etc.) are permitted. |
+| `full-access` | All tools execute without prompting. Useful for trusted, fully automated workflows. |
 
-**How it works:**
+```
+/mode                   (show current mode)
+/mode workspace-write   (default — file writes + safe shell allowed)
+/mode read-only         (block all writes and shell)
+/mode full-access       (allow everything)
+```
 
-1. Execution pauses and you see a menu with tool details
-2. Press a single key (no Enter needed):
-   - **1** - Yes, execute this tool once
-   - **2** - Yes to all, allow all tools for this session (one-time confirmation; subsequent tools execute silently)
-   - **3** - No, cancel execution
-   - **Esc** - Cancel execution
+**Tools that still ask in workspace-write mode:**
+- `web_fetch` / `google_web_search` — network access
+- `run_shell_command` — when the command doesn't match the safe-prefix allowlist
+- `mcp_*` — MCP server tools (unless server has `"trust": true`)
+
+**During a confirmation prompt**, if you press **2** (Yes to all) the session escalates to full-access mode in memory — no prompts for the rest of the session, but the saved mode is unchanged so the next launch uses whatever `/mode` you set last.
+
+**Confirmation menu keys (no Enter needed):**
+- **1** — Yes, execute once
+- **2** — Yes to all for this session (escalates to full-access in memory)
+- **3** or **Esc** — Cancel
 
 ### Memory Recall Confirmation
 
@@ -514,7 +522,7 @@ When relevant memories are recalled before a response:
    - **1** - Inject these memories into the system prompt
    - **2** or **Esc** - Skip (memories are not injected)
 
-When "allow all tools" is active, memory recall is auto-confirmed.
+In `full-access` mode, memory recall is auto-confirmed.
 
 ### Example Interactions
 

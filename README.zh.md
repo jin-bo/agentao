@@ -464,9 +464,10 @@ response = agent.chat("总结当前目录")
 | `/agent status` | 查看所有后台任务状态、耗时、统计 |
 | `/agent status <id>` | 查看指定后台任务的完整结果或错误 |
 | `/agents` | `/agent dashboard` 的简写 |
-| `/confirm` | 显示当前工具确认模式 |
-| `/confirm all` | 启用全允许模式（工具无需提示直接执行） |
-| `/confirm prompt` | 恢复提示模式（每次工具调用前询问） |
+| `/mode` | 显示当前权限模式 |
+| `/mode read-only` | 屏蔽所有写入和 Shell 工具 |
+| `/mode workspace-write` | 允许文件写入和安全只读 Shell；Web 访问需确认（默认） |
+| `/mode full-access` | 所有工具无需确认直接执行 |
 | `/sessions` | 列出已保存的会话 |
 | `/sessions resume <id>` | 恢复指定会话 |
 | `/sessions delete <id>` | 删除指定会话 |
@@ -476,27 +477,34 @@ response = agent.chat("总结当前目录")
 | `/tools <name>` | 显示指定工具的参数 schema |
 | `/exit` 或 `/quit` | 退出程序 |
 
-### 工具确认（安全特性）
+### 权限模式（安全特性）
 
-Agentao 在执行潜在危险工具前需要用户确认：
+Agentao 通过三种命名权限模式控制工具是否自动执行或需要用户确认。使用 `/mode` 切换，配置持久化至 `.agentao/settings.json`，下次启动时自动恢复。
 
-**需要确认的工具：**
-- `run_shell_command` — Shell 命令执行
-- `web_fetch` — 抓取网页内容
-- `google_web_search` — 网络搜索
-- `write_file` — 写入/覆盖文件
-- `delete_memory` — 删除已保存的记忆
-- `clear_all_memories` — 清空所有记忆
-- `mcp_*` — 所有 MCP 工具（除非服务器设置为 `"trust": true`）
+| 模式 | 行为 |
+|------|------|
+| `workspace-write` | **默认。** 文件写入（`write_file`、`replace`）和安全只读 Shell 命令（`git status/log/diff`、`ls`、`grep`、`cat` 等）自动执行。Web 访问（`web_fetch`、`google_web_search`）需确认。未知 Shell 命令需确认。危险指令（`rm -rf`、`sudo`）被阻断。 |
+| `read-only` | 所有写入和 Shell 工具被屏蔽，仅允许只读工具（`read_file`、`glob`、`grep` 等）。 |
+| `full-access` | 所有工具无需确认直接执行，适用于受信任的全自动工作流。 |
 
-**工作方式：**
+```
+/mode                   （显示当前模式）
+/mode workspace-write   （默认 — 文件写入 + 安全 Shell 自动执行）
+/mode read-only         （屏蔽所有写入和 Shell）
+/mode full-access       （允许所有工具）
+```
 
-1. 执行暂停，显示包含工具详情的菜单
-2. 按单个键（无需回车）：
-   - **1** — 是，执行本次工具
-   - **2** — 全部允许，本次会话允许所有工具（仅提示一次；后续工具静默执行）
-   - **3** — 否，取消执行
-   - **Esc** — 取消执行
+**workspace-write 模式下仍需确认的工具：**
+- `web_fetch` / `google_web_search` — 网络访问
+- `run_shell_command` — 命令不在安全前缀白名单中时
+- `mcp_*` — MCP 工具（除非服务器设置 `"trust": true`）
+
+**在确认提示中按 2（全部允许）**，会话临时升级为 full-access 模式（仅内存，不写入配置），本次会话剩余工具静默执行，下次启动仍使用最后一次 `/mode` 设置的模式。
+
+**确认菜单按键（无需回车）：**
+- **1** — 是，执行本次
+- **2** — 本次会话全部允许（临时升级为 full-access）
+- **3** 或 **Esc** — 取消
 
 ### 记忆召回确认
 
@@ -507,7 +515,7 @@ Agentao 在执行潜在危险工具前需要用户确认：
    - **1** — 将这些记忆注入系统提示词
    - **2** 或 **Esc** — 跳过（记忆不注入）
 
-"全部允许工具"模式激活时，记忆召回自动确认。
+处于 `full-access` 模式时，记忆召回自动确认。
 
 ### 示例交互
 
