@@ -76,6 +76,8 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mKHJABCDEF]")
 _ARG_TEXT_MAX  = 100   # regular tool argument text
 _TASK_TEXT_MAX = 150   # sub-agent task description
 _PATH_TAIL_MAX =  55   # chars kept at tail of a path / URL (tail-preserve)
+_CMD_HEAD_MAX  =  80   # chars kept from start of shell command (head-first)
+_CMD_TAIL_MAX  =  18   # chars kept from end of shell command (context tail)
 
 
 def _strip_ansi(text: str) -> str:
@@ -94,6 +96,27 @@ def _shorten_path(val: str) -> str:
     if len(val) <= _PATH_TAIL_MAX:
         return val
     return "…" + val[-_PATH_TAIL_MAX:]
+
+
+def _fmt_command(cmd: str) -> str:
+    """Head-first truncation for shell commands.
+
+    Preserves the command name and leading arguments; appends a small tail
+    for end-of-command context.  Never applies path/URL detection to the
+    full command string — a command containing paths must still show the
+    command name at the front.
+
+    Example:
+        pandoc /docs/main.md -o /tmp/out.pdf -V mainfont="PingFang SC" ...
+    NOT:
+        …PingFang SC" -V geometry:margin=1in
+    """
+    cmd = cmd.strip()
+    if not cmd:
+        return ""
+    if len(cmd) <= _CMD_HEAD_MAX + _CMD_TAIL_MAX + 1:
+        return cmd
+    return cmd[:_CMD_HEAD_MAX] + "…" + cmd[-_CMD_TAIL_MAX:]
 
 
 def _fmt_arg(val: object, max_len: int = _ARG_TEXT_MAX) -> str:
@@ -139,7 +162,11 @@ def _build_header(tool: str, args: dict) -> str:
 
     icon, verb, pk, sk = sem
     pval = args.get(pk, "") if pk else ""
-    arg_str = _fmt_arg(pval)
+    # Shell commands: head-first truncation — command name must never be lost
+    if tool == "run_shell_command":
+        arg_str = _fmt_command(str(pval).strip()) if pval else ""
+    else:
+        arg_str = _fmt_arg(pval)
     if sk and sk != pk and arg_str:
         sval = args.get(sk, "")
         if sval:
