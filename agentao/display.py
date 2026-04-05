@@ -71,28 +71,47 @@ _PROGRESS_INTERVAL = 0.3   # seconds between updates
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mKHJABCDEF]")
 
+# Argument display budgets
+_ARG_TEXT_MAX  = 100   # regular tool argument text
+_TASK_TEXT_MAX = 150   # sub-agent task description
+_PATH_TAIL_MAX =  55   # chars kept at tail of a path / URL (tail-preserve)
+
 
 def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
 def _shorten(val: str, max_len: int = 60) -> str:
+    """General-purpose truncation for error messages / stats (not arg display)."""
     if len(val) <= max_len:
         return val
-    if "/" in val or "\\" in val:
-        half = (max_len - 3) // 2
-        return val[:half] + "…" + val[-half:]
     return val[:max_len - 1] + "…"
 
 
-def _fmt_arg(val: object) -> str:
+def _shorten_path(val: str) -> str:
+    """Tail-preserve truncation for paths and URLs — keeps filename / endpoint."""
+    if len(val) <= _PATH_TAIL_MAX:
+        return val
+    return "…" + val[-_PATH_TAIL_MAX:]
+
+
+def _fmt_arg(val: object, max_len: int = _ARG_TEXT_MAX) -> str:
+    """Format a single tool argument for display in a header line.
+
+    Routing:
+    - Paths / URLs → _shorten_path (tail-preserve, not constrained by max_len)
+    - Plain text   → head-truncate at max_len; quote if it contains spaces
+    """
     if val is None:
         return ""
     s = str(val).strip()
     if not s:
         return ""
-    s = _shorten(s)
-    if " " in s and "/" not in s and "\\" not in s:
+    if "/" in s or "\\" in s or s.startswith(("http://", "https://")):
+        return _shorten_path(s)
+    if len(s) > max_len:
+        s = s[:max_len - 1] + "…"
+    if " " in s:
         return f'"{s}"'
     return s
 
@@ -100,7 +119,7 @@ def _fmt_arg(val: object) -> str:
 def _build_header(tool: str, args: dict) -> str:
     if tool.startswith("agent_"):
         agent_name = tool[len("agent_"):].replace("_", "-")
-        task = _fmt_arg(args.get("task", args.get("description", "")))
+        task = _fmt_arg(args.get("task", args.get("description", "")), max_len=_TASK_TEXT_MAX)
         return f"▶ {agent_name}" + (f"  {task}" if task else "")
 
     if tool.startswith("mcp_"):
@@ -511,7 +530,8 @@ class DisplayController:
     def _on_agent_start(self, d: dict) -> None:
         agent = d.get("agent", "agent")
         task = d.get("task", "")
-        task_preview = f": [dim]{_shorten(task, 80)}[/dim]" if task else ""
+        _t = (task[:_TASK_TEXT_MAX - 1] + "…") if len(task) > _TASK_TEXT_MAX else task
+        task_preview = f": [dim]{_t}[/dim]" if _t else ""
         self._stop_spinner()
         self._console.rule(f"[bold cyan]▶ [{agent}]{task_preview}[/bold cyan]", style="cyan")
         self._start_spinner(f"[bold cyan][{agent}] Thinking...[/bold cyan]")
