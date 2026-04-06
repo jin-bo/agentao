@@ -468,6 +468,12 @@ response = agent.chat("总结当前目录")
 | `/mode read-only` | 屏蔽所有写入和 Shell 工具 |
 | `/mode workspace-write` | 允许文件写入和安全只读 Shell；Web 访问需确认（默认） |
 | `/mode full-access` | 所有工具无需确认直接执行 |
+| `/plan` | 进入 Plan 模式（LLM 调研并起草计划，不允许任何写入操作） |
+| `/plan save` | 将最后一条 agent 响应保存为 `.agentao/plan.md` |
+| `/plan show` | 显示已保存的计划文件 |
+| `/plan implement` | 退出 Plan 模式，恢复原权限，展示已保存的计划 |
+| `/plan clear` | 删除计划文件并退出 Plan 模式 |
+| `/copy` | 将最后一条 agent 响应以 Markdown 格式复制到剪贴板 |
 | `/sessions` | 列出已保存的会话 |
 | `/sessions resume <id>` | 恢复指定会话 |
 | `/sessions delete <id>` | 删除指定会话 |
@@ -500,6 +506,42 @@ Agentao 通过三种命名权限模式控制工具是否自动执行或需要用
 - `mcp_*` — MCP 工具（除非服务器设置 `"trust": true`）
 
 **在确认提示中按 2（全部允许）**，会话临时升级为 full-access 模式（仅内存，不写入配置），本次会话剩余工具静默执行，下次启动仍使用最后一次 `/mode` 设置的模式。
+
+### Plan 模式
+
+Plan 模式是一种专为复杂任务设计的工作流：让 LLM **先调研、起草计划**，经你确认后再执行。
+
+```
+/plan                   （进入 Plan 模式 — 提示符变为 [plan]）
+"规划如何重构日志模块"
+                        （agent 读取文件，输出结构化 Markdown 计划）
+                        （计划自动保存至 .agentao/plan.md）
+                        "Execute this plan? [y/N]"
+y                       （退出 Plan 模式，恢复权限，agent 开始实现）
+```
+
+**Plan 模式强制执行的限制：**
+- 文件写入（`write_file`、`replace`）**被拒绝**
+- 记忆变更（`save_memory`、`delete_memory`、`todo_write`）**被拒绝**
+- 非白名单 Shell 命令**被拒绝**（防止意外副作用）
+- 安全只读 Shell 命令（`git diff`、`ls`、`cat`、`grep` 等）**允许执行**
+- Web 访问（`web_fetch`、`google_web_search`）与平时一样**需确认**
+- 技能激活**允许**（技能仅修改系统提示词）
+
+**Plan 模式预设优先于**任何自定义 `permissions.json` 规则 — 工作区对 `write_file` 的 `allow` 规则无法绕过 Plan 模式的限制。
+
+**使用流程：**
+1. `/plan` — 进入 Plan 模式；提示符变为 `[plan]`（洋红色）
+2. 让 agent 规划任务 — 它会读取文件并输出结构化计划
+3. 每次响应后计划自动保存至 `.agentao/plan.md`
+4. 在提示处按 `y` 执行，按 `n` 继续留在 Plan 模式中精修
+5. `/plan implement` — 手动退出 Plan 模式并恢复原权限
+6. `/plan clear` — 删除计划文件并退出 Plan 模式
+
+**注意事项：**
+- 进入 Plan 模式前的权限模式会被保存，`/plan implement` 时精确恢复
+- Plan 模式期间 `/mode` 被屏蔽（请先用 `/plan implement` 退出）
+- `/clear` 会自动重置 Plan 模式
 
 **确认菜单按键（无需回车）：**
 - **1** — 是，执行本次
@@ -584,6 +626,23 @@ Agentao 通过三种命名权限模式控制工具是否自动执行或需要用
 ```
 ❯ 激活 pdf 技能帮我合并 PDF 文件
 ❯ 使用 xlsx 技能分析这个电子表格
+```
+
+**先规划再实现：**
+```
+/plan
+"规划如何为 CLI 添加 /foo 命令"
+                        （agent 读取文件，输出计划，自动保存）
+                        "Execute this plan? [y/N]" → y
+                        （退出 Plan 模式，agent 开始实现）
+/plan implement         （如果按了 n，手动退出）
+/plan show              （随时查看已保存的计划）
+/plan clear             （丢弃计划并退出 Plan 模式）
+```
+
+**复制输出：**
+```
+/copy                           （将最后一条响应以 Markdown 格式复制到剪贴板）
 ```
 
 **查看工具：**

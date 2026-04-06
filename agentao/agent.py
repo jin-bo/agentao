@@ -34,6 +34,30 @@ from .transport import AgentEvent, EventType, NullTransport, build_compat_transp
 
 MAX_REASONING_HISTORY_CHARS = 500  # Truncate reasoning_content in history to ~125 tokens
 
+_PLAN_MODE_SECTION = """
+
+=== PLAN MODE ===
+
+You are in PLAN MODE. Research and write — do NOT execute.
+
+Rules:
+- Do NOT call write_file, replace, run_shell_command, or any mutation tool.
+- You MAY use read-only tools (read_file, list_directory, glob, search_file_content,
+  web_fetch) to explore the codebase before writing the plan.
+- Produce a complete, structured Markdown implementation plan.
+
+Plan format (required sections):
+1. **Objective** — 1-3 sentences describing the goal.
+2. **Implementation Steps** — numbered list; each step names the file, class/method
+   to change, and the rationale.
+3. **Critical Files** — the 3-5 most important files.
+4. **Edge Cases and Risks** — with mitigations.
+5. **Verification** — how to test the changes.
+
+Your response will be automatically saved as the plan. The user will be prompted
+to execute the plan immediately after. Do not attempt to write any file yourself.
+"""
+
 
 def _serialize_tool_call(tc) -> dict:
     """Serialize a tool call object to a dict for conversation history.
@@ -174,6 +198,9 @@ class Agentao:
 
         # Conversation history
         self.messages: List[Dict[str, Any]] = []
+
+        # Plan mode: when True, system prompt instructs LLM to plan rather than act
+        self._plan_mode: bool = False
 
         # Load project instructions if available
         self.project_instructions = self._load_project_instructions()
@@ -508,6 +535,9 @@ Use tools proactively only when they materially improve correctness or are neede
                 prompt += line + "\n"
             prompt += "\nWhen you learn new durable facts, call save_memory to preserve them."
 
+        if self._plan_mode:
+            prompt += _PLAN_MODE_SECTION
+
         return prompt
 
     def _llm_call(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]],
@@ -541,6 +571,10 @@ Use tools proactively only when they materially improve correctness or are neede
         self.context_manager._last_api_prompt_tokens = None
         self.llm.total_prompt_tokens = 0
         self.llm.total_completion_tokens = 0
+
+    def set_plan_mode(self, enabled: bool) -> None:
+        """Toggle plan mode; affects system prompt on next chat() call."""
+        self._plan_mode = enabled
 
     def chat(self, user_message: str, max_iterations: int = 100,
              cancellation_token: Optional[CancellationToken] = None) -> str:

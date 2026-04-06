@@ -475,6 +475,12 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/mode read-only` | Block all write and shell tools |
 | `/mode workspace-write` | Allow file writes and safe read-only shell; ask for web (default) |
 | `/mode full-access` | Allow all tools without prompting |
+| `/plan` | Enter plan mode (LLM researches and drafts a plan; no mutations allowed) |
+| `/plan save` | Save last agent response as `.agentao/plan.md` |
+| `/plan show` | Display the saved plan file |
+| `/plan implement` | Exit plan mode, restore prior permissions, display saved plan |
+| `/plan clear` | Delete the plan file and exit plan mode |
+| `/copy` | Copy last agent response to clipboard (Markdown) |
 | `/sessions` | List saved sessions |
 | `/sessions resume <id>` | Resume a saved session |
 | `/sessions delete <id>` | Delete a specific session |
@@ -507,6 +513,42 @@ Agentao controls which tools execute automatically versus which require user con
 - `mcp_*` — MCP server tools (unless server has `"trust": true`)
 
 **During a confirmation prompt**, if you press **2** (Yes to all) the session escalates to full-access mode in memory — no prompts for the rest of the session, but the saved mode is unchanged so the next launch uses whatever `/mode` you set last.
+
+### Plan Mode
+
+Plan mode is a dedicated workflow for complex tasks where you want the LLM to **research and draft a plan first**, then execute only after you approve.
+
+```
+/plan                   (enter plan mode — prompt turns [plan])
+"Plan how to refactor the logging module"
+                        (agent reads files, produces a structured Markdown plan)
+                        (plan is auto-saved to .agentao/plan.md)
+                        "Execute this plan? [y/N]"
+y                       (exit plan mode, restore permissions, agent implements)
+```
+
+**What plan mode enforces:**
+- File writes (`write_file`, `replace`) are **denied**
+- Memory mutations (`save_memory`, `delete_memory`, `todo_write`) are **denied**
+- Non-allowlisted shell commands are **denied** (no accidental side effects)
+- Safe read-only shell commands (`git diff`, `ls`, `cat`, `grep`, etc.) are **allowed**
+- Web access (`web_fetch`, `google_web_search`) **asks** as usual
+- Skill activation is **allowed** (skills only modify the system prompt)
+
+**Plan mode preset takes precedence** over any custom `permissions.json` rules — a workspace `allow` for `write_file` cannot bypass plan mode restrictions.
+
+**Workflow:**
+1. `/plan` — enter plan mode; prompt indicator turns `[plan]` (magenta)
+2. Ask the agent to plan something — it reads files and writes a structured plan
+3. Plan is auto-saved to `.agentao/plan.md` after each response
+4. Press `y` at the prompt to execute, or `n` to stay and refine
+5. `/plan implement` — manually exit plan mode and restore prior permissions
+6. `/plan clear` — delete the plan file and exit plan mode
+
+**Notes:**
+- Prior permission mode is saved and restored exactly on `/plan implement`
+- `/mode` is blocked while in plan mode (use `/plan implement` to exit first)
+- `/clear` resets plan mode automatically
 
 **Confirmation menu keys (no Enter needed):**
 - **1** — Yes, execute once
@@ -591,6 +633,23 @@ In `full-access` mode, memory recall is auto-confirmed.
 ```
 ❯ Activate the pdf skill to help me merge PDF files
 ❯ Use the xlsx skill to analyze this spreadsheet
+```
+
+**Planning before implementing:**
+```
+/plan
+"Plan how to add a /foo command to the CLI"
+                        (agent reads files, produces plan, auto-saves)
+                        "Execute this plan? [y/N]" → y
+                        (exits plan mode, agent implements)
+/plan implement         (manual exit if you pressed n)
+/plan show              (view saved plan at any time)
+/plan clear             (discard plan and exit plan mode)
+```
+
+**Copying output:**
+```
+/copy                           (copy last response to clipboard as Markdown)
 ```
 
 **Inspecting tools:**

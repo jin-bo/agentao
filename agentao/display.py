@@ -587,6 +587,7 @@ class DisplayController:
             else:  # error
                 err_str = f"  [dim red]{_shorten(error or '', 80)}[/dim red]" if error else ""
                 self._console.print(f"[red]✗[/red] [dim]{state.header}[/dim]{dur_str}{err_str}")
+            self._console.print()
 
         # Only restore "Thinking…" once the last tool in a parallel batch is done
         if not still_active:

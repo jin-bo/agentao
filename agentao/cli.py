@@ -61,10 +61,18 @@ def _tool_args_summary(tool_name: str, args: dict) -> str:
     return f"({first_val})"
 
 
+def _build_plan_file_content(response_text: str) -> str:
+    """Wrap an agent response in a plan file header."""
+    from datetime import datetime
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return f"# Agentao Plan\n\n_Saved: {now}_\n\n---\n\n{response_text.strip()}\n"
+
+
 _SLASH_COMMANDS = [
     '/agent', '/agent bg', '/agent dashboard', '/agent list', '/agent status',
     '/agents',
-    '/clear', '/new',
+    '/clear', '/copy', '/new',
+    '/plan', '/plan clear', '/plan implement', '/plan save', '/plan show',
     '/context', '/context limit', '/exit', '/help',
     '/mcp', '/mcp add', '/mcp list', '/mcp remove',
     '/markdown',
@@ -127,6 +135,10 @@ class AgentaoCLI:
         self.current_status = None  # Track active status context
         self._streaming_output = False  # unused; kept for any external callers
         self.markdown_mode = True  # Render responses as Markdown (toggle with /markdown)
+        self.last_response: str | None = None  # Last assistant response for /copy
+        self._plan_mode: bool = False
+        self._pre_plan_mode: Optional[object] = None  # PermissionMode; restored on /plan implement
+        self._pre_plan_allow_all: bool = False  # saved allow_all_tools state
         provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
         self.current_provider = provider  # Track active provider name
 
@@ -257,7 +269,7 @@ class AgentaoCLI:
         # guard here too for callers that invoke confirm_tool_execution directly.
         # Also honour the legacy allow_all_tools flag so external callers/tests work.
         from .permissions import PermissionMode
-        if self.current_mode == PermissionMode.FULL_ACCESS or self.allow_all_tools:
+        if (self.current_mode == PermissionMode.FULL_ACCESS or self.allow_all_tools) and not self._plan_mode:
             return True
 
         # Pause the "Thinking..." spinner during user confirmation
@@ -480,6 +492,12 @@ All commands start with `/`:
   - `/mode read-only` - Block all write & shell tools
   - `/mode workspace-write` - Allow file writes & safe shell; ask for web (default)
   - `/mode full-access` - Allow all tools without prompting
+- `/plan` - Plan mode workflow (read-only; LLM plans, not executes)
+  - `/plan` - Enter plan mode; if already on, shows current saved plan
+  - `/plan save` - Save last response as `.agentao/plan.md`
+  - `/plan show` - Display the saved plan file
+  - `/plan implement` - Exit plan mode, restore prior permissions, show plan
+  - `/plan clear` - Delete the plan file
 - `/skills` - List available skills
 - `/memory [subcommand] [arg]` - Manage saved memories
   - `/memory` or `/memory list` - Show all saved memories (with tag summary)
@@ -493,6 +511,7 @@ All commands start with `/`:
   - `/mcp` or `/mcp list` - List MCP servers with status and tools
   - `/mcp add <name> <command|url>` - Add an MCP server
   - `/mcp remove <name>` - Remove an MCP server
+- `/copy` - Copy the last assistant response (Markdown) to clipboard
 - `/markdown` - Toggle Markdown rendering ON/OFF (default: ON)
 - `/exit` or `/quit` - Exit the program
 
@@ -601,6 +620,129 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             color = _colors.get(status, "white")
             console.print(f"  [{color}]{icon}[/{color}] {todo['content']} [dim]{status}[/dim]")
         console.print()
+
+    def handle_plan_command(self, args: str) -> None:
+        """Handle /plan command and subcommands."""
+        from .permissions import PermissionMode
+        _plan_file = Path(".agentao") / "plan.md"
+        args = args.strip()
+
+        if args == "save":
+            if self.last_response is None:
+                console.print("\n[warning]No response to save. Ask the agent to produce a plan first.[/warning]\n")
+                return
+            try:
+                _plan_file.parent.mkdir(exist_ok=True)
+                _plan_file.write_text(_build_plan_file_content(self.last_response), encoding="utf-8")
+            except OSError as e:
+                console.print(f"\n[error]Could not save plan: {e}[/error]\n")
+                return
+            console.print(f"\n[success]Plan saved → {_plan_file}[/success]\n")
+            return
+
+        if args == "show":
+            if not _plan_file.exists():
+                console.print("\n[warning]No plan file found. Use /plan save after the agent responds.[/warning]\n")
+                return
+            content = _plan_file.read_text(encoding="utf-8")
+            console.print(f"\n[dim]{_plan_file}[/dim]\n")
+            console.print(Markdown(content) if self.markdown_mode else content)
+            console.print()
+            return
+
+        if args == "clear":
+            if not _plan_file.exists() and not self._plan_mode:
+                console.print("\n[info]No plan file to clear.[/info]\n")
+                return
+            if _plan_file.exists():
+                _plan_file.unlink()
+            # Also exit plan mode if active, so the user is not left stuck.
+            if self._plan_mode:
+                self._plan_mode = False
+                self.agent.set_plan_mode(False)
+                restore = self._pre_plan_mode or PermissionMode.WORKSPACE_WRITE
+                self._pre_plan_mode = None
+                _restore_allow_all = self._pre_plan_allow_all
+                self._pre_plan_allow_all = False
+                if restore == PermissionMode.FULL_ACCESS and _restore_allow_all:
+                    _saved = self._load_settings().get("mode", PermissionMode.WORKSPACE_WRITE.value)
+                    try:
+                        _disk = PermissionMode(_saved)
+                        restore = _disk if _disk != PermissionMode.PLAN else PermissionMode.WORKSPACE_WRITE
+                    except ValueError:
+                        restore = PermissionMode.WORKSPACE_WRITE
+                self._apply_mode(restore)
+                self.allow_all_tools = _restore_allow_all
+                console.print("\n[success]Plan file deleted. Plan mode OFF.[/success]\n")
+            else:
+                console.print("\n[success]Plan file deleted.[/success]\n")
+            return
+
+        if args == "implement":
+            if not self._plan_mode:
+                console.print("\n[info]Not in plan mode.[/info]\n")
+                return
+            self._plan_mode = False
+            self.agent.set_plan_mode(False)
+            restore = self._pre_plan_mode or PermissionMode.WORKSPACE_WRITE
+            self._pre_plan_mode = None
+            _restore_allow_all = self._pre_plan_allow_all
+            self._pre_plan_allow_all = False
+            # If restoring FULL_ACCESS that came from a session-only escalation
+            # (allow_all was active before plan mode), read the persisted mode from disk
+            # instead to avoid baking a temporary grant into settings.json.
+            if restore == PermissionMode.FULL_ACCESS and _restore_allow_all:
+                _saved = self._load_settings().get("mode", PermissionMode.WORKSPACE_WRITE.value)
+                try:
+                    _disk = PermissionMode(_saved)
+                    restore = _disk if _disk != PermissionMode.PLAN else PermissionMode.WORKSPACE_WRITE
+                except ValueError:
+                    restore = PermissionMode.WORKSPACE_WRITE
+            self._apply_mode(restore)
+            # Restore session-only allow-all AFTER _apply_mode, which resets it to False.
+            self.allow_all_tools = _restore_allow_all
+            console.print(f"\n[success]Plan mode OFF. Permission mode: {restore.value}[/success]")
+            if _plan_file.exists():
+                content = _plan_file.read_text(encoding="utf-8")
+                console.print(f"\n[dim]Current plan ({_plan_file}):[/dim]\n")
+                console.print(Markdown(content) if self.markdown_mode else content)
+                console.print("\n[dim]Ask the agent to implement the plan above.[/dim]\n")
+            else:
+                console.print("\n[warning]No saved plan file. Describe the plan in your next message.[/warning]\n")
+            return
+
+        if args == "":
+            if self._plan_mode:
+                console.print("\n[bold magenta][plan mode is ON][/bold magenta]")
+                if _plan_file.exists():
+                    content = _plan_file.read_text(encoding="utf-8")
+                    console.print(f"[dim]Saved plan: {_plan_file}[/dim]\n")
+                    console.print(Markdown(content) if self.markdown_mode else content)
+                else:
+                    console.print("[dim]No plan saved yet. Use /plan save after the agent responds.[/dim]")
+                console.print("\n[dim]/plan save · /plan show · /plan implement · /plan clear[/dim]\n")
+                return
+            # Enter plan mode — use the PLAN permission preset instead of READ_ONLY so
+            # that safe read-only shell commands (diff, git diff, cat, ls, grep, …) are
+            # still allowed while file writes are denied by the engine.
+            # Save the LIVE current_mode (not disk) so /plan implement can restore the
+            # correct active state, including an explicit /mode full-access.
+            self._pre_plan_mode = self.current_mode
+            # Suspend any session-wide allow-all escalation so plan restrictions apply.
+            self._pre_plan_allow_all = self.allow_all_tools
+            self.allow_all_tools = False
+            self._plan_mode = True
+            self.agent.set_plan_mode(True)
+            self.permission_engine.set_mode(PermissionMode.PLAN)
+            # Do NOT set readonly_mode=True: the PLAN preset handles enforcement via the
+            # engine so that shell commands with "allow" rules are not short-circuited.
+            self.readonly_mode = False
+            self._apply_readonly_mode()
+            console.print("\n[bold magenta]Plan mode ON[/bold magenta]  [dim](read-only; LLM will plan, not execute)[/dim]")
+            console.print("[dim]Ask what to plan. When done: /plan save · /plan implement · /plan clear[/dim]\n")
+            return
+
+        console.print(f"\n[error]Unknown: /plan {args}[/error]\n[info]Usage: /plan | /plan save | /plan show | /plan implement | /plan clear[/info]\n")
 
     def show_memories(self, subcommand: str = "", arg: str = ""):
         """Show saved memories.
@@ -1387,7 +1529,9 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         prompt_toolkit's wcwidth support correctly handles CJK characters on macOS.
         """
         from .permissions import PermissionMode
-        if self.current_mode == PermissionMode.READ_ONLY:
+        if self._plan_mode:
+            prompt = ANSI("\n\033[1;35m[plan]\033[0m \033[1;36m❯\033[0m ")
+        elif self.current_mode == PermissionMode.READ_ONLY:
             prompt = ANSI("\n\033[1;31m[read-only]\033[0m \033[1;36m❯\033[0m ")
         else:
             prompt = ANSI("\n\033[1;36m❯\033[0m ")
@@ -1435,8 +1579,13 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                     elif command in ("clear", "new"):
                         self.on_session_end()
                         self.current_session_id = None
+                        if self._plan_mode:
+                            self._plan_mode = False
+                            self._pre_plan_mode = None
+                            self.agent.set_plan_mode(False)
                         self.agent.clear_history()
                         self.agent.memory_tool.clear_all_memories()
+                        self.last_response = None
                         from .permissions import PermissionMode
                         self._apply_mode(PermissionMode.WORKSPACE_WRITE)
                         self.on_session_start()
@@ -1537,19 +1686,59 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
                     elif command == "mode":
                         from .permissions import PermissionMode
-                        _valid = {m.value: m for m in PermissionMode}
+                        # Exclude PLAN — it is an internal mode managed by /plan, not user-settable.
+                        _valid = {m.value: m for m in PermissionMode if m != PermissionMode.PLAN}
                         if args == "":
                             console.print(f"\n[info]Permission mode:[/info] {self.current_mode.value}\n")
                         elif args in _valid:
-                            self._apply_mode(_valid[args])
-                            _descriptions = {
-                                "read-only":       "write & shell tools are blocked",
-                                "workspace-write": "file writes & safe shell allowed, web asks",
-                                "full-access":     "all tools allowed without prompting",
-                            }
-                            console.print(f"\n[green]✓ Permission mode: {args}[/green]  [dim]({_descriptions.get(args, '')})[/dim]\n")
+                            if self._plan_mode:
+                                console.print("\n[warning]Cannot change permission mode while in plan mode.[/warning]")
+                                console.print("[dim]Exit plan mode first with /plan implement or /plan clear.[/dim]\n")
+                            else:
+                                self._apply_mode(_valid[args])
+                                _descriptions = {
+                                    "read-only":       "write & shell tools are blocked",
+                                    "workspace-write": "file writes & safe shell allowed, web asks",
+                                    "full-access":     "all tools allowed without prompting",
+                                }
+                                console.print(f"\n[green]✓ Permission mode: {args}[/green]  [dim]({_descriptions.get(args, '')})[/dim]\n")
                         else:
                             console.print("\n[warning]Usage: /mode [read-only|workspace-write|full-access][/warning]\n")
+                        continue
+
+                    elif command == "plan":
+                        self.handle_plan_command(args)
+                        continue
+
+                    elif command == "copy":
+                        if self.last_response is None:
+                            console.print("\n[warning]No response to copy yet.[/warning]\n")
+                        else:
+                            import subprocess
+                            try:
+                                proc = subprocess.run(
+                                    ["pbcopy"], input=self.last_response.encode(), check=True
+                                )
+                                console.print("\n[cyan]Copied to clipboard.[/cyan]\n")
+                            except FileNotFoundError:
+                                # pbcopy not available (non-macOS), try xclip/xsel
+                                try:
+                                    subprocess.run(
+                                        ["xclip", "-selection", "clipboard"],
+                                        input=self.last_response.encode(), check=True
+                                    )
+                                    console.print("\n[cyan]Copied to clipboard.[/cyan]\n")
+                                except (FileNotFoundError, subprocess.CalledProcessError):
+                                    try:
+                                        subprocess.run(
+                                            ["xsel", "--clipboard", "--input"],
+                                            input=self.last_response.encode(), check=True
+                                        )
+                                        console.print("\n[cyan]Copied to clipboard.[/cyan]\n")
+                                    except (FileNotFoundError, subprocess.CalledProcessError):
+                                        console.print("\n[error]No clipboard utility found (pbcopy/xclip/xsel).[/error]\n")
+                            except subprocess.CalledProcessError as e:
+                                console.print(f"\n[error]Copy failed: {e}[/error]\n")
                         continue
 
                     elif command == "markdown":
@@ -1589,6 +1778,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 self.current_status.start()
                 try:
                     response = self.agent.chat(user_input)
+                    self.last_response = response
                 finally:
                     # Explicitly stop the spinner — Rich's Status.__exit__ can lose
                     # track of the live display when start()/stop() are called manually
@@ -1603,6 +1793,54 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                     console.print(Markdown(response))
                 else:
                     console.print(response)
+
+                # In plan mode: auto-save and offer to execute immediately.
+                if self._plan_mode:
+                    _plan_file = Path(".agentao") / "plan.md"
+                    try:
+                        _plan_file.parent.mkdir(exist_ok=True)
+                        _plan_file.write_text(_build_plan_file_content(response), encoding="utf-8")
+                        console.print(f"\n[dim]Plan auto-saved → {_plan_file}[/dim]")
+                    except OSError as e:
+                        console.print(f"\n[warning]Plan auto-save failed: {e}[/warning]")
+                        console.print(f"[dim]Use /plan save to retry, or /plan implement to proceed.[/dim]")
+                    console.print("[bold magenta]Execute this plan?[/bold magenta] [dim][y/N][/dim] ", end="")
+                    try:
+                        _key = readchar.readkey()
+                        console.print()
+                        if _key in ("y", "Y"):
+                            self.handle_plan_command("implement")
+                            # If the restored mode is read-only (e.g. user entered /plan
+                            # from a locked-down session), escalate to workspace-write so
+                            # the implementation step can actually write files.
+                            # Use a non-persisting escalation so settings.json is not
+                            # overwritten and the next launch keeps the user's saved mode.
+                            from .permissions import PermissionMode as _PM
+                            if self.current_mode == _PM.READ_ONLY:
+                                self.current_mode = _PM.WORKSPACE_WRITE
+                                self.permission_engine.set_mode(_PM.WORKSPACE_WRITE)
+                                self.readonly_mode = False
+                                self._apply_readonly_mode()
+                            # Execute the plan: send an implementation message to the agent.
+                            console.rule("[bold green]Assistant[/bold green]", style="green")
+                            self.current_status = console.status("[bold yellow]Thinking...", spinner="dots")
+                            self.current_status.start()
+                            try:
+                                _exec_response = self.agent.chat("Now implement the plan. Follow the steps you outlined above.")
+                                self.last_response = _exec_response
+                            finally:
+                                if self.current_status:
+                                    self.current_status.stop()
+                                self.current_status = None
+                            console.print()
+                            if self.markdown_mode:
+                                console.print(Markdown(_exec_response))
+                            else:
+                                console.print(_exec_response)
+                        else:
+                            console.print("[dim]Type /plan implement when ready.[/dim]\n")
+                    except (KeyboardInterrupt, EOFError):
+                        console.print()
 
             except KeyboardInterrupt:
                 if self.current_status:

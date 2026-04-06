@@ -17,6 +17,7 @@ class PermissionMode(Enum):
     READ_ONLY = "read-only"
     WORKSPACE_WRITE = "workspace-write"
     FULL_ACCESS = "full-access"
+    PLAN = "plan"  # Internal: read-only writes, safe shell commands allowed
 
 
 # Preset rule lists for each mode. Evaluated after project/user JSON rules.
@@ -65,6 +66,38 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
     ],
     "full-access": [
         {"tool": "*", "action": "allow"},
+    ],
+    # Plan mode: allows safe read-only shell commands (diff, git diff, ls, cat, grep, …)
+    # but denies all file-write and session-mutation operations. Use this instead of
+    # "read-only" so that the ToolRunner does not short-circuit via is_read_only and
+    # shell analysis can still run.
+    "plan": [
+        {"tool": "write_file", "action": "deny"},
+        {"tool": "replace", "action": "deny"},
+        # Deny memory writes and task mutations — plan mode is research-only.
+        {"tool": "save_memory", "action": "deny"},
+        {"tool": "delete_memory", "action": "deny"},
+        {"tool": "clear_all_memories", "action": "deny"},
+        {"tool": "todo_write", "action": "deny"},
+        {
+            "tool": "run_shell_command",
+            "args": {
+                "command": (
+                    r"^("
+                    r"git (status|log|diff|show|stash list"
+                    r"|shortlog|describe|blame|ls-files|ls-tree|rev-parse|config --get)"
+                    r"|ls\b|cat\b|echo\b|pwd\b|which\b|file\b|head\b|tail\b"
+                    r"|wc\b|diff\b|grep\b|du\b|df\b|ps\b|env\b"
+                    r")"
+                    r"(?:[^;&|`$<>\n\r])*$"
+                )
+            },
+            "action": "allow",
+        },
+        {"tool": "run_shell_command", "args": {"command": r"rm\s+-rf|sudo\s|mkfs|dd\s+if="}, "action": "deny"},
+        {"tool": "run_shell_command", "action": "deny"},
+        {"tool": "web_fetch", "action": "ask"},
+        {"tool": "google_web_search", "action": "ask"},
     ],
 }
 
@@ -123,14 +156,14 @@ class PermissionEngine:
         """Evaluate rules for a tool call.
 
         Evaluation order (first match wins):
-          - full-access mode: mode preset rules run first (can't be overridden)
+          - full-access / plan mode: mode preset rules run first (can't be overridden)
           - all other modes: project JSON → user JSON → mode preset rules
 
         Returns:
             PermissionDecision.ALLOW / DENY / ASK for the first matching rule,
             or None if no rule matches.
         """
-        if self.active_mode == PermissionMode.FULL_ACCESS:
+        if self.active_mode in (PermissionMode.FULL_ACCESS, PermissionMode.PLAN):
             rule_order = self._mode_rules + self.rules
         else:
             rule_order = self.rules + self._mode_rules
@@ -172,7 +205,7 @@ class PermissionEngine:
         lines.append(f"Preset rules: {len(self._mode_rules)} | Custom rules: {len(self.rules)}\n")
 
         if self.rules:
-            order_note = "evaluated after mode preset" if self.active_mode.value == "full-access" else "evaluated before presets"
+            order_note = "evaluated after mode preset" if self.active_mode in (PermissionMode.FULL_ACCESS, PermissionMode.PLAN) else "evaluated before presets"
             lines.append(f"Custom Rules ({len(self.rules)} total, {order_note}):\n")
             for i, rule in enumerate(self.rules, 1):
                 tool = rule.get("tool", "*")
