@@ -72,6 +72,8 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
     # "read-only" so that the ToolRunner does not short-circuit via is_read_only and
     # shell analysis can still run.
     "plan": [
+        {"tool": "plan_save", "action": "allow"},
+        {"tool": "plan_finalize", "action": "allow"},
         {"tool": "write_file", "action": "deny"},
         {"tool": "replace", "action": "deny"},
         # Deny memory writes and task mutations — plan mode is research-only.

@@ -476,7 +476,6 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/mode workspace-write` | Allow file writes and safe read-only shell; ask for web (default) |
 | `/mode full-access` | Allow all tools without prompting |
 | `/plan` | Enter plan mode (LLM researches and drafts a plan; no mutations allowed) |
-| `/plan save` | Save last agent response as `.agentao/plan.md` |
 | `/plan show` | Display the saved plan file |
 | `/plan implement` | Exit plan mode, restore prior permissions, display saved plan |
 | `/plan clear` | Delete the plan file and exit plan mode |
@@ -521,8 +520,8 @@ Plan mode is a dedicated workflow for complex tasks where you want the LLM to **
 ```
 /plan                   (enter plan mode — prompt turns [plan])
 "Plan how to refactor the logging module"
-                        (agent reads files, produces a structured Markdown plan)
-                        (plan is auto-saved to .agentao/plan.md)
+                        (agent reads files, calls plan_save → gets draft_id)
+                        (agent calls plan_finalize(draft_id) when ready)
                         "Execute this plan? [y/N]"
 y                       (exit plan mode, restore permissions, agent implements)
 ```
@@ -535,13 +534,15 @@ y                       (exit plan mode, restore permissions, agent implements)
 - Web access (`web_fetch`, `google_web_search`) **asks** as usual
 - Skill activation is **allowed** (skills only modify the system prompt)
 
+**Model tools** — `plan_save(content)` and `plan_finalize(draft_id)` are available to the agent in plan mode. The agent calls `plan_save` to save a draft and receives a `draft_id`. It must pass that exact `draft_id` to `plan_finalize` to trigger the approval prompt — ensuring you approve the exact draft you reviewed.
+
 **Plan mode preset takes precedence** over any custom `permissions.json` rules — a workspace `allow` for `write_file` cannot bypass plan mode restrictions.
 
 **Workflow:**
 1. `/plan` — enter plan mode; prompt indicator turns `[plan]` (magenta)
 2. Ask the agent to plan something — it reads files and writes a structured plan
-3. Plan is auto-saved to `.agentao/plan.md` after each response
-4. Press `y` at the prompt to execute, or `n` to stay and refine
+3. Agent calls `plan_save` to persist the draft; the approval prompt only appears after `plan_finalize`
+4. Press `y` at the "Execute?" prompt to implement, or `n` to continue refining
 5. `/plan implement` — manually exit plan mode and restore prior permissions
 6. `/plan clear` — delete the plan file and exit plan mode
 
@@ -639,7 +640,7 @@ In `full-access` mode, memory recall is auto-confirmed.
 ```
 /plan
 "Plan how to add a /foo command to the CLI"
-                        (agent reads files, produces plan, auto-saves)
+                        (agent reads files, calls plan_save, then plan_finalize)
                         "Execute this plan? [y/N]" → y
                         (exits plan mode, agent implements)
 /plan implement         (manual exit if you pressed n)

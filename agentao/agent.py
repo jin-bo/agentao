@@ -26,6 +26,7 @@ from .tools import (
 from .agents import AgentManager
 from .agents.tools import drain_bg_notifications
 from .cancellation import CancellationToken, AgentCancelledError
+from .plan import PlanSession, build_plan_prompt
 from .skills import SkillManager
 from .context_manager import ContextManager, is_context_too_long_error, _get_tiktoken_encoding
 from .mcp import load_mcp_config, McpClientManager, McpTool
@@ -33,30 +34,6 @@ from .transport import AgentEvent, EventType, NullTransport, build_compat_transp
 
 
 MAX_REASONING_HISTORY_CHARS = 500  # Truncate reasoning_content in history to ~125 tokens
-
-_PLAN_MODE_SECTION = """
-
-=== PLAN MODE ===
-
-You are in PLAN MODE. Research and write — do NOT execute.
-
-Rules:
-- Do NOT call write_file, replace, run_shell_command, or any mutation tool.
-- You MAY use read-only tools (read_file, list_directory, glob, search_file_content,
-  web_fetch) to explore the codebase before writing the plan.
-- Produce a complete, structured Markdown implementation plan.
-
-Plan format (required sections):
-1. **Objective** — 1-3 sentences describing the goal.
-2. **Implementation Steps** — numbered list; each step names the file, class/method
-   to change, and the rationale.
-3. **Critical Files** — the 3-5 most important files.
-4. **Edge Cases and Risks** — with mitigations.
-5. **Verification** — how to test the changes.
-
-Your response will be automatically saved as the plan. The user will be prompted
-to execute the plan immediately after. Do not attempt to write any file yourself.
-"""
 
 
 def _serialize_tool_call(tc) -> dict:
@@ -107,6 +84,7 @@ class Agentao:
         permission_engine: Optional[PermissionEngine] = None,
         on_max_iterations_callback: Optional[Callable[[int, list], dict]] = None,
         transport=None,                   # Transport protocol instance (preferred)
+        plan_session: Optional[PlanSession] = None,
     ):
         """Initialize chat agent.
 
@@ -199,8 +177,8 @@ class Agentao:
         # Conversation history
         self.messages: List[Dict[str, Any]] = []
 
-        # Plan mode: when True, system prompt instructs LLM to plan rather than act
-        self._plan_mode: bool = False
+        # Plan session (shared with CLI; Agent reads via _plan_mode property)
+        self._plan_session: PlanSession = plan_session or PlanSession()
 
         # Load project instructions if available
         self.project_instructions = self._load_project_instructions()
@@ -376,8 +354,22 @@ class Agentao:
             "Use 'the file shows...' for facts, 'I expect...' for inferences."
         )
 
-    def _build_operational_guidelines(self) -> str:
-        """Return operational guidelines injected unconditionally into every system prompt."""
+    def _build_operational_guidelines(self, plan_mode: bool = False) -> str:
+        """Return operational guidelines injected into every system prompt."""
+        task_completion_section = (
+            "## Task Completion\n"
+            "- In plan mode, stop after the research and proposal are complete. Do not "
+            "attempt implementation, editing, or execution.\n"
+            "- If the plan is blocked by missing requirements, ask the user or list "
+            "open questions, then stop.\n"
+        ) if plan_mode else (
+            "## Task Completion\n"
+            "- Work autonomously until the task is fully resolved before yielding back to the user.\n"
+            "- If a fix introduces a new error, keep iterating rather than stopping and reporting the error.\n"
+            "- Only stop and ask when you are genuinely blocked on missing information "
+            "you cannot discover with tools.\n\n"
+        )
+
         return (
             "\n\n=== Operational Guidelines ===\n\n"
 
@@ -425,11 +417,7 @@ class Agentao:
             "- Verify that any library or framework you reference actually exists in the project "
             "before using it.\n\n"
 
-            "## Task Completion\n"
-            "- Work autonomously until the task is fully resolved before yielding back to the user.\n"
-            "- If a fix introduces a new error, keep iterating rather than stopping and reporting the error.\n"
-            "- Only stop and ask when you are genuinely blocked on missing information "
-            "you cannot discover with tools.\n\n"
+            f"{task_completion_section}"
 
             "## Security\n"
             "- Before running shell commands that modify the filesystem, codebase, or system state, "
@@ -443,7 +431,14 @@ class Agentao:
         Returns:
             System prompt string
         """
-        agent_instructions = f"""You are Agentao, a helpful AI assistant with access to various tools and skills.
+        if self._plan_mode:
+            agent_instructions = f"""You are Agentao, a helpful AI assistant with access to various tools and skills.
+
+Current Working Directory: {Path.cwd()}
+
+In plan mode, use tools only to research, inspect, and verify facts needed for the proposal. Do not use tools to execute changes or simulate implementation. If you need clarification, ask the user."""
+        else:
+            agent_instructions = f"""You are Agentao, a helpful AI assistant with access to various tools and skills.
 
 Current Working Directory: {Path.cwd()}
 
@@ -485,8 +480,8 @@ Use tools proactively only when they materially improve correctness or are neede
         if skills_context:
             prompt += "\n\n" + skills_context
 
-        # Add available agents section
-        if self.agent_manager:
+        # Add available agents section (suppressed in plan mode — delegation contradicts research-only intent)
+        if not self._plan_mode and self.agent_manager:
             agent_descriptions = self.agent_manager.list_agents()
             if agent_descriptions:
                 prompt += "\n\n=== Available Agents ===\n"
@@ -500,7 +495,7 @@ Use tools proactively only when they materially improve correctness or are neede
         prompt += self._build_reliability_section()
 
         # Inject operational guidelines unconditionally
-        prompt += self._build_operational_guidelines()
+        prompt += self._build_operational_guidelines(plan_mode=self._plan_mode)
 
         # Instruct LLM to show reasoning when a thinking/reasoning sink is active
         if self._has_thinking_handler:
@@ -536,7 +531,7 @@ Use tools proactively only when they materially improve correctness or are neede
             prompt += "\nWhen you learn new durable facts, call save_memory to preserve them."
 
         if self._plan_mode:
-            prompt += _PLAN_MODE_SECTION
+            prompt += build_plan_prompt(self._plan_session)
 
         return prompt
 
@@ -572,9 +567,10 @@ Use tools proactively only when they materially improve correctness or are neede
         self.llm.total_prompt_tokens = 0
         self.llm.total_completion_tokens = 0
 
-    def set_plan_mode(self, enabled: bool) -> None:
-        """Toggle plan mode; affects system prompt on next chat() call."""
-        self._plan_mode = enabled
+    @property
+    def _plan_mode(self) -> bool:
+        """Whether plan mode is active (reads from shared PlanSession)."""
+        return self._plan_session.is_active
 
     def chat(self, user_message: str, max_iterations: int = 100,
              cancellation_token: Optional[CancellationToken] = None) -> str:
@@ -625,8 +621,12 @@ Use tools proactively only when they materially improve correctness or are neede
             {"role": "system", "content": system_prompt}
         ] + self.messages
 
-        # Get tools in OpenAI format
-        tools = self.tools.to_openai_format()
+        # Get tools in OpenAI format; hide plan tools when not in plan mode
+        _plan_tool_names = {"plan_save", "plan_finalize"}
+        tools = [
+            t for t in self.tools.to_openai_format()
+            if self._plan_mode or t["function"]["name"] not in _plan_tool_names
+        ]
 
         # Reset doom-loop counter for this chat() invocation
         self.tool_runner.reset()

@@ -13,8 +13,9 @@ class EventType(str, Enum):
     THINKING      = "thinking"      # LLM reasoning / thought text
     LLM_TEXT      = "llm_text"      # LLM response text chunk (streaming)
     ERROR         = "error"         # runtime error
-    AGENT_START   = "agent_start"   # sub-agent started (replaces __agent_start__ magic string)
-    AGENT_END     = "agent_end"     # sub-agent finished (replaces __agent_end__ magic string)
+    AGENT_START       = "agent_start"       # sub-agent started (replaces __agent_start__ magic string)
+    AGENT_END         = "agent_end"         # sub-agent finished (replaces __agent_end__ magic string)
+    TOOL_CONFIRMATION = "tool_confirmation" # about to ask user to confirm a tool call
 
 
 @dataclass
@@ -34,10 +35,11 @@ class AgentEvent:
         THINKING      {"text": "Let me think..."}
         LLM_TEXT      {"chunk": "Sure, I can help"}
         ERROR         {"message": "...", "detail": "..."}
-        AGENT_START   {"agent": "codebase-investigator", "task": "...", "max_turns": 15}
-        AGENT_END     {"agent": "codebase-investigator", "state": "completed",
+        AGENT_START       {"agent": "codebase-investigator", "task": "...", "max_turns": 15}
+        AGENT_END         {"agent": "codebase-investigator", "state": "completed",
                        "turns": 3, "tool_calls": 5, "tokens": 1200,
                        "duration_ms": 8000, "error": None}
+        TOOL_CONFIRMATION {"tool": "run_shell_command", "args": {...}}
     """
 
     type: EventType

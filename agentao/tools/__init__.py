@@ -16,6 +16,7 @@ from .memory import (
 from .skill import ActivateSkillTool
 from .ask_user import AskUserTool
 from .todo import TodoWriteTool
+from .plan import PlanSaveTool, PlanFinalizeTool
 
 __all__ = [
     "Tool",
@@ -38,4 +39,6 @@ __all__ = [
     "ActivateSkillTool",
     "AskUserTool",
     "TodoWriteTool",
+    "PlanSaveTool",
+    "PlanFinalizeTool",
 ]

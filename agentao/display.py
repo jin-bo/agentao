@@ -22,7 +22,9 @@ Design rules:
 """
 
 import difflib
+import os
 import re
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -122,10 +124,15 @@ def _shorten(val: str, max_len: int = 60) -> str:
 
 
 def _shorten_path(val: str) -> str:
-    """Tail-preserve truncation for paths and URLs — keeps filename / endpoint."""
-    if len(val) <= _PATH_TAIL_MAX:
-        return val
-    return "…" + val[-_PATH_TAIL_MAX:]
+    """Shorten file paths to last two segments; tail-truncate URLs."""
+    if val.startswith(("http://", "https://")):
+        if len(val) <= _PATH_TAIL_MAX:
+            return val
+        return "…" + val[-_PATH_TAIL_MAX:]
+    parts = Path(val).parts
+    if len(parts) > 2:
+        return str(Path(*parts[-2:]))
+    return val
 
 
 def _fmt_command(cmd: str) -> str:
@@ -362,6 +369,72 @@ class _ToolState:
     _timer: object = field(default=None, repr=False)  # threading.Timer | None
 
 
+# ── Output summary helpers ────────────────────────────────────────────────────
+
+def _diff_stats(old: str, new: str) -> tuple[int, int]:
+    """Return (added_lines, removed_lines) for a replace operation."""
+    old_lines = (old or "").splitlines()
+    new_lines = (new or "").splitlines()
+    added = removed = 0
+    for ln in difflib.unified_diff(old_lines, new_lines):
+        if ln.startswith("+") and not ln.startswith("+++"):
+            added += 1
+        elif ln.startswith("-") and not ln.startswith("---"):
+            removed += 1
+    return added, removed
+
+
+def _save_full_output(lines: list[str]) -> str:
+    """Write full buffered output to a temp file; return the path."""
+    fd, path = tempfile.mkstemp(prefix="agentao_output_", suffix=".txt")
+    try:
+        os.write(fd, "\n".join(lines).encode())
+    finally:
+        os.close(fd)
+    return path
+
+
+def _build_output_summary(state: "_ToolState", status: str, visible: str, hidden: int) -> str:
+    """Build a short annotation string for the completion footer.
+
+    Returns a dim hint like  "42 lines"  /  "+3 −1"  /  "→ /tmp/agentao_xyz.txt"
+    or a combination. Empty string when nothing useful to show.
+    """
+    parts: list[str] = []
+
+    # ── Shell / read / search: line count + optional full-output file ──────────
+    if visible or hidden:
+        shown_lines = len(visible.splitlines()) if visible else 0
+        total = shown_lines + hidden
+        if total > 0:
+            parts.append(f"{total} lines")
+        char_truncated = visible.startswith("…")
+        if (hidden > 0 or char_truncated) and state.show_output:
+            # Truncated output (by line count or char cap) — save full content
+            try:
+                path = _save_full_output(list(state.buffer._lines))
+                parts.append(f"full → {path}")
+            except Exception:
+                pass
+
+    # ── Replace: +added −removed ───────────────────────────────────────────────
+    if status == "ok" and state.diff_context.get("kind") == "replace":
+        added, removed = _diff_stats(
+            state.diff_context.get("old", ""),
+            state.diff_context.get("new", ""),
+        )
+        if added or removed:
+            parts.append(f"+{added} \u2212{removed}")
+
+    # ── Write: N lines written ─────────────────────────────────────────────────
+    if status == "ok" and state.diff_context.get("kind") == "write":
+        n = len((state.diff_context.get("content") or "").splitlines())
+        if n:
+            parts.append(f"{n} lines")
+
+    return "  ".join(parts)
+
+
 # ── DisplayController ─────────────────────────────────────────────────────────
 
 class DisplayController:
@@ -510,7 +583,7 @@ class DisplayController:
             self._console.print(f"  [dim]+ {header}[/dim]")
         else:
             self._console.print(f"[bold yellow]{header}[/bold yellow]")
-        self._start_spinner()
+        self._start_spinner(f"[dim]⚙ {header}[/dim]")
 
         # Arm progress timer (fires after _PROGRESS_DELAY seconds)
         self._arm_progress_timer(call_id, header, state.start_ts)
@@ -538,7 +611,7 @@ class DisplayController:
 
         if state is None:
             if not still_active:
-                self._start_spinner("[bold yellow]Thinking...[/bold yellow]")
+                self._start_spinner("[bold yellow]Thinking…[/bold yellow]")
             return
 
         self._cancel_progress_timer(state)
@@ -579,19 +652,21 @@ class DisplayController:
         )
         if show_footer:
             dur_str = f"  [dim]{_fmt_duration(duration_ms)}[/dim]" if duration_ms > 0 else ""
+            summary = _build_output_summary(state, status, visible, hidden)
+            summary_str = f"  [dim]{summary}[/dim]" if summary else ""
             if status == "ok":
-                self._console.print(f"[green]✓[/green] [dim]{state.header}[/dim]{dur_str}")
+                self._console.print(f"[green]✓[/green] [dim]{state.header}[/dim]{dur_str}{summary_str}")
             elif status == "cancelled":
                 reason = f"  [dim]{error}[/dim]" if error else ""
                 self._console.print(f"[yellow]✗[/yellow] [dim]{state.header}[/dim]{dur_str}{reason}")
             else:  # error
                 err_str = f"  [dim red]{_shorten(error or '', 80)}[/dim red]" if error else ""
-                self._console.print(f"[red]✗[/red] [dim]{state.header}[/dim]{dur_str}{err_str}")
+                self._console.print(f"[red]✗[/red] [dim]{state.header}[/dim]{dur_str}{err_str}{summary_str}")
             self._console.print()
 
         # Only restore "Thinking…" once the last tool in a parallel batch is done
         if not still_active:
-            self._start_spinner("[bold yellow]Thinking...[/bold yellow]")
+            self._start_spinner("[bold yellow]Thinking…[/bold yellow]")
 
     # ── Sub-agent lifecycle ───────────────────────────────────────────────────
 
@@ -602,7 +677,7 @@ class DisplayController:
         task_preview = f": [dim]{_t}[/dim]" if _t else ""
         self._stop_spinner()
         self._console.rule(f"[bold cyan]▶ [{agent}]{task_preview}[/bold cyan]", style="cyan")
-        self._start_spinner(f"[bold cyan][{agent}] Thinking...[/bold cyan]")
+        self._start_spinner(f"[bold cyan][{agent}] Running…[/bold cyan]")
 
     def _on_agent_end(self, d: dict) -> None:
         agent = d.get("agent", "agent")
@@ -620,4 +695,4 @@ class DisplayController:
         style = "cyan" if state == "completed" else "red"
         self._stop_spinner()
         self._console.rule(f"[bold {style}]◀ [{agent}]  {stats}[/bold {style}]", style=style)
-        self._start_spinner("[bold yellow]Thinking...[/bold yellow]")
+        self._start_spinner("[bold yellow]Thinking…[/bold yellow]")

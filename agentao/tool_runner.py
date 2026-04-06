@@ -216,6 +216,9 @@ class ToolRunner:
             if _plan["decision"] == PermissionDecision.ASK:
                 _fn = _plan["function_name"]
                 self._logger.info(f"Tool {_fn} requires confirmation")
+                self._transport.emit(AgentEvent(EventType.TOOL_CONFIRMATION, {
+                    "tool": _fn, "args": _plan["function_args"],
+                }))
                 _confirmed = self._transport.confirm_tool(
                     _fn,
                     _plan["tool"].description,
@@ -224,6 +227,8 @@ class ToolRunner:
                 if not _confirmed:
                     self._logger.info(f"Tool {_fn} execution cancelled by user")
                     _plan["decision"] = "CANCELLED"
+                    # No TOOL_START will fire for cancelled tools — reset spinner explicitly.
+                    self._transport.emit(AgentEvent(EventType.TURN_START, {}))
                 else:
                     self._logger.info(f"Tool {_fn} execution confirmed by user")
                     _plan["decision"] = PermissionDecision.ALLOW
