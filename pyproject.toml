@@ -59,15 +59,19 @@ path = "agentao/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 exclude = [
-    "workspace", "docs", "agentao.log", "main.py", "run.sh", "AGENTAO.md",
+    "workspace", "docs", "agentao.log", "main.py", "run.sh", "AGENTAO.md", ".agentao",
 ]
 force-include = {"skills/skill-creator" = "skills/skill-creator"}
 
 [tool.hatch.build.targets.sdist]
 exclude = [
     "workspace", "docs", "agentao.log", "run.sh", "AGENTAO.md",
-    "main.py", ".claude",
+    "main.py", ".claude", ".agentao",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short"
 
 [dependency-groups]
 dev = [
