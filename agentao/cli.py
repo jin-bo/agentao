@@ -8,7 +8,11 @@ import json
 import os
 import sys
 import uuid as _uuid_mod
-import termios
+try:
+    import termios
+    _HAS_TERMIOS = True
+except ImportError:
+    _HAS_TERMIOS = False
 from pathlib import Path
 from typing import Optional
 
@@ -2031,24 +2035,25 @@ def main(resume_session: Optional[str] = None):
     # Restored on every exit path via atexit (normal, exception, sys.exit).
     _saved_tc = None
     _tty_fd = None
-    try:
-        # Open /dev/tty directly — more reliable than sys.stdin.fileno() in
-        # atexit handlers when stdin may already be partially torn down.
-        _tty_fd = os.open('/dev/tty', os.O_RDWR | os.O_NOCTTY)
-        _saved_tc = termios.tcgetattr(_tty_fd)
-    except Exception:
-        # Fallback: try sys.stdin
-        if _tty_fd is not None:
+    if _HAS_TERMIOS:
+        try:
+            # Open /dev/tty directly — more reliable than sys.stdin.fileno() in
+            # atexit handlers when stdin may already be partially torn down.
+            _tty_fd = os.open('/dev/tty', os.O_RDWR | os.O_NOCTTY)
+            _saved_tc = termios.tcgetattr(_tty_fd)
+        except Exception:
+            # Fallback: try sys.stdin
+            if _tty_fd is not None:
+                try:
+                    os.close(_tty_fd)
+                except Exception:
+                    pass
+                _tty_fd = None
             try:
-                os.close(_tty_fd)
+                if sys.stdin.isatty():
+                    _saved_tc = termios.tcgetattr(sys.stdin.fileno())
             except Exception:
                 pass
-            _tty_fd = None
-        try:
-            if sys.stdin.isatty():
-                _saved_tc = termios.tcgetattr(sys.stdin.fileno())
-        except Exception:
-            pass
 
     def _restore_terminal():
         if _saved_tc is None:
@@ -2060,10 +2065,11 @@ def main(resume_session: Optional[str] = None):
         )
         if fd is None:
             return
-        try:
-            termios.tcsetattr(fd, termios.TCSANOW, _saved_tc)
-        except Exception:
-            pass
+        if _HAS_TERMIOS:
+            try:
+                termios.tcsetattr(fd, termios.TCSANOW, _saved_tc)
+            except Exception:
+                pass
 
     atexit.register(_restore_terminal)
 

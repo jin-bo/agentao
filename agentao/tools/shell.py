@@ -4,10 +4,13 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+IS_WINDOWS = sys.platform == "win32"
 
 from .base import Tool
 
@@ -101,12 +104,16 @@ class ShellTool(Tool):
             "- Signal: only included if the process was killed by a signal.\n"
             "- Background PGID: only included when is_background=true."
         )
+        shell_desc = "cmd /c <command>" if IS_WINDOWS else "bash -c <command>"
+        stop_desc = (
+            "taskkill /F /PID <PID>" if IS_WINDOWS
+            else "`kill -- -PGID` or signaled as `kill -s SIGNAL -- -PGID`"
+        )
         return (
-            "This tool executes a given shell command as `bash -c <command>`. "
+            f"This tool executes a given shell command as `{shell_desc}`. "
             f"{background_instructions} "
             "Command is executed as a subprocess that leads its own process group. "
-            "Command process group can be terminated as `kill -- -PGID` or "
-            "signaled as `kill -s SIGNAL -- -PGID`."
+            f"Command process group can be terminated as {stop_desc}."
             f"{efficiency_guidelines}"
             f"{returned_info}"
         )
@@ -118,7 +125,11 @@ class ShellTool(Tool):
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "Exact bash command to execute as `bash -c <command>`.",
+                    "description": (
+                    "Exact command to execute. "
+                    "On Unix runs as `bash -c <command>`; "
+                    "on Windows runs as `cmd /c <command>`."
+                ),
                 },
                 "description": {
                     "type": "string",
@@ -191,25 +202,42 @@ class ShellTool(Tool):
     # ------------------------------------------------------------------
 
     def _run_background(self, command: str, cwd: Path) -> str:
-        """Start command detached; return PID and PGID immediately."""
+        """Start command detached; return PID (and PGID on Unix) immediately."""
         try:
-            proc = subprocess.Popen(
-                command,
-                shell=True,
-                cwd=cwd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                preexec_fn=os.setsid,  # become process group leader
-            )
-            pgid = os.getpgid(proc.pid)
-            return (
-                f"Background process started.\n"
-                f"PID: {proc.pid}\n"
-                f"PGID: {pgid}\n"
-                f"Command: {command}\n"
-                f"Working directory: {cwd}\n"
-                f"To stop: kill -- -{pgid}"
-            )
+            if IS_WINDOWS:
+                proc = subprocess.Popen(
+                    command,
+                    shell=True,
+                    cwd=cwd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+                )
+                return (
+                    f"Background process started.\n"
+                    f"PID: {proc.pid}\n"
+                    f"Command: {command}\n"
+                    f"Working directory: {cwd}\n"
+                    f"To stop: taskkill /F /T /PID {proc.pid}"
+                )
+            else:
+                proc = subprocess.Popen(
+                    command,
+                    shell=True,
+                    cwd=cwd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,  # equivalent to preexec_fn=os.setsid
+                )
+                pgid = os.getpgid(proc.pid)
+                return (
+                    f"Background process started.\n"
+                    f"PID: {proc.pid}\n"
+                    f"PGID: {pgid}\n"
+                    f"Command: {command}\n"
+                    f"Working directory: {cwd}\n"
+                    f"To stop: kill -- -{pgid}"
+                )
         except Exception as e:
             return f"Error starting background command: {e}"
 
@@ -219,15 +247,16 @@ class ShellTool(Tool):
 
     def _run_foreground(self, command: str, cwd: Path, timeout: float) -> str:
         """Run command, killing it after `timeout` seconds without any output."""
+        popen_kwargs: Dict[str, Any] = dict(
+            shell=True,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if not IS_WINDOWS:
+            popen_kwargs["start_new_session"] = True  # equivalent to preexec_fn=os.setsid
         try:
-            proc = subprocess.Popen(
-                command,
-                shell=True,
-                cwd=cwd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                preexec_fn=os.setsid,  # become process group leader
-            )
+            proc = subprocess.Popen(command, **popen_kwargs)
         except Exception as e:
             return f"Error starting command: {e}"
 
@@ -257,7 +286,16 @@ class ShellTool(Tool):
             if time.monotonic() - last_activity[0] > timeout:
                 timed_out[0] = True
                 try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    if IS_WINDOWS:
+                        # Kill the entire process tree: shell=True wraps the real
+                        # command in cmd.exe, so proc.kill() alone would only
+                        # terminate the wrapper and leave children running.
+                        subprocess.run(
+                            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                            capture_output=True,
+                        )
+                    else:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 except ProcessLookupError:
                     proc.kill()
                 break
