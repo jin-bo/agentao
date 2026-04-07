@@ -37,9 +37,9 @@ except Exception as e:
 
 try:
     from agentao.agent import Agentao
-    print("✓ Chat agent import successful")
+    print("✓ Agent import successful")
 except Exception as e:
-    print(f"✗ Chat agent import failed: {e}")
+    print(f"✗ Agent import failed: {e}")
 
 try:
     from agentao.cli import AgentaoCLI

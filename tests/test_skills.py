@@ -8,7 +8,7 @@ print("Testing Skills Loading from SKILL.md Files")
 print("=" * 70)
 
 # Show skills directory location
-skills_path = Path("/Users/bluerose/Documents/Data/ToDo/2024-AGI/src/chatagent/skills")
+skills_path = Path(__file__).parent.parent / "skills"
 print(f"\nSkills directory: {skills_path}")
 print(f"Exists: {skills_path.exists()}")
 

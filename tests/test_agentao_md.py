@@ -1,11 +1,11 @@
-"""Test that CHATAGENT.md is loaded correctly."""
+"""Test that AGENTAO.md is loaded correctly."""
 
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 
 def test_agentao_md_loading():
-    """Test that the agent loads CHATAGENT.md on initialization."""
+    """Test that the agent loads AGENTAO.md on initialization."""
     # Mock the LLMClient to avoid needing an API key
     with patch('agentao.agent.LLMClient') as mock_llm_client:
         # Create a mock logger
@@ -19,31 +19,31 @@ def test_agentao_md_loading():
         agent = Agentao()
 
         # Check that project instructions were loaded
-        assert agent.project_instructions is not None, "CHATAGENT.md should be loaded"
-        assert len(agent.project_instructions) > 0, "CHATAGENT.md should have content"
+        assert agent.project_instructions is not None, "AGENTAO.md should be loaded"
+        assert len(agent.project_instructions) > 0, "AGENTAO.md should have content"
         assert "Agentao Project Instructions" in agent.project_instructions, "Should contain header"
 
-        print("✅ CHATAGENT.md loaded successfully")
+        print("✅ AGENTAO.md loaded successfully")
         print(f"✅ Content length: {len(agent.project_instructions)} characters")
 
         # Test that system prompt includes project instructions
         system_prompt = agent._build_system_prompt()
         assert "=== Project Instructions ===" in system_prompt, "System prompt should include project instructions section"
-        assert "Agentao Project Instructions" in system_prompt, "System prompt should include CHATAGENT.md content"
+        assert "Agentao Project Instructions" in system_prompt, "System prompt should include AGENTAO.md content"
 
         print("✅ System prompt includes project instructions")
         print(f"✅ System prompt length: {len(system_prompt)} characters")
 
 
 def test_agentao_md_missing():
-    """Test that the agent handles missing CHATAGENT.md gracefully."""
+    """Test that the agent handles missing AGENTAO.md gracefully."""
     # Mock the LLMClient
     with patch('agentao.agent.LLMClient') as mock_llm_client:
         mock_logger = Mock()
         mock_llm_client.return_value.logger = mock_logger
         mock_llm_client.return_value.model = "gpt-4"
 
-        # Mock Path.cwd() to return a directory without CHATAGENT.md
+        # Mock Path.cwd() to return a directory without AGENTAO.md
         with patch('agentao.agent.Path.cwd') as mock_cwd:
             mock_cwd.return_value = Path('/nonexistent/path')
 
@@ -56,14 +56,14 @@ def test_agentao_md_missing():
 
             # System prompt should still work
             system_prompt = agent._build_system_prompt()
-            assert "You are Agentao" in system_prompt, "System prompt should work without CHATAGENT.md"
+            assert "You are Agentao" in system_prompt, "System prompt should work without AGENTAO.md"
             assert "=== Project Instructions ===" not in system_prompt, "Should not have project instructions section"
 
-            print("✅ Agent handles missing CHATAGENT.md gracefully")
+            print("✅ Agent handles missing AGENTAO.md gracefully")
 
 
 if __name__ == "__main__":
-    print("Testing CHATAGENT.md loading...")
+    print("Testing AGENTAO.md loading...")
     print()
 
     try:

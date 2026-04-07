@@ -64,7 +64,7 @@ def _serialize_tool_call(tc) -> dict:
 
 
 class Agentao:
-    """Main chat agent with tool and skill support."""
+    """Agentao agent with tool, skill, and MCP support."""
 
     def __init__(
         self,
@@ -86,7 +86,7 @@ class Agentao:
         transport=None,                   # Transport protocol instance (preferred)
         plan_session: Optional[PlanSession] = None,
     ):
-        """Initialize chat agent.
+        """Initialize Agentao agent.
 
         Args:
             api_key: API key for LLM service.

@@ -59,7 +59,7 @@ Available Tools:
 - web_fetch: Fetch content from URLs
 - google_web_search: Search the web
 - save_memory: Save important information
-- activate_skill: Activate a Claude skill
+- activate_skill: Activate a skill
 
 Features:
 - Multi-turn conversations with context

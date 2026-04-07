@@ -14,7 +14,7 @@
 >
 > *"Tao" (道) represents the underlying Laws, Methods, and Paths that govern all things. In Agentao, it is the invisible structure that keeps autonomous agents safe, connected, and observable.*
 
-A powerful CLI chat agent harness with tools, skills, and MCP support. Built with Python and designed to work with any OpenAI-compatible API.
+A powerful CLI agent harness with tools, skills, and MCP support. Built with Python and designed to work with any OpenAI-compatible API.
 
 ---
 

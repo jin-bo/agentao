@@ -29,7 +29,7 @@ python -m pytest tests/ -v
 - `test_multi_turn.py` - Test multi-turn conversations
 
 ### Feature Tests
-- `test_chatagent_md.py` - Test CHATAGENT.md auto-loading
+- `test_agentao_md.py` - Test AGENTAO.md auto-loading
 - `test_tool_confirmation.py` - Test tool confirmation mechanism
 - `test_menu_confirmation.py` - Test menu-based confirmation
 - `test_readchar_confirmation.py` - Test single-key confirmation with readchar

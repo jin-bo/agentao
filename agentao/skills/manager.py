@@ -1,4 +1,4 @@
-"""Skills manager for handling Claude skills."""
+"""Skills manager for Agentao."""
 
 import json
 import re
@@ -21,7 +21,7 @@ _CONFIG_FILE = _CONFIG_DIR / "skills_config.json"
 
 
 class SkillManager:
-    """Manager for Claude skills.
+    """Manager for Agentao skills.
 
     Scans two layers of skill directories:
       1. ~/.agentao/skills/     — global skills (shared across projects)

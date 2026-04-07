@@ -6,7 +6,7 @@ from .base import Tool
 
 
 class ActivateSkillTool(Tool):
-    """Tool for activating Claude skills."""
+    """Tool for activating Agentao skills."""
 
     def __init__(self, skill_manager=None):
         """Initialize skill tool.
@@ -22,7 +22,7 @@ class ActivateSkillTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Activate a Claude skill for specialized tasks. Skills provide enhanced capabilities for specific domains like PDF handling, spreadsheets, presentations, etc."
+        return "Activate a skill for specialized tasks. Skills provide enhanced capabilities for specific domains like PDF handling, spreadsheets, presentations, etc."
 
     @property
     def parameters(self) -> Dict[str, Any]:

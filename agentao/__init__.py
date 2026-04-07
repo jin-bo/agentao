@@ -1,4 +1,4 @@
-"""Agentao - A CLI chat agent with tools and skills support."""
+"""Agentao - A CLI agent harness with tools, skills, and MCP support."""
 
 import warnings
 warnings.filterwarnings("ignore", message="urllib3.*or chardet.*doesn't match")
