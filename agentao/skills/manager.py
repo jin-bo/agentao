@@ -142,14 +142,22 @@ class SkillManager:
         return frontmatter, remaining_content
 
     def _load_skills(self):
-        """Load skills from all configured directories."""
+        """Load skills from all configured directories.
+
+        Priority order (highest last — later entries overwrite earlier ones):
+          1. ~/.agentao/skills/      global skills
+          2. cwd/.agentao/skills/    project config skills
+          3. cwd/skills/             repo-root skills (highest priority)
+        """
         if self._explicit_dir is not None:
             # Legacy / sub-agent mode: single directory only
             self._load_skills_from_dir(self._explicit_dir)
         else:
-            # Two-layer: global first, then project (project overwrites on name clash)
             self._load_skills_from_dir(_GLOBAL_SKILLS_DIR)
             self._load_skills_from_dir(_PROJECT_SKILLS_DIR)
+            repo_skills = Path.cwd() / "skills"
+            if repo_skills.exists():
+                self._load_skills_from_dir(repo_skills)
 
     def _load_skills_from_dir(self, skills_dir: Path) -> None:
         """Scan one directory for skills and merge into available_skills."""
