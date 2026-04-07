@@ -58,10 +58,26 @@ build-backend = "hatchling.build"
 path = "agentao/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-exclude = ["skills", "workspace", "docs", "agentao.log", "main.py", "run.sh", "AGENTAO.md"]
+exclude = [
+    "workspace", "docs", "agentao.log", "main.py", "run.sh", "AGENTAO.md",
+]
+force-include = {"skills/skill-creator" = "skills/skill-creator"}
 
 [tool.hatch.build.targets.sdist]
-exclude = ["skills", "workspace", "docs", "agentao.log", "run.sh", "AGENTAO.md"]
+exclude = [
+    "skills/doc-coauthoring",
+    "skills/docx",
+    "skills/funds-data-cleaning",
+    "skills/funds-data-exam",
+    "skills/ocr",
+    "skills/pdf",
+    "skills/pptx",
+    "skills/sd2-pe",
+    "skills/standard-review",
+    "skills/xlsx",
+    "skills/zootopia-ppt",
+    "workspace", "docs", "agentao.log", "run.sh", "AGENTAO.md",
+]
 
 [dependency-groups]
 dev = [
