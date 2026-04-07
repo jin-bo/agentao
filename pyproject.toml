@@ -65,18 +65,8 @@ force-include = {"skills/skill-creator" = "skills/skill-creator"}
 
 [tool.hatch.build.targets.sdist]
 exclude = [
-    "skills/doc-coauthoring",
-    "skills/docx",
-    "skills/funds-data-cleaning",
-    "skills/funds-data-exam",
-    "skills/ocr",
-    "skills/pdf",
-    "skills/pptx",
-    "skills/sd2-pe",
-    "skills/standard-review",
-    "skills/xlsx",
-    "skills/zootopia-ppt",
     "workspace", "docs", "agentao.log", "run.sh", "AGENTAO.md",
+    "main.py", ".claude",
 ]
 
 [dependency-groups]
