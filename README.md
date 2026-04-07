@@ -281,6 +281,105 @@ cp .env.example .env
 
 ---
 
+## Minimum Viable Configuration
+
+Everything you need to get Agentao running from scratch.
+
+### Supported Python versions
+
+| Version | Status |
+|---------|--------|
+| 3.10 | ✅ supported |
+| 3.11 | ✅ supported |
+| 3.12 | ✅ supported |
+| < 3.10 | ❌ not supported |
+
+Verify before installing:
+
+```bash
+python --version   # must be 3.10 or higher
+```
+
+### Required environment variable
+
+Only one variable is mandatory to start Agentao:
+
+| Variable | Required | Example |
+|----------|----------|---------|
+| `OPENAI_API_KEY` | **Yes** (default provider) | `sk-...` |
+
+All other variables are optional. The absolute minimum `.env`:
+
+```env
+OPENAI_API_KEY=sk-your-key-here
+```
+
+Create it in the directory where you run `agentao`:
+
+```bash
+echo "OPENAI_API_KEY=sk-your-key-here" > .env
+```
+
+> **Note:** Agentao loads `.env` from the *current working directory*, then falls back to `~/.env`. No system-level setup is needed.
+
+### Default provider behavior
+
+When no provider is explicitly configured, Agentao uses these defaults:
+
+| Setting | Default | Override with |
+|---------|---------|---------------|
+| Provider | `OPENAI` | `LLM_PROVIDER=ANTHROPIC` |
+| API key | `$OPENAI_API_KEY` | `$<PROVIDER>_API_KEY` |
+| Model | `gpt-5.4` | `OPENAI_MODEL=gpt-4o` |
+| Base URL | OpenAI public API | `OPENAI_BASE_URL=https://...` |
+| Temperature | `0.2` | `LLM_TEMPERATURE=0.7` |
+
+Each provider reads its own `<NAME>_API_KEY`, `<NAME>_BASE_URL`, and `<NAME>_MODEL`:
+
+```env
+# Use Anthropic Claude instead of OpenAI
+LLM_PROVIDER=ANTHROPIC
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-4-6
+ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
+```
+
+### Minimal runnable example
+
+```bash
+pip install agentao
+echo "OPENAI_API_KEY=sk-your-key-here" > .env
+
+# Verify it works without a UI (exits after one response)
+agentao -p "Reply with the single word: OK"
+```
+
+Expected output:
+
+```
+OK
+```
+
+If that works, start the interactive session:
+
+```bash
+agentao
+```
+
+### Troubleshooting common startup failures
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `AuthenticationError` | Missing or invalid API key | Ensure `OPENAI_API_KEY` is set correctly in `.env` |
+| `NotFoundError: model not found` | Model name doesn't match provider | Set `OPENAI_MODEL=gpt-4o` (or the correct model for your provider) |
+| `APIConnectionError` | Network / firewall / proxy issue | Check your internet connection; set `OPENAI_BASE_URL` if behind a proxy |
+| `command not found: agentao` | CLI not on PATH | Confirm install succeeded; add `~/.local/bin` (Linux/Mac) or `Scripts\` (Windows) to `$PATH` |
+| Starts but gives wrong-provider errors | `LLM_PROVIDER` mismatch | Make sure `LLM_PROVIDER` matches the key you provided (e.g. `LLM_PROVIDER=OPENAI` with `OPENAI_API_KEY`) |
+| `ModuleNotFoundError` on startup | Incomplete install | Re-run `pip install agentao`; check Python version ≥ 3.10 |
+| `.env` not loaded | File in wrong directory | Run `agentao` from the directory containing `.env`, or place it in `~/.env` |
+
+---
+
 ## Configuration
 
 Edit `.env` with your settings:

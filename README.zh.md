@@ -282,6 +282,105 @@ cp .env.example .env
 
 ---
 
+## 最小可运行配置
+
+从零开始让 Agentao 跑起来所需的一切。
+
+### 支持的 Python 版本
+
+| 版本 | 状态 |
+|------|------|
+| 3.10 | ✅ 支持 |
+| 3.11 | ✅ 支持 |
+| 3.12 | ✅ 支持 |
+| < 3.10 | ❌ 不支持 |
+
+安装前确认版本：
+
+```bash
+python --version   # 必须 ≥ 3.10
+```
+
+### 必需的环境变量
+
+只有一个变量是强制要求的：
+
+| 变量 | 是否必需 | 示例 |
+|------|----------|------|
+| `OPENAI_API_KEY` | **是**（默认 provider） | `sk-...` |
+
+其余变量均为可选。最小 `.env` 文件：
+
+```env
+OPENAI_API_KEY=sk-your-key-here
+```
+
+在运行 `agentao` 的目录下创建：
+
+```bash
+echo "OPENAI_API_KEY=sk-your-key-here" > .env
+```
+
+> **说明：** Agentao 优先从*当前工作目录*加载 `.env`，其次回退到 `~/.env`，无需系统级配置。
+
+### 默认 provider 行为
+
+未显式配置 provider 时，Agentao 使用以下默认值：
+
+| 设置 | 默认值 | 覆盖方式 |
+|------|--------|----------|
+| Provider | `OPENAI` | `LLM_PROVIDER=ANTHROPIC` |
+| API key | `$OPENAI_API_KEY` | `$<PROVIDER>_API_KEY` |
+| 模型 | `gpt-5.4` | `OPENAI_MODEL=gpt-4o` |
+| Base URL | OpenAI 公共 API | `OPENAI_BASE_URL=https://...` |
+| Temperature | `0.2` | `LLM_TEMPERATURE=0.7` |
+
+每个 provider 读取自己的 `<NAME>_API_KEY`、`<NAME>_BASE_URL` 和 `<NAME>_MODEL`：
+
+```env
+# 改用 Anthropic Claude
+LLM_PROVIDER=ANTHROPIC
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-4-6
+ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
+```
+
+### 最小可运行示例
+
+```bash
+pip install agentao
+echo "OPENAI_API_KEY=sk-your-key-here" > .env
+
+# 无 UI 验证是否正常工作（响应后退出）
+agentao -p "Reply with the single word: OK"
+```
+
+预期输出：
+
+```
+OK
+```
+
+确认可用后，启动交互式会话：
+
+```bash
+agentao
+```
+
+### 常见启动失败排查
+
+| 现象 | 可能原因 | 解决方法 |
+|------|----------|----------|
+| `AuthenticationError` | API key 缺失或无效 | 确认 `.env` 中正确设置了 `OPENAI_API_KEY` |
+| `NotFoundError: model not found` | 模型名与 provider 不匹配 | 设置 `OPENAI_MODEL=gpt-4o`（或对应 provider 的正确模型名） |
+| `APIConnectionError` | 网络/防火墙/代理问题 | 检查网络；如有代理请设置 `OPENAI_BASE_URL` |
+| `command not found: agentao` | CLI 不在 PATH 中 | 确认安装成功；将 `~/.local/bin`（Linux/Mac）或 `Scripts\`（Windows）加入 `$PATH` |
+| 启动后报 provider 错误 | `LLM_PROVIDER` 与 key 不匹配 | 确保 `LLM_PROVIDER` 与提供的 key 对应（如 `LLM_PROVIDER=OPENAI` 配 `OPENAI_API_KEY`） |
+| 启动时 `ModuleNotFoundError` | 安装不完整 | 重新执行 `pip install agentao`；确认 Python 版本 ≥ 3.10 |
+| `.env` 未加载 | 文件不在当前目录 | 在包含 `.env` 的目录中运行 `agentao`，或将其放到 `~/.env` |
+
+---
+
 ## 配置
 
 编辑 `.env`：

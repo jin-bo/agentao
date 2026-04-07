@@ -77,11 +77,20 @@ class _StreamResponse:
 class LLMClient:
     """OpenAI-compatible LLM client with comprehensive logging."""
 
+    # Provider-specific model defaults used when neither the caller nor the
+    # environment supplies a model name.
+    _PROVIDER_DEFAULT_MODELS: Dict[str, str] = {
+        "OPENAI":     "gpt-5.4",
+        "ANTHROPIC":  "claude-sonnet-4-6",
+        "GEMINI":     "gemini-flash-latest",
+        "DEEPSEEK":   "deepseek-chat",
+    }
+
     def __init__(
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        model: str = "claude-sonnet-4-5",
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         log_file: str = "agentao.log",
     ):
@@ -90,13 +99,14 @@ class LLMClient:
         Args:
             api_key: API key for the LLM service
             base_url: Base URL for the API endpoint
-            model: Model name to use
+            model: Model name to use; defaults to provider-specific sensible default
             log_file: Path to log file for LLM interactions
         """
         provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
         self.api_key = api_key or os.getenv(f"{provider}_API_KEY")
         self.base_url = base_url or os.getenv(f"{provider}_BASE_URL")
-        self.model = model or os.getenv(f"{provider}_MODEL", "claude-sonnet-4-5")
+        _default_model = self._PROVIDER_DEFAULT_MODELS.get(provider, "gpt-4o")
+        self.model = model or os.getenv(f"{provider}_MODEL") or _default_model
         self.temperature = temperature if temperature is not None else float(os.getenv("LLM_TEMPERATURE", "0.2"))
         _max = os.getenv("LLM_MAX_TOKENS")
         self.max_tokens: Optional[int] = int(_max) if _max else 65536
