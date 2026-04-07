@@ -244,7 +244,7 @@ graph LR
 
 Agentao 围绕三个基础原则构建：
 
-1. **极简（Minimalism）** — 零摩擦启动。`uv sync` 即可运行。无需数据库、无需复杂配置、无需云依赖。
+1. **极简（Minimalism）** — 零摩擦启动。`pip install agentao` 即可运行。无需数据库、无需复杂配置、无需云依赖。
 
 2. **透明（Transparency）** — 没有黑盒。智能体的推理链实时展示。每一次 LLM 请求、工具调用和 token 消耗都记录在 `agentao.log` 中。你始终知道智能体在做什么、为什么这样做。
 
@@ -256,31 +256,27 @@ Agentao 围绕三个基础原则构建：
 
 ### 前置条件
 
-- Python 3.12 或更高版本
-- [uv](https://github.com/astral-sh/uv)（推荐）或 pip
-- OpenAI API 密钥或可访问的 OpenAI 兼容接口
+- Python 3.10 或更高版本
+- API 密钥（OpenAI、Anthropic、Gemini、DeepSeek 或任意 OpenAI 兼容接口）
 
-### 使用 uv 快速开始（推荐）
+### 安装
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+pip install agentao
 ```
 
-然后配置 Agentao：
+创建 `.env` 文件并填入 API 密钥：
 
 ```bash
+echo "OPENAI_API_KEY=your-api-key-here" > .env
+```
+
+### 贡献者 / 源码安装
+
+```bash
+git clone https://github.com/jin-bo/agentao
 cd agentao
 uv sync
-cp .env.example .env
-# 编辑 .env，填入你的 API 密钥
-```
-
-### 替代方案：pip
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e .
 cp .env.example .env
 ```
 
@@ -377,14 +373,7 @@ DEEPSEEK_MODEL=deepseek-chat
 ### 启动智能体
 
 ```bash
-# 快速启动
-uv run agentao
-
-# 通过 Python
-uv run python main.py
-
-# 通过便捷脚本
-./run.sh
+agentao
 ```
 
 ### 非交互（打印）模式
@@ -729,12 +718,12 @@ agentao/
 ## 测试
 
 ```bash
-# 运行所有测试
-uv run python -m pytest tests/ -v
+# 运行所有测试（需要源码 checkout）
+python -m pytest tests/ -v
 
 # 运行特定测试文件
-uv run python -m pytest tests/test_context_manager.py -v
-uv run python -m pytest tests/test_memory_management.py -v
+python -m pytest tests/test_context_manager.py -v
+python -m pytest tests/test_memory_management.py -v
 ```
 
 测试使用 `unittest.mock.Mock` 模拟 LLM 客户端——无需真实 API 调用。

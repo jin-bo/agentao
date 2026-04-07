@@ -1,18 +1,25 @@
-# ChatAgent Tests
+# Agentao Tests
 
-This directory contains test files for the ChatAgent project.
+This directory contains test files for the Agentao project.
 
 ## Running Tests
 
 ### Run all tests
 ```bash
-uv run python -m pytest tests/
+python -m pytest tests/
 ```
 
 ### Run a specific test file
 ```bash
-uv run python tests/test_imports.py
+python -m pytest tests/test_imports.py
 ```
+
+### With verbose output
+```bash
+python -m pytest tests/ -v
+```
+
+> **Note:** If running from a source checkout with `uv`, use `uv run python -m pytest tests/`.
 
 ## Test Files
 
@@ -42,8 +49,7 @@ uv run python tests/test_imports.py
 ## Test Requirements
 
 Tests use the following:
-- Python 3.12+
-- `uv` for package management
+- Python 3.10+
 - Dependencies from `pyproject.toml`
 
 ## Notes

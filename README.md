@@ -244,7 +244,7 @@ Add new skills by creating a directory with a `SKILL.md` file — no code change
 
 Agentao is built around three foundational principles:
 
-1. **Minimalism (极简)** — Zero friction to start. `uv sync` and you're running. No databases, no complex config, no cloud dependencies.
+1. **Minimalism (极简)** — Zero friction to start. `pip install agentao` and you're running. No databases, no complex config, no cloud dependencies.
 
 2. **Transparency (透明)** — No black boxes. The agent's reasoning chain is displayed in real time. Every LLM request, tool call, and token count is logged to `agentao.log`. You always know what the agent is doing and why.
 
@@ -255,31 +255,27 @@ Agentao is built around three foundational principles:
 ## Installation
 
 ### Prerequisites
-- Python 3.12 or higher
-- [uv](https://github.com/astral-sh/uv) (recommended) or pip
-- An OpenAI API key or access to an OpenAI-compatible API
+- Python 3.10 or higher
+- An API key (OpenAI, Anthropic, Gemini, DeepSeek, or any OpenAI-compatible provider)
 
-### Quick Start with uv (Recommended)
+### Install
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+pip install agentao
 ```
 
-Then set up Agentao:
+Then create a `.env` file with your API key:
 
 ```bash
+echo "OPENAI_API_KEY=your-api-key-here" > .env
+```
+
+### For contributors (source install)
+
+```bash
+git clone https://github.com/jin-bo/agentao
 cd agentao
 uv sync
-cp .env.example .env
-# Edit .env and add your API key
-```
-
-### Alternative: pip
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e .
 cp .env.example .env
 ```
 
@@ -384,14 +380,7 @@ The `/provider` command detects any `*_API_KEY` entry already loaded into the en
 ### Starting the Agent
 
 ```bash
-# Quick start
-uv run agentao
-
-# Or via Python
-uv run python main.py
-
-# Or via convenience script
-./run.sh
+agentao
 ```
 
 ### Non-Interactive (Print) Mode
@@ -739,12 +728,12 @@ agentao/
 ## Testing
 
 ```bash
-# Run all tests
-uv run python -m pytest tests/ -v
+# Run all tests (requires source checkout)
+python -m pytest tests/ -v
 
 # Run specific test files
-uv run python -m pytest tests/test_context_manager.py -v
-uv run python -m pytest tests/test_memory_management.py -v
+python -m pytest tests/test_context_manager.py -v
+python -m pytest tests/test_memory_management.py -v
 ```
 
 Tests use `unittest.mock.Mock` for the LLM client — no real API calls required.

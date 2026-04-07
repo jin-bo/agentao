@@ -2,38 +2,28 @@
 
 Get up and running with Agentao in under 2 minutes!
 
-## 1. Setup Environment
+## 1. Install
 
 ```bash
-# Copy the example environment file
+pip install agentao
+```
+
+## 2. Set Up Your API Key
+
+```bash
+echo "OPENAI_API_KEY=your-api-key-here" > .env
+```
+
+Or copy the example file if you have a source checkout:
+```bash
 cp .env.example .env
+# Edit .env and add your API key
 ```
-
-Edit `.env` and add your API key:
-```env
-OPENAI_API_KEY=your-api-key-here
-```
-
-## 2. Install Dependencies (uv)
-
-```bash
-# Sync dependencies - this creates a virtual environment and installs everything
-uv sync
-```
-
-That's it! No need to manually create virtual environments or install packages one by one.
 
 ## 3. Run Agentao
 
 ```bash
-# Method 1: Direct run with uv
-uv run python main.py
-
-# Method 2: Use the convenience script
-./run.sh
-
-# Method 3: Use the installed command
-uv run agentao
+agentao
 ```
 
 ## 4. Try It Out!
@@ -58,7 +48,7 @@ The agent will use the `glob` tool to find all `.py` files.
 ```
 You: /skills
 ```
-Shows all available Claude skills.
+Shows all available skills.
 
 ```
 You: Remember that I prefer using uv for Python projects
@@ -136,20 +126,20 @@ You: Use the codebase investigator to analyze the project structure
 
 ## Troubleshooting
 
-**Problem**: `command not found: uv`
-**Solution**: Install uv first: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+**Problem**: `command not found: agentao`
+**Solution**: Make sure the install completed: `pip install agentao`; or check that your Python scripts directory is on your PATH.
 
 **Problem**: API key error
-**Solution**: Make sure `.env` file exists and contains a valid `OPENAI_API_KEY`
+**Solution**: Make sure `.env` file exists and contains a valid `OPENAI_API_KEY`.
 
 **Problem**: Tool execution fails
 **Solution**: Check file permissions and paths. Use absolute paths if relative paths don't work.
 
 ## Next Steps
 
-- Read the full [README.md](README.md) for detailed documentation
-- Explore the different tools available with the `help` command
-- Try activating different skills with the `skills` command
+- Read the full [README.md](../README.md) for detailed documentation
+- Explore the different tools available with the `/help` command
+- Try activating different skills with the `/skills` command
 - Save your preferences with the `save_memory` tool
 
-Enjoy using Agentao! 🚀
+Enjoy using Agentao!

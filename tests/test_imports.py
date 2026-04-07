@@ -49,6 +49,4 @@ except Exception as e:
 
 print("\n✓ All imports successful! The project is ready to run.")
 print("\nTo start Agentao, run:")
-print("  uv run python main.py")
-print("or")
-print("  ./run.sh")
+print("  agentao")

@@ -89,7 +89,7 @@ print("=" * 70)
 
 print(f"\nNote: To see full logging in action:")
 print(f"1. Set a valid OPENAI_API_KEY in .env")
-print(f"2. Run: uv run python main.py")
+print(f"2. Run: agentao")
 print(f"3. Have a conversation with the agent")
 print(f"4. Check agentao.log for detailed logs")
 
