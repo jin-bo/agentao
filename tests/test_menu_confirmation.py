@@ -10,7 +10,7 @@ def test_menu_confirmation_yes():
 
     with patch('agentao.cli.load_dotenv'):
         with patch('agentao.cli.Agentao') as mock_agent_class:
-            with patch('agentao.cli.Prompt.ask', return_value='1'):
+            with patch('agentao.cli.readchar.readkey', return_value='1'):
                 from agentao.cli import AgentaoCLI
 
                 cli = AgentaoCLI()
@@ -32,7 +32,7 @@ def test_menu_confirmation_yes_to_all():
 
     with patch('agentao.cli.load_dotenv'):
         with patch('agentao.cli.Agentao') as mock_agent_class:
-            with patch('agentao.cli.Prompt.ask', return_value='2'):
+            with patch('agentao.cli.readchar.readkey', return_value='2'):
                 from agentao.cli import AgentaoCLI
 
                 cli = AgentaoCLI()
@@ -54,7 +54,7 @@ def test_menu_confirmation_no():
 
     with patch('agentao.cli.load_dotenv'):
         with patch('agentao.cli.Agentao') as mock_agent_class:
-            with patch('agentao.cli.Prompt.ask', return_value='3'):
+            with patch('agentao.cli.readchar.readkey', return_value='3'):
                 from agentao.cli import AgentaoCLI
 
                 cli = AgentaoCLI()
@@ -82,7 +82,7 @@ def test_allow_all_mode_bypass():
             cli.allow_all_tools = True
 
             # Should not prompt when allow_all is enabled
-            with patch('agentao.cli.Prompt.ask') as mock_prompt:
+            with patch('agentao.cli.readchar.readkey') as mock_readkey:
                 result = cli.confirm_tool_execution(
                     "test_tool",
                     "Test tool description",
@@ -90,7 +90,7 @@ def test_allow_all_mode_bypass():
                 )
 
                 assert result is True, "Should return True in allow_all mode"
-                mock_prompt.assert_not_called()  # Should not prompt
+                mock_readkey.assert_not_called()  # Should not prompt
                 print("✅ Allow all mode bypasses confirmation")
 
 
@@ -99,7 +99,7 @@ def test_keyboard_interrupt_handling():
 
     with patch('agentao.cli.load_dotenv'):
         with patch('agentao.cli.Agentao') as mock_agent_class:
-            with patch('agentao.cli.Prompt.ask', side_effect=KeyboardInterrupt):
+            with patch('agentao.cli.readchar.readkey', side_effect=KeyboardInterrupt):
                 from agentao.cli import AgentaoCLI
 
                 cli = AgentaoCLI()
@@ -134,7 +134,7 @@ def test_allow_all_persists_across_calls():
 
     with patch('agentao.cli.load_dotenv'):
         with patch('agentao.cli.Agentao') as mock_agent_class:
-            with patch('agentao.cli.Prompt.ask', return_value='2'):
+            with patch('agentao.cli.readchar.readkey', return_value='2'):
                 from agentao.cli import AgentaoCLI
 
                 cli = AgentaoCLI()
@@ -145,10 +145,10 @@ def test_allow_all_persists_across_calls():
                 assert cli.allow_all_tools is True
 
                 # Second call - should auto-approve without prompting
-                with patch('agentao.cli.Prompt.ask') as mock_prompt:
+                with patch('agentao.cli.readchar.readkey') as mock_readkey:
                     result2 = cli.confirm_tool_execution("tool2", "desc2", {})
                     assert result2 is True
-                    mock_prompt.assert_not_called()
+                    mock_readkey.assert_not_called()
 
                 print("✅ Allow all mode persists across calls")
 

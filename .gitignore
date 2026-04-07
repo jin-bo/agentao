@@ -45,15 +45,6 @@ chatagent.log
 .agentao/
 examples/
 workspace/
-skills/funds-data-cleaning/
-skills/funds-data-exam/
-skills/lab-standard-review/
-skills/pptx-generator/
-skills/standard-review/
-skills/sd2-pe/
-skills/*-ppt/
-slides/
-ppt/
 
 # OS
 .DS_Store

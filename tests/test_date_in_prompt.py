@@ -35,7 +35,7 @@ def test_date_injected_into_user_message():
     fake_response.choices[0].message.tool_calls = None
     fake_response.choices[0].message.content = "Hello!"
     fake_response.choices[0].message.reasoning_content = None
-    agent.llm.chat = Mock(return_value=fake_response)
+    agent._llm_call = Mock(return_value=fake_response)
 
     agent.chat("Say hello")
 
