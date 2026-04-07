@@ -467,7 +467,8 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/plan` | Enter plan mode (LLM researches and drafts a plan; no mutations allowed) |
 | `/plan show` | Display the saved plan file |
 | `/plan implement` | Exit plan mode, restore prior permissions, display saved plan |
-| `/plan clear` | Delete the plan file and exit plan mode |
+| `/plan clear` | Archive and clear the current plan; exit plan mode |
+| `/plan history` | List recently archived plans |
 | `/copy` | Copy last agent response to clipboard (Markdown) |
 | `/sessions` | List saved sessions |
 | `/sessions resume <id>` | Resume a saved session |

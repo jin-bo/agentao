@@ -72,7 +72,7 @@ _SLASH_COMMANDS = [
     '/agent', '/agent bg', '/agent dashboard', '/agent list', '/agent status',
     '/agents',
     '/clear', '/copy', '/new',
-    '/plan', '/plan clear', '/plan history', '/plan implement', '/plan save', '/plan show',
+    '/plan', '/plan clear', '/plan history', '/plan implement', '/plan show',
     '/context', '/context limit', '/exit', '/help',
     '/mcp', '/mcp add', '/mcp list', '/mcp remove',
     '/markdown',
@@ -528,7 +528,6 @@ All commands start with `/`:
   - `/mode full-access` - Allow all tools without prompting
 - `/plan` - Plan mode workflow (read-only; LLM plans, not executes)
   - `/plan` - Enter plan mode; if already on, shows current saved plan
-  - `/plan save` - Save last response as `.agentao/plan.md`
   - `/plan show` - Display the saved plan file
   - `/plan implement` - Exit plan mode, restore prior permissions, show plan
   - `/plan clear` - Archive and clear the current plan
@@ -661,22 +660,10 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         _plan_file = self._plan_session.current_plan_path
         args = args.strip()
 
-        if args == "save":
-            if self.last_response is None:
-                console.print("\n[warning]No response to save. Ask the agent to produce a plan first.[/warning]\n")
-                return
-            try:
-                self._plan_controller.save_draft(self.last_response)
-            except OSError as e:
-                console.print(f"\n[error]Could not save plan: {e}[/error]\n")
-                return
-            console.print(f"\n[success]Plan saved → {_plan_file}[/success]\n")
-            return
-
         if args == "show":
             content = self._plan_controller.show_draft()
             if content is None:
-                console.print("\n[warning]No plan file found. Use /plan save after the agent responds.[/warning]\n")
+                console.print("\n[warning]No plan file found. The agent saves it automatically when in plan mode.[/warning]\n")
                 return
             console.print(f"\n[dim]{_plan_file}[/dim]\n")
             console.print(Markdown(content) if self.markdown_mode else content)
@@ -721,7 +708,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                     console.print(Markdown(content) if self.markdown_mode else content)
                 else:
                     console.print("[dim]No plan saved yet.[/dim]")
-                console.print("\n[dim]/plan save · /plan show · /plan implement · /plan clear[/dim]\n")
+                console.print("\n[dim]/plan show · /plan implement · /plan clear[/dim]\n")
                 return
             # Enter plan mode
             self._plan_controller.enter(self.current_mode, self.allow_all_tools)
@@ -731,7 +718,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             self.readonly_mode = False
             self._apply_readonly_mode()
             console.print("\n[bold magenta]Plan mode ON[/bold magenta]  [dim](read-only; LLM will plan, not execute)[/dim]")
-            console.print("[dim]Ask what to plan. When done: /plan save · /plan implement · /plan clear[/dim]\n")
+            console.print("[dim]Ask what to plan. When done: /plan implement · /plan clear[/dim]\n")
             return
 
         if args == "history":
@@ -759,7 +746,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             console.print()
             return
 
-        console.print(f"\n[error]Unknown: /plan {args}[/error]\n[info]Usage: /plan | /plan save | /plan show | /plan implement | /plan clear | /plan history[/info]\n")
+        console.print(f"\n[error]Unknown: /plan {args}[/error]\n[info]Usage: /plan | /plan show | /plan implement | /plan clear | /plan history[/info]\n")
 
     def show_memories(self, subcommand: str = "", arg: str = ""):
         """Show saved memories.

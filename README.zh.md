@@ -460,7 +460,8 @@ response = agent.chat("总结当前目录")
 | `/plan` | 进入 Plan 模式（LLM 调研并起草计划，不允许任何写入操作） |
 | `/plan show` | 显示已保存的计划文件 |
 | `/plan implement` | 退出 Plan 模式，恢复原权限，展示已保存的计划 |
-| `/plan clear` | 删除计划文件并退出 Plan 模式 |
+| `/plan clear` | 归档并清除当前计划；退出 Plan 模式 |
+| `/plan history` | 列出最近归档的计划 |
 | `/copy` | 将最后一条 agent 响应以 Markdown 格式复制到剪贴板 |
 | `/sessions` | 列出已保存的会话 |
 | `/sessions resume <id>` | 恢复指定会话 |
