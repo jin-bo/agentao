@@ -101,3 +101,15 @@ jobs:
 
       - name: Verify agentao command is on PATH
         run: python -c "import shutil; assert shutil.which('agentao'), 'agentao not found on PATH'; print('agentao on PATH OK')"
+
+      - name: Verify bundled skills are discoverable after install
+        run: |
+          python -c "
+          from pathlib import Path
+          import agentao.skills.manager as m
+          bundled = m._BUNDLED_SKILLS_DIR
+          assert bundled.exists(), f'Bundled skills dir missing: {bundled}'
+          skills = [d.name for d in bundled.iterdir() if d.is_dir()]
+          assert 'skill-creator' in skills, f'skill-creator not found in {bundled}: {skills}'
+          print('Bundled skills OK:', skills)
+          "
