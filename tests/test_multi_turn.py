@@ -1,8 +1,18 @@
 """Test multi-turn tool calls."""
 
 import os
+
 from dotenv import load_dotenv
+
 from agentao import Agentao
+
+
+def _use_live_llm() -> bool:
+    env = os.getenv("AGENTAO_TEST_LIVE_LLM")
+    if env is not None:
+        return env.strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("GITHUB_ACTIONS") != "true"
+
 
 def test_multi_turn_tool_calls():
     """Test that agent can handle multiple rounds of tool calls."""
@@ -29,10 +39,17 @@ def test_multi_turn_tool_calls():
     print(f"\nTotal messages in history: {len(agent.messages)}")
 
     # Count tool messages
-    tool_messages = [m for m in agent.messages if m.get('role') == 'tool']
+    tool_messages = [m for m in agent.messages if m.get("role") == "tool"]
     print(f"Tool calls executed: {len(tool_messages)}")
 
-    return response
+    assert isinstance(response, str)
+    assert response.strip()
+    assert len(agent.messages) > 0
+    if _use_live_llm():
+        assert "[LLM API error:" not in response
+        assert len(tool_messages) > 0
+    else:
+        assert "LLM API error" in response
 
 if __name__ == "__main__":
     test_multi_turn_tool_calls()

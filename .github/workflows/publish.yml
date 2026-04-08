@@ -1,0 +1,91 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Build, verify, and publish to PyPI
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag matches package version
+        if: github.event_name == 'release'
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+
+          init_py = pathlib.Path("agentao/__init__.py").read_text(encoding="utf-8")
+          match = re.search(r'^__version__\s*=\s*"([^"]+)"', init_py, re.MULTILINE)
+          if not match:
+              raise SystemExit("Could not find __version__ in agentao/__init__.py")
+
+          package_version = match.group(1)
+          release_tag = "${{ github.event.release.tag_name }}"
+          normalized_tag = release_tag[1:] if release_tag.startswith("v") else release_tag
+
+          print(f"package version: {package_version}")
+          print(f"release tag: {release_tag}")
+
+          if normalized_tag != package_version:
+              raise SystemExit(
+                  f"Release tag {release_tag!r} does not match package version {package_version!r}"
+              )
+          PY
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --python 3.12
+
+      - name: Run tests in CI offline mode
+        env:
+          GITHUB_ACTIONS: "true"
+          AGENTAO_TEST_LIVE_MODELS: "0"
+          AGENTAO_TEST_LIVE_LLM: "0"
+        run: uv run --python 3.12 python -m pytest tests/ -v --tb=short
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      - name: Check dist metadata with twine
+        run: uvx twine check dist/*
+
+      - name: Smoke install from built wheel
+        run: |
+          python -m venv .publish-venv
+          .publish-venv/bin/pip install dist/*.whl
+          .publish-venv/bin/python -c "
+          import agentao
+          print('version:', agentao.__version__)
+          from agentao import Agentao, SkillManager
+          print('Public API OK')
+          "
+          .publish-venv/bin/python -c "from agentao.cli import entrypoint; print('CLI entrypoint OK')"
+          .publish-venv/bin/python -c "import shutil; assert shutil.which('agentao'), 'agentao not found on PATH'; print('agentao on PATH OK')"
+          .publish-venv/bin/python -c "
+          import agentao.skills.manager as m
+          bundled = m._BUNDLED_SKILLS_DIR
+          assert bundled.exists(), f'Bundled skills dir missing: {bundled}'
+          skills = [d.name for d in bundled.iterdir() if d.is_dir()]
+          assert 'skill-creator' in skills, f'skill-creator not found in {bundled}: {skills}'
+          print('Bundled skills OK:', skills)
+          "
+
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

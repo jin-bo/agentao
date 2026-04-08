@@ -1,59 +1,67 @@
-"""Test script to verify model switching functionality."""
+"""Tests for model switching functionality.
+
+This test runs offline in CI and can use the live provider locally.
+Set ``AGENTAO_TEST_LIVE_MODELS=0`` to force offline mode locally.
+Set ``AGENTAO_TEST_LIVE_MODELS=1`` to force live mode explicitly.
+"""
+
+from __future__ import annotations
 
 import os
 
-# Set test API key
-if not os.getenv("OPENAI_API_KEY"):
-    os.environ["OPENAI_API_KEY"] = "test-key"
+import pytest
 
 from agentao.agent import Agentao
 
-print("=" * 70)
-print("Testing Model Switching Functionality")
-print("=" * 70)
 
-# Initialize agent
-print("\n1. Initializing Agentao with default model...")
-agent = Agentao()
-print(f"✓ Default model: {agent.get_current_model()}")
+def _use_live_models() -> bool:
+    """Return whether the test should call the configured model API."""
+    env = os.getenv("AGENTAO_TEST_LIVE_MODELS")
+    if env is not None:
+        return env.strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("GITHUB_ACTIONS") != "true"
 
-# List available models
-print("\n2. Listing available models...")
-models = agent.list_available_models()
-print(f"✓ Found {len(models)} available models:")
-for model in models:
-    print(f"   • {model}")
 
-# Test model switching
-print("\n3. Testing model switching...")
-test_models = ["gpt-4", "claude-sonnet-4-5", "gpt-3.5-turbo"]
+def _build_agent() -> Agentao:
+    """Create an agent without clobbering any real local credentials."""
+    if not any(
+        os.getenv(name)
+        for name in (
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "DEEPSEEK_API_KEY",
+        )
+    ):
+        os.environ["OPENAI_API_KEY"] = "test-key"
+    return Agentao()
 
-for model in test_models:
-    result = agent.set_model(model)
-    current = agent.get_current_model()
-    if current == model:
-        print(f"✓ {result}")
-    else:
-        print(f"✗ Failed to switch to {model}")
 
-# Test conversation summary with model info
-print("\n4. Testing conversation summary (includes model info)...")
-summary = agent.get_conversation_summary()
-print("Summary:")
-for line in summary.split('\n'):
-    print(f"   {line}")
+def test_model_switching_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = _build_agent()
+    expected_models = ["claude-sonnet-4-5", "gpt-3.5-turbo", "gpt-4"]
 
-# Switch back to Claude
-print("\n5. Switching back to Claude Sonnet 4.5...")
-agent.set_model("claude-sonnet-4-5")
-print(f"✓ Current model: {agent.get_current_model()}")
+    if not _use_live_models():
+        monkeypatch.setattr(agent, "list_available_models", lambda: expected_models)
 
-print("\n" + "=" * 70)
-print("✓ All model tests passed!")
-print("=" * 70)
+    models = agent.list_available_models()
+    assert isinstance(models, list)
+    assert models
 
-print("\n📋 Usage in Agentao:")
-print("  /model                    - Show current and available models")
-print("  /model gpt-4              - Switch to GPT-4")
-print("  /model claude-sonnet-4-5  - Switch to Claude Sonnet")
-print("  /status                   - Show status (includes current model)")
+    if not _use_live_models():
+        assert models == expected_models
+
+    original_model = agent.get_current_model()
+    for model in expected_models:
+        result = agent.set_model(model)
+        current = agent.get_current_model()
+        assert current
+        assert current == model
+        assert model in result
+
+    summary = agent.get_conversation_summary()
+    assert isinstance(summary, str)
+    assert summary.strip()
+
+    agent.set_model(original_model)
+    assert agent.get_current_model() == original_model
