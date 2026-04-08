@@ -69,7 +69,7 @@ def _tool_args_summary(tool_name: str, args: dict) -> str:
 
 
 _SLASH_COMMANDS = [
-    '/agent', '/agent bg', '/agent dashboard', '/agent list', '/agent status',
+    '/agent', '/agent bg', '/agent cancel', '/agent dashboard', '/agent delete', '/agent list', '/agent status',
     '/agents',
     '/clear', '/copy', '/new',
     '/plan', '/plan clear', '/plan history', '/plan implement', '/plan show',
@@ -87,6 +87,8 @@ _SLASH_COMMANDS = [
 
 _SLASH_COMMAND_HINTS = {
     '/agent bg': '<agent-name> <task>',
+    '/agent cancel': '<agent-id>',
+    '/agent delete': '<agent-id>',
     '/agent status': '[agent-id]',
     '/mode': '[read-only|workspace-write|full-access]',
     '/model': '<model-name>',
@@ -171,6 +173,7 @@ class AgentaoCLI:
             permission_engine=self.permission_engine,
             plan_session=self._plan_session,
         )
+
         # Initialize plan controller and register plan tools on agent
         from .plan import PlanController
         self._plan_controller = PlanController(
@@ -980,8 +983,11 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
         def _fmt_status(t: dict) -> Text:
             status = t["status"]
+            if status == "pending":
+                return Text("◌  queued", style="dim")
             if status == "running":
-                elapsed = _time.time() - t.get("started_at", _time.time())
+                started = t.get("started_at")
+                elapsed = _time.time() - started if started else 0
                 return Text(f"○  {elapsed:.0f}s", style="yellow")
             if status == "completed":
                 ms = t.get("duration_ms", 0)
@@ -991,15 +997,18 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 tok_s = f"~{tok // 1000}k" if tok >= 1000 else str(tok)
                 dur_s = f"{ms / 1000:.1f}s" if ms >= 1000 else f"{ms}ms"
                 return Text(f"✓  {turns}t {calls}c {tok_s}  {dur_s}", style="green")
+            if status == "cancelled":
+                return Text("⊘  cancelled", style="dim")
             # failed
             return Text("✗  failed", style="red")
 
         def _make_panel() -> Panel:
             tasks = list_bg_tasks()
 
-            n_run = sum(1 for t in tasks if t["status"] == "running")
-            n_ok  = sum(1 for t in tasks if t["status"] == "completed")
-            n_err = sum(1 for t in tasks if t["status"] == "failed")
+            n_run    = sum(1 for t in tasks if t["status"] == "running")
+            n_ok     = sum(1 for t in tasks if t["status"] == "completed")
+            n_err    = sum(1 for t in tasks if t["status"] == "failed")
+            n_cancel = sum(1 for t in tasks if t["status"] == "cancelled")
 
             tbl = Table(box=rich_box.SIMPLE, show_header=True, pad_edge=False,
                         header_style="bold dim")
@@ -1008,7 +1017,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             tbl.add_column("Status", min_width=22)
             tbl.add_column("Task",   style="dim",    ratio=1)
 
-            for t in sorted(tasks, key=lambda x: x.get("started_at", 0), reverse=True):
+            for t in sorted(tasks, key=lambda x: x.get("created_at", 0), reverse=True):
                 status_cell = _fmt_status(t)
                 err_hint = ""
                 if t["status"] == "failed" and t.get("error"):
@@ -1019,7 +1028,8 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             summary = (
                 f"[yellow]○ {n_run} running[/yellow]  "
                 f"[green]✓ {n_ok} completed[/green]  "
-                f"{'[red]' if n_err else '[dim]'}✗ {n_err} failed{'[/red]' if n_err else '[/dim]'}"
+                f"{'[red]' if n_err else '[dim]'}✗ {n_err} failed{'[/red]' if n_err else '[/dim]'}  "
+                f"[dim]⊘ {n_cancel} cancelled[/dim]"
             )
             footer = "[dim]Press Ctrl+C to exit[/dim]" if n_run else ""
             title = f"Background Agents  ·  {summary}"
@@ -1030,21 +1040,22 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             console.print("\n[dim]No background agents in this session.[/dim]\n")
             return
 
-        has_running = any(t["status"] == "running" for t in tasks)
-        if not has_running:
+        active_statuses = {"pending", "running"}
+        has_active = any(t["status"] in active_statuses for t in tasks)
+        if not has_active:
             console.print()
             console.print(_make_panel())
             console.print()
             return
 
-        # Live view — auto-refreshes while agents are running
+        # Live view — auto-refreshes while agents are queued or running
         try:
             with Live(_make_panel(), console=console, refresh_per_second=2,
                       vertical_overflow="visible") as live:
                 while True:
                     _time.sleep(0.5)
                     live.update(_make_panel())
-                    if not any(t["status"] == "running" for t in list_bg_tasks()):
+                    if not any(t["status"] in active_statuses for t in list_bg_tasks()):
                         _time.sleep(0.3)   # final render
                         live.update(_make_panel())
                         break
@@ -1060,6 +1071,8 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
           /agent list                 — list available agents
           /agent dashboard            — live background-agent dashboard
           /agent status [id]          — show background agent status (all or specific)
+          /agent cancel <id>          — cancel a pending or running background agent
+          /agent delete <id>          — delete a finished background agent from history
           /agent <name> <task>        — run agent in foreground
           /agent bg <name> <task>     — run agent in background
         """
@@ -1105,11 +1118,22 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 console.print(f"\n[info]Background Agents ({len(tasks)}):[/info]\n")
                 for t in tasks:
                     status = t["status"]
-                    color = "yellow" if status == "running" else "green" if status == "completed" else "red"
-                    if t.get("finished_at"):
-                        elapsed = f"{t['finished_at'] - t['started_at']:.1f}s"
+                    color = (
+                        "dim" if status in ("pending", "cancelled")
+                        else "yellow" if status == "running"
+                        else "green" if status == "completed"
+                        else "red"
+                    )
+                    started = t.get("started_at")
+                    finished = t.get("finished_at")
+                    if finished and started:
+                        elapsed = f"{finished - started:.1f}s"
+                    elif started:
+                        elapsed = f"{_time.time() - started:.0f}s"
+                    elif status == "cancelled" and finished:
+                        elapsed = "cancelled before start"
                     else:
-                        elapsed = f"{_time.time() - t['started_at']:.0f}s"
+                        elapsed = "queued"
                     console.print(
                         f"  [{color}]{status:<10}[/{color}]  [cyan]{t['id']}[/cyan]"
                         f"  [bold]{t['agent_name']}[/bold]  ({elapsed})"
@@ -1122,19 +1146,52 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                     console.print(f"\n[error]No background agent with ID: {agent_id}[/error]\n")
                     return
                 status = rec["status"]
-                color = "yellow" if status == "running" else "green" if status == "completed" else "red"
+                color = (
+                    "dim" if status in ("pending", "cancelled")
+                    else "yellow" if status == "running"
+                    else "green" if status == "completed"
+                    else "red"
+                )
                 console.print(f"\n[info]Agent:[/info] [bold]{rec['agent_name']}[/bold]  ID: [cyan]{agent_id}[/cyan]")
                 console.print(f"[info]Status:[/info] [{color}]{status}[/{color}]")
                 console.print(f"[info]Task:[/info]   {rec['task']}")
-                if rec.get("finished_at"):
+                if rec.get("finished_at") and rec.get("started_at"):
                     elapsed = rec["finished_at"] - rec["started_at"]
                     console.print(f"[info]Time:[/info]   {elapsed:.1f}s")
+                elif status == "cancelled" and rec.get("finished_at") and rec.get("started_at") is None:
+                    console.print("[info]Time:[/info]   cancelled before start")
+                elif rec.get("started_at") is None:
+                    console.print("[info]Time:[/info]   not started yet")
                 if status == "completed" and rec.get("result"):
                     console.print("\n[info]Result:[/info]")
                     console.print(Markdown(rec["result"]))
                 elif status == "failed" and rec.get("error"):
                     console.print(f"\n[error]Error:[/error] {rec['error']}")
+                elif status == "cancelled":
+                    console.print("\n[dim]Agent was cancelled.[/dim]")
                 console.print()
+            return
+
+        # ── /agent cancel <id> ───────────────────────────────────────────────
+        if sub == "cancel":
+            agent_id = rest.strip()
+            if not agent_id:
+                console.print("\n[error]Usage: /agent cancel <agent-id>[/error]\n")
+                return
+            from .agents.tools import _cancel_bg_task
+            msg = _cancel_bg_task(agent_id)
+            console.print(f"\n{msg}\n")
+            return
+
+        # ── /agent delete <id> ───────────────────────────────────────────────
+        if sub == "delete":
+            agent_id = rest.strip()
+            if not agent_id:
+                console.print("\n[error]Usage: /agent delete <agent-id>[/error]\n")
+                return
+            from .agents.tools import _delete_bg_task
+            msg = _delete_bg_task(agent_id)
+            console.print(f"\n{msg}\n")
             return
 
         # ── /agent bg <name> <task> ──────────────────────────────────────────
@@ -1604,11 +1661,16 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                 for t in tasks:
                     name = t.get("agent_name", "agent").replace("_", "-")
                     st = t.get("status", "running")
-                    if st == "running":
-                        elapsed = int(_time.time() - t.get("started_at", _time.time()))
+                    if st == "pending":
+                        tokens.append(f"\x1b[2m⏳ {name} queued\x1b[0m")
+                    elif st == "running":
+                        started = t.get("started_at")
+                        elapsed = int(_time.time() - started) if started else 0
                         tokens.append(f"\x1b[93m⚙ {name} {elapsed}s\x1b[0m")
                     elif st == "completed":
                         tokens.append(f"\x1b[32m✓ {name}\x1b[0m")
+                    elif st == "cancelled":
+                        tokens.append(f"\x1b[2m⊘ {name}\x1b[0m")
                     else:  # failed
                         tokens.append(f"\x1b[91m✗ {name}\x1b[0m")
                 agents_part = f"  {DIM}│{RST}  " + f"  {DIM}·{RST}  ".join(tokens)

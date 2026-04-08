@@ -24,7 +24,7 @@ from .tools import (
     TodoWriteTool,
 )
 from .agents import AgentManager
-from .agents.tools import drain_bg_notifications
+from .agents.tools import CancelBackgroundAgentTool, CheckBackgroundAgentTool, drain_bg_notifications
 from .cancellation import CancellationToken, AgentCancelledError
 from .plan import PlanSession, build_plan_prompt
 from .skills import SkillManager
@@ -171,6 +171,13 @@ class Agentao:
         self.agent_manager = AgentManager()
         self._register_agent_tools()
 
+        # Restore persisted background tasks and reclassify any interrupted work.
+        # This belongs in core startup so direct Agentao() and print mode behave
+        # the same as the interactive CLI after a restart.
+        from .agents.store import recover_bg_task_store_once
+        from .agents.tools import _bg_lock, _bg_tasks
+        recover_bg_task_store_once(_bg_tasks, _bg_lock)
+
         # Per-turn cancellation token (set at the start of each chat() call)
         self._current_token: Optional[CancellationToken] = None
 
@@ -225,6 +232,8 @@ class Agentao:
             ActivateSkillTool(self.skill_manager),
             AskUserTool(ask_user_callback=self.transport.ask_user),
             self.todo_tool,
+            CheckBackgroundAgentTool(),
+            CancelBackgroundAgentTool(),
         ]
 
         for tool in tools_to_register:
