@@ -69,16 +69,17 @@ jobs:
       - name: Smoke install from built wheel
         run: |
           python -m venv .publish-testpypi-venv
-          .publish-testpypi-venv/bin/pip install dist/*.whl
-          .publish-testpypi-venv/bin/python -c "
+          source .publish-testpypi-venv/bin/activate
+          pip install dist/*.whl
+          python -c "
           import agentao
           print('version:', agentao.__version__)
           from agentao import Agentao, SkillManager
           print('Public API OK')
           "
-          .publish-testpypi-venv/bin/python -c "from agentao.cli import entrypoint; print('CLI entrypoint OK')"
-          .publish-testpypi-venv/bin/python -c "import shutil; assert shutil.which('agentao'), 'agentao not found on PATH'; print('agentao on PATH OK')"
-          .publish-testpypi-venv/bin/python -c "
+          python -c "from agentao.cli import entrypoint; print('CLI entrypoint OK')"
+          python -c "import shutil; assert shutil.which('agentao'), 'agentao not found on PATH'; print('agentao on PATH OK')"
+          python -c "
           import agentao.skills.manager as m
           bundled = m._BUNDLED_SKILLS_DIR
           assert bundled.exists(), f'Bundled skills dir missing: {bundled}'
