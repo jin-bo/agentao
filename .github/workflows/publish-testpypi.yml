@@ -64,7 +64,7 @@ jobs:
         run: uv build
 
       - name: Check dist metadata with twine
-        run: uvx twine check --repository testpypi dist/*
+        run: uvx twine check dist/*
 
       - name: Smoke install from built wheel
         run: |
