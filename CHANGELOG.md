@@ -5,6 +5,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.6] — 2026-04-09
+
+Promotes 0.2.6-rc1 to general availability. The substantive Added /
+Changed / Removed / Fixed / Tests breakdown of the memory subsystem rewrite
+lives in the `[0.2.6-rc1]` entry below — that is the content of this
+release. The only commits between rc1 and final are CI-only workflow
+hardening so the publish pipeline actually succeeds.
+
+### Packaging / CI
+
+- Bump `actions/checkout@v4` → `@v5` and `astral-sh/setup-uv@v5` → `@v6`
+  so CI workflows run on the Node.js 24 runner. GitHub deprecated
+  Node.js 20 actions on 2025-09-19; bumping to the next major of each
+  clears the deprecation warning on every run
+- Drop the invalid `--repository` flag from `twine check` in
+  `publish-testpypi.yml`. `--repository` is valid for `twine upload` but
+  not `twine check`, which only validates dist metadata locally — the
+  flag was causing the TestPyPI workflow to exit with code 2 on every
+  RC attempt
+- Activate the venv with `source .publish-venv/bin/activate` (and
+  `.publish-testpypi-venv`) before the publish smoke step instead of
+  invoking `.venv/bin/python` directly. Direct-invoke does not put the
+  venv's `bin/` on `PATH`, so `shutil.which('agentao')` returned `None`
+  and failed the smoke test even though the entry-point script was
+  installed correctly. Applied to both `publish.yml` and
+  `publish-testpypi.yml`
+
+### Notes
+
+**No library-code changes between 0.2.6-rc1 and 0.2.6.** Memory
+subsystem, prompt injection, crystallization pipeline, retriever
+scoring, and CLI surface are byte-identical to the RC; only
+`.github/workflows/*.yml` was touched.
+
+---
+
 ## [0.2.6-rc1] — 2026-04-09
 
 Headline: complete memory subsystem rewrite. SQLite replaces the old JSON
