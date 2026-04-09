@@ -14,26 +14,38 @@ import pytest
 from agentao.agent import Agentao
 
 
+_FAKE_KEY = "test-key"
+
+
+def _has_fake_openai_key() -> bool:
+    """True if OPENAI_API_KEY is an obvious placeholder (e.g. set by another test)."""
+    key = os.getenv("OPENAI_API_KEY", "")
+    return key.startswith("test-key") or key in {"", "dummy", "fake"}
+
+
 def _use_live_models() -> bool:
     """Return whether the test should call the configured model API."""
     env = os.getenv("AGENTAO_TEST_LIVE_MODELS")
     if env is not None:
         return env.strip().lower() in {"1", "true", "yes", "on"}
+    # If the default provider only has a placeholder key (often injected by
+    # other tests like test_logging.py), we can't hit the live API — fall back
+    # to offline mode regardless of CI status.
+    if os.getenv("LLM_PROVIDER", "OPENAI").strip().upper() == "OPENAI" and _has_fake_openai_key():
+        return False
     return os.getenv("GITHUB_ACTIONS") != "true"
 
 
 def _build_agent() -> Agentao:
-    """Create an agent without clobbering any real local credentials."""
-    if not any(
-        os.getenv(name)
-        for name in (
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "GEMINI_API_KEY",
-            "DEEPSEEK_API_KEY",
-        )
-    ):
-        os.environ["OPENAI_API_KEY"] = "test-key"
+    """Create an agent without clobbering any real local credentials.
+
+    LLMClient reads credentials for whatever provider LLM_PROVIDER points at
+    (default: OPENAI). Ensure the default provider has a key so the client
+    constructor never fails, even when the shell has credentials for a
+    different provider (e.g. GEMINI_API_KEY only).
+    """
+    os.environ.setdefault("LLM_PROVIDER", "OPENAI")
+    os.environ.setdefault("OPENAI_API_KEY", _FAKE_KEY)
     return Agentao()
 
 

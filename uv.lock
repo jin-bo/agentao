@@ -16,6 +16,7 @@ name = "agentao"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
+    { name = "filelock" },
     { name = "httpx" },
     { name = "mcp" },
     { name = "openai" },
@@ -75,6 +76,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "crawl4ai", marker = "extra == 'crawl4ai'", specifier = ">=0.8.0" },
     { name = "crawl4ai", marker = "extra == 'full'", specifier = ">=0.8.0" },
+    { name = "filelock", specifier = ">=1.4.0" },
     { name = "google-genai", marker = "extra == 'full'", specifier = ">=1.0.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.25.0" },
@@ -3814,8 +3816,8 @@ name = "uvicorn"
 version = "0.42.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "h11" },
+    { name = "click", marker = "python_full_version < '3.11' or sys_platform != 'emscripten'" },
+    { name = "h11", marker = "python_full_version < '3.11' or sys_platform != 'emscripten'" },
     { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e3/ad/4a96c425be6fb67e0621e62d86c402b4a17ab2be7f7c055d9bd2f638b9e2/uvicorn-0.42.0.tar.gz", hash = "sha256:9b1f190ce15a2dd22e7758651d9b6d12df09a13d51ba5bf4fc33c383a48e1775", size = 85393, upload-time = "2026-03-16T06:19:50.077Z" }

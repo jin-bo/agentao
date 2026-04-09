@@ -72,12 +72,14 @@ _SLASH_COMMANDS = [
     '/agent', '/agent bg', '/agent cancel', '/agent dashboard', '/agent delete', '/agent list', '/agent status',
     '/agents',
     '/clear', '/copy', '/new',
+    '/crystallize', '/crystallize create', '/crystallize suggest',
     '/plan', '/plan clear', '/plan history', '/plan implement', '/plan show',
     '/context', '/context limit', '/exit', '/help',
     '/mcp', '/mcp add', '/mcp list', '/mcp remove',
     '/markdown',
     '/memory', '/memory clear', '/memory delete', '/memory list',
-    '/memory search', '/memory tag', '/mode', '/model', '/permission', '/provider', '/quit',
+    '/memory project', '/memory search', '/memory session', '/memory status',
+    '/memory tag', '/memory user', '/mode', '/model', '/permission', '/provider', '/quit',
     '/sessions', '/sessions delete', '/sessions delete all', '/sessions list', '/sessions resume',
     '/skills', '/skills activate', '/skills deactivate',
     '/skills disable', '/skills enable', '/skills reload', '/status', '/temperature',
@@ -86,6 +88,7 @@ _SLASH_COMMANDS = [
 
 
 _SLASH_COMMAND_HINTS = {
+    '/crystallize create': '[skill-name]',
     '/agent bg': '<agent-name> <task>',
     '/agent cancel': '<agent-id>',
     '/agent delete': '<agent-id>',
@@ -124,6 +127,20 @@ class _SlashCompleter(Completer):
         for cmd in _SLASH_COMMANDS:
             if cmd.startswith(text):
                 yield Completion(cmd, start_position=-len(text))
+
+
+def _display_layered_entries(entries, header: str, console) -> None:
+    """Display MemoryRecord list in a readable format."""
+    if not entries:
+        console.print(f"\n[warning]{header}: no entries.[/warning]\n")
+        return
+    console.print(f"\n[info]{header} ({len(entries)} total):[/info]\n")
+    for e in entries:
+        excerpt = e.content[:120] + "..." if len(e.content) > 120 else e.content
+        console.print(f"  [dim]{e.id}[/dim] • [cyan]{e.title}[/cyan]: {excerpt}")
+        if e.tags:
+            console.print(f"    Tags: {', '.join(e.tags)}")
+    console.print()
 
 
 class AgentaoCLI:
@@ -751,36 +768,152 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
         console.print(f"\n[error]Unknown: /plan {args}[/error]\n[info]Usage: /plan | /plan show | /plan implement | /plan clear | /plan history[/info]\n")
 
-    def show_memories(self, subcommand: str = "", arg: str = ""):
-        """Show saved memories.
+    # =========================================================================
+    # /crystallize — Skill Crystallization (Phase 4)
+    # =========================================================================
 
-        Args:
-            subcommand: Subcommand (list, search, tag, delete, clear)
-            arg: Argument for the subcommand
-        """
-        memory_tool = self.agent.memory_tool
+    def handle_crystallize_command(self, args: str = "") -> None:
+        """Handle /crystallize [suggest|create [name]] commands."""
+        from rich.panel import Panel
+        from .memory.crystallizer import SkillCrystallizer, SUGGEST_SYSTEM_PROMPT, suggest_prompt, _extract_text
 
-        # Handle subcommands
-        if subcommand in ["", "list"]:
-            # List all memories
-            memories = memory_tool.get_all_memories()
+        parts = args.split(maxsplit=1)
+        subcommand = parts[0].lower() if parts else "suggest"
+        sub_arg = parts[1].strip() if len(parts) > 1 else ""
 
-            if not memories:
-                console.print("\n[warning]No memories saved yet.[/warning]\n")
+        if subcommand not in ("suggest", "create"):
+            console.print("\n[error]Usage: /crystallize suggest | /crystallize create [name][/error]\n")
+            return
+
+        # Read session content: merge compacted summary + live turns after last compaction
+        session_content = ""
+        summaries = self.agent.memory_manager.get_recent_session_summaries(limit=5)
+        if summaries:
+            session_content = "\n\n---\n\n".join(s.summary_text for s in reversed(summaries))
+
+        # Always append live user/assistant turns (may postdate last compaction)
+        live_parts = []
+        for msg in self.agent.messages:
+            role = msg.get("role", "")
+            if role not in ("user", "assistant"):
+                continue
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    b.get("text", "") for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            if content:
+                live_parts.append(f"{role.capitalize()}: {content}")
+        if live_parts:
+            live_section = "\n".join(live_parts)
+            session_content = (session_content + "\n\n" + live_section).strip()
+
+        if not session_content:
+            console.print("\n[warning]No session content found. Start a conversation first.[/warning]\n")
+            return
+
+        console.print("\n[dim]Analyzing session to generate skill draft...[/dim]")
+
+        # Call LLM to generate skill draft
+        try:
+            response = self.agent.llm.chat(
+                messages=[
+                    {"role": "system", "content": SUGGEST_SYSTEM_PROMPT},
+                    {"role": "user", "content": suggest_prompt(session_content)},
+                ],
+                max_tokens=800,
+            )
+            draft = _extract_text(response).strip()
+        except Exception as e:
+            console.print(f"\n[error]LLM call failed: {e}[/error]\n")
+            return
+
+        if not draft or draft == "NO_PATTERN_FOUND":
+            console.print("\n[warning]No clear repeatable pattern found in this session.[/warning]\n")
+            return
+
+        # Display draft in a panel
+        console.print()
+        console.print(Panel(draft, title="[cyan]Skill Draft[/cyan]", border_style="cyan", padding=(1, 2)))
+
+        if subcommand == "suggest":
+            # Just display — let user decide what to do next
+            console.print("[dim]Use /crystallize create [name] to save this skill.[/dim]\n")
+            return
+
+        # /crystallize create — prompt for name and scope, then write
+        name = sub_arg
+        if not name:
+            name = console.input("[cyan]Skill directory name[/cyan] (e.g. python-testing): ").strip()
+            if not name:
+                console.print("[warning]Cancelled — no name provided.[/warning]\n")
                 return
 
-            console.print(f"\n[info]Saved Memories ({len(memories)} total):[/info]\n")
-            for memory in memories:
-                console.print(f"  • [cyan]{memory['key']}[/cyan]: {memory['value']}")
-                if memory.get('tags'):
-                    console.print(f"    Tags: {', '.join(memory['tags'])}")
-                console.print(f"    Saved: {memory['timestamp']}")
-                console.print()
+        # Sanitize name: lowercase, only alphanumeric and hyphens
+        import re as _re
+        name = _re.sub(r'[^a-z0-9-]', '-', name.lower()).strip('-')
+        if not name:
+            console.print("[warning]Invalid skill name.[/warning]\n")
+            return
 
-            # Tag summary
+        console.print("\n[dim]Scope: [cyan]g[/cyan]lobal (~/.agentao/skills/) or [cyan]p[/cyan]roject (.agentao/skills/)?[/dim]")
+        console.print("[dim]Press g or p[/dim]", end=" ")
+        while True:
+            key = readchar.readkey()
+            if key == "g":
+                scope = "global"
+                console.print("\n")
+                break
+            elif key == "p":
+                scope = "project"
+                console.print("\n")
+                break
+            elif key in (readchar.key.ESC, "\x03"):
+                console.print("\n[warning]Cancelled.[/warning]\n")
+                return
+
+        crystallizer = SkillCrystallizer()
+        try:
+            target = crystallizer.create(name, scope, draft)
+        except Exception as e:
+            console.print(f"\n[error]Failed to write skill: {e}[/error]\n")
+            return
+
+        # Reload skills so the new one is immediately available
+        try:
+            count = self.agent.skill_manager.reload_skills()
+        except Exception:
+            count = None
+
+        console.print(f"\n[success]Skill saved to:[/success] [cyan]{target}[/cyan]")
+        if count is not None:
+            console.print(f"[dim]Skills reloaded ({count} available). Activate with /skills activate {name}[/dim]\n")
+        else:
+            console.print(f"[dim]Activate with /skills activate {name}[/dim]\n")
+
+    def show_memories(self, subcommand: str = "", arg: str = ""):
+        """Show saved memories."""
+        mgr = self.agent.memory_manager
+
+        def _print_entry(e) -> None:
+            console.print(f"  • [cyan]{e.title}[/cyan] [{e.scope}]: {e.content[:120]}")
+            if e.tags:
+                console.print(f"    Tags: {', '.join(e.tags)}")
+            console.print(f"    Updated: {e.updated_at}")
+            console.print()
+
+        if subcommand in ["", "list"]:
+            entries = mgr.get_all_entries()
+            if not entries:
+                console.print("\n[warning]No memories saved yet.[/warning]\n")
+                return
+            console.print(f"\n[info]Saved Memories ({len(entries)} total):[/info]\n")
+            for e in entries:
+                _print_entry(e)
             all_tags: dict = {}
-            for mem in memories:
-                for tag in mem.get("tags", []):
+            for e in entries:
+                for tag in e.tags:
                     all_tags[tag] = all_tags.get(tag, 0) + 1
             if all_tags:
                 console.print("[info]Tag Summary:[/info]")
@@ -792,61 +925,135 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             if not arg:
                 console.print("\n[error]Usage: /memory search <query>[/error]\n")
                 return
-
-            results = memory_tool.search_memories(arg)
-
+            results = mgr.search(arg)
             if not results:
                 console.print(f"\n[warning]No memories found matching '{arg}'[/warning]\n")
                 return
-
             console.print(f"\n[info]Found {len(results)} memory(ies) matching '{arg}':[/info]\n")
-            for memory in results:
-                console.print(f"  • [cyan]{memory['key']}[/cyan]: {memory['value']}")
-                if memory.get('tags'):
-                    console.print(f"    Tags: {', '.join(memory['tags'])}")
-                console.print(f"    Saved: {memory['timestamp']}")
-                console.print()
+            for e in results:
+                _print_entry(e)
 
         elif subcommand == "tag":
             if not arg:
                 console.print("\n[error]Usage: /memory tag <tag_name>[/error]\n")
                 return
-
-            results = memory_tool.filter_by_tag(arg)
-
+            results = mgr.filter_by_tag(arg)
             if not results:
                 console.print(f"\n[warning]No memories found with tag '{arg}'[/warning]\n")
                 return
-
             console.print(f"\n[info]Found {len(results)} memory(ies) with tag '{arg}':[/info]\n")
-            for memory in results:
-                console.print(f"  • [cyan]{memory['key']}[/cyan]: {memory['value']}")
-                if memory.get('tags'):
-                    console.print(f"    Tags: {', '.join(memory['tags'])}")
-                console.print(f"    Saved: {memory['timestamp']}")
-                console.print()
+            for e in results:
+                _print_entry(e)
 
         elif subcommand == "delete":
             if not arg:
                 console.print("\n[error]Usage: /memory delete <key>[/error]\n")
                 return
-
-            if memory_tool.delete_memory(arg):
+            count = mgr.delete_by_title(arg)
+            if not count:
+                # Also try matching by normalized key (e.g. "user_preference" → "User Preference")
+                for e in mgr.get_all_entries():
+                    if e.key_normalized == arg or e.key_normalized == arg.lower().replace(" ", "_"):
+                        if mgr.delete(e.id):
+                            count += 1
+            if count:
                 console.print(f"\n[success]Successfully deleted memory: {arg}[/success]\n")
             else:
                 console.print(f"\n[warning]Memory not found: {arg}[/warning]\n")
 
         elif subcommand == "clear":
-            # Confirm before clearing
             if Confirm.ask("\n[warning]Are you sure you want to delete ALL memories? This cannot be undone.[/warning]", default=False):
-                count = memory_tool.clear_all_memories()
+                count = mgr.clear()
+                mgr.clear_all_session_summaries()
                 console.print(f"\n[success]Successfully cleared {count} memory(ies)[/success]\n")
             else:
                 console.print("\n[info]Cancelled.[/info]\n")
 
+        elif subcommand == "user":
+            entries = mgr.get_all_entries(scope="user")
+            _display_layered_entries(entries, "[Profile Memory]", console)
+
+        elif subcommand == "project":
+            entries = mgr.get_all_entries(scope="project")
+            _display_layered_entries(entries, "[Project Memory]", console)
+
+        elif subcommand == "session":
+            summaries = mgr.get_recent_session_summaries(limit=10)
+            if summaries:
+                combined = "\n\n---\n\n".join(s.summary_text for s in reversed(summaries))
+                console.print(f"\n[info]Session Memory ({len(combined)} chars, {len(summaries)} summaries):[/info]\n")
+                console.print(combined[-2000:] if len(combined) > 2000 else combined)
+            else:
+                console.print("\n[warning]No active session summary.[/warning]\n")
+
+        elif subcommand == "crystallize":
+            items = mgr.crystallize_user_messages(self.agent.messages)
+            if not items:
+                console.print("\n[warning]No crystallization candidates found in current conversation.[/warning]\n")
+                return
+            console.print(f"\n[info]Added/updated {len(items)} review queue item(s):[/info]\n")
+            for it in items:
+                console.print(f"  • [cyan]{it.title}[/cyan] [{it.type}, {it.scope}] occ={it.occurrences}")
+                if it.evidence:
+                    console.print(f"    [dim]Evidence:[/dim] {it.evidence[:120]}")
+            console.print()
+
+        elif subcommand == "review":
+            parts = arg.split(maxsplit=1) if arg else [""]
+            action = parts[0]
+            target = parts[1] if len(parts) > 1 else ""
+            if not action:
+                items = mgr.list_review_items()
+                if not items:
+                    console.print("\n[warning]Review queue is empty.[/warning]\n")
+                    return
+                console.print(f"\n[info]Pending review items ({len(items)}):[/info]\n")
+                for it in items:
+                    console.print(f"  [{it.id}] [cyan]{it.title}[/cyan] {it.type}/{it.scope} occ={it.occurrences}")
+                    if it.evidence:
+                        console.print(f"      [dim]{it.evidence[:120]}[/dim]")
+                console.print("\n  Approve: /memory review approve <id>")
+                console.print("  Reject:  /memory review reject <id>\n")
+            elif action == "approve" and target:
+                rec = mgr.approve_review_item(target)
+                if rec:
+                    console.print(f"\n[success]Approved → memory '{rec.title}' (source=crystallized)[/success]\n")
+                else:
+                    console.print(f"\n[warning]No pending review item with id '{target}'[/warning]\n")
+            elif action == "reject" and target:
+                ok = mgr.reject_review_item(target)
+                if ok:
+                    console.print(f"\n[success]Rejected[/success]\n")
+                else:
+                    console.print(f"\n[warning]No pending review item with id '{target}'[/warning]\n")
+            else:
+                console.print("\n[error]Usage: /memory review [approve|reject <id>][/error]\n")
+
+        elif subcommand == "status":
+            user_entries = mgr.get_all_entries(scope="user")
+            proj_entries = mgr.get_all_entries(scope="project")
+            session_summaries = mgr.get_recent_session_summaries(limit=100)
+            retriever = getattr(self.agent, 'memory_retriever', None)
+            recall_count = retriever._recall_count if retriever else 0
+            error_count = retriever._error_count if retriever else 0
+            last_error = retriever._last_error if retriever else ""
+            stable_chars = getattr(self.agent, '_stable_block_chars', 0)
+            latest_summary = session_summaries[0].summary_text if session_summaries else ""
+            session_chars = len(latest_summary)
+            console.print("\n[info]Memory Status:[/info]")
+            console.print(f"  Profile  (user):        {len(user_entries)} entries")
+            console.print(f"  Project:                {len(proj_entries)} entries")
+            console.print(f"  Session summaries:      {len(session_summaries)}")
+            console.print(f"  Recall hits (session):  {recall_count}")
+            console.print(f"  Recall errors (session):{error_count}")
+            if last_error:
+                console.print(f"  Last recall error:      {last_error}")
+            console.print(f"  Stable block size:      {stable_chars} chars")
+            console.print(f"  Latest session summary: {session_chars} chars\n")
+
         else:
             console.print(f"\n[error]Unknown subcommand: {subcommand}[/error]")
-            console.print("[info]Available subcommands: list, search, tag, delete, clear[/info]\n")
+            console.print("[info]Available subcommands: list, search, tag, delete, clear, user, project, session, status, crystallize, review[/info]\n")
 
     def _list_providers_from_env(self) -> list:
         """Return sorted list of provider names that have an API key in environment."""
@@ -1549,12 +1756,11 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             console.print()
 
     def on_session_start(self) -> None:
-        """Hook called at the start of every session.
-
-        Override or extend in a subclass to add custom session-start behavior.
-        Default implementation does nothing.
-        """
-        pass
+        """Hook called at the start of every session."""
+        try:
+            self.agent.memory_manager.archive_session()
+        except Exception:
+            pass
 
     def on_session_end(self) -> None:
         """Hook called at the end of every session (before /clear, /new, or exit).
@@ -1732,20 +1938,43 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                         self.print_help()
                         continue
 
-                    elif command in ("clear", "new"):
+                    elif command == "clear":
                         self.on_session_end()
                         self.current_session_id = None
                         if self._plan_session.is_active:
                             self._plan_controller.exit_plan_mode()
                         self.agent.clear_history()
-                        self.agent.memory_tool.clear_all_memories()
+                        self.agent.memory_manager.clear()
+                        self.agent.memory_manager.clear_all_session_summaries()
                         self.last_response = None
                         self._cached_ctx_pct = 0.0
                         from .permissions import PermissionMode
                         self._apply_mode(PermissionMode.WORKSPACE_WRITE)
                         self.on_session_start()
-                        console.print("\n[success]Session ended and new session started.[/success]")
-                        console.print("[info]Conversation history and memories cleared.[/info]")
+                        console.print("\n[success]Session and all memories cleared.[/success]")
+                        console.print("[info]Permission mode reset to workspace-write.[/info]\n")
+                        continue
+
+                    elif command == "new":
+                        self.on_session_end()
+                        self.current_session_id = None
+                        if self._plan_session.is_active:
+                            self._plan_controller.exit_plan_mode()
+                        self.agent.clear_history()
+                        # NOTE: do NOT call clear_session() here. It would
+                        # delete the just-finished session's summaries before
+                        # on_session_start() advances the session id, which
+                        # would prevent them from surfacing via
+                        # get_cross_session_tail() in the new session. The
+                        # archive_session() inside on_session_start() is the
+                        # correct primitive for /new — it advances _session_id
+                        # without touching old rows.
+                        self.last_response = None
+                        self._cached_ctx_pct = 0.0
+                        from .permissions import PermissionMode
+                        self._apply_mode(PermissionMode.WORKSPACE_WRITE)
+                        self.on_session_start()
+                        console.print("\n[success]New session started. Long-term memories preserved.[/success]")
                         console.print("[info]Permission mode reset to workspace-write.[/info]\n")
                         continue
 
@@ -1801,6 +2030,10 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                                 console.print(f"\n[success]Skills reloaded. {count} available.[/success]\n")
                             else:
                                 console.print(f"[warning]Unknown subcommand '{sub_cmd}'. Use: activate, deactivate, disable, enable, reload[/warning]")
+                        continue
+
+                    elif command == "crystallize":
+                        self.handle_crystallize_command(args)
                         continue
 
                     elif command == "memory":

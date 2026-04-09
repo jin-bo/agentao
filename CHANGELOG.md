@@ -5,6 +5,186 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.6-rc1] — 2026-04-09
+
+Headline: complete memory subsystem rewrite. SQLite replaces the old JSON
+files; persistent memories, session summaries, and dynamic recall candidates
+are now distinct, structured data types; conservative rule-based
+crystallization sediments user statements into a review queue rather than
+silently writing.
+
+### Added
+
+- **SQLite-backed memory subsystem** — `agentao/memory/`
+  - Two stores: `.agentao/memory.db` (project) and `~/.agentao/memory.db` (user)
+  - Schema v3 with `memories`, `session_summaries`, `memory_review_queue`,
+    `memory_events`, `schema_meta`
+  - Three data types modeled separately: persistent `MemoryRecord`,
+    `SessionSummaryRecord`, in-memory `RecallCandidate`
+- **Two prompt-injection blocks** built per turn
+  - `<memory-stable>`: durable facts (`get_stable_entries()` policy:
+    user-scope always, structural types always, project_fact/note capped at
+    3 most-recent) plus a pre-reserved cross-session summary tail
+  - `<memory-context>`: top-k recall candidates scored against the current
+    user query
+- **Cross-session summary recall** — `MemoryManager.get_cross_session_tail()`
+  surfaces summaries from prior sessions through `<memory-stable>` so
+  conversation continuity survives a restart, not only an in-process
+  compaction
+- **`MemoryRetriever` with five-factor scoring**
+  - tag match (4.0, dampened to 1.5/2.5 for ≤2-token queries to prevent
+    single-tag over-recall)
+  - title Jaccard (3.0)
+  - tokenized keyword match (2.0; compound keywords like `agent.py` are
+    sub-tokenized so they match a query token `agent`)
+  - content snippet match on first 500 chars (1.0)
+  - filepath hint from context (2.0)
+  - recency / staleness modifiers
+  - CJK bigram tokenization, light Latin normalization (plurals, version
+    prefixes), Latin↔CJK boundary splitting, dynamic char budget,
+    `exclude_ids` parameter so dynamic recall never duplicates stable entries
+- **Conservative rule-based crystallization with review queue**
+  - `MemoryCrystallizer` rule patterns extract preference / constraint /
+    decision / workflow only, in English and Chinese
+  - Extraction runs on **raw user messages** (`extract_from_user_messages`),
+    never on LLM-generated summary prose — assistant narration that happens
+    to contain pattern words can never trigger a false match
+  - Candidates land in `memory_review_queue` with `source="crystallized"`,
+    not silently into live memories
+  - Repetition aggregation: same `(scope, key)` matched in multiple user
+    messages folds into one row with incremented `occurrences`; confidence
+    is auto-raised to `inferred` at 2+ hits
+  - Auto-trigger inside `ContextManager.compress_messages()` (Step 4b),
+    against the about-to-be-compacted user-message window
+- **CLI memory commands**: `/memory list/search/tag/delete/clear/user/project/session/status/crystallize/review`
+  including `/memory review approve <id>` and `/memory review reject <id>`
+- **Recall observability**: `/memory status` reports retrieval hits, recall
+  errors, last error message, stable block size, and latest session summary
+  size
+- **`clear_all_session_summaries()`** for hard reset across all sessions
+- **Memory subsystem decoupled from the LLM stack** —
+  `agentao/__init__.py` uses PEP 562 `__getattr__` for lazy `Agentao` /
+  `SkillManager` resolution, so `import agentao.memory` no longer pulls
+  `openai`, `mcp`, `agentao.tools.*`, or `agentao.llm.*`. Cold import:
+  **334 ms → 35 ms** (~10×); zero heavy modules leaked. Locked in by
+  subprocess-isolated regression tests in `tests/test_memory_decoupling.py`
+
+### Changed
+
+- **Search unified across five fields** — `SQLiteMemoryStore.search_memories`
+  LIKEs over `title`, `content`, `key_normalized`, `tags_json`, and
+  `keywords_json` (was three). `/memory search` and `MemoryRetriever` now
+  cover the same surface
+- **Stable block budget eviction is recency-priority** — under budget
+  pressure, the renderer admits records newest-first (greedy fit walking
+  records in reverse) so a fresh decision/constraint is never crowded out
+  by long-tail history. Survivors render in created_at-ASC order so the
+  prompt-cache prefix stays stable across turns
+- **Review queue duplicate folding refreshes ALL presentation fields** —
+  re-hits update `type`, `title`, `content`, `tags_json` (not just
+  `evidence` / `occurrences`) so the reviewer always sees the latest
+  extraction instead of the first one
+- **`/memory clear` and `/clear`** now wipe ALL session summaries via
+  `clear_all_session_summaries()`. Previously they only deleted the current
+  session, leaving prior-session summaries to silently resurface via the
+  cross-session tail
+- **`MemoryManager.save_session_summary()`** is now a pure persistence call.
+  Crystallization moved upstream to `compress_messages()` so it sees raw
+  user text instead of LLM-narrated summaries
+- **Manager facade methods** rewired: `crystallize_recent_sessions(limit)`
+  → `crystallize_user_messages(messages)`; same approve/reject API
+- **`MemoryGuard.classify_type` / `classify_scope`** drive tag-based memory
+  type and scope inference
+
+### Removed
+
+- `pinned`, `ttl_days`, `expires_at` fields from `MemoryRecord` — added
+  speculatively, never had a functional write path. SQL schema bumped to v3
+  with a `DROP COLUMN` migration for existing databases (silent skip on
+  SQLite < 3.35.0)
+- `MemoryCrystallizer.extract_from_sessions()` — operated on LLM-narrated
+  session summaries, exactly the regex-on-summary path the new design
+  rejects
+- `MemoryManager.crystallize_recent_sessions()` — superseded by
+  `crystallize_user_messages()`
+
+### Fixed
+
+- **`/new` was wiping the just-finished session's summaries** — the branch
+  called `clear_session()` before `archive_session()`, so cross-session
+  recall lost the most recent context. `clear_session()` is no longer
+  invoked from `/new`; `archive_session()` (in `on_session_start()`) is the
+  correct primitive. (Codex P2)
+- **`Agentao._extract_context_hints` read the wrong key on text blocks** —
+  list-shaped message content had `block.get("content")` instead of
+  `block.get("text")`, silently dropping every multimodal/tool-use message
+  and breaking `filepath_hint` scoring. Now matches the canonical
+  `{"type": "text", "text": ...}` shape used by `_format_for_summary` and
+  `_user_message_text`. (Codex P2)
+- **Recall errors are now observable** — exceptions inside
+  `MemoryRetriever.recall_candidates()` log a WARNING with traceback,
+  increment `_error_count`, and record `_last_error` instead of being
+  swallowed silently
+- **`<memory-stable>` cross-session tail is pre-reserved** so persistent
+  facts can never crowd out the previous-session summary
+- **Dynamic recall hard budget** — `render_dynamic_block()` enforces
+  `DYNAMIC_RECALL_MAX_CHARS` (~1200) and trims candidates that don't fit
+- **Stable block budget pre-reservation refactor** uses a deterministic
+  greedy fit instead of "stop at first overflow"
+
+### Tests
+
+- ~300 new memory-subsystem tests across `test_memory_store.py`,
+  `test_memory_manager.py`, `test_memory_session.py`, `test_memory_renderer.py`,
+  `test_retriever.py`, `test_crystallizer.py`, `test_memory_guards.py`,
+  `test_memory_injection.py`, and `test_memory_decoupling.py`
+- Suite total: **657 passing**, 1 skipped, 0 failing
+- Notable regression guards:
+  - `test_new_session_flow_preserves_cross_session_recall` (Codex P2 fix)
+  - `test_extracts_paths_from_list_text_blocks` (Codex P2 fix)
+  - `test_budget_eviction_preserves_newest_decision` (eviction priority)
+  - `test_assistant_narration_does_not_trigger` (crystallization safety)
+  - `test_clear_all_session_summaries_removes_cross_session_summaries`
+  - `test_search_unified_finds_record_via_any_field`
+
+---
+
+## [0.2.5] — 2026-04-07
+
+### Added
+
+- **`agentao init` setup wizard** — first-run interactive bootstrap for
+  `.agentao/` config, API keys, and skill discovery
+- **Background agent lifecycle** — pending state, cancellation token plumbing,
+  on-disk persistence so the dashboard survives restarts
+- **`cwd/skills/`** added as a third highest-priority skills layer
+  (overrides project and bundled skills); two-layer scan with first-run
+  bootstrap of bundled skills
+- **Windows compatibility** for the shell tool and terminal handling
+- **130 new tests** covering permissions, skills, MCP, and background agents
+- README "Minimum Viable Configuration" section
+
+### Changed
+
+- Bundled office / pdf / ocr skills removed from the default install
+  (slimmer wheel; users opt in via the `pdf` / `excel` / `image` extras)
+- Install path unified to `pip install agentao` across docs and README
+- ChatAgent / Claude naming remnants cleaned up
+
+### Packaging / CI
+
+- GitHub Actions workflow with test / build / smoke matrix
+- PyPI release workflows
+- `main.py` and `.claude/` excluded from sdist
+- `skills/skill-creator` included in wheel; other internal skills marked private
+
+### Fixed
+
+- `/plan save` CLI command removed to match the documented plan-mode v2
+  contract (model-driven `plan_save` tool only)
+
+---
+
 ## [0.2.3] — 2026-04-06
 
 ### Added

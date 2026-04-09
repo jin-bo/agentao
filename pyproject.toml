@@ -30,6 +30,7 @@ dependencies = [
     "prompt-toolkit>=3.0.52",
     "pyyaml>=6.0.3",
     "mcp>=1.26.0",
+    "filelock>=1.4.0",
 ]
 
 [project.optional-dependencies]

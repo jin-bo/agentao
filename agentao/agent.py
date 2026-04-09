@@ -1,5 +1,6 @@
 """Main agent logic for Agentao."""
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -106,7 +107,17 @@ class Agentao:
         """
         self.llm = LLMClient(api_key=api_key, base_url=base_url, model=model, temperature=temperature)
         self.skill_manager = SkillManager()
-        self.memory_tool = SaveMemoryTool()
+        from .memory import MemoryManager, MemoryRetriever
+        from .memory.render import MemoryPromptRenderer
+        self._memory_manager = MemoryManager(
+            project_root=Path.cwd() / ".agentao",
+            global_root=Path.home() / ".agentao",
+        )
+        self.memory_tool = SaveMemoryTool(memory_manager=self._memory_manager)
+        self.memory_retriever = MemoryRetriever(self._memory_manager)
+        self.memory_renderer = MemoryPromptRenderer()
+        self._last_user_message: str = ""
+        self._stable_block_chars: int = 0  # size of last rendered <memory-stable> block
         self.todo_tool = TodoWriteTool()
         self.permission_engine = permission_engine
 
@@ -158,6 +169,7 @@ class Agentao:
             llm_client=self.llm,
             memory_tool=self.memory_tool,
             max_tokens=max_context_tokens,
+            memory_manager=self._memory_manager,
         )
 
         # Initialize tool registry
@@ -197,6 +209,18 @@ class Agentao:
             transport=self.transport,
             logger=self.llm.logger,
         )
+
+    @property
+    def memory_manager(self):
+        return self._memory_manager
+
+    @memory_manager.setter
+    def memory_manager(self, manager):
+        """Replace the memory manager and keep all dependent helpers in sync."""
+        self._memory_manager = manager
+        self.memory_tool.memory_manager = manager
+        self.memory_retriever._manager = manager
+        self.context_manager.memory_manager = manager
 
     def _load_project_instructions(self) -> Optional[str]:
         """Load project-specific instructions from AGENTAO.md.
@@ -527,22 +551,57 @@ Use tools proactively only when they materially improve correctness or are neede
                 prompt += f"- {icon} [{todo['status']}] {todo['content']}\n"
             prompt += "\nUpdate task statuses with todo_write as you complete each step."
 
-        # Inject all saved memories (omit section entirely when empty to save tokens)
-        memories = self.memory_tool.get_all_memories()
-        if memories:
-            prompt += "\n\n=== Memories ===\n"
-            prompt += "Important information remembered from past conversations:\n\n"
-            for m in memories:
-                line = f"• {m['key']}: {m['value']}"
-                if m.get('tags'):
-                    line += f" [tags: {', '.join(m['tags'])}]"
-                prompt += line + "\n"
-            prompt += "\nWhen you learn new durable facts, call save_memory to preserve them."
+        # Stable memory block (structured, XML-escaped)
+        stable_records = self.memory_manager.get_stable_entries()
+        cross_session_tail = self.memory_manager.get_cross_session_tail()
+        stable_block = self.memory_renderer.render_stable_block(
+            stable_records, session_tail=cross_session_tail,
+        )
+        self._stable_block_chars = len(stable_block)
+        if stable_block:
+            prompt += "\n\n" + stable_block
+
+        # Dynamic recall (per-turn; query-specific top-k candidates)
+        # Exclude entries already shown in the stable block to avoid duplication.
+        context_hints = self._extract_context_hints()
+        stable_ids = {r.id for r in stable_records}
+        candidates = self.memory_retriever.recall_candidates(
+            query=self._last_user_message or "",
+            context_hints=context_hints,
+            exclude_ids=stable_ids,
+        )
+        if candidates:
+            recall_block = self.memory_renderer.render_dynamic_block(candidates)
+            if recall_block:
+                prompt += "\n\n" + recall_block
 
         if self._plan_mode:
             prompt += build_plan_prompt(self._plan_session)
 
         return prompt
+
+    def _extract_context_hints(self) -> List[str]:
+        """Extract file paths from recent messages to use as recall hints (§10.1).
+
+        Handles both shapes the chat path can produce:
+
+        - Plain string ``content``.
+        - List of typed blocks (multimodal/tool-use); the canonical text
+          block is ``{"type": "text", "text": "..."}``, matching how
+          :meth:`ContextManager._format_for_summary` and
+          :meth:`MemoryCrystallizer._user_message_text` consume them.
+        """
+        path_re = re.compile(r'[\w./\\-]+\.\w{2,6}')
+        hints = []
+        for msg in self.messages[-10:]:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                hints.extend(path_re.findall(content))
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        hints.extend(path_re.findall(str(block.get("text", ""))))
+        return hints[:20]
 
     def _llm_call(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]],
                   cancellation_token: Optional[CancellationToken] = None) -> Any:
@@ -620,6 +679,7 @@ Use tools proactively only when they materially improve correctness or are neede
             f"Current Date/Time: {now.strftime('%Y-%m-%d %H:%M:%S')} ({now.strftime('%A')})\n"
             f"</system-reminder>\n"
         )
+        self._last_user_message = user_message
         self.add_message("user", system_reminder + user_message)
 
         # Build system prompt (injects all memories)
@@ -642,7 +702,7 @@ Use tools proactively only when they materially improve correctness or are neede
 
         # System prompt dirty-flag: only rebuild when skills or memories change
         _current_active_skills = frozenset(self.skill_manager.get_active_skills().keys())
-        _current_memory_count = len(self.memory_tool.get_all_memories())
+        _current_memory_version = self.memory_manager.write_version
 
         # Call LLM and handle multiple rounds of tool calls
         iteration = 0
@@ -815,10 +875,10 @@ Use tools proactively only when they materially improve correctness or are neede
                 # Update messages for next iteration.
                 # Only rebuild system prompt if skills or memories changed (dirty flag).
                 new_active_skills = frozenset(self.skill_manager.get_active_skills().keys())
-                new_memory_count = len(self.memory_tool.get_all_memories())
-                if new_active_skills != _current_active_skills or new_memory_count != _current_memory_count:
+                new_memory_version = self.memory_manager.write_version
+                if new_active_skills != _current_active_skills or new_memory_version != _current_memory_version:
                     _current_active_skills = new_active_skills
-                    _current_memory_count = new_memory_count
+                    _current_memory_version = new_memory_version
                     system_prompt = self._build_system_prompt()
                 messages_with_system = [
                     {"role": "system", "content": system_prompt}
@@ -874,7 +934,7 @@ Use tools proactively only when they materially improve correctness or are neede
         else:
             bd_full = {"system": 0, "messages": 0, "tools": 0, "total": 0}
         stats["token_breakdown"] = bd_full
-        memory_count = len(self.memory_tool.get_all_memories())
+        memory_count = len(self.memory_manager.get_all_entries())
 
         if not self.messages:
             summary = "No conversation history\n"

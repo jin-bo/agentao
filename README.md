@@ -78,16 +78,40 @@ Agentao automatically manages long conversations to stay within LLM context limi
 
 Default context limit is 200K tokens. Override with `AGENTAO_CONTEXT_TOKENS` environment variable.
 
-### 💾 Cognitive Resonance (认知共鸣)
+### 💾 SQLite Memory (持久记忆)
 
-*Agentic RAG without a vector database* — relevant memories surface automatically before each response:
+A SQLite-backed persistent memory system that automatically surfaces relevant context — no vector database required.
 
-1. All saved memories are listed for the LLM
-2. The LLM returns a JSON array of relevant memory keys
-3. You are shown the recalled memories and asked whether to inject them (single-key confirmation)
-4. Confirmed memories are added to the system prompt for that turn
+**Storage:** Two SQLite databases, auto-created on first run:
 
-This means important context you've saved (preferences, facts, project details) resonates back into the conversation when relevant — no manual retrieval needed.
+| Database | Path | Scope |
+|----------|------|-------|
+| Project store | `.agentao/memory.db` | Per-project memories + session summaries |
+| User store | `~/.agentao/memory.db` | Cross-project user preferences |
+
+**Three data types:**
+
+| Type | Where stored | Lifetime |
+|------|-------------|----------|
+| **Persistent memories** | `memories` table (soft-delete) | Until explicitly deleted |
+| **Session summaries** | `session_summaries` table | Current session; cleared on `/memory clear` |
+| **Recall candidates** | In-memory only (never stored) | Single turn |
+
+**Injection strategy (per-turn, two blocks):**
+
+1. **`<memory-stable>`** — persistent memories up to a character budget. Summaries from **previous sessions** are also appended here (pre-reserved so they are never crowded out by fact entries), giving the LLM cross-session continuity after a restart.
+
+2. **`<memory-context>`** — top-k recall candidates scored against the current user message using a keyword / Jaccard / tag / recency formula; injected dynamically so the stable prefix stays cache-friendly.
+
+> **Session summary channels:** the *current* session's summary lives only in `self.messages` as a `[Conversation Summary]` block (injecting it into the system prompt too would duplicate context). *Previous* sessions' summaries have no message-history channel after a restart, so they flow through `<memory-stable>` instead.
+
+**Save a memory:**
+```
+❯ Remember that this project uses uv for package management
+❯ Save my preferred language as Python
+```
+
+**Skill Crystallization:** `/crystallize suggest` reads the current session transcript, asks the LLM to identify the most repeatable workflow, and displays a draft `SKILL.md`. `/crystallize create [name]` writes it to `skills/` (global or project scope) and reloads skills immediately.
 
 ### 💡 Semantic Display Engine
 
@@ -204,7 +228,7 @@ graph LR
 
 Skills are auto-discovered from the `skills/` directory. Each subdirectory contains a `SKILL.md` file with YAML frontmatter. Skills are listed in the system prompt and can be activated with the `activate_skill` tool.
 
-Add new skills by creating a directory with a `SKILL.md` file — no code changes needed.
+Add new skills by creating a directory with a `SKILL.md` file — no code changes needed. Or use **Skill Crystallization** to generate one from your current session: `/crystallize suggest` drafts a skill from the session transcript; `/crystallize create [name]` writes it and reloads skills immediately.
 
 ### 🛠️ Comprehensive Tools
 
@@ -541,11 +565,17 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/provider` | List available providers (detected from `*_API_KEY` env vars) |
 | `/provider <NAME>` | Switch to a different provider (e.g., `/provider GEMINI`) |
 | `/skills` | List available and active skills |
-| `/memory` | List all saved memories with tag summary |
+| `/memory` | List all saved memories |
+| `/memory user` | Show user-scope memories (~/.agentao/memory.db) |
+| `/memory project` | Show project-scope memories (.agentao/memory.db) |
+| `/memory session` | Show current session summary (from session_summaries table) |
+| `/memory status` | Show memory counts, session size, and recall hit count |
 | `/memory search <query>` | Search memories (searches keys, tags, and values) |
 | `/memory tag <tag>` | Filter memories by tag |
 | `/memory delete <key>` | Delete a specific memory |
 | `/memory clear` | Clear all memories (with confirmation) |
+| `/crystallize suggest` | Analyze session transcript and draft a reusable skill |
+| `/crystallize create [name]` | Write the skill draft to skills/ (prompts for name and scope) |
 | `/mcp` | List MCP servers with status and tool counts |
 | `/mcp add <name> <cmd\|url>` | Add an MCP server to project config |
 | `/mcp remove <name>` | Remove an MCP server from project config |
@@ -617,7 +647,7 @@ y                       (exit plan mode, restore permissions, agent implements)
 
 **What plan mode enforces:**
 - File writes (`write_file`, `replace`) are **denied**
-- Memory mutations (`save_memory`, `delete_memory`, `todo_write`) are **denied**
+- Memory writes (`save_memory`, `todo_write`) are **denied**
 - Non-allowlisted shell commands are **denied** (no accidental side effects)
 - Safe read-only shell commands (`git diff`, `ls`, `cat`, `grep`, etc.) are **allowed**
 - Web access (`web_fetch`, `google_web_search`) **asks** as usual
@@ -644,17 +674,6 @@ y                       (exit plan mode, restore permissions, agent implements)
 - **1** — Yes, execute once
 - **2** — Yes to all for this session (escalates to full-access in memory)
 - **3** or **Esc** — Cancel
-
-### Memory Recall Confirmation
-
-When relevant memories are recalled before a response:
-
-1. A list of recalled memories is shown (key: value format)
-2. Press a single key:
-   - **1** - Inject these memories into the system prompt
-   - **2** or **Esc** - Skip (memories are not injected)
-
-In `full-access` mode, memory recall is auto-confirmed.
 
 ### Example Interactions
 
@@ -683,6 +702,15 @@ In `full-access` mode, memory recall is auto-confirmed.
 ❯ Remember that I prefer tabs over spaces for indentation
 ❯ Save this API endpoint URL for future use
 ❯ What do you remember about my preferences?
+/memory status              (see entry counts, session size, recall hits)
+/memory user                (browse profile-scope memories)
+/memory project             (browse project-scope memories)
+```
+
+**Skill crystallization:**
+```
+/crystallize suggest        (draft a skill from the current session)
+/crystallize create         (write the skill to skills/ and reload)
 ```
 
 **Context management:**
@@ -809,13 +837,19 @@ agentao/
     │   ├── config.py        # Config loading + env var expansion
     │   ├── client.py        # McpClient + McpClientManager
     │   └── tool.py          # McpTool wrapper for Tool interface
+    ├── memory/
+    │   ├── __init__.py      # Exports MemoryManager, MemoryRetriever, SkillCrystallizer
+    │   ├── models.py        # MemoryEntry, IndexEntry, RetrievalHit dataclasses + constants
+    │   ├── manager.py       # SQLite memory manager: persistent memories, session summaries, recall
+    │   ├── retriever.py     # Index-based dynamic recall (tokenize, score, recall, format)
+    │   └── crystallizer.py  # Skill Crystallization (suggest prompt + SKILL.md writer)
     ├── tools/
     │   ├── base.py          # Tool base class + registry
     │   ├── file_ops.py      # Read, write, edit, list
     │   ├── search.py        # Glob, grep
     │   ├── shell.py         # Shell execution
     │   ├── web.py           # Fetch, search
-    │   ├── memory.py        # Persistent memory (6 tools)
+    │   ├── memory.py        # Persistent memory tools (save, search, delete, clear, filter, list)
     │   ├── skill.py         # Skill activation
     │   ├── ask_user.py      # Mid-task user clarification
     │   └── todo.py          # Session task checklist
@@ -917,6 +951,8 @@ Restart Agentao — agents are auto-discovered and registered as `agent_my_agent
 
 ### Adding a Skill
 
+**Option A: manually**
+
 1. Create `skills/my-skill/SKILL.md`:
 
 ```yaml
@@ -932,6 +968,15 @@ Documentation here...
 
 2. Restart Agentao — skills are auto-discovered.
 
+**Option B: crystallize from a session**
+
+```
+/crystallize suggest   (LLM drafts a skill from the current session transcript)
+/crystallize create    (prompts for name + scope, writes SKILL.md, reloads immediately)
+```
+
+Skills created with `/crystallize create` are written to `.agentao/skills/` (project scope) or `~/.agentao/skills/` (global scope) and are available immediately without restarting.
+
 ---
 
 ## Troubleshooting
@@ -944,7 +989,7 @@ Documentation here...
 
 **Context Too Long Errors:** Agentao handles these automatically with three-tier recovery (compress → minimal history → error). Common causes: very large tool results (e.g. reading huge files) or extremely long conversations. If errors persist, lower the limit with `/context limit <n>` or `AGENTAO_CONTEXT_TOKENS`.
 
-**Memory Recall Not Working:** Check that memories exist (`/memory`). Recall requires at least one memory saved. The LLM judges relevance — unrelated memories won't be recalled.
+**Memory Not Appearing in Responses:** Check `/memory status` — verify entries exist and recall hit count is incrementing. The retriever scores entries against your query using keyword overlap and recency; if your query doesn't share tokens with any entry's title, tags, keywords, or content, nothing will be recalled. Try rephrasing or use `/memory user` / `/memory project` to inspect entries directly. Note that the stable block always includes user-scope entries and structural project types (`decision`, `constraint`, `workflow`, `preference`, `profile`) regardless of the query — only `project_fact` and `note` entries depend on the per-turn recall scoring (with the 3 most-recently-updated also surfaced unconditionally).
 
 **MCP Server Not Connecting:** Run `/mcp list` to see status and error messages. Verify the command exists and is executable, or that the SSE URL is reachable. Check `agentao.log` for detailed connection errors.
 

@@ -301,25 +301,41 @@ Supports: `1`, `2`, `3`, `Esc`, `Ctrl+C`. Invalid keys are silently ignored.
 
 ### Memory System
 
-Persistent JSON storage in `.agentao_memory.json` (gitignored):
-```python
-# tools/memory.py
-{"memories": [{"key": "...", "value": "...", "tags": [...], "timestamp": "..."}]}
-```
+**Architecture:** SQLite-backed storage managed by `MemoryManager` (`agentao/memory/manager.py`).
 
-**Available Tools:**
-- `save_memory` - Save/update memories
-- `search_memory` - Search by keyword
-- `delete_memory` - Delete specific memory
-- `clear_all_memories` - Clear all memories
-- `filter_memory_by_tag` - Filter by tag
+**SQLite databases:**
 
-**CLI Commands:**
-- `/memory` or `/memory list` - List all memories
-- `/memory search <query>` - Search memories
-- `/memory tag <tag>` - Filter by tag
-- `/memory delete <key>` - Delete specific memory
-- `/memory clear` - Clear all (with confirmation)
+| Database | Path | Content |
+|----------|------|---------|
+| Project store | `.agentao/memory.db` | Project-scoped persistent memories + session summaries |
+| User store | `~/.agentao/memory.db` | Cross-project user-scoped persistent memories |
+
+**Three data types:**
+
+1. **Persistent memories** (`MemoryRecord`) — rows in the `memories` table. Soft-deleted (never physically removed). Scoped to `user` or `project`. Types: `preference`, `profile`, `project_fact`, `workflow`, `decision`, `constraint`, `note`. Source: `explicit` (LLM-written) or `auto`/`crystallized`. Fields: `id`, `scope`, `type`, `key_normalized`, `title`, `content`, `tags`, `keywords`, `source`, `confidence`, `sensitivity`, `created_at`, `updated_at`, `deleted_at`.
+
+2. **Session summaries** (`SessionSummaryRecord`) — rows in the `session_summaries` table. Written by the context-compression pipeline (microcompaction / full LLM summarization) to preserve conversation continuity across compaction events. Scoped to a `session_id`.
+
+3. **Recall candidates** (`RecallCandidate`) — transient, in-memory only. Scored at query time by `MemoryRetriever` using a keyword/Jaccard/tag/recency formula. Never stored.
+
+**Prompt injection (per turn, two blocks):**
+- `<memory-stable>` — rendered by `MemoryPromptRenderer.render_stable_block()`: stable persistent memories only (budget-limited, selection policy applied). Session summaries are intentionally excluded — they already live in the conversation message history as `[Conversation Summary]` blocks.
+- `<memory-context>` — rendered by `render_dynamic_block()`: top-k recall candidates scored against the current user message.
+
+**LLM tool (write-only):**
+- `save_memory(key, value, tags?)` — the only memory tool exposed to the LLM
+
+**CLI commands (full management):**
+- `/memory` / `/memory list` — list all entries
+- `/memory search <query>` — keyword search across title, value, tags
+- `/memory tag <tag>` — filter by tag
+- `/memory user` / `/memory project` — show a single scope
+- `/memory delete <key>` — soft-delete by title
+- `/memory clear` — soft-delete all entries + clear session summaries (with confirmation)
+- `/memory session` — show current session summary
+- `/memory status` — entry counts, session size, archive count
+
+**Separation of concerns:** The LLM can only write (`save_memory`). Search, delete, and clear are CLI-only operations that call `MemoryManager` methods directly — they are never exposed to the LLM as callable tools.
 
 See `docs/features/memory-management.md` for detailed documentation.
 

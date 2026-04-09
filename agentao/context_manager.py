@@ -65,7 +65,7 @@ class ContextManager:
     MICROCOMPACT_TOOL_LIMIT = 3_000 # Max chars kept from any old tool result in microcompact
     MICROCOMPACT_PRESERVE_RECENT = 5  # Keep the most recent N tool results at full fidelity
 
-    def __init__(self, llm_client, memory_tool, max_tokens: int = DEFAULT_MAX_TOKENS):
+    def __init__(self, llm_client, memory_tool, max_tokens: int = DEFAULT_MAX_TOKENS, memory_manager=None):  # Optional[MemoryManager]
         """Initialize ContextManager.
 
         Args:
@@ -76,6 +76,7 @@ class ContextManager:
         self.llm_client = llm_client
         self.memory_tool = memory_tool
         self.max_tokens = max_tokens
+        self.memory_manager = memory_manager
 
         # Circuit breaker: stop auto-compact after too many consecutive failures
         self._consecutive_compact_failures: int = 0
@@ -307,6 +308,16 @@ class ContextManager:
         # --- Step 4: extract recently read files ----------------------------
         recently_read = self._extract_recently_read_files(to_summarize)
 
+        # --- Step 4b: crystallize from raw user messages --------------------
+        # Run *before* summarization so the rule-based extractor sees
+        # authentic user text, never the LLM's narration of it. Best-effort —
+        # must never break the compaction pipeline.
+        if self.memory_manager is not None:
+            try:
+                self.memory_manager.crystallize_user_messages(to_summarize)
+            except Exception:
+                pass
+
         # --- Step 5: LLM summarization --------------------------------------
         pre_tokens = self.estimate_tokens(messages)
         summary = self._summarize_messages(to_summarize)
@@ -316,16 +327,16 @@ class ContextManager:
 
         self._consecutive_compact_failures = 0  # reset on success
 
-        # --- Step 6: save to memory -----------------------------------------
-        try:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.memory_tool.execute(
-                key=f"conversation_summary_{ts}",
-                value=summary,
-                tags=["auto", "conversation_summary"],
-            )
-        except Exception:
-            pass
+        # --- Step 6: save session summary to SQLite --------------------------
+        if self.memory_manager is not None:
+            try:
+                self.memory_manager.save_session_summary(
+                    summary=summary,
+                    tokens_before=pre_tokens,
+                    messages_summarized=len(to_summarize),
+                )
+            except Exception:
+                pass
 
         # --- Step 7: assemble result ----------------------------------------
         boundary_msg = {

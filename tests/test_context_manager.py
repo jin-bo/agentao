@@ -25,9 +25,12 @@ def _make_mock_llm(response_text: str = "[]"):
     return mock_llm
 
 
-def _make_memory_tool(tmp_path: str):
+def _make_memory_tool(tmp_path):
+    from pathlib import Path
+    from agentao.memory.manager import MemoryManager
     from agentao.tools.memory import SaveMemoryTool
-    return SaveMemoryTool(memory_file=tmp_path)
+    mgr = MemoryManager(project_root=Path(tmp_path) / ".agentao", global_root=None)
+    return SaveMemoryTool(memory_manager=mgr)
 
 
 def _make_messages(n: int) -> list:
@@ -155,27 +158,21 @@ def test_compress_messages_prepends_summary_system_msg():
         Path(tmp).unlink(missing_ok=True)
 
 
-def test_compress_messages_saves_summary_to_memory():
+def test_compress_messages_saves_summary_to_memory(tmp_path):
     from agentao.context_manager import ContextManager
+    from agentao.memory.manager import MemoryManager
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        f.write('{"memories": []}')
-        tmp = f.name
+    memory_tool = _make_memory_tool(tmp_path)
+    mgr = memory_tool.memory_manager
+    mock_llm = _make_mock_llm("This is a saved summary.")
+    cm = ContextManager(mock_llm, memory_tool, max_tokens=200_000, memory_manager=mgr)
 
-    try:
-        memory_tool = _make_memory_tool(tmp)
-        mock_llm = _make_mock_llm("This is a saved summary.")
-        cm = ContextManager(mock_llm, memory_tool, max_tokens=200_000)
+    original = _make_messages(20)
+    cm.compress_messages(original)
 
-        original = _make_messages(20)
-        cm.compress_messages(original)
-
-        saved = memory_tool.get_all_memories()
-        summary_mems = [m for m in saved if "conversation_summary" in m.get("key", "")]
-        assert len(summary_mems) >= 1
-        assert "conversation_summary" in summary_mems[0].get("tags", [])
-    finally:
-        Path(tmp).unlink(missing_ok=True)
+    # Compaction summaries go to SQLite session_summaries table
+    summaries = mgr.get_recent_session_summaries(limit=10)
+    assert any("This is a saved summary." in s.summary_text for s in summaries)
 
 
 def test_compress_messages_graceful_on_llm_error():
@@ -346,40 +343,33 @@ def test_tiktoken_model_mapping():
 # Integration test
 # ---------------------------------------------------------------------------
 
-def test_full_flow_compress_saves_to_memory():
-    """Integration test: compress messages saves summary to memory tool."""
+def test_full_flow_compress_saves_to_memory(tmp_path):
+    """Integration test: compress messages saves summary to SQLite via memory_manager."""
     from agentao.context_manager import ContextManager
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        f.write('{"memories": []}')
-        tmp = f.name
+    def mock_chat(**kwargs):
+        mock_choice = Mock()
+        mock_choice.message.content = "Early conversation summary."
+        mock_choice.message.tool_calls = None
+        mock_resp = Mock()
+        mock_resp.choices = [mock_choice]
+        return mock_resp
 
-    try:
-        def mock_chat(**kwargs):
-            mock_choice = Mock()
-            mock_choice.message.content = "Early conversation summary."
-            mock_choice.message.tool_calls = None
-            mock_resp = Mock()
-            mock_resp.choices = [mock_choice]
-            return mock_resp
+    mock_llm = Mock()
+    mock_llm.logger = Mock()
+    mock_llm.chat = mock_chat
 
-        mock_llm = Mock()
-        mock_llm.logger = Mock()
-        mock_llm.chat = mock_chat
+    memory_tool = _make_memory_tool(tmp_path)
+    mgr = memory_tool.memory_manager
+    cm = ContextManager(mock_llm, memory_tool, max_tokens=200_000, memory_manager=mgr)
 
-        memory_tool = _make_memory_tool(tmp)
-        cm = ContextManager(mock_llm, memory_tool, max_tokens=200_000)
+    original = _make_messages(20)
+    compressed = cm.compress_messages(original)
+    assert len(compressed) < len(original)
 
-        original = _make_messages(20)
-        compressed = cm.compress_messages(original)
-        assert len(compressed) < len(original)
-
-        # Compression should have saved a summary memory
-        saved = memory_tool.get_all_memories()
-        assert any("conversation_summary" in m["key"] for m in saved)
-
-    finally:
-        Path(tmp).unlink(missing_ok=True)
+    # Summaries go to SQLite session_summaries table
+    summaries = mgr.get_recent_session_summaries(limit=10)
+    assert any("Early conversation summary." in s.summary_text for s in summaries)
 
 
 if __name__ == "__main__":
@@ -401,7 +391,8 @@ if __name__ == "__main__":
     # Compression algorithm
     test_compress_messages_reduces_count()
     test_compress_messages_prepends_summary_system_msg()
-    test_compress_messages_saves_summary_to_memory()
+    with tempfile.TemporaryDirectory() as _td2:
+        test_compress_messages_saves_summary_to_memory(Path(_td2))
     test_compress_messages_graceful_on_llm_error()
     test_compress_messages_too_few_messages()
     print("✓ Compression algorithm tests passed")
@@ -429,7 +420,9 @@ if __name__ == "__main__":
     print("✓ reasoning_content test passed")
 
     # Integration
-    test_full_flow_compress_saves_to_memory()
+    import tempfile
+    with tempfile.TemporaryDirectory() as _td:
+        test_full_flow_compress_saves_to_memory(Path(_td))
     print("✓ Integration test passed")
 
     print("\n✅ All ContextManager tests passed!")

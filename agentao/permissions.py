@@ -78,8 +78,6 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
         {"tool": "replace", "action": "deny"},
         # Deny memory writes and task mutations — plan mode is research-only.
         {"tool": "save_memory", "action": "deny"},
-        {"tool": "delete_memory", "action": "deny"},
-        {"tool": "clear_all_memories", "action": "deny"},
         {"tool": "todo_write", "action": "deny"},
         {
             "tool": "run_shell_command",

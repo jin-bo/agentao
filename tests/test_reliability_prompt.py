@@ -70,13 +70,13 @@ def test_reliability_before_memories():
     agent.memory_tool.execute(key="test_key", value="test_value")
     prompt = agent._build_system_prompt()
     rel_idx = prompt.find("=== Reliability Principles ===")
-    mem_idx = prompt.find("=== Memories ===")
+    mem_idx = prompt.find("<memory-stable>")
     assert rel_idx != -1, "Reliability Principles section not found"
-    assert mem_idx != -1, "Memories section not found"
+    assert mem_idx != -1, "Memory stable block not found"
     assert rel_idx < mem_idx, (
-        f"Reliability Principles (pos {rel_idx}) should appear before Memories (pos {mem_idx})"
+        f"Reliability Principles (pos {rel_idx}) should appear before memory block (pos {mem_idx})"
     )
-    print("✅ Reliability Principles appears before Memories section")
+    print("✅ Reliability Principles appears before memory block")
 
 
 if __name__ == "__main__":
