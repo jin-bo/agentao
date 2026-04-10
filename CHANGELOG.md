@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [0.2.7-rc1] — 2026-04-09
+## [0.2.7] — 2026-04-09
 
 Headline: **Agent Client Protocol (ACP)** — Agentao can now be driven as
 a headless JSON-RPC agent runtime by ACP-compatible clients (e.g. Zed).
