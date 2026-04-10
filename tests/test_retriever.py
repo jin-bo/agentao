@@ -7,7 +7,13 @@ import pytest
 
 from agentao.memory.manager import MemoryManager
 from agentao.memory.models import MemoryRecord, RecallCandidate
-from agentao.memory.retriever import MemoryRetriever, _jaccard, _days_since, _normalize_token, _cjk_bigrams
+from agentao.memory.retriever import (
+    MemoryRetriever,
+    _jaccard,
+    _days_since,
+    _normalize_token,
+    _cjk_segment,
+)
 
 
 def _make_manager(tmp_path: Path) -> MemoryManager:
@@ -313,21 +319,35 @@ def test_normalize_no_op():
 
 
 # ---------------------------------------------------------------------------
-# _cjk_bigrams
+# _cjk_segment (jieba-backed CJK word segmentation)
 # ---------------------------------------------------------------------------
 
-def test_cjk_bigrams_basic():
-    bigrams = _cjk_bigrams("版本管理")
-    assert "版本" in bigrams
-    assert "本管" in bigrams
-    assert "管理" in bigrams
+def test_cjk_segment_basic():
+    # jieba should split "版本管理" into ["版本", "管理"] — no noise like "本管"
+    segs = _cjk_segment("版本管理")
+    assert "版本" in segs
+    assert "管理" in segs
+    assert "本管" not in segs  # regression guard: bigram noise must be gone
 
-def test_cjk_bigrams_single_char():
-    bigrams = _cjk_bigrams("你")
-    assert "你" in bigrams
+def test_cjk_segment_drops_single_char():
+    """Single CJK characters are filtered out (mirrors Latin len>1 rule)."""
+    assert _cjk_segment("你") == set()
+    # Single chars in a sentence should also be dropped while multi-char words stay.
+    segs = _cjk_segment("我学习中文")  # jieba: ["我", "学习", "中文"]
+    assert "我" not in segs
+    assert "学习" in segs
+    assert "中文" in segs
 
-def test_cjk_bigrams_empty():
-    assert _cjk_bigrams("hello world") == set()
+def test_cjk_segment_empty():
+    assert _cjk_segment("hello world") == set()
+
+def test_cjk_segment_skips_latin_runs():
+    """_cjk_segment only processes CJK character runs; Latin tokens are ignored here."""
+    segs = _cjk_segment("Python 开发工具")
+    assert "python" not in segs
+    # jieba may keep "开发工具" as one compound word OR split it into "开发"+"工具";
+    # accept either as long as some CJK content was extracted.
+    assert any("开发" in s or "工具" in s for s in segs)
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +367,7 @@ def test_tokenize_version_prefix(tmp_path):
     assert "3" in tokens    # normalized
     assert "v3" in tokens   # original
 
-def test_tokenize_cjk_bigrams(tmp_path):
+def test_tokenize_cjk_with_latin(tmp_path):
     ret, _ = _make_retriever(tmp_path)
     tokens = ret.tokenize("Python版本")
     assert "python" in tokens
@@ -357,14 +377,14 @@ def test_tokenize_cjk_only(tmp_path):
     ret, _ = _make_retriever(tmp_path)
     tokens = ret.tokenize("版本管理")
     assert "版本" in tokens
-    assert "本管" in tokens
     assert "管理" in tokens
+    assert "本管" not in tokens  # bigram noise must be gone
 
 def test_tokenize_mixed_cjk_latin(tmp_path):
     ret, _ = _make_retriever(tmp_path)
     tokens = ret.tokenize("使用 Python 开发")
     assert "python" in tokens
-    assert "使用" in tokens or "用" in tokens  # at least some CJK tokens
+    assert "使用" in tokens  # jieba recognizes "使用" as a word
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +457,7 @@ def test_score_short_query_dampens_single_tag_recall(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_recall_cjk_query_matches_cjk_content(tmp_path):
-    """A Chinese query can recall a record whose content contains matching bigrams."""
+    """A Chinese query recalls a record whose content shares jieba-segmented words."""
     ret, mgr = _make_retriever(tmp_path)
     r = _make_record(
         title="project note",
@@ -481,3 +501,66 @@ def test_recall_candidates_exclude_ids(tmp_path):
     hits_excl = ret.recall_candidates("python", top_k=10, exclude_ids={r1.id})
     assert all(c.memory_id != r1.id for c in hits_excl)
     assert any(c.memory_id == r2.id for c in hits_excl)
+
+
+# ---------------------------------------------------------------------------
+# Inverted index — rebuild on write_version change & candidate pruning
+# ---------------------------------------------------------------------------
+
+def test_inverted_index_picks_up_newly_saved_record(tmp_path):
+    """After saving a new record between recalls, the index must pick it up."""
+    ret, mgr = _make_retriever(tmp_path)
+
+    # First save + recall populates the cached index at write_version=1
+    mgr.save_from_tool("vcs_tool", "本项目使用版本管理工具", ["tooling"])
+    hits1 = ret.recall_candidates("版本管理")
+    assert len(hits1) == 1
+
+    # Save a second record — write_version advances to 2 → index must rebuild
+    mgr.save_from_tool("vcs_note", "另一个版本管理条目", ["tooling"])
+    hits2 = ret.recall_candidates("版本管理")
+    titles = {h.title for h in hits2}
+    assert "vcs_tool" in titles
+    assert "vcs_note" in titles
+
+
+def test_inverted_index_reused_when_unchanged(tmp_path):
+    """Two consecutive recalls without writes share the same cached index."""
+    ret, mgr = _make_retriever(tmp_path)
+    mgr.save_from_tool("python_pref", "Python is the preferred language", ["python"])
+
+    ret.recall_candidates("python")
+    version_after_first = ret._index_version
+    cached_records = dict(ret._records_by_id)  # snapshot
+
+    ret.recall_candidates("python")
+    # No writes happened — index_version unchanged, same record cache
+    assert ret._index_version == version_after_first
+    assert ret._records_by_id is not None
+    assert set(ret._records_by_id.keys()) == set(cached_records.keys())
+
+
+def test_inverted_index_prunes_unrelated_records(tmp_path):
+    """Records sharing no tokens with the query are not in the candidate set."""
+    ret, mgr = _make_retriever(tmp_path)
+    mgr.save_from_tool("cat_facts", "cats like fish and warm spots", ["pets"])
+    mgr.save_from_tool("k8s_note", "kubernetes pods need readiness probes", ["k8s"])
+
+    hits = ret.recall_candidates("kubernetes")
+    titles = {h.title for h in hits}
+    assert "k8s_note" in titles
+    assert "cat_facts" not in titles
+
+
+def test_inverted_index_rebuilds_after_delete(tmp_path):
+    """Soft-deleting a record must remove it from subsequent recalls."""
+    ret, mgr = _make_retriever(tmp_path)
+    mgr.save_from_tool("temp_note", "transient kubernetes config draft", ["k8s"])
+
+    hits = ret.recall_candidates("kubernetes")
+    assert any(h.title == "temp_note" for h in hits)
+
+    # Soft-delete via the manager (bumps write_version)
+    mgr.delete_by_title("temp_note")
+    hits2 = ret.recall_candidates("kubernetes")
+    assert all(h.title != "temp_note" for h in hits2)

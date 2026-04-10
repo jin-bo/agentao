@@ -65,17 +65,25 @@ def _load_json_file(path: Path) -> Dict[str, Any]:
         return {}
 
 
-def load_mcp_config() -> Dict[str, McpServerConfig]:
+def load_mcp_config(*, project_root: Optional[Path] = None) -> Dict[str, McpServerConfig]:
     """Load MCP server configs from global (~/.agentao/mcp.json) and project (.agentao/mcp.json).
 
     Project-level configs override global ones for the same server name.
     Environment variables in config values are expanded.
 
+    Args:
+        project_root: Optional project directory to resolve the project-level
+            ``.agentao/mcp.json`` against. When ``None``, falls back to
+            ``Path.cwd()`` (legacy CLI behavior). ACP sessions pass the
+            session's cwd so two sessions in different directories see
+            independent MCP configuration (Issue 05).
+
     Returns:
         Dict mapping server name to its expanded config.
     """
     global_path = Path.home() / ".agentao" / "mcp.json"
-    project_path = Path.cwd() / ".agentao" / "mcp.json"
+    project_cwd = project_root if project_root is not None else Path.cwd()
+    project_path = project_cwd / ".agentao" / "mcp.json"
 
     global_cfg = _load_json_file(global_path)
     project_cfg = _load_json_file(project_path)

@@ -14,8 +14,15 @@ _MAX_SESSIONS = 10
 _TITLE_MAX_CHARS = 60
 
 
-def _session_dir() -> Path:
-    return Path.cwd() / _SESSION_SUBDIR
+def _session_dir(project_root: Optional[Path] = None) -> Path:
+    """Return the ``.agentao/sessions`` directory for a project.
+
+    When ``project_root`` is ``None`` (legacy CLI code path), falls back to
+    the process cwd. ACP sessions pass the session's cwd so two sessions in
+    different directories do not share persistence state (Issue 05).
+    """
+    root = project_root if project_root is not None else Path.cwd()
+    return root / _SESSION_SUBDIR
 
 
 def _derive_title(messages: List[Dict[str, Any]]) -> str:
@@ -48,13 +55,19 @@ def save_session(
     model: str,
     active_skills: Optional[List[str]] = None,
     session_id: Optional[str] = None,
+    project_root: Optional[Path] = None,
 ) -> Tuple[Path, str]:
     """Serialize conversation to disk and rotate old sessions.
+
+    Args:
+        project_root: Optional project directory whose ``.agentao/sessions``
+            subdirectory should hold the persisted session files. Defaults
+            to the process cwd for CLI compatibility.
 
     Returns:
         ``(path, session_id)`` — path of the saved file and the stable session UUID.
     """
-    session_dir = _session_dir()
+    session_dir = _session_dir(project_root)
     session_dir.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now()
@@ -85,11 +98,14 @@ def save_session(
 
 def load_session(
     session_id: Optional[str] = None,
+    project_root: Optional[Path] = None,
 ) -> Tuple[List[Dict[str, Any]], str, List[str]]:
     """Load a saved session.
 
     Args:
         session_id: UUID string (or prefix), timestamp prefix, or None for latest.
+        project_root: Optional project directory containing the persisted
+            ``.agentao/sessions`` subdir. Defaults to the process cwd.
 
     Returns:
         ``(messages, model, active_skills)``
@@ -97,7 +113,7 @@ def load_session(
     Raises:
         FileNotFoundError: If no sessions exist or the given ID is not found.
     """
-    session_dir = _session_dir()
+    session_dir = _session_dir(project_root)
     if not session_dir.exists():
         raise FileNotFoundError("No sessions directory found")
 
@@ -140,9 +156,12 @@ def load_session(
     )
 
 
-def list_sessions() -> List[Dict[str, Any]]:
-    """Return metadata for all saved sessions, newest first."""
-    session_dir = _session_dir()
+def list_sessions(project_root: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """Return metadata for all saved sessions, newest first.
+
+    ``project_root`` defaults to the process cwd for CLI compatibility.
+    """
+    session_dir = _session_dir(project_root)
     if not session_dir.exists():
         return []
 
@@ -182,13 +201,15 @@ def list_sessions() -> List[Dict[str, Any]]:
     return result
 
 
-def delete_session(session_id: str) -> bool:
+def delete_session(session_id: str, project_root: Optional[Path] = None) -> bool:
     """Delete a session by UUID or timestamp prefix.
+
+    ``project_root`` defaults to the process cwd for CLI compatibility.
 
     Returns:
         True if deleted, False if not found.
     """
-    session_dir = _session_dir()
+    session_dir = _session_dir(project_root)
     if not session_dir.exists():
         return False
 
@@ -216,13 +237,15 @@ def delete_session(session_id: str) -> bool:
     return True
 
 
-def delete_all_sessions() -> int:
+def delete_all_sessions(project_root: Optional[Path] = None) -> int:
     """Delete all saved sessions.
+
+    ``project_root`` defaults to the process cwd for CLI compatibility.
 
     Returns:
         Number of sessions deleted.
     """
-    session_dir = _session_dir()
+    session_dir = _session_dir(project_root)
     if not session_dir.exists():
         return 0
     count = 0

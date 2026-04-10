@@ -67,7 +67,7 @@ class FindFilesTool(Tool):
     def execute(self, pattern: str, directory: str = ".") -> str:
         """Find files matching pattern, with recently modified files listed first."""
         try:
-            path = Path(directory).expanduser()
+            path = self._resolve_path(directory)
             if not path.exists():
                 return f"Error: Directory {directory} does not exist"
 
@@ -223,7 +223,7 @@ class SearchTextTool(Tool):
     ) -> str:
         """Search for text in files. Uses git grep when available for performance."""
         try:
-            path = Path(directory).expanduser().resolve()
+            path = self._resolve_directory(directory)
             if not path.exists():
                 return f"Error: Directory {directory} does not exist"
 

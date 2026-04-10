@@ -103,6 +103,8 @@ A SQLite-backed persistent memory system that automatically surfaces relevant co
 
 2. **`<memory-context>`** — top-k recall candidates scored against the current user message using a keyword / Jaccard / tag / recency formula; injected dynamically so the stable prefix stays cache-friendly.
 
+**Retrieval performance & CJK quality:** the retriever maintains a `write_version`-gated inverted index (token → record IDs) so each recall call scores only the records that share at least one query token, avoiding a full scan as the memory store grows. CJK text is segmented with [`jieba`](https://github.com/fxsjy/jieba) word segmentation rather than character bigrams — `"版本管理"` tokenizes to `{"版本", "管理"}` instead of `{"版本", "本管", "管理"}`, eliminating the noise bigrams that polluted ranking. Single-character CJK tokens are filtered out (mirroring the Latin `len > 1` rule). Add domain-specific terms — project names, technical jargon, proper nouns — to `~/.agentao/userdict.txt` and jieba will pick them up on first recall.
+
 > **Session summary channels:** the *current* session's summary lives only in `self.messages` as a `[Conversation Summary]` block (injecting it into the system prompt too would duplicate context). *Previous* sessions' summaries have no message-history channel after a restart, so they flow through `<memory-stable>` instead.
 
 **Save a memory:**
@@ -549,6 +551,24 @@ response = agent.chat("Summarize the current directory")
 `SdkTransport` accepts four optional callbacks: `on_event`, `confirm_tool`, `ask_user`, `on_max_iterations`. Omit any you don't need — unset ones fall back to safe defaults (auto-approve, sentinel for ask_user, stop on max iterations).
 
 For fully silent headless use with no callbacks, just `Agentao()` — it uses `NullTransport` automatically.
+
+### ACP (Agent Client Protocol) Mode
+
+Launch Agentao as an [ACP](https://github.com/zed-industries/agent-client-protocol) stdio JSON-RPC server so ACP-compatible clients (e.g. Zed) can drive Agentao as their agent runtime:
+
+```bash
+agentao --acp --stdio
+# or, when the console script isn't on PATH:
+python -m agentao --acp --stdio
+```
+
+The server reads newline-delimited JSON-RPC 2.0 messages on stdin, writes responses and `session/update` notifications on stdout, and routes logs (and any stray `print`) to stderr. Press Ctrl-D or close stdin to shut down cleanly.
+
+**Supported methods:** `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/load`. Tool confirmations are surfaced via server→client `session/request_permission` requests with `allow_once` / `allow_always` / `reject_once` / `reject_always` options. Per-session `cwd` and `mcpServers` injection are supported; multi-session isolation (cancel/permission/messages) is enforced.
+
+**v1 limits:** stdio transport only; `text` and `resource_link` content blocks only (image/audio/embedded resource are rejected with `INVALID_PARAMS`); MCP servers limited to stdio + sse (http capability is `false`); ACP-level `fs/*` and `terminal/*` host capabilities are not proxied — files and shell commands run locally in the session's `cwd`.
+
+See **[docs/ACP.md](docs/ACP.md)** for the full launch flow, supported method table, capability advertisement, annotated NDJSON transcript, event mapping reference, troubleshooting, and contributor notes.
 
 ### Commands
 

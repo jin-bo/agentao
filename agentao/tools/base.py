@@ -2,6 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 _logger = logging.getLogger(__name__)
@@ -12,6 +13,49 @@ class Tool(ABC):
 
     def __init__(self):
         self.output_callback: Optional[Callable[[str], None]] = None
+        # Per-session working directory bound by Agentao at registration time
+        # (Issue 05). ``None`` = legacy behavior: relative paths resolve
+        # against the process cwd at call time. A ``Path`` binds the tool
+        # to a specific session cwd so two ACP sessions with different cwd
+        # values do not leak state through relative file paths.
+        self.working_directory: Optional[Path] = None
+
+    # ------------------------------------------------------------------
+    # Path resolution helpers (Issue 05)
+    # ------------------------------------------------------------------
+
+    def _resolve_path(self, raw: str) -> Path:
+        """Resolve a user-supplied path against this tool's working directory.
+
+        - ``~`` is expanded.
+        - Absolute paths pass through unchanged.
+        - Relative paths are joined to ``self.working_directory`` if set;
+          otherwise returned as a relative ``Path`` (legacy: ``open()`` and
+          friends resolve them against the process cwd).
+
+        Deliberately does NOT call ``.resolve()`` on the result — we preserve
+        the path the caller supplied so error messages stay readable. If a
+        caller needs the canonical absolute path, they can call ``.resolve()``
+        themselves.
+        """
+        p = Path(raw).expanduser()
+        if p.is_absolute():
+            return p
+        if self.working_directory is not None:
+            return self.working_directory / p
+        return p
+
+    def _resolve_directory(self, raw: str) -> Path:
+        """Like :meth:`_resolve_path` but always returns a resolved absolute path.
+
+        Shell and search tools need the canonical path because they pass it
+        to subprocesses via ``cwd=`` and use it for ``path.relative_to``
+        computations. Uses ``.resolve()`` so symlinks are followed once.
+        """
+        p = Path(raw).expanduser()
+        if not p.is_absolute() and self.working_directory is not None:
+            p = self.working_directory / p
+        return p.resolve()
 
     @property
     @abstractmethod

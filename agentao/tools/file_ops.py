@@ -55,7 +55,7 @@ class ReadFileTool(Tool):
     def execute(self, file_path: str, offset: int = 1, limit: int = 0) -> str:
         """Read file contents with line numbers and optional range."""
         try:
-            path = Path(file_path).expanduser()
+            path = self._resolve_path(file_path)
 
             if not path.exists():
                 return f"Error: File {file_path} does not exist"
@@ -164,7 +164,7 @@ class WriteFileTool(Tool):
     def execute(self, file_path: str, content: str, append: bool = False) -> str:
         """Write content to file."""
         try:
-            path = Path(file_path).expanduser()
+            path = self._resolve_path(file_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             mode = "a" if append else "w"
             with open(path, mode, encoding="utf-8") as f:
@@ -270,7 +270,7 @@ class EditTool(Tool):
     def execute(self, file_path: str, old_text: str, new_text: str, replace_all: bool = False) -> str:
         """Replace text in file with flexible whitespace matching fallback."""
         try:
-            path = Path(file_path).expanduser()
+            path = self._resolve_path(file_path)
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
 
@@ -350,7 +350,7 @@ class ReadFolderTool(Tool):
     def execute(self, directory_path: str = ".", recursive: bool = False) -> str:
         """List directory contents."""
         try:
-            path = Path(directory_path).expanduser()
+            path = self._resolve_path(directory_path)
             if not path.exists():
                 return f"Error: Directory {directory_path} does not exist"
 

@@ -5,6 +5,115 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.7-rc1] — 2026-04-09
+
+Headline: **Agent Client Protocol (ACP)** — Agentao can now be driven as
+a headless JSON-RPC agent runtime by ACP-compatible clients (e.g. Zed).
+The entire ACP wire protocol, per-session working directory isolation,
+session-scoped MCP injection, and multi-session lifecycle are new.
+
+The retriever's CJK tokenization is upgraded from character bigrams to
+jieba word segmentation, and the memory subsystem's startup resilience is
+hardened so restricted / read-only environments no longer crash the
+constructor.
+
+### Added
+
+- **ACP stdio JSON-RPC server** (`agentao/acp/`, ~3 500 lines)
+  - Launch with `agentao --acp --stdio` or `python -m agentao --acp --stdio`
+  - Methods: `initialize`, `session/new`, `session/prompt`,
+    `session/cancel`, `session/load`
+  - Server→client `session/request_permission` with `allow_once` /
+    `allow_always` / `reject_once` / `reject_always` options
+  - Stdout guard: `sys.stdout` redirected to stderr on ACP entry so
+    stray `print()` anywhere in the process never corrupts the NDJSON
+    wire; JSON-RPC responses use a captured handle to the real stdout
+  - Capability advertisement: `text` + `resource_link` content blocks,
+    stdio + sse MCP transport, no `fs.*`/`terminal.*` host proxying
+  - `AcpServer`, `AcpSessionManager`, `AcpSessionState`, `ACPTransport`
+    (maps Agentao transport events to ACP `session/update` notifications)
+- **`python -m agentao` module entry point** (`agentao/__main__.py`) so
+  the CLI works even when the console script is not on PATH
+- **Per-session working directory isolation** (Issue 05)
+  - `Agentao(working_directory=Path)` freezes memory, permissions, MCP
+    config, AGENTAO.md loading, system-prompt rendering, file tools, and
+    shell tool against that path
+  - `Agentao.working_directory` property: `None` → lazy `Path.cwd()`
+    (CLI compatibility); `Path` → frozen resolved path (ACP sessions)
+  - `Tool._resolve_path()` / `_resolve_directory()` helpers on the base
+    class; all file, search, and shell tools use them
+  - `PermissionEngine(project_root=...)`, `load_mcp_config(project_root=...)`,
+    `SkillManager(working_directory=...)`, `save_session(project_root=...)`,
+    `load_session(project_root=...)`, `list_sessions(project_root=...)`,
+    `delete_session(project_root=...)`, `delete_all_sessions(project_root=...)`
+    all accept an explicit project root; `None` falls back to `Path.cwd()`
+- **Session-scoped MCP server injection** (Issue 11)
+  - `Agentao(extra_mcp_servers=...)` merges in-memory configs on top of
+    file-loaded `.agentao/mcp.json` (name-level override, no disk writes)
+  - ACP `session/new` `mcpServers` wire field → translated by
+    `agentao.acp.mcp_translate.translate_acp_mcp_servers()`
+- **LLM log file fallback** — `LLMClient._build_file_handler()` resolves
+  `agentao.log` to an absolute path anchored to the working directory;
+  when the target is unwritable (ACP launches with cwd `/` on macOS),
+  falls back to `~/.agentao/agentao.log`
+- **jieba word segmentation for CJK retrieval** — `MemoryRetriever` now
+  segments Chinese/Japanese/Korean text with jieba instead of character
+  bigrams. `"版本管理"` → `{"版本", "管理"}` (was `{"版本", "本管", "管理"}`).
+  Single-character CJK tokens filtered out (matches the Latin `len > 1`
+  rule). Custom dictionary: `~/.agentao/userdict.txt` (lazy-loaded on
+  first recall). New dependency: `jieba>=0.42.1`
+- **Inverted index in `MemoryRetriever`** — `write_version`-gated
+  token → record-ID map so recall scores only records sharing at least
+  one query token; avoids full-scan as memory store grows
+
+### Changed
+
+- `MemoryManager.__init__` widened exception handling from `OSError` to
+  `(OSError, sqlite3.Error)` on both project-store and user-store init
+  branches. The previous `OSError`-only catch missed
+  `sqlite3.OperationalError: unable to open database file` raised when
+  the directory exists but the DB cannot be opened/WAL-journaled,
+  crashing `Agentao()` in restricted environments and killing every ACP
+  session spawn. Each fallback now logs a `WARNING` (was silent)
+- `_cjk_bigrams()` replaced by `_cjk_segment()` (jieba-backed); bigram
+  noise eliminated from CJK recall scoring
+- CLI `entrypoint()` extended: `--acp` and `--stdio` flags; `--acp`
+  short-circuits to `run_acp_mode()` before any Rich/interactive setup;
+  `--stdio` without `--acp` exits with error code 2
+- `SkillManager` now resolves project-scoped skill dirs and config files
+  from an explicit `working_directory` at construction time; two ACP
+  sessions in different repos see independent skill sets and
+  disabled-skill state
+
+### Fixed
+
+- **`Agentao()` crash in restricted / non-writable environments** —
+  `sqlite3.OperationalError` from the user-scope memory DB now triggers
+  the fallback path (user store disabled, project store in-memory) instead
+  of propagating as an unhandled exception. Root cause of ACP subprocess
+  smoke-test failures and plain `Agentao(api_key='x')` startup failure
+  when `~/.agentao/memory.db` is unwritable
+
+### Tests
+
+- **336 new ACP tests** across `test_acp_initialize.py`,
+  `test_acp_session_new.py`, `test_acp_session_prompt.py`,
+  `test_acp_session_cancel.py`, `test_acp_session_load.py`,
+  `test_acp_session_manager.py`, `test_acp_protocol.py`,
+  `test_acp_mcp_injection.py`, `test_acp_multi_session.py`,
+  `test_acp_request_permission.py`, `test_acp_transport.py`,
+  `test_acp_cli_entrypoint.py`
+- **Per-session cwd isolation tests** in `test_per_session_cwd.py`:
+  tool path resolution, memory DB binding, skill isolation, LLM log
+  anchoring, ACP factory wiring, and two sqlite-fault-injection
+  regressions for the restricted-env crash
+- **Memory init fallback regressions** in `test_memory_manager.py`:
+  `test_project_store_sqlite_error_falls_back_to_memory`,
+  `test_user_store_sqlite_error_leaves_user_store_none`
+- Suite total: **1035 tests** (1034 passing, 1 skipped), up from 657
+
+---
+
 ## [0.2.6] — 2026-04-09
 
 Promotes 0.2.6-rc1 to general availability. The substantive Added /

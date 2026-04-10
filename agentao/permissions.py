@@ -123,7 +123,18 @@ class PermissionEngine:
     caller falls back to the tool's own ``requires_confirmation`` attribute.
     """
 
-    def __init__(self):
+    def __init__(self, *, project_root: Optional[Path] = None):
+        """Initialize the permission engine.
+
+        Args:
+            project_root: Optional project directory whose ``.agentao/permissions.json``
+                file should be loaded for project-level rules. When ``None``,
+                falls back to ``Path.cwd() / ".agentao"`` to preserve the
+                legacy CLI behavior. ACP sessions pass the session's cwd so
+                two sessions in different directories see independent rules
+                (Issue 05).
+        """
+        self._project_root: Optional[Path] = project_root
         self.rules: List[Dict[str, Any]] = []
         self._mode_rules: List[Dict[str, Any]] = []
         self.active_mode: PermissionMode = PermissionMode.WORKSPACE_WRITE
@@ -138,7 +149,8 @@ class PermissionEngine:
     def _load_rules(self):
         """Load rules from user then project config files (project takes priority)."""
         user_rules = self._load_file(Path.home() / ".agentao" / "permissions.json")
-        project_rules = self._load_file(Path.cwd() / ".agentao" / "permissions.json")
+        project_root = self._project_root if self._project_root is not None else Path.cwd()
+        project_rules = self._load_file(project_root / ".agentao" / "permissions.json")
         # Project rules prepended so they are evaluated first
         self.rules = project_rules + user_rules
 

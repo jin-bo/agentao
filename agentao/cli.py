@@ -2482,8 +2482,44 @@ def run_init_wizard() -> None:
     console.print("  Run [bold cyan]agentao[/bold cyan] to start.\n")
 
 
+def run_acp_mode() -> None:
+    """Launch Agentao as an ACP stdio JSON-RPC server (Issue 12).
+
+    Delegates to :func:`agentao.acp.__main__.main`, which constructs an
+    :class:`~agentao.acp.server.AcpServer` attached to the real
+    ``sys.stdin``/``sys.stdout`` and registers every handler shipped so
+    far (initialize, session/new, session/prompt, session/cancel,
+    session/load).
+
+    Stdout hygiene: :class:`AcpServer` installs a stdout guard that
+    redirects ``sys.stdout`` to ``sys.stderr`` so any stray ``print``
+    anywhere in the process lands on stderr instead of corrupting the
+    NDJSON wire. JSON-RPC responses go through a captured handle to
+    the *original* stdout. Logs are routed to stderr by the same
+    guard's :func:`logging.StreamHandler` install.
+
+    Shutdown: :meth:`AcpServer.run` exits cleanly on stdin EOF, and
+    its ``finally`` clause calls
+    :meth:`AcpSessionManager.close_all` (Issue 03) which disconnects
+    every session-owned MCP runtime. Issue 08's executor drain runs
+    before that, so any in-flight handler completes before teardown.
+
+    This function never returns to the caller — it blocks inside
+    ``server.run()`` until the client disconnects, at which point the
+    process exits with code 0.
+    """
+    # Local import keeps the ACP package optional for non-ACP entry
+    # paths (CLI, print mode). Importing it here also defers any ACP
+    # module-level side effects (the stdout guard runs in the AcpServer
+    # constructor, not at import time, so this is safe).
+    from agentao.acp.__main__ import main as acp_main
+
+    acp_main()
+
+
 def entrypoint():
-    """Unified entry point: -p for print mode, --resume for session restore, otherwise interactive."""
+    """Unified entry point: -p for print mode, --resume for session restore,
+    --acp --stdio for ACP server mode, otherwise interactive."""
     import argparse
     parser = argparse.ArgumentParser(prog="agentao", add_help=False)
     parser.add_argument("subcommand", nargs="?", default=None, help="Subcommand (e.g. init)")
@@ -2497,7 +2533,47 @@ def entrypoint():
         metavar="SESSION_ID",
         help="Resume a saved session. Omit SESSION_ID to resume the latest.",
     )
+    parser.add_argument(
+        "--acp",
+        dest="acp",
+        action="store_true",
+        default=False,
+        help="Launch Agentao as an Agent Client Protocol (ACP) server.",
+    )
+    parser.add_argument(
+        "--stdio",
+        dest="stdio",
+        action="store_true",
+        default=False,
+        help=(
+            "Use stdio transport for ACP mode (currently the only supported "
+            "transport — implied by --acp)."
+        ),
+    )
     args, _ = parser.parse_known_args()
+
+    # ACP mode takes priority over every other entry path. We bypass the
+    # interactive Rich UI entirely so no terminal output, prompts, or
+    # color codes can ever land on stdout — that would corrupt the
+    # NDJSON JSON-RPC wire. Stdout hygiene is enforced inside
+    # :class:`AcpServer.__init__` via its stdout guard; this branch
+    # simply ensures we never reach the CLI's print/main paths.
+    #
+    # ``--stdio`` without ``--acp`` is rejected so a typo doesn't
+    # silently fall through to interactive mode. ``--acp`` without
+    # ``--stdio`` defaults to stdio (the only supported transport in
+    # v1) — no other flag combination has meaning yet.
+    if args.acp:
+        # Future-proof: if we ever add a non-stdio ACP transport (sse,
+        # websocket, ...) it would be selected by a different flag and
+        # this branch would dispatch on it.
+        run_acp_mode()
+        return
+    if args.stdio:
+        sys.stderr.write(
+            "agentao: --stdio requires --acp (no other transport mode uses stdio)\n"
+        )
+        sys.exit(2)
 
     if args.subcommand == "init":
         run_init_wizard()

@@ -8,6 +8,7 @@ dirty-flag detection by callers.
 from __future__ import annotations
 
 import logging
+import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -48,14 +49,27 @@ class MemoryManager:
         self._global_root = Path(global_root) if global_root else None
         self.guard = guard or MemoryGuard()
 
-        # Initialize SQLite stores
+        # Initialize SQLite stores. The catch intentionally covers both
+        # ``OSError`` (mkdir / permission failures) and ``sqlite3.Error``
+        # (e.g. ``sqlite3.OperationalError: unable to open database file``
+        # raised from within ``SQLiteMemoryStore.__init__`` when the target
+        # directory exists but is not writable — common in ACP subprocess
+        # launches and other restricted environments). Both branches degrade
+        # gracefully rather than crashing ``Agentao()`` construction.
         try:
             self._project_root.mkdir(parents=True, exist_ok=True)
             self.project_store = SQLiteMemoryStore(
                 str(self._project_root / "memory.db")
             )
-        except OSError:
+        except (OSError, sqlite3.Error) as exc:
             # Fallback: in-memory store when filesystem is not writable
+            logger.warning(
+                "Project memory store at %s unavailable (%s: %s); "
+                "falling back to transient in-memory store.",
+                self._project_root / "memory.db",
+                type(exc).__name__,
+                exc,
+            )
             self.project_store = SQLiteMemoryStore(":memory:")
 
         self.user_store: Optional[SQLiteMemoryStore] = None
@@ -65,8 +79,14 @@ class MemoryManager:
                 self.user_store = SQLiteMemoryStore(
                     str(self._global_root / "memory.db")
                 )
-            except OSError:
-                pass
+            except (OSError, sqlite3.Error) as exc:
+                logger.warning(
+                    "User memory store at %s unavailable (%s: %s); "
+                    "user-scope memory disabled for this session.",
+                    self._global_root / "memory.db",
+                    type(exc).__name__,
+                    exc,
+                )
 
         # Session tracking
         self._session_id: str = uuid.uuid4().hex[:12]

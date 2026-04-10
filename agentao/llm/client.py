@@ -3,6 +3,8 @@
 import json
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
@@ -128,18 +130,28 @@ class LLMClient:
         # Remove existing handlers to avoid duplicates on hot-reload
         pkg_logger.handlers.clear()
 
-        # File handler for detailed logs
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
-        file_handler.setLevel(logging.DEBUG)
+        # File handler for detailed logs.
+        #
+        # We resolve the log file to an absolute path before opening it. The
+        # primary caller (Agentao) already passes an absolute path anchored to
+        # its working directory, but LLMClient is also constructed directly by
+        # tests and may be reused as a public-ish API, so we anchor any
+        # remaining relative path to the current cwd here as defense in depth.
+        # If the chosen path is unwritable (e.g. ACP launches with cwd="/" on
+        # macOS, or a sandboxed/read-only project dir), fall back to the
+        # user-scoped ~/.agentao/agentao.log so the agent can still start.
+        file_handler = self._build_file_handler(log_file)
 
         # Concise format for file logs (no name/level noise in dedicated log file)
         file_formatter = logging.Formatter(
             "%(asctime)s %(message)s",
             datefmt="%H:%M:%S",
         )
-        file_handler.setFormatter(file_formatter)
 
-        pkg_logger.addHandler(file_handler)
+        if file_handler is not None:
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(file_formatter)
+            pkg_logger.addHandler(file_handler)
 
         # Request counter for tracking
         self.request_count = 0
@@ -154,6 +166,54 @@ class LLMClient:
         self._last_tools_hash: Optional[int] = None
 
         self.logger.info(f"LLMClient initialized with model: {self.model}")
+
+    @staticmethod
+    def _build_file_handler(log_file: str) -> Optional[logging.FileHandler]:
+        """Open a FileHandler for ``log_file`` with an absolute path + fallback.
+
+        Resolves a relative ``log_file`` to ``Path.cwd() / log_file`` so the
+        target never depends on the process cwd at any later moment, then
+        ``mkdir(parents=True, exist_ok=True)`` on its parent. If opening the
+        handler still fails (read-only filesystem, permission denied, etc.),
+        falls back to ``~/.agentao/agentao.log`` so headless launches like
+        ACP — where the parent client may have spawned us with cwd="/" — can
+        still start. Returns ``None`` only if even the home-dir fallback is
+        unwritable, in which case the caller continues without a file handler.
+        """
+        primary = Path(log_file)
+        if not primary.is_absolute():
+            primary = Path.cwd() / primary
+
+        try:
+            primary.parent.mkdir(parents=True, exist_ok=True)
+            return logging.FileHandler(primary, encoding="utf-8")
+        except OSError as primary_err:
+            fallback = Path.home() / ".agentao" / "agentao.log"
+            if fallback == primary:
+                # Already tried; nothing else to fall back to.
+                print(
+                    f"agentao: cannot open log file {primary}: {primary_err}; "
+                    "continuing without file logging.",
+                    file=sys.stderr,
+                )
+                return None
+            try:
+                fallback.parent.mkdir(parents=True, exist_ok=True)
+                handler = logging.FileHandler(fallback, encoding="utf-8")
+                print(
+                    f"agentao: log file {primary} is not writable "
+                    f"({primary_err}); using {fallback} instead.",
+                    file=sys.stderr,
+                )
+                return handler
+            except OSError as fallback_err:
+                print(
+                    f"agentao: cannot open log file {primary} ({primary_err}) "
+                    f"or fallback {fallback} ({fallback_err}); "
+                    "continuing without file logging.",
+                    file=sys.stderr,
+                )
+                return None
 
     def reconfigure(
         self,

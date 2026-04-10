@@ -8,14 +8,18 @@ from typing import Dict, List, Optional, Set
 
 import yaml
 
-# Two-layer skill directories (global then project; project takes priority)
+# Global skills directory (shared across all projects). Cwd-independent.
 _GLOBAL_SKILLS_DIR = Path.home() / ".agentao" / "skills"
-_PROJECT_SKILLS_DIR = Path.cwd() / ".agentao" / "skills"
 
 # Bundled skills shipped with the package (skill-creator lives here after install)
 _BUNDLED_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 
-# Config file for persisting disabled skills (project-scoped)
+# Default project-scoped paths, evaluated once at import time. These are the
+# fallbacks used by ``SkillManager()`` when no ``working_directory`` is
+# supplied (CLI behavior). They remain module-level so existing tests can
+# patch them via ``unittest.mock.patch.multiple(...)``. ACP sessions pass an
+# explicit ``working_directory`` and bypass these constants entirely.
+_PROJECT_SKILLS_DIR = Path.cwd() / ".agentao" / "skills"
 _CONFIG_DIR = Path.cwd() / ".agentao"
 _CONFIG_FILE = _CONFIG_DIR / "skills_config.json"
 
@@ -23,26 +27,65 @@ _CONFIG_FILE = _CONFIG_DIR / "skills_config.json"
 class SkillManager:
     """Manager for Agentao skills.
 
-    Scans two layers of skill directories:
-      1. ~/.agentao/skills/     — global skills (shared across projects)
-      2. cwd/.agentao/skills/   — project skills (override global on name clash)
+    Scans three layers of skill directories (highest priority last):
+      1. ~/.agentao/skills/                  — global skills
+      2. <working_directory>/.agentao/skills — project config skills
+      3. <working_directory>/skills          — repo-root skills
+
+    Project paths are resolved against an explicit ``working_directory`` so
+    that ACP sessions targeting different repositories see independent skill
+    sets and disabled-skill state. The CLI passes ``None`` and falls back to
+    ``Path.cwd()`` at construction time, preserving the legacy single-project
+    behavior.
 
     On first run, bundled skills (e.g. skill-creator) are copied to the global
     skills directory so they are available immediately after install.
     """
 
-    def __init__(self, skills_dir: Optional[str] = None):
+    def __init__(
+        self,
+        skills_dir: Optional[str] = None,
+        *,
+        working_directory: Optional[Path] = None,
+    ):
         """Initialize skill manager.
 
         Args:
             skills_dir: If provided, scan only this directory (legacy / sub-agent use).
                        Pass a non-existent path to suppress all skills.
                        If None (default), use the two-layer global + project scan.
+            working_directory: Project root used to resolve project-scoped
+                       skill directories and the disabled-skills config file.
+                       When ``None`` (CLI default), falls back to ``Path.cwd()``
+                       *at construction time* — same semantic as the previous
+                       module-level constants. ACP sessions pass their frozen
+                       per-session ``cwd`` so two sessions in different repos
+                       cannot leak skills or disabled-skill state into each
+                       other.
         """
         self.active_skills: Dict[str, dict] = {}
         self.available_skills: Dict[str, dict] = {}
         self.disabled_skills: Set[str] = set()
         self._explicit_dir = Path(skills_dir) if skills_dir is not None else None
+
+        # Resolve project-scoped paths once at construction time:
+        #   - When ``working_directory`` is provided (ACP session path),
+        #     scope every project path to it. Two ACP sessions in different
+        #     repos see independent skills + disabled-skill state.
+        #   - When ``working_directory`` is None (CLI default), fall back to
+        #     the module-level constants. Tests patch those constants via
+        #     ``unittest.mock.patch.multiple(_mod, _PROJECT_SKILLS_DIR=...)``,
+        #     so this fallback path preserves their existing setup pattern.
+        if working_directory is not None:
+            self._project_skills_dir = working_directory / ".agentao" / "skills"
+            self._repo_skills_dir = working_directory / "skills"
+            self._config_dir = working_directory / ".agentao"
+            self._config_file = self._config_dir / "skills_config.json"
+        else:
+            self._project_skills_dir = _PROJECT_SKILLS_DIR
+            self._repo_skills_dir = Path.cwd() / "skills"
+            self._config_dir = _CONFIG_DIR
+            self._config_file = _CONFIG_FILE
 
         if self._explicit_dir is None:
             self._bootstrap_bundled_skills()
@@ -78,9 +121,9 @@ class SkillManager:
 
     def _load_config(self):
         """Load disabled skills list from config file."""
-        if _CONFIG_FILE.exists():
+        if self._config_file.exists():
             try:
-                with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
+                with open(self._config_file, "r", encoding="utf-8") as f:
                     config = json.load(f)
                 self.disabled_skills = set(config.get("disabled_skills", []))
             except (IOError, json.JSONDecodeError):
@@ -88,9 +131,9 @@ class SkillManager:
 
     def _save_config(self):
         """Save disabled skills list to config file."""
-        _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        self._config_dir.mkdir(parents=True, exist_ok=True)
         config = {"disabled_skills": sorted(self.disabled_skills)}
-        with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
+        with open(self._config_file, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
 
     def disable_skill(self, skill_name: str) -> str:
@@ -145,19 +188,21 @@ class SkillManager:
         """Load skills from all configured directories.
 
         Priority order (highest last — later entries overwrite earlier ones):
-          1. ~/.agentao/skills/      global skills
-          2. cwd/.agentao/skills/    project config skills
-          3. cwd/skills/             repo-root skills (highest priority)
+          1. ~/.agentao/skills/                   global skills
+          2. <project_root>/.agentao/skills/      project config skills
+          3. <project_root>/skills/               repo-root skills (highest priority)
+
+        ``<project_root>`` is the per-instance ``working_directory`` argument
+        captured at construction time, defaulting to ``Path.cwd()`` for the CLI.
         """
         if self._explicit_dir is not None:
             # Legacy / sub-agent mode: single directory only
             self._load_skills_from_dir(self._explicit_dir)
         else:
             self._load_skills_from_dir(_GLOBAL_SKILLS_DIR)
-            self._load_skills_from_dir(_PROJECT_SKILLS_DIR)
-            repo_skills = Path.cwd() / "skills"
-            if repo_skills.exists():
-                self._load_skills_from_dir(repo_skills)
+            self._load_skills_from_dir(self._project_skills_dir)
+            if self._repo_skills_dir.exists():
+                self._load_skills_from_dir(self._repo_skills_dir)
 
     def _load_skills_from_dir(self, skills_dir: Path) -> None:
         """Scan one directory for skills and merge into available_skills."""

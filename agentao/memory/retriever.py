@@ -3,8 +3,12 @@
 import logging
 import re
 import traceback
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional, Set, TYPE_CHECKING
+from pathlib import Path
+from typing import Dict, List, Optional, Set, TYPE_CHECKING
+
+import jieba
 
 from .models import MemoryRecord, RecallCandidate
 
@@ -12,6 +16,33 @@ if TYPE_CHECKING:
     from .manager import MemoryManager
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# jieba lazy initialization
+# ---------------------------------------------------------------------------
+
+_JIEBA_INITIALIZED = False
+_USERDICT_PATH = Path.home() / ".agentao" / "userdict.txt"
+
+
+def _ensure_jieba_ready() -> None:
+    """Lazy-init jieba: load user dict on first call, idempotent.
+
+    jieba.initialize() forces dict load up-front (~1s) instead of paying the
+    cost on first cut. The optional ``~/.agentao/userdict.txt`` file lets users
+    add project names, technical terms, and proper nouns that the default
+    dictionary doesn't know.
+    """
+    global _JIEBA_INITIALIZED
+    if _JIEBA_INITIALIZED:
+        return
+    jieba.initialize()
+    if _USERDICT_PATH.exists():
+        try:
+            jieba.load_userdict(str(_USERDICT_PATH))
+        except Exception as exc:
+            logger.warning("Failed to load jieba userdict at %s: %s", _USERDICT_PATH, exc)
+    _JIEBA_INITIALIZED = True
 
 # ---------------------------------------------------------------------------
 # Text processing constants
@@ -70,18 +101,25 @@ def _normalize_token(token: str) -> str:
     return token
 
 
-def _cjk_bigrams(text: str) -> set:
-    """Extract overlapping bigrams from consecutive CJK characters in *text*.
+def _cjk_segment(text: str) -> set:
+    """Segment CJK substrings with jieba; return set of multi-char CJK words.
 
-    A single isolated CJK character (no neighbor) is added as-is so that
-    single-character queries still match.
+    Runs jieba only on CJK character runs (skipping Latin/ASCII regions which
+    are handled by the Latin path). A word is kept if its first character is
+    CJK AND its length >= 2 -- single CJK characters are intentionally dropped
+    (mirrors the Latin path's len > 1 filter, since single Chinese chars are
+    too ambiguous to carry useful retrieval signal and would flood the inverted
+    index with high-frequency function words like "的"/"了").
     """
-    chars = [c for c in text if _CJK_RE.match(c)]
+    _ensure_jieba_ready()
     result: set = set()
-    if len(chars) == 1:
-        result.add(chars[0])
-    for i in range(len(chars) - 1):
-        result.add(chars[i] + chars[i + 1])
+    for match in re.finditer(
+        r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]+',
+        text,
+    ):
+        for word in jieba.lcut(match.group(), cut_all=False):
+            if len(word) >= 2 and _CJK_RE.match(word):
+                result.add(word)
     return result
 
 
@@ -104,6 +142,20 @@ def _days_since(iso_str: str) -> float:
         return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 86400)
     except Exception:
         return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Inverted-index data structures
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _RecordTokenBundle:
+    """Pre-tokenized fields for a single memory record, cached in the index."""
+    title_tokens: Set[str] = field(default_factory=set)
+    content_tokens: Set[str] = field(default_factory=set)
+    kw_tokens: Set[str] = field(default_factory=set)
+    tags: Set[str] = field(default_factory=set)
+    all_tokens: Set[str] = field(default_factory=set)  # union, for inverted index
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +185,56 @@ class MemoryRetriever:
         self._error_count: int = 0    # total recall errors this session
         self._last_error: str = ""    # one-line summary of the most recent error
 
+        # Inverted-index state — invalidated when manager.write_version advances.
+        self._index_version: int = -1
+        self._inverted: Dict[str, Set[str]] = {}              # token -> set of record IDs
+        self._bundles_by_id: Dict[str, _RecordTokenBundle] = {}
+        self._records_by_id: Dict[str, MemoryRecord] = {}
+
+    # ------------------------------------------------------------------
+    # Index management
+    # ------------------------------------------------------------------
+
+    def _build_bundle(self, record: MemoryRecord) -> _RecordTokenBundle:
+        """Compute all token sets for a record (mirrors score()'s tokenization)."""
+        title_tokens = self.tokenize(record.title)
+        content_tokens = self.tokenize(record.content[:_CONTENT_SNIPPET_LEN])
+        kw_tokens: Set[str] = {k.lower() for k in record.keywords}
+        for k in record.keywords:
+            kw_tokens.update(self.tokenize(k))
+        tags = {t.lower() for t in record.tags}
+        all_tokens = title_tokens | content_tokens | kw_tokens | tags
+        return _RecordTokenBundle(
+            title_tokens=title_tokens,
+            content_tokens=content_tokens,
+            kw_tokens=kw_tokens,
+            tags=tags,
+            all_tokens=all_tokens,
+        )
+
+    def _rebuild_index_if_stale(self) -> None:
+        """Rebuild inverted index whenever ``manager.write_version`` advances.
+
+        Cheap O(1) version check on hot path; full rebuild only when memories
+        have been added/updated/deleted since the last build.
+        """
+        current = self._manager.write_version
+        if current == self._index_version and self._records_by_id:
+            return
+        records = self._manager.get_all_entries()
+        self._inverted.clear()
+        self._bundles_by_id.clear()
+        self._records_by_id.clear()
+        for r in records:
+            bundle = self._build_bundle(r)
+            self._bundles_by_id[r.id] = bundle
+            self._records_by_id[r.id] = r
+            for tok in bundle.all_tokens:
+                self._inverted.setdefault(tok, set()).add(r.id)
+        self._index_version = current
+
     def tokenize(self, text: str) -> set:
-        """Tokenize *text* with CJK bigram support and light normalization.
+        """Tokenize *text* with jieba CJK segmentation and light normalization.
 
         Latin/ASCII path
         ~~~~~~~~~~~~~~~~
@@ -145,11 +245,12 @@ class MemoryRetriever:
 
         CJK path
         ~~~~~~~~
-        Extract overlapping bigrams from consecutive CJK characters (Chinese,
-        Japanese kana, Korean Hangul).  A solitary CJK character with no
-        neighbor is kept as a unigram so single-character queries work.
+        Run jieba word segmentation on each run of consecutive CJK characters.
+        Single-character CJK words are filtered out (same len > 1 rule as the
+        Latin path) to avoid flooding the index with high-frequency function
+        words.  Custom domain terms can be added via ``~/.agentao/userdict.txt``.
 
-        The two paths are unioned; a mixed string like ``"Python版本"`` yields
+        The two paths are unioned; a mixed string like ``"Python版本管理"`` yields
         tokens from both paths.
         """
         tokens: set = set()
@@ -168,8 +269,8 @@ class MemoryRetriever:
             if norm != raw:
                 tokens.add(norm)
 
-        # --- CJK bigram path (runs on original text to preserve char sequence) ---
-        tokens.update(_cjk_bigrams(text))
+        # --- CJK path (jieba segmentation on CJK runs in the original text) ---
+        tokens.update(_cjk_segment(text))
 
         return tokens
 
@@ -178,8 +279,14 @@ class MemoryRetriever:
         record: MemoryRecord,
         query_tokens: set,
         hint_tokens: set,
+        bundle: Optional[_RecordTokenBundle] = None,
     ) -> tuple:
         """Return ``(total_score, reasons, semantic_signal)`` for a record.
+
+        When ``bundle`` is provided (the fast path used by ``recall_candidates``)
+        the per-record token sets are reused from the inverted-index cache;
+        otherwise they are computed on the fly. Direct callers (tests) can omit
+        ``bundle`` and rely on lazy tokenization.
 
         Factors
         -------
@@ -196,18 +303,12 @@ class MemoryRetriever:
         ``semantic_signal`` = sum of the five path hits (used as gating filter;
         a record with signal == 0 is excluded from results entirely).
         """
-        tags = {t.lower() for t in record.tags}
-        title_tokens = self.tokenize(record.title)
-        content_tokens = self.tokenize(record.content[:_CONTENT_SNIPPET_LEN])
-
-        # Tokenize keywords once and reuse for both kw_match and fp_match.
-        # Raw keyword strings stay in the set so an exact stored keyword
-        # (e.g. ``"fastapi"``) still matches a query token of the same form,
-        # while sub-tokens of compound keywords (``"agent.py"`` →
-        # ``{"agent", "py"}``) also become matchable.
-        kw_tokens: set = {k.lower() for k in record.keywords}
-        for k in record.keywords:
-            kw_tokens.update(self.tokenize(k))
+        if bundle is None:
+            bundle = self._build_bundle(record)
+        tags = bundle.tags
+        title_tokens = bundle.title_tokens
+        content_tokens = bundle.content_tokens
+        kw_tokens = bundle.kw_tokens
 
         q_len = len(query_tokens)
         tag_w = 4.0 if q_len >= 3 else (2.5 if q_len == 2 else 1.5)
@@ -244,30 +345,48 @@ class MemoryRetriever:
         top_k: int = 5,
         exclude_ids: Optional[Set[str]] = None,
     ) -> List[RecallCandidate]:
-        """Score all memory records against query + hints; return top-k candidates.
+        """Score memory records against query + hints; return top-k candidates.
 
         Steps:
         1. Tokenize query and context_hints
-        2. Load all memory records (skip IDs in exclude_ids — already in stable block)
-        3. Score every record; keep those with semantic > 0
-        4. Sort descending; take top_k
+        2. Rebuild inverted index if memory store has changed since last call
+        3. Look up candidate record IDs via the inverted index (token union)
+        4. Score only the candidate subset; keep those with semantic > 0
+        5. Sort descending; take top_k
         """
         if not query.strip():
             return []
         try:
             query_tokens = self.tokenize(query)
             hint_tokens = self.tokenize(" ".join(context_hints or []))
+            if not query_tokens and not hint_tokens:
+                return []
 
-            records = self._manager.get_all_entries()
-            if not records:
+            self._rebuild_index_if_stale()
+            if not self._records_by_id:
+                return []
+
+            # Candidate set = union of records hit by any query/hint token.
+            candidate_ids: Set[str] = set()
+            for tok in query_tokens | hint_tokens:
+                ids = self._inverted.get(tok)
+                if ids:
+                    candidate_ids |= ids
+            if not candidate_ids:
                 return []
 
             _excluded = exclude_ids or set()
             scored = []
-            for record in records:
-                if record.id in _excluded:
+            for rid in candidate_ids:
+                if rid in _excluded:
                     continue
-                s, reasons, semantic = self.score(record, query_tokens, hint_tokens)
+                record = self._records_by_id.get(rid)
+                if record is None:
+                    continue
+                bundle = self._bundles_by_id.get(rid)
+                s, reasons, semantic = self.score(
+                    record, query_tokens, hint_tokens, bundle=bundle
+                )
                 if semantic > 0:
                     scored.append((s, reasons, record))
             if not scored:

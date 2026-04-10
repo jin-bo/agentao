@@ -86,6 +86,9 @@ class Agentao:
         on_max_iterations_callback: Optional[Callable[[int, list], dict]] = None,
         transport=None,                   # Transport protocol instance (preferred)
         plan_session: Optional[PlanSession] = None,
+        *,
+        working_directory: Optional[Path] = None,
+        extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         """Initialize Agentao agent.
 
@@ -99,18 +102,74 @@ class Agentao:
                        is used (silent / headless mode).
             max_context_tokens: Maximum context window tokens (default 200K).
             permission_engine: Optional PermissionEngine for rule-based tool access.
+            working_directory: Per-runtime working directory (Issue 05). When
+                ``None`` (the default, CLI behavior), the runtime lazily reads
+                ``Path.cwd()`` at every access so a user ``cd`` in the process
+                remains visible. When set to a concrete ``Path``, the runtime
+                is frozen to that directory: memory/permissions/MCP config/
+                AGENTAO.md/system-prompt rendering/file tools/shell tool all
+                resolve against it, isolating multiple ACP sessions that run
+                in the same process.
+            extra_mcp_servers: Optional in-memory MCP server configs to merge
+                **on top of** the file-loaded ``.agentao/mcp.json``. Used by
+                ACP ``session/new`` (Issue 11) to inject session-scoped
+                servers without writing to the project's config files.
+                Already in Agentao's internal dict shape — translation from
+                ACP wire format lives in
+                :func:`agentao.acp.mcp_translate.translate_acp_mcp_servers`.
+                Per-name override semantics: an entry here replaces a
+                file-loaded entry with the same name. ``None`` means "no
+                extras", which is the CLI default and produces the legacy
+                file-only behavior.
 
         Deprecated args (still accepted for backward compatibility):
             confirmation_callback, step_callback, thinking_callback, ask_user_callback,
             output_callback, tool_complete_callback, llm_text_callback,
             on_max_iterations_callback.
         """
-        self.llm = LLMClient(api_key=api_key, base_url=base_url, model=model, temperature=temperature)
-        self.skill_manager = SkillManager()
+        # Freeze working directory to an absolute path if one was supplied.
+        # Resolve once so subsequent accesses are cheap and consistent.
+        self._explicit_working_directory: Optional[Path] = (
+            Path(working_directory).expanduser().resolve()
+            if working_directory is not None
+            else None
+        )
+
+        # Snapshot of session-scoped MCP server configs (Issue 11). Stored
+        # privately so a caller can't mutate it after construction. ``None``
+        # means "no extras", preserving the legacy CLI behavior of
+        # file-only MCP loading. We deep-copy at the dict level so a
+        # subsequent mutation by the caller cannot leak into _init_mcp.
+        self._extra_mcp_servers: Dict[str, Dict[str, Any]] = (
+            {name: dict(cfg) for name, cfg in extra_mcp_servers.items()}
+            if extra_mcp_servers
+            else {}
+        )
+
+        # Anchor the LLM debug log to the agent's effective working directory
+        # so it always resolves to an absolute, writable path. CLI runs land it
+        # at <project>/agentao.log (unchanged behavior, since working_directory
+        # falls back to Path.cwd()); ACP sessions land it under the frozen,
+        # client-supplied project cwd instead of the subprocess's cwd — which
+        # for ACP launches is often "/" and read-only.
+        self.llm = LLMClient(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            temperature=temperature,
+            log_file=str(self.working_directory / "agentao.log"),
+        )
+        # Pass the explicit working_directory through (or None for the CLI
+        # default — SkillManager will fall back to Path.cwd() at construction
+        # time, matching the legacy behavior). ACP sessions targeting different
+        # repos must see independent project skills + disabled-skill state.
+        self.skill_manager = SkillManager(
+            working_directory=self._explicit_working_directory,
+        )
         from .memory import MemoryManager, MemoryRetriever
         from .memory.render import MemoryPromptRenderer
         self._memory_manager = MemoryManager(
-            project_root=Path.cwd() / ".agentao",
+            project_root=self.working_directory / ".agentao",
             global_root=Path.home() / ".agentao",
         )
         self.memory_tool = SaveMemoryTool(memory_manager=self._memory_manager)
@@ -211,6 +270,23 @@ class Agentao:
         )
 
     @property
+    def working_directory(self) -> Path:
+        """Effective working directory for this runtime (Issue 05).
+
+        - When the agent was constructed without ``working_directory``
+          (the default, CLI behavior), returns the *current* process cwd
+          lazily at each access. This preserves the legacy semantics where
+          a ``cd`` in the surrounding shell is immediately visible.
+        - When ``working_directory`` was supplied (ACP session path),
+          returns the frozen, resolved ``Path`` captured at construction.
+          Two Agentao instances created with different ``working_directory``
+          values will report independent paths even in the same process.
+        """
+        if self._explicit_working_directory is not None:
+            return self._explicit_working_directory
+        return Path.cwd()
+
+    @property
     def memory_manager(self):
         return self._memory_manager
 
@@ -229,8 +305,8 @@ class Agentao:
             Project instructions content or None if file doesn't exist
         """
         try:
-            # Look for AGENTAO.md in current directory
-            agentao_md = Path.cwd() / "AGENTAO.md"
+            # Look for AGENTAO.md in the runtime's working directory (Issue 05).
+            agentao_md = self.working_directory / "AGENTAO.md"
             if agentao_md.exists():
                 content = agentao_md.read_text(encoding='utf-8')
                 self.llm.logger.info(f"Loaded project instructions from {agentao_md}")
@@ -260,16 +336,54 @@ class Agentao:
             CancelBackgroundAgentTool(),
         ]
 
+        # Bind per-session working directory onto each tool (Issue 05).
+        # When the agent was constructed without ``working_directory`` (CLI
+        # default), ``self._explicit_working_directory`` is ``None`` and the
+        # tools' ``_resolve_path`` helpers fall through to legacy process-cwd
+        # behavior, so this loop is a no-op for CLI runs.
+        wd = self._explicit_working_directory
         for tool in tools_to_register:
+            tool.working_directory = wd
             self.tools.register(tool)
 
     def _init_mcp(self) -> Optional[McpClientManager]:
-        """Load MCP config, connect servers, and register discovered tools."""
+        """Load MCP config, connect servers, and register discovered tools.
+
+        Sources merged (later overrides earlier):
+
+          1. ``~/.agentao/mcp.json``  (global, file)
+          2. ``<cwd>/.agentao/mcp.json``  (project, file)
+          3. ``self._extra_mcp_servers``  (Issue 11: ACP session-scoped)
+
+        Steps 1+2 are loaded by :func:`load_mcp_config`. Step 3 is the
+        in-memory dict captured at construction time. Names collide on
+        a "last writer wins" basis so an ACP client can override a
+        project's mcp.json without touching disk.
+
+        All errors are logged and downgraded to a no-op return so a
+        single broken MCP server cannot crash session creation. Tools
+        from servers that connected successfully are still registered.
+        """
         try:
-            configs = load_mcp_config()
+            configs = load_mcp_config(project_root=self.working_directory)
         except Exception as e:
             self.llm.logger.warning(f"Failed to load MCP config: {e}")
-            return None
+            configs = {}
+
+        # Merge ACP-injected configs on top of file-loaded ones (Issue 11).
+        # We treat ``configs`` as a fresh dict and ``self._extra_mcp_servers``
+        # as overrides — same per-name semantics as ``load_mcp_config``'s
+        # global-then-project merge.
+        if self._extra_mcp_servers:
+            merged = dict(configs)
+            for name, override in self._extra_mcp_servers.items():
+                if name in merged:
+                    self.llm.logger.info(
+                        "MCP: ACP session config overrides file-loaded server %r",
+                        name,
+                    )
+                merged[name] = override
+            configs = merged
 
         if not configs:
             return None
@@ -467,13 +581,13 @@ class Agentao:
         if self._plan_mode:
             agent_instructions = f"""You are Agentao, a helpful AI assistant with access to various tools and skills.
 
-Current Working Directory: {Path.cwd()}
+Current Working Directory: {self.working_directory}
 
 In plan mode, use tools only to research, inspect, and verify facts needed for the proposal. Do not use tools to execute changes or simulate implementation. If you need clarification, ask the user."""
         else:
             agent_instructions = f"""You are Agentao, a helpful AI assistant with access to various tools and skills.
 
-Current Working Directory: {Path.cwd()}
+Current Working Directory: {self.working_directory}
 
 Use tools proactively only when they materially improve correctness or are needed to verify ground truth. Do not use tools for casual greetings, small talk, or obvious questions. If you need clarification, ask the user."""
 

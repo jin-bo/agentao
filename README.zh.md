@@ -103,6 +103,8 @@ Agentao 自动管理长对话，以保持在 LLM 上下文限制内：
 
 2. **`<memory-context>`** — 基于关键词 / Jaccard / 标签 / 时效性公式对当前用户消息动态评分，将得分最高的 k 条召回结果注入，保持稳定前缀对 provider prompt cache 友好。
 
+**召回性能与中文分词质量：** 召回器维护一个由 `write_version` 失效控制的倒排索引（token → 记录 ID 集），每次召回仅对与查询有 token 交集的记录打分，记忆库增长后避免全表扫描。中文文本改用 [`jieba`](https://github.com/fxsjy/jieba) 词级分词替代字符 bigram —— `"版本管理"` 现在分词为 `{"版本", "管理"}` 而非 `{"版本", "本管", "管理"}`，消除了污染排序的噪声 bigram。单字 CJK token 被过滤（与 Latin 路径的 `len > 1` 规则一致）。如需添加项目名、技术术语、专有名词等领域词汇，将其加入 `~/.agentao/userdict.txt`，jieba 将在首次召回时加载。
+
 > **会话摘要的两条通道：** *当前会话*的摘要仅存在于 `self.messages` 的 `[Conversation Summary]` 块中（再注入系统提示词会造成重复）。*历史会话*的摘要在重启后无法进入消息历史，因此改走 `<memory-stable>` 通道。
 
 **保存记忆：**
@@ -542,6 +544,24 @@ response = agent.chat("总结当前目录")
 `SdkTransport` 接受四个可选回调：`on_event`、`confirm_tool`、`ask_user`、`on_max_iterations`。未设置的回调使用安全默认值（自动允许、ask_user 返回提示信息、超出最大迭代次数时停止）。
 
 如需完全静默的无头模式，直接 `Agentao()` 即可——自动使用 `NullTransport`。
+
+### ACP（Agent Client Protocol）模式
+
+将 Agentao 作为 [ACP](https://github.com/zed-industries/agent-client-protocol) stdio JSON-RPC 服务器启动，让兼容 ACP 的客户端（如 Zed）将 Agentao 作为其智能体运行时驱动：
+
+```bash
+agentao --acp --stdio
+# 或者，在控制台脚本不在 PATH 时：
+python -m agentao --acp --stdio
+```
+
+服务器从 stdin 读取以换行分隔的 JSON-RPC 2.0 消息，将响应和 `session/update` 通知写入 stdout，将日志（以及任何遗留的 `print`）输出到 stderr。按 Ctrl-D 或关闭 stdin 即可干净退出。
+
+**已支持的方法：** `initialize`、`session/new`、`session/prompt`、`session/cancel`、`session/load`。工具确认通过 server→client 的 `session/request_permission` 请求暴露给客户端，提供 `allow_once` / `allow_always` / `reject_once` / `reject_always` 四个选项。支持每个 session 注入独立的 `cwd` 与 `mcpServers`；多 session 的取消、权限、消息流均做了隔离。
+
+**v1 限制：** 仅支持 stdio 传输；仅接受 `text` 与 `resource_link` 两种 content 块（image / audio / embedded resource 会被 `INVALID_PARAMS` 拒绝）；MCP 服务器仅限 stdio 与 sse（http capability 为 `false`）；ACP 层的 `fs/*` 与 `terminal/*` host 能力**不**做代理 —— 文件操作和 shell 命令始终在 session 自己的 `cwd` 下本地执行。
+
+完整启动流程、方法对照表、capability 协商、带注释的 NDJSON 抓包、事件映射参考、故障排查与贡献者笔记参见 **[docs/ACP.md](docs/ACP.md)**。
 
 ### 命令列表
 

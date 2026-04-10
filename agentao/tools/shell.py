@@ -182,9 +182,12 @@ class ShellTool(Tool):
         is_background: bool = False,
     ) -> str:
         """Execute shell command."""
-        # Resolve and validate working directory
+        # Resolve and validate working directory. ``_resolve_directory``
+        # routes relative paths through the tool's session cwd (Issue 05)
+        # when one is bound, else falls back to legacy ``.resolve()`` which
+        # uses the process cwd.
         try:
-            cwd = Path(working_directory).expanduser().resolve()
+            cwd = self._resolve_directory(working_directory)
             if not cwd.is_dir():
                 return (
                     f"Error: working_directory '{working_directory}' does not exist "

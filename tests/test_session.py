@@ -24,8 +24,14 @@ _SKILLS = ["my-skill"]
 
 @pytest.fixture(autouse=True)
 def isolated_session_dir(tmp_path, monkeypatch):
-    """Redirect _session_dir() to a temp directory for every test."""
-    monkeypatch.setattr(session_module, "_session_dir", lambda: tmp_path / "sessions")
+    """Redirect _session_dir() to a temp directory for every test.
+
+    Issue 05 added an optional ``project_root`` parameter to ``_session_dir``;
+    the mock accepts but ignores it so the tests keep working unchanged.
+    """
+    monkeypatch.setattr(
+        session_module, "_session_dir", lambda project_root=None: tmp_path / "sessions"
+    )
 
 
 def test_save_and_load_roundtrip():

@@ -1,5 +1,6 @@
 """Tests for MemoryManager: SQLite-backed CRUD, session summaries."""
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -380,3 +381,73 @@ def test_stable_entries_structural_not_capped_by_recent_limit(tmp_path):
 def test_stable_entries_empty_when_no_entries(tmp_path):
     mgr = _make_manager(tmp_path)
     assert mgr.get_stable_entries() == []
+
+
+# ---------------------------------------------------------------------------
+# Init-time store failure: sqlite3.Error must be caught alongside OSError
+# (regression — otherwise Agentao() crashes in restricted/ACP environments
+# where the parent directory exists but the DB file cannot be opened.)
+# ---------------------------------------------------------------------------
+
+def test_project_store_sqlite_error_falls_back_to_memory(tmp_path, monkeypatch, caplog):
+    """A sqlite3.OperationalError from the project store must fall back to :memory:."""
+    from agentao.memory import manager as mgr_mod
+
+    real_init = mgr_mod.SQLiteMemoryStore.__init__
+    call_paths: list[str] = []
+
+    def fake_init(self, db_path):
+        call_paths.append(db_path)
+        # First call targets the on-disk project path — simulate a restricted env.
+        if db_path != ":memory:":
+            raise sqlite3.OperationalError("unable to open database file")
+        real_init(self, db_path)
+
+    monkeypatch.setattr(mgr_mod.SQLiteMemoryStore, "__init__", fake_init)
+
+    with caplog.at_level("WARNING", logger="agentao.memory.manager"):
+        mgr = MemoryManager(project_root=tmp_path / ".agentao", global_root=None)
+
+    # Construction succeeded with the in-memory fallback in place.
+    assert mgr.project_store is not None
+    assert ":memory:" in call_paths
+    assert any("falling back to transient in-memory store" in rec.message for rec in caplog.records)
+
+    # And the manager is functional — writes round-trip through the fallback.
+    result = mgr.save_from_tool("fallback_key", "fallback_value", [])
+    assert "memory" in result.lower()
+    entries = mgr.get_all_entries(scope="project")
+    assert any(e.title == "fallback_key" for e in entries)
+
+
+def test_user_store_sqlite_error_leaves_user_store_none(tmp_path, monkeypatch, caplog):
+    """A sqlite3.OperationalError from the user store must disable user scope only."""
+    from agentao.memory import manager as mgr_mod
+
+    proj_root = tmp_path / "proj"
+    user_root = tmp_path / "user"
+    user_db = str(user_root / "memory.db")
+
+    real_init = mgr_mod.SQLiteMemoryStore.__init__
+
+    def fake_init(self, db_path):
+        if db_path == user_db:
+            raise sqlite3.OperationalError("unable to open database file")
+        real_init(self, db_path)
+
+    monkeypatch.setattr(mgr_mod.SQLiteMemoryStore, "__init__", fake_init)
+
+    with caplog.at_level("WARNING", logger="agentao.memory.manager"):
+        mgr = MemoryManager(project_root=proj_root, global_root=user_root)
+
+    # Project store is real; user store is disabled.
+    assert mgr.project_store is not None
+    assert mgr.user_store is None
+    assert any("user-scope memory disabled" in rec.message for rec in caplog.records)
+
+    # A user-scoped save is downgraded to project scope (manager.py:100).
+    mgr.save_from_tool("downgraded_pref", "value", ["user", "preference"])
+    project_entries = mgr.get_all_entries(scope="project")
+    assert any(e.title == "downgraded_pref" for e in project_entries)
+    # Nothing leaked into the (nonexistent) user scope.
+    assert mgr.get_all_entries(scope="user") == []
