@@ -316,3 +316,130 @@ def test_get_rules_display_custom_rule_shown(tmp_path, monkeypatch):
     display = e.get_rules_display()
     assert "web_fetch" in display
     assert "ALLOW" in display
+
+
+# ---------------------------------------------------------------------------
+# Domain-based web_fetch permission rules
+# ---------------------------------------------------------------------------
+
+def test_domain_allowlist_suffix_match(tmp_path, monkeypatch):
+    """URLs matching allowlist domains are auto-allowed."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "https://api.github.com/repos/foo"}) == PermissionDecision.ALLOW
+
+
+def test_domain_allowlist_exact_root_match(tmp_path, monkeypatch):
+    """'.github.com' also matches 'github.com' itself (no subdomain)."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "https://github.com/foo/bar"}) == PermissionDecision.ALLOW
+
+
+def test_domain_allowlist_exact_entry(tmp_path, monkeypatch):
+    """Exact domain entry (no leading dot) matches only that exact host."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "https://r.jina.ai/https://example.com"}) == PermissionDecision.ALLOW
+
+
+def test_domain_allowlist_no_false_suffix(tmp_path, monkeypatch):
+    """'.github.com' should NOT match 'notgithub.com'."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "https://notgithub.com/foo"}) == PermissionDecision.ASK
+
+
+def test_domain_blocklist_localhost(tmp_path, monkeypatch):
+    """Localhost is auto-denied."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "http://localhost:8080/api"}) == PermissionDecision.DENY
+
+
+def test_domain_blocklist_loopback_ip(tmp_path, monkeypatch):
+    """127.0.0.1 is auto-denied."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "http://127.0.0.1/secret"}) == PermissionDecision.DENY
+
+
+def test_domain_blocklist_metadata_endpoint(tmp_path, monkeypatch):
+    """Cloud metadata IP is auto-denied (SSRF protection)."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "http://169.254.169.254/latest/meta-data"}) == PermissionDecision.DENY
+
+
+def test_domain_blocklist_internal_suffix(tmp_path, monkeypatch):
+    """Domains ending in .internal are auto-denied."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "https://api.corp.internal/data"}) == PermissionDecision.DENY
+
+
+def test_domain_blocklist_zero_ip(tmp_path, monkeypatch):
+    """0.0.0.0 is auto-denied."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "http://0.0.0.0:5000/"}) == PermissionDecision.DENY
+
+
+def test_domain_fallthrough_to_ask(tmp_path, monkeypatch):
+    """URLs not in allowlist or blocklist get ASK."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "https://example.com/page"}) == PermissionDecision.ASK
+
+
+def test_domain_case_insensitive(tmp_path, monkeypatch):
+    """Domain matching is case-insensitive."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "HTTPS://GITHUB.COM/foo"}) == PermissionDecision.ALLOW
+
+
+def test_domain_missing_scheme(tmp_path, monkeypatch):
+    """URL without scheme is handled gracefully."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "docs.python.org/3/library/os.html"}) == PermissionDecision.ALLOW
+
+
+def test_domain_port_stripping(tmp_path, monkeypatch):
+    """Port numbers don't interfere with domain matching."""
+    e = _engine(tmp_path, monkeypatch)
+    assert e.decide("web_fetch", {"url": "http://localhost:3000/health"}) == PermissionDecision.DENY
+
+
+def test_domain_ip_exact_match_no_suffix(tmp_path, monkeypatch):
+    """IP '127.0.0.1' does not match via suffix (e.g. '1.127.0.0.1' should not match)."""
+    e = _engine(tmp_path, monkeypatch)
+    # This domain is not in any list, so should fall through to ask
+    assert e.decide("web_fetch", {"url": "http://1.127.0.0.1/"}) == PermissionDecision.ASK
+
+
+def test_domain_userinfo_bypass_attempt(tmp_path, monkeypatch):
+    """URL with userinfo (evil.com@github.com) resolves to the actual host."""
+    e = _engine(tmp_path, monkeypatch)
+    # urlparse treats github.com as the hostname here
+    assert e.decide("web_fetch", {"url": "http://evil.com@github.com/path"}) == PermissionDecision.ALLOW
+
+
+def test_domain_custom_allowlist_overrides_preset_blocklist(tmp_path, monkeypatch):
+    """Project-level custom domain allowlist can override preset blocklist."""
+    rules = [{"tool": "web_fetch", "domain": {"allowlist": ["localhost"]}, "action": "allow"}]
+    e = _engine(tmp_path, monkeypatch, project_rules=rules)
+    # Custom rule evaluated first in workspace-write mode
+    assert e.decide("web_fetch", {"url": "http://localhost:8080/"}) == PermissionDecision.ALLOW
+
+
+def test_domain_plan_mode_allowlist(tmp_path, monkeypatch):
+    """Plan mode also has domain allowlist for web_fetch."""
+    e = _engine(tmp_path, monkeypatch)
+    e.set_mode(PermissionMode.PLAN)
+    assert e.decide("web_fetch", {"url": "https://docs.python.org/3/"}) == PermissionDecision.ALLOW
+
+
+def test_domain_plan_mode_blocklist(tmp_path, monkeypatch):
+    """Plan mode also has domain blocklist for web_fetch."""
+    e = _engine(tmp_path, monkeypatch)
+    e.set_mode(PermissionMode.PLAN)
+    assert e.decide("web_fetch", {"url": "http://127.0.0.1/admin"}) == PermissionDecision.DENY
+
+
+def test_domain_display_shows_allowlist(tmp_path, monkeypatch):
+    """get_rules_display shows domain allowlist entries."""
+    rules = [{"tool": "web_fetch", "domain": {"allowlist": [".example.com"]}, "action": "allow"}]
+    e = _engine(tmp_path, monkeypatch, project_rules=rules)
+    display = e.get_rules_display()
+    assert "domain allowlist" in display
+    assert ".example.com" in display

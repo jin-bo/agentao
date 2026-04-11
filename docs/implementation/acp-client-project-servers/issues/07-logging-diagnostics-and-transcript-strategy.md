@@ -20,7 +20,10 @@ Issue index: [ACP Client Project-Local Servers Issues](README.md)
 
 - `agentao/acp_client/process.py`
 - `agentao/acp_client/manager.py`
-- `agentao/cli.py`
+- CLI diagnostics surface：
+  - `agentao/cli/app.py`
+  - `agentao/cli/commands.py`
+  - `agentao/cli/commands_ext.py`
 - 诊断相关测试
 
 ## Dependencies

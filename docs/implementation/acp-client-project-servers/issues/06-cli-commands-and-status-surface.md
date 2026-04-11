@@ -25,7 +25,11 @@ Issue index: [ACP Client Project-Local Servers Issues](README.md)
 
 ## Deliverables
 
-- `agentao/cli.py`
+- CLI 集成：
+  - `agentao/cli/app.py`
+  - `agentao/cli/commands.py`
+  - `agentao/cli/commands_ext.py`
+  - `agentao/cli/_utils.py`
 - CLI tests
 
 ## Dependencies
@@ -44,6 +48,10 @@ Issue index: [ACP Client Project-Local Servers Issues](README.md)
 - 如果存在待用户处理的 interaction，`/acp` 或 `/status` 应显示计数摘要
 - 错误信息要指向具体 server 名称
 - `send` 走统一高层 API，不在 CLI 里拼握手细节
+- CLI 已拆分为多个模块，因此：
+  - `app.py` 负责交互壳、PromptSession、toolbar 和主循环接缝
+  - `commands.py` / `commands_ext.py` 负责 `/acp` 与 `/status` 命令分发
+  - `_utils.py` 负责命令枚举与补全提示
 
 ## Tests
 

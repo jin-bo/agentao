@@ -48,7 +48,7 @@ A disciplined agent that acts deliberately, not impulsively:
 - Multi-turn conversations with persistent context
 - Function calling for structured tool usage
 - Smart tool selection and execution
-- **Tool confirmation** — user approval required for Shell, Web, and destructive Memory operations
+- **Tool confirmation** — user approval required for Shell, Web, and destructive Memory operations; domain-based tiered permissions for `web_fetch` (allowlist/blocklist/ask)
 - **Reliability principles** — system prompt enforces read-before-assert, discrepancy reporting, and fact/inference distinction on every turn
 - **Operational guidelines** — tone & style rules, shell command efficiency patterns, tool parallelism, non-interactive flags, and explain-before-act security rules
 - **Auto-loading of project instructions** from `AGENTAO.md` at startup
@@ -226,11 +226,174 @@ graph LR
 - **Env var expansion** — `$VAR` and `${VAR}` syntax in config values
 - **Two-level config** — project `.agentao/mcp.json` overrides global `~/.agentao/mcp.json`
 
+### 🧩 Plugin System
+
+Agentao supports a **Claude Code-compatible plugin system** that lets you extend the agent with custom skills, commands, agents, MCP servers, and hooks — all packaged in a single directory with a `plugin.json` manifest.
+
+**Plugin sources** (lowest to highest precedence):
+1. **Global:** `~/.agentao/plugins/{marketplace}/{name}/{version}/`
+2. **Project:** `.agentao/plugins/{marketplace}/{name}/{version}/`
+3. **Inline:** `--plugin-dir /path/to/plugin` (highest priority)
+
+**What a plugin can provide:**
+- **Skills & Commands** — auto-registered with `plugin:skill` namespacing
+- **Agents** — sub-agent definitions (`.md` with YAML frontmatter)
+- **MCP Servers** — additional tool servers merged at startup
+- **Hooks** — lifecycle hooks that fire on events (see [Hooks System](#hooks-system) below)
+
+**CLI management:**
+```bash
+agentao plugin list              # Show loaded plugins with diagnostics
+agentao plugin list --json       # JSON output
+agentao skill install owner/repo # Install a skill from GitHub
+agentao skill list               # List all skills (managed + unmanaged)
+agentao skill remove my-skill    # Remove an installed skill
+agentao skill update --all       # Update all managed skills
+```
+
+**Creating a plugin:**
+```
+my-plugin/
+├── plugin.json     # Manifest (name, version, hooks, skills, etc.)
+├── skills/         # SKILL.md files auto-discovered
+├── commands/       # Command .md files
+├── agents/         # Agent definition .md files
+└── hooks/
+    └── hooks.json  # Hook rules
+```
+
+Minimal `plugin.json`:
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "My custom plugin",
+  "hooks": "./hooks/hooks.json"
+}
+```
+
+### 🪝 Hooks System
+
+Agentao implements a subset of the [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) protocol, allowing plugins to react to agent lifecycle events by running external commands or injecting context.
+
+#### Supported Hook Events
+
+| Event | Type | Description | Claude Code Compat |
+|-------|------|-------------|-------------------|
+| `UserPromptSubmit` | command, prompt | Before the user's message is sent to the LLM | ✅ Full |
+| `PreToolUse` | command | Before a tool executes | ✅ Full |
+| `PostToolUse` | command | After a tool succeeds | ✅ Full |
+| `PostToolUseFailure` | command | After a tool fails | ✅ Full |
+| `SessionStart` | command | When a session begins | ✅ Full |
+| `SessionEnd` | command | When a session ends | ✅ Full |
+
+#### Unsupported Hook Events (Claude Code only)
+
+| Event | Status | Notes |
+|-------|--------|-------|
+| `Notification` | ❌ Not implemented | Agentao does not emit notification events |
+| `Stop` | ❌ Not implemented | No stop-reason hook |
+| `SubagentTool` | ❌ Not implemented | Sub-agent tool calls are not hooked |
+
+#### Supported Hook Types
+
+| Type | Supported | Description |
+|------|-----------|-------------|
+| `command` | ✅ Yes | Run a shell command; receives JSON payload via stdin |
+| `prompt` | ✅ Yes | Inject text into context (UserPromptSubmit only) |
+| `http` | ⚠️ Recognized, skipped | Parsed but not dispatched (warning emitted) |
+| `agent` | ⚠️ Recognized, skipped | Parsed but not dispatched (warning emitted) |
+
+#### Hook Rules Format (`hooks.json`)
+
+```json
+[
+  {
+    "event": "PreToolUse",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "python ./hooks/lint-check.py",
+        "matcher": { "toolName": "Bash" }
+      }
+    ]
+  },
+  {
+    "event": "UserPromptSubmit",
+    "hooks": [
+      {
+        "type": "prompt",
+        "prompt": "Always respond in formal English."
+      },
+      {
+        "type": "command",
+        "command": "node ./hooks/validate-input.js"
+      }
+    ]
+  }
+]
+```
+
+#### Tool Name Aliasing (Claude Code Compatibility)
+
+Hook payloads use **Claude Code tool names** so hooks written for Claude Code work in Agentao without modification:
+
+| Agentao Tool | Claude Code Name |
+|-------------|-----------------|
+| `read_file` | `Read` |
+| `write_file` | `Write` |
+| `replace` | `Edit` |
+| `run_shell_command` | `Bash` |
+| `glob` | `Glob` |
+| `search_file_content` | `Grep` |
+| `web_fetch` | `WebFetch` |
+| `google_web_search` | `WebSearch` |
+| `list_directory` | `LS` |
+
+A `matcher` like `{ "toolName": "Bash" }` will match Agentao's `run_shell_command` tool. Glob patterns are supported: `{ "toolName": "Read*" }`.
+
+#### Command Hook I/O Protocol
+
+Command hooks receive a JSON payload via **stdin** and can output JSON to **stdout**:
+
+**Input (stdin):**
+```json
+{
+  "event": "PreToolUse",
+  "data": {
+    "toolName": "Bash",
+    "toolInput": { "command": "rm -rf /tmp/test" },
+    "sessionId": "abc-123"
+  }
+}
+```
+
+**Output (stdout) — optional:**
+```json
+{ "additionalContext": "Reminder: always use --dry-run first" }
+```
+```json
+{ "blockingError": "Dangerous command blocked by policy" }
+```
+```json
+{ "preventContinuation": true, "stopReason": "Rate limit reached" }
+```
+
+Non-JSON output is treated as additional context. No output = success (side-effect only).
+
 ### 🎯 Dynamic Skills System
 
 Skills are auto-discovered from the `skills/` directory. Each subdirectory contains a `SKILL.md` file with YAML frontmatter. Skills are listed in the system prompt and can be activated with the `activate_skill` tool.
 
 Add new skills by creating a directory with a `SKILL.md` file — no code changes needed. Or use **Skill Crystallization** to generate one from your current session: `/crystallize suggest` drafts a skill from the session transcript; `/crystallize create [name]` writes it and reloads skills immediately.
+
+Skills can also be installed from GitHub:
+```bash
+agentao skill install owner/repo    # Install from GitHub
+agentao skill list --installed      # Show managed installs
+agentao skill update my-skill       # Update to latest
+agentao skill remove my-skill       # Uninstall
+```
 
 ### 🛠️ Comprehensive Tools
 
@@ -246,7 +409,7 @@ Add new skills by creating a directory with a `SKILL.md` file — no code change
 
 **Shell & Web:**
 - `run_shell_command` - Execute shell commands (requires confirmation)
-- `web_fetch` - Fetch and extract content from URLs (requires confirmation); uses [Crawl4AI](https://github.com/unclecode/crawl4ai) for clean Markdown output if installed, otherwise falls back to plain text extraction
+- `web_fetch` - Fetch and extract content from URLs (domain-tiered: trusted sites auto-allow, loopback/metadata auto-deny, others ask); uses [Crawl4AI](https://github.com/unclecode/crawl4ai) for clean Markdown output if installed, otherwise falls back to plain text extraction
 - `google_web_search` - Search the web via DuckDuckGo (requires confirmation)
 
 **Task Tracking:**
@@ -646,9 +809,30 @@ Agentao controls which tools execute automatically versus which require user con
 ```
 
 **Tools that still ask in workspace-write mode:**
-- `web_fetch` / `google_web_search` — network access
+- `web_fetch` — network access (with domain-tiered exceptions: see below)
+- `google_web_search` — network access
 - `run_shell_command` — when the command doesn't match the safe-prefix allowlist
 - `mcp_*` — MCP server tools (unless server has `"trust": true`)
+
+**Domain-based permissions for `web_fetch`:**
+
+| Category | Domains | Behavior |
+|----------|---------|----------|
+| Allowlist | `.github.com`, `.docs.python.org`, `.wikipedia.org`, `r.jina.ai`, `.pypi.org`, `.readthedocs.io` | Auto-allow |
+| Blocklist | `localhost`, `127.0.0.1`, `0.0.0.0`, `169.254.169.254`, `.internal`, `.local`, `::1` | Auto-deny (SSRF protection) |
+| Default | Everything else | Ask for confirmation |
+
+Customize via `.agentao/permissions.json`:
+```json
+{
+  "rules": [
+    {"tool": "web_fetch", "domain": {"allowlist": [".mycompany.com"]}, "action": "allow"},
+    {"tool": "web_fetch", "domain": {"blocklist": [".sketchy.io"]}, "action": "deny"}
+  ]
+}
+```
+
+Domain patterns: leading dot (`.github.com`) = suffix match; no dot (`r.jina.ai`) = exact match.
 
 **During a confirmation prompt**, if you press **2** (Yes to all) the session escalates to full-access mode in memory — no prompts for the rest of the session, but the saved mode is unchanged so the next launch uses whatever `/mode` you set last.
 
@@ -826,17 +1010,23 @@ agentao/
 ├── AGENTAO.md             # Project-specific agent instructions
 ├── README.md                # This file
 ├── tests/                   # Test files
-│   ├── test_context_manager.py      # ContextManager tests (24 tests, mock LLM)
-│   ├── test_memory_management.py    # Memory tool tests
-│   ├── test_reliability_prompt.py   # Reliability principles in system prompt (6 tests)
-│   ├── test_transport.py            # Transport protocol tests (26 tests)
-│   └── test_*.py                    # Other feature tests
+│   └── test_*.py            # Feature tests
 ├── docs/                    # Documentation
 │   ├── features/            # Feature documentation
-│   └── updates/             # Update logs
+│   └── implementation/      # Technical implementation details
 └── agentao/
     ├── agent.py             # Core orchestration
-    ├── cli.py               # CLI interface (Rich)
+    ├── cli/                 # CLI interface (Rich) — split into subpackage
+    │   ├── __init__.py      # Re-exports for backward compat
+    │   ├── _globals.py      # Console, logger, theme
+    │   ├── _utils.py        # Slash commands, completer
+    │   ├── app.py           # AgentaoCLI class (init, REPL loop)
+    │   ├── transport.py     # Transport protocol callbacks
+    │   ├── session.py       # Session lifecycle hooks
+    │   ├── commands.py      # Slash command handlers
+    │   ├── commands_ext.py  # Heavy command handlers (memory, agent)
+    │   ├── entrypoints.py   # Entry points, parser, init wizard
+    │   └── subcommands.py   # Skill/plugin CLI subcommands
     ├── context_manager.py   # Context window management + Agentic RAG
     ├── transport/           # Transport protocol (decouple runtime from UI)
     │   ├── events.py        # AgentEvent + EventType
@@ -846,35 +1036,42 @@ agentao/
     ├── llm/
     │   └── client.py        # OpenAI-compatible LLM client
     ├── agents/
-    │   ├── __init__.py      # SubAgent exports
     │   ├── manager.py       # AgentManager — loads definitions, creates wrappers
     │   ├── tools.py         # TaskComplete, CompleteTaskTool, AgentToolWrapper
     │   └── definitions/     # Built-in agent definitions (.md with YAML frontmatter)
-    │       ├── codebase-investigator.md
-    │       └── generalist.md
+    ├── plugins/             # Plugin system
+    │   ├── manager.py       # Plugin discovery, loading, precedence
+    │   ├── manifest.py      # plugin.json parser + path safety
+    │   ├── hooks.py         # Hook dispatch, payload adapters, tool aliasing
+    │   ├── models.py        # Plugin data models, supported events/types
+    │   ├── skills.py        # Plugin skill resolution + collision detection
+    │   ├── agents.py        # Plugin agent resolution
+    │   ├── mcp.py           # Plugin MCP server merge
+    │   └── diagnostics.py   # Plugin diagnostics + CLI reporting
     ├── mcp/
-    │   ├── __init__.py      # MCP package exports
     │   ├── config.py        # Config loading + env var expansion
     │   ├── client.py        # McpClient + McpClientManager
     │   └── tool.py          # McpTool wrapper for Tool interface
     ├── memory/
-    │   ├── __init__.py      # Exports MemoryManager, MemoryRetriever, SkillCrystallizer
-    │   ├── models.py        # MemoryEntry, IndexEntry, RetrievalHit dataclasses + constants
-    │   ├── manager.py       # SQLite memory manager: persistent memories, session summaries, recall
-    │   ├── retriever.py     # Index-based dynamic recall (tokenize, score, recall, format)
-    │   └── crystallizer.py  # Skill Crystallization (suggest prompt + SKILL.md writer)
+    │   ├── manager.py       # SQLite memory manager
+    │   ├── models.py        # MemoryEntry, IndexEntry dataclasses
+    │   ├── retriever.py     # Index-based dynamic recall
+    │   └── crystallizer.py  # Skill Crystallization
     ├── tools/
     │   ├── base.py          # Tool base class + registry
     │   ├── file_ops.py      # Read, write, edit, list
     │   ├── search.py        # Glob, grep
     │   ├── shell.py         # Shell execution
     │   ├── web.py           # Fetch, search
-    │   ├── memory.py        # Persistent memory tools (save, search, delete, clear, filter, list)
+    │   ├── memory.py        # Persistent memory tools
     │   ├── skill.py         # Skill activation
     │   ├── ask_user.py      # Mid-task user clarification
     │   └── todo.py          # Session task checklist
     └── skills/
-        └── manager.py       # Skill loading and management
+        ├── manager.py       # Skill loading and management
+        ├── registry.py      # Skill registry (JSON-backed)
+        ├── installer.py     # Skill install/update from remote
+        └── sources.py       # GitHub skill source
 ```
 
 ---

@@ -25,6 +25,11 @@ Issue index: [ACP Client Project-Local Servers Issues](README.md)
   - `/acp approve <name> <request-id>`
   - `/acp reject <name> <request-id>`
   - `/acp reply <name> <request-id> <text>`
+- CLI 集成位置：
+  - `agentao/cli/app.py`
+  - `agentao/cli/commands.py`
+  - `agentao/cli/commands_ext.py`
+  - `agentao/cli/transport.py`
 - 相关测试
 
 ## Dependencies
@@ -38,6 +43,9 @@ Issue index: [ACP Client Project-Local Servers Issues](README.md)
 ## Design Notes
 
 - v1 不直接复用前台 Agentao 的 `confirm_tool()` 和 `ask_user()` 交互
+- 这里的“前台 Agentao 交互”在当前代码结构中主要位于：
+  - `agentao/cli/transport.py`
+  - `agentao/cli/app.py`
 - 原因：
   - 它们是同步阻塞模型
   - 会打断 prompt_toolkit 输入态

@@ -37,7 +37,7 @@ from typing import Any, Dict, TYPE_CHECKING
 
 from agentao import __version__ as AGENTAO_VERSION
 
-from .protocol import ACP_PROTOCOL_VERSION, METHOD_INITIALIZE
+from .protocol import ACP_PROTOCOL_VERSION, METHOD_ASK_USER, METHOD_INITIALIZE
 
 if TYPE_CHECKING:
     from .server import AcpServer
@@ -137,6 +137,12 @@ def handle_initialize(server: "AcpServer", params: Any) -> Dict[str, Any]:
         "agentCapabilities": AGENT_CAPABILITIES,
         "authMethods": AUTH_METHODS,
         "agentInfo": AGENT_INFO,
+        "extensions": [
+            {
+                "method": METHOD_ASK_USER,
+                "description": "Request free-form text input from the user.",
+            },
+        ],
     }
 
 

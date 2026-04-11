@@ -53,3 +53,9 @@ METHOD_SESSION_LOAD = "session/load"
 # Server → client notifications
 METHOD_SESSION_UPDATE = "session/update"
 METHOD_REQUEST_PERMISSION = "session/request_permission"
+
+# Agentao extension methods (private, prefixed with underscore per ACP spec)
+METHOD_ASK_USER = "_agentao.cn/ask_user"
+
+# Sentinel returned when the user is unavailable for ask_user.
+ASK_USER_UNAVAILABLE_SENTINEL = "(user unavailable)"

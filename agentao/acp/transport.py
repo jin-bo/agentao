@@ -95,7 +95,12 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 
 from agentao.transport.events import AgentEvent, EventType
 
-from .protocol import METHOD_REQUEST_PERMISSION, METHOD_SESSION_UPDATE
+from .protocol import (
+    ASK_USER_UNAVAILABLE_SENTINEL,
+    METHOD_ASK_USER,
+    METHOD_REQUEST_PERMISSION,
+    METHOD_SESSION_UPDATE,
+)
 
 
 # Regex used to strip ``<system-reminder>...</system-reminder>`` blocks
@@ -811,14 +816,84 @@ class ACPTransport:
         return False
 
     def ask_user(self, question: str) -> str:
-        raise NotImplementedError(
-            "ACPTransport.ask_user — implemented by a later issue"
+        """Ask the ACP client for free-form user input via ``_agentao.cn/ask_user``.
+
+        Sends the extension method as a JSON-RPC request and blocks until
+        the client responds.  All failure modes resolve to the sentinel
+        string ``"(user unavailable)"`` rather than raising, so a broken
+        ask_user path cannot crash a turn in progress.
+
+        Returns:
+            The user's text answer, or the sentinel on any failure.
+        """
+        if self._server is None:
+            logger.error(
+                "acp: ask_user called with no server bound (session %s)",
+                self._session_id,
+            )
+            return ASK_USER_UNAVAILABLE_SENTINEL
+
+        params = {
+            "sessionId": self._session_id,
+            "question": question,
+        }
+
+        try:
+            pending = self._server.call(METHOD_ASK_USER, params)
+        except Exception:
+            logger.exception(
+                "acp: ask_user — failed to send %s", METHOD_ASK_USER
+            )
+            return ASK_USER_UNAVAILABLE_SENTINEL
+
+        from .server import PendingRequestCancelled, JsonRpcHandlerError
+
+        try:
+            result = pending.wait()
+        except PendingRequestCancelled:
+            logger.info(
+                "acp: ask_user — request cancelled (connection closed)"
+            )
+            return ASK_USER_UNAVAILABLE_SENTINEL
+        except JsonRpcHandlerError as e:
+            logger.error(
+                "acp: ask_user — client returned error %d: %s",
+                e.code, e.message,
+            )
+            return ASK_USER_UNAVAILABLE_SENTINEL
+        except Exception:
+            logger.exception("acp: ask_user — unexpected error")
+            return ASK_USER_UNAVAILABLE_SENTINEL
+
+        if not isinstance(result, dict):
+            logger.warning(
+                "acp: ask_user — non-object result: %r", result
+            )
+            return ASK_USER_UNAVAILABLE_SENTINEL
+
+        outcome = result.get("outcome", "")
+        if outcome == "answered":
+            text = result.get("text", "")
+            return text if text else ASK_USER_UNAVAILABLE_SENTINEL
+        if outcome == "cancelled":
+            return ASK_USER_UNAVAILABLE_SENTINEL
+
+        logger.warning(
+            "acp: ask_user — unknown outcome %r", outcome
         )
+        return ASK_USER_UNAVAILABLE_SENTINEL
 
     def on_max_iterations(self, count: int, messages: list) -> dict:
-        raise NotImplementedError(
-            "ACPTransport.on_max_iterations — implemented by a later issue"
+        """Conservative default: stop the turn when max iterations is reached.
+
+        ACP mode has no interactive menu, so the safe default is to stop.
+        """
+        logger.info(
+            "acp: max iterations (%d) reached on session %s — stopping",
+            count,
+            self._session_id,
         )
+        return {"action": "stop"}
 
 
 # ---------------------------------------------------------------------------

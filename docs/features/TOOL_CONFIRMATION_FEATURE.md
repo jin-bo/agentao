@@ -149,17 +149,83 @@ uv run python test_tool_confirmation.py
 - ✅ 确认回调签名正确
 - ✅ 无回调时正常工作
 
+## 域名分级权限 (Domain-Based Tiered Permissions)
+
+**版本 0.2.8 新增**：`web_fetch` 工具现在支持基于域名的分级权限控制。
+
+### 工作原理
+
+权限引擎在评估 `web_fetch` 请求时，会解析 URL 的域名并按以下优先级判断：
+
+1. **白名单 (allowlist)** — 自动允许，无需确认
+2. **黑名单 (blocklist)** — 自动拒绝，防止 SSRF 攻击
+3. **默认 (default)** — 需要用户确认
+
+### 默认规则
+
+| 类别 | 域名 | 行为 |
+|------|------|------|
+| 白名单 | `.github.com`, `.docs.python.org`, `.wikipedia.org`, `r.jina.ai`, `.pypi.org`, `.readthedocs.io` | 自动允许 |
+| 黑名单 | `localhost`, `127.0.0.1`, `0.0.0.0`, `169.254.169.254`, `.internal`, `.local`, `::1` | 自动拒绝 |
+| 其他 | 所有不在上述列表中的域名 | 需要确认 |
+
+### 域名匹配规则
+
+- **前缀点号** (如 `.github.com`)：后缀匹配 — 匹配 `github.com` 和 `api.github.com`，但不匹配 `notgithub.com`
+- **无前缀点号** (如 `r.jina.ai`)：精确匹配 — 只匹配 `r.jina.ai`
+- 匹配不区分大小写，端口号会被自动忽略
+
+### 自定义配置
+
+在 `.agentao/permissions.json` 中添加自定义域名规则：
+
+```json
+{
+  "rules": [
+    {
+      "tool": "web_fetch",
+      "domain": {"allowlist": [".mycompany.com", ".confluence.io"]},
+      "action": "allow"
+    },
+    {
+      "tool": "web_fetch",
+      "domain": {"blocklist": [".sketchy.io", "evil.com"]},
+      "action": "deny"
+    }
+  ]
+}
+```
+
+自定义规则在 `workspace-write` 模式下优先于内置预设规则评估（先匹配先生效）。
+
+### 安全防护
+
+- **SSRF 防护**：默认黑名单覆盖回环地址、链路本地地址、云元数据端点
+- **URL 解析安全**：使用 `urlparse.hostname` 获取规范化主机名（小写、去端口、忽略 userinfo）
+- **无后缀误匹配**：IP 地址使用精确匹配，不会把 `1.127.0.0.1` 误匹配为 `127.0.0.1`
+
+### 示例
+
+```
+# 自动允许（白名单）
+web_fetch https://docs.python.org/3/library/os.html  → ✓ ALLOW
+
+# 自动拒绝（黑名单）
+web_fetch http://169.254.169.254/latest/meta-data    → ✗ DENY
+
+# 需要确认（其他）
+web_fetch https://example.com/api                    → ? ASK
+```
+
 ## 未来改进
 
 可能的增强：
-- 添加"总是允许"选项
-- 添加"总是拒绝"选项
-- 配置哪些工具需要确认
-- 记住用户的确认偏好
-- 批量确认多个工具调用
+- 重定向目标域名检查（当前只检查初始 URL）
+- RFC 1918 私有 IP 段匹配（10.x、172.16.x、192.168.x）
+- `google_web_search` 的类似分级权限
 
 ---
 
 **特性状态**: ✅ 已实现并测试
-**版本**: 0.2.0
-**最后更新**: 2026-02-11
+**版本**: 0.2.8
+**最后更新**: 2026-04-11

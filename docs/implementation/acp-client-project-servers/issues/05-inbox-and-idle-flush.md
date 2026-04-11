@@ -21,7 +21,10 @@ Issue index: [ACP Client Project-Local Servers Issues](README.md)
 
 - `agentao/acp_client/inbox.py`
 - `agentao/acp_client/render.py`
-- `agentao/cli.py` 的 flush 集成
+- CLI flush 集成：
+  - `agentao/cli/app.py`
+  - `agentao/cli/commands.py`
+  - `agentao/cli/commands_ext.py`
 - 相关测试
 
 ## Dependencies
@@ -45,6 +48,7 @@ Issue index: [ACP Client Project-Local Servers Issues](README.md)
 - 不在用户输入过程中抢占式打印
 - v1 不把消息注入 Agentao 对话上下文
 - 来自 ACP server 的 permission request / input request 也通过 inbox 可见化，但不直接弹同步菜单
+- 由于 CLI 已模块化，idle flush 不应假设单一 `agentao/cli.py` 文件存在，而应挂在当前输入循环和命令 dispatch 的实际入口上
 
 ## Tests
 

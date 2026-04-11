@@ -1,4 +1,5 @@
 from agentao.cli import AgentaoCLI
+from agentao.cli.commands_ext import _show_agents_dashboard
 
 
 def test_dashboard_keeps_live_view_for_pending_tasks(monkeypatch):
@@ -34,11 +35,11 @@ def test_dashboard_keeps_live_view_for_pending_tasks(monkeypatch):
 
     monkeypatch.setattr("agentao.agents.tools.list_bg_tasks", fake_list_bg_tasks)
     monkeypatch.setattr("rich.live.Live", FakeLive)
-    monkeypatch.setattr("agentao.cli.console.print", lambda *args, **kwargs: prints.append((args, kwargs)))
+    monkeypatch.setattr("agentao.cli._globals.console.print", lambda *args, **kwargs: prints.append((args, kwargs)))
     monkeypatch.setattr("time.sleep", lambda *args, **kwargs: None)
 
     cli = AgentaoCLI.__new__(AgentaoCLI)
-    AgentaoCLI._show_agents_dashboard(cli)
+    _show_agents_dashboard(cli)
 
     assert calls["live_started"] is True
     assert prints

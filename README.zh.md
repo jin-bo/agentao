@@ -48,7 +48,7 @@ agentao -p "列出这里所有的 Python 文件，并概括每个文件的作用
 - 多轮对话，保持上下文
 - 函数调用驱动工具执行
 - 智能工具选择与调度
-- **工具确认机制** — Shell、Web 及破坏性记忆操作需用户审批
+- **工具确认机制** — Shell、Web 及破坏性记忆操作需用户审批；`web_fetch` 支持域名分级权限（白名单/黑名单/询问）
 - **可靠性原则** — 系统提示词在每轮对话中强制要求"读取后再断言"、报告差异、区分事实与推断
 - **操作规范** — 语气与风格规则、Shell 命令效率模式、工具并行调用、非交互式参数及"先解释后执行"安全规范
 - **项目指令自动加载** — 启动时自动读取当前目录下的 `AGENTAO.md`
@@ -226,11 +226,174 @@ graph LR
 - **环境变量展开** — 配置值中支持 `$VAR` 和 `${VAR}` 语法
 - **两级配置** — 项目级 `.agentao/mcp.json` 覆盖全局 `~/.agentao/mcp.json`
 
+### 🧩 插件系统
+
+Agentao 支持 **兼容 Claude Code 的插件系统**，允许通过自定义技能、命令、智能体、MCP 服务器和钩子（hooks）来扩展代理——所有内容打包在一个带有 `plugin.json` 清单的目录中。
+
+**插件来源**（优先级从低到高）：
+1. **全局：** `~/.agentao/plugins/{marketplace}/{name}/{version}/`
+2. **项目：** `.agentao/plugins/{marketplace}/{name}/{version}/`
+3. **内联：** `--plugin-dir /path/to/plugin`（最高优先级）
+
+**插件可提供的组件：**
+- **技能与命令** — 以 `plugin:skill` 命名空间自动注册
+- **智能体** — 子智能体定义（带 YAML frontmatter 的 `.md` 文件）
+- **MCP 服务器** — 启动时合并的额外工具服务器
+- **钩子（Hooks）** — 在事件发生时触发的生命周期钩子（见下方[钩子系统](#钩子系统hooks-system)）
+
+**CLI 管理命令：**
+```bash
+agentao plugin list              # 显示已加载插件及诊断信息
+agentao plugin list --json       # JSON 输出
+agentao skill install owner/repo # 从 GitHub 安装技能
+agentao skill list               # 列出所有技能（托管 + 非托管）
+agentao skill remove my-skill    # 移除已安装的技能
+agentao skill update --all       # 更新所有托管技能
+```
+
+**创建插件：**
+```
+my-plugin/
+├── plugin.json     # 清单（name、version、hooks、skills 等）
+├── skills/         # SKILL.md 文件自动发现
+├── commands/       # 命令 .md 文件
+├── agents/         # 智能体定义 .md 文件
+└── hooks/
+    └── hooks.json  # 钩子规则
+```
+
+最小 `plugin.json`：
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "我的自定义插件",
+  "hooks": "./hooks/hooks.json"
+}
+```
+
+### 🪝 钩子系统（Hooks System）
+
+Agentao 实现了 [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) 协议的子集，允许插件在代理生命周期事件发生时运行外部命令或注入上下文。
+
+#### 已支持的钩子事件
+
+| 事件 | 类型 | 说明 | Claude Code 兼容性 |
+|------|------|------|-------------------|
+| `UserPromptSubmit` | command, prompt | 用户消息发送给 LLM 之前 | ✅ 完全兼容 |
+| `PreToolUse` | command | 工具执行之前 | ✅ 完全兼容 |
+| `PostToolUse` | command | 工具执行成功之后 | ✅ 完全兼容 |
+| `PostToolUseFailure` | command | 工具执行失败之后 | ✅ 完全兼容 |
+| `SessionStart` | command | 会话开始时 | ✅ 完全兼容 |
+| `SessionEnd` | command | 会话结束时 | ✅ 完全兼容 |
+
+#### 未支持的钩子事件（仅 Claude Code 支持）
+
+| 事件 | 状态 | 说明 |
+|------|------|------|
+| `Notification` | ❌ 未实现 | Agentao 不发出通知事件 |
+| `Stop` | ❌ 未实现 | 无停止原因钩子 |
+| `SubagentTool` | ❌ 未实现 | 子智能体工具调用不触发钩子 |
+
+#### 已支持的钩子类型
+
+| 类型 | 支持状态 | 说明 |
+|------|----------|------|
+| `command` | ✅ 支持 | 运行 Shell 命令；通过 stdin 接收 JSON 载荷 |
+| `prompt` | ✅ 支持 | 注入文本到上下文（仅 UserPromptSubmit） |
+| `http` | ⚠️ 已识别但跳过 | 解析但不分发（会输出警告） |
+| `agent` | ⚠️ 已识别但跳过 | 解析但不分发（会输出警告） |
+
+#### 钩子规则格式（`hooks.json`）
+
+```json
+[
+  {
+    "event": "PreToolUse",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "python ./hooks/lint-check.py",
+        "matcher": { "toolName": "Bash" }
+      }
+    ]
+  },
+  {
+    "event": "UserPromptSubmit",
+    "hooks": [
+      {
+        "type": "prompt",
+        "prompt": "始终使用正式的英语回复。"
+      },
+      {
+        "type": "command",
+        "command": "node ./hooks/validate-input.js"
+      }
+    ]
+  }
+]
+```
+
+#### 工具名称别名（Claude Code 兼容性）
+
+钩子载荷使用 **Claude Code 工具名称**，因此为 Claude Code 编写的钩子无需修改即可在 Agentao 中使用：
+
+| Agentao 工具 | Claude Code 名称 |
+|-------------|-----------------|
+| `read_file` | `Read` |
+| `write_file` | `Write` |
+| `replace` | `Edit` |
+| `run_shell_command` | `Bash` |
+| `glob` | `Glob` |
+| `search_file_content` | `Grep` |
+| `web_fetch` | `WebFetch` |
+| `google_web_search` | `WebSearch` |
+| `list_directory` | `LS` |
+
+如 `{ "toolName": "Bash" }` 的匹配器会匹配 Agentao 的 `run_shell_command` 工具。支持 glob 模式：`{ "toolName": "Read*" }`。
+
+#### 命令钩子 I/O 协议
+
+命令钩子通过 **stdin** 接收 JSON 载荷，可通过 **stdout** 输出 JSON：
+
+**输入（stdin）：**
+```json
+{
+  "event": "PreToolUse",
+  "data": {
+    "toolName": "Bash",
+    "toolInput": { "command": "rm -rf /tmp/test" },
+    "sessionId": "abc-123"
+  }
+}
+```
+
+**输出（stdout）— 可选：**
+```json
+{ "additionalContext": "提醒：请始终先使用 --dry-run" }
+```
+```json
+{ "blockingError": "策略阻止了危险命令" }
+```
+```json
+{ "preventContinuation": true, "stopReason": "达到速率限制" }
+```
+
+非 JSON 输出视为附加上下文。无输出 = 成功（仅副作用）。
+
 ### 🎯 动态技能系统
 
 技能从 `skills/` 目录自动发现。每个子目录包含带 YAML frontmatter 的 `SKILL.md` 文件。技能列于系统提示词中，可通过 `activate_skill` 工具激活。
 
 创建包含 `SKILL.md` 的目录即可添加新技能——无需修改代码。也可使用 **技能蒸馏** 从当前会话自动生成：`/crystallize suggest` 根据会话记录起草技能；`/crystallize create [name]` 立即写入并重新加载。
+
+技能也可从 GitHub 安装：
+```bash
+agentao skill install owner/repo    # 从 GitHub 安装
+agentao skill list --installed      # 显示托管安装
+agentao skill update my-skill       # 更新到最新版
+agentao skill remove my-skill       # 卸载
+```
 
 ### 🛠️ 完整工具集
 
@@ -246,7 +409,7 @@ graph LR
 
 **Shell 与 Web：**
 - `run_shell_command` — 执行 Shell 命令（需确认）
-- `web_fetch` — 抓取并提取 URL 内容（需确认）；若已安装 [Crawl4AI](https://github.com/unclecode/crawl4ai) 则输出干净的 Markdown，否则回退为纯文本提取
+- `web_fetch` — 抓取并提取 URL 内容（域名分级：受信站点自动允许、回环/元数据地址自动拒绝、其他需确认）；若已安装 [Crawl4AI](https://github.com/unclecode/crawl4ai) 则输出干净的 Markdown，否则回退为纯文本提取
 - `google_web_search` — 通过 DuckDuckGo 搜索（需确认）
 
 **任务追踪：**
@@ -639,9 +802,30 @@ Agentao 通过三种命名权限模式控制工具是否自动执行或需要用
 ```
 
 **workspace-write 模式下仍需确认的工具：**
-- `web_fetch` / `google_web_search` — 网络访问
+- `web_fetch` — 网络访问（含域名分级例外，见下表）
+- `google_web_search` — 网络访问
 - `run_shell_command` — 命令不在安全前缀白名单中时
 - `mcp_*` — MCP 工具（除非服务器设置 `"trust": true`）
+
+**`web_fetch` 域名分级权限：**
+
+| 类别 | 域名 | 行为 |
+|------|------|------|
+| 白名单 | `.github.com`、`.docs.python.org`、`.wikipedia.org`、`r.jina.ai`、`.pypi.org`、`.readthedocs.io` | 自动允许 |
+| 黑名单 | `localhost`、`127.0.0.1`、`0.0.0.0`、`169.254.169.254`、`.internal`、`.local`、`::1` | 自动拒绝（SSRF 防护） |
+| 默认 | 不在上述列表中的域名 | 需要确认 |
+
+通过 `.agentao/permissions.json` 自定义：
+```json
+{
+  "rules": [
+    {"tool": "web_fetch", "domain": {"allowlist": [".mycompany.com"]}, "action": "allow"},
+    {"tool": "web_fetch", "domain": {"blocklist": [".sketchy.io"]}, "action": "deny"}
+  ]
+}
+```
+
+域名匹配规则：前缀点号（`.github.com`）= 后缀匹配；无点号（`r.jina.ai`）= 精确匹配。
 
 **在确认提示中按 2（全部允许）**，会话临时升级为 full-access 模式（仅内存，不写入配置），本次会话剩余工具静默执行，下次启动仍使用最后一次 `/mode` 设置的模式。
 
@@ -820,17 +1004,23 @@ agentao/
 ├── README.md                # 英文文档
 ├── README.zh.md             # 中文文档（本文件）
 ├── tests/                   # 测试文件
-│   ├── test_context_manager.py      # ContextManager 测试（24 个，mock LLM）
-│   ├── test_memory_management.py    # 记忆工具测试
-│   ├── test_reliability_prompt.py   # 可靠性原则测试（6 个）
-│   ├── test_transport.py            # Transport 协议测试（26 个）
-│   └── test_*.py                    # 其他功能测试
+│   └── test_*.py            # 功能测试
 ├── docs/                    # 文档
 │   ├── features/            # 功能文档
-│   └── updates/             # 更新日志
+│   └── implementation/      # 技术实现细节
 └── agentao/
     ├── agent.py             # 核心编排
-    ├── cli.py               # CLI 界面（Rich）
+    ├── cli/                 # CLI 界面（Rich）— 拆分为子包
+    │   ├── __init__.py      # 向后兼容的重新导出
+    │   ├── _globals.py      # Console、logger、主题
+    │   ├── _utils.py        # 斜杠命令、补全器
+    │   ├── app.py           # AgentaoCLI 类（初始化、REPL 循环）
+    │   ├── transport.py     # Transport 协议回调
+    │   ├── session.py       # 会话生命周期钩子
+    │   ├── commands.py      # 斜杠命令处理器
+    │   ├── commands_ext.py  # 重型命令处理器（记忆、智能体）
+    │   ├── entrypoints.py   # 入口点、解析器、初始化向导
+    │   └── subcommands.py   # 技能/插件 CLI 子命令
     ├── context_manager.py   # 上下文窗口管理 + Agentic RAG
     ├── transport/           # Transport 协议（运行时与 UI 解耦）
     │   ├── events.py        # AgentEvent + EventType
@@ -842,29 +1032,40 @@ agentao/
     ├── agents/
     │   ├── manager.py       # AgentManager — 加载定义，创建包装器
     │   ├── tools.py         # TaskComplete、CompleteTaskTool、AgentToolWrapper
-    │   └── definitions/     # 内置智能体定义（带 YAML frontmatter 的 .md 文件）
+    │   └── definitions/     # 内置智能体定义
+    ├── plugins/             # 插件系统
+    │   ├── manager.py       # 插件发现、加载、优先级
+    │   ├── manifest.py      # plugin.json 解析器 + 路径安全检查
+    │   ├── hooks.py         # 钩子分发、载荷适配器、工具别名
+    │   ├── models.py        # 插件数据模型、支持的事件/类型
+    │   ├── skills.py        # 插件技能解析 + 冲突检测
+    │   ├── agents.py        # 插件智能体解析
+    │   ├── mcp.py           # 插件 MCP 服务器合并
+    │   └── diagnostics.py   # 插件诊断 + CLI 报告
     ├── mcp/
     │   ├── config.py        # 配置加载 + 环境变量展开
     │   ├── client.py        # McpClient + McpClientManager
     │   └── tool.py          # McpTool 包装器
     ├── memory/
-    │   ├── __init__.py      # 导出 MemoryManager、MemoryRetriever、SkillCrystallizer
-    │   ├── models.py        # MemoryEntry、IndexEntry、RetrievalHit 数据类 + 常量
-    │   ├── manager.py       # SQLite 记忆管理器：持久记忆、会话摘要、召回候选
-    │   ├── retriever.py     # 基于索引的动态召回（tokenize、score、recall、format）
-    │   └── crystallizer.py  # 技能蒸馏（建议提示词 + SKILL.md 写入）
+    │   ├── manager.py       # SQLite 记忆管理器
+    │   ├── models.py        # MemoryEntry、IndexEntry 数据类
+    │   ├── retriever.py     # 基于索引的动态召回
+    │   └── crystallizer.py  # 技能蒸馏
     ├── tools/
     │   ├── base.py          # Tool 基类 + 注册表
     │   ├── file_ops.py      # 读、写、编辑、列出
     │   ├── search.py        # Glob、grep
     │   ├── shell.py         # Shell 执行
     │   ├── web.py           # 抓取、搜索
-    │   ├── memory.py        # 持久化记忆工具（save、search、delete、clear、filter、list）
+    │   ├── memory.py        # 持久化记忆工具
     │   ├── skill.py         # 技能激活
     │   ├── ask_user.py      # 任务中途向用户提问
     │   └── todo.py          # 会话任务清单
     └── skills/
-        └── manager.py       # 技能加载与管理
+        ├── manager.py       # 技能加载与管理
+        ├── registry.py      # 技能注册表（JSON 持久化）
+        ├── installer.py     # 远程技能安装/更新
+        └── sources.py       # GitHub 技能源
 ```
 
 ---

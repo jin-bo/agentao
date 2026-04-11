@@ -5,6 +5,7 @@ import re
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 
 class PermissionDecision(Enum):
@@ -18,6 +19,47 @@ class PermissionMode(Enum):
     WORKSPACE_WRITE = "workspace-write"
     FULL_ACCESS = "full-access"
     PLAN = "plan"  # Internal: read-only writes, safe shell commands allowed
+
+
+def _extract_domain(url: str) -> Optional[str]:
+    """Extract and normalize the hostname from a URL for domain matching.
+
+    Returns lowercase hostname (no port), or None if parsing fails.
+    Handles missing scheme by prepending https://.
+    """
+    if not url:
+        return None
+    # urlparse needs a scheme to correctly identify the hostname
+    if "://" not in url:
+        url = "https://" + url
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname  # lowercase, no port, no userinfo
+        return hostname if hostname else None
+    except Exception:
+        return None
+
+
+def _domain_matches(hostname: str, patterns: List[str]) -> bool:
+    """Check if hostname matches any pattern in the list.
+
+    Pattern semantics:
+    - Leading dot (e.g. ".github.com"): suffix match — matches
+      "github.com" and "api.github.com" but not "notgithub.com".
+    - No leading dot (e.g. "r.jina.ai"): exact match only.
+    """
+    for pattern in patterns:
+        pattern_lower = pattern.lower()
+        if pattern_lower.startswith("."):
+            # Suffix match: ".github.com" matches "github.com" and "x.github.com"
+            bare = pattern_lower[1:]  # "github.com"
+            if hostname == bare or hostname.endswith(pattern_lower):
+                return True
+        else:
+            # Exact match
+            if hostname == pattern_lower:
+                return True
+    return False
 
 
 # Preset rule lists for each mode. Evaluated after project/user JSON rules.
@@ -61,6 +103,17 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
             "action": "deny",
         },
         {"tool": "run_shell_command", "action": "ask"},
+        # Domain-tiered web_fetch: allowlist auto-allows, blocklist auto-denies, rest asks
+        {
+            "tool": "web_fetch",
+            "domain": {"allowlist": [".github.com", ".docs.python.org", ".wikipedia.org", "r.jina.ai", ".pypi.org", ".readthedocs.io"]},
+            "action": "allow",
+        },
+        {
+            "tool": "web_fetch",
+            "domain": {"blocklist": ["localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254", ".internal", ".local", "::1"]},
+            "action": "deny",
+        },
         {"tool": "web_fetch", "action": "ask"},
         {"tool": "google_web_search", "action": "ask"},
     ],
@@ -96,6 +149,17 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
         },
         {"tool": "run_shell_command", "args": {"command": r"rm\s+-rf|sudo\s|mkfs|dd\s+if="}, "action": "deny"},
         {"tool": "run_shell_command", "action": "deny"},
+        # Domain-tiered web_fetch (same as workspace-write)
+        {
+            "tool": "web_fetch",
+            "domain": {"allowlist": [".github.com", ".docs.python.org", ".wikipedia.org", "r.jina.ai", ".pypi.org", ".readthedocs.io"]},
+            "action": "allow",
+        },
+        {
+            "tool": "web_fetch",
+            "domain": {"blocklist": ["localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254", ".internal", ".local", "::1"]},
+            "action": "deny",
+        },
         {"tool": "web_fetch", "action": "ask"},
         {"tool": "google_web_search", "action": "ask"},
     ],
@@ -194,6 +258,22 @@ class PermissionEngine:
         rule_tool = rule.get("tool", "*")
         if rule_tool != "*" and not self._match_pattern(rule_tool, tool_name):
             return False
+        # Domain-based matching (for web_fetch and similar URL tools)
+        domain_spec = rule.get("domain")
+        if domain_spec is not None:
+            url_arg = domain_spec.get("url_arg", "url")
+            raw_url = str(tool_args.get(url_arg, ""))
+            hostname = _extract_domain(raw_url)
+            if hostname is None:
+                return False  # unparseable URL never matches a domain rule
+            allowlist = domain_spec.get("allowlist")
+            blocklist = domain_spec.get("blocklist")
+            if allowlist and _domain_matches(hostname, allowlist):
+                return True
+            if blocklist and _domain_matches(hostname, blocklist):
+                return True
+            return False  # domain rule present but no match
+        # Regex-based arg matching
         for arg_key, arg_pattern in rule.get("args", {}).items():
             arg_value = str(tool_args.get(arg_key, ""))
             try:
@@ -225,6 +305,12 @@ class PermissionEngine:
                 args = rule.get("args", {})
                 label = symbols.get(action, f"? {action.upper()}")
                 line = f"  {i}. [{label}] {tool}"
+                domain = rule.get("domain")
+                if domain:
+                    if "allowlist" in domain:
+                        line += f"\n        domain allowlist: {', '.join(domain['allowlist'])}"
+                    if "blocklist" in domain:
+                        line += f"\n        domain blocklist: {', '.join(domain['blocklist'])}"
                 if args:
                     for k, v in args.items():
                         line += f"\n        {k}: {v}"

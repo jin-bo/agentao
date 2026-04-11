@@ -6,8 +6,8 @@ from unittest.mock import Mock, patch
 def test_clear_resets_confirmation():
     """Test that clear command resets allow_all_tools to False."""
 
-    with patch('agentao.cli.load_dotenv'):
-        with patch('agentao.cli.Agentao') as mock_agent_class:
+    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+        with patch('agentao.cli.app.Agentao') as mock_agent_class:
             # Mock the agent instance
             mock_agent = Mock()
             mock_agent_class.return_value = mock_agent
@@ -32,8 +32,8 @@ def test_clear_resets_confirmation():
 def test_clear_command_flow():
     """Test the full flow of clear command with confirmation reset."""
 
-    with patch('agentao.cli.load_dotenv'):
-        with patch('agentao.cli.Agentao') as mock_agent_class:
+    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+        with patch('agentao.cli.app.Agentao') as mock_agent_class:
             mock_agent = Mock()
             mock_agent_class.return_value = mock_agent
 
@@ -58,8 +58,8 @@ def test_clear_command_flow():
 def test_clear_vs_reset_confirm():
     """Test that both /clear and /reset-confirm reset confirmation."""
 
-    with patch('agentao.cli.load_dotenv'):
-        with patch('agentao.cli.Agentao') as mock_agent_class:
+    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+        with patch('agentao.cli.app.Agentao') as mock_agent_class:
             mock_agent = Mock()
             mock_agent_class.return_value = mock_agent
 
@@ -86,8 +86,8 @@ def test_clear_vs_reset_confirm():
 def test_initial_state():
     """Test that CLI starts with allow_all_tools = False."""
 
-    with patch('agentao.cli.load_dotenv'):
-        with patch('agentao.cli.Agentao') as mock_agent_class:
+    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+        with patch('agentao.cli.app.Agentao') as mock_agent_class:
             mock_agent = Mock()
             mock_agent_class.return_value = mock_agent
 
@@ -102,8 +102,8 @@ def test_initial_state():
 def test_clear_makes_sense():
     """Test the logical flow: clear should reset everything to initial state."""
 
-    with patch('agentao.cli.load_dotenv'):
-        with patch('agentao.cli.Agentao') as mock_agent_class:
+    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+        with patch('agentao.cli.app.Agentao') as mock_agent_class:
             mock_agent = Mock()
             mock_agent_class.return_value = mock_agent
 
