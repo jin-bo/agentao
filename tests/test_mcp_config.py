@@ -192,7 +192,7 @@ def test_save_mcp_config_project(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     servers = {"my-server": {"command": "cmd", "args": []}}
     path = save_mcp_config(servers, global_config=False)
-    saved = json.loads(path.read_text())
+    saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["mcpServers"] == servers
 
 
@@ -202,7 +202,7 @@ def test_save_mcp_config_global(tmp_path, monkeypatch):
     servers = {"global-svc": {"url": "https://example.com/sse"}}
     path = save_mcp_config(servers, global_config=True)
     assert "home" in str(path)
-    saved = json.loads(path.read_text())
+    saved = json.loads(path.read_text(encoding="utf-8"))
     assert "global-svc" in saved["mcpServers"]
 
 
@@ -216,6 +216,6 @@ def test_save_mcp_config_preserves_other_keys(tmp_path, monkeypatch):
         json.dumps({"otherKey": "preserved", "mcpServers": {}}), encoding="utf-8"
     )
     save_mcp_config({"new-svc": {}}, global_config=False)
-    saved = json.loads((cfg_dir / "mcp.json").read_text())
+    saved = json.loads((cfg_dir / "mcp.json").read_text(encoding="utf-8"))
     assert saved["otherKey"] == "preserved"
     assert "new-svc" in saved["mcpServers"]

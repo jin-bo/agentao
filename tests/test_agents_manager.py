@@ -200,7 +200,7 @@ def test_missing_name_falls_back_to_filename(tmp_path, monkeypatch):
     agents_dir.mkdir(parents=True)
     # No name in frontmatter
     (agents_dir / "my-agent.md").write_text(
-        "---\ndescription: No name\n---\nBody.\n", encoding="utf-8"
+        "---\ndescription: No name\n---\nBody.\n", encoding="utf-8",
     )
     m = AgentManager()
     assert "my-agent" in m.definitions

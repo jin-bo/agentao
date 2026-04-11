@@ -5,6 +5,7 @@ warnings.filterwarnings("ignore", message="urllib3.*or chardet.*doesn't match")
 
 import atexit
 import json
+import logging
 import os
 import sys
 import uuid as _uuid_mod
@@ -43,6 +44,11 @@ custom_theme = Theme({
 })
 
 console = Console(theme=custom_theme)
+logger = logging.getLogger(__name__)
+
+# Plugin inline dirs set from --plugin-dir in entrypoint(), consumed by
+# AgentaoCLI and run_print_mode to wire plugins into sessions.
+_plugin_inline_dirs: list[Path] = []
 
 # Tool argument keys to display in the thinking step (priority order)
 _TOOL_SUMMARY_KEYS = ("path", "file_path", "query", "description", "command", "url", "key", "pattern", "tag")
@@ -81,6 +87,7 @@ _SLASH_COMMANDS = [
     '/memory project', '/memory search', '/memory session', '/memory status',
     '/memory tag', '/memory user', '/mode', '/model', '/permission', '/provider', '/quit',
     '/sessions', '/sessions delete', '/sessions delete all', '/sessions list', '/sessions resume',
+    '/plugins', '/plugins list',
     '/skills', '/skills activate', '/skills deactivate',
     '/skills disable', '/skills enable', '/skills reload', '/status', '/temperature',
     '/todos', '/tools',
@@ -150,7 +157,7 @@ class AgentaoCLI:
         """Initialize CLI."""
         load_dotenv()
 
-        self.current_session_id: Optional[str] = None  # Stable UUID of active session
+        self.current_session_id: Optional[str] = str(_uuid_mod.uuid4())  # Stable UUID of active session
         self.current_status = None  # Track active status context
         self._streaming_output = False  # unused; kept for any external callers
         self.markdown_mode = True  # Render responses as Markdown (toggle with /markdown)
@@ -202,6 +209,13 @@ class AgentaoCLI:
         from .tools.plan import PlanSaveTool, PlanFinalizeTool
         self.agent.tools.register(PlanSaveTool(self._plan_controller))
         self.agent.tools.register(PlanFinalizeTool(self._plan_controller))
+
+        # Propagate session ID to agent so plugin hooks can identify the session.
+        self.agent._session_id = self.current_session_id
+        self.agent.tool_runner._session_id = self.current_session_id
+
+        # Load plugins and register their skills/agents/MCP servers.
+        _load_and_register_plugins(self.agent)
 
         # prompt_toolkit session: multiline=True captures full paste; Enter submits
         _kb = KeyBindings()
@@ -561,6 +575,7 @@ All commands start with `/`:
   - `/memory clear` - Clear all memories (requires confirmation)
 - `/context` - Show context window token usage and limit
   - `/context limit <n>` - Set max context tokens (default: 200,000)
+- `/plugins` - List loaded plugins with diagnostics
 - `/mcp [subcommand]` - Manage MCP servers
   - `/mcp` or `/mcp list` - List MCP servers with status and tools
   - `/mcp add <name> <command|url>` - Add an MCP server
@@ -1711,6 +1726,8 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
         # For legacy sessions without a session_id, mint a new UUID so the resumed
         # conversation gets a stable identity for subsequent saves.
         self.current_session_id = match.get("session_id") or str(_uuid_mod.uuid4())
+        self.agent._session_id = self.current_session_id
+        self.agent.tool_runner._session_id = self.current_session_id
         sid_display = self.current_session_id[:8]
         title_display = f": {match['title']}" if match.get("title") else ""
         msg_count = len(messages)
@@ -1757,17 +1774,30 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
     def on_session_start(self) -> None:
         """Hook called at the start of every session."""
+        # Ensure a session ID exists (e.g. after /new or /clear reset it to None).
+        if self.current_session_id is None:
+            self.current_session_id = str(_uuid_mod.uuid4())
+        self.agent._session_id = self.current_session_id
+        self.agent.tool_runner._session_id = self.current_session_id
+
         try:
             self.agent.memory_manager.archive_session()
         except Exception:
             pass
 
+        # Dispatch SessionStart plugin hooks now that the session ID is final.
+        self._dispatch_session_start_hooks()
+
     def on_session_end(self) -> None:
         """Hook called at the end of every session (before /clear, /new, or exit).
 
         Override or extend in a subclass to add custom session-end behavior.
-        Default implementation saves the current session to disk.
+        Default implementation saves the current session to disk and dispatches
+        SessionEnd plugin hooks.
         """
+        # Dispatch SessionEnd hooks before saving so plugins can export/clean up.
+        self._dispatch_session_end_hooks()
+
         if not self.agent.messages:
             return
         from .session import save_session
@@ -1783,6 +1813,42 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             console.print(f"[dim]Session saved → {sid[:8]} ({session_file.name})[/dim]")
         except Exception:
             pass  # Non-critical
+
+    def _dispatch_session_start_hooks(self) -> None:
+        """Fire SessionStart plugin hooks with the current (final) session ID."""
+        if not self.agent._plugin_hook_rules:
+            return
+        try:
+            from .plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
+            _cwd = self.agent.working_directory
+            adapter = ClaudeHookPayloadAdapter()
+            payload = adapter.build_session_start(
+                session_id=self.current_session_id, cwd=_cwd,
+            )
+            dispatcher = PluginHookDispatcher(cwd=_cwd)
+            dispatcher.dispatch_session_start(
+                payload=payload, rules=self.agent._plugin_hook_rules,
+            )
+        except Exception:
+            pass  # Best-effort
+
+    def _dispatch_session_end_hooks(self) -> None:
+        """Fire SessionEnd plugin hooks with the current session ID."""
+        if not self.agent._plugin_hook_rules:
+            return
+        try:
+            from .plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
+            _cwd = self.agent.working_directory
+            adapter = ClaudeHookPayloadAdapter()
+            payload = adapter.build_session_end(
+                session_id=self.current_session_id, cwd=_cwd,
+            )
+            dispatcher = PluginHookDispatcher(cwd=_cwd)
+            dispatcher.dispatch_session_end(
+                payload=payload, rules=self.agent._plugin_hook_rules,
+            )
+        except Exception:
+            pass  # Best-effort
 
     def _save_session_on_exit(self):
         """Internal helper; delegates to on_session_end()."""
@@ -2063,6 +2129,10 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
                         self.handle_mcp_command(args)
                         continue
 
+                    elif command in ("plugins", "plugin"):
+                        _handle_plugins_interactive()
+                        continue
+
                     elif command == "agent":
                         self.handle_agent_command(args)
                         continue
@@ -2302,6 +2372,26 @@ def run_print_mode(prompt: str) -> int:
         model=os.getenv(f"{provider}_MODEL"),
         on_max_iterations_callback=_on_max_iterations,
     )
+    # Generate a session ID for print mode so hook payloads are identifiable.
+    agent._session_id = str(_uuid_mod.uuid4())
+    agent.tool_runner._session_id = agent._session_id
+    _load_and_register_plugins(agent)
+
+    # Dispatch SessionStart hooks (after plugin loading so rules are available).
+    if agent._plugin_hook_rules:
+        try:
+            from .plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
+            _cwd = agent.working_directory
+            adapter = ClaudeHookPayloadAdapter()
+            payload = adapter.build_session_start(
+                session_id=agent._session_id, cwd=_cwd,
+            )
+            PluginHookDispatcher(cwd=_cwd).dispatch_session_start(
+                payload=payload, rules=agent._plugin_hook_rules,
+            )
+        except Exception:
+            pass
+
     try:
         response = agent.chat(prompt)
         print(response)
@@ -2309,6 +2399,22 @@ def run_print_mode(prompt: str) -> int:
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+    finally:
+        # Dispatch SessionEnd hooks before closing (matching interactive path).
+        if agent._plugin_hook_rules:
+            try:
+                from .plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
+                _cwd = agent.working_directory
+                adapter = ClaudeHookPayloadAdapter()
+                payload = adapter.build_session_end(
+                    session_id=agent._session_id, cwd=_cwd,
+                )
+                PluginHookDispatcher(cwd=_cwd).dispatch_session_end(
+                    payload=payload, rules=agent._plugin_hook_rules,
+                )
+            except Exception:
+                pass
+        agent.close()
 
 
 def main(resume_session: Optional[str] = None):
@@ -2466,7 +2572,7 @@ def run_init_wizard() -> None:
         "# LLM_TEMPERATURE=0.2\n",
     ]
 
-    env_path.write_text("".join(lines))
+    env_path.write_text("".join(lines), encoding="utf-8")
 
     # --- Create .agentao/ dir ---
     dot_dir = Path(".agentao")
@@ -2517,12 +2623,11 @@ def run_acp_mode() -> None:
     acp_main()
 
 
-def entrypoint():
-    """Unified entry point: -p for print mode, --resume for session restore,
-    --acp --stdio for ACP server mode, otherwise interactive."""
+def _build_parser():
+    """Build the top-level argument parser with subcommands."""
     import argparse
+
     parser = argparse.ArgumentParser(prog="agentao", add_help=False)
-    parser.add_argument("subcommand", nargs="?", default=None, help="Subcommand (e.g. init)")
     parser.add_argument("-p", "--print", dest="prompt", nargs="?", const="", default=None)
     parser.add_argument(
         "--resume",
@@ -2550,7 +2655,554 @@ def entrypoint():
             "transport — implied by --acp)."
         ),
     )
+    parser.add_argument(
+        "--plugin-dir",
+        dest="plugin_dirs",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="Load a plugin from DIR (repeatable).",
+    )
+
+    subparsers = parser.add_subparsers(dest="subcommand")
+
+    # agentao init
+    subparsers.add_parser("init")
+
+    # Subcommand parsers also accept --plugin-dir so the flag works both
+    # before and after the subcommand name.  We use default=None (not [])
+    # so the subparser default doesn't clobber top-level values; entrypoint()
+    # merges both sources.
+    _sub_plugin_dir_kwargs = dict(
+        dest="sub_plugin_dirs", action="append", default=None,
+        metavar="DIR", help="Load a plugin from DIR (repeatable).",
+    )
+
+    # agentao plugin ...
+    plugin_parser = subparsers.add_parser("plugin")
+    plugin_parser.add_argument("--plugin-dir", **_sub_plugin_dir_kwargs)
+    plugin_sub = plugin_parser.add_subparsers(dest="plugin_action")
+    plugin_list_p = plugin_sub.add_parser("list", help="List loaded plugins")
+    plugin_list_p.add_argument("--plugin-dir", **_sub_plugin_dir_kwargs)
+    plugin_list_p.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Output as JSON",
+    )
+
+    # agentao skill ...
+    skill_parser = subparsers.add_parser("skill")
+    skill_parser.add_argument("--plugin-dir", **_sub_plugin_dir_kwargs)
+    skill_sub = skill_parser.add_subparsers(dest="skill_action")
+
+    # agentao skill install <ref>
+    install_p = skill_sub.add_parser("install", help="Install a skill from GitHub")
+    install_p.add_argument("ref", help="GitHub ref: owner/repo")
+    install_p.add_argument(
+        "--scope", choices=["global", "project"], default=None,
+        help="Install scope (default: auto-detect)",
+    )
+    install_p.add_argument(
+        "--force", action="store_true",
+        help="Overwrite existing skill",
+    )
+
+    # agentao skill remove <name>
+    remove_p = skill_sub.add_parser("remove", help="Remove an installed skill")
+    remove_p.add_argument("name", help="Skill name to remove")
+    remove_p.add_argument(
+        "--scope", choices=["global", "project"], default=None,
+        help="Scope to remove from (default: auto-detect)",
+    )
+
+    # agentao skill list
+    list_p = skill_sub.add_parser("list", help="List installed skills")
+    list_p.add_argument(
+        "--installed", action="store_true",
+        help="Show only managed installs",
+    )
+    list_p.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Output as JSON",
+    )
+
+    # agentao skill update [name]
+    update_p = skill_sub.add_parser("update", help="Update installed skill(s)")
+    update_p.add_argument("name", nargs="?", default=None, help="Skill name to update")
+    update_p.add_argument(
+        "--all", dest="update_all", action="store_true",
+        help="Update all managed skills",
+    )
+    update_p.add_argument(
+        "--scope", choices=["global", "project"], default=None,
+        help="Scope to update (default: auto-detect)",
+    )
+
+    return parser
+
+
+# ------------------------------------------------------------------
+# Skill subcommand handlers
+# ------------------------------------------------------------------
+
+def _skill_list(args) -> None:
+    """List skills.
+
+    By default lists all discoverable skills (managed + unmanaged).
+    With ``--installed`` shows only managed registry entries.
+    """
+    from rich.table import Table as RichTable
+
+    from .skills.registry import SkillRegistry, registry_path_for_scope
+
+    installed_only = getattr(args, "installed", False)
+
+    # Always collect managed records from both registries.
+    managed_records = []
+    managed_names: set[str] = set()
+    for scope in ("global", "project"):
+        reg_path = registry_path_for_scope(scope)
+        if reg_path.exists():
+            reg = SkillRegistry(reg_path)
+            for rec in reg.list_all():
+                managed_records.append(rec)
+                managed_names.add(rec.name)
+
+    if installed_only:
+        # --installed: show only managed installs.
+        if getattr(args, "json_output", False):
+            import dataclasses as _dc
+            print(json.dumps([_dc.asdict(r) for r in managed_records], indent=2))
+            return
+
+        if not managed_records:
+            console.print("[dim]No managed skills installed.[/dim]")
+            return
+
+        table = RichTable(title="Managed Skills")
+        table.add_column("Name", style="cyan")
+        table.add_column("Version")
+        table.add_column("Source")
+        table.add_column("Scope", style="green")
+        table.add_column("Status")
+
+        for rec in managed_records:
+            repo_skill = Path.cwd() / "skills" / rec.name
+            status = "shadowed" if repo_skill.exists() else "ok"
+            table.add_row(
+                rec.name,
+                rec.version or "-",
+                f"{rec.source_type}:{rec.source_ref}",
+                rec.install_scope,
+                status,
+            )
+        console.print(table)
+        return
+
+    # Default: show all discoverable skills (managed + unmanaged).
+    # Resolve the project root upward so subdirectory invocations still
+    # find skills installed in <project>/.agentao/skills and <project>/skills.
+    from .skills.manager import SkillManager
+    from .skills.registry import _find_project_root
+    project_root = _find_project_root() or Path.cwd()
+    sm = SkillManager(working_directory=project_root)
+    all_skills = sm.available_skills
+
+    if getattr(args, "json_output", False):
+        entries = []
+        for name, info in sorted(all_skills.items()):
+            entries.append({
+                "name": name,
+                "description": info.get("description", ""),
+                "managed": name in managed_names,
+            })
+        print(json.dumps(entries, indent=2))
+        return
+
+    if not all_skills:
+        console.print("[dim]No skills found.[/dim]")
+        return
+
+    table = RichTable(title="Skills")
+    table.add_column("Name", style="cyan")
+    table.add_column("Description")
+    table.add_column("Managed", style="green")
+
+    for name, info in sorted(all_skills.items()):
+        managed_tag = "yes" if name in managed_names else "-"
+        table.add_row(name, info.get("description", "")[:60], managed_tag)
+    console.print(table)
+
+
+def _skill_remove(args, scope: str) -> None:
+    """Remove a managed skill installation."""
+    import shutil
+
+    from .skills.registry import SkillRegistry, registry_path_for_scope
+
+    reg_path = registry_path_for_scope(scope)
+    registry = SkillRegistry(reg_path)
+    record = registry.get(args.name)
+
+    if record is None:
+        # Try the other scope
+        other_scope = "global" if scope == "project" else "project"
+        other_path = registry_path_for_scope(other_scope)
+        if other_path.exists():
+            other_reg = SkillRegistry(other_path)
+            if other_reg.get(args.name):
+                console.print(
+                    f"[yellow]Skill '{args.name}' not found in {scope} scope, "
+                    f"but exists in {other_scope} scope. "
+                    f"Use --scope {other_scope} to remove it.[/yellow]"
+                )
+                sys.exit(1)
+        console.print(f"[red]Skill '{args.name}' not found in any registry.[/red]")
+        sys.exit(1)
+
+    install_dir = Path(record.install_dir)
+    if install_dir.exists():
+        shutil.rmtree(install_dir)
+
+    registry.remove(args.name)
+    registry.save()
+    console.print(f"[green]Removed skill '{args.name}' from {scope} scope.[/green]")
+
+
+def _skill_install(args, scope: str) -> None:
+    """Install a skill from a remote source."""
+    from .skills.installer import SkillInstallError, SkillInstaller
+    from .skills.registry import SkillRegistry, registry_path_for_scope
+    from .skills.sources import GitHubSkillSource
+
+    registry = SkillRegistry(registry_path_for_scope(scope))
+    source = GitHubSkillSource()
+    installer = SkillInstaller(registry=registry, source=source, scope=scope)
+
+    try:
+        record = installer.install(args.ref, force=args.force)
+        console.print(
+            f"[green]Installed skill '{record.name}' "
+            f"({record.source_ref}) into {scope} scope.[/green]"
+        )
+    except SkillInstallError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        sys.exit(1)
+
+
+def _skill_update(args, scope: str, *, explicit_scope: str | None = None) -> None:
+    """Update one or all managed skills."""
+    from .skills.installer import SkillInstallError, SkillInstaller
+    from .skills.registry import SkillRegistry, registry_path_for_scope
+    from .skills.sources import GitHubSkillSource
+
+    if args.update_all:
+        # Honor --scope: when the user explicitly passes --scope, only iterate
+        # that scope.  Without --scope, update across both scopes.
+        scopes_to_update = [explicit_scope] if explicit_scope else ["global", "project"]
+        updated, up_to_date, failed = [], [], []
+        for update_scope in scopes_to_update:
+            reg_path = registry_path_for_scope(update_scope)
+            if not reg_path.exists():
+                continue
+            registry = SkillRegistry(reg_path)
+            source = GitHubSkillSource()
+            installer = SkillInstaller(registry=registry, source=source, scope=update_scope)
+            for rec in registry.list_all():
+                if rec.source_type == "manual":
+                    continue
+                try:
+                    result = installer.update(rec.name)
+                    if result:
+                        updated.append(rec.name)
+                    else:
+                        up_to_date.append(rec.name)
+                except SkillInstallError as exc:
+                    failed.append((rec.name, str(exc)))
+        if not updated and not up_to_date and not failed:
+            console.print("[dim]No managed skills to update.[/dim]")
+            return
+        if updated:
+            console.print(f"[green]Updated: {', '.join(updated)}[/green]")
+        if up_to_date:
+            console.print(f"[dim]Up-to-date: {', '.join(up_to_date)}[/dim]")
+        if failed:
+            for name, err in failed:
+                console.print(f"[red]Failed {name}: {err}[/red]")
+        return
+
+    if not args.name:
+        console.print("[red]Specify a skill name or use --all.[/red]")
+        sys.exit(2)
+
+    registry = SkillRegistry(registry_path_for_scope(scope))
+    record = registry.get(args.name)
+
+    # Fall back to the other scope if the skill isn't in the auto-resolved one.
+    if not record:
+        other_scope = "global" if scope == "project" else "project"
+        other_path = registry_path_for_scope(other_scope)
+        if other_path.exists():
+            other_reg = SkillRegistry(other_path)
+            if other_reg.get(args.name):
+                scope = other_scope
+                registry = other_reg
+                record = other_reg.get(args.name)
+    if not record:
+        console.print(f"[red]Skill '{args.name}' not found in any registry.[/red]")
+        sys.exit(1)
+
+    source = GitHubSkillSource()
+    installer = SkillInstaller(registry=registry, source=source, scope=scope)
+
+    try:
+        result = installer.update(args.name)
+        if result:
+            console.print(
+                f"[green]Updated '{args.name}' to revision "
+                f"{result.revision[:12]}.[/green]"
+            )
+        else:
+            console.print(f"Skill '{args.name}' is already up-to-date.")
+    except SkillInstallError as exc:
+        console.print(f"[red]Error updating '{args.name}': {exc}[/red]")
+        sys.exit(1)
+
+
+def handle_plugin_subcommand(args) -> None:
+    """Dispatch plugin subcommands (``agentao plugin list``)."""
+    action = getattr(args, "plugin_action", None)
+
+    if action == "list":
+        _plugin_list_cli(args)
+    else:
+        sys.stderr.write("Usage: agentao plugin {list}\n")
+        sys.exit(2)
+
+
+def _plugin_list_cli(args) -> None:
+    """``agentao plugin list`` — show loaded plugins with diagnostics."""
+    from pathlib import Path
+
+    from .plugins.diagnostics import build_diagnostics
+    from .plugins.manager import PluginManager
+
+    _top = getattr(args, "plugin_dirs", []) or []
+    _sub = getattr(args, "sub_plugin_dirs", None) or []
+    inline_dirs = [Path(d) for d in _top + _sub]
+    mgr = PluginManager(inline_dirs=inline_dirs)
+    loaded = mgr.load_plugins()
+
+    # Simulate registration checks so the listing reflects post-load
+    # failures (e.g. skill/agent name collisions) that would cause
+    # _load_and_register_plugins() to reject a plugin at runtime.
+    from .plugins.skills import resolve_plugin_entries
+    from .plugins.agents import resolve_plugin_agents
+
+    all_warnings = list(mgr.get_warnings())
+    all_errors = list(mgr.get_errors())
+    failed_plugins: set[str] = set()
+
+    for plugin in loaded:
+        entries, pw, pe = resolve_plugin_entries(plugin)
+        all_warnings.extend(pw)
+        all_errors.extend(pe)
+        if pe:
+            failed_plugins.add(plugin.name)
+
+    for plugin in loaded:
+        if plugin.name in failed_plugins:
+            continue
+        defs, aw, ae = resolve_plugin_agents(plugin)
+        all_warnings.extend(aw)
+        all_errors.extend(ae)
+        if ae:
+            failed_plugins.add(plugin.name)
+
+    # Separate healthy plugins from failed ones in the diagnostics.
+    healthy = [p for p in loaded if p.name not in failed_plugins]
+    diag = build_diagnostics(healthy, all_warnings, all_errors)
+
+    if getattr(args, "json_output", False):
+        import json as _json
+        data = {
+            "plugins": [
+                {
+                    "name": p.name,
+                    "version": p.version,
+                    "source": p.source,
+                    "marketplace": p.marketplace,
+                    "qualified_name": p.qualified_name,
+                    "root_path": str(p.root_path),
+                    "status": "ok" if p.name not in failed_plugins else "failed",
+                }
+                for p in loaded
+            ],
+            "warnings": [str(w) for w in diag.warnings],
+            "errors": [str(e) for e in diag.errors],
+        }
+        print(_json.dumps(data, indent=2))
+        return
+
+    console.print(diag.format_report())
+
+
+def _load_and_register_plugins(agent: "Agentao") -> None:
+    """Load plugins and register their skills, agents, and MCP servers on *agent*.
+
+    Called during normal startup (interactive and print mode) so that
+    plugin-provided capabilities are available in every session.
+    """
+    from .plugins.diagnostics import build_diagnostics
+    from .plugins.manager import PluginManager
+    from .plugins.skills import resolve_plugin_entries
+    from .plugins.agents import resolve_plugin_agents
+    from .plugins.mcp import merge_plugin_mcp_servers
+
+    mgr = PluginManager(inline_dirs=_plugin_inline_dirs or None)
+    loaded = mgr.load_plugins()
+    if not loaded:
+        return
+
+    # Register skills and commands.  Track plugins that fail so we can
+    # skip them in later registration phases (hooks, MCP) to avoid a
+    # confusing partial-load state.
+    failed_plugins: set = set()
+    for plugin in loaded:
+        entries, warnings, errors = resolve_plugin_entries(plugin)
+        if not errors and entries:
+            try:
+                reg_errors = agent.skill_manager.register_plugin_skills(entries)
+                for err in reg_errors:
+                    logger.warning("Plugin skill registration failed: %s", err)
+                if reg_errors:
+                    failed_plugins.add(plugin.name)
+            except Exception as exc:
+                logger.warning("Plugin skill registration error for '%s': %s", plugin.name, exc)
+                failed_plugins.add(plugin.name)
+        if errors:
+            failed_plugins.add(plugin.name)
+        for err in errors:
+            logger.warning("Plugin skill resolution error: %s", err)
+
+    # Register agents.
+    _agents_added = False
+    for plugin in loaded:
+        if plugin.name in failed_plugins:
+            continue
+        defs, warnings, errors = resolve_plugin_agents(plugin)
+        if not errors and defs:
+            try:
+                reg_errors = agent.agent_manager.register_plugin_agents(defs)
+                for err in reg_errors:
+                    logger.warning("Plugin agent registration failed: %s", err)
+                if reg_errors:
+                    failed_plugins.add(plugin.name)
+                else:
+                    _agents_added = True
+            except Exception as exc:
+                logger.warning("Plugin agent registration error for '%s': %s", plugin.name, exc)
+                failed_plugins.add(plugin.name)
+        if errors:
+            failed_plugins.add(plugin.name)
+        for err in errors:
+            logger.warning("Plugin agent resolution error: %s", err)
+
+    # Re-register agent tools so new plugin agents get callable tool wrappers.
+    if _agents_added:
+        agent._register_agent_tools()
+
+    # Filter out failed plugins before MCP merge and hooks.
+    active_plugins = [p for p in loaded if p.name not in failed_plugins]
+
+    # Merge plugin MCP servers and apply to the running agent.
+    from .mcp.config import load_mcp_config
+    base_mcp = load_mcp_config(project_root=agent.working_directory)
+    merge_result = merge_plugin_mcp_servers(base_mcp, active_plugins)
+    for err in merge_result.errors:
+        logger.warning("Plugin MCP merge error: %s", err)
+
+    # Compute new servers contributed by plugins (not already in base).
+    plugin_servers = {k: v for k, v in merge_result.servers.items() if k not in base_mcp}
+    if plugin_servers:
+        # Inject plugin MCP servers and re-initialise MCP so they connect.
+        agent._extra_mcp_servers.update(plugin_servers)
+        if agent.mcp_manager is not None:
+            try:
+                agent.mcp_manager.disconnect_all()
+            except Exception:
+                pass
+        agent.mcp_manager = agent._init_mcp()
+
+    # Resolve and register plugin hooks on the agent so they fire at runtime.
+    from .plugins.hooks import (
+        ClaudeHookPayloadAdapter,
+        PluginHookDispatcher,
+        resolve_all_hook_rules,
+    )
+    hook_rules, hook_warnings = resolve_all_hook_rules(active_plugins)
+    for w in hook_warnings:
+        logger.warning("Plugin hook warning: %s", w.message)
+    agent._plugin_hook_rules = hook_rules
+    agent._loaded_plugins = list(active_plugins)
+    agent.tool_runner._plugin_hook_rules = hook_rules
+    agent.tool_runner._working_directory = agent.working_directory
+
+    # NOTE: SessionStart hooks are NOT dispatched here — they are fired from
+    # on_session_start() (interactive) or run_print_mode() (print mode) after
+    # the session ID is finalized.  This avoids sending a stale/temporary
+    # session ID when resuming a session.
+
+    # Log summary.
+    diag = build_diagnostics(loaded, mgr.get_warnings(), mgr.get_errors())
+    if diag.plugin_count:
+        logger.info("Plugins: %s", diag.summary())
+
+
+def _handle_plugins_interactive() -> None:
+    """Handle the interactive ``/plugins`` command."""
+    from .plugins.diagnostics import build_diagnostics
+    from .plugins.manager import PluginManager
+
+    mgr = PluginManager(inline_dirs=_plugin_inline_dirs or None)
+    loaded = mgr.load_plugins()
+    diag = build_diagnostics(loaded, mgr.get_warnings(), mgr.get_errors())
+    console.print(diag.format_report())
+
+
+def handle_skill_subcommand(args) -> None:
+    """Dispatch skill subcommands."""
+    from .skills.registry import resolve_default_scope
+
+    explicit_scope = getattr(args, "scope", None)
+    scope = explicit_scope or resolve_default_scope()
+    action = args.skill_action
+
+    if action == "list":
+        _skill_list(args)
+    elif action == "remove":
+        _skill_remove(args, scope)
+    elif action == "install":
+        _skill_install(args, scope)
+    elif action == "update":
+        _skill_update(args, scope, explicit_scope=explicit_scope)
+    else:
+        sys.stderr.write("Usage: agentao skill {install|remove|list|update}\n")
+        sys.exit(2)
+
+
+def entrypoint():
+    """Unified entry point: -p for print mode, --resume for session restore,
+    --acp --stdio for ACP server mode, skill management, or interactive."""
+    global _plugin_inline_dirs
+    parser = _build_parser()
     args, _ = parser.parse_known_args()
+
+    # Propagate --plugin-dir to the module-level list so AgentaoCLI and
+    # run_print_mode can pick it up.  Merge top-level and subcommand-level
+    # values so the flag works in either position.
+    _top_dirs = getattr(args, "plugin_dirs", []) or []
+    _sub_dirs = getattr(args, "sub_plugin_dirs", None) or []
+    _plugin_inline_dirs = [Path(d) for d in _top_dirs + _sub_dirs]
 
     # ACP mode takes priority over every other entry path. We bypass the
     # interactive Rich UI entirely so no terminal output, prompts, or
@@ -2577,6 +3229,10 @@ def entrypoint():
 
     if args.subcommand == "init":
         run_init_wizard()
+    elif args.subcommand == "plugin":
+        handle_plugin_subcommand(args)
+    elif args.subcommand == "skill":
+        handle_skill_subcommand(args)
     elif args.prompt is not None:
         stdin_text = "" if sys.stdin.isatty() else sys.stdin.read()
         parts = [p for p in [args.prompt.strip(), stdin_text.strip()] if p]

@@ -38,7 +38,7 @@ else:
 
 # Read and display log content
 print(f"\n2. Reading log file content...")
-with open(log_file, "r") as f:
+with open(log_file, "r", encoding="utf-8") as f:
     log_content = f.read()
     print(f"✓ Log file contains {len(log_content)} characters")
     print("\nLog content preview:")

@@ -249,6 +249,12 @@ class Agentao:
         from .agents.tools import _bg_lock, _bg_tasks
         recover_bg_task_store_once(_bg_tasks, _bg_lock)
 
+        # Plugin hook rules — populated by _load_and_register_plugins() in cli.py.
+        self._plugin_hook_rules: list = []
+        self._loaded_plugins: list = []
+        # Session ID for plugin hook payloads — set by CLI after session start.
+        self._session_id: Optional[str] = None
+
         # Per-turn cancellation token (set at the start of each chat() call)
         self._current_token: Optional[CancellationToken] = None
 
@@ -413,7 +419,13 @@ class Agentao:
         return manager
 
     def close(self) -> None:
-        """Clean up resources (MCP connections, event loops)."""
+        """Clean up resources (MCP connections, event loops).
+
+        NOTE: SessionEnd hooks are dispatched by the CLI layer
+        (on_session_end / _dispatch_session_end_hooks) which runs before
+        close() on every exit path.  We intentionally do NOT duplicate
+        the dispatch here to avoid double-firing.
+        """
         if self.mcp_manager is not None:
             try:
                 self.mcp_manager.disconnect_all()
@@ -794,6 +806,34 @@ Use tools proactively only when they materially improve correctness or are neede
             f"</system-reminder>\n"
         )
         self._last_user_message = user_message
+
+        # Dispatch UserPromptSubmit plugin hooks before processing.
+        if self._plugin_hook_rules:
+            from .plugins.hooks import (
+                ClaudeHookPayloadAdapter,
+                PluginHookDispatcher,
+            )
+            _cwd = self.working_directory
+            adapter = ClaudeHookPayloadAdapter()
+            payload = adapter.build_user_prompt_submit(
+                user_message=user_message, session_id=self._session_id, cwd=_cwd,
+            )
+            dispatcher = PluginHookDispatcher(cwd=_cwd)
+            ups_result = dispatcher.dispatch_user_prompt_submit(
+                payload=payload, rules=self._plugin_hook_rules,
+            )
+            if ups_result.blocking_error:
+                return f"[Blocked by hook] {ups_result.blocking_error}"
+            if ups_result.prevent_continuation:
+                return f"[Hook stopped] {ups_result.stop_reason or 'Hook prevented continuation'}"
+            # Inject additional context from hooks into the user message.
+            if ups_result.additional_contexts:
+                extra = "\n".join(
+                    f"<user-prompt-submit-hook>\n{ctx}\n</user-prompt-submit-hook>"
+                    for ctx in ups_result.additional_contexts
+                )
+                user_message = extra + "\n" + user_message
+
         self.add_message("user", system_reminder + user_message)
 
         # Build system prompt (injects all memories)

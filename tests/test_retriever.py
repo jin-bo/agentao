@@ -1,5 +1,7 @@
 """Tests for MemoryRetriever: tokenize, score, recall_candidates, format_recall_block."""
 
+import logging
+import sys
 import uuid
 from pathlib import Path
 
@@ -11,6 +13,8 @@ from agentao.memory.retriever import (
     MemoryRetriever,
     _jaccard,
     _days_since,
+    _ensure_jieba_ready,
+    _initialize_jieba_with_logging,
     _normalize_token,
     _cjk_segment,
 )
@@ -283,7 +287,6 @@ def test_recall_error_increments_counter(tmp_path, monkeypatch):
 
 def test_recall_error_logged_as_warning(tmp_path, monkeypatch, caplog):
     """A retriever exception is logged at WARNING level."""
-    import logging
     ret, _ = _make_retriever(tmp_path)
     monkeypatch.setattr(ret, "tokenize", lambda _text: (_ for _ in ()).throw(ValueError("bad input")))
 
@@ -321,6 +324,53 @@ def test_normalize_no_op():
 # ---------------------------------------------------------------------------
 # _cjk_segment (jieba-backed CJK word segmentation)
 # ---------------------------------------------------------------------------
+
+def test_initialize_jieba_redirects_stderr_to_logger(monkeypatch, caplog, capsys):
+    def fake_initialize():
+        print("Building prefix dict from the default dictionary ...", file=sys.stderr)
+        print("Prefix dict has been built successfully.", file=sys.stderr)
+
+    monkeypatch.setattr("agentao.memory.retriever.jieba.initialize", fake_initialize)
+
+    with caplog.at_level(logging.DEBUG, logger="agentao.memory.retriever"):
+        _initialize_jieba_with_logging()
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert any("jieba: Building prefix dict from the default dictionary ..." in r.message for r in caplog.records)
+    assert any("jieba: Prefix dict has been built successfully." in r.message for r in caplog.records)
+
+
+def test_ensure_jieba_ready_logs_progress_without_terminal_output(monkeypatch, caplog, capsys):
+    monkeypatch.setattr("agentao.memory.retriever._JIEBA_INITIALIZED", False)
+    monkeypatch.setattr("agentao.memory.retriever._USERDICT_PATH", Path("/definitely/missing/userdict.txt"))
+
+    def fake_initialize():
+        print("Loading model from cache /tmp/jieba.cache", file=sys.stderr)
+
+    monkeypatch.setattr("agentao.memory.retriever.jieba.initialize", fake_initialize)
+
+    with caplog.at_level(logging.DEBUG, logger="agentao.memory.retriever"):
+        _ensure_jieba_ready()
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert any("jieba: Loading model from cache /tmp/jieba.cache" in r.message for r in caplog.records)
+
+
+def test_initialize_jieba_redirects_jieba_logger_without_terminal_output(monkeypatch, caplog, capsys):
+    def fake_initialize():
+        logging.getLogger("jieba").info("Loading model cost 0.258 seconds.")
+
+    monkeypatch.setattr("agentao.memory.retriever.jieba.initialize", fake_initialize)
+
+    with caplog.at_level(logging.DEBUG, logger="agentao.memory.retriever"):
+        _initialize_jieba_with_logging()
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert any("jieba: Loading model cost 0.258 seconds." in r.message for r in caplog.records)
+
 
 def test_cjk_segment_basic():
     # jieba should split "版本管理" into ["版本", "管理"] — no noise like "本管"

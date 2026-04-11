@@ -22,13 +22,13 @@ def _engine(tmp_path, monkeypatch, project_rules=None, user_rules=None):
         cfg = tmp_path / ".agentao"
         cfg.mkdir(exist_ok=True)
         (cfg / "permissions.json").write_text(
-            json.dumps({"rules": project_rules}), encoding="utf-8"
+            json.dumps({"rules": project_rules}), encoding="utf-8",
         )
     if user_rules is not None:
         home_cfg = tmp_path / "home" / ".agentao"
         home_cfg.mkdir(parents=True, exist_ok=True)
         (home_cfg / "permissions.json").write_text(
-            json.dumps({"rules": user_rules}), encoding="utf-8"
+            json.dumps({"rules": user_rules}), encoding="utf-8",
         )
 
     return PermissionEngine()

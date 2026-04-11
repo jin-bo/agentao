@@ -89,6 +89,12 @@ class ToolRunner:
         self._logger = logger
         self._doom_counter: Counter = Counter()
         self.readonly_mode: bool = False
+        # Plugin hook rules — set by the agent after plugin loading.
+        self._plugin_hook_rules: list = []
+        # Session working directory for hook dispatchers (set by cli after plugin loading).
+        self._working_directory: Optional[Path] = None
+        # Session ID for hook payloads (set by cli after session start).
+        self._session_id: Optional[str] = None
 
     def set_readonly_mode(self, enabled: bool) -> None:
         """Enable or disable readonly mode. When enabled, all non-read-only tools are denied."""
@@ -294,6 +300,10 @@ class ToolRunner:
 
                 # Acquire the per-tool lock to serialize concurrent calls to the
                 # same tool instance, protecting output_callback assignment.
+                # Dispatch PreToolUse plugin hooks.
+                if self._plugin_hook_rules:
+                    self._dispatch_pre_tool_hook(_fn, _args)
+
                 _errored = False
                 _error_msg = None
                 with _tool_locks[id(_tool)]:
@@ -323,6 +333,13 @@ class ToolRunner:
                             "duration_ms": round((time.monotonic() - _t0) * 1000),
                             "error": _error_msg,
                         }))
+
+                # Dispatch PostToolUse / PostToolUseFailure plugin hooks.
+                if self._plugin_hook_rules:
+                    if _errored:
+                        self._dispatch_post_tool_failure_hook(_fn, _args, _error_msg)
+                    else:
+                        self._dispatch_post_tool_hook(_fn, _args, _result)
 
             return _tc.id, _fn, _result
 
@@ -371,3 +388,53 @@ class ToolRunner:
             })
 
         return False, result_messages
+
+    # ------------------------------------------------------------------
+    # Plugin hook dispatch helpers
+    # ------------------------------------------------------------------
+
+    def _dispatch_pre_tool_hook(self, tool_name: str, tool_args: Dict[str, Any]) -> None:
+        try:
+            from .plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
+            adapter = ClaudeHookPayloadAdapter()
+            payload = adapter.build_pre_tool_use(
+                tool_name=tool_name, tool_input=tool_args,
+                session_id=self._session_id,
+            )
+            dispatcher = PluginHookDispatcher(cwd=self._working_directory)
+            dispatcher.dispatch_pre_tool_use(payload=payload, rules=self._plugin_hook_rules)
+        except Exception as exc:
+            self._logger.warning("PreToolUse hook dispatch error: %s", exc)
+
+    def _dispatch_post_tool_hook(
+        self, tool_name: str, tool_args: Dict[str, Any], result: str
+    ) -> None:
+        try:
+            from .plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
+            adapter = ClaudeHookPayloadAdapter()
+            payload = adapter.build_post_tool_use(
+                tool_name=tool_name, tool_input=tool_args,
+                tool_output=result if isinstance(result, str) else str(result),
+                session_id=self._session_id,
+            )
+            dispatcher = PluginHookDispatcher(cwd=self._working_directory)
+            dispatcher.dispatch_post_tool_use(payload=payload, rules=self._plugin_hook_rules)
+        except Exception as exc:
+            self._logger.warning("PostToolUse hook dispatch error: %s", exc)
+
+    def _dispatch_post_tool_failure_hook(
+        self, tool_name: str, tool_args: Dict[str, Any], error: str | None
+    ) -> None:
+        try:
+            from .plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
+            adapter = ClaudeHookPayloadAdapter()
+            payload = adapter.build_post_tool_use_failure(
+                tool_name=tool_name, tool_input=tool_args, error=error,
+                session_id=self._session_id,
+            )
+            dispatcher = PluginHookDispatcher(cwd=self._working_directory)
+            dispatcher.dispatch_post_tool_use_failure(
+                payload=payload, rules=self._plugin_hook_rules,
+            )
+        except Exception as exc:
+            self._logger.warning("PostToolUseFailure hook dispatch error: %s", exc)

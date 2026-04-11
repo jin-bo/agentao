@@ -185,7 +185,7 @@ def test_bootstrap_skips_existing_skill(tmp_path):
                         _CONFIG_DIR=tmp_path):
         SkillManager()
     # User version must not be overwritten
-    content = (global_dir / "skill-creator" / "SKILL.md").read_text()
+    content = (global_dir / "skill-creator" / "SKILL.md").read_text(encoding="utf-8")
     assert "user version" in content
 
 
@@ -324,7 +324,7 @@ def test_disabled_skill_persisted_to_disk(tmp_path):
                         _CONFIG_DIR=tmp_path):
         m = SkillManager()
         m.disable_skill("alpha")
-    saved = json.loads(cfg_file.read_text())
+    saved = json.loads(cfg_file.read_text(encoding="utf-8"))
     assert "alpha" in saved["disabled_skills"]
 
 

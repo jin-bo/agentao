@@ -10,6 +10,8 @@ from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 import jieba
 
+from agentao.logging_utils import capture_third_party_output
+
 from .models import MemoryRecord, RecallCandidate
 
 if TYPE_CHECKING:
@@ -25,6 +27,17 @@ _JIEBA_INITIALIZED = False
 _USERDICT_PATH = Path.home() / ".agentao" / "userdict.txt"
 
 
+def _initialize_jieba_with_logging() -> None:
+    """Run jieba initialization without leaking its progress messages to the terminal."""
+    capture_third_party_output(
+        runner=jieba.initialize,
+        source_logger_names=("jieba",),
+        target_logger=logger,
+        target_level=logging.DEBUG,
+        prefix="jieba: ",
+    )
+
+
 def _ensure_jieba_ready() -> None:
     """Lazy-init jieba: load user dict on first call, idempotent.
 
@@ -36,7 +49,7 @@ def _ensure_jieba_ready() -> None:
     global _JIEBA_INITIALIZED
     if _JIEBA_INITIALIZED:
         return
-    jieba.initialize()
+    _initialize_jieba_with_logging()
     if _USERDICT_PATH.exists():
         try:
             jieba.load_userdict(str(_USERDICT_PATH))

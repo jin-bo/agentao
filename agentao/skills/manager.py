@@ -358,16 +358,82 @@ class SkillManager:
 
         return context
 
+    # ------------------------------------------------------------------
+    # Plugin skill registration
+    # ------------------------------------------------------------------
+
+    def register_plugin_skills(
+        self,
+        entries: "list[PluginSkillEntry]",
+    ) -> "list[PluginLoadError]":
+        """Register plugin-provided skill entries.
+
+        Returns a list of collision errors.  If the list is non-empty the
+        caller should treat the plugin as failed.
+
+        Imports are deferred to avoid a hard dependency when the plugin
+        subsystem is not installed.
+        """
+        from agentao.plugins.models import PluginLoadError, PluginSkillEntry
+        from agentao.plugins.skills import validate_no_external_collisions
+
+        errors = validate_no_external_collisions(
+            entries[0].plugin_name if entries else "",
+            entries,
+            set(self.available_skills.keys()),
+        )
+        if errors:
+            return errors
+
+        for entry in entries:
+            self.available_skills[entry.runtime_name] = {
+                "name": entry.runtime_name,
+                "title": entry.runtime_name,
+                "description": entry.description or "",
+                "when_to_use": "",
+                "path": str(entry.source_path) if entry.source_path else None,
+                "content": (entry.content or "")[:500],
+                "frontmatter": {},
+                # Plugin metadata — distinguishes plugin entries from native ones.
+                "plugin_name": entry.plugin_name,
+                "source_kind": entry.source_kind,
+                "argument_hint": entry.argument_hint,
+                "model": entry.model,
+                "allowed_tools": entry.allowed_tools,
+                "full_content": entry.content,
+            }
+
+        return []
+
     def reload_skills(self):
-        """Reload skill definitions from disk."""
+        """Reload skill definitions from disk.
+
+        Plugin-provided skills are preserved across reloads since they
+        are not backed by on-disk skill directories.
+        """
+        # Snapshot plugin entries so they survive the clear+reload cycle.
+        plugin_entries = {
+            name: info
+            for name, info in self.available_skills.items()
+            if info.get("source_kind")
+        }
         self.available_skills.clear()
         self._load_skills()
+        # Re-inject plugin entries that don't collide with native skills.
+        for name, info in plugin_entries.items():
+            if name not in self.available_skills:
+                self.available_skills[name] = info
         self.disabled_skills &= set(self.available_skills.keys())
         self._save_config()
 
     def get_skill_content(self, skill_name: str) -> Optional[str]:
         skill_info = self.get_skill_info(skill_name)
-        if not skill_info or 'path' not in skill_info:
+        if not skill_info:
+            return None
+        # Plugin entries with inline content but no file path.
+        if skill_info.get("full_content") and not skill_info.get("path"):
+            return skill_info["full_content"]
+        if "path" not in skill_info or not skill_info["path"]:
             return None
         try:
             with open(skill_info['path'], 'r', encoding='utf-8') as f:

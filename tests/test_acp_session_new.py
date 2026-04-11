@@ -306,7 +306,7 @@ def test_cwd_nonexistent_raises(initialized_server):
 
 def test_cwd_that_is_a_file_raises(initialized_server, tmp_path):
     file_path = tmp_path / "foo.txt"
-    file_path.write_text("hi")
+    file_path.write_text("hi", encoding="utf-8")
     factory, _ = make_recording_factory()
     with pytest.raises(TypeError, match="not a directory"):
         acp_session_new.handle_session_new(

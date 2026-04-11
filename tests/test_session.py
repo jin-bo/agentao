@@ -58,7 +58,7 @@ def test_load_latest_when_no_id(tmp_path):
             "active_skills": [],
             "messages": [{"role": "user", "content": content}],
         }
-        (session_dir / f"{ts}.json").write_text(json.dumps(data))
+        (session_dir / f"{ts}.json").write_text(json.dumps(data), encoding="utf-8")
     messages, model, _ = load_session()
     assert messages[0]["content"] == "second"
     assert model == "gpt-4o"
@@ -72,7 +72,7 @@ def test_load_by_id_prefix(tmp_path):
     for ts, content in [(ts1, "alpha"), (ts2, "beta")]:
         data = {"timestamp": ts, "model": "gpt-4", "active_skills": [],
                 "messages": [{"role": "user", "content": content}]}
-        (session_dir / f"{ts}.json").write_text(json.dumps(data))
+        (session_dir / f"{ts}.json").write_text(json.dumps(data), encoding="utf-8")
     messages, _, _ = load_session(session_id=ts1)
     assert messages[0]["content"] == "alpha"
 
@@ -111,7 +111,7 @@ def test_rotation_keeps_max_10(tmp_path):
     for i in range(12):
         ts = f"20260101_{i:06d}"
         data = {"timestamp": ts, "model": _MODEL, "active_skills": [], "messages": []}
-        (session_dir / f"{ts}.json").write_text(json.dumps(data))
+        (session_dir / f"{ts}.json").write_text(json.dumps(data), encoding="utf-8")
     _rotate_sessions(session_dir)
     remaining = list(session_dir.glob("*.json"))
     assert len(remaining) == 10
@@ -142,7 +142,7 @@ def test_delete_all_sessions(tmp_path):
     session_dir.mkdir(parents=True, exist_ok=True)
     for ts in ["20260101_000001", "20260101_000002"]:
         data = {"timestamp": ts, "model": _MODEL, "active_skills": [], "messages": _MESSAGES}
-        (session_dir / f"{ts}.json").write_text(json.dumps(data))
+        (session_dir / f"{ts}.json").write_text(json.dumps(data), encoding="utf-8")
     count = delete_all_sessions()
     assert count == 2
     assert list_sessions() == []
@@ -207,7 +207,7 @@ def test_delete_removes_all_checkpoints_with_same_uuid(tmp_path):
             "active_skills": [],
             "messages": _MESSAGES,
         }
-        (session_dir / f"{ts}.json").write_text(json.dumps(data))
+        (session_dir / f"{ts}.json").write_text(json.dumps(data), encoding="utf-8")
     assert len(list_sessions()) == 2
     result = delete_session(sid)
     assert result is True

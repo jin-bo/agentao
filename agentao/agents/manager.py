@@ -76,6 +76,56 @@ class AgentManager:
 
         return frontmatter, parts[2]
 
+    # ------------------------------------------------------------------
+    # Plugin agent registration
+    # ------------------------------------------------------------------
+
+    def register_plugin_agents(
+        self,
+        agent_defs: "list[PluginAgentDefinition]",
+    ) -> "list[PluginLoadError]":
+        """Register plugin-provided agent definitions.
+
+        Returns a list of collision errors.  If the list is non-empty the
+        caller should treat the plugin as failed.
+
+        Imports are deferred to avoid a hard dependency when the plugin
+        subsystem is not installed.
+        """
+        from agentao.plugins.agents import validate_no_external_collisions
+        from agentao.plugins.models import PluginAgentDefinition, PluginLoadError
+
+        plugin_name = agent_defs[0].plugin_name if agent_defs else ""
+        errors = validate_no_external_collisions(
+            plugin_name, agent_defs, set(self.definitions.keys())
+        )
+        if errors:
+            return errors
+
+        for defn in agent_defs:
+            frontmatter, body = self._parse_yaml_frontmatter(defn.raw_markdown)
+
+            tools_list = frontmatter.get("tools")
+            if isinstance(tools_list, str):
+                tools_list = [t.strip() for t in tools_list.split(",")]
+
+            raw_temp = frontmatter.get("temperature")
+
+            self.definitions[defn.runtime_name] = {
+                "name": defn.runtime_name,
+                "description": defn.description or frontmatter.get("description", ""),
+                "tools": tools_list,
+                "max_turns": int(frontmatter.get("max_turns", 15)),
+                "system_instructions": body.strip() or None,
+                "model": frontmatter.get("model") or None,
+                "temperature": float(raw_temp) if raw_temp is not None else None,
+                # Plugin metadata
+                "plugin_name": defn.plugin_name,
+                "source_path": str(defn.source_path),
+            }
+
+        return []
+
     def list_agents(self) -> Dict[str, str]:
         """Return {name: description} for all loaded agents."""
         return {name: defn["description"] for name, defn in self.definitions.items()}

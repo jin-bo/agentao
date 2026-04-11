@@ -133,7 +133,7 @@ def test_write_file_tool_writes_to_session_cwd(tmp_path):
     result = tool.execute(file_path="new.txt", content="written\n")
 
     assert "Successfully" in result
-    assert (tmp_path / "new.txt").read_text() == "written\n"
+    assert (tmp_path / "new.txt").read_text(encoding="utf-8") == "written\n"
     # Must NOT have written to the process cwd.
     assert not (Path.cwd() / "new.txt").exists() or str(Path.cwd()) == str(tmp_path)
 
@@ -147,12 +147,12 @@ def test_edit_tool_resolves_relative_path(tmp_path):
     result = tool.execute(file_path="foo.txt", old_text="hello", new_text="howdy")
 
     assert "Replaced" in result
-    assert target.read_text() == "howdy world\n"
+    assert target.read_text(encoding="utf-8") == "howdy world\n"
 
 
 def test_read_folder_tool_resolves_relative(tmp_path):
     (tmp_path / "a").mkdir()
-    (tmp_path / "b.txt").write_text("x")
+    (tmp_path / "b.txt").write_text("x", encoding="utf-8")
     tool = ReadFolderTool()
     tool.working_directory = tmp_path
 
@@ -163,9 +163,9 @@ def test_read_folder_tool_resolves_relative(tmp_path):
 
 
 def test_find_files_tool_resolves_relative(tmp_path):
-    (tmp_path / "x.py").write_text("")
-    (tmp_path / "y.py").write_text("")
-    (tmp_path / "z.txt").write_text("")
+    (tmp_path / "x.py").write_text("", encoding="utf-8")
+    (tmp_path / "y.py").write_text("", encoding="utf-8")
+    (tmp_path / "z.txt").write_text("", encoding="utf-8")
     tool = FindFilesTool()
     tool.working_directory = tmp_path
 
@@ -182,8 +182,8 @@ def test_two_sessions_see_independent_files(tmp_path):
     dir_b = tmp_path / "session_b"
     dir_a.mkdir()
     dir_b.mkdir()
-    (dir_a / "shared.txt").write_text("I am A\n")
-    (dir_b / "shared.txt").write_text("I am B\n")
+    (dir_a / "shared.txt").write_text("I am A\n", encoding="utf-8")
+    (dir_b / "shared.txt").write_text("I am B\n", encoding="utf-8")
 
     tool_a = ReadFileTool()
     tool_a.working_directory = dir_a
@@ -218,7 +218,7 @@ def test_shell_tool_default_wd_resolves_to_session_cwd(tmp_path):
 def test_permission_engine_reads_project_root(tmp_path):
     (tmp_path / ".agentao").mkdir()
     rules = {"rules": [{"tool": "custom_tool_a", "action": "allow"}]}
-    (tmp_path / ".agentao" / "permissions.json").write_text(json.dumps(rules))
+    (tmp_path / ".agentao" / "permissions.json").write_text(json.dumps(rules), encoding="utf-8")
 
     engine = PermissionEngine(project_root=tmp_path)
 
@@ -231,10 +231,10 @@ def test_permission_engines_for_different_projects_are_independent(tmp_path):
     (dir_a / ".agentao").mkdir(parents=True)
     (dir_b / ".agentao").mkdir(parents=True)
     (dir_a / ".agentao" / "permissions.json").write_text(
-        json.dumps({"rules": [{"tool": "only_in_a", "action": "allow"}]})
+        json.dumps({"rules": [{"tool": "only_in_a", "action": "allow"}]}), encoding="utf-8"
     )
     (dir_b / ".agentao" / "permissions.json").write_text(
-        json.dumps({"rules": [{"tool": "only_in_b", "action": "allow"}]})
+        json.dumps({"rules": [{"tool": "only_in_b", "action": "allow"}]}), encoding="utf-8"
     )
 
     engine_a = PermissionEngine(project_root=dir_a)
@@ -249,7 +249,7 @@ def test_permission_engine_default_still_uses_process_cwd(monkeypatch, tmp_path)
     """No ``project_root`` → legacy behavior: read from ``Path.cwd()/.agentao``."""
     (tmp_path / ".agentao").mkdir()
     (tmp_path / ".agentao" / "permissions.json").write_text(
-        json.dumps({"rules": [{"tool": "legacy_tool", "action": "allow"}]})
+        json.dumps({"rules": [{"tool": "legacy_tool", "action": "allow"}]}), encoding="utf-8"
     )
     monkeypatch.chdir(tmp_path)
 
@@ -265,7 +265,7 @@ def test_permission_engine_default_still_uses_process_cwd(monkeypatch, tmp_path)
 def test_load_mcp_config_reads_project_root(tmp_path):
     (tmp_path / ".agentao").mkdir()
     cfg = {"mcpServers": {"local": {"command": "/bin/true", "args": []}}}
-    (tmp_path / ".agentao" / "mcp.json").write_text(json.dumps(cfg))
+    (tmp_path / ".agentao" / "mcp.json").write_text(json.dumps(cfg), encoding="utf-8")
 
     loaded = load_mcp_config(project_root=tmp_path)
 
@@ -279,10 +279,10 @@ def test_load_mcp_config_independent_per_project(tmp_path):
     (dir_a / ".agentao").mkdir(parents=True)
     (dir_b / ".agentao").mkdir(parents=True)
     (dir_a / ".agentao" / "mcp.json").write_text(
-        json.dumps({"mcpServers": {"server_a": {"command": "/a", "args": []}}})
+        json.dumps({"mcpServers": {"server_a": {"command": "/a", "args": []}}}), encoding="utf-8"
     )
     (dir_b / ".agentao" / "mcp.json").write_text(
-        json.dumps({"mcpServers": {"server_b": {"command": "/b", "args": []}}})
+        json.dumps({"mcpServers": {"server_b": {"command": "/b", "args": []}}}), encoding="utf-8"
     )
 
     cfg_a = load_mcp_config(project_root=dir_a)
@@ -331,7 +331,7 @@ def test_agentao_memory_manager_bound_to_session_cwd(stub_llm_env, tmp_path):
 
 
 def test_agentao_loads_project_instructions_from_session_cwd(stub_llm_env, tmp_path):
-    (tmp_path / "AGENTAO.md").write_text("## Session-specific instructions\nhello\n")
+    (tmp_path / "AGENTAO.md").write_text("## Session-specific instructions\nhello\n", encoding="utf-8")
 
     agent = _make_agent(working_directory=tmp_path)
     try:
@@ -434,8 +434,8 @@ def test_two_agentao_instances_have_isolated_file_tool_reads(stub_llm_env, tmp_p
     dir_b = tmp_path / "session_b"
     dir_a.mkdir()
     dir_b.mkdir()
-    (dir_a / "note.txt").write_text("note-A\n")
-    (dir_b / "note.txt").write_text("note-B\n")
+    (dir_a / "note.txt").write_text("note-A\n", encoding="utf-8")
+    (dir_b / "note.txt").write_text("note-B\n", encoding="utf-8")
 
     agent_a = _make_agent(working_directory=dir_a)
     agent_b = _make_agent(working_directory=dir_b)
@@ -559,7 +559,7 @@ def test_llm_client_falls_back_when_primary_log_path_unwritable(
     monkeypatch.setenv("HOME", str(tmp_path))
 
     blocker = tmp_path / "not-a-dir"
-    blocker.write_text("regular file, not a directory")
+    blocker.write_text("regular file, not a directory", encoding="utf-8")
     primary = blocker / "agentao.log"  # mkdir on the parent will fail
 
     from agentao.llm.client import LLMClient
