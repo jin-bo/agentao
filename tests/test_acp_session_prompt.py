@@ -538,7 +538,9 @@ def test_end_to_end_wire(tmp_path):
     sid = server.sessions.session_ids()[0]
     acp_session_prompt.register(server)
 
-    # Now send a full session/prompt request over the stdin stream.
+    # Dispatch synchronously via _handle_line to avoid the race between
+    # the executor worker and the shutdown path that fires cancel tokens
+    # when stdin hits EOF inside server.run().
     request = {
         "jsonrpc": "2.0",
         "id": 7,
@@ -548,9 +550,8 @@ def test_end_to_end_wire(tmp_path):
             "prompt": [{"type": "text", "text": "ping"}],
         },
     }
-    server._in = io.StringIO(json.dumps(request) + "\n")
     server._out = io.StringIO()
-    server.run()
+    server._handle_line(json.dumps(request))
 
     response = json.loads(server._out.getvalue().strip())
     assert response["jsonrpc"] == "2.0"
