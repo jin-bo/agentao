@@ -87,7 +87,7 @@ A SQLite-backed persistent memory system that automatically surfaces relevant co
 | Database | Path | Scope |
 |----------|------|-------|
 | Project store | `.agentao/memory.db` | Per-project memories + session summaries |
-| User store | `~/.agentao/memory.db` | Cross-project user preferences |
+| User store | `<home>/.agentao/memory.db` | Cross-project user preferences |
 
 **Three data types:**
 
@@ -103,7 +103,7 @@ A SQLite-backed persistent memory system that automatically surfaces relevant co
 
 2. **`<memory-context>`** — top-k recall candidates scored against the current user message using a keyword / Jaccard / tag / recency formula; injected dynamically so the stable prefix stays cache-friendly.
 
-**Retrieval performance & CJK quality:** the retriever maintains a `write_version`-gated inverted index (token → record IDs) so each recall call scores only the records that share at least one query token, avoiding a full scan as the memory store grows. CJK text is segmented with [`jieba`](https://github.com/fxsjy/jieba) word segmentation rather than character bigrams — `"版本管理"` tokenizes to `{"版本", "管理"}` instead of `{"版本", "本管", "管理"}`, eliminating the noise bigrams that polluted ranking. Single-character CJK tokens are filtered out (mirroring the Latin `len > 1` rule). Add domain-specific terms — project names, technical jargon, proper nouns — to `~/.agentao/userdict.txt` and jieba will pick them up on first recall.
+**Retrieval performance & CJK quality:** the retriever maintains a `write_version`-gated inverted index (token → record IDs) so each recall call scores only the records that share the query tokens, avoiding a full scan as the memory store grows. CJK text is segmented with [`jieba`](https://github.com/fxsjy/jieba) word segmentation rather than character bigrams — `"版本管理"` tokenizes to `{"版本", "管理"}` instead of `{"版本", "本管", "管理"}`, eliminating the noise bigrams that polluted ranking. Single-character CJK tokens are filtered out (mirroring the Latin `len > 1` rule). Add domain-specific terms — project names, technical jargon, proper nouns — to `<home>/.agentao/userdict.txt` and jieba will pick them up on first recall.
 
 > **Session summary channels:** the *current* session's summary lives only in `self.messages` as a `[Conversation Summary]` block (injecting it into the system prompt too would duplicate context). *Previous* sessions' summaries have no message-history channel after a restart, so they flow through `<memory-stable>` instead.
 
@@ -224,14 +224,14 @@ graph LR
 - **Auto-discovery** — tools are discovered on startup and registered as `mcp_{server}_{tool}`
 - **Confirmation** — MCP tools require user confirmation unless the server is marked `"trust": true`
 - **Env var expansion** — `$VAR` and `${VAR}` syntax in config values
-- **Two-level config** — project `.agentao/mcp.json` overrides global `~/.agentao/mcp.json`
+- **Two-level config** — project `.agentao/mcp.json` overrides global `<home>/.agentao/mcp.json`
 
 ### 🧩 Plugin System
 
 Agentao supports a **Claude Code-compatible plugin system** that lets you extend the agent with custom skills, commands, agents, MCP servers, and hooks — all packaged in a single directory with a `plugin.json` manifest.
 
 **Plugin sources** (lowest to highest precedence):
-1. **Global:** `~/.agentao/plugins/{marketplace}/{name}/{version}/`
+1. **Global:** `<home>/.agentao/plugins/{marketplace}/{name}/{version}/`
 2. **Project:** `.agentao/plugins/{marketplace}/{name}/{version}/`
 3. **Inline:** `--plugin-dir /path/to/plugin` (highest priority)
 
@@ -595,7 +595,7 @@ OPENAI_API_KEY=your-api-key-here
 
 ### MCP Server Configuration
 
-Create `.agentao/mcp.json` in your project (or `~/.agentao/mcp.json` for global servers):
+Create `.agentao/mcp.json` in your project (or `<home>/.agentao/mcp.json` for global servers):
 
 ```json
 {
@@ -733,6 +733,71 @@ The server reads newline-delimited JSON-RPC 2.0 messages on stdin, writes respon
 
 See **[docs/ACP.md](docs/ACP.md)** for the full launch flow, supported method table, capability advertisement, annotated NDJSON transcript, event mapping reference, troubleshooting, and contributor notes.
 
+### ACP Client — Project-Local Server Management
+
+In addition to acting *as* an ACP server, Agentao can also act *as* an ACP client — connecting to and managing project-local ACP servers. These are external agent processes that communicate over stdio using JSON-RPC 2.0 with NDJSON framing.
+
+**Configuration:** Create `.agentao/acp.json` in your project root:
+
+```json
+{
+  "servers": {
+    "planner": {
+      "command": "node",
+      "args": ["./agents/planner/index.js"],
+      "env": { "LOG_LEVEL": "info" },
+      "cwd": ".",
+      "description": "Planning agent",
+      "autoStart": true
+    },
+    "reviewer": {
+      "command": "python",
+      "args": ["-m", "review_agent"],
+      "cwd": "./agents/reviewer",
+      "description": "Code review agent",
+      "autoStart": false,
+      "requestTimeoutMs": 120000
+    }
+  }
+}
+```
+
+**Server lifecycle:**
+
+```
+configured → starting → initializing → ready ↔ busy → stopping → stopped
+                                         ↕
+                                   waiting_for_user
+```
+
+**CLI commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/acp` | Overview of all servers |
+| `/acp start <name>` | Start a server |
+| `/acp stop <name>` | Stop a server |
+| `/acp restart <name>` | Restart a server |
+| `/acp send <name> <msg>` | Send a prompt (auto-connects) |
+| `/acp cancel <name>` | Cancel active turn |
+| `/acp status <name>` | Detailed status |
+| `/acp logs <name> [n]` | View stderr output (last n lines) |
+| `/acp approve <name> <id>` | Approve a permission request |
+| `/acp reject <name> <id>` | Reject a permission request |
+| `/acp reply <name> <id> <text>` | Reply to an input request |
+
+**Interaction bridge:** When an ACP server needs user input (permission confirmation or free-form text), it sends a notification that becomes a pending interaction. These appear in the inbox and in `/acp status <name>`.
+
+**Extension method:** Agentao advertises a private `_agentao.cn/ask_user` extension for requesting free-form text input from the user, enabling richer server-to-user interaction beyond simple permission grants.
+
+**Key design decisions:**
+- **Project-only config** — no global `<home>/.agentao/acp.json`; ACP servers are project-scoped
+- **No auto-send** — messages are never automatically routed to ACP servers; use `/acp send` explicitly
+- **Separate inbox** — server output appears in the ACP inbox, not in the main conversation context
+- **Lazy initialization** — the ACP manager is created on first `/acp` command, not at startup
+
+See **[docs/features/acp-client.md](docs/features/acp-client.md)** for the full configuration reference, lifecycle details, interaction bridge protocol, diagnostics, and troubleshooting guide.
+
 ### Commands
 
 All commands start with `/`. Type `/` and press **Tab** for autocomplete.
@@ -749,7 +814,7 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/provider <NAME>` | Switch to a different provider (e.g., `/provider GEMINI`) |
 | `/skills` | List available and active skills |
 | `/memory` | List all saved memories |
-| `/memory user` | Show user-scope memories (~/.agentao/memory.db) |
+| `/memory user` | Show user-scope memories (<home>/.agentao/memory.db) |
 | `/memory project` | Show project-scope memories (.agentao/memory.db) |
 | `/memory session` | Show current session summary (from session_summaries table) |
 | `/memory status` | Show memory counts, session size, and recall hit count |
@@ -1192,7 +1257,7 @@ Documentation here...
 /crystallize create    (prompts for name + scope, writes SKILL.md, reloads immediately)
 ```
 
-Skills created with `/crystallize create` are written to `.agentao/skills/` (project scope) or `~/.agentao/skills/` (global scope) and are available immediately without restarting.
+Skills created with `/crystallize create` are written to `.agentao/skills/` (project scope) or `<home>/.agentao/skills/` (global scope) and are available immediately without restarting.
 
 ---
 

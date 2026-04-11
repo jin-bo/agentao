@@ -87,7 +87,7 @@ Agentao 自动管理长对话，以保持在 LLM 上下文限制内：
 | 数据库 | 路径 | 作用域 |
 |--------|------|--------|
 | 项目库 | `.agentao/memory.db` | 项目级记忆 + 会话摘要 |
-| 用户库 | `~/.agentao/memory.db` | 跨项目用户偏好 |
+| 用户库 | `<home>/.agentao/memory.db` | 跨项目用户偏好 |
 
 **三类数据：**
 
@@ -103,7 +103,7 @@ Agentao 自动管理长对话，以保持在 LLM 上下文限制内：
 
 2. **`<memory-context>`** — 基于关键词 / Jaccard / 标签 / 时效性公式对当前用户消息动态评分，将得分最高的 k 条召回结果注入，保持稳定前缀对 provider prompt cache 友好。
 
-**召回性能与中文分词质量：** 召回器维护一个由 `write_version` 失效控制的倒排索引（token → 记录 ID 集），每次召回仅对与查询有 token 交集的记录打分，记忆库增长后避免全表扫描。中文文本改用 [`jieba`](https://github.com/fxsjy/jieba) 词级分词替代字符 bigram —— `"版本管理"` 现在分词为 `{"版本", "管理"}` 而非 `{"版本", "本管", "管理"}`，消除了污染排序的噪声 bigram。单字 CJK token 被过滤（与 Latin 路径的 `len > 1` 规则一致）。如需添加项目名、技术术语、专有名词等领域词汇，将其加入 `~/.agentao/userdict.txt`，jieba 将在首次召回时加载。
+**召回性能与中文分词质量：** 召回器维护一个由 `write_version` 失效控制的倒排索引（token → 记录 ID 集），每次召回仅对与查询有 token 交集的记录打分，记忆库增长后避免全表扫描。中文文本改用 [`jieba`](https://github.com/fxsjy/jieba) 词级分词替代字符 bigram —— `"版本管理"` 现在分词为 `{"版本", "管理"}` 而非 `{"版本", "本管", "管理"}`，消除了污染排序的噪声 bigram。单字 CJK token 被过滤（与 Latin 路径的 `len > 1` 规则一致）。如需添加项目名、技术术语、专有名词等领域词汇，将其加入 `<home>/.agentao/userdict.txt`，jieba 将在首次召回时加载。
 
 > **会话摘要的两条通道：** *当前会话*的摘要仅存在于 `self.messages` 的 `[Conversation Summary]` 块中（再注入系统提示词会造成重复）。*历史会话*的摘要在重启后无法进入消息历史，因此改走 `<memory-stable>` 通道。
 
@@ -224,14 +224,14 @@ graph LR
 - **自动发现** — 启动时发现工具并注册为 `mcp_{server}_{tool}`
 - **确认机制** — 除非服务器标记为 `"trust": true`，否则 MCP 工具需用户确认
 - **环境变量展开** — 配置值中支持 `$VAR` 和 `${VAR}` 语法
-- **两级配置** — 项目级 `.agentao/mcp.json` 覆盖全局 `~/.agentao/mcp.json`
+- **两级配置** — 项目级 `.agentao/mcp.json` 覆盖全局 `<home>/.agentao/mcp.json`
 
 ### 🧩 插件系统
 
 Agentao 支持 **兼容 Claude Code 的插件系统**，允许通过自定义技能、命令、智能体、MCP 服务器和钩子（hooks）来扩展代理——所有内容打包在一个带有 `plugin.json` 清单的目录中。
 
 **插件来源**（优先级从低到高）：
-1. **全局：** `~/.agentao/plugins/{marketplace}/{name}/{version}/`
+1. **全局：** `<home>/.agentao/plugins/{marketplace}/{name}/{version}/`
 2. **项目：** `.agentao/plugins/{marketplace}/{name}/{version}/`
 3. **内联：** `--plugin-dir /path/to/plugin`（最高优先级）
 
@@ -590,7 +590,7 @@ OPENAI_API_KEY=your-api-key-here
 
 ### MCP 服务器配置
 
-在项目中创建 `.agentao/mcp.json`（或 `~/.agentao/mcp.json` 用于全局服务器）：
+在项目中创建 `.agentao/mcp.json`（或 `<home>/.agentao/mcp.json` 用于全局服务器）：
 
 ```json
 {
@@ -726,6 +726,71 @@ python -m agentao --acp --stdio
 
 完整启动流程、方法对照表、capability 协商、带注释的 NDJSON 抓包、事件映射参考、故障排查与贡献者笔记参见 **[docs/ACP.md](docs/ACP.md)**。
 
+### ACP 客户端 — 项目本地服务器管理
+
+除了作为 ACP 服务器运行外，Agentao 还可以作为 ACP **客户端**——连接并管理项目本地的 ACP 服务器。这些外部代理进程通过 stdio 使用 JSON-RPC 2.0 + NDJSON 分帧通信。
+
+**配置：** 在项目根目录创建 `.agentao/acp.json`：
+
+```json
+{
+  "servers": {
+    "planner": {
+      "command": "node",
+      "args": ["./agents/planner/index.js"],
+      "env": { "LOG_LEVEL": "info" },
+      "cwd": ".",
+      "description": "规划代理",
+      "autoStart": true
+    },
+    "reviewer": {
+      "command": "python",
+      "args": ["-m", "review_agent"],
+      "cwd": "./agents/reviewer",
+      "description": "代码审查代理",
+      "autoStart": false,
+      "requestTimeoutMs": 120000
+    }
+  }
+}
+```
+
+**服务器生命周期：**
+
+```
+configured → starting → initializing → ready ↔ busy → stopping → stopped
+                                         ↕
+                                   waiting_for_user
+```
+
+**CLI 命令：**
+
+| 命令 | 说明 |
+|------|------|
+| `/acp` | 所有服务器概览 |
+| `/acp start <name>` | 启动服务器 |
+| `/acp stop <name>` | 停止服务器 |
+| `/acp restart <name>` | 重启服务器 |
+| `/acp send <name> <msg>` | 发送提示（自动连接） |
+| `/acp cancel <name>` | 取消当前轮次 |
+| `/acp status <name>` | 详细状态 |
+| `/acp logs <name> [n]` | 查看 stderr 输出（最近 n 行） |
+| `/acp approve <name> <id>` | 批准权限请求 |
+| `/acp reject <name> <id>` | 拒绝权限请求 |
+| `/acp reply <name> <id> <text>` | 回复输入请求 |
+
+**交互桥接：** 当 ACP 服务器需要用户输入（权限确认或自由文本）时，会发送通知，成为待处理交互。这些交互显示在收件箱和 `/acp status <name>` 中。
+
+**扩展方法：** Agentao 公布了私有扩展 `_agentao.cn/ask_user`，用于向用户请求自由文本输入，支持比简单权限授予更丰富的服务器到用户交互。
+
+**关键设计决策：**
+- **仅项目级配置** — 无全局 `<home>/.agentao/acp.json`；ACP 服务器为项目级作用域
+- **不自动发送** — 消息不会自动路由到 ACP 服务器，需使用 `/acp send` 显式发送
+- **独立收件箱** — 服务器输出显示在 ACP 收件箱中，不进入主对话上下文
+- **延迟初始化** — ACP 管理器在首次执行 `/acp` 命令时创建，而非启动时
+
+完整配置参考、生命周期详情、交互桥接协议、诊断与故障排查指南参见 **[docs/features/acp-client.md](docs/features/acp-client.md)**。
+
 ### 命令列表
 
 所有命令以 `/` 开头，输入 `/` 后按 **Tab** 自动补全。
@@ -742,7 +807,7 @@ python -m agentao --acp --stdio
 | `/provider <NAME>` | 切换到其他提供商（如 `/provider GEMINI`） |
 | `/skills` | 列出可用和已激活的技能 |
 | `/memory` | 列出所有已保存记忆 |
-| `/memory user` | 查看用户级记忆（~/.agentao/memory.db） |
+| `/memory user` | 查看用户级记忆（<home>/.agentao/memory.db） |
 | `/memory project` | 查看项目级记忆（.agentao/memory.db） |
 | `/memory session` | 查看当前会话摘要（session_summaries 表） |
 | `/memory status` | 显示记忆条目数、会话大小及本次召回命中数 |
@@ -1185,7 +1250,7 @@ description: 使用场景（LLM 的触发条件）
 /crystallize create    （提示输入名称和作用域，写入 SKILL.md，立即重新加载）
 ```
 
-通过 `/crystallize create` 创建的技能写入 `.agentao/skills/`（项目作用域）或 `~/.agentao/skills/`（全局作用域），无需重启即可立即激活。
+通过 `/crystallize create` 创建的技能写入 `.agentao/skills/`（项目作用域）或 `<home>/.agentao/skills/`（全局作用域），无需重启即可立即激活。
 
 ---
 

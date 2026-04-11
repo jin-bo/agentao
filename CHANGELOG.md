@@ -5,6 +5,76 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.8-rc1] — 2026-04-11
+
+Headline: **ACP Client for project-local server management** — Agentao can
+now act as an ACP client, connecting to and managing external ACP-compatible
+agent processes configured per-project. The old monolithic CLI is refactored
+into a modular `agentao/cli/` package for maintainability.
+
+### Added
+
+- **ACP client subsystem** (`agentao/acp_client/`, ~2 400 lines)
+  - `ACPManager` — top-level façade: lazy init on first `/acp` command,
+    config loading, server lifecycle orchestration
+  - `ACPClient` — per-server JSON-RPC 2.0 client over stdio with NDJSON
+    framing; handles `initialize` + `session/new` handshake, `session/prompt`,
+    `session/cancel`, and notification dispatch
+  - `ACPProcessHandle` — subprocess lifecycle (spawn, graceful shutdown,
+    stderr ring buffer for diagnostics)
+  - `Inbox` — bounded message queue with idle-point flush; messages from
+    ACP servers stay separate from the main conversation context
+  - `InteractionRegistry` — tracks pending permission and input requests
+    from servers; supports `approve`, `reject`, and `reply` resolution
+  - `AcpServerConfig` / `AcpClientConfig` models with validation
+  - `load_acp_client_config()` — reads `.agentao/acp.json` (project-only;
+    no global config)
+  - Rich-based `render.py` for CLI output formatting
+- **`/acp` CLI commands**: `list`, `start`, `stop`, `restart`, `send`,
+  `cancel`, `status`, `logs`, `approve`, `reject`, `reply`
+- **ACP extension method `_agentao.cn/ask_user`** — advertised in
+  `initialize` response `extensions` array; enables ACP servers to request
+  free-form text input from the user. `ACPTransport.ask_user()` implemented
+  with full error handling (all failures resolve to a sentinel, never crash
+  the turn)
+- **`ACPTransport.on_max_iterations()`** — conservative default: stops the
+  turn when max iterations reached (no interactive menu in ACP mode)
+- **Domain-based permission rules for `web_fetch`** in `PermissionEngine`:
+  - `_extract_domain()` — URL parsing with missing-scheme handling
+  - `_domain_matches()` — supports leading-dot suffix matching
+    (`.github.com` matches `github.com` and `api.github.com`) and exact
+    matching (`r.jina.ai`)
+  - Preset allowlist: `.github.com`, `.docs.python.org`, `.wikipedia.org`,
+    `r.jina.ai`, `.pypi.org`, `.readthedocs.io` → auto-allow
+  - Preset blocklist: `localhost`, `127.0.0.1`, `0.0.0.0`,
+    `169.254.169.254`, `.internal`, `.local`, `::1` → auto-deny
+  - Domain rules displayed in `/permissions` output
+- **`docs/features/acp-client.md`** — full configuration reference,
+  lifecycle, interaction bridge protocol, diagnostics, and troubleshooting
+
+### Changed
+
+- **CLI refactored from monolith to package** — the old `agentao/cli.py` (3 246
+  lines) replaced by `agentao/cli/` package (~3 800 lines across 12
+  modules): `app.py`, `commands.py`, `commands_ext.py`, `entrypoints.py`,
+  `session.py`, `subcommands.py`, `transport.py`, `_globals.py`, `_utils.py`
+- `PermissionEngine.evaluate()` now checks `domain` rules before falling
+  through to regex-based `args` matching
+- `PermissionEngine.explain()` renders domain allowlist/blocklist in the
+  rule detail output
+- README.md / README.zh.md updated with ACP Client section
+
+### Tests
+
+- **7 new test files** (~2 300 lines): `test_acp_client_cli.py`,
+  `test_acp_client_config.py`, `test_acp_client_inbox.py`,
+  `test_acp_client_jsonrpc.py`, `test_acp_client_process.py`,
+  `test_acp_client_prompt.py`, `test_acp_ask_user.py`
+- Existing CLI tests updated for the `agentao.cli` → `agentao.cli.app`
+  import path change
+
+---
+
 ## [0.2.7] — 2026-04-09
 
 Headline: **Agent Client Protocol (ACP)** — Agentao can now be driven as
@@ -55,12 +125,12 @@ constructor.
 - **LLM log file fallback** — `LLMClient._build_file_handler()` resolves
   `agentao.log` to an absolute path anchored to the working directory;
   when the target is unwritable (ACP launches with cwd `/` on macOS),
-  falls back to `~/.agentao/agentao.log`
+  falls back to `<home>/.agentao/agentao.log`
 - **jieba word segmentation for CJK retrieval** — `MemoryRetriever` now
   segments Chinese/Japanese/Korean text with jieba instead of character
   bigrams. `"版本管理"` → `{"版本", "管理"}` (was `{"版本", "本管", "管理"}`).
   Single-character CJK tokens filtered out (matches the Latin `len > 1`
-  rule). Custom dictionary: `~/.agentao/userdict.txt` (lazy-loaded on
+  rule). Custom dictionary: `<home>/.agentao/userdict.txt` (lazy-loaded on
   first recall). New dependency: `jieba>=0.42.1`
 - **Inverted index in `MemoryRetriever`** — `write_version`-gated
   token → record-ID map so recall scores only records sharing at least
@@ -92,7 +162,7 @@ constructor.
   the fallback path (user store disabled, project store in-memory) instead
   of propagating as an unhandled exception. Root cause of ACP subprocess
   smoke-test failures and plain `Agentao(api_key='x')` startup failure
-  when `~/.agentao/memory.db` is unwritable
+  when `<home>/.agentao/memory.db` is unwritable
 
 ### Tests
 
@@ -161,7 +231,7 @@ silently writing.
 ### Added
 
 - **SQLite-backed memory subsystem** — `agentao/memory/`
-  - Two stores: `.agentao/memory.db` (project) and `~/.agentao/memory.db` (user)
+  - Two stores: `.agentao/memory.db` (project) and `<home>/.agentao/memory.db` (user)
   - Schema v3 with `memories`, `session_summaries`, `memory_review_queue`,
     `memory_events`, `schema_meta`
   - Three data types modeled separately: persistent `MemoryRecord`,
