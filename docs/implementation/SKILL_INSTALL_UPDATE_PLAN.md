@@ -21,12 +21,12 @@ The design must fit the current codebase:
 
 From the current code:
 
-- [`agentao/cli.py`](../../agentao/cli.py#L2520) only has a thin top-level `argparse` with a single optional `subcommand`, so `agentao skill install ...` is not yet representable cleanly.
+- [`agentao/cli/entrypoints.py`](../../agentao/cli/entrypoints.py) now owns top-level argument parsing, while subcommand dispatch lives under `agentao/cli/subcommands.py`. Any `agentao skill install ...` design should target the modular CLI package rather than the removed monolithic file.
 - [`agentao/skills/manager.py`](../../agentao/skills/manager.py#L24) only scans local folders and a disabled-skills config. It does not track install source, version, or update state.
 - Skills are already layered by priority:
-  1. `~/.agentao/skills`
-  2. `<project>/.agentao/skills`
-  3. `<project>/skills`
+  1. `<home>/.agentao/skills`
+  2. `<project-root>/.agentao/skills`
+  3. `<project-root>/skills`
 
 That layering is a good base. Installed remote skills should live in one managed layer, not in repo-root `skills/`.
 
@@ -115,14 +115,14 @@ Do not introduce a separate `skills-installed/` directory.
 
 Managed installs should use the existing writable skill roots:
 
-- global: `~/.agentao/skills/<skill-name>/`
-- project: `<project>/.agentao/skills/<skill-name>/`
+- global: `<home>/.agentao/skills/<skill-name>/`
+- project: `<project-root>/.agentao/skills/<skill-name>/`
 
 `SkillManager` scan order stays simple:
 
-1. `~/.agentao/skills/`
-2. `<project>/.agentao/skills/`
-3. `<project>/skills/`
+1. `<home>/.agentao/skills/`
+2. `<project-root>/.agentao/skills/`
+3. `<project-root>/skills/`
 
 Rationale:
 
@@ -135,8 +135,8 @@ Rationale:
 
 Add a registry JSON file per scope:
 
-- global: `~/.agentao/skills_registry.json`
-- project: `<project>/.agentao/skills_registry.json`
+- global: `<home>/.agentao/skills_registry.json`
+- project: `<project-root>/.agentao/skills_registry.json`
 
 Example:
 
@@ -149,11 +149,11 @@ Example:
       "source_ref": "jin-bo/agentao-git-skill",
       "installed_at": "2026-04-10T12:00:00Z",
       "install_scope": "global",
-      "install_dir": "/Users/me/.agentao/skills/web-scraper",
+      "install_dir": "<home>/.agentao/skills/web-scraper",
       "version": "1.2.0",
       "revision": "sha256:abcd",
       "etag": "W/\"1234\"",
-      "manifest_path": "/Users/me/.agentao/skills/web-scraper/skill.json"
+      "manifest_path": "<home>/.agentao/skills/web-scraper/skill.json"
     }
   }
 }
@@ -353,7 +353,7 @@ This avoids half-installed skills.
 
 ### Problem
 
-[`entrypoint()`](../../agentao/cli.py#L2520) currently parses only:
+[`entrypoint()`](../../agentao/cli/entrypoints.py) currently parses the top-level CLI, with subcommand handling split into `agentao/cli/subcommands.py`:
 
 - `agentao init`
 - `agentao -p`
@@ -384,7 +384,7 @@ Suggested implementation split:
 - add `build_parser()`
 - add `handle_skill_subcommand(args)`
 
-New CLI helpers can stay in `agentao/cli.py` first; if it grows further, move to `agentao/skills/cli.py`.
+New CLI helpers should land in the relevant `agentao/cli/` module directly; avoid reintroducing a monolithic single-file CLI.
 
 ## Validation Rules
 
@@ -418,12 +418,12 @@ For managed installs:
 
 It must never delete:
 
-- `<project>/skills/<name>`
+- `<project-root>/skills/<name>`
 
 and it must never delete manually created skills in:
 
-- `~/.agentao/skills/<name>`
-- `<project>/.agentao/skills/<name>`
+- `<home>/.agentao/skills/<name>`
+- `<project-root>/.agentao/skills/<name>`
 
 unless the registry says that exact directory was installed and is managed by Agentao.
 

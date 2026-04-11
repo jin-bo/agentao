@@ -67,8 +67,22 @@ force-include = {"skills/skill-creator" = "skills/skill-creator"}
 
 [tool.hatch.build.targets.sdist]
 exclude = [
-    "workspace", "docs", "agentao.log", "run.sh", "AGENTAO.md",
-    "main.py", ".claude", ".agentao",
+    ".agentao",
+    ".claude",
+    ".github",
+    ".pytest_cache",
+    ".venv",
+    "agentao.log",
+    "dist",
+    "docs",
+    "main.py",
+    "run.sh",
+    "tests",
+    "workspace",
+    "AGENTAO.md",
+    "CLAUDE.md",
+    "test_dict.txt",
+    "test_dict_2.txt",
 ]
 
 [tool.pytest.ini_options]

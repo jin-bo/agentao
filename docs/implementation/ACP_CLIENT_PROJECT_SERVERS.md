@@ -24,7 +24,7 @@ issue 入口：
 核心边界：
 
 - 配置来源仅限：
-  - `<cwd>/.agentao/acp.json`
+  - `<project-root>/.agentao/acp.json`
 - 使用方式：
   - 显式 `/acp ...` 命令
   - `/acp send` 可按需自动启动 server

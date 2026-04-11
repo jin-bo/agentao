@@ -37,8 +37,8 @@
 ## MVP Contract For This Phase
 
 - 插件目录来源：
-  - `~/.agentao/plugins`
-  - `<cwd>/.agentao/plugins`
+  - `<home>/.agentao/plugins`
+  - `<project-root>/.agentao/plugins`
   - `--plugin-dir`
 - 插件 identity 使用 `plugin.json.name`
 - precedence 规则：
@@ -65,7 +65,7 @@
 
 可能改动：
 
-- `agentao/cli.py`
+- `agentao/cli/subcommands.py`
   - 仅为后续 `--plugin-dir` 参数预留接线点时才需要
 
 ## Data Model
@@ -194,8 +194,8 @@ class PluginManager:
 
 目录层级：
 
-1. global: `~/.agentao/plugins`
-2. project: `<cwd>/.agentao/plugins`
+1. global: `<home>/.agentao/plugins`
+2. project: `<project-root>/.agentao/plugins`
 3. inline: `--plugin-dir`
 
 precedence：
@@ -206,8 +206,8 @@ precedence：
 
 disable 规则：
 
-- global config: `~/.agentao/plugins_config.json`
-- project config: `<cwd>/.agentao/plugins_config.json`
+- global config: `<home>/.agentao/plugins_config.json`
+- project config: `<project-root>/.agentao/plugins_config.json`
 - project config 对当前项目最终态有更高优先级
 
 ## Example Inputs

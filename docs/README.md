@@ -4,6 +4,8 @@ This directory contains documentation for the Agentao project.
 
 ## Structure
 
+This directory mixes stable user-facing guides with implementation notes and historical records. For release-facing documentation, prioritize the files listed under **Core Documentation** and the current release notes in `docs/releases/`.
+
 ### Core Documentation
 
 User-facing guides and references:
@@ -22,8 +24,8 @@ Detailed documentation for major features, including design decisions and implem
 - [TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md) - User confirmation system for Shell & Web tools
 - [DATE_CONTEXT_FEATURE.md](features/DATE_CONTEXT_FEATURE.md) - Current date/time injection in system prompt
 
-### `/updates` - Update Logs
-Detailed change logs for specific updates:
+### `/updates` - Historical Update Logs
+Historical change notes captured during development. These are useful for archaeology, but they are not the canonical source for current behavior:
 
 - [SKILLS_UPDATE.md](updates/SKILLS_UPDATE.md) - Skills system enhancements
 - [LOGGING_UPDATE.md](updates/LOGGING_UPDATE.md) - Logging improvements
@@ -32,15 +34,15 @@ Detailed change logs for specific updates:
 - [SKILLS_PROMPT_UPDATE.md](updates/SKILLS_PROMPT_UPDATE.md) - Skills prompt integration
 - [MENU_CONFIRMATION_UPDATE.md](updates/MENU_CONFIRMATION_UPDATE.md) - Menu-based confirmation system
 
-### `/implementation` - Technical Implementation Details
-Deep dives into implementation specifics for developers:
+### `/implementation` - Internal Implementation Notes
+Design drafts, implementation plans, and technical deep dives for contributors. Some files describe superseded designs and should not be treated as current user-facing documentation:
 
 - [READCHAR_IMPLEMENTATION.md](implementation/READCHAR_IMPLEMENTATION.md) - Single-key input with readchar library
 - [CLEAR_RESETS_CONFIRMATION.md](implementation/CLEAR_RESETS_CONFIRMATION.md) - /clear command confirmation reset
 - [TOOL_CONFIRMATION.md](implementation/TOOL_CONFIRMATION.md) - Tool confirmation mechanism details
 
-### `/dev-notes` - Development Notes
-Historical development notes and summaries (archived):
+### `/dev-notes` - Archived Development Notes
+Archived summaries from earlier development phases. These are historical records, not release-facing docs:
 
 - [FIXES_SUMMARY.md](dev-notes/FIXES_SUMMARY.md) - Summary of fixes
 - [MULTI_TURN_FIX.md](dev-notes/MULTI_TURN_FIX.md) - Multi-turn conversation fix details
@@ -53,6 +55,18 @@ Historical development notes and summaries (archived):
 For general project information, see:
 - [README.md](../README.md) - Project overview and quick start
 - [CLAUDE.md](../CLAUDE.md) - Guidance for Claude Code when working with this codebase
+
+## Release Guidance
+
+For a release or external handoff, use this documentation surface first:
+
+1. `../README.md`
+2. `../README.zh.md`
+3. `ACP.md`, `QUICKSTART.md`, `QUICK_REFERENCE.md`, `LOGGING.md`, `MODEL_SWITCHING.md`
+4. `features/` guides that match the shipped feature
+5. `releases/` notes for the exact version being published
+
+Treat `updates/`, `implementation/`, and `dev-notes/` as internal context unless a specific file is intentionally published as reference material.
 
 ## Contributing
 

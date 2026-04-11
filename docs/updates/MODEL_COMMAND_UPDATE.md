@@ -416,7 +416,7 @@ You: /model my-custom-model  # ✓ 仍然有效
 
 ### 修改文件
 - `agentao/agent.py` - 添加模型方法
-- `agentao/cli.py` - 添加 `/model` 命令
+- `agentao/cli/commands.py` - 添加 `/model` 命令
 - `README.md` - 更新文档
 - `QUICKSTART.md` - 更新文档
 

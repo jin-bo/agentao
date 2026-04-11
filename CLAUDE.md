@@ -189,7 +189,7 @@ Session state `allow_all_tools` persists across tool confirmations within one se
 
 Agentao supports connecting to external MCP servers that provide additional tools.
 
-**Configuration**: `.agentao/mcp.json` (project) and `~/.agentao/mcp.json` (global):
+**Configuration**: `.agentao/mcp.json` (project) and `<home>/.agentao/mcp.json` (global):
 ```json
 {
   "mcpServers": {
@@ -310,7 +310,7 @@ Supports: `1`, `2`, `3`, `Esc`, `Ctrl+C`. Invalid keys are silently ignored.
 | Database | Path | Content |
 |----------|------|---------|
 | Project store | `.agentao/memory.db` | Project-scoped persistent memories + session summaries |
-| User store | `~/.agentao/memory.db` | Cross-project user-scoped persistent memories |
+| User store | `<home>/.agentao/memory.db` | Cross-project user-scoped persistent memories |
 
 **Three data types:**
 

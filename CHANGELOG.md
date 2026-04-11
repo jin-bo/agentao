@@ -12,6 +12,10 @@ now act as an ACP client, connecting to and managing external ACP-compatible
 agent processes configured per-project. The old monolithic CLI is refactored
 into a modular `agentao/cli/` package for maintainability.
 
+Release intent: **prerelease / TestPyPI path**. Use tag `v0.2.8-rc1` and a
+GitHub pre-release so `.github/workflows/publish-testpypi.yml` runs instead
+of the full PyPI publish workflow.
+
 ### Added
 
 - **ACP client subsystem** (`agentao/acp_client/`, ~2 400 lines)
@@ -54,7 +58,7 @@ into a modular `agentao/cli/` package for maintainability.
 
 ### Changed
 
-- **CLI refactored from monolith to package** — the old `agentao/cli.py` (3 246
+- **CLI refactored from monolith to package** — the old single-file CLI (3 246
   lines) replaced by `agentao/cli/` package (~3 800 lines across 12
   modules): `app.py`, `commands.py`, `commands_ext.py`, `entrypoints.py`,
   `session.py`, `subcommands.py`, `transport.py`, `_globals.py`, `_utils.py`

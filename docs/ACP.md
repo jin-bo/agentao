@@ -2,7 +2,7 @@
 
 Agentao implements a stdio-based [Agent Client Protocol](https://github.com/zed-industries/agent-client-protocol) server so ACP-compatible clients (e.g. Zed) can drive Agentao as their agent runtime. This document covers what ships, how to launch it, and the explicit limits of the v1 implementation.
 
-ACP support landed across `docs/implementation/acp-issues/01` through `14`. Tests live in `tests/test_acp_*.py` (1035 passing as of v0.2.7-rc1).
+ACP support landed across `docs/implementation/acp-issues/01` through `14`. Tests live in `tests/test_acp_*.py`. Version examples below track the current prerelease line (`0.2.8-rc1` as of this document revision).
 
 ---
 
@@ -32,13 +32,13 @@ EOF
 Expected — two NDJSON response envelopes on stdout:
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false},"mcpCapabilities":{"http":false,"sse":true}},"authMethods":[],"agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.7-rc1"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false},"mcpCapabilities":{"http":false,"sse":true}},"authMethods":[],"agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.8-rc1"}}}
 {"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_<32hex>"}}
 ```
 
 ### From a real ACP client
 
-A reference Zed configuration (`~/.config/zed/settings.json`):
+A reference Zed configuration (`<home>/.config/zed/settings.json`):
 
 ```json
 {
@@ -251,7 +251,7 @@ agentao/acp/
 └── session_load.py        # session/load handler + history hydration + replay
 ```
 
-The CLI wiring (`agentao --acp --stdio`) lives in `agentao/cli.py::run_acp_mode` and `agentao/__main__.py`; both delegate to `agentao.acp.__main__.main`.
+The CLI wiring (`agentao --acp --stdio`) lives in `agentao/cli/entrypoints.py::run_acp_mode` and `agentao/__main__.py`; both delegate to `agentao.acp.__main__.main`.
 
 ---
 
@@ -275,12 +275,12 @@ Below is a complete client→server→client conversation. Each line on the wire
       "mcpCapabilities":{"http":false,"sse":true}
     },
     "authMethods":[],
-    "agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.7-rc1"}
+    "agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.8-rc1"}
   }}
 
 // 2. Open a session bound to a working directory.
 → {"jsonrpc":"2.0","id":2,"method":"session/new","params":{
-    "cwd":"/Users/me/work/myproject",
+    "cwd":"<project-root>",
     "mcpServers":[]
   }}
 
@@ -445,7 +445,7 @@ After cancellation, the still-running `session/prompt` returns `{"stopReason": "
 
 ### Tests
 
-Each issue's tests live in a dedicated file. The full ACP test surface is ~6,300 LOC across 12 files (1020 passing total in the repo as of v0.2.6, with 178 dedicated to ACP):
+Each issue's tests live in a dedicated file. The ACP suite has expanded significantly since the initial v0.2.6 rollout; rely on the current CI or local `pytest` output for exact pass counts rather than the historical numbers from older release notes.
 
 | File | Issue | Coverage focus |
 |---|---|---|

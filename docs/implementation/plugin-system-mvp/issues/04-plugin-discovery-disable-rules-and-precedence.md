@@ -10,8 +10,8 @@ Issue index: [Plugin System MVP Issues](README.md)
 
 ## Scope
 
-- `~/.agentao/plugins`
-- `<cwd>/.agentao/plugins`
+- `<home>/.agentao/plugins`
+- `<project-root>/.agentao/plugins`
 - `--plugin-dir`
 - `plugins_config.json`
 - `discover_candidates()`

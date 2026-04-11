@@ -30,8 +30,8 @@ issue 入口：
 核心边界：
 
 - 插件来源：
-  - `~/.agentao/plugins`
-  - `<cwd>/.agentao/plugins`
+  - `<home>/.agentao/plugins`
+  - `<project-root>/.agentao/plugins`
   - `--plugin-dir`
 - 插件 identity 使用 `plugin.json.name`
 - precedence 使用 global < project < inline 的原子覆盖

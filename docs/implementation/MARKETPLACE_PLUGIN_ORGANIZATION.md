@@ -2,14 +2,14 @@
 
 ## 1. 背景
 
-Claude Code 将插件按 marketplace 组织（如 `~/.claude/plugins/cache/openai-codex/codex/1.0.2/`）。Agentao 当前使用扁平结构。引入 marketplace 目录层级，为未来支持多个插件市场奠定基础。
+Claude Code 将插件按 marketplace 组织（如 `<home>/.claude/plugins/cache/openai-codex/codex/1.0.2/`）。Agentao 当前使用扁平结构。引入 marketplace 目录层级，为未来支持多个插件市场奠定基础。
 
 ---
 
 ## 2. 目录结构
 
 ```
-~/.agentao/plugins/
+<home>/.agentao/plugins/
 ├── {marketplace-id}/                    # marketplace 目录（autodiscovery）
 │   ├── {plugin-name}/
 │   │   └── {version}/                  # 插件根目录
@@ -27,7 +27,7 @@ Claude Code 将插件按 marketplace 组织（如 `~/.claude/plugins/cache/opena
 └── plugins_config.json                 # 禁用规则（已有）
 ```
 
-项目级结构相同：`<project>/.agentao/plugins/{marketplace-id|local}/...`
+项目级结构相同：`<project-root>/.agentao/plugins/{marketplace-id|local}/...`
 
 ### 2.1 两层扫描
 
@@ -142,8 +142,8 @@ if c.name in disabled or (c.qualified_name and c.qualified_name in disabled):
 `diagnostics.py` — `format_report()` 显示 marketplace 标签：
 
 ```
-  - codex v1.0.2 [openai-codex] (global: ~/.agentao/plugins/openai-codex/codex/1.0.2)
-  - my-tool [local] (global: ~/.agentao/plugins/local/my-tool)
+  - codex v1.0.2 [openai-codex] (global: <home>/.agentao/plugins/openai-codex/codex/1.0.2)
+  - my-tool [local] (global: <home>/.agentao/plugins/local/my-tool)
 ```
 
 `cli.py` — `_plugin_list_cli()` JSON 输出增加 `marketplace`、`qualified_name` 字段。
@@ -157,7 +157,7 @@ if c.name in disabled or (c.qualified_name and c.qualified_name in disabled):
 | `agentao/plugins/models.py` | `PluginCandidate`、`LoadedPlugin` 加 `marketplace`、`qualified_name` |
 | `agentao/plugins/manager.py` | `_scan_dir()` 重写；`_try_parse()` 加参数；`load_plugin()`/`resolve_precedence()`/`filter_disabled()` 适配 |
 | `agentao/plugins/diagnostics.py` | `format_report()` 显示 marketplace |
-| `agentao/cli.py` | JSON 输出加字段 |
+| `agentao/cli/subcommands.py` | JSON 输出加字段 |
 | `tests/test_plugin_loader.py` | 新增 `TestMarketplaceDiscovery` |
 
 **不改动：** `manifest.py`、`skills.py`、`agents.py`、`hooks.py`、`mcp.py`

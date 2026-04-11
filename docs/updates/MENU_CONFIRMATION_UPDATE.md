@@ -101,7 +101,7 @@ Tool confirmation reset. Will prompt for each tool.
 
 ### CLI 改动
 
-**文件**: `agentao/cli.py`
+**文件**: `agentao/cli/app.py`
 
 1. **添加会话状态**
    ```python
@@ -287,7 +287,7 @@ Tool confirmation reset. Will prompt for each tool.
 
 ### 修改的文件
 
-1. **agentao/cli.py** (+45 行)
+1. **agentao/cli/app.py** (+45 行)
    - 添加 `allow_all_tools` 状态
    - 改进 `confirm_tool_execution()` 方法
    - 更新 `show_status()` 显示

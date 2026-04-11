@@ -6,7 +6,7 @@ Agentao dynamically loads skills from the `skills` directory. Each skill is defi
 
 ## How Skills Are Loaded
 
-1. **Skills Directory**: `/Users/bluerose/Documents/Data/ToDo/2024-AGI/src/agentao/skills/`
+1. **Skills Directory**: `<project-root>/skills/`
 2. **Scan Subdirectories**: Each subdirectory represents one skill
 3. **Read SKILL.md**: Each subdirectory must contain a `SKILL.md` file
 4. **Parse Metadata**: Extract name and description from YAML frontmatter

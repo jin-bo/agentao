@@ -30,8 +30,8 @@
 所有阶段默认继承以下总约束：
 
 - 插件来源分三层：
-  - `~/.agentao/plugins`
-  - `<cwd>/.agentao/plugins`
+  - `<home>/.agentao/plugins`
+  - `<project-root>/.agentao/plugins`
   - `--plugin-dir`
 - 插件唯一身份使用 `plugin.json.name`
 - 同名插件按 global < project < inline 原子覆盖

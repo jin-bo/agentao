@@ -17,7 +17,7 @@ Issue index: [Plugin System MVP Issues](README.md)
 
 ## Deliverables
 
-- `agentao/cli.py`
+- `agentao/cli/subcommands.py`
 - CLI tests
 
 ## Dependencies

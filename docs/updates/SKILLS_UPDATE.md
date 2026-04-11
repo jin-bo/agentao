@@ -23,7 +23,7 @@ The skills system has been completely redesigned to load skills dynamically from
 ### Skills Directory Structure
 
 ```
-/Users/bluerose/Documents/Data/ToDo/2024-AGI/src/agentao/skills/
+<project-root>/skills/
 ├── algorithmic-art/
 │   └── SKILL.md
 ├── brand-guidelines/
@@ -91,7 +91,7 @@ Each `SKILL.md` file contains:
    - Extracts metadata and content
    - Added `get_skill_content()` for full documentation access
 
-2. `agentao/cli.py` - Enhanced skill display
+2. `agentao/cli/app.py` - Enhanced skill display
    - Shows skill title and description
    - Better formatted output
    - Shows loaded skill count

@@ -41,7 +41,7 @@ exit / quit
 
 #### 1. CLI 命令处理逻辑
 
-**文件**: `agentao/cli.py`
+**文件**: `agentao/cli/commands.py`
 
 **更改**：
 - 检查输入是否以 `/` 开头

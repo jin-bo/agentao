@@ -24,7 +24,7 @@
    - 如需确认则调用回调函数
    - 记录确认结果到日志
 
-5. **agentao/cli.py**
+5. **agentao/cli/app.py**
    - 添加 `confirm_tool_execution()` 方法
    - 使用 rich.Confirm 显示确认提示
    - 将确认回调传递给 agent

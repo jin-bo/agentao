@@ -86,7 +86,7 @@ def clear_all_memories(self) -> int
    - 导入新工具
    - 在 `_register_tools()` 中注册新工具
 
-4. **agentao/cli.py**
+4. **agentao/cli/commands.py**
    - 重写 `show_memories()` 方法支持子命令
    - 更新 `/memory` 命令处理逻辑
    - 更新欢迎消息和帮助文档

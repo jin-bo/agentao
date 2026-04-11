@@ -46,7 +46,7 @@ uv add readchar
 
 ### 2. 修改代码
 
-**agentao/cli.py**:
+**agentao/cli/app.py**:
 
 ```python
 import readchar

@@ -67,7 +67,7 @@ Create `.agentao/acp.json` in your project root:
 
 ### Key Design Decisions
 
-- **Project-only config.** No global `~/.agentao/acp.json` — ACP servers are project-scoped.
+- **Project-only config.** No global `<home>/.agentao/acp.json` — ACP servers are project-scoped.
 - **No auto-send.** Messages are never automatically routed to ACP servers. Use `/acp send` explicitly.
 - **ACP responses stay separate.** Server output appears in the ACP inbox, not in the main Agentao conversation context.
 - **Lazy initialization.** The ACP manager is created on first `/acp` command, not at startup.
