@@ -10,11 +10,27 @@ Runtime state types (``ServerState``, ``AcpProcessInfo``) are used by
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+def _expand_env_value(value: str) -> str:
+    """Expand ``$VAR`` / ``${VAR}`` references from the process environment.
+
+    Returns the original string unchanged when the referenced variable is
+    not set, so configuration errors surface loudly in the server's stderr
+    (rather than silently injecting an empty string).
+    """
+    if not isinstance(value, str):
+        return value
+    if "$" not in value:
+        return value
+    expanded = os.path.expandvars(value)
+    return expanded
 
 
 class AcpConfigError(ValueError):
@@ -180,10 +196,16 @@ class AcpServerConfig:
         capabilities = raw.get("capabilities", {})
         description = raw.get("description", "")
 
+        # Expand $VAR / ${VAR} references in env values.
+        expanded_env = {
+            k: _expand_env_value(v) if isinstance(v, str) else v
+            for k, v in raw["env"].items()
+        }
+
         return cls(
             command=raw["command"],
             args=raw["args"],
-            env=raw["env"],
+            env=expanded_env,
             cwd=resolved_cwd,
             auto_start=auto_start,
             startup_timeout_ms=startup_timeout_ms,

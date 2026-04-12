@@ -19,6 +19,7 @@
 9. [09 Documentation And Operator Notes](./09-documentation-and-operator-notes.md)
 10. [10 Server User-Interaction Bridge](./10-server-user-interaction-bridge.md)
 11. [11 Ask-User ACP Extension Method](./11-ask-user-acp-extension-method.md)
+12. [12 Explicit Routing And Push Delegation](./12-explicit-routing-and-push-delegation.md) — Part A shipped; Part B dropped (non-standard `task_complete`).
 
 ## Recommended Order
 
@@ -33,3 +34,4 @@
 9. 09
 10. 10
 11. 11
+12. 12

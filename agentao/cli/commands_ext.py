@@ -806,16 +806,30 @@ def _handle_inline_interaction(cli, mgr, server_name: str, interaction) -> None:
 
 
 def _acp_send(cli: AgentaoCLI, rest: str) -> None:
-    """Send a prompt to an ACP server with inline interaction handling.
-
-    Uses a non-blocking send so that permission/input requests from the
-    server are displayed and resolved immediately, rather than deadlocking.
-    """
+    """Slash entry point for ``/acp send <name> <message>``."""
     parts = rest.split(None, 1) if rest else []
     if len(parts) < 2:
         console.print("\n[error]Usage: /acp send <name> <message>[/error]\n")
         return
     name, message = parts[0], parts[1]
+    run_acp_prompt_inline(cli, name, message)
+
+
+def run_acp_prompt_inline(cli: AgentaoCLI, name: str, message: str) -> None:
+    """Send a prompt to an ACP server with inline interaction handling.
+
+    Shared runner used by both ``/acp send`` and the explicit-routing
+    fast path (Issue 12, Part A) that triggers on ``@server-name``-style
+    user input.
+
+    Uses a non-blocking send so that permission/input requests from the
+    server are displayed and resolved immediately, rather than deadlocking.
+    """
+    if not name or not message or not message.strip():
+        console.print(
+            "\n[error]ACP routing: missing server or empty task.[/error]\n"
+        )
+        return
     mgr = _ensure_acp_manager(cli)
     if mgr is None:
         return

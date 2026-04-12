@@ -40,13 +40,10 @@ Create `.agentao/acp.json` in your project root:
 /acp start <name>             # Start a server
 /acp stop <name>              # Stop a server
 /acp restart <name>           # Restart a server
-/acp send <name> <message>    # Send a prompt (auto-connects)
+/acp send <name> <message>    # Send a prompt (auto-connects; handles permission/input inline)
 /acp cancel <name>            # Cancel active turn
 /acp status <name>            # Detailed status
 /acp logs <name> [lines]      # View stderr output
-/acp approve <name> <id>      # Approve a permission request
-/acp reject <name> <id>       # Reject a permission request
-/acp reply <name> <id> <text> # Reply to an input request
 ```
 
 ## Configuration Reference
@@ -59,11 +56,13 @@ Create `.agentao/acp.json` in your project root:
 | `args` | string[] | yes | — | Command arguments |
 | `env` | object | yes | — | Extra environment variables |
 | `cwd` | string | yes | — | Working directory (relative to project root) |
-| `autoStart` | boolean | no | `true` | Auto-start on first `/acp` |
-| `startupTimeoutMs` | integer | no | `10000` | Startup timeout in ms |
+| `autoStart` | boolean | no | `true` | Reserved for bulk-start flows; current CLI does not auto-start servers just because `/acp` was opened |
+| `startupTimeoutMs` | integer | no | `10000` | Parsed config field; currently not enforced by the CLI runtime |
 | `requestTimeoutMs` | integer | no | `60000` | Per-request timeout in ms |
 | `capabilities` | object | no | `{}` | Server capability hints |
 | `description` | string | no | `""` | Human-readable description |
+
+Values in `env` support `$VAR` / `${VAR}` expansion from the process environment, so secrets such as API keys can live in the shell / `.env` rather than in `acp.json`.
 
 ### Key Design Decisions
 
@@ -71,6 +70,7 @@ Create `.agentao/acp.json` in your project root:
 - **No auto-send.** Messages are never automatically routed to ACP servers. Use `/acp send` explicitly.
 - **ACP responses stay separate.** Server output appears in the ACP inbox, not in the main Agentao conversation context.
 - **Lazy initialization.** The ACP manager is created on first `/acp` command, not at startup.
+- **Inline interaction handling.** Permission and input requests are handled inline during `/acp send` and at safe idle points in the main CLI loop.
 
 ## Server Lifecycle
 
@@ -91,15 +91,38 @@ configured → starting → initializing → ready ↔ busy → stopping → sto
 
 ## Interaction Bridge
 
-When an ACP server needs user input (permission confirmation or free-form text), it sends a notification that becomes a **pending interaction**. These appear in the inbox and can be resolved via CLI commands:
+When an ACP server needs user input (permission confirmation or free-form text), it becomes a **pending interaction**. These appear in the inbox and are handled inline by the CLI.
 
 ```
-/acp approve planner abc123     # Grant permission
-/acp reject planner abc123      # Deny permission
-/acp reply planner abc123 main  # Reply with text
+Permission requests: choose 1 / 2 / 3 / 4
+Input requests: type a reply inline at the prompt
 ```
 
 Pending interactions are visible in `/acp status <name>` and `/status`.
+
+## Explicit Target-Server Routing
+
+User messages that explicitly name a configured ACP server are routed directly to that server instead of going through the normal main-agent turn. Recognised deterministic forms:
+
+- `@server-name <task>`
+- `server-name: <task>`
+- `让 server-name <task>` / `请 server-name <task>`
+
+On a match the CLI prints `ACP Delegation → <server>` and reuses the same runner as `/acp send` (inline handling of permission / input requests).
+
+Notes:
+
+- Only configured server names match; unknown names fall through to the normal agent path.
+- Empty task text after the server name prints a usage hint.
+- Results stay in the ACP inbox and are **not** injected into the main Agentao conversation context — the explicit-routing semantics are "hand this turn to the sub-agent", not "let the main agent know".
+
+### Push Delegation (removed)
+
+An earlier design proposed an experimental `pushTaskCompleteToAgent` flag that would bridge private `task_complete` notifications into the main Agentao conversation. It was **dropped** before landing: `task_complete` is not part of the ACP standard enum of `sessionUpdate` kinds, so shipping it would require every compatible server to speak a private extension. The flag, its queue, and the synthetic-message injection path are no longer present in the codebase. See the corresponding design doc for history.
+
+Design doc:
+
+- [docs/implementation/acp-client-project-servers/issues/12-explicit-routing-and-push-delegation.md](../implementation/acp-client-project-servers/issues/12-explicit-routing-and-push-delegation.md)
 
 ## Diagnostics
 
@@ -146,7 +169,7 @@ ACP interactions: 1 pending
 
 - Default behavior: permission requests that expire are rejected.
 - Input requests that expire are cancelled.
-- Use `/acp approve` / `/acp reject` / `/acp reply` promptly.
+- Respond promptly when the inline permission or input prompt appears.
 
 ## ACP Extension: `_agentao.cn/ask_user`
 

@@ -5,6 +5,7 @@ from .config import load_acp_client_config
 from .inbox import Inbox, InboxMessage, MessageKind
 from .interaction import InteractionKind, InteractionRegistry, PendingInteraction
 from .manager import ACPManager
+from .router import AcpExplicitRoute, detect_explicit_route
 from .models import (
     AcpClientConfig,
     AcpConfigError,
@@ -22,6 +23,7 @@ __all__ = [
     "AcpClientError",
     "AcpConfigError",
     "AcpConnectionInfo",
+    "AcpExplicitRoute",
     "AcpProcessInfo",
     "AcpRpcError",
     "AcpServerConfig",
@@ -32,5 +34,6 @@ __all__ = [
     "MessageKind",
     "PendingInteraction",
     "ServerState",
+    "detect_explicit_route",
     "load_acp_client_config",
 ]
