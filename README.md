@@ -18,6 +18,100 @@ A powerful CLI agent harness with tools, skills, and MCP support. Built with Pyt
 
 ---
 
+## Quick Start
+
+Get Agentao running in about 3 minutes:
+
+1. Install the package:
+
+```bash
+pip install agentao
+```
+
+2. Create a local `.env` file:
+
+```bash
+echo "OPENAI_API_KEY=sk-your-key-here" > .env
+```
+
+3. Verify the CLI works:
+
+```bash
+agentao -p "Reply with the single word: OK"
+```
+
+Expected output:
+
+```text
+OK
+```
+
+4. Start the interactive session:
+
+```bash
+agentao
+```
+
+If you hit a startup error, jump directly to [Troubleshooting common startup failures](#troubleshooting-common-startup-failures) or [Troubleshooting](#troubleshooting).
+
+## Start Here
+
+Choose the path that matches what you want to do:
+
+- New to Agentao: [Quick Start](#quick-start) → [Minimum Viable Configuration](#minimum-viable-configuration) → [Usage](#usage)
+- Need the minimum setup only: [Installation](#installation) → [Required environment variable](#required-environment-variable) → [Minimal runnable example](#minimal-runnable-example)
+- Want to switch models or providers: [Using with Different Providers](#using-with-different-providers)
+- Want MCP tools: [MCP Server Configuration](#mcp-server-configuration) → [MCP (Model Context Protocol) Support](#-mcp-model-context-protocol-support)
+- Want plugins, hooks, or skills: [Plugin System](#-plugin-system) → [Hooks System](#-hooks-system) → [Dynamic Skills System](#-dynamic-skills-system)
+- Want to embed Agentao in code: [Headless / SDK Use](#headless--sdk-use) → [ACP (Agent Client Protocol) Mode](#acp-agent-client-protocol-mode)
+- Want to contribute: [For contributors (source install)](#for-contributors-source-install) → [Development](#development) → [Testing](#testing)
+
+## Table of Contents
+
+### User Guide
+
+- [Quick Start](#quick-start)
+- [Start Here](#start-here)
+- [First Commands](#first-commands)
+- [Why Agentao?](#why-agentao)
+- [Feature Overview](#feature-overview)
+- [Common Workflows](#common-workflows)
+- [Installation](#installation)
+- [Minimum Viable Configuration](#minimum-viable-configuration)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Project Instructions (AGENTAO.md)](#project-instructions-agentaomd)
+- [Troubleshooting](#troubleshooting)
+
+### Contributor Guide
+
+- [Project Structure](#project-structure)
+- [Testing](#testing)
+- [Logging](#logging)
+- [Development](#development)
+- [License](#license)
+
+### Detailed Reference
+
+- [Core Capabilities](#core-capabilities)
+- [Design Principles](#design-principles)
+- [Etymology](#etymology)
+- [Acknowledgments](#acknowledgments)
+
+## First Commands
+
+Once the CLI starts, these are the commands most new users need first:
+
+```text
+/help       Show available commands
+/status     Show provider, model, token usage, and task summary
+/model      List or switch models on the current provider
+/provider   List or switch configured providers
+/todos      Show the current task checklist
+/memory     Inspect or manage memory
+/mcp list   Check MCP server status
+```
+
 ## Why Agentao?
 
 Most agent frameworks give you power. **Agentao gives you power with discipline.**
@@ -30,6 +124,46 @@ The name itself encodes the design: *Agent* (capability) + *Tao* (governance). E
 | **Connectivity** (连接) | Agents must reach the world beyond their training | MCP Protocol — seamlessly connects to any external service via stdio or SSE |
 | **Observability** (可观测性) | Agents must show their work | Live Thinking display + Complete Logging — every reasoning step and tool call is visible |
 
+## Feature Overview
+
+If you're evaluating Agentao, start here. If you're trying to get unblocked quickly, skip ahead to [Installation](#installation) and [Usage](#usage).
+
+| Area | What you get | Where to go next |
+|------|--------------|------------------|
+| Governance | Tool confirmation, permission modes, read-before-assert behavior, visible reasoning | [Permission Modes](#permission-modes-safety-feature) |
+| Context | Long-session token tracking, compression, overflow recovery | [Core Capabilities](#core-capabilities) |
+| Memory | SQLite-backed persistent memory and recall | [Core Capabilities](#core-capabilities) |
+| Execution UX | Rich terminal output, structured tool display, task checklist | [Usage](#usage) |
+| Extensibility | MCP servers, plugins, hooks, dynamic skills | [Configuration](#configuration) |
+| Automation | Non-interactive mode, SDK transport, ACP mode, sub-agents | [Usage](#usage) |
+
+## Common Workflows
+
+If you're not sure how to approach Agentao yet, follow one of these paths:
+
+| Goal | What to read | What to try |
+|------|--------------|-------------|
+| Get the first successful run | [Quick Start](#quick-start) → [Minimum Viable Configuration](#minimum-viable-configuration) | `agentao -p "Reply with the single word: OK"` |
+| Start using it in a real repo | [Starting the Agent](#starting-the-agent) → [Project Instructions (AGENTAO.md)](#project-instructions-agentaomd) | `agentao` then `/status` |
+| Use another provider or model | [Using with Different Providers](#using-with-different-providers) → [Commands](#commands) | `/provider` then `/model` |
+| Add external tools | [MCP Server Configuration](#mcp-server-configuration) → [MCP (Model Context Protocol) Support](#-mcp-model-context-protocol-support) | create `.agentao/mcp.json` then `/mcp list` |
+| Extend the agent | [Plugin System](#-plugin-system) → [Hooks System](#-hooks-system) → [Dynamic Skills System](#-dynamic-skills-system) | `agentao skill list` |
+| Contribute code | [For contributors (source install)](#for-contributors-source-install) → [Testing](#testing) → [Development](#development) | `uv sync` then run tests |
+
+## Documentation Map
+
+Use the README for the main path, and jump to the docs below when you need depth:
+
+| Topic | Document |
+|------|----------|
+| Quickstart | [docs/QUICKSTART.md](docs/QUICKSTART.md) |
+| Command cheat sheet | [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) |
+| ACP server mode | [docs/ACP.md](docs/ACP.md) |
+| Logging details | [docs/LOGGING.md](docs/LOGGING.md) |
+| Skills guide | [docs/SKILLS_GUIDE.md](docs/SKILLS_GUIDE.md) |
+| Memory details | [docs/features/memory-management.md](docs/features/memory-management.md) |
+| ACP client details | [docs/features/acp-client.md](docs/features/acp-client.md) |
+
 **One-liner demo** — try it right after install:
 
 ```bash
@@ -40,6 +174,8 @@ agentao -p "List all Python files here and summarize what each one does"
 ---
 
 ## Core Capabilities
+
+This section is the detailed feature reference. If you're brand new, you can skip to [Installation](#installation), [Minimum Viable Configuration](#minimum-viable-configuration), and [Usage](#usage) first, then come back here later.
 
 ### 🏛️ Autonomous Governance (自治治理)
 
@@ -61,51 +197,34 @@ A disciplined agent that acts deliberately, not impulsively:
 
 ### 🧠 Elastic Context Engine (弹性上下文引擎)
 
-Agentao automatically manages long conversations to stay within LLM context limits:
+Agentao keeps long sessions usable without forcing users to manually prune context.
 
-- **Three-tier token counting** — (1) real `prompt_tokens` from provider API response after every LLM call; (2) provider `count_tokens` API (extension point); (3) local estimator: [tiktoken](https://github.com/openai/tiktoken) for GPT-4/Claude/DeepSeek families, CJK-aware character scan (ASCII = 0.25 tok/char, non-ASCII = 1.3 tok/char, adapted from [gemini-cli](https://github.com/google-gemini/gemini-cli)) as fallback. Install tiktoken with `uv sync --extra tokenizer`
-- **Token breakdown** — `/status` shows context split by component: system prompt / conversation messages / tools schema, plus session-total prompt and completion tokens
-- **Two-tier compression** — at 55% usage, *microcompaction* cheaply truncates old oversized tool results (no LLM call); at 65% usage, full LLM summarization kicks in and replaces early messages with a structured `[Conversation Summary]` block
-- **Structured 9-section summary** — LLM summarization produces a detailed summary covering: intent, key concepts, files touched, errors & fixes, problem solving, user messages, pending tasks, current work, and next step — preserving full continuity
-- **Partial compaction** — keeps the most recent 20 messages verbatim; split point advances to the next `user` boundary so tool call sequences are never split mid-flight
-- **Boundary marker + file hints** — compressed history is preceded by a `[Compact Boundary]` header and a list of recently-read files so the agent knows where to re-read for details
-- **Pinned messages** — messages starting with `[PIN]` are always kept verbatim and never summarized
-- **Circuit breaker** — after 3 consecutive compression failures, auto-compact is disabled to prevent infinite retry loops (`/context` shows failure count)
-- **Tool result truncation** — tool outputs larger than 80K characters (~20K tokens) are truncated before being added to messages
-- **Auto-save summaries** — compression summaries are saved to memory with tag `conversation_summary` for future reference
-- **Graceful degradation** — if compression fails, the original messages are preserved unchanged
-- **Three-tier overflow recovery** — if the API returns a context-too-long error: (1) force-compress and retry; (2) if still too long, keep only the last 2 messages and retry; (3) only surfaces an error to the user if all three tiers fail
+The important user-facing pieces are:
 
-Default context limit is 200K tokens. Override with `AGENTAO_CONTEXT_TOKENS` environment variable.
+- token usage is visible in `/status` and `/context`
+- old history is compressed instead of silently dropped
+- recent turns stay verbatim for continuity
+- oversized tool output is truncated before it can blow up the prompt
+- overflow recovery retries automatically before surfacing an error
+
+Default context limit is 200K tokens and can be changed with `AGENTAO_CONTEXT_TOKENS`.
 
 ### 💾 SQLite Memory (持久记忆)
 
-A SQLite-backed persistent memory system that automatically surfaces relevant context — no vector database required.
+A SQLite-backed memory system automatically resurfaces relevant context without requiring a vector database.
 
-**Storage:** Two SQLite databases, auto-created on first run:
+At the README level, the key ideas are:
 
-| Database | Path | Scope |
-|----------|------|-------|
-| Project store | `.agentao/memory.db` | Per-project memories + session summaries |
-| User store | `<home>/.agentao/memory.db` | Cross-project user preferences |
+- two stores exist by default: project memory and user memory
+- persistent memories survive until deleted
+- session summaries help continuity across restarts
+- recall is dynamic per turn, so relevant memory comes back when needed
+- Chinese retrieval quality is improved with `jieba` segmentation and a user dictionary
 
-**Three data types:**
+Useful next steps:
 
-| Type | Where stored | Lifetime |
-|------|-------------|----------|
-| **Persistent memories** | `memories` table (soft-delete) | Until explicitly deleted |
-| **Session summaries** | `session_summaries` table | Current session; cleared on `/memory clear` |
-| **Recall candidates** | In-memory only (never stored) | Single turn |
-
-**Injection strategy (per-turn, two blocks):**
-
-1. **`<memory-stable>`** — persistent memories up to a character budget. Summaries from **previous sessions** are also appended here (pre-reserved so they are never crowded out by fact entries), giving the LLM cross-session continuity after a restart.
-
-2. **`<memory-context>`** — top-k recall candidates scored against the current user message using a keyword / Jaccard / tag / recency formula; injected dynamically so the stable prefix stays cache-friendly.
-
-**Retrieval performance & CJK quality:** the retriever maintains a `write_version`-gated inverted index (token → record IDs) so each recall call scores only the records that share the query tokens, avoiding a full scan as the memory store grows. CJK text is segmented with [`jieba`](https://github.com/fxsjy/jieba) word segmentation rather than character bigrams — `"版本管理"` tokenizes to `{"版本", "管理"}` instead of `{"版本", "本管", "管理"}`, eliminating the noise bigrams that polluted ranking. Single-character CJK tokens are filtered out (mirroring the Latin `len > 1` rule). Add domain-specific terms — project names, technical jargon, proper nouns — to `<home>/.agentao/userdict.txt` and jieba will pick them up on first recall.
-
-> **Session summary channels:** the *current* session's summary lives only in `self.messages` as a `[Conversation Summary]` block (injecting it into the system prompt too would duplicate context). *Previous* sessions' summaries have no message-history channel after a restart, so they flow through `<memory-stable>` instead.
+- quick usage: [docs/features/memory-quickstart.md](docs/features/memory-quickstart.md)
+- implementation and behavior details: [docs/features/memory-management.md](docs/features/memory-management.md)
 
 **Save a memory:**
 ```
@@ -117,42 +236,17 @@ A SQLite-backed persistent memory system that automatically surfaces relevant co
 
 ### 💡 Semantic Display Engine
 
-The terminal display provides clean, low-noise tool execution output using Rich formatting:
+The terminal UI is designed to stay readable during real work, not just demos.
 
-```
-→ read  src/agent.py             ← fast + silent: header only, no footer
+In practice this means:
 
-$ pytest tests/ -q
-  ...........
-  … +42 lines
-✓ $ pytest tests/ -q  3.1s      ← slow (≥2s): footer shown
+- tool calls render with semantic headers instead of raw noise
+- long output is buffered and truncated around the useful tail
+- diffs and errors are surfaced clearly
+- warnings are consolidated instead of flooding the screen
+- sub-agent execution and reasoning stay visually distinct
 
-← edit  src/agent.py
-  --- a/agent.py
-  +++ b/agent.py
-  @@ -12,3 +12,4 @@
-  -old line
-  +new line
-✓ edit  src/agent.py  12ms      ← diff shown: footer shown
-
-$ pandoc doc.md -o doc.pdf
-  [warning] Missing character: 'X'
-  … +14 similar warnings         ← consolidated warnings
-✓ $ pandoc …  1.8s
-```
-
-- **Semantic tool headers** — each tool call renders with a meaningful icon and argument preview: `→ read`  `← edit`  `$ shell`  `✱ search`  `↗ fetch`  `◈ remember`
-- **Buffered output** — all output (including shell) is buffered and shown at completion; prevents screen flooding and handles `\r` progress bars, ANSI codes, and `\r\n` line endings correctly
-- **Tail-biased truncation** — long output shows the last 8 lines with a `… +N lines` fold indicator; errors and results near the tail are always visible
-- **Expand / collapse** — shell commands show buffered output; read/search/memory tools collapse silently; errors on collapsed tools surface the tail retroactively
-- **Diff rendering** — `replace` shows a colored unified diff; `write_file` shows a syntax-highlighted content preview (first 16 lines, lexer auto-detected from extension)
-- **Tool aggregation** — parallel tools in the same LLM turn shown with `  + header` prefix to signal batching
-- **Live elapsed timer** — spinner updates to `tool  0.8s` for tools running longer than 0.5 s
-- **Conditional completion footer** — shown only when there is output, a diff, an error, or the tool takes ≥ 2 s; fast/silent tools display a single header line only: `✓ read  32ms`  /  `✗ run_shell_command  1.2s  Permission denied`
-- **Warning consolidation** — consecutive similar warnings in shell output are collapsed to a single summary: `… +N similar warnings`
-- **Sub-agent lifecycle** — foreground sub-agents wrapped with cyan `▶`/`◀` rule separators; stats shown on completion
-- **Thinking display** — LLM reasoning shown in dim italic style under a separator
-- **Structured reasoning** — before each set of tool calls the agent prints its **Action**, **Expectation**, and **If wrong** plan — a falsifiable prediction you can verify against the actual tool result
+If you need command-level operational shortcuts, use [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md). Logging detail lives in [docs/LOGGING.md](docs/LOGGING.md).
 
 ### ✅ Session Task Tracking
 
@@ -228,204 +322,76 @@ graph LR
 
 ### 🧩 Plugin System
 
-Agentao supports a **Claude Code-compatible plugin system** that lets you extend the agent with custom skills, commands, agents, MCP servers, and hooks — all packaged in a single directory with a `plugin.json` manifest.
+Agentao supports a **Claude Code-compatible plugin system** for packaging extensions behind a `plugin.json` manifest.
 
-**Plugin sources** (lowest to highest precedence):
-1. **Global:** `<home>/.agentao/plugins/{marketplace}/{name}/{version}/`
-2. **Project:** `.agentao/plugins/{marketplace}/{name}/{version}/`
-3. **Inline:** `--plugin-dir /path/to/plugin` (highest priority)
+At a high level, a plugin can contribute:
 
-**What a plugin can provide:**
-- **Skills & Commands** — auto-registered with `plugin:skill` namespacing
-- **Agents** — sub-agent definitions (`.md` with YAML frontmatter)
-- **MCP Servers** — additional tool servers merged at startup
-- **Hooks** — lifecycle hooks that fire on events (see [Hooks System](#hooks-system) below)
+- Skills and commands
+- Sub-agent definitions
+- MCP server definitions
+- Lifecycle hooks
 
-**CLI management:**
+Plugin sources are loaded with precedence from global → project → inline `--plugin-dir`.
+
+Most users only need these commands:
+
 ```bash
-agentao plugin list              # Show loaded plugins with diagnostics
-agentao plugin list --json       # JSON output
-agentao skill install owner/repo # Install a skill from GitHub
-agentao skill list               # List all skills (managed + unmanaged)
-agentao skill remove my-skill    # Remove an installed skill
-agentao skill update --all       # Update all managed skills
+agentao plugin list
+agentao plugin list --json
+agentao skill list
+agentao skill install owner/repo
+agentao skill update --all
 ```
 
-**Creating a plugin:**
-```
-my-plugin/
-├── plugin.json     # Manifest (name, version, hooks, skills, etc.)
-├── skills/         # SKILL.md files auto-discovered
-├── commands/       # Command .md files
-├── agents/         # Agent definition .md files
-└── hooks/
-    └── hooks.json  # Hook rules
-```
-
-Minimal `plugin.json`:
-```json
-{
-  "name": "my-plugin",
-  "version": "1.0.0",
-  "description": "My custom plugin",
-  "hooks": "./hooks/hooks.json"
-}
-```
+Use this section as the overview. For skill-centric workflows, jump to [docs/SKILLS_GUIDE.md](docs/SKILLS_GUIDE.md). The plugin internals stay in the contributor docs and implementation notes.
 
 ### 🪝 Hooks System
 
-Agentao implements a subset of the [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) protocol, allowing plugins to react to agent lifecycle events by running external commands or injecting context.
+Hooks let plugins react to lifecycle events before or after prompts and tool calls.
 
-#### Supported Hook Events
+The important part for most readers:
 
-| Event | Type | Description | Claude Code Compat |
-|-------|------|-------------|-------------------|
-| `UserPromptSubmit` | command, prompt | Before the user's message is sent to the LLM | ✅ Full |
-| `PreToolUse` | command | Before a tool executes | ✅ Full |
-| `PostToolUse` | command | After a tool succeeds | ✅ Full |
-| `PostToolUseFailure` | command | After a tool fails | ✅ Full |
-| `SessionStart` | command | When a session begins | ✅ Full |
-| `SessionEnd` | command | When a session ends | ✅ Full |
+- Agentao supports a practical subset of the Claude Code hooks model
+- `command` hooks can run external commands
+- `prompt` hooks can inject additional context
+- hook payloads use Claude Code tool aliases for compatibility
 
-#### Unsupported Hook Events (Claude Code only)
-
-| Event | Status | Notes |
-|-------|--------|-------|
-| `Notification` | ❌ Not implemented | Agentao does not emit notification events |
-| `Stop` | ❌ Not implemented | No stop-reason hook |
-| `SubagentTool` | ❌ Not implemented | Sub-agent tool calls are not hooked |
-
-#### Supported Hook Types
-
-| Type | Supported | Description |
-|------|-----------|-------------|
-| `command` | ✅ Yes | Run a shell command; receives JSON payload via stdin |
-| `prompt` | ✅ Yes | Inject text into context (UserPromptSubmit only) |
-| `http` | ⚠️ Recognized, skipped | Parsed but not dispatched (warning emitted) |
-| `agent` | ⚠️ Recognized, skipped | Parsed but not dispatched (warning emitted) |
-
-#### Hook Rules Format (`hooks.json`)
-
-```json
-[
-  {
-    "event": "PreToolUse",
-    "hooks": [
-      {
-        "type": "command",
-        "command": "python ./hooks/lint-check.py",
-        "matcher": { "toolName": "Bash" }
-      }
-    ]
-  },
-  {
-    "event": "UserPromptSubmit",
-    "hooks": [
-      {
-        "type": "prompt",
-        "prompt": "Always respond in formal English."
-      },
-      {
-        "type": "command",
-        "command": "node ./hooks/validate-input.js"
-      }
-    ]
-  }
-]
-```
-
-#### Tool Name Aliasing (Claude Code Compatibility)
-
-Hook payloads use **Claude Code tool names** so hooks written for Claude Code work in Agentao without modification:
-
-| Agentao Tool | Claude Code Name |
-|-------------|-----------------|
-| `read_file` | `Read` |
-| `write_file` | `Write` |
-| `replace` | `Edit` |
-| `run_shell_command` | `Bash` |
-| `glob` | `Glob` |
-| `search_file_content` | `Grep` |
-| `web_fetch` | `WebFetch` |
-| `google_web_search` | `WebSearch` |
-| `list_directory` | `LS` |
-
-A `matcher` like `{ "toolName": "Bash" }` will match Agentao's `run_shell_command` tool. Glob patterns are supported: `{ "toolName": "Read*" }`.
-
-#### Command Hook I/O Protocol
-
-Command hooks receive a JSON payload via **stdin** and can output JSON to **stdout**:
-
-**Input (stdin):**
-```json
-{
-  "event": "PreToolUse",
-  "data": {
-    "toolName": "Bash",
-    "toolInput": { "command": "rm -rf /tmp/test" },
-    "sessionId": "abc-123"
-  }
-}
-```
-
-**Output (stdout) — optional:**
-```json
-{ "additionalContext": "Reminder: always use --dry-run first" }
-```
-```json
-{ "blockingError": "Dangerous command blocked by policy" }
-```
-```json
-{ "preventContinuation": true, "stopReason": "Rate limit reached" }
-```
-
-Non-JSON output is treated as additional context. No output = success (side-effect only).
+If you are evaluating whether hooks exist, this section answers that. If you need the full event matrix or payload contract, move that detail into dedicated docs rather than the README front page.
 
 ### 🎯 Dynamic Skills System
 
-Skills are auto-discovered from the `skills/` directory. Each subdirectory contains a `SKILL.md` file with YAML frontmatter. Skills are listed in the system prompt and can be activated with the `activate_skill` tool.
+Skills are auto-discovered from `skills/`, activated on demand, and can be created without changing Python code.
 
-Add new skills by creating a directory with a `SKILL.md` file — no code changes needed. Or use **Skill Crystallization** to generate one from your current session: `/crystallize suggest` drafts a skill from the session transcript; `/crystallize create [name]` writes it and reloads skills immediately.
+Typical ways to work with skills:
 
-Skills can also be installed from GitHub:
+- Add a local `skills/<name>/SKILL.md`
+- Generate one from a session with `/crystallize suggest`
+- Write it with `/crystallize create [name]`
+- Install managed skills from GitHub
+
+Common commands:
+
 ```bash
-agentao skill install owner/repo    # Install from GitHub
-agentao skill list --installed      # Show managed installs
-agentao skill update my-skill       # Update to latest
-agentao skill remove my-skill       # Uninstall
+agentao skill list
+agentao skill install owner/repo
+agentao skill update my-skill
+agentao skill remove my-skill
 ```
+
+For a fuller walkthrough, use [docs/SKILLS_GUIDE.md](docs/SKILLS_GUIDE.md).
 
 ### 🛠️ Comprehensive Tools
 
-**File Operations:**
-- `read_file` - Read file contents
-- `write_file` - Write content to files (requires confirmation)
-- `replace` - Edit files by replacing text
-- `list_directory` - List directory contents
+Agentao ships with a broad tool surface, but most users only need the categories:
 
-**Search & Discovery:**
-- `glob` - Find files matching patterns (supports `**` for recursive search)
-- `search_file_content` - Search text in files with regex support
+- File operations: read, write, edit, list
+- Search and discovery: glob, grep-like content search
+- Shell and web access
+- Task tracking and memory tools
+- Sub-agent and skill activation tools
+- Dynamically discovered MCP tools
 
-**Shell & Web:**
-- `run_shell_command` - Execute shell commands (requires confirmation)
-- `web_fetch` - Fetch and extract content from URLs (domain-tiered: trusted sites auto-allow, loopback/metadata auto-deny, others ask); uses [Crawl4AI](https://github.com/unclecode/crawl4ai) for clean Markdown output if installed, otherwise falls back to plain text extraction
-- `google_web_search` - Search the web via DuckDuckGo (requires confirmation)
-
-**Task Tracking:**
-- `todo_write` - Update the session task checklist (pending → in_progress → completed); use `/todos` to view
-
-**Agents & Skills:**
-- `agent_codebase_investigator` - Delegate read-only codebase exploration to a sub-agent (supports `run_in_background`)
-- `agent_generalist` - Delegate complex multi-step tasks to a sub-agent (supports `run_in_background`)
-- `check_background_agent` - Poll the status of a background sub-agent by ID; pass empty string to list all
-- `activate_skill` - Activate specialized skills for specific tasks
-- `ask_user` - Pause and ask the user a clarifying question mid-task
-
-**MCP Tools:**
-- Dynamically discovered from connected MCP servers
-- Named `mcp_{server}_{tool}` (e.g. `mcp_filesystem_read_file`)
-- Require confirmation unless server is trusted
+Use [First Commands](#first-commands) for the beginner subset, [Commands](#commands) for the full slash-command reference, and [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) for a faster operator cheat sheet.
 
 ---
 
@@ -442,6 +408,8 @@ Agentao is built around three foundational principles:
 ---
 
 ## Installation
+
+If your goal is simply "get Agentao running", read this section together with [Minimum Viable Configuration](#minimum-viable-configuration). If you're contributing to the codebase, you can jump to [For contributors (source install)](#for-contributors-source-install).
 
 ### Prerequisites
 - Python 3.10 or higher
@@ -473,6 +441,13 @@ cp .env.example .env
 ## Minimum Viable Configuration
 
 Everything you need to get Agentao running from scratch.
+
+Recommended first-run order:
+
+1. Confirm your Python version.
+2. Set `OPENAI_API_KEY` in `.env`.
+3. Run the minimal example.
+4. If it fails, check the startup troubleshooting table below.
 
 ### Supported Python versions
 
@@ -571,6 +546,8 @@ agentao
 
 ## Configuration
 
+Use this section after the first successful run. If you're new, you usually only need the `.env` example below plus the provider notes in [Using with Different Providers](#using-with-different-providers).
+
 Edit `.env` with your settings:
 
 ```env
@@ -581,7 +558,7 @@ OPENAI_API_KEY=your-api-key-here
 # OPENAI_BASE_URL=https://api.openai.com/v1
 
 # Optional: Model name
-# OPENAI_MODEL=gpt-4-turbo-preview
+# OPENAI_MODEL=gpt-4o
 
 # Optional: Context window limit in tokens (default: 200000)
 # AGENTAO_CONTEXT_TOKENS=200000
@@ -639,7 +616,7 @@ Agentao supports switching between providers at runtime with `/provider`. Add cr
 ```env
 # OpenAI (default)
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4-turbo-preview
+OPENAI_MODEL=gpt-4o
 
 # Gemini
 GEMINI_API_KEY=...
@@ -665,11 +642,21 @@ The `/provider` command detects any `*_API_KEY` entry already loaded into the en
 
 ## Usage
 
+This section is organized by usage mode:
+
+- Interactive CLI: [Starting the Agent](#starting-the-agent) and [Commands](#commands)
+- One-shot scripting: [Non-Interactive (Print) Mode](#non-interactive-print-mode)
+- Python embedding: [Headless / SDK Use](#headless--sdk-use)
+- Editor or external client integration: [ACP (Agent Client Protocol) Mode](#acp-agent-client-protocol-mode)
+- Project-local ACP servers: [ACP Client — Project-Local Server Management](#acp-client--project-local-server-management)
+
 ### Starting the Agent
 
 ```bash
 agentao
 ```
+
+If this is your first interactive run, try `/help`, `/status`, and `/model` first.
 
 ### Non-Interactive (Print) Mode
 
@@ -802,6 +789,8 @@ See **[docs/features/acp-client.md](docs/features/acp-client.md)** for the full 
 
 All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 
+If you only need the small beginner subset, start with [First Commands](#first-commands). The table below is the full command reference.
+
 | Command | Description |
 |---------|-------------|
 | `/help` | Show help message |
@@ -809,7 +798,7 @@ All commands start with `/`. Type `/` and press **Tab** for autocomplete.
 | `/new` | Alias for `/clear` |
 | `/status` | Show message count, model, active skills, memory count, context usage |
 | `/model` | Fetch and list available models from the configured API endpoint |
-| `/model <name>` | Switch to specified model (e.g., `/model gpt-4`) |
+| `/model <name>` | Switch to specified model (e.g., `/model gpt-4o`) |
 | `/provider` | List available providers (detected from `*_API_KEY` env vars) |
 | `/provider <NAME>` | Switch to a different provider (e.g., `/provider GEMINI`) |
 | `/skills` | List available and active skills |
@@ -1050,6 +1039,8 @@ y                       (exit plan mode, restore permissions, agent implements)
 
 ## Project Instructions (AGENTAO.md)
 
+Use `AGENTAO.md` when you want project-specific rules, conventions, or workflow instructions to load automatically for every session in the current repository.
+
 Agentao automatically loads project-specific instructions from `AGENTAO.md` if it exists in the current working directory. This is the most powerful customization feature — it injects your instructions at the *top* of the system prompt, making them higher-priority than any built-in agent guidelines.
 
 Use `AGENTAO.md` to define:
@@ -1065,6 +1056,8 @@ If the file doesn't exist, the agent works normally with its default instruction
 ---
 
 ## Project Structure
+
+This section is mainly for contributors or advanced users who want to understand how the codebase is organized.
 
 ```
 agentao/
@@ -1143,6 +1136,8 @@ agentao/
 
 ## Testing
 
+Run these checks before opening a PR or after making behavior changes.
+
 ```bash
 # Run all tests (requires source checkout)
 python -m pytest tests/ -v
@@ -1158,6 +1153,8 @@ Tests use `unittest.mock.Mock` for the LLM client — no real API calls required
 
 ## Logging
 
+Use this section when you need to inspect what the agent, model, or tools actually did during a session.
+
 All LLM interactions are logged to `agentao.log`:
 
 ```bash
@@ -1170,6 +1167,15 @@ Logged data includes: full message content, tool calls with arguments, tool resu
 ---
 
 ## Development
+
+Contributor reading path:
+
+1. [For contributors (source install)](#for-contributors-source-install)
+2. [Project Structure](#project-structure)
+3. [Testing](#testing)
+4. The extension guide you need: [Adding a Tool](#adding-a-tool), [Adding an Agent](#adding-an-agent), or [Adding a Skill](#adding-a-skill)
+
+This section is contributor-oriented. If you're only using Agentao as a CLI, you can skip it.
 
 ### Adding a Tool
 
@@ -1262,6 +1268,10 @@ Skills created with `/crystallize create` are written to `.agentao/skills/` (pro
 ---
 
 ## Troubleshooting
+
+Use this section for issues beyond first-run setup, including runtime behavior, tools, and integration problems.
+
+If you're debugging a first-run problem, start with [Troubleshooting common startup failures](#troubleshooting-common-startup-failures) instead of this section.
 
 **Model List Not Loading:** `/model` queries the live API endpoint. If it fails (invalid key, unreachable endpoint, no `models` endpoint), a clear error is shown. Verify your `OPENAI_API_KEY` and `OPENAI_BASE_URL` settings.
 

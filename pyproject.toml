@@ -81,8 +81,6 @@ exclude = [
     "workspace",
     "AGENTAO.md",
     "CLAUDE.md",
-    "test_dict.txt",
-    "test_dict_2.txt",
 ]
 
 [tool.pytest.ini_options]
@@ -91,5 +89,7 @@ addopts = "--tb=short"
 
 [dependency-groups]
 dev = [
+    "build>=1.2.2",
     "pytest>=9.0.2",
+    "twine>=6.1.0",
 ]

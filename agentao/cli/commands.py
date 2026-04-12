@@ -217,7 +217,7 @@ def handle_model_command(cli: AgentaoCLI, args: str) -> None:
                 console.print(f"    • {model}{marker}")
 
         console.print("\n[info]Usage:[/info] /model <model_name>")
-        console.print("Example: /model claude-sonnet-4-5\n")
+        console.print("Example: /model claude-sonnet-4-6\n")
 
     else:
         result = cli.agent.set_model(args)

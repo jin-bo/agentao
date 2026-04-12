@@ -14,41 +14,38 @@ You: /model
 
 Output:
 ```
-Current Model: claude-sonnet-4-5
+Current Model: claude-sonnet-4-6
 
 Available Models:
 
   Claude:
     • claude-opus-4
-    • claude-sonnet-4-5 ✓
+    • claude-sonnet-4-6 ✓
     • claude-sonnet-4
     • claude-haiku-4
 
   OpenAI GPT:
-    • gpt-4-turbo-preview
-    • gpt-4-turbo
-    • gpt-4
-    • gpt-4-32k
-    • gpt-3.5-turbo
-    • gpt-3.5-turbo-16k
+    • gpt-5.4
+    • gpt-4o
+    • gpt-4.1
 
   Other:
     • deepseek-chat
     • deepseek-coder
 
 Usage: /model <model_name>
-Example: /model claude-sonnet-4-5
+Example: /model claude-sonnet-4-6
 ```
 
 ### Switch to a Specific Model
 
 ```bash
-You: /model gpt-4
+You: /model gpt-4o
 ```
 
 Output:
 ```
-Model changed from claude-sonnet-4-5 to gpt-4
+Model changed from claude-sonnet-4-6 to gpt-4o
 ```
 
 ### Check Current Model in Status
@@ -60,7 +57,7 @@ You: /status
 Output includes current model:
 ```
 Total messages: 10
-Current model: gpt-4
+Current model: gpt-4o
 Active skills: 0
 ```
 
@@ -71,7 +68,7 @@ Active skills: 0
 | Model | Description |
 |-------|-------------|
 | `claude-opus-4` | Most capable Claude model |
-| `claude-sonnet-4-5` | Balanced performance and speed (default) |
+| `claude-sonnet-4-6` | Balanced performance and speed |
 | `claude-sonnet-4` | Previous Sonnet version |
 | `claude-haiku-4` | Fastest Claude model |
 
@@ -79,12 +76,9 @@ Active skills: 0
 
 | Model | Description |
 |-------|-------------|
-| `gpt-4-turbo-preview` | Latest GPT-4 Turbo |
-| `gpt-4-turbo` | GPT-4 Turbo with vision |
-| `gpt-4` | Standard GPT-4 |
-| `gpt-4-32k` | GPT-4 with 32K context |
-| `gpt-3.5-turbo` | Fast and cost-effective |
-| `gpt-3.5-turbo-16k` | GPT-3.5 with 16K context |
+| `gpt-5.4` | Current flagship OpenAI model |
+| `gpt-4o` | Fast multimodal general-purpose model |
+| `gpt-4.1` | Strong coding and instruction-following model |
 
 ### Other Models
 
@@ -100,11 +94,11 @@ Active skills: 0
 Switch between models to compare their responses to the same question:
 
 ```bash
-You: /model gpt-4
+You: /model gpt-4o
 You: Explain quantum computing in simple terms
 [GPT-4 response]
 
-You: /model claude-sonnet-4-5
+You: /model claude-sonnet-4-6
 You: Explain quantum computing in simple terms
 [Claude response]
 ```
@@ -122,8 +116,8 @@ You: Analyze this complex algorithm...
 You: /model claude-haiku-4
 You: Format this text...
 
-# Use GPT-4 for tasks it excels at
-You: /model gpt-4
+# Use GPT-4o for fast general-purpose tasks
+You: /model gpt-4o
 You: Generate creative content...
 ```
 
@@ -132,12 +126,12 @@ You: Generate creative content...
 Use cheaper models when appropriate:
 
 ```bash
-# Use faster/cheaper model for simple queries
-You: /model gpt-3.5-turbo
+# Use a faster model for simple queries
+You: /model gpt-4o
 You: What's the weather?
 
 # Switch to more capable model for complex tasks
-You: /model gpt-4
+You: /model gpt-5.4
 You: Help me debug this complex issue...
 ```
 
@@ -154,7 +148,7 @@ The model setting persists throughout your session:
 
 All model switches are logged to `agentao.log`:
 ```
-2026-02-09 14:30:45 - agentao.llm - INFO - Model changed from claude-sonnet-4-5 to gpt-4
+2026-02-09 14:30:45 - agentao.llm - INFO - Model changed from claude-sonnet-4-6 to gpt-4o
 ```
 
 ### Context Preservation
@@ -172,7 +166,7 @@ Set the default model via environment variable:
 
 ```bash
 # In .env file
-OPENAI_MODEL=claude-sonnet-4-5
+OPENAI_MODEL=gpt-5.4
 ```
 
 Or when initializing:
@@ -180,7 +174,7 @@ Or when initializing:
 ```python
 from agentao import Agentao
 
-agent = Agentao(model="gpt-4")
+agent = Agentao(model="gpt-4o")
 ```
 
 ### API Configuration
@@ -210,13 +204,13 @@ OPENAI_BASE_URL=https://your-endpoint.com/v1
 $ uv run python main.py
 
 You: /model
-> Current Model: claude-sonnet-4-5
+> Current Model: claude-sonnet-4-6
 
 You: Hello
 > [Response from Claude Sonnet]
 
-You: /model gpt-4
-> Model changed from claude-sonnet-4-5 to gpt-4
+You: /model gpt-4o
+> Model changed from claude-sonnet-4-6 to gpt-4o
 
 You: Hello again
 > [Response from GPT-4]
@@ -228,7 +222,7 @@ You: Hello again
 You: /model claude-opus-4
 You: Write a poem about AI
 
-You: /model gpt-4
+You: /model gpt-4o
 You: Write a poem about AI
 
 You: /model claude-haiku-4
@@ -243,7 +237,7 @@ You: /model deepseek-coder
 You: Optimize this Python function...
 
 # Switch to Claude for analysis
-You: /model claude-sonnet-4-5
+You: /model claude-sonnet-4-6
 You: Explain what this code does...
 ```
 
@@ -277,7 +271,7 @@ If you switch to a model that's not supported by your API:
 
 ```bash
 You: /model some-unavailable-model
-> Model changed from claude-sonnet-4-5 to some-unavailable-model
+> Model changed from claude-sonnet-4-6 to some-unavailable-model
 [Next API call will fail with error]
 ```
 
@@ -307,7 +301,7 @@ You can switch to any model name, even if not in the list:
 
 ```bash
 You: /model my-custom-model
-> Model changed from claude-sonnet-4-5 to my-custom-model
+> Model changed from claude-sonnet-4-6 to my-custom-model
 ```
 
 This is useful for:
@@ -331,7 +325,7 @@ models = agent.list_available_models()
 print(f"Available: {models}")
 
 # Switch model
-result = agent.set_model("gpt-4")
+result = agent.set_model("gpt-4o")
 print(result)
 ```
 

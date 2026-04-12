@@ -5,6 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.8] — 2026-04-11
+
+Promotes `0.2.8-rc1` to general availability.
+
+The substantive Added / Changed / Tests breakdown for the ACP client and CLI
+refactor remains in the `[0.2.8-rc1]` entry below. The final 0.2.8 release
+locks down release-facing metadata and documentation so the package version,
+Git tag, release notes, and maintainer workflow all agree on the GA path.
+
+### Packaging / Release
+
+- Align package version, changelog, release notes, and publish workflow usage
+  to the final `0.2.8` release line
+- Add a maintainer smoke path at `scripts/release_check.sh` that runs tests,
+  builds sdist/wheel, and validates metadata with `twine check`
+- Add `build` and `twine` to the dev dependency group so release checks can be
+  reproduced from a local source checkout
+
+### Documentation
+
+- Update `.env.example`, quickstart guides, and README snippets to reflect the
+  current default model line (`gpt-5.4` / `gpt-4o` examples) instead of stale
+  `gpt-4-turbo-preview` examples
+- Add final release notes at `docs/releases/v0.2.8.md`
+- Update `docs/ACP.md` version examples from `0.2.8-rc1` to `0.2.8`
+
 ## [0.2.8-rc1] — 2026-04-11
 
 Headline: **ACP Client for project-local server management** — Agentao can
