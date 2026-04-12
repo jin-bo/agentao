@@ -557,8 +557,8 @@ OPENAI_API_KEY=your-api-key-here
 # Optional: Base URL for OpenAI-compatible APIs
 # OPENAI_BASE_URL=https://api.openai.com/v1
 
-# Optional: Model name
-# OPENAI_MODEL=gpt-4o
+# Optional: Model name (defaults to gpt-5.4)
+# OPENAI_MODEL=gpt-5.4
 
 # Optional: Context window limit in tokens (default: 200000)
 # AGENTAO_CONTEXT_TOKENS=200000
@@ -616,7 +616,7 @@ Agentao supports switching between providers at runtime with `/provider`. Add cr
 ```env
 # OpenAI (default)
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o
+OPENAI_MODEL=gpt-5.4
 
 # Gemini
 GEMINI_API_KEY=...

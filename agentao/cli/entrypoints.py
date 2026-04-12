@@ -140,11 +140,15 @@ def main(resume_session: Optional[str] = None):
         sys.exit(1)
 
 
+# Keep the ``model`` values in sync with
+# ``agentao.llm.client.LLMClient._PROVIDER_DEFAULT_MODELS`` so the init
+# wizard's suggested default matches the runtime default when no
+# ``<NAME>_MODEL`` env var is set.
 _PROVIDER_DEFAULTS = {
-    "OPENAI":     {"base_url": "https://api.openai.com/v1",                                          "model": "gpt-4o"},
+    "OPENAI":     {"base_url": "https://api.openai.com/v1",                                          "model": "gpt-5.4"},
     "DEEPSEEK":   {"base_url": "https://api.deepseek.com/v1",                                        "model": "deepseek-chat"},
-    "GEMINI":     {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai",             "model": "gemini-2.0-flash"},
-    "ANTHROPIC":  {"base_url": "https://api.anthropic.com/v1",                                       "model": "claude-opus-4-6"},
+    "GEMINI":     {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai",             "model": "gemini-flash-latest"},
+    "ANTHROPIC":  {"base_url": "https://api.anthropic.com/v1",                                       "model": "claude-sonnet-4-6"},
 }
 
 

@@ -555,8 +555,8 @@ OPENAI_API_KEY=your-api-key-here
 # 可选：OpenAI 兼容接口的 Base URL
 # OPENAI_BASE_URL=https://api.openai.com/v1
 
-# 可选：模型名称
-# OPENAI_MODEL=gpt-4o
+# 可选：模型名称（默认 gpt-5.4）
+# OPENAI_MODEL=gpt-5.4
 
 # 可选：上下文窗口 token 限制（默认：200000）
 # AGENTAO_CONTEXT_TOKENS=200000
@@ -608,7 +608,7 @@ Agentao 支持通过 `/provider` 在运行时切换提供商。在 `.env`（或 
 ```env
 # OpenAI（默认）
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o
+OPENAI_MODEL=gpt-5.4
 
 # Gemini
 GEMINI_API_KEY=...

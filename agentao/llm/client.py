@@ -107,7 +107,7 @@ class LLMClient:
         provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
         self.api_key = api_key or os.getenv(f"{provider}_API_KEY")
         self.base_url = base_url or os.getenv(f"{provider}_BASE_URL")
-        _default_model = self._PROVIDER_DEFAULT_MODELS.get(provider, "gpt-4o")
+        _default_model = self._PROVIDER_DEFAULT_MODELS.get(provider, "gpt-5.4")
         self.model = model or os.getenv(f"{provider}_MODEL") or _default_model
         self.temperature = temperature if temperature is not None else float(os.getenv("LLM_TEMPERATURE", "0.2"))
         _max = os.getenv("LLM_MAX_TOKENS")
