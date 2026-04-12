@@ -5,6 +5,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.9] — 2026-04-11
+
+Small GA follow-up to `0.2.8` with three independently useful fixes on top
+of the ACP client subsystem and the default-model rollout.
+
+### Added
+
+- **Explicit `@server` routing for the ACP client** (`agentao/acp_client/router.py`,
+  `agentao/cli/app.py::_try_acp_explicit_route`) — `@server-name <task>`,
+  `server-name: <task>`, and `让 / 请 server-name <task>` forms route
+  deterministically to the named ACP server from the main CLI input. Longest-first
+  name matching handles overlapping names (`qa` vs `qa.bot`). High-confidence shapes
+  (`@…`, `让 …`, `请 …`) consume the turn when config is unavailable so delegation
+  intent never silently falls back to the main agent; ambiguous colon-prefix shapes
+  fall through so `Note:` / `url:` prose is never hijacked. ACP config is re-stat'd
+  by mtime each attempt, so new/renamed servers are picked up without a CLI restart.
+- **`$VAR` / `${VAR}` expansion in `AcpServerConfig.env`** — API keys and tokens
+  can live in `.env` or the shell environment instead of being pasted into
+  `.agentao/acp.json`.
+
+### Fixed
+
+- **ACP stdio is now forced to UTF-8 with `errors="strict"` before the server starts**
+  (`agentao/acp/__main__.py`). Non-UTF-8 default encodings silently corrupt the
+  JSON-RPC stream; the entry point now reconfigures stdin/stdout/stderr, verifies the
+  result, and exits with a diagnostic on stderr if the streams cannot be made safe.
+- **Default-model messaging realigned with the runtime** across the init wizard,
+  `.env.example`, `README.md`, and `README.zh.md`. `LLMClient._PROVIDER_DEFAULT_MODELS`
+  is the canonical source; surfaces previously suggested `gpt-4o` / `gemini-2.0-flash`
+  / `claude-opus-4-6`, contradicting the actual defaults (`gpt-5.4`,
+  `gemini-flash-latest`, `claude-sonnet-4-6`, `deepseek-chat`). Unknown-provider
+  fallback in `LLMClient.__init__` also returns `gpt-5.4` now instead of `gpt-4o`.
+
+### Documentation
+
+- Add `docs/releases/v0.2.9.md`
+- Update `docs/ACP.md` version examples from `0.2.8` to `0.2.9`
+
 ## [0.2.8] — 2026-04-11
 
 Promotes `0.2.8-rc1` to general availability.
