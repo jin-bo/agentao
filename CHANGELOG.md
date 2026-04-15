@@ -5,6 +5,74 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.10-rc1] — 2026-04-15
+
+Prerelease focused on two initiatives: promoting `agentao.acp_client` as a
+stable **embedding facade for non-interactive runtimes**, and adding an
+explicit **`/crystallize refine` stage** to the skill-crystallization flow.
+
+### Added
+
+- **ACP embedding facade** (`agentao/acp_client/`): non-interactive
+  `send_prompt(..., interactive=False)` plus a one-shot `prompt_once(...)`
+  entry point for daemon/workflow runtimes. Ephemeral clients created by
+  `prompt_once` are tracked separately from durable `_clients` and do not
+  appear in `get_status()`.
+- **Structured client-side error taxonomy** (`AcpErrorCode`, `AcpClientError`,
+  `AcpRpcError`, `AcpInteractionRequiredError`): embedding callers can branch
+  on failure category without string matching. `AcpRpcError` preserves the
+  raw JSON-RPC numeric `rpc_code` alongside the structured classification.
+- **`HANDSHAKE_FAIL` classification**: `initialize` / `session/new` failures
+  are re-labelled on both the `connect_server()` path and the ephemeral
+  `prompt_once()` path, including RPC errors, so embedders can distinguish
+  startup failures from in-session RPC failures uniformly.
+- **Per-call `cwd` and `mcp_servers` session reuse**: a mismatch on either
+  field triggers a fresh session; otherwise sessions are reused per named
+  server under a strict single-active-turn contract.
+- **`/crystallize refine`** (`agentao/cli/commands_ext.py`,
+  `agentao/skills/drafts.py`): three-stage workflow
+  `suggest -> refine -> create`, where `refine` re-runs the draft through
+  the bundled `skill-creator` guidance. `suggest` now persists drafts under
+  `.agentao/skill-drafts/` so `refine`/`create` can pick them up across
+  turns.
+- **Skill draft helpers** (`agentao/skills/drafts.py`): `new_draft`,
+  `save_skill_draft`, `load_skill_draft`, `clear_skill_draft` with
+  session-scoped paths and graceful handling of missing or malformed state.
+
+### Fixed
+
+- **`stop_all()` closes ephemeral clients** — in-flight `prompt_once()`
+  callers previously blocked until their request timeout when the manager
+  was shut down mid-call; ephemeral slots now receive the synthetic
+  transport-closed signal alongside durable clients.
+- **`load_skill_draft()` tolerates non-object JSON** — a corrupted draft
+  file containing `[]` or a bare string no longer crashes
+  `/crystallize status|refine|create`; the helper now returns `None` for
+  any non-dict payload.
+- **`/crystallize suggest` degrades when the draft directory is not
+  writable** — the generated `SKILL.md` is still displayed, the save
+  failure is surfaced as a warning, and the user is pointed at
+  `/crystallize create [name]` instead of aborting the command.
+
+### Tests
+
+- New `tests/test_acp_client_embedding.py` covering non-interactive
+  `send_prompt`, `prompt_once`, session reuse, ephemeral lifecycle,
+  cancellation precedence, and handshake error classification.
+- New `tests/test_skill_drafts.py` covering draft persistence, session
+  scoping, corrupt-file tolerance, and path selection.
+- Updated `tests/test_acp_client_cli.py`, `tests/test_acp_client_jsonrpc.py`,
+  `tests/test_crystallizer.py`, `tests/test_reliability_prompt.py` for the
+  new surfaces.
+
+### Documentation
+
+- Add `docs/features/acp-embedding.md` (embedding facade overview)
+- Add `docs/implementation/ACP_EMBEDDING_IMPLEMENTATION_PLAN.md`
+- Add `docs/implementation/SKILL_CRYSTALLIZE_REFINEMENT_PLAN.md`
+- Add `docs/kanban-acp-embedded-client-issue.md` (design parent doc)
+- Add `docs/releases/v0.2.10-rc1.md`
+
 ## [0.2.9] — 2026-04-11
 
 Small GA follow-up to `0.2.8` with three independently useful fixes on top
@@ -56,8 +124,9 @@ Git tag, release notes, and maintainer workflow all agree on the GA path.
 
 - Align package version, changelog, release notes, and publish workflow usage
   to the final `0.2.8` release line
-- Add a maintainer smoke path at `scripts/release_check.sh` that runs tests,
-  builds sdist/wheel, and validates metadata with `twine check`
+- Document a maintainer smoke path (`uv run python -m pytest tests/`,
+  `uv build`, `uv run twine check dist/*`) that runs tests, builds
+  sdist/wheel, and validates metadata
 - Add `build` and `twine` to the dev dependency group so release checks can be
   reproduced from a local source checkout
 
