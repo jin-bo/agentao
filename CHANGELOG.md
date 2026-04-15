@@ -5,7 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [0.2.10-rc1] — 2026-04-15
+## [0.2.10-rc2] — 2026-04-15
+
+Re-cut of `0.2.10-rc1`. `rc1` failed the CI tag-vs-package version
+consistency check because the `v0.2.10-rc1` tag was pushed against a
+commit where `agentao/__init__.py` still reported `0.2.9`. `rc2` carries
+the identical feature set with the version string aligned to the tag.
 
 Prerelease focused on two initiatives: promoting `agentao.acp_client` as a
 stable **embedding facade for non-interactive runtimes**, and adding an
@@ -71,7 +76,7 @@ explicit **`/crystallize refine` stage** to the skill-crystallization flow.
 - Add `docs/implementation/ACP_EMBEDDING_IMPLEMENTATION_PLAN.md`
 - Add `docs/implementation/SKILL_CRYSTALLIZE_REFINEMENT_PLAN.md`
 - Add `docs/kanban-acp-embedded-client-issue.md` (design parent doc)
-- Add `docs/releases/v0.2.10-rc1.md`
+- Add `docs/releases/v0.2.10-rc2.md`
 
 ## [0.2.9] — 2026-04-11
 
