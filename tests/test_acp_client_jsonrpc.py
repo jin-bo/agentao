@@ -153,7 +153,7 @@ class TestResponseRouting:
         with pytest.raises(AcpRpcError, match="intentional failure") as exc_info:
             client.call("fail", timeout=5)
 
-        assert exc_info.value.code == -32603
+        assert exc_info.value.rpc_code == -32603
 
         client.close()
         handle.stop()
@@ -342,7 +342,12 @@ class TestClose:
         t.join(timeout=5)
 
         assert len(errors) == 1
-        assert "client closed" in str(errors[0])
+        err = errors[0]
+        assert isinstance(err, AcpClientError)
+        assert "transport closed" in str(err)
+        from agentao.acp_client import AcpErrorCode
+
+        assert err.code is AcpErrorCode.TRANSPORT_DISCONNECT
 
         handle.stop()
 

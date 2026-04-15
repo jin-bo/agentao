@@ -79,6 +79,49 @@ def test_reliability_before_memories():
     print("✅ Reliability Principles appears before memory block")
 
 
+def test_stable_prefix_order():
+    """Stable prefix comes before volatile sections: Reliability → Operational
+    → <memory-stable> → Available Skills. Protects the prompt-cache prefix
+    against future reorder regressions."""
+    agent = _make_agent()
+    # Ensure both a memory entry and at least one available skill exist so
+    # the indices are non-(-1).
+    agent.memory_tool.execute(key="order_probe", value="v")
+    prompt = agent._build_system_prompt()
+
+    rel_idx = prompt.find("=== Reliability Principles ===")
+    op_idx = prompt.find("=== Operational Guidelines ===")
+    mem_idx = prompt.find("<memory-stable>")
+    skills_idx = prompt.find("=== Available Skills ===")
+
+    assert rel_idx != -1, "Reliability section missing"
+    assert op_idx != -1, "Operational Guidelines section missing"
+    assert mem_idx != -1, "memory-stable block missing"
+
+    assert rel_idx < op_idx < mem_idx, (
+        f"Stable-prefix order violated: rel={rel_idx} op={op_idx} mem={mem_idx}"
+    )
+    # Skills section is optional (depends on on-disk skills/); only assert order
+    # when it is actually rendered.
+    if skills_idx != -1:
+        assert mem_idx < skills_idx, (
+            f"<memory-stable> (pos {mem_idx}) must precede "
+            f"Available Skills (pos {skills_idx}) to keep skills in the volatile suffix"
+        )
+    print("✅ Stable prefix order: Reliability → Operational → memory-stable → Skills")
+
+
+def test_reasoning_requirement_has_gating_clause():
+    """Reasoning Requirement instructs the model to skip the preamble for
+    trivial read-only lookups, not demand it on every tool call."""
+    agent = _make_agent(thinking_callback=lambda x: None)
+    prompt = agent._build_system_prompt()
+    assert "Skip this preamble" in prompt, (
+        "Reasoning Requirement should contain a gating clause for trivial calls"
+    )
+    print("✅ Reasoning Requirement gated for trivial read-only lookups")
+
+
 if __name__ == "__main__":
     print("Testing reliability principles in system prompt...")
     print()
@@ -89,6 +132,8 @@ if __name__ == "__main__":
         test_reasoning_structure_with_thinking_callback,
         test_reasoning_structure_absent_without_thinking_callback,
         test_reliability_before_memories,
+        test_stable_prefix_order,
+        test_reasoning_requirement_has_gating_clause,
     ]
     passed = 0
     for t in tests:

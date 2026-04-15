@@ -533,13 +533,13 @@ class Agentao:
             "\n\n=== Operational Guidelines ===\n\n"
 
             "## Tone and Style\n"
-            "- Concise & Direct: fewer than 3 lines of text per response (excluding tool use/code) when practical.\n"
+            "- Default to short, direct replies (a few lines). Expand only when the user asks "
+            "for detail, when explaining a non-trivial plan, or when the answer genuinely requires it.\n"
             "- No Chitchat: omit preambles ('Okay, I will now...') and postambles ('I have finished...') "
-            "unless explaining intent before a modifying command.\n"
+            "unless stating intent before a modifying command.\n"
             "- Tools vs. Text: use tools for actions, text only for communication. "
             "No explanatory comments inside tool calls.\n"
-            "- Formatting: GitHub-flavored Markdown; responses render in monospace.\n"
-            "- Clarity over Brevity: when a request is ambiguous or explanation is essential, prioritize clarity.\n\n"
+            "- Formatting: GitHub-flavored Markdown; responses render in monospace.\n\n"
 
             "## Shell Command Efficiency\n"
             "IT IS CRITICAL TO FOLLOW THESE TO AVOID EXCESSIVE TOKEN CONSUMPTION.\n"
@@ -615,6 +615,55 @@ Use tools proactively only when they materially improve correctness or are neede
         else:
             prompt = agent_instructions
 
+        # --- Stable prefix (cached across turns) ---------------------------
+        # Order here is intentional: Reliability → Operational → Reasoning →
+        # Agents → <memory-stable>. Keeping volatile content (skills, todos,
+        # dynamic recall, plan suffix) below this prefix maximizes
+        # prompt-cache reuse across turns.
+
+        # Inject reliability principles unconditionally
+        prompt += self._build_reliability_section()
+
+        # Inject operational guidelines unconditionally
+        prompt += self._build_operational_guidelines(plan_mode=self._plan_mode)
+
+        # Instruct LLM to show reasoning when a thinking/reasoning sink is active
+        if self._has_thinking_handler:
+            prompt += (
+                "\n\n=== Reasoning Requirement ===\n"
+                "Before any tool call that modifies state, runs a shell command, "
+                "or is part of a multi-step investigation, write 2-3 sentences:\n"
+                "- Action: What tool you are calling and with what input.\n"
+                "- Expectation: What you expect to find or what the result should confirm.\n"
+                "- If wrong: What you will do if the result contradicts your expectation.\n"
+                "Skip this preamble for trivial read-only lookups "
+                "(single read_file, list_directory, glob). "
+                "Be specific and falsifiable when you do write it."
+            )
+
+        # Add available agents section (suppressed in plan mode — delegation contradicts research-only intent)
+        if not self._plan_mode and self.agent_manager:
+            agent_descriptions = self.agent_manager.list_agents()
+            if agent_descriptions:
+                prompt += "\n\n=== Available Agents ===\n"
+                prompt += "For the following types of tasks, prefer delegating to a specialized agent:\n\n"
+                for agent_name, desc in agent_descriptions.items():
+                    tool_name = f"agent_{agent_name.replace('-', '_')}"
+                    prompt += f"- {agent_name}: {desc} (use tool: {tool_name})\n"
+                prompt += "\nCall the corresponding agent tool to delegate a task."
+
+        # Stable memory block (structured, XML-escaped) — last item in the stable prefix
+        stable_records = self.memory_manager.get_stable_entries()
+        cross_session_tail = self.memory_manager.get_cross_session_tail()
+        stable_block = self.memory_renderer.render_stable_block(
+            stable_records, session_tail=cross_session_tail,
+        )
+        self._stable_block_chars = len(stable_block)
+        if stable_block:
+            prompt += "\n\n" + stable_block
+
+        # --- Volatile suffix (changes within a session) --------------------
+
         # Add available skills section (excluding already-active skills to save tokens)
         available_skills = self.skill_manager.list_available_skills()
         active_names = set(self.skill_manager.get_active_skills().keys())
@@ -639,34 +688,6 @@ Use tools proactively only when they materially improve correctness or are neede
         if skills_context:
             prompt += "\n\n" + skills_context
 
-        # Add available agents section (suppressed in plan mode — delegation contradicts research-only intent)
-        if not self._plan_mode and self.agent_manager:
-            agent_descriptions = self.agent_manager.list_agents()
-            if agent_descriptions:
-                prompt += "\n\n=== Available Agents ===\n"
-                prompt += "For the following types of tasks, prefer delegating to a specialized agent:\n\n"
-                for agent_name, desc in agent_descriptions.items():
-                    tool_name = f"agent_{agent_name.replace('-', '_')}"
-                    prompt += f"- {agent_name}: {desc} (use tool: {tool_name})\n"
-                prompt += "\nCall the corresponding agent tool to delegate a task."
-
-        # Inject reliability principles unconditionally
-        prompt += self._build_reliability_section()
-
-        # Inject operational guidelines unconditionally
-        prompt += self._build_operational_guidelines(plan_mode=self._plan_mode)
-
-        # Instruct LLM to show reasoning when a thinking/reasoning sink is active
-        if self._has_thinking_handler:
-            prompt += (
-                "\n\n=== Reasoning Requirement ===\n"
-                "Before each set of tool calls, write 2-3 sentences in this structure:\n"
-                "- Action: What tool you are calling and with what input.\n"
-                "- Expectation: What you expect to find or what the result should confirm.\n"
-                "- If wrong: What you will do if the result contradicts your expectation.\n"
-                "Be specific and falsifiable. This reasoning is shown to the user."
-            )
-
         # Inject current task list if any todos exist
         todos = self.todo_tool.get_todos()
         if todos:
@@ -676,16 +697,6 @@ Use tools proactively only when they materially improve correctness or are neede
                 icon = _icons.get(todo["status"], "○")
                 prompt += f"- {icon} [{todo['status']}] {todo['content']}\n"
             prompt += "\nUpdate task statuses with todo_write as you complete each step."
-
-        # Stable memory block (structured, XML-escaped)
-        stable_records = self.memory_manager.get_stable_entries()
-        cross_session_tail = self.memory_manager.get_cross_session_tail()
-        stable_block = self.memory_renderer.render_stable_block(
-            stable_records, session_tail=cross_session_tail,
-        )
-        self._stable_block_chars = len(stable_block)
-        if stable_block:
-            prompt += "\n\n" + stable_block
 
         # Dynamic recall (per-turn; query-specific top-k candidates)
         # Exclude entries already shown in the stable block to avoid duplication.

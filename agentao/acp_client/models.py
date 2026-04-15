@@ -112,7 +112,10 @@ _OPTIONAL_FIELD_MAP: Dict[str, str] = {
     "requestTimeoutMs": "request_timeout_ms",
     "capabilities": "capabilities",
     "description": "description",
+    "nonInteractivePolicy": "non_interactive_policy",
 }
+
+_NON_INTERACTIVE_POLICIES = frozenset({"reject_all", "accept_all"})
 
 
 @dataclass
@@ -133,6 +136,7 @@ class AcpServerConfig:
     request_timeout_ms: int = 60_000
     capabilities: Dict[str, Any] = field(default_factory=dict)
     description: str = ""
+    non_interactive_policy: str = "reject_all"
 
     @classmethod
     def from_dict(
@@ -195,6 +199,12 @@ class AcpServerConfig:
         request_timeout_ms = raw.get("requestTimeoutMs", 60_000)
         capabilities = raw.get("capabilities", {})
         description = raw.get("description", "")
+        non_interactive_policy = raw.get("nonInteractivePolicy", "reject_all")
+        if non_interactive_policy not in _NON_INTERACTIVE_POLICIES:
+            raise AcpConfigError(
+                f"server '{name}': 'nonInteractivePolicy' must be one of "
+                f"{sorted(_NON_INTERACTIVE_POLICIES)}, got {non_interactive_policy!r}"
+            )
 
         # Expand $VAR / ${VAR} references in env values.
         expanded_env = {
@@ -212,7 +222,23 @@ class AcpServerConfig:
             request_timeout_ms=request_timeout_ms,
             capabilities=capabilities,
             description=description,
+            non_interactive_policy=non_interactive_policy,
         )
+
+
+@dataclass
+class PromptResult:
+    """Typed result of a single ACP prompt turn.
+
+    Returned by :meth:`ACPManager.prompt_once` (Phase 3). The shape is
+    frozen here in Phase 1 so the public type surface stabilizes before
+    the one-shot helper lands.
+    """
+
+    stop_reason: str
+    raw: Dict[str, Any] = field(default_factory=dict)
+    session_id: Optional[str] = None
+    cwd: Optional[str] = None
 
 
 @dataclass

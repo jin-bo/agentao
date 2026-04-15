@@ -5,12 +5,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.10] — 2026-04-15
+
+Promotes the `0.2.10` line to general availability.
+
+The feature set — ACP embedding facade and `/crystallize refine` — is
+the same as the `[0.2.10-rc2]` entry below; this GA release is the first
+cut that actually ships the feature code. Both `v0.2.10-rc1` and
+`v0.2.10-rc2` were tagged against commits that carried only the version
+bump and release notes, so the rc tarballs on TestPyPI are effectively
+empty. **Do not depend on `v0.2.10-rc1` or `v0.2.10-rc2`** — upgrade
+directly from `0.2.9` to `0.2.10`.
+
+### Packaging / Release
+
+- Align package version, changelog, release notes, and publish workflow
+  usage to the final `0.2.10` GA line
+- Bundle the ACP embedding facade, `/crystallize refine`, skill draft
+  helpers, and the associated tests/docs into the GA commit so the
+  sdist/wheel actually contains the advertised feature set
+
+### Documentation
+
+- Add `docs/releases/v0.2.10.md`
+- Update `docs/ACP.md` version examples from `0.2.9` to `0.2.10`
+
 ## [0.2.10-rc2] — 2026-04-15
 
 Re-cut of `0.2.10-rc1`. `rc1` failed the CI tag-vs-package version
 consistency check because the `v0.2.10-rc1` tag was pushed against a
 commit where `agentao/__init__.py` still reported `0.2.9`. `rc2` carries
 the identical feature set with the version string aligned to the tag.
+
+> **Note:** Neither `rc1` nor `rc2` actually shipped the feature code
+> described below — both tags pointed at docs-only commits. The feature
+> set first ships in the GA `0.2.10` release above.
 
 Prerelease focused on two initiatives: promoting `agentao.acp_client` as a
 stable **embedding facade for non-interactive runtimes**, and adding an

@@ -9,6 +9,8 @@ from agentao.memory.crystallizer import (
     SkillCrystallizer,
     SUGGEST_SYSTEM_PROMPT,
     suggest_prompt,
+    REFINE_SYSTEM_PROMPT,
+    refine_prompt,
     _extract_text,
 )
 from agentao.memory.manager import MemoryManager
@@ -116,6 +118,68 @@ def test_create_overwrites_existing(tmp_path, monkeypatch):
     crystallizer.create("my-skill", "project", "updated")
     target = tmp_path / ".agentao" / "skills" / "my-skill" / "SKILL.md"
     assert target.read_text(encoding="utf-8") == "updated"
+
+
+def test_create_uses_project_root_over_cwd(tmp_path, monkeypatch):
+    """Project-scope writes must follow the explicit ``project_root`` —
+    not the process cwd — so ACP / background sessions save skills under
+    the agent's working directory instead of the launcher's shell cwd.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    elsewhere = tmp_path / "launcher_cwd"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    crystallizer = SkillCrystallizer()
+    target = crystallizer.create(
+        "my-skill", "project", _SAMPLE_SKILL_MD, project_root=repo,
+    )
+    expected = repo / ".agentao" / "skills" / "my-skill" / "SKILL.md"
+    assert target == expected
+    assert target.exists()
+    # And must NOT have leaked into the process cwd.
+    assert not (elsewhere / ".agentao").exists()
+
+
+def test_create_project_root_none_falls_back_to_cwd(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    crystallizer = SkillCrystallizer()
+    target = crystallizer.create(
+        "my-skill", "project", _SAMPLE_SKILL_MD, project_root=None,
+    )
+    assert target == tmp_path / ".agentao" / "skills" / "my-skill" / "SKILL.md"
+
+
+# ---------------------------------------------------------------------------
+# REFINE prompt
+# ---------------------------------------------------------------------------
+
+def test_refine_system_prompt_constrains_output():
+    p = REFINE_SYSTEM_PROMPT
+    assert "SKILL.md" in p
+    # Must instruct output to be frontmatter-valid and only the skill content
+    assert "ONLY" in p or "only" in p
+    assert "frontmatter" in p.lower() or "---" in p
+
+
+def test_refine_prompt_includes_draft_and_transcript():
+    draft = "---\nname: foo\ndescription: test\n---\nbody"
+    transcript = "Recent discussion about foo"
+    guidance = "Write triggering descriptions"
+    out = refine_prompt(draft, transcript, guidance)
+    assert draft in out
+    assert transcript in out
+    assert guidance in out
+
+
+def test_refine_prompt_truncates_long_transcript():
+    draft = "---\nname: foo\ndescription: d\n---\nbody"
+    transcript = "y" * 5000
+    out = refine_prompt(draft, transcript, "g")
+    # transcript truncated to last 3000 chars — the full 5000 cannot be present
+    assert transcript not in out
+    assert "y" * 3000 in out
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 from .models import ServerState
@@ -34,18 +35,149 @@ ACP_PROTOCOL_VERSION = 1
 _DEFAULT_TIMEOUT = 30.0
 
 
+class AcpErrorCode(str, Enum):
+    """Client-side classification for ACP failures.
+
+    Embedding callers should branch on ``AcpClientError.code`` rather than
+    pattern-matching message strings. ``AcpRpcError`` carries the raw
+    JSON-RPC numeric code separately on ``rpc_code``.
+    """
+
+    CONFIG_INVALID = "config_invalid"
+    SERVER_NOT_FOUND = "server_not_found"
+    PROCESS_START_FAIL = "process_start_fail"
+    HANDSHAKE_FAIL = "handshake_fail"
+    REQUEST_TIMEOUT = "request_timeout"
+    TRANSPORT_DISCONNECT = "transport_disconnect"
+    INTERACTION_REQUIRED = "interaction_required"
+    PROTOCOL_ERROR = "protocol_error"
+    SERVER_BUSY = "server_busy"
+
+
 class AcpClientError(Exception):
-    """Base error for ACP client operations."""
+    """Base error for ACP client operations.
+
+    Carries a structured :class:`AcpErrorCode` so embedding callers can
+    branch on failure category without string matching. Existing
+    ``except AcpClientError`` handlers keep working because the class
+    hierarchy is unchanged.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: AcpErrorCode = AcpErrorCode.PROTOCOL_ERROR,
+        details: Optional[Dict[str, Any]] = None,
+        cause: Optional[BaseException] = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.details: Dict[str, Any] = dict(details) if details else {}
+        self.cause = cause
+
+
+class AcpServerNotFound(AcpClientError, KeyError):
+    """Raised when a caller references an unknown ACP server by name.
+
+    Inherits from both :class:`AcpClientError` (so embedders can branch
+    on ``err.code == AcpErrorCode.SERVER_NOT_FOUND``) and :class:`KeyError`
+    (so pre-existing ``except KeyError`` handlers keep working).
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            f"no ACP server named '{name}'",
+            code=AcpErrorCode.SERVER_NOT_FOUND,
+            details={"server": name},
+        )
+        self.server_name = name
 
 
 class AcpRpcError(AcpClientError):
-    """The server returned a JSON-RPC error response."""
+    """The server returned a JSON-RPC error response.
 
-    def __init__(self, code: int, message: str, data: Any = None) -> None:
-        self.code = code
-        self.rpc_message = message
+    Preserves the pre-existing public contract: ``code`` is the raw
+    JSON-RPC numeric error code (``int``), so existing call sites that
+    branch on ``err.code == -32603`` keep working. The same value is
+    also available as ``rpc_code`` for call sites that prefer the
+    explicit name.
+
+    The structured :class:`AcpErrorCode` classification for RPC
+    failures — always ``AcpErrorCode.PROTOCOL_ERROR`` — is available
+    on ``error_code``; generic ``except AcpClientError`` handlers can
+    use ``getattr(err, "error_code", err.code)`` or
+    ``isinstance(err, AcpRpcError)`` to classify RPC failures without
+    string matching.
+
+    The constructor accepts ``rpc_code`` / ``rpc_message`` as the
+    primary keyword arguments, with legacy positional ``code`` /
+    ``message`` still supported so older call sites keep working.
+    """
+
+    def __init__(
+        self,
+        rpc_code: Optional[int] = None,
+        rpc_message: Optional[str] = None,
+        data: Any = None,
+        *,
+        code: Optional[int] = None,
+        message: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if rpc_code is None:
+            rpc_code = code if code is not None else -1
+        if rpc_message is None:
+            rpc_message = message if message is not None else ""
+        super().__init__(
+            f"JSON-RPC error {rpc_code}: {rpc_message}",
+            code=AcpErrorCode.PROTOCOL_ERROR,
+            details=details,
+        )
+        # Backward-compatible numeric code on ``.code``. Overrides the
+        # structured value set by the base class so pre-existing
+        # ``err.code == <int>`` branches keep working.
+        self.code: int = rpc_code  # type: ignore[assignment]
+        self.error_code: AcpErrorCode = AcpErrorCode.PROTOCOL_ERROR
+        self.rpc_code: int = rpc_code
+        self.rpc_message: str = rpc_message
         self.data = data
-        super().__init__(f"JSON-RPC error {code}: {message}")
+
+
+class AcpInteractionRequiredError(AcpClientError):
+    """Raised for non-interactive turns when the server requests user input.
+
+    The raw server request method is stored under ``details["method"]`` and
+    is intentionally not exposed as a public attribute — embedding callers
+    must branch on ``code`` only, so the internal method name can change
+    without breaking the API.
+    """
+
+    def __init__(
+        self,
+        *,
+        server: str,
+        method: str,
+        prompt: str = "",
+        options: Optional[List[Dict[str, Any]]] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        merged: Dict[str, Any] = {
+            "server": server,
+            "method": method,
+            "prompt": prompt,
+            "options": list(options) if options else [],
+        }
+        if details:
+            merged.update(details)
+        super().__init__(
+            f"ACP server {server!r} requires interaction",
+            code=AcpErrorCode.INTERACTION_REQUIRED,
+            details=merged,
+        )
+        self.server = server
+        self.prompt = prompt
+        self.options = list(options) if options else []
 
 
 # ---------------------------------------------------------------------------
@@ -69,12 +201,32 @@ class _PendingRequest:
 
 @dataclass
 class AcpConnectionInfo:
-    """Information gathered from the ``initialize`` handshake."""
+    """Information gathered from the ``initialize`` handshake.
+
+    ``session_cwd`` is populated by :meth:`ACPClient.create_session` so
+    :class:`ACPManager` can decide between session reuse and fresh connect
+    for per-call ``cwd`` semantics (Phase 3).
+    """
 
     protocol_version: Optional[int] = None
     agent_capabilities: Dict[str, Any] = field(default_factory=dict)
     agent_info: Optional[Dict[str, Any]] = None
     session_id: Optional[str] = None
+    session_cwd: Optional[str] = None
+    session_mcp_servers_fingerprint: Optional[str] = None
+
+
+def _fingerprint_mcp_servers(mcp_servers: Optional[List[Dict[str, Any]]]) -> str:
+    """Stable canonical serialization of an ``mcp_servers`` list.
+
+    Used by session-reuse logic (Phase 3) so ``ensure_connected`` can
+    decide whether a cached client's session is compatible with the
+    requested per-call ``mcp_servers``. ``None`` and ``[]`` produce the
+    same fingerprint ("no MCP servers requested").
+    """
+    if not mcp_servers:
+        return "[]"
+    return json.dumps(mcp_servers, sort_keys=True, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
@@ -152,13 +304,20 @@ class ACPClient:
         """Write one NDJSON line to the server's stdin."""
         stdin = self._handle.stdin
         if stdin is None:
-            raise AcpClientError("server stdin is not available")
+            raise AcpClientError(
+                "server stdin is not available",
+                code=AcpErrorCode.TRANSPORT_DISCONNECT,
+            )
         line = json.dumps(obj, ensure_ascii=False) + "\n"
         try:
             stdin.write(line.encode("utf-8"))
             stdin.flush()
         except (BrokenPipeError, OSError) as exc:
-            raise AcpClientError(f"failed to write to server: {exc}") from exc
+            raise AcpClientError(
+                f"failed to write to server: {exc}",
+                code=AcpErrorCode.TRANSPORT_DISCONNECT,
+                cause=exc,
+            ) from exc
 
     def _read_loop(self) -> None:
         """Background loop: read NDJSON lines from stdout, route responses."""
@@ -294,6 +453,25 @@ class ACPClient:
                     "acp[%s]: error in notification callback", self._handle.name
                 )
 
+    @staticmethod
+    def _raise_from_slot_error(err: Dict[str, Any], *, method: str) -> None:
+        """Translate a pending-slot ``error`` dict into the right exception.
+
+        When :meth:`close` wakes pending requests it tags the synthetic
+        error with ``_transport_closed`` so callers can distinguish a
+        broken connection from a real server-returned JSON-RPC error.
+        """
+        if err.get("_transport_closed"):
+            raise AcpClientError(
+                f"transport closed while waiting for '{method}'",
+                code=AcpErrorCode.TRANSPORT_DISCONNECT,
+            )
+        raise AcpRpcError(
+            rpc_code=err.get("code", -1),
+            rpc_message=err.get("message", "unknown error"),
+            data=err.get("data"),
+        )
+
     # ------------------------------------------------------------------
     # Public RPC methods
     # ------------------------------------------------------------------
@@ -347,19 +525,16 @@ class ACPClient:
             with self._pending_lock:
                 self._pending.pop(rid, None)
             raise AcpClientError(
-                f"timeout waiting for response to '{method}' (id={rid})"
+                f"timeout waiting for response to '{method}' (id={rid})",
+                code=AcpErrorCode.REQUEST_TIMEOUT,
+                details={"method": method, "request_id": rid, "timeout": timeout},
             )
 
         with self._pending_lock:
             self._pending.pop(rid, None)
 
         if slot.error is not None:
-            err = slot.error
-            raise AcpRpcError(
-                code=err.get("code", -1),
-                message=err.get("message", "unknown error"),
-                data=err.get("data"),
-            )
+            self._raise_from_slot_error(slot.error, method=method)
 
         return slot.result
 
@@ -430,19 +605,31 @@ class ACPClient:
         Returns:
             The ``sessionId`` string.
         """
+        effective_cwd = cwd or self._handle.config.cwd
+        effective_mcp = list(mcp_servers) if mcp_servers else []
         params = {
-            "cwd": cwd or self._handle.config.cwd,
-            "mcpServers": mcp_servers or [],
+            "cwd": effective_cwd,
+            "mcpServers": effective_mcp,
         }
 
         try:
             result = self.call("session/new", params, timeout=timeout)
         except (AcpRpcError, AcpClientError) as exc:
+            # A failed session/new invalidates any previously-established
+            # session: downstream code must not treat this client as
+            # "already connected" and reuse stale metadata.
+            self.connection_info.session_id = None
+            self.connection_info.session_cwd = None
+            self.connection_info.session_mcp_servers_fingerprint = None
             self._handle._set_state(ServerState.FAILED, str(exc))
             raise
 
         session_id = result.get("sessionId", "")
         self.connection_info.session_id = session_id
+        self.connection_info.session_cwd = effective_cwd
+        self.connection_info.session_mcp_servers_fingerprint = (
+            _fingerprint_mcp_servers(effective_mcp)
+        )
 
         # Handshake complete — server is ready.
         self._handle._set_state(ServerState.READY)
@@ -482,12 +669,16 @@ class ACPClient:
         """
         session_id = self.connection_info.session_id
         if not session_id:
-            raise AcpClientError("no active session — call create_session() first")
+            raise AcpClientError(
+                "no active session — call create_session() first",
+                code=AcpErrorCode.PROTOCOL_ERROR,
+            )
 
         with self._active_turn_lock:
             if self._active_turn_id is not None:
                 raise AcpClientError(
-                    "a prompt is already in progress on this server"
+                    "a prompt is already in progress on this server",
+                    code=AcpErrorCode.SERVER_BUSY,
                 )
             rid = self._alloc_id()
             self._active_turn_id = rid
@@ -530,7 +721,9 @@ class ACPClient:
                 self._active_turn_id = None
             self._handle._set_state(ServerState.READY)
             raise AcpClientError(
-                f"timeout waiting for session/prompt response (id={rid})"
+                f"timeout waiting for session/prompt response (id={rid})",
+                code=AcpErrorCode.REQUEST_TIMEOUT,
+                details={"method": "session/prompt", "request_id": rid, "timeout": timeout},
             )
 
         with self._pending_lock:
@@ -539,13 +732,8 @@ class ACPClient:
             self._active_turn_id = None
 
         if slot.error is not None:
-            err = slot.error
             self._handle._set_state(ServerState.READY)
-            raise AcpRpcError(
-                code=err.get("code", -1),
-                message=err.get("message", "unknown error"),
-                data=err.get("data"),
-            )
+            self._raise_from_slot_error(slot.error, method="session/prompt")
 
         self._handle._set_state(ServerState.READY)
         return slot.result
@@ -568,12 +756,16 @@ class ACPClient:
         """
         session_id = self.connection_info.session_id
         if not session_id:
-            raise AcpClientError("no active session — call create_session() first")
+            raise AcpClientError(
+                "no active session — call create_session() first",
+                code=AcpErrorCode.PROTOCOL_ERROR,
+            )
 
         with self._active_turn_lock:
             if self._active_turn_id is not None:
                 raise AcpClientError(
-                    "a prompt is already in progress on this server"
+                    "a prompt is already in progress on this server",
+                    code=AcpErrorCode.SERVER_BUSY,
                 )
             rid = self._alloc_id()
             self._active_turn_id = rid
@@ -619,13 +811,8 @@ class ACPClient:
             self._active_turn_id = None
 
         if slot.error is not None:
-            err = slot.error
             self._handle._set_state(ServerState.READY)
-            raise AcpRpcError(
-                code=err.get("code", -1),
-                message=err.get("message", "unknown error"),
-                data=err.get("data"),
-            )
+            self._raise_from_slot_error(slot.error, method="session/prompt")
 
         self._handle._set_state(ServerState.READY)
         return slot.result
@@ -633,14 +820,35 @@ class ACPClient:
     def cancel_prompt(self, rid: int) -> None:
         """Clean up a non-blocking prompt without collecting its result.
 
-        Used when the user cancels or a timeout occurs.
+        Used when the user cancels or a timeout occurs. Sends
+        ``session/cancel`` at the end; the pending slot and active-turn
+        fields are cleared *before* the notification so that even a
+        broken transport cannot leave the client poisoned for the next
+        turn. :meth:`discard_pending_slot` is the raise-free primitive.
         """
-        with self._pending_lock:
-            self._pending.pop(rid, None)
-        with self._active_turn_lock:
-            self._active_turn_id = None
+        self.discard_pending_slot(rid)
         self._handle._set_state(ServerState.READY)
         self.cancel_active_turn()
+
+    def discard_pending_slot(self, rid: int) -> None:
+        """Remove a pending prompt slot without touching the transport.
+
+        Idempotent and raise-free by design. Timeout / error paths call
+        this after (or instead of) :meth:`cancel_prompt` so a failure
+        during ``session/cancel`` delivery cannot leave ``_pending`` or
+        ``_active_turn_id`` stale.
+        """
+        try:
+            with self._pending_lock:
+                self._pending.pop(rid, None)
+            with self._active_turn_lock:
+                if self._active_turn_id == rid:
+                    self._active_turn_id = None
+        except Exception:
+            logger.debug(
+                "acp[%s]: discard_pending_slot(%s) raised",
+                self._handle.name, rid, exc_info=True,
+            )
 
     def cancel_active_turn(self) -> None:
         """Cancel the currently active prompt, if any.
@@ -667,12 +875,16 @@ class ACPClient:
     def close(self) -> None:
         """Mark the client as closed so the reader thread exits."""
         self._closed = True
-        # Wake up any pending requests so callers don't hang.
+        # Wake up any pending requests so callers don't hang. The
+        # ``_transport_closed`` sentinel distinguishes a synthesized
+        # shutdown from a real server-returned JSON-RPC error so
+        # ``_raise_from_slot_error`` can map it to TRANSPORT_DISCONNECT.
         with self._pending_lock:
             for slot in self._pending.values():
                 slot.error = {
                     "code": -1,
                     "message": "client closed",
+                    "_transport_closed": True,
                 }
                 slot.event.set()
             self._pending.clear()

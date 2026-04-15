@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time as _time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import readchar
@@ -17,19 +18,8 @@ if TYPE_CHECKING:
     from .app import AgentaoCLI
 
 
-def handle_crystallize_command(cli: AgentaoCLI, args: str = "") -> None:
-    """Handle /crystallize [suggest|create [name]] commands."""
-    from ..memory.crystallizer import SkillCrystallizer, SUGGEST_SYSTEM_PROMPT, suggest_prompt, _extract_text
-
-    parts = args.split(maxsplit=1)
-    subcommand = parts[0].lower() if parts else "suggest"
-    sub_arg = parts[1].strip() if len(parts) > 1 else ""
-
-    if subcommand not in ("suggest", "create"):
-        console.print("\n[error]Usage: /crystallize suggest | /crystallize create [name][/error]\n")
-        return
-
-    # Read session content: merge compacted summary + live turns after last compaction
+def _collect_session_content(cli: AgentaoCLI) -> str:
+    """Merge compacted session summaries + live conversation turns."""
     session_content = ""
     summaries = cli.agent.memory_manager.get_recent_session_summaries(limit=5)
     if summaries:
@@ -51,70 +41,264 @@ def handle_crystallize_command(cli: AgentaoCLI, args: str = "") -> None:
     if live_parts:
         live_section = "\n".join(live_parts)
         session_content = (session_content + "\n\n" + live_section).strip()
+    return session_content
 
-    if not session_content:
-        console.print("\n[warning]No session content found. Start a conversation first.[/warning]\n")
-        return
 
-    console.print("\n[dim]Analyzing session to generate skill draft...[/dim]")
-
-    try:
-        response = cli.agent.llm.chat(
-            messages=[
-                {"role": "system", "content": SUGGEST_SYSTEM_PROMPT},
-                {"role": "user", "content": suggest_prompt(session_content)},
-            ],
-            max_tokens=800,
-        )
-        draft = _extract_text(response).strip()
-    except Exception as e:
-        console.print(f"\n[error]LLM call failed: {e}[/error]\n")
-        return
-
-    if not draft or draft == "NO_PATTERN_FOUND":
-        console.print("\n[warning]No clear repeatable pattern found in this session.[/warning]\n")
-        return
-
-    console.print()
-    console.print(Panel(draft, title="[cyan]Skill Draft[/cyan]", border_style="cyan", padding=(1, 2)))
-
-    if subcommand == "suggest":
-        console.print("[dim]Use /crystallize create [name] to save this skill.[/dim]\n")
-        return
-
-    # /crystallize create — prompt for name and scope, then write
-    name = sub_arg
-    if not name:
-        name = console.input("[cyan]Skill directory name[/cyan] (e.g. python-testing): ").strip()
-        if not name:
-            console.print("[warning]Cancelled — no name provided.[/warning]\n")
-            return
-
+def _sanitize_skill_name(raw: str) -> str:
     import re as _re
-    name = _re.sub(r'[^a-z0-9-]', '-', name.lower()).strip('-')
-    if not name:
-        console.print("[warning]Invalid skill name.[/warning]\n")
-        return
+    return _re.sub(r'[^a-z0-9-]', '-', (raw or "").lower()).strip('-')
 
+
+def _prompt_scope() -> str | None:
     console.print("\n[dim]Scope: [cyan]g[/cyan]lobal (~/.agentao/skills/) or [cyan]p[/cyan]roject (.agentao/skills/)?[/dim]")
     console.print("[dim]Press g or p[/dim]", end=" ")
     while True:
         key = readchar.readkey()
         if key == "g":
-            scope = "global"
             console.print("\n")
-            break
-        elif key == "p":
-            scope = "project"
+            return "global"
+        if key == "p":
             console.print("\n")
-            break
-        elif key in (readchar.key.ESC, "\x03"):
+            return "project"
+        if key in (readchar.key.ESC, "\x03"):
             console.print("\n[warning]Cancelled.[/warning]\n")
+            return None
+
+
+def handle_crystallize_command(cli: AgentaoCLI, args: str = "") -> None:
+    """Handle /crystallize [suggest|refine|create [name]|status|clear] commands."""
+    from ..memory.crystallizer import (
+        SkillCrystallizer,
+        SUGGEST_SYSTEM_PROMPT,
+        suggest_prompt,
+        REFINE_SYSTEM_PROMPT,
+        refine_prompt,
+        load_skill_creator_guidance,
+        _extract_text,
+    )
+    from ..skills.drafts import (
+        clear_skill_draft,
+        extract_skill_name,
+        load_skill_draft,
+        new_draft,
+        replace_skill_name,
+        save_skill_draft,
+    )
+
+    parts = args.split(maxsplit=1)
+    subcommand = parts[0].lower() if parts else "suggest"
+    sub_arg = parts[1].strip() if len(parts) > 1 else ""
+
+    valid = {"suggest", "refine", "create", "status", "clear"}
+    if subcommand not in valid:
+        console.print(
+            "\n[error]Usage: /crystallize [suggest|refine|create [name]|status|clear][/error]\n"
+        )
+        return
+
+    # Scope drafts to the agent's explicit working directory (ACP/background
+    # sessions may run with cwd != project root), and key them by session_id
+    # so concurrent sessions in the same repo don't clobber each other.
+    wd = getattr(cli.agent, "working_directory", None)
+    sid = getattr(cli.agent, "_session_id", None) or ""
+
+    # ---------- /crystallize status ----------
+    if subcommand == "status":
+        draft = load_skill_draft(working_directory=wd, session_id=sid)
+        if draft is None:
+            console.print("\n[dim]No pending skill draft.[/dim]\n")
             return
+        console.print("\n[info]Pending skill draft:[/info]")
+        console.print(f"  name: [cyan]{draft.suggested_name or '(unknown)'}[/cyan]")
+        console.print(f"  source: {draft.source}")
+        console.print(f"  refined_with: {draft.refined_with or '(none)'}")
+        console.print(f"  updated_at: {draft.updated_at}\n")
+        return
+
+    # ---------- /crystallize clear ----------
+    if subcommand == "clear":
+        if clear_skill_draft(working_directory=wd, session_id=sid):
+            console.print("\n[success]Pending skill draft cleared.[/success]\n")
+        else:
+            console.print("\n[dim]No pending skill draft.[/dim]\n")
+        return
+
+    # ---------- /crystallize suggest ----------
+    if subcommand == "suggest":
+        session_content = _collect_session_content(cli)
+        if not session_content:
+            console.print("\n[warning]No session content found. Start a conversation first.[/warning]\n")
+            return
+        console.print("\n[dim]Analyzing session to generate skill draft...[/dim]")
+        try:
+            response = cli.agent.llm.chat(
+                messages=[
+                    {"role": "system", "content": SUGGEST_SYSTEM_PROMPT},
+                    {"role": "user", "content": suggest_prompt(session_content)},
+                ],
+                max_tokens=800,
+            )
+            draft_text = _extract_text(response).strip()
+        except Exception as e:
+            console.print(f"\n[error]LLM call failed: {e}[/error]\n")
+            return
+
+        if not draft_text or draft_text == "NO_PATTERN_FOUND":
+            console.print(
+                "\n[warning]No clear repeatable skill pattern found in the current session.[/warning]\n"
+            )
+            return
+
+        suggested_name = extract_skill_name(draft_text) or ""
+        draft = new_draft(
+            content=draft_text,
+            suggested_name=suggested_name,
+            session_id=sid,
+            source="suggest",
+        )
+        save_error: Exception | None = None
+        try:
+            save_skill_draft(draft, working_directory=wd, session_id=sid)
+        except Exception as e:
+            save_error = e
+
+        console.print()
+        console.print(Panel(draft_text, title="[cyan]Skill Draft[/cyan]", border_style="cyan", padding=(1, 2)))
+        if save_error is None:
+            console.print("[dim]Draft saved.[/dim]")
+            console.print("[dim]Use /crystallize refine to improve it with skill-creator.[/dim]")
+            console.print("[dim]Use /crystallize create [name] to save it.[/dim]\n")
+        else:
+            console.print(f"[warning]Draft could not be persisted: {save_error}[/warning]")
+            console.print("[dim]Review the draft above and use /crystallize create [name] to save it directly.[/dim]\n")
+        return
+
+    # ---------- /crystallize refine ----------
+    if subcommand == "refine":
+        draft = load_skill_draft(working_directory=wd, session_id=sid)
+        if draft is None:
+            console.print("\n[warning]No pending skill draft. Run /crystallize suggest first.[/warning]\n")
+            return
+
+        session_content = _collect_session_content(cli)
+        guidance = load_skill_creator_guidance()
+        console.print("\n[dim]Refining draft with skill-creator guidance...[/dim]")
+        try:
+            response = cli.agent.llm.chat(
+                messages=[
+                    {"role": "system", "content": REFINE_SYSTEM_PROMPT},
+                    {"role": "user", "content": refine_prompt(draft.content, session_content, guidance)},
+                ],
+                max_tokens=1200,
+            )
+            refined = _extract_text(response).strip()
+        except Exception as e:
+            console.print(f"\n[error]LLM call failed: {e}[/error]\n")
+            return
+
+        if not refined or not refined.lstrip().startswith("---"):
+            console.print("\n[error]Refine output is not a valid SKILL.md. Keeping previous draft.[/error]\n")
+            return
+
+        refined_name = extract_skill_name(refined) or draft.suggested_name
+        draft.content = refined
+        draft.suggested_name = refined_name
+        draft.refined_with = "skill-creator"
+        try:
+            save_skill_draft(draft, working_directory=wd, session_id=sid)
+        except Exception as e:
+            console.print(f"\n[error]Failed to save refined draft: {e}[/error]\n")
+            return
+
+        console.print()
+        console.print(Panel(refined, title="[cyan]Refined Skill Draft[/cyan]", border_style="cyan", padding=(1, 2)))
+        console.print("[dim]Refined draft saved. Use /crystallize create [name] to persist it.[/dim]\n")
+        return
+
+    # ---------- /crystallize create ----------
+    # Fall back to generating a draft on-the-fly when none has been
+    # saved: pre-patch, ``/crystallize create [name]`` generated from
+    # the current session and wrote immediately. Preserve that
+    # one-shot path so existing scripts that call ``create`` directly
+    # still work.
+    draft = load_skill_draft(working_directory=wd, session_id=sid)
+    if draft is None:
+        session_content = _collect_session_content(cli)
+        if not session_content:
+            console.print("\n[warning]No session content found. Start a conversation first.[/warning]\n")
+            return
+        console.print("\n[dim]Analyzing session to generate skill draft...[/dim]")
+        try:
+            response = cli.agent.llm.chat(
+                messages=[
+                    {"role": "system", "content": SUGGEST_SYSTEM_PROMPT},
+                    {"role": "user", "content": suggest_prompt(session_content)},
+                ],
+                max_tokens=800,
+            )
+            draft_text = _extract_text(response).strip()
+        except Exception as e:
+            console.print(f"\n[error]LLM call failed: {e}[/error]\n")
+            return
+        if not draft_text or draft_text == "NO_PATTERN_FOUND":
+            console.print(
+                "\n[warning]No clear repeatable skill pattern found in the current session.[/warning]\n"
+            )
+            return
+        draft = new_draft(
+            content=draft_text,
+            suggested_name=extract_skill_name(draft_text) or "",
+            session_id=sid,
+            source="suggest",
+        )
+        # Persisting the draft is only needed to resume across sessions.
+        # A read-only project directory must not block one-shot creates
+        # whose final target could still be the writable global skills
+        # dir (~/.agentao/skills).
+        try:
+            save_skill_draft(draft, working_directory=wd, session_id=sid)
+        except Exception as e:
+            console.print(
+                f"\n[warning]Could not persist draft ({e}); continuing "
+                "with in-memory draft.[/warning]"
+            )
+        console.print()
+        console.print(Panel(draft_text, title="[cyan]Skill Draft[/cyan]", border_style="cyan", padding=(1, 2)))
+
+    name_arg = sub_arg or draft.suggested_name
+    if not name_arg:
+        name_arg = console.input("[cyan]Skill directory name[/cyan] (e.g. python-testing): ").strip()
+        if not name_arg:
+            console.print("[warning]Cancelled — no name provided.[/warning]\n")
+            return
+    name = _sanitize_skill_name(name_arg)
+    if not name:
+        console.print("[warning]Invalid skill name.[/warning]\n")
+        return
+
+    # If user supplied an explicit name (via arg or prompt) different from draft, rewrite frontmatter.
+    # Drafts without YAML frontmatter are still salvageable — persist the
+    # raw content with a warning instead of abandoning the user mid-flow.
+    content = draft.content
+    if name != (extract_skill_name(content) or ""):
+        try:
+            content = replace_skill_name(content, name)
+        except ValueError:
+            console.print(
+                "[warning]Draft has no YAML frontmatter; saving raw content. "
+                "Add `name:` / `description:` manually if needed.[/warning]"
+            )
+
+    scope = _prompt_scope()
+    if scope is None:
+        return
 
     crystallizer = SkillCrystallizer()
     try:
-        target = crystallizer.create(name, scope, draft)
+        project_root = Path(wd) if wd else None
+        target = crystallizer.create(
+            name, scope, content, project_root=project_root,
+        )
     except Exception as e:
         console.print(f"\n[error]Failed to write skill: {e}[/error]\n")
         return
@@ -123,6 +307,8 @@ def handle_crystallize_command(cli: AgentaoCLI, args: str = "") -> None:
         count = cli.agent.skill_manager.reload_skills()
     except Exception:
         count = None
+
+    clear_skill_draft(working_directory=wd, session_id=sid)
 
     console.print(f"\n[success]Skill saved to:[/success] [cyan]{target}[/cyan]")
     if count is not None:
@@ -893,7 +1079,7 @@ def run_acp_prompt_inline(cli: AgentaoCLI, name: str, message: str) -> None:
                     flush_to_console(remaining, console)
 
                 try:
-                    result = client.finish_prompt(rid, slot)
+                    result = mgr.finish_prompt_nonblocking(name, client, rid, slot)
                 except Exception as exc:
                     console.print(f"\n[error]Prompt failed: {exc}[/error]\n")
                     return
@@ -911,7 +1097,7 @@ def run_acp_prompt_inline(cli: AgentaoCLI, name: str, message: str) -> None:
             # Check timeout.
             if _time.time() >= deadline:
                 spinner.stop()
-                client.cancel_prompt(rid)
+                mgr.cancel_prompt_nonblocking(name, client, rid)
                 console.print(
                     f"\n[error]Timeout waiting for response "
                     f"from '{name}'[/error]\n"
@@ -950,11 +1136,17 @@ def run_acp_prompt_inline(cli: AgentaoCLI, name: str, message: str) -> None:
 
     except KeyboardInterrupt:
         spinner.stop()
-        client.cancel_prompt(rid)
+        mgr.cancel_prompt_nonblocking(name, client, rid)
         console.print(f"\n[warning]Cancelled prompt to '{name}'.[/warning]\n")
     except Exception as exc:
         try:
             spinner.stop()
+        except Exception:
+            pass
+        # Make sure the per-server lock + turn slot are released even on
+        # unexpected exceptions; cancel_prompt_nonblocking is idempotent.
+        try:
+            mgr.cancel_prompt_nonblocking(name, client, rid)
         except Exception:
             pass
         console.print(f"\n[error]Send failed: {exc}[/error]\n")

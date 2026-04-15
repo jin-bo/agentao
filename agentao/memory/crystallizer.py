@@ -8,7 +8,7 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from .models import (
     CrystallizationProposal,
@@ -293,6 +293,76 @@ def suggest_prompt(session_content: str) -> str:
     )
 
 
+REFINE_SYSTEM_PROMPT = """\
+You are refining an existing Agentao SKILL.md draft using skill-authoring best practices.
+
+Rules:
+- Preserve the draft's original intent and scope. Do NOT introduce new capabilities that the transcript does not support.
+- If the draft is already solid, make only minimal improvements.
+- Improve where appropriate:
+  - description: make it triggering (concrete when-to-use cues), covering BOTH what it does AND when to activate it.
+  - "When to use": concrete user phrases / contexts.
+  - "Steps": clear, imperative, minimal, ordered.
+  - Writing style: concise and actionable.
+- Keep the YAML frontmatter (---/name/description/---) valid.
+- Output ONLY the complete SKILL.md content. No preamble, no commentary, no code fences.
+"""
+
+
+def refine_prompt(
+    draft_content: str,
+    session_content: str,
+    skill_creator_guidance: str,
+) -> str:
+    """Build the user message for LLM skill-draft refinement.
+
+    Three blocks are provided: current draft, recent transcript excerpt,
+    and a selected skill-creator guidance excerpt.
+    """
+    transcript = session_content[-3000:] if len(session_content) > 3000 else session_content
+    guidance = skill_creator_guidance[:2500] if skill_creator_guidance else ""
+    return (
+        "# Current draft\n"
+        f"{draft_content}\n\n"
+        "# Recent session transcript excerpt\n"
+        f"{transcript}\n\n"
+        "# Skill-creator guidance excerpt\n"
+        f"{guidance}\n\n"
+        "Return the improved complete SKILL.md now."
+    )
+
+
+def load_skill_creator_guidance() -> str:
+    """Load a curated slice of skills/skill-creator/SKILL.md.
+
+    Returns an empty string when the bundled skill is not available.
+    """
+    try:
+        from agentao.skills.manager import _BUNDLED_SKILLS_DIR
+    except Exception:
+        return ""
+    candidate = _BUNDLED_SKILLS_DIR / "skill-creator" / "SKILL.md"
+    if not candidate.exists():
+        # Also try ~/.agentao/skills as a fallback (installed location).
+        alt = Path.home() / ".agentao" / "skills" / "skill-creator" / "SKILL.md"
+        if not alt.exists():
+            return ""
+        candidate = alt
+    try:
+        text = candidate.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    # Extract the "Write the SKILL.md" + "Skill Writing Guide" sections if present,
+    # otherwise fall back to a head slice. This keeps the prompt tight.
+    marker = "### Write the SKILL.md"
+    idx = text.find(marker)
+    if idx != -1:
+        excerpt = text[idx : idx + 2500]
+    else:
+        excerpt = text[:2500]
+    return excerpt
+
+
 def _extract_text(llm_response) -> str:
     """Extract text content from an LLM response object."""
     try:
@@ -304,13 +374,26 @@ def _extract_text(llm_response) -> str:
 class SkillCrystallizer:
     """Writes skill drafts to the skills/ directory."""
 
-    def create(self, name: str, scope: str, skill_md_content: str) -> Path:
+    def create(
+        self,
+        name: str,
+        scope: str,
+        skill_md_content: str,
+        *,
+        project_root: Optional[Path] = None,
+    ) -> Path:
         """Write SKILL.md to the appropriate skills/ directory.
 
         Args:
-            name: Directory name for the skill (e.g. "python-testing")
-            scope: "global" (~/.agentao/skills/) or "project" (cwd/.agentao/skills/)
-            skill_md_content: Full SKILL.md file content
+            name: Directory name for the skill (e.g. "python-testing").
+            scope: ``global`` (``~/.agentao/skills/``) or ``project``
+                (``<project_root>/.agentao/skills/``).
+            skill_md_content: Full SKILL.md file content.
+            project_root: Root used when ``scope == "project"``. Callers
+                should pass the agent's working directory so ACP or
+                background sessions save skills under the session's repo
+                rather than the process cwd. Defaults to :func:`Path.cwd`
+                for backwards compatibility.
 
         Returns:
             Path to the written SKILL.md file.
@@ -318,7 +401,8 @@ class SkillCrystallizer:
         if scope == "global":
             skills_dir = _GLOBAL_SKILLS_DIR
         else:
-            skills_dir = Path.cwd() / ".agentao" / "skills"
+            base = Path(project_root) if project_root is not None else Path.cwd()
+            skills_dir = base / ".agentao" / "skills"
         target = skills_dir / name / "SKILL.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(skill_md_content, encoding="utf-8")

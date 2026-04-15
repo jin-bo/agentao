@@ -465,16 +465,18 @@ class TestWaitingForUserState:
     def test_state_enum_value(self) -> None:
         assert ServerState.WAITING_FOR_USER.value == "waiting_for_user"
 
-    def test_approve_transitions_to_busy(self) -> None:
+    def test_approve_transitions_to_ready_without_active_turn(self) -> None:
+        # No active turn: nothing else will drive the terminal READY, so
+        # resolving the interaction must land the handle in READY itself.
         mgr = _make_manager("srv")
         handle = mgr.get_handle("srv")
         handle._set_state(ServerState.WAITING_FOR_USER)
         i = PendingInteraction(server="srv", kind=InteractionKind.PERMISSION, prompt="?")
         mgr.interactions.register(i)
         mgr.approve_interaction("srv", i.request_id)
-        assert handle.state == ServerState.BUSY
+        assert handle.state == ServerState.READY
 
-    def test_reject_transitions_to_ready(self) -> None:
+    def test_reject_transitions_to_ready_without_active_turn(self) -> None:
         mgr = _make_manager("srv")
         handle = mgr.get_handle("srv")
         handle._set_state(ServerState.WAITING_FOR_USER)
@@ -482,3 +484,22 @@ class TestWaitingForUserState:
         mgr.interactions.register(i)
         mgr.reject_interaction("srv", i.request_id)
         assert handle.state == ServerState.READY
+
+    def test_reject_transitions_to_busy_when_turn_active(self) -> None:
+        # With an active turn owning the terminal READY transition, the
+        # handle should go back to BUSY so the prompt RPC can finalize.
+        from agentao.acp_client.manager import _TurnContext
+
+        mgr = _make_manager("srv")
+        handle = mgr.get_handle("srv")
+        handle._set_state(ServerState.WAITING_FOR_USER)
+        mgr._install_turn("srv", _TurnContext(server="srv", interactive=True))
+        try:
+            i = PendingInteraction(
+                server="srv", kind=InteractionKind.PERMISSION, prompt="?",
+            )
+            mgr.interactions.register(i)
+            mgr.reject_interaction("srv", i.request_id)
+            assert handle.state == ServerState.BUSY
+        finally:
+            mgr._clear_turn("srv")
