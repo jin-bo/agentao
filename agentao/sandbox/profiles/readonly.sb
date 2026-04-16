@@ -1,0 +1,35 @@
+;; Agentao built-in sandbox profile: readonly
+;;
+;; Effect:
+;;   - Reads are allowed anywhere (so agent can inspect any file).
+;;   - Writes are denied everywhere except /tmp, /var/tmp, /dev/null.
+;;   - Network is denied.
+;;   - Fork and exec allowed (so shell can run children).
+;;
+;; Activated by:  sandbox-exec -D _RW1=<cwd> -f readonly.sb /bin/sh -c '<cmd>'
+
+(version 1)
+(debug deny)
+
+(import "system.sb")
+
+(allow file-read*)
+
+(allow file-write*
+  (subpath "/tmp")
+  (subpath "/var/tmp")
+  (subpath "/private/tmp")
+  (subpath "/private/var/tmp")
+  (literal "/dev/null")
+  (literal "/dev/dtracehelper")
+  (regex #"^/private/var/folders/"))
+
+(deny network*)
+
+(allow process-fork)
+(allow process-exec)
+(allow signal (target self))
+
+(allow mach-lookup)
+(allow sysctl-read)
+(allow ipc-posix-shm)

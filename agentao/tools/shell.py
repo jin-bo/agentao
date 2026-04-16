@@ -2,6 +2,7 @@
 
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -11,8 +12,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
 
 from .base import Tool
+from ..sandbox import SandboxProfile
 
 # Maximum combined stdout+stderr before truncation (~10K tokens).
 # Matches Gemini CLI's default threshold of 40,000 characters.
@@ -73,6 +76,51 @@ def _collapse_carriage_returns(text: str) -> str:
         else:
             collapsed.append(line)
     return "\n".join(collapsed)
+
+
+def _wrap_with_sandbox(command: str, profile: SandboxProfile) -> str:
+    """Prefix `command` with a sandbox-exec invocation.
+
+    The resulting string is a single POSIX shell expression that, when run
+    under `/bin/sh -c`, will exec `sandbox-exec` with the required -D /-f
+    flags and pass the original command to a fresh `/bin/sh -c` inside the
+    sandbox. stdout / stderr / exit code propagate normally.
+    """
+    if not IS_MACOS:
+        return command
+    prefix = " ".join(shlex.quote(a) for a in profile.as_args())
+    return f"{prefix} /bin/sh -c {shlex.quote(command)}"
+
+
+_SANDBOX_DENIAL_MARKERS = (
+    "Operation not permitted",
+    "deny file-write",
+    "deny network",
+)
+
+
+def _annotate_sandbox_denial(result: str, profile: SandboxProfile) -> str:
+    """If the result looks like a sandbox denial, append a hint for the LLM.
+
+    We only annotate when there's evidence of sandbox rejection — not every
+    EPERM is sandbox-caused, but the marker + an active profile is a strong
+    enough signal to flag.
+
+    NB: we deliberately do NOT look for the literal "sandbox-exec" because
+    the wrapped command string is echoed back by the background-start path
+    and by the inactivity-timeout path, which would false-positive on every
+    successful background launch.
+    """
+    if any(m in result for m in _SANDBOX_DENIAL_MARKERS):
+        hint = (
+            f"\n\n[Sandbox hint] The command ran under macOS sandbox profile "
+            f"'{profile.name}'. If the failure looks like a capability denial "
+            f"(file-write outside workspace, network access, etc.) rather than "
+            f"a real command error, ask the user to run `/sandbox off` or switch "
+            f"profile via `/sandbox profile <name>`."
+        )
+        return result + hint
+    return result
 
 
 class ShellTool(Tool):
@@ -180,8 +228,14 @@ class ShellTool(Tool):
         working_directory: str = ".",
         timeout: float = 120,
         is_background: bool = False,
+        _sandbox_profile: Optional[SandboxProfile] = None,
     ) -> str:
-        """Execute shell command."""
+        """Execute shell command.
+
+        `_sandbox_profile` is a private parameter (not exposed via `parameters`)
+        that ToolRunner injects when a macOS sandbox policy is active. When
+        set, the command is wrapped in `sandbox-exec` before spawning.
+        """
         # Resolve and validate working directory. ``_resolve_directory``
         # routes relative paths through the tool's session cwd (Issue 05)
         # when one is bound, else falls back to legacy ``.resolve()`` which
@@ -196,9 +250,19 @@ class ShellTool(Tool):
         except Exception as e:
             return f"Error resolving working_directory: {e}"
 
+        if _sandbox_profile is not None:
+            wrapped = _wrap_with_sandbox(command, _sandbox_profile)
+        else:
+            wrapped = command
+
         if is_background:
-            return self._run_background(command, cwd)
-        return self._run_foreground(command, cwd, timeout)
+            result = self._run_background(wrapped, cwd)
+        else:
+            result = self._run_foreground(wrapped, cwd, timeout)
+
+        if _sandbox_profile is not None:
+            result = _annotate_sandbox_denial(result, _sandbox_profile)
+        return result
 
     # ------------------------------------------------------------------
     # Background execution

@@ -1,0 +1,36 @@
+;; Agentao built-in sandbox profile: workspace-write
+;;
+;; Effect:
+;;   - Reads anywhere.
+;;   - Writes only in the workspace subtree ($_RW1), /tmp, /var/tmp.
+;;   - Network ALLOWED (npm install, pip install, git clone work).
+;;   - Fork and exec allowed.
+;;
+;; Activated by:  sandbox-exec -D _RW1=<cwd> -f workspace-write.sb /bin/sh -c '<cmd>'
+
+(version 1)
+(debug deny)
+
+(import "system.sb")
+
+(allow file-read*)
+
+(allow file-write*
+  (subpath (param "_RW1"))
+  (subpath "/tmp")
+  (subpath "/var/tmp")
+  (subpath "/private/tmp")
+  (subpath "/private/var/tmp")
+  (literal "/dev/null")
+  (literal "/dev/dtracehelper")
+  (regex #"^/private/var/folders/"))
+
+(allow network*)
+
+(allow process-fork)
+(allow process-exec)
+(allow signal (target self))
+
+(allow mach-lookup)
+(allow sysctl-read)
+(allow ipc-posix-shm)

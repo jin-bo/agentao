@@ -31,6 +31,7 @@ from .plan import PlanSession, build_plan_prompt
 from .skills import SkillManager
 from .context_manager import ContextManager, is_context_too_long_error, _get_tiktoken_encoding
 from .mcp import load_mcp_config, McpClientManager, McpTool
+from .sandbox import SandboxPolicy
 from .transport import AgentEvent, EventType, NullTransport, build_compat_transport
 
 
@@ -267,12 +268,27 @@ class Agentao:
         # Load project instructions if available
         self.project_instructions = self._load_project_instructions()
 
+        # Initialize sandbox policy (macOS sandbox-exec wrapper for shell
+        # commands). Silently disabled on non-macOS or when config absent.
+        # The policy must track the same working directory as the rest of
+        # the runtime — freezing Path.cwd() here would apply the wrong
+        # project's .agentao/sandbox.json after a chdir (ACP/embedded).
+        if self._explicit_working_directory is not None:
+            self.sandbox_policy = SandboxPolicy(
+                project_root=self._explicit_working_directory,
+            )
+        else:
+            self.sandbox_policy = SandboxPolicy(
+                project_root_provider=Path.cwd,
+            )
+
         # Initialize tool runner (encapsulates 4-phase tool execution pipeline)
         self.tool_runner = ToolRunner(
             tools=self.tools,
             permission_engine=self.permission_engine,
             transport=self.transport,
             logger=self.llm.logger,
+            sandbox_policy=self.sandbox_policy,
         )
 
     @property

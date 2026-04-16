@@ -427,6 +427,11 @@ All commands start with `/`:
   - `/mcp` or `/mcp list` - List MCP servers with status and tools
   - `/mcp add <name> <command|url>` - Add an MCP server
   - `/mcp remove <name>` - Remove an MCP server
+- `/sandbox [subcommand]` - Control macOS sandbox-exec for shell commands (macOS only)
+  - `/sandbox` or `/sandbox status` - Show current sandbox state
+  - `/sandbox on` / `/sandbox off` - Toggle for this session
+  - `/sandbox profile <name>` - Switch to a built-in or user profile
+  - `/sandbox profiles` - List available profiles
 - `/acp [subcommand]` - Manage ACP servers
   - `/acp` or `/acp list` - List ACP servers with state
   - `/acp start/stop/restart <name>` - Control server lifecycle
@@ -674,7 +679,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             handle_todos_command, handle_plan_command, handle_provider_command,
             handle_model_command, handle_temperature_command, handle_context_command,
             handle_mcp_command, handle_permission_command, handle_sessions_command,
-            resume_session, handle_tools_command,
+            resume_session, handle_tools_command, handle_sandbox_command,
         )
         from .commands_ext import (
             handle_crystallize_command, show_memories, handle_agent_command,
@@ -901,6 +906,10 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
 
                     elif command == "permission":
                         handle_permission_command(self, args)
+                        continue
+
+                    elif command == "sandbox":
+                        handle_sandbox_command(self, args)
                         continue
 
                     elif command == "sessions":

@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .permissions import PermissionDecision, PermissionEngine
 from .agents import TaskComplete
+from .sandbox import SandboxMisconfiguredError, SandboxPolicy
 from .tools import ToolRegistry
 from .transport import AgentEvent, EventType, NullTransport
 
@@ -77,6 +78,7 @@ class ToolRunner:
         permission_engine: Optional[PermissionEngine],
         transport,  # Transport protocol instance
         logger,
+        sandbox_policy: Optional[SandboxPolicy] = None,
         # ── Deprecated: kept for backward compatibility ──────────────────────
         confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
         step_callback: Optional[Callable[[Optional[str], Dict[str, Any]], None]] = None,
@@ -87,6 +89,7 @@ class ToolRunner:
         self._permission_engine = permission_engine
         self._transport = transport
         self._logger = logger
+        self._sandbox_policy = sandbox_policy
         self._doom_counter: Counter = Counter()
         self.readonly_mode: bool = False
         # Plugin hook rules — set by the agent after plugin loading.
@@ -306,6 +309,22 @@ class ToolRunner:
 
                 _errored = False
                 _error_msg = None
+                # Inject macOS sandbox profile for run_shell_command when
+                # policy is enabled. Private kwarg — never exposed to LLM or
+                # to plugin Post/Pre hooks (which JSON-serialize tool_args).
+                # If the policy is enabled but broken (typoed profile name,
+                # missing profiles_dir, etc.), resolve() raises and we
+                # fail-closed rather than silently running unsandboxed.
+                _call_args = _args
+                _sandbox_error: Optional[SandboxMisconfiguredError] = None
+                if self._sandbox_policy is not None and _fn == "run_shell_command":
+                    try:
+                        _profile = self._sandbox_policy.resolve(_fn, _args)
+                    except SandboxMisconfiguredError as _sbe:
+                        _sandbox_error = _sbe
+                    else:
+                        if _profile is not None:
+                            _call_args = {**_args, "_sandbox_profile": _profile}
                 with _tool_locks[id(_tool)]:
                     if hasattr(_tool, "output_callback"):
                         _tool.output_callback = (
@@ -316,9 +335,21 @@ class ToolRunner:
                             )
                         )
                     try:
-                        _result = _tool.execute(**_args)
+                        if _sandbox_error is not None:
+                            raise _sandbox_error
+                        _result = _tool.execute(**_call_args)
                     except TaskComplete as _tc_exc:
                         _result = _tc_exc.result
+                    except SandboxMisconfiguredError as _sbe:
+                        _errored = True
+                        _error_msg = "sandbox misconfigured"
+                        _result = (
+                            f"[Sandbox error] {_sbe}\n\n"
+                            f"The command was NOT executed. This is fail-closed "
+                            f"behavior: running shell commands without the "
+                            f"sandbox the user enabled would be worse than "
+                            f"refusing to run them."
+                        )
                     except Exception as _e:
                         _errored = True
                         _error_msg = str(_e)[:200]
