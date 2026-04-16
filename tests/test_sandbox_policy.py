@@ -321,7 +321,10 @@ def test_health_error_reports_broken_config(tmp_path):
     p = SandboxPolicy(config={"enabled": False, "platform": "darwin"})
     assert p.health_error() is None
 
-    # Enabled with bogus profile → specific error
+    # Enabled with bogus profile → specific error. On non-macOS,
+    # `health_error()` short-circuits at the platform check before ever
+    # reaching profile resolution, so the "typoed" assertion only holds
+    # on macOS.
     p = SandboxPolicy(
         project_root=tmp_path,
         config={
@@ -332,7 +335,10 @@ def test_health_error_reports_broken_config(tmp_path):
     )
     err = p.health_error()
     assert err is not None
-    assert "typoed" in err
+    if sys.platform == "darwin":
+        assert "typoed" in err
+    else:
+        assert "macOS" in err
 
     # Enabled with valid profile → no error (macOS) / platform error (other)
     p = SandboxPolicy(
@@ -511,8 +517,13 @@ def test_wrap_with_sandbox_is_noop_on_non_macos(tmp_path):
         assert _wrap_with_sandbox("ls", profile) == "ls"
 
 
+@MACOS_ONLY
 def test_wrap_with_sandbox_handles_single_quotes(tmp_path):
-    """shlex.quote must handle commands containing single quotes safely."""
+    """shlex.quote must handle commands containing single quotes safely.
+
+    Gated to macOS because `_wrap_with_sandbox` is a no-op on other
+    platforms (sandbox-exec does not exist there) — see the adjacent
+    `test_wrap_with_sandbox_is_noop_on_non_macos`."""
     profile = SandboxProfile(
         name="readonly",
         path=Path(__file__).parent.parent / "agentao" / "sandbox" / "profiles" / "readonly.sb",
