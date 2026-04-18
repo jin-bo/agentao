@@ -1,0 +1,14 @@
+{
+  "name": "agentao-developer-guide",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bilingual (ZH/EN) developer guide for embedding the Agentao harness into third-party applications.",
+  "scripts": {
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.3"
+  }
+}

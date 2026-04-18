@@ -1,0 +1,40 @@
+# 1.1 Agentao 是什么
+
+**Agentao 是一个可嵌入的 Agent Harness（智能体运行时外壳）**，用来把"能调用工具、理解项目上下文、多轮推理"的 LLM 能力装进你自己的应用里。
+
+## 从 CLI 到可嵌入框架
+
+Agentao 诞生于一个命令行工具——你可以 `uv run agentao` 在终端里和它对话，让它读写文件、跑命令、查文档。但 CLI 只是它的"默认皮肤"。从 v0.2.10 开始，Agentao 把核心运行时（the "harness"）抽离出来，暴露了两个稳定的嵌入面：
+
+- **Python 进程内 SDK**：`from agentao import Agentao` 直接拿到一个 Agent 实例，驱动它运转
+- **ACP 协议服务器**：`agentao --acp --stdio` 以标准协议对外，任何语言的宿主都能通过 JSON-RPC 驱动它
+
+> **Harness 一词的含义**：不是最终产品，而是把 LLM、工具调用、权限、记忆、会话、沙箱等能力编排在一起的**运行时骨架**。你的应用提供"业务肌肉"（你的 API、你的数据库、你的 UI），Agentao 负责"神经中枢"（决策循环、状态管理、安全防线）。
+
+## 它不是什么
+
+| 别把 Agentao 当作 | 原因 |
+|------------------|------|
+| LangChain / LlamaIndex 的替代 | 那些是"拼装工具箱"；Agentao 是"预装好的运行时" |
+| 端到端 Agent 产品 | 它没有自己的 UI、用户系统、账务；需要你的应用把它"安装"进去 |
+| 单一模型厂商绑定 | 支持 OpenAI / Anthropic / Gemini / DeepSeek 等所有 OpenAI 兼容接口 |
+| 纯框架（零依赖） | 自带成套工具（文件/Shell/Web/搜索/记忆/MCP 桥接），开箱可用 |
+
+## 为什么选择嵌入 Agentao
+
+1. **开箱即用的工具集** — 文件读写、Shell、Web、搜索、代码编辑、MCP 桥接都已内置并经过实战打磨
+2. **多层安全边界** — 工具确认、权限引擎、domain allowlist/blocklist、macOS sandbox-exec 层层可组合
+3. **成熟的会话管理** — 对话压缩、记忆持久化、`working_directory` 隔离，多实例并发友好
+4. **标准协议支持** — 原生 MCP 客户端 + ACP 服务器，与 Zed / Claude Code 等工具生态互通
+5. **轻量可控** — Python 纯依赖，无 Web 服务器/数据库强要求，可直接 `pip install` 进你的应用
+
+## 本指南如何组织
+
+- **第 2 部分**：Python 宿主的直接嵌入（最短路径）
+- **第 3 部分**：ACP 协议，供非 Python 宿主使用
+- **第 4 部分**：事件层与 UI 集成（流式、确认、询问）
+- **第 5 部分**：六大扩展点——让 Agentao 理解**你**的业务
+- **第 6 - 7 部分**：安全、生产化部署
+- **第 8 部分**：五个典型集成蓝图（Cookbook）
+
+下一节：[1.2 核心概念 →](./2-core-concepts)
