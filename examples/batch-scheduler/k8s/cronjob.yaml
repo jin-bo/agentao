@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily-digest
+spec:
+  schedule: "0 3 * * *"       # 03:00 UTC daily
+  concurrencyPolicy: Forbid   # don't pile up if yesterday ran long
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1         # fail loud, don't retry 6 times
+      activeDeadlineSeconds: 1800  # 30-minute hard wall
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: runner
+            image: your-registry/agentao-digest:v0.2.11
+            command: ["python", "-m", "src.daily_digest"]
+            env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef: {name: agent-secrets, key: openai-key}
+            resources:
+              requests: {cpu: "200m", memory: "512Mi"}
+              limits:   {cpu: "1",    memory: "2Gi"}

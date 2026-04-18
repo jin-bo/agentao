@@ -163,6 +163,8 @@ Use the README for the main path, and jump to the docs below when you need depth
 | Skills guide | [docs/SKILLS_GUIDE.md](docs/SKILLS_GUIDE.md) |
 | Memory details | [docs/features/memory-management.md](docs/features/memory-management.md) |
 | ACP client details | [docs/features/acp-client.md](docs/features/acp-client.md) |
+| Developer guide | [developer-guide/](developer-guide/) (run `cd developer-guide && npx vitepress dev` to browse locally) |
+| Integration examples | [examples/](examples/) — five runnable blueprints (SaaS API, IDE plugin, ticket triage, data workbench, batch job) |
 
 **One-liner demo** — try it right after install:
 

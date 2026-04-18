@@ -43,8 +43,26 @@ chatagent.log
 *.log
 .chatagent/
 .agentao/
-examples/
 workspace/
+
+# Integration examples (ship code, ignore build/runtime artifacts)
+examples/**/__pycache__/
+examples/**/.env
+examples/**/node_modules/
+examples/**/.venv/
+examples/**/dist/
+examples/**/out/
+examples/**/*.egg-info/
+examples/**/runs/
+examples/**/workspaces/
+examples/**/data/
+examples/**/agentao.log
+examples/**/*.db
+
+# Un-ignore authored skill definitions (the blanket `.agentao/` above hides them)
+!examples/**/.agentao/
+!examples/**/.agentao/skills/
+!examples/**/.agentao/skills/**
 
 # OS
 .DS_Store

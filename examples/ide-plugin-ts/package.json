@@ -1,0 +1,31 @@
+{
+  "name": "agentao-ide-plugin-example",
+  "version": "0.1.0",
+  "description": "Blueprint B — reference VS Code extension that drives `agentao --acp --stdio`.",
+  "private": true,
+  "main": "./out/extension.js",
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=20"
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -p ./ -w",
+    "typecheck": "tsc -p ./ --noEmit"
+  },
+  "contributes": {
+    "commands": [
+      { "command": "agentao.ask",    "title": "Agentao: Ask" },
+      { "command": "agentao.cancel", "title": "Agentao: Cancel current turn" }
+    ]
+  },
+  "activationEvents": [
+    "onCommand:agentao.ask",
+    "onCommand:agentao.cancel"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.0"
+  }
+}
