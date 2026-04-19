@@ -982,8 +982,10 @@ class TestStdioMultiSessionSubprocess:
         env = os.environ.copy()
         env.setdefault("PYTHONUNBUFFERED", "1")
         # session/new constructs a real Agentao runtime which checks for
-        # an API key during LLMClient init.
+        # credentials during LLMClient init.
         env.setdefault("OPENAI_API_KEY", "test-dummy-key")
+        env.setdefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        env.setdefault("OPENAI_MODEL", "gpt-5.4")
         return subprocess.Popen(
             [sys.executable, "-m", "agentao", "--acp", "--stdio"],
             cwd=str(_agentao_repo_root()),

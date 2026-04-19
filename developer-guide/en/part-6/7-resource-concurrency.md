@@ -25,7 +25,7 @@ Exceeding triggers **context compression** — the LLM summarizes old messages. 
 
 | Model | Suggested max_context_tokens |
 |-------|-----------------------------|
-| gpt-4o / gpt-4.1 | 100_000–128_000 |
+| gpt-5.4 / gpt-4.1 | 100_000–128_000 |
 | claude-sonnet-4 | 150_000–200_000 |
 | 1M-context class | 500_000–800_000 |
 | Cheap small models | 4_000–16_000 |

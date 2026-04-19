@@ -15,10 +15,10 @@ Scope policy vs. related issues:
   Agentao MCP client configs and connect them. Here we only validate the
   shape — an obvious-invalid config must fail the request loudly rather
   than deferring errors to Issue 11.
-- **Issue 07** will replace the :class:`ACPTransport` stub with a working
-  adapter. Constructing the stub here is safe because Agentao's
-  ``__init__`` never *calls* the transport — it only stores the reference
-  and dispatches to it during ``chat()`` (Issue 06).
+- **Issue 07** already replaced the :class:`ACPTransport` stub with the
+  real ``session/update`` adapter. Constructing it here is still cheap
+  and safe because Agentao's ``__init__`` stores the transport reference;
+  the event callbacks are exercised later during ``chat()``.
 
 Agent construction is injected via an ``agent_factory`` parameter so tests
 can substitute a lightweight fake, and so Issue 05 can swap in a

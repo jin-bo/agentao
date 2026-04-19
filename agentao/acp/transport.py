@@ -147,7 +147,7 @@ _TOOL_KIND_MAP: Dict[str, str] = {
     "search_text": "search",
     "grep": "search",
     "glob": "search",
-    "google_web_search": "search",
+    "web_search": "search",
     # execution
     "run_shell_command": "execute",
     "bash": "execute",

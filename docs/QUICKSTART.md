@@ -62,7 +62,7 @@ All commands start with `/`:
 - `/help` - Show help message
 - `/model` - List or switch models
   - `/model` - Show current and available models
-  - `/model gpt-4o` - Switch to GPT-4o
+  - `/model gpt-5.4` - Switch to GPT-4o
   - `/model claude-sonnet-4-6` - Switch to Claude Sonnet
 - `/clear` - Clear conversation history
 - `/status` - Show conversation status (includes current model)
@@ -96,7 +96,7 @@ You: Now help me merge multiple PDFs
 ### Using Commands
 ```
 You: /model              (show current model and available models)
-You: /model gpt-4o       (switch to GPT-4o)
+You: /model gpt-5.4       (switch to GPT-4o)
 You: /skills             (list all skills)
 You: /memory             (show memories)
 You: /status             (show status and current model)

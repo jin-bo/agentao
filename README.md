@@ -468,36 +468,38 @@ python --version   # must be 3.10 or higher
 
 ### Required environment variable
 
-Only one variable is mandatory to start Agentao:
+Three variables are mandatory to start Agentao:
 
 | Variable | Required | Example |
 |----------|----------|---------|
-| `OPENAI_API_KEY` | **Yes** (default provider) | `sk-...` |
+| `OPENAI_API_KEY` | **Yes** | `sk-...` |
+| `OPENAI_BASE_URL` | **Yes** | `https://api.openai.com/v1` |
+| `OPENAI_MODEL` | **Yes** | `gpt-5.4` |
 
-All other variables are optional. The absolute minimum `.env`:
+All three must be set — Agentao raises `ValueError` immediately at startup if any is missing. The minimum `.env`:
 
 ```env
 OPENAI_API_KEY=sk-your-key-here
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-5.4
 ```
 
 Create it in the directory where you run `agentao`:
 
 ```bash
-echo "OPENAI_API_KEY=sk-your-key-here" > .env
+printf "OPENAI_API_KEY=sk-your-key-here\nOPENAI_BASE_URL=https://api.openai.com/v1\nOPENAI_MODEL=gpt-5.4\n" > .env
 ```
 
 > **Note:** Agentao loads `.env` from the *current working directory*, then falls back to `~/.env`. No system-level setup is needed.
 
 ### Default provider behavior
 
-When no provider is explicitly configured, Agentao uses these defaults:
-
 | Setting | Default | Override with |
 |---------|---------|---------------|
 | Provider | `OPENAI` | `LLM_PROVIDER=ANTHROPIC` |
-| API key | `$OPENAI_API_KEY` | `$<PROVIDER>_API_KEY` |
-| Model | `gpt-5.4` | `OPENAI_MODEL=gpt-4o` |
-| Base URL | OpenAI public API | `OPENAI_BASE_URL=https://...` |
+| API key | *(none — must be set)* | `OPENAI_API_KEY=sk-...` |
+| Base URL | *(none — must be set)* | `OPENAI_BASE_URL=https://api.openai.com/v1` |
+| Model | *(none — must be set)* | `OPENAI_MODEL=gpt-5.4` |
 | Temperature | `0.2` | `LLM_TEMPERATURE=0.7` |
 
 Each provider reads its own `<NAME>_API_KEY`, `<NAME>_BASE_URL`, and `<NAME>_MODEL`:
@@ -514,7 +516,7 @@ ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
 
 ```bash
 pip install agentao
-echo "OPENAI_API_KEY=sk-your-key-here" > .env
+printf "OPENAI_API_KEY=sk-your-key-here\nOPENAI_BASE_URL=https://api.openai.com/v1\nOPENAI_MODEL=gpt-5.4\n" > .env
 
 # Verify it works without a UI (exits after one response)
 agentao -p "Reply with the single word: OK"
@@ -536,8 +538,11 @@ agentao
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| `AuthenticationError` | Missing or invalid API key | Ensure `OPENAI_API_KEY` is set correctly in `.env` |
-| `NotFoundError: model not found` | Model name doesn't match provider | Set `OPENAI_MODEL=gpt-4o` (or the correct model for your provider) |
+| `ValueError: Missing OPENAI_API_KEY` | API key not set | Add `OPENAI_API_KEY=sk-...` to `.env` |
+| `ValueError: Missing OPENAI_BASE_URL` | Base URL not set | Add `OPENAI_BASE_URL=https://api.openai.com/v1` to `.env` |
+| `ValueError: Missing OPENAI_MODEL` | Model not set | Add `OPENAI_MODEL=gpt-5.4` (or your target model) to `.env` |
+| `AuthenticationError` | Invalid API key | Verify the key value in `.env` |
+| `NotFoundError: model not found` | Model name doesn't match provider | Confirm the model is available for your provider |
 | `APIConnectionError` | Network / firewall / proxy issue | Check your internet connection; set `OPENAI_BASE_URL` if behind a proxy |
 | `command not found: agentao` | CLI not on PATH | Confirm install succeeded; add `~/.local/bin` (Linux/Mac) or `Scripts\` (Windows) to `$PATH` |
 | Starts but gives wrong-provider errors | `LLM_PROVIDER` mismatch | Make sure `LLM_PROVIDER` matches the key you provided (e.g. `LLM_PROVIDER=OPENAI` with `OPENAI_API_KEY`) |
@@ -556,11 +561,11 @@ Edit `.env` with your settings:
 # Required: Your API key
 OPENAI_API_KEY=your-api-key-here
 
-# Optional: Base URL for OpenAI-compatible APIs
-# OPENAI_BASE_URL=https://api.openai.com/v1
+# Required: Base URL for the API endpoint
+OPENAI_BASE_URL=https://api.openai.com/v1
 
-# Optional: Model name (defaults to gpt-5.4)
-# OPENAI_MODEL=gpt-5.4
+# Required: Model name (no default — must be set explicitly)
+OPENAI_MODEL=gpt-5.4
 
 # Optional: Context window limit in tokens (default: 200000)
 # AGENTAO_CONTEXT_TOKENS=200000
@@ -613,7 +618,7 @@ MCP servers connect automatically on startup. Use `/mcp list` to check status.
 
 ### Using with Different Providers
 
-Agentao supports switching between providers at runtime with `/provider`. Add credentials for each provider to your `.env` (or `~/.env`) using the naming convention `<NAME>_API_KEY`, `<NAME>_BASE_URL`, and `<NAME>_MODEL`:
+Agentao supports switching between providers at runtime with `/provider`. Add credentials for each provider to your `.env` (or `~/.env`) using the naming convention `<NAME>_API_KEY`, `<NAME>_BASE_URL`, and `<NAME>_MODEL`. **All three must be set** — a provider missing any of them is not shown in the `/provider` list and cannot be switched to.
 
 ```env
 # OpenAI (default)
@@ -633,12 +638,10 @@ DEEPSEEK_MODEL=deepseek-chat
 
 Then switch at runtime:
 ```
-/provider           # list detected providers
+/provider           # list providers that have both API key and model configured
 /provider GEMINI    # switch to Gemini
 /model              # see available models on the new endpoint
 ```
-
-The `/provider` command detects any `*_API_KEY` entry already loaded into the environment, so it works with `~/.env` and system environment variables — not just a local `.env` file.
 
 ---
 
@@ -800,7 +803,7 @@ If you only need the small beginner subset, start with [First Commands](#first-c
 | `/new` | Alias for `/clear` |
 | `/status` | Show message count, model, active skills, memory count, context usage |
 | `/model` | Fetch and list available models from the configured API endpoint |
-| `/model <name>` | Switch to specified model (e.g., `/model gpt-4o`) |
+| `/model <name>` | Switch to specified model (e.g., `/model gpt-5.4`) |
 | `/provider` | List available providers (detected from `*_API_KEY` env vars) |
 | `/provider <NAME>` | Switch to a different provider (e.g., `/provider GEMINI`) |
 | `/skills` | List available and active skills |
@@ -853,7 +856,7 @@ Agentao controls which tools execute automatically versus which require user con
 
 | Mode | Behavior |
 |------|----------|
-| `workspace-write` | **Default.** File writes (`write_file`, `replace`) and safe read-only shell commands (`git status/log/diff`, `ls`, `grep`, `cat`, etc.) execute automatically. Web access (`web_fetch`, `google_web_search`) asks. Unknown shell commands ask. Dangerous patterns (`rm -rf`, `sudo`) are blocked. |
+| `workspace-write` | **Default.** File writes (`write_file`, `replace`) and safe read-only shell commands (`git status/log/diff`, `ls`, `grep`, `cat`, etc.) execute automatically. Web access (`web_fetch`, `web_search`) asks. Unknown shell commands ask. Dangerous patterns (`rm -rf`, `sudo`) are blocked. |
 | `read-only` | All write and shell tools are blocked. Only read-only tools (`read_file`, `glob`, `grep`, etc.) are permitted. |
 | `full-access` | All tools execute without prompting. Useful for trusted, fully automated workflows. |
 
@@ -866,7 +869,7 @@ Agentao controls which tools execute automatically versus which require user con
 
 **Tools that still ask in workspace-write mode:**
 - `web_fetch` — network access (with domain-tiered exceptions: see below)
-- `google_web_search` — network access
+- `web_search` — network access
 - `run_shell_command` — when the command doesn't match the safe-prefix allowlist
 - `mcp_*` — MCP server tools (unless server has `"trust": true`)
 
@@ -910,7 +913,7 @@ y                       (exit plan mode, restore permissions, agent implements)
 - Memory writes (`save_memory`, `todo_write`) are **denied**
 - Non-allowlisted shell commands are **denied** (no accidental side effects)
 - Safe read-only shell commands (`git diff`, `ls`, `cat`, `grep`, etc.) are **allowed**
-- Web access (`web_fetch`, `google_web_search`) **asks** as usual
+- Web access (`web_fetch`, `web_search`) **asks** as usual
 - Skill activation is **allowed** (skills only modify the system prompt)
 
 **Model tools** — `plan_save(content)` and `plan_finalize(draft_id)` are available to the agent in plan mode. The agent calls `plan_save` to save a draft and receives a `draft_id`. It must pass that exact `draft_id` to `plan_finalize` to trigger the approval prompt — ensuring you approve the exact draft you reviewed.
@@ -1277,7 +1280,7 @@ If you're debugging a first-run problem, start with [Troubleshooting common star
 
 **Model List Not Loading:** `/model` queries the live API endpoint. If it fails (invalid key, unreachable endpoint, no `models` endpoint), a clear error is shown. Verify your `OPENAI_API_KEY` and `OPENAI_BASE_URL` settings.
 
-**Provider List Empty:** `/provider` scans the environment for `*_API_KEY` entries. Make sure your credentials are in `~/.env` or exported into the shell — a local `.env` in the project directory is not required.
+**Provider List Empty:** `/provider` shows only providers that have **all three** of `*_API_KEY`, `*_BASE_URL`, and `*_MODEL` set. Make sure all three are in `~/.env` or exported into the shell — a local `.env` in the project directory is not required.
 
 **API Key Issues:** Verify `.env` exists and contains a valid key with correct permissions.
 

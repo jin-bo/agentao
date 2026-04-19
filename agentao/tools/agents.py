@@ -57,7 +57,7 @@ Available Tools:
 - search_file_content: Search for text in files
 - run_shell_command: Execute shell commands
 - web_fetch: Fetch content from URLs
-- google_web_search: Search the web
+- web_search: Search the web
 - save_memory: Save important information
 - activate_skill: Activate a skill
 

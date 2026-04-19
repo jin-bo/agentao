@@ -133,9 +133,9 @@ def test_workspace_write_asks_web_fetch(tmp_path, monkeypatch):
     assert e.decide("web_fetch", {"url": "https://example.com"}) == PermissionDecision.ASK
 
 
-def test_workspace_write_asks_google_web_search(tmp_path, monkeypatch):
+def test_workspace_write_asks_web_search(tmp_path, monkeypatch):
     e = _engine(tmp_path, monkeypatch)
-    assert e.decide("google_web_search", {"query": "python"}) == PermissionDecision.ASK
+    assert e.decide("web_search", {"query": "python"}) == PermissionDecision.ASK
 
 
 def test_workspace_write_unknown_tool_returns_none(tmp_path, monkeypatch):
@@ -255,9 +255,9 @@ def test_user_rule_applies_when_no_project_rule(tmp_path, monkeypatch):
 
 
 def test_custom_rule_loaded_from_project_config(tmp_path, monkeypatch):
-    rules = [allow("google_web_search")]
+    rules = [allow("web_search")]
     e = _engine(tmp_path, monkeypatch, project_rules=rules)
-    assert e.decide("google_web_search", {"query": "test"}) == PermissionDecision.ALLOW
+    assert e.decide("web_search", {"query": "test"}) == PermissionDecision.ALLOW
 
 
 # ---------------------------------------------------------------------------

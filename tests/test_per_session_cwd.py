@@ -53,8 +53,10 @@ from agentao.tools.shell import ShellTool
 
 @pytest.fixture
 def stub_llm_env(monkeypatch):
-    """Ensure LLMClient construction works without a real API key."""
+    """Ensure LLMClient construction works without real credentials."""
     monkeypatch.setenv("OPENAI_API_KEY", "test-dummy-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4")
     return None
 
 

@@ -114,10 +114,10 @@ agent.set_provider(
 )
 
 # 只换模型（保留凭据）
-agent.set_model("gpt-4o-mini")
+agent.set_model("gpt-5.4")
 
 # 查询当前模型
-current = agent.get_current_model()  # -> "gpt-4o-mini"
+current = agent.get_current_model()  # -> "gpt-5.4"
 ```
 
 用途：

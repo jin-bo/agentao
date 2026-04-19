@@ -62,7 +62,7 @@ def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
 **When called**:
 
 - Before invoking any tool with `requires_confirmation=True`
-- Default triggers: `write_file`, `run_shell_command`, `web_fetch`, `google_web_search`
+- Default triggers: `write_file`, `run_shell_command`, `web_fetch`, `web_search`
 
 **Blocking semantics**: this is a **synchronous call** — until you return True/False, the agent's execution thread is stuck here. For async hosts, block internally (see 4.5).
 

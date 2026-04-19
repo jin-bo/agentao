@@ -179,7 +179,7 @@ _TOOL_ALIASES: dict[str, str] = {
     "glob": "Glob",
     "search_file_content": "Grep",
     "web_fetch": "WebFetch",
-    "google_web_search": "WebSearch",
+    "web_search": "WebSearch",
     "list_directory": "LS",
     "save_memory": "SaveMemory",
     "ask_user": "AskUser",

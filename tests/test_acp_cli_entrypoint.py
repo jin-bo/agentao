@@ -238,10 +238,12 @@ class TestAcpSubprocessSmoke:
         env = os.environ.copy()
         # Force a deterministic, non-interactive environment.
         env.setdefault("PYTHONUNBUFFERED", "1")
-        # Provide a dummy API key so :class:`LLMClient` constructs without
+        # Provide dummy credentials so :class:`LLMClient` constructs without
         # raising during ``session/new``. We never run a real turn in
-        # these tests, so the dummy never reaches a network call.
+        # these tests, so the dummies never reach a network call.
         env.setdefault("OPENAI_API_KEY", "test-dummy-key")
+        env.setdefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        env.setdefault("OPENAI_MODEL", "gpt-5.4")
         return subprocess.Popen(
             [sys.executable, "-m", "agentao", "--acp", "--stdio"],
             cwd=str(_agentao_repo_root()),

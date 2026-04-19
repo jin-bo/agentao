@@ -36,12 +36,37 @@ def test_reliability_section_present_with_project_instructions():
 
 
 def test_reliability_keywords():
-    """The four rules contain their key discriminating phrases."""
+    """The seven rules contain their key discriminating phrases."""
     agent = _make_agent()
     prompt = agent._build_system_prompt()
-    for phrase in ("assert facts", "differs from what you expected", "returns an error", "Distinguish"):
+    for phrase in (
+        "assert facts",                    # #1
+        "differs from what you expected",  # #2
+        "returns an error",                # #3
+        "Distinguish",                     # #4
+        "Never fabricate",                 # #5
+        "Report outcomes faithfully",      # #6
+        "collaborator, not just an executor",  # #7
+    ):
         assert phrase in prompt, f"Expected phrase not found in reliability section: {phrase!r}"
-    print("✅ All four reliability rule keywords present")
+    print("✅ All seven reliability rule keywords present")
+
+
+def test_reliability_rule_numbering():
+    """Rules 1-7 are numbered in order in the Reliability section."""
+    agent = _make_agent()
+    prompt = agent._build_system_prompt()
+    rel_idx = prompt.find("=== Reliability Principles ===")
+    assert rel_idx != -1
+    section = prompt[rel_idx:rel_idx + 3000]
+    last = -1
+    for n in range(1, 8):
+        marker = f"\n{n}. "
+        pos = section.find(marker)
+        assert pos != -1, f"Rule {n} not found in Reliability section"
+        assert pos > last, f"Rule {n} appears out of order"
+        last = pos
+    print("✅ Reliability rules numbered 1-7 in order")
 
 
 def test_reasoning_structure_with_thinking_callback():
@@ -129,6 +154,7 @@ if __name__ == "__main__":
         test_reliability_section_present_without_project_instructions,
         test_reliability_section_present_with_project_instructions,
         test_reliability_keywords,
+        test_reliability_rule_numbering,
         test_reasoning_structure_with_thinking_callback,
         test_reasoning_structure_absent_without_thinking_callback,
         test_reliability_before_memories,

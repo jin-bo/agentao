@@ -1,11 +1,11 @@
 # 6.3 Network & SSRF Defense
 
-Three agent tools reach the network: `web_fetch`, `google_web_search`, and anything via MCP. This section shrinks their attack surface to the minimum necessary.
+Three agent tools reach the network: `web_fetch`, `web_search`, and anything via MCP. This section shrinks their attack surface to the minimum necessary.
 
 ## Three network layers
 
 ```
-   LLM → web_fetch / google_web_search / MCP
+   LLM → web_fetch / web_search / MCP
                 │
                 ▼
   ┌──────────────────────────────┐
@@ -198,7 +198,7 @@ Every network call should log:
 
 ```python
 def on_event(ev):
-    if ev.type == EventType.TOOL_COMPLETE and ev.data["tool"] in {"web_fetch", "google_web_search"}:
+    if ev.type == EventType.TOOL_COMPLETE and ev.data["tool"] in {"web_fetch", "web_search"}:
         audit_log.info("network_call", extra={
             "tool": ev.data["tool"],
             "status": ev.data["status"],

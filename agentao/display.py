@@ -49,7 +49,7 @@ _SEMANTICS: dict[str, tuple[str, str, Optional[str], Optional[str]]] = {
     "replace":                ("←", "edit",     "file_path",       None),
     "run_shell_command":      ("$", "",         "command",         None),
     "web_fetch":              ("↗", "fetch",    "url",             None),
-    "google_web_search":      ("↗", "search",   "query",           None),
+    "web_search":             ("↗", "search",   "query",           None),
     "save_memory":            ("◈", "remember", "key",             None),
     "activate_skill":         ("◉", "skill",    "skill_name",      "task_description"),
     "ask_user":               ("?", "ask",      "question",        None),

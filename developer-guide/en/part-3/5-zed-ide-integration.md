@@ -27,7 +27,7 @@ Zed reads its agent config from `~/.config/zed/settings.json` (or the UI's **Set
       "args": ["--acp", "--stdio"],
       "env": {
         "OPENAI_API_KEY": "sk-...",
-        "OPENAI_MODEL": "gpt-4o-mini"
+        "OPENAI_MODEL": "gpt-5.4"
       }
     }
   ]

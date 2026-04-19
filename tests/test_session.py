@@ -18,7 +18,7 @@ _MESSAGES = [
     {"role": "user", "content": "hello"},
     {"role": "assistant", "content": "hi there"},
 ]
-_MODEL = "gpt-4o"
+_MODEL = "gpt-5.4"
 _SKILLS = ["my-skill"]
 
 
@@ -50,7 +50,7 @@ def test_load_latest_when_no_id(tmp_path):
     session_dir.mkdir(parents=True, exist_ok=True)
     for ts, model, content in [
         ("20260101_000001", "gpt-4", "first"),
-        ("20260101_000002", "gpt-4o", "second"),
+        ("20260101_000002", "gpt-5.4", "second"),
     ]:
         data = {
             "timestamp": ts,
@@ -61,7 +61,7 @@ def test_load_latest_when_no_id(tmp_path):
         (session_dir / f"{ts}.json").write_text(json.dumps(data), encoding="utf-8")
     messages, model, _ = load_session()
     assert messages[0]["content"] == "second"
-    assert model == "gpt-4o"
+    assert model == "gpt-5.4"
 
 
 def test_load_by_id_prefix(tmp_path):

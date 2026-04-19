@@ -26,7 +26,7 @@ Available Models:
 
   OpenAI GPT:
     • gpt-5.4
-    • gpt-4o
+    • gpt-5.4
     • gpt-4.1
 
   Other:
@@ -40,12 +40,12 @@ Example: /model claude-sonnet-4-6
 ### Switch to a Specific Model
 
 ```bash
-You: /model gpt-4o
+You: /model gpt-5.4
 ```
 
 Output:
 ```
-Model changed from claude-sonnet-4-6 to gpt-4o
+Model changed from claude-sonnet-4-6 to gpt-5.4
 ```
 
 ### Check Current Model in Status
@@ -57,7 +57,7 @@ You: /status
 Output includes current model:
 ```
 Total messages: 10
-Current model: gpt-4o
+Current model: gpt-5.4
 Active skills: 0
 ```
 
@@ -77,7 +77,7 @@ Active skills: 0
 | Model | Description |
 |-------|-------------|
 | `gpt-5.4` | Current flagship OpenAI model |
-| `gpt-4o` | Fast multimodal general-purpose model |
+| `gpt-5.4` | Fast multimodal general-purpose model |
 | `gpt-4.1` | Strong coding and instruction-following model |
 
 ### Other Models
@@ -94,7 +94,7 @@ Active skills: 0
 Switch between models to compare their responses to the same question:
 
 ```bash
-You: /model gpt-4o
+You: /model gpt-5.4
 You: Explain quantum computing in simple terms
 [GPT-4 response]
 
@@ -117,7 +117,7 @@ You: /model claude-haiku-4
 You: Format this text...
 
 # Use GPT-4o for fast general-purpose tasks
-You: /model gpt-4o
+You: /model gpt-5.4
 You: Generate creative content...
 ```
 
@@ -127,7 +127,7 @@ Use cheaper models when appropriate:
 
 ```bash
 # Use a faster model for simple queries
-You: /model gpt-4o
+You: /model gpt-5.4
 You: What's the weather?
 
 # Switch to more capable model for complex tasks
@@ -148,7 +148,7 @@ The model setting persists throughout your session:
 
 All model switches are logged to `agentao.log`:
 ```
-2026-02-09 14:30:45 - agentao.llm - INFO - Model changed from claude-sonnet-4-6 to gpt-4o
+2026-02-09 14:30:45 - agentao.llm - INFO - Model changed from claude-sonnet-4-6 to gpt-5.4
 ```
 
 ### Context Preservation
@@ -174,7 +174,7 @@ Or when initializing:
 ```python
 from agentao import Agentao
 
-agent = Agentao(model="gpt-4o")
+agent = Agentao(model="gpt-5.4")
 ```
 
 ### API Configuration
@@ -209,8 +209,8 @@ You: /model
 You: Hello
 > [Response from Claude Sonnet]
 
-You: /model gpt-4o
-> Model changed from claude-sonnet-4-6 to gpt-4o
+You: /model gpt-5.4
+> Model changed from claude-sonnet-4-6 to gpt-5.4
 
 You: Hello again
 > [Response from GPT-4]
@@ -222,7 +222,7 @@ You: Hello again
 You: /model claude-opus-4
 You: Write a poem about AI
 
-You: /model gpt-4o
+You: /model gpt-5.4
 You: Write a poem about AI
 
 You: /model claude-haiku-4
@@ -325,7 +325,7 @@ models = agent.list_available_models()
 print(f"Available: {models}")
 
 # Switch model
-result = agent.set_model("gpt-4o")
+result = agent.set_model("gpt-5.4")
 print(result)
 ```
 

@@ -26,17 +26,19 @@ Agentao calls LLMs through an OpenAI-compatible interface. Configure at least on
 
 | Env var | Purpose | Example |
 |--------|---------|---------|
-| `OPENAI_API_KEY` | API key (required) | `sk-...` |
-| `OPENAI_BASE_URL` | Custom endpoint (optional) | `https://api.deepseek.com` |
-| `OPENAI_MODEL` | Model id (optional) | `gpt-4o-mini` |
+| `OPENAI_API_KEY` | API key (**required**) | `sk-...` |
+| `OPENAI_BASE_URL` | API endpoint (**required**) | `https://api.openai.com/v1` |
+| `OPENAI_MODEL` | Model id (**required**) | `gpt-5.4` |
 | `LLM_TEMPERATURE` | Sampling temp (optional, default 0.2) | `0.3` |
 | `LLM_PROVIDER` | Vendor tag (optional, default OPENAI) | `ANTHROPIC` |
+
+> **All three — `{PROVIDER}_API_KEY`, `{PROVIDER}_BASE_URL`, and `{PROVIDER}_MODEL` — are required.** `LLMClient.__init__` raises `ValueError` immediately at startup if any is missing. Constructor args `api_key=`, `base_url=`, and `model=` can substitute for the env vars when embedding programmatically.
 
 ### Verified compatible endpoints
 
 | Vendor | base_url | Default model |
 |--------|----------|---------------|
-| OpenAI | (default) | gpt-4o / gpt-5 family |
+| OpenAI | (default) | gpt-5.4 / gpt-5 family |
 | Anthropic | `https://api.anthropic.com/v1` | claude-sonnet-4-6 |
 | Gemini | via OpenAI-compatible gateway | gemini-flash-latest |
 | DeepSeek | `https://api.deepseek.com` | deepseek-chat |
@@ -54,7 +56,7 @@ Agentao calls LLMs through an OpenAI-compatible interface. Configure at least on
 
 ## Network
 
-- **Outbound**: LLM calls hit your configured `base_url`; some tools (`web_fetch`, `google_web_search`) hit the public internet
+- **Outbound**: LLM calls hit your configured `base_url`; some tools (`web_fetch`, `web_search`) hit the public internet
 - **Inbound**: **none**. Agentao does not listen on a port; ACP mode uses stdio
 - **MCP SSE servers**: if you use SSE-based MCP servers, the host must reach their URLs
 
@@ -100,6 +102,8 @@ Install only what you need to keep the dependency surface minimal.
 python --version                        # >= 3.10
 pip show agentao | grep Version          # your pinned version
 echo $OPENAI_API_KEY | head -c 10       # key prefix visible
+echo $OPENAI_BASE_URL                   # must be non-empty
+echo $OPENAI_MODEL                      # must be non-empty
 agentao --help                          # CLI reachable (optional)
 python -c "from agentao import Agentao; print('OK')"
 python -c "from agentao.transport import SdkTransport; print('OK')"

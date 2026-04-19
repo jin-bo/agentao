@@ -16,7 +16,7 @@
 
 3. **agentao/tools/web.py**
    - `WebFetchTool` 设置 `requires_confirmation = True`
-   - `GoogleSearchTool` 设置 `requires_confirmation = True`
+   - `WebSearchTool` 设置 `requires_confirmation = True`
 
 4. **agentao/agent.py**
    - 添加 `confirmation_callback` 参数
@@ -71,7 +71,7 @@
 |------|------|
 | `run_shell_command` | 可能执行危险命令、修改系统 |
 | `web_fetch` | 可能访问敏感网站、产生网络流量 |
-| `google_web_search` | 可能暴露搜索意图、产生网络请求 |
+| `web_search` | 可能暴露搜索意图、产生网络请求 |
 
 ## 确认提示示例
 
@@ -222,7 +222,7 @@ web_fetch https://example.com/api                    → ? ASK
 可能的增强：
 - 重定向目标域名检查（当前只检查初始 URL）
 - RFC 1918 私有 IP 段匹配（10.x、172.16.x、192.168.x）
-- `google_web_search` 的类似分级权限
+- `web_search` 的类似分级权限
 
 ---
 

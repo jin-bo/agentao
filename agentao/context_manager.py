@@ -20,7 +20,7 @@ def _get_tiktoken_encoding(model: str):
     """Return tiktoken Encoding for model, or None if unsupported/unavailable.
 
     Mapping:
-      gpt-4o* / o1* / o3*                     -> o200k_base
+      gpt-5* / gpt-4o* / o1* / o3*            -> o200k_base
       gpt-4* / gpt-3.5* / claude* / deepseek* -> cl100k_base
       gemini* / unknown                         -> None (CJK heuristic fallback)
     """
@@ -28,7 +28,7 @@ def _get_tiktoken_encoding(model: str):
         return None
     m = model.lower()
     try:
-        if any(m.startswith(p) for p in ("gpt-4o", "o1", "o3")):
+        if any(m.startswith(p) for p in ("gpt-5", "gpt-4o", "o1", "o3")):
             return _tiktoken.get_encoding("o200k_base")
         if any(m.startswith(p) for p in ("gpt-4", "gpt-3.5", "claude", "deepseek")):
             return _tiktoken.get_encoding("cl100k_base")

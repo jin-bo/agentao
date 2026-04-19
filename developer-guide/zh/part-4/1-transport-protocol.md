@@ -60,7 +60,7 @@ def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
 
 **何时被调用**：
 - Agent 准备调用某个 `requires_confirmation=True` 的工具时
-- 默认触发者：`write_file`、`run_shell_command`、`web_fetch`、`google_web_search`
+- 默认触发者：`write_file`、`run_shell_command`、`web_fetch`、`web_search`
 
 **阻塞语义**：这是**同步调用**——在你返回 True/False 前，Agent 的执行线程会停在这里。如果你的宿主是异步 UI，需要在 Transport 实现内部做阻塞等待（见 4.5）。
 

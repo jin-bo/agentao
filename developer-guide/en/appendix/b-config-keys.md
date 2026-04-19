@@ -12,8 +12,10 @@ Every knob Agentao reads — environment variables first, then on-disk JSON. All
 |-----|----------|---------|-------|
 | `LLM_PROVIDER` | — | `OPENAI` | Picks the `{PROVIDER}_*` prefix. Any upper-case name works (e.g. `DEEPSEEK`, `ANTHROPIC`, `GEMINI`) |
 | `{PROVIDER}_API_KEY` | **yes** | — | Constructor `api_key=` overrides |
-| `{PROVIDER}_BASE_URL` | — | provider default | OpenAI-compatible endpoint |
-| `{PROVIDER}_MODEL` | — | `gpt-5.4` | Runtime-swappable via `agent.set_model()` |
+| `{PROVIDER}_BASE_URL` | **yes** | — | Constructor `base_url=` overrides. OpenAI-compatible endpoint |
+| `{PROVIDER}_MODEL` | **yes** | — | Constructor `model=` overrides. Runtime-swappable via `agent.set_model()` |
+
+> **Fail-fast rule:** `LLMClient.__init__` raises `ValueError` at startup if any of `{PROVIDER}_API_KEY`, `{PROVIDER}_BASE_URL`, or `{PROVIDER}_MODEL` is absent and was not supplied via the constructor. The `/provider` listing and switching commands apply the same gate — all three must be set for a provider to appear in the list or be switchable.
 
 ### Global runtime
 
@@ -29,6 +31,7 @@ Every knob Agentao reads — environment variables first, then on-disk JSON. All
 | Key | Consumed by | Purpose |
 |-----|-------------|---------|
 | `GITHUB_TOKEN` | Skill catalog fetcher | Higher-rate GitHub API access |
+| `BOCHA_API_KEY` | `web_search` tool | Use Bocha Search API instead of DuckDuckGo. If absent, the tool falls back to DuckDuckGo automatically. |
 
 MCP servers and custom tools typically read their own env keys — those are defined in your `.agentao/mcp.json` or your custom-tool code, not here.
 

@@ -131,12 +131,13 @@ def handle_plan_command(cli: AgentaoCLI, args: str) -> None:
 
 
 def _list_providers_from_env() -> list:
-    """Return sorted list of provider names that have an API key in environment."""
+    """Return sorted list of provider names that have API key, base URL, and model in environment."""
     providers = []
     for key, value in os.environ.items():
         if key.endswith("_API_KEY") and value:
             provider = key[: -len("_API_KEY")]
-            providers.append(provider)
+            if os.getenv(f"{provider}_BASE_URL") and os.getenv(f"{provider}_MODEL"):
+                providers.append(provider)
     return sorted(providers)
 
 
@@ -168,7 +169,17 @@ def handle_provider_command(cli: AgentaoCLI, args: str) -> None:
             return
 
         base_url = os.getenv(f"{args}_BASE_URL") or None
+        if not base_url:
+            console.print(f"\n[error]No base URL configured for provider '{args}' "
+                           f"(expected env var: {args}_BASE_URL, "
+                           f"e.g. {args}_BASE_URL=https://api.openai.com/v1)[/error]\n")
+            return
+
         model = os.getenv(f"{args}_MODEL") or None
+        if not model:
+            console.print(f"\n[error]No model configured for provider '{args}' "
+                           f"(expected env var: {args}_MODEL, e.g. {args}_MODEL=gpt-5.4)[/error]\n")
+            return
 
         cli.agent.set_provider(api_key=api_key, base_url=base_url, model=model)
         cli.current_provider = args

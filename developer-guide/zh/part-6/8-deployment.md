@@ -69,7 +69,7 @@ services:
       - ./logs:/data/logs          # 日志
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_MODEL: gpt-4o
+      OPENAI_MODEL: gpt-5.4
       # 给每容器一个独立租户
       TENANT_ID: ${TENANT_ID}
     security_opt:
@@ -163,7 +163,7 @@ Agentao 支持运行时切换（[2.3 节](/zh/part-2/3-lifecycle)）：
 if user.id in beta_users:
     agent.set_model("gpt-5")
 else:
-    agent.set_model("gpt-4o")
+    agent.set_model("gpt-5.4")
 ```
 
 **注意**：切换不会清历史——如果新旧模型上下文格式不兼容（极少见），需要同时 `clear_history()`。

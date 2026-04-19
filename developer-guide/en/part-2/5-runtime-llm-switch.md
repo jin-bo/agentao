@@ -6,10 +6,10 @@ One running `Agentao` is bound to one LLM at construction. But you often want to
 
 ```python
 # Query
-current = agent.get_current_model()   # -> "gpt-4o"
+current = agent.get_current_model()   # -> "gpt-5.4"
 
 # Model only — keep the same provider / API key
-agent.set_model("gpt-4o-mini")
+agent.set_model("gpt-5.4")
 
 # Full swap — new key + endpoint + model
 agent.set_provider(
@@ -19,7 +19,7 @@ agent.set_provider(
 )
 
 # List everything the current endpoint advertises
-models = agent.list_available_models()  # -> ["gpt-4o", "gpt-4o-mini", ...]
+models = agent.list_available_models()  # -> ["gpt-5.4", "gpt-5.4", ...]
 ```
 
 All four are **synchronous** and cheap (no network traffic on `set_*`). They only mutate in-process state; the next `chat()` call picks up the change.
@@ -40,8 +40,8 @@ All four are **synchronous** and cheap (no network traffic on `set_*`). They onl
 ### Cheap-fast / expensive-smart router
 
 ```python
-CHEAP_MODEL     = "gpt-4o-mini"
-SMART_MODEL     = "gpt-4o"
+CHEAP_MODEL     = "gpt-5.4"
+SMART_MODEL     = "gpt-5.4"
 SMART_KEYWORDS  = ("plan", "design", "refactor", "architecture")
 
 def route(agent: Agentao, user_message: str) -> str:
@@ -56,7 +56,7 @@ def route(agent: Agentao, user_message: str) -> str:
 
 ```python
 PROVIDERS = [
-    {"api_key": os.environ["OPENAI_API_KEY"], "base_url": None,                         "model": "gpt-4o-mini"},
+    {"api_key": os.environ["OPENAI_API_KEY"], "base_url": None,                         "model": "gpt-5.4"},
     {"api_key": os.environ["DEEPSEEK_API_KEY"], "base_url": "https://api.deepseek.com", "model": "deepseek-chat"},
     {"api_key": os.environ["MOONSHOT_API_KEY"], "base_url": "https://api.moonshot.cn/v1","model": "moonshot-v1-8k"},
 ]
@@ -81,7 +81,7 @@ Note: this retries **the same turn** on the next provider. Because history is pr
 def build_agent_for(tenant: Tenant) -> Agentao:
     agent = Agentao(
         working_directory=tenant.workdir,
-        model=tenant.plan.default_model,     # "gpt-4o-mini" or "gpt-4o"
+        model=tenant.plan.default_model,     # "gpt-5.4" or "gpt-5.4"
     )
     return agent
 
@@ -94,9 +94,9 @@ agent.set_model(tenant.plan.default_model)
 ```python
 shadow_reply = None
 if random.random() < 0.05:                 # 5% traffic to challenger
-    agent.set_model("gpt-4o")
+    agent.set_model("gpt-5.4")
     shadow_reply = agent.chat(msg)
-    agent.set_model("gpt-4o-mini")         # restore default
+    agent.set_model("gpt-5.4")         # restore default
 real_reply = agent.chat(msg)
 log_ab(real=real_reply, shadow=shadow_reply)
 ```
@@ -138,7 +138,7 @@ except RuntimeError:
    Some providers send smaller/larger chunks or delay the first token. UI-perceived latency can change noticeably after a swap. Your `Transport.emit(...)` still fires — but chunk boundaries are different.
 
 4. **Context window changes**
-   `gpt-4o` has 128k; `gpt-4o-mini` has 128k; `deepseek-chat` has 64k. After `set_model("deepseek-chat")`, a long history that fit before may now trigger compaction. This is handled automatically by the context manager — no action needed on your side, but expect a summary block to appear.
+   `gpt-5.4` has 128k; `gpt-5.4` has 128k; `deepseek-chat` has 64k. After `set_model("deepseek-chat")`, a long history that fit before may now trigger compaction. This is handled automatically by the context manager — no action needed on your side, but expect a summary block to appear.
 
 5. **Swapping mid-turn is undefined**
    Don't call `set_model()` inside a `chat()` — `chat()` holds a reference to the LLM client and the swap won't apply cleanly until the next turn. If you need it, wrap `chat()` with `clear_history()` + `set_model()` + new `chat()`.

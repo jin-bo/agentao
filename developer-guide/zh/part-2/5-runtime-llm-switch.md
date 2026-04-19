@@ -6,10 +6,10 @@
 
 ```python
 # 查询
-current = agent.get_current_model()   # -> "gpt-4o"
+current = agent.get_current_model()   # -> "gpt-5.4"
 
 # 只换模型——provider / API key 不变
-agent.set_model("gpt-4o-mini")
+agent.set_model("gpt-5.4")
 
 # 整套切换——key + endpoint + model
 agent.set_provider(
@@ -19,7 +19,7 @@ agent.set_provider(
 )
 
 # 列出当前 endpoint 声明的模型
-models = agent.list_available_models()  # -> ["gpt-4o", "gpt-4o-mini", ...]
+models = agent.list_available_models()  # -> ["gpt-5.4", "gpt-5.4", ...]
 ```
 
 四个都是**同步**、**便宜**（`set_*` 本身不发网络请求），只改进程内状态；下一次 `chat()` 就会用新设置。
@@ -40,8 +40,8 @@ models = agent.list_available_models()  # -> ["gpt-4o", "gpt-4o-mini", ...]
 ### 快便宜 / 慢聪明 的路由
 
 ```python
-CHEAP_MODEL     = "gpt-4o-mini"
-SMART_MODEL     = "gpt-4o"
+CHEAP_MODEL     = "gpt-5.4"
+SMART_MODEL     = "gpt-5.4"
 SMART_KEYWORDS  = ("规划", "设计", "重构", "架构", "plan", "design")
 
 def route(agent: Agentao, user_message: str) -> str:
@@ -56,7 +56,7 @@ def route(agent: Agentao, user_message: str) -> str:
 
 ```python
 PROVIDERS = [
-    {"api_key": os.environ["OPENAI_API_KEY"], "base_url": None,                         "model": "gpt-4o-mini"},
+    {"api_key": os.environ["OPENAI_API_KEY"], "base_url": None,                         "model": "gpt-5.4"},
     {"api_key": os.environ["DEEPSEEK_API_KEY"], "base_url": "https://api.deepseek.com", "model": "deepseek-chat"},
     {"api_key": os.environ["MOONSHOT_API_KEY"], "base_url": "https://api.moonshot.cn/v1","model": "moonshot-v1-8k"},
 ]
@@ -81,7 +81,7 @@ def chat_with_fallback(agent: Agentao, msg: str) -> str:
 def build_agent_for(tenant: Tenant) -> Agentao:
     agent = Agentao(
         working_directory=tenant.workdir,
-        model=tenant.plan.default_model,     # "gpt-4o-mini" 或 "gpt-4o"
+        model=tenant.plan.default_model,     # "gpt-5.4" 或 "gpt-5.4"
     )
     return agent
 
@@ -94,9 +94,9 @@ agent.set_model(tenant.plan.default_model)
 ```python
 shadow_reply = None
 if random.random() < 0.05:                 # 5% 流量打 challenger
-    agent.set_model("gpt-4o")
+    agent.set_model("gpt-5.4")
     shadow_reply = agent.chat(msg)
-    agent.set_model("gpt-4o-mini")         # 恢复默认
+    agent.set_model("gpt-5.4")         # 恢复默认
 real_reply = agent.chat(msg)
 log_ab(real=real_reply, shadow=shadow_reply)
 ```
@@ -138,7 +138,7 @@ except RuntimeError:
    不同 provider 的 chunk 切分、首 token 延迟不同。切换后 UI 感受可能明显变化。`Transport.emit(...)` 仍会照样触发——只是 chunk 边界不一样
 
 4. **上下文窗口会变**
-   `gpt-4o` 128k、`gpt-4o-mini` 128k、`deepseek-chat` 64k。`set_model("deepseek-chat")` 后，原本装得下的长历史可能触发压缩。上下文管理器会自动处理——但会出现摘要块，心里有数
+   `gpt-5.4` 128k、`gpt-5.4` 128k、`deepseek-chat` 64k。`set_model("deepseek-chat")` 后，原本装得下的长历史可能触发压缩。上下文管理器会自动处理——但会出现摘要块，心里有数
 
 5. **chat() 进行中切换是未定义行为**
    不要在 `chat()` 里面调 `set_model()`——`chat()` 持有 LLM 客户端的引用，切换要下一轮才生效。要做请用 `clear_history()` + `set_model()` + 新的 `chat()` 这个组合

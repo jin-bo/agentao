@@ -79,15 +79,6 @@ class _StreamResponse:
 class LLMClient:
     """OpenAI-compatible LLM client with comprehensive logging."""
 
-    # Provider-specific model defaults used when neither the caller nor the
-    # environment supplies a model name.
-    _PROVIDER_DEFAULT_MODELS: Dict[str, str] = {
-        "OPENAI":     "gpt-5.4",
-        "ANTHROPIC":  "claude-sonnet-4-6",
-        "GEMINI":     "gemini-flash-latest",
-        "DEEPSEEK":   "deepseek-chat",
-    }
-
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -99,16 +90,31 @@ class LLMClient:
         """Initialize LLM client.
 
         Args:
-            api_key: API key for the LLM service
-            base_url: Base URL for the API endpoint
-            model: Model name to use; defaults to provider-specific sensible default
+            api_key: API key for the LLM service (overrides env)
+            base_url: Base URL for the API endpoint (overrides env)
+            model: Model name to use (overrides env; required if not set in env)
             log_file: Path to log file for LLM interactions
         """
         provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
         self.api_key = api_key or os.getenv(f"{provider}_API_KEY")
         self.base_url = base_url or os.getenv(f"{provider}_BASE_URL")
-        _default_model = self._PROVIDER_DEFAULT_MODELS.get(provider, "gpt-5.4")
-        self.model = model or os.getenv(f"{provider}_MODEL") or _default_model
+        self.model = model or os.getenv(f"{provider}_MODEL")
+
+        # Fail fast when any required credential is absent and was not supplied explicitly.
+        if not self.api_key:
+            raise ValueError(
+                f"Missing {provider}_API_KEY. Set it in .env or pass api_key= explicitly."
+            )
+        if not self.base_url:
+            raise ValueError(
+                f"Missing {provider}_BASE_URL. Set it in .env "
+                f"(e.g. {provider}_BASE_URL=https://api.openai.com/v1) or pass base_url= explicitly."
+            )
+        if not self.model:
+            raise ValueError(
+                f"Missing {provider}_MODEL. Set it in .env "
+                f"(e.g. {provider}_MODEL=gpt-5.4) or pass model= explicitly."
+            )
         self.temperature = temperature if temperature is not None else float(os.getenv("LLM_TEMPERATURE", "0.2"))
         _max = os.getenv("LLM_MAX_TOKENS")
         self.max_tokens: Optional[int] = int(_max) if _max else 65536

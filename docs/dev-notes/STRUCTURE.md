@@ -42,7 +42,7 @@ agentao/
     │       ├── file_ops.py       # 4 tools: read, write, replace, list
     │       ├── search.py         # 2 tools: glob, search_file_content
     │       ├── shell.py          # 1 tool: run_shell_command
-    │       ├── web.py            # 2 tools: web_fetch, google_web_search
+    │       ├── web.py            # 2 tools: web_fetch, web_search
     │       ├── memory.py         # 1 tool: save_memory
     │       ├── agents.py         # 2 tools: cli_help, codebase_investigator
     │       └── skill.py          # 1 tool: activate_skill

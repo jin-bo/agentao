@@ -112,7 +112,7 @@ class MyTool(Tool):
 **Tools requiring confirmation:**
 - `run_shell_command` - Shell command execution (allowlist for safe read-only commands)
 - `web_fetch` - Fetch web content (domain-tiered: allowlist/blocklist/ask)
-- `google_web_search` - Web search
+- `web_search` - Web search
 - `write_file` - File writing/overwriting (prevents data loss)
 
 **Domain-Based Permissions** (`web_fetch`): The `PermissionEngine` supports `"domain"` rules with allowlist/blocklist matching. Default presets auto-allow trusted docs sites (`.github.com`, `.docs.python.org`, etc.) and auto-deny SSRF targets (`localhost`, `127.0.0.1`, `169.254.169.254`, etc.). Customizable via `.agentao/permissions.json`. See `docs/features/TOOL_CONFIRMATION_FEATURE.md` for details.

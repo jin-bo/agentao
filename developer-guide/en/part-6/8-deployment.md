@@ -64,7 +64,7 @@ services:
       - ./logs:/data/logs
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_MODEL: gpt-4o
+      OPENAI_MODEL: gpt-5.4
       TENANT_ID: ${TENANT_ID}
     security_opt:
       - no-new-privileges:true
@@ -157,7 +157,7 @@ Agentao supports runtime model swap ([2.3](/en/part-2/3-lifecycle)):
 if user.id in beta_users:
     agent.set_model("gpt-5")
 else:
-    agent.set_model("gpt-4o")
+    agent.set_model("gpt-5.4")
 ```
 
 **Note**: swap doesn't clear history; if the new model's context format differs (rare), also `clear_history()`.

@@ -78,7 +78,7 @@ def test_parse_frontmatter_full_metadata(tmp_path, monkeypatch):
     _write_agent(agents_dir, "full.md", {
         "name": "full-agent",
         "description": "Full metadata agent",
-        "model": "openai/gpt-4o",
+        "model": "openai/gpt-5.4",
         "temperature": "0.5",
         "max_turns": "20",
         "tools": "read_file, glob",
@@ -86,7 +86,7 @@ def test_parse_frontmatter_full_metadata(tmp_path, monkeypatch):
     m = AgentManager()
     defn = m.definitions["full-agent"]
     assert defn["description"] == "Full metadata agent"
-    assert defn["model"] == "openai/gpt-4o"
+    assert defn["model"] == "openai/gpt-5.4"
     assert defn["temperature"] == pytest.approx(0.5)
     assert defn["max_turns"] == 20
     assert "read_file" in defn["tools"]

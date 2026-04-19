@@ -27,7 +27,7 @@ Zed 从 `~/.config/zed/settings.json`（或 UI 的 **Settings → Agents**）读
       "args": ["--acp", "--stdio"],
       "env": {
         "OPENAI_API_KEY": "sk-...",
-        "OPENAI_MODEL": "gpt-4o-mini"
+        "OPENAI_MODEL": "gpt-5.4"
       }
     }
   ]

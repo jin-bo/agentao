@@ -6,11 +6,13 @@ runs the Agentao chat loop, and returns ``{"stopReason": ...}``.
 
 Scope vs. sibling issues:
 
-- **Issue 07** will replace :meth:`ACPTransport.emit` with real
-  ``session/update`` mapping. Until then emit is a debug no-op, so ACP
-  clients see only the final ``stopReason`` from this handler, not the
-  streamed intermediate text. Tests verify that ``chat()`` was called
-  with the expected text, not that output streamed.
+- **Issue 07** now provides the real ``session/update`` mapping in
+  :class:`ACPTransport`, so prompt turns can stream intermediate text,
+  thinking, and tool events to the client while this handler is waiting
+  for ``agent.chat()`` to finish. The tests in this module still focus
+  on prompt parsing, session lookup, locking, and stop-reason handling;
+  transport-level streaming shapes are covered separately in
+  ``tests/test_acp_transport.py``.
 - **Issue 08** will implement ``transport.confirm_tool``. Until then,
   any prompt whose LLM decides to call a confirmation-requiring tool
   will crash the turn with ``NotImplementedError``. Out of scope here.

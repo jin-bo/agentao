@@ -453,7 +453,7 @@ The agent has access to the following tools:
 - `search_file_content` - Search text in files
 - `run_shell_command` - Execute shell commands
 - `web_fetch` - Fetch web content
-- `google_web_search` - Search the web
+- `web_search` - Search the web
 - `activate_skill` - Activate skills
 - `cli_help` - Get CLI help
 - `codebase_investigator` - Investigate codebases

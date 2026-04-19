@@ -166,7 +166,7 @@ The WORKSPACE_WRITE preset (source `agentao/permissions.py:68-118`):
   {"tool": "web_fetch", "domain": {"allowlist": [".github.com", ".docs.python.org", ".wikipedia.org", "r.jina.ai", ".pypi.org", ".readthedocs.io"]}, "action": "allow"},
   {"tool": "web_fetch", "domain": {"blocklist": ["localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254", ".internal", ".local", "::1"]}, "action": "deny"},
   {"tool": "web_fetch", "action": "ask"},
-  {"tool": "google_web_search", "action": "ask"}
+  {"tool": "web_search", "action": "ask"}
 ]
 ```
 

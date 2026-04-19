@@ -113,10 +113,10 @@ agent.set_provider(
 )
 
 # Model only (keep credentials)
-agent.set_model("gpt-4o-mini")
+agent.set_model("gpt-5.4")
 
 # Query current
-current = agent.get_current_model()  # -> "gpt-4o-mini"
+current = agent.get_current_model()  # -> "gpt-5.4"
 ```
 
 Uses:

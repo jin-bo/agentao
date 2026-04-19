@@ -51,7 +51,7 @@ agentao/
 6. **search_file_content** - Search text in files (regex support)
 7. **run_shell_command** - Execute shell commands with timeout
 8. **web_fetch** - Fetch web content with HTML parsing
-9. **google_web_search** - Web search via DuckDuckGo
+9. **web_search** - Web search via DuckDuckGo
 10. **save_memory** - Persist important information
 11. **activate_skill** - Activate Claude skills
 12. **cli_help** - Contextual help system

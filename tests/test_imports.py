@@ -19,7 +19,7 @@ try:
         SearchTextTool,
         ShellTool,
         WebFetchTool,
-        GoogleSearchTool,
+        WebSearchTool,
         SaveMemoryTool,
         CLIHelpAgentTool,
         CodebaseInvestigatorTool,

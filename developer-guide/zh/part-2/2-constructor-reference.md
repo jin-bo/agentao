@@ -170,7 +170,7 @@ def make_agent_for_session(
         # LLM
         api_key=os.environ["OPENAI_API_KEY"],
         base_url=os.environ.get("OPENAI_BASE_URL"),
-        model="gpt-4o",
+        model="gpt-5.4",
         temperature=0.1,
         # 交互
         transport=transport,
