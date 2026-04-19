@@ -1,7 +1,7 @@
 """Test tool confirmation feature."""
 
 from unittest.mock import Mock, patch
-from agentao.tools import ShellTool, WebFetchTool, GoogleSearchTool, ReadFileTool
+from agentao.tools import ShellTool, WebFetchTool, WebSearchTool, ReadFileTool
 
 
 def test_requires_confirmation_property():
@@ -10,11 +10,11 @@ def test_requires_confirmation_property():
     # Tools that require confirmation
     shell_tool = ShellTool()
     web_fetch_tool = WebFetchTool()
-    google_search_tool = GoogleSearchTool()
+    web_search_tool = WebSearchTool()
 
     assert shell_tool.requires_confirmation is True, "ShellTool should require confirmation"
     assert web_fetch_tool.requires_confirmation is True, "WebFetchTool should require confirmation"
-    assert google_search_tool.requires_confirmation is True, "GoogleSearchTool should require confirmation"
+    assert web_search_tool.requires_confirmation is True, "WebSearchTool should require confirmation"
 
     print("✅ Shell & Web tools require confirmation")
 
