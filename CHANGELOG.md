@@ -5,6 +5,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Multi-provider `web_search`**: `WebSearchTool` now reads `BOCHA_API_KEY` once at startup. When present, all web searches route through Bocha Search API (`POST https://api.bochaai.com/v1/web-search`, Bearer auth, structured JSON results). When absent, the tool falls back to DuckDuckGo — no configuration change required for existing users.
+
+### Changed
+
+- **Strict LLM provider gating** (breaking): `LLMClient.__init__` now raises `ValueError` at startup if any of `{PROVIDER}_API_KEY`, `{PROVIDER}_BASE_URL`, or `{PROVIDER}_MODEL` is absent and was not supplied via constructor args. Previously a missing model silently fell back to a hardcoded default. Migrate: add all three to `.env`.
+- `/provider` listing now only shows providers that have all three of `{PROVIDER}_API_KEY`, `{PROVIDER}_BASE_URL`, and `{PROVIDER}_MODEL` set. Switching to an incomplete provider also errors with a clear message.
+- Removed `_PROVIDER_DEFAULT_MODELS` internal dict from `LLMClient`.
+- `gpt-5.4` added to context-manager tokenizer mapping (`o200k_base` encoding, same as `gpt-4o` family).
+- Default model in all examples, templates, and documentation updated from `gpt-4o` → `gpt-5.4`.
+
+### Migration
+
+```bash
+# Before (silently used default model fallback):
+OPENAI_API_KEY=sk-...
+
+# After (all three required):
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-5.4        # or whichever model you target
+```
+
+---
+
 ## [0.2.10] — 2026-04-15
 
 Promotes the `0.2.10` line to general availability.
@@ -135,10 +163,10 @@ of the ACP client subsystem and the default-model rollout.
   result, and exits with a diagnostic on stderr if the streams cannot be made safe.
 - **Default-model messaging realigned with the runtime** across the init wizard,
   `.env.example`, `README.md`, and `README.zh.md`. `LLMClient._PROVIDER_DEFAULT_MODELS`
-  is the canonical source; surfaces previously suggested `gpt-4o` / `gemini-2.0-flash`
+  is the canonical source; surfaces previously suggested `gpt-5.4` / `gemini-2.0-flash`
   / `claude-opus-4-6`, contradicting the actual defaults (`gpt-5.4`,
   `gemini-flash-latest`, `claude-sonnet-4-6`, `deepseek-chat`). Unknown-provider
-  fallback in `LLMClient.__init__` also returns `gpt-5.4` now instead of `gpt-4o`.
+  fallback in `LLMClient.__init__` also returns `gpt-5.4` now instead of `gpt-5.4`.
 
 ### Documentation
 
@@ -167,7 +195,7 @@ Git tag, release notes, and maintainer workflow all agree on the GA path.
 ### Documentation
 
 - Update `.env.example`, quickstart guides, and README snippets to reflect the
-  current default model line (`gpt-5.4` / `gpt-4o` examples) instead of stale
+  current default model line (`gpt-5.4` / `gpt-5.4` examples) instead of stale
   `gpt-4-turbo-preview` examples
 - Add final release notes at `docs/releases/v0.2.8.md`
 - Update `docs/ACP.md` version examples from `0.2.8-rc1` to `0.2.8`
@@ -685,7 +713,7 @@ silently writing.
 ### Added
 - Initial release as **ChatAgent**
 - CLI chat loop with OpenAI-compatible API
-- Tool system: `read_file`, `write_file`, `replace`, `glob`, `grep`, `run_shell_command`, `web_fetch`, `google_web_search`, `save_memory`
+- Tool system: `read_file`, `write_file`, `replace`, `glob`, `grep`, `run_shell_command`, `web_fetch`, `web_search`, `save_memory`
 - Skills system — auto-discovery from `skills/` with YAML frontmatter
 - `AGENTAO.md` auto-loading for project-specific instructions
 - Current date injected as `<system-reminder>`

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from typing import Any, Dict
 from urllib.parse import quote_plus
 
@@ -18,7 +19,6 @@ try:
 except ImportError:
     _CRAWL4AI_AVAILABLE = False
 
-# SPA/JS-framework fingerprints that indicate server-side content is absent
 _JS_MARKERS = [
     "__NEXT_DATA__",        # Next.js
     "__nuxt__",             # Nuxt.js
@@ -32,20 +32,15 @@ _JS_MARKERS = [
     "__remix_manifest",     # Remix
 ]
 
-# Ratio of visible text to raw HTML below this threshold → likely JS-rendered
 _TEXT_RATIO_THRESHOLD = 0.05
-# Absolute visible text shorter than this (chars) → likely JS-rendered
 _MIN_TEXT_LENGTH = 200
 
 
 def _needs_js_rendering(html: str, soup: BeautifulSoup) -> bool:
-    """Return True if the page likely requires JavaScript to show its content."""
-    # Check framework fingerprints
     for marker in _JS_MARKERS:
         if marker in html:
             return True
 
-    # Check text/HTML ratio
     text = soup.get_text(separator=" ", strip=True)
     text_len = len(text)
     html_len = len(html)
@@ -84,8 +79,6 @@ def _run_async(coro):
 
 
 class WebFetchTool(Tool):
-    """Tool for fetching web content."""
-
     @property
     def is_read_only(self) -> bool:
         return True
@@ -125,12 +118,10 @@ class WebFetchTool(Tool):
         return True
 
     def execute(self, url: str, extract_text: bool = True) -> str:
-        """Fetch web content, auto-detecting JS-heavy pages."""
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
 
-        # --- Fast path: plain HTTP fetch ---
         try:
             with httpx.Client(follow_redirects=True, timeout=30.0) as client:
                 response = client.get(url, headers=headers)
@@ -143,7 +134,6 @@ class WebFetchTool(Tool):
                 logger.info("JS rendering detected for %s, using crawl4ai", url)
                 return self._crawl4ai_fetch(url)
 
-            # Static page — extract directly
             if extract_text:
                 text = _extract_text(soup)
                 if len(text) > 10000:
@@ -158,7 +148,6 @@ class WebFetchTool(Tool):
         except httpx.TimeoutException:
             return f"Error: Request timed out for {url}"
         except httpx.HTTPError as e:
-            # Network/HTTP error — try crawl4ai as last resort
             if _CRAWL4AI_AVAILABLE:
                 logger.warning("httpx failed for %s (%s), trying crawl4ai", url, e)
                 return self._crawl4ai_fetch(url)
@@ -179,8 +168,10 @@ class WebFetchTool(Tool):
             return f"Error: crawl4ai failed — {e}"
 
 
-class GoogleSearchTool(Tool):
-    """Tool for performing Google searches."""
+class WebSearchTool(Tool):
+    def __init__(self) -> None:
+        self._bocha_api_key = os.getenv("BOCHA_API_KEY")
+        self._provider = "bocha" if self._bocha_api_key else "duckduckgo"
 
     @property
     def is_read_only(self) -> bool:
@@ -188,11 +179,14 @@ class GoogleSearchTool(Tool):
 
     @property
     def name(self) -> str:
-        return "google_web_search"
+        return "web_search"
 
     @property
     def description(self) -> str:
-        return "Search the web using Google. Returns search results with titles, URLs, and snippets."
+        return (
+            "Search the web. Returns search results with titles, URLs, and snippets. "
+            f"Backend: {self._provider}."
+        )
 
     @property
     def parameters(self) -> Dict[str, Any]:
@@ -217,7 +211,56 @@ class GoogleSearchTool(Tool):
         return True
 
     def execute(self, query: str, num_results: int = 5) -> str:
-        """Perform Google search."""
+        if self._provider == "bocha":
+            return self._search_bocha(query, num_results)
+        return self._search_duckduckgo(query, num_results)
+
+    def _search_bocha(self, query: str, num_results: int) -> str:
+        try:
+            payload = {"query": query, "count": num_results, "summary": True}
+            headers = {
+                "Authorization": f"Bearer {self._bocha_api_key}",
+                "Content-Type": "application/json",
+            }
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    "https://api.bochaai.com/v1/web-search",
+                    json=payload,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            raw_results = []
+            web_pages = data.get("data", {}).get("webPages", {}) if isinstance(data.get("data"), dict) else {}
+            if web_pages and isinstance(web_pages.get("value"), list):
+                raw_results = web_pages["value"]
+            elif isinstance(data.get("data"), list):
+                raw_results = data["data"]
+            elif isinstance(data.get("results"), list):
+                raw_results = data["results"]
+
+            if not raw_results:
+                return f"No search results found for: {query}"
+
+            output = f"Search results for: {query}\n\n"
+            for i, item in enumerate(raw_results[:num_results], 1):
+                title = item.get("name") or item.get("title") or "(no title)"
+                url = item.get("url") or ""
+                snippet = item.get("snippet") or item.get("summary") or ""
+                output += f"{i}. {title}\n"
+                output += f"   URL: {url}\n"
+                if snippet:
+                    output += f"   {snippet}\n"
+                output += "\n"
+            return output
+
+        except httpx.HTTPError as e:
+            return f"Error performing Bocha search: {str(e)}"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def _search_duckduckgo(self, query: str, num_results: int) -> str:
         try:
             encoded_query = quote_plus(query)
             url = f"https://html.duckduckgo.com/html/?q={encoded_query}"

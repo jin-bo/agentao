@@ -4,7 +4,7 @@ from .base import Tool, ToolRegistry
 from .file_ops import EditTool, ReadFileTool, ReadFolderTool, WriteFileTool
 from .search import FindFilesTool, SearchTextTool
 from .shell import ShellTool
-from .web import GoogleSearchTool, WebFetchTool
+from .web import WebFetchTool, WebSearchTool
 from .memory import SaveMemoryTool
 from .skill import ActivateSkillTool
 from .ask_user import AskUserTool
@@ -21,8 +21,8 @@ __all__ = [
     "FindFilesTool",
     "SearchTextTool",
     "ShellTool",
-    "GoogleSearchTool",
     "WebFetchTool",
+    "WebSearchTool",
     "SaveMemoryTool",
     "ActivateSkillTool",
     "AskUserTool",

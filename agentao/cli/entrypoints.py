@@ -140,10 +140,6 @@ def main(resume_session: Optional[str] = None):
         sys.exit(1)
 
 
-# Keep the ``model`` values in sync with
-# ``agentao.llm.client.LLMClient._PROVIDER_DEFAULT_MODELS`` so the init
-# wizard's suggested default matches the runtime default when no
-# ``<NAME>_MODEL`` env var is set.
 _PROVIDER_DEFAULTS = {
     "OPENAI":     {"base_url": "https://api.openai.com/v1",                                          "model": "gpt-5.4"},
     "DEEPSEEK":   {"base_url": "https://api.deepseek.com/v1",                                        "model": "deepseek-chat"},
@@ -210,15 +206,23 @@ def run_init_wizard() -> None:
     default_url = defaults["base_url"]
     default_model = defaults["model"]
 
-    base_url = Prompt.ask(
-        f"{provider}_BASE_URL",
-        default=default_url if default_url else "",
-    ).strip()
+    while True:
+        base_url = Prompt.ask(
+            f"{provider}_BASE_URL",
+            default=default_url if default_url else None,
+        ).strip()
+        if base_url:
+            break
+        console.print("[error]Base URL is required.[/error]")
 
-    model = Prompt.ask(
-        f"{provider}_MODEL",
-        default=default_model if default_model else "",
-    ).strip()
+    while True:
+        model = Prompt.ask(
+            f"{provider}_MODEL",
+            default=default_model if default_model else None,
+        ).strip()
+        if model:
+            break
+        console.print("[error]Model name is required.[/error]")
     console.print()
 
     lines = [
@@ -226,11 +230,9 @@ def run_init_wizard() -> None:
         "\n",
         f"LLM_PROVIDER={provider}\n",
         f"{provider}_API_KEY={api_key}\n",
+        f"{provider}_BASE_URL={base_url}\n",
+        f"{provider}_MODEL={model}\n",
     ]
-    if base_url:
-        lines.append(f"{provider}_BASE_URL={base_url}\n")
-    if model:
-        lines.append(f"{provider}_MODEL={model}\n")
     lines += [
         "\n",
         "# LLM Temperature (0.0-2.0, default: 0.2)\n",

@@ -115,7 +115,7 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
             "action": "deny",
         },
         {"tool": "web_fetch", "action": "ask"},
-        {"tool": "google_web_search", "action": "ask"},
+        {"tool": "web_search", "action": "ask"},
     ],
     "full-access": [
         {"tool": "*", "action": "allow"},
@@ -161,7 +161,7 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
             "action": "deny",
         },
         {"tool": "web_fetch", "action": "ask"},
-        {"tool": "google_web_search", "action": "ask"},
+        {"tool": "web_search", "action": "ask"},
     ],
 }
 
