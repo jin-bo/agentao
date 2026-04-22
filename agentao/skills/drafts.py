@@ -4,14 +4,41 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 _DRAFT_DIR = Path(".agentao") / "crystallize"
 _DEFAULT_DRAFT_FILENAME = "skill_draft.json"
 _SAFE_SESSION_ID_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+@dataclass
+class SkillEvidence:
+    """Structured evidence collected from the current session.
+
+    Populated by ``collect_crystallize_evidence`` and persisted alongside the
+    draft so that `/crystallize refine` and `/crystallize feedback` can reason
+    about the actual tool/LLM activity, not just raw chat text.
+    """
+
+    user_goals: List[str] = field(default_factory=list)
+    assistant_conclusions: List[str] = field(default_factory=list)
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    tool_results: List[Dict[str, Any]] = field(default_factory=list)
+    key_files: List[str] = field(default_factory=list)
+    workflow_steps: List[str] = field(default_factory=list)
+    outcome_signals: List[str] = field(default_factory=list)
+
+
+@dataclass
+class SkillFeedbackEntry:
+    """A single user feedback note attached to a skill draft."""
+
+    author: str
+    content: str
+    created_at: str
 
 
 @dataclass
@@ -23,6 +50,9 @@ class SkillDraft:
     refined_with: Optional[str]
     suggested_name: str
     content: str
+    evidence: SkillEvidence = field(default_factory=SkillEvidence)
+    feedback_history: List[SkillFeedbackEntry] = field(default_factory=list)
+    open_questions: List[str] = field(default_factory=list)
 
 
 def _now_iso() -> str:
@@ -60,6 +90,46 @@ def save_skill_draft(
     return path
 
 
+def _evidence_from_dict(data: Any) -> SkillEvidence:
+    if not isinstance(data, dict):
+        return SkillEvidence()
+
+    def _str_list(val: Any) -> List[str]:
+        if not isinstance(val, list):
+            return []
+        return [str(x) for x in val if isinstance(x, (str, int, float))]
+
+    def _dict_list(val: Any) -> List[Dict[str, Any]]:
+        if not isinstance(val, list):
+            return []
+        return [dict(x) for x in val if isinstance(x, dict)]
+
+    return SkillEvidence(
+        user_goals=_str_list(data.get("user_goals")),
+        assistant_conclusions=_str_list(data.get("assistant_conclusions")),
+        tool_calls=_dict_list(data.get("tool_calls")),
+        tool_results=_dict_list(data.get("tool_results")),
+        key_files=_str_list(data.get("key_files")),
+        workflow_steps=_str_list(data.get("workflow_steps")),
+        outcome_signals=_str_list(data.get("outcome_signals")),
+    )
+
+
+def _feedback_from_list(data: Any) -> List[SkillFeedbackEntry]:
+    if not isinstance(data, list):
+        return []
+    out: List[SkillFeedbackEntry] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        out.append(SkillFeedbackEntry(
+            author=str(item.get("author", "user")),
+            content=str(item.get("content", "")),
+            created_at=str(item.get("created_at", "")),
+        ))
+    return out
+
+
 def load_skill_draft(
     working_directory: Path | None = None,
     session_id: str | None = None,
@@ -82,6 +152,12 @@ def load_skill_draft(
             refined_with=data.get("refined_with"),
             suggested_name=data.get("suggested_name", ""),
             content=data.get("content", ""),
+            evidence=_evidence_from_dict(data.get("evidence")),
+            feedback_history=_feedback_from_list(data.get("feedback_history")),
+            open_questions=[
+                str(q) for q in (data.get("open_questions") or [])
+                if isinstance(q, (str, int, float))
+            ],
         )
     except TypeError:
         return None
@@ -103,6 +179,7 @@ def new_draft(
     suggested_name: str,
     session_id: str = "",
     source: str = "suggest",
+    evidence: Optional[SkillEvidence] = None,
 ) -> SkillDraft:
     now = _now_iso()
     return SkillDraft(
@@ -113,7 +190,44 @@ def new_draft(
         refined_with=None,
         suggested_name=suggested_name,
         content=content,
+        evidence=evidence if evidence is not None else SkillEvidence(),
     )
+
+
+def append_skill_feedback(
+    draft: SkillDraft,
+    text: str,
+    author: str = "user",
+) -> SkillDraft:
+    """Append a feedback entry to ``draft.feedback_history`` in place.
+
+    Returns the same draft for chaining. Whitespace-only text is rejected.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        raise ValueError("Feedback text must not be empty")
+    draft.feedback_history.append(SkillFeedbackEntry(
+        author=author,
+        content=cleaned,
+        created_at=_now_iso(),
+    ))
+    return draft
+
+
+def summarize_draft_status(draft: SkillDraft) -> Dict[str, Any]:
+    """Return a compact dict view of a draft's headline metadata."""
+    ev = draft.evidence or SkillEvidence()
+    return {
+        "name": draft.suggested_name or "",
+        "source": draft.source,
+        "refined_with": draft.refined_with,
+        "updated_at": draft.updated_at,
+        "feedback_count": len(draft.feedback_history or []),
+        "tool_call_count": len(ev.tool_calls),
+        "tool_result_count": len(ev.tool_results),
+        "workflow_step_count": len(ev.workflow_steps),
+        "key_file_count": len(ev.key_files),
+    }
 
 
 _FRONTMATTER_RE = re.compile(r"\A\s*---\s*\n(.*?)\n---\s*\n?", re.DOTALL)

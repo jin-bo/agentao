@@ -283,14 +283,71 @@ Keep it concise and actionable. Use concrete, imperative language.
 If no clear repeatable pattern exists, output exactly: NO_PATTERN_FOUND"""
 
 
-def suggest_prompt(session_content: str) -> str:
-    """Build the user message for LLM skill suggestion."""
+def suggest_prompt(session_content: str, evidence_text: str = "") -> str:
+    """Build the user message for LLM skill suggestion.
+
+    ``evidence_text`` is a pre-rendered structured-evidence block (tool
+    calls, workflow, key files, etc.). When present, it is shown first so
+    the model grounds the draft in actual tool activity rather than in
+    narrated chat text.
+    """
     truncated = session_content[-3000:] if len(session_content) > 3000 else session_content
-    return (
-        "Analyze this session transcript and suggest a reusable skill that captures "
-        "the most useful repeated pattern:\n\n"
-        f"{truncated}"
-    )
+    evidence_block = evidence_text[-4000:] if evidence_text else ""
+    parts = [
+        "Suggest a reusable skill based on this session. "
+        "Ground the draft in the structured evidence (tool calls, files, outcomes); "
+        "the raw transcript is secondary context only.\n",
+    ]
+    if evidence_block:
+        parts.append("# Structured evidence\n")
+        parts.append(evidence_block)
+        parts.append("")
+    parts.append("# Recent transcript excerpt\n")
+    parts.append(truncated)
+    return "\n".join(parts)
+
+
+FEEDBACK_SYSTEM_PROMPT = """\
+You are rewriting an Agentao SKILL.md draft to incorporate user feedback.
+
+Rules:
+- The user's latest feedback takes priority; earlier feedback is context.
+- Stay grounded in the structured evidence. Do NOT invent tools, files, or
+  outcomes that do not appear in the evidence.
+- Keep the YAML frontmatter (---/name/description/---) valid.
+- Preserve the draft's useful structure (When to use / Steps) unless the
+  feedback explicitly asks to restructure it.
+- Output ONLY the complete rewritten SKILL.md. No preamble, no commentary,
+  no code fences.
+"""
+
+
+def feedback_prompt(
+    draft_content: str,
+    evidence_text: str,
+    latest_feedback: str,
+    feedback_history_text: str = "",
+) -> str:
+    """Build the user message for feedback-driven draft rewrite."""
+    evidence_block = evidence_text[-4000:] if evidence_text else ""
+    history_block = feedback_history_text.strip()
+    parts = [
+        "# Current draft",
+        draft_content.strip(),
+        "",
+        "# Structured evidence",
+        evidence_block or "(none)",
+        "",
+    ]
+    if history_block:
+        parts.extend(["# Prior feedback", history_block, ""])
+    parts.extend([
+        "# Latest user feedback (apply this)",
+        latest_feedback.strip(),
+        "",
+        "Return the rewritten complete SKILL.md now.",
+    ])
+    return "\n".join(parts)
 
 
 REFINE_SYSTEM_PROMPT = """\
@@ -313,23 +370,33 @@ def refine_prompt(
     draft_content: str,
     session_content: str,
     skill_creator_guidance: str,
+    evidence_text: str = "",
 ) -> str:
     """Build the user message for LLM skill-draft refinement.
 
-    Three blocks are provided: current draft, recent transcript excerpt,
-    and a selected skill-creator guidance excerpt.
+    Four blocks are optionally provided: current draft, structured evidence,
+    recent transcript excerpt, and a selected skill-creator guidance excerpt.
     """
     transcript = session_content[-3000:] if len(session_content) > 3000 else session_content
     guidance = skill_creator_guidance[:2500] if skill_creator_guidance else ""
-    return (
-        "# Current draft\n"
-        f"{draft_content}\n\n"
-        "# Recent session transcript excerpt\n"
-        f"{transcript}\n\n"
-        "# Skill-creator guidance excerpt\n"
-        f"{guidance}\n\n"
-        "Return the improved complete SKILL.md now."
-    )
+    evidence_block = evidence_text[-4000:] if evidence_text else ""
+    parts = [
+        "# Current draft",
+        draft_content,
+        "",
+    ]
+    if evidence_block:
+        parts.extend(["# Structured evidence", evidence_block, ""])
+    parts.extend([
+        "# Recent session transcript excerpt",
+        transcript,
+        "",
+        "# Skill-creator guidance excerpt",
+        guidance,
+        "",
+        "Return the improved complete SKILL.md now.",
+    ])
+    return "\n".join(parts)
 
 
 def load_skill_creator_guidance() -> str:
