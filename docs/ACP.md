@@ -2,7 +2,7 @@
 
 Agentao implements a stdio-based [Agent Client Protocol](https://github.com/zed-industries/agent-client-protocol) server so ACP-compatible clients (e.g. Zed) can drive Agentao as their agent runtime. This document covers what ships, how to launch it, and the explicit limits of the v1 implementation.
 
-ACP support landed across `docs/implementation/acp-issues/01` through `14`. Tests live in `tests/test_acp_*.py`. Version examples below track the current release line (`0.2.10` as of this document revision).
+ACP support landed across `docs/implementation/acp-issues/01` through `14`. Tests live in `tests/test_acp_*.py`. Version examples below track the current release line (`0.2.12` as of this document revision).
 
 ---
 
@@ -35,6 +35,10 @@ Expected — two NDJSON response envelopes on stdout:
 {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false},"mcpCapabilities":{"http":false,"sse":true}},"authMethods":[],"agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.10"}}}
 {"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_<32hex>"}}
 ```
+
+> **Note:** `agentInfo.version` in the response is sourced from
+> `agentao.__version__`, so the literal above tracks whatever release
+> line you have installed — it is illustrative, not a pinned value.
 
 ### From a real ACP client
 
@@ -275,6 +279,7 @@ Below is a complete client→server→client conversation. Each line on the wire
       "mcpCapabilities":{"http":false,"sse":true}
     },
     "authMethods":[],
+    // agentInfo.version is sourced from agentao.__version__ — tracks the installed release line.
     "agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.10"}
   }}
 

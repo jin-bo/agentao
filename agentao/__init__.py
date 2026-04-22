@@ -1,11 +1,11 @@
-"""Agentao - A CLI agent harness with tools, skills, and MCP support."""
+"""Agentao - A governed agent runtime for local-first, private-first, embeddable AI agents."""
 
 import warnings
 from typing import TYPE_CHECKING
 
 warnings.filterwarnings("ignore", message="urllib3.*or chardet.*doesn't match")
 
-__version__ = "0.2.11"
+__version__ = "0.2.12"
 
 # Lazy exports via PEP 562 module __getattr__.
 #

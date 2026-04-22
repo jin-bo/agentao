@@ -5,6 +5,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+_No changes yet._
+
+---
+
+## [0.2.12] — 2026-04-22
+
+### Added
+
+- **Headless runtime v1** (`docs/features/headless-runtime.md`): operator-facing contract for `ACPManager` as a non-interactive embedding target — public entry points (`prompt_once`, `send_prompt`), single-active-turn concurrency pinned to `AcpErrorCode.SERVER_BUSY`, typed status snapshot. `send_prompt_nonblocking` family is classified **internal / unstable** and removed from the embedding contract.
+- **`ServerStatus` dataclass** (`agentao/acp_client/models.py`, re-exported from `agentao.acp_client`): frozen v1 shape with `server`, `state`, `pid`, `has_active_turn`.
+- **`examples/headless_worker.py`**: runnable headless smoke consumer. Spins up an inline mock ACP server, exercises success / non-interactive error / cancel paths, and prints the typed snapshot after each.
+- **`tests/test_headless_runtime.py`**: baseline smoke tests pinning the Week 1 contract — typed snapshot shape, `has_active_turn` derivation, `SERVER_BUSY` on concurrent submit, cancel-then-continue, non-interactive reject non-pollution, timeout recovery, session reuse.
+- **Headless runtime Week 2 diagnostics** (`docs/features/headless-runtime.md` §3-§4, additive on `ServerStatus`): `active_session_id`, `last_error`, `last_error_at` (tz-aware UTC `datetime` assigned at *store time* inside the manager, not raise time), `inbox_pending`, `interaction_pending` (singular, replaces the pre-v1 `interactions_pending` alias), `config_warnings` (per-server list; Week 3 will populate on legacy config).
+- **`ACPManager.readiness(name)` / `.is_ready(name)`**: typed 4-valued classifier (`"ready" | "busy" | "failed" | "not_ready"`) over the combination of handle state and the active-turn slot. Consumers that only need a gating signal should prefer this over string-matching on `state`.
+- **`ACPManager.reset_last_error(name)`**: explicit clear for the sticky `last_error` / `last_error_at` surface. A new error overwrites automatically; this method is only needed when the host wants to drop the stored error without waiting for a new one.
+- **State-vs-error contract**: the recorded-error surface is diagnostic, not gating — `state` is the authoritative readiness signal, `last_error` is history. `SERVER_BUSY` and `SERVER_NOT_FOUND` are intentionally excluded from the store so fail-fast retries do not overwrite real failures. Pinned by tests (`tests/test_headless_runtime.py::TestLastErrorStore`) including a `datetime`-patch proof that the timestamp is taken inside `_record_last_error`, not pre-computed.
+- **`InteractionPolicy` dataclass** (Week 3, Issue 11) re-exported from `agentao.acp_client`. Minimal single-dimension policy model over the non-interactive interaction decision: `InteractionPolicy(mode="reject_all" | "accept_all")`. No other knobs — additional dimensions belong on a new options object.
+- **`interaction_policy=` per-call override** on `ACPManager.send_prompt` and `ACPManager.prompt_once`. Accepts `InteractionPolicy` or the bare strings `"reject_all"` / `"accept_all"`. Precedence: per-call override > server default (`nonInteractivePolicy`). `None` falls back to the server default. `send_prompt_nonblocking` is **internal / unstable** per the Week 1 decision and deliberately does **not** accept this kwarg — the Week 3 policy surface is `send_prompt` + `prompt_once` only.
+- **Headless runtime Week 4 lifecycle & recovery** (`docs/features/headless-runtime.md` §7). Pins the deterministic release order on every failure path (pending-slot drop → turn-slot clear → lock release → `last_error` record) and introduces the client/process-death classifier.
+- **`classify_process_death` pure classifier** exported from `agentao.acp_client`. Maps `(exit_code, signaled, during_active_turn, restart_count, max_recoverable_restarts, handshake_fail_streak)` to `"recoverable"` / `"fatal"` per the Issue 16 decision matrix. Testable in isolation; the manager calls it inside `ensure_connected` to decide whether to lazy-rebuild or flip the server into the sticky fatal state.
+- **`ACPManager.is_fatal(name)` / `.restart_count(name)`** surfaces for the recovery state. `is_fatal(name)` is sticky — cleared only by an explicit `restart_server` or `start_server` call (operator action required).
+- **`AcpServerConfig.max_recoverable_restarts`** (JSON: `maxRecoverableRestarts`, default 3). Caps consecutive auto-recoveries on recoverable idle non-zero exits before the manager flips the server to fatal. Active-turn deaths bypass the cap; each is always allowed at least one rebuild attempt.
+- **Daemon-style regression suite** (`tests/test_headless_runtime.py::TestDaemonRegression`): long session reuse, reject-then-continue, cancel-then-continue, timeout-then-continue, and process-death recovery (both recoverable and fatal). Pinned against the mock ACP server from `test_acp_client_embedding` so the scenarios stay executable in CI.
+
+### Changed
+
+- **Breaking: `ACPManager.get_status()` now returns `list[ServerStatus]`** instead of `list[dict]`. This is a deliberate, once-for-all API convergence — there is no `get_status_typed()` side channel and no permanent dict alias. Migration table and field semantics are in `docs/features/headless-runtime.md#3-status-snapshot-v1--v2`.
+  - The legacy `"name"` dict key is renamed to `ServerStatus.server`.
+  - Week-1 core fields are `server` / `state` / `pid` / `has_active_turn`. Week 2 adds `active_session_id`, `last_error`, `last_error_at`, `inbox_pending`, `interaction_pending`, `config_warnings` **additively** — the Week 1 shape is unchanged.
+  - `has_active_turn` is derived from the manager's active turn slot (not handle state), so it stays `True` across the in-flight interaction phase of non-interactive turns.
+  - `last_error` is sticky across successful turns by design (so once-per-minute pollers still see the last-known failure); clear explicitly via `reset_last_error(name)` or wait for a new error to overwrite.
+- CLI `/acp list` / session status readouts and the embedding developer-guide pages (part-1 mode 3, part-3 reverse-ACP, appendix A / D / F / G, zh + en mirrors) are migrated to the typed contract.
+- **Breaking: `nonInteractivePolicy` bare-string config form is removed** (Week 3, Issue 12). `.agentao/acp.json` must now use the structured object form — `"nonInteractivePolicy": {"mode": "reject_all" | "accept_all"}`. The legacy strings `"reject_all"` / `"accept_all"` as a bare value raise `AcpConfigError` **at config-load time** (`AcpClientConfig.from_dict` / `load_acp_client_config`). There is no silent upgrade and no deferred runtime failure — a drifted config cannot slip through to `send_prompt` execution. Migration: see [developer-guide appendix E.7](./developer-guide/en/appendix/e-migration.md#e7-headless-runtime--noninteractivepolicy-shape-change-week-3) (and the zh mirror).
+- `AcpServerConfig.non_interactive_policy` is now typed as `InteractionPolicy` (previously `str`). Downstream callers that read `server_cfg.non_interactive_policy` should read `.mode` instead.
+
+---
+
 ## [0.2.11] — 2026-04-19
 
 ### Added
