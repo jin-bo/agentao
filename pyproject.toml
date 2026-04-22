@@ -1,7 +1,7 @@
 [project]
 name = "agentao"
 dynamic = ["version"]
-description = "An Eastern-philosophy-inspired CLI agent harness for personal research and data analysis assistance."
+description = "A governed agent runtime for local-first, private-first, embeddable AI agents."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}

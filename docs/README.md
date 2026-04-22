@@ -1,8 +1,8 @@
 # Agentao Documentation
 
-This directory is the documentation hub for Agentao.
+This directory is the documentation hub for Agentao, a governed agent runtime for local-first, private-first, embeddable AI agents.
 
-Use the root [README.md](../README.md) for the product overview and first-run path. Use this page when you already know you want a document inside `docs/` and need the fastest route.
+Use the root [README.md](../README.md) for the product overview and first-run path. Use this page when you already know you want a document inside `docs/` and need the fastest route through runtime capabilities such as ACP, SDK embedding, governance, memory, and extensibility.
 
 ## Start Here
 
@@ -10,10 +10,10 @@ Pick the path that matches your goal:
 
 - First-time setup: [QUICKSTART.md](QUICKSTART.md)
 - Daily command lookup: [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
-- ACP server mode: [ACP.md](ACP.md)
+- Embedding and protocol entrypoints: [ACP.md](ACP.md)
 - Logging and debugging: [LOGGING.md](LOGGING.md)
 - Model and provider switching: [MODEL_SWITCHING.md](MODEL_SWITCHING.md)
-- Skills workflow: [SKILLS_GUIDE.md](SKILLS_GUIDE.md)
+- Skills and runtime extension: [SKILLS_GUIDE.md](SKILLS_GUIDE.md)
 - Feature-specific behavior: see [Feature Guides](#feature-guides)
 - Internal implementation notes: see [Implementation Notes](#implementation-notes)
 
@@ -63,7 +63,7 @@ Pick the path that matches your goal:
 1. [../README.md](../README.md)
 2. [QUICKSTART.md](QUICKSTART.md)
 3. [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
-4. One deeper guide that matches your task:
+4. One deeper guide that matches the runtime surface you need:
    [ACP.md](ACP.md), [MODEL_SWITCHING.md](MODEL_SWITCHING.md), [SKILLS_GUIDE.md](SKILLS_GUIDE.md), or a file under [features/](features/)
 
 ### For Contributors

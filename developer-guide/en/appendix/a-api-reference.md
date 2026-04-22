@@ -227,6 +227,7 @@ Raised inside the agent loop when a token is cancelled. Caught by `chat()`, whic
 ### `ACPManager`
 
 Typical host-side entry point for driving external ACP servers declared in `.agentao/acp.json`.
+In unattended environments (CI / workers / cron / queue consumers), this same object is what the guide calls the **Headless Runtime**: not a new protocol or class, just an operating profile of `ACPManager`.
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
@@ -235,11 +236,15 @@ Typical host-side entry point for driving external ACP servers declared in `.age
 | `start_all` | `start_all(only_auto=True)` | Spawn all auto-start servers |
 | `start_server(name)` / `stop_server(name)` / `restart_server(name)` | | |
 | `ensure_connected(name, cwd=?, mcp_servers=?)` | | Idempotent connect + session |
-| `send_prompt(name, prompt, timeout=?)` | `-> PromptResult` | Interactive turn |
-| `prompt_once(name, prompt, cwd=?, mcp_servers=?, timeout=?, interactive=False, stop_process=True)` | `-> PromptResult` | Fail-fast one-shot, cleans up |
-| `send_prompt_nonblocking` / `finish_prompt_nonblocking` / `cancel_prompt_nonblocking` | | Lower-level async variants |
+| `send_prompt(name, prompt, timeout=?)` | `-> PromptResult` | Interactive turn (public) |
+| `prompt_once(name, prompt, cwd=?, mcp_servers=?, timeout=?, interactive=False, stop_process=True)` | `-> PromptResult` | Fail-fast one-shot, cleans up (public) |
+| `send_prompt_nonblocking` / `finish_prompt_nonblocking` / `cancel_prompt_nonblocking` | | Lower-level async variants (**internal / unstable** — not part of the embedding contract) |
 | `stop_all()` | | Shut down all subprocesses |
-| `get_status()` / `get_client(name)` / `get_handle(name)` | | Introspection |
+| `get_status()` | `-> list[ServerStatus]` | Typed headless snapshot (Week 1 frozen + Week 2 additive fields) |
+| `readiness(name)` | `-> Literal["ready","busy","failed","not_ready"]` | Typed classification of state × active-turn (Week 2) |
+| `is_ready(name)` | `-> bool` | Shortcut for `readiness(name) == "ready"` |
+| `reset_last_error(name)` | | Clear recorded `last_error` / `last_error_at` on the manager |
+| `get_client(name)` / `get_handle(name)` | | Introspection |
 | `config` (property) | `-> AcpClientConfig` | |
 
 ### `PromptResult`
@@ -267,6 +272,41 @@ class ServerState(str, Enum):
     STOPPED = "stopped"
     FAILED = "failed"
 ```
+
+### `ServerStatus`
+
+Typed return type of `ACPManager.get_status()`. Week 1 core fields are
+frozen; Week 2 added diagnostic fields additively.
+
+```python
+@dataclass(frozen=True)
+class ServerStatus:
+    # Week 1 — core (frozen)
+    server: str
+    state: str
+    pid: Optional[int]
+    has_active_turn: bool
+
+    # Week 2 — diagnostics (additive)
+    active_session_id: Optional[str] = None
+    last_error: Optional[str] = None
+    last_error_at: Optional[datetime] = None   # tz-aware, UTC
+    inbox_pending: int = 0
+    interaction_pending: int = 0
+    config_warnings: List[str] = field(default_factory=list)
+```
+
+Week 2 field notes:
+
+- `last_error` is **sticky** across successful turns; clear with
+  `reset_last_error(name)`.
+- `last_error_at` is assigned **at store time** (inside the manager),
+  not at raise time. Use it for staleness judgements.
+- `SERVER_BUSY` and `SERVER_NOT_FOUND` are **not** recorded — they are
+  caller-side signals.
+
+See [`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)
+for the full state-vs-error contract and the readiness classifier.
 
 ### Exception classes
 

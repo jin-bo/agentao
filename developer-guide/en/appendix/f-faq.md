@@ -139,7 +139,7 @@ Expected — SSRF attempts hit the built-in blocklist. Check `agentao.log` for t
 
 ### `handshake_fail` on initialize
 
-Likely a version mismatch. Agentao v0.2.x speaks `protocolVersion: 1` (integer). If your client sends a string like `"2025-09-01"`, the server rejects it. See [3.1](/en/part-3/1-acp-tour).
+Likely a version mismatch. Agentao v0.2.x speaks `protocolVersion: 1` (integer). If your client sends a string like `"2025-09-01"`, the server rejects it. See [3.1](/en/part-3/1-acp-tour). If the failure reaches you as an `AcpRpcError` instead of a plain `AcpClientError(code=HANDSHAKE_FAIL)`, the handshake-phase signal lives in `details["phase"] == "handshake"` — see [Appendix D §D.7](./d-error-codes#d-7-detecting-handshake-phase-failures-canonical-pattern) for the full classification rules.
 
 ### `server_busy` from `prompt_once`
 
@@ -154,6 +154,57 @@ See [Appendix D.5](./d-error-codes#d-5-retry-guidance).
 ### "session/cancel doesn't stop my long tool"
 
 Cancellation bubbles through `CancellationToken`, but **your custom tool must cooperate**. Check `self._current_token` inside long loops and call `token.check()` between steps.
+
+### "How do I tell if an ACP server is usable right now?"
+
+Don't string-match on `state`; call `readiness(name)`:
+
+```python
+if mgr.is_ready("my-server"):
+    mgr.prompt_once("my-server", "hello", timeout=30)
+```
+
+- `"ready"` — safe to submit.
+- `"busy"` — a turn is in flight; retrying will raise `SERVER_BUSY`.
+- `"failed"` — auto-recovery already handles recoverable idle exits (capped by `maxRecoverableRestarts`, default 3); once the sticky fatal flag is set or the cap is exhausted, an explicit `restart_server()` / `start_server()` by the operator is required.
+- `"not_ready"` — server is still starting up or winding down.
+
+### "Why is `last_error` still set even though my last turn succeeded?"
+
+By design. `last_error` / `last_error_at` are **sticky diagnostic fields** so a host polling once per minute still sees the last-known failure. Read `state` (or `readiness()`) first for gating; treat `last_error` as history. To explicitly clear it, call `reset_last_error(name)`. See [Appendix D.5](./d-error-codes#d-5-state-vs-error-contract-headless).
+
+### "Is `last_error_at` the exact raise time?"
+
+No. It's the instant the manager **stored** the error, not the instant it was raised. Use it for staleness judgements (`now - last_error_at > Δ`), not as raise-time instrumentation. The regression suite pins this by monkey-patching `datetime` during a recorded error and verifying the snapshot reflects the patched clock.
+
+### "Why does my `"nonInteractivePolicy": "reject_all"` now raise `AcpConfigError`?"
+
+Week 3 dropped the legacy bare-string form. The new shape is a structured object:
+
+```json
+"nonInteractivePolicy": { "mode": "reject_all" }
+```
+
+The failure is deliberately loud and raised at config-load time (`AcpClientConfig.from_dict` / `load_acp_client_config`) — not at `send_prompt` time — so config drift cannot quietly ship to production. For a single-call override, don't touch the config at all — use `interaction_policy=` on `send_prompt` / `prompt_once`. Full migration in [Appendix E.7](./e-migration#e-7-headless-runtime--noninteractivepolicy-shape-change-week-3).
+
+### "A server crashed mid-turn. How do I recover?"
+
+Depends on how it died (Week 4 classifier):
+
+- **Recoverable death** (clean exit, non-zero idle exit within cap, stdio EOF, death during active turn): no operator action needed. The next `send_prompt` / `prompt_once` automatically rebuilds the client; `mgr.restart_count(name)` shows how many auto-rebuilds happened.
+- **Fatal death** (OOM / SIGKILL / `exit 137` / consecutive handshake failure / beyond `maxRecoverableRestarts`): the server is marked sticky-fatal. `mgr.is_fatal(name)` returns `True`; all `ensure_connected` calls raise `AcpClientError(code=TRANSPORT_DISCONNECT, details={"recovery": "fatal"})`. Call `mgr.restart_server(name)` or `mgr.start_server(name)` to acknowledge and re-enable auto-recovery.
+
+To tune the retry cap, set `maxRecoverableRestarts` on the server config (default 3).
+
+### "Is `ensure_connected` safe to call after `cancel_turn`?"
+
+Yes. Week 4's cleanup guarantees (see [§7.1 of the headless runtime doc](../../../docs/features/headless-runtime.md)):
+
+1. The pending slot is dropped before `session/cancel` is sent.
+2. The turn slot and the per-server lock are released in `finally` blocks.
+3. `last_error` is recorded before the lock is released, so a parallel `get_status()` observes the failure on the same tick.
+
+The next `send_prompt` sees a ready server with no residual busy / locked state. `test_headless_runtime.py::TestDaemonRegression::test_cancel_then_continue` pins this.
 
 ## F.7 Deployment & ops
 

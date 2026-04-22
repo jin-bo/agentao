@@ -280,10 +280,10 @@ class TestACPManager:
 
         status = mgr.get_status()
         assert len(status) == 1
-        assert status[0]["name"] == "a"
-        assert status[0]["state"] == "starting"
-        assert status[0]["pid"] is not None
-        assert status[0]["description"] == "Alpha server"
+        assert status[0].server == "a"
+        assert status[0].state == "starting"
+        assert status[0].pid is not None
+        assert status[0].has_active_turn is False
 
         mgr.stop_all()
 

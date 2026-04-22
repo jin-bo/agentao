@@ -43,6 +43,7 @@ chatagent.log
 *.log
 .chatagent/
 .agentao/
+.claude/
 workspace/
 
 # Integration examples (ship code, ignore build/runtime artifacts)

@@ -124,7 +124,7 @@ Every client-originated failure sets a structured `AcpErrorCode`:
 | `CONFIG_INVALID` | `.agentao/acp.json` failed validation |
 | `SERVER_NOT_FOUND` | Unknown server name |
 | `PROCESS_START_FAIL` | Subprocess failed to start |
-| `HANDSHAKE_FAIL` | `initialize` or `session/new` failed |
+| `HANDSHAKE_FAIL` | `initialize` or `session/new` failed. Auto-reclassified on **non-RPC** `AcpClientError` (original code preserved in `details["underlying_code"]`); `AcpRpcError` raised during handshake keeps its wire `code: int` and surfaces the handshake context via `details["phase"] == "handshake"`. See [Appendix D §D.7](/en/appendix/d-error-codes#d-7-detecting-handshake-phase-failures-canonical-pattern). |
 | `REQUEST_TIMEOUT` | RPC or prompt timed out |
 | `TRANSPORT_DISCONNECT` | Stdin broken, process exited, connection closed |
 | `INTERACTION_REQUIRED` | Non-interactive turn hit a permission/input request |
@@ -167,12 +167,18 @@ via `exc.details["method"]` for diagnostics only — do not branch on it.
 
 ## Status and Diagnostics
 
-- `mgr.get_status()` returns one dict per configured server, including
-  `state`, `pid`, `last_error`, and `inbox_pending`. Ephemeral clients
-  do not contribute durable entries to this snapshot.
+- `mgr.get_status()` returns `list[ServerStatus]` — one typed entry per
+  configured server. The v1 fields are `server`, `state`, `pid`,
+  `has_active_turn`. Ephemeral clients do not contribute durable
+  entries to this snapshot. Full contract in
+  [headless-runtime.md](./headless-runtime.md).
 - `mgr.get_server_logs(name, n=50)` returns the last *n* stderr lines
   captured from the subprocess — the right place to look for daemon
   diagnostics when an RPC fails.
+- Week 2 adds diagnostic fields on the same dataclass (`last_error`,
+  `last_error_at`, `active_session_id`, `inbox_pending`,
+  `interaction_pending`, `config_warnings`). Until then read them
+  from `mgr.get_handle(name).info`, `mgr.inbox`, and `mgr.interactions`.
 
 ## Concurrency Cheat Sheet
 

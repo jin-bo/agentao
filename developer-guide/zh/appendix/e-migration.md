@@ -107,7 +107,49 @@
 | "文档 RAG" | retriever 工具 | MCP filesystem / 自定义 retriever 工具 |
 | "取消进行中的轮" | LCEL abort / AG cancel | `CancellationToken` |
 
-## E.7 迁移时的常见坑
+## E.7 Headless 运行时——`nonInteractivePolicy` 形态变更（Week 3）
+
+Week 3 之前的裸字符串形式不再接受。`AcpClientConfig.from_dict` / `load_acp_client_config` 在**配置加载阶段**直接抛 `AcpConfigError`——不会拖到 `send_prompt` 阶段才炸。
+
+之前：
+
+```json
+{
+  "servers": {
+    "my-server": {
+      "command": "…",
+      "args": [],
+      "env": {},
+      "cwd": ".",
+      "nonInteractivePolicy": "reject_all"
+    }
+  }
+}
+```
+
+之后：
+
+```json
+{
+  "servers": {
+    "my-server": {
+      "command": "…",
+      "args": [],
+      "env": {},
+      "cwd": ".",
+      "nonInteractivePolicy": { "mode": "reject_all" }
+    }
+  }
+}
+```
+
+要点：
+
+- 可以直接删掉 `nonInteractivePolicy`，默认等价于 `{"mode": "reject_all"}`
+- 仅想针对某次调用覆盖默认值时，**不要改配置**，直接用 `ACPManager.send_prompt` / `ACPManager.prompt_once` 的 `interaction_policy=` kwarg。见 [3.4 反向 ACP 调用](/zh/part-3/4-reverse-acp-call)
+- 不提供静默兼容。如果需要批量迁移老配置，脚本里先用 `AcpClientConfig.from_dict` dry-run，捕获 `AcpConfigError`，再把报错的 server 显式改写
+
+## E.8 迁移时的常见坑
 
 1. **过度抽象** —— 不需要 DAG，信 LLM + 工具
 2. **低估工具描述的重要性** —— Agentao 没有思维链脚手架；工具描述和 AGENTAO.md **就是**行为计划，要写厚

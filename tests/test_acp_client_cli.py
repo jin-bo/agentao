@@ -401,19 +401,22 @@ class TestManagerGetStatus:
         mgr = _make_manager("alpha", "beta")
         statuses = mgr.get_status()
         assert len(statuses) == 2
+        server_names = {s.server for s in statuses}
+        assert server_names == {"alpha", "beta"}
         for s in statuses:
-            assert "name" in s
-            assert "state" in s
-            assert "interactions_pending" in s
-            assert "stderr_lines" in s
+            assert isinstance(s.state, str)
+            assert s.has_active_turn is False
 
-    def test_status_shows_interaction_count(self) -> None:
+    def test_status_unaffected_by_pending_interaction(self) -> None:
+        # Pending interactions are diagnostic state (Week 2 field); they do
+        # not affect the v1 snapshot.
         mgr = _make_manager("srv")
         mgr.interactions.register(
             PendingInteraction(server="srv", kind=InteractionKind.PERMISSION, prompt="?")
         )
         statuses = mgr.get_status()
-        assert statuses[0]["interactions_pending"] == 1
+        assert statuses[0].server == "srv"
+        assert statuses[0].has_active_turn is False
 
     def test_no_config_empty_status(self) -> None:
         mgr = ACPManager(AcpClientConfig(servers={}))

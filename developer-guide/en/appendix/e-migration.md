@@ -107,7 +107,49 @@ You probably **want** to migrate if:
 | "RAG over docs" | retriever tool | MCP filesystem / custom retriever tool |
 | "Cancel a running turn" | LCEL abort / AG cancel | `CancellationToken` |
 
-## E.7 Common pitfalls when migrating
+## E.7 Headless runtime — `nonInteractivePolicy` shape change (Week 3)
+
+The pre-Week-3 bare-string form of `nonInteractivePolicy` is no longer accepted. `AcpClientConfig.from_dict` / `load_acp_client_config` raise `AcpConfigError` **at config-load time** — the failure cannot slip through to `send_prompt`.
+
+Before:
+
+```json
+{
+  "servers": {
+    "my-server": {
+      "command": "…",
+      "args": [],
+      "env": {},
+      "cwd": ".",
+      "nonInteractivePolicy": "reject_all"
+    }
+  }
+}
+```
+
+After:
+
+```json
+{
+  "servers": {
+    "my-server": {
+      "command": "…",
+      "args": [],
+      "env": {},
+      "cwd": ".",
+      "nonInteractivePolicy": { "mode": "reject_all" }
+    }
+  }
+}
+```
+
+Notes:
+
+- Drop `nonInteractivePolicy` entirely to accept the default `{"mode": "reject_all"}`.
+- For a single-call override, don't touch the config — use the `interaction_policy=` kwarg on `ACPManager.send_prompt` / `ACPManager.prompt_once`. See [3.4 Reverse ACP calls](/en/part-3/4-reverse-acp-call).
+- There is no silent upgrade. If you need to roll old configs through automation, parse each one with `AcpClientConfig.from_dict` in a dry-run, catch `AcpConfigError`, and rewrite the flagged servers explicitly.
+
+## E.8 Common pitfalls when migrating
 
 1. **Over-abstracting** — you don't need a DAG. Trust the LLM + tools.
 2. **Under-trusting tool descriptions** — Agentao has no chain-of-thought scaffold; the tool description and AGENTAO.md *are* the behavior plan. Make them rich.

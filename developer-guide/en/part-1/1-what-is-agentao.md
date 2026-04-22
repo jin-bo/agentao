@@ -1,15 +1,17 @@
 # 1.1 What is Agentao
 
-**Agentao is an embeddable agent harness** — a runtime shell that lets you drop LLM-powered capability (tool use, project-aware reasoning, multi-turn loops) into your own application.
+**Agentao is a governed agent runtime** for local-first, private-first, embeddable AI agents.
+
+It lets you drop LLM-powered capability — tool use, project-aware reasoning, multi-turn loops, permissions, memory, and protocol connectivity — into your own application without giving up control.
 
 ## From CLI to Embeddable Framework
 
-Agentao started as a command-line tool: `uv run agentao` opens a terminal REPL where it reads files, runs commands, queries docs. But the CLI is just the default skin. Since v0.2.10, the core runtime (the "harness") is decoupled and exposes two stable embedding surfaces:
+Agentao started as a command-line tool: `uv run agentao` opens a terminal REPL where it reads files, runs commands, and queries docs. But the CLI is just the default skin, not the product boundary. Since v0.2.10, the core runtime is decoupled and exposes two stable embedding surfaces:
 
 - **Python in-process SDK** — `from agentao import Agentao` hands you a live agent instance
 - **ACP protocol server** — `agentao --acp --stdio` speaks a standard JSON-RPC protocol any language can drive
 
-> **Harness** here does not mean an end product. It is the **runtime skeleton** that orchestrates the LLM loop, tool invocation, permissions, memory, sessions, and sandboxing. Your application provides the "business muscles" (your APIs, your database, your UI); Agentao provides the "nervous system" (decision loop, state, safety rails).
+> **Harness** remains a useful explanatory term here, but not the primary product label. It refers to the **runtime skeleton** that orchestrates the LLM loop, tool invocation, permissions, memory, sessions, and sandboxing. Your application provides the "business muscles" (your APIs, your database, your UI); Agentao provides the "nervous system" (decision loop, state, safety rails).
 
 ## What Agentao is not
 
@@ -17,6 +19,7 @@ Agentao started as a command-line tool: `uv run agentao` opens a terminal REPL w
 |-------------------------|--------|
 | A LangChain / LlamaIndex replacement | Those are toolkits to compose; Agentao is a preassembled runtime |
 | An end-to-end agent product | It has no UI, user system, or billing — your app must install it |
+| A generic AI assistant or coding chatbot | The CLI is one surface; the product itself is the governed runtime behind it |
 | Locked to one model vendor | Works with OpenAI / Anthropic / Gemini / DeepSeek / any OpenAI-compatible endpoint |
 | A thin framework | Ships with batteries: file / shell / web / search / memory / MCP bridge tools |
 

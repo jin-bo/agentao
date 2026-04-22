@@ -129,6 +129,21 @@ v0.2.x **不**支持 HTTP 传输，只支持 stdio + SSE。
 
 仅在 **Agentao 作为 ACP 客户端**时读取（见 [3.4 ACPManager](/zh/part-3/)——待补）。结构与 `mcp.json` 一致，只是键为 `acpServers`。大部分集成无需关心。
 
+`servers.{name}` 下的每服务器键：
+
+| 键 | 类型 | 默认 | 说明 |
+|----|------|------|------|
+| `command` | string | — | 必填 |
+| `args` | list[str] | — | 必填 |
+| `env` | dict | — | 必填；`$VAR` / `${VAR}` 会被展开 |
+| `cwd` | string | — | 必填；相对路径相对项目根解析 |
+| `autoStart` | bool | `true` | |
+| `startupTimeoutMs` | int | `10000` | |
+| `requestTimeoutMs` | int | `60000` | |
+| `capabilities` | dict | `{}` | |
+| `description` | string | `""` | |
+| `nonInteractivePolicy` | `{"mode": "reject_all" \| "accept_all"}` | `{"mode": "reject_all"}` | 结构化对象（Week 3）。**历史裸字符串形式在配置加载阶段直接报错**，迁移见 [附录 E](./e-migration)。 |
+
 ## B.4 构造器参数对应表
 
 上面每个 env 或 JSON 键，`Agentao(...)` 都有对应参数：

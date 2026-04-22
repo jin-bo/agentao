@@ -227,6 +227,7 @@ token 被取消时在 agent 循环里抛出。`chat()` 会捕获并返回 `[Canc
 ### `ACPManager`
 
 宿主侧驱动 `.agentao/acp.json` 里声明的外部 ACP 服务器的典型入口。
+如果你在无人值守环境里使用它（CI / worker / cron / queue consumer），那它就是正文里说的 **Headless Runtime**：不是新协议，也不是新类，只是 `ACPManager` 的一种运行方式。
 
 | 方法 | 签名 | 作用 |
 |------|------|------|
@@ -235,11 +236,15 @@ token 被取消时在 agent 循环里抛出。`chat()` 会捕获并返回 `[Canc
 | `start_all` | `start_all(only_auto=True)` | 启动所有 auto-start 服务器 |
 | `start_server(name)` / `stop_server(name)` / `restart_server(name)` | | |
 | `ensure_connected(name, cwd=?, mcp_servers=?)` | | 幂等连接 + 新建会话 |
-| `send_prompt(name, prompt, timeout=?)` | `-> PromptResult` | 交互式一轮 |
-| `prompt_once(name, prompt, cwd=?, mcp_servers=?, timeout=?, interactive=False, stop_process=True)` | `-> PromptResult` | Fail-fast 一次性，自动清理 |
-| `send_prompt_nonblocking` / `finish_prompt_nonblocking` / `cancel_prompt_nonblocking` | | 底层异步版本 |
+| `send_prompt(name, prompt, timeout=?)` | `-> PromptResult` | 交互式一轮（public） |
+| `prompt_once(name, prompt, cwd=?, mcp_servers=?, timeout=?, interactive=False, stop_process=True)` | `-> PromptResult` | Fail-fast 一次性，自动清理（public） |
+| `send_prompt_nonblocking` / `finish_prompt_nonblocking` / `cancel_prompt_nonblocking` | | 底层异步版本（**internal / unstable**，不在 embedding contract 内） |
 | `stop_all()` | | 停所有子进程 |
-| `get_status()` / `get_client(name)` / `get_handle(name)` | | 自省 |
+| `get_status()` | `-> list[ServerStatus]` | 类型化 headless 快照（Week 1 核心字段冻结 + Week 2 增量字段） |
+| `readiness(name)` | `-> Literal["ready","busy","failed","not_ready"]` | 基于 state × active-turn 的类型化可用性分级（Week 2） |
+| `is_ready(name)` | `-> bool` | `readiness(name) == "ready"` 的快捷方式 |
+| `reset_last_error(name)` | | 清除 manager 上记录的 `last_error` / `last_error_at` |
+| `get_client(name)` / `get_handle(name)` | | 自省 |
 | `config`（属性） | `-> AcpClientConfig` | |
 
 ### `PromptResult`
@@ -267,6 +272,42 @@ class ServerState(str, Enum):
     STOPPED = "stopped"
     FAILED = "failed"
 ```
+
+### `ServerStatus`
+
+`ACPManager.get_status()` 的类型化返回值。Week 1 核心字段已冻结；
+Week 2 按增量方式扩展了诊断字段。
+
+```python
+@dataclass(frozen=True)
+class ServerStatus:
+    # Week 1 —— 核心（冻结）
+    server: str
+    state: str
+    pid: Optional[int]
+    has_active_turn: bool
+
+    # Week 2 —— 诊断（增量）
+    active_session_id: Optional[str] = None
+    last_error: Optional[str] = None
+    last_error_at: Optional[datetime] = None   # 带 tzinfo=UTC
+    inbox_pending: int = 0
+    interaction_pending: int = 0
+    config_warnings: List[str] = field(default_factory=list)
+```
+
+Week 2 字段语义要点：
+
+- `last_error` 在成功 turn 之间**保持**，不会被覆盖成 `None`；如需清空，
+  调用 `reset_last_error(name)`。
+- `last_error_at` 的时间戳由 manager **存入时**取的
+  `datetime.now(timezone.utc)`，不是抛出时的瞬时。消费者应据此判断错误
+  是否陈旧，而不是把它当作精确 raise 时刻来使用。
+- `SERVER_BUSY` 与 `SERVER_NOT_FOUND` **不**写入 `last_error`，因为它们是
+  调用方侧信号，不是服务端状态。
+
+完整 state-vs-error 合约和 readiness 分级见
+[`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)。
 
 ### 异常类
 

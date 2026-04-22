@@ -139,7 +139,7 @@ agent.memory.clear(scope="project")
 
 ### initialize 时报 `handshake_fail`
 
-多半是版本不匹配。Agentao v0.2.x 讲 `protocolVersion: 1`（整数）。如果你的客户端发 `"2025-09-01"` 这样的字符串，服务器会拒。见 [3.1](/zh/part-3/1-acp-tour)。
+多半是版本不匹配。Agentao v0.2.x 讲 `protocolVersion: 1`（整数）。如果你的客户端发 `"2025-09-01"` 这样的字符串，服务器会拒。见 [3.1](/zh/part-3/1-acp-tour)。如果错误到你手里是 `AcpRpcError`（不是带 `code=HANDSHAKE_FAIL` 的 `AcpClientError`），则握手阶段信号在 `details["phase"] == "handshake"`——完整分类规则见[附录 D §D.7](./d-error-codes#d-7-识别握手阶段失败规范写法)。
 
 ### `prompt_once` 报 `server_busy`
 
@@ -154,6 +154,57 @@ Fail-fast 语义——已有别人在 turn 里。两条路：
 ### "session/cancel 停不下我的长工具"
 
 取消通过 `CancellationToken` 传播，但**你的自定义工具必须配合**。长循环内定期读 `self._current_token` 并 `token.check()`。
+
+### "现在这个 ACP server 能不能接单？"
+
+不要去字符串匹配 `state`，调用 `readiness(name)`：
+
+```python
+if mgr.is_ready("my-server"):
+    mgr.prompt_once("my-server", "hello", timeout=30)
+```
+
+- `"ready"` —— 可以直接提交。
+- `"busy"` —— 当前已有 turn 在跑，再提交会得到 `SERVER_BUSY`。
+- `"failed"` —— 自动恢复已对"可恢复的 idle 退出"生效（由 `maxRecoverableRestarts` 封顶，默认 3 次）；一旦进入粘性 fatal 或用光配额，就需要运维显式调 `restart_server()` / `start_server()`。
+- `"not_ready"` —— 仍在启动或收尾阶段。
+
+### "为什么上一次 turn 成功了，`last_error` 还在？"
+
+这是有意设计。`last_error` / `last_error_at` 是**粘性诊断字段**——每分钟轮询一次的 host 仍然应该看到"最近一次失败是什么"。消费顺序：先看 `state`（或 `readiness()`）决定是否放行，再把 `last_error` 当作历史诊断读。需要显式清空调 `reset_last_error(name)`。见 [附录 D.5](./d-error-codes#d-5-状态与错误合约headless)。
+
+### "`last_error_at` 是 raise 时刻吗？"
+
+不是。它是 manager **存入错误**的时刻，不是 raise 的时刻。用它判断"错误过没过期"（`now - last_error_at > Δ`）就够了，不要拿它做精确 raise 时刻取样。回归测试会 monkey-patch `datetime` 来断言时间戳确实来自存入时的 `now()`，而不是预先在别处算好的。
+
+### "为什么我的 `"nonInteractivePolicy": "reject_all"` 现在报 `AcpConfigError`？"
+
+Week 3 把历史裸字符串形式下掉了。新形态是结构化对象：
+
+```json
+"nonInteractivePolicy": { "mode": "reject_all" }
+```
+
+错误是在**配置加载阶段**（`AcpClientConfig.from_dict` / `load_acp_client_config`）炸的，不会等到 `send_prompt` 再暴露——目的就是不让配置漂移悄悄上线。如果只是想单次调用覆盖，不用改配置，直接在 `send_prompt` / `prompt_once` 上传 `interaction_policy=`。完整迁移见 [附录 E.7](./e-migration#e-7-headless-运行时noninteractivepolicy-形态变更week-3)。
+
+### "server 中途挂了，怎么恢复？"
+
+看怎么挂的（Week 4 classifier）：
+
+- **可恢复死亡**（干净退出、idle 非零退出且在重试上限内、stdio EOF、active turn 期间死亡）：不需要人工干预。下一次 `send_prompt` / `prompt_once` 会自动重建 client；`mgr.restart_count(name)` 能看到目前自动重建了几次
+- **致命死亡**（OOM / SIGKILL / `exit 137` / 连续 handshake 失败 / 超过 `maxRecoverableRestarts`）：server 被打上 sticky-fatal 标记。`mgr.is_fatal(name)` 返回 `True`，所有 `ensure_connected` 调用都会抛 `AcpClientError(code=TRANSPORT_DISCONNECT, details={"recovery": "fatal"})`。运维需要显式调 `mgr.restart_server(name)` 或 `mgr.start_server(name)` 来确认并重新开启自动恢复
+
+重试上限通过 server 配置中的 `maxRecoverableRestarts` 调（默认 3）。
+
+### "`cancel_turn` 之后再调 `ensure_connected` 安全吗？"
+
+安全。Week 4 的清理保证（见 [headless runtime 文档 §7.1](../../../docs/features/headless-runtime.md)）：
+
+1. `session/cancel` 发出去之前，pending slot 已经先 drop 掉了
+2. turn slot 与 per-server lock 都在 `finally` 里释放
+3. `last_error` 在锁释放之前就记录好，同 tick 的 `get_status()` 读者就能看到
+
+下一次 `send_prompt` 看到的是一个 ready、没有残留 busy / locked 状态的 server。`test_headless_runtime.py::TestDaemonRegression::test_cancel_then_continue` 固化这个保证。
 
 ## F.7 部署与运维
 

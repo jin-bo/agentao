@@ -10,11 +10,13 @@
 
 > **"Order in Chaos, Path in Intelligence."**
 >
-> **Agentao** is the *running path* of the intelligent agent — an Agent Harness inspired by Eastern philosophy, combining rigorous governance with fluid orchestration.
+> **Agentao** is a **Governed Agent Runtime** for local-first, private-first, embeddable AI agents.
 >
-> *"Tao" (道) represents the underlying Laws, Methods, and Paths that govern all things. In Agentao, it is the invisible structure that keeps autonomous agents safe, connected, and observable.*
+> It helps teams build, embed, and extend AI agents with governance, permissions, protocols, memory, plugins, and multi-session control.
+>
+> *"Tao" (道) represents the underlying Laws, Methods, and Paths that govern all things. In Agentao, it is the invisible structure that keeps autonomous agents safe, connected, and observable. "Agent Harness" remains a useful explanatory term for this runtime skeleton, but it is not the product's primary positioning.*
 
-A powerful CLI agent harness with tools, skills, and MCP support. Built with Python and designed to work with any OpenAI-compatible API.
+Built with Python, Agentao gives developers and teams a governed runtime they can run locally, deploy privately, and embed into their own tools and workflows.
 
 ---
 
@@ -114,9 +116,9 @@ Once the CLI starts, these are the commands most new users need first:
 
 ## Why Agentao?
 
-Most agent frameworks give you power. **Agentao gives you power with discipline.**
+Most agent frameworks give you raw capability. **Agentao gives you a governed runtime.**
 
-The name itself encodes the design: *Agent* (capability) + *Tao* (governance). Every feature is built around three pillars of the Harness Philosophy:
+The name itself encodes the design: *Agent* (capability) + *Tao* (governance). Every feature is built around three pillars of a governed runtime:
 
 | Pillar | What it means | How Agentao implements it |
 |--------|--------------|--------------------------|
@@ -135,7 +137,7 @@ If you're evaluating Agentao, start here. If you're trying to get unblocked quic
 | Memory | SQLite-backed persistent memory and recall | [Core Capabilities](#core-capabilities) |
 | Execution UX | Rich terminal output, structured tool display, task checklist | [Usage](#usage) |
 | Extensibility | MCP servers, plugins, hooks, dynamic skills | [Configuration](#configuration) |
-| Automation | Non-interactive mode, SDK transport, ACP mode, sub-agents | [Usage](#usage) |
+| Runtime Surfaces | CLI, non-interactive mode, SDK embedding, ACP mode, sub-agents | [Usage](#usage) |
 
 ## Common Workflows
 
@@ -234,7 +236,7 @@ Useful next steps:
 ❯ Save my preferred language as Python
 ```
 
-**Skill Crystallization:** `/crystallize suggest` reads the current session transcript, asks the LLM to identify the most repeatable workflow, and displays a draft `SKILL.md`. `/crystallize create [name]` writes it to `skills/` (global or project scope) and reloads skills immediately.
+**Skill Crystallization:** `/crystallize suggest` collects structured evidence from the current session (tool calls, file paths, workflow steps, outcome signals) and drafts a `SKILL.md`. Iterate with `/crystallize feedback <text>` (or `/crystallize revise` for interactive input) to steer the rewrite, polish authoring style with `/crystallize refine`, then `/crystallize create [name]` writes it to `skills/` (global or project scope) and reloads skills immediately. Recommended flow: `suggest` → `feedback` (repeatable) → `refine` → `create`.
 
 ### 💡 Semantic Display Engine
 
@@ -368,6 +370,7 @@ Typical ways to work with skills:
 
 - Add a local `skills/<name>/SKILL.md`
 - Generate one from a session with `/crystallize suggest`
+- Iterate with `/crystallize feedback <text>` or `/crystallize refine`
 - Write it with `/crystallize create [name]`
 - Install managed skills from GitHub
 
@@ -816,7 +819,12 @@ If you only need the small beginner subset, start with [First Commands](#first-c
 | `/memory tag <tag>` | Filter memories by tag |
 | `/memory delete <key>` | Delete a specific memory |
 | `/memory clear` | Clear all memories (with confirmation) |
-| `/crystallize suggest` | Analyze session transcript and draft a reusable skill |
+| `/crystallize suggest` | Analyze the session (evidence + transcript) and draft a reusable skill |
+| `/crystallize feedback <text>` | Add feedback and rewrite the current skill draft |
+| `/crystallize revise` | Interactively enter feedback and rewrite the draft |
+| `/crystallize refine` | Improve the current draft with skill-creator guidance |
+| `/crystallize status` | Show pending draft status (feedback + evidence counts) |
+| `/crystallize clear` | Clear the pending draft |
 | `/crystallize create [name]` | Write the skill draft to skills/ (prompts for name and scope) |
 | `/mcp` | List MCP servers with status and tool counts |
 | `/mcp add <name> <cmd\|url>` | Add an MCP server to project config |
@@ -972,8 +980,12 @@ y                       (exit plan mode, restore permissions, agent implements)
 
 **Skill crystallization:**
 ```
-/crystallize suggest        (draft a skill from the current session)
-/crystallize create         (write the skill to skills/ and reload)
+/crystallize suggest             (draft a skill from the current session)
+/crystallize feedback <text>     (rewrite the draft with your feedback, repeatable)
+/crystallize revise              (interactively enter feedback)
+/crystallize refine              (polish with skill-creator guidance)
+/crystallize status              (show feedback + evidence counts)
+/crystallize create [name]       (write the skill to skills/ and reload)
 ```
 
 **Context management:**
@@ -1264,9 +1276,13 @@ Documentation here...
 **Option B: crystallize from a session**
 
 ```
-/crystallize suggest   (LLM drafts a skill from the current session transcript)
-/crystallize create    (prompts for name + scope, writes SKILL.md, reloads immediately)
+/crystallize suggest             (LLM drafts a skill from the session's tool calls + transcript)
+/crystallize feedback <text>     (optional, repeatable — rewrite the draft to address your feedback)
+/crystallize refine              (optional — polish authoring style with skill-creator guidance)
+/crystallize create [name]       (prompts for scope, writes SKILL.md, reloads immediately)
 ```
+
+Each `suggest` captures structured evidence — tool calls, file paths, workflow steps, outcome signals — alongside the transcript, so the draft reflects what the session actually did, not just what was chatted about. `feedback` / `revise` update the pending draft in place; `status` shows the current draft's evidence + feedback counts; `clear` discards it.
 
 Skills created with `/crystallize create` are written to `.agentao/skills/` (project scope) or `<home>/.agentao/skills/` (global scope) and are available immediately without restarting.
 

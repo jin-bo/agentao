@@ -588,7 +588,7 @@ class TestPromptOnce:
             assert "srv" not in mgr._clients
             assert mgr._ephemeral_clients == {}
             statuses = mgr.get_status()
-            assert statuses[0]["state"] in (
+            assert statuses[0].state in (
                 ServerState.STOPPED.value,
                 ServerState.CONFIGURED.value,
                 ServerState.FAILED.value,

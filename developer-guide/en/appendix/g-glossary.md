@@ -56,6 +56,7 @@ Canonical EN ↔ ZH terms used in this guide. If you find a translation that doe
 | TTL eviction | TTL 驱逐 | Removing pool entries idle beyond a time-to-live |
 | LRU eviction | LRU 驱逐 | Removing the least-recently-used pool entry when capacity is hit |
 | `prompt_once` | 一次性提示 | `ACPManager.prompt_once()` — single-turn fire-and-forget API |
+| Headless runtime | 无头运行时 | Running Agentao as a non-interactive embedding target — `ACPManager` driving ACP servers with typed `get_status()` snapshots and no human in the loop. See [`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md). |
 | Tenant | 租户 | The top-level isolation unit in multi-tenant SaaS — each tenant has its own working directory + memory |
 | Canary | 灰度 | Rolling out a change to a small traffic % before full deployment |
 

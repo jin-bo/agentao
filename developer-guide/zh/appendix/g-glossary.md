@@ -56,6 +56,7 @@
 | TTL eviction | TTL 驱逐 | 移除闲置超过 TTL 的会话池条目 |
 | LRU eviction | LRU 驱逐 | 容量满时移除最久未使用的会话池条目 |
 | `prompt_once` | 一次性提示 | `ACPManager.prompt_once()`——单轮 fire-and-forget API |
+| Headless runtime | 无头运行时 | 把 Agentao 作为非交互 embedding 目标运行——`ACPManager` 驱动 ACP 服务器，`get_status()` 返回类型化快照，全程无需人工介入。见 [`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)。 |
 | Tenant | 租户 | 多租户 SaaS 中最外层的隔离单元；每租户独立 working directory + memory |
 | Canary | 灰度 | 先放小比例流量再全量部署 |
 

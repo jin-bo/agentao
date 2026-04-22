@@ -129,6 +129,21 @@ Evaluation order: explicit rules → mode preset → fall back to `ask` on write
 
 Only consumed when **Agentao itself is an ACP client** (see [3.4 ACPManager](/en/part-3/) — forthcoming). Structure mirrors `mcp.json` but under `acpServers`. Safe to omit for most integrations.
 
+Per-server keys under `servers.{name}`:
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `command` | string | — | Required |
+| `args` | list[str] | — | Required |
+| `env` | dict | — | Required; `$VAR` / `${VAR}` expanded |
+| `cwd` | string | — | Required; relative paths resolve against project root |
+| `autoStart` | bool | `true` | |
+| `startupTimeoutMs` | int | `10000` | |
+| `requestTimeoutMs` | int | `60000` | |
+| `capabilities` | dict | `{}` | |
+| `description` | string | `""` | |
+| `nonInteractivePolicy` | `{"mode": "reject_all" \| "accept_all"}` | `{"mode": "reject_all"}` | Structured object (Week 3). **Legacy bare-string form is rejected at config load time** — see [Appendix E](./e-migration). |
+
 ## B.4 Constructor parameters that shadow these
 
 Every env var and JSON key above has a Python equivalent on `Agentao(...)`:

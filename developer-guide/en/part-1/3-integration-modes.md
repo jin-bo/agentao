@@ -90,6 +90,27 @@ The two modes **compose**. A common pattern:
 
 This way long-lived state stays in the SDK side while one-off heavy work is delegated to isolated ACP subprocesses.
 
+### Headless runtime use
+
+When the embedder drives `ACPManager` unattended — CI workers, batch jobs, queue consumers — treat it as a **headless runtime**.
+
+The key clarification is that **Headless Runtime is not a third integration mode and not a separate protocol**. It is still the ACP path above; the host is simply using `ACPManager` as an unattended, pollable runtime with no human in the loop.
+
+Practical mental model:
+
+- **Transport is unchanged**: ACP subprocess + stdio + JSON-RPC
+- **Host object is unchanged**: still `ACPManager`
+- **Only the operating assumption changes**: no one clicks approvals, no one answers questions, and the host owns polling, admission control, and retries
+
+In practice, keep four rules in mind:
+
+- Submit turns only through `prompt_once()` or `send_prompt()`
+- Do not depend on `send_prompt_nonblocking*`; they are internal / unstable
+- One server allows only one active turn at a time; collisions become `SERVER_BUSY`
+- Read `get_status()` / `readiness()` first for gating, then `last_error` for diagnosis
+
+The contract (public entry points, typed `get_status()`, single-active-turn concurrency, error classification) is pinned in [`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md); the runnable sample is [`examples/headless_worker.py`](../../../examples/headless_worker.py).
+
 ## How the rest of the guide is organized
 
 - **Part 2** — Python SDK deep-dive

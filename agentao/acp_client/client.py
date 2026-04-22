@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import threading
 import time
 from dataclasses import dataclass, field
@@ -109,6 +110,25 @@ class AcpRpcError(AcpClientError):
     use ``getattr(err, "error_code", err.code)`` or
     ``isinstance(err, AcpRpcError)`` to classify RPC failures without
     string matching.
+
+    Handshake-phase note: the manager classifies handshake /
+    session-setup failures asymmetrically across subclasses.
+
+    * **Non-RPC** :class:`AcpClientError` raised during
+      ``initialize`` / ``session/new`` has its ``code`` flipped to
+      :attr:`AcpErrorCode.HANDSHAKE_FAIL`; the original
+      :class:`AcpErrorCode` is preserved in
+      ``details["underlying_code"]`` so downstream classification
+      (``REQUEST_TIMEOUT`` vs. ``TRANSPORT_DISCONNECT`` vs.
+      ``PROTOCOL_ERROR``) stays available.
+    * :class:`AcpRpcError` — this class — keeps both ``code`` (int)
+      and ``error_code`` (``PROTOCOL_ERROR``) unchanged: its public
+      shape is rigid. The server-side rejection is already fully
+      described by ``rpc_code`` / ``rpc_message``.
+
+    Both paths stamp ``details["phase"] = "handshake"``, which is
+    therefore the canonical cross-subclass detector. See
+    Appendix D §D.7 for the full pattern.
 
     The constructor accepts ``rpc_code`` / ``rpc_message`` as the
     primary keyword arguments, with legacy positional ``code`` /
@@ -268,6 +288,9 @@ class ACPClient:
 
         self._reader_thread: Optional[threading.Thread] = None
         self._closed = False
+        # Queue shared between the feeder thread (blocked on stdout) and
+        # _read_loop. None is the EOF sentinel.
+        self._line_queue: queue.Queue = queue.Queue()
 
         # Active turn tracking (one prompt at a time per v1 spec).
         self._active_turn_id: Optional[int] = None
@@ -290,9 +313,18 @@ class ACPClient:
     # ------------------------------------------------------------------
 
     def start_reader(self) -> None:
-        """Spawn the background thread that reads NDJSON from server stdout."""
+        """Subscribe to handle stdout and start the message-routing thread.
+
+        The actual blocking stdout read lives in
+        :meth:`ACPProcessHandle._feed_stdout` (one feeder per process
+        lifetime, owned by the handle).  This method registers ``_line_queue``
+        as the current subscriber so lines flow here, then starts
+        ``_read_loop`` to process them.  :meth:`close` unsubscribes, ensuring
+        at most one ACPClient consumes the pipe at any time.
+        """
         if self._reader_thread is not None:
             return
+        self._handle.subscribe_stdout(self._line_queue)
         self._reader_thread = threading.Thread(
             target=self._read_loop,
             name=f"acp-reader-{self._handle.name}",
@@ -320,14 +352,17 @@ class ACPClient:
             ) from exc
 
     def _read_loop(self) -> None:
-        """Background loop: read NDJSON lines from stdout, route responses."""
-        stdout = self._handle.stdout
-        if stdout is None:
-            return
-        try:
-            for raw_line in stdout:
-                if self._closed:
-                    break
+        """Drain ``_line_queue`` and route messages until closed or EOF."""
+        while not self._closed:
+            try:
+                raw_line = self._line_queue.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if raw_line is None:  # EOF sentinel from _feeder_loop
+                break
+            if self._closed:
+                break
+            try:
                 line = (
                     raw_line.decode("utf-8", errors="replace")
                     if isinstance(raw_line, bytes)
@@ -346,11 +381,11 @@ class ACPClient:
                     )
                     continue
                 self._route_message(msg)
-        except Exception:
-            if not self._closed:
-                logger.debug(
-                    "acp[%s]: reader thread exiting", self._handle.name
-                )
+            except Exception:
+                if not self._closed:
+                    logger.debug(
+                        "acp[%s]: reader thread exiting", self._handle.name
+                    )
 
     def _route_message(self, msg: dict) -> None:
         """Dispatch a parsed JSON-RPC message."""
@@ -873,7 +908,16 @@ class ACPClient:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        """Mark the client as closed so the reader thread exits."""
+        """Unsubscribe from handle stdout and wait for the reader to exit.
+
+        Unsubscribing first means the handle feeder stops routing bytes to
+        ``_line_queue`` immediately.  Setting ``_closed`` then causes
+        ``_read_loop`` to exit within one queue-poll cycle (~50 ms).
+        Joining ``_reader_thread`` guarantees that when ``close()`` returns
+        no bytes from the process stdout are being processed by this client,
+        so a new client on the same handle can subscribe safely.
+        """
+        self._handle.unsubscribe_stdout(self._line_queue)
         self._closed = True
         # Wake up any pending requests so callers don't hang. The
         # ``_transport_closed`` sentinel distinguishes a synthesized
@@ -888,3 +932,6 @@ class ACPClient:
                 }
                 slot.event.set()
             self._pending.clear()
+        t = self._reader_thread
+        if t is not None and t is not threading.current_thread() and t.is_alive():
+            t.join(timeout=0.5)

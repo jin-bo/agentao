@@ -39,8 +39,12 @@ from .models import (
     AcpConfigError,
     AcpProcessInfo,
     AcpServerConfig,
+    INTERACTION_POLICY_MODES,
+    InteractionPolicy,
     PromptResult,
     ServerState,
+    ServerStatus,
+    classify_process_death,
 )
 from .process import ACPProcessHandle
 from .router import AcpExplicitRoute, detect_explicit_route
@@ -59,14 +63,18 @@ __all__ = [
     "AcpProcessInfo",
     "AcpRpcError",
     "AcpServerConfig",
+    "INTERACTION_POLICY_MODES",
     "Inbox",
     "InboxMessage",
     "InteractionKind",
+    "InteractionPolicy",
     "InteractionRegistry",
     "MessageKind",
     "PendingInteraction",
     "PromptResult",
     "ServerState",
+    "ServerStatus",
+    "classify_process_death",
     "detect_explicit_route",
     "load_acp_client_config",
 ]

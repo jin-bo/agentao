@@ -414,6 +414,15 @@ All commands start with `/`:
   - `/plan clear` - Archive and clear the current plan
   - `/plan history` - List recent archived plans
 - `/skills` - List available skills
+- `/crystallize [subcommand]` - Draft a reusable skill from the current session
+  - `/crystallize` or `/crystallize suggest` - Analyze the session and generate a skill draft
+  - `/crystallize feedback <text>` - Add feedback and rewrite the current draft
+  - `/crystallize revise` - Interactively enter feedback and rewrite the draft
+  - `/crystallize refine` - Improve the current draft with skill-creator guidance
+  - `/crystallize status` - Show current pending draft status
+  - `/crystallize clear` - Clear the current pending draft
+  - `/crystallize create [name]` - Save the draft into skills/ and reload
+  - Recommended flow: `suggest` → `feedback <text>` (repeatable) → `refine` → `create [name]`
 - `/memory [subcommand] [arg]` - Manage saved memories
   - `/memory` or `/memory list` - Show all saved memories (with tag summary)
   - `/memory search <query>` - Search memories by keyword (key, value, tags)
@@ -528,7 +537,7 @@ Type `/skills` to see available skills, or ask the agent to activate a specific 
             if statuses:
                 running = sum(
                     1 for s in statuses
-                    if s["state"] not in ("configured", "stopped", "failed")
+                    if s.state not in ("configured", "stopped", "failed")
                 )
                 inbox_n = self._acp_manager.inbox.pending_count
                 interact_n = self._acp_manager.interactions.pending_count
