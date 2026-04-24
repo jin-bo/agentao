@@ -11,12 +11,30 @@ _No changes yet._
 
 ---
 
-## [0.2.13rc1] — 2026-04-24
+## [0.2.13] — 2026-04-24
 
-_Pre-release. Cuts the decomposed runtime and session-replay subsystem from `main` for integrator soak._
+Promotes `0.2.13rc1` to general availability, plus one additive feature
+(monorepo skill install) folded into the GA cut.
+
+Headline: **runtime decomposition + session replay subsystem**, now with
+**monorepo-aware `skill install`** layered on top. The substantive
+Added / Changed breakdown — session replay (`agentao/replay/`), the
+`agentao --help` / `-h` entry-point fix, and the four-module runtime
+split (`runtime/`, `acp_client/manager/`, `cli/commands_ext/`, new
+`prompts/` and `tooling/` packages) — is preserved below from the
+`[0.2.13rc1]` soak entry.
+
+The GA cut also carries a packaging + documentation pass: version string
+aligned from `0.2.13rc1` → `0.2.13`, `docs/ACP.md` examples bumped,
+Quick Start env var guidance synced with the strict provider-gating
+behaviour shipped in `0.2.11`, the GitHub Pages workflow switched from
+the legacy Jekyll template to the actual VitePress developer-guide
+build, and lingering `0.2.10` / `0.2.11` install-pin examples in the
+developer guide refreshed to the current line.
 
 ### Added
 
+- **Monorepo skill install** (`agentao skill install owner/repo:path[@ref]`): extends the GitHub installer to pull a single skill out of a multi-skill repository — e.g. `agentao skill install anthropics/skills:pptx@main` installs only the `pptx/` subdirectory instead of rejecting the archive for missing a top-level `SKILL.md`. `SourceSpec.package_path` (`agentao/skills/sources.py`) carries the subpath; `GitHubSkillSource.resolve()` parses the `:path` segment and rejects empty / absolute / `.` / `..` components. `SkillInstaller._find_package_root()` (`agentao/skills/installer.py`) validates the subdirectory exists, is a directory, and contains `SKILL.md`; the recorded `source_ref` preserves the full `owner/repo:path@ref` string so `skill update` round-trips. CLI help on `skill install` now advertises the new form. Coverage: `tests/test_skill_installer.py` (+119 lines across success / empty-path / parent-dir-traversal / update paths), `tests/test_skill_cli.py`.
 - **Session replay subsystem** (`agentao/replay/`): JSONL timeline of runtime events written to `.agentao/replays/`, with recorder, reader, redaction, retention, and sanitization. Wired through `transport/events.py` and surfaced via the new `cli/replay_commands.py` / `replay_render.py`. Feature docs: `docs/features/session-replay.md`. Tests: `tests/test_replay*`, `tests/test_replay_redact.py`.
 - **`agentao --help` / `agentao -h`**: explicit `-h` / `--help` handler on the top-level CLI parser. Prints usage and exits `0` instead of silently falling through to interactive mode (the previous `add_help=False` + `parse_known_args()` combination swallowed the flag). Regression coverage: `tests/test_acp_cli_entrypoint.py::TestEntrypointArgparse::test_help_flag_prints_help_and_exits` and `test_short_help_flag_prints_help_and_exits`.
 
@@ -29,11 +47,19 @@ _Pre-release. Cuts the decomposed runtime and session-replay subsystem from `mai
   - `agentao/cli/app.py` shrunk by ~800 lines; new CLI modules `input_loop`, `ui`, `acp_inbox`.
   - `agentao/prompts/` (new): `builder` + `sections` + `helpers` for system-prompt composition. `agent._build_system_prompt()` and `agent._load_project_instructions()` retained as thin facades so existing tests and external patches keep working.
   - `agentao/tooling/` (new): `registry`, `agent_tools`, `mcp_tools`.
-- **Docs**: `docs/ACP.md` version examples bumped from `0.2.10` to `0.2.13rc1`. Developer-guide `part-2/2-constructor-reference.md`, `part-5/5-memory.md`, `part-5/6-system-prompt.md` (en + zh mirrors) updated to reference the new `prompts/builder.py` location for system-prompt composition.
+- **Docs**: `docs/ACP.md` version examples bumped from `0.2.10` to `0.2.13`. Developer-guide `part-2/2-constructor-reference.md`, `part-5/5-memory.md`, `part-5/6-system-prompt.md` (en + zh mirrors) updated to reference the new `prompts/builder.py` location for system-prompt composition.
 
-### Notes for integrators
+### Packaging / Release (GA)
 
-- `0.2.13rc1` is the soak build for the `0.2.13` line. API surface for replay events and the new package layouts is expected to be stable through GA; file any breakage against the `0.2.13` milestone before the GA cut.
+- Align package version, changelog, release notes, and publish workflow usage to the final `0.2.13` release line.
+- README / `docs/QUICKSTART.md` Quick Start: document all three required provider variables (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`) up front. Previously only `OPENAI_API_KEY` was shown, contradicting the strict-provider-gating behaviour introduced in `0.2.11` — the single-key snippet would raise `ValueError` at startup.
+- `.github/workflows/jekyll-gh-pages.yml` replaced by a VitePress build + deploy pipeline pointed at `developer-guide/`. The Jekyll template was a repo-init leftover; the actual docs site is VitePress, so the previous workflow was deploying nothing useful.
+- Developer-guide install-pin / version-check examples refreshed from `0.2.10` / `0.2.11` to `0.2.13` in `part-1/5-requirements.md`, `part-2/1-install-import.md`, `part-3/2-agentao-as-server.md` (JSON response example), and `part-3/5-zed-ide-integration.md` (en + zh mirrors). Historical statements ("Since v0.2.10…", "Pre-0.2.10 Agentao used…") are kept — they describe when a surface was introduced, not the current pin.
+
+### Documentation
+
+- Add `docs/releases/v0.2.13.md`.
+- `docs/SKILLS_GUIDE.md` and `developer-guide/en|zh/part-5/2-skills.md` document the new monorepo `skill install` form with worked examples against `anthropics/skills` (pptx, docx, xlsx, pdf, doc-coauthoring).
 
 ---
 
