@@ -5,7 +5,7 @@ Agent 运行时与你的用户界面之间的唯一接口就是 **Transport**。
 ## 本部分覆盖
 
 - [**4.1 Transport Protocol**](./1-transport-protocol) — 四个方法、三种实现路径、线程与异步要点
-- [**4.2 AgentEvent 事件清单**](./2-agent-events) — 10 种事件的触发时机、payload、典型用法
+- [**4.2 AgentEvent 事件清单**](./2-agent-events) — UI、工具、LLM、replay 与状态变更事件
 - [**4.3 SdkTransport 快速桥接**](./3-sdk-transport) — 官方回调实现的最佳实践与陷阱
 - [**4.4 构建流式 UI**](./4-streaming-ui) — SSE / WebSocket 端到端示例
 - [**4.5 工具确认 UI**](./5-tool-confirmation-ui) — CLI / Web 模态 / 手机 / 批处理四种形态

@@ -51,6 +51,7 @@ All files live in an `.agentao/` directory. **Project** files (in `<working_dire
 | `permissions.json` | project + user | [5.4](/en/part-5/4-permissions) | Permission mode + rules |
 | `sandbox.json` | project + user | [6.2](/en/part-6/2-shell-sandbox) | Shell sandbox profile selection |
 | `acp.json` | project only | [3.2](/en/part-3/2-agentao-as-server) | ACP server config (when Agentao runs as client) |
+| `settings.json` | project only | [6.6](/en/part-6/6-observability) | Replay and other project runtime settings |
 | `memory.db` | project + user | [5.5](/en/part-5/5-memory) | SQLite-backed persistent memory (not JSON; listed for completeness) |
 
 ### B.3.1 `mcp.json`
@@ -144,6 +145,38 @@ Per-server keys under `servers.{name}`:
 | `description` | string | `""` | |
 | `nonInteractivePolicy` | `{"mode": "reject_all" \| "accept_all"}` | `{"mode": "reject_all"}` | Structured object (Week 3). **Legacy bare-string form is rejected at config load time** — see [Appendix E](./e-migration). |
 
+### B.3.5 `settings.json`
+
+Project-local runtime settings. The replay block is read from `<working_directory>/.agentao/settings.json`.
+
+```json
+{
+  "replay": {
+    "enabled": false,
+    "max_instances": 20,
+    "capture_flags": {
+      "capture_llm_delta": true,
+      "capture_full_llm_io": false,
+      "capture_tool_result_full": false,
+      "capture_plugin_hook_output_full": false
+    }
+  }
+}
+```
+
+Replay keys:
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `replay.enabled` | bool | `false` | Enables recording for future sessions. `/replay on` and `/replay off` write this value. |
+| `replay.max_instances` | int | `20` | Retention cap under `.agentao/replays/`; does not affect `.agentao/sessions/`. |
+| `replay.capture_flags.capture_llm_delta` | bool | `true` | Records messages newly added by each LLM call. |
+| `replay.capture_flags.capture_full_llm_io` | bool | `false` | Deep capture of full LLM inputs/outputs; treat as sensitive. |
+| `replay.capture_flags.capture_tool_result_full` | bool | `false` | Deep capture of full tool results beyond the normal replay truncation policy. |
+| `replay.capture_flags.capture_plugin_hook_output_full` | bool | `false` | Deep capture of plugin hook output. |
+
+Malformed `settings.json` falls back to safe defaults instead of blocking startup.
+
 ## B.4 Constructor parameters that shadow these
 
 Every env var and JSON key above has a Python equivalent on `Agentao(...)`:
@@ -158,6 +191,7 @@ Every env var and JSON key above has a Python equivalent on `Agentao(...)`:
 | `mcp.json` | `extra_mcp_servers=` (merged on top of file) |
 | `permissions.json` | `permission_engine=` |
 | `sandbox.json` | no direct arg — policy is read at tool-call time |
+| `settings.json` replay block | no direct arg — use `/replay on/off` or edit the file |
 
 Constructor always wins. Useful for SaaS hosts that inject per-tenant settings without touching env.
 

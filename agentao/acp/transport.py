@@ -602,7 +602,7 @@ class ACPTransport:
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
         """Ask the ACP client to approve a tool call.
 
-        Called by :class:`~agentao.tool_runner.ToolRunner` when a tool with
+        Called by :class:`~agentao.runtime.tool_runner.ToolRunner` when a tool with
         ``requires_confirmation=True`` is about to execute. Returns ``True``
         if the client approved, ``False`` if they rejected or the
         connection failed while we were waiting.

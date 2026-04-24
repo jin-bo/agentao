@@ -9,7 +9,7 @@
 - [**6.3 网络与 SSRF 防护**](./3-network-ssrf) — 域名分层、httpx 重定向、MCP 网络隔离
 - [**6.4 多租户隔离与文件系统**](./4-multi-tenant-fs) — working_directory 黄金规则、DB 隔离、/tmp 污染
 - [**6.5 密钥管理与 Prompt 注入防御**](./5-secrets-injection) — 五条戒律、注入攻击面、红队测试清单
-- [**6.6 可观测性与审计**](./6-observability) — 4 个观测维度、事件流存档、合规日志
+- [**6.6 可观测性与审计**](./6-observability) — 4 个观测维度、内建 replay、合规日志
 - [**6.7 资源治理与并发**](./7-resource-concurrency) — 会话池、TTL、token 预算、内存估算
 - [**6.8 容器化、灰度与回滚**](./8-deployment) — Dockerfile、K8s StatefulSet、可灰度的维度
 

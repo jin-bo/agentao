@@ -102,7 +102,7 @@ class AgentEvent:
     data: dict
 ```
 
-Ten `EventType` values — full payload reference in [4.2](/en/part-4/2-agent-events).
+`EventType` covers UI streaming, tool lifecycle, LLM-call metadata, replay observability, and runtime state changes. Full payload reference in [4.2](/en/part-4/2-agent-events).
 
 ## A.3 Tools
 

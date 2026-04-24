@@ -504,7 +504,7 @@ class TestLastErrorStore:
                     return fixed if tz is timezone.utc else datetime.now(tz)
 
             with mock.patch(
-                "agentao.acp_client.manager.datetime", _FixedDatetime
+                "agentao.acp_client.manager.recovery.datetime", _FixedDatetime
             ):
                 with pytest.raises(AcpClientError):
                     mgr.send_prompt(

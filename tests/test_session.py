@@ -1,6 +1,8 @@
 """Regression tests for session save/restore (agentao/session.py)."""
 
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,7 @@ import agentao.session as session_module
 from agentao.session import (
     delete_all_sessions,
     delete_session,
+    format_session_time_local,
     list_sessions,
     load_session,
     save_session,
@@ -92,6 +95,26 @@ def test_list_sessions_metadata():
     assert s.get("title") == "hello"            # title derived from first user msg
     assert s.get("created_at") is not None
     assert s.get("updated_at") is not None
+
+
+def test_format_session_time_uses_local_timezone(monkeypatch):
+    if not hasattr(time, "tzset"):
+        pytest.skip("time.tzset is not available on this platform")
+
+    old_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    try:
+        assert (
+            format_session_time_local("2026-04-24T08:30:00+08:00")
+            == "2026-04-24 00:30:00 +0000"
+        )
+    finally:
+        if old_tz is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", old_tz)
+        time.tzset()
 
 
 def test_list_first_user_msg_truncation():

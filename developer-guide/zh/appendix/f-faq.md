@@ -228,7 +228,7 @@ Week 3 把历史裸字符串形式下掉了。新形态是结构化对象：
 - 技能改了导致每轮调的工具变多
 - 上下文压缩触发更频繁——查 `max_context_tokens`
 
-对比昨天 vs 今天的 `LLM_TEXT` 事件 token 数。事件存档（[6.6](/zh/part-6/6-observability#事件流存档)）让这件事可行。
+对比昨天 vs 今天的 `LLM_TEXT` 事件 token 数。Session replay（[6.6](/zh/part-6/6-observability#维度三session-replay)）让这件事可行。
 
 ## F.8 开发与测试
 

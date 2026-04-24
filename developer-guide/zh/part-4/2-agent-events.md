@@ -15,21 +15,27 @@ class AgentEvent:
 
 **JSON 可序列化** 约束意味着所有 `data` 字段都能直接转发到 SSE / WebSocket / JSON-RPC，无需额外处理。
 
-## 全部 10 种事件
+## 事件分组
 
 ```
-TURN_START → (LLM call starts)
-├── THINKING *           (可选，0 或多次)
-├── LLM_TEXT *            (流式 chunk，多次)
-├── TOOL_START            (工具开始)
-│   ├── TOOL_CONFIRMATION  (可选，确认弹窗用)
-│   ├── TOOL_OUTPUT *      (流式 chunk，多次)
-│   ├── AGENT_START        (若工具是 sub-agent)
-│   │   └── AGENT_END      (sub-agent 完成)
-│   └── TOOL_COMPLETE      (工具结束)
-├── ERROR                 (可选，出错时)
-└── (下一轮 LLM call 或返回最终 reply)
+TURN_START -> (LLM call starts)
+├── LLM_CALL_STARTED        (调用 provider 前的元数据)
+├── THINKING *              (可选，0 或多次)
+├── LLM_TEXT *              (用户可见的流式 chunk)
+├── LLM_CALL_DELTA          (本次调用新增的 messages)
+├── LLM_CALL_COMPLETED      (usage + finish reason)
+├── TOOL_START              (工具开始)
+│   ├── TOOL_CONFIRMATION   (可选，确认弹窗镜像事件)
+│   ├── TOOL_OUTPUT *       (流式 chunk)
+│   ├── TOOL_COMPLETE       (状态 + 耗时)
+│   └── TOOL_RESULT         (最终内容 / hash / 落盘元数据)
+├── AGENT_START / AGENT_END (sub-agent 生命周期)
+├── ERROR                   (可选，出错时)
+└── replay-only observability events
 ```
+
+大多数 UI 只需要处理 `LLM_TEXT`、`THINKING`、`TOOL_START`、`TOOL_OUTPUT`、`TOOL_COMPLETE`、`TOOL_CONFIRMATION`、`AGENT_START`、`AGENT_END` 和 `ERROR`。
+其他事件主要服务于 session replay、审计、指标和调试。
 
 ## 单事件详解
 
@@ -83,7 +89,7 @@ if event.type == EventType.LLM_TEXT:
 | `data` | `{"tool": "run_shell_command", "args": {...}, "call_id": "uuid"}` |
 | 典型用法 | 在 UI 插入 "Running tool X..." 卡片；记录 `call_id` 做关联 |
 
-`call_id` 是这次调用的唯一键，后续 `TOOL_OUTPUT` 和 `TOOL_COMPLETE` 会带同一个 id，方便在 UI 里把流式输出挂到正确的卡片上。
+`call_id` 是这次调用的唯一键，后续 `TOOL_OUTPUT`、`TOOL_COMPLETE` 和 `TOOL_RESULT` 会带同一个 id，方便在 UI 里把流式输出挂到正确的卡片上。
 
 ### `TOOL_CONFIRMATION`
 
@@ -121,6 +127,40 @@ if event.type == EventType.TOOL_COMPLETE:
                        duration=d["duration_ms"])
 ```
 
+### `TOOL_RESULT`
+
+| 字段 | 说明 |
+|------|------|
+| 触发时机 | 工具最终结果可用后 |
+| `data` | `{"tool": "...", "call_id": "uuid", "content": "...", "content_hash": "sha256:...", "original_chars": 123, "saved_to_disk": false, "disk_path": null, "status": "ok"\|"error"\|"cancelled", "duration_ms": 123, "error": None}` |
+| 典型用法 | 不依赖流式 chunk，持久化或检查工具最终输出 |
+
+普通 UI spinner 优先看 `TOOL_COMPLETE`。`TOOL_RESULT` 更适合 replay、审计、结果 hash 和大输出场景。
+
+### `LLM_CALL_STARTED` / `LLM_CALL_COMPLETED`
+
+| 字段 | 说明 |
+|------|------|
+| 触发时机 | 每次 provider 调用前后 |
+| `data` | 调用前元数据；调用后的 usage / finish 元数据 |
+| 典型用法 | 指标、成本统计、调试模型行为 |
+
+### `LLM_CALL_DELTA`
+
+| 字段 | 说明 |
+|------|------|
+| 触发时机 | 一次 LLM 调用向历史新增 messages 后 |
+| `data` | 相比上次调用新增的 messages |
+| 典型用法 | 用较紧凑的方式做 session replay |
+
+### `LLM_CALL_IO`
+
+| 字段 | 说明 |
+|------|------|
+| 触发时机 | 仅 deep capture 开启时 |
+| `data` | 该次 LLM 调用的完整 prompt / tool payload |
+| 典型用法 | 离线调试；按敏感内容处理 |
+
 ### `ERROR`
 
 | 字段 | 说明 |
@@ -150,6 +190,22 @@ if event.type == EventType.ERROR:
 | 触发时机 | sub-agent 完成 |
 | `data` | `{"agent": "...", "state": "completed"\|"...", "turns": 3, "tool_calls": 5, "tokens": 1200, "duration_ms": 8000, "error": None}` |
 | 典型用法 | 折叠子任务面板、显示汇总 (3 轮/5 次工具/8s) |
+
+### Replay 可观测性事件
+
+这些事件主要用于 session replay 和运行审计。大多数交互式 UI 可以忽略。
+
+| 事件 | 典型 payload / 用途 |
+|------|---------------------|
+| `ASK_USER_REQUESTED` / `ASK_USER_ANSWERED` | 记录 `ask_user()` 的问题和回答 |
+| `BACKGROUND_NOTIFICATION_INJECTED` | 后台通知被注入当前 turn |
+| `CONTEXT_COMPRESSED` | 发生上下文压缩 |
+| `SESSION_SUMMARY_WRITTEN` | 会话摘要已写入 |
+| `SKILL_ACTIVATED` / `SKILL_DEACTIVATED` | Skill 生命周期 |
+| `MEMORY_WRITE` / `MEMORY_DELETE` / `MEMORY_CLEARED` | Memory 变更 |
+| `MODEL_CHANGED` | 运行时模型切换 |
+| `PERMISSION_MODE_CHANGED` / `READONLY_MODE_CHANGED` | 运行时安全模式变化 |
+| `PLUGIN_HOOK_FIRED` | Plugin hook 已执行 |
 
 ## 枚举值的字符串形态
 

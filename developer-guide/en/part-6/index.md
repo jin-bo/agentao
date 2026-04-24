@@ -9,7 +9,7 @@
 - [**6.3 Network & SSRF Defense**](./3-network-ssrf) — Domain layering, httpx redirects, MCP network isolation
 - [**6.4 Multi-Tenant & Filesystem Isolation**](./4-multi-tenant-fs) — working_directory golden rule, DB isolation, /tmp pollution
 - [**6.5 Secrets & Prompt-Injection Defense**](./5-secrets-injection) — Five commandments, attack surfaces, red-team checklist
-- [**6.6 Observability & Audit**](./6-observability) — 4 observation axes, event archive, compliance logs
+- [**6.6 Observability & Audit**](./6-observability) — 4 observation axes, built-in replay, compliance logs
 - [**6.7 Resource Governance & Concurrency**](./7-resource-concurrency) — Session pool, TTL, token budgets, memory estimation
 - [**6.8 Deployment, Canary & Rollback**](./8-deployment) — Dockerfile, K8s StatefulSet, canary dimensions
 

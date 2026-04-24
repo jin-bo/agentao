@@ -34,6 +34,7 @@ Pick the path that matches your goal:
 - [features/memory-quickstart.md](features/memory-quickstart.md)
 - [features/memory-management.md](features/memory-management.md)
 - [features/acp-client.md](features/acp-client.md)
+- [features/session-replay.md](features/session-replay.md)
 - [features/TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md)
 - [features/DATE_CONTEXT_FEATURE.md](features/DATE_CONTEXT_FEATURE.md)
 - [features/CHATAGENT_MD_FEATURE.md](features/CHATAGENT_MD_FEATURE.md)
@@ -44,6 +45,7 @@ Pick the path that matches your goal:
 - [implementation/TOOL_CONFIRMATION.md](implementation/TOOL_CONFIRMATION.md)
 - [implementation/ACP_CLIENT_PROJECT_SERVERS.md](implementation/ACP_CLIENT_PROJECT_SERVERS.md)
 - [implementation/PLUGIN_SYSTEM_MVP_PLAN.md](implementation/PLUGIN_SYSTEM_MVP_PLAN.md)
+- [implementation/SESSION_REPLAY_PLAN.md](implementation/SESSION_REPLAY_PLAN.md)
 - [implementation/MARKETPLACE_PLUGIN_ORGANIZATION.md](implementation/MARKETPLACE_PLUGIN_ORGANIZATION.md)
 - [implementation/SKILL_INSTALL_UPDATE_PLAN.md](implementation/SKILL_INSTALL_UPDATE_PLAN.md)
 - [implementation/ACP_GITHUB_EPIC.md](implementation/ACP_GITHUB_EPIC.md)
@@ -97,6 +99,7 @@ These documents go deeper on specific shipped features.
 | [features/memory-quickstart.md](features/memory-quickstart.md) | Memory usage from a user perspective |
 | [features/memory-management.md](features/memory-management.md) | Memory behavior and implementation details |
 | [features/acp-client.md](features/acp-client.md) | Project-local ACP client/server management |
+| [features/session-replay.md](features/session-replay.md) | Structured JSONL replay of runtime events |
 | [features/TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md) | Tool confirmation behavior and safety model |
 | [features/DATE_CONTEXT_FEATURE.md](features/DATE_CONTEXT_FEATURE.md) | Date/time context injection |
 | [features/CHATAGENT_MD_FEATURE.md](features/CHATAGENT_MD_FEATURE.md) | Project instruction auto-loading |
@@ -111,6 +114,7 @@ Treat these as engineering context, not the canonical user surface:
 - [implementation/TOOL_CONFIRMATION.md](implementation/TOOL_CONFIRMATION.md)
 - [implementation/ACP_CLIENT_PROJECT_SERVERS.md](implementation/ACP_CLIENT_PROJECT_SERVERS.md)
 - [implementation/PLUGIN_SYSTEM_MVP_PLAN.md](implementation/PLUGIN_SYSTEM_MVP_PLAN.md)
+- [implementation/SESSION_REPLAY_PLAN.md](implementation/SESSION_REPLAY_PLAN.md)
 - [implementation/MARKETPLACE_PLUGIN_ORGANIZATION.md](implementation/MARKETPLACE_PLUGIN_ORGANIZATION.md)
 - [implementation/SKILL_INSTALL_UPDATE_PLAN.md](implementation/SKILL_INSTALL_UPDATE_PLAN.md)
 - [implementation/ACP_GITHUB_EPIC.md](implementation/ACP_GITHUB_EPIC.md)

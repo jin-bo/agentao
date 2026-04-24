@@ -81,15 +81,26 @@ Full reference in [Part 4.2](/en/part-4/2-agent-events). This table fixes the tr
 | EventType | 中文 |
 |-----------|------|
 | `TURN_START` | 轮开始 |
-| `TURN_END` | 轮结束 |
 | `TOOL_CONFIRMATION` | 工具确认 |
 | `TOOL_START` | 工具开始 |
 | `TOOL_OUTPUT` | 工具输出 |
 | `TOOL_COMPLETE` | 工具完成 |
+| `TOOL_RESULT` | 工具结果 |
 | `THINKING` | 思考 |
 | `LLM_TEXT` | LLM 文本（流式） |
+| `LLM_CALL_STARTED` / `LLM_CALL_COMPLETED` | LLM 调用开始 / 完成 |
+| `LLM_CALL_DELTA` / `LLM_CALL_IO` | LLM 调用增量 / 完整 IO |
 | `ERROR` | 错误 |
 | `AGENT_START` / `AGENT_END` | Agent 启动 / 结束 |
+| `ASK_USER_REQUESTED` / `ASK_USER_ANSWERED` | 用户询问发起 / 已回答 |
+| `BACKGROUND_NOTIFICATION_INJECTED` | 后台通知注入 |
+| `CONTEXT_COMPRESSED` | 上下文压缩 |
+| `SESSION_SUMMARY_WRITTEN` | 会话摘要写入 |
+| `SKILL_ACTIVATED` / `SKILL_DEACTIVATED` | Skill 激活 / 停用 |
+| `MEMORY_WRITE` / `MEMORY_DELETE` / `MEMORY_CLEARED` | Memory 写入 / 删除 / 清空 |
+| `MODEL_CHANGED` | 模型切换 |
+| `PERMISSION_MODE_CHANGED` / `READONLY_MODE_CHANGED` | 权限模式切换 / 只读模式切换 |
+| `PLUGIN_HOOK_FIRED` | Plugin hook 触发 |
 
 ## G.7 Translation rules of thumb
 

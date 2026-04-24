@@ -318,6 +318,17 @@ def handle_session_new(
             mcp_servers=mcp_servers_internal,
         )
 
+        # Begin a replay instance for this ACP session when recording is
+        # enabled in ``<cwd>/.agentao/settings.json``. Creating the
+        # recorder at session birth (rather than first prompt) means the
+        # on-disk file matches the logical session lifecycle.
+        try:
+            start_replay = getattr(agent, "start_replay", None)
+            if callable(start_replay):
+                start_replay(session_id)
+        except Exception:
+            logger.exception("acp: session/new replay start failed")
+
         state = AcpSessionState(
             session_id=session_id,
             agent=agent,

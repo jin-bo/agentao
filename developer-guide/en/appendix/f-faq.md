@@ -228,7 +228,7 @@ Likely culprits:
 - A skill change made the LLM call more tools per turn
 - Context compression triggered more often — check `max_context_tokens`
 
-Compare `LLM_TEXT` event token counts from yesterday vs today. Event archive ([6.6](/en/part-6/6-observability#event-stream-archive)) is what makes this feasible.
+Compare `LLM_TEXT` event token counts from yesterday vs today. Session replay ([6.6](/en/part-6/6-observability#axis-three-session-replay)) is what makes this feasible.
 
 ## F.8 Development & testing
 

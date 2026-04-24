@@ -51,6 +51,7 @@ MCP 服务器和自定义工具通常有自己的 env 键——写在 `.agentao/
 | `permissions.json` | 项目 + 用户 | [5.4](/zh/part-5/4-permissions) | 权限模式 + 规则 |
 | `sandbox.json` | 项目 + 用户 | [6.2](/zh/part-6/2-shell-sandbox) | Shell 沙箱 profile |
 | `acp.json` | 仅项目 | [3.2](/zh/part-3/2-agentao-as-server) | ACP 服务器配置（Agentao 作为客户端时） |
+| `settings.json` | 仅项目 | [6.6](/zh/part-6/6-observability) | Replay 和其他项目级运行时设置 |
 | `memory.db` | 项目 + 用户 | [5.5](/zh/part-5/5-memory) | SQLite 持久化记忆（非 JSON；此处完整列出） |
 
 ### B.3.1 `mcp.json`
@@ -144,6 +145,38 @@ v0.2.x **不**支持 HTTP 传输，只支持 stdio + SSE。
 | `description` | string | `""` | |
 | `nonInteractivePolicy` | `{"mode": "reject_all" \| "accept_all"}` | `{"mode": "reject_all"}` | 结构化对象（Week 3）。**历史裸字符串形式在配置加载阶段直接报错**，迁移见 [附录 E](./e-migration)。 |
 
+### B.3.5 `settings.json`
+
+项目级运行时设置。Replay 配置从 `<working_directory>/.agentao/settings.json` 的 `replay` 块读取。
+
+```json
+{
+  "replay": {
+    "enabled": false,
+    "max_instances": 20,
+    "capture_flags": {
+      "capture_llm_delta": true,
+      "capture_full_llm_io": false,
+      "capture_tool_result_full": false,
+      "capture_plugin_hook_output_full": false
+    }
+  }
+}
+```
+
+Replay 键：
+
+| 键 | 类型 | 默认 | 说明 |
+|----|------|------|------|
+| `replay.enabled` | bool | `false` | 为后续 session 开启记录。`/replay on` 和 `/replay off` 会写这个值。 |
+| `replay.max_instances` | int | `20` | `.agentao/replays/` 下的保留上限；不影响 `.agentao/sessions/`。 |
+| `replay.capture_flags.capture_llm_delta` | bool | `true` | 记录每次 LLM 调用新增的 messages。 |
+| `replay.capture_flags.capture_full_llm_io` | bool | `false` | deep capture 完整 LLM 输入/输出；按敏感内容处理。 |
+| `replay.capture_flags.capture_tool_result_full` | bool | `false` | 在普通 replay 截断策略之外，deep capture 完整工具结果。 |
+| `replay.capture_flags.capture_plugin_hook_output_full` | bool | `false` | deep capture plugin hook 输出。 |
+
+`settings.json` 格式错误时会回退到安全默认值，不阻塞启动。
+
 ## B.4 构造器参数对应表
 
 上面每个 env 或 JSON 键，`Agentao(...)` 都有对应参数：
@@ -158,6 +191,7 @@ v0.2.x **不**支持 HTTP 传输，只支持 stdio + SSE。
 | `mcp.json` | `extra_mcp_servers=`（叠加在文件之上） |
 | `permissions.json` | `permission_engine=` |
 | `sandbox.json` | 无直接参数——策略在工具调用时读 |
+| `settings.json` replay 块 | 无直接参数——用 `/replay on/off` 或直接编辑文件 |
 
 构造器永远胜出。SaaS 宿主按租户注入配置而不改 env 时很有用。
 

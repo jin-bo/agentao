@@ -117,54 +117,76 @@ turn_dur.observe((time.time() - start) * 1000)
 | Cache hit rate < 30% | System prompt is churning |
 | Confirm timeout rate > 10% | UI issue or user drop-off |
 
-## Axis three: event stream archive
+## Axis three: session replay
 
-Saving each session's `AgentEvent` stream enables:
+Agentao can record each session's runtime timeline as append-only JSONL under `.agentao/replays/`. Enable it per project:
+
+```bash
+/replay on
+```
+
+This writes `.agentao/settings.json`:
+
+```json
+{
+  "replay": {
+    "enabled": true,
+    "max_instances": 20
+  }
+}
+```
+
+Recording starts on the next session. Existing replay files remain readable after `/replay off`.
+
+Replay enables:
 
 - **Session replay** (reconstruct issue scene in UI)
 - **Retroactive debugging** (see where the LLM made the wrong call)
 - **Compliance audit** (user X had the agent do Z at time Y)
 
-### Format
+### Commands
 
-One event per line JSONL:
-
-```json
-{"ts": 1704067200.1, "session": "sess-123", "type": "turn_start", "data": {}}
-{"ts": 1704067200.3, "session": "sess-123", "type": "tool_start", "data": {"tool": "get_customer_orders", "args": {"customer_id": "c-42"}, "call_id": "..."}}
-{"ts": 1704067200.8, "session": "sess-123", "type": "tool_complete", "data": {"tool": "get_customer_orders", "status": "ok", "duration_ms": 500, "call_id": "..."}}
+```bash
+/replays               # list replay instances
+/replays show <id>     # grouped render
+/replays show <id> --raw
+/replays show <id> --turn <turn_id>
+/replays show <id> --kind tool_
+/replays show <id> --errors
+/replays tail <id> 50
+/replays prune
 ```
 
-### Implementation
+Replay files are separate from saved sessions: `save_session` / `load_session` restore conversation state, while replay records what the runtime did.
+
+### Capture depth
+
+Default replay capture includes turn boundaries, user messages, assistant chunks, tool lifecycle, permission decisions, sub-agent lifecycle, errors, state changes, and compact LLM deltas.
+
+Deep capture flags live under `replay.capture_flags` in `.agentao/settings.json`:
+
+| Flag | Default | Risk |
+|------|---------|------|
+| `capture_llm_delta` | `true` | Normal replay history delta |
+| `capture_full_llm_io` | `false` | Full provider payloads; sensitive |
+| `capture_tool_result_full` | `false` | Full tool output; may be large or sensitive |
+| `capture_plugin_hook_output_full` | `false` | Full plugin hook output |
+
+### Custom archive hook
+
+Use the built-in replay recorder first. Add a custom `on_event` archiver only when you need to send selected events into your own audit pipeline:
 
 ```python
-import json, time
-from pathlib import Path
-
-class EventArchiver:
-    def __init__(self, path: Path, session_id: str, tenant_id: str):
-        self.f = path.open("a", encoding="utf-8")
-        self.session_id = session_id
-        self.tenant_id = tenant_id
-
-    def __call__(self, ev):
-        self.f.write(json.dumps({
-            "ts": time.time(),
-            "session": self.session_id,
-            "tenant": self.tenant_id,
+def audit_event(ev):
+    if ev.type in {EventType.TOOL_COMPLETE, EventType.ERROR}:
+        audit_log.info("agent_event", extra={
             "type": ev.type.value,
-            "data": ev.data,
-        }) + "\n")
-        self.f.flush()
+            "session_id": session_id,
+            "tenant_id": tenant.id,
+            **ev.data,
+        })
 
-    def close(self):
-        self.f.close()
-
-archiver = EventArchiver(
-    path=Path(f"/data/tenant-{tenant.id}/events.jsonl"),
-    session_id=session_id, tenant_id=tenant.id,
-)
-transport = SdkTransport(on_event=archiver)
+transport = SdkTransport(on_event=audit_event)
 ```
 
 ## Axis four: distributed tracing
@@ -227,7 +249,7 @@ On a budget:
 
 1. `agentao.log` → per-tenant files, daily rotate, 14d retention
 2. `prometheus_client` → the 5 key metrics, Grafana dashboard
-3. Event JSONL → per session file, 7d retention
+3. Built-in replay JSONL → `.agentao/replays/`, tune `replay.max_instances`
 4. No OpenTelemetry
 
 Enough for 99% of small/mid SaaS. Add APM when you scale.

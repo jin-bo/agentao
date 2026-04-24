@@ -342,8 +342,8 @@ class TestIntegration:
             tmp_proj = Path(tmpdir) / ".agentao"
             tmp_global = Path(tmpdir) / "global"
             with patch("agentao.agent.LLMClient") as mock_llm_cls, \
-                 patch("agentao.agent.load_mcp_config", return_value=[]), \
-                 patch("agentao.agent.McpClientManager"):
+                 patch("agentao.tooling.mcp_tools.load_mcp_config", return_value=[]), \
+                 patch("agentao.tooling.mcp_tools.McpClientManager"):
                 mock_llm = Mock()
                 mock_llm.logger = Mock()
                 mock_llm.model = "test-model"
@@ -378,8 +378,8 @@ class TestIntegration:
             tmp_proj = Path(tmpdir) / ".agentao"
             tmp_global = Path(tmpdir) / "global"
             with patch("agentao.agent.LLMClient") as mock_llm_cls, \
-                 patch("agentao.agent.load_mcp_config", return_value=[]), \
-                 patch("agentao.agent.McpClientManager"):
+                 patch("agentao.tooling.mcp_tools.load_mcp_config", return_value=[]), \
+                 patch("agentao.tooling.mcp_tools.McpClientManager"):
                 mock_llm = Mock()
                 mock_llm.logger = Mock()
                 mock_llm.model = "test-model"
@@ -413,8 +413,8 @@ class TestExtractContextHints:
         from unittest.mock import Mock, patch
 
         with patch("agentao.agent.LLMClient") as mock_llm_cls, \
-             patch("agentao.agent.load_mcp_config", return_value=[]), \
-             patch("agentao.agent.McpClientManager"):
+             patch("agentao.tooling.mcp_tools.load_mcp_config", return_value=[]), \
+             patch("agentao.tooling.mcp_tools.McpClientManager"):
             mock_llm = Mock()
             mock_llm.logger = Mock()
             mock_llm.model = "test-model"

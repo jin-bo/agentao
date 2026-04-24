@@ -15,21 +15,27 @@ class AgentEvent:
 
 The **JSON-serializable** constraint means every `data` payload can ship over SSE / WebSocket / JSON-RPC with no extra marshaling.
 
-## All 10 event types
+## Event groups
 
 ```
-TURN_START → (LLM call starts)
-├── THINKING *            (optional, 0 or more)
-├── LLM_TEXT *            (streaming chunks)
-├── TOOL_START            (tool begins)
-│   ├── TOOL_CONFIRMATION  (optional, mirrors confirm prompt)
-│   ├── TOOL_OUTPUT *      (streaming chunks)
-│   ├── AGENT_START        (if the tool is a sub-agent)
-│   │   └── AGENT_END
-│   └── TOOL_COMPLETE      (tool ends)
-├── ERROR                 (optional, on errors)
-└── (next LLM call or final reply)
+TURN_START -> (LLM call starts)
+├── LLM_CALL_STARTED        (metadata before the provider call)
+├── THINKING *              (optional, 0 or more)
+├── LLM_TEXT *              (visible streaming chunks)
+├── LLM_CALL_DELTA          (new messages since previous call)
+├── LLM_CALL_COMPLETED      (usage + finish reason)
+├── TOOL_START              (tool begins)
+│   ├── TOOL_CONFIRMATION   (optional, mirrors confirm prompt)
+│   ├── TOOL_OUTPUT *       (streaming chunks)
+│   ├── TOOL_COMPLETE       (status + duration)
+│   └── TOOL_RESULT         (final content/hash/disk metadata)
+├── AGENT_START / AGENT_END (sub-agent lifecycle)
+├── ERROR                   (optional, on errors)
+└── replay-only observability events
 ```
+
+Most UIs only need `LLM_TEXT`, `THINKING`, `TOOL_START`, `TOOL_OUTPUT`, `TOOL_COMPLETE`, `TOOL_CONFIRMATION`, `AGENT_START`, `AGENT_END`, and `ERROR`.
+The rest are primarily for session replay, audit, metrics, and debugging.
 
 ## Per-event details
 
@@ -83,7 +89,7 @@ if event.type == EventType.LLM_TEXT:
 | `data` | `{"tool": "run_shell_command", "args": {...}, "call_id": "uuid"}` |
 | Typical use | Insert a "Running X..." card; remember `call_id` to correlate |
 
-`call_id` is the unique key for this invocation. Later `TOOL_OUTPUT` and `TOOL_COMPLETE` carry the same id, so you can route streamed output to the right card.
+`call_id` is the unique key for this invocation. Later `TOOL_OUTPUT`, `TOOL_COMPLETE`, and `TOOL_RESULT` carry the same id, so you can route streamed output to the right card.
 
 ### `TOOL_CONFIRMATION`
 
@@ -121,6 +127,40 @@ if event.type == EventType.TOOL_COMPLETE:
                        duration=d["duration_ms"])
 ```
 
+### `TOOL_RESULT`
+
+| Field | Description |
+|-------|-------------|
+| Trigger | After a tool result is available |
+| `data` | `{"tool": "...", "call_id": "uuid", "content": "...", "content_hash": "sha256:...", "original_chars": 123, "saved_to_disk": false, "disk_path": null, "status": "ok"\|"error"\|"cancelled", "duration_ms": 123, "error": None}` |
+| Typical use | Persist or inspect final tool output without relying on streamed chunks |
+
+For normal UI spinners, prefer `TOOL_COMPLETE`. Use `TOOL_RESULT` for replay, audit, result hashing, and large-output workflows.
+
+### `LLM_CALL_STARTED` / `LLM_CALL_COMPLETED`
+
+| Field | Description |
+|-------|-------------|
+| Trigger | Around each provider call |
+| `data` | Provider-call metadata before the call; usage / finish metadata after the call |
+| Typical use | Metrics, cost tracking, debugging model behavior |
+
+### `LLM_CALL_DELTA`
+
+| Field | Description |
+|-------|-------------|
+| Trigger | After an LLM call adds messages to history |
+| `data` | Messages newly added since the previous call |
+| Typical use | Session replay with compact per-call history |
+
+### `LLM_CALL_IO`
+
+| Field | Description |
+|-------|-------------|
+| Trigger | Only when deep capture is enabled |
+| `data` | Full prompt/tool payloads for the LLM call |
+| Typical use | Offline debugging; treat as sensitive content |
+
 ### `ERROR`
 
 | Field | Description |
@@ -150,6 +190,22 @@ if event.type == EventType.ERROR:
 | Trigger | Sub-agent finishes |
 | `data` | `{"agent": "...", "state": "completed"\|"...", "turns": 3, "tool_calls": 5, "tokens": 1200, "duration_ms": 8000, "error": None}` |
 | Typical use | Collapse sub-task, show summary (3 turns / 5 tool calls / 8s) |
+
+### Replay observability events
+
+These events are emitted for session replay and operational audit. Most interactive UIs can ignore them.
+
+| Event | Typical payload / use |
+|-------|------------------------|
+| `ASK_USER_REQUESTED` / `ASK_USER_ANSWERED` | Records `ask_user()` prompts and answers |
+| `BACKGROUND_NOTIFICATION_INJECTED` | Background notification was injected into the turn |
+| `CONTEXT_COMPRESSED` | Context compression occurred |
+| `SESSION_SUMMARY_WRITTEN` | Session summary persisted |
+| `SKILL_ACTIVATED` / `SKILL_DEACTIVATED` | Skill lifecycle |
+| `MEMORY_WRITE` / `MEMORY_DELETE` / `MEMORY_CLEARED` | Memory mutations |
+| `MODEL_CHANGED` | Runtime model switched |
+| `PERMISSION_MODE_CHANGED` / `READONLY_MODE_CHANGED` | Runtime safety mode changed |
+| `PLUGIN_HOOK_FIRED` | Plugin hook ran |
 
 ## Enum as string
 

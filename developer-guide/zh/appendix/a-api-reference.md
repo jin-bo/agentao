@@ -102,7 +102,7 @@ class AgentEvent:
     data: dict
 ```
 
-10 种 `EventType`——payload 完整参考见 [4.2](/zh/part-4/2-agent-events)。
+`EventType` 覆盖 UI 流式输出、工具生命周期、LLM 调用元数据、replay 可观测性和运行时状态变化。payload 完整参考见 [4.2](/zh/part-4/2-agent-events)。
 
 ## A.3 工具
 

@@ -50,6 +50,44 @@ def _find_created_at(session_dir: Path, session_id: str) -> Optional[str]:
     return None
 
 
+def _parse_session_datetime(value: Any) -> Optional[datetime]:
+    """Parse a persisted session timestamp.
+
+    New session files store ISO datetimes. Older files may only have the
+    filename-style timestamp, so keep that as a compatibility fallback.
+    """
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+
+    iso_text = text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(iso_text)
+    except ValueError:
+        pass
+
+    for fmt in ("%Y%m%d_%H%M%S_%f", "%Y%m%d_%H%M%S"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def format_session_time_local(value: Any) -> str:
+    """Format a session timestamp in the machine's local terminal timezone."""
+    dt = _parse_session_datetime(value)
+    if dt is None:
+        return str(value) if value is not None else ""
+
+    # Naive timestamps came from older local datetime.now() saves, so treat
+    # them as local wall time. Aware timestamps are converted to local time.
+    local_dt = dt.astimezone()
+    return local_dt.strftime("%Y-%m-%d %H:%M:%S %z")
+
+
 def save_session(
     messages: List[Dict[str, Any]],
     model: str,
@@ -70,7 +108,7 @@ def save_session(
     session_dir = _session_dir(project_root)
     session_dir.mkdir(parents=True, exist_ok=True)
 
-    now = datetime.now()
+    now = datetime.now().astimezone()
     sid = session_id or str(_uuid_mod.uuid4())
 
     # Preserve original created_at for continuations; default to now for new sessions.

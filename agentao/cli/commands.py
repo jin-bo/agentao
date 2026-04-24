@@ -514,7 +514,12 @@ def handle_sandbox_command(cli: AgentaoCLI, args: str) -> None:
 
 def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /sessions command."""
-    from ..session import list_sessions, delete_session, delete_all_sessions
+    from ..session import (
+        delete_all_sessions,
+        delete_session,
+        format_session_time_local,
+        list_sessions,
+    )
 
     args = args.strip()
     parts = args.split(None, 1) if args else []
@@ -535,9 +540,11 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
                 console.print(f"    [bold]{s['title']}[/bold]")
             console.print(f"    Model: [dim]{s['model']}[/dim]  Messages: {s['message_count']}")
             if s.get("created_at"):
-                console.print(f"    Created: {s['created_at'][:19]}  Updated: {s.get('updated_at', '')[:19]}")
+                created = format_session_time_local(s["created_at"])
+                updated = format_session_time_local(s.get("updated_at"))
+                console.print(f"    Created: {created}  Updated: {updated}")
             else:
-                console.print(f"    Saved: {s['timestamp']}")
+                console.print(f"    Saved: {format_session_time_local(s['timestamp'])}")
             if s["active_skills"]:
                 console.print(f"    Skills: {', '.join(s['active_skills'])}")
             console.print()
@@ -617,6 +624,15 @@ def resume_session(cli: AgentaoCLI, session_id: Optional[str] = None) -> None:
     cli.current_session_id = match.get("session_id") or str(_uuid_mod.uuid4())
     cli.agent._session_id = cli.current_session_id
     cli.agent.tool_runner._session_id = cli.current_session_id
+
+    # Restart replay so subsequent turns are recorded under the resumed session.
+    try:
+        cli.agent.end_replay()
+        cli.agent.reload_replay_config()
+        cli.agent.start_replay(cli.current_session_id)
+    except Exception:
+        pass
+
     sid_display = cli.current_session_id[:8]
     title_display = f": {match['title']}" if match.get("title") else ""
     msg_count = len(messages)

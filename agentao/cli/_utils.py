@@ -44,6 +44,8 @@ _SLASH_COMMANDS = [
     '/memory tag', '/memory user', '/mode', '/model', '/permission', '/provider', '/quit',
     '/sessions', '/sessions delete', '/sessions delete all', '/sessions list', '/sessions resume',
     '/plugins', '/plugins list',
+    '/replay', '/replay off', '/replay on',
+    '/replays', '/replays list', '/replays prune', '/replays show', '/replays tail',
     '/skills', '/skills activate', '/skills deactivate',
     '/skills disable', '/skills enable', '/skills reload', '/status', '/temperature',
     '/todos', '/tools',
@@ -80,6 +82,8 @@ _SLASH_COMMAND_HINTS = {
     '/sessions delete': '<session-id>',
     '/mcp add': '<name> <command|url>',
     '/mcp remove': '<name>',
+    '/replays show': '<id>',
+    '/replays tail': '<id> [n]',
 }
 
 

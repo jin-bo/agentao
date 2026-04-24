@@ -245,6 +245,16 @@ def handle_session_load(
             session_id,
         )
 
+        # Begin a fresh replay instance for this session/load. The spec
+        # requires a new instance file rather than appending to the old
+        # one, even when the logical ``session_id`` is reused.
+        try:
+            start_replay = getattr(agent, "start_replay", None)
+            if callable(start_replay):
+                start_replay(session_id)
+        except Exception:
+            logger.exception("acp: session/load replay start failed")
+
         # 8) Now register: replay is done, no live turn can race against
         #    the historical updates. Any race with a concurrent
         #    ``session/load`` for the same id is caught here.

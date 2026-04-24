@@ -23,12 +23,29 @@ def on_session_start(cli: AgentaoCLI) -> None:
     except Exception:
         pass
 
+    # Begin a new replay instance if recording is enabled. No-op when
+    # replay.enabled=false in .agentao/settings.json.
+    try:
+        cli.agent.reload_replay_config()
+        cli.agent.start_replay(cli.current_session_id)
+    except Exception:
+        pass
+
     _dispatch_session_start_hooks(cli)
 
 
 def on_session_end(cli: AgentaoCLI) -> None:
     """Hook called at the end of every session (before /clear, /new, or exit)."""
     _dispatch_session_end_hooks(cli)
+
+    # Close the current replay instance before persisting the session.
+    # The SESSION_REPLAY_PLAN reserves ``session_saved`` for an explicit
+    # save entrypoint; the auto-save triggered by /clear / /new / exit
+    # does NOT emit it.
+    try:
+        cli.agent.end_replay()
+    except Exception:
+        pass
 
     if not cli.agent.messages:
         return

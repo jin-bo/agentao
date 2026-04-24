@@ -606,8 +606,6 @@ class TestAgentaoMergeLogic:
     def test_init_mcp_reads_extras_and_merges(self, tmp_path, monkeypatch):
         """When file config is empty, the extras dict is what gets passed
         to ``McpClientManager``."""
-        from agentao import agent as agent_module
-
         captured: Dict[str, Any] = {}
 
         def fake_load_mcp_config(*, project_root):
@@ -627,8 +625,12 @@ class TestAgentaoMergeLogic:
             def get_client(self, name):
                 return None
 
-        monkeypatch.setattr(agent_module, "load_mcp_config", fake_load_mcp_config)
-        monkeypatch.setattr(agent_module, "McpClientManager", _FakeManager)
+        monkeypatch.setattr(
+            "agentao.tooling.mcp_tools.load_mcp_config", fake_load_mcp_config
+        )
+        monkeypatch.setattr(
+            "agentao.tooling.mcp_tools.McpClientManager", _FakeManager
+        )
 
         agent = self._make_bare_agent(
             tmp_path, {"foo": {"command": "echo", "args": ["hi"]}}
@@ -645,8 +647,6 @@ class TestAgentaoMergeLogic:
         self, tmp_path, monkeypatch
     ):
         """Per-name override: ACP-injected entry replaces a file-loaded one."""
-        from agentao import agent as agent_module
-
         captured: Dict[str, Any] = {}
 
         def fake_load_mcp_config(*, project_root):
@@ -669,8 +669,12 @@ class TestAgentaoMergeLogic:
             def get_client(self, name):
                 return None
 
-        monkeypatch.setattr(agent_module, "load_mcp_config", fake_load_mcp_config)
-        monkeypatch.setattr(agent_module, "McpClientManager", _FakeManager)
+        monkeypatch.setattr(
+            "agentao.tooling.mcp_tools.load_mcp_config", fake_load_mcp_config
+        )
+        monkeypatch.setattr(
+            "agentao.tooling.mcp_tools.McpClientManager", _FakeManager
+        )
 
         agent = self._make_bare_agent(
             tmp_path,
@@ -691,10 +695,8 @@ class TestAgentaoMergeLogic:
     def test_init_mcp_returns_none_when_both_sources_empty(
         self, tmp_path, monkeypatch
     ):
-        from agentao import agent as agent_module
-
         monkeypatch.setattr(
-            agent_module, "load_mcp_config", lambda **kw: {}
+            "agentao.tooling.mcp_tools.load_mcp_config", lambda **kw: {}
         )
         agent = self._make_bare_agent(tmp_path, {})
         assert agent._init_mcp() is None
@@ -704,8 +706,6 @@ class TestAgentaoMergeLogic:
     ):
         """A broken file config must not prevent ACP-injected servers from
         being passed to the manager — Issue 11's non-fatal contract."""
-        from agentao import agent as agent_module
-
         captured: Dict[str, Any] = {}
 
         def boom(**_kw):
@@ -725,8 +725,10 @@ class TestAgentaoMergeLogic:
             def get_client(self, name):
                 return None
 
-        monkeypatch.setattr(agent_module, "load_mcp_config", boom)
-        monkeypatch.setattr(agent_module, "McpClientManager", _FakeManager)
+        monkeypatch.setattr("agentao.tooling.mcp_tools.load_mcp_config", boom)
+        monkeypatch.setattr(
+            "agentao.tooling.mcp_tools.McpClientManager", _FakeManager
+        )
 
         agent = self._make_bare_agent(
             tmp_path, {"foo": {"command": "echo", "args": []}}
@@ -741,8 +743,6 @@ class TestAgentaoMergeLogic:
     ):
         """A failing ``connect_all`` is logged and downgraded; tool
         registration for already-discovered tools still proceeds."""
-        from agentao import agent as agent_module
-
         class _FakeManager:
             def __init__(self, configs):
                 self.clients = {"foo": object()}
@@ -757,9 +757,11 @@ class TestAgentaoMergeLogic:
                 return None
 
         monkeypatch.setattr(
-            agent_module, "load_mcp_config", lambda **kw: {}
+            "agentao.tooling.mcp_tools.load_mcp_config", lambda **kw: {}
         )
-        monkeypatch.setattr(agent_module, "McpClientManager", _FakeManager)
+        monkeypatch.setattr(
+            "agentao.tooling.mcp_tools.McpClientManager", _FakeManager
+        )
 
         agent = self._make_bare_agent(
             tmp_path, {"foo": {"command": "echo", "args": []}}

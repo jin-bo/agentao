@@ -117,54 +117,76 @@ turn_dur.observe((time.time() - start) * 1000)
 | cache 命中率 < 30% | 系统提示在抖 |
 | confirm 超时率 > 10% | UI 问题或用户流失 |
 
-## 维度三：事件流存档
+## 维度三：Session Replay
 
-每会话的 `AgentEvent` 流如果能**完整保存**，你能做：
+Agentao 可以把每个 session 的运行时间线记录成 `.agentao/replays/` 下的 append-only JSONL。按项目开启：
+
+```bash
+/replay on
+```
+
+这会写入 `.agentao/settings.json`：
+
+```json
+{
+  "replay": {
+    "enabled": true,
+    "max_instances": 20
+  }
+}
+```
+
+记录从下一个 session 开始生效。执行 `/replay off` 后，已有 replay 文件仍可读取。
+
+Replay 能支持：
 
 - **按会话重放**（线上 UI 重建问题现场）
 - **回溯调试**（看 LLM 在哪一步做了错决定）
 - **合规审计**（用户 X 在时间 Y 让 Agent 做了 Z）
 
-### 存档格式
+### 命令
 
-一行一个事件的 JSONL：
-
-```json
-{"ts": 1704067200.1, "session": "sess-123", "type": "turn_start", "data": {}}
-{"ts": 1704067200.3, "session": "sess-123", "type": "tool_start", "data": {"tool": "get_customer_orders", "args": {"customer_id": "c-42"}, "call_id": "..."}}
-{"ts": 1704067200.8, "session": "sess-123", "type": "tool_complete", "data": {"tool": "get_customer_orders", "status": "ok", "duration_ms": 500, "call_id": "..."}}
+```bash
+/replays               # 列出 replay instances
+/replays show <id>     # 分组渲染
+/replays show <id> --raw
+/replays show <id> --turn <turn_id>
+/replays show <id> --kind tool_
+/replays show <id> --errors
+/replays tail <id> 50
+/replays prune
 ```
 
-### 实现
+Replay 文件和保存的 session 是两套东西：`save_session` / `load_session` 恢复可继续对话的 conversation state；replay 记录 runtime 做过什么。
+
+### 捕获深度
+
+默认 replay 会记录 turn 边界、用户消息、assistant chunk、工具生命周期、权限决策、sub-agent 生命周期、错误、状态变化，以及紧凑的 LLM delta。
+
+Deep capture 开关位于 `.agentao/settings.json` 的 `replay.capture_flags` 下：
+
+| 开关 | 默认 | 风险 |
+|------|------|------|
+| `capture_llm_delta` | `true` | 普通 replay 历史 delta |
+| `capture_full_llm_io` | `false` | 完整 provider payload；敏感 |
+| `capture_tool_result_full` | `false` | 完整工具输出；可能很大或敏感 |
+| `capture_plugin_hook_output_full` | `false` | 完整 plugin hook 输出 |
+
+### 自定义归档 hook
+
+优先使用内建 replay。只有当你需要把部分事件送入自己的审计管线时，再额外加 `on_event` archiver：
 
 ```python
-import json, time
-from pathlib import Path
-
-class EventArchiver:
-    def __init__(self, path: Path, session_id: str, tenant_id: str):
-        self.f = path.open("a", encoding="utf-8")
-        self.session_id = session_id
-        self.tenant_id = tenant_id
-
-    def __call__(self, ev):
-        self.f.write(json.dumps({
-            "ts": time.time(),
-            "session": self.session_id,
-            "tenant": self.tenant_id,
+def audit_event(ev):
+    if ev.type in {EventType.TOOL_COMPLETE, EventType.ERROR}:
+        audit_log.info("agent_event", extra={
             "type": ev.type.value,
-            "data": ev.data,
-        }) + "\n")
-        self.f.flush()
+            "session_id": session_id,
+            "tenant_id": tenant.id,
+            **ev.data,
+        })
 
-    def close(self):
-        self.f.close()
-
-archiver = EventArchiver(
-    path=Path(f"/data/tenant-{tenant.id}/events.jsonl"),
-    session_id=session_id, tenant_id=tenant.id,
-)
-transport = SdkTransport(on_event=archiver)
+transport = SdkTransport(on_event=audit_event)
 ```
 
 ## 维度四：分布式追踪
@@ -227,7 +249,7 @@ async def chat(req: ChatRequest):
 
 1. `agentao.log` → 每租户独立文件、日切、保 14 天
 2. `prometheus_client` → 上面 5 个关键指标、Grafana 面板
-3. 事件 JSONL → 每会话一文件，保 7 天
+3. 内建 replay JSONL → `.agentao/replays/`，通过 `replay.max_instances` 控制保留量
 4. 无 OpenTelemetry
 
 这套够 99% 的中小 SaaS 用。上规模后再加 APM。
