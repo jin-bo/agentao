@@ -79,6 +79,47 @@ class TestEntrypointArgparse:
         assert called.get("acp") is True
         assert "main" not in called
 
+    def test_help_flag_prints_help_and_exits(self, monkeypatch, capsys):
+        """``agentao --help`` must print argparse help and exit(0) rather
+        than fall through into interactive mode (regression test for the
+        pre-0.2.13 smoke failure where ``add_help=False`` combined with
+        ``parse_known_args`` silently swallowed ``--help``)."""
+        from agentao import cli
+
+        monkeypatch.setattr(
+            cli, "main", lambda **kw: pytest.fail("interactive main called"),
+        )
+        monkeypatch.setattr(
+            cli, "run_print_mode", lambda *a, **kw: pytest.fail("print mode called"),
+        )
+        monkeypatch.setattr(
+            cli, "run_acp_mode", lambda: pytest.fail("acp mode called"),
+        )
+        monkeypatch.setattr(sys, "argv", ["agentao", "--help"])
+
+        with pytest.raises(SystemExit) as exc:
+            cli.entrypoint()
+        assert exc.value.code == 0
+
+        out = capsys.readouterr().out
+        assert "usage: agentao" in out
+        assert "--acp" in out
+
+    def test_short_help_flag_prints_help_and_exits(self, monkeypatch, capsys):
+        """``agentao -h`` is the standard POSIX short form and must behave
+        identically to ``--help``."""
+        from agentao import cli
+
+        monkeypatch.setattr(
+            cli, "main", lambda **kw: pytest.fail("interactive main called"),
+        )
+        monkeypatch.setattr(sys, "argv", ["agentao", "-h"])
+
+        with pytest.raises(SystemExit) as exc:
+            cli.entrypoint()
+        assert exc.value.code == 0
+        assert "usage: agentao" in capsys.readouterr().out
+
     def test_stdio_without_acp_exits_with_error(self, monkeypatch, capsys):
         """``--stdio`` alone is a typo guard — fail fast on stderr."""
         from agentao import cli

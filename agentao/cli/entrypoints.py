@@ -264,6 +264,13 @@ def _build_parser():
     import argparse
 
     parser = argparse.ArgumentParser(prog="agentao", add_help=False)
+    parser.add_argument(
+        "-h", "--help",
+        dest="show_help",
+        action="store_true",
+        default=False,
+        help="Show this help message and exit.",
+    )
     parser.add_argument("-p", "--print", dest="prompt", nargs="?", const="", default=None)
     parser.add_argument(
         "--resume",
@@ -378,6 +385,10 @@ def entrypoint():
 
     parser = _build_parser()
     args, _ = parser.parse_known_args()
+
+    if getattr(args, "show_help", False):
+        parser.print_help()
+        sys.exit(0)
 
     _top_dirs = getattr(args, "plugin_dirs", []) or []
     _sub_dirs = getattr(args, "sub_plugin_dirs", None) or []

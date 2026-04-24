@@ -11,6 +11,32 @@ _No changes yet._
 
 ---
 
+## [0.2.13rc1] — 2026-04-24
+
+_Pre-release. Cuts the decomposed runtime and session-replay subsystem from `main` for integrator soak._
+
+### Added
+
+- **Session replay subsystem** (`agentao/replay/`): JSONL timeline of runtime events written to `.agentao/replays/`, with recorder, reader, redaction, retention, and sanitization. Wired through `transport/events.py` and surfaced via the new `cli/replay_commands.py` / `replay_render.py`. Feature docs: `docs/features/session-replay.md`. Tests: `tests/test_replay*`, `tests/test_replay_redact.py`.
+- **`agentao --help` / `agentao -h`**: explicit `-h` / `--help` handler on the top-level CLI parser. Prints usage and exits `0` instead of silently falling through to interactive mode (the previous `add_help=False` + `parse_known_args()` combination swallowed the flag). Regression coverage: `tests/test_acp_cli_entrypoint.py::TestEntrypointArgparse::test_help_flag_prints_help_and_exits` and `test_short_help_flag_prints_help_and_exits`.
+
+### Changed
+
+- **Runtime decomposition** — four monolithic modules split into focused packages; public `Agentao.chat()` / `tool_runner` contract preserved (`agentao/tool_runner.py` kept as a compat shim):
+  - `agentao/runtime/` (new): `chat_loop`, `tool_runner`, `model`, `llm_call`, `turn` extracted from `agent.py` (~660 net lines removed from `agent.py`).
+  - `agentao/acp_client/manager.py` (2938 lines) → `manager/` package (`connection`, `core`, `helpers`, `interactions`, `lifecycle`, `recovery`, `status`, `turns`).
+  - `agentao/cli/commands_ext.py` (1688 lines) → `commands_ext/` package (`acp`, `agents`, `crystallize`, `memory`).
+  - `agentao/cli/app.py` shrunk by ~800 lines; new CLI modules `input_loop`, `ui`, `acp_inbox`.
+  - `agentao/prompts/` (new): `builder` + `sections` + `helpers` for system-prompt composition. `agent._build_system_prompt()` and `agent._load_project_instructions()` retained as thin facades so existing tests and external patches keep working.
+  - `agentao/tooling/` (new): `registry`, `agent_tools`, `mcp_tools`.
+- **Docs**: `docs/ACP.md` version examples bumped from `0.2.10` to `0.2.13rc1`. Developer-guide `part-2/2-constructor-reference.md`, `part-5/5-memory.md`, `part-5/6-system-prompt.md` (en + zh mirrors) updated to reference the new `prompts/builder.py` location for system-prompt composition.
+
+### Notes for integrators
+
+- `0.2.13rc1` is the soak build for the `0.2.13` line. API surface for replay events and the new package layouts is expected to be stable through GA; file any breakage against the `0.2.13` milestone before the GA cut.
+
+---
+
 ## [0.2.12] — 2026-04-22
 
 ### Added
