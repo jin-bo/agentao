@@ -40,8 +40,6 @@ jobs:
         run: npm ci
 
       - name: Build VitePress site
-        env:
-          DOCS_BASE: /agentao/
         run: npm run docs:build
 
       - name: Setup Pages

@@ -223,8 +223,8 @@ const enSidebar = [
 export default defineConfig({
   title: 'Agentao Developer Guide',
   description: 'Embed the Agentao harness into your application',
-  // GitHub Pages project site lives under /agentao/; local dev/preview stays at /.
-  // Override in CI via DOCS_BASE=/agentao/ (set by .github/workflows/deploy-developer-guide.yml).
+  // Served from custom domain agentao.cn at the root. Override with DOCS_BASE only
+  // if deploying to a subpath (e.g. a GitHub Pages project site under /agentao/).
   base: process.env.DOCS_BASE || '/',
   cleanUrls: true,
   lastUpdated: true,
