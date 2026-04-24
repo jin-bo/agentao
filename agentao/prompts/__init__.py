@@ -7,6 +7,7 @@ existing tests and any external callers continue to work.
 """
 
 from .builder import SystemPromptBuilder
+from .helpers import extract_context_hints, load_project_instructions
 from .sections import (
     build_identity_section,
     build_reliability_section,
@@ -26,4 +27,6 @@ __all__ = [
     "build_completion_standard_section",
     "build_untrusted_input_section",
     "build_operational_guidelines",
+    "extract_context_hints",
+    "load_project_instructions",
 ]

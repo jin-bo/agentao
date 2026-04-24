@@ -1,6 +1,6 @@
 # 2.2 Constructor Reference
 
-Full signature (`agentao/agent.py:71-93`):
+Full signature (`agentao/agent.py`, `Agentao.__init__`):
 
 ```python
 Agentao(

@@ -83,7 +83,7 @@ agent._memory_manager.user_store = None
 
 ## 提示词里的两个记忆块
 
-Agentao 在系统提示中注入两种块（源码 `agentao/agent.py::_build_system_prompt()`）：
+Agentao 在系统提示中注入两种块（组装逻辑在 `agentao/prompts/builder.py::SystemPromptBuilder.build()`，由 `agent._build_system_prompt()` facade 转发）：
 
 ### `<memory-stable>` — 稳定块
 

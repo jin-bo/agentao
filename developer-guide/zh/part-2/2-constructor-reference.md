@@ -1,6 +1,6 @@
 # 2.2 构造器完整参数表
 
-`Agentao.__init__` 的签名（`agentao/agent.py:71-93`）：
+`Agentao.__init__` 的签名（`agentao/agent.py`，`Agentao.__init__`）：
 
 ```python
 Agentao(

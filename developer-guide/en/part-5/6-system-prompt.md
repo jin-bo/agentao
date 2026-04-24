@@ -4,7 +4,7 @@ The agent's system prompt is **rebuilt every `chat()` turn**, not a static strin
 
 ## System prompt structure
 
-Source: `agentao/agent.py::_build_system_prompt()` (lines 603-734)
+Source: `agentao/prompts/builder.py::SystemPromptBuilder.build()` (composition), invoked via the `agentao/agent.py::_build_system_prompt()` facade.
 
 ```
 ┌────────────────────────────────────────────┐

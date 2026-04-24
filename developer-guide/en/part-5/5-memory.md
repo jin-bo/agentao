@@ -82,7 +82,7 @@ Works for the session, forgotten on process exit.
 
 ## The two prompt blocks
 
-Agentao injects two memory blocks into the system prompt (source `agentao/agent.py::_build_system_prompt()`):
+Agentao injects two memory blocks into the system prompt (composition lives in `agentao/prompts/builder.py::SystemPromptBuilder.build()`, invoked via the `agent._build_system_prompt()` facade):
 
 ### `<memory-stable>` — stable block
 

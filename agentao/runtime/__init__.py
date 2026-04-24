@@ -12,8 +12,10 @@ preserved for external users of the library.
 """
 
 from .chat_loop import ChatLoopRunner
+from .llm_call import run_llm_call
 from .model import list_available_models, set_model, set_provider
 from .tool_runner import ToolRunner
+from .turn import run_turn
 
 __all__ = [
     "ChatLoopRunner",
@@ -21,4 +23,6 @@ __all__ = [
     "list_available_models",
     "set_model",
     "set_provider",
+    "run_llm_call",
+    "run_turn",
 ]
