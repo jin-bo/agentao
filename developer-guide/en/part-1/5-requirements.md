@@ -91,9 +91,9 @@ Install only what you need to keep the dependency surface minimal.
 
 - Agentao is currently in **0.x (Beta)**. Breaking changes can land between minor versions — pin exact versions:
   ```
-  agentao==0.2.10     # or >=0.2.10,<0.3
+  agentao==0.2.13     # or >=0.2.13,<0.3
   ```
-- This guide targets **v0.2.10 GA**. Version-specific notes will be flagged inline.
+- This guide targets **v0.2.13 GA**. Version-specific notes will be flagged inline.
 
 ## Checklist
 

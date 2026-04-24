@@ -4,13 +4,13 @@
 
 ```bash
 # 推荐：pin 一个精确版本
-pip install 'agentao==0.2.10'
+pip install 'agentao==0.2.13'
 
 # uv 用户
-uv add 'agentao==0.2.10'
+uv add 'agentao==0.2.13'
 
 # 带可选工具包
-pip install 'agentao[pdf,excel,tokenizer]==0.2.10'
+pip install 'agentao[pdf,excel,tokenizer]==0.2.13'
 ```
 
 可选 extras 见 [1.5 运行环境要求](/zh/part-1/5-requirements)。
@@ -69,7 +69,7 @@ def get_agent():
 
 ```python
 import agentao
-print(agentao.__version__)   # "0.2.11-dev" 或 "0.2.10"
+print(agentao.__version__)   # "0.2.14-dev" 或 "0.2.13"
 ```
 
 生产代码建议在启动时校验：
@@ -78,7 +78,7 @@ print(agentao.__version__)   # "0.2.11-dev" 或 "0.2.10"
 import agentao
 from packaging.version import Version
 
-MIN = Version("0.2.10")
+MIN = Version("0.2.13")
 if Version(agentao.__version__) < MIN:
     raise RuntimeError(f"Need agentao >= {MIN}, got {agentao.__version__}")
 ```

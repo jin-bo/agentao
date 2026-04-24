@@ -80,7 +80,7 @@ agentao --acp --stdio
     "agentInfo": {
       "name": "agentao",
       "title": "Agentao",
-      "version": "0.2.10"
+      "version": "0.2.13"
     },
     "extensions": [
       {

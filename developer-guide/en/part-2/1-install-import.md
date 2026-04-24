@@ -4,13 +4,13 @@
 
 ```bash
 # Recommended: pin an exact version
-pip install 'agentao==0.2.10'
+pip install 'agentao==0.2.13'
 
 # uv users
-uv add 'agentao==0.2.10'
+uv add 'agentao==0.2.13'
 
 # With optional extras
-pip install 'agentao[pdf,excel,tokenizer]==0.2.10'
+pip install 'agentao[pdf,excel,tokenizer]==0.2.13'
 ```
 
 Extras are listed in [1.5 Requirements](/en/part-1/5-requirements).
@@ -68,7 +68,7 @@ def get_agent():
 
 ```python
 import agentao
-print(agentao.__version__)   # "0.2.10" / "0.2.11-dev"
+print(agentao.__version__)   # "0.2.13" / "0.2.14-dev"
 ```
 
 In production, verify at startup:
@@ -77,7 +77,7 @@ In production, verify at startup:
 import agentao
 from packaging.version import Version
 
-MIN = Version("0.2.10")
+MIN = Version("0.2.13")
 if Version(agentao.__version__) < MIN:
     raise RuntimeError(f"Need agentao >= {MIN}, got {agentao.__version__}")
 ```
