@@ -14,6 +14,7 @@ from agentao.skills.installer import (
 )
 from agentao.skills.registry import InstalledSkillRecord, SkillRegistry
 from agentao.skills.sources import FetchResult, SkillSource, SourceSpec, UpdateInfo
+from agentao.skills.sources import GitHubSkillSource
 
 
 # ------------------------------------------------------------------
@@ -34,6 +35,7 @@ class FakeSource(SkillSource):
             owner=parts[0] if len(parts) > 0 else "owner",
             repo=parts[1] if len(parts) > 1 else "repo",
             ref=None,
+            package_path="",
             archive_url=f"https://fake/{ref}",
         )
 
@@ -85,6 +87,48 @@ class TestNormalizeSkillName:
 
     def test_collapse_hyphens(self):
         assert normalize_skill_name("my--skill") == "my-skill"
+
+
+# ------------------------------------------------------------------
+# GitHub ref parsing
+# ------------------------------------------------------------------
+
+class TestGitHubSkillSourceResolve:
+    def test_owner_repo(self):
+        spec = GitHubSkillSource().resolve("owner/repo")
+        assert spec.owner == "owner"
+        assert spec.repo == "repo"
+        assert spec.package_path == ""
+        assert spec.ref is None
+
+    def test_owner_repo_with_ref(self):
+        spec = GitHubSkillSource().resolve("owner/repo@v1.2")
+        assert spec.owner == "owner"
+        assert spec.repo == "repo"
+        assert spec.package_path == ""
+        assert spec.ref == "v1.2"
+
+    def test_owner_repo_with_package_path(self):
+        spec = GitHubSkillSource().resolve("anthropics/skills:skills/pdf")
+        assert spec.owner == "anthropics"
+        assert spec.repo == "skills"
+        assert spec.package_path == "skills/pdf"
+        assert spec.ref is None
+
+    def test_owner_repo_with_package_path_and_ref(self):
+        spec = GitHubSkillSource().resolve("anthropics/skills:skills/pdf@main")
+        assert spec.owner == "anthropics"
+        assert spec.repo == "skills"
+        assert spec.package_path == "skills/pdf"
+        assert spec.ref == "main"
+
+    def test_rejects_empty_package_path(self):
+        with pytest.raises(ValueError, match="Package path cannot be empty"):
+            GitHubSkillSource().resolve("owner/repo:")
+
+    def test_rejects_parent_package_path(self):
+        with pytest.raises(ValueError, match="relative path"):
+            GitHubSkillSource().resolve("owner/repo:../secret")
 
 
 # ------------------------------------------------------------------
@@ -283,6 +327,44 @@ class TestInstall:
         record = installer.install("owner/my-skill@v1.2")
         assert record.source_ref == "owner/my-skill@v1.2"
 
+    def test_install_from_package_path(self, tmp_path):
+        """Installing owner/repo:path validates and copies only that subdirectory."""
+        repo = tmp_path / "repo"
+        _create_valid_skill(repo / "skills" / "pdf", "pdf")
+        _create_valid_skill(repo / "skills" / "docx", "docx")
+
+        class PathSource(FakeSource):
+            def resolve(self, ref):
+                spec = super().resolve("anthropics/skills")
+                spec.package_path = "skills/pdf"
+                return spec
+
+        reg = SkillRegistry(tmp_path / "reg.json")
+        installer = SkillInstaller(reg, PathSource(repo), "project", tmp_path)
+        record = installer.install("anthropics/skills:skills/pdf")
+
+        assert record.name == "pdf"
+        assert record.source_ref == "anthropics/skills:skills/pdf"
+        installed = Path(record.install_dir)
+        assert (installed / "SKILL.md").exists()
+        assert not (installed / "skills" / "docx").exists()
+
+    def test_install_from_missing_package_path_fails(self, tmp_path):
+        repo = tmp_path / "repo"
+        _create_valid_skill(repo / "skills" / "pdf", "pdf")
+
+        class PathSource(FakeSource):
+            def resolve(self, ref):
+                spec = super().resolve("anthropics/skills")
+                spec.package_path = "skills/missing"
+                return spec
+
+        reg = SkillRegistry(tmp_path / "reg.json")
+        installer = SkillInstaller(reg, PathSource(repo), "project", tmp_path)
+
+        with pytest.raises(SkillValidationError, match="Package path 'skills/missing'"):
+            installer.install("anthropics/skills:skills/missing")
+
     def test_install_rejects_invalid_package(self, tmp_path):
         pkg = tmp_path / "bad-pkg"
         pkg.mkdir()
@@ -334,6 +416,27 @@ class TestUpdate:
         from agentao.skills.installer import SkillInstallError
         with pytest.raises(SkillInstallError, match="not found"):
             installer.update("nonexistent")
+
+    def test_update_preserves_package_path_source_ref(self, tmp_path):
+        repo = tmp_path / "repo"
+        _create_valid_skill(repo / "skills" / "pdf", "pdf")
+
+        class PathSource(FakeSource):
+            def resolve(self, ref):
+                spec = super().resolve("anthropics/skills")
+                spec.package_path = "skills/pdf"
+                return spec
+
+        reg = SkillRegistry(tmp_path / "reg.json")
+        source = PathSource(repo, has_update=True)
+        installer = SkillInstaller(reg, source, "project", tmp_path)
+
+        record = installer.install("anthropics/skills:skills/pdf")
+        assert record.source_ref == "anthropics/skills:skills/pdf"
+
+        updated = installer.update("pdf")
+        assert updated is not None
+        assert updated.source_ref == "anthropics/skills:skills/pdf"
 
 
 # ------------------------------------------------------------------
@@ -399,6 +502,22 @@ class TestFindPackageRoot:
         installer = self._make_installer(tmp_path)
         with pytest.raises(SkillValidationError, match="No SKILL.md"):
             installer._find_package_root(extracted)
+
+    def test_package_path(self, tmp_path):
+        extracted = tmp_path / "extracted"
+        skill = extracted / "skills" / "pdf"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("test", encoding="utf-8")
+        installer = self._make_installer(tmp_path)
+        assert installer._find_package_root(extracted, "skills/pdf") == skill
+
+    def test_package_path_without_skill_md(self, tmp_path):
+        extracted = tmp_path / "extracted"
+        skill = extracted / "skills" / "pdf"
+        skill.mkdir(parents=True)
+        installer = self._make_installer(tmp_path)
+        with pytest.raises(SkillValidationError, match="No SKILL.md"):
+            installer._find_package_root(extracted, "skills/pdf")
 
     def test_ambiguous_multiple_subdirs(self, tmp_path):
         extracted = tmp_path / "extracted"

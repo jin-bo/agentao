@@ -71,6 +71,26 @@ Source: `agentao/skills/manager.py:27-43`
 - **User-customizable**: leave `~/.agentao/skills/` for user-authored skills
 - **Ephemeral/test**: use `.agentao/skills/` for project-local skills you don't want in git
 
+### Remote installs
+
+The CLI can install managed skills from GitHub:
+
+```bash
+agentao skill install owner/repo[:path][@ref]
+```
+
+If `:path` is present, Agentao installs that repository subdirectory as a single
+skill package. For example, Anthropic's official PDF skill lives inside a larger
+repository:
+
+```bash
+agentao skill install anthropics/skills:skills/pdf
+```
+
+Project-scoped installs go to `<project-root>/.agentao/skills/`; global installs
+use `~/.agentao/skills/`. The repo-level `skills/` directory still has the
+highest priority, so product-shipped skills can override managed installs.
+
 ### Multi-tenant isolation
 
 In ACP / multi-instance Python, each agent's `working_directory` determines which project-level skills it sees — tenants stay isolated.

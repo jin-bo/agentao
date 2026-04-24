@@ -107,6 +107,71 @@ Main documentation content goes here...
 
 3. Update the name and description in the frontmatter
 
+## Installing Anthropic Official Claude Code Skills
+
+Anthropic publishes the official Claude Code skills in
+[`anthropics/skills`](https://github.com/anthropics/skills). Agentao can install
+a single skill from a GitHub repository subdirectory with:
+
+```bash
+agentao skill install owner/repo:path/to/skill
+```
+
+To install the official document and documentation co-authoring skills into the
+current project:
+
+```bash
+agentao skill install anthropics/skills:skills/pptx
+agentao skill install anthropics/skills:skills/docx
+agentao skill install anthropics/skills:skills/xlsx
+agentao skill install anthropics/skills:skills/pdf
+agentao skill install anthropics/skills:skills/doc-coauthoring
+```
+
+By default, Agentao installs into the current project's managed skill directory:
+
+```text
+<project-root>/.agentao/skills/
+```
+
+Use `--scope global` if you want the skills available across projects:
+
+```bash
+agentao skill install anthropics/skills:skills/pdf --scope global
+```
+
+Verify that Agentao can discover them:
+
+```bash
+agentao skill list
+```
+
+Expected skill names:
+
+- `pptx` - PowerPoint presentations, decks, and slides
+- `docx` - Word documents
+- `xlsx` - spreadsheets
+- `pdf` - PDF workflows
+- `doc-coauthoring` - structured documentation co-authoring
+
+These skills may rely on external tools such as LibreOffice, Poppler, Node
+packages, or Python packages. Agentao installs the skill instructions; runtime
+dependencies are documented inside each skill's `SKILL.md` and are not installed
+automatically.
+
+To pin a branch, tag, or commit:
+
+```bash
+agentao skill install anthropics/skills:skills/pdf@main
+```
+
+Managed installs can be updated later:
+
+```bash
+agentao skill update pdf
+agentao skill update --all
+```
+
 ## Using Skills in Agentao
 
 ### List Available Skills

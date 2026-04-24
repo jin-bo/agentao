@@ -29,6 +29,12 @@ class TestBuildParser:
         assert args.force is False
         assert args.scope is None
 
+    def test_skill_install_with_package_path(self):
+        args = self._parse(["skill", "install", "anthropics/skills:skills/pdf"])
+        assert args.subcommand == "skill"
+        assert args.skill_action == "install"
+        assert args.ref == "anthropics/skills:skills/pdf"
+
     def test_skill_install_with_scope_and_force(self):
         args = self._parse(
             ["skill", "install", "owner/repo", "--scope", "global", "--force"]

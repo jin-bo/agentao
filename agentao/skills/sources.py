@@ -20,6 +20,7 @@ class SourceSpec:
     owner: str
     repo: str
     ref: Optional[str]     # branch/tag, None = default branch
+    package_path: str      # optional subdirectory containing SKILL.md
     archive_url: str
 
 
@@ -77,15 +78,31 @@ class GitHubSkillSource(SkillSource):
         return headers
 
     def resolve(self, ref: str) -> SourceSpec:
-        """Parse ``owner/repo`` or ``owner/repo@ref``."""
+        """Parse ``owner/repo[:path][@ref]``."""
         at_ref = None
         if "@" in ref:
             ref, at_ref = ref.rsplit("@", 1)
 
+        package_path = ""
+        if ":" in ref:
+            ref, package_path = ref.split(":", 1)
+            package_path = package_path.strip("/")
+            if not package_path:
+                raise ValueError(
+                    f"Invalid GitHub ref '{ref}:'. Package path cannot be empty."
+                )
+            if package_path.startswith("/") or any(
+                part in ("", ".", "..") for part in package_path.split("/")
+            ):
+                raise ValueError(
+                    f"Invalid GitHub ref package path '{package_path}'. "
+                    "Use a relative path like skills/pdf."
+                )
+
         parts = ref.strip("/").split("/")
         if len(parts) != 2 or not parts[0] or not parts[1]:
             raise ValueError(
-                f"Invalid GitHub ref '{ref}'. Expected format: owner/repo"
+                f"Invalid GitHub ref '{ref}'. Expected format: owner/repo[:path][@ref]"
             )
 
         owner, repo = parts
@@ -98,6 +115,7 @@ class GitHubSkillSource(SkillSource):
             owner=owner,
             repo=repo,
             ref=at_ref,
+            package_path=package_path,
             archive_url=archive_url,
         )
 

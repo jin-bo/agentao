@@ -331,7 +331,7 @@ def _build_parser():
     skill_sub = skill_parser.add_subparsers(dest="skill_action")
 
     install_p = skill_sub.add_parser("install", help="Install a skill from GitHub")
-    install_p.add_argument("ref", help="GitHub ref: owner/repo")
+    install_p.add_argument("ref", help="GitHub ref: owner/repo[:path][@ref]")
     install_p.add_argument(
         "--scope", choices=["global", "project"], default=None,
         help="Install scope (default: auto-detect)",

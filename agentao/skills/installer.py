@@ -122,7 +122,9 @@ class SkillInstaller:
             except Exception as exc:
                 raise SkillFetchError(f"Failed to fetch {ref}: {exc}") from exc
 
-            package_root = self._find_package_root(result.extracted_dir)
+            package_root = self._find_package_root(
+                result.extracted_dir, spec.package_path
+            )
             skill_name, warnings = self._validate_package(package_root)
 
             # Print warnings (non-fatal)
@@ -153,6 +155,8 @@ class SkillInstaller:
 
             # Build record — preserve the full ref including @tag if present
             full_ref = f"{spec.owner}/{spec.repo}"
+            if spec.package_path:
+                full_ref += f":{spec.package_path}"
             if spec.ref:
                 full_ref += f"@{spec.ref}"
             record = InstalledSkillRecord(
@@ -200,7 +204,9 @@ class SkillInstaller:
                     f"Failed to fetch update for '{name}': {exc}"
                 ) from exc
 
-            package_root = self._find_package_root(result.extracted_dir)
+            package_root = self._find_package_root(
+                result.extracted_dir, spec.package_path
+            )
             skill_name, warnings = self._validate_package(package_root)
             for w in warnings:
                 print(f"  Warning: {w}")
@@ -234,8 +240,24 @@ class SkillInstaller:
     # Package discovery
     # ------------------------------------------------------------------
 
-    def _find_package_root(self, extracted_dir: Path) -> Path:
+    def _find_package_root(self, extracted_dir: Path, package_path: str = "") -> Path:
         """Locate the directory containing SKILL.md."""
+        if package_path:
+            package_root = extracted_dir / package_path
+            if not package_root.exists():
+                raise SkillValidationError(
+                    f"Package path '{package_path}' not found in repository archive."
+                )
+            if not package_root.is_dir():
+                raise SkillValidationError(
+                    f"Package path '{package_path}' is not a directory."
+                )
+            if not (package_root / "SKILL.md").exists():
+                raise SkillValidationError(
+                    f"No SKILL.md found in package path '{package_path}'."
+                )
+            return package_root
+
         if (extracted_dir / "SKILL.md").exists():
             return extracted_dir
 
