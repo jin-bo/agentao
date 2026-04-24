@@ -8,16 +8,22 @@ Get up and running with Agentao in under 2 minutes!
 pip install agentao
 ```
 
-## 2. Set Up Your API Key
+## 2. Set Up Your Provider Variables
+
+Agentao requires **all three** provider variables at startup. Missing any of them raises `ValueError` immediately:
+
+- `OPENAI_API_KEY` — your API key
+- `OPENAI_BASE_URL` — API endpoint (e.g. `https://api.openai.com/v1`)
+- `OPENAI_MODEL` — model name (e.g. `gpt-5.4`, no default)
 
 ```bash
-echo "OPENAI_API_KEY=your-api-key-here" > .env
+printf "OPENAI_API_KEY=your-api-key-here\nOPENAI_BASE_URL=https://api.openai.com/v1\nOPENAI_MODEL=gpt-5.4\n" > .env
 ```
 
 Or copy the example file if you have a source checkout:
 ```bash
 cp .env.example .env
-# Edit .env and add your API key
+# Edit .env and fill in all three values
 ```
 
 ## 3. Run Agentao

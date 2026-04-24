@@ -30,10 +30,10 @@ Get Agentao running in about 3 minutes:
 pip install agentao
 ```
 
-2. Create a local `.env` file:
+2. Create a local `.env` file. Agentao requires **all three** provider variables at startup — missing `OPENAI_BASE_URL` or `OPENAI_MODEL` raises `ValueError` immediately:
 
 ```bash
-echo "OPENAI_API_KEY=sk-your-key-here" > .env
+printf "OPENAI_API_KEY=sk-your-key-here\nOPENAI_BASE_URL=https://api.openai.com/v1\nOPENAI_MODEL=gpt-5.4\n" > .env
 ```
 
 3. Verify the CLI works:
@@ -426,10 +426,10 @@ If your goal is simply "get Agentao running", read this section together with [M
 pip install agentao
 ```
 
-Then create a `.env` file with your API key:
+Then create a `.env` file. Agentao requires **all three** provider variables at startup — `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`:
 
 ```bash
-echo "OPENAI_API_KEY=your-api-key-here" > .env
+printf "OPENAI_API_KEY=your-api-key-here\nOPENAI_BASE_URL=https://api.openai.com/v1\nOPENAI_MODEL=gpt-5.4\n" > .env
 ```
 
 ### For contributors (source install)
@@ -450,7 +450,7 @@ Everything you need to get Agentao running from scratch.
 Recommended first-run order:
 
 1. Confirm your Python version.
-2. Set `OPENAI_API_KEY` in `.env`.
+2. Set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` in `.env` (all three are mandatory).
 3. Run the minimal example.
 4. If it fails, check the startup troubleshooting table below.
 
@@ -626,6 +626,7 @@ Agentao supports switching between providers at runtime with `/provider`. Add cr
 ```env
 # OpenAI (default)
 OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-5.4
 
 # Gemini
