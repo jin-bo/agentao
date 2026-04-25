@@ -35,7 +35,11 @@ Plus a single end-to-end stdio subprocess test that brings up a real
 with distinct ids.
 
 All tests use the same ``FakeAgent`` pattern as the per-issue tests so
-no LLM credentials are required.
+no LLM credentials are required. Test doubles and server builders live
+in :mod:`tests.support.acp_agents` and :mod:`tests.support.acp_server`.
+The local :class:`FakeAgent` here defaults to ``track_messages=True``
+because the multi-session isolation tests assert per-session message
+history independence (see :class:`TestMessageHistoryIsolation`).
 """
 
 from __future__ import annotations
@@ -75,19 +79,28 @@ from agentao.acp.transport import (
 from agentao.cancellation import CancellationToken
 from agentao.session import save_session
 
+from .support.acp_agents import (
+    StallingFakeAgent,
+    make_factory,
+    make_round_robin_factory,
+)
+from .support.acp_agents import FakeAgent as _FakeAgent
+from .support.acp_server import make_initialized_server, make_server
+
 
 # ===========================================================================
 # Test doubles
 # ===========================================================================
 
 
-class FakeAgent:
-    """Minimal Agentao replacement.
+class FakeAgent(_FakeAgent):
+    """Multi-session local variant: ``track_messages=True`` by default.
 
-    Records ``chat`` calls and exposes a ``messages`` list so tests can
-    assert that conversation state stays per-session. ``side_effect``
-    runs *inside* ``chat`` before returning, used to fire cancel tokens
-    or coordinate barriers in concurrency tests.
+    The multi-session message-isolation tests assert per-session
+    conversation state, which requires ``chat`` to mirror real Agentao
+    by appending user/assistant entries to ``self.messages``. Other ACP
+    test files use the support default (``track_messages=False``)
+    because their assertions on ``messages`` would regress.
     """
 
     def __init__(
@@ -95,98 +108,13 @@ class FakeAgent:
         reply: str = "ok",
         *,
         side_effect: Optional[Callable[[CancellationToken], None]] = None,
+        track_messages: bool = True,
     ) -> None:
-        self.reply = reply
-        self.side_effect = side_effect
-        self.messages: List[Dict[str, Any]] = []
-        self.chat_calls: List[Tuple[str, CancellationToken]] = []
-        self.close_calls = 0
-
-    def chat(
-        self,
-        user_message: str,
-        max_iterations: int = 100,
-        cancellation_token: Optional[CancellationToken] = None,
-    ) -> str:
-        assert cancellation_token is not None, "handler must always pass a token"
-        self.chat_calls.append((user_message, cancellation_token))
-        # Mirror real Agentao: append the user message to the running history
-        # so the multi-session message-isolation test can observe it.
-        self.messages.append({"role": "user", "content": user_message})
-        if self.side_effect is not None:
-            self.side_effect(cancellation_token)
-        # If the side effect cancelled, return a sentinel like the real
-        # agent would; the handler reads ``token.is_cancelled`` for the
-        # stopReason, so the literal value here is just for completeness.
-        if cancellation_token.is_cancelled:
-            return "[Cancelled: acp]"
-        self.messages.append({"role": "assistant", "content": self.reply})
-        return self.reply
-
-    def close(self) -> None:
-        self.close_calls += 1
-
-
-class StallingFakeAgent:
-    """Fake agent whose ``chat`` blocks until either the token is
-    cancelled or a release event fires.
-
-    Used by the cancellation-isolation and concurrency tests so a turn
-    is observably *in flight* while another session does work.
-    """
-
-    def __init__(self) -> None:
-        self.entered = threading.Event()
-        self.release = threading.Event()
-        self.observed_cancellation = False
-        self.chat_calls = 0
-        self.close_calls = 0
-
-    def chat(
-        self,
-        user_message: str,
-        max_iterations: int = 100,
-        cancellation_token: Optional[CancellationToken] = None,
-    ) -> str:
-        self.chat_calls += 1
-        assert cancellation_token is not None
-        self.entered.set()
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            if cancellation_token.is_cancelled:
-                self.observed_cancellation = True
-                return "[Cancelled: acp]"
-            if self.release.is_set():
-                return "released"
-            time.sleep(0.005)
-        return "timeout"
-
-    def close(self) -> None:
-        self.close_calls += 1
-
-
-def make_factory(agent: Any) -> Callable[..., Any]:
-    """Return an agent factory that always yields the given fake."""
-    def factory(**kwargs: Any) -> Any:
-        return agent
-    return factory
-
-
-def make_round_robin_factory(agents: List[Any]) -> Callable[..., Any]:
-    """Return a factory that yields each agent in ``agents`` in turn.
-
-    Used by tests that build N sessions in one ``initialized_server``
-    so each session gets its own fake without monkeypatching.
-    """
-    iterator = iter(agents)
-
-    def factory(**kwargs: Any) -> Any:
-        try:
-            return next(iterator)
-        except StopIteration as e:
-            raise AssertionError("agent factory exhausted") from e
-
-    return factory
+        super().__init__(
+            reply=reply,
+            side_effect=side_effect,
+            track_messages=track_messages,
+        )
 
 
 # ===========================================================================
@@ -246,23 +174,18 @@ class CapturingStdout:
 
 @pytest.fixture
 def server():
-    return AcpServer(stdin=io.StringIO(""), stdout=io.StringIO())
+    return make_server()
 
 
 @pytest.fixture
-def initialized_server(server):
-    acp_initialize.handle_initialize(
-        server,
-        {
-            "protocolVersion": ACP_PROTOCOL_VERSION,
-            "clientCapabilities": {
-                "fs": {"readTextFile": True, "writeTextFile": True},
-                "terminal": True,
-            },
-            "clientInfo": {"name": "multi-session-test", "version": "0.0.1"},
+def initialized_server():
+    return make_initialized_server(
+        client_capabilities={
+            "fs": {"readTextFile": True, "writeTextFile": True},
+            "terminal": True,
         },
+        client_info={"name": "multi-session-test", "version": "0.0.1"},
     )
-    return server
 
 
 def _new_session(

@@ -12,6 +12,9 @@ Three layers of coverage:
    inside ``session/prompt``, send ``session/cancel`` over stdin, and
    verify that the prompt response surfaces ``stopReason: "cancelled"``
    and that ``run()`` exits cleanly without hanging.
+
+Test doubles and server builders live in :mod:`tests.support.acp_agents`
+and :mod:`tests.support.acp_server`.
 """
 
 from __future__ import annotations
@@ -41,6 +44,9 @@ from agentao.acp.protocol import (
 from agentao.acp.server import AcpServer, JsonRpcHandlerError
 from agentao.cancellation import CancellationToken
 
+from .support.acp_agents import StallingFakeAgent
+from .support.acp_server import make_initialized_server, make_server
+
 
 # ---------------------------------------------------------------------------
 # Fixtures + helpers
@@ -49,19 +55,12 @@ from agentao.cancellation import CancellationToken
 
 @pytest.fixture
 def server():
-    return AcpServer(stdin=io.StringIO(""), stdout=io.StringIO())
+    return make_server()
 
 
 @pytest.fixture
-def initialized_server(server):
-    acp_initialize.handle_initialize(
-        server,
-        {
-            "protocolVersion": ACP_PROTOCOL_VERSION,
-            "clientCapabilities": {},
-        },
-    )
-    return server
+def initialized_server():
+    return make_initialized_server()
 
 
 def _register_session(
@@ -426,46 +425,6 @@ class BlockingStdin:
             self._closed = True
             return ""
         return item
-
-
-class StallingFakeAgent:
-    """Fake agent whose chat() blocks on a barrier and polls the token.
-
-    Mirrors the real agent loop's "check token between iterations"
-    pattern: it sets a barrier event so the test can synchronize on
-    "chat is now in flight", then waits in a loop until the token is
-    cancelled OR a release event fires (test escape hatch).
-    """
-
-    def __init__(self) -> None:
-        self.entered = threading.Event()
-        self.release = threading.Event()
-        self.observed_cancellation = False
-        self.chat_calls = 0
-        self.close_calls = 0
-
-    def chat(
-        self,
-        user_message: str,
-        max_iterations: int = 100,
-        cancellation_token: Optional[CancellationToken] = None,
-    ) -> str:
-        self.chat_calls += 1
-        assert cancellation_token is not None
-        self.entered.set()
-        # Poll the token cooperatively, just like the real agent loop.
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            if cancellation_token.is_cancelled:
-                self.observed_cancellation = True
-                return "[Cancelled: acp]"
-            if self.release.is_set():
-                return "released"
-            time.sleep(0.005)
-        return "timeout"
-
-    def close(self) -> None:
-        self.close_calls += 1
 
 
 class TestEndToEndCancel:

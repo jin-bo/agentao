@@ -4,6 +4,8 @@ These drive :class:`AcpSessionManager` and :class:`AcpSessionState`
 directly with a fake ``Agentao``-shaped stub so we don't need real API
 credentials or an LLM client. The one integration test at the bottom
 verifies the ``AcpServer.run()`` finally-block shutdown hook.
+
+Test doubles live in :mod:`tests.support.acp_agents`.
 """
 
 from __future__ import annotations
@@ -23,32 +25,7 @@ from agentao.acp.session_manager import (
 )
 from agentao.cancellation import CancellationToken
 
-
-# ---------------------------------------------------------------------------
-# Test doubles
-# ---------------------------------------------------------------------------
-
-class FakeAgent:
-    """Stand-in for ``Agentao`` — just records that ``close`` was called.
-
-    Real ``Agentao`` construction requires provider credentials and pulls
-    the full LLM/tool stack. The registry only touches ``.close()`` on
-    the runtime, so a one-method double is enough.
-    """
-
-    def __init__(self) -> None:
-        self.close_calls = 0
-
-    def close(self) -> None:
-        self.close_calls += 1
-
-
-class ExplodingAgent(FakeAgent):
-    """Fake agent whose ``close`` raises, to test shutdown robustness."""
-
-    def close(self) -> None:
-        self.close_calls += 1
-        raise RuntimeError("simulated MCP disconnect failure")
+from .support.acp_agents import ExplodingAgent, FakeAgent
 
 
 def _state(

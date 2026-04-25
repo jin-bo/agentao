@@ -1,12 +1,11 @@
 """Tests for ACP client JSON-RPC layer (Issue 03).
 
 Uses a tiny in-process mock ACP server script spawned via subprocess to
-exercise the real NDJSON wire protocol end-to-end.
+exercise the real NDJSON wire protocol end-to-end. The mock server and
+its handle builder live in :mod:`tests.support.acp_client`.
 """
 
 import json
-import sys
-import textwrap
 import threading
 import time
 from pathlib import Path
@@ -21,85 +20,9 @@ from agentao.acp_client.client import (
     AcpRpcError,
     _PendingRequest,
 )
-from agentao.acp_client.models import AcpServerConfig, ServerState
-from agentao.acp_client.process import ACPProcessHandle
+from agentao.acp_client.models import ServerState
 
-# ---------------------------------------------------------------------------
-# Mock ACP server script
-# ---------------------------------------------------------------------------
-
-# A minimal ACP server that reads NDJSON from stdin, handles initialize and
-# session/new, and echoes everything else as an error.
-_MOCK_SERVER_SCRIPT = textwrap.dedent("""\
-    import json
-    import sys
-
-    def respond(rid, result):
-        msg = {"jsonrpc": "2.0", "id": rid, "result": result}
-        sys.stdout.write(json.dumps(msg) + "\\n")
-        sys.stdout.flush()
-
-    def respond_error(rid, code, message):
-        msg = {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}}
-        sys.stdout.write(json.dumps(msg) + "\\n")
-        sys.stdout.flush()
-
-    def send_notification(method, params=None):
-        msg = {"jsonrpc": "2.0", "method": method}
-        if params is not None:
-            msg["params"] = params
-        sys.stdout.write(json.dumps(msg) + "\\n")
-        sys.stdout.flush()
-
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        method = req.get("method", "")
-        rid = req.get("id")
-
-        if method == "initialize":
-            respond(rid, {
-                "protocolVersion": 1,
-                "agentCapabilities": {"loadSession": True},
-                "agentInfo": {"name": "mock", "title": "Mock", "version": "0.1"},
-            })
-        elif method == "session/new":
-            respond(rid, {"sessionId": "sess_test123"})
-        elif method == "echo":
-            respond(rid, req.get("params", {}))
-        elif method == "fail":
-            respond_error(rid, -32603, "intentional failure")
-        elif method == "notify_me":
-            # Send a notification, then respond.
-            send_notification("session/update", {"status": "hello"})
-            respond(rid, {"ok": True})
-        elif method == "slow":
-            import time
-            time.sleep(5)
-            respond(rid, {"ok": True})
-        else:
-            respond_error(rid, -32601, f"method not found: {method}")
-""")
-
-
-def _make_mock_handle(tmp_path: Path) -> ACPProcessHandle:
-    """Create a handle that spawns the mock server."""
-    script = tmp_path / "mock_acp_server.py"
-    script.write_text(_MOCK_SERVER_SCRIPT, encoding="utf-8")
-
-    config = AcpServerConfig(
-        command=sys.executable,
-        args=[str(script)],
-        env={},
-        cwd=str(tmp_path),
-    )
-    return ACPProcessHandle("mock", config)
+from .support.acp_client import make_jsonrpc_mock_handle as _make_mock_handle
 
 
 # ---------------------------------------------------------------------------

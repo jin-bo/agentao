@@ -4,6 +4,10 @@ Uses a fake agent factory so we don't pull the LLM stack or need
 ``OPENAI_API_KEY`` at test time. The factory receives the same kwargs the
 default factory does, so the test double also validates that the handler
 passes the expected arguments.
+
+Test doubles (:class:`FakeAgent`, :class:`ExplodingAgent`, factory
+helpers) live in :mod:`tests.support.acp_agents`; the server builders
+live in :mod:`tests.support.acp_server`.
 """
 
 from __future__ import annotations
@@ -29,78 +33,37 @@ from agentao.acp.server import AcpServer
 from agentao.acp.session_manager import DuplicateSessionError
 from agentao.acp.transport import ACPTransport
 
-
-# ---------------------------------------------------------------------------
-# Test doubles
-# ---------------------------------------------------------------------------
-
-class FakeAgent:
-    """Minimal Agentao replacement — only ``close`` is called by the registry."""
-
-    def __init__(self) -> None:
-        self.close_calls = 0
-
-    def close(self) -> None:
-        self.close_calls += 1
-
-
-class ExplodingAgent(FakeAgent):
-    """Fake agent whose close() raises — validates cleanup robustness."""
-
-    def close(self) -> None:
-        self.close_calls += 1
-        raise RuntimeError("simulated MCP teardown failure")
-
-
-def make_recording_factory():
-    """Return ``(factory, calls)`` — the factory records its kwargs for assertions."""
-    calls: list[dict] = []
-
-    def factory(**kwargs) -> FakeAgent:
-        calls.append(kwargs)
-        return FakeAgent()
-
-    return factory, calls
-
-
-def make_failing_factory(exc: Exception):
-    def factory(**kwargs):
-        raise exc
-    return factory
+from .support.acp_agents import (
+    ExplodingAgent,
+    FakeAgent,
+    make_failing_factory,
+    make_recording_factory,
+)
+from .support.acp_server import make_initialized_server, make_server
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+_FULL_CLIENT_CAPABILITIES = {
+    "fs": {"readTextFile": True, "writeTextFile": True},
+    "terminal": True,
+}
+
+
 @pytest.fixture
 def server():
-    """A fresh AcpServer attached to in-memory streams."""
-    stdin = io.StringIO("")
-    stdout = io.StringIO()
-    return AcpServer(stdin=stdin, stdout=stdout)
+    return make_server()
 
 
 @pytest.fixture
-def initialized_server(server):
-    """A server that has already completed the ``initialize`` handshake."""
-    acp_initialize.handle_initialize(
-        server,
-        {
-            "protocolVersion": ACP_PROTOCOL_VERSION,
-            "clientCapabilities": {
-                "fs": {"readTextFile": True, "writeTextFile": True},
-                "terminal": True,
-            },
-            "clientInfo": {"name": "test-client", "version": "0.0.1"},
-        },
-    )
-    return server
+def initialized_server():
+    return make_initialized_server(client_capabilities=_FULL_CLIENT_CAPABILITIES)
 
 
 @pytest.fixture
 def abs_tmp_dir(tmp_path) -> str:
-    """An absolute, existing, writable directory path as a string."""
     return str(tmp_path)
 
 

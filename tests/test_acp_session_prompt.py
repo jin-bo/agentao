@@ -4,6 +4,9 @@ Uses a ``FakeAgent`` test double so the LLM stack is not loaded and no
 ``OPENAI_API_KEY`` is required. Sessions are created end-to-end through
 the real ``session/new`` handler with an injected fake agent factory,
 which also exercises the factory DI path from Issue 04.
+
+Test doubles and server builders live in :mod:`tests.support.acp_agents`
+and :mod:`tests.support.acp_server`.
 """
 
 from __future__ import annotations
@@ -34,55 +37,8 @@ from agentao.acp.transport import ACPTransport
 from agentao.cancellation import CancellationToken
 from agentao.transport.events import AgentEvent, EventType
 
-
-# ---------------------------------------------------------------------------
-# Test doubles
-# ---------------------------------------------------------------------------
-
-class FakeAgent:
-    """Minimal Agentao replacement.
-
-    Captures each ``chat()`` invocation as a ``(text, token)`` tuple so
-    tests can assert the handler passed the right payload. ``side_effect``
-    is an optional callable that runs before the configured reply is
-    returned — used for cancellation tests (to fire the token) and
-    concurrency tests (to block until a barrier is released).
-    """
-
-    def __init__(
-        self,
-        reply: str = "ok",
-        side_effect: Optional[Callable[[CancellationToken], None]] = None,
-    ) -> None:
-        self.reply = reply
-        self.side_effect = side_effect
-        self.chat_calls: List[Tuple[str, CancellationToken]] = []
-        self.close_calls = 0
-
-    def chat(
-        self,
-        user_message: str,
-        max_iterations: int = 100,
-        cancellation_token: Optional[CancellationToken] = None,
-    ) -> str:
-        # Defensive — handler must always pass a token.
-        assert cancellation_token is not None, "handler must supply a token"
-        self.chat_calls.append((user_message, cancellation_token))
-        if self.side_effect is not None:
-            self.side_effect(cancellation_token)
-        return self.reply
-
-    def close(self) -> None:
-        self.close_calls += 1
-
-
-def make_factory(agent: FakeAgent) -> Callable[..., FakeAgent]:
-    """Return an agent factory that always yields the given FakeAgent."""
-
-    def factory(**kwargs: Any) -> FakeAgent:
-        return agent
-
-    return factory
+from .support.acp_agents import FakeAgent, make_factory
+from .support.acp_server import make_initialized_server, make_server
 
 
 # ---------------------------------------------------------------------------
@@ -91,22 +47,12 @@ def make_factory(agent: FakeAgent) -> Callable[..., FakeAgent]:
 
 @pytest.fixture
 def server():
-    stdin = io.StringIO("")
-    stdout = io.StringIO()
-    return AcpServer(stdin=stdin, stdout=stdout)
+    return make_server()
 
 
 @pytest.fixture
-def initialized_server(server):
-    acp_initialize.handle_initialize(
-        server,
-        {
-            "protocolVersion": ACP_PROTOCOL_VERSION,
-            "clientCapabilities": {},
-            "clientInfo": {"name": "test-client", "version": "0.0.1"},
-        },
-    )
-    return server
+def initialized_server():
+    return make_initialized_server()
 
 
 @pytest.fixture
@@ -121,7 +67,6 @@ def session_with_agent(initialized_server, tmp_path):
         {"cwd": str(tmp_path), "mcpServers": []},
         agent_factory=make_factory(fake),
     )
-    # We just created exactly one session; grab its id directly.
     session_ids = initialized_server.sessions.session_ids()
     assert len(session_ids) == 1
     return initialized_server, session_ids[0], fake

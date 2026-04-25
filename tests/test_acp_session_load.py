@@ -11,6 +11,12 @@ Three layers:
    real :class:`AcpServer.run` loop, persist a fixture session via the
    real :func:`agentao.session.save_session`, load it through the wire,
    and confirm a follow-up prompt continues the same conversation.
+
+Test doubles and server builders live in :mod:`tests.support.acp_agents`
+and :mod:`tests.support.acp_server`. Note: ``FakeAgent`` here uses the
+default ``track_messages=False``, so ``chat`` does not mutate
+``messages`` — the load tests assert that ``messages`` equals the
+hydrated history after a follow-up prompt.
 """
 
 from __future__ import annotations
@@ -48,40 +54,13 @@ from agentao.acp.transport import (
 from agentao.cancellation import CancellationToken
 from agentao.session import save_session
 
+from .support.acp_agents import FakeAgent, make_factory
+from .support.acp_server import make_initialized_server, make_server
+
 
 # ---------------------------------------------------------------------------
 # Test doubles
 # ---------------------------------------------------------------------------
-
-
-class FakeAgent:
-    """Lightweight Agentao replacement that records hydration + chat calls."""
-
-    def __init__(self, reply: str = "fake reply") -> None:
-        self.reply = reply
-        self.messages: List[Dict[str, Any]] = []
-        self.chat_calls: List[Tuple[str, CancellationToken]] = []
-        self.close_calls = 0
-
-    def chat(
-        self,
-        user_message: str,
-        max_iterations: int = 100,
-        cancellation_token: Optional[CancellationToken] = None,
-    ) -> str:
-        assert cancellation_token is not None
-        self.chat_calls.append((user_message, cancellation_token))
-        return self.reply
-
-    def close(self) -> None:
-        self.close_calls += 1
-
-
-def make_factory(agent: FakeAgent) -> Callable[..., FakeAgent]:
-    def factory(**kwargs: Any) -> FakeAgent:
-        return agent
-
-    return factory
 
 
 class RecordingServer:
@@ -107,19 +86,12 @@ class RecordingServer:
 
 @pytest.fixture
 def server():
-    return AcpServer(stdin=io.StringIO(""), stdout=io.StringIO())
+    return make_server()
 
 
 @pytest.fixture
-def initialized_server(server):
-    acp_initialize.handle_initialize(
-        server,
-        {
-            "protocolVersion": ACP_PROTOCOL_VERSION,
-            "clientCapabilities": {},
-        },
-    )
-    return server
+def initialized_server():
+    return make_initialized_server()
 
 
 def _persist_session(

@@ -1,12 +1,13 @@
 """Tests for the ACP embedding public types (Phase 1) and the
 non-interactive turn control layer (Phase 2).
+
+The mock interaction server and the :class:`ACPManager` builder used by
+this file live in :mod:`tests.support.acp_client`.
 """
 
 from __future__ import annotations
 
 import json
-import sys
-import textwrap
 import threading
 import time
 from pathlib import Path
@@ -21,183 +22,9 @@ from agentao.acp_client import (
     AcpRpcError,
     PromptResult,
 )
-from agentao.acp_client.manager import ACPManager, _TurnContext
-from agentao.acp_client.models import (
-    AcpClientConfig,
-    AcpServerConfig,
-    ServerState,
-)
+from agentao.acp_client.models import ServerState
 
-
-# ---------------------------------------------------------------------------
-# Mock ACP server that emits server-initiated requests (permission / ask_user)
-# mid-turn so we can exercise non-interactive policy behavior.
-# ---------------------------------------------------------------------------
-
-_INTERACTION_SERVER_SCRIPT = textwrap.dedent("""\
-    import json
-    import sys
-    import threading
-    import queue
-    import time
-
-    stdin_raw = sys.stdin.buffer if hasattr(sys.stdin, 'buffer') else sys.stdin
-
-    pending_responses = {}
-    response_cv = threading.Condition()
-    cancel_event = threading.Event()
-    write_lock = threading.Lock()
-    next_srv_id = [1000]
-
-    def write(obj):
-        line = json.dumps(obj) + "\\n"
-        with write_lock:
-            sys.stdout.write(line)
-            sys.stdout.flush()
-
-    def respond(rid, result):
-        write({"jsonrpc": "2.0", "id": rid, "result": result})
-
-    def respond_error(rid, code, message):
-        write({"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}})
-
-    def server_request(method, params):
-        sid = next_srv_id[0]
-        next_srv_id[0] += 1
-        write({"jsonrpc": "2.0", "id": sid, "method": method, "params": params})
-        with response_cv:
-            while sid not in pending_responses:
-                response_cv.wait(timeout=5)
-                if sid in pending_responses:
-                    break
-            return pending_responses.pop(sid)
-
-    def reader_thread():
-        for raw_line in stdin_raw:
-            line = raw_line.decode("utf-8", errors="replace").strip()
-            if not line:
-                continue
-            try:
-                req = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if "method" not in req:
-                rid = req.get("id")
-                with response_cv:
-                    pending_responses[rid] = req
-                    response_cv.notify_all()
-                continue
-            method = req.get("method", "")
-            if method == "session/cancel":
-                cancel_event.set()
-                continue
-            msg_queue.put(req)
-        msg_queue.put(None)
-
-    msg_queue = queue.Queue()
-    t = threading.Thread(target=reader_thread, daemon=True)
-    t.start()
-
-    while True:
-        req = msg_queue.get()
-        if req is None:
-            break
-        method = req.get("method", "")
-        rid = req.get("id")
-        params = req.get("params", {})
-        if method == "initialize":
-            respond(rid, {"protocolVersion": 1, "agentCapabilities": {},
-                          "agentInfo": {"name": "mock"}})
-        elif method == "session/new":
-            respond(rid, {"sessionId": "sess_mock"})
-        elif method == "session/prompt":
-            text = ""
-            for block in params.get("prompt", []):
-                if block.get("type") == "text":
-                    text += block.get("text", "")
-            cancel_event.clear()
-            if text == "permission":
-                reply = server_request("session/request_permission", {
-                    "toolCall": {"title": "rm -rf /", "kind": "shell"},
-                    "options": [
-                        {"id": "allow_once", "label": "Allow"},
-                        {"id": "reject_once", "label": "Reject"},
-                    ],
-                })
-                respond(rid, {"stopReason": "end_turn",
-                              "_interaction": reply.get("result")})
-            elif text == "permission_alt":
-                # Non-standard option ids: manager must pick the one
-                # whose 'kind' signals reject, not a hardcoded id.
-                reply = server_request("session/request_permission", {
-                    "toolCall": {"title": "x", "kind": "shell"},
-                    "options": [
-                        {"optionId": "go_ahead", "kind": "allow_once",
-                         "name": "Go ahead"},
-                        {"optionId": "decline_now", "kind": "reject_once",
-                         "name": "Decline"},
-                    ],
-                })
-                respond(rid, {"stopReason": "end_turn",
-                              "_interaction": reply.get("result")})
-            elif text == "permission_no_options":
-                # No options array: manager must send outcome=cancelled,
-                # not a bogus optionId.
-                reply = server_request("session/request_permission", {
-                    "toolCall": {"title": "x"},
-                })
-                respond(rid, {"stopReason": "end_turn",
-                              "_interaction": reply.get("result")})
-            elif text == "ask_user":
-                try:
-                    reply = server_request("_agentao.cn/ask_user", {
-                        "question": "what now?",
-                    })
-                    respond(rid, {"stopReason": "end_turn",
-                                  "_interaction": reply.get("result")})
-                except Exception:
-                    respond(rid, {"stopReason": "end_turn", "_error": True})
-            elif text == "permission_then_wait":
-                # Auto-reject should happen fast; then server holds the prompt
-                # RPC open so tests can observe BUSY before terminal state.
-                server_request("session/request_permission", {
-                    "toolCall": {"title": "x", "kind": "shell"},
-                })
-                # Hold until cancel or 3s.
-                for _ in range(30):
-                    if cancel_event.is_set():
-                        respond(rid, {"stopReason": "cancelled"})
-                        break
-                    time.sleep(0.1)
-                else:
-                    respond(rid, {"stopReason": "end_turn"})
-            elif text == "slow":
-                for _ in range(50):
-                    if cancel_event.is_set():
-                        respond(rid, {"stopReason": "cancelled"})
-                        break
-                    time.sleep(0.1)
-                else:
-                    respond(rid, {"stopReason": "end_turn"})
-            else:
-                respond(rid, {"stopReason": "end_turn"})
-        else:
-            if rid is not None:
-                respond_error(rid, -32601, "unknown")
-""")
-
-
-def _make_mgr(tmp_path: Path, name: str = "srv") -> ACPManager:
-    script = tmp_path / "mock_interaction_server.py"
-    script.write_text(_INTERACTION_SERVER_SCRIPT, encoding="utf-8")
-    cfg = AcpServerConfig(
-        command=sys.executable,
-        args=[str(script)],
-        env={},
-        cwd=str(tmp_path),
-        request_timeout_ms=10_000,
-    )
-    return ACPManager(AcpClientConfig(servers={name: cfg}))
+from .support.acp_client import make_interaction_mock_manager as _make_mgr
 
 
 class TestAcpErrorCode:

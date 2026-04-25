@@ -25,7 +25,6 @@ authoritative in a single place.
 
 from __future__ import annotations
 
-import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -41,7 +40,6 @@ from agentao.acp_client import (
     AcpErrorCode,
     AcpInteractionRequiredError,
     AcpRpcError,
-    AcpServerConfig,
     InteractionPolicy,
     ServerStatus,
     classify_process_death,
@@ -49,7 +47,7 @@ from agentao.acp_client import (
 from agentao.acp_client.manager import AcpServerNotFound, ACPManager
 from agentao.acp_client.models import ServerState
 
-from .test_acp_client_embedding import _make_mgr
+from .support.acp_client import make_interaction_mock_manager as _make_mgr
 
 
 class TestStatusSnapshotShape:
@@ -623,19 +621,10 @@ def _make_mgr_with_policy(tmp_path: Path, policy_mode: str) -> ACPManager:
     ``nonInteractivePolicy`` as an :class:`InteractionPolicy` dataclass,
     bypassing ``from_dict`` (that path is exercised separately in the
     legacy-config tests)."""
-    from .test_acp_client_embedding import _INTERACTION_SERVER_SCRIPT
-
-    script = tmp_path / "mock_interaction_server.py"
-    script.write_text(_INTERACTION_SERVER_SCRIPT, encoding="utf-8")
-    cfg = AcpServerConfig(
-        command=sys.executable,
-        args=[str(script)],
-        env={},
-        cwd=str(tmp_path),
-        request_timeout_ms=10_000,
+    return _make_mgr(
+        tmp_path,
         non_interactive_policy=InteractionPolicy(mode=policy_mode),
     )
-    return ACPManager(AcpClientConfig(servers={"srv": cfg}))
 
 
 class TestInteractionPolicyDefault:
