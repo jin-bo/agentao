@@ -75,9 +75,14 @@ class EventKind:
     SESSION_LOADED = "session_loaded"
     SESSION_FORKED = "session_forked"
 
-    ALL = frozenset({
+    # Versioned partitions. ``V1_0`` is the original event set and is
+    # never retroactively grown — adding a kind is always a v1.1+ event.
+    # ``V1_1_NEW`` holds only what 1.1 added; readers that want the full
+    # 1.1 vocabulary use :data:`V1_1` (the union). The schema generator
+    # in :mod:`agentao.replay.schema` consumes these sets directly so
+    # that the committed schema files stay in lock-step with the code.
+    V1_0 = frozenset({
         REPLAY_HEADER,
-        REPLAY_FOOTER,
         SESSION_STARTED,
         SESSION_ENDED,
         SESSION_SAVED,
@@ -94,7 +99,10 @@ class EventKind:
         SUBAGENT_STARTED,
         SUBAGENT_COMPLETED,
         ERROR,
-        # v1.1
+    })
+
+    V1_1_NEW = frozenset({
+        REPLAY_FOOTER,
         TOOL_RESULT,
         LLM_CALL_STARTED,
         LLM_CALL_COMPLETED,
@@ -117,6 +125,12 @@ class EventKind:
         SESSION_LOADED,
         SESSION_FORKED,
     })
+
+    V1_1 = V1_0 | V1_1_NEW
+
+    # Back-compat alias. Existing callers that imported ``EventKind.ALL``
+    # keep working; new code should pick the version-specific set.
+    ALL = V1_1
 
 
 @dataclass
