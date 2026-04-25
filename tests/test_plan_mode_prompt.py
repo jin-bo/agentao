@@ -162,22 +162,14 @@ def test_plan_tools_hidden_outside_plan_mode():
     agent.tools.register(_StubTool("plan_save"))
     agent.tools.register(_StubTool("plan_finalize"))
 
-    plan_tool_names = {"plan_save", "plan_finalize"}
-
     agent._plan_session.phase = PlanPhase.INACTIVE
-    visible = [
-        t for t in agent.tools.to_openai_format()
-        if agent._plan_mode or t["function"]["name"] not in plan_tool_names
-    ]
+    visible = agent.tools.to_openai_format(plan_mode=agent._plan_mode)
     visible_names = {t["function"]["name"] for t in visible}
     assert "plan_save" not in visible_names
     assert "plan_finalize" not in visible_names
 
     agent._plan_session.phase = PlanPhase.ACTIVE
-    visible_plan = [
-        t for t in agent.tools.to_openai_format()
-        if agent._plan_mode or t["function"]["name"] not in plan_tool_names
-    ]
+    visible_plan = agent.tools.to_openai_format(plan_mode=agent._plan_mode)
     visible_plan_names = {t["function"]["name"] for t in visible_plan}
     assert "plan_save" in visible_plan_names
     assert "plan_finalize" in visible_plan_names

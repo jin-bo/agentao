@@ -152,6 +152,21 @@ class ToolRegistry:
         """List all registered tools."""
         return list(self.tools.values())
 
-    def to_openai_format(self) -> List[Dict[str, Any]]:
-        """Convert all tools to OpenAI function-calling format."""
-        return [tool.to_openai_format() for tool in self.tools.values()]
+    # Tools that are only exposed to the model when plan mode is active.
+    # Centralised here so the chat loop, token accounting, and tests stay in sync.
+    _PLAN_ONLY_TOOLS = frozenset({"plan_save", "plan_finalize"})
+
+    def to_openai_format(self, *, plan_mode: bool = False) -> List[Dict[str, Any]]:
+        """Convert all tools to OpenAI function-calling format.
+
+        Args:
+            plan_mode: When ``False`` (default), plan-only tools (``plan_save``,
+                ``plan_finalize``) are omitted from the schema. The chat loop
+                passes the current plan-session state so the model only sees
+                these tools while plan mode is active.
+        """
+        return [
+            tool.to_openai_format()
+            for tool in self.tools.values()
+            if plan_mode or tool.name not in self._PLAN_ONLY_TOOLS
+        ]

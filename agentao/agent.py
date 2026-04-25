@@ -481,7 +481,7 @@ class Agentao:
         Returns:
             Conversation summary
         """
-        tools_schema = self.tools.to_openai_format()
+        tools_schema = self.tools.to_openai_format(plan_mode=self._plan_mode)
         # Headline count: self.messages only so a fresh session shows 0.
         # When Tier 1 API count is present it already reflects all overhead.
         stats = self.context_manager.get_usage_stats(self.messages)

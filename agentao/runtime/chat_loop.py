@@ -131,12 +131,7 @@ class ChatLoopRunner:
             {"role": "system", "content": system_prompt}
         ] + agent.messages
 
-        # Get tools in OpenAI format; hide plan tools when not in plan mode
-        _plan_tool_names = {"plan_save", "plan_finalize"}
-        tools = [
-            t for t in agent.tools.to_openai_format()
-            if agent._plan_mode or t["function"]["name"] not in _plan_tool_names
-        ]
+        tools = agent.tools.to_openai_format(plan_mode=agent._plan_mode)
 
         # Reset doom-loop counter for this chat() invocation
         agent.tool_runner.reset()

@@ -1,73 +1,15 @@
 """Tool execution pipeline for Agentao."""
 
-import hashlib
-import json
-import threading
-import time
-import uuid
-from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..permissions import PermissionDecision, PermissionEngine
-from ..agents import TaskComplete
-from ..sandbox import SandboxMisconfiguredError, SandboxPolicy
+from ..permissions import PermissionEngine
+from ..sandbox import SandboxPolicy
 from ..tools import ToolRegistry
-from ..transport import AgentEvent, EventType, NullTransport
-
-# Tool outputs larger than this are saved to disk; a head+tail excerpt stays in context.
-TOOL_OUTPUT_SAVE_THRESHOLD = 40_000   # chars  (~10K tokens)
-# Fraction of the threshold kept from the beginning of the output (error context, args)
-TOOL_OUTPUT_HEAD_RATIO = 0.2          # 20% head, 80% tail (errors/results tend to be at end)
-# Directory for saved full outputs (relative to cwd)
-_TOOL_OUTPUT_DIR = Path(".agentao") / "tool-outputs"
-
-# Legacy hard cap for results that fail the file-save path (e.g. write errors)
-MAX_TOOL_RESULT_CHARS = 80_000
-
-
-def _save_and_truncate(
-    content: str, tool_name: str, logger=None,
-) -> Tuple[str, Optional[str]]:
-    """Save large tool output to ``.agentao/tool-outputs/`` and return
-    ``(excerpt, disk_path_or_None)``.
-
-    The full content is preserved on disk so the LLM can ``read_file`` it
-    later. In context only the first 20% and last 80% of
-    ``TOOL_OUTPUT_SAVE_THRESHOLD`` chars are kept. The ``disk_path`` is
-    surfaced so the replay's ``tool_result`` event can record where the
-    full output lives (``None`` when the save attempt failed).
-    """
-    head_chars = int(TOOL_OUTPUT_SAVE_THRESHOLD * TOOL_OUTPUT_HEAD_RATIO)
-    tail_chars = TOOL_OUTPUT_SAVE_THRESHOLD - head_chars
-    total = len(content)
-    omitted = total - TOOL_OUTPUT_SAVE_THRESHOLD
-
-    # Attempt to persist full output
-    file_ref = ""
-    disk_path: Optional[str] = None
-    try:
-        _TOOL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        ts = int(time.time())
-        uid = uuid.uuid4().hex[:6]
-        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in tool_name)
-        out_file = _TOOL_OUTPUT_DIR / f"{safe_name}_{ts}_{uid}.txt"
-        out_file.write_text(content, encoding="utf-8")
-        file_ref = f"\nFull output saved to: {out_file}  (use read_file to access)"
-        disk_path = str(out_file)
-    except Exception as exc:
-        if logger:
-            logger.warning(f"Could not save tool output to file: {exc}")
-
-    excerpt = (
-        f"[Output truncated: {total:,} chars total, showing first {head_chars:,} "
-        f"and last {tail_chars:,} chars.{file_ref}]\n\n"
-        + content[:head_chars]
-        + f"\n\n[… {omitted:,} chars omitted …]\n\n"
-        + content[total - tail_chars :]
-    )
-    return excerpt, disk_path
+from ..transport import AgentEvent, EventType
+from .tool_executor import ToolExecutor
+from .tool_planning import ToolCallDecision, ToolCallPlanner
+from .tool_result_formatter import ToolResultFormatter
 
 
 class ToolRunner:
@@ -100,7 +42,9 @@ class ToolRunner:
         self._transport = transport
         self._logger = logger
         self._sandbox_policy = sandbox_policy
-        self._doom_counter: Counter = Counter()
+        self._planner = ToolCallPlanner(tools, permission_engine, logger)
+        self._executor = ToolExecutor(transport, logger, sandbox_policy)
+        self._formatter = ToolResultFormatter(transport, logger)
         self.readonly_mode: bool = False
         # Plugin hook rules — set by the agent after plugin loading.
         self._plugin_hook_rules: list = []
@@ -127,7 +71,7 @@ class ToolRunner:
 
     def reset(self) -> None:
         """Reset doom-loop counter. Call at the start of each chat() invocation."""
-        self._doom_counter.clear()
+        self._planner.reset()
 
     def execute(self, tool_calls, cancellation_token=None) -> Tuple[bool, List[Dict[str, Any]]]:
         """Run the 4-phase tool execution pipeline.
@@ -143,416 +87,62 @@ class ToolRunner:
         """
         result_messages: List[Dict[str, Any]] = []
 
-        # --- Phase 1: Pre-process (sequential) ---
-        # Doom-loop detection + JSON parsing + permission decisions; no I/O yet.
-        _plans: List[Dict[str, Any]] = []
-        for tool_call in tool_calls:
-            function_name = tool_call.function.name
-            function_args_raw = tool_call.function.arguments
+        # --- Phase 1: Planning (sequential, no I/O) ---
+        # Doom-loop detection, JSON parse, tool lookup, and the
+        # permission decision are all delegated to ToolCallPlanner.
+        planning = self._planner.plan(tool_calls, readonly_mode=self.readonly_mode)
+        result_messages.extend(planning.early_messages)
 
-            _doom_key = (function_name, function_args_raw)
-            self._doom_counter[_doom_key] += 1
-            if self._doom_counter[_doom_key] >= 3:
-                self._logger.warning(
-                    f"Doom-loop detected: {function_name} called 3+ times with identical args"
-                )
+        if planning.doom_loop_triggered:
+            # Placeholder results for plans that had already passed planning
+            # before the offending tool_call tripped the counter — keeps the
+            # tool_call_id ↔ tool message mapping consistent for the LLM.
+            for _plan in planning.plans:
                 result_messages.append({
                     "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": function_name,
-                    "content": (
-                        f"[Doom-loop detected] Tool '{function_name}' was called 3 times "
-                        f"with identical arguments. Execution stopped to prevent an infinite loop. "
-                        f"Please try a different approach or tool."
-                    ),
+                    "tool_call_id": _plan.tool_call.id,
+                    "name": _plan.function_name,
+                    "content": "Tool not executed (halted by doom-loop detection).",
                 })
-                # Placeholder results for already-queued plans so message state stays consistent.
-                for _p in _plans:
-                    result_messages.append({
-                        "role": "tool",
-                        "tool_call_id": _p["tool_call"].id,
-                        "name": _p["function_name"],
-                        "content": "Tool not executed (halted by doom-loop detection).",
-                    })
-                return True, result_messages
+            return True, result_messages
 
-            # Fix #3: guard against malformed JSON from the LLM
-            try:
-                function_args = json.loads(function_args_raw)
-            except json.JSONDecodeError as exc:
-                self._logger.warning(
-                    f"Tool '{function_name}' received invalid JSON arguments: {exc}"
-                )
-                result_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": function_name,
-                    "content": (
-                        f"Error: could not parse arguments for '{function_name}': {exc}. "
-                        f"Please retry with valid JSON."
-                    ),
-                })
-                continue
-
-            # Fix #4 is in ToolRegistry.get() — KeyError now includes available tools
-            try:
-                tool = self._tools.get(function_name)
-            except KeyError as exc:
-                self._logger.warning(str(exc))
-                result_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": function_name,
-                    "content": str(exc),
-                })
-                continue
-
-            # Readonly mode: block all non-read-only tools before any other check.
-            if self.readonly_mode and not tool.is_read_only:
-                raw_decision = PermissionDecision.DENY
-            elif self._permission_engine:
-                engine_decision = self._permission_engine.decide(function_name, function_args)
-                if engine_decision == PermissionDecision.ALLOW:
-                    raw_decision = PermissionDecision.ALLOW
-                elif engine_decision == PermissionDecision.DENY:
-                    raw_decision = PermissionDecision.DENY
-                else:
-                    # No matching rule — fall back to tool's own setting
-                    raw_decision = (
-                        PermissionDecision.ASK
-                        if tool.requires_confirmation
-                        else PermissionDecision.ALLOW
-                    )
-            else:
-                raw_decision = (
-                    PermissionDecision.ASK
-                    if tool.requires_confirmation
-                    else PermissionDecision.ALLOW
-                )
-
-            _plans.append({
-                "tool_call": tool_call,
-                "function_name": function_name,
-                "function_args": function_args,
-                "tool": tool,
-                "decision": raw_decision,
-            })
-
+        _plans = planning.plans
         if not _plans:
             return False, result_messages
 
         # --- Phase 2: Confirmation (sequential, interactive) ---
         # All user-facing prompts happen here before any execution starts.
         for _plan in _plans:
-            if _plan["decision"] == PermissionDecision.ASK:
-                _fn = _plan["function_name"]
+            if _plan.decision == ToolCallDecision.ASK:
+                _fn = _plan.function_name
                 self._logger.info(f"Tool {_fn} requires confirmation")
                 self._transport.emit(AgentEvent(EventType.TOOL_CONFIRMATION, {
-                    "tool": _fn, "args": _plan["function_args"],
+                    "tool": _fn, "args": _plan.function_args,
                 }))
                 _confirmed = self._transport.confirm_tool(
                     _fn,
-                    _plan["tool"].description,
-                    _plan["function_args"],
+                    _plan.tool.description,
+                    _plan.function_args,
                 )
                 if not _confirmed:
                     self._logger.info(f"Tool {_fn} execution cancelled by user")
-                    _plan["decision"] = "CANCELLED"
+                    _plan.decision = ToolCallDecision.CANCELLED
                     # No TOOL_START will fire for cancelled tools — reset spinner explicitly.
                     self._transport.emit(AgentEvent(EventType.TURN_START, {}))
                 else:
                     self._logger.info(f"Tool {_fn} execution confirmed by user")
-                    _plan["decision"] = PermissionDecision.ALLOW
+                    _plan.decision = ToolCallDecision.ALLOW
 
-        # --- Phase 3: Parallel execution ---
-        # Fix #1: per-tool-instance lock prevents concurrent calls to the same tool
-        # from corrupting shared state (e.g. output_callback).  Different tool
-        # instances still run in parallel.
-        _tool_locks: Dict[int, threading.Lock] = {}
-        for _p in _plans:
-            _tid = id(_p["tool"])
-            if _tid not in _tool_locks:
-                _tool_locks[_tid] = threading.Lock()
+        # --- Phase 3: Parallel execution (delegated to ToolExecutor) ---
+        _exec_results = self._executor.execute_batch(
+            _plans,
+            cancellation_token=cancellation_token,
+            readonly_mode=self.readonly_mode,
+            hook_rules=self._plugin_hook_rules,
+            hook_cwd=self._working_directory,
+            hook_session_id=self._session_id,
+        )
 
-        def _execute_one(_plan: Dict[str, Any]) -> tuple:
-            _fn = _plan["function_name"]
-            _args = _plan["function_args"]
-            _tool = _plan["tool"]
-            _tc = _plan["tool_call"]
-            _decision = _plan["decision"]
-            _call_id = _tc.id
-            _t0 = time.monotonic()
-
-            self._transport.emit(AgentEvent(EventType.TOOL_START, {
-                "tool": _fn, "args": _args, "call_id": _call_id,
-            }))
-
-            _status = "ok"
-            _duration_ms = 0
-            _completion_error: Optional[str] = None
-            if _decision == PermissionDecision.DENY:
-                self._logger.info(f"Tool {_fn} denied")
-                if self.readonly_mode and not _tool.is_read_only:
-                    _result = (
-                        f"[Readonly mode] Tool '{_fn}' is blocked — "
-                        f"only read-only tools are permitted in readonly mode."
-                    )
-                else:
-                    _result = (
-                        f"Tool execution denied: '{_fn}' is not permitted "
-                        f"by the current permission rules."
-                    )
-                _status = "cancelled"
-                _completion_error = "denied by permission engine"
-                self._transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {
-                    "tool": _fn, "call_id": _call_id, "status": _status,
-                    "duration_ms": _duration_ms, "error": _completion_error,
-                }))
-            elif _decision == "CANCELLED":
-                _result = (
-                    f"Tool execution cancelled by user. "
-                    f"The user declined to execute {_fn}."
-                )
-                _status = "cancelled"
-                _completion_error = "cancelled by user"
-                self._transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {
-                    "tool": _fn, "call_id": _call_id, "status": _status,
-                    "duration_ms": _duration_ms, "error": _completion_error,
-                }))
-            else:  # ALLOW
-                # Propagate cancellation token to AgentToolWrapper so it can pass
-                # it down to nested sub-agent chat() calls.
-                if cancellation_token and hasattr(_tool, "_cancellation_token"):
-                    _tool._cancellation_token = cancellation_token
-
-                # Pre-execution cancellation check (e.g. Ctrl+C fired while
-                # other parallel tools were executing).
-                if cancellation_token and cancellation_token.is_cancelled:
-                    _result = f"[Operation Cancelled] {cancellation_token.reason}"
-                    _status = "cancelled"
-                    _completion_error = "cancelled by user"
-                    _duration_ms = round((time.monotonic() - _t0) * 1000)
-                    self._transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {
-                        "tool": _fn, "call_id": _call_id, "status": _status,
-                        "duration_ms": _duration_ms, "error": _completion_error,
-                    }))
-                    return _tc.id, {
-                        "fn_name": _fn,
-                        "result": _result,
-                        "status": _status,
-                        "duration_ms": _duration_ms,
-                        "error": _completion_error,
-                    }
-
-                # Acquire the per-tool lock to serialize concurrent calls to the
-                # same tool instance, protecting output_callback assignment.
-                # Dispatch PreToolUse plugin hooks.
-                if self._plugin_hook_rules:
-                    self._dispatch_pre_tool_hook(_fn, _args)
-
-                _errored = False
-                _error_msg = None
-                # Inject macOS sandbox profile for run_shell_command when
-                # policy is enabled. Private kwarg — never exposed to LLM or
-                # to plugin Post/Pre hooks (which JSON-serialize tool_args).
-                # If the policy is enabled but broken (typoed profile name,
-                # missing profiles_dir, etc.), resolve() raises and we
-                # fail-closed rather than silently running unsandboxed.
-                _call_args = _args
-                _sandbox_error: Optional[SandboxMisconfiguredError] = None
-                if self._sandbox_policy is not None and _fn == "run_shell_command":
-                    try:
-                        _profile = self._sandbox_policy.resolve(_fn, _args)
-                    except SandboxMisconfiguredError as _sbe:
-                        _sandbox_error = _sbe
-                    else:
-                        if _profile is not None:
-                            _call_args = {**_args, "_sandbox_profile": _profile}
-                with _tool_locks[id(_tool)]:
-                    if hasattr(_tool, "output_callback"):
-                        _tool.output_callback = (
-                            lambda chunk, _name=_fn, _cid=_call_id: self._transport.emit(
-                                AgentEvent(EventType.TOOL_OUTPUT, {
-                                    "tool": _name, "chunk": chunk, "call_id": _cid,
-                                })
-                            )
-                        )
-                    try:
-                        if _sandbox_error is not None:
-                            raise _sandbox_error
-                        _result = _tool.execute(**_call_args)
-                    except TaskComplete as _tc_exc:
-                        _result = _tc_exc.result
-                    except SandboxMisconfiguredError as _sbe:
-                        _errored = True
-                        _error_msg = "sandbox misconfigured"
-                        _result = (
-                            f"[Sandbox error] {_sbe}\n\n"
-                            f"The command was NOT executed. This is fail-closed "
-                            f"behavior: running shell commands without the "
-                            f"sandbox the user enabled would be worse than "
-                            f"refusing to run them."
-                        )
-                    except Exception as _e:
-                        _errored = True
-                        _error_msg = str(_e)[:200]
-                        _result = f"Error executing {_fn}: {str(_e)}"
-                    finally:
-                        if hasattr(_tool, "output_callback"):
-                            _tool.output_callback = None
-                        _status = "error" if _errored else "ok"
-                        _duration_ms = round((time.monotonic() - _t0) * 1000)
-                        _completion_error = _error_msg
-                        self._transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {
-                            "tool": _fn,
-                            "call_id": _call_id,
-                            "status": _status,
-                            "duration_ms": _duration_ms,
-                            "error": _completion_error,
-                        }))
-
-                # Dispatch PostToolUse / PostToolUseFailure plugin hooks.
-                if self._plugin_hook_rules:
-                    if _errored:
-                        self._dispatch_post_tool_failure_hook(_fn, _args, _error_msg)
-                    else:
-                        self._dispatch_post_tool_hook(_fn, _args, _result)
-
-            return _tc.id, {
-                "fn_name": _fn,
-                "result": _result,
-                "status": _status,
-                "duration_ms": _duration_ms,
-                "error": _completion_error,
-            }
-
-        _exec_results: Dict[str, Dict[str, Any]] = {}
-
-        # Fix #6: skip ThreadPoolExecutor overhead for the common single-tool case
-        if len(_plans) == 1:
-            _call_id, _info = _execute_one(_plans[0])
-            _exec_results[_call_id] = _info
-        else:
-            with ThreadPoolExecutor(max_workers=8) as _executor:
-                _futures = {_executor.submit(_execute_one, p): p for p in _plans}
-                for _future in as_completed(_futures):
-                    _call_id, _info = _future.result()
-                    _exec_results[_call_id] = _info
-
-        # --- Phase 4: Append results in original order ---
-        for _plan in _plans:
-            _tc = _plan["tool_call"]
-            _info = _exec_results[_tc.id]
-            _fn_name = _info["fn_name"]
-            _result = _info["result"]
-
-            # Capture the ORIGINAL result for the replay's tool_result
-            # event — before Phase-4 truncation rewrites ``_result`` into
-            # a compact conversation message. ``content_hash`` is over
-            # the full untruncated bytes so a reader can later verify
-            # the exact result a file on disk belongs to.
-            _original_for_replay = _result if isinstance(_result, str) else str(_result)
-            _original_chars = len(_original_for_replay)
-            _content_hash = hashlib.sha256(
-                _original_for_replay.encode("utf-8", errors="replace"),
-            ).hexdigest()
-            _saved_to_disk = False
-            _disk_path: Optional[str] = None
-
-            # Save large outputs to disk and put a head+tail excerpt in context.
-            # This prevents context explosion while keeping full data accessible.
-            if isinstance(_result, str) and len(_result) > TOOL_OUTPUT_SAVE_THRESHOLD:
-                self._logger.warning(
-                    f"Tool result from {_fn_name} is {len(_result):,} chars — "
-                    f"saving to file and truncating context copy"
-                )
-                _result, _disk_path = _save_and_truncate(
-                    _result, _fn_name, self._logger,
-                )
-                _saved_to_disk = _disk_path is not None
-            elif isinstance(_result, str) and len(_result) > MAX_TOOL_RESULT_CHARS:
-                # Fallback hard cap (should rarely be reached after file-save path)
-                _truncated = len(_result) - MAX_TOOL_RESULT_CHARS
-                _result = (
-                    _result[:MAX_TOOL_RESULT_CHARS]
-                    + f"\n\n[... {_truncated:,} characters truncated ...]"
-                )
-                self._logger.warning(
-                    f"Tool result from {_fn_name} hard-truncated: {_truncated:,} chars removed"
-                )
-
-            # Fire the replay-side ``tool_result`` event with the raw
-            # content. The ReplayAdapter forwards this into recorder.record()
-            # which runs sanitize_event — that's where the 8000-char
-            # head/tail truncation and secret scanning happen.
-            self._transport.emit(AgentEvent(EventType.TOOL_RESULT, {
-                "tool": _fn_name,
-                "call_id": _tc.id,
-                "content": _original_for_replay,
-                "content_hash": _content_hash,
-                "original_chars": _original_chars,
-                "saved_to_disk": _saved_to_disk,
-                "disk_path": _disk_path,
-                "status": _info.get("status", "ok"),
-                "duration_ms": _info.get("duration_ms", 0),
-                "error": _info.get("error"),
-            }))
-
-            result_messages.append({
-                "role": "tool",
-                "tool_call_id": _tc.id,
-                "name": _fn_name,
-                "content": _result,
-            })
-
+        # --- Phase 4: Result formatting (delegated to ToolResultFormatter) ---
+        result_messages.extend(self._formatter.format_batch(_plans, _exec_results))
         return False, result_messages
-
-    # ------------------------------------------------------------------
-    # Plugin hook dispatch helpers
-    # ------------------------------------------------------------------
-
-    def _dispatch_pre_tool_hook(self, tool_name: str, tool_args: Dict[str, Any]) -> None:
-        try:
-            from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
-            adapter = ClaudeHookPayloadAdapter()
-            payload = adapter.build_pre_tool_use(
-                tool_name=tool_name, tool_input=tool_args,
-                session_id=self._session_id,
-            )
-            dispatcher = PluginHookDispatcher(cwd=self._working_directory)
-            dispatcher.dispatch_pre_tool_use(payload=payload, rules=self._plugin_hook_rules)
-        except Exception as exc:
-            self._logger.warning("PreToolUse hook dispatch error: %s", exc)
-
-    def _dispatch_post_tool_hook(
-        self, tool_name: str, tool_args: Dict[str, Any], result: str
-    ) -> None:
-        try:
-            from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
-            adapter = ClaudeHookPayloadAdapter()
-            payload = adapter.build_post_tool_use(
-                tool_name=tool_name, tool_input=tool_args,
-                tool_output=result if isinstance(result, str) else str(result),
-                session_id=self._session_id,
-            )
-            dispatcher = PluginHookDispatcher(cwd=self._working_directory)
-            dispatcher.dispatch_post_tool_use(payload=payload, rules=self._plugin_hook_rules)
-        except Exception as exc:
-            self._logger.warning("PostToolUse hook dispatch error: %s", exc)
-
-    def _dispatch_post_tool_failure_hook(
-        self, tool_name: str, tool_args: Dict[str, Any], error: str | None
-    ) -> None:
-        try:
-            from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
-            adapter = ClaudeHookPayloadAdapter()
-            payload = adapter.build_post_tool_use_failure(
-                tool_name=tool_name, tool_input=tool_args, error=error,
-                session_id=self._session_id,
-            )
-            dispatcher = PluginHookDispatcher(cwd=self._working_directory)
-            dispatcher.dispatch_post_tool_use_failure(
-                payload=payload, rules=self._plugin_hook_rules,
-            )
-        except Exception as exc:
-            self._logger.warning("PostToolUseFailure hook dispatch error: %s", exc)
