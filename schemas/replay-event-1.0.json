@@ -1,0 +1,266 @@
+{
+  "$id": "urn:agentao:schema:replay-event:1.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One JSONL line in a replay file. Source of truth: agentao/replay/events.py - regenerate via scripts/write_replay_schema.py.",
+  "oneOf": [
+    {
+      "properties": {
+        "kind": {
+          "const": "assistant_text_chunk"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "assistant_thought_chunk"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "error"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "replay_header"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "session_ended"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "session_saved"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "session_started"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "subagent_completed"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "subagent_started"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_completed"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_confirmation_requested"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_confirmation_resolved"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_output_chunk"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_started"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "turn_completed"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "turn_started"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "user_message"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    }
+  ],
+  "properties": {
+    "event_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "instance_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "assistant_text_chunk",
+        "assistant_thought_chunk",
+        "error",
+        "replay_header",
+        "session_ended",
+        "session_saved",
+        "session_started",
+        "subagent_completed",
+        "subagent_started",
+        "tool_completed",
+        "tool_confirmation_requested",
+        "tool_confirmation_resolved",
+        "tool_output_chunk",
+        "tool_started",
+        "turn_completed",
+        "turn_started",
+        "user_message"
+      ],
+      "type": "string"
+    },
+    "parent_turn_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "payload": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "seq": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "session_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "ts": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "turn_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "event_id",
+    "session_id",
+    "instance_id",
+    "seq",
+    "ts",
+    "kind",
+    "payload"
+  ],
+  "title": "Agentao replay event (v1.0)",
+  "type": "object"
+}
