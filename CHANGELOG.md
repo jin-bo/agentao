@@ -11,6 +11,79 @@ _No changes yet._
 
 ---
 
+## [0.2.14] — 2026-04-25
+
+Maintenance follow-up to `0.2.13` GA. Headline: **tool-call resilience
+layer** for local / open-source models that drift from the OpenAI
+function-call schema, plus per-session isolation polish, replay schema
+drift gating, and the GitHub-Actions Node 24 prep.
+
+### Added
+
+- **Tool-call repair / outbound sanitize subsystem** (`agentao/runtime/`):
+  three cooperating modules that sit between the LLM and the tool
+  dispatcher so models like GLM, DeepSeek, Kimi and local Ollama still
+  land in a runnable shape.
+  - `arg_repair.py`: conservative JSON repair for malformed function
+    arguments — double-encoded JSON, fenced JSON, lenient Python
+    literals, trailing commas, bracket imbalance. No punctuation
+    guessing.
+  - `name_repair.py`: fuzzy matching that maps near-miss tool names
+    (CamelCase / suffix variants) onto a registered tool when the score
+    is unambiguous.
+  - `sanitize.py`: outbound scrubbing — replaces lone UTF-16 surrogates
+    and re-emits canonical compact JSON for repaired arguments before
+    assistant / tool messages reach strict provider APIs.
+  Wired into `chat_loop`, `tool_planning`, and `tool_runner`; repair is
+  invisible to the model itself (only logged), preserving prompt-cache
+  behaviour. Coverage: `tests/test_tool_argument_repair.py`,
+  `tests/test_tool_name_repair.py`, `tests/test_outbound_sanitize.py`,
+  helper `tests/support/tool_calls.py`. Documented in developer-guide
+  §5.1 ("Tool-call normalization").
+- **Per-instance background-task store** (commit `82edb55`): the
+  background-agent registry is now per-`Agentao` instance rather than
+  process-global, so concurrent ACP sessions / multi-tenant embeddings
+  no longer leak handles across each other. Adds path-containment
+  guards and prompt-diagnostics surfacing.
+- **Replay JSON Schema export** (commit `5c85179`): `agentao/replay/`
+  now ships an exported JSON Schema and a CI drift-detection job
+  (`tests/test_replay_schema.py`) that fails fast when
+  `agentao/replay/events.py` evolves without the schema being
+  regenerated.
+
+### Changed
+
+- **`ToolRunner` split** (commit `f5dc034`): the monolithic
+  `tool_runner` decomposed into focused `tool_planning`,
+  `tool_runner` (executor), and `tool_result_formatter` modules under
+  `agentao/runtime/`. Public `Agentao.chat()` contract preserved.
+- **Test scaffolding** (commit `e6ccfee`): ACP test helpers extracted
+  into `tests/support/` so individual test files stay focused on
+  scenarios rather than fixture wiring.
+- **Logging rotation**: `agentao.log` now uses
+  `RotatingFileHandler(maxBytes=10_000_000, backupCount=5)` instead of
+  a plain `FileHandler`, capping disk footprint at ~60 MB. The home-dir
+  fallback (`~/.agentao/agentao.log`) gets the same rotation. Long-
+  running sessions that previously grew the log into the hundreds of
+  megabytes now self-cap.
+
+### Fixed
+
+- **VitePress docs at custom-domain root** (commit `875e526`): the
+  developer-guide deploy now serves correctly at the `agentao.cn`
+  custom-domain root rather than under a subpath.
+
+### Packaging / CI
+
+- `actions/upload-artifact` v4 → v8, `actions/download-artifact` v4 →
+  v8, `actions/setup-python` v5 → v6 — clears the GitHub Node 24
+  default cutover (2026-06-02). `setup-uv` had already moved v6 → v7
+  in `0.2.14.dev0`.
+- Version pins refreshed from `0.2.13` to `0.2.14` across `docs/ACP.md`
+  and the developer-guide install / version-check examples.
+
+---
+
 ## [0.2.13] — 2026-04-24
 
 Promotes `0.2.13rc1` to general availability, plus one additive feature

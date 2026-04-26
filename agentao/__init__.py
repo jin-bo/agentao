@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 warnings.filterwarnings("ignore", message="urllib3.*or chardet.*doesn't match")
 
-__version__ = "0.2.14.dev0"
+__version__ = "0.2.14"
 
 # Lazy exports via PEP 562 module __getattr__.
 #
