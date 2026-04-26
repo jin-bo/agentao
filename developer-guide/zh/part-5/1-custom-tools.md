@@ -76,6 +76,17 @@ def execute(self, **kwargs) -> str:
 
 大返回（> 几十 KB）应**先截断或分页**，否则占爆上下文窗口。
 
+## 工具调用规范化
+
+在工具调用写回对话历史或真正执行之前，Agentao 会规范化模型产出的 function-call payload：
+
+- 参数字符串在能安全修复时会被解析并重新输出为紧凑 JSON
+- 近似但不完全匹配的工具名可修复为已注册工具名
+- lone UTF-16 surrogate 字符会在 assistant/tool 消息发回严格 provider API 前被清洗
+- 每个 assistant `tool_call_id` 都会得到对应的 `role:tool` 消息，包括参数解析错误和循环保护中止
+
+这是韧性层，不是 schema 质量的替代。`parameters` 仍要精确，`description` 仍要明确；危险操作或业务关键字段仍应在 `execute()` 内二次校验后再产生副作用。
+
 ## 怎样写一个 "能让 LLM 用对的" description
 
 这是比写代码更关键的环节。差的描述让 LLM 误调用；好的描述让 LLM 知道什么时候该用、用完怎么处理。

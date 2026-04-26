@@ -162,7 +162,7 @@ spec:
           restartPolicy: Never
           containers:
           - name: runner
-            image: your-agent:v0.2.13
+            image: your-agent:v0.2.14
             command: ["python", "-m", "jobs.daily_digest"]
             env:
             - name: OPENAI_API_KEY

@@ -170,7 +170,7 @@ agentao --acp --stdio < trace.ndjson > output.ndjson 2> agentao.stderr.log
 - `protocolVersion` 协商处理版本不匹配：IDE 发 `2`，Agentao 只支持 `1`，Agentao 回 `1`，IDE 决定继续或断开
 - 技能、MCP、记忆按 **workspace** 作用域，不受二进制升级影响
 
-破坏性协议变更被规避。想锁定版本，请用户 `uv tool install agentao==0.2.13`。
+破坏性协议变更被规避。想锁定版本，请用户 `uv tool install agentao==0.2.14`。
 
 ## 3.5.10 新 IDE 集成自查
 

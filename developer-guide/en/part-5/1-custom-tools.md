@@ -75,6 +75,17 @@ def execute(self, **kwargs) -> str:
 
 Large responses (> a few dozen KB) should be **truncated or paginated** first, or they'll blow out the context window.
 
+## Tool-call normalization
+
+Before a tool call is written back into conversation history or executed, Agentao normalizes the model's function-call payload:
+
+- argument strings are parsed and re-emitted as compact JSON when a safe repair is possible
+- near-miss tool names can be repaired to a registered tool name
+- lone UTF-16 surrogate characters are sanitized before outbound assistant/tool messages reach strict provider APIs
+- every assistant `tool_call_id` is answered with a `role:tool` message, including parse errors and loop-protection halts
+
+This is a resilience layer, not a substitute for a clear schema. Keep `parameters` precise, keep descriptions unambiguous, and validate dangerous or business-critical fields inside `execute()` before taking side effects.
+
 ## Writing a description the LLM can actually use
 
 This matters more than the code. Bad descriptions cause misuse; good ones teach the LLM when to use, when not to, and how to handle the return.

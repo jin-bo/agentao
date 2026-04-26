@@ -12,7 +12,6 @@ concern. ``ToolRunner.reset()`` delegates to ``ToolCallPlanner.reset()``.
 
 from __future__ import annotations
 
-import json
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
@@ -20,10 +19,36 @@ from typing import Any, Dict, List, Optional
 
 from ..permissions import PermissionDecision, PermissionEngine
 from ..tools import Tool, ToolRegistry
+from .arg_repair import parse_tool_arguments
+from .name_repair import repair_tool_name
 
 
 # Repeating identical (name, args_raw) this many times trips doom-loop.
 DOOM_LOOP_THRESHOLD = 3
+
+# Per-tool consecutive parse failures (with *different* malformed strings
+# each time, so the identical-args counter doesn't catch them) that trip
+# a parse-doom-loop. Without this, a model that keeps inventing fresh
+# garbage JSON for the same tool would loop forever.
+PARSE_FAILURE_THRESHOLD = 3
+
+
+def make_tool_result_message(
+    tool_call_id: str, name: str, content: str,
+) -> Dict[str, Any]:
+    """Build a Chat-Completions ``role: tool`` message.
+
+    Used wherever a tool_call must be answered without (or before) the
+    tool actually running — early errors, doom-loop placeholders, etc.
+    Centralised so the field set stays in lock-step with what strict
+    APIs require.
+    """
+    return {
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "name": name,
+        "content": content,
+    }
 
 
 class ToolCallDecision(Enum):
@@ -78,10 +103,15 @@ class ToolCallPlanner:
         self._permission_engine = permission_engine
         self._logger = logger
         self._doom_counter: Counter = Counter()
+        # Counts *consecutive* parse failures per tool name; reset on the
+        # first successful parse for that tool. Distinct from
+        # ``_doom_counter`` (which keys on identical-args repeats).
+        self._consecutive_parse_failures: Counter = Counter()
 
     def reset(self) -> None:
         """Clear the doom-loop counter. Call between ``chat()`` invocations."""
         self._doom_counter.clear()
+        self._consecutive_parse_failures.clear()
 
     def plan(
         self,
@@ -101,7 +131,6 @@ class ToolCallPlanner:
             function_name = tool_call.function.name
             function_args_raw = tool_call.function.arguments
 
-            # --- Doom-loop detection (early exit for the whole batch) ---
             doom_key = (function_name, function_args_raw)
             self._doom_counter[doom_key] += 1
             if self._doom_counter[doom_key] >= DOOM_LOOP_THRESHOLD:
@@ -109,52 +138,68 @@ class ToolCallPlanner:
                     f"Doom-loop detected: {function_name} called "
                     f"{DOOM_LOOP_THRESHOLD}+ times with identical args"
                 )
-                result.early_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": function_name,
-                    "content": (
-                        f"[Doom-loop detected] Tool '{function_name}' was called "
-                        f"{DOOM_LOOP_THRESHOLD} times with identical arguments. "
-                        f"Execution stopped to prevent an infinite loop. "
-                        f"Please try a different approach or tool."
-                    ),
-                })
+                result.early_messages.append(make_tool_result_message(
+                    tool_call.id, function_name,
+                    f"[Doom-loop detected] Tool '{function_name}' was called "
+                    f"{DOOM_LOOP_THRESHOLD} times with identical arguments. "
+                    f"Execution stopped to prevent an infinite loop. "
+                    f"Please try a different approach or tool.",
+                ))
                 result.doom_loop_triggered = True
                 return result
 
-            # --- JSON parse ---
             try:
-                function_args = json.loads(function_args_raw)
-            except json.JSONDecodeError as exc:
+                function_args, repair_tags = parse_tool_arguments(function_args_raw)
+            except ValueError as exc:
+                self._consecutive_parse_failures[function_name] += 1
                 self._logger.warning(
-                    f"Tool '{function_name}' received invalid JSON arguments: {exc}"
+                    f"Tool '{function_name}' received unparseable arguments: {exc}"
                 )
-                result.early_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": function_name,
-                    "content": (
-                        f"Error: could not parse arguments for '{function_name}': {exc}. "
-                        f"Please retry with valid JSON."
-                    ),
-                })
+                if self._consecutive_parse_failures[function_name] >= PARSE_FAILURE_THRESHOLD:
+                    self._logger.warning(
+                        f"Parse-failure doom-loop: '{function_name}' produced "
+                        f"unparseable arguments {PARSE_FAILURE_THRESHOLD}+ times"
+                    )
+                    result.early_messages.append(make_tool_result_message(
+                        tool_call.id, function_name,
+                        f"[Parse-failure doom-loop] Tool '{function_name}' "
+                        f"produced unparseable arguments "
+                        f"{PARSE_FAILURE_THRESHOLD} times. Stopping to "
+                        f"prevent an infinite loop. Try a different tool "
+                        f"or approach.",
+                    ))
+                    result.doom_loop_triggered = True
+                    return result
+                result.early_messages.append(make_tool_result_message(
+                    tool_call.id, function_name,
+                    f"Error: could not parse arguments for '{function_name}': {exc}. "
+                    f"Please retry with valid JSON.",
+                ))
                 continue
+            self._consecutive_parse_failures.pop(function_name, None)
+            if repair_tags:
+                self._logger.warning(
+                    f"Tool '{function_name}' arguments repaired via "
+                    f"{'+'.join(repair_tags)}"
+                )
 
-            # --- Tool lookup ---
             try:
                 tool = self._tools.get(function_name)
             except KeyError as exc:
-                self._logger.warning(str(exc))
-                result.early_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": function_name,
-                    "content": str(exc),
-                })
-                continue
+                repaired = repair_tool_name(function_name, self._tools.tools)
+                if repaired is not None:
+                    self._logger.warning(
+                        "Tool name '%s' repaired to '%s'", function_name, repaired,
+                    )
+                    function_name = repaired
+                    tool = self._tools.get(repaired)
+                else:
+                    self._logger.warning(str(exc))
+                    result.early_messages.append(make_tool_result_message(
+                        tool_call.id, function_name, str(exc),
+                    ))
+                    continue
 
-            # --- Decision ---
             decision = self._decide(
                 tool, function_name, function_args, readonly_mode,
             )

@@ -7,9 +7,18 @@ from ..permissions import PermissionEngine
 from ..sandbox import SandboxPolicy
 from ..tools import ToolRegistry
 from ..transport import AgentEvent, EventType
+from .name_repair import repair_tool_name
+from .sanitize import normalize_tool_calls as _normalize_tool_calls
 from .tool_executor import ToolExecutor
-from .tool_planning import ToolCallDecision, ToolCallPlanner
+from .tool_planning import (
+    ToolCallDecision,
+    ToolCallPlanner,
+    make_tool_result_message,
+)
 from .tool_result_formatter import ToolResultFormatter
+
+
+_DOOM_HALT_MESSAGE = "Tool not executed (halted by doom-loop detection)."
 
 
 class ToolRunner:
@@ -73,6 +82,29 @@ class ToolRunner:
         """Reset doom-loop counter. Call at the start of each chat() invocation."""
         self._planner.reset()
 
+    def normalize_tool_calls(self, tool_calls: Any):
+        """Surrogate-sanitize and name-repair tool_calls in one pass.
+
+        Returns ``(cleaned_list, any_changed)``. The list is always safe
+        for both history serialization and execution: when an SDK object
+        is frozen / read-only, the corresponding entry is a
+        ``SimpleNamespace`` proxy with cleaned fields. Mutable SDK
+        objects are mutated in place (preserves identity).
+
+        Both consumers (history serializer + ``execute()``) must iterate
+        the returned list — never ``assistant_message.tool_calls``
+        directly — otherwise frozen tool_calls leave history and
+        execution divergent on id/name, which strict APIs reject.
+        """
+        valid = self._tools.tools
+        return _normalize_tool_calls(
+            tool_calls,
+            repair_name_fn=lambda n: (
+                None if n in valid else repair_tool_name(n, valid)
+            ),
+            logger=self._logger,
+        )
+
     def execute(self, tool_calls, cancellation_token=None) -> Tuple[bool, List[Dict[str, Any]]]:
         """Run the 4-phase tool execution pipeline.
 
@@ -94,16 +126,33 @@ class ToolRunner:
         result_messages.extend(planning.early_messages)
 
         if planning.doom_loop_triggered:
-            # Placeholder results for plans that had already passed planning
-            # before the offending tool_call tripped the counter — keeps the
-            # tool_call_id ↔ tool message mapping consistent for the LLM.
+            # Strict Chat-Completions APIs reject the next request if any
+            # assistant tool_call lacks a corresponding tool result. So
+            # emit a placeholder for every tool_call in the batch — both
+            # those that already passed planning AND those that were
+            # never reached (they came after the offending call).
+            #
+            # Seed seen_ids from early_messages so we don't double-answer
+            # the offending call (which already has its doom-loop message
+            # in early_messages) or any prior parse/lookup-error calls.
+            seen_ids: set = {
+                msg["tool_call_id"] for msg in planning.early_messages
+            }
             for _plan in planning.plans:
-                result_messages.append({
-                    "role": "tool",
-                    "tool_call_id": _plan.tool_call.id,
-                    "name": _plan.function_name,
-                    "content": "Tool not executed (halted by doom-loop detection).",
-                })
+                result_messages.append(make_tool_result_message(
+                    _plan.tool_call.id, _plan.function_name, _DOOM_HALT_MESSAGE,
+                ))
+                seen_ids.add(_plan.tool_call.id)
+            for _tc in tool_calls:
+                _tc_id = getattr(_tc, "id", None)
+                if _tc_id is None or _tc_id in seen_ids:
+                    continue
+                _fn = getattr(_tc, "function", None)
+                _fn_name = getattr(_fn, "name", "?") if _fn is not None else "?"
+                result_messages.append(make_tool_result_message(
+                    _tc_id, _fn_name, _DOOM_HALT_MESSAGE,
+                ))
+                seen_ids.add(_tc_id)
             return True, result_messages
 
         _plans = planning.plans

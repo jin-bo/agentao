@@ -192,6 +192,7 @@ A disciplined agent that acts deliberately, not impulsively:
 - Multi-turn conversations with persistent context
 - Function calling for structured tool usage
 - Smart tool selection and execution
+- **Tool-call resilience** — lightweight repair for malformed JSON arguments and near-miss tool names, plus outbound text sanitization before messages are sent back to strict LLM APIs
 - **Tool confirmation** — user approval required for Shell, Web, and destructive Memory operations; domain-based tiered permissions for `web_fetch` (allowlist/blocklist/ask)
 - **Reliability principles** — system prompt enforces read-before-assert, discrepancy reporting, and fact/inference distinction on every turn
 - **Operational guidelines** — tone & style rules, shell command efficiency patterns, tool parallelism, non-interactive flags, and explain-before-act security rules

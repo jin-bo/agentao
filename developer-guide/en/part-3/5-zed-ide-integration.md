@@ -170,7 +170,7 @@ When a user updates the `agentao` binary:
 - `protocolVersion` negotiation handles version mismatch: if the IDE sends version `2` and Agentao supports `1`, Agentao returns `1` and the IDE either continues or disconnects
 - Skills, MCP, and memory are **workspace-scoped**, so they survive binary upgrades
 
-Breaking protocol changes are avoided. If you need to pin a specific version, ask users to install with `uv tool install agentao==0.2.13`.
+Breaking protocol changes are avoided. If you need to pin a specific version, ask users to install with `uv tool install agentao==0.2.14`.
 
 ## 3.5.10 Checklist for a new IDE integration
 

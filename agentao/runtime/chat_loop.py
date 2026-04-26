@@ -1,9 +1,8 @@
 """ChatLoopRunner — owns the per-turn chat loop body.
 
-Extracted verbatim from ``Agentao._chat_inner`` so the agent core can
-shrink without changing behavior. ``Agentao.chat()`` still owns the
-turn lifecycle (cancellation token, replay begin_turn/end_turn,
-``_current_token`` bookkeeping) and delegates the loop body here.
+``Agentao.chat()`` still owns the turn lifecycle (cancellation token,
+replay begin_turn/end_turn, ``_current_token`` bookkeeping) and
+delegates the loop body here.
 
 Behavioral contract preserved:
 
@@ -14,12 +13,6 @@ Behavioral contract preserved:
   and ``_emit_session_summary_if_new`` are still invoked as agent
   methods so any subclass override or test patch continues to apply.
 - All ``transport.emit`` event types and payload shapes are unchanged.
-
-The only structural changes versus the inline version are:
-
-- The plugin-hook dispatch was lifted into a private helper for
-  readability; its return value carries the same three outcomes
-  (block / stop / continue with optional context injection).
 """
 
 from __future__ import annotations
@@ -31,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 from ..cancellation import AgentCancelledError, CancellationToken
 from ..context_manager import is_context_too_long_error
 from ..transport import AgentEvent, EventType
+from .sanitize import canonicalize_tool_arguments, sanitize_assistant_message
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
     from ..agent import Agentao
@@ -39,29 +33,56 @@ if TYPE_CHECKING:  # pragma: no cover - import-time only
 MAX_REASONING_HISTORY_CHARS = 500  # Truncate reasoning_content in history to ~125 tokens
 
 
-def _serialize_tool_call(tc) -> dict:
+def _attach_reasoning(msg: Dict[str, Any], reasoning_content: Optional[str]) -> None:
+    """Attach a truncated copy of ``reasoning_content`` to ``msg`` (in place).
+
+    No-op when ``reasoning_content`` is ``None``. Truncation cap matches
+    the prompt-budget assumption that reasoning shouldn't dominate
+    history. The trailing ellipsis flags the truncation to the model.
+    """
+    if reasoning_content is None:
+        return
+    stored = reasoning_content[:MAX_REASONING_HISTORY_CHARS]
+    if len(reasoning_content) > MAX_REASONING_HISTORY_CHARS:
+        stored += "..."
+    msg["reasoning_content"] = stored
+
+
+def _serialize_tool_call(tc, *, logger=None) -> dict:
     """Serialize a tool call object to a dict for conversation history.
 
-    Uses model_dump() to preserve ALL Pydantic extra fields at their correct level.
-    This handles Gemini's thought_signature (and similar fields) regardless of
-    which level they appear at in the response (tc vs tc.function).
-    Falls back to manual construction for non-Pydantic objects.
+    Uses model_dump() to preserve ALL Pydantic extra fields at their correct
+    level. This handles Gemini's thought_signature (and similar fields)
+    regardless of which level they appear at in the response.
+
+    The ``function.arguments`` string is round-tripped through the repair
+    pipeline and re-emitted as canonical compact JSON so downstream API
+    proxies receive valid JSON even when the model emitted malformed args.
     """
     if hasattr(tc, "model_dump"):
-        return tc.model_dump()
-    entry: Dict[str, Any] = {
-        "id": tc.id,
-        "type": "function",
-        "function": {
-            "name": tc.function.name,
-            "arguments": tc.function.arguments,
-        },
-    }
-    thought_sig = getattr(tc.function, "thought_signature", None)
-    if thought_sig is None:
-        thought_sig = getattr(tc, "thought_signature", None)
-    if thought_sig is not None:
-        entry["function"]["thought_signature"] = thought_sig
+        entry = tc.model_dump()
+    else:
+        entry: Dict[str, Any] = {
+            "id": tc.id,
+            "type": "function",
+            "function": {
+                "name": tc.function.name,
+                "arguments": tc.function.arguments,
+            },
+        }
+        thought_sig = getattr(tc.function, "thought_signature", None)
+        if thought_sig is None:
+            thought_sig = getattr(tc, "thought_signature", None)
+        if thought_sig is not None:
+            entry["function"]["thought_signature"] = thought_sig
+
+    fn = entry.get("function")
+    if isinstance(fn, dict):
+        fn["arguments"] = canonicalize_tool_arguments(
+            fn.get("arguments", ""),
+            tool_name=fn.get("name", "?"),
+            logger=logger,
+        )
     return entry
 
 
@@ -205,6 +226,16 @@ class ChatLoopRunner:
                     f"in iteration {iteration}"
                 )
 
+                # Pre-pass: clean surrogates and repair tool names so
+                # the history serializer and the runner see identical
+                # ids/names/arguments (frozen SDK objects otherwise
+                # diverge between the two paths).
+                clean_tool_calls, tcs_changed = (
+                    agent.tool_runner.normalize_tool_calls(
+                        assistant_message.tool_calls
+                    )
+                )
+
                 reasoning_content = getattr(assistant_message, "reasoning_content", None)
                 if reasoning_content:
                     agent.transport.emit(AgentEvent(EventType.THINKING, {"text": reasoning_content}))
@@ -217,21 +248,23 @@ class ChatLoopRunner:
                     "role": "assistant",
                     "content": assistant_message.content or "",
                     "tool_calls": [
-                        _serialize_tool_call(tc)
-                        for tc in assistant_message.tool_calls
+                        _serialize_tool_call(tc, logger=agent.llm.logger)
+                        for tc in clean_tool_calls
                     ],
                 }
+                _attach_reasoning(assistant_msg, reasoning_content)
 
-                if reasoning_content is not None:
-                    stored = reasoning_content[:MAX_REASONING_HISTORY_CHARS]
-                    if len(reasoning_content) > MAX_REASONING_HISTORY_CHARS:
-                        stored += "..."
-                    assistant_msg["reasoning_content"] = stored
-
+                msg_sanitized = sanitize_assistant_message(assistant_msg)
+                if tcs_changed or msg_sanitized:
+                    agent.llm.logger.warning(
+                        "Sanitised lone surrogates in outbound assistant "
+                        "message (iteration %d)",
+                        iteration,
+                    )
                 agent.messages.append(assistant_msg)
 
                 doom_triggered, tool_results = agent.tool_runner.execute(
-                    assistant_message.tool_calls,
+                    clean_tool_calls,
                     cancellation_token=token,
                 )
                 agent.messages.extend(tool_results)
@@ -263,11 +296,12 @@ class ChatLoopRunner:
                 assistant_content = assistant_message.content or ""
                 reasoning_content = getattr(assistant_message, "reasoning_content", None)
                 final_msg: Dict[str, Any] = {"role": "assistant", "content": assistant_content}
-                if reasoning_content is not None:
-                    stored = reasoning_content[:MAX_REASONING_HISTORY_CHARS]
-                    if len(reasoning_content) > MAX_REASONING_HISTORY_CHARS:
-                        stored += "..."
-                    final_msg["reasoning_content"] = stored
+                _attach_reasoning(final_msg, reasoning_content)
+                if sanitize_assistant_message(final_msg):
+                    agent.llm.logger.warning(
+                        "Sanitised lone surrogates in final assistant message "
+                        "(iteration %d)", iteration,
+                    )
                 agent.messages.append(final_msg)
                 return assistant_content
 
@@ -281,11 +315,11 @@ class ChatLoopRunner:
             if assistant_message else None
         )
         final_msg: Dict[str, Any] = {"role": "assistant", "content": assistant_content}
-        if reasoning_content is not None:
-            stored = reasoning_content[:MAX_REASONING_HISTORY_CHARS]
-            if len(reasoning_content) > MAX_REASONING_HISTORY_CHARS:
-                stored += "..."
-            final_msg["reasoning_content"] = stored
+        _attach_reasoning(final_msg, reasoning_content)
+        if sanitize_assistant_message(final_msg):
+            agent.llm.logger.warning(
+                "Sanitised lone surrogates in max-iteration assistant message"
+            )
         agent.messages.append(final_msg)
         return assistant_content
 

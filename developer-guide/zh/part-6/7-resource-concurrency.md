@@ -40,6 +40,8 @@ reply = agent.chat(msg, max_iterations=50)   # 默认 100
 
 配合 `on_max_iterations_callback`（[4.6 节](/zh/part-4/6-max-iterations)）做兜底。
 
+Agentao 也会在单轮内跟踪重复的工具调用失败。完全相同的重复工具调用会触发 doom-loop 保护；同一个工具连续产出无法解析的参数时，会返回 `role:tool` 中止消息，确保下一次 LLM 请求仍满足协议要求，而不是无限重试。
+
 按场景设：
 
 | 任务类型 | max_iterations |

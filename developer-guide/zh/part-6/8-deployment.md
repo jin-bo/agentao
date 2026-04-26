@@ -103,7 +103,7 @@ spec:
         fsGroup: 10001
       containers:
       - name: agent
-        image: your-agent:v0.2.13
+        image: your-agent:v0.2.14
         resources:
           requests: {cpu: "500m", memory: "1Gi"}
           limits: {cpu: "2", memory: "4Gi"}
