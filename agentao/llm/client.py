@@ -2,6 +2,7 @@
 
 import json
 import logging
+import logging.handlers
 import os
 import sys
 from pathlib import Path
@@ -192,7 +193,9 @@ class LLMClient:
 
         try:
             primary.parent.mkdir(parents=True, exist_ok=True)
-            return logging.FileHandler(primary, encoding="utf-8")
+            return logging.handlers.RotatingFileHandler(
+                primary, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
+            )
         except OSError as primary_err:
             fallback = Path.home() / ".agentao" / "agentao.log"
             if fallback == primary:
@@ -205,7 +208,9 @@ class LLMClient:
                 return None
             try:
                 fallback.parent.mkdir(parents=True, exist_ok=True)
-                handler = logging.FileHandler(fallback, encoding="utf-8")
+                handler = logging.handlers.RotatingFileHandler(
+                    fallback, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
+                )
                 print(
                     f"agentao: log file {primary} is not writable "
                     f"({primary_err}); using {fallback} instead.",
