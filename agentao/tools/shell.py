@@ -16,6 +16,7 @@ IS_MACOS = sys.platform == "darwin"
 
 from .base import Tool
 from ..sandbox import SandboxProfile
+from ..security import PathPolicy, PathPolicyError
 
 # Maximum combined stdout+stderr before truncation (~10K tokens).
 # Matches Gemini CLI's default threshold of 40,000 characters.
@@ -236,19 +237,15 @@ class ShellTool(Tool):
         that ToolRunner injects when a macOS sandbox policy is active. When
         set, the command is wrapped in `sandbox-exec` before spawning.
         """
-        # Resolve and validate working directory. ``_resolve_directory``
-        # routes relative paths through the tool's session cwd (Issue 05)
-        # when one is bound, else falls back to legacy ``.resolve()`` which
-        # uses the process cwd.
         try:
-            cwd = self._resolve_directory(working_directory)
-            if not cwd.is_dir():
-                return (
-                    f"Error: working_directory '{working_directory}' does not exist "
-                    "or is not a directory."
-                )
-        except Exception as e:
-            return f"Error resolving working_directory: {e}"
+            cwd = PathPolicy.for_tool(self).contain_directory(working_directory)
+        except PathPolicyError as e:
+            return f"Error: {e}"
+        if not cwd.is_dir():
+            return (
+                f"Error: working_directory '{working_directory}' does not exist "
+                "or is not a directory."
+            )
 
         if _sandbox_profile is not None:
             wrapped = _wrap_with_sandbox(command, _sandbox_profile)

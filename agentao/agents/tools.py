@@ -1,18 +1,21 @@
-"""SubAgent tool wrappers — core components for the agent-as-tool pattern."""
+"""SubAgent tool wrappers — core components for the agent-as-tool pattern.
+
+Background-task state (registry, cancellation tokens, notification queue,
+persistence) lives on a per-Agentao :class:`BackgroundTaskStore`. The
+three tools here take a store reference at construction time and read
+or write through it.
+"""
 
 import os
 import threading
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
-
-BgTaskStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
-
-_VALID_BG_STATUSES: frozenset = frozenset({"pending", "running", "completed", "failed", "cancelled"})
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..cancellation import AgentCancelledError, CancellationToken
 from ..tools.base import Tool, ToolRegistry
+from .bg_store import BackgroundTaskStore, BgTaskStatus
 
 
 # ---------------------------------------------------------------------------
@@ -86,212 +89,15 @@ class CompleteTaskTool(Tool):
 
 
 # ---------------------------------------------------------------------------
-# Background agent registry
-# ---------------------------------------------------------------------------
-
-_bg_tasks: Dict[str, Dict[str, Any]] = {}   # agent_id → task record
-_bg_lock = threading.Lock()
-_bg_store_lock = threading.Lock()
-
-_bg_task_tokens: Dict[str, CancellationToken] = {}  # agent_id → cancellation token
-_bg_token_lock = threading.Lock()
-
-# Completion notification queue: background agents push here when done;
-# the parent agent drains this before each LLM call.
-_bg_notifications: List[str] = []
-_bg_notify_lock = threading.Lock()
-
-
-def _push_bg_notification(msg: str) -> None:
-    with _bg_notify_lock:
-        _bg_notifications.append(msg)
-
-
-def drain_bg_notifications() -> List[str]:
-    """Drain and return all pending background-agent completion notifications."""
-    with _bg_notify_lock:
-        msgs = list(_bg_notifications)
-        _bg_notifications.clear()
-        return msgs
-
-
-def _register_bg_task(agent_id: str, agent_name: str, task_summary: str) -> None:
-    with _bg_lock:
-        _bg_tasks[agent_id] = {
-            "agent_name": agent_name,
-            "task": task_summary,
-            "status": "pending",    # pending → running → completed | failed | cancelled
-            "result": None,
-            "error": None,
-            "created_at": time.time(),  # when the record was created
-            "started_at": None,         # set when thread begins executing
-            "finished_at": None,        # set on completion / failure
-            # stats — populated on completion
-            "turns": 0,
-            "tool_calls": 0,
-            "tokens": 0,
-            "duration_ms": 0,
-        }
-    _flush_to_disk()
-
-
-def _mark_bg_task_running(agent_id: str) -> bool:
-    """Transition a pending task to running and record its actual start time."""
-    should_flush = False
-    with _bg_lock:
-        rec = _bg_tasks.get(agent_id)
-        if rec and rec["status"] == "pending":
-            rec["status"] = "running"
-            rec["started_at"] = time.time()
-            should_flush = True
-    if should_flush:
-        _flush_to_disk()
-    return should_flush
-
-
-def _update_bg_task(
-    agent_id: str,
-    *,
-    status: BgTaskStatus,
-    result: Optional[str] = None,
-    error: Optional[str] = None,
-    turns: int = 0,
-    tool_calls: int = 0,
-    tokens: int = 0,
-    duration_ms: int = 0,
-) -> None:
-    assert status in _VALID_BG_STATUSES, f"Invalid bg task status: {status!r}"
-    agent_name: Optional[str] = None
-    with _bg_lock:
-        rec = _bg_tasks.get(agent_id)
-        if rec:
-            rec["status"] = status
-            rec["result"] = result
-            rec["error"] = error
-            rec["finished_at"] = time.time()
-            rec["turns"] = turns
-            rec["tool_calls"] = tool_calls
-            rec["tokens"] = tokens
-            rec["duration_ms"] = duration_ms
-            agent_name = rec["agent_name"]
-
-    if agent_name is None:
-        return
-
-    _flush_to_disk()
-
-    # Push completion notification outside the lock to avoid lock ordering issues.
-    if status == "completed" and result is not None:
-        preview = result[:300] + "…" if len(result) > 300 else result
-        _push_bg_notification(
-            f"Background agent '{agent_name}' (ID: {agent_id}) completed.\n{preview}"
-        )
-    elif status == "failed":
-        _push_bg_notification(
-            f"Background agent '{agent_name}' (ID: {agent_id}) failed: {error}"
-        )
-    elif status == "cancelled":
-        _push_bg_notification(
-            f"Background agent '{agent_name}' (ID: {agent_id}) was cancelled."
-        )
-
-
-def get_bg_task(agent_id: str) -> Optional[Dict[str, Any]]:
-    with _bg_lock:
-        return dict(_bg_tasks[agent_id]) if agent_id in _bg_tasks else None
-
-
-def list_bg_tasks() -> List[Dict[str, Any]]:
-    with _bg_lock:
-        return [dict(v) | {"id": k} for k, v in _bg_tasks.items()]
-
-
-def _cancel_bg_task(agent_id: str) -> str:
-    """Cancel a background task. Returns a human-readable result string."""
-    cancelled_before_start = False
-    agent_name: Optional[str] = None
-
-    with _bg_lock:
-        rec = _bg_tasks.get(agent_id)
-        if rec is None:
-            return f"No background agent found with ID: {agent_id}"
-
-        status = rec["status"]
-        agent_name = rec["agent_name"]
-
-        if status in ("completed", "failed", "cancelled"):
-            return f"Agent '{agent_name}' ({agent_id}) is already {status} — nothing to cancel."
-
-        if status == "pending":
-            rec["status"] = "cancelled"
-            rec["result"] = None
-            rec["error"] = None
-            rec["finished_at"] = time.time()
-            rec["turns"] = 0
-            rec["tool_calls"] = 0
-            rec["tokens"] = 0
-            rec["duration_ms"] = 0
-            cancelled_before_start = True
-
-    if cancelled_before_start:
-        _flush_to_disk()
-        _push_bg_notification(
-            f"Background agent '{agent_name}' (ID: {agent_id}) was cancelled."
-        )
-        with _bg_token_lock:
-            _bg_task_tokens.pop(agent_id, None)
-        return f"Agent '{agent_name}' ({agent_id}) cancelled before it started."
-
-    # Running: signal the token; the thread catches AgentCancelledError → "cancelled"
-    with _bg_token_lock:
-        token = _bg_task_tokens.get(agent_id)
-    if token:
-        token.cancel("user-cancel")
-    return (
-        f"Cancellation signal sent to agent '{agent_name}' ({agent_id}). "
-        f"It will stop at the next safe point."
-    )
-
-
-def _delete_bg_task(agent_id: str) -> str:
-    """Delete a finished background task from memory and persisted history."""
-    with _bg_lock:
-        rec = _bg_tasks.get(agent_id)
-        if rec is None:
-            return f"No background agent found with ID: {agent_id}"
-
-        status = rec["status"]
-        agent_name = rec["agent_name"]
-        if status in ("pending", "running"):
-            return (
-                f"Agent '{agent_name}' ({agent_id}) is still {status} and cannot be deleted. "
-                f"Cancel it first or wait for it to finish."
-            )
-
-        del _bg_tasks[agent_id]
-
-    with _bg_token_lock:
-        _bg_task_tokens.pop(agent_id, None)
-
-    _flush_to_disk()
-    return f"Deleted background agent '{agent_name}' ({agent_id}) from history."
-
-
-def _flush_to_disk() -> None:
-    """Serialize snapshot + write so older snapshots cannot overtake newer ones."""
-    from .store import save_bg_task_store
-    with _bg_store_lock:
-        with _bg_lock:
-            snapshot = {k: dict(v) for k, v in _bg_tasks.items()}
-        save_bg_task_store(snapshot)
-
-
-# ---------------------------------------------------------------------------
 # CheckBackgroundAgentTool
 # ---------------------------------------------------------------------------
 
 class CheckBackgroundAgentTool(Tool):
     """Poll the status of a background sub-agent and retrieve its result."""
+
+    def __init__(self, bg_store: BackgroundTaskStore):
+        super().__init__()
+        self.bg_store = bg_store
 
     @property
     def is_read_only(self) -> bool:
@@ -327,7 +133,7 @@ class CheckBackgroundAgentTool(Tool):
 
     def execute(self, agent_id: str) -> str:
         if not agent_id:
-            tasks = list_bg_tasks()
+            tasks = self.bg_store.list()
             if not tasks:
                 return "No background agents have been launched in this session."
             lines = ["Background agents:"]
@@ -346,7 +152,7 @@ class CheckBackgroundAgentTool(Tool):
                 )
             return "\n".join(lines)
 
-        rec = get_bg_task(agent_id)
+        rec = self.bg_store.get(agent_id)
         if rec is None:
             return f"No background agent found with ID: {agent_id}"
 
@@ -376,6 +182,10 @@ class CheckBackgroundAgentTool(Tool):
 class CancelBackgroundAgentTool(Tool):
     """Cancel a running or pending background sub-agent."""
 
+    def __init__(self, bg_store: BackgroundTaskStore):
+        super().__init__()
+        self.bg_store = bg_store
+
     @property
     def name(self) -> str:
         return "cancel_background_agent"
@@ -402,7 +212,7 @@ class CancelBackgroundAgentTool(Tool):
         }
 
     def execute(self, agent_id: str) -> str:
-        return _cancel_bg_task(agent_id)
+        return self.bg_store.cancel(agent_id)
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +236,7 @@ class AgentToolWrapper(Tool):
         definition: Dict[str, Any],
         all_tools: Dict[str, Tool],
         llm_config: Dict[str, Any],
+        bg_store: BackgroundTaskStore,
         confirmation_callback: Optional[Callable] = None,
         step_callback: Optional[Callable] = None,
         output_callback: Optional[Callable] = None,
@@ -440,6 +251,7 @@ class AgentToolWrapper(Tool):
         self._definition = definition
         self._all_tools = all_tools
         self._llm_config = llm_config
+        self._bg_store = bg_store
         self._confirmation_callback = confirmation_callback
         self._step_callback = step_callback
         self._output_callback = output_callback
@@ -721,14 +533,13 @@ class AgentToolWrapper(Tool):
     def _launch_background(self, task: str, parent_context: str) -> str:
         agent_id = uuid.uuid4().hex[:8]
         agent_name = self._definition["name"]
-        _register_bg_task(agent_id, agent_name, task[:80])
+        self._bg_store.register(agent_id, agent_name, task[:80])
 
         token = CancellationToken()
-        with _bg_token_lock:
-            _bg_task_tokens[agent_id] = token
+        self._bg_store.register_token(agent_id, token)
 
         def _run():
-            if not _mark_bg_task_running(agent_id):
+            if not self._bg_store.mark_running(agent_id):
                 return
             try:
                 result, stats = self._run_sync(
@@ -737,18 +548,17 @@ class AgentToolWrapper(Tool):
                     cancellation_token=token,
                 )
                 formatted = self._format_result(result, stats)
-                _update_bg_task(
+                self._bg_store.update(
                     agent_id, status="completed", result=formatted,
                     turns=stats["turns"], tool_calls=stats["tool_calls"],
                     tokens=stats["tokens"], duration_ms=stats["duration_ms"],
                 )
             except AgentCancelledError:
-                _update_bg_task(agent_id, status="cancelled")
+                self._bg_store.update(agent_id, status="cancelled")
             except Exception as exc:
-                _update_bg_task(agent_id, status="failed", error=str(exc))
+                self._bg_store.update(agent_id, status="failed", error=str(exc))
             finally:
-                with _bg_token_lock:
-                    _bg_task_tokens.pop(agent_id, None)
+                self._bg_store.unregister_token(agent_id)
 
         # Background agents run silently: suppress_output=True ensures no callbacks
         # fire on the background thread, preventing interleaving with foreground output.

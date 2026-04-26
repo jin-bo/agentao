@@ -5,6 +5,7 @@ backward-compatible draft load, and new prompt builders.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ import pytest
 
 from agentao.cli.commands_ext import (
     collect_crystallize_evidence,
+    render_available_skills_summary,
     render_crystallize_context,
 )
 from agentao.memory.crystallizer import (
@@ -337,3 +339,113 @@ def test_refine_prompt_still_works_without_evidence():
     out = refine_prompt("DRAFT", "TRANSCRIPT", "GUIDE")
     assert "Structured evidence" not in out
     assert "DRAFT" in out and "TRANSCRIPT" in out
+
+
+# ---------------------------------------------------------------------------
+# render_available_skills_summary
+#
+# CLI-level builder for the `available_skills_text` block fed into
+# suggest_prompt. Exercises sort order (active → recent → alpha) and the
+# truncation hint when the budget overflows.
+# ---------------------------------------------------------------------------
+
+
+def _fake_cli_with_skills(tmp_path: Path, skills: list, active: list) -> SimpleNamespace:
+    """Build a minimal CLI stub whose `agent.skill_manager` exposes the
+    shape ``render_available_skills_summary`` reads."""
+    available = {}
+    for name, desc, mtime in skills:
+        skill_dir = tmp_path / name
+        skill_dir.mkdir()
+        skill_md = skill_dir / "SKILL.md"
+        skill_md.write_text(f"---\nname: {name}\ndescription: {desc}\n---\n# {name}\n", encoding="utf-8")
+        os.utime(skill_md, (mtime, mtime))
+        available[name] = {
+            "name": name,
+            "description": desc,
+            "path": str(skill_md),
+        }
+    active_dict = {n: {} for n in active}
+    sm = SimpleNamespace(
+        list_available_skills=lambda: list(available.keys()),
+        get_active_skills=lambda: active_dict,
+        get_skill_info=lambda name: available.get(name),
+    )
+    return SimpleNamespace(agent=SimpleNamespace(skill_manager=sm))
+
+
+def test_render_available_skills_empty_when_no_skill_manager():
+    cli = SimpleNamespace(agent=SimpleNamespace())  # no skill_manager
+    assert render_available_skills_summary(cli) == ""
+
+
+def test_render_available_skills_empty_when_no_skills(tmp_path: Path):
+    cli = _fake_cli_with_skills(tmp_path, skills=[], active=[])
+    assert render_available_skills_summary(cli) == ""
+
+
+def test_render_available_skills_active_sorted_first(tmp_path: Path):
+    # alpha order would be a, b, c; recency would be c (newest), b, a.
+    # active="b" must override both — b first.
+    cli = _fake_cli_with_skills(
+        tmp_path,
+        skills=[
+            ("a-skill", "Alpha skill", 1_000_000),
+            ("b-skill", "Bravo skill", 1_000_500),
+            ("c-skill", "Charlie skill", 1_001_000),
+        ],
+        active=["b-skill"],
+    )
+    out = render_available_skills_summary(cli)
+    lines = [line for line in out.splitlines() if line.startswith("- ")]
+    assert lines[0].startswith("- b-skill"), lines  # active first
+    # Among inactive, c (most recent) should come before a (oldest)
+    rest = [line for line in lines if not line.startswith("- b-skill")]
+    assert rest[0].startswith("- c-skill"), rest
+    assert rest[1].startswith("- a-skill"), rest
+
+
+def test_render_available_skills_truncation_appends_hint(tmp_path: Path):
+    # Create enough skills with long descriptions to blow past the 2000-char
+    # budget. Each line ~150 chars × 30 skills ≈ 4500 chars.
+    skills = [
+        (f"skill-{i:02d}", "Long " + "x" * 140, 1_000_000 + i)
+        for i in range(30)
+    ]
+    cli = _fake_cli_with_skills(tmp_path, skills=skills, active=[])
+    out = render_available_skills_summary(cli)
+    assert "showing top" in out
+    assert "of 30 installed skills" in out
+    assert "be conservative on duplication" in out
+
+
+def test_render_available_skills_no_hint_when_within_budget(tmp_path: Path):
+    cli = _fake_cli_with_skills(
+        tmp_path,
+        skills=[("only-skill", "Short desc", 1_000_000)],
+        active=[],
+    )
+    out = render_available_skills_summary(cli)
+    assert "only-skill" in out
+    assert "showing top" not in out
+
+
+def test_render_available_skills_total_length_respects_budget(tmp_path: Path):
+    """The hint suffix must be counted against the 2000-char budget.
+
+    Regression: an earlier version reserved 0 bytes for the hint, so a
+    truncated block consistently overran the budget by ~110 chars. The
+    rendered total length (including the hint) must stay <= 2000.
+    """
+    from agentao.cli.commands_ext.crystallize import _AVAILABLE_SKILLS_BUDGET
+
+    skills = [
+        (f"skill-{i:02d}", "Long " + "x" * 140, 1_000_000 + i)
+        for i in range(30)
+    ]
+    cli = _fake_cli_with_skills(tmp_path, skills=skills, active=[])
+    out = render_available_skills_summary(cli)
+    assert "showing top" in out  # truncation actually fired
+    assert len(out) <= _AVAILABLE_SKILLS_BUDGET, (
+        f"rendered {len(out)} chars, budget is {_AVAILABLE_SKILLS_BUDGET}"
+    )

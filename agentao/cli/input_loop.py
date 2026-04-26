@@ -57,7 +57,6 @@ def get_user_input(cli: "AgentaoCLI") -> str:
 
 
 def get_status_toolbar(cli: "AgentaoCLI") -> ANSI:
-    from ..agents.tools import list_bg_tasks
     from ..permissions import PermissionMode
 
     RST = "\x1b[0m"
@@ -86,7 +85,7 @@ def get_status_toolbar(cli: "AgentaoCLI") -> ANSI:
         ctx_col = "\x1b[37m"
 
     try:
-        tasks = list_bg_tasks()
+        tasks = cli.agent.bg_store.list()
         if tasks:
             import time as _time
             tokens = []
@@ -148,9 +147,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
         handle_mcp_command, handle_permission_command, handle_sessions_command,
         handle_tools_command, handle_sandbox_command,
     )
-    from .replay_commands import (
-        handle_replays_command, handle_replay_toggle_command,
-    )
+    from .replay_commands import handle_replay_command
     from .commands_ext import (
         handle_crystallize_command, show_memories, handle_agent_command,
         _show_agents_dashboard, handle_acp_command,
@@ -373,12 +370,8 @@ def run_loop(cli: "AgentaoCLI") -> None:
                     handle_tools_command(cli, args)
                     continue
 
-                elif command == "replays":
-                    handle_replays_command(cli, args)
-                    continue
-
                 elif command == "replay":
-                    handle_replay_toggle_command(cli, args)
+                    handle_replay_command(cli, args)
                     continue
 
                 else:

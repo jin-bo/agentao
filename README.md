@@ -165,6 +165,10 @@ Use the README for the main path, and jump to the docs below when you need depth
 | Skills guide | [docs/SKILLS_GUIDE.md](docs/SKILLS_GUIDE.md) |
 | Memory details | [docs/features/memory-management.md](docs/features/memory-management.md) |
 | ACP client details | [docs/features/acp-client.md](docs/features/acp-client.md) |
+| ACP embedding API | [docs/features/acp-embedding.md](docs/features/acp-embedding.md) |
+| Headless runtime contract | [docs/features/headless-runtime.md](docs/features/headless-runtime.md) |
+| Session replay | [docs/features/session-replay.md](docs/features/session-replay.md) |
+| macOS sandbox-exec | [docs/features/macos-sandbox-exec.md](docs/features/macos-sandbox-exec.md) |
 | Developer guide | [developer-guide/](developer-guide/) (run `cd developer-guide && npx vitepress dev` to browse locally) |
 | Integration examples | [examples/](examples/) — five runnable blueprints (SaaS API, IDE plugin, ticket triage, data workbench, batch job) |
 
@@ -343,7 +347,8 @@ Most users only need these commands:
 agentao plugin list
 agentao plugin list --json
 agentao skill list
-agentao skill install owner/repo
+agentao skill install owner/repo:path/to/skill        # monorepo subdirectory
+agentao skill install owner/repo:path/to/skill@main   # pin to a branch / tag / commit
 agentao skill update --all
 ```
 
@@ -378,7 +383,8 @@ Common commands:
 
 ```bash
 agentao skill list
-agentao skill install owner/repo
+agentao skill install anthropics/skills:skills/pdf      # owner/repo:path
+agentao skill install anthropics/skills:skills/pdf@main # pin a ref
 agentao skill update my-skill
 agentao skill remove my-skill
 ```
@@ -397,6 +403,40 @@ Agentao ships with a broad tool surface, but most users only need the categories
 - Dynamically discovered MCP tools
 
 Use [First Commands](#first-commands) for the beginner subset, [Commands](#commands) for the full slash-command reference, and [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) for a faster operator cheat sheet.
+
+### 📼 Session Replay
+
+Agentao can record the full runtime timeline of a session — turns, tool calls, permission decisions, streaming chunks, errors — as an append-only JSONL file under `.agentao/replays/`. This is separate from `/sessions` (which restores a conversation you can keep talking to); replay records *what the agent did* for debugging, audit, and protocol replay.
+
+- **Disabled by default.** Toggle with `/replay on` or set `replay.enabled: true` in `.agentao/settings.json`.
+- **One file per session instance.** A new `instance_id` is minted on each session birth (`/clear`, `/new`, ACP `session/load` all start a fresh file).
+- **Inspect & prune** — `/replay list` lists, `/replay show <id>` renders, `/replay tail <id> [n]` shows the last N events, `/replay prune` enforces the `replay.max_instances` cap (default 20).
+- **Schema is exported and CI-enforced.** The JSON Schema lives in `agentao/replay/schema.py` and drift between code and the on-disk format fails CI.
+
+For the full event reference and field-level redaction options, see [docs/features/session-replay.md](docs/features/session-replay.md).
+
+### 🛡️ macOS Sandbox (defense-in-depth)
+
+On macOS, Agentao can wrap each `run_shell_command` subprocess in `sandbox-exec` (Apple Seatbelt) so even tool calls the user approves cannot escape the workspace. This is **orthogonal to permission modes** — it limits what an *allowed* command can actually do, not whether it's allowed.
+
+- **Opt-in.** Off by default to avoid breaking network-dependent workflows like `npm install` or `git clone`.
+- **Per-session toggle.** `/sandbox on` / `/sandbox off` for the running session; persist by editing `.agentao/sandbox.json`.
+- **Switchable profiles.** `/sandbox profile <name>` picks among the built-in `.sb` templates under `agentao/sandbox/profiles/`.
+- **Status & inspection.** `/sandbox status` shows the active profile and any config errors; `/sandbox profiles` lists what's available.
+- **Scope.** Only `run_shell_command` is wrapped — other tools run inside the agent process and continue to rely on the permission engine. Linux / Windows are no-ops.
+
+For the full profile schema and threat model, see [docs/features/macos-sandbox-exec.md](docs/features/macos-sandbox-exec.md).
+
+### 🛰️ Headless Runtime
+
+`agentao.acp_client.ACPManager` is the stable, semver-guaranteed surface for embedding hosts (workflow runtimes, daemons, schedulers) that need to drive project-local ACP servers without scraping the CLI.
+
+- **Public entry points.** `prompt_once(name, prompt, ...)` for one-shot fire-and-forget turns; `send_prompt(...)` for long-lived sessions. Both fail-fast with `AcpClientError(code=SERVER_BUSY)` rather than block when a turn is already in flight on the same server.
+- **One active turn per server.** Concurrency is enforced via a per-server lock; cancellation, timeouts, and errors all clean up the slot.
+- **Non-interactive mode.** Set `interactive=False` so the manager auto-rejects `session/request_permission` and `_agentao.cn/ask_user` instead of blocking on `WAITING_FOR_USER` — the right default for daemons.
+- **Stable import root.** Only `from agentao.acp_client import ...` is semver-stable; submodule internals can change between releases.
+
+A runnable smoke consumer lives at [`examples/headless_worker.py`](examples/headless_worker.py). For the full contract — error codes, timeout vs. lock-wait semantics, latched-interaction behavior — see [docs/features/headless-runtime.md](docs/features/headless-runtime.md) and [docs/features/acp-embedding.md](docs/features/acp-embedding.md).
 
 ---
 
@@ -1092,23 +1132,39 @@ agentao/
 │   └── implementation/      # Technical implementation details
 └── agentao/
     ├── agent.py             # Core orchestration
+    ├── session.py           # Save / load / list saved sessions
+    ├── cancellation.py      # Cooperative CancellationToken (Ctrl+C propagation)
+    ├── permissions.py       # PermissionEngine (modes, domain rules, allowlists)
+    ├── display.py           # Rich theming + tool/event renderers
+    ├── logging_utils.py     # File logger setup for agentao.log
+    ├── tool_runner.py       # Thin facade re-exporting runtime/ phases
     ├── cli/                 # CLI interface (Rich) — split into subpackage
-    │   ├── __init__.py      # Re-exports for backward compat
     │   ├── _globals.py      # Console, logger, theme
     │   ├── _utils.py        # Slash commands, completer
     │   ├── app.py           # AgentaoCLI class (init, REPL loop)
     │   ├── transport.py     # Transport protocol callbacks
     │   ├── session.py       # Session lifecycle hooks
-    │   ├── commands.py      # Slash command handlers
+    │   ├── commands.py      # Slash command handlers (incl. /sandbox, /replay)
     │   ├── commands_ext.py  # Heavy command handlers (memory, agent)
     │   ├── entrypoints.py   # Entry points, parser, init wizard
     │   └── subcommands.py   # Skill/plugin CLI subcommands
+    ├── runtime/             # Per-turn pipeline (split out of ToolRunner)
+    │   ├── chat_loop.py     # Outer chat() loop; iteration cap; replay end-of-turn
+    │   ├── llm_call.py      # Single LLM round-trip + retry/recovery
+    │   ├── turn.py          # PerTurnRuntime — wraps one LLM→tool cycle
+    │   ├── tool_planning.py # Plan tool calls (resolve, dedupe, ordering)
+    │   ├── tool_executor.py # Phase-3 execution (permissions, sandbox injection)
+    │   └── tool_result_formatter.py  # Format tool results for next LLM turn
     ├── context_manager.py   # Context window management + Agentic RAG
     ├── transport/           # Transport protocol (decouple runtime from UI)
     │   ├── events.py        # AgentEvent + EventType
     │   ├── null.py          # NullTransport (headless / silent)
     │   ├── sdk.py           # SdkTransport + build_compat_transport
     │   └── base.py          # Transport Protocol definition
+    ├── prompts/             # System-prompt assembly
+    │   ├── builder.py       # _build_system_prompt entry point
+    │   ├── sections.py      # Identity, reliability, tone & style blocks
+    │   └── helpers.py       # Date injection, AGENTAO.md loader
     ├── llm/
     │   └── client.py        # OpenAI-compatible LLM client
     ├── agents/
@@ -1124,6 +1180,31 @@ agentao/
     │   ├── agents.py        # Plugin agent resolution
     │   ├── mcp.py           # Plugin MCP server merge
     │   └── diagnostics.py   # Plugin diagnostics + CLI reporting
+    ├── plan/                # Plan mode (controller, prompt, session state)
+    ├── replay/              # Session replay subsystem
+    │   ├── recorder.py      # Append-only JSONL writer per session/instance
+    │   ├── reader.py        # Stream/tail replay files
+    │   ├── schema.py        # Exported JSON Schema (drift-checked in CI)
+    │   ├── lifecycle.py     # start/end hooks tied to session lifecycle
+    │   ├── retention.py     # max_instances pruning
+    │   ├── redact.py        # Field-level redaction
+    │   └── sanitize.py      # Tool-arg / event sanitization
+    ├── sandbox/             # macOS sandbox-exec wrapper (opt-in)
+    │   ├── policy.py        # SandboxPolicy.resolve(tool_name, args)
+    │   └── profiles/        # Built-in .sb seatbelt profiles
+    ├── acp/                 # ACP server (run Agentao as agent for Zed/etc.)
+    │   ├── server.py        # JSON-RPC stdio loop
+    │   ├── session_manager.py  # Multi-session isolation
+    │   ├── session_new.py / session_prompt.py / session_cancel.py / session_load.py
+    │   ├── transport.py     # NDJSON framing
+    │   └── mcp_translate.py # Per-session MCP injection
+    ├── acp_client/          # ACP client manager (Agentao drives external servers)
+    │   ├── manager/         # ACPManager — public API: prompt_once, send_prompt
+    │   ├── client.py        # Single-server JSON-RPC client
+    │   ├── process.py       # Subprocess lifecycle
+    │   ├── inbox.py         # Server-output inbox
+    │   ├── interaction.py   # Permission / ask_user bridge
+    │   └── router.py        # Notification dispatch
     ├── mcp/
     │   ├── config.py        # Config loading + env var expansion
     │   ├── client.py        # McpClient + McpClientManager
@@ -1133,11 +1214,12 @@ agentao/
     │   ├── models.py        # MemoryEntry, IndexEntry dataclasses
     │   ├── retriever.py     # Index-based dynamic recall
     │   └── crystallizer.py  # Skill Crystallization
+    ├── tooling/             # Cross-cutting tool helpers (registry adapters)
     ├── tools/
     │   ├── base.py          # Tool base class + registry
     │   ├── file_ops.py      # Read, write, edit, list
     │   ├── search.py        # Glob, grep
-    │   ├── shell.py         # Shell execution
+    │   ├── shell.py         # Shell execution (sandbox-aware)
     │   ├── web.py           # Fetch, search
     │   ├── memory.py        # Persistent memory tools
     │   ├── skill.py         # Skill activation

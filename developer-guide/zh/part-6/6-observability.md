@@ -147,14 +147,15 @@ Replay 能支持：
 ### 命令
 
 ```bash
-/replays               # 列出 replay instances
-/replays show <id>     # 分组渲染
-/replays show <id> --raw
-/replays show <id> --turn <turn_id>
-/replays show <id> --kind tool_
-/replays show <id> --errors
-/replays tail <id> 50
-/replays prune
+/replay list            # 列出 replay instances（裸 /replay 默认也是这个）
+/replay on | /replay off  # 开关录制（写入 .agentao/settings.json）
+/replay show <id>       # 分组渲染
+/replay show <id> --raw
+/replay show <id> --turn <turn_id>
+/replay show <id> --kind tool_
+/replay show <id> --errors
+/replay tail <id> 50
+/replay prune
 ```
 
 Replay 文件和保存的 session 是两套东西：`save_session` / `load_session` 恢复可继续对话的 conversation state；replay 记录 runtime 做过什么。

@@ -63,6 +63,7 @@ def register_agent_tools(agent: "Agentao") -> None:
     agent_tools = agent.agent_manager.create_agent_tools(
         all_tools=agent.tools.tools,
         llm_config=agent._llm_config,
+        bg_store=agent.bg_store,
         confirmation_callback=lambda *a, **kw: agent.transport.confirm_tool(*a, **kw),
         step_callback=_agent_step_cb,
         output_callback=lambda name, chunk: agent.transport.emit(

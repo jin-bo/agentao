@@ -51,8 +51,8 @@ def register_builtin_tools(agent: "Agentao") -> None:
         ActivateSkillTool(agent.skill_manager),
         AskUserTool(ask_user_callback=lambda *a, **kw: agent.transport.ask_user(*a, **kw)),
         agent.todo_tool,
-        CheckBackgroundAgentTool(),
-        CancelBackgroundAgentTool(),
+        CheckBackgroundAgentTool(bg_store=agent.bg_store),
+        CancelBackgroundAgentTool(bg_store=agent.bg_store),
     ]
 
     wd = agent._explicit_working_directory

@@ -14,6 +14,7 @@ from .agents import _show_agents_dashboard, handle_agent_command
 from .crystallize import (
     collect_crystallize_evidence,
     handle_crystallize_command,
+    render_available_skills_summary,
     render_crystallize_context,
 )
 from .memory import show_memories
@@ -21,6 +22,7 @@ from .memory import show_memories
 __all__ = [
     "collect_crystallize_evidence",
     "handle_crystallize_command",
+    "render_available_skills_summary",
     "render_crystallize_context",
     "show_memories",
     "_show_agents_dashboard",

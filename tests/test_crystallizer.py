@@ -6,8 +6,10 @@ import pytest
 
 from agentao.memory.crystallizer import (
     MemoryCrystallizer,
+    NOOP_GATE_IDS,
     SkillCrystallizer,
     SUGGEST_SYSTEM_PROMPT,
+    parse_noop_skip,
     suggest_prompt,
     REFINE_SYSTEM_PROMPT,
     refine_prompt,
@@ -63,6 +65,94 @@ def test_suggest_system_prompt_contains_format():
     assert "name:" in SUGGEST_SYSTEM_PROMPT
     assert "description:" in SUGGEST_SYSTEM_PROMPT
     assert "NO_PATTERN_FOUND" in SUGGEST_SYSTEM_PROMPT
+
+
+def test_suggest_system_prompt_contains_all_gate_ids():
+    """All 4 canonical gate IDs must appear in the system prompt so the
+    model knows which strings are valid in the NO_PATTERN_FOUND:<id>
+    contract."""
+    for gate_id in NOOP_GATE_IDS:
+        assert gate_id in SUGGEST_SYSTEM_PROMPT, gate_id
+    # And the 4 gates are exactly what we documented — guards against a
+    # silent expansion to a 5th gate without updating the parser.
+    assert NOOP_GATE_IDS == (
+        "covered_by_existing_skill",
+        "not_concrete_steps",
+        "ordinary_agent_knowledge",
+        "too_session_specific",
+    )
+
+
+def test_suggest_prompt_renders_available_skills_block():
+    skills_text = "- pdf-merge — Combine PDF files\n- xlsx — Read spreadsheets"
+    result = suggest_prompt("session", "evidence", skills_text)
+    assert "Available skills (do not duplicate)" in result
+    assert "pdf-merge" in result
+    assert "xlsx" in result
+    # Skill block must come before the structured-evidence block so the
+    # model sees the duplication gate input first.
+    assert result.index("Available skills") < result.index("Structured evidence")
+
+
+def test_suggest_prompt_omits_skills_block_when_empty():
+    result = suggest_prompt("session", "evidence")
+    assert "Available skills" not in result
+    # And the gate-priming sentence is skipped too.
+    assert "covered_by_existing_skill" not in result
+
+
+# ---------------------------------------------------------------------------
+# parse_noop_skip
+# ---------------------------------------------------------------------------
+
+def test_parse_noop_skip_legacy_bare_form():
+    assert parse_noop_skip("NO_PATTERN_FOUND") == (None, "")
+
+
+def test_parse_noop_skip_with_known_gate_and_reason():
+    out = parse_noop_skip(
+        "NO_PATTERN_FOUND:covered_by_existing_skill Already covered by pdf-merge."
+    )
+    assert out == ("covered_by_existing_skill", "Already covered by pdf-merge.")
+
+
+def test_parse_noop_skip_with_known_gate_no_reason():
+    out = parse_noop_skip("NO_PATTERN_FOUND:not_concrete_steps")
+    assert out == ("not_concrete_steps", "")
+
+
+def test_parse_noop_skip_unknown_gate_falls_back_to_legacy():
+    """Forward-compat: a model that emits a gate id we don't know about
+    must not crash the CLI — fall back to the legacy bare form."""
+    assert parse_noop_skip("NO_PATTERN_FOUND:not_a_real_gate some reason") == (None, "")
+
+
+def test_parse_noop_skip_real_draft_returns_none():
+    """A real SKILL.md draft is NOT a NO-OP signal."""
+    draft = "---\nname: foo\n---\n# Foo\n\n## Steps\n1. Do thing"
+    assert parse_noop_skip(draft) is None
+
+
+def test_parse_noop_skip_empty_returns_none():
+    assert parse_noop_skip("") is None
+    assert parse_noop_skip("   \n  ") is None
+
+
+def test_parse_noop_skip_tolerates_whitespace():
+    out = parse_noop_skip(
+        "  NO_PATTERN_FOUND:ordinary_agent_knowledge boring  "
+    )
+    assert out == ("ordinary_agent_knowledge", "boring")
+
+
+def test_parse_noop_skip_uses_only_first_line():
+    """Defense against models that paste the bare token plus a
+    follow-up paragraph — only the first line is the signal."""
+    out = parse_noop_skip(
+        "NO_PATTERN_FOUND:too_session_specific one-off cleanup\n\n"
+        "(extra commentary the model added)"
+    )
+    assert out == ("too_session_specific", "one-off cleanup")
 
 
 # ---------------------------------------------------------------------------

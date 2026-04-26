@@ -1,12 +1,15 @@
 """AgentManager — loads agent definitions and creates AgentToolWrapper instances."""
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 import yaml
 
 from ..tools.base import Tool
 from .tools import AgentToolWrapper, CheckBackgroundAgentTool
+
+if TYPE_CHECKING:
+    from .bg_store import BackgroundTaskStore
 
 
 class AgentManager:
@@ -134,6 +137,7 @@ class AgentManager:
         self,
         all_tools: Dict[str, Tool],
         llm_config: Dict[str, Any],
+        bg_store: "BackgroundTaskStore",
         confirmation_callback: Optional[Callable] = None,
         step_callback: Optional[Callable] = None,
         output_callback: Optional[Callable] = None,
@@ -152,6 +156,7 @@ class AgentManager:
                 definition=defn,
                 all_tools=all_tools,
                 llm_config=llm_config,
+                bg_store=bg_store,
                 confirmation_callback=confirmation_callback,
                 step_callback=step_callback,
                 output_callback=output_callback,
@@ -165,4 +170,4 @@ class AgentManager:
             )
             for defn in self.definitions.values()
         ]
-        return wrappers + [CheckBackgroundAgentTool()]
+        return wrappers + [CheckBackgroundAgentTool(bg_store=bg_store)]

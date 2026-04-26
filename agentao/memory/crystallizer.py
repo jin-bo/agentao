@@ -260,6 +260,38 @@ SUGGEST_SYSTEM_PROMPT = """\
 You are a skill extraction assistant for Agentao, an AI coding agent.
 Analyze the provided session transcript and suggest ONE reusable skill that captures a useful, repeatable workflow.
 
+# NO-OP gates — evaluate IN ORDER, stop at the first that fires
+
+Each gate is an advisory filter. They are listed cheap-deterministic-first; do not skip ahead.
+
+1. covered_by_existing_skill
+   If the workflow is already substantially covered by one of the
+   "Available skills" listed in the user message, fire this gate.
+   Name the existing skill in the reason.
+2. not_concrete_steps
+   If you cannot express the workflow as an ordered, imperative step
+   list (3+ concrete steps), fire this gate.
+3. ordinary_agent_knowledge
+   If the workflow is ordinary coding knowledge a competent agent should
+   already know without this session's project-specific evidence (e.g.
+   "use git status to see changes"), fire this gate.
+4. too_session_specific
+   If the workflow is only useful for this one artifact / file /
+   incident, with little chance of future reuse on similar tasks, fire
+   this gate.
+
+When ANY gate fires, output exactly one of these forms — nothing else:
+
+NO_PATTERN_FOUND:<gate_id> <one-line reason>
+
+where <gate_id> is one of (exact spelling, lowercase, no other values):
+covered_by_existing_skill | not_concrete_steps | ordinary_agent_knowledge | too_session_specific
+
+Bare "NO_PATTERN_FOUND" (no gate id) is also accepted as a fallback but is
+discouraged — prefer the gated form so the user sees why you stopped.
+
+# When NO gate fires
+
 Output ONLY a valid SKILL.md in this exact format — nothing before or after:
 
 ---
@@ -279,25 +311,83 @@ description: <1-2 sentences: when to activate this skill and what it helps with>
 2. <step 2>
 3. <step 3>
 
-Keep it concise and actionable. Use concrete, imperative language.
-If no clear repeatable pattern exists, output exactly: NO_PATTERN_FOUND"""
+Keep it concise and actionable. Use concrete, imperative language."""
+
+# Canonical NO-OP gate identifiers. Kept in the same order as the gates
+# in SUGGEST_SYSTEM_PROMPT. Used by the CLI parser as a whitelist —
+# unknown ids fall back to the legacy bare-`NO_PATTERN_FOUND` branch.
+NOOP_GATE_IDS: Tuple[str, ...] = (
+    "covered_by_existing_skill",
+    "not_concrete_steps",
+    "ordinary_agent_knowledge",
+    "too_session_specific",
+)
 
 
-def suggest_prompt(session_content: str, evidence_text: str = "") -> str:
+def parse_noop_skip(text: str) -> Optional[Tuple[Optional[str], str]]:
+    """Parse a model response for the NO-OP skip contract.
+
+    Returns:
+        ``None`` if the text is not a NO-OP signal (i.e. it is a real draft).
+        ``(None, "")`` for the legacy bare ``NO_PATTERN_FOUND`` form.
+        ``(gate_id, reason)`` for the gated form when ``gate_id`` is in the
+        :data:`NOOP_GATE_IDS` whitelist. Unknown gate ids fall back to the
+        legacy form ``(None, "")`` so older models that emit unrecognized
+        ids do not crash the CLI.
+    """
+    if not text:
+        return None
+    head = text.strip().split("\n", 1)[0].strip()
+    if head == "NO_PATTERN_FOUND":
+        return (None, "")
+    if not head.startswith("NO_PATTERN_FOUND:"):
+        return None
+    payload = head[len("NO_PATTERN_FOUND:"):].strip()
+    if not payload:
+        return (None, "")
+    gate_id, _, reason = payload.partition(" ")
+    gate_id = gate_id.strip()
+    reason = reason.strip()
+    if gate_id not in NOOP_GATE_IDS:
+        return (None, "")
+    return (gate_id, reason)
+
+
+def suggest_prompt(
+    session_content: str,
+    evidence_text: str = "",
+    available_skills_text: str = "",
+) -> str:
     """Build the user message for LLM skill suggestion.
 
     ``evidence_text`` is a pre-rendered structured-evidence block (tool
     calls, workflow, key files, etc.). When present, it is shown first so
     the model grounds the draft in actual tool activity rather than in
     narrated chat text.
+
+    ``available_skills_text`` is a pre-rendered ``name — description``
+    block (one skill per line) covering the skills already installed in
+    this workspace. Shown first so the model can apply the
+    ``covered_by_existing_skill`` NO-OP gate without hallucinating
+    skills it has never seen. Caller is responsible for sort order and
+    truncation; this function just lays the block down verbatim.
     """
     truncated = session_content[-3000:] if len(session_content) > 3000 else session_content
     evidence_block = evidence_text[-4000:] if evidence_text else ""
-    parts = [
+    parts = []
+    if available_skills_text:
+        parts.append(
+            "Apply the `covered_by_existing_skill` gate against this list "
+            "before drafting anything new.\n"
+        )
+        parts.append("# Available skills (do not duplicate)\n")
+        parts.append(available_skills_text)
+        parts.append("")
+    parts.append(
         "Suggest a reusable skill based on this session. "
         "Ground the draft in the structured evidence (tool calls, files, outcomes); "
         "the raw transcript is secondary context only.\n",
-    ]
+    )
     if evidence_block:
         parts.append("# Structured evidence\n")
         parts.append(evidence_block)

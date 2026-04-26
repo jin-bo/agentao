@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from .base import Tool
+from ..security import PathPolicy, PathPolicyError
 
 # Maximum lines to show without explicit limit
 MAX_LINES_DEFAULT = 2000
@@ -164,7 +165,10 @@ class WriteFileTool(Tool):
     def execute(self, file_path: str, content: str, append: bool = False) -> str:
         """Write content to file."""
         try:
-            path = self._resolve_path(file_path)
+            path = PathPolicy.for_tool(self).contain_file(file_path)
+        except PathPolicyError as e:
+            return f"Error: {e}"
+        try:
             path.parent.mkdir(parents=True, exist_ok=True)
             mode = "a" if append else "w"
             with open(path, mode, encoding="utf-8") as f:
@@ -210,6 +214,11 @@ class EditTool(Tool):
             },
             "required": ["file_path", "old_text", "new_text"],
         }
+
+    @property
+    def requires_confirmation(self) -> bool:
+        """File editing requires user confirmation to prevent silent rewrites."""
+        return True
 
     def _normalize_whitespace(self, text: str) -> str:
         """Normalize whitespace: strip trailing spaces per line, normalize line endings."""
@@ -270,7 +279,10 @@ class EditTool(Tool):
     def execute(self, file_path: str, old_text: str, new_text: str, replace_all: bool = False) -> str:
         """Replace text in file with flexible whitespace matching fallback."""
         try:
-            path = self._resolve_path(file_path)
+            path = PathPolicy.for_tool(self).contain_file(file_path)
+        except PathPolicyError as e:
+            return f"Error: {e}"
+        try:
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
 

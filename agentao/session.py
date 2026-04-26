@@ -14,6 +14,11 @@ _MAX_SESSIONS = 10
 _TITLE_MAX_CHARS = 60
 
 
+def strip_system_reminders(text: str) -> str:
+    """Remove ``<system-reminder>…</system-reminder>`` blocks and trim whitespace."""
+    return _SYSTEM_REMINDER_RE.sub("", text).strip()
+
+
 def _session_dir(project_root: Optional[Path] = None) -> Path:
     """Return the ``.agentao/sessions`` directory for a project.
 
@@ -31,7 +36,7 @@ def _derive_title(messages: List[Dict[str, Any]]) -> str:
         if m.get("role") == "user":
             content = m.get("content", "")
             if isinstance(content, str):
-                content = _SYSTEM_REMINDER_RE.sub("", content).strip()
+                content = strip_system_reminders(content)
                 if content:
                     return content[:_TITLE_MAX_CHARS] + ("…" if len(content) > _TITLE_MAX_CHARS else "")
     return ""
@@ -214,7 +219,7 @@ def list_sessions(project_root: Optional[Path] = None) -> List[Dict[str, Any]]:
                 None,
             )
             if first_user_msg:
-                first_user_msg = _SYSTEM_REMINDER_RE.sub("", first_user_msg).strip()
+                first_user_msg = strip_system_reminders(first_user_msg)
             if first_user_msg and len(first_user_msg) > 80:
                 first_user_msg = first_user_msg[:77] + "..."
 

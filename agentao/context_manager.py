@@ -97,7 +97,7 @@ class ContextManager:
         """Store real prompt_tokens from the latest API response (Tier 1)."""
         self._last_api_prompt_tokens = prompt_tokens
 
-    def _count_tokens_in_text(self, text: str) -> int:
+    def count_tokens_in_text(self, text: str) -> int:
         """Count tokens via tiktoken; fall back to CJK-aware heuristic."""
         if self._encoding is not None:
             try:
@@ -111,17 +111,17 @@ class ContextManager:
         tokens = 0
         content = msg.get("content", "")
         if isinstance(content, str):
-            tokens += self._count_tokens_in_text(content)
+            tokens += self.count_tokens_in_text(content)
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    tokens += self._count_tokens_in_text(block.get("text", ""))
+                    tokens += self.count_tokens_in_text(block.get("text", ""))
         # reasoning_content is truncated to MAX_REASONING_HISTORY_CHARS before storage
         rc = msg.get("reasoning_content")
         if isinstance(rc, str) and rc:
-            tokens += self._count_tokens_in_text(rc)
+            tokens += self.count_tokens_in_text(rc)
         if "tool_calls" in msg:
-            tokens += self._count_tokens_in_text(str(msg["tool_calls"]))
+            tokens += self.count_tokens_in_text(str(msg["tool_calls"]))
         return tokens
 
     def estimate_tokens(self, messages: List[Dict[str, Any]]) -> int:
@@ -157,7 +157,7 @@ class ContextManager:
                 tools_str = json.dumps(tools)
             except Exception:
                 tools_str = str(tools)
-            tools_tokens = self._count_tokens_in_text(tools_str)
+            tools_tokens = self.count_tokens_in_text(tools_str)
         total = system_tokens + message_tokens + tools_tokens
         return {
             "system": system_tokens,

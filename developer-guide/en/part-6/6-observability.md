@@ -147,14 +147,15 @@ Replay enables:
 ### Commands
 
 ```bash
-/replays               # list replay instances
-/replays show <id>     # grouped render
-/replays show <id> --raw
-/replays show <id> --turn <turn_id>
-/replays show <id> --kind tool_
-/replays show <id> --errors
-/replays tail <id> 50
-/replays prune
+/replay list            # list replay instances (also the default of bare /replay)
+/replay on | /replay off  # toggle recording (persists to .agentao/settings.json)
+/replay show <id>       # grouped render
+/replay show <id> --raw
+/replay show <id> --turn <turn_id>
+/replay show <id> --kind tool_
+/replay show <id> --errors
+/replay tail <id> 50
+/replay prune
 ```
 
 Replay files are separate from saved sessions: `save_session` / `load_session` restore conversation state, while replay records what the runtime did.

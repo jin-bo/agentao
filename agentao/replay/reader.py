@@ -195,6 +195,27 @@ class ReplayReader:
         return list(self.iter_events(kinds=kinds, turn_id=turn_id))
 
 
+# Captured at scan time so /replay list can preview the first user message
+# without re-streaming the file. Capped well above the render limit (80) so
+# any future use-case (search, longer previews) can reuse it without a re-read.
+_FIRST_USER_MESSAGE_MAX = 256
+
+
+def _extract_first_user_content(event: Dict[str, Any]) -> Optional[str]:
+    if event.get("kind") != EventKind.USER_MESSAGE:
+        return None
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    content = payload.get("content")
+    if not isinstance(content, str):
+        return None
+    stripped = content.strip()
+    if not stripped:
+        return None
+    return stripped[:_FIRST_USER_MESSAGE_MAX]
+
+
 def _summarize(path: Path) -> Optional[ReplayMeta]:
     """Quick scan of a replay file to build a ``ReplayMeta`` summary."""
     try:
@@ -212,6 +233,7 @@ def _summarize(path: Path) -> Optional[ReplayMeta]:
     turn_ids: Set[str] = set()
     has_errors = False
     malformed = 0
+    first_user_message: Optional[str] = None
     lines = raw.splitlines()
     total = len(lines)
     for idx, line in enumerate(lines):
@@ -232,14 +254,17 @@ def _summarize(path: Path) -> Optional[ReplayMeta]:
             session_id = str(event.get("session_id") or "")
         if not instance_id:
             instance_id = str(event.get("instance_id") or "")
-        if event.get("kind") == EventKind.REPLAY_HEADER and created_at is None:
+        kind = event.get("kind")
+        if kind == EventKind.REPLAY_HEADER and created_at is None:
             payload = event.get("payload") or {}
             if isinstance(payload, dict):
                 created_at = payload.get("created_at")
+        if first_user_message is None:
+            first_user_message = _extract_first_user_content(event)
         tid = event.get("turn_id")
         if tid:
             turn_ids.add(tid)
-        if event.get("kind") == EventKind.ERROR:
+        if kind == EventKind.ERROR:
             has_errors = True
     if not session_id or not instance_id:
         # Fall back to filename pattern ``session.instance.jsonl`` when
@@ -259,6 +284,7 @@ def _summarize(path: Path) -> Optional[ReplayMeta]:
         turn_count=len(turn_ids),
         has_errors=has_errors,
         malformed_lines=malformed,
+        first_user_message=first_user_message,
     )
 
 

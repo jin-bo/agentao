@@ -20,7 +20,7 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
     from rich.table import Table
     from rich import box as rich_box
     from rich.text import Text
-    from ...agents.tools import list_bg_tasks
+    bg_store = cli.agent.bg_store
 
     def _fmt_status(t: dict) -> Text:
         status = t["status"]
@@ -43,7 +43,7 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
         return Text("✗  failed", style="red")
 
     def _make_panel() -> Panel:
-        tasks = list_bg_tasks()
+        tasks = bg_store.list()
 
         n_run    = sum(1 for t in tasks if t["status"] == "running")
         n_ok     = sum(1 for t in tasks if t["status"] == "completed")
@@ -75,7 +75,7 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
         title = f"Background Agents  ·  {summary}"
         return Panel(tbl, title=title, subtitle=footer, border_style="cyan")
 
-    tasks = list_bg_tasks()
+    tasks = bg_store.list()
     if not tasks:
         console.print("\n[dim]No background agents in this session.[/dim]\n")
         return
@@ -94,7 +94,7 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
             while True:
                 _time.sleep(0.5)
                 live.update(_make_panel())
-                if not any(t["status"] in active_statuses for t in list_bg_tasks()):
+                if not any(t["status"] in active_statuses for t in bg_store.list()):
                     _time.sleep(0.3)
                     live.update(_make_panel())
                     break
@@ -105,8 +105,8 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
 
 def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /agent command."""
-    from ...agents.tools import list_bg_tasks, get_bg_task
     import time as _time
+    bg_store = cli.agent.bg_store
 
     args = args.strip()
     parts = args.split(None, 1)
@@ -137,7 +137,7 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
     if sub == "status":
         agent_id = rest
         if not agent_id:
-            tasks = list_bg_tasks()
+            tasks = bg_store.list()
             if not tasks:
                 console.print("\n[dim]No background agents in this session.[/dim]\n")
                 return
@@ -167,7 +167,7 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
                 )
             console.print()
         else:
-            rec = get_bg_task(agent_id)
+            rec = bg_store.get(agent_id)
             if rec is None:
                 console.print(f"\n[error]No background agent with ID: {agent_id}[/error]\n")
                 return
@@ -203,8 +203,7 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
         if not agent_id:
             console.print("\n[error]Usage: /agent cancel <agent-id>[/error]\n")
             return
-        from ...agents.tools import _cancel_bg_task
-        msg = _cancel_bg_task(agent_id)
+        msg = bg_store.cancel(agent_id)
         console.print(f"\n{msg}\n")
         return
 
@@ -213,8 +212,7 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
         if not agent_id:
             console.print("\n[error]Usage: /agent delete <agent-id>[/error]\n")
             return
-        from ...agents.tools import _delete_bg_task
-        msg = _delete_bg_task(agent_id)
+        msg = bg_store.delete(agent_id)
         console.print(f"\n{msg}\n")
         return
 

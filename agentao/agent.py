@@ -207,6 +207,22 @@ class Agentao:
             memory_manager=self._memory_manager,
         )
 
+        # Per-instance store anchored to working_directory so concurrent
+        # ACP sessions don't share .agentao/background_tasks.json. For
+        # default sessions we follow Path.cwd() lazily — same pattern as
+        # the sandbox policy below — so an embedded/legacy chdir after
+        # construction retargets persistence to the new project rather
+        # than freezing it under the original cwd.
+        from .agents.bg_store import BackgroundTaskStore
+        if self._explicit_working_directory is not None:
+            self.bg_store = BackgroundTaskStore(
+                persistence_dir=self._explicit_working_directory,
+            )
+        else:
+            self.bg_store = BackgroundTaskStore(
+                persistence_dir_provider=Path.cwd,
+            )
+
         # Initialize tool registry
         self.tools = ToolRegistry()
         self._register_tools()
@@ -218,12 +234,7 @@ class Agentao:
         self.agent_manager = AgentManager()
         self._register_agent_tools()
 
-        # Restore persisted background tasks and reclassify any interrupted work.
-        # This belongs in core startup so direct Agentao() and print mode behave
-        # the same as the interactive CLI after a restart.
-        from .agents.store import recover_bg_task_store_once
-        from .agents.tools import _bg_lock, _bg_tasks
-        recover_bg_task_store_once(_bg_tasks, _bg_lock)
+        self.bg_store.recover()
 
         # Plugin hook rules — populated by _load_and_register_plugins() in cli.py.
         self._plugin_hook_rules: list = []

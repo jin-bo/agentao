@@ -28,7 +28,6 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
-from ..agents.tools import drain_bg_notifications
 from ..cancellation import AgentCancelledError, CancellationToken
 from ..context_manager import is_context_too_long_error
 from ..transport import AgentEvent, EventType
@@ -425,7 +424,7 @@ class ChatLoopRunner:
         system_prompt: str,
     ) -> list:
         agent = self._agent
-        bg_notes = drain_bg_notifications()
+        bg_notes = agent.bg_store.drain_notifications()
         if not bg_notes:
             return messages_with_system
         note_content = "\n\n".join(bg_notes)

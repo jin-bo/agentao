@@ -50,10 +50,10 @@ never span across those boundaries.
 ## Inspecting replays
 
 ```bash
-/replays               # list recorded instances (newest last)
-/replays show <id>     # render events for one instance in sequence
-/replays tail <id> [n] # show the last N events (default 20)
-/replays prune         # delete instances above replay.max_instances
+/replay list           # list recorded instances (newest first)
+/replay show <id>      # render events for one instance in sequence
+/replay tail <id> [n]  # show the last N events (default 20)
+/replay prune          # delete instances above replay.max_instances
 ```
 
 `<id>` can be a full `session_id.instance_id` or any unambiguous prefix

@@ -101,12 +101,12 @@ All commands start with `/`:
   - `/acp cancel <name>` - Cancel active turn
   - `/acp status <name>` - Detailed server status
   - `/acp logs <name> [lines]` - View server stderr
-- `/replay [on|off]` - Toggle persistent replay recording (writes `.agentao/settings.json`)
-- `/replays` - List, inspect, or prune recorded replay instances
-  - `/replays` or `/replays list` - List replay instances
-  - `/replays show <id>` - Render events in sequence order
-  - `/replays tail <id> [n]` - Show last n events (default 20)
-  - `/replays prune` - Delete replays beyond `replay.max_instances`
+- `/replay [subcommand]` - Persistent replay recording: toggle, list, inspect, prune
+  - `/replay` or `/replay list` - List replay instances (with recording status)
+  - `/replay on` / `/replay off` - Toggle recording (writes `.agentao/settings.json`)
+  - `/replay show <id>` - Render events in sequence order
+  - `/replay tail <id> [n]` - Show last n events (default 20)
+  - `/replay prune` - Delete replays beyond `replay.max_instances`
 - `/copy` - Copy the last assistant response (Markdown) to clipboard
 - `/markdown` - Toggle Markdown rendering ON/OFF (default: ON)
 - `/exit` or `/quit` - Exit the program
