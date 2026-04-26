@@ -76,7 +76,7 @@ jobs:
         run: uvx twine check dist/*
 
       - name: Upload dist artifacts
-        uses: actions/upload-artifact@v8
+        uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
