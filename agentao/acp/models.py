@@ -14,7 +14,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from agentao.cancellation import CancellationToken
 
@@ -200,6 +200,7 @@ class AcpSessionState:
     turn_lock: threading.Lock = field(default_factory=threading.Lock)
     permission_overrides: Dict[str, bool] = field(default_factory=dict)
     permission_lock: threading.Lock = field(default_factory=threading.Lock)
+    last_known_models: Optional[List[str]] = None
     closed: bool = False
 
     def close(self) -> None:

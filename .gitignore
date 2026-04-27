@@ -41,6 +41,7 @@ env/
 .agentao_memory.json
 chatagent.log
 *.log
+*.log.*
 .chatagent/
 .agentao/
 .claude/

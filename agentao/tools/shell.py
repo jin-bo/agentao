@@ -273,6 +273,11 @@ class ShellTool(Tool):
                     command,
                     shell=True,
                     cwd=cwd,
+                    # Detach stdin so we never inherit the parent's stdin —
+                    # under the ACP stdio transport the parent stdin is the
+                    # JSON-RPC channel, and a shell=True child inheriting it
+                    # can corrupt framing or deadlock.
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
@@ -289,6 +294,7 @@ class ShellTool(Tool):
                     command,
                     shell=True,
                     cwd=cwd,
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,  # equivalent to preexec_fn=os.setsid
@@ -314,6 +320,9 @@ class ShellTool(Tool):
         popen_kwargs: Dict[str, Any] = dict(
             shell=True,
             cwd=cwd,
+            # See _run_background: never inherit parent stdin (JSON-RPC channel
+            # under ACP stdio).
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -356,6 +365,7 @@ class ShellTool(Tool):
                         # terminate the wrapper and leave children running.
                         subprocess.run(
                             ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                            stdin=subprocess.DEVNULL,
                             capture_output=True,
                         )
                     else:
