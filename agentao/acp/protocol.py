@@ -49,6 +49,9 @@ METHOD_SESSION_NEW = "session/new"
 METHOD_SESSION_PROMPT = "session/prompt"
 METHOD_SESSION_CANCEL = "session/cancel"
 METHOD_SESSION_LOAD = "session/load"
+METHOD_SESSION_SET_MODEL = "session/set_model"
+METHOD_SESSION_SET_MODE = "session/set_mode"
+METHOD_SESSION_LIST_MODELS = "session/list_models"
 
 # Server → client notifications
 METHOD_SESSION_UPDATE = "session/update"

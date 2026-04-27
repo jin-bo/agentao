@@ -33,10 +33,14 @@ class _StreamToolCall:
 
 
 class _StreamMessage:
-    def __init__(self, content, tool_calls):
+    def __init__(self, content, tool_calls, reasoning_content: Optional[str] = None):
         self.content = content
         self.tool_calls = tool_calls
         self.role = "assistant"
+        # Mirrors the non-streaming `message.reasoning_content` attribute so
+        # chat_loop / context_manager / sanitize all see thinking-model output
+        # the same way regardless of streaming mode.
+        self.reasoning_content = reasoning_content
 
 
 class _StreamChoice:
@@ -55,6 +59,7 @@ class _StreamResponse:
         tool_calls_data: Dict[int, Dict[str, str]],
         finish_reason: str,
         usage: Any = None,
+        reasoning_content: Optional[str] = None,
     ):
         self.model = model
         self.usage = usage  # populated when provider supports stream_options include_usage
@@ -73,7 +78,11 @@ class _StreamResponse:
                 for idx in sorted(tool_calls_data)
             ]
 
-        message = _StreamMessage(content=content, tool_calls=tool_calls)
+        message = _StreamMessage(
+            content=content,
+            tool_calls=tool_calls,
+            reasoning_content=reasoning_content,
+        )
         self.choices = [_StreamChoice(message=message, finish_reason=finish_reason)]
 
 
@@ -134,8 +143,17 @@ class LLMClient:
         pkg_logger = logging.getLogger("agentao")
         pkg_logger.setLevel(logging.DEBUG)
 
-        # Remove existing handlers to avoid duplicates on hot-reload
-        pkg_logger.handlers.clear()
+        # Don't drop handlers we don't own (e.g. AcpServer's stderr guard).
+        # Tag our own and evict only the marked ones to avoid duplicates
+        # when LLMClient is reconstructed (which happens on every model
+        # switch in ACP mode).
+        for h in list(pkg_logger.handlers):
+            if getattr(h, "_agentao_llm_file_handler", False):
+                pkg_logger.removeHandler(h)
+                try:
+                    h.close()
+                except Exception:
+                    pass
 
         # File handler for detailed logs.
         #
@@ -158,6 +176,7 @@ class LLMClient:
         if file_handler is not None:
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(file_formatter)
+            file_handler._agentao_llm_file_handler = True  # type: ignore[attr-defined]
             pkg_logger.addHandler(file_handler)
 
         # Request counter for tracking
@@ -516,6 +535,7 @@ class LLMClient:
             stream = self.client.chat.completions.create(**kwargs)
 
             content_parts: List[str] = []
+            reasoning_parts: List[str] = []
             tool_calls_data: Dict[int, Dict[str, str]] = {}
             finish_reason = "stop"
             response_model = self.model
@@ -537,6 +557,12 @@ class LLMClient:
                     content_parts.append(delta.content)
                     if on_text_chunk:
                         on_text_chunk(delta.content)
+
+                # Accumulate reasoning_content (DeepSeek/MiniMax/Kimi-style thinking
+                # field). Non-streaming exposes it on message.reasoning_content;
+                # without this branch the streaming path would silently drop it.
+                if delta and getattr(delta, "reasoning_content", None):
+                    reasoning_parts.append(delta.reasoning_content)
 
                 # Accumulate tool call deltas
                 if delta and delta.tool_calls:
@@ -574,6 +600,7 @@ class LLMClient:
                 tool_calls_data=tool_calls_data,
                 finish_reason=finish_reason,
                 usage=usage_data,
+                reasoning_content="".join(reasoning_parts) if reasoning_parts else None,
             )
 
             self._log_response(request_id, response)
@@ -590,6 +617,7 @@ class LLMClient:
                 try:
                     stream = self.client.chat.completions.create(**kwargs)
                     content_parts2: List[str] = []
+                    reasoning_parts2: List[str] = []
                     tool_calls_data2: Dict[int, Dict[str, str]] = {}
                     finish_reason2 = "stop"
                     response_model2 = self.model
@@ -605,6 +633,8 @@ class LLMClient:
                             content_parts2.append(delta.content)
                             if on_text_chunk:
                                 on_text_chunk(delta.content)
+                        if delta and getattr(delta, "reasoning_content", None):
+                            reasoning_parts2.append(delta.reasoning_content)
                         if delta and delta.tool_calls:
                             for tc_delta in delta.tool_calls:
                                 idx = tc_delta.index
@@ -630,6 +660,7 @@ class LLMClient:
                         tool_calls_data=tool_calls_data2,
                         finish_reason=finish_reason2,
                         usage=usage_data2,
+                        reasoning_content="".join(reasoning_parts2) if reasoning_parts2 else None,
                     )
                     self._log_response(request_id, response)
                     return response

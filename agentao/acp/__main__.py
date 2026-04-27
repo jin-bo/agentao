@@ -10,7 +10,16 @@ As subsequent issues land, each adds its own ``register(server)`` call below.
 
 import sys
 
-from . import initialize, session_cancel, session_load, session_new, session_prompt
+from . import (
+    initialize,
+    session_cancel,
+    session_list_models,
+    session_load,
+    session_new,
+    session_prompt,
+    session_set_mode,
+    session_set_model,
+)
 from .server import AcpServer
 
 
@@ -64,11 +73,14 @@ def _ensure_acp_utf8_stdio() -> None:
 def main() -> None:
     _ensure_acp_utf8_stdio()
     server = AcpServer()  # attaches to real sys.stdin / sys.stdout with guards
-    initialize.register(server)      # Issue 02: initialize handshake
-    session_new.register(server)     # Issue 04: session/new creation
-    session_prompt.register(server)  # Issue 06: session/prompt turn execution
-    session_cancel.register(server)  # Issue 09: session/cancel turn cancellation
-    session_load.register(server)    # Issue 10: session/load + history replay
+    initialize.register(server)
+    session_new.register(server)
+    session_prompt.register(server)
+    session_cancel.register(server)
+    session_load.register(server)
+    session_set_model.register(server)
+    session_set_mode.register(server)
+    session_list_models.register(server)
     server.run()
 
 
