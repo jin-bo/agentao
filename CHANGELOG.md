@@ -11,6 +11,76 @@ _No changes yet._
 
 ---
 
+## [0.2.15] — 2026-04-27
+
+Maintenance follow-up to `0.2.14`. Headline: **ACP control-plane
+parity** — `session/set_model`, `session/set_mode`, and
+`session/list_models` handlers land so ACP clients (Zed and others)
+can drive model switching, permission-mode toggles, and capability
+discovery on a live session. The same release fixes three
+correctness gaps around the ACP stdio channel and streaming
+`reasoning_content`.
+
+### Added
+
+- **`session/set_model` handler** (`agentao/acp/session_set_model.py`):
+  apply `model` / `contextLength` / `maxTokens` independently on a
+  running session via `agent.set_model()` and `agent.context_manager.max_tokens`
+  / `agent.llm.max_tokens`. Each knob is optional; partial requests
+  do not reset untouched fields. Holds the session's idle turn lock
+  so an in-flight `session/prompt` cannot observe a mid-stream
+  change. Conversation history and tool state are preserved.
+- **`session/set_mode` handler** (`agentao/acp/session_set_mode.py`):
+  toggle `PermissionEngine` mode (`default` / `acceptEdits` /
+  `bypassPermissions` / `plan`) per session via
+  `permission_engine.set_mode(...)`.
+- **`session/list_models` handler** (`agentao/acp/session_list_models.py`):
+  call `agent.list_available_models()` and cache the result on
+  `AcpSessionState.last_known_models`. On provider lookup failure,
+  returns the cached list plus a `warning` field instead of a
+  JSON-RPC error so transient provider outages don't blank the UI.
+- **Shared session-validation helper**
+  (`agentao/acp/_handler_utils.py`): single point for "does this
+  `session_id` exist, is it ours, did the client send a well-formed
+  request" so each new handler does not re-derive the contract.
+- **Streaming `reasoning_content` capture** (`agentao/llm/client.py`):
+  thinking-model output arriving on the streaming `delta` is now
+  forwarded the same way as the non-streaming
+  `message.reasoning_content` field, so transport `THINKING` events
+  no longer drop reasoning text from streaming backends.
+- **Test coverage** for all of the above:
+  `tests/test_acp_session_set_model.py` (484 lines, 31 cases),
+  `tests/test_chat_stream_reasoning.py`,
+  `tests/test_llm_handler_marker.py`,
+  `tests/test_shell_stdin_devnull.py`.
+
+### Fixed
+
+- **Outsider log handlers preserved across `LLMClient` reconstruction**
+  (`agentao/llm/client.py`): the package-root handler eviction now
+  only drops handlers tagged with `_agentao_llm_file_handler=True`.
+  Previously, every `LLMClient` rebuild (which `set_model` triggers,
+  and which the test suite triggers repeatedly) silently evicted
+  unrelated handlers — including the `AcpServer` stderr-guard handler
+  that protects the ACP JSON-RPC stdout/stdin channel.
+- **Shell subprocess no longer inherits parent stdin**
+  (`agentao/tools/shell.py`): `Popen(..., stdin=subprocess.DEVNULL)`.
+  Children that read from stdin (interactive prompts, `read`-style
+  tooling) can no longer consume bytes from the ACP JSON-RPC stdin
+  channel that the parent process owns.
+
+### Packaging
+
+- `.gitignore`: ignore rotated `*.log.*` files (avoid tracking the
+  bounded-rotation artifacts introduced in `0.2.14`).
+- `.github/workflows/ci.yml`: `actions/upload-artifact` pinned at v7
+  (v8 does not exist; resolved on-branch in `e84fc0b`).
+
+See [`docs/releases/v0.2.15.md`](docs/releases/v0.2.15.md) for the
+release summary and maintainer checklist.
+
+---
+
 ## [0.2.14] — 2026-04-25
 
 Maintenance follow-up to `0.2.13` GA. Headline: **tool-call resilience
