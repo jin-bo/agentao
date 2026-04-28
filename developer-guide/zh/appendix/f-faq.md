@@ -38,7 +38,7 @@ uv add 'agentao[all]'
 
 你设了 `PermissionMode.READ_ONLY`（显式或默认）。两条路：
 
-- 构造后显式切模式：`e = PermissionEngine(); e.set_mode(PermissionMode.WORKSPACE_WRITE); agent = Agentao(permission_engine=e, ...)`
+- 构造后显式切模式：`e = PermissionEngine(project_root=workdir); e.set_mode(PermissionMode.WORKSPACE_WRITE); agent = Agentao(working_directory=workdir, permission_engine=e, ...)` —— 0.2.16 起 `project_root=` 必传
 - 或在 transport 上实现 `confirm_tool`，让用户交互确认
 
 ### `chat()` 永不返回

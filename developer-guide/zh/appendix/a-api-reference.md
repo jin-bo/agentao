@@ -43,6 +43,10 @@ Agentao(
     mcp_manager: McpClientManager | None = None,
     filesystem: FileSystem | None = None,
     shell: ShellExecutor | None = None,
+    # 可选启用的子系统（0.2.16+；None = 完全禁用）
+    replay_config: ReplayConfig | None = None,
+    sandbox_policy: SandboxPolicy | None = None,
+    bg_store: BackgroundTaskStore | None = None,
     # 老式回调（建议改用 `transport=`）
     output_callback: Callable[[str], None] | None = None,
     confirmation_callback: Callable[[str, str, dict], bool] | None = None,
@@ -56,6 +60,14 @@ Agentao(
 
 - `llm_client=` 与任何 `api_key=` / `base_url=` / `model=` / `temperature=` 同时传
 - `mcp_manager=` 与 `extra_mcp_servers=` 同时传
+
+可选子系统语义（0.2.16 起默认 `None`）：
+
+- `replay_config=None` —— 构造时不读 `<wd>/.agentao/replay.json`，内部用 no-op 的 `ReplayConfig()`。
+- `sandbox_policy=None` —— `ToolRunner` 跑 shell 时不再走 macOS `sandbox-exec` 包装。
+- `bg_store=None` —— `check_background_agent` / `cancel_background_agent` 不注册，chat loop 后台通知 drain 短路，子 agent 工具定义里 `run_in_background` 字段在 **schema 层被移除**（LLM 看不到、就不会调用一个被禁用的能力）。`/agent bg|dashboard|cancel|delete|logs|result` 这几个 CLI 子命令也会短路，并打印明确的提示。
+
+`agentao.embedding.build_from_environment()` 会按 CLI 默认行为构造这三个对象（都锚定到当前 session 的工作目录），然后显式传入，所以 CLI / ACP 行为保持不变。嵌入式 host 不主动启用就不会有任何开销。
 
 ### `agentao.embedding.build_from_environment`
 
@@ -227,10 +239,14 @@ class PermissionDecision(Enum):
 ### `PermissionEngine`
 
 ```python
-PermissionEngine(*, project_root: Path | None = None)
+PermissionEngine(
+    project_root: Path,
+    *,
+    user_root: Path | None = None,
+)
 ```
 
-构造时自动从 `<project_root>/.agentao/permissions.json` + `~/.agentao/permissions.json` 加载规则。构造后用 `set_mode()` 切换预设模式。
+0.2.16 起两个参数都显式传——`project_root=None`（或不传）会抛 `TypeError`。项目规则从 `<project_root>/.agentao/permissions.json` 加载；用户规则从 `<user_root>/permissions.json` 加载（一般 `user_root=Path.home() / ".agentao"`，对应 `~/.agentao/permissions.json`）。传 `user_root=None` 可完全禁用用户态规则。构造后用 `set_mode()` 切换预设模式。
 
 | 方法 | 签名 | 作用 |
 |------|------|------|

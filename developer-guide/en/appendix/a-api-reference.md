@@ -43,6 +43,10 @@ Agentao(
     mcp_manager: McpClientManager | None = None,
     filesystem: FileSystem | None = None,
     shell: ShellExecutor | None = None,
+    # Opt-in subsystems (0.2.16+; None = fully disabled)
+    replay_config: ReplayConfig | None = None,
+    sandbox_policy: SandboxPolicy | None = None,
+    bg_store: BackgroundTaskStore | None = None,
     # Legacy callbacks (prefer `transport=`)
     output_callback: Callable[[str], None] | None = None,
     confirmation_callback: Callable[[str, str, dict], bool] | None = None,
@@ -56,6 +60,14 @@ Mutual-exclusion rules (raise `ValueError` if violated):
 
 - `llm_client=` together with any of `api_key=` / `base_url=` / `model=` / `temperature=`
 - `mcp_manager=` together with `extra_mcp_servers=`
+
+Opt-in subsystem semantics (defaults are `None` since 0.2.16):
+
+- `replay_config=None` — no `<wd>/.agentao/replay.json` is read at construction time; the agent uses a no-op `ReplayConfig()` internally.
+- `sandbox_policy=None` — `ToolRunner` runs shell commands without the macOS `sandbox-exec` wrapper.
+- `bg_store=None` — `check_background_agent` / `cancel_background_agent` are not registered, the chat loop's background-notification drain short-circuits, and the `run_in_background` field is **schema-level removed** from sub-agent tool definitions (the LLM cannot call a disabled feature). `/agent bg|dashboard|cancel|delete|logs|result` CLI subcommands short-circuit with a clear warning.
+
+`agentao.embedding.build_from_environment()` constructs CLI defaults for all three (anchored to the session's working directory) and passes them explicitly, so CLI / ACP behavior is preserved. Embedded hosts that don't ask for these features pay zero cost.
 
 ### `agentao.embedding.build_from_environment`
 
@@ -227,10 +239,14 @@ class PermissionDecision(Enum):
 ### `PermissionEngine`
 
 ```python
-PermissionEngine(*, project_root: Path | None = None)
+PermissionEngine(
+    project_root: Path,
+    *,
+    user_root: Path | None = None,
+)
 ```
 
-Rules are auto-loaded from `<project_root>/.agentao/permissions.json` + `~/.agentao/permissions.json` at construction time. Switch the preset mode after construction with `set_mode()`.
+Both arguments are explicit since 0.2.16 — passing `project_root=None` (or omitting it) raises `TypeError`. Project rules load from `<project_root>/.agentao/permissions.json`; user rules load from `<user_root>/permissions.json` (typically `~/.agentao/permissions.json` if `user_root=Path.home() / ".agentao"`). Pass `user_root=None` to disable user-scope rules entirely. Switch the preset mode after construction with `set_mode()`.
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|

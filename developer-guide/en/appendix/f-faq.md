@@ -38,7 +38,7 @@ The default model id is `gpt-5.4`. If your endpoint offers different models, pas
 
 You set `PermissionMode.READ_ONLY` (explicitly or by accident). Either:
 
-- Construct an engine and switch modes explicitly: `e = PermissionEngine(); e.set_mode(PermissionMode.WORKSPACE_WRITE); agent = Agentao(permission_engine=e, ...)`
+- Construct an engine and switch modes explicitly: `e = PermissionEngine(project_root=workdir); e.set_mode(PermissionMode.WORKSPACE_WRITE); agent = Agentao(working_directory=workdir, permission_engine=e, ...)` — `project_root=` is required since 0.2.16
 - Or implement a `confirm_tool` callback on the transport so users can approve interactively
 
 ### `chat()` never returns
