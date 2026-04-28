@@ -363,11 +363,12 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
             if len(cmd_parts) > 1:
                 server_cfg["args"] = cmd_parts[1:]
 
-        project_path = Path.cwd() / ".agentao" / "mcp.json"
+        project_dir = cli.agent.working_directory / ".agentao"
+        project_path = project_dir / "mcp.json"
         existing = _load_json_file(project_path)
         servers = existing.get("mcpServers", {})
         servers[name] = server_cfg
-        saved_path = save_mcp_config(servers)
+        saved_path = save_mcp_config(servers, config_dir=project_dir)
 
         console.print(f"\n[success]Added MCP server '{name}' to {saved_path}[/success]")
         console.print("[info]Restart agentao to connect to the new server.[/info]\n")
@@ -378,7 +379,8 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
             console.print("\n[error]Usage: /mcp remove <name>[/error]\n")
             return
 
-        project_path = Path.cwd() / ".agentao" / "mcp.json"
+        project_dir = cli.agent.working_directory / ".agentao"
+        project_path = project_dir / "mcp.json"
         existing = _load_json_file(project_path)
         servers = existing.get("mcpServers", {})
         if name not in servers:
@@ -386,7 +388,7 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
             return
 
         del servers[name]
-        save_mcp_config(servers)
+        save_mcp_config(servers, config_dir=project_dir)
         console.print(f"\n[success]Removed MCP server '{name}'.[/success]")
         console.print("[info]Restart agentao to apply changes.[/info]\n")
 

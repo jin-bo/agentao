@@ -7,6 +7,7 @@ Covers ``session/set_model``, ``session/set_mode``, and
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, List, Optional
 
 import pytest
@@ -27,6 +28,21 @@ from agentao.acp.server import JsonRpcHandlerError
 from agentao.permissions import PermissionEngine, PermissionMode
 
 from .support.acp_server import make_initialized_server, make_server
+
+
+@pytest.fixture
+def make_engine(tmp_path_factory):
+    """Factory that returns fresh ``PermissionEngine`` instances.
+
+    The handler tests don't care about rule contents — only that the
+    engine is constructable and modal — so each call produces a fresh
+    pytest-managed project root with no inherited rules. Returning a
+    factory (rather than a single engine) lets tests build multiple
+    independent engines for isolation assertions.
+    """
+    def _make() -> PermissionEngine:
+        return PermissionEngine(project_root=tmp_path_factory.mktemp("permissions"))
+    return _make
 
 
 # ---------------------------------------------------------------------------
@@ -226,9 +242,9 @@ class TestSetMode:
             )
         assert exc.value.code == SERVER_NOT_INITIALIZED
 
-    def test_unknown_mode_rejected(self):
+    def test_unknown_mode_rejected(self, make_engine):
         server = make_initialized_server()
-        agent = _FakeAgent(permission_engine=PermissionEngine())
+        agent = _FakeAgent(permission_engine=make_engine())
         _register_session(server, "s", agent)
         with pytest.raises(TypeError):
             acp_set_mode.handle_session_set_mode(
@@ -243,9 +259,9 @@ class TestSetMode:
             )
         assert exc.value.code == INVALID_REQUEST
 
-    def test_applies_mode_to_session_engine(self):
+    def test_applies_mode_to_session_engine(self, make_engine):
         server = make_initialized_server()
-        engine = PermissionEngine()
+        engine = make_engine()
         agent = _FakeAgent(permission_engine=engine)
         _register_session(server, "s", agent)
 
@@ -255,12 +271,12 @@ class TestSetMode:
         assert result == {"mode": "read-only"}
         assert engine.active_mode == PermissionMode.READ_ONLY
 
-    def test_does_not_affect_other_session(self):
+    def test_does_not_affect_other_session(self, make_engine):
         """Critical isolation guarantee: each session owns its own
         PermissionEngine; updating session A must not change session B."""
         server = make_initialized_server()
-        engine_a = PermissionEngine()
-        engine_b = PermissionEngine()
+        engine_a = make_engine()
+        engine_b = make_engine()
         _register_session(server, "a", _FakeAgent(permission_engine=engine_a))
         _register_session(server, "b", _FakeAgent(permission_engine=engine_b))
 
@@ -431,9 +447,9 @@ class TestActiveTurnGuard:
         assert state.turn_lock.acquire(blocking=False)
         state.turn_lock.release()
 
-    def test_set_mode_rejected_while_turn_active(self):
+    def test_set_mode_rejected_while_turn_active(self, make_engine):
         server = make_initialized_server()
-        engine = PermissionEngine()
+        engine = make_engine()
         state = _register_session(server, "s", _FakeAgent(permission_engine=engine))
         assert state.turn_lock.acquire(blocking=False)
         try:

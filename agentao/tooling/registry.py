@@ -51,9 +51,13 @@ def register_builtin_tools(agent: "Agentao") -> None:
         ActivateSkillTool(agent.skill_manager),
         AskUserTool(ask_user_callback=lambda *a, **kw: agent.transport.ask_user(*a, **kw)),
         agent.todo_tool,
-        CheckBackgroundAgentTool(bg_store=agent.bg_store),
-        CancelBackgroundAgentTool(bg_store=agent.bg_store),
     ]
+    # When the background-agent store is disabled, omit the poll /
+    # cancel tools so the LLM-visible schema doesn't advertise a
+    # feature the runtime can't service.
+    if agent.bg_store is not None:
+        tools_to_register.append(CheckBackgroundAgentTool(bg_store=agent.bg_store))
+        tools_to_register.append(CancelBackgroundAgentTool(bg_store=agent.bg_store))
 
     wd = agent._explicit_working_directory
     for tool in tools_to_register:

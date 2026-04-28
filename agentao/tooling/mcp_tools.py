@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 from ..mcp import McpClientManager, McpTool, load_mcp_config
+from ..paths import user_root
 
 if TYPE_CHECKING:
     from ..agent import Agentao
@@ -34,7 +35,14 @@ def init_mcp(agent: "Agentao") -> Optional[McpClientManager]:
     configured. All failures are logged via ``agent.llm.logger``.
     """
     try:
-        configs = load_mcp_config(project_root=agent.working_directory)
+        # Bootstrap layer: project-scope ``<wd>/.agentao/mcp.json`` plus
+        # user-scope ``~/.agentao/mcp.json``. Embedded hosts that want
+        # different scoping inject a pre-built ``mcp_manager`` and skip
+        # this path entirely.
+        configs = load_mcp_config(
+            project_root=agent.working_directory,
+            user_root=user_root(),
+        )
     except Exception as e:
         agent.llm.logger.warning(f"Failed to load MCP config: {e}")
         configs = {}

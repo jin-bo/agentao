@@ -65,28 +65,38 @@ def _load_json_file(path: Path) -> Dict[str, Any]:
         return {}
 
 
-def load_mcp_config(*, project_root: Optional[Path] = None) -> Dict[str, McpServerConfig]:
-    """Load MCP server configs from global (~/.agentao/mcp.json) and project (.agentao/mcp.json).
+def load_mcp_config(
+    *,
+    project_root: Path,
+    user_root: Optional[Path] = None,
+) -> Dict[str, McpServerConfig]:
+    """Load MCP server configs from user-scope and project-scope files.
 
-    Project-level configs override global ones for the same server name.
+    Project-level configs override user-scope ones for the same server name.
     Environment variables in config values are expanded.
 
     Args:
-        project_root: Optional project directory to resolve the project-level
-            ``.agentao/mcp.json`` against. When ``None``, falls back to
-            ``Path.cwd()`` (legacy CLI behavior). ACP sessions pass the
-            session's cwd so two sessions in different directories see
-            independent MCP configuration (Issue 05).
+        project_root: Project directory to resolve
+            ``<project_root>/.agentao/mcp.json`` against. Required:
+            the loader performs no implicit cwd resolution.
+        user_root: Optional user-scope directory to resolve
+            ``<user_root>/mcp.json`` against. ``None`` (the default)
+            skips the user-scope read; pass an explicit path
+            (typically ``~/.agentao``) to opt in.
 
     Returns:
         Dict mapping server name to its expanded config.
     """
-    global_path = Path.home() / ".agentao" / "mcp.json"
-    project_cwd = project_root if project_root is not None else Path.cwd()
-    project_path = project_cwd / ".agentao" / "mcp.json"
+    if project_root is None:
+        raise TypeError(
+            "load_mcp_config requires a project_root keyword argument."
+        )
+    project_path = project_root / ".agentao" / "mcp.json"
 
-    global_cfg = _load_json_file(global_path)
     project_cfg = _load_json_file(project_path)
+    global_cfg: Dict[str, Any] = (
+        _load_json_file(user_root / "mcp.json") if user_root is not None else {}
+    )
 
     # Merge: project overrides global
     servers: Dict[str, McpServerConfig] = {}
@@ -99,20 +109,26 @@ def load_mcp_config(*, project_root: Optional[Path] = None) -> Dict[str, McpServ
     return {name: _expand_config_env(conf) for name, conf in servers.items()}
 
 
-def save_mcp_config(servers: Dict[str, McpServerConfig], *, global_config: bool = False) -> Path:
-    """Save MCP server configs to the project or global config file.
+def save_mcp_config(
+    servers: Dict[str, McpServerConfig],
+    *,
+    config_dir: Path,
+) -> Path:
+    """Save MCP server configs to ``<config_dir>/mcp.json``.
 
     Args:
         servers: Server configs to save.
-        global_config: If True, save to ~/.agentao/mcp.json; otherwise .agentao/mcp.json.
+        config_dir: Directory in which to write ``mcp.json``. Callers
+            pass ``<working_directory>/.agentao`` for project scope or
+            ``~/.agentao`` for user scope.
 
     Returns:
         Path to the saved config file.
     """
-    if global_config:
-        config_dir = Path.home() / ".agentao"
-    else:
-        config_dir = Path.cwd() / ".agentao"
+    if config_dir is None:
+        raise TypeError(
+            "save_mcp_config requires a config_dir keyword argument."
+        )
 
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "mcp.json"

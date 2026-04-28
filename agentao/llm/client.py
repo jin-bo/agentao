@@ -3,7 +3,6 @@
 import json
 import logging
 import logging.handlers
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -96,19 +95,32 @@ class LLMClient:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        temperature: float = 0.2,
+        max_tokens: int = 65536,
         log_file: Optional[str] = "agentao.log",
         logger: Optional[logging.Logger] = None,
     ):
         """Initialize LLM client.
 
+        ``api_key`` / ``base_url`` / ``model`` are required keyword-only
+        arguments. The client never reads environment variables on its
+        own — embedded hosts construct it directly with explicit values,
+        and CLI / ACP go through
+        :func:`agentao.embedding.build_from_environment`, which is the
+        single place that resolves ``LLM_PROVIDER`` / ``*_API_KEY`` /
+        ``*_BASE_URL`` / ``*_MODEL`` / ``LLM_TEMPERATURE`` /
+        ``LLM_MAX_TOKENS`` from the surrounding environment.
+
         Args:
-            api_key: API key for the LLM service (overrides env)
-            base_url: Base URL for the API endpoint (overrides env)
-            model: Model name to use (overrides env; required if not set in env)
+            api_key: API key for the LLM service.
+            base_url: Base URL for the API endpoint.
+            model: Model name to use.
+            temperature: Sampling temperature (default 0.2).
+            max_tokens: Default per-call output token cap (default 65536).
             log_file: Path to log file for LLM interactions. ``None`` skips
                 the file handler entirely.
             logger: Optional injected logger. When provided, the client
@@ -117,29 +129,17 @@ class LLMClient:
                 handler attach, no marker eviction. Embedded hosts that
                 own their logging stack should pass this.
         """
-        provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
-        self.api_key = api_key or os.getenv(f"{provider}_API_KEY")
-        self.base_url = base_url or os.getenv(f"{provider}_BASE_URL")
-        self.model = model or os.getenv(f"{provider}_MODEL")
-
-        # Fail fast when any required credential is absent and was not supplied explicitly.
-        if not self.api_key:
-            raise ValueError(
-                f"Missing {provider}_API_KEY. Set it in .env or pass api_key= explicitly."
-            )
-        if not self.base_url:
-            raise ValueError(
-                f"Missing {provider}_BASE_URL. Set it in .env "
-                f"(e.g. {provider}_BASE_URL=https://api.openai.com/v1) or pass base_url= explicitly."
-            )
-        if not self.model:
-            raise ValueError(
-                f"Missing {provider}_MODEL. Set it in .env "
-                f"(e.g. {provider}_MODEL=gpt-5.4) or pass model= explicitly."
-            )
-        self.temperature = temperature if temperature is not None else float(os.getenv("LLM_TEMPERATURE", "0.2"))
-        _max = os.getenv("LLM_MAX_TOKENS")
-        self.max_tokens: Optional[int] = int(_max) if _max else 65536
+        if not api_key:
+            raise ValueError("LLMClient requires a non-empty api_key.")
+        if not base_url:
+            raise ValueError("LLMClient requires a non-empty base_url.")
+        if not model:
+            raise ValueError("LLMClient requires a non-empty model.")
+        self.api_key = api_key
+        self.base_url = base_url
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens: int = max_tokens
 
         # Set to True after detecting the model requires max_completion_tokens
         self._use_max_completion_tokens: bool = False

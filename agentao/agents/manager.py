@@ -136,8 +136,8 @@ class AgentManager:
     def create_agent_tools(
         self,
         all_tools: Dict[str, Tool],
-        llm_config: Dict[str, Any],
-        bg_store: "BackgroundTaskStore",
+        llm_config_getter: Callable[[], Dict[str, Any]],
+        bg_store: Optional["BackgroundTaskStore"] = None,
         confirmation_callback: Optional[Callable] = None,
         step_callback: Optional[Callable] = None,
         output_callback: Optional[Callable] = None,
@@ -148,14 +148,22 @@ class AgentManager:
         cancellation_token_getter: Optional[Callable] = None,
         readonly_mode_getter: Optional[Callable[[], bool]] = None,
         permission_mode_getter: Optional[Callable] = None,
+        permission_user_root_getter: Optional[Callable] = None,
+        sandbox_policy: Optional[Any] = None,
     ) -> List[Tool]:
-        """Create an AgentToolWrapper for each agent definition plus CheckBackgroundAgentTool."""
+        """Create an :class:`AgentToolWrapper` per agent definition.
+
+        When ``bg_store`` is ``None`` the background-agent surface is
+        disabled: each wrapper drops ``run_in_background`` from its
+        parameter schema and the trailing
+        :class:`CheckBackgroundAgentTool` is not appended.
+        """
         _readonly_getter = readonly_mode_getter or (lambda: False)
         wrappers = [
             AgentToolWrapper(
                 definition=defn,
                 all_tools=all_tools,
-                llm_config=llm_config,
+                llm_config_getter=llm_config_getter,
                 bg_store=bg_store,
                 confirmation_callback=confirmation_callback,
                 step_callback=step_callback,
@@ -167,7 +175,11 @@ class AgentManager:
                 cancellation_token_getter=cancellation_token_getter,
                 readonly_mode_getter=_readonly_getter,
                 permission_mode_getter=permission_mode_getter,
+                permission_user_root_getter=permission_user_root_getter,
+                sandbox_policy=sandbox_policy,
             )
             for defn in self.definitions.values()
         ]
+        if bg_store is None:
+            return wrappers
         return wrappers + [CheckBackgroundAgentTool(bg_store=bg_store)]

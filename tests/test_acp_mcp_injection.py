@@ -608,7 +608,7 @@ class TestAgentaoMergeLogic:
         to ``McpClientManager``."""
         captured: Dict[str, Any] = {}
 
-        def fake_load_mcp_config(*, project_root):
+        def fake_load_mcp_config(*, project_root, user_root=None):
             return {}  # no file-loaded servers
 
         class _FakeManager:
@@ -649,7 +649,7 @@ class TestAgentaoMergeLogic:
         """Per-name override: ACP-injected entry replaces a file-loaded one."""
         captured: Dict[str, Any] = {}
 
-        def fake_load_mcp_config(*, project_root):
+        def fake_load_mcp_config(*, project_root, user_root=None):
             return {
                 "foo": {"command": "/usr/bin/from-file", "args": []},
                 "bar": {"command": "/usr/bin/keep-me", "args": []},

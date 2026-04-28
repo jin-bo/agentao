@@ -43,6 +43,7 @@ from .sandbox import SandboxPolicy
 from .transport import NullTransport, build_compat_transport
 
 if TYPE_CHECKING:
+    from .agents.bg_store import BackgroundTaskStore  # noqa: F401
     from .capabilities import FileSystem, ShellExecutor
     from .memory import MemoryManager  # noqa: F401
 
@@ -56,6 +57,7 @@ class Agentao:
         base_url: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
         # ── Deprecated callbacks — kept for backward compatibility ────────────
         confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
         max_context_tokens: int = 200_000,
@@ -81,6 +83,11 @@ class Agentao:
         mcp_manager: Optional[McpClientManager] = None,
         filesystem: Optional["FileSystem"] = None,
         shell: Optional["ShellExecutor"] = None,
+        # Opt-in subsystems — ``None`` (default) disables. The factory
+        # wires CLI defaults from ``<wd>/.agentao/*``.
+        bg_store: Optional["BackgroundTaskStore"] = None,
+        sandbox_policy: Optional[SandboxPolicy] = None,
+        replay_config: Optional[ReplayConfig] = None,
     ):
         """Initialize Agentao agent.
 
@@ -122,11 +129,11 @@ class Agentao:
         # A fully-constructed object always wins over its raw-config
         # sibling; supplying both is a programmer error.
         if llm_client is not None and any(
-            v is not None for v in (api_key, base_url, model, temperature)
+            v is not None for v in (api_key, base_url, model, temperature, max_tokens)
         ):
             raise ValueError(
                 "Agentao(): pass either llm_client= or "
-                "api_key/base_url/model/temperature, not both."
+                "api_key/base_url/model/temperature/max_tokens, not both."
             )
         if mcp_manager is not None and extra_mcp_servers is not None:
             raise ValueError(
@@ -177,14 +184,26 @@ class Agentao:
         if llm_client is not None:
             self.llm = llm_client
         else:
-            self.llm = LLMClient(
+            if not api_key or not base_url or not model:
+                raise ValueError(
+                    "Agentao(): api_key, base_url, and model are required "
+                    "when llm_client is not supplied. Pass them explicitly, "
+                    "inject a pre-built llm_client=, or use "
+                    "agentao.embedding.build_from_environment() for "
+                    "CLI-style env auto-discovery."
+                )
+            llm_kwargs: Dict[str, Any] = dict(
                 api_key=api_key,
                 base_url=base_url,
                 model=model,
-                temperature=temperature,
                 log_file=str(self.working_directory / "agentao.log"),
                 logger=logger,
             )
+            if temperature is not None:
+                llm_kwargs["temperature"] = temperature
+            if max_tokens is not None:
+                llm_kwargs["max_tokens"] = max_tokens
+            self.llm = LLMClient(**llm_kwargs)
         # When the host has constructed and pre-loaded its own
         # ``SkillManager``, skip the auto-discovery scan entirely.
         if skill_manager is not None:
@@ -198,9 +217,14 @@ class Agentao:
         if memory_manager is not None:
             self._memory_manager = memory_manager
         else:
+            # Pure-injection / bare-construction path: project scope only.
+            # The CLI / ACP factory passes an explicitly-built MemoryManager
+            # with both project_root and global_root resolved from the
+            # surrounding environment, so cross-project user memory only
+            # surfaces through that path.
             self._memory_manager = MemoryManager(
                 project_root=self.working_directory / ".agentao",
-                global_root=Path.home() / ".agentao",
+                global_root=None,
             )
         self.memory_tool = SaveMemoryTool(memory_manager=self._memory_manager)
         self.memory_retriever = MemoryRetriever(self._memory_manager)
@@ -245,16 +269,6 @@ class Agentao:
         # Reasoning prompt is shown only when a dedicated thinking callback is registered
         self._has_thinking_handler = thinking_callback is not None
 
-        # Resolved values on the LLM client itself — covers both the
-        # raw-kwargs path and the injected ``llm_client`` path so
-        # sub-agents always see the parent's effective provider config.
-        self._llm_config = {
-            "api_key": self.llm.api_key,
-            "base_url": self.llm.base_url,
-            "model": self.llm.model,
-            "temperature": self.llm.temperature,
-        }
-
         # Initialize context manager
         self.context_manager = ContextManager(
             llm_client=self.llm,
@@ -263,21 +277,12 @@ class Agentao:
             memory_manager=self._memory_manager,
         )
 
-        # Per-instance store anchored to working_directory so concurrent
-        # ACP sessions don't share .agentao/background_tasks.json. For
-        # default sessions we follow Path.cwd() lazily — same pattern as
-        # the sandbox policy below — so an embedded/legacy chdir after
-        # construction retargets persistence to the new project rather
-        # than freezing it under the original cwd.
-        from .agents.bg_store import BackgroundTaskStore
-        if self._explicit_working_directory is not None:
-            self.bg_store = BackgroundTaskStore(
-                persistence_dir=self._explicit_working_directory,
-            )
-        else:
-            self.bg_store = BackgroundTaskStore(
-                persistence_dir_provider=Path.cwd,
-            )
+        self.bg_store: Optional["BackgroundTaskStore"] = bg_store
+        # Must be set before _register_agent_tools(): the sub-agent wrapper
+        # captures this via getattr(agent, "sandbox_policy", ...) at
+        # registration time, so a late assignment leaves sub-agents
+        # unsandboxed.
+        self.sandbox_policy: Optional[SandboxPolicy] = sandbox_policy
 
         # Initialize tool registry
         self.tools = ToolRegistry()
@@ -297,7 +302,8 @@ class Agentao:
         self.agent_manager = AgentManager()
         self._register_agent_tools()
 
-        self.bg_store.recover()
+        if self.bg_store is not None:
+            self.bg_store.recover()
 
         # Plugin hook rules — populated by _load_and_register_plugins() in cli.py.
         self._plugin_hook_rules: list = []
@@ -321,30 +327,13 @@ class Agentao:
         else:
             self.project_instructions = self._load_project_instructions()
 
-        # Initialize sandbox policy (macOS sandbox-exec wrapper for shell
-        # commands). Silently disabled on non-macOS or when config absent.
-        # The policy must track the same working directory as the rest of
-        # the runtime — freezing Path.cwd() here would apply the wrong
-        # project's .agentao/sandbox.json after a chdir (ACP/embedded).
-        if self._explicit_working_directory is not None:
-            self.sandbox_policy = SandboxPolicy(
-                project_root=self._explicit_working_directory,
-            )
-        else:
-            self.sandbox_policy = SandboxPolicy(
-                project_root_provider=Path.cwd,
-            )
-
-        # Replay state — recorder + adapter are created lazily in
-        # ``start_replay()``. When recording is disabled (the default),
-        # ``_replay_adapter`` stays ``None`` and the transport stack is
-        # the original transport with zero replay overhead.
+        # Replay recorder + adapter are created lazily in
+        # ``start_replay()``; the no-op ``ReplayConfig()`` stays in
+        # place when no config is injected so the transport stack
+        # carries zero replay overhead.
         self._replay_recorder: Optional[ReplayRecorder] = None
         self._replay_adapter: Optional[ReplayAdapter] = None
-        try:
-            self._replay_config: ReplayConfig = load_replay_config(self.working_directory)
-        except Exception:
-            self._replay_config = ReplayConfig()
+        self._replay_config: ReplayConfig = replay_config or ReplayConfig()
 
         # Initialize tool runner (encapsulates 4-phase tool execution pipeline)
         self.tool_runner = ToolRunner(
@@ -354,6 +343,22 @@ class Agentao:
             logger=self.llm.logger,
             sandbox_policy=self.sandbox_policy,
         )
+
+    @property
+    def _llm_config(self) -> Dict[str, Any]:
+        """Live snapshot of the parent's effective provider config.
+
+        Read at every access so sub-agents launched after a runtime
+        ``set_model`` / ``maxTokens`` change inherit the active values
+        rather than the construction-time snapshot.
+        """
+        return {
+            "api_key": self.llm.api_key,
+            "base_url": self.llm.base_url,
+            "model": self.llm.model,
+            "temperature": self.llm.temperature,
+            "max_tokens": self.llm.max_tokens,
+        }
 
     @property
     def working_directory(self) -> Path:

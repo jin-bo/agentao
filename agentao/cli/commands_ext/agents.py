@@ -13,6 +13,10 @@ if TYPE_CHECKING:
     from ..app import AgentaoCLI
 
 
+_BG_REQUIRED_SUBS = frozenset({"bg", "status", "dashboard", "cancel", "delete", "logs", "result"})
+
+
+
 def _show_agents_dashboard(cli: AgentaoCLI) -> None:
     """Render a live auto-refreshing table of all background agents."""
     import time as _time
@@ -21,6 +25,12 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
     from rich import box as rich_box
     from rich.text import Text
     bg_store = cli.agent.bg_store
+    if bg_store is None:
+        console.print(
+            "\n[warning]Background agents are disabled in this runtime "
+            "(bg_store=None).[/warning]\n"
+        )
+        return
 
     def _fmt_status(t: dict) -> Text:
         status = t["status"]
@@ -108,10 +118,16 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
     import time as _time
     bg_store = cli.agent.bg_store
 
-    args = args.strip()
-    parts = args.split(None, 1)
+    parts = args.strip().split(None, 1)
     sub = parts[0] if parts else ""
     rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if bg_store is None and sub in _BG_REQUIRED_SUBS:
+        console.print(
+            f"\n[warning]/agent {sub} requires the background-agent "
+            "store (bg_store=None in this runtime).[/warning]\n"
+        )
+        return
 
     if not sub or sub == "list":
         if not cli.agent.agent_manager:

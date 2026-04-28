@@ -234,8 +234,8 @@ class AgentToolWrapper(Tool):
         self,
         definition: Dict[str, Any],
         all_tools: Dict[str, Tool],
-        llm_config: Dict[str, Any],
-        bg_store: BackgroundTaskStore,
+        llm_config_getter: Callable[[], Dict[str, Any]],
+        bg_store: Optional[BackgroundTaskStore] = None,
         confirmation_callback: Optional[Callable] = None,
         step_callback: Optional[Callable] = None,
         output_callback: Optional[Callable] = None,
@@ -246,10 +246,14 @@ class AgentToolWrapper(Tool):
         cancellation_token_getter: Optional[Callable] = None,
         readonly_mode_getter: Callable[[], bool] = lambda: False,
         permission_mode_getter: Optional[Callable] = None,
+        permission_user_root_getter: Optional[Callable] = None,
+        sandbox_policy: Optional[Any] = None,
     ):
         self._definition = definition
         self._all_tools = all_tools
-        self._llm_config = llm_config
+        # Live getter so a runtime ``session/set_model`` (model /
+        # maxTokens) is reflected in sub-agents launched afterwards.
+        self._llm_config_getter = llm_config_getter
         self._bg_store = bg_store
         self._confirmation_callback = confirmation_callback
         self._step_callback = step_callback
@@ -261,6 +265,8 @@ class AgentToolWrapper(Tool):
         self._cancellation_token_getter = cancellation_token_getter
         self._readonly_mode_getter = readonly_mode_getter
         self._permission_mode_getter = permission_mode_getter
+        self._permission_user_root_getter = permission_user_root_getter
+        self._sandbox_policy = sandbox_policy
         # Set by ToolRunner just before execute() to propagate the per-turn token
         self._cancellation_token: Optional[Any] = None
 
@@ -274,23 +280,26 @@ class AgentToolWrapper(Tool):
 
     @property
     def parameters(self) -> Dict[str, Any]:
+        # Hide ``run_in_background`` from the LLM when the bg subsystem is disabled.
+        properties: Dict[str, Any] = {
+            "task": {
+                "type": "string",
+                "description": "Task description to delegate to this agent",
+            },
+        }
+        if self._bg_store is not None:
+            properties["run_in_background"] = {
+                "type": "boolean",
+                "description": (
+                    "Run the agent asynchronously (fire-and-forget). "
+                    "Returns immediately with an agent_id. "
+                    "Use check_background_agent to poll for the result. "
+                    "Useful for long-running tasks that should not block."
+                ),
+            }
         return {
             "type": "object",
-            "properties": {
-                "task": {
-                    "type": "string",
-                    "description": "Task description to delegate to this agent",
-                },
-                "run_in_background": {
-                    "type": "boolean",
-                    "description": (
-                        "Run the agent asynchronously (fire-and-forget). "
-                        "Returns immediately with an agent_id. "
-                        "Use check_background_agent to poll for the result. "
-                        "Useful for long-running tasks that should not block."
-                    ),
-                },
-            },
+            "properties": properties,
             "required": ["task"],
         }
 
@@ -314,6 +323,16 @@ class AgentToolWrapper(Tool):
         self._cancellation_token = None
 
         if run_in_background:
+            if self._bg_store is None:
+                # Schema-level removal of ``run_in_background`` in
+                # ``parameters`` keeps this unreachable for well-behaved
+                # LLMs. Reaching it means a replay / hand-crafted call
+                # is asking for a disabled feature — surface it loudly
+                # rather than silently rewriting to sync execution.
+                raise ValueError(
+                    "run_in_background=True but background-agent store "
+                    "is disabled (bg_store=None) on this runtime."
+                )
             return self._launch_background(task, parent_context)
 
         agent_name = self._definition["name"]
@@ -418,24 +437,24 @@ class AgentToolWrapper(Tool):
                 scoped_registry.register(tool)
         scoped_registry.register(CompleteTaskTool())
 
-        # Resolve LLM credentials
         defn_model: Optional[str] = self._definition.get("model")
         defn_temperature: Optional[float] = self._definition.get("temperature")
 
-        # Sub-agents inherit the parent's resolved LLM config so a
-        # mid-run env mutation cannot give a child different credentials
-        # than its parent.
+        # Inherit the parent's *current* LLM config — a mid-run
+        # ``session/set_model`` must reach sub-agents launched afterwards.
+        live_cfg = self._llm_config_getter()
         if defn_model and "/" in defn_model:
             _, model_name = defn_model.split("/", 1)
         else:
-            model_name = defn_model or self._llm_config.get("model")
-        api_key = self._llm_config["api_key"]
-        base_url = self._llm_config.get("base_url")
+            model_name = defn_model or live_cfg.get("model")
+        api_key = live_cfg["api_key"]
+        base_url = live_cfg.get("base_url")
 
         temperature = (
             defn_temperature if defn_temperature is not None
-            else self._llm_config.get("temperature")
+            else live_cfg.get("temperature")
         )
+        max_tokens = live_cfg.get("max_tokens")
 
         max_turns = self._definition.get("max_turns", 15)
         agent_name = self._definition["name"]
@@ -457,6 +476,14 @@ class AgentToolWrapper(Tool):
             base_url=base_url,
             model=model_name,
             temperature=temperature,
+            max_tokens=max_tokens,
+            sandbox_policy=self._sandbox_policy,
+            # Inherit the parent's background-task store so the
+            # sub-agent's ``ToolRunner`` registry actually contains
+            # ``check_background_agent`` / ``cancel_background_agent``;
+            # otherwise scoped_registry exposes them to the LLM but
+            # execution fails with "Tool not found".
+            bg_store=self._bg_store,
             confirmation_callback=confirm_cb,
             step_callback=step_cb,
             output_callback=None if suppress_output else self._output_callback,
@@ -476,7 +503,20 @@ class AgentToolWrapper(Tool):
             mode = self._permission_mode_getter()
             if mode is not None:
                 from ..permissions import PermissionEngine
-                engine = PermissionEngine()
+                # Anchor the sub-agent's permission engine to the parent's
+                # working directory so the same project rules apply, and
+                # pass through the parent's ``user_root`` so user-scope
+                # rules in ``~/.agentao/permissions.json`` aren't silently
+                # dropped — losing them was a permission bypass.
+                user_root = (
+                    self._permission_user_root_getter()
+                    if self._permission_user_root_getter is not None
+                    else None
+                )
+                engine = PermissionEngine(
+                    project_root=sub_agent.working_directory,
+                    user_root=user_root,
+                )
                 engine.set_mode(mode)
                 sub_agent.tool_runner._permission_engine = engine
 

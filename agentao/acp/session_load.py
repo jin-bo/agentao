@@ -194,8 +194,12 @@ def handle_session_load(
     client_capabilities_snapshot = dict(server.state.client_capabilities)
     transport = ACPTransport(server=server, session_id=session_id)
 
+    from agentao.paths import user_root
     from agentao.permissions import PermissionEngine
-    permission_engine = PermissionEngine(project_root=cwd)
+    permission_engine = PermissionEngine(
+        project_root=cwd,
+        user_root=user_root(),
+    )
 
     # Translate any ACP-provided MCP server entries (Issue 11). Same
     # path as session/new — translation is total and never raises.

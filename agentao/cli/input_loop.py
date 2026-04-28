@@ -85,7 +85,10 @@ def get_status_toolbar(cli: "AgentaoCLI") -> ANSI:
         ctx_col = "\x1b[37m"
 
     try:
-        tasks = cli.agent.bg_store.list()
+        if cli.agent.bg_store is None:
+            tasks = []
+        else:
+            tasks = cli.agent.bg_store.list()
         if tasks:
             import time as _time
             tokens = []

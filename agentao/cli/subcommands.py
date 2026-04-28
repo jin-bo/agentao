@@ -368,7 +368,11 @@ def _load_and_register_plugins(agent) -> None:
     active_plugins = [p for p in loaded if p.name not in failed_plugins]
 
     from ..mcp.config import load_mcp_config
-    base_mcp = load_mcp_config(project_root=agent.working_directory)
+    from ..paths import user_root
+    base_mcp = load_mcp_config(
+        project_root=agent.working_directory,
+        user_root=user_root(),
+    )
     merge_result = merge_plugin_mcp_servers(base_mcp, active_plugins)
     for err in merge_result.errors:
         logger.warning("Plugin MCP merge error: %s", err)

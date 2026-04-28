@@ -301,8 +301,12 @@ def handle_session_new(
     # permissions.json``. Passing ``project_root=cwd`` (Issue 05) isolates
     # the engine from the process cwd so two sessions running in different
     # directories see independent rules.
+    from agentao.paths import user_root
     from agentao.permissions import PermissionEngine
-    permission_engine = PermissionEngine(project_root=cwd)
+    permission_engine = PermissionEngine(
+        project_root=cwd,
+        user_root=user_root(),
+    )
 
     # Translate ACP-shape MCP server entries to Agentao internal config
     # (Issue 11). The translator is total — it logs and drops malformed

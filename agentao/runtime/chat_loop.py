@@ -458,6 +458,8 @@ class ChatLoopRunner:
         system_prompt: str,
     ) -> list:
         agent = self._agent
+        if agent.bg_store is None:
+            return messages_with_system
         bg_notes = agent.bg_store.drain_notifications()
         if not bg_notes:
             return messages_with_system

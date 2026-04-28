@@ -258,17 +258,12 @@ def test_permission_engines_for_different_projects_are_independent(tmp_path):
     assert any(r.get("tool") == "only_in_b" for r in engine_b.rules)
 
 
-def test_permission_engine_default_still_uses_process_cwd(monkeypatch, tmp_path):
-    """No ``project_root`` → legacy behavior: read from ``Path.cwd()/.agentao``."""
-    (tmp_path / ".agentao").mkdir()
-    (tmp_path / ".agentao" / "permissions.json").write_text(
-        json.dumps({"rules": [{"tool": "legacy_tool", "action": "allow"}]}), encoding="utf-8"
-    )
-    monkeypatch.chdir(tmp_path)
-
-    engine = PermissionEngine()
-
-    assert any(r.get("tool") == "legacy_tool" for r in engine.rules)
+def test_permission_engine_requires_project_root():
+    """``PermissionEngine()`` rejects missing ``project_root`` so two
+    sessions in different directories cannot leak rules through a
+    shared process cwd."""
+    with pytest.raises(TypeError):
+        PermissionEngine()
 
 
 # ---------------------------------------------------------------------------

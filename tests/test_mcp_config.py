@@ -119,103 +119,112 @@ def _write_mcp(path: Path, servers: dict):
     path.write_text(json.dumps({"mcpServers": servers}), encoding="utf-8")
 
 
-def test_load_mcp_config_global_only(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
-    monkeypatch.chdir(tmp_path)
-    _write_mcp(tmp_path / "home" / ".agentao" / "mcp.json", {
+def test_load_mcp_config_global_only(tmp_path):
+    user_root = tmp_path / "home" / ".agentao"
+    _write_mcp(user_root / "mcp.json", {
         "global-server": {"command": "npx", "args": []}
     })
-    result = load_mcp_config()
+    result = load_mcp_config(project_root=tmp_path, user_root=user_root)
     assert "global-server" in result
 
 
-def test_load_mcp_config_project_only(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
-    monkeypatch.chdir(tmp_path)
+def test_load_mcp_config_project_only(tmp_path):
     _write_mcp(tmp_path / ".agentao" / "mcp.json", {
         "project-server": {"command": "python", "args": ["-m", "server"]}
     })
-    result = load_mcp_config()
+    result = load_mcp_config(project_root=tmp_path)
     assert "project-server" in result
 
 
-def test_load_mcp_config_project_overrides_global(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
-    monkeypatch.chdir(tmp_path)
-    _write_mcp(tmp_path / "home" / ".agentao" / "mcp.json", {
+def test_load_mcp_config_project_overrides_global(tmp_path):
+    user_root = tmp_path / "home" / ".agentao"
+    _write_mcp(user_root / "mcp.json", {
         "shared": {"command": "global-cmd", "args": []}
     })
     _write_mcp(tmp_path / ".agentao" / "mcp.json", {
         "shared": {"command": "project-cmd", "args": []}
     })
-    result = load_mcp_config()
+    result = load_mcp_config(project_root=tmp_path, user_root=user_root)
     assert result["shared"]["command"] == "project-cmd"
 
 
-def test_load_mcp_config_merged(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
-    monkeypatch.chdir(tmp_path)
-    _write_mcp(tmp_path / "home" / ".agentao" / "mcp.json", {
+def test_load_mcp_config_merged(tmp_path):
+    user_root = tmp_path / "home" / ".agentao"
+    _write_mcp(user_root / "mcp.json", {
         "global-svc": {"command": "ga", "args": []}
     })
     _write_mcp(tmp_path / ".agentao" / "mcp.json", {
         "project-svc": {"command": "pa", "args": []}
     })
-    result = load_mcp_config()
+    result = load_mcp_config(project_root=tmp_path, user_root=user_root)
     assert "global-svc" in result
     assert "project-svc" in result
 
 
 def test_load_mcp_config_env_vars_expanded(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
-    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("API_KEY", "secret")
     _write_mcp(tmp_path / ".agentao" / "mcp.json", {
         "svc": {"headers": {"Authorization": "Bearer $API_KEY"}}
     })
-    result = load_mcp_config()
+    result = load_mcp_config(project_root=tmp_path)
     assert result["svc"]["headers"]["Authorization"] == "Bearer secret"
 
 
-def test_load_mcp_config_no_files_returns_empty(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
-    monkeypatch.chdir(tmp_path)
-    assert load_mcp_config() == {}
+def test_load_mcp_config_no_files_returns_empty(tmp_path):
+    assert load_mcp_config(
+        project_root=tmp_path, user_root=tmp_path / "home" / ".agentao"
+    ) == {}
+
+
+def test_load_mcp_config_user_root_none_skips_user_scope(tmp_path):
+    """``user_root=None`` (default) must not read any cross-project
+    location, even if a stale ``~/.agentao/mcp.json`` is present in
+    the test environment."""
+    _write_mcp(tmp_path / ".agentao" / "mcp.json", {"only-project": {}})
+    result = load_mcp_config(project_root=tmp_path, user_root=None)
+    assert list(result.keys()) == ["only-project"]
+
+
+def test_load_mcp_config_requires_project_root():
+    """``load_mcp_config()`` rejects missing ``project_root``."""
+    with pytest.raises(TypeError):
+        load_mcp_config()
 
 
 # ---------------------------------------------------------------------------
 # save_mcp_config
 # ---------------------------------------------------------------------------
 
-def test_save_mcp_config_project(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
-    monkeypatch.chdir(tmp_path)
+def test_save_mcp_config_project(tmp_path):
+    project_dir = tmp_path / ".agentao"
     servers = {"my-server": {"command": "cmd", "args": []}}
-    path = save_mcp_config(servers, global_config=False)
+    path = save_mcp_config(servers, config_dir=project_dir)
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["mcpServers"] == servers
 
 
-def test_save_mcp_config_global(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
-    monkeypatch.chdir(tmp_path)
+def test_save_mcp_config_global(tmp_path):
+    user_root = tmp_path / "home" / ".agentao"
     servers = {"global-svc": {"url": "https://example.com/sse"}}
-    path = save_mcp_config(servers, global_config=True)
+    path = save_mcp_config(servers, config_dir=user_root)
     assert "home" in str(path)
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert "global-svc" in saved["mcpServers"]
 
 
-def test_save_mcp_config_preserves_other_keys(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
-    monkeypatch.chdir(tmp_path)
-    # Write existing file with extra key
+def test_save_mcp_config_preserves_other_keys(tmp_path):
     cfg_dir = tmp_path / ".agentao"
     cfg_dir.mkdir()
     (cfg_dir / "mcp.json").write_text(
         json.dumps({"otherKey": "preserved", "mcpServers": {}}), encoding="utf-8"
     )
-    save_mcp_config({"new-svc": {}}, global_config=False)
+    save_mcp_config({"new-svc": {}}, config_dir=cfg_dir)
     saved = json.loads((cfg_dir / "mcp.json").read_text(encoding="utf-8"))
     assert saved["otherKey"] == "preserved"
     assert "new-svc" in saved["mcpServers"]
+
+
+def test_save_mcp_config_requires_config_dir():
+    """``save_mcp_config()`` rejects missing ``config_dir``."""
+    with pytest.raises(TypeError):
+        save_mcp_config({"x": {}})

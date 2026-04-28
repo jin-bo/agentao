@@ -62,7 +62,10 @@ def register_agent_tools(agent: "Agentao") -> None:
 
     agent_tools = agent.agent_manager.create_agent_tools(
         all_tools=agent.tools.tools,
-        llm_config=agent._llm_config,
+        # Live getter — sub-agents launched after a runtime
+        # ``session/set_model`` / maxTokens change pick up the new
+        # values rather than the snapshot frozen at registration time.
+        llm_config_getter=lambda: agent._llm_config,
         bg_store=agent.bg_store,
         confirmation_callback=lambda *a, **kw: agent.transport.confirm_tool(*a, **kw),
         step_callback=_agent_step_cb,
@@ -85,6 +88,8 @@ def register_agent_tools(agent: "Agentao") -> None:
         cancellation_token_getter=lambda: agent._current_token,
         readonly_mode_getter=lambda: getattr(agent, 'tool_runner', None) is not None and agent.tool_runner.readonly_mode,
         permission_mode_getter=lambda: getattr(agent.tool_runner, '_permission_engine', None) and agent.tool_runner._permission_engine.active_mode,
+        permission_user_root_getter=lambda: getattr(getattr(agent.tool_runner, '_permission_engine', None), '_user_root', None),
+        sandbox_policy=getattr(agent, "sandbox_policy", None),
     )
     for agent_tool in agent_tools:
         agent.tools.register(agent_tool)

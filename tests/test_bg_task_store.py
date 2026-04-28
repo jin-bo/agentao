@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from agentao.agent import Agentao
+from agentao.embedding import build_from_environment
 from agentao.agents.bg_store import (
     BackgroundTaskStore,
     _reset_recovery_guard_for_tests,
@@ -267,7 +268,10 @@ def test_agentao_init_recovers_persisted_interrupted_tasks(tmp_path, monkeypatch
         "r1": _make_task("running"),
     })
 
-    agent = Agentao(working_directory=tmp_path)
+    # ``Agentao(...)`` no longer constructs a default
+    # ``BackgroundTaskStore`` — that's the factory's job. Use the
+    # factory to exercise the CLI-equivalent recovery path.
+    agent = build_from_environment(working_directory=tmp_path)
 
     p1 = agent.bg_store.get("p1")
     r1 = agent.bg_store.get("r1")
@@ -338,8 +342,8 @@ def test_two_agentao_instances_each_own_their_store(tmp_path, monkeypatch):
     a_root.mkdir()
     b_root.mkdir()
 
-    agent_a = Agentao(working_directory=a_root)
-    agent_b = Agentao(working_directory=b_root)
+    agent_a = build_from_environment(working_directory=a_root)
+    agent_b = build_from_environment(working_directory=b_root)
 
     assert agent_a.bg_store is not agent_b.bg_store
 

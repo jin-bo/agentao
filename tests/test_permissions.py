@@ -14,9 +14,7 @@ from agentao.permissions import PermissionDecision, PermissionEngine, Permission
 
 def _engine(tmp_path, monkeypatch, project_rules=None, user_rules=None):
     """Build a PermissionEngine with optional project/user JSON rules in tmp_path."""
-    # Redirect cwd and home so _load_rules reads from tmp_path only
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
+    user_root = tmp_path / "home" / ".agentao"
 
     if project_rules is not None:
         cfg = tmp_path / ".agentao"
@@ -25,13 +23,12 @@ def _engine(tmp_path, monkeypatch, project_rules=None, user_rules=None):
             json.dumps({"rules": project_rules}), encoding="utf-8",
         )
     if user_rules is not None:
-        home_cfg = tmp_path / "home" / ".agentao"
-        home_cfg.mkdir(parents=True, exist_ok=True)
-        (home_cfg / "permissions.json").write_text(
+        user_root.mkdir(parents=True, exist_ok=True)
+        (user_root / "permissions.json").write_text(
             json.dumps({"rules": user_rules}), encoding="utf-8",
         )
 
-    return PermissionEngine()
+    return PermissionEngine(project_root=tmp_path, user_root=user_root)
 
 
 def allow(tool, **kwargs):
@@ -286,13 +283,11 @@ def test_wildcard_tool_rule(tmp_path, monkeypatch):
 # Error handling
 # ---------------------------------------------------------------------------
 
-def test_invalid_json_config_graceful_fallback(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
+def test_invalid_json_config_graceful_fallback(tmp_path):
     cfg = tmp_path / ".agentao"
     cfg.mkdir()
     (cfg / "permissions.json").write_text("not valid json", encoding="utf-8")
-    e = PermissionEngine()  # should not raise
+    e = PermissionEngine(project_root=tmp_path)  # should not raise
     assert e.rules == []
 
 
