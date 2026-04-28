@@ -104,15 +104,17 @@ def default_agent_factory(
     """
     # Local import avoids pulling openai/tools/llm into the ACP package
     # at import time — handler modules stay lightweight for testing.
-    from agentao.agent import Agentao
+    from agentao.embedding import build_from_environment
 
-    return Agentao(
-        model=model or None,  # empty string from missing field → default
-        permission_engine=permission_engine,
-        transport=transport,
-        working_directory=cwd,
-        extra_mcp_servers=mcp_servers,
-    )
+    overrides: Dict[str, Any] = {
+        "permission_engine": permission_engine,
+        "transport": transport,
+        "extra_mcp_servers": mcp_servers,
+    }
+    if model:  # empty string / None → use default discovered by factory
+        overrides["model"] = model
+
+    return build_from_environment(working_directory=cwd, **overrides)
 
 
 # ---------------------------------------------------------------------------

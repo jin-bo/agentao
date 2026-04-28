@@ -46,6 +46,10 @@ class AgentEvent:
     All data values must be JSON-serializable so transports can forward
     events over SSE / WebSocket without extra marshalling.
 
+    ``schema_version`` is the runtime-payload version contract for the
+    wire form (independent of ACP's protocol version); bump it when a
+    payload field's shape or semantics change.
+
     Common data payloads:
         TURN_START    {}
         TOOL_START    {"tool": "run_shell_command", "args": {...}, "call_id": "uuid"}
@@ -73,3 +77,15 @@ class AgentEvent:
 
     type: EventType
     data: Dict[str, Any] = field(default_factory=dict)
+    schema_version: int = 1
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to the JSON-safe wire shape ``{type, schema_version, data}``.
+
+        ``data`` aliases ``self.data`` (no copy); callers must not mutate it.
+        """
+        return {
+            "type": self.type.value,
+            "schema_version": self.schema_version,
+            "data": self.data,
+        }

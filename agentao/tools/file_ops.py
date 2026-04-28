@@ -57,22 +57,19 @@ class ReadFileTool(Tool):
         """Read file contents with line numbers and optional range."""
         try:
             path = self._resolve_path(file_path)
+            fs = self._get_fs()
 
-            if not path.exists():
+            if not fs.is_file(path):
                 return f"Error: File {file_path} does not exist"
 
-            if not path.is_file():
-                return f"Error: {file_path} is not a file"
+            sniff = fs.read_partial(path, BINARY_CHECK_SIZE)
+            if b"\x00" in sniff:
+                return f"Binary file: {file_path} ({fs.stat(path).size} bytes)"
 
-            # Binary detection: check first 8KB for null bytes
-            with open(path, "rb") as f:
-                chunk = f.read(BINARY_CHECK_SIZE)
-                if b"\x00" in chunk:
-                    size = path.stat().st_size
-                    return f"Binary file: {file_path} ({size} bytes)"
-
-            with open(path, "r", encoding="utf-8") as f:
-                all_lines = f.readlines()
+            try:
+                all_lines = list(fs.open_text(path))
+            except UnicodeDecodeError:
+                return f"Binary file: {file_path} ({fs.stat(path).size} bytes)"
 
             total_lines = len(all_lines)
 
@@ -118,9 +115,6 @@ class ReadFileTool(Tool):
                 result += f"\n[{long_lines} line(s) truncated to {MAX_LINE_LENGTH} chars per line]"
 
             return result
-        except UnicodeDecodeError:
-            size = path.stat().st_size
-            return f"Binary file: {file_path} ({size} bytes)"
         except Exception as e:
             return f"Error reading file: {str(e)}"
 
@@ -169,10 +163,7 @@ class WriteFileTool(Tool):
         except PathPolicyError as e:
             return f"Error: {e}"
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            mode = "a" if append else "w"
-            with open(path, mode, encoding="utf-8") as f:
-                f.write(content)
+            self._get_fs().write_text(path, content, append=append)
             action = "appended to" if append else "wrote to"
             return f"Successfully {action} {file_path}"
         except Exception as e:
@@ -282,9 +273,9 @@ class EditTool(Tool):
             path = PathPolicy.for_tool(self).contain_file(file_path)
         except PathPolicyError as e:
             return f"Error: {e}"
+        fs = self._get_fs()
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = fs.read_bytes(path).decode("utf-8")
 
             # 1. Exact match (original logic)
             if old_text in content:
@@ -295,8 +286,7 @@ class EditTool(Tool):
                     new_content = content.replace(old_text, new_text, 1)
                     count = 1
 
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(new_content)
+                fs.write_text(path, new_content)
                 return f"Replaced {count} occurrence(s) in {file_path}"
 
             # 2. Flexible match: whitespace-normalized comparison
@@ -316,8 +306,7 @@ class EditTool(Tool):
                     new_content = content[:start] + new_text + content[end:]
                     count = 1
 
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(new_content)
+                fs.write_text(path, new_content)
                 return f"Replaced {count} occurrence(s) in {file_path} (flexible whitespace match)"
 
             # 3. Not found — return hint with most similar snippet
@@ -363,31 +352,35 @@ class ReadFolderTool(Tool):
         """List directory contents."""
         try:
             path = self._resolve_path(directory_path)
-            if not path.exists():
+            fs = self._get_fs()
+            if not fs.exists(path):
                 return f"Error: Directory {directory_path} does not exist"
 
-            if not path.is_dir():
+            if not fs.is_dir(path):
                 return f"Error: {directory_path} is not a directory"
 
             results = []
             if recursive:
-                items = sorted(path.rglob("*"), key=lambda e: (not e.is_dir(), str(e).lower()))
+                items = sorted(fs.glob(path, "*", recursive=True),
+                               key=lambda e: (not fs.is_dir(e), str(e).lower()))
                 for item in items:
                     rel_path = item.relative_to(path)
-                    if item.is_dir():
+                    if fs.is_dir(item):
                         results.append(f"[DIR]  {rel_path}/")
                     else:
-                        size = item.stat().st_size
+                        try:
+                            size = fs.stat(item).size
+                        except OSError:
+                            size = 0
                         results.append(f"[FILE] {rel_path} ({size} bytes)")
             else:
-                # Sort: directories first, then alphabetical (case-insensitive)
-                items = sorted(path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower()))
+                entries = fs.list_dir(path)
+                items = sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
                 for item in items:
-                    if item.is_dir():
+                    if item.is_dir:
                         results.append(f"[DIR]  {item.name}/")
                     else:
-                        size = item.stat().st_size
-                        results.append(f"[FILE] {item.name} ({size} bytes)")
+                        results.append(f"[FILE] {item.name} ({item.size} bytes)")
 
             return f"Directory: {directory_path}\n\n" + "\n".join(results)
         except Exception as e:

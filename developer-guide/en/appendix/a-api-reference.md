@@ -5,7 +5,9 @@ This is a **surface reference** — the public symbols that form Agentao's embed
 Authoritative `__all__`:
 
 - `from agentao import ...` → `Agentao`, `SkillManager`
+- `from agentao.embedding import ...` → `build_from_environment`
 - `from agentao.transport import ...` → `AgentEvent`, `EventType`, `Transport`, `NullTransport`, `SdkTransport`, `build_compat_transport`
+- `from agentao.capabilities import ...` → `FileSystem`, `LocalFileSystem`, `FileEntry`, `FileStat`, `ShellExecutor`, `LocalShellExecutor`, `ShellRequest`, `ShellResult`, `BackgroundHandle`
 - `from agentao.tools.base import ...` → `Tool`, `ToolRegistry`
 - `from agentao.permissions import ...` → `PermissionEngine`, `PermissionMode`, `PermissionDecision`
 - `from agentao.memory.manager import MemoryManager`
@@ -18,6 +20,8 @@ The core class — see [Part 2.2](/en/part-2/2-constructor-reference) for the fu
 
 ### Constructor
 
+See [Part 2.2](/en/part-2/2-constructor-reference) for the full parameter table. **Since 0.2.16**, `Agentao()` without `working_directory=` emits a `DeprecationWarning` and will become a `TypeError` in 0.3.0.
+
 ```python
 Agentao(
     api_key: str | None = None,
@@ -26,24 +30,51 @@ Agentao(
     temperature: float | None = None,
     transport: Transport | None = None,
     working_directory: Path | None = None,
-    extra_mcp_servers: list[dict] | None = None,
+    extra_mcp_servers: dict[str, dict] | None = None,
     permission_engine: PermissionEngine | None = None,
     max_context_tokens: int = 200_000,
-    plan_session: bool = False,
-    # legacy callbacks (prefer `transport=`)
+    plan_session: PlanSession | None = None,
+    # Embedded-harness explicit injections (0.2.16+)
+    llm_client: LLMClient | None = None,
+    logger: logging.Logger | None = None,
+    memory_manager: MemoryManager | None = None,
+    skill_manager: SkillManager | None = None,
+    project_instructions: str | None = None,
+    mcp_manager: McpClientManager | None = None,
+    filesystem: FileSystem | None = None,
+    shell: ShellExecutor | None = None,
+    # Legacy callbacks (prefer `transport=`)
     output_callback: Callable[[str], None] | None = None,
     confirmation_callback: Callable[[str, str, dict], bool] | None = None,
-    input_callback: Callable[[str], str] | None = None,
+    ask_user_callback: Callable[[str], str] | None = None,
     on_max_iterations_callback: Callable[[int, list], dict] | None = None,
     # ...
 )
 ```
+
+Mutual-exclusion rules (raise `ValueError` if violated):
+
+- `llm_client=` together with any of `api_key=` / `base_url=` / `model=` / `temperature=`
+- `mcp_manager=` together with `extra_mcp_servers=`
+
+### `agentao.embedding.build_from_environment`
+
+```python
+def build_from_environment(
+    working_directory: Path | None = None,
+    **overrides,
+) -> Agentao:
+    ...
+```
+
+CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars, `<wd>/.agentao/permissions.json`, `<wd>/.agentao/mcp.json`, memory roots; constructs `Agentao` with the discovered values. **Caller-supplied `**overrides` win** over auto-discovered ones. Raises `ValueError` on the same mutual-exclusion conflicts as the constructor (if `llm_client` is in `overrides`, the factory's discovered `api_key` / `base_url` / `model` are dropped before forwarding).
 
 ### Methods
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
 | `chat` | `chat(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None) -> str` | Run one turn. Returns final assistant text. |
+| `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None) -> str` | Async surface — bridges `chat()` through `loop.run_in_executor`. Same semantics for cancellation, replay, max_iterations. |
 | `clear_history` | `clear_history() -> None` | Reset `self.messages`; does not touch memory DB. |
 | `close` | `close() -> None` | Release MCP subprocesses, close DB handles. Call in `finally:`. |
 | `set_provider` | `set_provider(api_key: str, base_url: str | None = None, model: str | None = None) -> None` | Runtime LLM swap. |
@@ -128,7 +159,14 @@ class Tool(ABC):
     # populated by Agentao at registration time
     working_directory: Path | None
     output_callback: Callable[[str], None] | None
+    filesystem: FileSystem | None
+    shell: ShellExecutor | None
+
+    def _get_fs(self) -> FileSystem: ...      # lazy LocalFileSystem fallback
+    def _get_shell(self) -> ShellExecutor: ... # lazy LocalShellExecutor fallback
 ```
+
+Custom tool subclasses that need to read/write files should call `self._get_fs()` rather than touching `pathlib` directly — that way the host's injected `FileSystem` (Docker, virtual FS, audit proxy) is honored.
 
 ### `ToolRegistry`
 
@@ -138,6 +176,32 @@ class Tool(ABC):
 | `get(name: str) -> Tool` | Raises `KeyError` with available-tools list |
 | `list_tools() -> list[Tool]` | |
 | `to_openai_format() -> list[dict]` | OpenAI function-calling schemas |
+
+### Capabilities (`agentao.capabilities`)
+
+Runtime-checkable `Protocol`s that file/search/shell tools route IO through. Hosts inject custom implementations via `Agentao(filesystem=..., shell=...)` to redirect through Docker exec, virtual filesystems, audit proxies, or remote runners. The package also exports byte-equivalent `LocalFileSystem` / `LocalShellExecutor` defaults.
+
+```python
+class FileSystem(Protocol):
+    def read_bytes(self, path: Path) -> bytes: ...
+    def read_partial(self, path: Path, n: int) -> bytes: ...
+    def open_text(self, path: Path) -> Iterator[str]: ...      # streaming
+    def write_text(self, path: Path, data: str, *, append: bool = False) -> None: ...
+    def list_dir(self, path: Path) -> list[FileEntry]: ...
+    def glob(self, base: Path, pattern: str, *, recursive: bool) -> list[Path]: ...
+    def stat(self, path: Path) -> FileStat: ...
+    def exists(self, path: Path) -> bool: ...
+    def is_dir(self, path: Path) -> bool: ...
+    def is_file(self, path: Path) -> bool: ...
+
+class ShellExecutor(Protocol):
+    def run(self, request: ShellRequest) -> ShellResult: ...
+    def run_background(self, request: ShellRequest) -> BackgroundHandle: ...
+```
+
+Frozen dataclasses: `FileEntry(name, is_dir, is_file, size)`, `FileStat(size, mtime, is_dir, is_file)`, `ShellRequest(command, cwd, timeout, on_chunk, env)`, `ShellResult(returncode, stdout, stderr, timed_out)`, `BackgroundHandle(pid, pgid, command, cwd)`.
+
+Hosts that cannot support real backgrounding may raise `NotImplementedError` from `run_background` — `ShellTool` surfaces that as a normal tool error string.
 
 ## A.4 Permissions
 

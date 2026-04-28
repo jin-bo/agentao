@@ -2,13 +2,15 @@
 """Test skill integration with Agentao."""
 
 import os
+from pathlib import Path
+
 from agentao import Agentao
 
 
 def test_skill_with_resources():
     """Test that agent can access skill resources."""
     # Create agent
-    agent = Agentao()
+    agent = Agentao(working_directory=Path.cwd())
 
     print("=" * 70)
     print("Testing Skill Resource Access")

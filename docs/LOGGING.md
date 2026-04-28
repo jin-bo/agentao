@@ -347,11 +347,13 @@ grep -B 2 -A 5 "Tool Calls" agentao.log
 在初始化 `Agentao` 时，可以传递日志配置：
 
 ```python
+from pathlib import Path
 from agentao.agent import Agentao
 
 agent = Agentao(
     api_key="your-key",
     model="claude-sonnet-4-5",
+    working_directory=Path.cwd(),
     # log_file 会传递给 LLMClient
 )
 ```

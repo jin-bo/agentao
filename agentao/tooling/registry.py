@@ -58,4 +58,6 @@ def register_builtin_tools(agent: "Agentao") -> None:
     wd = agent._explicit_working_directory
     for tool in tools_to_register:
         tool.working_directory = wd
+        tool.filesystem = agent.filesystem
+        tool.shell = agent.shell
         agent.tools.register(tool)

@@ -81,6 +81,7 @@ def test_llm_text_maps_to_agent_message_chunk(transport):
     assert upd == {
         "sessionUpdate": "agent_message_chunk",
         "content": {"type": "text", "text": "Hello"},
+        "schema_version": 1,
     }
 
 
@@ -111,6 +112,7 @@ def test_thinking_maps_to_agent_thought_chunk(transport):
     assert upd == {
         "sessionUpdate": "agent_thought_chunk",
         "content": {"type": "text", "text": "Let me check..."},
+        "schema_version": 1,
     }
 
 
@@ -138,6 +140,7 @@ def test_tool_start_maps_to_tool_call(transport):
         "kind": "read",
         "status": "pending",
         "rawInput": {"file_path": "/tmp/x"},
+        "schema_version": 1,
     }
 
 
@@ -188,6 +191,7 @@ def test_tool_output_maps_to_tool_call_update_in_progress(transport):
         "content": [
             {"type": "content", "content": {"type": "text", "text": "line 1\n"}}
         ],
+        "schema_version": 1,
     }
 
 
@@ -214,6 +218,7 @@ def test_tool_complete_ok_maps_to_completed(transport):
         "sessionUpdate": "tool_call_update",
         "toolCallId": "u",
         "status": "completed",
+        "schema_version": 1,
     }
 
 

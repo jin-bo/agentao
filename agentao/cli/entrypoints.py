@@ -18,11 +18,9 @@ from ._globals import console, _plugin_inline_dirs
 
 def run_print_mode(prompt: str) -> int:
     """Non-interactive print mode: send prompt, print response, exit. Returns exit code."""
-    from ..agent import Agentao
+    from ..embedding import build_from_environment
     from .subcommands import _load_and_register_plugins
 
-    load_dotenv()
-    provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
     max_iterations_reached = [False]
 
     def _on_max_iterations(max_iterations: int, pending_tools: list) -> dict:
@@ -34,10 +32,7 @@ def run_print_mode(prompt: str) -> int:
         )
         return {"action": "stop"}
 
-    agent = Agentao(
-        api_key=os.getenv(f"{provider}_API_KEY"),
-        base_url=os.getenv(f"{provider}_BASE_URL"),
-        model=os.getenv(f"{provider}_MODEL"),
+    agent = build_from_environment(
         on_max_iterations_callback=_on_max_iterations,
     )
     agent._session_id = str(_uuid_mod.uuid4())

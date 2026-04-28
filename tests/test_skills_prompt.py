@@ -1,6 +1,7 @@
 """Test that skills are included in system prompt."""
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -15,6 +16,7 @@ def test_skills_in_system_prompt():
         api_key=os.getenv("OPENAI_API_KEY"),
         base_url=os.getenv("OPENAI_BASE_URL"),
         model=os.getenv("OPENAI_MODEL"),
+        working_directory=Path.cwd(),
     )
 
     print("Testing Skills in System Prompt")

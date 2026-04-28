@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 
 from ..agent import Agentao
 from ..display import DisplayController
+from ..embedding import build_from_environment
 from ..transport import AgentEvent
 from ._globals import console
 from ._utils import _SlashCompleter
@@ -54,9 +55,6 @@ class AgentaoCLI:
 
         context_limit = int(os.getenv("AGENTAO_CONTEXT_TOKENS", "200000"))
 
-        from ..permissions import PermissionEngine, PermissionMode
-        self.permission_engine = PermissionEngine()
-
         self.allow_all_tools = False
         self.readonly_mode = False
         self._cached_ctx_pct: float = 0.0
@@ -65,19 +63,18 @@ class AgentaoCLI:
         from ..permissions import PermissionMode as _PM
         _saved = self._load_settings().get("mode", "workspace-write")
         try:
-            self.current_mode: PermissionMode = _PM(_saved)
+            self.current_mode: _PM = _PM(_saved)
         except ValueError:
             self.current_mode = _PM.WORKSPACE_WRITE
 
-        self.agent = Agentao(
-            api_key=os.getenv(f"{provider}_API_KEY"),
-            base_url=os.getenv(f"{provider}_BASE_URL"),
-            model=os.getenv(f"{provider}_MODEL"),
+        self.agent = build_from_environment(
             transport=self,
             max_context_tokens=context_limit,
-            permission_engine=self.permission_engine,
             plan_session=self._plan_session,
         )
+        # Hold a reference so the CLI can switch modes / inspect rules
+        # without going through the agent.
+        self.permission_engine = self.agent.permission_engine
 
         from ..plan import PlanController
         self._plan_controller = PlanController(

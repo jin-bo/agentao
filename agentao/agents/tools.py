@@ -6,7 +6,6 @@ three tools here take a store reference at construction time and read
 or write through it.
 """
 
-import os
 import threading
 import time
 import uuid
@@ -423,15 +422,15 @@ class AgentToolWrapper(Tool):
         defn_model: Optional[str] = self._definition.get("model")
         defn_temperature: Optional[float] = self._definition.get("temperature")
 
+        # Sub-agents inherit the parent's resolved LLM config so a
+        # mid-run env mutation cannot give a child different credentials
+        # than its parent.
         if defn_model and "/" in defn_model:
-            provider, model_name = defn_model.split("/", 1)
-            provider = provider.strip().upper()
-            api_key = os.getenv(f"{provider}_API_KEY") or self._llm_config["api_key"]
-            base_url = os.getenv(f"{provider}_BASE_URL") or self._llm_config.get("base_url")
+            _, model_name = defn_model.split("/", 1)
         else:
             model_name = defn_model or self._llm_config.get("model")
-            api_key = self._llm_config["api_key"]
-            base_url = self._llm_config.get("base_url")
+        api_key = self._llm_config["api_key"]
+        base_url = self._llm_config.get("base_url")
 
         temperature = (
             defn_temperature if defn_temperature is not None

@@ -7,7 +7,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- **Embedded harness foundations** (Issues #9-#13). Agentao is now
+  positioned as an embedded agent runtime that hosts can drop into
+  their own apps without the implicit cwd/env/.agentao/ side effects
+  the CLI relies on. Headline pieces:
+  - `agentao.capabilities.FileSystem` / `ShellExecutor` protocols
+    plus `LocalFileSystem` / `LocalShellExecutor` defaults. File,
+    search, and shell tools route through them, so embedded hosts
+    can swap in Docker exec, virtual filesystems, or remote runners
+    without monkey-patching `subprocess` / `pathlib`.
+  - `agentao.embedding.build_from_environment(...)` factory that
+    captures every implicit `.env` / `.agentao/permissions.json` /
+    `.agentao/mcp.json` / cwd read in one place. CLI and ACP route
+    through it so subsystem fallbacks become dead code from their
+    perspective.
+  - `Agentao.__init__` accepts explicit injections for
+    `llm_client`, `logger`, `memory_manager`, `skill_manager`,
+    `project_instructions`, `mcp_manager`, `filesystem`, and
+    `shell`. When `skill_manager` or `project_instructions` is
+    injected, the auto-discovery / disk-read paths are skipped.
+  - `Agentao.arun(...)` async surface that bridges sync chat
+    internals through `loop.run_in_executor`. Async hosts can
+    `await agent.arun(...)` without rolling their own thread
+    bridge; cancellation, replay, and `max_iterations` behave
+    identically across `chat()` and `arun()`.
+- Sub-agent construction in `agentao/agents/tools.py` no longer
+  re-reads provider env vars (`{PROVIDER}_API_KEY` / `_BASE_URL`).
+  Children inherit the parent's already-resolved LLM config so a
+  mid-run env mutation cannot create a credential split.
+
+### Deprecated
+
+- `Agentao()` without `working_directory=` emits a `DeprecationWarning`
+  and will become a `TypeError` in 0.3.0. Pass an explicit `Path` —
+  or use `agentao.embedding.build_from_environment()` for CLI-style
+  cwd / `.env` / `.agentao/` auto-discovery.
 
 ---
 

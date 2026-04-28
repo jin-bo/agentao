@@ -24,7 +24,7 @@ def _agent_with_temp_memory():
             from agentao.memory import MemoryManager
             from agentao.tools.memory import SaveMemoryTool
 
-            agent = Agentao()
+            agent = Agentao(working_directory=Path(tmpdir))
             # Override manager with isolated temp dirs
             agent.memory_manager = MemoryManager(
                 project_root=tmp_proj, global_root=tmp_global

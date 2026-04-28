@@ -16,7 +16,7 @@ def test_agentao_md_loading():
         # Import and create agent
         from agentao.agent import Agentao
 
-        agent = Agentao()
+        agent = Agentao(working_directory=Path.cwd())
 
         # Check that project instructions were loaded
         assert agent.project_instructions is not None, "AGENTAO.md should be loaded"
@@ -49,7 +49,10 @@ def test_agentao_md_missing():
 
             from agentao.agent import Agentao
 
-            agent = Agentao()
+            # Pass an explicit working_directory that does not contain
+            # AGENTAO.md so the missing-file branch exercises the same
+            # absent-file path the test name describes.
+            agent = Agentao(working_directory=Path('/nonexistent/path'))
 
             # Should handle missing file gracefully
             assert agent.project_instructions is None, "Should be None when file doesn't exist"

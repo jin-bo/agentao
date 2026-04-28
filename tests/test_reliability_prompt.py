@@ -1,5 +1,6 @@
 """Test that reliability principles are present in the system prompt."""
 
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 
@@ -8,7 +9,10 @@ def _make_agent(thinking_callback=None):
         mock_llm_client.return_value.logger = Mock()
         mock_llm_client.return_value.model = "gpt-4"
         from agentao.agent import Agentao
-        agent = Agentao(thinking_callback=thinking_callback)
+        agent = Agentao(
+            thinking_callback=thinking_callback,
+            working_directory=Path.cwd(),
+        )
     return agent
 
 
