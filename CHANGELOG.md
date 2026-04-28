@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+---
+
+## [0.2.16] — 2026-04-28
+
+Maintenance release that completes the **embedded-harness M2/M3
+milestones**. `Agentao(...)` is now a pure-injection construction
+surface: nothing in the constructor implicitly reads `os.environ`,
+`Path.home()`, `Path.cwd()`, or `<wd>/.agentao/*.json` unless the
+caller routes through `agentao.embedding.build_from_environment()`.
+CLI and ACP both go through the factory, so end-user behavior is
+unchanged; embedded hosts get a deterministic, side-effect-free
+construction surface plus an `await agent.arun(...)` async path,
+opt-in `replay` / `sandbox` / `bg_store`, and a
+`DeprecationWarning` for `Agentao()` constructed without
+`working_directory=` (a `TypeError` in `0.3.0`).
+
+See [`docs/releases/v0.2.16.md`](docs/releases/v0.2.16.md) for the
+release summary and maintainer checklist.
+
 ### Added
 
 - **Embedded harness foundations** (Issues #9-#13). Agentao is now
@@ -37,6 +58,65 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   re-reads provider env vars (`{PROVIDER}_API_KEY` / `_BASE_URL`).
   Children inherit the parent's already-resolved LLM config so a
   mid-run env mutation cannot create a credential split.
+
+### Changed
+
+- **`Replay` / `Sandbox` / `BackgroundTaskStore` are now opt-in**
+  (Issue 9 of the embedded-harness epic). `Agentao.__init__` accepts
+  three new keyword-only kwargs: `replay_config`, `sandbox_policy`,
+  and `bg_store`. Each defaults to `None`, which now means *fully
+  disabled* — embedded hosts that didn't ask for the feature pay
+  zero cost. `agentao.embedding.build_from_environment()` constructs
+  CLI defaults for all three (anchored to the session's working
+  directory) and passes them explicitly, so CLI and ACP behavior is
+  unchanged. Callers can pass `bg_store=None` etc. as a factory
+  override to disable a feature even on the CLI path.
+  - When `bg_store=None`: `check_background_agent` and
+    `cancel_background_agent` are not registered, the chat loop's
+    background-notification drain short-circuits, and the
+    `run_in_background` field is **schema-level removed** from
+    sub-agent tool definitions (not expose-then-error). The LLM
+    cannot be tempted to call a disabled feature, and ACP / OpenAI
+    tool catalogs do not advertise it. `/agent bg|dashboard|cancel|
+    delete|logs|result` CLI subcommands short-circuit with a clear
+    warning when invoked against an Agentao with `bg_store=None`.
+  - When `sandbox_policy=None`: `ToolRunner` runs shell commands
+    without the macOS sandbox-exec wrapper.
+  - When `replay_config=None`: no `<wd>/.agentao/replay.json` is
+    read at construction time; `Agentao._replay_config` falls back
+    to the no-op `ReplayConfig()` default.
+
+- **Subsystem constructors no longer fall back to `os.environ` /
+  `Path.cwd()` / `Path.home()`** (Issue 5 of the embedded-harness
+  epic, PR 3b). Callers must now supply explicit arguments — CLI,
+  ACP, and `agentao.embedding.build_from_environment()` already do,
+  so end-user behavior is unchanged. Direct constructions in
+  embedded-host code or test code may break; the migration is to
+  pass the previously-implicit values explicitly.
+  - `LLMClient(api_key=, base_url=, model=)` are required keyword
+    arguments; `temperature` defaults to `0.2` and `max_tokens` to
+    `65536` in code (no more `LLM_TEMPERATURE` / `LLM_MAX_TOKENS`
+    env reads). `Agentao` now also accepts a top-level
+    `max_tokens=` kwarg that forwards to `LLMClient`. The factory
+    is the single place that resolves `LLM_PROVIDER` /
+    `*_API_KEY` / `*_BASE_URL` / `*_MODEL` / `LLM_TEMPERATURE` /
+    `LLM_MAX_TOKENS`.
+  - `PermissionEngine(project_root=)` is required; new keyword-only
+    `user_root=` (defaults to `None`) replaces the implicit
+    `Path.home() / ".agentao"` user-rules read. The factory and ACP
+    `session/new` / `session/load` pass both roots explicitly.
+  - `load_mcp_config(project_root=)` is required; new keyword-only
+    `user_root=` (defaults to `None`) replaces the implicit
+    `Path.home() / ".agentao"` user-scope read. `save_mcp_config()`
+    drops `global_config: bool` in favor of an explicit
+    `config_dir: Path`. CLI `/mcp add` / `/mcp remove` resolve the
+    project directory through `cli.agent.working_directory`
+    instead of `Path.cwd()`.
+  - `Agentao.__init__` no longer defaults `MemoryManager`'s
+    `global_root` to `Path.home() / ".agentao"` when no
+    `memory_manager` is injected; pure-injection construction is
+    now project-scope only. CLI / ACP receive the user root through
+    the factory exactly as before.
 
 ### Deprecated
 
