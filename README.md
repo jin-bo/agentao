@@ -736,7 +736,7 @@ In print mode all tools are auto-confirmed (no interactive prompts). The exit co
 Embed Agentao in your own Python code with no terminal UI:
 
 ```python
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 
 events = []
@@ -744,13 +744,15 @@ transport = SdkTransport(
     on_event=events.append,           # receive typed AgentEvents
     confirm_tool=lambda n, d, a: True,  # auto-approve all tools
 )
-agent = Agentao(transport=transport, working_directory=Path.cwd())
+# Factory reads .env / .agentao/ for credentials and config.
+# For pure-injection construction use Agentao(working_directory=, api_key=, base_url=, model=, transport=...).
+agent = build_from_environment(transport=transport)
 response = agent.chat("Summarize the current directory")
 ```
 
 `SdkTransport` accepts four optional callbacks: `on_event`, `confirm_tool`, `ask_user`, `on_max_iterations`. Omit any you don't need — unset ones fall back to safe defaults (auto-approve, sentinel for ask_user, stop on max iterations).
 
-For fully silent headless use with no callbacks, use `Agentao(working_directory=Path.cwd())` — it uses `NullTransport` automatically. Embedded hosts that want CLI-style auto-discovery of `.env` and `.agentao/` can route through `agentao.embedding.build_from_environment()` instead.
+For fully silent headless use with no callbacks, call `build_from_environment()` with no transport — it uses `NullTransport` automatically. Embedded hosts that want pure-injection construction (no `.env` / `.agentao/` reads) can call `Agentao(working_directory=..., api_key=..., base_url=..., model=..., transport=...)` directly; since 0.2.16 the three credential fields are required when no `llm_client=` is supplied.
 
 ### ACP (Agent Client Protocol) Mode
 

@@ -728,7 +728,7 @@ agentao -p "翻译成法语：早上好" | pbcopy
 在自己的 Python 代码中嵌入 Agentao，无需终端界面：
 
 ```python
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 
 events = []
@@ -736,13 +736,15 @@ transport = SdkTransport(
     on_event=events.append,              # 接收类型化的 AgentEvent
     confirm_tool=lambda n, d, a: True,   # 自动允许所有工具
 )
-agent = Agentao(transport=transport, working_directory=Path.cwd())
+# 工厂自动读 .env / .agentao/ 完成凭据与配置发现。
+# 如需纯注入构造，请改用 Agentao(working_directory=, api_key=, base_url=, model=, transport=...)。
+agent = build_from_environment(transport=transport)
 response = agent.chat("总结当前目录")
 ```
 
 `SdkTransport` 接受四个可选回调：`on_event`、`confirm_tool`、`ask_user`、`on_max_iterations`。未设置的回调使用安全默认值（自动允许、ask_user 返回提示信息、超出最大迭代次数时停止）。
 
-如需完全静默的无头模式，使用 `Agentao(working_directory=Path.cwd())` 即可——自动使用 `NullTransport`。需要 CLI 风格的 `.env` / `.agentao/` 自动发现时，请改用 `agentao.embedding.build_from_environment()`。
+如需完全静默的无头模式，直接调用不带 transport 的 `build_from_environment()` 即可——自动使用 `NullTransport`。需要纯注入构造（不读 `.env` / `.agentao/`）的嵌入式 host 可以直接调用 `Agentao(working_directory=..., api_key=..., base_url=..., model=..., transport=...)`；自 0.2.16 起，未提供 `llm_client=` 时这三个凭据字段都必传。
 
 ### ACP（Agent Client Protocol）模式
 
