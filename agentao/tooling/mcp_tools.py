@@ -62,6 +62,19 @@ def init_mcp(agent: "Agentao") -> Optional[McpClientManager]:
     except Exception as e:
         agent.llm.logger.warning(f"MCP connection error: {e}")
 
+    register_mcp_tools(agent, manager)
+    return manager
+
+
+def register_mcp_tools(agent: "Agentao", manager: McpClientManager) -> None:
+    """Wrap every tool exposed by ``manager`` and register it on ``agent``.
+
+    Used by both ``init_mcp`` (for file/ACP-discovered managers) and
+    ``Agentao.__init__`` (for managers the embedded host injects directly).
+    The host owns connect/disconnect; this only handles tool wrapping so
+    the model sees the same surface regardless of how the manager was
+    created.
+    """
     for server_name, mcp_tool_def in manager.get_all_tools():
         client = manager.get_client(server_name)
         trusted = client.is_trusted if client else False
@@ -79,4 +92,3 @@ def init_mcp(agent: "Agentao") -> Optional[McpClientManager]:
         agent.llm.logger.info(
             f"MCP: {count} tools from {len(manager.clients)} server(s)"
         )
-    return manager
