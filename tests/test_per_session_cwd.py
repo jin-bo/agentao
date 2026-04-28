@@ -60,22 +60,17 @@ def stub_llm_env(monkeypatch):
     return None
 
 
-def _make_agent(working_directory=None, stub_llm_env=None):
+def _make_agent(working_directory: Path, stub_llm_env=None):
     """Construct a real Agentao instance without invoking the API.
 
-    These tests deliberately exercise the legacy ``working_directory=None``
-    default to assert the lazy-cwd-read behavior, so we suppress the
-    Issue 13 ``DeprecationWarning`` here. The same warning is asserted
-    explicitly in ``tests/test_factory_build_from_environment.py`` and
-    the new injection-path tests.
+    Since 0.3.0 ``working_directory`` is a required keyword argument
+    (Issue #14 hard break). Tests that previously exercised the
+    legacy ``working_directory=None`` lazy-cwd default were either
+    deleted or rewritten to pin the new ``TypeError`` semantic.
     """
-    import warnings
-
     from agentao.agent import Agentao
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        return Agentao(working_directory=working_directory)
+    return Agentao(working_directory=working_directory)
 
 
 # ---------------------------------------------------------------------------
@@ -304,14 +299,18 @@ def test_load_mcp_config_independent_per_project(tmp_path):
 # Agentao.working_directory property
 # ---------------------------------------------------------------------------
 
-def test_agentao_working_directory_defaults_to_process_cwd(stub_llm_env, monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    agent = _make_agent()
-    try:
-        assert agent.working_directory == Path.cwd()
-        assert agent.working_directory == tmp_path
-    finally:
-        agent.close()
+def test_agentao_without_working_directory_raises(stub_llm_env):
+    """Since 0.3.0 ``working_directory`` is required keyword-only.
+
+    Calling ``Agentao()`` without it must raise ``TypeError`` from
+    Python's signature dispatch — there is no longer a ``Path.cwd()``
+    lazy fallback. Embedded hosts that want the legacy CLI behavior
+    should route through ``agentao.embedding.build_from_environment``.
+    """
+    from agentao.agent import Agentao
+
+    with pytest.raises(TypeError):
+        Agentao()  # type: ignore[call-arg]
 
 
 def test_agentao_working_directory_is_frozen_when_explicit(stub_llm_env, tmp_path, monkeypatch):
@@ -377,19 +376,6 @@ def test_agentao_registers_tools_with_session_cwd(stub_llm_env, tmp_path):
             assert tool.working_directory == expected, (
                 f"{name} has wrong working_directory: {tool.working_directory} != {expected}"
             )
-    finally:
-        agent.close()
-
-
-def test_agentao_default_mode_leaves_tools_unbound(stub_llm_env, monkeypatch, tmp_path):
-    """CLI default: tools have ``working_directory = None`` so they keep
-    resolving relative paths against the process cwd lazily."""
-    monkeypatch.chdir(tmp_path)
-    agent = _make_agent()
-    try:
-        tool = agent.tools.get("read_file")
-        assert tool is not None
-        assert tool.working_directory is None
     finally:
         agent.close()
 
@@ -536,19 +522,6 @@ def test_agentao_log_lands_in_session_cwd_not_process_cwd(
         assert not (process_cwd / "agentao.log").exists(), (
             "log file must NOT be created under the process cwd"
         )
-    finally:
-        agent.close()
-
-
-def test_agentao_default_log_uses_process_cwd_for_cli_compat(
-    stub_llm_env, tmp_path, monkeypatch
-):
-    """CLI default (no working_directory): log still lands in the process cwd."""
-    monkeypatch.chdir(tmp_path)
-
-    agent = _make_agent()
-    try:
-        assert (tmp_path / "agentao.log").exists()
     finally:
         agent.close()
 

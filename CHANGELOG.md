@@ -7,7 +7,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_No unreleased changes._
+### BREAKING
+
+- **`Agentao(working_directory=)` is now required** (Issue #14, the
+  hard break promised in the 0.2.16 soft-deprecation cycle).
+  `working_directory` is a required keyword argument; calling
+  `Agentao()` without it raises `TypeError` from Python's signature
+  dispatch — there is no longer a `Path.cwd()` lazy fallback. Two
+  Agentao instances created with different `working_directory`
+  values report independent paths even in the same process; an
+  `os.chdir` inside the host has no effect on an already-constructed
+  Agentao. **Migration:** pass an explicit `Path` (preferred for
+  embedded hosts), or use
+  `agentao.embedding.build_from_environment()` for CLI-style
+  auto-detection from the surrounding `cwd` / `.env` / `.agentao/`.
+  CLI and ACP behavior is unchanged because both already route
+  through the factory; the audit confirmed `os.chdir` is never
+  called inside `agentao/`, so no mid-process cwd retargeting is
+  affected.
+
+### Removed
+
+- `Agentao.__init__` no longer emits a `DeprecationWarning` when
+  `working_directory` is missing — the warning was the 0.2.16
+  one-cycle migration aid and is now obsolete because the argument
+  is required at the signature level.
+- `Agentao._explicit_working_directory` private attribute renamed
+  to `Agentao._working_directory` (always populated, never
+  `Optional`). External code should not read this; callers should
+  use the `agent.working_directory` property.
+- `Agentao.working_directory` property no longer falls back to
+  `Path.cwd()`. The "lazy cwd" branch (`agent.py:376-378` in
+  0.2.16) is deleted; the property now returns the frozen value
+  unconditionally.
 
 ---
 

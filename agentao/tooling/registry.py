@@ -59,7 +59,7 @@ def register_builtin_tools(agent: "Agentao") -> None:
         tools_to_register.append(CheckBackgroundAgentTool(bg_store=agent.bg_store))
         tools_to_register.append(CancelBackgroundAgentTool(bg_store=agent.bg_store))
 
-    wd = agent._explicit_working_directory
+    wd = agent._working_directory
     for tool in tools_to_register:
         tool.working_directory = wd
         tool.filesystem = agent.filesystem

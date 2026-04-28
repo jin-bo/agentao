@@ -592,7 +592,7 @@ class TestAgentaoMergeLogic:
         from agentao.tools.base import ToolRegistry
 
         agent = Agentao.__new__(Agentao)
-        agent._explicit_working_directory = cwd
+        agent._working_directory = cwd
         agent._extra_mcp_servers = {
             name: dict(cfg) for name, cfg in (extras or {}).items()
         }

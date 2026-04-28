@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
@@ -72,7 +71,7 @@ class Agentao:
         transport=None,                   # Transport protocol instance (preferred)
         plan_session: Optional[PlanSession] = None,
         *,
-        working_directory: Optional[Path] = None,
+        working_directory: Path,
         extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None,
         # Embedded-harness explicit-injection kwargs.
         llm_client: Optional[LLMClient] = None,
@@ -101,14 +100,16 @@ class Agentao:
                        is used (silent / headless mode).
             max_context_tokens: Maximum context window tokens (default 200K).
             permission_engine: Optional PermissionEngine for rule-based tool access.
-            working_directory: Per-runtime working directory (Issue 05). When
-                ``None`` (the default, CLI behavior), the runtime lazily reads
-                ``Path.cwd()`` at every access so a user ``cd`` in the process
-                remains visible. When set to a concrete ``Path``, the runtime
-                is frozen to that directory: memory/permissions/MCP config/
-                AGENTAO.md/system-prompt rendering/file tools/shell tool all
-                resolve against it, isolating multiple ACP sessions that run
-                in the same process.
+            working_directory: Per-runtime working directory (required
+                since 0.3.0; was a deprecated optional in 0.2.16).
+                Frozen at construction: memory/permissions/MCP config/
+                AGENTAO.md/system-prompt rendering/file tools/shell tool
+                all resolve against it. Two Agentao instances created
+                with different ``working_directory`` values can coexist
+                in the same process. Use
+                :func:`agentao.embedding.build_from_environment` for
+                CLI-style auto-detection from the surrounding cwd /
+                ``.env`` / ``.agentao/`` files.
             extra_mcp_servers: Optional in-memory MCP server configs to merge
                 **on top of** the file-loaded ``.agentao/mcp.json``. Used by
                 ACP ``session/new`` (Issue 11) to inject session-scoped
@@ -141,22 +142,12 @@ class Agentao:
                 "not both."
             )
 
-        if working_directory is None:
-            warnings.warn(
-                "Agentao() without working_directory= is deprecated and "
-                "will be required in 0.3.0. Pass an explicit Path, or use "
-                "agentao.embedding.build_from_environment() for CLI-style "
-                "auto-detection of cwd/.env/.agentao/.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        # Freeze working directory to an absolute path if one was supplied.
-        # Resolve once so subsequent accesses are cheap and consistent.
-        self._explicit_working_directory: Optional[Path] = (
+        # Freeze working directory to an absolute path. Resolved once so
+        # subsequent accesses are cheap and consistent. Required since
+        # 0.3.0 — calling ``Agentao()`` without ``working_directory=``
+        # raises ``TypeError`` from Python's signature dispatch.
+        self._working_directory: Path = (
             Path(working_directory).expanduser().resolve()
-            if working_directory is not None
-            else None
         )
 
         # When ``None``, file/search/shell tools fall back to
@@ -210,7 +201,7 @@ class Agentao:
             self.skill_manager = skill_manager
         else:
             self.skill_manager = SkillManager(
-                working_directory=self._explicit_working_directory,
+                working_directory=self._working_directory,
             )
         from .memory import MemoryManager, MemoryRetriever
         from .memory.render import MemoryPromptRenderer
@@ -362,20 +353,15 @@ class Agentao:
 
     @property
     def working_directory(self) -> Path:
-        """Effective working directory for this runtime (Issue 05).
+        """Effective working directory for this runtime.
 
-        - When the agent was constructed without ``working_directory``
-          (the default, CLI behavior), returns the *current* process cwd
-          lazily at each access. This preserves the legacy semantics where
-          a ``cd`` in the surrounding shell is immediately visible.
-        - When ``working_directory`` was supplied (ACP session path),
-          returns the frozen, resolved ``Path`` captured at construction.
-          Two Agentao instances created with different ``working_directory``
-          values will report independent paths even in the same process.
+        Frozen at construction (required keyword arg since 0.3.0).
+        Two Agentao instances created with different
+        ``working_directory`` values report independent paths even in
+        the same process. ``os.chdir`` inside the host has no effect on
+        an already-constructed Agentao.
         """
-        if self._explicit_working_directory is not None:
-            return self._explicit_working_directory
-        return Path.cwd()
+        return self._working_directory
 
     @property
     def memory_manager(self):
