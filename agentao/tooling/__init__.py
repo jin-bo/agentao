@@ -13,11 +13,12 @@ Split by concern so each file is small and independently testable:
 """
 
 from .agent_tools import register_agent_tools
-from .mcp_tools import init_mcp
+from .mcp_tools import init_mcp, register_mcp_tools
 from .registry import register_builtin_tools
 
 __all__ = [
     "register_builtin_tools",
     "register_agent_tools",
     "init_mcp",
+    "register_mcp_tools",
 ]

@@ -63,3 +63,38 @@ def test_arun_does_not_block_event_loop(tmp_path):
     assert marker == ["co"]
     # The chat call landed on a different thread than the loop's main thread.
     assert side_thread_seen and side_thread_seen[0] != "MainThread"
+
+
+def test_arun_propagates_async_cancellation_to_token(tmp_path):
+    """asyncio cancellation must signal the chat() token so the worker stops."""
+    agent = _make_agent(tmp_path)
+
+    seen_tokens = []
+    started = asyncio.Event()
+    main_loop = None
+
+    def _fake_chat(user_message, max_iterations, cancellation_token):
+        seen_tokens.append(cancellation_token)
+        # Signal the loop that we're inside the executor, then block until
+        # the token is cancelled (mirrors how the real chat loop polls).
+        main_loop.call_soon_threadsafe(started.set)
+        cancellation_token._event.wait(timeout=2.0)
+        return "should-not-return"
+
+    agent.chat = _fake_chat  # type: ignore[assignment]
+
+    async def _run():
+        nonlocal main_loop
+        main_loop = asyncio.get_running_loop()
+        task = asyncio.create_task(agent.arun("hi"))
+        await started.wait()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+    assert seen_tokens, "chat was never invoked"
+    assert seen_tokens[0].is_cancelled
+    assert seen_tokens[0].reason == "async-cancel"

@@ -11,7 +11,7 @@ from .permissions import PermissionEngine
 from .runtime import ChatLoopRunner, ToolRunner, run_llm_call, run_turn
 from .runtime import model as _runtime_model
 from .tools import ToolRegistry, SaveMemoryTool, TodoWriteTool
-from .tooling import init_mcp, register_agent_tools, register_builtin_tools
+from .tooling import init_mcp, register_agent_tools, register_builtin_tools, register_mcp_tools
 from .agents import AgentManager
 from .cancellation import CancellationToken
 from .plan import PlanSession
@@ -284,9 +284,12 @@ class Agentao:
         self._register_tools()
 
         # When an already-built manager is injected, skip the file
-        # discovery pass entirely; the host owns the lifecycle.
+        # discovery pass entirely; the host owns the lifecycle. We still
+        # have to wrap and register every tool the manager exposes, or
+        # the model can't see any of them.
         if mcp_manager is not None:
             self.mcp_manager = mcp_manager
+            register_mcp_tools(self, mcp_manager)
         else:
             self.mcp_manager = self._init_mcp()
 
@@ -556,12 +559,22 @@ class Agentao:
 
         Cancellation, replay, and ``max_iterations`` behave identically
         across both surfaces; the executor thread reads the same
-        cancellation token.
+        cancellation token. If the awaiting task is cancelled (e.g.
+        ``asyncio.wait_for`` timeout, client disconnect) we forward the
+        signal to the in-flight ``chat()`` call so the executor thread
+        actually winds down instead of running to completion against
+        the now-detached host.
         """
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, self.chat, user_message, max_iterations, cancellation_token
+        token = cancellation_token if cancellation_token is not None else CancellationToken()
+        future = loop.run_in_executor(
+            None, self.chat, user_message, max_iterations, token
         )
+        try:
+            return await future
+        except asyncio.CancelledError:
+            token.cancel("async-cancel")
+            raise
 
     def _chat_inner(self, user_message: str, max_iterations: int,
                     token: CancellationToken) -> str:
