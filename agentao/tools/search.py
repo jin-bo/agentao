@@ -8,7 +8,7 @@ import fnmatch
 import re
 
 from .base import Tool
-from ..capabilities import FileSystem
+from ..capabilities import FileSystem, LocalFileSystem
 
 # Files modified within this window are sorted by recency
 RECENCY_THRESHOLD = 86400  # 24 hours
@@ -227,8 +227,11 @@ class SearchTextTool(Tool):
             if not fs.exists(path):
                 return f"Error: Directory {directory} does not exist"
 
-            # Try git grep first (much faster in git repos)
-            if self._is_git_repo(path):
+            # Try git grep first (much faster in git repos), but only when the
+            # filesystem capability is the local default. An injected FileSystem
+            # may be virtual or remote, so the on-disk git repo at ``path``
+            # would return results unrelated to the injected view.
+            if isinstance(fs, LocalFileSystem) and self._is_git_repo(path):
                 result = self._git_grep(path, pattern, file_pattern, case_sensitive, regex)
                 if result is not None:
                     return result

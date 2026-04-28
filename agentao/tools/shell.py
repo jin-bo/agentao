@@ -10,7 +10,7 @@ IS_WINDOWS = sys.platform == "win32"
 IS_MACOS = sys.platform == "darwin"
 
 from .base import Tool
-from ..capabilities import BackgroundHandle, ShellRequest, ShellResult
+from ..capabilities import BackgroundHandle, LocalShellExecutor, ShellRequest, ShellResult
 from ..capabilities.shell import _is_binary
 from ..sandbox import SandboxProfile
 from ..security import PathPolicy, PathPolicyError
@@ -230,7 +230,11 @@ class ShellTool(Tool):
             cwd = PathPolicy.for_tool(self).contain_directory(working_directory)
         except PathPolicyError as e:
             return f"Error: {e}"
-        if not cwd.is_dir():
+        # Only validate cwd against the local filesystem when using the default
+        # local executor. An injected ShellExecutor (Docker, remote host, …)
+        # may accept a container/remote path that does not exist locally; let
+        # that executor validate the cwd itself.
+        if isinstance(self._get_shell(), LocalShellExecutor) and not cwd.is_dir():
             return (
                 f"Error: working_directory '{working_directory}' does not exist "
                 "or is not a directory."
