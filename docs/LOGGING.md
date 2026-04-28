@@ -176,8 +176,9 @@ from agentao.llm import LLMClient
 
 client = LLMClient(
     api_key="your-key",
+    base_url="https://api.anthropic.com/v1",  # 0.2.16 起必传
     model="claude-sonnet-4-5",
-    log_file="custom_location.log"  # 自定义日志文件
+    log_file="custom_location.log",  # 自定义日志文件
 )
 ```
 
@@ -352,10 +353,15 @@ from agentao.agent import Agentao
 
 agent = Agentao(
     api_key="your-key",
+    base_url="https://api.anthropic.com/v1",  # 0.2.16 起必传
     model="claude-sonnet-4-5",
     working_directory=Path.cwd(),
     # log_file 会传递给 LLMClient
 )
+
+# 或者走工厂从 .env 自动发现（.env 里设 LLM_PROVIDER + 对应 _API_KEY/_BASE_URL/_MODEL）
+from agentao.embedding import build_from_environment
+agent = build_from_environment()
 ```
 
 ## 故障排除

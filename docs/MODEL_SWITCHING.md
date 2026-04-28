@@ -173,9 +173,11 @@ Or when initializing:
 
 ```python
 from pathlib import Path
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 
-agent = Agentao(model="gpt-5.4", working_directory=Path.cwd())
+# Factory reads .env / LLM_PROVIDER + the matching *_API_KEY / *_BASE_URL,
+# then `model=` overrides whatever *_MODEL the env resolves to.
+agent = build_from_environment(working_directory=Path.cwd(), model="gpt-5.4")
 ```
 
 ### API Configuration
@@ -314,9 +316,9 @@ This is useful for:
 
 ```python
 from pathlib import Path
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 
-agent = Agentao(working_directory=Path.cwd())
+agent = build_from_environment(working_directory=Path.cwd())
 
 # Get current model
 current = agent.get_current_model()
