@@ -87,7 +87,12 @@ class _StreamResponse:
 
 
 class LLMClient:
-    """OpenAI-compatible LLM client with comprehensive logging."""
+    """OpenAI-compatible LLM client with comprehensive logging.
+
+    Pass ``logger=...`` to skip all ``agentao`` package-root mutation
+    (handler attach, level set, marker eviction) — embedded hosts own
+    their stack. Pass ``log_file=None`` to skip the file handler.
+    """
 
     def __init__(
         self,
@@ -95,7 +100,8 @@ class LLMClient:
         base_url: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
-        log_file: str = "agentao.log",
+        log_file: Optional[str] = "agentao.log",
+        logger: Optional[logging.Logger] = None,
     ):
         """Initialize LLM client.
 
@@ -103,7 +109,13 @@ class LLMClient:
             api_key: API key for the LLM service (overrides env)
             base_url: Base URL for the API endpoint (overrides env)
             model: Model name to use (overrides env; required if not set in env)
-            log_file: Path to log file for LLM interactions
+            log_file: Path to log file for LLM interactions. ``None`` skips
+                the file handler entirely.
+            logger: Optional injected logger. When provided, the client
+                uses it as ``self.logger`` and does not mutate
+                ``logging.getLogger("agentao")`` — no level set, no
+                handler attach, no marker eviction. Embedded hosts that
+                own their logging stack should pass this.
         """
         provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
         self.api_key = api_key or os.getenv(f"{provider}_API_KEY")
@@ -137,47 +149,32 @@ class LLMClient:
             base_url=self.base_url,
         )
 
-        # Setup logging — attach FileHandler to the package root so all
-        # child loggers (agentao.llm, agentao.tools.web, etc.) inherit it.
-        self.logger = logging.getLogger("agentao.llm")
-        pkg_logger = logging.getLogger("agentao")
-        pkg_logger.setLevel(logging.DEBUG)
+        # Injected logger → host owns the stack; skip package-root mutation.
+        if logger is not None:
+            self.logger = logger
+        else:
+            self.logger = logging.getLogger("agentao.llm")
+            pkg_logger = logging.getLogger("agentao")
+            pkg_logger.setLevel(logging.DEBUG)
 
-        # Don't drop handlers we don't own (e.g. AcpServer's stderr guard).
-        # Tag our own and evict only the marked ones to avoid duplicates
-        # when LLMClient is reconstructed (which happens on every model
-        # switch in ACP mode).
-        for h in list(pkg_logger.handlers):
-            if getattr(h, "_agentao_llm_file_handler", False):
-                pkg_logger.removeHandler(h)
-                try:
-                    h.close()
-                except Exception:
-                    pass
+            # Evict only our marker-tagged handlers so AcpServer's stderr
+            # guard (and any other outsider handler) survives reconstruction.
+            for h in list(pkg_logger.handlers):
+                if getattr(h, "_agentao_llm_file_handler", False):
+                    pkg_logger.removeHandler(h)
+                    try:
+                        h.close()
+                    except Exception:
+                        pass
 
-        # File handler for detailed logs.
-        #
-        # We resolve the log file to an absolute path before opening it. The
-        # primary caller (Agentao) already passes an absolute path anchored to
-        # its working directory, but LLMClient is also constructed directly by
-        # tests and may be reused as a public-ish API, so we anchor any
-        # remaining relative path to the current cwd here as defense in depth.
-        # If the chosen path is unwritable (e.g. ACP launches with cwd="/" on
-        # macOS, or a sandboxed/read-only project dir), fall back to the
-        # user-scoped ~/.agentao/agentao.log so the agent can still start.
-        file_handler = self._build_file_handler(log_file)
-
-        # Concise format for file logs (no name/level noise in dedicated log file)
-        file_formatter = logging.Formatter(
-            "%(asctime)s %(message)s",
-            datefmt="%H:%M:%S",
-        )
-
-        if file_handler is not None:
-            file_handler.setLevel(logging.DEBUG)
-            file_handler.setFormatter(file_formatter)
-            file_handler._agentao_llm_file_handler = True  # type: ignore[attr-defined]
-            pkg_logger.addHandler(file_handler)
+            file_handler = self._build_file_handler(log_file) if log_file else None
+            if file_handler is not None:
+                file_handler.setLevel(logging.DEBUG)
+                file_handler.setFormatter(
+                    logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S")
+                )
+                file_handler._agentao_llm_file_handler = True  # type: ignore[attr-defined]
+                pkg_logger.addHandler(file_handler)
 
         # Request counter for tracking
         self.request_count = 0

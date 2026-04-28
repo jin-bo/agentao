@@ -277,6 +277,8 @@ class ACPTransport:
             update = self._build_update(event)
             if update is None:
                 return  # silent event (e.g. TURN_START)
+            # Stamp the runtime payload version (independent of ACP_PROTOCOL_VERSION).
+            update["schema_version"] = event.schema_version
             self._server.write_notification(
                 METHOD_SESSION_UPDATE,
                 {"sessionId": self._session_id, "update": update},

@@ -3,7 +3,10 @@
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from ..capabilities import FileSystem, ShellExecutor
 
 _logger = logging.getLogger(__name__)
 
@@ -13,12 +16,32 @@ class Tool(ABC):
 
     def __init__(self):
         self.output_callback: Optional[Callable[[str], None]] = None
-        # Per-session working directory bound by Agentao at registration time
-        # (Issue 05). ``None`` = legacy behavior: relative paths resolve
-        # against the process cwd at call time. A ``Path`` binds the tool
-        # to a specific session cwd so two ACP sessions with different cwd
-        # values do not leak state through relative file paths.
+        # Per-session working directory bound by Agentao at registration time.
+        # ``None`` = legacy behavior: relative paths resolve against the
+        # process cwd at call time. A ``Path`` binds the tool to a specific
+        # session cwd so two ACP sessions with different cwd values do not
+        # leak state through relative file paths.
         self.working_directory: Optional[Path] = None
+        # Capability injection. ``None`` means "construct a local default
+        # lazily at first use"; embedded hosts override at registration
+        # time to redirect IO through Docker exec, virtual FS, audit
+        # proxy, etc.
+        self.filesystem: Optional["FileSystem"] = None
+        self.shell: Optional["ShellExecutor"] = None
+
+    def _get_fs(self) -> "FileSystem":
+        """Lazy accessor — build a ``LocalFileSystem`` on first use."""
+        if self.filesystem is None:
+            from ..capabilities import LocalFileSystem
+            self.filesystem = LocalFileSystem()
+        return self.filesystem
+
+    def _get_shell(self) -> "ShellExecutor":
+        """Lazy accessor — build a ``LocalShellExecutor`` on first use."""
+        if self.shell is None:
+            from ..capabilities import LocalShellExecutor
+            self.shell = LocalShellExecutor()
+        return self.shell
 
     # ------------------------------------------------------------------
     # Path resolution helpers (Issue 05)

@@ -5,6 +5,7 @@ discriminating phrases for each new behavioral clause introduced in
 SYSTEM_PROMPT_REDESIGN_PLAN.md.
 """
 
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from agentao.plan import PlanPhase
@@ -15,7 +16,10 @@ def _make_agent(thinking_callback=None):
         mock_llm_client.return_value.logger = Mock()
         mock_llm_client.return_value.model = "gpt-4"
         from agentao.agent import Agentao
-        return Agentao(thinking_callback=thinking_callback)
+        return Agentao(
+            thinking_callback=thinking_callback,
+            working_directory=Path.cwd(),
+        )
 
 
 # ---------------------------------------------------------------------------

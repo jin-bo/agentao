@@ -736,13 +736,13 @@ transport = SdkTransport(
     on_event=events.append,              # 接收类型化的 AgentEvent
     confirm_tool=lambda n, d, a: True,   # 自动允许所有工具
 )
-agent = Agentao(transport=transport)
+agent = Agentao(transport=transport, working_directory=Path.cwd())
 response = agent.chat("总结当前目录")
 ```
 
 `SdkTransport` 接受四个可选回调：`on_event`、`confirm_tool`、`ask_user`、`on_max_iterations`。未设置的回调使用安全默认值（自动允许、ask_user 返回提示信息、超出最大迭代次数时停止）。
 
-如需完全静默的无头模式，直接 `Agentao()` 即可——自动使用 `NullTransport`。
+如需完全静默的无头模式，使用 `Agentao(working_directory=Path.cwd())` 即可——自动使用 `NullTransport`。需要 CLI 风格的 `.env` / `.agentao/` 自动发现时，请改用 `agentao.embedding.build_from_environment()`。
 
 ### ACP（Agent Client Protocol）模式
 

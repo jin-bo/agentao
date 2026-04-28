@@ -20,12 +20,21 @@ class SdkTransport:
     All callback parameters are optional; unset ones fall back to the
     ``NullTransport`` behaviour (ignore / auto-approve).
 
+    The ``on_event`` callback receives the live :class:`AgentEvent`
+    dataclass so embedded callers can branch on ``event.type`` cheaply.
+    Hosts that need to forward events over a wire protocol (SSE,
+    WebSocket, IPC) should call :meth:`AgentEvent.to_dict` to get the
+    versioned ``{"type", "schema_version", "data"}`` payload.
+
     Example::
 
         events = []
         transport = SdkTransport(on_event=events.append)
         agent = Agentao(transport=transport)
         agent.chat("hello")
+
+        # Wire form (versioned by AgentEvent.schema_version):
+        wire = [e.to_dict() for e in events]
     """
 
     def __init__(

@@ -21,6 +21,8 @@ def _make_agent(**kwargs):
     Mirrors the helper in tests/test_system_prompt_sections.py — keeps
     the LLMClient stubbed so we don't need real credentials.
     """
+    from pathlib import Path
+    kwargs.setdefault("working_directory", Path.cwd())
     with patch("agentao.agent.LLMClient") as mock_llm_client:
         mock_llm_client.return_value.logger = Mock()
         mock_llm_client.return_value.model = "gpt-4"

@@ -1,7 +1,10 @@
 """Main agent logic for Agentao."""
 
+import asyncio
+import logging
+import warnings
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from .llm import LLMClient
 from .permissions import PermissionEngine
@@ -39,6 +42,10 @@ from .replay.observability import (
 from .sandbox import SandboxPolicy
 from .transport import NullTransport, build_compat_transport
 
+if TYPE_CHECKING:
+    from .capabilities import FileSystem, ShellExecutor
+    from .memory import MemoryManager  # noqa: F401
+
 
 class Agentao:
     """Agentao agent with tool, skill, and MCP support."""
@@ -65,6 +72,15 @@ class Agentao:
         *,
         working_directory: Optional[Path] = None,
         extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None,
+        # Embedded-harness explicit-injection kwargs.
+        llm_client: Optional[LLMClient] = None,
+        logger: Optional[logging.Logger] = None,
+        memory_manager: Optional["MemoryManager"] = None,
+        skill_manager: Optional[SkillManager] = None,
+        project_instructions: Optional[str] = None,
+        mcp_manager: Optional[McpClientManager] = None,
+        filesystem: Optional["FileSystem"] = None,
+        shell: Optional["ShellExecutor"] = None,
     ):
         """Initialize Agentao agent.
 
@@ -103,6 +119,31 @@ class Agentao:
             output_callback, tool_complete_callback, llm_text_callback,
             on_max_iterations_callback.
         """
+        # A fully-constructed object always wins over its raw-config
+        # sibling; supplying both is a programmer error.
+        if llm_client is not None and any(
+            v is not None for v in (api_key, base_url, model, temperature)
+        ):
+            raise ValueError(
+                "Agentao(): pass either llm_client= or "
+                "api_key/base_url/model/temperature, not both."
+            )
+        if mcp_manager is not None and extra_mcp_servers is not None:
+            raise ValueError(
+                "Agentao(): pass either mcp_manager= or extra_mcp_servers=, "
+                "not both."
+            )
+
+        if working_directory is None:
+            warnings.warn(
+                "Agentao() without working_directory= is deprecated and "
+                "will be required in 0.3.0. Pass an explicit Path, or use "
+                "agentao.embedding.build_from_environment() for CLI-style "
+                "auto-detection of cwd/.env/.agentao/.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Freeze working directory to an absolute path if one was supplied.
         # Resolve once so subsequent accesses are cheap and consistent.
         self._explicit_working_directory: Optional[Path] = (
@@ -110,6 +151,11 @@ class Agentao:
             if working_directory is not None
             else None
         )
+
+        # When ``None``, file/search/shell tools fall back to
+        # ``LocalFileSystem`` / ``LocalShellExecutor`` at first use.
+        self.filesystem = filesystem
+        self.shell = shell
 
         # Snapshot of session-scoped MCP server configs (Issue 11). Stored
         # privately so a caller can't mutate it after construction. ``None``
@@ -128,26 +174,34 @@ class Agentao:
         # falls back to Path.cwd()); ACP sessions land it under the frozen,
         # client-supplied project cwd instead of the subprocess's cwd — which
         # for ACP launches is often "/" and read-only.
-        self.llm = LLMClient(
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
-            temperature=temperature,
-            log_file=str(self.working_directory / "agentao.log"),
-        )
-        # Pass the explicit working_directory through (or None for the CLI
-        # default — SkillManager will fall back to Path.cwd() at construction
-        # time, matching the legacy behavior). ACP sessions targeting different
-        # repos must see independent project skills + disabled-skill state.
-        self.skill_manager = SkillManager(
-            working_directory=self._explicit_working_directory,
-        )
+        if llm_client is not None:
+            self.llm = llm_client
+        else:
+            self.llm = LLMClient(
+                api_key=api_key,
+                base_url=base_url,
+                model=model,
+                temperature=temperature,
+                log_file=str(self.working_directory / "agentao.log"),
+                logger=logger,
+            )
+        # When the host has constructed and pre-loaded its own
+        # ``SkillManager``, skip the auto-discovery scan entirely.
+        if skill_manager is not None:
+            self.skill_manager = skill_manager
+        else:
+            self.skill_manager = SkillManager(
+                working_directory=self._explicit_working_directory,
+            )
         from .memory import MemoryManager, MemoryRetriever
         from .memory.render import MemoryPromptRenderer
-        self._memory_manager = MemoryManager(
-            project_root=self.working_directory / ".agentao",
-            global_root=Path.home() / ".agentao",
-        )
+        if memory_manager is not None:
+            self._memory_manager = memory_manager
+        else:
+            self._memory_manager = MemoryManager(
+                project_root=self.working_directory / ".agentao",
+                global_root=Path.home() / ".agentao",
+            )
         self.memory_tool = SaveMemoryTool(memory_manager=self._memory_manager)
         self.memory_retriever = MemoryRetriever(self._memory_manager)
         self.memory_renderer = MemoryPromptRenderer()
@@ -191,12 +245,14 @@ class Agentao:
         # Reasoning prompt is shown only when a dedicated thinking callback is registered
         self._has_thinking_handler = thinking_callback is not None
 
-        # Save LLM config for sub-agent creation
+        # Resolved values on the LLM client itself — covers both the
+        # raw-kwargs path and the injected ``llm_client`` path so
+        # sub-agents always see the parent's effective provider config.
         self._llm_config = {
-            "api_key": api_key,
-            "base_url": base_url,
-            "model": model,
-            "temperature": self.llm.temperature,  # resolved value (explicit or from env)
+            "api_key": self.llm.api_key,
+            "base_url": self.llm.base_url,
+            "model": self.llm.model,
+            "temperature": self.llm.temperature,
         }
 
         # Initialize context manager
@@ -227,8 +283,12 @@ class Agentao:
         self.tools = ToolRegistry()
         self._register_tools()
 
-        # Initialize MCP (Model Context Protocol) support
-        self.mcp_manager = self._init_mcp()
+        # When an already-built manager is injected, skip the file
+        # discovery pass entirely; the host owns the lifecycle.
+        if mcp_manager is not None:
+            self.mcp_manager = mcp_manager
+        else:
+            self.mcp_manager = self._init_mcp()
 
         # Initialize agent manager and register agent tools
         self.agent_manager = AgentManager()
@@ -251,8 +311,12 @@ class Agentao:
         # Plan session (shared with CLI; Agent reads via _plan_mode property)
         self._plan_session: PlanSession = plan_session or PlanSession()
 
-        # Load project instructions if available
-        self.project_instructions = self._load_project_instructions()
+        # When the host injects a ``project_instructions`` string,
+        # skip the AGENTAO.md disk read and use the override verbatim.
+        if project_instructions is not None:
+            self.project_instructions = project_instructions
+        else:
+            self.project_instructions = self._load_project_instructions()
 
         # Initialize sandbox policy (macOS sandbox-exec wrapper for shell
         # commands). Silently disabled on non-macOS or when config absent.
@@ -475,6 +539,29 @@ class Agentao:
         # :mod:`agentao.runtime.turn`; this method stays as a thin facade
         # so external callers and tests keep using ``Agentao.chat``.
         return run_turn(self, user_message, max_iterations, cancellation_token)
+
+    async def arun(
+        self,
+        user_message: str,
+        max_iterations: int = 100,
+        cancellation_token: Optional[CancellationToken] = None,
+    ) -> str:
+        """Async wrapper around :meth:`chat` for embedded async hosts.
+
+        Runtime internals stay sync (the chat loop, tool execution,
+        permission, and replay surfaces are all sequential I/O). This
+        method bridges through ``run_in_executor`` so async hosts can
+        ``await agent.arun(...)`` without their own thread bridge while
+        the same turn lifecycle from :meth:`chat` runs unchanged.
+
+        Cancellation, replay, and ``max_iterations`` behave identically
+        across both surfaces; the executor thread reads the same
+        cancellation token.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self.chat, user_message, max_iterations, cancellation_token
+        )
 
     def _chat_inner(self, user_message: str, max_iterations: int,
                     token: CancellationToken) -> str:

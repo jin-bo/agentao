@@ -1,34 +1,23 @@
 """Shell command execution tool."""
 
-import os
 import re
 import shlex
-import signal
-import subprocess
 import sys
-import threading
-import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 IS_WINDOWS = sys.platform == "win32"
 IS_MACOS = sys.platform == "darwin"
 
 from .base import Tool
+from ..capabilities import BackgroundHandle, ShellRequest, ShellResult
+from ..capabilities.shell import _is_binary
 from ..sandbox import SandboxProfile
 from ..security import PathPolicy, PathPolicyError
 
 # Maximum combined stdout+stderr before truncation (~10K tokens).
 # Matches Gemini CLI's default threshold of 40,000 characters.
 _MAX_OUTPUT_CHARS = 40_000
-
-# Number of bytes to sniff for binary detection.
-_BINARY_SNIFF_BYTES = 8_192
-
-
-def _is_binary(data: bytes) -> bool:
-    """Return True if data looks like binary (null bytes present)."""
-    return b"\x00" in data[:_BINARY_SNIFF_BYTES]
 
 
 def _decode(raw: bytes) -> str:
@@ -268,48 +257,33 @@ class ShellTool(Tool):
     def _run_background(self, command: str, cwd: Path) -> str:
         """Start command detached; return PID (and PGID on Unix) immediately."""
         try:
-            if IS_WINDOWS:
-                proc = subprocess.Popen(
-                    command,
-                    shell=True,
-                    cwd=cwd,
-                    # Detach stdin so we never inherit the parent's stdin —
-                    # under the ACP stdio transport the parent stdin is the
-                    # JSON-RPC channel, and a shell=True child inheriting it
-                    # can corrupt framing or deadlock.
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
-                )
-                return (
-                    f"Background process started.\n"
-                    f"PID: {proc.pid}\n"
-                    f"Command: {command}\n"
-                    f"Working directory: {cwd}\n"
-                    f"To stop: taskkill /F /T /PID {proc.pid}"
-                )
-            else:
-                proc = subprocess.Popen(
-                    command,
-                    shell=True,
-                    cwd=cwd,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,  # equivalent to preexec_fn=os.setsid
-                )
-                pgid = os.getpgid(proc.pid)
-                return (
-                    f"Background process started.\n"
-                    f"PID: {proc.pid}\n"
-                    f"PGID: {pgid}\n"
-                    f"Command: {command}\n"
-                    f"Working directory: {cwd}\n"
-                    f"To stop: kill -- -{pgid}"
-                )
+            handle: BackgroundHandle = self._get_shell().run_background(
+                ShellRequest(command=command, cwd=cwd)
+            )
+        except NotImplementedError:
+            return (
+                "Error: shell executor does not support background execution. "
+                "Run this command with is_background=false."
+            )
         except Exception as e:
             return f"Error starting background command: {e}"
+
+        if IS_WINDOWS or handle.pgid is None:
+            return (
+                f"Background process started.\n"
+                f"PID: {handle.pid}\n"
+                f"Command: {command}\n"
+                f"Working directory: {cwd}\n"
+                f"To stop: taskkill /F /T /PID {handle.pid}"
+            )
+        return (
+            f"Background process started.\n"
+            f"PID: {handle.pid}\n"
+            f"PGID: {handle.pgid}\n"
+            f"Command: {command}\n"
+            f"Working directory: {cwd}\n"
+            f"To stop: kill -- -{handle.pgid}"
+        )
 
     # ------------------------------------------------------------------
     # Foreground execution with inactivity timeout
@@ -317,78 +291,26 @@ class ShellTool(Tool):
 
     def _run_foreground(self, command: str, cwd: Path, timeout: float) -> str:
         """Run command, killing it after `timeout` seconds without any output."""
-        popen_kwargs: Dict[str, Any] = dict(
-            shell=True,
-            cwd=cwd,
-            # See _run_background: never inherit parent stdin (JSON-RPC channel
-            # under ACP stdio).
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        if not IS_WINDOWS:
-            popen_kwargs["start_new_session"] = True  # equivalent to preexec_fn=os.setsid
         try:
-            proc = subprocess.Popen(command, **popen_kwargs)
+            result: ShellResult = self._get_shell().run(
+                ShellRequest(
+                    command=command,
+                    cwd=cwd,
+                    timeout=timeout,
+                    on_chunk=self.output_callback,
+                )
+            )
         except Exception as e:
             return f"Error starting command: {e}"
 
-        stdout_chunks: List[bytes] = []
-        stderr_chunks: List[bytes] = []
-        last_activity = [time.monotonic()]
-        timed_out = [False]
-        callback = self.output_callback
-
-        def _read(stream, chunks: List[bytes], on_chunk: Optional[Callable[[str], None]] = None) -> None:
-            for chunk in iter(lambda: stream.read(4096), b""):
-                chunks.append(chunk)
-                last_activity[0] = time.monotonic()
-                if on_chunk and not _is_binary(chunk):
-                    try:
-                        on_chunk(chunk.decode("utf-8", errors="replace"))
-                    except Exception:
-                        pass  # Never let display errors kill the reader thread
-
-        t_out = threading.Thread(target=_read, args=(proc.stdout, stdout_chunks, callback), daemon=True)
-        t_err = threading.Thread(target=_read, args=(proc.stderr, stderr_chunks, callback), daemon=True)
-        t_out.start()
-        t_err.start()
-
-        # Poll for inactivity timeout
-        while proc.poll() is None:
-            if time.monotonic() - last_activity[0] > timeout:
-                timed_out[0] = True
-                try:
-                    if IS_WINDOWS:
-                        # Kill the entire process tree: shell=True wraps the real
-                        # command in cmd.exe, so proc.kill() alone would only
-                        # terminate the wrapper and leave children running.
-                        subprocess.run(
-                            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-                            stdin=subprocess.DEVNULL,
-                            capture_output=True,
-                        )
-                    else:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except ProcessLookupError:
-                    proc.kill()
-                break
-            time.sleep(0.05)
-
-        t_out.join(timeout=2)
-        t_err.join(timeout=2)
-
-        stdout_raw = b"".join(stdout_chunks)
-        stderr_raw = b"".join(stderr_chunks)
-
-        if timed_out[0]:
-            partial = _decode(stdout_raw + stderr_raw)
+        if result.timed_out:
+            partial = _decode(result.stdout + result.stderr)
             msg = f"Command timed out after {timeout:.0f}s of inactivity.\nCommand: {command}"
             if partial:
                 msg += f"\n\nPartial output before timeout:\n{partial}"
             return msg
 
-        return self._format_result(proc.returncode, stdout_raw, stderr_raw)
+        return self._format_result(result.returncode, result.stdout, result.stderr)
 
     # ------------------------------------------------------------------
     # Output formatting

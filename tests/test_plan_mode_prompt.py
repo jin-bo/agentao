@@ -1,5 +1,6 @@
 """Regression tests for plan mode system prompt constraints."""
 
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from agentao.plan import PlanPhase
@@ -11,7 +12,7 @@ def _make_agent():
         mock_llm_client.return_value.model = "gpt-4"
         from agentao.agent import Agentao
 
-        return Agentao()
+        return Agentao(working_directory=Path.cwd())
 
 
 def _activate_plan(agent):

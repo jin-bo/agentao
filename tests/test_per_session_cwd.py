@@ -61,10 +61,21 @@ def stub_llm_env(monkeypatch):
 
 
 def _make_agent(working_directory=None, stub_llm_env=None):
-    """Construct a real Agentao instance without invoking the API."""
+    """Construct a real Agentao instance without invoking the API.
+
+    These tests deliberately exercise the legacy ``working_directory=None``
+    default to assert the lazy-cwd-read behavior, so we suppress the
+    Issue 13 ``DeprecationWarning`` here. The same warning is asserted
+    explicitly in ``tests/test_factory_build_from_environment.py`` and
+    the new injection-path tests.
+    """
+    import warnings
+
     from agentao.agent import Agentao
 
-    return Agentao(working_directory=working_directory)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return Agentao(working_directory=working_directory)
 
 
 # ---------------------------------------------------------------------------

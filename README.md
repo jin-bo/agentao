@@ -744,13 +744,13 @@ transport = SdkTransport(
     on_event=events.append,           # receive typed AgentEvents
     confirm_tool=lambda n, d, a: True,  # auto-approve all tools
 )
-agent = Agentao(transport=transport)
+agent = Agentao(transport=transport, working_directory=Path.cwd())
 response = agent.chat("Summarize the current directory")
 ```
 
 `SdkTransport` accepts four optional callbacks: `on_event`, `confirm_tool`, `ask_user`, `on_max_iterations`. Omit any you don't need — unset ones fall back to safe defaults (auto-approve, sentinel for ask_user, stop on max iterations).
 
-For fully silent headless use with no callbacks, just `Agentao()` — it uses `NullTransport` automatically.
+For fully silent headless use with no callbacks, use `Agentao(working_directory=Path.cwd())` — it uses `NullTransport` automatically. Embedded hosts that want CLI-style auto-discovery of `.env` and `.agentao/` can route through `agentao.embedding.build_from_environment()` instead.
 
 ### ACP (Agent Client Protocol) Mode
 

@@ -172,9 +172,10 @@ OPENAI_MODEL=gpt-5.4
 Or when initializing:
 
 ```python
+from pathlib import Path
 from agentao import Agentao
 
-agent = Agentao(model="gpt-5.4")
+agent = Agentao(model="gpt-5.4", working_directory=Path.cwd())
 ```
 
 ### API Configuration
@@ -312,9 +313,10 @@ This is useful for:
 ### Programmatic Access
 
 ```python
+from pathlib import Path
 from agentao import Agentao
 
-agent = Agentao()
+agent = Agentao(working_directory=Path.cwd())
 
 # Get current model
 current = agent.get_current_model()

@@ -1,6 +1,36 @@
 # 2.2 Constructor Reference
 
-Full signature (`agentao/agent.py`, `Agentao.__init__`):
+There are now **two stable construction paths**, picked by what your host already knows:
+
+- **`agentao.embedding.build_from_environment(...)`** — CLI-style auto-discovery: reads `.env`, `LLM_PROVIDER`, `<wd>/.agentao/permissions.json`, `<wd>/.agentao/mcp.json`, memory roots, then constructs `Agentao` for you. Use this when your host follows the same project-directory conventions as the CLI.
+- **`Agentao(...)` directly** — explicit injection: you already have an `LLMClient`, `PermissionEngine`, etc. and don't want any env / disk side effects at construction time.
+
+**Important (0.2.16)**: `Agentao()` without `working_directory=` now emits a `DeprecationWarning` and will become a `TypeError` in 0.3.0. Always pass an explicit `Path`, or go through `build_from_environment()`.
+
+## The factory: `build_from_environment()`
+
+```python
+from pathlib import Path
+from agentao.embedding import build_from_environment
+
+agent = build_from_environment(
+    working_directory=Path("/data/tenant-acme"),
+    transport=my_transport,
+    max_context_tokens=128_000,
+)
+```
+
+What it does:
+
+1. Resolves `working_directory` (defaults to `Path.cwd()`) once and freezes the result.
+2. Calls `load_dotenv()` against `<wd>/.env` if it exists, else process-wide.
+3. Reads `LLM_PROVIDER` and the matching `*_API_KEY` / `*_BASE_URL` / `*_MODEL` env vars.
+4. Builds a `PermissionEngine(project_root=wd)` and a `MemoryManager(project_root=wd/.agentao, global_root=~/.agentao)`.
+5. Forwards everything explicitly to `Agentao(...)`. **Caller `**overrides` win** over auto-discovered values.
+
+This is the only place in the codebase that reads env / dotenv / `.agentao/*.json` at startup. Hosts that don't want any of that should construct `Agentao` directly.
+
+## `Agentao.__init__` full signature (`agentao/agent.py`)
 
 ```python
 Agentao(
@@ -8,7 +38,7 @@ Agentao(
     base_url:         Optional[str]    = None,
     model:            Optional[str]    = None,
     temperature:      Optional[float]  = None,
-    # ── The 8 below are deprecated legacy callbacks (still accepted) ──
+    # ── Deprecated legacy callbacks (still accepted) ──
     confirmation_callback:      Optional[Callable] = None,
     max_context_tokens:         int                = 200_000,
     step_callback:              Optional[Callable] = None,
@@ -24,6 +54,15 @@ Agentao(
     *,
     working_directory:  Optional[Path]                     = None,
     extra_mcp_servers:  Optional[Dict[str, Dict[str, Any]]] = None,
+    # ── Embedded-harness explicit-injection kwargs (0.2.16+) ──
+    llm_client:           Optional[LLMClient]         = None,
+    logger:               Optional[logging.Logger]    = None,
+    memory_manager:       Optional[MemoryManager]     = None,
+    skill_manager:        Optional[SkillManager]      = None,
+    project_instructions: Optional[str]               = None,
+    mcp_manager:          Optional[McpClientManager]  = None,
+    filesystem:           Optional[FileSystem]        = None,
+    shell:                Optional[ShellExecutor]     = None,
 )
 ```
 
@@ -31,24 +70,64 @@ Agentao(
 
 | Param | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `api_key` | `str` | `OPENAI_API_KEY` env | LLM credential |
-| `base_url` | `str` | env or vendor default | Switch compatible endpoint (DeepSeek, Gemini gateway, vLLM…) |
-| `model` | `str` | env or vendor default | Model id |
-| `temperature` | `float` | env `LLM_TEMPERATURE` or `0.2` | Sampling temperature |
+| `api_key` | `str` | — (must be supplied or come from `llm_client=`) | LLM credential |
+| `base_url` | `str` | — | Switch compatible endpoint (DeepSeek, Gemini gateway, vLLM…) |
+| `model` | `str` | — | Model id |
+| `temperature` | `float` | `0.2` | Sampling temperature |
 
-**Recommendation**: pass all four explicitly. Skipping env vars makes debugging and auditing cleaner:
+Pass all four explicitly, or pass a fully-constructed `llm_client=` (see below). **Mutually exclusive**: passing both `llm_client=` and any of the raw LLM params raises `ValueError`.
+
+For multi-tenant apps, each session can carry **different credentials** (e.g. per customer) — see Part 7.2.
+
+## Embedded-harness explicit injections (0.2.16+)
+
+When you don't want `Agentao()` to construct a subsystem from defaults, inject your own:
+
+| Param | Type | What gets skipped when injected |
+|-------|------|---------------------------------|
+| `llm_client` | `LLMClient` | No `LLMClient(...)` is constructed; no env reads for credentials |
+| `logger` | `logging.Logger` | The package-root level/handler mutation in `LLMClient.__init__` is skipped — your stack stays untouched |
+| `memory_manager` | `MemoryManager` | No `<wd>/.agentao/memory.db` open at startup |
+| `skill_manager` | `SkillManager` | The bundled-skill auto-discovery scan is skipped — your instance is used verbatim |
+| `project_instructions` | `str` | The `<wd>/AGENTAO.md` disk read is skipped — your string is used verbatim |
+| `mcp_manager` | `McpClientManager` | No `.agentao/mcp.json` discovery; you own the MCP lifecycle |
+| `filesystem` | `FileSystem` | File / search tools route through your `FileSystem` (see Part 6.4) |
+| `shell` | `ShellExecutor` | The shell tool routes through your `ShellExecutor` |
+
+These are the bridges hosts use when they want Agentao's runtime but not its CLI-style implicit reads. Combine freely:
 
 ```python
+from agentao import Agentao
+from agentao.llm import LLMClient
+from agentao.capabilities import LocalFileSystem
+
 agent = Agentao(
-    api_key=settings.openai_api_key,
-    base_url=settings.openai_base_url,
-    model=settings.openai_model,
-    temperature=0.1,
-    ...
+    working_directory=Path("/srv/agent-workdir"),
+    llm_client=LLMClient(
+        api_key=secrets.openai_api_key,
+        base_url="https://api.openai.com/v1",
+        model="gpt-5.4",
+        log_file=None,             # don't write a log file
+        logger=app.logger,         # use the host's logger
+    ),
+    skill_manager=preloaded_skill_manager,
+    filesystem=LocalFileSystem(),  # or your sandboxed FS
+    transport=my_transport,
 )
 ```
 
-For multi-tenant apps, each session can carry **different credentials** (e.g. per customer) — see Part 7.2.
+### Capability protocols
+
+`FileSystem` / `ShellExecutor` are runtime-checkable `Protocol`s defined in `agentao.capabilities`. The package exports default `LocalFileSystem` / `LocalShellExecutor` implementations that match Agentao's pre-0.2.16 behavior byte-for-byte. Hosts replace them to route IO through Docker exec, virtual filesystems, audit proxies, or remote runners.
+
+```python
+from agentao.capabilities import (
+    FileSystem, FileEntry, FileStat,
+    ShellExecutor, ShellRequest, ShellResult, BackgroundHandle,
+)
+```
+
+See Part 6.4 for the multi-tenant filesystem isolation pattern.
 
 ## Transport (recommended)
 
@@ -56,7 +135,7 @@ For multi-tenant apps, each session can carry **different credentials** (e.g. pe
 |-------|------|---------|---------|
 | `transport` | `Transport` | `NullTransport()` | UI interaction + event stream |
 
-One `Transport` covers all interaction: tool confirmations, user asks, event streaming, max-iteration fallback. **Skip it = auto-approve everything, no event listener** (that's `NullTransport`) — fine for headless batch jobs.
+One `Transport` covers all interaction: tool confirmations, user asks, event streaming, max-iteration fallback. **Skip it = auto-approve everything, no event listener** (`NullTransport`) — fine for headless batch jobs.
 
 ```python
 from agentao.transport import SdkTransport
@@ -67,7 +146,7 @@ transport = SdkTransport(
     ask_user=prompt_user,
     on_max_iterations=lambda n, msgs: {"action": "stop"},
 )
-agent = Agentao(transport=transport, ...)
+agent = Agentao(transport=transport, working_directory=workdir, ...)
 ```
 
 Implementing a custom Transport: see [Part 4](/en/part-4/).
@@ -85,7 +164,7 @@ Implementing a custom Transport: see [Part 4](/en/part-4/).
 | `llm_text_callback` | `on_event=` + `LLM_TEXT` |
 | `on_max_iterations_callback` | `SdkTransport(on_max_iterations=...)` |
 
-**All 8 still work** — Agentao wraps them in a `build_compat_transport()` shim internally. New code should go straight through `Transport` to avoid two parallel channels.
+**All 8 still work** — Agentao wraps them in a `build_compat_transport()` shim internally. New code should go straight through `Transport`.
 
 ## Runtime behavior
 
@@ -93,22 +172,22 @@ Implementing a custom Transport: see [Part 4](/en/part-4/).
 |-------|------|---------|---------|
 | `max_context_tokens` | `int` | `200_000` | Triggers compression (Part 7.3) |
 | `plan_session` | `PlanSession` | `None` | Enables Plan mode; rarely needed in embedders |
-| `permission_engine` | `PermissionEngine` | loaded from `.agentao/permissions.json` | Rule engine (Parts 5.4 / 6.3) |
+| `permission_engine` | `PermissionEngine` | `None` (factory builds one rooted at `wd`) | Rule engine (Parts 5.4 / 6.3) |
 
 ## Session isolation (critical!)
 
 | Param | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `working_directory` | `Path` | `None` (dynamic `Path.cwd()`) | **Must be set explicitly for multi-instance** |
+| `working_directory` | `Path` | `None` (deprecated; will become required in 0.3.0) | **Must be set explicitly for multi-instance** |
 
 **Why it matters**:
-- `None` → agent reads live `Path.cwd()` on every access (CLI behavior; user `cd` is respected)
+- `None` → agent reads live `Path.cwd()` on every access (CLI behavior; user `cd` is respected) — emits `DeprecationWarning` since 0.2.16
 - `Path(...)` → agent freezes on that directory at construction; file tools, `AGENTAO.md`, `.agentao/` config, shell CWD all resolve against it
 
-In embedded contexts (web server, ACP sessions), `Path.cwd()` is **process-global state** — two concurrent sessions will cross-contaminate. Always pass `working_directory=` explicitly per instance.
+In embedded contexts (web server, ACP sessions), `Path.cwd()` is **process-global state** — two concurrent sessions cross-contaminate. Always pass `working_directory=` explicitly per instance.
 
 ```python
-# ❌ Bad: sessions share cwd
+# ❌ Bad: sessions share cwd, plus DeprecationWarning
 agent_a = Agentao(...)
 agent_b = Agentao(...)
 
@@ -123,7 +202,7 @@ agent_b = Agentao(..., working_directory=Path("/tmp/tenant-b"))
 |-------|------|---------|---------|
 | `extra_mcp_servers` | `Dict[str, Dict]` | `None` | Programmatic MCP server injection |
 
-Add MCP servers to a **single session** without touching the project's `.agentao/mcp.json`. Typical use: swap GitHub-token-per-tenant:
+Add MCP servers to a **single session** without touching the project's `.agentao/mcp.json`. Typical use: per-tenant GitHub token:
 
 ```python
 agent = Agentao(
@@ -139,6 +218,23 @@ agent = Agentao(
 ```
 
 Merge rule: **entries here override** same-named entries in `.agentao/mcp.json`.
+
+**Mutually exclusive** with `mcp_manager=`: pass either an already-built manager or the dict to merge, not both.
+
+## Async hosts: `Agentao.arun()`
+
+Sync callers use `agent.chat(user_message)`; async hosts use `await agent.arun(user_message)`.
+
+```python
+async def handle_request(request):
+    response = await agent.arun(
+        request.text,
+        cancellation_token=request.cancel_token,
+    )
+    return {"reply": response}
+```
+
+`arun()` bridges the (still-sync) chat loop through `asyncio.get_running_loop().run_in_executor(None, self.chat, ...)`. Cancellation, replay, and `max_iterations` behave identically across both surfaces. The runtime internals stay sync because they are sequential I/O — exposing async all the way down would expand surface without benefit.
 
 ## Full example: production embedding template
 
@@ -156,7 +252,6 @@ def make_agent_for_session(
     on_event,
     confirm_tool,
 ) -> Agentao:
-    # Per-session permission engine (tunable per tenant)
     engine = PermissionEngine(project_root=tenant_workdir)
     engine.set_mode(PermissionMode.WORKSPACE_WRITE)
 
@@ -167,20 +262,14 @@ def make_agent_for_session(
     )
 
     return Agentao(
-        # LLM
         api_key=os.environ["OPENAI_API_KEY"],
         base_url=os.environ.get("OPENAI_BASE_URL"),
         model="gpt-5.4",
         temperature=0.1,
-        # Interaction
         transport=transport,
-        # Isolation
         working_directory=tenant_workdir,
-        # Resource limits
         max_context_tokens=128_000,
-        # Security
         permission_engine=engine,
-        # Session-scoped MCP
         extra_mcp_servers={
             "gh": {
                 "command": "npx",
@@ -189,6 +278,18 @@ def make_agent_for_session(
             },
         },
     )
+```
+
+Or, when your host already follows the CLI conventions:
+
+```python
+from agentao.embedding import build_from_environment
+
+agent = build_from_environment(
+    working_directory=tenant_workdir,
+    transport=transport,
+    max_context_tokens=128_000,
+)
 ```
 
 Next: [2.3 Lifecycle →](./3-lifecycle)

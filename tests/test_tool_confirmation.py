@@ -1,5 +1,6 @@
 """Test tool confirmation feature."""
 
+from pathlib import Path
 from unittest.mock import Mock, patch
 from agentao.tools import ShellTool, WebFetchTool, WebSearchTool, ReadFileTool
 
@@ -40,7 +41,10 @@ def test_agent_with_confirmation_callback():
         confirmation_callback = Mock(return_value=True)
 
         # Create agent with confirmation callback
-        agent = Agentao(confirmation_callback=confirmation_callback)
+        agent = Agentao(
+            confirmation_callback=confirmation_callback,
+            working_directory=Path.cwd(),
+        )
 
         assert agent.confirmation_callback is not None, "Confirmation callback should be set"
         print("✅ Agent accepts confirmation callback")
@@ -71,7 +75,10 @@ def test_confirmation_callback_signature():
         from agentao.agent import Agentao
 
         # Create agent with callback
-        agent = Agentao(confirmation_callback=sample_callback)
+        agent = Agentao(
+            confirmation_callback=sample_callback,
+            working_directory=Path.cwd(),
+        )
 
         # Test callback
         result = agent.confirmation_callback("test_tool", "Test tool description", {"arg1": "value1"})
@@ -91,7 +98,7 @@ def test_no_confirmation_callback():
         from agentao.agent import Agentao
 
         # Create agent without callback
-        agent = Agentao()
+        agent = Agentao(working_directory=Path.cwd())
 
         assert agent.confirmation_callback is None, "Confirmation callback should be None"
         print("✅ Agent works without confirmation callback")

@@ -1,6 +1,7 @@
 """Test multi-turn tool calls."""
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -22,6 +23,7 @@ def test_multi_turn_tool_calls():
         api_key=os.getenv("OPENAI_API_KEY"),
         base_url=os.getenv("OPENAI_BASE_URL"),
         model=os.getenv("OPENAI_MODEL"),
+        working_directory=Path.cwd(),
     )
 
     print("Testing multi-turn tool calls...")

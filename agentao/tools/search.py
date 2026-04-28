@@ -8,6 +8,7 @@ import fnmatch
 import re
 
 from .base import Tool
+from ..capabilities import FileSystem
 
 # Files modified within this window are sorted by recency
 RECENCY_THRESHOLD = 86400  # 24 hours
@@ -46,14 +47,14 @@ class FindFilesTool(Tool):
             "required": ["pattern"],
         }
 
-    def _sort_by_recency(self, base_path: Path, file_paths: List[str]) -> List[str]:
+    def _sort_by_recency(self, base_path: Path, file_paths: List[str], fs: FileSystem) -> List[str]:
         """Sort files: recently modified (24h) by mtime desc, then rest alphabetically."""
         now = time.time()
         recent = []
         older = []
         for f in file_paths:
             try:
-                mtime = (base_path / f).stat().st_mtime
+                mtime = fs.stat(base_path / f).mtime
                 if now - mtime < RECENCY_THRESHOLD:
                     recent.append((f, mtime))
                 else:
@@ -68,23 +69,21 @@ class FindFilesTool(Tool):
         """Find files matching pattern, with recently modified files listed first."""
         try:
             path = self._resolve_path(directory)
-            if not path.exists():
+            fs = self._get_fs()
+            if not fs.exists(path):
                 return f"Error: Directory {directory} does not exist"
 
             matches = []
-            if "**" in pattern:
-                for item in path.rglob(pattern.replace("**/", "")):
-                    if item.is_file():
-                        matches.append(str(item.relative_to(path)))
-            else:
-                for item in path.glob(pattern):
-                    if item.is_file():
-                        matches.append(str(item.relative_to(path)))
+            recursive = "**" in pattern
+            search_pattern = pattern.replace("**/", "") if recursive else pattern
+            for item in fs.glob(path, search_pattern, recursive=recursive):
+                if fs.is_file(item):
+                    matches.append(str(item.relative_to(path)))
 
             if not matches:
                 return f"No files found matching pattern: {pattern}"
 
-            sorted_matches = self._sort_by_recency(path, matches)
+            sorted_matches = self._sort_by_recency(path, matches, fs)
             return f"Found {len(sorted_matches)} file(s):\n\n" + "\n".join(sorted_matches)
         except Exception as e:
             return f"Error finding files: {str(e)}"
@@ -224,7 +223,8 @@ class SearchTextTool(Tool):
         """Search for text in files. Uses git grep when available for performance."""
         try:
             path = self._resolve_directory(directory)
-            if not path.exists():
+            fs = self._get_fs()
+            if not fs.exists(path):
                 return f"Error: Directory {directory} does not exist"
 
             # Try git grep first (much faster in git repos)
@@ -244,31 +244,32 @@ class SearchTextTool(Tool):
                 if not case_sensitive:
                     pattern = pattern.lower()
 
-            files_to_search = []
-            if "**" in file_pattern:
-                files_to_search = list(path.rglob(file_pattern.replace("**/", "")))
-            else:
-                files_to_search = list(path.glob(file_pattern))
+            recursive = "**" in file_pattern
+            search_pattern = file_pattern.replace("**/", "") if recursive else file_pattern
+            files_to_search = fs.glob(path, search_pattern, recursive=recursive)
 
             results = []
             for file_path in files_to_search:
-                if not file_path.is_file():
+                if not fs.is_file(file_path):
                     continue
 
                 try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        for line_num, line in enumerate(f, 1):
-                            match = False
-                            if regex:
-                                match = compiled_pattern.search(line) is not None
-                            else:
-                                search_line = line if case_sensitive else line.lower()
-                                match = pattern in search_line
+                    line_iter = fs.open_text(file_path)
+                except (UnicodeDecodeError, PermissionError, OSError):
+                    continue
 
-                            if match:
-                                rel_path = file_path.relative_to(path)
-                                results.append(f"{rel_path}:{line_num}: {line.rstrip()}")
-                except (UnicodeDecodeError, PermissionError):
+                try:
+                    for line_num, line in enumerate(line_iter, 1):
+                        if regex:
+                            match = compiled_pattern.search(line) is not None
+                        else:
+                            search_line = line if case_sensitive else line.lower()
+                            match = pattern in search_line
+
+                        if match:
+                            rel_path = file_path.relative_to(path)
+                            results.append(f"{rel_path}:{line_num}: {line.rstrip()}")
+                except (UnicodeDecodeError, PermissionError, OSError):
                     continue
 
             if not results:

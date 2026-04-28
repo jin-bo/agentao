@@ -353,7 +353,7 @@ class TestIntegration:
                 from agentao.memory import MemoryManager
                 from agentao.tools.memory import SaveMemoryTool
 
-                agent = Agentao()
+                agent = Agentao(working_directory=Path(tmpdir))
                 agent.memory_manager = MemoryManager(
                     project_root=tmp_proj, global_root=tmp_global
                 )
@@ -388,7 +388,7 @@ class TestIntegration:
                 from agentao.agent import Agentao
                 from agentao.memory import MemoryManager
 
-                agent = Agentao()
+                agent = Agentao(working_directory=Path(tmpdir))
                 agent.memory_manager = MemoryManager(
                     project_root=tmp_proj, global_root=tmp_global
                 )
@@ -421,7 +421,7 @@ class TestExtractContextHints:
             mock_llm_cls.return_value = mock_llm
 
             from agentao.agent import Agentao
-            return Agentao()
+            return Agentao(working_directory=Path(tmpdir))
 
     def test_extracts_paths_from_string_content(self, tmp_path):
         agent = self._make_agent(tmp_path)

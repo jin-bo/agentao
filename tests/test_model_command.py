@@ -8,6 +8,7 @@ Set ``AGENTAO_TEST_LIVE_MODELS=1`` to force live mode explicitly.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -46,7 +47,7 @@ def _build_agent() -> Agentao:
     """
     os.environ.setdefault("LLM_PROVIDER", "OPENAI")
     os.environ.setdefault("OPENAI_API_KEY", _FAKE_KEY)
-    return Agentao()
+    return Agentao(working_directory=Path.cwd())
 
 
 def test_model_switching_flow(monkeypatch: pytest.MonkeyPatch) -> None:

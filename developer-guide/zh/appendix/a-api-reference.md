@@ -5,7 +5,9 @@
 权威 `__all__`：
 
 - `from agentao import ...` → `Agentao`、`SkillManager`
+- `from agentao.embedding import ...` → `build_from_environment`
 - `from agentao.transport import ...` → `AgentEvent`、`EventType`、`Transport`、`NullTransport`、`SdkTransport`、`build_compat_transport`
+- `from agentao.capabilities import ...` → `FileSystem`、`LocalFileSystem`、`FileEntry`、`FileStat`、`ShellExecutor`、`LocalShellExecutor`、`ShellRequest`、`ShellResult`、`BackgroundHandle`
 - `from agentao.tools.base import ...` → `Tool`、`ToolRegistry`
 - `from agentao.permissions import ...` → `PermissionEngine`、`PermissionMode`、`PermissionDecision`
 - `from agentao.memory.manager import MemoryManager`
@@ -18,6 +20,8 @@
 
 ### 构造器
 
+完整参数表见 [Part 2.2](/zh/part-2/2-constructor-reference)。**0.2.16 起**，不传 `working_directory=` 调用 `Agentao()` 会发 `DeprecationWarning`，0.3.0 起会变成 `TypeError`。
+
 ```python
 Agentao(
     api_key: str | None = None,
@@ -26,24 +30,51 @@ Agentao(
     temperature: float | None = None,
     transport: Transport | None = None,
     working_directory: Path | None = None,
-    extra_mcp_servers: list[dict] | None = None,
+    extra_mcp_servers: dict[str, dict] | None = None,
     permission_engine: PermissionEngine | None = None,
     max_context_tokens: int = 200_000,
-    plan_session: bool = False,
+    plan_session: PlanSession | None = None,
+    # 嵌入式 harness 显式注入（0.2.16+）
+    llm_client: LLMClient | None = None,
+    logger: logging.Logger | None = None,
+    memory_manager: MemoryManager | None = None,
+    skill_manager: SkillManager | None = None,
+    project_instructions: str | None = None,
+    mcp_manager: McpClientManager | None = None,
+    filesystem: FileSystem | None = None,
+    shell: ShellExecutor | None = None,
     # 老式回调（建议改用 `transport=`）
     output_callback: Callable[[str], None] | None = None,
     confirmation_callback: Callable[[str, str, dict], bool] | None = None,
-    input_callback: Callable[[str], str] | None = None,
+    ask_user_callback: Callable[[str], str] | None = None,
     on_max_iterations_callback: Callable[[int, list], dict] | None = None,
     # ...
 )
 ```
+
+互斥规则（违反时抛 `ValueError`）：
+
+- `llm_client=` 与任何 `api_key=` / `base_url=` / `model=` / `temperature=` 同时传
+- `mcp_manager=` 与 `extra_mcp_servers=` 同时传
+
+### `agentao.embedding.build_from_environment`
+
+```python
+def build_from_environment(
+    working_directory: Path | None = None,
+    **overrides,
+) -> Agentao:
+    ...
+```
+
+CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变量、`<wd>/.agentao/permissions.json`、`<wd>/.agentao/mcp.json`、内存目录，然后用发现到的值构造 `Agentao`。**调用方传入的 `**overrides` 优先**。同样会触发上面构造器的互斥校验（如果 `overrides` 含 `llm_client`，工厂会先把发现到的 `api_key` / `base_url` / `model` 丢掉再转发）。
 
 ### 方法
 
 | 方法 | 签名 | 作用 |
 |------|------|------|
 | `chat` | `chat(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None) -> str` | 跑一轮，返回助手最终文本 |
+| `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None) -> str` | 异步接口——通过 `loop.run_in_executor` 桥到 `chat()`。取消、replay、`max_iterations` 语义与同步版完全一致 |
 | `clear_history` | `clear_history() -> None` | 清 `self.messages`；不影响 memory DB |
 | `close` | `close() -> None` | 关 MCP 子进程与 DB handle；请放 `finally:` |
 | `set_provider` | `set_provider(api_key, base_url=None, model=None) -> None` | 运行时换 LLM |
@@ -128,7 +159,14 @@ class Tool(ABC):
     # 注册时由 Agentao 注入
     working_directory: Path | None
     output_callback: Callable[[str], None] | None
+    filesystem: FileSystem | None
+    shell: ShellExecutor | None
+
+    def _get_fs(self) -> FileSystem: ...      # 没注入时 lazy 构造 LocalFileSystem
+    def _get_shell(self) -> ShellExecutor: ... # 没注入时 lazy 构造 LocalShellExecutor
 ```
+
+自定义 Tool 子类需要读写文件时，调用 `self._get_fs()` 而不是直接用 `pathlib`——这样宿主注入的 `FileSystem`（Docker、虚拟 FS、审计代理）会被正确尊重。
 
 ### `ToolRegistry`
 
@@ -138,6 +176,32 @@ class Tool(ABC):
 | `get(name: str) -> Tool` | 不存在时抛 `KeyError`，带可用工具列表 |
 | `list_tools() -> list[Tool]` | |
 | `to_openai_format() -> list[dict]` | OpenAI function-calling schemas |
+
+### Capabilities（`agentao.capabilities`）
+
+文件 / 搜索 / Shell 工具的 IO 都路由经过这两个 runtime-checkable `Protocol`。宿主通过 `Agentao(filesystem=..., shell=...)` 注入自定义实现，可以重定向到 Docker exec、虚拟文件系统、审计代理或远程 runner。包还导出与 0.2.16 之前字节级一致的默认实现 `LocalFileSystem` / `LocalShellExecutor`。
+
+```python
+class FileSystem(Protocol):
+    def read_bytes(self, path: Path) -> bytes: ...
+    def read_partial(self, path: Path, n: int) -> bytes: ...
+    def open_text(self, path: Path) -> Iterator[str]: ...      # 流式读取
+    def write_text(self, path: Path, data: str, *, append: bool = False) -> None: ...
+    def list_dir(self, path: Path) -> list[FileEntry]: ...
+    def glob(self, base: Path, pattern: str, *, recursive: bool) -> list[Path]: ...
+    def stat(self, path: Path) -> FileStat: ...
+    def exists(self, path: Path) -> bool: ...
+    def is_dir(self, path: Path) -> bool: ...
+    def is_file(self, path: Path) -> bool: ...
+
+class ShellExecutor(Protocol):
+    def run(self, request: ShellRequest) -> ShellResult: ...
+    def run_background(self, request: ShellRequest) -> BackgroundHandle: ...
+```
+
+冻结的 dataclass：`FileEntry(name, is_dir, is_file, size)`、`FileStat(size, mtime, is_dir, is_file)`、`ShellRequest(command, cwd, timeout, on_chunk, env)`、`ShellResult(returncode, stdout, stderr, timed_out)`、`BackgroundHandle(pid, pgid, command, cwd)`。
+
+宿主无法支持真正的后台执行时，可以在 `run_background` 抛 `NotImplementedError`——`ShellTool` 会把它呈现为普通的工具错误字符串。
 
 ## A.4 权限
 

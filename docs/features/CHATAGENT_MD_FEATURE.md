@@ -204,8 +204,9 @@ Potential improvements:
 
 View the system prompt to verify instructions are loaded:
 ```python
+from pathlib import Path
 from agentao.agent import Agentao
-agent = Agentao()
+agent = Agentao(working_directory=Path.cwd())
 print(agent._build_system_prompt())
 ```
 
