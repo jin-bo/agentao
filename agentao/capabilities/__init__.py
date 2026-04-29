@@ -14,6 +14,7 @@ from .filesystem import (
     LocalFileSystem,
 )
 from .memory import MemoryStore
+from .mcp import MCPRegistry
 from .shell import (
     BackgroundHandle,
     LocalShellExecutor,
@@ -22,6 +23,7 @@ from .shell import (
     ShellResult,
 )
 from ..memory.storage import SQLiteMemoryStore
+from ..mcp.registry import FileBackedMCPRegistry, InMemoryMCPRegistry
 
 __all__ = [
     "FileEntry",
@@ -35,4 +37,7 @@ __all__ = [
     "LocalShellExecutor",
     "MemoryStore",
     "SQLiteMemoryStore",
+    "MCPRegistry",
+    "FileBackedMCPRegistry",
+    "InMemoryMCPRegistry",
 ]

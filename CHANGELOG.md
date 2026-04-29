@@ -9,6 +9,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`MCPRegistry` capability protocol** (Issue #17). Embedded hosts
+  can now enumerate MCP servers from any source (in-process dict,
+  plugin system, dynamic discovery, remote registry) without writing
+  to `.agentao/mcp.json`. Two default implementations ship in
+  `agentao.mcp.registry`: `FileBackedMCPRegistry` (CLI/ACP default —
+  reads `<wd>/.agentao/mcp.json` + `~/.agentao/mcp.json`,
+  byte-equivalent to the pre-Protocol behavior) and
+  `InMemoryMCPRegistry` (programmatic counterpart for hosts and
+  tests). Re-exported from `agentao.capabilities` for symmetry with
+  `FileSystem` / `MemoryStore`:
+  ```python
+  from agentao.capabilities import (
+      MCPRegistry, FileBackedMCPRegistry, InMemoryMCPRegistry,
+  )
+  ```
+- `Agentao(mcp_registry=...)` keyword. Mutually exclusive with
+  `mcp_manager=` (which is the pre-built construction outcome — the
+  registry is the config source for construction). Bare
+  `Agentao(working_directory=...)` outside the factory still falls
+  back to `load_mcp_config` so existing CLI-shaped scripts keep
+  working.
+
 - **`MemoryStore` capability protocol** (Issue #16). Embedded hosts
   can now swap memory backends — Redis, Postgres, in-process dict,
   remote API — without subclassing or forking `MemoryManager`. The
@@ -31,6 +53,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no boolean disambiguation needed.
 
 ### Changed
+
+- `agentao.embedding.build_from_environment()` now constructs a
+  `FileBackedMCPRegistry(project_root=wd, user_root=user_root())` and
+  passes it to `Agentao` as `mcp_registry=`. CLI and ACP behavior is
+  unchanged because the registry resolves the same files. Hosts that
+  want programmatic registration pass an explicit `mcp_registry=`
+  (or any `MCPRegistry`-compatible object) to override the default.
+- `agentao.memory.MemoryStore` is no longer re-exported from
+  `agentao.memory` — the canonical home is `agentao.capabilities`.
+  Re-exporting it from the memory package would force
+  `import agentao.memory` to load all of `agentao.capabilities`,
+  which after Issue #17 transitively pulls the MCP SDK and breaks
+  the `tests/test_memory_decoupling.py` decoupling guarantee.
 
 - `MemoryManager(project_store=..., user_store=...)` now accepts
   pre-built `MemoryStore` instances. Path-based construction (the

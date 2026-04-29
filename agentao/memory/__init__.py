@@ -1,6 +1,14 @@
-"""Memory management subpackage for Agentao."""
+"""Memory management subpackage for Agentao.
 
-from ..capabilities.memory import MemoryStore
+Note: the :class:`MemoryStore` Protocol lives in
+:mod:`agentao.capabilities.memory` and is re-exported from
+:mod:`agentao.capabilities` only — pulling it through
+``agentao.memory`` here would force ``import agentao.memory`` to load
+the rest of ``agentao.capabilities`` (which after Issue #17 includes
+the MCP registry concretes that drag the MCP SDK). Keeping memory
+import-light is asserted by ``tests/test_memory_decoupling.py``.
+"""
+
 from .manager import MemoryManager
 from .retriever import MemoryRetriever
 from .crystallizer import MemoryCrystallizer, SkillCrystallizer
@@ -21,7 +29,6 @@ __all__ = [
     "MemoryRetriever",
     "MemoryCrystallizer",
     "SkillCrystallizer",
-    "MemoryStore",
     "SQLiteMemoryStore",
     "MemoryGuard",
     "SensitiveMemoryError",

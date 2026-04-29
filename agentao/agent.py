@@ -43,7 +43,7 @@ from .transport import NullTransport, build_compat_transport
 
 if TYPE_CHECKING:
     from .agents.bg_store import BackgroundTaskStore  # noqa: F401
-    from .capabilities import FileSystem, ShellExecutor
+    from .capabilities import FileSystem, MCPRegistry, ShellExecutor
     from .memory import MemoryManager  # noqa: F401
 
 
@@ -80,6 +80,7 @@ class Agentao:
         skill_manager: Optional[SkillManager] = None,
         project_instructions: Optional[str] = None,
         mcp_manager: Optional[McpClientManager] = None,
+        mcp_registry: Optional["MCPRegistry"] = None,
         filesystem: Optional["FileSystem"] = None,
         shell: Optional["ShellExecutor"] = None,
         # Opt-in subsystems — ``None`` (default) disables. The factory
@@ -141,6 +142,11 @@ class Agentao:
                 "Agentao(): pass either mcp_manager= or extra_mcp_servers=, "
                 "not both."
             )
+        if mcp_manager is not None and mcp_registry is not None:
+            raise ValueError(
+                "Agentao(): pass either mcp_manager= (pre-built) or "
+                "mcp_registry= (config source), not both."
+            )
 
         # Freeze working directory to an absolute path. Resolved once so
         # subsequent accesses are cheap and consistent. Required since
@@ -165,6 +171,12 @@ class Agentao:
             if extra_mcp_servers
             else {}
         )
+
+        # Issue #17: optional MCPRegistry replaces the implicit file-load
+        # path inside ``init_mcp``. ``None`` means "use the legacy file
+        # source via ``load_mcp_config``" — the factory injects a
+        # ``FileBackedMCPRegistry`` so the CLI/ACP path always sets this.
+        self._mcp_registry: Optional["MCPRegistry"] = mcp_registry
 
         # Anchor the LLM debug log to the agent's effective working directory
         # so it always resolves to an absolute, writable path. CLI runs land it

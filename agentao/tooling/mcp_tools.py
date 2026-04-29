@@ -2,7 +2,9 @@
 
 Extracted from ``Agentao._init_mcp``. Behavior is identical:
 
-1. Load file configs (``load_mcp_config``).
+1. Resolve server configs from ``agent._mcp_registry`` (the embedded-host
+   injection point) or fall back to the file source via
+   ``load_mcp_config`` for the bare-construction path.
 2. Overlay in-memory ACP overrides (``agent._extra_mcp_servers``).
 3. Connect all servers, register each remote tool wrapped in ``McpTool``.
 4. Return the ``McpClientManager`` so the caller can disconnect on close.
@@ -27,22 +29,31 @@ def init_mcp(agent: "Agentao") -> Optional[McpClientManager]:
 
     Config sources merged (later overrides earlier):
 
-      1. ``~/.agentao/mcp.json``              (global, file)
-      2. ``<cwd>/.agentao/mcp.json``          (project, file)
-      3. ``agent._extra_mcp_servers``         (Issue 11: ACP session-scoped)
+      1. ``agent._mcp_registry.list_servers()`` if injected (Issue #17),
+         else ``<wd>/.agentao/mcp.json`` + ``~/.agentao/mcp.json``
+         via ``load_mcp_config`` for the bare-construction path.
+      2. ``agent._extra_mcp_servers``         (Issue 11: ACP session-scoped)
 
     Returns the manager on success, ``None`` when no servers are
     configured. All failures are logged via ``agent.llm.logger``.
     """
+    registry = getattr(agent, "_mcp_registry", None)
     try:
-        # Bootstrap layer: project-scope ``<wd>/.agentao/mcp.json`` plus
-        # user-scope ``~/.agentao/mcp.json``. Embedded hosts that want
-        # different scoping inject a pre-built ``mcp_manager`` and skip
-        # this path entirely.
-        configs = load_mcp_config(
-            project_root=agent.working_directory,
-            user_root=user_root(),
-        )
+        if registry is not None:
+            # Embedded host (or factory) provided an explicit registry.
+            # The default ``FileBackedMCPRegistry`` reproduces the
+            # pre-Protocol disk-read behavior; programmatic registries
+            # skip the filesystem entirely.
+            configs = registry.list_servers()
+        else:
+            # Bare-construction fallback: the legacy disk source. CLI
+            # and ACP paths set ``_mcp_registry`` via the factory, so
+            # this branch is only hit by ``Agentao(working_directory=...)``
+            # without going through ``build_from_environment``.
+            configs = load_mcp_config(
+                project_root=agent.working_directory,
+                user_root=user_root(),
+            )
     except Exception as e:
         agent.llm.logger.warning(f"Failed to load MCP config: {e}")
         configs = {}

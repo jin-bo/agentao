@@ -89,6 +89,7 @@ def build_from_environment(
     # would defeat the point of having a thin entry surface.
     from ..agent import Agentao
     from ..agents.bg_store import BackgroundTaskStore
+    from ..mcp import FileBackedMCPRegistry
     from ..memory import MemoryManager, SQLiteMemoryStore
     from ..paths import user_root
     from ..permissions import PermissionEngine
@@ -161,6 +162,15 @@ def build_from_environment(
             overrides["replay_config"] = load_replay_config(wd)
         except Exception:
             pass
+    # Issue #17: default MCP registry reads the same on-disk files the
+    # pre-Protocol path consulted. Embedded hosts that want
+    # programmatic registration pass ``mcp_registry=`` (or
+    # ``mcp_registry=None`` to opt out of file discovery entirely).
+    if "mcp_registry" not in overrides and "mcp_manager" not in overrides:
+        overrides["mcp_registry"] = FileBackedMCPRegistry(
+            project_root=wd,
+            user_root=user_root(),
+        )
 
     # When the caller supplied an ``llm_client``, do not surface the
     # factory-discovered raw provider kwargs — the constructor would
