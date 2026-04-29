@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
@@ -29,6 +30,26 @@ if TYPE_CHECKING:
     from ..agent import Agentao
 
 logger = logging.getLogger(__name__)
+
+
+def _load_settings(wd: Path) -> Dict[str, Any]:
+    path = wd / ".agentao" / "settings.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _builtin_agents_enabled(settings: Dict[str, Any]) -> bool:
+    agents = settings.get("agents")
+    if isinstance(agents, dict) and isinstance(agents.get("enable_builtin"), bool):
+        return agents["enable_builtin"]
+    if isinstance(settings.get("enable_builtin_agents"), bool):
+        return settings["enable_builtin_agents"]
+    return False
 
 
 def discover_llm_kwargs() -> Dict[str, Any]:
@@ -97,6 +118,7 @@ def build_from_environment(
     from ..sandbox import SandboxPolicy
 
     wd = (working_directory or Path.cwd()).expanduser().resolve()
+    settings = _load_settings(wd)
 
     dotenv_path = wd / ".env"
     if dotenv_path.is_file():
@@ -162,6 +184,8 @@ def build_from_environment(
             overrides["replay_config"] = load_replay_config(wd)
         except Exception:
             pass
+    if "enable_builtin_agents" not in overrides:
+        overrides["enable_builtin_agents"] = _builtin_agents_enabled(settings)
     # Issue #17: default MCP registry reads the same on-disk files the
     # pre-Protocol path consulted. Embedded hosts that want
     # programmatic registration pass ``mcp_registry=`` (or

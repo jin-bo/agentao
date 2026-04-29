@@ -3,7 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 if TYPE_CHECKING:
     from ..capabilities import FileSystem, ShellExecutor
@@ -11,8 +11,19 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
-class Tool(ABC):
-    """Base class for all tools."""
+class _BaseTool(ABC):
+    """Internal: every non-execute concern shared by sync and async tools.
+
+    Carries the per-instance slots, capability accessors, path-resolution
+    helpers, the full metadata surface, and the OpenAI schema serializer.
+    Not a public class — callers should subclass :class:`Tool` (sync) or
+    :class:`AsyncToolBase` (async); :data:`RegistrableTool` is the public
+    union type that registry / planner / executor signatures use.
+
+    The split exists so ``AsyncToolBase`` inherits exactly ``Tool``'s
+    surface without copy-paste drift; the only difference between the
+    two leaf classes is the abstract ``execute`` vs ``async_execute``.
+    """
 
     def __init__(self):
         self.output_callback: Optional[Callable[[str], None]] = None
@@ -114,18 +125,6 @@ class Tool(ABC):
         """
         return False
 
-    @abstractmethod
-    def execute(self, **kwargs) -> str:
-        """Execute the tool with given parameters.
-
-        Args:
-            **kwargs: Tool parameters
-
-        Returns:
-            Tool execution result as string
-        """
-        pass
-
     def to_openai_format(self) -> Dict[str, Any]:
         """Convert tool to OpenAI function format."""
         return {
@@ -138,13 +137,76 @@ class Tool(ABC):
         }
 
 
+class Tool(_BaseTool):
+    """Sync base class for all tools.
+
+    Subclasses implement :meth:`execute`; every other concern (metadata
+    properties, capability accessors, path helpers, OpenAI schema
+    serialization) is inherited from :class:`_BaseTool` and is identical
+    to what was on this class historically — extracting the shared base
+    is purely a structural change so :class:`AsyncToolBase` can mirror
+    the same surface without drift.
+    """
+
+    @abstractmethod
+    def execute(self, **kwargs) -> str:
+        """Execute the tool with given parameters.
+
+        Args:
+            **kwargs: Tool parameters
+
+        Returns:
+            Tool execution result as string
+        """
+        pass
+
+
+class AsyncToolBase(_BaseTool):
+    """Async sibling of :class:`Tool`.
+
+    Identical surface to :class:`Tool`, but execution is asynchronous via
+    :meth:`async_execute`. Drops directly into the existing
+    :class:`ToolRegistry` — no adapter needed; the executor's dispatcher
+    detects the type and bridges through ``run_coroutine_threadsafe`` onto
+    the host event loop captured at :meth:`Agentao.arun` entry.
+
+    Subclasses that hold loop-affine state (``aiohttp.ClientSession``,
+    async DB pools, ``anyio`` task groups) should be invoked via
+    :meth:`Agentao.arun` so the host loop is captured. The sync
+    :meth:`Agentao.chat` fallback supports only loop-independent async
+    tools (those that create and tear down all loop-bound resources
+    inside a single ``async_execute`` call).
+    """
+
+    @abstractmethod
+    async def async_execute(self, **kwargs) -> str:
+        """Asynchronously execute the tool.
+
+        Args:
+            **kwargs: Tool parameters
+
+        Returns:
+            Tool execution result as string.
+        """
+        pass
+
+
+# Public union: any tool the registry / planner / executor accepts.
+RegistrableTool = Union[Tool, AsyncToolBase]
+
+
 class ToolRegistry:
     """Registry for managing tools."""
 
-    def __init__(self):
-        self.tools: Dict[str, Tool] = {}
+    # Class-level annotation so ``typing.get_type_hints(ToolRegistry)``
+    # exposes ``tools: Dict[str, RegistrableTool]`` for the type-boundary
+    # acceptance check. The value is still assigned per-instance below.
+    tools: Dict[str, RegistrableTool]
 
-    def register(self, tool: Tool) -> None:
+    def __init__(self):
+        self.tools = {}
+
+    def register(self, tool: RegistrableTool) -> None:
         """Register a tool.
 
         Logs a warning if a tool with the same name is already registered, so
@@ -158,7 +220,7 @@ class ToolRegistry:
             )
         self.tools[tool.name] = tool
 
-    def get(self, name: str) -> Tool:
+    def get(self, name: str) -> RegistrableTool:
         """Get a tool by name.
 
         Raises:
@@ -171,7 +233,7 @@ class ToolRegistry:
             )
         return self.tools[name]
 
-    def list_tools(self) -> List[Tool]:
+    def list_tools(self) -> List[RegistrableTool]:
         """List all registered tools."""
         return list(self.tools.values())
 

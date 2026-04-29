@@ -18,7 +18,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from ..permissions import PermissionDecision, PermissionEngine
-from ..tools import Tool, ToolRegistry
+from ..tools import RegistrableTool, ToolRegistry
 from .arg_repair import parse_tool_arguments
 from .name_repair import repair_tool_name
 
@@ -72,7 +72,7 @@ class ToolCallPlan:
     tool_call: Any  # OpenAI tool_call object — exposes .id and .function
     function_name: str
     function_args: Dict[str, Any]
-    tool: Tool
+    tool: RegistrableTool
     decision: ToolCallDecision
 
 
@@ -216,7 +216,7 @@ class ToolCallPlanner:
 
     def _decide(
         self,
-        tool: Tool,
+        tool: RegistrableTool,
         function_name: str,
         function_args: Dict[str, Any],
         readonly_mode: bool,

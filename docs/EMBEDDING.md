@@ -110,7 +110,9 @@ What the factory does, in order:
 6. Builds `FileBackedMCPRegistry(project_root=wd, user_root=user_root())`.
 7. Wires opt-in defaults (`BackgroundTaskStore`, `SandboxPolicy`,
    `replay_config`) — pass `None` for any of them to disable.
-8. Constructs `Agentao(...)` with all of the above as explicit kwargs.
+8. Reads `<wd>/.agentao/settings.json` for factory-level toggles such
+   as `agents.enable_builtin`.
+9. Constructs `Agentao(...)` with all of the above as explicit kwargs.
 
 The CLI and ACP `session/new` both go through this factory; their
 behaviour is unchanged after embedding.
@@ -272,7 +274,41 @@ agent = Agentao(
 
 ---
 
-## 6. Migration guide: 0.2.15 → 0.2.16 → 0.3.0
+## 6. Built-in sub-agents
+
+Project-level agents in `<wd>/.agentao/agents/*.md` are discovered by
+default. Built-in agents (`codebase-investigator` and `generalist`) are
+disabled by default so the model does not always receive extra
+delegation tools.
+
+Enable built-ins for a project through `<wd>/.agentao/settings.json`:
+
+```json
+{
+  "agents": {
+    "enable_builtin": true
+  }
+}
+```
+
+Embedded hosts can override the setting directly:
+
+```python
+agent = build_from_environment(
+    working_directory=workdir,
+    enable_builtin_agents=True,
+)
+
+agent = Agentao(
+    working_directory=workdir,
+    llm_client=...,
+    enable_builtin_agents=True,
+)
+```
+
+---
+
+## 7. Migration guide: 0.2.15 → 0.2.16 → 0.3.0
 
 The embedded-harness epic shipped over three releases. Code that
 worked on 0.2.15 should land on 0.3.0 with two mechanical changes.

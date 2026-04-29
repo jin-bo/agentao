@@ -17,17 +17,34 @@ so the hot ``_execute_one`` path is free of ``if rules:`` noise.
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..agents import TaskComplete
 from ..sandbox import SandboxMisconfiguredError, SandboxPolicy
+from ..tools.base import AsyncToolBase
 from ..transport import AgentEvent, EventType
 from .tool_planning import ToolCallDecision, ToolCallPlan
+
+
+# Bounded ack timeout for AsyncTool cancellation. Long enough for typical
+# async cleanup (closing client sessions, rolling back transactions);
+# short enough that a stalled host loop cannot hang the worker thread
+# indefinitely. Module-level so tests can monkeypatch.
+_ASYNC_CANCEL_ACK_TIMEOUT_S = 5.0
+
+
+# Reason string set on ``CancellationToken`` when ``Agentao.arun()`` forwards
+# an ``asyncio.CancelledError``, and the fallback emitted by the dispatcher
+# when the token has no reason of its own. Shared so the agent surface, the
+# dispatcher, and tests stay in lock-step on the single canonical value.
+ASYNC_CANCEL_REASON = "async-cancel"
 
 
 @dataclass
@@ -39,6 +56,26 @@ class ToolExecutionResult:
     status: str  # "ok" | "error" | "cancelled"
     duration_ms: int
     error: Optional[str] = None
+
+
+@dataclass
+class _AsyncToolOutcome:
+    """Internal: shape returned by :meth:`ToolExecutor._run_async_tool`.
+
+    Exactly one field is meaningful per call:
+
+    - ``result_text`` carries the success string (``cancel_result`` is
+      None) — propagates back into the existing success/error tail of
+      ``_execute_one``.
+    - ``cancel_result`` carries the fully-formed cancelled
+      :class:`ToolExecutionResult` (``result_text`` is unused) —
+      ``TOOL_COMPLETE`` has already been emitted from inside the
+      helper, so ``_execute_one`` must short-circuit the success/error
+      tail to avoid double-emit.
+    """
+
+    result_text: str = ""
+    cancel_result: Optional[ToolExecutionResult] = None
 
 
 class ToolExecutor:
@@ -215,6 +252,9 @@ class ToolExecutor:
 
         errored = False
         error_msg: Optional[str] = None
+        # ``_emit_complete`` has already fired inside ``_run_async_tool``
+        # when this is set; the success/error tail below must short-circuit.
+        async_cancel_outcome: Optional[ToolExecutionResult] = None
         with tool_locks[id(tool)]:
             if hasattr(tool, "output_callback"):
                 tool.output_callback = (
@@ -227,7 +267,21 @@ class ToolExecutor:
             try:
                 if sandbox_error is not None:
                     raise sandbox_error
-                result_text = tool.execute(**call_args)
+                if isinstance(tool, AsyncToolBase):
+                    async_outcome = self._run_async_tool(
+                        plan=plan,
+                        call_args=call_args,
+                        t0=t0,
+                        cancellation_token=cancellation_token,
+                    )
+                    if async_outcome.cancel_result is not None:
+                        async_cancel_outcome = async_outcome.cancel_result
+                        # Fall through to ``finally`` for output_callback
+                        # cleanup; ``_execute_one`` short-circuits below.
+                    else:
+                        result_text = async_outcome.result_text
+                else:
+                    result_text = tool.execute(**call_args)
             except TaskComplete as tc_exc:
                 result_text = tc_exc.result
             except SandboxMisconfiguredError as sbe:
@@ -248,6 +302,12 @@ class ToolExecutor:
                 if hasattr(tool, "output_callback"):
                     tool.output_callback = None
 
+        # AsyncTool token-cancel short-circuit: TOOL_COMPLETE already
+        # emitted inside _run_async_tool; bypass the success/error tail
+        # (no post-tool hook, matches DENY / pre-cancel paths).
+        if async_cancel_outcome is not None:
+            return call_id, async_cancel_outcome
+
         status = "error" if errored else "ok"
         duration_ms = round((time.monotonic() - t0) * 1000)
         self._emit_complete(fn, call_id, status, duration_ms, error_msg)
@@ -267,6 +327,119 @@ class ToolExecutor:
             fn_name=fn, result=result_text, status=status,
             duration_ms=duration_ms, error=error_msg,
         )
+
+    # ------------------------------------------------------------------
+    # AsyncTool dispatch
+    # ------------------------------------------------------------------
+
+    def _run_async_tool(
+        self,
+        *,
+        plan: ToolCallPlan,
+        call_args: Dict[str, Any],
+        t0: float,
+        cancellation_token,
+    ) -> _AsyncToolOutcome:
+        """Bridge an :class:`AsyncToolBase` invocation onto the host loop.
+
+        Two paths:
+
+        1. ``cancellation_token.runtime_loop`` is a running loop (set by
+           :meth:`Agentao.arun`): schedule the coroutine via
+           :func:`asyncio.run_coroutine_threadsafe` and block on the
+           returned future. A token ``add_done_callback`` arms
+           ``fut.cancel()`` so token-driven cancel propagates onto the
+           host loop. A bridged coroutine signals a ``threading.Event``
+           in its ``finally`` so that on cancel we can wait for the user
+           coroutine's own cleanup before reporting ``TOOL_COMPLETE``.
+
+        2. No host loop captured (sync :meth:`Agentao.chat` path):
+           fallback to :func:`asyncio.run`. Supports only
+           loop-independent async tools; tools that hold loop-affine
+           state must be invoked via ``arun()``.
+        """
+        tool = plan.tool
+        assert isinstance(tool, AsyncToolBase)
+        fn = plan.function_name
+        call_id = plan.tool_call.id
+
+        runtime_loop = (
+            cancellation_token.runtime_loop
+            if cancellation_token is not None
+            else None
+        )
+
+        # Sync fallback — fresh loop on the worker thread; no token
+        # cancellation hookup is possible (asyncio.run owns the loop).
+        if runtime_loop is None or not runtime_loop.is_running():
+            result_text = asyncio.run(tool.async_execute(**call_args))
+            return _AsyncToolOutcome(result_text=result_text)
+
+        ack = threading.Event()
+
+        async def _bridged():
+            try:
+                return await tool.async_execute(**call_args)
+            finally:
+                # Runs after the user coroutine's own try/finally cleanup
+                # on the host loop. Signals the worker thread that it is
+                # safe to surface the cancel to TOOL_COMPLETE.
+                ack.set()
+
+        fut = asyncio.run_coroutine_threadsafe(_bridged(), runtime_loop)
+        remove: Optional[Callable[[], None]] = None
+        if cancellation_token is not None:
+            remove = cancellation_token.add_done_callback(lambda: fut.cancel())
+
+        try:
+            try:
+                result_text = fut.result()
+                # Success: _bridged()'s finally has already run, so ack is set.
+                return _AsyncToolOutcome(result_text=result_text)
+            except concurrent.futures.CancelledError:
+                # Token-driven cancel. Wait for _bridged()'s finally to
+                # run on the host loop so the user coroutine's cleanup
+                # has completed before we report TOOL_COMPLETE. Proceed
+                # (with a logged warning) past the bounded timeout so a
+                # stalled host loop cannot hang the worker indefinitely.
+                if not ack.wait(timeout=_ASYNC_CANCEL_ACK_TIMEOUT_S):
+                    self._logger.warning(
+                        "AsyncTool %s: cancel ack timeout after %.1fs; "
+                        "emitting TOOL_COMPLETE without confirmed "
+                        "coroutine cleanup.",
+                        fn,
+                        _ASYNC_CANCEL_ACK_TIMEOUT_S,
+                    )
+                duration_ms = round((time.monotonic() - t0) * 1000)
+                # Match the existing executor convention of putting a
+                # short human-readable reason in the error field. Fall
+                # back when the token has no reason (it may be cancelled
+                # by something other than arun() forwarding
+                # asyncio.CancelledError).
+                reason = (
+                    cancellation_token.reason
+                    if cancellation_token is not None and cancellation_token.reason
+                    else ASYNC_CANCEL_REASON
+                )
+                self._emit_complete(
+                    fn, call_id, "cancelled", duration_ms, reason,
+                )
+                return _AsyncToolOutcome(
+                    cancel_result=ToolExecutionResult(
+                        fn_name=fn,
+                        result="Tool execution cancelled.",
+                        status="cancelled",
+                        duration_ms=duration_ms,
+                        error=reason,
+                    ),
+                )
+            # Other exceptions (TypeError, RuntimeError, user
+            # ValueError, TaskComplete, SandboxMisconfiguredError, ...)
+            # propagate to the caller — `_execute_one`'s outer
+            # try/except classifies them exactly like sync tools.
+        finally:
+            if remove is not None:
+                remove()
 
     def _emit_complete(
         self,

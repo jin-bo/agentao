@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..cancellation import AgentCancelledError, CancellationToken
-from ..tools.base import Tool, ToolRegistry
+from ..tools.base import RegistrableTool, Tool, ToolRegistry
 from .bg_store import BackgroundTaskStore, BgTaskStatus
 
 
@@ -233,7 +233,7 @@ class AgentToolWrapper(Tool):
     def __init__(
         self,
         definition: Dict[str, Any],
-        all_tools: Dict[str, Tool],
+        all_tools: Dict[str, RegistrableTool],
         llm_config_getter: Callable[[], Dict[str, Any]],
         bg_store: Optional[BackgroundTaskStore] = None,
         confirmation_callback: Optional[Callable] = None,

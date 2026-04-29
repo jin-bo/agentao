@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 import yaml
 
-from ..tools.base import Tool
+from ..tools.base import RegistrableTool, Tool
 from .tools import AgentToolWrapper, CheckBackgroundAgentTool
 
 if TYPE_CHECKING:
@@ -15,17 +15,25 @@ if TYPE_CHECKING:
 class AgentManager:
     """Discovers and manages agent definitions from Markdown files with YAML frontmatter."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        project_root: Optional[Path] = None,
+        include_builtin_agents: bool = False,
+    ):
         self.definitions: Dict[str, Dict[str, Any]] = {}
+        self.project_root = (project_root or Path.cwd()).expanduser().resolve()
+        self.include_builtin_agents = include_builtin_agents
         self._load_definitions()
 
     def _load_definitions(self):
         # 1. Built-in definitions: agentao/agents/definitions/*.md
-        builtin_dir = Path(__file__).parent / "definitions"
-        self._scan_directory(builtin_dir)
+        if self.include_builtin_agents:
+            builtin_dir = Path(__file__).parent / "definitions"
+            self._scan_directory(builtin_dir)
 
         # 2. User-defined: .agentao/agents/*.md (project-level)
-        user_dir = Path.cwd() / ".agentao" / "agents"
+        user_dir = self.project_root / ".agentao" / "agents"
         self._scan_directory(user_dir)
 
     def _scan_directory(self, directory: Path):
@@ -135,7 +143,7 @@ class AgentManager:
 
     def create_agent_tools(
         self,
-        all_tools: Dict[str, Tool],
+        all_tools: Dict[str, RegistrableTool],
         llm_config_getter: Callable[[], Dict[str, Any]],
         bg_store: Optional["BackgroundTaskStore"] = None,
         confirmation_callback: Optional[Callable] = None,
@@ -150,7 +158,7 @@ class AgentManager:
         permission_mode_getter: Optional[Callable] = None,
         permission_user_root_getter: Optional[Callable] = None,
         sandbox_policy: Optional[Any] = None,
-    ) -> List[Tool]:
+    ) -> List[RegistrableTool]:
         """Create an :class:`AgentToolWrapper` per agent definition.
 
         When ``bg_store`` is ``None`` the background-agent surface is

@@ -35,41 +35,9 @@ class CLIHelpAgentTool(Tool):
 
     def execute(self, question: str) -> str:
         """Provide CLI help."""
-        help_text = f"""
-Agentao CLI Help
-==================
+        from ..cli.help_text import CLI_HELP_TEXT
 
-Question: {question}
-
-Available Commands:
-- Type your message to chat with the AI
-- Type 'help' for this help message
-- Type 'clear' to clear conversation history
-- Type 'exit' or 'quit' to exit the program
-- Type '/skill <skill_name>' to activate a skill
-
-Available Tools:
-- read_file: Read file contents with line numbers (offset/limit for large files)
-- write_file: Write/append content to a file
-- replace: Edit a file by replacing text (supports replace_all)
-- list_directory: List directory contents
-- glob: Find files matching a pattern
-- search_file_content: Search for text in files
-- run_shell_command: Execute shell commands
-- web_fetch: Fetch content from URLs
-- web_search: Search the web
-- save_memory: Save important information
-- activate_skill: Activate a skill
-
-Features:
-- Multi-turn conversations with context
-- Function calling for tool usage
-- Skills support for specialized tasks
-- Memory system for saving information
-
-For more detailed information, refer to the documentation or ask specific questions.
-"""
-        return help_text.strip()
+        return f"Question: {question}\n\n{CLI_HELP_TEXT.strip()}"
 
 
 class CodebaseInvestigatorTool(Tool):

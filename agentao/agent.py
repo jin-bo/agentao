@@ -9,6 +9,7 @@ from .llm import LLMClient
 from .permissions import PermissionEngine
 from .runtime import ChatLoopRunner, ToolRunner, run_llm_call, run_turn
 from .runtime import model as _runtime_model
+from .runtime.tool_executor import ASYNC_CANCEL_REASON
 from .tools import ToolRegistry, SaveMemoryTool, TodoWriteTool
 from .tooling import init_mcp, register_agent_tools, register_builtin_tools, register_mcp_tools
 from .agents import AgentManager
@@ -88,6 +89,7 @@ class Agentao:
         bg_store: Optional["BackgroundTaskStore"] = None,
         sandbox_policy: Optional[SandboxPolicy] = None,
         replay_config: Optional[ReplayConfig] = None,
+        enable_builtin_agents: bool = False,
     ):
         """Initialize Agentao agent.
 
@@ -302,8 +304,13 @@ class Agentao:
         else:
             self.mcp_manager = self._init_mcp()
 
-        # Initialize agent manager and register agent tools
-        self.agent_manager = AgentManager()
+        # Initialize agent manager and register agent tools. Built-in
+        # sub-agents are opt-in so the default tool schema stays compact;
+        # project/plugin agents remain available when configured.
+        self.agent_manager = AgentManager(
+            project_root=self._working_directory,
+            include_builtin_agents=enable_builtin_agents,
+        )
         self._register_agent_tools()
 
         if self.bg_store is not None:
@@ -571,13 +578,20 @@ class Agentao:
         """
         loop = asyncio.get_running_loop()
         token = cancellation_token if cancellation_token is not None else CancellationToken()
+        # Capture the host loop on the token so the AsyncTool dispatcher
+        # in ToolExecutor can bridge coroutines back onto the loop that
+        # owns any host-affine resources (aiohttp sessions, async DB
+        # pools, anyio task groups). Sync chat() callers leave the field
+        # ``None`` and the dispatcher falls back to ``asyncio.run``,
+        # which only supports loop-independent async tools.
+        token.runtime_loop = loop
         future = loop.run_in_executor(
             None, self.chat, user_message, max_iterations, token
         )
         try:
             return await future
         except asyncio.CancelledError:
-            token.cancel("async-cancel")
+            token.cancel(ASYNC_CANCEL_REASON)
             raise
 
     def _chat_inner(self, user_message: str, max_iterations: int,

@@ -24,21 +24,28 @@ def _write_agent(directory: Path, filename: str, frontmatter: dict, body: str = 
 # ---------------------------------------------------------------------------
 
 def test_builtin_agents_loaded():
-    m = AgentManager()
+    m = AgentManager(include_builtin_agents=True)
     agents = m.list_agents()
     # Both built-in definitions must be discovered
     assert "codebase-investigator" in agents
     assert "generalist" in agents
 
 
-def test_builtin_agent_has_description():
+def test_builtin_agents_disabled_by_default():
     m = AgentManager()
+    agents = m.list_agents()
+    assert "codebase-investigator" not in agents
+    assert "generalist" not in agents
+
+
+def test_builtin_agent_has_description():
+    m = AgentManager(include_builtin_agents=True)
     agents = m.list_agents()
     assert agents["generalist"]  # non-empty description
 
 
 def test_builtin_agent_definition_fields():
-    m = AgentManager()
+    m = AgentManager(include_builtin_agents=True)
     defn = m.definitions.get("generalist")
     assert defn is not None
     assert "name" in defn
@@ -64,7 +71,7 @@ def test_project_agent_overrides_builtin(tmp_path, monkeypatch):
     _write_agent(agents_dir, "generalist.md",
                  {"name": "generalist", "description": "My custom generalist"},
                  body="Custom instructions.")
-    m = AgentManager()
+    m = AgentManager(include_builtin_agents=True)
     assert m.list_agents()["generalist"] == "My custom generalist"
 
 
@@ -160,7 +167,7 @@ def test_list_agents_returns_name_description_dict():
 
 
 def test_get_agent_definition_returns_dict():
-    m = AgentManager()
+    m = AgentManager(include_builtin_agents=True)
     defn = m.definitions.get("generalist")
     assert isinstance(defn, dict)
     assert defn["name"] == "generalist"
@@ -190,8 +197,7 @@ def test_nonexistent_project_agents_dir_graceful(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     # No .agentao/agents dir
     m = AgentManager()  # must not raise
-    # Built-ins still loaded
-    assert "generalist" in m.definitions
+    assert m.definitions == {}
 
 
 def test_missing_name_falls_back_to_filename(tmp_path, monkeypatch):
