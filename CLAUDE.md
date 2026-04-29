@@ -60,6 +60,8 @@ cp .env.example .env
 # Edit .env with your API key and settings
 ```
 
+> **Reference for all config files** (`.env`, `.agentao/settings.json`, `permissions.json`, `mcp.json`, `acp.json`, `skills_config.json`, `AGENTAO.md`, memory DBs): see [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for paths, schema, defaults, and precedence rules.
+
 Required: `OPENAI_API_KEY`
 Optional: `OPENAI_BASE_URL`, `OPENAI_MODEL`
 

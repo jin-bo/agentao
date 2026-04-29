@@ -160,6 +160,7 @@ Use the README for the main path, and jump to the docs below when you need depth
 |------|----------|
 | Quickstart | [docs/QUICKSTART.md](docs/QUICKSTART.md) |
 | Command cheat sheet | [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) |
+| Configuration reference (all `.agentao/*` files, `.env`, `AGENTAO.md`) | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) |
 | ACP server mode | [docs/ACP.md](docs/ACP.md) |
 | Logging details | [docs/LOGGING.md](docs/LOGGING.md) |
 | Skills guide | [docs/SKILLS_GUIDE.md](docs/SKILLS_GUIDE.md) |
@@ -284,6 +285,18 @@ Agentao can delegate tasks to independent sub-agents, each running its own LLM l
 **Built-in agents:**
 - `codebase-investigator` — read-only codebase exploration (find files, search patterns, analyze structure)
 - `generalist` — general-purpose agent with access to all tools for complex multi-step tasks
+
+Built-in agents are disabled by default to keep the default tool schema compact. Enable them per project in `.agentao/settings.json`:
+
+```json
+{
+  "agents": {
+    "enable_builtin": true
+  }
+}
+```
+
+Embedded hosts can also pass `enable_builtin_agents=True` to `Agentao(...)` or `build_from_environment(...)`.
 
 **Two trigger paths:**
 1. **LLM-driven** — the parent LLM decides to delegate via `agent_codebase_investigator` / `agent_generalist` tools; supports optional `run_in_background=true` for async fire-and-forget
@@ -1325,7 +1338,7 @@ tools_to_register.append(MyTool())
 
 ### Adding an Agent
 
-Create a Markdown file with YAML frontmatter. Built-in agents go in `agentao/agents/definitions/`, project-level agents go in `.agentao/agents/`.
+Create a Markdown file with YAML frontmatter. Built-in agents live in `agentao/agents/definitions/` and are opt-in via `.agentao/settings.json`; project-level agents go in `.agentao/agents/` and are discovered by default.
 
 ```yaml
 ---
