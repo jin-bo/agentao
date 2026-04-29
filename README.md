@@ -736,6 +736,7 @@ In print mode all tools are auto-confirmed (no interactive prompts). The exit co
 Embed Agentao in your own Python code with no terminal UI:
 
 ```python
+from pathlib import Path
 from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 
@@ -746,13 +747,13 @@ transport = SdkTransport(
 )
 # Factory reads .env / .agentao/ for credentials and config.
 # For pure-injection construction use Agentao(working_directory=, api_key=, base_url=, model=, transport=...).
-agent = build_from_environment(transport=transport)
+agent = build_from_environment(working_directory=Path.cwd(), transport=transport)
 response = agent.chat("Summarize the current directory")
 ```
 
 `SdkTransport` accepts four optional callbacks: `on_event`, `confirm_tool`, `ask_user`, `on_max_iterations`. Omit any you don't need — unset ones fall back to safe defaults (auto-approve, sentinel for ask_user, stop on max iterations).
 
-For fully silent headless use with no callbacks, call `build_from_environment()` with no transport — it uses `NullTransport` automatically. Embedded hosts that want pure-injection construction (no `.env` / `.agentao/` reads) can call `Agentao(working_directory=..., api_key=..., base_url=..., model=..., transport=...)` directly; since 0.2.16 the three credential fields are required when no `llm_client=` is supplied.
+For fully silent headless use with no callbacks, call `build_from_environment(working_directory=...)` with no transport — it uses `NullTransport` automatically. Embedded hosts that want pure-injection construction (no `.env` / `.agentao/` reads) can call `Agentao(working_directory=..., api_key=..., base_url=..., model=..., transport=...)` directly; since 0.3.0 `working_directory=` is required (TypeError without it), and the three credential fields are required when no `llm_client=` is supplied.
 
 For end-to-end embedding patterns — capability injection (`FileSystem` / `ShellExecutor` / `MemoryStore` / `MCPRegistry`), async usage (`agent.arun(...)`), opt-in `replay` / `sandbox` / `bg_store`, and the 0.2.15 → 0.3.0 migration guide — see **[docs/EMBEDDING.md](docs/EMBEDDING.md)**.
 

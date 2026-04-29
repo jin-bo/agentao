@@ -728,6 +728,7 @@ agentao -p "翻译成法语：早上好" | pbcopy
 在自己的 Python 代码中嵌入 Agentao，无需终端界面：
 
 ```python
+from pathlib import Path
 from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 
@@ -738,13 +739,13 @@ transport = SdkTransport(
 )
 # 工厂自动读 .env / .agentao/ 完成凭据与配置发现。
 # 如需纯注入构造，请改用 Agentao(working_directory=, api_key=, base_url=, model=, transport=...)。
-agent = build_from_environment(transport=transport)
+agent = build_from_environment(working_directory=Path.cwd(), transport=transport)
 response = agent.chat("总结当前目录")
 ```
 
 `SdkTransport` 接受四个可选回调：`on_event`、`confirm_tool`、`ask_user`、`on_max_iterations`。未设置的回调使用安全默认值（自动允许、ask_user 返回提示信息、超出最大迭代次数时停止）。
 
-如需完全静默的无头模式，直接调用不带 transport 的 `build_from_environment()` 即可——自动使用 `NullTransport`。需要纯注入构造（不读 `.env` / `.agentao/`）的嵌入式 host 可以直接调用 `Agentao(working_directory=..., api_key=..., base_url=..., model=..., transport=...)`；自 0.2.16 起，未提供 `llm_client=` 时这三个凭据字段都必传。
+如需完全静默的无头模式，调用不带 transport 的 `build_from_environment(working_directory=...)` 即可——自动使用 `NullTransport`。需要纯注入构造（不读 `.env` / `.agentao/`）的嵌入式 host 可以直接调用 `Agentao(working_directory=..., api_key=..., base_url=..., model=..., transport=...)`；自 0.3.0 起 `working_directory=` 必传（不传会抛 `TypeError`），未提供 `llm_client=` 时这三个凭据字段也都必传。
 
 完整的嵌入实践——能力注入（`FileSystem` / `ShellExecutor` / `MemoryStore` / `MCPRegistry`）、异步用法（`agent.arun(...)`）、可选的 `replay` / `sandbox` / `bg_store`，以及 0.2.15 → 0.3.0 迁移指南——请参阅 **[docs/EMBEDDING.md](docs/EMBEDDING.md)**。
 
