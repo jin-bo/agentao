@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
@@ -26,6 +27,8 @@ from dotenv import load_dotenv
 
 if TYPE_CHECKING:
     from ..agent import Agentao
+
+logger = logging.getLogger(__name__)
 
 
 def discover_llm_kwargs() -> Dict[str, Any]:
@@ -86,7 +89,7 @@ def build_from_environment(
     # would defeat the point of having a thin entry surface.
     from ..agent import Agentao
     from ..agents.bg_store import BackgroundTaskStore
-    from ..memory import MemoryManager
+    from ..memory import MemoryManager, SQLiteMemoryStore
     from ..paths import user_root
     from ..permissions import PermissionEngine
     from ..replay import load_replay_config
@@ -117,9 +120,31 @@ def build_from_environment(
 
     memory_manager = overrides.pop("memory_manager", None)
     if memory_manager is None:
+        # Project store always succeeds — degrades to ``:memory:`` on disk
+        # error (matches the pre-#16 behavior in restricted environments
+        # like ACP subprocess launches). User store is optional and
+        # disabled with a warning if it cannot be opened, since user-scope
+        # memory is cross-project state and silently re-routing to project
+        # would conflate the scopes.
+        project_store = SQLiteMemoryStore.open_or_memory(
+            wd / ".agentao" / "memory.db"
+        )
+        user_store: Optional[SQLiteMemoryStore] = None
+        user = user_root()
+        if user is not None:
+            try:
+                user_store = SQLiteMemoryStore.open(user / "memory.db")
+            except (OSError, sqlite3.Error) as exc:
+                logger.warning(
+                    "User memory store at %s unavailable (%s: %s); "
+                    "user-scope memory disabled for this session.",
+                    user / "memory.db",
+                    type(exc).__name__,
+                    exc,
+                )
         memory_manager = MemoryManager(
-            project_root=wd / ".agentao",
-            global_root=user_root(),
+            project_store=project_store,
+            user_store=user_store,
         )
 
     # Wire CLI defaults for the opt-in subsystems. Caller can disable

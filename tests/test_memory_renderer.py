@@ -354,8 +354,12 @@ class TestIntegration:
                 from agentao.tools.memory import SaveMemoryTool
 
                 agent = Agentao(working_directory=Path(tmpdir))
+                from agentao.memory import SQLiteMemoryStore
                 agent.memory_manager = MemoryManager(
-                    project_root=tmp_proj, global_root=tmp_global
+                    project_store=SQLiteMemoryStore.open_or_memory(
+                        tmp_proj / "memory.db"
+                    ),
+                    user_store=SQLiteMemoryStore.open(tmp_global / "memory.db"),
                 )
                 agent.memory_tool = SaveMemoryTool(memory_manager=agent.memory_manager)
 
@@ -389,8 +393,12 @@ class TestIntegration:
                 from agentao.memory import MemoryManager
 
                 agent = Agentao(working_directory=Path(tmpdir))
+                from agentao.memory import SQLiteMemoryStore
                 agent.memory_manager = MemoryManager(
-                    project_root=tmp_proj, global_root=tmp_global
+                    project_store=SQLiteMemoryStore.open_or_memory(
+                        tmp_proj / "memory.db"
+                    ),
+                    user_store=SQLiteMemoryStore.open(tmp_global / "memory.db"),
                 )
 
                 prompt = agent._build_system_prompt()

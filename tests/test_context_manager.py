@@ -26,10 +26,9 @@ def _make_mock_llm(response_text: str = "[]"):
 
 
 def _make_memory_tool(tmp_path):
-    from pathlib import Path
-    from agentao.memory.manager import MemoryManager
     from agentao.tools.memory import SaveMemoryTool
-    mgr = MemoryManager(project_root=Path(tmp_path) / ".agentao", global_root=None)
+    from tests.support.memory import make_memory_manager
+    mgr = make_memory_manager(tmp_path)
     return SaveMemoryTool(memory_manager=mgr)
 
 

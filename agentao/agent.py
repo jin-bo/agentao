@@ -203,19 +203,20 @@ class Agentao:
             self.skill_manager = SkillManager(
                 working_directory=self._working_directory,
             )
-        from .memory import MemoryManager, MemoryRetriever
+        from .memory import MemoryManager, MemoryRetriever, SQLiteMemoryStore
         from .memory.render import MemoryPromptRenderer
         if memory_manager is not None:
             self._memory_manager = memory_manager
         else:
             # Pure-injection / bare-construction path: project scope only.
             # The CLI / ACP factory passes an explicitly-built MemoryManager
-            # with both project_root and global_root resolved from the
+            # with both project and user stores resolved from the
             # surrounding environment, so cross-project user memory only
             # surfaces through that path.
             self._memory_manager = MemoryManager(
-                project_root=self.working_directory / ".agentao",
-                global_root=None,
+                project_store=SQLiteMemoryStore.open_or_memory(
+                    self.working_directory / ".agentao" / "memory.db"
+                ),
             )
         self.memory_tool = SaveMemoryTool(memory_manager=self._memory_manager)
         self.memory_retriever = MemoryRetriever(self._memory_manager)

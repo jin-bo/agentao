@@ -1,18 +1,18 @@
-"""MemoryManager: SQLite-backed persistent memory for Agentao.
+"""MemoryManager: persistent-memory orchestration for Agentao.
 
-Orchestrates SQLiteMemoryStore instances (project + optional user scope),
-validates through MemoryGuard, and maintains a write_version counter for
-dirty-flag detection by callers.
+Routes reads/writes across one project-scope and one optional
+user-scope :class:`MemoryStore`, validates through ``MemoryGuard``,
+and maintains a ``write_version`` counter for dirty-flag detection by
+callers. The manager itself is storage-agnostic: it never imports
+:mod:`sqlite3` and never knows about ``Path`` / disk I/O.
 """
 
 from __future__ import annotations
 
 import logging
-import sqlite3
 import uuid
 from datetime import datetime
-from pathlib import Path
-from typing import List, Literal, Optional
+from typing import TYPE_CHECKING, List, Literal, Optional
 
 from .guards import MemoryGuard, SensitiveMemoryError
 from .models import (
@@ -23,7 +23,9 @@ from .models import (
     SaveMemoryRequest,
     SessionSummaryRecord,
 )
-from .storage import SQLiteMemoryStore
+
+if TYPE_CHECKING:
+    from ..capabilities.memory import MemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -33,60 +35,32 @@ def _now() -> str:
 
 
 class MemoryManager:
-    """Manages all Agentao memory layers via SQLite.
+    """Manages all Agentao memory layers via injected stores.
 
-    project_root: cwd/.agentao   (project-scope DB lives here)
-    global_root:  ~/.agentao     (user-scope DB lives here; None = no user scope)
+    Takes pre-built :class:`MemoryStore` instances rather than disk
+    paths; the embedding factory (or any host) constructs the stores
+    and passes them in. CLI / ACP wiring lives in
+    ``agentao.embedding.build_from_environment``; tests construct
+    stores via :meth:`SQLiteMemoryStore.open_or_memory` /
+    :meth:`SQLiteMemoryStore.open`.
+
+    Args:
+        project_store: project-scope persistent store (always present).
+        user_store: optional cross-project user-scope store. ``None``
+            downgrades user-scope writes to project scope (matches the
+            pre-#16 behavior when ``global_root`` was ``None``).
+        guard: optional :class:`MemoryGuard`; defaults to a fresh one.
     """
 
     def __init__(
         self,
-        project_root: Path,
-        global_root: Optional[Path] = None,
+        project_store: "MemoryStore",
+        user_store: Optional["MemoryStore"] = None,
         guard: Optional[MemoryGuard] = None,
     ) -> None:
-        self._project_root = Path(project_root)
-        self._global_root = Path(global_root) if global_root else None
+        self.project_store = project_store
+        self.user_store = user_store
         self.guard = guard or MemoryGuard()
-
-        # Initialize SQLite stores. The catch intentionally covers both
-        # ``OSError`` (mkdir / permission failures) and ``sqlite3.Error``
-        # (e.g. ``sqlite3.OperationalError: unable to open database file``
-        # raised from within ``SQLiteMemoryStore.__init__`` when the target
-        # directory exists but is not writable — common in ACP subprocess
-        # launches and other restricted environments). Both branches degrade
-        # gracefully rather than crashing ``Agentao()`` construction.
-        try:
-            self._project_root.mkdir(parents=True, exist_ok=True)
-            self.project_store = SQLiteMemoryStore(
-                str(self._project_root / "memory.db")
-            )
-        except (OSError, sqlite3.Error) as exc:
-            # Fallback: in-memory store when filesystem is not writable
-            logger.warning(
-                "Project memory store at %s unavailable (%s: %s); "
-                "falling back to transient in-memory store.",
-                self._project_root / "memory.db",
-                type(exc).__name__,
-                exc,
-            )
-            self.project_store = SQLiteMemoryStore(":memory:")
-
-        self.user_store: Optional[SQLiteMemoryStore] = None
-        if self._global_root:
-            try:
-                self._global_root.mkdir(parents=True, exist_ok=True)
-                self.user_store = SQLiteMemoryStore(
-                    str(self._global_root / "memory.db")
-                )
-            except (OSError, sqlite3.Error) as exc:
-                logger.warning(
-                    "User memory store at %s unavailable (%s: %s); "
-                    "user-scope memory disabled for this session.",
-                    self._global_root / "memory.db",
-                    type(exc).__name__,
-                    exc,
-                )
 
         # Session tracking
         self._session_id: str = uuid.uuid4().hex[:12]
@@ -439,7 +413,7 @@ class MemoryManager:
             return False
         return self.project_store.update_review_status(item_id, "rejected")
 
-    def _store_for_scope(self, scope: str) -> SQLiteMemoryStore:
+    def _store_for_scope(self, scope: str) -> "MemoryStore":
         if scope == "user" and self.user_store is not None:
             return self.user_store
         return self.project_store

@@ -7,8 +7,8 @@ import pytest
 
 
 def _make_manager(tmp_path: Path):
-    from agentao.memory.manager import MemoryManager
-    return MemoryManager(project_root=tmp_path / ".agentao", global_root=None)
+    from tests.support.memory import make_memory_manager
+    return make_memory_manager(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -42,9 +42,19 @@ def test_save_records_metadata(tmp_path):
 
 
 def test_save_is_noop_on_exception(tmp_path):
-    """save_session_summary must not raise even if disk write fails."""
-    from agentao.memory.manager import MemoryManager
-    mgr = MemoryManager(project_root=Path("/nonexistent/readonly/path"), global_root=None)
+    """save_session_summary must not raise even if disk write fails.
+
+    After Issue #16, the project-store fallback lives in
+    ``SQLiteMemoryStore.open_or_memory`` (degrades to ``:memory:``);
+    the test still demonstrates that an unwritable path doesn't crash
+    the ``MemoryManager`` construction or subsequent writes.
+    """
+    from agentao.memory import MemoryManager, SQLiteMemoryStore
+    mgr = MemoryManager(
+        project_store=SQLiteMemoryStore.open_or_memory(
+            Path("/nonexistent/readonly/path/memory.db")
+        ),
+    )
     mgr.save_session_summary("S.", tokens_before=0, messages_summarized=0)
 
 
@@ -261,7 +271,8 @@ def test_context_manager_writes_session_summary(tmp_path, monkeypatch):
     mock_resp.choices = [mock_choice]
     mock_llm.chat.return_value = mock_resp
 
-    mgr = MemoryManager(project_root=tmp_path / ".agentao", global_root=None)
+    from tests.support.memory import make_memory_manager
+    mgr = make_memory_manager(tmp_path)
     mock_memory_tool = Mock()
     mock_memory_tool.execute = Mock()
 
@@ -290,14 +301,15 @@ def test_context_manager_crystallizes_from_raw_user_messages(tmp_path):
     messages), not from the LLM-generated summary text. Assistant prose
     that happens to contain pattern words must be ignored."""
     from agentao.context_manager import ContextManager
-    from agentao.memory.manager import MemoryManager
+
+    from tests.support.memory import make_memory_manager
 
     mock_llm = Mock()
     mock_llm.logger = Mock()
     mock_llm.logger.info = Mock()
     mock_llm.model = "test-model"
 
-    mgr = MemoryManager(project_root=tmp_path / ".agentao", global_root=None)
+    mgr = make_memory_manager(tmp_path)
     cm = ContextManager(
         llm_client=mock_llm,
         memory_tool=Mock(),

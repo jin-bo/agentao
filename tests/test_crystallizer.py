@@ -320,7 +320,8 @@ def test_create_skill_md_has_frontmatter(tmp_path, monkeypatch):
 
 
 def _make_manager(tmp_path: Path) -> MemoryManager:
-    return MemoryManager(project_root=tmp_path / ".agentao", global_root=tmp_path / "global")
+    from tests.support.memory import make_memory_manager
+    return make_memory_manager(tmp_path, with_user=True)
 
 
 # ---------------------------------------------------------------------------

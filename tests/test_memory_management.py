@@ -1,14 +1,13 @@
 """Test memory management features via MemoryManager + SaveMemoryTool."""
 
-from pathlib import Path
-
-from agentao.memory.manager import MemoryManager
 from agentao.tools.memory import SaveMemoryTool
+
+from tests.support.memory import make_memory_manager
 
 
 def test_memory_management(tmp_path):
     """Test save, search, filter, delete, and clear via MemoryManager."""
-    mgr = MemoryManager(project_root=tmp_path / ".agentao", global_root=None)
+    mgr = make_memory_manager(tmp_path)
     tool = SaveMemoryTool(memory_manager=mgr)
 
     # Save memories

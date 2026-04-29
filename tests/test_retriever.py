@@ -21,7 +21,8 @@ from agentao.memory.retriever import (
 
 
 def _make_manager(tmp_path: Path) -> MemoryManager:
-    return MemoryManager(project_root=tmp_path / ".agentao", global_root=tmp_path / "global")
+    from tests.support.memory import make_memory_manager
+    return make_memory_manager(tmp_path, with_user=True)
 
 
 def _make_retriever(tmp_path: Path):

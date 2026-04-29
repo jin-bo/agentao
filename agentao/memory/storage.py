@@ -6,7 +6,8 @@ import json
 import logging
 import sqlite3
 from datetime import datetime
-from typing import List, Optional
+from pathlib import Path
+from typing import List, Optional, Union
 
 from .models import MemoryRecord, MemoryReviewItem, SessionSummaryRecord
 
@@ -91,6 +92,45 @@ class SQLiteMemoryStore:
         self._is_memory = db_path == ":memory:"
         self._persistent_conn: Optional[sqlite3.Connection] = None
         self._init_db()
+
+    # ------------------------------------------------------------------
+    # Path-based constructors
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def open(cls, db_path: Union[Path, str]) -> "SQLiteMemoryStore":
+        """Open a SQLite-backed store at ``db_path`` (strict).
+
+        Creates the parent directory and propagates ``OSError`` /
+        ``sqlite3.Error`` on failure. Use this for the user-scope store
+        where a failure should disable the scope rather than silently
+        degrade to a transient backing.
+        """
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        return cls(str(db_path))
+
+    @classmethod
+    def open_or_memory(cls, db_path: Union[Path, str]) -> "SQLiteMemoryStore":
+        """Open a SQLite-backed store at ``db_path``; degrade to ``:memory:``
+        on ``OSError`` / ``sqlite3.Error``.
+
+        Mirrors the historical ``MemoryManager.__init__`` try/except
+        (manager.py before #16): the project store always succeeds, even
+        on read-only or otherwise-restricted environments such as ACP
+        subprocess launches. Use this for the project-scope store where
+        a missing DB is preferable to a crashed agent.
+        """
+        try:
+            return cls.open(db_path)
+        except (OSError, sqlite3.Error) as exc:
+            logger.warning(
+                "Memory store at %s unavailable (%s: %s); "
+                "falling back to transient in-memory store.",
+                db_path,
+                type(exc).__name__,
+                exc,
+            )
+            return cls(":memory:")
 
     # ------------------------------------------------------------------
     # Connection

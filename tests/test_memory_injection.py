@@ -21,13 +21,14 @@ def _agent_with_temp_memory():
             mock_llm_cls.return_value = mock_llm
 
             from agentao.agent import Agentao
-            from agentao.memory import MemoryManager
+            from agentao.memory import MemoryManager, SQLiteMemoryStore
             from agentao.tools.memory import SaveMemoryTool
 
             agent = Agentao(working_directory=Path(tmpdir))
             # Override manager with isolated temp dirs
             agent.memory_manager = MemoryManager(
-                project_root=tmp_proj, global_root=tmp_global
+                project_store=SQLiteMemoryStore.open_or_memory(tmp_proj / "memory.db"),
+                user_store=SQLiteMemoryStore.open(tmp_global / "memory.db"),
             )
             agent.memory_tool = SaveMemoryTool(memory_manager=agent.memory_manager)
             yield agent

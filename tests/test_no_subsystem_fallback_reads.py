@@ -86,7 +86,7 @@ class TestRequiredArgs:
         with pytest.raises(TypeError):
             save_mcp_config({"x": {}})  # type: ignore[call-arg]
 
-    def test_memory_manager_requires_project_root(self):
+    def test_memory_manager_requires_project_store(self):
         with pytest.raises(TypeError):
             MemoryManager()  # type: ignore[call-arg]
 
@@ -160,14 +160,18 @@ class TestNoImplicitReads:
         assert path == out / "mcp.json"
         assert path.parent == out
 
-    def test_memory_manager_uses_explicit_roots(self, tmp_path, _trip_wires):
-        """Both project and (optional) global roots must be passed
-        explicitly. ``Path.home()`` must not be consulted as a default."""
+    def test_memory_manager_uses_explicit_stores(self, tmp_path, _trip_wires):
+        """Pre-built stores must be passed explicitly. ``Path.home()``
+        must not be consulted as a default — and after Issue #16 the
+        manager itself never imports :mod:`sqlite3` or constructs any
+        store, so disk reads happen only at the call site."""
+        from agentao.memory import SQLiteMemoryStore
         mgr = MemoryManager(
-            project_root=tmp_path / ".agentao",
-            global_root=None,  # explicit "no user scope"
+            project_store=SQLiteMemoryStore.open_or_memory(
+                tmp_path / ".agentao" / "memory.db"
+            ),
+            user_store=None,  # explicit "no user scope"
         )
-        # MemoryManager no-ops gracefully if it cannot open the SQLite DB.
         # The contract here is just: construction did not crash from a
         # ``Path.home()`` trip-wire raise.
         assert mgr is not None

@@ -1,9 +1,10 @@
 """Capability protocols for embedded harness IO routing.
 
-Embedded hosts inject these protocols to redirect filesystem and shell
-IO through their own infrastructure (Docker exec, virtual FS, audit
-proxies, remote runners, …). When omitted, ``LocalFileSystem`` and
-``LocalShellExecutor`` provide byte-equivalent default behavior.
+Embedded hosts inject these protocols to redirect filesystem, shell,
+and persistent-memory IO through their own infrastructure (Docker
+exec, virtual FS, audit proxies, remote runners, Redis, Postgres, …).
+When omitted, ``LocalFileSystem`` / ``LocalShellExecutor`` /
+``SQLiteMemoryStore`` provide byte-equivalent default behavior.
 """
 
 from .filesystem import (
@@ -12,6 +13,7 @@ from .filesystem import (
     FileSystem,
     LocalFileSystem,
 )
+from .memory import MemoryStore
 from .shell import (
     BackgroundHandle,
     LocalShellExecutor,
@@ -19,6 +21,7 @@ from .shell import (
     ShellRequest,
     ShellResult,
 )
+from ..memory.storage import SQLiteMemoryStore
 
 __all__ = [
     "FileEntry",
@@ -30,4 +33,6 @@ __all__ = [
     "ShellRequest",
     "ShellResult",
     "LocalShellExecutor",
+    "MemoryStore",
+    "SQLiteMemoryStore",
 ]

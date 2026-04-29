@@ -515,8 +515,8 @@ class TestReviewQueue:
         same preference folds into the existing pending row, refreshes
         evidence/source_session, increments occurrences, and raises
         confidence to ``inferred`` — instead of stacking duplicates."""
-        from agentao.memory.manager import MemoryManager
-        mgr = MemoryManager(project_root=tmp_path / ".agentao", global_root=None)
+        from tests.support.memory import make_memory_manager
+        mgr = make_memory_manager(tmp_path)
 
         # First extraction — first session
         mgr.crystallize_user_messages([{
@@ -663,5 +663,63 @@ class TestReviewQueue:
     def test_update_review_status_missing_returns_false(self, tmp_path):
         store = _make_store(tmp_path)
         assert store.update_review_status("nope", "approved") is False
+
+
+# ---------------------------------------------------------------------------
+# Path-based constructors: open / open_or_memory
+#
+# Issue #16 moved the project-store ``:memory:`` fallback out of
+# ``MemoryManager.__init__`` and into ``SQLiteMemoryStore.open_or_memory``.
+# The classmethod is the new single source of truth for the
+# "fall back gracefully when the on-disk DB cannot be opened" semantic.
+# ---------------------------------------------------------------------------
+
+
+class TestPathConstructors:
+    def test_open_creates_parent_dir(self, tmp_path):
+        store = SQLiteMemoryStore.open(tmp_path / "nested" / "memory.db")
+        assert (tmp_path / "nested").is_dir()
+        assert store.db_path == str(tmp_path / "nested" / "memory.db")
+
+    def test_open_propagates_oserror(self, tmp_path, monkeypatch):
+        """``open()`` is strict: an unwritable target must raise."""
+        import sqlite3
+        real_init = SQLiteMemoryStore.__init__
+
+        def fake_init(self, db_path):
+            raise sqlite3.OperationalError("unable to open database file")
+
+        monkeypatch.setattr(SQLiteMemoryStore, "__init__", fake_init)
+        with pytest.raises(sqlite3.OperationalError):
+            SQLiteMemoryStore.open(tmp_path / "memory.db")
+
+    def test_open_or_memory_falls_back_on_oserror(self, tmp_path, monkeypatch, caplog):
+        """``open_or_memory()`` degrades to ``:memory:`` on disk error.
+
+        Migrated from ``test_memory_manager.py::test_project_store_sqlite_error_falls_back_to_memory``
+        — the fallback now lives at the storage layer instead of inside
+        ``MemoryManager.__init__``.
+        """
+        import sqlite3
+        real_init = SQLiteMemoryStore.__init__
+        call_paths: list[str] = []
+
+        def fake_init(self, db_path):
+            call_paths.append(db_path)
+            if db_path != ":memory:":
+                raise sqlite3.OperationalError("unable to open database file")
+            real_init(self, db_path)
+
+        monkeypatch.setattr(SQLiteMemoryStore, "__init__", fake_init)
+
+        with caplog.at_level("WARNING", logger="agentao.memory.storage"):
+            store = SQLiteMemoryStore.open_or_memory(tmp_path / "memory.db")
+
+        assert store is not None
+        assert ":memory:" in call_paths
+        assert any(
+            "falling back to transient in-memory store" in rec.message
+            for rec in caplog.records
+        )
 
 

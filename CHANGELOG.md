@@ -7,6 +7,66 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`MemoryStore` capability protocol** (Issue #16). Embedded hosts
+  can now swap memory backends — Redis, Postgres, in-process dict,
+  remote API — without subclassing or forking `MemoryManager`. The
+  `SQLiteMemoryStore` default is unchanged and remains the CLI/ACP
+  backing store. Re-exported from `agentao.capabilities` for symmetry
+  with `FileSystem` / `LocalFileSystem` / `ShellExecutor`:
+  ```python
+  from agentao.capabilities import MemoryStore, SQLiteMemoryStore
+  ```
+- `SQLiteMemoryStore.open(path)` — strict path-based constructor that
+  creates the parent dir and propagates `OSError` / `sqlite3.Error`
+  on failure. Use this for the user-scope store where a failure
+  should disable the scope rather than silently degrade.
+- `SQLiteMemoryStore.open_or_memory(path)` — graceful constructor
+  that degrades to `:memory:` on `OSError` / `sqlite3.Error`. Use
+  this for the project-scope store where a missing DB is preferable
+  to a crashed agent (matches the pre-#16 ACP fault-tolerance).
+  The two classmethods make the asymmetry between
+  project-falls-back and user-disables explicit at every call site;
+  no boolean disambiguation needed.
+
+### Changed
+
+- `MemoryManager(project_store=..., user_store=...)` now accepts
+  pre-built `MemoryStore` instances. Path-based construction (the
+  pre-#16 shape) moves to the call site:
+  ```python
+  # before:
+  mgr = MemoryManager(project_root=p, global_root=g)
+  # after:
+  mgr = MemoryManager(
+      project_store=SQLiteMemoryStore.open_or_memory(p / "memory.db"),
+      user_store=SQLiteMemoryStore.open(g / "memory.db") if g else None,
+  )
+  ```
+  CLI and ACP users see no change because the factory
+  (`agentao.embedding.build_from_environment()`) absorbs the new
+  construction shape internally.
+- The `:memory:` fallback for unwritable project DBs has moved from
+  `MemoryManager.__init__` into `SQLiteMemoryStore.open_or_memory`.
+  Behavior is observably identical: project store still degrades to
+  `:memory:` on `OSError` / `sqlite3.OperationalError`, user store
+  is still disabled with a warning on the same errors.
+- `agentao.memory.MemoryManager` no longer imports `sqlite3` and has
+  no filesystem knowledge. Embedded hosts that construct it directly
+  with custom stores see zero disk I/O from the manager.
+
+### Removed
+
+- `MemoryManager.__init__(project_root=, global_root=)` — replaced by
+  the explicit-store signature above. **Migration:** build the stores
+  via `SQLiteMemoryStore.open_or_memory(path)` (or `.open(path)`) and
+  pass them as `project_store=` / `user_store=` kwargs.
+- `MemoryManager._project_root` / `MemoryManager._global_root` private
+  attributes are gone. Tests / introspectors that probed these
+  should read `manager.project_store.db_path` (or accept that a
+  swapped backend may not expose any path at all).
+
 ### BREAKING
 
 - **`Agentao(working_directory=)` is now required** (Issue #14, the

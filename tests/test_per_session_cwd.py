@@ -329,10 +329,11 @@ def test_agentao_working_directory_is_frozen_when_explicit(stub_llm_env, tmp_pat
 def test_agentao_memory_manager_bound_to_session_cwd(stub_llm_env, tmp_path):
     agent = _make_agent(working_directory=tmp_path)
     try:
-        # MemoryManager stores its project_root on init; just verify it's
-        # rooted under the session cwd, not the process cwd.
-        root = Path(agent._memory_manager._project_root)
-        assert root == tmp_path.resolve() / ".agentao"
+        # After Issue #16, MemoryManager has no notion of a root path —
+        # the SQLite store's ``db_path`` is the load-bearing artifact.
+        # Verify the project store is rooted under the session cwd.
+        db_path = Path(agent._memory_manager.project_store.db_path)
+        assert db_path == tmp_path.resolve() / ".agentao" / "memory.db"
     finally:
         agent.close()
 
@@ -393,11 +394,11 @@ def test_two_agentao_instances_do_not_share_memory_db(stub_llm_env, tmp_path):
     agent_a = _make_agent(working_directory=dir_a)
     agent_b = _make_agent(working_directory=dir_b)
     try:
-        root_a = Path(agent_a._memory_manager._project_root)
-        root_b = Path(agent_b._memory_manager._project_root)
-        assert root_a != root_b
-        assert root_a == dir_a.resolve() / ".agentao"
-        assert root_b == dir_b.resolve() / ".agentao"
+        db_a = Path(agent_a._memory_manager.project_store.db_path)
+        db_b = Path(agent_b._memory_manager.project_store.db_path)
+        assert db_a != db_b
+        assert db_a == dir_a.resolve() / ".agentao" / "memory.db"
+        assert db_b == dir_b.resolve() / ".agentao" / "memory.db"
     finally:
         agent_a.close()
         agent_b.close()
@@ -588,35 +589,50 @@ def test_llm_client_anchors_relative_log_to_cwd_at_construction(
 def test_agentao_survives_user_memory_db_sqlite_error(
     stub_llm_env, tmp_path, monkeypatch
 ):
-    """``Agentao()`` must boot when the user memory DB cannot be opened."""
+    """``Agentao()`` must boot when the user memory DB cannot be opened.
+
+    After Issue #16, the user-store fault is injected by patching
+    :class:`SQLiteMemoryStore.__init__` directly; the factory's
+    ``open(...)`` call propagates the error and disables the user store.
+    """
     import sqlite3
 
-    from agentao.memory import manager as mgr_mod
+    from agentao.memory import SQLiteMemoryStore
 
     # Point HOME at a writable tmp dir so the test is hermetic, but still
     # fault-inject a sqlite3.OperationalError on the user-scope path so the
-    # manager hits the exact crash path reported by the user.
+    # factory hits the exact crash path reported by the user.
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     user_db = str(home / ".agentao" / "memory.db")
 
-    real_init = mgr_mod.SQLiteMemoryStore.__init__
+    real_init = SQLiteMemoryStore.__init__
 
     def fake_init(self, db_path):
         if db_path == user_db:
             raise sqlite3.OperationalError("unable to open database file")
         real_init(self, db_path)
 
-    monkeypatch.setattr(mgr_mod.SQLiteMemoryStore, "__init__", fake_init)
+    monkeypatch.setattr(SQLiteMemoryStore, "__init__", fake_init)
 
-    from agentao.agent import Agentao
+    from agentao.embedding import build_from_environment
 
     # Construction must succeed; user store is disabled, project store is live.
-    agent = Agentao(working_directory=tmp_path)
+    agent = build_from_environment(working_directory=tmp_path)
     try:
-        assert agent._memory_manager.user_store is None
-        assert agent._memory_manager.project_store is not None
+        mgr = agent._memory_manager
+        assert mgr.user_store is None
+        assert mgr.project_store is not None
+
+        # And a user-scoped save is downgraded to project scope (the
+        # ``MemoryManager.upsert`` fallback path) — covers the regression
+        # previously asserted by ``test_user_store_sqlite_error_leaves_user_store_none``
+        # in ``test_memory_manager.py`` before #16.
+        mgr.save_from_tool("downgraded_pref", "value", ["user", "preference"])
+        project_entries = mgr.get_all_entries(scope="project")
+        assert any(e.title == "downgraded_pref" for e in project_entries)
+        assert mgr.get_all_entries(scope="user") == []
     finally:
         agent.close()
 
@@ -627,21 +643,21 @@ def test_acp_session_new_survives_user_memory_db_sqlite_error(
     """End-to-end ACP ``session/new`` must not crash on a dead user memory DB."""
     import sqlite3
 
-    from agentao.memory import manager as mgr_mod
+    from agentao.memory import SQLiteMemoryStore
 
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     user_db = str(home / ".agentao" / "memory.db")
 
-    real_init = mgr_mod.SQLiteMemoryStore.__init__
+    real_init = SQLiteMemoryStore.__init__
 
     def fake_init(self, db_path):
         if db_path == user_db:
             raise sqlite3.OperationalError("unable to open database file")
         real_init(self, db_path)
 
-    monkeypatch.setattr(mgr_mod.SQLiteMemoryStore, "__init__", fake_init)
+    monkeypatch.setattr(SQLiteMemoryStore, "__init__", fake_init)
 
     stdin = io.StringIO("")
     stdout = io.StringIO()

@@ -1,5 +1,6 @@
 """Memory management subpackage for Agentao."""
 
+from ..capabilities.memory import MemoryStore
 from .manager import MemoryManager
 from .retriever import MemoryRetriever
 from .crystallizer import MemoryCrystallizer, SkillCrystallizer
@@ -20,6 +21,7 @@ __all__ = [
     "MemoryRetriever",
     "MemoryCrystallizer",
     "SkillCrystallizer",
+    "MemoryStore",
     "SQLiteMemoryStore",
     "MemoryGuard",
     "SensitiveMemoryError",

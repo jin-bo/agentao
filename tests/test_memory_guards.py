@@ -238,41 +238,41 @@ class TestExtractKeywords:
 
 class TestGuardIntegration:
     def test_sensitive_content_refused_via_tool(self, tmp_path):
-        from agentao.memory.manager import MemoryManager
-        mgr = MemoryManager(project_root=tmp_path / ".agentao", global_root=None)
+        from tests.support.memory import make_memory_manager
+        mgr = make_memory_manager(tmp_path)
         result = mgr.save_from_tool("my_key", "api_key = sk-1234567890abcdefghij", [])
         assert "refused" in result.lower() or "sensitive" in result.lower()
         assert mgr.get_all_entries() == []
 
     def test_empty_content_refused(self, tmp_path):
-        from agentao.memory.manager import MemoryManager
-        mgr = MemoryManager(project_root=tmp_path / ".agentao", global_root=None)
+        from tests.support.memory import make_memory_manager
+        mgr = make_memory_manager(tmp_path)
         result = mgr.save_from_tool("my_key", "   ", [])
         assert "error" in result.lower()
 
     def test_multiline_key_refused(self, tmp_path):
-        from agentao.memory.manager import MemoryManager
-        mgr = MemoryManager(project_root=tmp_path / ".agentao", global_root=None)
+        from tests.support.memory import make_memory_manager
+        mgr = make_memory_manager(tmp_path)
         result = mgr.save_from_tool("line1\nline2", "value", [])
         assert "error" in result.lower()
 
     def test_scope_explicit_via_tool(self, tmp_path):
-        from agentao.memory.manager import MemoryManager
-        mgr = MemoryManager(project_root=tmp_path / ".agentao", global_root=tmp_path / "global")
+        from tests.support.memory import make_memory_manager
+        mgr = make_memory_manager(tmp_path, with_user=True)
         mgr.save_from_tool("my_setting", "value", [], scope="user")
         user_entries = mgr.get_all_entries(scope="user")
         assert any(e.title == "my_setting" for e in user_entries)
 
     def test_type_explicit_via_tool(self, tmp_path):
-        from agentao.memory.manager import MemoryManager
-        mgr = MemoryManager(project_root=tmp_path / ".agentao", global_root=None)
+        from tests.support.memory import make_memory_manager
+        mgr = make_memory_manager(tmp_path)
         mgr.save_from_tool("my_workflow", "run tests first", [], type="workflow")
         entries = mgr.get_all_entries()
         assert entries[0].type == "workflow"
 
     def test_key_normalized_consistently(self, tmp_path):
-        from agentao.memory.manager import MemoryManager
-        mgr = MemoryManager(project_root=tmp_path / ".agentao", global_root=None)
+        from tests.support.memory import make_memory_manager
+        mgr = make_memory_manager(tmp_path)
         mgr.save_from_tool("My Key Name", "v1", [])
         mgr.save_from_tool("my_key_name", "v2", [])
         # Should be the same entry (upserted)
