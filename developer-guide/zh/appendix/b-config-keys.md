@@ -39,19 +39,26 @@ MCP 服务器和自定义工具通常有自己的 env 键——写在 `.agentao/
 
 每个设置：**构造器参数 > 环境变量 > 磁盘 JSON > 硬编码默认值**。
 
-磁盘 JSON 内部分层：**项目 `<cwd>/.agentao/*.json` > 用户 `~/.agentao/*.json`**（同一键以项目为准）。
+磁盘 JSON 的合并规则因配置面而异：
+
+- **`sandbox.json` / `mcp.json`** — 项目文件覆盖用户文件中的同名键。
+- **`permissions.json`** — 两个文件都加载；**项目规则前置**，先于用户规则求值。模式预设规则最后跑（在 `full-access` / `plan` 模式下预设最先跑且不可覆盖）。
+- **`memory.db`** — 项目与用户两个 store **独立**读取；prompt 渲染器同时可见两者；项目并不覆盖用户。
+- **`acp.json`、`settings.json`、`skills_config.json`、`AGENTAO.md`** — 仅项目级；不做合并。
 
 ## B.3 磁盘 JSON 文件
 
-所有文件位于 `.agentao/` 目录下。**项目**文件（`<working_directory>/.agentao/`）优先于**用户**文件（`~/.agentao/`）。任何文件都可缺省。
+JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.agentao/`，用户位于 `~/.agentao/`）；项目级 `AGENTAO.md` 位于项目根。各配置面的合并优先级见 B.2。任何文件都可缺省。
 
 | 文件 | 作用域 | 章节 | 作用 |
 |------|--------|------|------|
 | `mcp.json` | 项目 + 用户 | [5.3](/zh/part-5/3-mcp) | MCP 服务器（stdio / SSE） |
-| `permissions.json` | 项目 + 用户 | [5.4](/zh/part-5/4-permissions) | 权限模式 + 规则 |
+| `permissions.json` | 项目 + 用户 | [5.4](/zh/part-5/4-permissions) | 单工具权限规则 |
 | `sandbox.json` | 项目 + 用户 | [6.2](/zh/part-6/2-shell-sandbox) | Shell 沙箱 profile |
-| `acp.json` | 仅项目 | [3.2](/zh/part-3/2-agentao-as-server) | ACP 服务器配置（Agentao 作为客户端时） |
-| `settings.json` | 仅项目 | [6.6](/zh/part-6/6-observability) | Replay 和其他项目级运行时设置 |
+| `acp.json` | 仅项目 | [3.2](/zh/part-3/2-agentao-as-server) | ACP 子智能体注册表（Agentao 作为客户端时） |
+| `settings.json` | 仅项目 | [6.6](/zh/part-6/6-observability) | 持久化的权限模式、built-in agents 开关、replay 块 |
+| `skills_config.json` | 仅项目 | [5.2](/zh/part-5/2-skills) | 已禁用技能列表（用 `/skills disable` 管理） |
+| `AGENTAO.md` | 仅项目 | [5.6](/zh/part-5/6-system-prompt) | 项目专属指令，注入到 system prompt 顶端 |
 | `memory.db` | 项目 + 用户 | [5.5](/zh/part-5/5-memory) | SQLite 持久化记忆（非 JSON；此处完整列出） |
 
 ### B.3.1 `mcp.json`
@@ -88,26 +95,41 @@ MCP 服务器和自定义工具通常有自己的 env 键——写在 `.agentao/
 | `trust` | bool | 该服务器的工具跳过确认 |
 | `timeout` | number (秒) | 单次工具调用超时 |
 
-v0.2.x **不**支持 HTTP 传输，只支持 stdio + SSE。
+**不**支持 HTTP 传输，只支持 stdio + SSE。
 
 ### B.3.2 `permissions.json`
 
 ```json
 {
-  "mode": "WORKSPACE_WRITE",
   "rules": [
-    { "tool": "run_shell_command", "args": { "command": "rm -rf *" }, "action": "deny" },
-    { "tool": "web_fetch", "domain": "*.internal", "action": "deny" },
-    { "tool": "write_file", "action": "allow" }
+    { "tool": "run_shell_command", "args": { "command": "^git " }, "action": "allow" },
+    { "tool": "run_shell_command", "args": { "command": "rm\\s+-rf" }, "action": "deny" },
+    { "tool": "write_file", "action": "ask" },
+    {
+      "tool": "web_fetch",
+      "domain": { "allowlist": [".github.com"], "url_arg": "url" },
+      "action": "allow"
+    }
   ]
 }
 ```
 
-**模式**：`READ_ONLY`、`WORKSPACE_WRITE`、`FULL_ACCESS`、`PLAN`。
-**规则动作**：`allow`、`deny`、`ask`。
-**规则键**：必须有 `tool`，可选 `args`（局部匹配）和 `domain`（用于 `web_fetch`）。
+**规则字段**：
 
-求值顺序：显式规则 → 模式预设 → 写工具默认 `ask`。
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `tool` | string | 是 | 工具名；通过 `re.fullmatch` 按正则匹配（用 `"*"` 通配） |
+| `args` | object | 否 | `<arg_name>` → 正则的映射；**全部**条目都要 `re.search` 命中规则才生效 |
+| `domain` | object | 否 | 仅 URL 类工具（`web_fetch`）；键：`url_arg`（默认 `"url"`）、`allowlist`、`blocklist`。`.` 开头的模式做后缀匹配（如 `.github.com` 命中 `api.github.com`），否则精确匹配 |
+| `action` | string | 是 | `"allow"` \| `"deny"` \| `"ask"`（大小写不敏感） |
+
+`mode` 字段**不**写在 `permissions.json` 里 — 它属于 `settings.json`（B.3.5），运行时通过 `/permissions` 切换。模式取值：`read-only`、`workspace-write`、`full-access`、`plan`（小写连字符；`plan` 为内部模式）。
+
+求值顺序：
+
+- `read-only` / `workspace-write`：`[项目规则] → [用户规则] → [当前模式预设]`，命中即停。
+- `full-access` / `plan`：`[当前模式预设] → [项目规则] → [用户规则]`，预设不可覆盖。
+- 都未命中 → 回退到该工具的 `requires_confirmation` 属性。
 
 ### B.3.3 `sandbox.json`
 
@@ -141,16 +163,21 @@ v0.2.x **不**支持 HTTP 传输，只支持 stdio + SSE。
 | `autoStart` | bool | `true` | |
 | `startupTimeoutMs` | int | `10000` | |
 | `requestTimeoutMs` | int | `60000` | |
+| `maxRecoverableRestarts` | int | `3` | 子进程可恢复死亡后的自动重启上限；首次成功对话后清零 |
 | `capabilities` | dict | `{}` | |
 | `description` | string | `""` | |
 | `nonInteractivePolicy` | `{"mode": "reject_all" \| "accept_all"}` | `{"mode": "reject_all"}` | 结构化对象（Week 3）。**历史裸字符串形式在配置加载阶段直接报错**，迁移见 [附录 E](./e-migration)。 |
 
 ### B.3.5 `settings.json`
 
-项目级运行时设置。Replay 配置从 `<working_directory>/.agentao/settings.json` 的 `replay` 块读取。
+项目级运行时设置。从 `<working_directory>/.agentao/settings.json` 读取。包含三块：持久化的权限模式、built-in 子智能体开关、replay 块。
 
 ```json
 {
+  "mode": "workspace-write",
+  "agents": {
+    "enable_builtin": false
+  },
   "replay": {
     "enabled": false,
     "max_instances": 20,
@@ -163,6 +190,13 @@ v0.2.x **不**支持 HTTP 传输，只支持 stdio + SSE。
   }
 }
 ```
+
+顶层键：
+
+| 键 | 类型 | 默认 | 说明 |
+|----|------|------|------|
+| `mode` | string | `"workspace-write"`（缺省时） | 持久化的最近一次权限模式，用于恢复路径和 `/permissions` 查看。允许值：`"read-only"`、`"workspace-write"`、`"full-access"`。（`"plan"` 为内部模式，由 `/plan` 流程设置，用户不应直接写入。） |
+| `agents.enable_builtin` | bool | `false` | 启用内置子智能体集。历史顶层别名 `enable_builtin_agents`（bool）仍被识别。 |
 
 Replay 键：
 

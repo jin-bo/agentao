@@ -39,19 +39,26 @@ MCP servers and custom tools typically read their own env keys — those are def
 
 For every setting: **constructor argument > environment variable > on-disk JSON > hard-coded default**.
 
-On-disk JSON itself layers: **project `<cwd>/.agentao/*.json` > user `~/.agentao/*.json`** (project wins when both define the same key).
+On-disk JSON layering varies by surface:
+
+- **`sandbox.json` / `mcp.json`** — project file overrides user file on the same key.
+- **`permissions.json`** — both files are loaded; **project rules are prepended** so they evaluate before user rules. Mode preset rules then run last (or first in `full-access` / `plan`, where they cannot be overridden).
+- **`memory.db`** — project and user stores are read **independently**; both are visible to the prompt renderer. Project does not override user.
+- **`acp.json`, `settings.json`, `skills_config.json`, `AGENTAO.md`** — project-only; no merge.
 
 ## B.3 On-disk JSON files
 
-All files live in an `.agentao/` directory. **Project** files (in `<working_directory>/.agentao/`) take precedence over **user** files (in `~/.agentao/`). Any file may be absent.
+JSON config files live in an `.agentao/` directory (project at `<working_directory>/.agentao/`, user at `~/.agentao/`); the project-level `AGENTAO.md` lives at the project root. Per-surface precedence is described in B.2. Any file may be absent.
 
 | File | Scope | Section | Purpose |
 |------|-------|---------|---------|
 | `mcp.json` | project + user | [5.3](/en/part-5/3-mcp) | MCP servers (stdio / SSE) |
-| `permissions.json` | project + user | [5.4](/en/part-5/4-permissions) | Permission mode + rules |
+| `permissions.json` | project + user | [5.4](/en/part-5/4-permissions) | Per-tool permission rules |
 | `sandbox.json` | project + user | [6.2](/en/part-6/2-shell-sandbox) | Shell sandbox profile selection |
-| `acp.json` | project only | [3.2](/en/part-3/2-agentao-as-server) | ACP server config (when Agentao runs as client) |
-| `settings.json` | project only | [6.6](/en/part-6/6-observability) | Replay and other project runtime settings |
+| `acp.json` | project only | [3.2](/en/part-3/2-agentao-as-server) | ACP subagent registry (when Agentao runs as client) |
+| `settings.json` | project only | [6.6](/en/part-6/6-observability) | Persisted permission mode, builtin-agents flag, replay block |
+| `skills_config.json` | project only | [5.2](/en/part-5/2-skills) | Disabled-skills list (managed via `/skills disable`) |
+| `AGENTAO.md` | project only | [5.6](/en/part-5/6-system-prompt) | Project-specific instructions, prepended to system prompt |
 | `memory.db` | project + user | [5.5](/en/part-5/5-memory) | SQLite-backed persistent memory (not JSON; listed for completeness) |
 
 ### B.3.1 `mcp.json`
@@ -88,26 +95,41 @@ All files live in an `.agentao/` directory. **Project** files (in `<working_dire
 | `trust` | bool | Skip confirmation prompt for tools from this server |
 | `timeout` | number (s) | Per-tool-call timeout |
 
-HTTP transport is **not** supported in v0.2.x; stdio + SSE only.
+HTTP transport is **not** supported; stdio + SSE only.
 
 ### B.3.2 `permissions.json`
 
 ```json
 {
-  "mode": "WORKSPACE_WRITE",
   "rules": [
-    { "tool": "run_shell_command", "args": { "command": "rm -rf *" }, "action": "deny" },
-    { "tool": "web_fetch", "domain": "*.internal", "action": "deny" },
-    { "tool": "write_file", "action": "allow" }
+    { "tool": "run_shell_command", "args": { "command": "^git " }, "action": "allow" },
+    { "tool": "run_shell_command", "args": { "command": "rm\\s+-rf" }, "action": "deny" },
+    { "tool": "write_file", "action": "ask" },
+    {
+      "tool": "web_fetch",
+      "domain": { "allowlist": [".github.com"], "url_arg": "url" },
+      "action": "allow"
+    }
   ]
 }
 ```
 
-**Modes**: `READ_ONLY`, `WORKSPACE_WRITE`, `FULL_ACCESS`, `PLAN`.
-**Rule actions**: `allow`, `deny`, `ask`.
-**Rule keys**: one of `tool` (required), plus optional `args` (partial match) and `domain` (for `web_fetch`).
+**Rule fields**:
 
-Evaluation order: explicit rules → mode preset → fall back to `ask` on write tools.
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `tool` | string | yes | Tool name; matched as a regex via `re.fullmatch` (use `"*"` for wildcard) |
+| `args` | object | no | Map of `<arg_name>` → regex; **all** entries must `re.search`-match for the rule to fire |
+| `domain` | object | no | URL-tools only (`web_fetch`); keys `url_arg` (default `"url"`), `allowlist`, `blocklist`. Patterns starting with `.` do suffix matching (e.g. `.github.com` matches `api.github.com`); otherwise exact match |
+| `action` | string | yes | `"allow"` \| `"deny"` \| `"ask"` (case-insensitive) |
+
+The `mode` field is **not** stored in `permissions.json` — it lives in `settings.json` (B.3.5) and is changed at runtime via `/permissions`. Modes: `read-only`, `workspace-write`, `full-access`, `plan` (lowercase-hyphen; `plan` is internal).
+
+Evaluation order:
+
+- `read-only` / `workspace-write`: `[project rules] → [user rules] → [active mode preset]` — first match wins.
+- `full-access` / `plan`: `[active mode preset] → [project rules] → [user rules]` — presets cannot be overridden.
+- No match → falls back to the tool's own `requires_confirmation` attribute.
 
 ### B.3.3 `sandbox.json`
 
@@ -141,16 +163,21 @@ Per-server keys under `servers.{name}`:
 | `autoStart` | bool | `true` | |
 | `startupTimeoutMs` | int | `10000` | |
 | `requestTimeoutMs` | int | `60000` | |
+| `maxRecoverableRestarts` | int | `3` | Cap for auto-restarts after recoverable subprocess deaths; reset on first successful turn |
 | `capabilities` | dict | `{}` | |
 | `description` | string | `""` | |
 | `nonInteractivePolicy` | `{"mode": "reject_all" \| "accept_all"}` | `{"mode": "reject_all"}` | Structured object (Week 3). **Legacy bare-string form is rejected at config load time** — see [Appendix E](./e-migration). |
 
 ### B.3.5 `settings.json`
 
-Project-local runtime settings. The replay block is read from `<working_directory>/.agentao/settings.json`.
+Project-local runtime settings. Read from `<working_directory>/.agentao/settings.json`. Carries persisted permission mode, the built-in-agents opt-in, and the replay block.
 
 ```json
 {
+  "mode": "workspace-write",
+  "agents": {
+    "enable_builtin": false
+  },
   "replay": {
     "enabled": false,
     "max_instances": 20,
@@ -163,6 +190,13 @@ Project-local runtime settings. The replay block is read from `<working_director
   }
 }
 ```
+
+Top-level keys:
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `mode` | string | `"workspace-write"` (when key absent) | Last-known permission mode used for restoration paths and `/permissions` inspection. Allowed: `"read-only"`, `"workspace-write"`, `"full-access"`. (`"plan"` is internal — set by the `/plan` flow, never written by users.) |
+| `agents.enable_builtin` | bool | `false` | Enables the built-in sub-agent set. Legacy top-level alias `enable_builtin_agents` (bool) is still honored. |
 
 Replay keys:
 
