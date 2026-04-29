@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-04-29
+
 ### Added
 
 - **`MCPRegistry` capability protocol** (Issue #17). Embedded hosts
