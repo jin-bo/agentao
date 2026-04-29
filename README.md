@@ -754,6 +754,8 @@ response = agent.chat("Summarize the current directory")
 
 For fully silent headless use with no callbacks, call `build_from_environment()` with no transport — it uses `NullTransport` automatically. Embedded hosts that want pure-injection construction (no `.env` / `.agentao/` reads) can call `Agentao(working_directory=..., api_key=..., base_url=..., model=..., transport=...)` directly; since 0.2.16 the three credential fields are required when no `llm_client=` is supplied.
 
+For end-to-end embedding patterns — capability injection (`FileSystem` / `ShellExecutor` / `MemoryStore` / `MCPRegistry`), async usage (`agent.arun(...)`), opt-in `replay` / `sandbox` / `bg_store`, and the 0.2.15 → 0.3.0 migration guide — see **[docs/EMBEDDING.md](docs/EMBEDDING.md)**.
+
 ### ACP (Agent Client Protocol) Mode
 
 Launch Agentao as an [ACP](https://github.com/zed-industries/agent-client-protocol) stdio JSON-RPC server so ACP-compatible clients (e.g. Zed) can drive Agentao as their agent runtime:

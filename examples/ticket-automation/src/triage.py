@@ -16,7 +16,8 @@ from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
-from agentao import Agentao
+from agentao import Agentao  # type alias for return annotation
+from agentao.embedding import build_from_environment
 from agentao.permissions import PermissionDecision, PermissionEngine, PermissionMode
 from agentao.tools.base import Tool
 
@@ -193,7 +194,7 @@ def build_agent(ticket_id: str) -> Agentao:
     engine = ConfidenceGatedEngine(project_root=workdir)
     engine.set_mode(PermissionMode.READ_ONLY)
 
-    agent = Agentao(
+    agent = build_from_environment(
         working_directory=workdir,
         permission_engine=engine,
     )

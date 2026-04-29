@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 from agentao.transport.events import EventType
 
@@ -45,7 +45,7 @@ def run() -> None:
             tokens_used += len(ev.data.get("chunk", "")) // 4
 
     transport = SdkTransport(on_event=on_event)
-    agent = Agentao(
+    agent = build_from_environment(
         working_directory=workdir,
         transport=transport,
         max_context_tokens=64_000,

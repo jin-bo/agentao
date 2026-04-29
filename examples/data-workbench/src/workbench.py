@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 from agentao.transport.events import EventType
 
@@ -83,7 +83,7 @@ def run(question: str) -> None:
                 charts.append(m.group(1))
 
     transport = SdkTransport(on_event=on_event)
-    agent = Agentao(working_directory=workdir, transport=transport)
+    agent = build_from_environment(working_directory=workdir, transport=transport)
 
     agent.skill_manager.activate_skill(
         "duckdb-analyst",

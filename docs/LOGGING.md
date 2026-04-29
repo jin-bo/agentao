@@ -361,8 +361,11 @@ agent = Agentao(
 
 # 或者走工厂从 .env 自动发现（.env 里设 LLM_PROVIDER + 对应 _API_KEY/_BASE_URL/_MODEL）
 from agentao.embedding import build_from_environment
-agent = build_from_environment()
+agent = build_from_environment(working_directory=Path.cwd())
 ```
+
+> 嵌入式 host 的完整接入指南（凭据、能力注入、异步、回放/沙箱/后台等）见
+> **[docs/EMBEDDING.md](EMBEDDING.md)**。
 
 ## 故障排除
 

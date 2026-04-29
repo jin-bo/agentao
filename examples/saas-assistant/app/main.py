@@ -26,8 +26,9 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from agentao import Agentao
+from agentao import Agentao  # type alias for the cache values
 from agentao.cancellation import CancellationToken
+from agentao.embedding import build_from_environment
 from agentao.permissions import PermissionEngine, PermissionMode
 from agentao.transport import SdkTransport
 
@@ -56,7 +57,7 @@ class SessionPool:
             engine = PermissionEngine(project_root=workdir)
             engine.set_mode(PermissionMode.READ_ONLY)
 
-            agent = Agentao(
+            agent = build_from_environment(
                 working_directory=workdir,
                 permission_engine=engine,
             )

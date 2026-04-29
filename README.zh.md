@@ -746,6 +746,8 @@ response = agent.chat("总结当前目录")
 
 如需完全静默的无头模式，直接调用不带 transport 的 `build_from_environment()` 即可——自动使用 `NullTransport`。需要纯注入构造（不读 `.env` / `.agentao/`）的嵌入式 host 可以直接调用 `Agentao(working_directory=..., api_key=..., base_url=..., model=..., transport=...)`；自 0.2.16 起，未提供 `llm_client=` 时这三个凭据字段都必传。
 
+完整的嵌入实践——能力注入（`FileSystem` / `ShellExecutor` / `MemoryStore` / `MCPRegistry`）、异步用法（`agent.arun(...)`）、可选的 `replay` / `sandbox` / `bg_store`，以及 0.2.15 → 0.3.0 迁移指南——请参阅 **[docs/EMBEDDING.md](docs/EMBEDDING.md)**。
+
 ### ACP（Agent Client Protocol）模式
 
 将 Agentao 作为 [ACP](https://github.com/zed-industries/agent-client-protocol) stdio JSON-RPC 服务器启动，让兼容 ACP 的客户端（如 Zed）将 Agentao 作为其智能体运行时驱动：
