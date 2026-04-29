@@ -7,7 +7,7 @@ Authoritative `__all__`:
 - `from agentao import ...` → `Agentao`, `SkillManager`
 - `from agentao.embedding import ...` → `build_from_environment`
 - `from agentao.transport import ...` → `AgentEvent`, `EventType`, `Transport`, `NullTransport`, `SdkTransport`, `build_compat_transport`
-- `from agentao.capabilities import ...` → `FileSystem`, `LocalFileSystem`, `FileEntry`, `FileStat`, `ShellExecutor`, `LocalShellExecutor`, `ShellRequest`, `ShellResult`, `BackgroundHandle`
+- `from agentao.capabilities import ...` → `FileSystem`, `LocalFileSystem`, `FileEntry`, `FileStat`, `ShellExecutor`, `LocalShellExecutor`, `ShellRequest`, `ShellResult`, `BackgroundHandle`, `MemoryStore`, `SQLiteMemoryStore`, `MCPRegistry`, `FileBackedMCPRegistry`, `InMemoryMCPRegistry`
 - `from agentao.tools.base import ...` → `Tool`, `ToolRegistry`
 - `from agentao.permissions import ...` → `PermissionEngine`, `PermissionMode`, `PermissionDecision`
 - `from agentao.memory.manager import MemoryManager`
@@ -20,7 +20,7 @@ The core class — see [Part 2.2](/en/part-2/2-constructor-reference) for the fu
 
 ### Constructor
 
-See [Part 2.2](/en/part-2/2-constructor-reference) for the full parameter table. **Since 0.2.16**, `Agentao()` without `working_directory=` emits a `DeprecationWarning` and will become a `TypeError` in 0.3.0.
+See [Part 2.2](/en/part-2/2-constructor-reference) for the full parameter table. **Since 0.3.0**, `Agentao()` without `working_directory=` raises `TypeError` from Python signature dispatch — the soft-deprecation cycle ended. End-to-end embedding patterns live in [`docs/EMBEDDING.md`](../../../docs/EMBEDDING.md).
 
 ```python
 Agentao(
@@ -29,21 +29,23 @@ Agentao(
     model: str | None = None,
     temperature: float | None = None,
     transport: Transport | None = None,
-    working_directory: Path | None = None,
+    *,
+    working_directory: Path,                    # required since 0.3.0
     extra_mcp_servers: dict[str, dict] | None = None,
     permission_engine: PermissionEngine | None = None,
     max_context_tokens: int = 200_000,
     plan_session: PlanSession | None = None,
-    # Embedded-harness explicit injections (0.2.16+)
+    # Embedded-harness explicit injections
     llm_client: LLMClient | None = None,
     logger: logging.Logger | None = None,
     memory_manager: MemoryManager | None = None,
     skill_manager: SkillManager | None = None,
     project_instructions: str | None = None,
     mcp_manager: McpClientManager | None = None,
+    mcp_registry: MCPRegistry | None = None,    # 0.3.0+ (#17)
     filesystem: FileSystem | None = None,
     shell: ShellExecutor | None = None,
-    # Opt-in subsystems (0.2.16+; None = fully disabled)
+    # Opt-in subsystems (None = fully disabled)
     replay_config: ReplayConfig | None = None,
     sandbox_policy: SandboxPolicy | None = None,
     bg_store: BackgroundTaskStore | None = None,
@@ -60,6 +62,7 @@ Mutual-exclusion rules (raise `ValueError` if violated):
 
 - `llm_client=` together with any of `api_key=` / `base_url=` / `model=` / `temperature=`
 - `mcp_manager=` together with `extra_mcp_servers=`
+- `mcp_manager=` together with `mcp_registry=` — the registry is a config source, the manager is the construction outcome
 
 Opt-in subsystem semantics (defaults are `None` since 0.2.16):
 
@@ -258,18 +261,29 @@ Subclass and override `decide()` to integrate company IAM — see [7.3](/en/part
 
 ## A.5 Memory
 
-### `MemoryManager`
+### `MemoryManager` (since 0.3.0 / #16)
 
 ```python
 MemoryManager(
-    project_root: Path,
-    global_root: Path | None = None,
+    project_store: MemoryStore,                 # required, pre-built
+    user_store: MemoryStore | None = None,      # cross-project; None disables user scope
     guard: MemoryGuard | None = None,
 )
 ```
 
-- `project_root` — directory where `memory.db` for project-scoped memories lives (usually `<cwd>/.agentao`)
-- `global_root` — directory for the cross-project user-scoped DB (usually `~/.agentao`); `None` disables user-scope memory
+The constructor takes pre-built `MemoryStore` instances (the embedding factory builds them and passes them in). Path-based construction moved to the store layer:
+
+```python
+from agentao.memory import MemoryManager, SQLiteMemoryStore
+
+mgr = MemoryManager(
+    project_store=SQLiteMemoryStore.open_or_memory(workdir / ".agentao" / "memory.db"),
+    user_store=SQLiteMemoryStore.open(home / ".agentao" / "memory.db"),
+)
+```
+
+- `project_store` — required `MemoryStore` for project-scoped memories (the factory uses `SQLiteMemoryStore.open_or_memory(...)` so a missing directory degrades to `:memory:` instead of crashing)
+- `user_store` — optional cross-project store (the factory uses `SQLiteMemoryStore.open(...)`; `None` disables user-scope memory entirely; user-scope writes are downgraded to project on `None`)
 - `guard` — optional `MemoryGuard` that filters sensitive content before persistence
 
 | Method | Purpose |
@@ -282,9 +296,61 @@ MemoryManager(
 | `clear(scope=?)` | Soft-delete all in scope |
 | `save_session_summary(...)` / `get_recent_session_summaries(...)` | Used by the compaction pipeline |
 | `archive_session() / clear_session()` | End-of-session house-keeping |
+| `clear_all_session_summaries()` | Drop every session summary across all sessions |
 | `get_stable_entries(...)` | Render into `<memory-stable>` system-prompt block |
 
-## A.6 Cancellation
+### `MemoryStore` (Protocol, 0.3.0 / #16)
+
+```python
+class MemoryStore(Protocol):
+    # Memory CRUD
+    def upsert_memory(self, record: MemoryRecord) -> MemoryRecord: ...
+    def get_memory_by_id(self, memory_id: str) -> Optional[MemoryRecord]: ...
+    def get_memory_by_scope_key(self, scope: str, key_normalized: str) -> Optional[MemoryRecord]: ...
+    def list_memories(self, scope: Optional[str] = None) -> List[MemoryRecord]: ...
+    def search_memories(self, query: str, scope: Optional[str] = None) -> List[MemoryRecord]: ...
+    def filter_by_tag(self, tag: str, scope: Optional[str] = None) -> List[MemoryRecord]: ...
+    def soft_delete_memory(self, memory_id: str) -> bool: ...
+    def clear_memories(self, scope: Optional[str] = None) -> int: ...
+    # Session summaries
+    def save_session_summary(self, record: SessionSummaryRecord) -> None: ...
+    def list_session_summaries(self, session_id=None, limit=20) -> List[SessionSummaryRecord]: ...
+    def clear_session_summaries(self, session_id=None) -> int: ...
+    # Review queue
+    def upsert_review_item(self, item: MemoryReviewItem) -> MemoryReviewItem: ...
+    def get_review_item(self, item_id: str) -> Optional[MemoryReviewItem]: ...
+    def list_review_items(self, status="pending", limit=50) -> List[MemoryReviewItem]: ...
+    def update_review_status(self, item_id: str, status: str) -> bool: ...
+```
+
+15 methods, schema-less. Implement the Protocol to back memory with Redis / Postgres / in-process dict / remote API. Default `SQLiteMemoryStore` is byte-equivalent to the pre-Protocol implementation.
+
+### `SQLiteMemoryStore`
+
+```python
+SQLiteMemoryStore.open(path)              # strict; raises on disk error
+SQLiteMemoryStore.open_or_memory(path)    # graceful; degrades to ":memory:"
+```
+
+The classmethods replace the historical `MemoryManager.__init__` try/except. Use `open_or_memory` for the project store (a missing DB beats a crashed agent), `open` for the user store (a failure should disable the scope, not silently re-route writes).
+
+## A.6 MCP
+
+### `MCPRegistry` (Protocol, 0.3.0 / #17)
+
+```python
+class MCPRegistry(Protocol):
+    def list_servers(self) -> Dict[str, McpServerConfig]: ...
+```
+
+Source of MCP server configs. The `Agentao(mcp_registry=...)` kwarg is the injection point; `mcp_manager=` and `mcp_registry=` are mutually exclusive (manager = construction outcome, registry = config source).
+
+| Concrete class | Purpose |
+|---|---|
+| `FileBackedMCPRegistry(project_root, user_root=None)` | CLI/ACP default. Reads `<wd>/.agentao/mcp.json` + `<user_root>/mcp.json` on every `list_servers()`. |
+| `InMemoryMCPRegistry(servers=None)` | Programmatic counterpart for tests / embedded hosts. Constructor input is shallow-copied. |
+
+## A.7 Cancellation
 
 ### `CancellationToken`
 
@@ -302,7 +368,7 @@ Pass to `agent.chat(..., cancellation_token=token)` to abort from another thread
 
 Raised inside the agent loop when a token is cancelled. Caught by `chat()`, which returns a `[Cancelled: reason]` string rather than propagating.
 
-## A.7 ACP client
+## A.8 ACP client
 
 ### `ACPManager`
 
@@ -409,7 +475,7 @@ When `project_root` is `None`, it defaults to `Path.cwd()`.
 
 Validate + load `.agentao/acp.json` without constructing a manager. Useful for config-lint tooling.
 
-## A.8 Skills
+## A.9 Skills
 
 ### `SkillManager`
 

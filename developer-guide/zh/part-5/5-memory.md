@@ -23,18 +23,18 @@
 
 ## 降级：文件系统不可写怎么办
 
-ACP 子进程、受限容器、只读文件系统里，记忆 DB 可能写不了。Agentao 的策略（`agentao/memory/manager.py:59-90`）：
+ACP 子进程、受限容器、只读文件系统里，记忆 DB 可能写不了。0.3.0（Issue #16）起，fallback 策略下沉到存储层（`SQLiteMemoryStore.open_or_memory`），由嵌入式工厂负责接进来：
 
 ```
-尝试打开 <cwd>/.agentao/memory.db
+SQLiteMemoryStore.open_or_memory(<cwd>/.agentao/memory.db)
  ├─ 成功 → 正常使用
  └─ 失败（OSError / sqlite3.Error）
-     → fallback 到 SQLiteMemoryStore(":memory:")
-     → log warning
+     → 返回 SQLiteMemoryStore(":memory:")
+     → 记一条 warning
      → Agent 继续启动（不崩溃）
 ```
 
-用户级同理。**记忆永远不会让 Agent 启动失败**——最差就是丢失跨会话持久化。
+用户作用域走严格构造 `SQLiteMemoryStore.open(...)`：失败时直接禁用该作用域，而不是降级到 `:memory:`（否则用户作用域写入会被默默路由到项目作用域，混淆两层语义）。**记忆永远不会让 Agent 启动失败**——最差就是丢失跨会话持久化。
 
 ## 在嵌入里怎么用
 
@@ -50,36 +50,45 @@ ACP 子进程、受限容器、只读文件系统里，记忆 DB 可能写不了
 
 ### 禁用用户级记忆
 
-默认 Agent 会读写 `~/.agentao/memory.db`。如果你的产品不希望 Agent 沾染"用户"层的任何状态：
+默认工厂会读写 `~/.agentao/memory.db`。如果你的产品不希望 Agent 沾染"用户"层的任何状态，自己构造 `MemoryManager`、显式 `user_store=None` 传进来即可（#16 之后 `MemoryManager` 接的是预先构造好的 store）：
 
 ```python
-# 需要直接替换 memory manager
-from agentao.memory import MemoryManager
+from agentao.memory import MemoryManager, SQLiteMemoryStore
 
-agent = Agentao(working_directory=Path("/tmp/sess"))
-# 构造后替换成只用项目 DB 的版本
-agent._memory_manager = MemoryManager(
-    project_root=agent.working_directory / ".agentao",
-    global_root=None,   # 不用用户级
+workdir = Path("/tmp/sess")
+agent = Agentao(
+    working_directory=workdir,
+    memory_manager=MemoryManager(
+        project_store=SQLiteMemoryStore.open_or_memory(
+            workdir / ".agentao" / "memory.db"
+        ),
+        # user_store=None — 不要跨项目用户作用域
+    ),
+    llm_client=...,
 )
 ```
 
-⚠️ 这是"内部 API"路径，依赖 `_memory_manager` 属性名，未来版本可能变。生产前建议向上游提 issue 要求公开配置。
-
 ### 完全禁用记忆
 
-最简单的方法：让项目 DB 指向只读 / 只写 `:memory:`：
+最简单的方法：让项目 store 指向 `:memory:`（user_store 默认 `None`，无需显式给）：
 
 ```python
-from agentao.memory import MemoryManager
-from agentao.memory.storage import SQLiteMemoryStore
+from agentao.memory import MemoryManager, SQLiteMemoryStore
 
-agent = Agentao(working_directory=Path("/tmp/sess"))
-agent._memory_manager.project_store = SQLiteMemoryStore(":memory:")
-agent._memory_manager.user_store = None
+agent = Agentao(
+    working_directory=Path("/tmp/sess"),
+    memory_manager=MemoryManager(
+        project_store=SQLiteMemoryStore(":memory:"),
+    ),
+    llm_client=...,
+)
 ```
 
 会话内工作，进程结束即丢。
+
+### 自定义记忆后端（Redis / Postgres / 远端 API）
+
+`MemoryStore` 能力协议（`agentao.capabilities.MemoryStore`）就是这种场景的官方注入点——实现一次它的 15 个方法，把实例作为 `project_store=` / `user_store=` 传入即可。详见 `docs/EMBEDDING.md` 与 `agentao/capabilities/memory.py`。
 
 ## 提示词里的两个记忆块
 
@@ -144,19 +153,20 @@ save_memory(key="preference", value="user prefers TypeScript strict mode")
 ```python
 mm = agent._memory_manager
 
-# 列出项目级所有记忆
-for record in mm.list_memories(scope="project"):
+# 列出项目级所有记忆（不传 scope 时返回 project + user 合集）
+for record in mm.get_all_entries(scope="project"):
     print(record.title, "—", record.content[:60])
 
 # 搜索
 for record in mm.search("typescript"):
     print(record)
 
-# 软删除
-mm.soft_delete(record_id)
+# 按 id 软删除（按用户友好的 key 删用 ``delete_by_title``）
+mm.delete(record_id)
 
-# 完全清空（含会话摘要）
-mm.clear_all()
+# 完全清空：把所有作用域的 memory 都软删除 + 删掉会话摘要
+mm.clear()                       # 两个作用域；传 scope="project" / "user" 可只清一个
+mm.clear_all_session_summaries()
 ```
 
 **合规价值**：给用户"查看 AI 知道关于我的什么"和"一键遗忘"的按钮，是很多 SaaS 场景的硬性要求。
@@ -186,6 +196,6 @@ save_memory("doc", open("readme.md").read())   # 几十 KB
 
 ### ❌ 忘记记忆跨 `clear_history()` 存活
 
-用户在 UI 上点"新对话"→ `agent.clear_history()` 只清会话，不清记忆。如果"新对话"应该忘掉一切，要同时调 `MemoryManager.clear_all()`。
+用户在 UI 上点"新对话"→ `agent.clear_history()` 只清会话，不清记忆。如果"新对话"应该忘掉一切，要同时调 `MemoryManager.clear()` + `clear_all_session_summaries()`。
 
 → 下一节：[5.6 系统提示定制](./6-system-prompt)

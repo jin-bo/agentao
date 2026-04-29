@@ -5,7 +5,7 @@ There are now **two stable construction paths**, picked by what your host alread
 - **`agentao.embedding.build_from_environment(...)`** — CLI-style auto-discovery: reads `.env`, `LLM_PROVIDER`, `<wd>/.agentao/permissions.json`, `<wd>/.agentao/mcp.json`, memory roots, then constructs `Agentao` for you. Use this when your host follows the same project-directory conventions as the CLI.
 - **`Agentao(...)` directly** — explicit injection: you already have an `LLMClient`, `PermissionEngine`, etc. and don't want any env / disk side effects at construction time.
 
-**Important (0.2.16)**: `Agentao()` without `working_directory=` now emits a `DeprecationWarning` and will become a `TypeError` in 0.3.0. Always pass an explicit `Path`, or go through `build_from_environment()`.
+**Important (0.3.0)**: `Agentao()` without `working_directory=` now raises `TypeError` from Python signature dispatch — the soft-deprecation cycle ended. Always pass an explicit `Path`, or go through `build_from_environment()`. End-to-end embedding patterns live in [`docs/EMBEDDING.md`](../../../docs/EMBEDDING.md).
 
 ## The factory: `build_from_environment()`
 
@@ -25,7 +25,7 @@ What it does:
 1. Resolves `working_directory` (defaults to `Path.cwd()`) once and freezes the result.
 2. Calls `load_dotenv()` against `<wd>/.env` if it exists, else process-wide.
 3. Reads `LLM_PROVIDER` and the matching `*_API_KEY` / `*_BASE_URL` / `*_MODEL` env vars.
-4. Builds a `PermissionEngine(project_root=wd)` and a `MemoryManager(project_root=wd/.agentao, global_root=~/.agentao)`.
+4. Builds a `PermissionEngine(project_root=wd, user_root=user_root())`, a `MemoryManager` (project store via `SQLiteMemoryStore.open_or_memory(wd / ".agentao" / "memory.db")`, user store via `SQLiteMemoryStore.open(...)` — disabled with a warning if unwritable), and a `FileBackedMCPRegistry(project_root=wd, user_root=user_root())` since #16/#17.
 5. Forwards everything explicitly to `Agentao(...)`. **Caller `**overrides` win** over auto-discovered values.
 
 This is the only place in the codebase that reads env / dotenv / `.agentao/*.json` at startup. Hosts that don't want any of that should construct `Agentao` directly.
@@ -52,17 +52,22 @@ Agentao(
     transport:                  Optional[Transport]        = None,
     plan_session:               Optional[PlanSession]      = None,
     *,
-    working_directory:  Optional[Path]                     = None,
+    working_directory:  Path,                                  # required since 0.3.0
     extra_mcp_servers:  Optional[Dict[str, Dict[str, Any]]] = None,
-    # ── Embedded-harness explicit-injection kwargs (0.2.16+) ──
+    # ── Embedded-harness explicit-injection kwargs ──
     llm_client:           Optional[LLMClient]         = None,
     logger:               Optional[logging.Logger]    = None,
     memory_manager:       Optional[MemoryManager]     = None,
     skill_manager:        Optional[SkillManager]      = None,
     project_instructions: Optional[str]               = None,
     mcp_manager:          Optional[McpClientManager]  = None,
+    mcp_registry:         Optional[MCPRegistry]       = None,  # 0.3.0+ (#17)
     filesystem:           Optional[FileSystem]        = None,
     shell:                Optional[ShellExecutor]     = None,
+    # ── Opt-in subsystems (None = disabled) ──
+    bg_store:             Optional[BackgroundTaskStore] = None,
+    sandbox_policy:       Optional[SandboxPolicy]       = None,
+    replay_config:        Optional[ReplayConfig]        = None,
 )
 ```
 
@@ -91,8 +96,12 @@ When you don't want `Agentao()` to construct a subsystem from defaults, inject y
 | `skill_manager` | `SkillManager` | The bundled-skill auto-discovery scan is skipped — your instance is used verbatim |
 | `project_instructions` | `str` | The `<wd>/AGENTAO.md` disk read is skipped — your string is used verbatim |
 | `mcp_manager` | `McpClientManager` | No `.agentao/mcp.json` discovery; you own the MCP lifecycle |
+| `mcp_registry` (0.3.0+) | `MCPRegistry` | Replaces the implicit `load_mcp_config(...)` source. Default `FileBackedMCPRegistry` matches the pre-#17 disk read; pass an `InMemoryMCPRegistry` for programmatic registration. Mutually exclusive with `mcp_manager=`. |
 | `filesystem` | `FileSystem` | File / search tools route through your `FileSystem` (see Part 6.4) |
 | `shell` | `ShellExecutor` | The shell tool routes through your `ShellExecutor` |
+| `bg_store` (opt-in) | `BackgroundTaskStore` | Background tool persistence. `None` keeps `check_background_agent` etc. unregistered and strips `run_in_background` from sub-agent tool schemas. |
+| `sandbox_policy` (opt-in) | `SandboxPolicy` | Shell sandboxing. `None` runs commands without the macOS `sandbox-exec` wrapper. |
+| `replay_config` (opt-in) | `ReplayConfig` | Deterministic re-runs. `None` uses a no-op recorder. |
 
 These are the bridges hosts use when they want Agentao's runtime but not its CLI-style implicit reads. Combine freely:
 
@@ -178,20 +187,20 @@ Implementing a custom Transport: see [Part 4](/en/part-4/).
 
 | Param | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `working_directory` | `Path` | `None` (deprecated; will become required in 0.3.0) | **Must be set explicitly for multi-instance** |
+| `working_directory` | `Path` | — (required since 0.3.0) | **Frozen at construction** |
 
-**Why it matters**:
-- `None` → agent reads live `Path.cwd()` on every access (CLI behavior; user `cd` is respected) — emits `DeprecationWarning` since 0.2.16
-- `Path(...)` → agent freezes on that directory at construction; file tools, `AGENTAO.md`, `.agentao/` config, shell CWD all resolve against it
+**Why it matters** (since 0.3.0):
+- Required keyword — the soft-deprecation cycle ended. `Agentao()` without it raises `TypeError` from Python signature dispatch.
+- The path is `expanduser().resolve()`-d once and frozen. File tools, `AGENTAO.md`, `.agentao/` config, shell CWD all resolve against it. An `os.chdir` in the host has no effect on an already-constructed Agentao.
 
-In embedded contexts (web server, ACP sessions), `Path.cwd()` is **process-global state** — two concurrent sessions cross-contaminate. Always pass `working_directory=` explicitly per instance.
+In embedded contexts (web server, ACP sessions), `Path.cwd()` is **process-global state** — two concurrent sessions would cross-contaminate. The required `working_directory` rules that out.
 
 ```python
-# ❌ Bad: sessions share cwd, plus DeprecationWarning
+# ❌ Pre-0.3.0: relied on Path.cwd() — now a TypeError
 agent_a = Agentao(...)
 agent_b = Agentao(...)
 
-# ✅ Good: each session has its own root
+# ✅ Each session has its own root
 agent_a = Agentao(..., working_directory=Path("/tmp/tenant-a"))
 agent_b = Agentao(..., working_directory=Path("/tmp/tenant-b"))
 ```

@@ -7,7 +7,7 @@
 - `from agentao import ...` → `Agentao`、`SkillManager`
 - `from agentao.embedding import ...` → `build_from_environment`
 - `from agentao.transport import ...` → `AgentEvent`、`EventType`、`Transport`、`NullTransport`、`SdkTransport`、`build_compat_transport`
-- `from agentao.capabilities import ...` → `FileSystem`、`LocalFileSystem`、`FileEntry`、`FileStat`、`ShellExecutor`、`LocalShellExecutor`、`ShellRequest`、`ShellResult`、`BackgroundHandle`
+- `from agentao.capabilities import ...` → `FileSystem`、`LocalFileSystem`、`FileEntry`、`FileStat`、`ShellExecutor`、`LocalShellExecutor`、`ShellRequest`、`ShellResult`、`BackgroundHandle`、`MemoryStore`、`SQLiteMemoryStore`、`MCPRegistry`、`FileBackedMCPRegistry`、`InMemoryMCPRegistry`
 - `from agentao.tools.base import ...` → `Tool`、`ToolRegistry`
 - `from agentao.permissions import ...` → `PermissionEngine`、`PermissionMode`、`PermissionDecision`
 - `from agentao.memory.manager import MemoryManager`
@@ -20,7 +20,7 @@
 
 ### 构造器
 
-完整参数表见 [Part 2.2](/zh/part-2/2-constructor-reference)。**0.2.16 起**，不传 `working_directory=` 调用 `Agentao()` 会发 `DeprecationWarning`，0.3.0 起会变成 `TypeError`。
+完整参数表见 [Part 2.2](/zh/part-2/2-constructor-reference)。**0.3.0 起**，不传 `working_directory=` 调用 `Agentao()` 会从 Python 签名分派直接抛 `TypeError`——软废弃周期已结束。完整嵌入式接入实践见 [`docs/EMBEDDING.md`](../../../docs/EMBEDDING.md)。
 
 ```python
 Agentao(
@@ -29,21 +29,23 @@ Agentao(
     model: str | None = None,
     temperature: float | None = None,
     transport: Transport | None = None,
-    working_directory: Path | None = None,
+    *,
+    working_directory: Path,                     # 0.3.0 起必传
     extra_mcp_servers: dict[str, dict] | None = None,
     permission_engine: PermissionEngine | None = None,
     max_context_tokens: int = 200_000,
     plan_session: PlanSession | None = None,
-    # 嵌入式 harness 显式注入（0.2.16+）
+    # 嵌入式 harness 显式注入
     llm_client: LLMClient | None = None,
     logger: logging.Logger | None = None,
     memory_manager: MemoryManager | None = None,
     skill_manager: SkillManager | None = None,
     project_instructions: str | None = None,
     mcp_manager: McpClientManager | None = None,
+    mcp_registry: MCPRegistry | None = None,     # 0.3.0+ (#17)
     filesystem: FileSystem | None = None,
     shell: ShellExecutor | None = None,
-    # 可选启用的子系统（0.2.16+；None = 完全禁用）
+    # 可选启用的子系统（None = 完全禁用）
     replay_config: ReplayConfig | None = None,
     sandbox_policy: SandboxPolicy | None = None,
     bg_store: BackgroundTaskStore | None = None,
@@ -60,8 +62,9 @@ Agentao(
 
 - `llm_client=` 与任何 `api_key=` / `base_url=` / `model=` / `temperature=` 同时传
 - `mcp_manager=` 与 `extra_mcp_servers=` 同时传
+- `mcp_manager=` 与 `mcp_registry=` 同时传——registry 是配置源，manager 是构造结果
 
-可选子系统语义（0.2.16 起默认 `None`）：
+可选子系统语义（默认 `None`）：
 
 - `replay_config=None` —— 构造时不读 `<wd>/.agentao/replay.json`，内部用 no-op 的 `ReplayConfig()`。
 - `sandbox_policy=None` —— `ToolRunner` 跑 shell 时不再走 macOS `sandbox-exec` 包装。
@@ -258,19 +261,30 @@ PermissionEngine(
 
 ## A.5 记忆
 
-### `MemoryManager`
+### `MemoryManager`（0.3.0 / #16 起）
 
 ```python
 MemoryManager(
-    project_root: Path,
-    global_root: Path | None = None,
+    project_store: MemoryStore,                   # 必传，预先构造好的 store
+    user_store: MemoryStore | None = None,        # 跨项目；None 表示禁用用户作用域
     guard: MemoryGuard | None = None,
 )
 ```
 
-- `project_root` —— 项目作用域 `memory.db` 的所在目录（一般是 `<cwd>/.agentao`）
-- `global_root` —— 跨项目的用户作用域 DB 所在目录（一般是 `~/.agentao`）；传 `None` 关闭用户作用域
-- `guard` —— 可选的 `MemoryGuard`，落盘前过滤敏感内容
+构造器接收预先构造好的 `MemoryStore` 实例（嵌入式工厂负责构造并传入）。基于路径的构造下沉到 store 层：
+
+```python
+from agentao.memory import MemoryManager, SQLiteMemoryStore
+
+mgr = MemoryManager(
+    project_store=SQLiteMemoryStore.open_or_memory(workdir / ".agentao" / "memory.db"),
+    user_store=SQLiteMemoryStore.open(home / ".agentao" / "memory.db"),
+)
+```
+
+- `project_store` —— 必传的项目作用域 `MemoryStore`（工厂用 `SQLiteMemoryStore.open_or_memory(...)`，目录写不进去会降级到 `:memory:` 而不是炸掉）
+- `user_store` —— 可选的跨项目 store（工厂用 `SQLiteMemoryStore.open(...)`；传 `None` 完全禁用用户作用域，user-scope 写入会下移到 project）
+- `guard` —— 可选 `MemoryGuard`，落盘前过滤敏感内容
 
 | 方法 | 作用 |
 |------|------|
@@ -282,9 +296,61 @@ MemoryManager(
 | `clear(scope=?)` | 整个作用域软删除 |
 | `save_session_summary(...)` / `get_recent_session_summaries(...)` | 压缩流水线用 |
 | `archive_session() / clear_session()` | 会话末尾清理 |
+| `clear_all_session_summaries()` | 清掉所有会话的所有摘要 |
 | `get_stable_entries(...)` | 注入 `<memory-stable>` 系统提示块 |
 
-## A.6 取消
+### `MemoryStore`（Protocol，0.3.0 / #16）
+
+```python
+class MemoryStore(Protocol):
+    # 记忆 CRUD
+    def upsert_memory(self, record: MemoryRecord) -> MemoryRecord: ...
+    def get_memory_by_id(self, memory_id: str) -> Optional[MemoryRecord]: ...
+    def get_memory_by_scope_key(self, scope: str, key_normalized: str) -> Optional[MemoryRecord]: ...
+    def list_memories(self, scope: Optional[str] = None) -> List[MemoryRecord]: ...
+    def search_memories(self, query: str, scope: Optional[str] = None) -> List[MemoryRecord]: ...
+    def filter_by_tag(self, tag: str, scope: Optional[str] = None) -> List[MemoryRecord]: ...
+    def soft_delete_memory(self, memory_id: str) -> bool: ...
+    def clear_memories(self, scope: Optional[str] = None) -> int: ...
+    # 会话摘要
+    def save_session_summary(self, record: SessionSummaryRecord) -> None: ...
+    def list_session_summaries(self, session_id=None, limit=20) -> List[SessionSummaryRecord]: ...
+    def clear_session_summaries(self, session_id=None) -> int: ...
+    # 复审队列
+    def upsert_review_item(self, item: MemoryReviewItem) -> MemoryReviewItem: ...
+    def get_review_item(self, item_id: str) -> Optional[MemoryReviewItem]: ...
+    def list_review_items(self, status="pending", limit=50) -> List[MemoryReviewItem]: ...
+    def update_review_status(self, item_id: str, status: str) -> bool: ...
+```
+
+15 个方法，schema-less。实现这套 Protocol 即可把记忆后端换成 Redis / Postgres / 进程内 dict / 远端 API。默认 `SQLiteMemoryStore` 与 #16 之前的实现字节级一致。
+
+### `SQLiteMemoryStore`
+
+```python
+SQLiteMemoryStore.open(path)              # 严格；磁盘出错抛
+SQLiteMemoryStore.open_or_memory(path)    # 宽容；出错降级到 ":memory:"
+```
+
+两个 classmethod 取代了原本 `MemoryManager.__init__` 的 try/except。项目 store 用 `open_or_memory`（宁可在内存里也别把 Agent 启动炸掉），用户 store 用 `open`（写不进去就该禁用，而不是默默把写入路由到项目作用域）。
+
+## A.6 MCP
+
+### `MCPRegistry`（Protocol，0.3.0 / #17）
+
+```python
+class MCPRegistry(Protocol):
+    def list_servers(self) -> Dict[str, McpServerConfig]: ...
+```
+
+MCP 服务器配置的来源。`Agentao(mcp_registry=...)` 是注入点；`mcp_manager=` 与 `mcp_registry=` 互斥（manager 是构造结果，registry 是配置源）。
+
+| 具体实现 | 作用 |
+|---|---|
+| `FileBackedMCPRegistry(project_root, user_root=None)` | CLI/ACP 默认。每次 `list_servers()` 都重读 `<wd>/.agentao/mcp.json` + `<user_root>/mcp.json`。 |
+| `InMemoryMCPRegistry(servers=None)` | 测试 / 嵌入式 host 用的程序化版本。构造入参做浅拷贝。 |
+
+## A.7 取消
 
 ### `CancellationToken`
 
@@ -302,7 +368,7 @@ token.reason               # str
 
 token 被取消时在 agent 循环里抛出。`chat()` 会捕获并返回 `[Cancelled: reason]` 字符串，而不是再往外抛。
 
-## A.7 ACP 客户端
+## A.8 ACP 客户端
 
 ### `ACPManager`
 
@@ -410,7 +476,7 @@ load_acp_client_config(project_root: Path | None = None) -> AcpClientConfig
 
 不构造 manager 直接校验 + 加载 `.agentao/acp.json`。写 config lint 工具时好用。
 
-## A.8 技能
+## A.9 技能
 
 ### `SkillManager`
 

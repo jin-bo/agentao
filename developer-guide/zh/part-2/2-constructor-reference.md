@@ -5,7 +5,7 @@
 - **`agentao.embedding.build_from_environment(...)`** —— CLI 风格的自动发现：读 `.env`、`LLM_PROVIDER`、`<wd>/.agentao/permissions.json`、`<wd>/.agentao/mcp.json`、内存目录，然后帮你构造 `Agentao`。当宿主沿用 CLI 的项目目录约定时使用。
 - **直接 `Agentao(...)`** —— 显式注入：你已经持有 `LLMClient`、`PermissionEngine` 等子系统，构造时不希望发生任何 env / 磁盘副作用。
 
-**重要（0.2.16）**：不传 `working_directory=` 调用 `Agentao()` 现在会发 `DeprecationWarning`，0.3.0 起会变成 `TypeError`。请显式传入 `Path`，或走 `build_from_environment()`。
+**重要（0.3.0）**：不传 `working_directory=` 调用 `Agentao()` 现在会从 Python 签名分派直接抛 `TypeError`——软废弃周期已经走完。请显式传入 `Path`，或走 `build_from_environment()`。完整的嵌入式接入实践见 [`docs/EMBEDDING.md`](../../../docs/EMBEDDING.md)。
 
 ## 工厂：`build_from_environment()`
 
@@ -25,7 +25,7 @@ agent = build_from_environment(
 1. 解析 `working_directory`（默认 `Path.cwd()`），冻结成绝对路径。
 2. `<wd>/.env` 存在则按它 `load_dotenv`，否则全局回落。
 3. 读 `LLM_PROVIDER` 与对应的 `*_API_KEY` / `*_BASE_URL` / `*_MODEL`。
-4. 构造 `PermissionEngine(project_root=wd)` 与 `MemoryManager(project_root=wd/.agentao, global_root=~/.agentao)`。
+4. 构造 `PermissionEngine(project_root=wd, user_root=user_root())`，构造 `MemoryManager`（项目 store 用 `SQLiteMemoryStore.open_or_memory(wd / ".agentao" / "memory.db")`，用户 store 用 `SQLiteMemoryStore.open(...)`，写不进去就降级到禁用），构造 `FileBackedMCPRegistry(project_root=wd, user_root=user_root())`（#16/#17 起）。
 5. 把所有显式参数传入 `Agentao(...)`。**调用方传入的 `**overrides` 优先**。
 
 整个代码库里只有这一处会在启动时读 env / dotenv / `.agentao/*.json`。不希望发生这些副作用的宿主直接构造 `Agentao` 即可。
@@ -52,17 +52,22 @@ Agentao(
     transport:                  Optional[Transport]        = None,
     plan_session:               Optional[PlanSession]      = None,
     *,
-    working_directory:  Optional[Path]                     = None,
+    working_directory:  Path,                                  # 0.3.0 起必传
     extra_mcp_servers:  Optional[Dict[str, Dict[str, Any]]] = None,
-    # ── 嵌入式 harness 显式注入参数（0.2.16+） ──
+    # ── 嵌入式 harness 显式注入参数 ──
     llm_client:           Optional[LLMClient]         = None,
     logger:               Optional[logging.Logger]    = None,
     memory_manager:       Optional[MemoryManager]     = None,
     skill_manager:        Optional[SkillManager]      = None,
     project_instructions: Optional[str]               = None,
     mcp_manager:          Optional[McpClientManager]  = None,
+    mcp_registry:         Optional[MCPRegistry]       = None,  # 0.3.0+ (#17)
     filesystem:           Optional[FileSystem]        = None,
     shell:                Optional[ShellExecutor]     = None,
+    # ── 可选启用的子系统（None = 完全禁用） ──
+    bg_store:             Optional[BackgroundTaskStore] = None,
+    sandbox_policy:       Optional[SandboxPolicy]       = None,
+    replay_config:        Optional[ReplayConfig]        = None,
 )
 ```
 
@@ -79,7 +84,7 @@ Agentao(
 
 多租户/多会话场景下：每个会话可以有**不同的凭据**（比如按客户区分），详见第 7.2 节。
 
-## 嵌入式 harness 显式注入（0.2.16+）
+## 嵌入式 harness 显式注入
 
 不希望 `Agentao()` 用默认值构造某个子系统时，把你自己的实例注入进来：
 
@@ -91,8 +96,12 @@ Agentao(
 | `skill_manager` | `SkillManager` | 跳过自带技能扫描，按你给的实例原样使用 |
 | `project_instructions` | `str` | 跳过 `<wd>/AGENTAO.md` 的磁盘读取，按你给的字符串原样使用 |
 | `mcp_manager` | `McpClientManager` | 不读 `.agentao/mcp.json`，由你掌控 MCP 生命周期 |
+| `mcp_registry` (0.3.0+) | `MCPRegistry` | 替代 `init_mcp` 里的隐式 `load_mcp_config(...)`。默认 `FileBackedMCPRegistry` 与 #17 之前的磁盘读一致；要程序化注册就传 `InMemoryMCPRegistry`。与 `mcp_manager=` 互斥。 |
 | `filesystem` | `FileSystem` | 文件 / 搜索工具走你提供的 `FileSystem`（详见 6.4 节） |
 | `shell` | `ShellExecutor` | Shell 工具走你提供的 `ShellExecutor` |
+| `bg_store`（可选） | `BackgroundTaskStore` | 后台工具状态持久化。`None` 时 `check_background_agent` 等不注册，子 agent 的 `run_in_background` 字段从 schema 里抠掉。 |
+| `sandbox_policy`（可选） | `SandboxPolicy` | Shell 沙箱。`None` 时不套 macOS `sandbox-exec`。 |
+| `replay_config`（可选） | `ReplayConfig` | 确定性回放。`None` 时使用空 recorder。 |
 
 这是宿主在"我要 Agentao 的运行时但不要它的 CLI 风格隐式读取"场景下的桥梁。可以自由组合：
 
@@ -178,16 +187,16 @@ agent = Agentao(transport=transport, working_directory=workdir, ...)
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `working_directory` | `Path` | `None`（已废弃；0.3.0 起变成必传） | **多实例嵌入必须显式传入** |
+| `working_directory` | `Path` | —— （0.3.0 起必传） | **构造时冻结** |
 
-**为什么重要**：
-- `None` 时，Agent 每次访问当前目录都读实时 `Path.cwd()` ——CLI 行为，用户 `cd` 进去就生效；0.2.16 起会发 `DeprecationWarning`
-- 传入具体 `Path` 时，Agent 在构造时**冻结**到这个目录，之后所有文件操作、`AGENTAO.md`、`.agentao/` 配置、Shell CWD 全部相对它
+**为什么重要**（0.3.0 起）：
+- 必传关键字参数——软废弃周期已结束。不传会从 Python 签名分派直接抛 `TypeError`。
+- 路径在构造时被 `expanduser().resolve()` 一次冻结。之后所有文件操作、`AGENTAO.md`、`.agentao/` 配置、Shell CWD 全部相对它；宿主进程后续 `os.chdir` 不会影响已构造好的 Agent。
 
-嵌入场景（Web 服务器、ACP sessions）里，`Path.cwd()` 是进程全局状态；两个并发会话会**互相污染**。务必为每个 Agent 实例显式 `working_directory=`。
+嵌入场景（Web 服务器、ACP sessions）里，`Path.cwd()` 是进程全局状态；两个并发会话原本会**互相污染**——必传 `working_directory` 把这个坑封住了。
 
 ```python
-# ❌ 不好：两个会话会串目录，还会触发 DeprecationWarning
+# ❌ 0.3.0 之前：依赖 Path.cwd()——现在直接 TypeError
 agent_a = Agentao(...)
 agent_b = Agentao(...)
 

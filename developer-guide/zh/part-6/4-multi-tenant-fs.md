@@ -84,9 +84,15 @@ def cleanup_session_workdir(workdir: Path):
 ## 用户级记忆的陷阱
 
 ```python
+# 工厂默认接进来的形态——注意 user_store 那条。
+from agentao.memory import MemoryManager, SQLiteMemoryStore
 agent._memory_manager = MemoryManager(
-    project_root=working_directory / ".agentao",
-    global_root=Path.home() / ".agentao",   # ← 这是进程级别的！
+    project_store=SQLiteMemoryStore.open_or_memory(
+        working_directory / ".agentao" / "memory.db"
+    ),
+    user_store=SQLiteMemoryStore.open(
+        Path.home() / ".agentao" / "memory.db"   # ← 这是进程级别的！
+    ),
 )
 ```
 
@@ -96,8 +102,10 @@ agent._memory_manager = MemoryManager(
 
 ```python
 agent._memory_manager = MemoryManager(
-    project_root=workdir / ".agentao",
-    global_root=None,    # 完全不用用户级
+    project_store=SQLiteMemoryStore.open_or_memory(
+        workdir / ".agentao" / "memory.db"
+    ),
+    # user_store=None — 完全不用用户级
 )
 ```
 

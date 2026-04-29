@@ -23,18 +23,18 @@ Project-level = "facts specific to this project" (project codename, team convent
 
 ## Graceful degradation
 
-In ACP subprocesses, restricted containers, or read-only filesystems, the memory DB may not be writable. Agentao's policy (`agentao/memory/manager.py:59-90`):
+In ACP subprocesses, restricted containers, or read-only filesystems, the memory DB may not be writable. Since 0.3.0 (Issue #16), the fallback policy lives at the storage layer (`SQLiteMemoryStore.open_or_memory`) and the embedding factory wires it in:
 
 ```
-try to open <cwd>/.agentao/memory.db
+SQLiteMemoryStore.open_or_memory(<cwd>/.agentao/memory.db)
  ├─ success → normal usage
  └─ fail (OSError / sqlite3.Error)
-     → fallback to SQLiteMemoryStore(":memory:")
+     → return SQLiteMemoryStore(":memory:")
      → log warning
      → agent keeps starting (no crash)
 ```
 
-Same for user-level. **Memory never crashes agent construction** — worst case is loss of cross-session persistence.
+The user-scope store uses `SQLiteMemoryStore.open(...)` (strict): a failure disables the user scope for the session rather than degrading to `:memory:` (silently re-routing user-scope writes into project would conflate the scopes). **Memory never crashes agent construction** — worst case is loss of cross-session persistence.
 
 ## How to use it while embedding
 
@@ -50,35 +50,45 @@ For **full isolation** across agents (multi-tenant), passing distinct `working_d
 
 ### Disable user-level memory
 
-By default the agent reads/writes `~/.agentao/memory.db`. If your product shouldn't pull in any "user-level" state:
+By default the factory reads/writes `~/.agentao/memory.db`. If your product shouldn't pull in any "user-level" state, build the manager yourself with `user_store=None` and pass it explicitly (post-#16, `MemoryManager` takes pre-built stores):
 
 ```python
-# Must replace the memory manager directly
-from agentao.memory import MemoryManager
+from agentao.memory import MemoryManager, SQLiteMemoryStore
 
-agent = Agentao(working_directory=Path("/tmp/sess"))
-agent._memory_manager = MemoryManager(
-    project_root=agent.working_directory / ".agentao",
-    global_root=None,   # no user scope
+workdir = Path("/tmp/sess")
+agent = Agentao(
+    working_directory=workdir,
+    memory_manager=MemoryManager(
+        project_store=SQLiteMemoryStore.open_or_memory(
+            workdir / ".agentao" / "memory.db"
+        ),
+        # user_store=None — no cross-project memory
+    ),
+    llm_client=...,
 )
 ```
 
-⚠️ This touches a private attribute (`_memory_manager`). The name could change in future versions. If you plan to rely on this, file an issue upstream requesting a public config.
-
 ### Disable memory entirely
 
-Simplest way: point the project store at `:memory:`:
+Simplest way: point both stores at `:memory:` (or just project; user is `None` by default on the bare constructor):
 
 ```python
-from agentao.memory import MemoryManager
-from agentao.memory.storage import SQLiteMemoryStore
+from agentao.memory import MemoryManager, SQLiteMemoryStore
 
-agent = Agentao(working_directory=Path("/tmp/sess"))
-agent._memory_manager.project_store = SQLiteMemoryStore(":memory:")
-agent._memory_manager.user_store = None
+agent = Agentao(
+    working_directory=Path("/tmp/sess"),
+    memory_manager=MemoryManager(
+        project_store=SQLiteMemoryStore(":memory:"),
+    ),
+    llm_client=...,
+)
 ```
 
 Works for the session, forgotten on process exit.
+
+### Custom memory backend (Redis / Postgres / remote API)
+
+The `MemoryStore` capability protocol (`agentao.capabilities.MemoryStore`) is the supported injection point — implement the 15-method contract once and pass an instance as `project_store=` / `user_store=`. See `docs/EMBEDDING.md` and `agentao/capabilities/memory.py` for the surface.
 
 ## The two prompt blocks
 
@@ -144,19 +154,20 @@ Your host can call `MemoryManager` directly to build a user-facing "view / delet
 ```python
 mm = agent._memory_manager
 
-# List all project-scope memories
-for record in mm.list_memories(scope="project"):
+# List all project-scope memories (helper returns project + user when scope=None)
+for record in mm.get_all_entries(scope="project"):
     print(record.title, "—", record.content[:60])
 
 # Search
 for record in mm.search("typescript"):
     print(record)
 
-# Soft delete
-mm.soft_delete(record_id)
+# Soft delete by id (use ``delete_by_title`` for the human-friendly key)
+mm.delete(record_id)
 
-# Full clear (including session summaries)
-mm.clear_all()
+# Full clear: soft-delete every memory + drop every session summary
+mm.clear()                       # both scopes; pass scope="project" or "user" to narrow
+mm.clear_all_session_summaries()
 ```
 
 **Compliance value**: "show the user what AI remembers about them" and a "forget me" button are often SaaS hard requirements.
@@ -186,6 +197,6 @@ Two users' agents pointing at the same default `Path.cwd()` or `working_director
 
 ### ❌ Forgetting memory outlives `clear_history()`
 
-A user clicks "new conversation" → `agent.clear_history()` — that clears session but not memory. If "new conversation" should forget everything, also call `MemoryManager.clear_all()`.
+A user clicks "new conversation" → `agent.clear_history()` — that clears session but not memory. If "new conversation" should forget everything, also call `MemoryManager.clear()` + `clear_all_session_summaries()`.
 
 → Next: [5.6 System Prompt Customization](./6-system-prompt)

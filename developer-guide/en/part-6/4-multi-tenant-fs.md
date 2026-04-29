@@ -83,9 +83,15 @@ def cleanup_session_workdir(workdir: Path):
 ## The user-level memory trap
 
 ```python
+# What the factory wires by default — note the user_store path.
+from agentao.memory import MemoryManager, SQLiteMemoryStore
 agent._memory_manager = MemoryManager(
-    project_root=working_directory / ".agentao",
-    global_root=Path.home() / ".agentao",   # ← process-global!
+    project_store=SQLiteMemoryStore.open_or_memory(
+        working_directory / ".agentao" / "memory.db"
+    ),
+    user_store=SQLiteMemoryStore.open(
+        Path.home() / ".agentao" / "memory.db"   # ← process-global!
+    ),
 )
 ```
 
@@ -95,8 +101,10 @@ Even with `working_directory` isolated, `~/.agentao/memory.db` is **process-glob
 
 ```python
 agent._memory_manager = MemoryManager(
-    project_root=workdir / ".agentao",
-    global_root=None,    # no user scope
+    project_store=SQLiteMemoryStore.open_or_memory(
+        workdir / ".agentao" / "memory.db"
+    ),
+    # user_store=None — no cross-project memory
 )
 ```
 
