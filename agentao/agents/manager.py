@@ -158,6 +158,7 @@ class AgentManager:
         permission_mode_getter: Optional[Callable] = None,
         permission_user_root_getter: Optional[Callable] = None,
         sandbox_policy: Optional[Any] = None,
+        subagent_emitter: Optional[Any] = None,
     ) -> List[RegistrableTool]:
         """Create an :class:`AgentToolWrapper` per agent definition.
 
@@ -185,6 +186,7 @@ class AgentManager:
                 permission_mode_getter=permission_mode_getter,
                 permission_user_root_getter=permission_user_root_getter,
                 sandbox_policy=sandbox_policy,
+                subagent_emitter=subagent_emitter,
             )
             for defn in self.definitions.values()
         ]

@@ -24,13 +24,17 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING, Tuple
 
 from ..agents import TaskComplete
 from ..sandbox import SandboxMisconfiguredError, SandboxPolicy
 from ..tools.base import AsyncToolBase
 from ..transport import AgentEvent, EventType
+from . import identity as _identity
 from .tool_planning import ToolCallDecision, ToolCallPlan
+
+if TYPE_CHECKING:  # pragma: no cover - import-time only
+    from ..harness.projection import HarnessToolEmitter
 
 
 # Bounded ack timeout for AsyncTool cancellation. Long enough for typical
@@ -86,10 +90,13 @@ class ToolExecutor:
         transport,
         logger,
         sandbox_policy: Optional[SandboxPolicy] = None,
+        *,
+        harness_tool_emitter: Optional["HarnessToolEmitter"] = None,
     ):
         self._transport = transport
         self._logger = logger
         self._sandbox_policy = sandbox_policy
+        self._harness_tool_emitter = harness_tool_emitter
         # Adapter is stateless; reuse a single instance across calls.
         from ..plugins.hooks import ClaudeHookPayloadAdapter
         self._hook_adapter = ClaudeHookPayloadAdapter()
@@ -177,7 +184,10 @@ class ToolExecutor:
         tool = plan.tool
         tc = plan.tool_call
         decision = plan.decision
-        call_id = tc.id
+        # ``plan.tool_call_id`` is the planner's normalized, non-empty id;
+        # use it everywhere downstream so providers that omit ``tc.id``
+        # still get correlated public lifecycle events.
+        call_id = plan.tool_call_id
         t0 = time.monotonic()
 
         self._transport.emit(AgentEvent(EventType.TOOL_START, {
@@ -197,6 +207,9 @@ class ToolExecutor:
                     f"by the current permission rules."
                 )
             self._emit_complete(fn, call_id, "cancelled", 0, "denied by permission engine")
+            self._emit_harness_terminal_cancelled(
+                fn, call_id, summary="denied by permission engine",
+            )
             return call_id, ToolExecutionResult(
                 fn_name=fn, result=result_text, status="cancelled",
                 duration_ms=0, error="denied by permission engine",
@@ -208,6 +221,9 @@ class ToolExecutor:
                 f"The user declined to execute {fn}."
             )
             self._emit_complete(fn, call_id, "cancelled", 0, "cancelled by user")
+            self._emit_harness_terminal_cancelled(
+                fn, call_id, summary="cancelled by user",
+            )
             return call_id, ToolExecutionResult(
                 fn_name=fn, result=result_text, status="cancelled",
                 duration_ms=0, error="cancelled by user",
@@ -219,12 +235,30 @@ class ToolExecutor:
         if cancellation_token and hasattr(tool, "_cancellation_token"):
             tool._cancellation_token = cancellation_token
 
+        # Public ``ToolLifecycleEvent(started)`` fires after the
+        # permission/cancel guards but before execution. The
+        # PermissionDecisionEvent for the same tool_call_id is emitted
+        # earlier by the runner so the ordering contract holds.
+        harness_started_at: Optional[str] = None
+        if self._harness_tool_emitter is not None:
+            try:
+                harness_started_at = self._harness_tool_emitter.started(
+                    tool_call_id=call_id, tool_name=fn,
+                )
+            except Exception:
+                harness_started_at = None
+
         # Pre-execution cancellation check (e.g. Ctrl+C fired while other
         # parallel tools were executing).
         if cancellation_token and cancellation_token.is_cancelled:
             result_text = f"[Operation Cancelled] {cancellation_token.reason}"
             duration_ms = round((time.monotonic() - t0) * 1000)
             self._emit_complete(fn, call_id, "cancelled", duration_ms, "cancelled by user")
+            self._emit_harness_terminal_cancelled(
+                fn, call_id,
+                started_at=harness_started_at,
+                summary="cancelled by user",
+            )
             return call_id, ToolExecutionResult(
                 fn_name=fn, result=result_text, status="cancelled",
                 duration_ms=duration_ms, error="cancelled by user",
@@ -255,6 +289,7 @@ class ToolExecutor:
         # ``_emit_complete`` has already fired inside ``_run_async_tool``
         # when this is set; the success/error tail below must short-circuit.
         async_cancel_outcome: Optional[ToolExecutionResult] = None
+        error_type_name: Optional[str] = None
         with tool_locks[id(tool)]:
             if hasattr(tool, "output_callback"):
                 tool.output_callback = (
@@ -287,6 +322,7 @@ class ToolExecutor:
             except SandboxMisconfiguredError as sbe:
                 errored = True
                 error_msg = "sandbox misconfigured"
+                error_type_name = type(sbe).__name__
                 result_text = (
                     f"[Sandbox error] {sbe}\n\n"
                     f"The command was NOT executed. This is fail-closed "
@@ -297,6 +333,7 @@ class ToolExecutor:
             except Exception as exc:
                 errored = True
                 error_msg = str(exc)[:200]
+                error_type_name = type(exc).__name__
                 result_text = f"Error executing {fn}: {str(exc)}"
             finally:
                 if hasattr(tool, "output_callback"):
@@ -304,13 +341,53 @@ class ToolExecutor:
 
         # AsyncTool token-cancel short-circuit: TOOL_COMPLETE already
         # emitted inside _run_async_tool; bypass the success/error tail
-        # (no post-tool hook, matches DENY / pre-cancel paths).
+        # (no post-tool hook, matches DENY / pre-cancel paths). The
+        # public harness terminal event is emitted from inside
+        # _run_async_tool too — see _emit_async_cancel_harness().
         if async_cancel_outcome is not None:
+            self._emit_harness_terminal_cancelled(
+                fn, call_id,
+                started_at=harness_started_at,
+                summary=async_cancel_outcome.error or "cancelled",
+            )
             return call_id, async_cancel_outcome
 
         status = "error" if errored else "ok"
         duration_ms = round((time.monotonic() - t0) * 1000)
         self._emit_complete(fn, call_id, status, duration_ms, error_msg)
+        if self._harness_tool_emitter is not None:
+            try:
+                if errored:
+                    # ``error_msg`` is ``str(exc)[:200]`` — exception text
+                    # routinely contains argument values, file contents,
+                    # or shell stdout. The public envelope already
+                    # surfaces ``error_type``; raw exception text would
+                    # leak through ``summary`` because the projection's
+                    # ``redact_summary`` only collapses whitespace and
+                    # truncates. Surface a generic terminal label so
+                    # hosts get a stable, non-sensitive line.
+                    self._harness_tool_emitter.failed(
+                        tool_call_id=call_id,
+                        tool_name=fn,
+                        started_at=harness_started_at or _identity.utc_now_rfc3339(),
+                        error_type=error_type_name,
+                        summary=f"{fn} failed",
+                    )
+                else:
+                    # Same redaction boundary: ``result_text`` is the raw
+                    # tool output and may contain tokens, file contents
+                    # or shell stdout. Hosts that need the full output
+                    # consume the internal ``TOOL_RESULT`` transport
+                    # event (with its own redaction policy); the public
+                    # harness summary stays a non-sensitive status line.
+                    self._harness_tool_emitter.completed(
+                        tool_call_id=call_id,
+                        tool_name=fn,
+                        started_at=harness_started_at or _identity.utc_now_rfc3339(),
+                        summary=f"{fn} succeeded",
+                    )
+            except Exception:
+                pass
 
         if errored:
             self._dispatch_post_tool_failure_hook(
@@ -361,7 +438,7 @@ class ToolExecutor:
         tool = plan.tool
         assert isinstance(tool, AsyncToolBase)
         fn = plan.function_name
-        call_id = plan.tool_call.id
+        call_id = plan.tool_call_id
 
         runtime_loop = (
             cancellation_token.runtime_loop
@@ -453,6 +530,36 @@ class ToolExecutor:
             "tool": fn, "call_id": call_id, "status": status,
             "duration_ms": duration_ms, "error": error,
         }))
+
+    def _emit_harness_terminal_cancelled(
+        self,
+        fn: str,
+        call_id: str,
+        *,
+        started_at: Optional[str] = None,
+        summary: Optional[str] = None,
+    ) -> None:
+        """Emit a public ``cancelled`` terminal envelope, best-effort.
+
+        Used by every short-circuit cancel path (DENY, user cancel,
+        pre-execution token cancel, AsyncTool token cancel). When the
+        ALLOW path never reached the ``started`` emit (e.g. DENY), the
+        terminal event still needs an RFC 3339 ``started_at`` — we
+        synthesize one from the current time so the wire shape stays
+        valid; hosts can detect this case via
+        ``started_at == completed_at``.
+        """
+        if self._harness_tool_emitter is None:
+            return
+        try:
+            self._harness_tool_emitter.cancelled(
+                tool_call_id=call_id,
+                tool_name=fn,
+                started_at=started_at or _identity.utc_now_rfc3339(),
+                summary=summary,
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Plugin hook dispatch (each helper short-circuits on empty rules)

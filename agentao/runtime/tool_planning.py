@@ -17,8 +17,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from ..permissions import PermissionDecision, PermissionEngine
+from ..permissions import PermissionDecision, PermissionDecisionDetail, PermissionEngine
 from ..tools import RegistrableTool, ToolRegistry
+from . import identity as _identity
 from .arg_repair import parse_tool_arguments
 from .name_repair import repair_tool_name
 
@@ -31,6 +32,37 @@ DOOM_LOOP_THRESHOLD = 3
 # a parse-doom-loop. Without this, a model that keeps inventing fresh
 # garbage JSON for the same tool would loop forever.
 PARSE_FAILURE_THRESHOLD = 3
+
+
+def _synth(
+    decision: PermissionDecision,
+    reason: str,
+) -> PermissionDecisionDetail:
+    """Synthesize a public-event detail for paths with no matched rule."""
+    return PermissionDecisionDetail(
+        decision, matched_rule=None, reason=reason,
+    )
+
+
+def _ensure_tool_call_id(tool_call: Any) -> str:
+    """Return a stable, non-empty ``tool_call_id`` for ``tool_call``.
+
+    The OpenAI SDK's ``ChatCompletionMessageToolCall`` is mutable, so we
+    write the normalized id back onto the upstream object too. The
+    assistant message in conversation history references the same object,
+    so the API tool_result we send next round shares a matching id even
+    when the provider returned ``None`` or an empty string. Mutation is
+    best-effort: read-only or unusual shapes fall through with the
+    normalized value still returned for the planner to store on the plan.
+    """
+    raw = getattr(tool_call, "id", None)
+    normalized = _identity.normalize_tool_call_id(raw)
+    if raw != normalized:
+        try:
+            tool_call.id = normalized
+        except (AttributeError, TypeError):
+            pass
+    return normalized
 
 
 def make_tool_result_message(
@@ -74,6 +106,32 @@ class ToolCallPlan:
     function_args: Dict[str, Any]
     tool: RegistrableTool
     decision: ToolCallDecision
+    # Normalized, non-empty ``tool_call_id`` for downstream phases. The
+    # planner computes this once via :func:`identity.normalize_tool_call_id`
+    # and best-effort mirrors it back onto ``tool_call.id`` so the API
+    # tool_result message and the public lifecycle events share the same
+    # identifier even for providers that omit ids. Always a string.
+    tool_call_id: str = ""
+    # Public-event provenance: the structured permission detail (matched
+    # rule, reason, raw outcome) the runtime needs to emit a
+    # :class:`PermissionDecisionEvent`. ``None`` means the engine
+    # produced no rule match and the runner fell back to the tool's
+    # own ``requires_confirmation`` attribute — in that case the event
+    # still fires (with ``matched_rule=None``), classified by the
+    # decision the planner finally settled on.
+    permission_detail: Optional[PermissionDecisionDetail] = None
+
+    def __post_init__(self) -> None:
+        # Direct construction sites (tests, custom planners that bypass
+        # ``ToolCallPlanner``) may leave ``tool_call_id`` unset. Derive
+        # it from the upstream tool_call.id so production paths keep
+        # working without forcing every callsite to repeat the planner's
+        # normalization step. The planner's own callsite always passes a
+        # non-empty value, so this branch is a no-op there.
+        if not self.tool_call_id:
+            self.tool_call_id = _identity.normalize_tool_call_id(
+                getattr(self.tool_call, "id", None),
+            )
 
 
 @dataclass
@@ -130,6 +188,13 @@ class ToolCallPlanner:
         for tool_call in tool_calls:
             function_name = tool_call.function.name
             function_args_raw = tool_call.function.arguments
+            # Normalize the provider-supplied tool_call_id once per call so
+            # every downstream phase (permission events, lifecycle events,
+            # tool-result formatting, late doom-loop placeholders) shares
+            # the same stable string. Best-effort mirror onto ``tool_call.id``
+            # keeps the API tool_result message in sync with the assistant
+            # message that ToolRunner echoed back to the LLM.
+            normalized_id = _ensure_tool_call_id(tool_call)
 
             doom_key = (function_name, function_args_raw)
             self._doom_counter[doom_key] += 1
@@ -139,7 +204,7 @@ class ToolCallPlanner:
                     f"{DOOM_LOOP_THRESHOLD}+ times with identical args"
                 )
                 result.early_messages.append(make_tool_result_message(
-                    tool_call.id, function_name,
+                    normalized_id, function_name,
                     f"[Doom-loop detected] Tool '{function_name}' was called "
                     f"{DOOM_LOOP_THRESHOLD} times with identical arguments. "
                     f"Execution stopped to prevent an infinite loop. "
@@ -161,7 +226,7 @@ class ToolCallPlanner:
                         f"unparseable arguments {PARSE_FAILURE_THRESHOLD}+ times"
                     )
                     result.early_messages.append(make_tool_result_message(
-                        tool_call.id, function_name,
+                        normalized_id, function_name,
                         f"[Parse-failure doom-loop] Tool '{function_name}' "
                         f"produced unparseable arguments "
                         f"{PARSE_FAILURE_THRESHOLD} times. Stopping to "
@@ -171,7 +236,7 @@ class ToolCallPlanner:
                     result.doom_loop_triggered = True
                     return result
                 result.early_messages.append(make_tool_result_message(
-                    tool_call.id, function_name,
+                    normalized_id, function_name,
                     f"Error: could not parse arguments for '{function_name}': {exc}. "
                     f"Please retry with valid JSON.",
                 ))
@@ -196,11 +261,11 @@ class ToolCallPlanner:
                 else:
                     self._logger.warning(str(exc))
                     result.early_messages.append(make_tool_result_message(
-                        tool_call.id, function_name, str(exc),
+                        normalized_id, function_name, str(exc),
                     ))
                     continue
 
-            decision = self._decide(
+            decision, permission_detail = self._decide(
                 tool, function_name, function_args, readonly_mode,
             )
 
@@ -210,6 +275,8 @@ class ToolCallPlanner:
                 function_args=function_args,
                 tool=tool,
                 decision=decision,
+                tool_call_id=normalized_id,
+                permission_detail=permission_detail,
             ))
 
         return result
@@ -220,21 +287,39 @@ class ToolCallPlanner:
         function_name: str,
         function_args: Dict[str, Any],
         readonly_mode: bool,
-    ) -> ToolCallDecision:
-        # Readonly mode short-circuits everything else for non-read-only tools.
+    ) -> tuple[ToolCallDecision, Optional[PermissionDecisionDetail]]:
+        """Return both the routing decision and the public-event detail.
+
+        For the readonly-mode short-circuit and for the
+        ``requires_confirmation`` fallback we synthesize a detail with
+        ``matched_rule=None`` so the public event still fires with the
+        right ``outcome``.
+        """
         if readonly_mode and not tool.is_read_only:
-            return ToolCallDecision.DENY
+            return ToolCallDecision.DENY, _synth(
+                PermissionDecision.DENY,
+                "readonly mode blocks non-read-only tools",
+            )
 
-        if self._permission_engine is not None:
-            engine = self._permission_engine.decide(function_name, function_args)
-            if engine == PermissionDecision.ALLOW:
-                return ToolCallDecision.ALLOW
-            if engine == PermissionDecision.DENY:
-                return ToolCallDecision.DENY
-            # engine returned ASK → fall through to the tool's own setting
+        engine_detail = (
+            self._permission_engine.decide_detail(function_name, function_args)
+            if self._permission_engine is not None
+            else None
+        )
+        if engine_detail is not None and engine_detail.decision is PermissionDecision.ALLOW:
+            return ToolCallDecision.ALLOW, engine_detail
+        if engine_detail is not None and engine_detail.decision is PermissionDecision.DENY:
+            return ToolCallDecision.DENY, engine_detail
 
-        return (
-            ToolCallDecision.ASK
-            if tool.requires_confirmation
-            else ToolCallDecision.ALLOW
+        # Engine returned ASK or no match: fall through to the tool's
+        # own confirmation setting, preserving the engine detail so the
+        # public event still reports any matched rule.
+        if tool.requires_confirmation:
+            return ToolCallDecision.ASK, engine_detail or _synth(
+                PermissionDecision.ASK,
+                "tool requires_confirmation fallback",
+            )
+        return ToolCallDecision.ALLOW, engine_detail or _synth(
+            PermissionDecision.ALLOW,
+            "no rule matched; tool does not require confirmation",
         )

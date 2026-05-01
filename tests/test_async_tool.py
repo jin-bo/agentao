@@ -448,6 +448,7 @@ def test_sync_chat_runs_loop_independent_async_tool():
     tool = _AsyncEcho()
     plan = _make_plan(tool, args={"x": "hello"})
     plan.tool_call.id = "sync-call"
+    plan.tool_call_id = "sync-call"
 
     results = executor.execute_batch([plan], cancellation_token=None)
     assert results["sync-call"].status == "ok"
@@ -465,6 +466,7 @@ def test_sync_dispatcher_does_not_pass_ctx_kwargs_to_sync_tool():
     tool = _StrictSyncTool()
     plan = _make_plan(tool, args={})
     plan.tool_call.id = "strict-call"
+    plan.tool_call_id = "strict-call"
 
     results = executor.execute_batch([plan], cancellation_token=None)
     assert results["strict-call"].status == "ok"
@@ -557,6 +559,7 @@ def _drive_async_cancel(
     executor, transport = _make_executor()
     plan = _make_plan(tool)
     plan.tool_call.id = "cancel-call"
+    plan.tool_call_id = "cancel-call"
 
     captured: Dict[str, Any] = {
         "results": None,

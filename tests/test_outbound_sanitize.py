@@ -402,3 +402,46 @@ class TestNormalizeToolCallsFrozenFallback:
         assert cleaned[0].id == "x�"
         assert cleaned[0].function.name == "write_file"
         assert cleaned[0].function.arguments == "{}"
+
+
+class TestNormalizeToolCallsMissingId:
+    """Regression: providers that return a missing or empty ``tool_call.id``
+    used to leave the assistant message with that id while the planner
+    later synthesized a UUID4 for the tool_result. Strict Chat Completions
+    APIs reject the resulting mismatch. ``normalize_tool_calls`` now
+    synthesizes the fallback id so history and tool_result share it."""
+
+    @pytest.mark.parametrize("missing_id", [None, "", "   "])
+    def test_missing_id_normalized_to_nonempty_string(self, missing_id):
+        tcs = [make_tool_call(missing_id, "name", "{}")]
+        cleaned, changed = normalize_tool_calls(tcs)
+        assert changed is True
+        assert isinstance(cleaned[0].id, str)
+        assert cleaned[0].id  # non-empty
+        # Sanity: looks like a UUID4 hex form.
+        assert "-" in cleaned[0].id
+
+    def test_history_serialization_and_runtime_view_share_id(self):
+        # End-to-end of the Codex P1 fix: the assistant message dict the
+        # chat loop appends to history and the cleaned list the runner
+        # iterates must carry the same id, so the next API request can
+        # correlate the tool_result back to the assistant tool_call.
+        tcs = [make_tool_call(None, "write_file", '{"path":"a"}')]
+        cleaned, _ = normalize_tool_calls(tcs)
+        history_dict = _serialize_tool_call(cleaned[0])
+        assert history_dict["id"] == cleaned[0].id
+        assert history_dict["id"]  # non-empty
+
+    def test_planner_reuses_normalized_id_without_resynthesizing(self):
+        # The planner's ``_ensure_tool_call_id`` is a safety net that runs
+        # again on whatever ``normalize_tool_calls`` produced. When the id
+        # is already a non-empty string, it must be preserved verbatim —
+        # otherwise the assistant-message id and the plan id diverge
+        # again. This test pins the contract: id stable end-to-end.
+        from agentao.runtime.tool_planning import _ensure_tool_call_id
+
+        tcs = [make_tool_call(None, "name", "{}")]
+        cleaned, _ = normalize_tool_calls(tcs)
+        normalized_once = cleaned[0].id
+        normalized_twice = _ensure_tool_call_id(cleaned[0])
+        assert normalized_twice == normalized_once

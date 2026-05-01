@@ -97,7 +97,7 @@ class ToolResultFormatter:
         """
         messages: List[Dict[str, Any]] = []
         for plan in plans:
-            messages.append(self._format_one(plan, exec_results[plan.tool_call.id]))
+            messages.append(self._format_one(plan, exec_results[plan.tool_call_id]))
         return messages
 
     # ------------------------------------------------------------------
@@ -111,7 +111,7 @@ class ToolResultFormatter:
     ) -> Dict[str, Any]:
         fn_name = info.fn_name
         result = info.result
-        call_id = plan.tool_call.id
+        call_id = plan.tool_call_id
 
         # Capture the ORIGINAL result for the replay's tool_result event —
         # before truncation rewrites ``result`` into a compact conversation

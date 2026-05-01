@@ -1,7 +1,7 @@
 """Tool execution pipeline for Agentao."""
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING, Tuple
 
 from ..permissions import PermissionEngine
 from ..sandbox import SandboxPolicy
@@ -17,8 +17,20 @@ from .tool_planning import (
 )
 from .tool_result_formatter import ToolResultFormatter
 
+if TYPE_CHECKING:  # pragma: no cover - import-time only
+    from ..harness.projection import HarnessPermissionEmitter, HarnessToolEmitter
+
 
 _DOOM_HALT_MESSAGE = "Tool not executed (halted by doom-loop detection)."
+
+# Maps the planner's routing enum to the public PermissionDecisionEvent
+# outcome literal. ``CANCELLED`` is intentionally absent: the public
+# event is emitted pre-Phase 2, before any user-cancel mutation.
+_DECISION_OUTCOME = {
+    ToolCallDecision.ALLOW: "allow",
+    ToolCallDecision.DENY: "deny",
+    ToolCallDecision.ASK: "prompt",
+}
 
 
 class ToolRunner:
@@ -40,6 +52,9 @@ class ToolRunner:
         transport,  # Transport protocol instance
         logger,
         sandbox_policy: Optional[SandboxPolicy] = None,
+        *,
+        harness_tool_emitter: Optional["HarnessToolEmitter"] = None,
+        harness_permission_emitter: Optional["HarnessPermissionEmitter"] = None,
         # ── Deprecated: kept for backward compatibility ──────────────────────
         confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
         step_callback: Optional[Callable[[Optional[str], Dict[str, Any]], None]] = None,
@@ -51,8 +66,13 @@ class ToolRunner:
         self._transport = transport
         self._logger = logger
         self._sandbox_policy = sandbox_policy
+        self._harness_tool_emitter = harness_tool_emitter
+        self._harness_permission_emitter = harness_permission_emitter
         self._planner = ToolCallPlanner(tools, permission_engine, logger)
-        self._executor = ToolExecutor(transport, logger, sandbox_policy)
+        self._executor = ToolExecutor(
+            transport, logger, sandbox_policy,
+            harness_tool_emitter=harness_tool_emitter,
+        )
         self._formatter = ToolResultFormatter(transport, logger)
         self.readonly_mode: bool = False
         # Plugin hook rules — set by the agent after plugin loading.
@@ -140,12 +160,18 @@ class ToolRunner:
             }
             for _plan in planning.plans:
                 result_messages.append(make_tool_result_message(
-                    _plan.tool_call.id, _plan.function_name, _DOOM_HALT_MESSAGE,
+                    _plan.tool_call_id, _plan.function_name, _DOOM_HALT_MESSAGE,
                 ))
-                seen_ids.add(_plan.tool_call.id)
+                seen_ids.add(_plan.tool_call_id)
+            # Calls past the doom-loop trip never reached the planner, so
+            # their ids weren't normalized in place. Normalize here too —
+            # a provider-omitted id would otherwise produce a placeholder
+            # the strict API rejects (tool_call_id must be a string) and
+            # break the next round-trip.
+            from .identity import normalize_tool_call_id as _norm_id
             for _tc in tool_calls:
-                _tc_id = getattr(_tc, "id", None)
-                if _tc_id is None or _tc_id in seen_ids:
+                _tc_id = _norm_id(getattr(_tc, "id", None))
+                if _tc_id in seen_ids:
                     continue
                 _fn = getattr(_tc, "function", None)
                 _fn_name = getattr(_fn, "name", "?") if _fn is not None else "?"
@@ -158,6 +184,15 @@ class ToolRunner:
         _plans = planning.plans
         if not _plans:
             return False, result_messages
+
+        # PermissionDecisionEvent must precede the tool's started event
+        # for the same tool_call_id; firing here, before Phase 2 / 3,
+        # honours that. Skip the per-plan loop entirely when no host is
+        # subscribed — the alternative builds Pydantic models the
+        # consumer never reads.
+        if self._should_emit_permission_events():
+            for _plan in _plans:
+                self._emit_permission_event(_plan)
 
         # --- Phase 2: Confirmation (sequential, interactive) ---
         # All user-facing prompts happen here before any execution starts.
@@ -195,3 +230,56 @@ class ToolRunner:
         # --- Phase 4: Result formatting (delegated to ToolResultFormatter) ---
         result_messages.extend(self._formatter.format_batch(_plans, _exec_results))
         return False, result_messages
+
+    # ------------------------------------------------------------------
+    # Public-event helpers
+    # ------------------------------------------------------------------
+
+    def _should_emit_permission_events(self) -> bool:
+        """Skip per-plan emit when no host is listening.
+
+        Avoids ``new_decision_id`` + ``ActivePermissions`` + Pydantic
+        construction per tool call in the (common) no-subscriber case.
+        Falls back to ``True`` when the emitter has no stream handle to
+        introspect — better to emit than silently drop.
+        """
+        emitter = self._harness_permission_emitter
+        if emitter is None:
+            return False
+        stream = getattr(emitter, "_stream", None)
+        check = getattr(stream, "_has_subscribers", None)
+        if check is None:
+            return True
+        try:
+            return bool(check())
+        except Exception:
+            return True
+
+    def _emit_permission_event(self, plan) -> None:
+        """Project one plan's permission decision into a public event.
+
+        ``ASK`` maps to ``prompt`` because Phase 2 has not yet resolved
+        to allow/cancel; cancellation is captured later by the matching
+        :class:`ToolLifecycleEvent`.
+        """
+        outcome = _DECISION_OUTCOME.get(plan.decision)
+        if outcome is None:
+            # ``ToolCallDecision.CANCELLED`` only appears post-Phase 2;
+            # the helper is called pre-Phase 2 so the branch is dead in
+            # practice.
+            return
+        from ..runtime.identity import new_decision_id
+        detail = plan.permission_detail
+        matched_rule = detail.matched_rule if detail is not None else None
+        reason = detail.reason if detail is not None else None
+        try:
+            self._harness_permission_emitter.emit(
+                tool_name=plan.function_name,
+                tool_call_id=plan.tool_call_id,
+                decision_id=new_decision_id(),
+                outcome=outcome,
+                matched_rule=matched_rule,
+                reason=reason,
+            )
+        except Exception:
+            pass

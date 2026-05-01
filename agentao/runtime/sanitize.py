@@ -173,7 +173,17 @@ def _normalize_one(
     raw_name = getattr(fn, "name", None) if fn is not None else None
     raw_args = getattr(fn, "arguments", None) if fn is not None else None
 
-    new_id = sanitize_surrogates(raw_id) if isinstance(raw_id, str) else raw_id
+    if isinstance(raw_id, str) and raw_id.strip():
+        new_id = sanitize_surrogates(raw_id)
+    else:
+        # Provider returned a missing or empty ``id``. Synthesize the
+        # public-event UUID4 fallback here so the assistant message
+        # ``chat_loop`` is about to serialise into history shares the
+        # exact same id with the planner's downstream tool_result
+        # message — strict Chat Completions APIs reject mismatched
+        # tool_call_id between assistant and tool roles.
+        from . import identity as _identity
+        new_id = _identity.normalize_tool_call_id(raw_id)
     new_name = sanitize_surrogates(raw_name) if isinstance(raw_name, str) else raw_name
     new_args = sanitize_surrogates(raw_args) if isinstance(raw_args, str) else raw_args
 
@@ -186,7 +196,7 @@ def _normalize_one(
                 )
             new_name = repaired
 
-    id_changed = isinstance(raw_id, str) and new_id is not raw_id
+    id_changed = new_id != raw_id
     name_changed = isinstance(raw_name, str) and new_name != raw_name
     args_changed = isinstance(raw_args, str) and new_args is not raw_args
     if not (id_changed or name_changed or args_changed):

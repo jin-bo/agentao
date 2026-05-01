@@ -248,6 +248,7 @@ class AgentToolWrapper(Tool):
         permission_mode_getter: Optional[Callable] = None,
         permission_user_root_getter: Optional[Callable] = None,
         sandbox_policy: Optional[Any] = None,
+        subagent_emitter: Optional[Any] = None,
     ):
         self._definition = definition
         self._all_tools = all_tools
@@ -267,6 +268,10 @@ class AgentToolWrapper(Tool):
         self._permission_mode_getter = permission_mode_getter
         self._permission_user_root_getter = permission_user_root_getter
         self._sandbox_policy = sandbox_policy
+        # Public harness emitter for sub-agent lineage events. ``None``
+        # for hosts that haven't wired the harness; the call sites
+        # short-circuit when the emitter is missing.
+        self._subagent_emitter = subagent_emitter
         # Set by ToolRunner just before execute() to propagate the per-turn token
         self._cancellation_token: Optional[Any] = None
 
@@ -346,7 +351,29 @@ class AgentToolWrapper(Tool):
                                  task=task[:80], max_turns=max_turns),
             )
 
-        result, stats = self._run_sync(task, parent_context, cancellation_token=token)
+        # ``task`` is user-supplied free-form text (and may carry the
+        # parent's tool output, secrets, or sensitive instructions);
+        # ``redact_summary`` in the projection layer only flattens
+        # whitespace, so the public ``SubagentLifecycleEvent`` would
+        # otherwise leak the first 80 chars of that input verbatim.
+        # Use a generic non-sensitive label — hosts have ``agent_name``
+        # via the parent ``tool_name`` and can correlate via the
+        # ``child_task_id`` already on the envelope.
+        task_summary = f"sub-agent: {agent_name}"
+        subagent_ctx = self._spawn_subagent_event(task_summary)
+
+        try:
+            result, stats = self._run_sync(
+                task, parent_context, cancellation_token=token,
+            )
+        except AgentCancelledError:
+            self._terminal_subagent_event(subagent_ctx, "cancelled", task_summary)
+            raise
+        except Exception as exc:
+            self._terminal_subagent_event(
+                subagent_ctx, "failed", task_summary, error_type=type(exc).__name__,
+            )
+            raise
 
         # Signal sub-agent end to the CLI
         if self._step_callback:
@@ -364,7 +391,49 @@ class AgentToolWrapper(Tool):
                 ),
             )
 
+        self._terminal_subagent_event(subagent_ctx, "completed", task_summary)
         return self._format_result(result, stats)
+
+    # ------------------------------------------------------------------
+    # Public-event helpers
+    # ------------------------------------------------------------------
+
+    def _spawn_subagent_event(
+        self,
+        task_summary: str,
+        *,
+        parent_task_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if self._subagent_emitter is None:
+            return None
+        try:
+            return self._subagent_emitter.spawned(
+                task_summary=task_summary, parent_task_id=parent_task_id,
+            )
+        except Exception:
+            return None
+
+    def _terminal_subagent_event(
+        self,
+        ctx: Optional[Dict[str, Any]],
+        phase: str,
+        task_summary: str,
+        *,
+        error_type: Optional[str] = None,
+    ) -> None:
+        if self._subagent_emitter is None or ctx is None:
+            return
+        try:
+            if phase == "completed":
+                self._subagent_emitter.completed(ctx=ctx, task_summary=task_summary)
+            elif phase == "cancelled":
+                self._subagent_emitter.cancelled(ctx=ctx, task_summary=task_summary)
+            else:  # "failed"
+                self._subagent_emitter.failed(
+                    ctx=ctx, task_summary=task_summary, error_type=error_type,
+                )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Parent context injection
@@ -577,8 +646,21 @@ class AgentToolWrapper(Tool):
         token = CancellationToken()
         self._bg_store.register_token(agent_id, token)
 
+        # Generic non-sensitive label — see the foreground spawn site
+        # for the redaction-boundary rationale. ``task`` is intentionally
+        # NOT included on the public event.
+        task_summary = f"sub-agent: {agent_name}"
+        subagent_ctx = self._spawn_subagent_event(task_summary, parent_task_id=agent_id)
+
         def _run():
             if not self._bg_store.mark_running(agent_id):
+                # Pending-cancel race: the agent was cancelled before
+                # the worker started running. ``spawned`` already fired
+                # outside this thread, so without an explicit terminal
+                # event harness subscribers would see a child task that
+                # never completes. Emit ``cancelled`` so the lifecycle
+                # pair is closed.
+                self._terminal_subagent_event(subagent_ctx, "cancelled", task_summary)
                 return
             try:
                 result, stats = self._run_sync(
@@ -592,10 +674,16 @@ class AgentToolWrapper(Tool):
                     turns=stats["turns"], tool_calls=stats["tool_calls"],
                     tokens=stats["tokens"], duration_ms=stats["duration_ms"],
                 )
+                self._terminal_subagent_event(subagent_ctx, "completed", task_summary)
             except AgentCancelledError:
                 self._bg_store.update(agent_id, status="cancelled")
+                self._terminal_subagent_event(subagent_ctx, "cancelled", task_summary)
             except Exception as exc:
                 self._bg_store.update(agent_id, status="failed", error=str(exc))
+                self._terminal_subagent_event(
+                    subagent_ctx, "failed", task_summary,
+                    error_type=type(exc).__name__,
+                )
             finally:
                 self._bg_store.unregister_token(agent_id)
 
