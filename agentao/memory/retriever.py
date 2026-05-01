@@ -8,7 +8,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
-import jieba
+# `jieba` is deferred (P0.5): importing this module is on the path of
+# constructing ``Agentao(...)``, but jieba's ~30 ms dict-init cost (and the
+# wheel itself) only materializes on the recall scoring hot path. Embedded
+# hosts that swap MemoryStore typically never reach it.
+#
+# A PEP 562 ``__getattr__`` exposes ``agentao.memory.retriever.jieba`` for
+# tests / patching without loading the module at import time.
+if TYPE_CHECKING:
+    import jieba as _jieba_t
+
+
+def __getattr__(name: str):
+    if name == "jieba":
+        import jieba as _jieba_module
+
+        return _jieba_module
+    raise AttributeError(f"module 'agentao.memory.retriever' has no attribute {name!r}")
+
 
 from agentao.logging_utils import capture_third_party_output
 
@@ -29,6 +46,8 @@ _USERDICT_PATH = Path.home() / ".agentao" / "userdict.txt"
 
 def _initialize_jieba_with_logging() -> None:
     """Run jieba initialization without leaking its progress messages to the terminal."""
+    import jieba
+
     capture_third_party_output(
         runner=jieba.initialize,
         source_logger_names=("jieba",),
@@ -46,6 +65,8 @@ def _ensure_jieba_ready() -> None:
     add project names, technical terms, and proper nouns that the default
     dictionary doesn't know.
     """
+    import jieba
+
     global _JIEBA_INITIALIZED
     if _JIEBA_INITIALIZED:
         return
@@ -124,6 +145,8 @@ def _cjk_segment(text: str) -> set:
     too ambiguous to carry useful retrieval signal and would flood the inverted
     index with high-frequency function words like "的"/"了").
     """
+    import jieba
+
     _ensure_jieba_ready()
     result: set = set()
     for match in re.finditer(

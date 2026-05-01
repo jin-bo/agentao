@@ -4,9 +4,14 @@ import dataclasses
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
-from filelock import FileLock
+# `filelock` is deferred (P0.5): the registry is only touched when an
+# embedded host (or the CLI) installs / updates skills. Plain ``Agentao()``
+# construction never reaches the lock path, so the wheel cost stays out of
+# the import-time budget.
+if TYPE_CHECKING:
+    from filelock import FileLock as _FileLock_t
 
 
 @dataclasses.dataclass
@@ -56,6 +61,8 @@ class SkillRegistry:
 
     def save(self) -> None:
         """Persist registry to disk with file locking."""
+        from filelock import FileLock
+
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "skills": {

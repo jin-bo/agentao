@@ -28,7 +28,7 @@ from prompt_toolkit.styles import Style
 from dotenv import load_dotenv
 
 from ..agent import Agentao
-from ..display import DisplayController
+from .display import DisplayController
 from ..embedding import build_from_environment
 from ..transport import AgentEvent
 from ._globals import console

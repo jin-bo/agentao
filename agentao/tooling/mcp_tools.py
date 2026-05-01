@@ -17,14 +17,48 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from ..mcp import McpClientManager, McpTool, load_mcp_config
+# ``McpClientManager`` / ``McpTool`` pull in the heavy ``mcp`` SDK
+# (httpx + click + rich + pydantic_settings + starlette). They are
+# resolved lazily at function-call time via ``_ensure_mcp_classes()``
+# (writes into module globals so ``init_mcp`` can use the bare names),
+# AND surfaced as module attributes via PEP 562 ``__getattr__`` so
+# tests that ``patch("agentao.tooling.mcp_tools.McpClientManager")``
+# still work without forcing an import-time load. ``load_mcp_config``
+# is config-only and stays eager (no SDK dependency).
+from ..mcp import load_mcp_config
 from ..paths import user_root
 
 if TYPE_CHECKING:
     from ..agent import Agentao
+    from ..mcp import McpClientManager, McpTool  # noqa: F401
 
 
-def init_mcp(agent: "Agentao") -> Optional[McpClientManager]:
+def _ensure_mcp_classes() -> None:
+    """Bind ``McpClientManager`` / ``McpTool`` into this module's globals.
+
+    First call loads the mcp SDK; subsequent calls are a dict lookup.
+    Idempotent and safe under unittest patches — once a name is in
+    ``globals()`` (either by us or by ``mock.patch``), we leave it.
+    """
+    g = globals()
+    if "McpClientManager" not in g:
+        from ..mcp import McpClientManager as _MCM
+
+        g["McpClientManager"] = _MCM
+    if "McpTool" not in g:
+        from ..mcp import McpTool as _MT
+
+        g["McpTool"] = _MT
+
+
+def __getattr__(name: str):
+    if name in ("McpClientManager", "McpTool"):
+        _ensure_mcp_classes()
+        return globals()[name]
+    raise AttributeError(f"module 'agentao.tooling.mcp_tools' has no attribute {name!r}")
+
+
+def init_mcp(agent: "Agentao") -> Optional["McpClientManager"]:
     """Initialize MCP for ``agent`` and register every discovered tool.
 
     Config sources merged (later overrides earlier):
@@ -75,6 +109,8 @@ def init_mcp(agent: "Agentao") -> Optional[McpClientManager]:
     if not configs:
         return None
 
+    _ensure_mcp_classes()
+
     manager = McpClientManager(configs)
     try:
         manager.connect_all()
@@ -85,7 +121,7 @@ def init_mcp(agent: "Agentao") -> Optional[McpClientManager]:
     return manager
 
 
-def register_mcp_tools(agent: "Agentao", manager: McpClientManager) -> None:
+def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
     """Wrap every tool exposed by ``manager`` and register it on ``agent``.
 
     Used by both ``init_mcp`` (for file/ACP-discovered managers) and
@@ -94,6 +130,8 @@ def register_mcp_tools(agent: "Agentao", manager: McpClientManager) -> None:
     the model sees the same surface regardless of how the manager was
     created.
     """
+    _ensure_mcp_classes()
+
     for server_name, mcp_tool_def in manager.get_all_tools():
         client = manager.get_client(server_name)
         trusted = client.is_trusted if client else False

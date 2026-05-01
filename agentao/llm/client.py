@@ -5,9 +5,33 @@ import logging
 import logging.handlers
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from openai import OpenAI
+# `openai` is deferred (P0.5): merely importing ``LLMClient`` should not pull
+# in the OpenAI SDK. Hosts that inject their own ``llm_client=`` never load
+# it; hosts that use this default class load it on first construction.
+#
+# A PEP 562 ``__getattr__`` exposes ``OpenAI`` as a module attribute on first
+# access so existing tests that ``patch("agentao.llm.client.OpenAI")`` keep
+# working without forcing an import-time load. Construction sites use
+# ``_openai_client_cls()`` so the patched class wins.
+if TYPE_CHECKING:
+    from openai import OpenAI as _OpenAIClient
+
+
+def _openai_client_cls() -> "type[_OpenAIClient]":
+    g = globals()
+    if "OpenAI" not in g:
+        from openai import OpenAI as _OpenAIImpl
+
+        g["OpenAI"] = _OpenAIImpl
+    return g["OpenAI"]
+
+
+def __getattr__(name: str):
+    if name == "OpenAI":
+        return _openai_client_cls()
+    raise AttributeError(f"module 'agentao.llm.client' has no attribute {name!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +168,7 @@ class LLMClient:
         # Set to True after detecting the model requires max_completion_tokens
         self._use_max_completion_tokens: bool = False
 
-        self.client = OpenAI(
+        self.client = _openai_client_cls()(
             api_key=self.api_key,
             base_url=self.base_url,
         )
@@ -261,7 +285,7 @@ class LLMClient:
         if model is not None:
             self.model = model
 
-        self.client = OpenAI(
+        self.client = _openai_client_cls()(
             api_key=self.api_key,
             base_url=self.base_url,
         )

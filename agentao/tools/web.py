@@ -3,11 +3,15 @@
 import asyncio
 import logging
 import os
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 from urllib.parse import quote_plus
 
-import httpx
-from bs4 import BeautifulSoup
+# `httpx` and `bs4` are deferred (P0.5): the web tools may never be
+# registered in an embedded host that doesn't expose web capabilities, so
+# importing this module should not pay for the parsing / HTTP stack until a
+# tool actually runs. ``execute()`` / ``_search_*()`` paths import locally.
+if TYPE_CHECKING:
+    from bs4 import BeautifulSoup as _BeautifulSoup_t
 
 from .base import Tool
 
@@ -36,7 +40,7 @@ _TEXT_RATIO_THRESHOLD = 0.05
 _MIN_TEXT_LENGTH = 200
 
 
-def _needs_js_rendering(html: str, soup: BeautifulSoup) -> bool:
+def _needs_js_rendering(html: str, soup: "_BeautifulSoup_t") -> bool:
     for marker in _JS_MARKERS:
         if marker in html:
             return True
@@ -53,7 +57,7 @@ def _needs_js_rendering(html: str, soup: BeautifulSoup) -> bool:
     return False
 
 
-def _extract_text(soup: BeautifulSoup) -> str:
+def _extract_text(soup: "_BeautifulSoup_t") -> str:
     for tag in soup(["script", "style", "nav", "footer"]):
         tag.decompose()
     text = soup.get_text()
@@ -118,6 +122,9 @@ class WebFetchTool(Tool):
         return True
 
     def execute(self, url: str, extract_text: bool = True) -> str:
+        import httpx
+        from bs4 import BeautifulSoup
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
@@ -216,6 +223,8 @@ class WebSearchTool(Tool):
         return self._search_duckduckgo(query, num_results)
 
     def _search_bocha(self, query: str, num_results: int) -> str:
+        import httpx
+
         try:
             payload = {"query": query, "count": num_results, "summary": True}
             headers = {
@@ -261,6 +270,9 @@ class WebSearchTool(Tool):
             return f"Error: {str(e)}"
 
     def _search_duckduckgo(self, query: str, num_results: int) -> str:
+        import httpx
+        from bs4 import BeautifulSoup
+
         try:
             encoded_query = quote_plus(query)
             url = f"https://html.duckduckgo.com/html/?q={encoded_query}"

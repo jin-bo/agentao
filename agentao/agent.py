@@ -22,7 +22,6 @@ from .prompts import (
 )
 from .skills import SkillManager
 from .context_manager import ContextManager
-from .mcp import McpClientManager
 from .replay import (
     ReplayAdapter,
     ReplayConfig,
@@ -45,6 +44,7 @@ from .transport import NullTransport, build_compat_transport
 if TYPE_CHECKING:
     from .agents.bg_store import BackgroundTaskStore  # noqa: F401
     from .capabilities import FileSystem, MCPRegistry, ShellExecutor
+    from .mcp import McpClientManager  # type-only; MCP SDK is heavy
     from .memory import MemoryManager  # noqa: F401
 
 
@@ -80,7 +80,7 @@ class Agentao:
         memory_manager: Optional["MemoryManager"] = None,
         skill_manager: Optional[SkillManager] = None,
         project_instructions: Optional[str] = None,
-        mcp_manager: Optional[McpClientManager] = None,
+        mcp_manager: Optional["McpClientManager"] = None,
         mcp_registry: Optional["MCPRegistry"] = None,
         filesystem: Optional["FileSystem"] = None,
         shell: Optional["ShellExecutor"] = None,
@@ -338,6 +338,10 @@ class Agentao:
         # carries zero replay overhead.
         self._replay_recorder: Optional[ReplayRecorder] = None
         self._replay_adapter: Optional[ReplayAdapter] = None
+        # Lazy: ``start_replay()`` instantiates a HarnessReplaySink that
+        # observes ``self._harness_events`` and routes each event into
+        # the recorder. ``end_replay()`` detaches and clears.
+        self._harness_replay_sink: Optional[Any] = None
         self._replay_config: ReplayConfig = replay_config or ReplayConfig()
 
         # Harness emitter setup MUST run before ``_register_agent_tools``
@@ -481,7 +485,7 @@ class Agentao:
         # module for the tool list and working-directory binding logic.
         register_builtin_tools(self)
 
-    def _init_mcp(self) -> Optional[McpClientManager]:
+    def _init_mcp(self) -> Optional["McpClientManager"]:
         # Implementation lives in ``agentao.tooling.mcp_tools`` — see that
         # module for config merge semantics and error handling.
         return init_mcp(self)
