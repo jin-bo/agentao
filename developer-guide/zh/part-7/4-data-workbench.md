@@ -1,6 +1,11 @@
 # 7.4 蓝图 D · 数据分析工作台
 
-> **运行此例**：[`examples/data-workbench/`](https://github.com/jin-bo/agentao/tree/main/examples/data-workbench) —— `uv run python -m src.workbench "你的问题"`
+::: tip ⚡ 端到端可跑
+**产出** —— 分析师用自然语言问 "Q3 各地区销售看一下"；Agent 跑 DuckDB SQL、写一次性绘图脚本、把 PNG 存到会话草稿目录 —— 全过程在 `sandbox-exec` profile 里。
+**技术栈** —— Python · DuckDB · 沙箱 profile 内的 Shell 工具 · 自定义"分析师"技能 · 会话级工作目录。
+**源代码** —— [`examples/data-workbench/`](https://github.com/jin-bo/agentao/tree/main/examples/data-workbench)
+**运行** —— `uv run python -m src.workbench "你的问题"`
+:::
 
 **场景**：内部分析师有一个类 Jupyter 的工作台。你希望加上"用中/英文提问，返回图表和 SQL"——Agentao 跑 `duckdb`、写一次性 Python 脚本、把 PNG 存到会话的草稿目录。因为涉及 shell，沙箱是硬性要求。
 
@@ -156,7 +161,11 @@ volumes:
 
 分析师只相信能看到查询语句的结果。前端把 `LLM_TEXT` 里的 ```sql 代码块解析出来，渲染成可复制的代码。`duckdb-analyst` 技能"永远打印 SQL"的规则让这件事可靠。
 
-## 陷阱
+## ⚠️ 陷阱
+
+::: warning 数据工作台真实部署中的 Day-2 bug
+下面每一行都是一次真实的生产事故。**上线前先扫一遍**——现在改便宜，事后查代价大。
+:::
 
 | 上线第二天的 bug | 根因 | 修法 |
 |------------------|------|------|

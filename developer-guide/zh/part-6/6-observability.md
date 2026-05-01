@@ -1,5 +1,10 @@
 # 6.6 可观测性与审计
 
+> **本节你会学到**
+> - 4 个观测维度：结构化日志、指标、追踪、会话 replay
+> - 生产部署最少应该上报哪些指标
+> - 什么时候只有会话 replay 才能诊断"Agent 为什么会做出 X"这种问题
+
 Agent 是"长尾出 bug"的典型——90% 时间好好的，10% 出现让你无从下手的行为。没有观测就没法诊断，没法诊断就没法改进。
 
 ## 四个观测维度
@@ -254,5 +259,12 @@ async def chat(req: ChatRequest):
 4. 无 OpenTelemetry
 
 这套够 99% 的中小 SaaS 用。上规模后再加 APM。
+
+## TL;DR
+
+- **四个维度**：结构化日志（`agentao.log`）、指标（Prometheus / StatsD）、追踪（OpenTelemetry）、会话 replay。
+- 最少上报这些指标：按工具名拆的调用率、工具失败率、LLM 5xx 率、confirm 超时率、轮次延迟 p50/p95/p99、最大迭代命中率。
+- **会话 replay 是杀手特性**——出现"Agent 为什么会做 X"时，用 `replay_config=` 确定性回放，逐步排查。
+- 把成本作为一等观测目标：跟踪每轮 token 数和按租户的 token 数；突然 2× 飙升通常是切了模型或换了技能。
 
 → [6.7 资源治理与并发](./7-resource-concurrency)

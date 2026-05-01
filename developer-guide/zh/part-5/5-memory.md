@@ -1,10 +1,13 @@
 # 5.5 记忆系统（Memory）
 
+> **本节你会学到**
+> - 记忆系统的三种数据：持久化记录、会话摘要、召回候选
+> - 两个 SQLite 数据库（项目级 + 用户级）以及如何选
+> - 怎样干净地清空 / 迁移 / 禁用记忆
+
 记忆系统让 Agent **跨会话记住**用户偏好、项目事实、约定。区别于"对话历史"（本轮聊天内容），**记忆**是跨会话持久化的。
 
 ## 记忆的三种数据
-
-源码：`agentao/memory/manager.py`、`agentao/memory/models.py`
 
 | 类型 | 存储位置 | 作用 |
 |------|---------|------|
@@ -23,7 +26,7 @@
 
 ## 降级：文件系统不可写怎么办
 
-ACP 子进程、受限容器、只读文件系统里，记忆 DB 可能写不了。0.3.0（Issue #16）起，fallback 策略下沉到存储层（`SQLiteMemoryStore.open_or_memory`），由嵌入式工厂负责接进来：
+ACP 子进程、受限容器、只读文件系统里，记忆 DB 可能写不了。fallback 策略下沉到存储层（`SQLiteMemoryStore.open_or_memory`），由嵌入式工厂负责接进来：
 
 ```
 SQLiteMemoryStore.open_or_memory(<cwd>/.agentao/memory.db)
@@ -180,7 +183,15 @@ mm.clear_all_session_summaries()
 | "本项目用 Ruff 做 lint、端口 8080" | `AGENTAO.md`（项目级约束，进 git） |
 | "本轮需要的技术方案" | Plan 模式（不跨会话） |
 
-## 常见陷阱
+## ⚠️ 常见陷阱
+
+::: warning 上线前先确认这几条
+- ❌ **把大文档塞进记忆** —— 召回会把它带进每个 prompt，撑爆上下文
+- ❌ **多租户共享记忆** —— 用户作用域 DB 是进程全局，跨租户泄漏只是时间问题
+- ❌ **忘记记忆跨 `clear_history()` 存活** —— "新对话"还记得旧事
+
+下面每一条都附完整修法。
+:::
 
 ### ❌ 把大文档塞进记忆
 
@@ -197,5 +208,12 @@ save_memory("doc", open("readme.md").read())   # 几十 KB
 ### ❌ 忘记记忆跨 `clear_history()` 存活
 
 用户在 UI 上点"新对话"→ `agent.clear_history()` 只清会话，不清记忆。如果"新对话"应该忘掉一切，要同时调 `MemoryManager.clear()` + `clear_all_session_summaries()`。
+
+## TL;DR
+
+- 记忆 ≠ 对话历史。记忆跨会话存在 SQLite；历史活在 `agent.messages` 上。
+- 两个作用域 / 两个 DB：**项目**（`<wd>/.agentao/memory.db`）和**用户**（`~/.agentao/memory.db`）。多租户部署里要么按 `tenant_id+user_id` 拆分用户作用域，要么直接禁用。
+- 只读 / 受限 FS 自动降级为内存 store 并 warning——Agent 还是能起。
+- `clear_history()` **不**清记忆；这是设计如此。要"新对话"彻底忘记时显式同时清两边。
 
 → 下一节：[5.6 系统提示定制](./6-system-prompt)

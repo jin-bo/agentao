@@ -236,6 +236,30 @@ Recommended host UI flow:
 2. On user choice → respond immediately with `result`
 3. On timeout → respond with `{"outcome":"cancelled"}` and optionally send `session/cancel`
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as End user
+    participant H as Host UI
+    participant S as agentao server
+
+    S--)H: session/update {tool_call started, status:pending}
+    S->>H: session/request_permission {id:42, toolCall, options}
+    H->>U: show modal (title, args, options)
+    alt User clicks "Allow once"
+        U->>H: select allow_once
+        H-->>S: result {outcome:{outcome:"selected", optionId:"allow_once"}}
+        S--)H: session/update {tool_call_update completed}
+    else User clicks "Reject"
+        U->>H: select reject_once
+        H-->>S: result {outcome:{outcome:"selected", optionId:"reject_once"}}
+        Note right of S: tool returns "[Cancelled by user]" to LLM
+    else User idle / closed dialog
+        H-->>S: result {outcome:{outcome:"cancelled"}}
+        H-)S: session/cancel (optional, abort the whole turn)
+    end
+```
+
 ## Cancellation `session/cancel`
 
 ```json
@@ -243,6 +267,25 @@ Recommended host UI flow:
 ```
 
 Effect: the in-flight `session/prompt` turn finishes with `stopReason:"cancelled"`. Idempotent — repeat calls don't error.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as Host
+    participant S as agentao server
+
+    H->>S: session/prompt {sessionId, prompt}
+    S--)H: session/update {agent_message_chunk} ...
+    S--)H: session/update {tool_call started}
+    Note over H: User clicks Stop
+    H-)S: session/cancel {sessionId}
+    Note over S: signal CancellationToken;<br/>any in-flight tool gets a cancel hook
+    S--)H: session/update {tool_call_update cancelled}
+    S-->>H: result {id:<prompt_id>, stopReason:"cancelled"}
+    Note over H,S: Connection stays open;<br/>next session/prompt can run immediately
+```
+
+**Idempotency** — sending `session/cancel` again after the prompt already finished is a no-op (no error, no extra notifications).
 
 ## Restoring sessions `session/load`
 
@@ -264,15 +307,24 @@ For **persistent session** scenarios: store `sessionId` + history in your DB, re
 }
 ```
 
-## Common pitfalls
+## ⚠️ Common pitfalls
 
+::: warning ACP wire-level mistakes that will burn you
 1. **Framing**: NDJSON always — **no raw newlines inside a JSON object**. Use your JSON library's compact mode.
 2. **Stdout pollution**: Agentao routes all logs to `agentao.log` + stderr, never stdout. Your client reads pure JSON from stdout.
 3. **Stdin backpressure**: if the client ignores stdout after sending a request, the server's stdout buffer will fill. Use async I/O or a dedicated reader thread.
-4. **Version field typing**: must be `int` (see above).
+4. **Version field typing**: `protocolVersion` must be `int`, not a date string.
 5. **Don't reply to `session/update`**: JSON-RPC 2.0 prohibits responses to notifications.
+:::
 
 ## End-to-end minimal client (Python, for demo)
+
+::: tip ⚡ Runnable end-to-end (≈ 5 minutes)
+**Outcome** — drives `agentao --acp --stdio` from a 50-line Python client; you see streaming `session/update` notifications + the final `stopReason`.
+**Stack** — `pip install 'agentao[cli]>=0.4.0'` + 3 env vars; the Python below is the only host code you need.
+**Run** — paste into `acp_demo.py`, then `python acp_demo.py`.
+**Even if your host isn't Python** — read this to understand the wire flow, then translate to your language using [3.3 Host as ACP Client](./3-host-client-architecture).
+:::
 
 Even if your host isn't Python, this snippet clarifies the wire flow:
 

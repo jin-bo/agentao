@@ -1,5 +1,10 @@
 # 4.5 工具确认 UI
 
+> **本节你会学到**
+> - 为什么 `confirm_tool` 是同步的——以及如何干净地桥接到异步 UI
+> - CLI / Web 弹窗 / IDE / Slack 各种形态的完整代码
+> - "本次允许" / "永久允许" / 自动批准阈值的策略选择
+
 `confirm_tool(name, desc, args) -> bool` 是 Agent 的安全阀门——本节讲怎么在**不同 UI 形态**下正确实现它。
 
 ## 核心挑战：同步阻塞
@@ -235,5 +240,12 @@ class SmartConfirm:
             return True
         return resp == "allow_once"
 ```
+
+## TL;DR
+
+- `confirm_tool` 是**阻塞**的——Agent 循环等你返回 bool。永远不要返回 `None`，也不要在里面直接 `await`。
+- 异步 UI 桥接：从 worker 线程用 `asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=…)`，让事件循环处理弹窗。
+- **永远**给等待加一个有限超时——UI 出 bug 永不响应时，否则整个 Agent 会挂死。
+- 配合 [5.4 PermissionEngine](/zh/part-5/4-permissions)，让 90% 的安全调用直接放行，`confirm_tool` 只在真正需要 ASK 时触发。
 
 → 下一节：[4.6 最大迭代数兜底策略](./6-max-iterations)

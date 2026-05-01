@@ -1,5 +1,10 @@
 # 4.6 Max-Iterations Fallback
 
+> **What you'll learn**
+> - The `on_max_iterations` contract and three return actions (`continue` / `stop` / `new_instruction`)
+> - When to ask the user vs. auto-stop vs. inject "summarize and finish"
+> - Sane production defaults
+
 `max_iterations` (default 100) is the **circuit breaker** against infinite loops. If the agent keeps calling tools for 100 rounds without producing a final reply, Agentao invokes `transport.on_max_iterations(count, messages)` to ask you what to do.
 
 ## Interface
@@ -243,6 +248,13 @@ Good UX = fallback strategy + frontend progress awareness.
 
 ---
 
-**End of Part 4.** You now have the full bridging path from agent events to user UI. Next we teach the agent to **understand your business** via custom tools, skills, MCP, and permissions.
+You now have the full bridging path from agent events to user UI. Before moving on to Part 5, the next chapter introduces the **stable host contract** — `agent.events()` and `active_permissions()` — for building forward-compatible audit and observability pipelines.
 
-→ [Part 5 · Extensibility](/en/part-5/) (coming soon)
+## TL;DR
+
+- `on_max_iterations` returns `{"action": ...}` — three actions: `continue` (raise the cap and keep going), `stop` (return the partial reply), `new_instruction` (inject text and reset the counter).
+- Default to `stop` for production — silent loops cost real money. Bump `max_iterations` to ~30 if you pay per call.
+- Use `new_instruction` to nudge the model with "summarize what you have and finish" — better than letting it hang.
+- Always log the count and the last few tool calls so you can post-mortem why the loop didn't converge.
+
+→ Next: [4.7 Embedded Harness Contract](./7-harness-contract)

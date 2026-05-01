@@ -1,5 +1,10 @@
 # 6.2 Shell Sandbox & Command Control
 
+> **What you'll learn**
+> - The three progressive defenses for shell: PermissionEngine, `confirm_tool`, kernel sandbox
+> - The three macOS sandbox profiles (`readonly` / `workspace-write` / `workspace-write-no-network`)
+> - Linux equivalents: containers, namespaces, seccomp
+
 `run_shell_command` is Agentao's most capable — and most dangerous — tool. Agentao provides **three progressive defenses**, ranked cheap-to-expensive:
 
 ```
@@ -14,8 +19,6 @@ Layer C · macOS sandbox-exec  (off by default; explicit enable)
 A and B are covered in [Part 4.5](/en/part-4/5-tool-confirmation-ui) and [Part 5.4](/en/part-5/4-permissions). This section focuses on **Layer C: system-level sandbox**.
 
 ## macOS sandbox-exec
-
-Source: `agentao/sandbox/policy.py`, `agentao/sandbox/profiles/`
 
 macOS ships with `sandbox-exec`, a kernel-level isolator for file writes and network. Agentao's `SandboxPolicy` wraps shell commands with it when enabled.
 
@@ -188,7 +191,15 @@ Even with sandbox on, always filter command strings at the permission layer firs
 
 Sandbox stops "kernel-level damage from the command"; permissions stop "the command shouldn't run at all". Layer both.
 
-## Common pitfalls
+## ⚠️ Common pitfalls
+
+::: warning Don't ship without these
+- ❌ **Only sandboxing, no rule filtering** — `sandbox-exec` denies *after* the LLM decided to run the command; PermissionEngine should reject earlier
+- ❌ **Not validating custom profiles** — typos in `.sb` files silently disable enforcement
+- ❌ **`_RW1` points to the wrong place** — sandbox writes only allowed under `_RW1`; if it's not your `workspace_root`, nothing is writable
+
+Each pitfall below has the full fix.
+:::
 
 ### ❌ Only sandboxing, no rule filtering
 
@@ -207,5 +218,12 @@ assert err is None, f"Profile broken: {err}"
 ### ❌ `_RW1` points to the wrong place
 
 Sandbox only allows writes under `_RW1`. If you expect the agent to write `/tmp/output`, either allow it in the profile or change `workspace_root`. Default: `workspace_root = project root`.
+
+## TL;DR
+
+- **Three layers, in order**: PermissionEngine (always on) → `confirm_tool` (interactive) → macOS `sandbox-exec` (kernel-level, opt-in).
+- Profiles: `readonly` (audit), `workspace-write` (default for dev), `workspace-write-no-network` (CI / batch).
+- macOS-only: Linux production should use containers + seccomp + user namespaces. The PermissionEngine + `confirm_tool` layers still apply.
+- Mount sandbox config read-only in containers — the agent must not be able to relax its own profile.
 
 → [6.3 Network & SSRF Defense](./3-network-ssrf)

@@ -1,10 +1,13 @@
 # 5.1 Custom Tools
 
+> **What you'll learn**
+> - The 6 essentials of a `Tool` subclass: name / description / parameters / execute / requires_confirmation / is_read_only
+> - How to write a description the LLM actually uses (this matters more than the code)
+> - When to pick Tool vs. Skill vs. MCP for a given need
+
 **Custom tools are the best way to let the agent call your business APIs.** Handing the LLM your OpenAPI spec and asking it to craft HTTP requests is fragile; a typed `Tool` subclass is reliable, auditable, and safe.
 
 ## The Tool base class
-
-Source: `agentao/tools/base.py:11-115`
 
 ```python
 from abc import ABC, abstractmethod
@@ -245,7 +248,18 @@ def make_agent_for_tenant(tenant, backend):
     return agent
 ```
 
-## Common pitfalls
+## ⚠️ Common pitfalls
+
+::: warning Don't ship without these
+Real production bugs to defend against:
+- ❌ **Raising inside `execute()`** — kills the whole `chat()` call
+- ❌ **Description too vague** — LLM calls the tool everywhere
+- ❌ **Forgetting `requires_confirmation=True`** for side-effecting tools
+- ❌ **No argument bounds** — LLM may pass `limit=99999`
+- ❌ **Oversized responses** — blows the context window
+
+Each pitfall below has the full pattern + the fix.
+:::
 
 ### ❌ Raising inside `execute`
 
@@ -308,5 +322,13 @@ return json.dumps({
 | Integrate an existing third-party tool service (GitHub, filesystem, DB) | **MCP** ([5.3](./3-mcp)) |
 
 Production products usually use all three: tools for business logic, MCP for integrations, skills for style.
+
+## TL;DR
+
+- A Tool returns **a string** (`role:tool` message); never raw dicts/bytes. Bound business data → JSON-stringify and clamp size.
+- The **description** is what the LLM reads to decide *if* and *how* to call. Be specific: when to use, args, return shape, hard rules.
+- Set `requires_confirmation=True` for anything with side effects; set `is_read_only=True` for pure reads (helps PermissionEngine and Plan mode).
+- Catch exceptions inside `execute()` and return an error string — uncaught exceptions kill the whole `chat()` call.
+- One tool, one focused job. Vague descriptions get called everywhere.
 
 → Next: [5.2 Skills & Plugins](./2-skills)

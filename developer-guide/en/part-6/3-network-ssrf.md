@@ -1,5 +1,10 @@
 # 6.3 Network & SSRF Defense
 
+> **What you'll learn**
+> - Why agents are perfect SSRF probes and what the default blocklist covers
+> - The four-layer network defense: domain rules → redirect blocking → egress firewall → DNS rebinding
+> - Production patterns: VPC egress allowlist, redirect-disabled `web_fetch`
+
 Three agent tools reach the network: `web_fetch`, `web_search`, and anything via MCP. This section shrinks their attack surface to the minimum necessary.
 
 ## Three network layers
@@ -210,7 +215,15 @@ def on_event(ev):
 
 `agentao.log` already records tool call args — see [6.5 Secrets](./5-secrets-injection#four-log-scrubbing) for scrubbing.
 
-## Common pitfalls
+## ⚠️ Common pitfalls
+
+::: warning Don't ship without these
+- ❌ **Allowlist without blocklist** — `*.example.com` allowed, but `169.254.169.254` not denied; agent reaches metadata IP via redirect
+- ❌ **Trusting the LLM not to hit internal** — system prompts won't survive prompt injection; always enforce at rule layer
+- ❌ **Unprotected redirects** — `https://good.com` → 302 → `http://169.254.169.254/` follows by default
+
+Each pitfall below has the full fix.
+:::
 
 ### ❌ Allowlist without blocklist
 
@@ -228,5 +241,12 @@ Prompt injection can **trick** the LLM into any URL. Don't rely on LLM common se
 ### ❌ Unprotected redirects
 
 `web_fetch https://good.com` → 302 → `http://169.254.169.254/` follows. Production should override with redirect-disabled `web_fetch`.
+
+## TL;DR
+
+- **The default SSRF blocklist already covers** localhost, `127.0.0.1`, `169.254.169.254` (cloud metadata), RFC1918 private ranges. Don't disable it.
+- Layer 4 (rule engine) is **app-side**; Layer 7 (VPC / egress firewall) is **infra-side** — you need both. Apps can be tricked; infra is the hard wall.
+- **Always disable HTTP redirects** in production `web_fetch` overrides — `https://good.com` → 302 → cloud-metadata IP is the classic bypass.
+- For internal APIs the agent legitimately needs, write explicit allowlist domains; never widen the global blocklist.
 
 → [6.4 Multi-Tenant & Filesystem](./4-multi-tenant-fs)

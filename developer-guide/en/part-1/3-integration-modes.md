@@ -1,5 +1,10 @@
 # 1.3 Integration Modes
 
+> **What you'll learn**
+> - The two stable embedding paths and their trade-offs
+> - A decision tree to pick one in 30 seconds
+> - When (and how) to compose both in one process
+
 Agentao offers **two stable embedding paths**. Pick based on your host language, isolation needs, and distribution model.
 
 ## Mode A · Python In-Process SDK
@@ -116,5 +121,12 @@ The contract (public entry points, typed `get_status()`, single-active-turn conc
 - **Part 2** — Python SDK deep-dive
 - **Part 3** — ACP (both Agentao-as-server and Agentao-as-client)
 - **Parts 4 – 8** — Cross-cutting content for both modes
+
+## TL;DR
+
+- **Python host? → SDK** unless you need process isolation or multi-tenant safety.
+- **Non-Python host? → ACP** (only option). Same for IDE plugins.
+- **Both can compose** — your Python backend uses SDK for the main flow and `ACPManager` to call other ACP servers.
+- **Headless runtime is not a third mode** — it's `ACPManager` driving an ACP server with no human in the loop.
 
 Next: [1.4 Hello Agentao in 5 min →](./4-hello-agentao)

@@ -9,6 +9,14 @@ Each blueprint answers the same four questions:
 3. **Key code** — the 50–150 lines that matter
 4. **Pitfalls** — what tends to break on day two
 
+::: info Key terms in this Part
+- **In-product assistant** — chat / agent embedded inside an existing SaaS UI; the most common shape · [§7.1](/en/part-7/1-saas-assistant), [G.4](/en/appendix/g-glossary#g-4-integration-patterns)
+- **IDE plugin (ACP)** — host = editor, agent = subprocess speaking ACP; uses `session/load` + `request_permission` · [§7.2](/en/part-7/2-ide-plugin), [G.3](/en/appendix/g-glossary#g-3-acp-terms)
+- **Ticket automation** — async handler reading from a queue; `prompt_once` style, no streaming UI · [§7.3](/en/part-7/3-ticket-automation), [G.4](/en/appendix/g-glossary#g-4-integration-patterns)
+- **Data workbench** — interactive analyst session with shell + sandbox + skills · [§7.4](/en/part-7/4-data-workbench)
+- **Batch scheduler** — cron-driven `prompt_once` for offline / nightly jobs; no end-user · [§7.5](/en/part-7/5-batch-scheduler), [G.4](/en/appendix/g-glossary#g-4-integration-patterns)
+:::
+
 ## The five blueprints
 
 | # | Blueprint | Integration mode | Star extensions |

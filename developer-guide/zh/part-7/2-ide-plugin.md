@@ -1,6 +1,11 @@
 # 7.2 蓝图 B · IDE / 编辑器插件
 
-> **运行此例**：[`examples/ide-plugin-ts/`](https://github.com/jin-bo/agentao/tree/main/examples/ide-plugin-ts) —— `npm install && npm run compile`，然后在 VS Code 里按 **F5**
+::: tip ⚡ 端到端可跑
+**产出** —— VS Code 扩展启动 `agentao --acp --stdio` 子进程，在编辑器里看到 Agent 流式输出、工具审批、`session/load` 恢复。
+**技术栈** —— TypeScript · VS Code Extension API · 走 stdio 的 ACP JSON-RPC 2.0 · NDJSON 帧。
+**源代码** —— [`examples/ide-plugin-ts/`](https://github.com/jin-bo/agentao/tree/main/examples/ide-plugin-ts)
+**运行** —— `npm install && npm run compile`，再在 VS Code 里按 **F5** 启动扩展宿主。
+:::
 
 **场景**：你在做一个 VS Code / Zed / JetBrains / Neovim 插件，想给编辑器加"跟代码库对话"的能力。你希望进程隔离（每个 workspace 一个 Agentao），语言无关的胶水（插件可能是 TypeScript），并且 IDE 重启后能接着对话。
 
@@ -184,7 +189,11 @@ ctx.globalState.update("agentao.sessionId", sessionId);
 }
 ```
 
-## 陷阱
+## ⚠️ 陷阱
+
+::: warning IDE 插件真实部署中的 Day-2 bug
+下面每一行都是一次真实的生产事故。**上线前先扫一遍**——现在改便宜，事后查代价大。
+:::
 
 | 上线第二天的 bug | 根因 | 修法 |
 |------------------|------|------|

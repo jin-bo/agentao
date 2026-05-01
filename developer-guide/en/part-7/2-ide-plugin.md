@@ -1,6 +1,11 @@
 # 7.2 Blueprint B · IDE / Editor Plugin
 
-> **Run this example**: [`examples/ide-plugin-ts/`](https://github.com/jin-bo/agentao/tree/main/examples/ide-plugin-ts) — `npm install && npm run compile`, then **F5** inside VS Code
+::: tip ⚡ Runnable end-to-end
+**Outcome** — VS Code extension that spawns `agentao --acp --stdio` as a subprocess and shows the agent's streaming output, tool approvals, and `session/load` restore in the editor.
+**Stack** — TypeScript · VS Code Extension API · ACP JSON-RPC 2.0 over stdio · NDJSON framing.
+**Source** — [`examples/ide-plugin-ts/`](https://github.com/jin-bo/agentao/tree/main/examples/ide-plugin-ts)
+**Run** — `npm install && npm run compile`, then press **F5** in VS Code to launch the extension host.
+:::
 
 **Scenario**: you're building a VS Code / Zed / JetBrains / Neovim plugin that adds "chat with your codebase" to the editor. You want process isolation (one Agentao per workspace), language-agnostic glue (your plugin might be TypeScript), and the ability to resume a conversation after the IDE restarts.
 
@@ -184,7 +189,11 @@ Drop `.agentao/acp.json` at workspace root so users can customize without touchi
 }
 ```
 
-## Pitfalls
+## ⚠️ Pitfalls
+
+::: warning Day-2 bugs from real IDE-plugin deployments
+Each row below is a real production incident. Skim them before you ship — the fixes are cheap *now* and expensive *later*.
+:::
 
 | Day-2 bug | Root cause | Fix |
 |-----------|------------|-----|

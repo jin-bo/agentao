@@ -1,10 +1,13 @@
 # 5.5 Memory System
 
+> **What you'll learn**
+> - The three kinds of data Memory holds: persistent records, session summaries, recall candidates
+> - The two SQLite databases (project + user scope) and how they're chosen
+> - How to wipe / migrate / disable memory cleanly
+
 Memory lets the agent **remember across sessions** — user preferences, project facts, conventions. It's distinct from conversation history (this turn's messages); memory persists.
 
 ## Three kinds of data
-
-Source: `agentao/memory/manager.py`, `agentao/memory/models.py`
 
 | Type | Storage | Purpose |
 |------|---------|---------|
@@ -23,7 +26,7 @@ Project-level = "facts specific to this project" (project codename, team convent
 
 ## Graceful degradation
 
-In ACP subprocesses, restricted containers, or read-only filesystems, the memory DB may not be writable. Since 0.3.0 (Issue #16), the fallback policy lives at the storage layer (`SQLiteMemoryStore.open_or_memory`) and the embedding factory wires it in:
+In ACP subprocesses, restricted containers, or read-only filesystems, the memory DB may not be writable. The fallback policy lives at the storage layer (`SQLiteMemoryStore.open_or_memory`) and the embedding factory wires it in:
 
 ```
 SQLiteMemoryStore.open_or_memory(<cwd>/.agentao/memory.db)
@@ -181,7 +184,15 @@ mm.clear_all_session_summaries()
 | "This project uses Ruff for linting, port 8080" | `AGENTAO.md` (project-level constraint, committed to git) |
 | "Technical plan needed for this turn" | Plan mode (doesn't cross sessions) |
 
-## Common pitfalls
+## ⚠️ Common pitfalls
+
+::: warning Don't ship without these
+- ❌ **Cramming big documents into memory** — recall pulls them into every prompt, blowing context
+- ❌ **Shared memory across tenants** — user-scope DB is process-global; cross-tenant leak waiting to happen
+- ❌ **Forgetting memory outlives `clear_history()`** — "new conversation" still remembers
+
+Each pitfall below has the full fix.
+:::
 
 ### ❌ Cramming big documents into memory
 
@@ -198,5 +209,12 @@ Two users' agents pointing at the same default `Path.cwd()` or `working_director
 ### ❌ Forgetting memory outlives `clear_history()`
 
 A user clicks "new conversation" → `agent.clear_history()` — that clears session but not memory. If "new conversation" should forget everything, also call `MemoryManager.clear()` + `clear_all_session_summaries()`.
+
+## TL;DR
+
+- Memory ≠ conversation history. Memory persists across sessions in SQLite; history lives on `agent.messages`.
+- Two scopes / two DBs: **project** (`<wd>/.agentao/memory.db`) and **user** (`~/.agentao/memory.db`). Multi-tenant deployments must key user scope by `tenant_id+user_id` or disable it.
+- Read-only / restricted FS auto-degrades to in-memory store with a warning — agent keeps starting.
+- `clear_history()` does **not** clear memory; that's intentional. Wipe both explicitly when "new conversation" should forget everything.
 
 → Next: [5.6 System Prompt Customization](./6-system-prompt)

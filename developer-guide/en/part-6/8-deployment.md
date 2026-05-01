@@ -1,5 +1,10 @@
 # 6.8 Deployment, Canary & Rollback
 
+> **What you'll learn**
+> - Why agent deployments differ from typical web services (long containers, heavy deps, many canary dimensions)
+> - A multi-stage Dockerfile that doesn't ship `uv` to runtime
+> - Kubernetes patterns: `StatefulSet`, PVC, `sessionAffinity` for sticky sessions
+
 Agent deployments differ from typical web services in three ways: **long-lived containers** (session state), **heavy deps** (Python + openai + mcp), and **many canary dimensions** (model, skills, rules can each be versioned independently).
 
 ## Dockerfile template
@@ -216,5 +221,12 @@ Clients reopen sessions via `session/load` (ACP) or your SDK-side `add_message()
 ---
 
 **End of Part 6.** You now have the full production stack — sandbox to deployment. The final part weaves these into **canonical integration blueprints**: hands-on examples for real customer scenarios.
+
+## TL;DR
+
+- Multi-stage Dockerfile: build with `uv`, ship only the resolved venv + your code. Don't ship `uv` to runtime.
+- Use `StatefulSet` (not `Deployment`) when sessions are sticky; pair with PVC for `/data` and `sessionAffinity: ClientIP` on the Service.
+- Canary by **dimension** — model, skills, permission rules each get their own rollout knob. Don't bundle them.
+- Rollback drill: keep N-1 model + N-1 skill bundle hot-swappable in seconds; the LLM tier is your most volatile dependency.
 
 → [Part 7 · Integration Blueprints](/en/part-7/) (coming soon)

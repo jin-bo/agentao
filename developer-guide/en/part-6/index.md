@@ -2,6 +2,14 @@
 
 **Shipping an agent to real users** is 10× harder than running it on a developer's laptop. This part merges "security" and "production" — they're inseparable.
 
+::: info Key terms in this Part
+- **Defense-in-depth** — every layer assumes the one above failed; security never lives in one place · [§6.1](/en/part-6/1-defense-model), [G.5](/en/appendix/g-glossary#g-5-security-vocabulary)
+- **SSRF blocklist** — bans `127.0.0.1`, `169.254.169.254`, link-local, RFC1918 by default; **only extend, never disable** · [§6.3](/en/part-6/3-network-ssrf), [G.5](/en/appendix/g-glossary#g-5-security-vocabulary)
+- **Working-directory golden rule** — one tenant = one CWD; never share — file tools resolve there · [§6.4](/en/part-6/4-multi-tenant-fs)
+- **Session pool** — TTL + LRU eviction over `(tenant_id, session_id)` keys; the production lifecycle pattern · [§6.7](/en/part-6/7-resource-concurrency)
+- **Sticky session** — `StatefulSet` + PVC + `sessionAffinity`; how the same session lands on the same pod · [§6.8](/en/part-6/8-deployment)
+:::
+
 ## Coverage
 
 - [**6.1 Defense-in-Depth Model**](./1-defense-model) — 7-layer defense stack, 5 threat categories, minimum vs ideal

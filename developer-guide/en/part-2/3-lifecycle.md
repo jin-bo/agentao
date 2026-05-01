@@ -1,5 +1,10 @@
 # 2.3 Lifecycle
 
+> **What you'll learn**
+> - The 4-step standard lifecycle (`Agentao()` → `chat()` → … → `close()`)
+> - Why a single agent isn't thread-safe and how to serialize correctly
+> - A FastAPI template that handles concurrent sessions without cross-talk
+
 One `Agentao` instance = one conversation. Understanding its lifecycle is essential for production embedding.
 
 ## Standard lifecycle
@@ -204,5 +209,13 @@ Key points:
 - The explicit `DELETE` endpoint triggers `close()` for proper MCP cleanup
 
 For production you still need TTL eviction, memory caps, crash recovery — covered in [Part 7](/en/part-7/).
+
+## TL;DR
+
+- **One agent = one stateful session.** Don't rebuild per turn — you'll lose context.
+- `chat()` is **blocking and not thread-safe**. Per-session lock + `asyncio.to_thread` for async hosts.
+- Always call `close()` (or use a context manager) — leaks MCP subprocesses + DB handles otherwise.
+- `clear_history()` resets `messages` only; **memory DB persists** by design.
+- Swap models at runtime via `set_provider()` / `set_model()`; history continues unchanged.
 
 → More parameters and extensibility: [Part 5 · Extensibility](/en/part-5/) (coming soon)

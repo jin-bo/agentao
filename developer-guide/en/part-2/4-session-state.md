@@ -1,5 +1,10 @@
 # 2.4 Session State & Persistence
 
+> **What you'll learn**
+> - The four state buckets every `Agentao` instance carries
+> - Which parts must be persisted to survive a process restart
+> - Three deployment patterns (long-pool / rebuild-per-request / hybrid) and how to pick
+
 A running `Agentao` instance carries a lot more than the last assistant message. Knowing **exactly what lives on the instance and where** is the difference between "users keep their context when the pod restarts" and "every restart throws away the conversation."
 
 This section is the reference for three questions:
@@ -170,6 +175,13 @@ Field format is **different from the SDK list** — ACP wraps content in an arra
 | **Hybrid** (hot pool + fallback to DB) | SaaS chatbots | Hot sessions are fast; cold sessions self-heal | More code |
 
 Production deployments typically run the hybrid pattern — see [7.2 Stateless vs stateful service](/en/part-7/2-stateless-vs-stateful) for the full design.
+
+## TL;DR
+
+- State lives in **4 buckets**: `messages`, memory DB, MCP subprocesses, `working_directory` contents.
+- To persist across restart: serialize `agent.messages` into your own DB; memory + working_directory survive on disk.
+- To restore: rebuild the agent, replay history with `add_message(role, content)` for each row, then call `chat()` normally.
+- Three deployment shapes: **long-running pool** (low latency, sticky sessions), **rebuild-per-request** (stateless, ~50–200 ms cost per turn), **hybrid** (hot pool + DB fallback — typical for SaaS).
 
 ---
 

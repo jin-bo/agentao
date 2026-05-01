@@ -1,6 +1,11 @@
 # 7.4 Blueprint D · Data Analyst Workbench
 
-> **Run this example**: [`examples/data-workbench/`](https://github.com/jin-bo/agentao/tree/main/examples/data-workbench) — `uv run python -m src.workbench "your question"`
+::: tip ⚡ Runnable end-to-end
+**Outcome** — analyst asks "show me Q3 sales by region" in plain language; agent runs DuckDB SQL, writes a one-off Python plotting script, saves a PNG into the session scratch dir — all inside a `sandbox-exec` profile.
+**Stack** — Python · DuckDB · Shell tool inside sandbox profile · custom "Analyst" skill · per-session working directory.
+**Source** — [`examples/data-workbench/`](https://github.com/jin-bo/agentao/tree/main/examples/data-workbench)
+**Run** — `uv run python -m src.workbench "your question"`
+:::
 
 **Scenario**: internal analysts have a Jupyter-like workbench. You want to add "ask in English / Chinese, get back a chart and the SQL" — Agentao runs `duckdb`, writes a one-off Python script, and saves a PNG into the session's scratch directory. Since shell is involved, the sandbox is non-negotiable.
 
@@ -156,7 +161,11 @@ Enforced at the OS level — even if the sandbox profile is loosened, the mount 
 
 Analysts trust answers only when they see the query. Parse `LLM_TEXT` chunks for fenced ```sql blocks client-side and render them as copy-able code. The `duckdb-analyst` skill's "always print the SQL" rule makes this reliable.
 
-## Pitfalls
+## ⚠️ Pitfalls
+
+::: warning Day-2 bugs from real data-workbench deployments
+Each row below is a real production incident. Skim them before you ship — the fixes are cheap *now* and expensive *later*.
+:::
 
 | Day-2 bug | Root cause | Fix |
 |-----------|------------|-----|

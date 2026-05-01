@@ -1,10 +1,13 @@
 # 4.1 Transport Protocol
 
+> **What you'll learn**
+> - The four methods that make up the entire Transport interface
+> - The contract for each: what's blocking, what's fire-and-forget
+> - How `NullTransport` behaves and when it's the right default
+
 Transport is the **only interface** between the agent runtime and your host UI / business logic. Master its four methods and you can integrate Agentao into any UI framework.
 
 ## Definition
-
-Source: `agentao/transport/base.py`
 
 ```python
 @runtime_checkable
@@ -208,5 +211,12 @@ def test_my_transport():
     r = t.on_max_iterations(100, [])
     assert r["action"] in {"continue", "stop", "new_instruction"}
 ```
+
+## TL;DR
+
+- Transport = **4 methods**: `emit` (fire-and-forget), `confirm_tool` (blocking bool), `ask_user` (blocking str), `on_max_iterations` (blocking dict).
+- `emit` exceptions are swallowed; the other three's exceptions propagate.
+- `NullTransport` = silent + auto-approve — fine for tests and headless batch jobs.
+- Implement all 4 if you build a custom transport — even a no-op stub keeps the agent loop honest.
 
 → Next: [4.2 AgentEvent Reference](./2-agent-events)

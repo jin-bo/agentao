@@ -1,5 +1,10 @@
 # 6.4 多租户隔离与文件系统
 
+> **本节你会学到**
+> - 跨租户串数据的典型模式（几乎都是配置问题，不是代码 bug）
+> - 三层 FS 隔离：`working_directory` → 用户命名空间 → 容器/虚机
+> - 上线前确认租户安全的检查清单
+
 多租户 Agent 嵌入最容易出的安全事故：**数据串租户**。根源往往不是代码漏洞，而是**共享了同一个 `working_directory`** 或**共享了进程级资源**。
 
 ## 黄金规则：一会话 = 一目录 = 一实例
@@ -227,5 +232,12 @@ class GetUserTool(Tool):
 - [ ] 共享 /tmp？（看容器/隔离）
 - [ ] 业务工具能跨租户查？（看 Tool 里有没有 tenant_id guard）
 - [ ] 日志混在一起？（看 agentao.log 路径）
+
+## TL;DR
+
+- **一会话 = 一 `working_directory` = 一 `Agentao` 实例**。绝不跨租户复用 agent，哪怕只是一瞬间。
+- 三层叠加：每会话 `working_directory`、操作系统用户命名空间、容器/虚机。
+- 记忆用户作用域（`~/.agentao/memory.db`）是**进程全局**——多租户场景要禁用，或按 `tenant_id+user_id` 索引。
+- 自定义 Tool 在构造时捕获了 `tenant_id` 的，**必须每会话新建**，不能从进程级缓存里复用。
 
 → [6.5 密钥管理与 Prompt 注入](./5-secrets-injection)

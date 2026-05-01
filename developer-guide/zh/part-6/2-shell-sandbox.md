@@ -1,5 +1,10 @@
 # 6.2 Shell 沙箱与命令控制
 
+> **本节你会学到**
+> - Shell 的三层递进防护：PermissionEngine、`confirm_tool`、内核沙箱
+> - macOS 三个 sandbox profile（`readonly` / `workspace-write` / `workspace-write-no-network`）
+> - Linux 等价方案：容器、namespace、seccomp
+
 `run_shell_command` 是 Agent 能力最强、也最危险的工具。Agentao 提供**三层递进**防护，按"越下层越贵、越严"排：
 
 ```
@@ -14,8 +19,6 @@
 A、B 在 [Part 4.5](/zh/part-4/5-tool-confirmation-ui) 与 [Part 5.4](/zh/part-5/4-permissions) 讲过。本节专注**层 C：系统级沙箱**。
 
 ## macOS sandbox-exec
-
-源码：`agentao/sandbox/policy.py`、`agentao/sandbox/profiles/`
 
 macOS 自带 `sandbox-exec` 工具，内核级隔离文件写入和网络访问。Agentao 的 SandboxPolicy 在命令执行前**用它包一层**。
 
@@ -186,7 +189,15 @@ class FirejailShellTool(ShellTool):
 
 沙箱防的是"命令造成的内核级伤害"；权限防的是"命令根本不该被执行"。两层叠加才稳。
 
-## 常见陷阱
+## ⚠️ 常见陷阱
+
+::: warning 上线前先确认这几条
+- ❌ **只靠沙箱不做规则过滤** —— `sandbox-exec` 是在 LLM 决定执行**之后**才拒，PermissionEngine 要在更早一层拦下
+- ❌ **自定义 profile 未验证** —— `.sb` 文件里的拼写错误会让规则静默失效
+- ❌ **`_RW1` 指错地方** —— 沙箱只允许写 `_RW1`，如果它不是你的 `workspace_root`，等于没法写
+
+下面每一条都附完整修法。
+:::
 
 ### ❌ 只靠沙箱不做规则过滤
 
@@ -205,5 +216,12 @@ assert err is None, f"Profile broken: {err}"
 ### ❌ `_RW1` 指错地方
 
 沙箱只允许写 `_RW1`，如果你希望 Agent 能写 `/tmp/output`，要么改 profile 加白，要么改 `workspace_root`。默认 `workspace_root = project root`。
+
+## TL;DR
+
+- **三层按顺序**：PermissionEngine（始终启用）→ `confirm_tool`（人机交互）→ macOS `sandbox-exec`（内核级，opt-in）。
+- Profile：`readonly`（审计）、`workspace-write`（开发默认）、`workspace-write-no-network`（CI / 批处理）。
+- 仅 macOS 有 `sandbox-exec`：Linux 生产用容器 + seccomp + 用户命名空间。前两层（PermissionEngine + `confirm_tool`）依然适用。
+- 容器内沙箱配置 mount 为只读——Agent 不能改自己的 profile。
 
 → [6.3 网络与 SSRF 防护](./3-network-ssrf)

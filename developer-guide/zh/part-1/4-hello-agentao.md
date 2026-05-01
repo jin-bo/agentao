@@ -1,152 +1,104 @@
 # 1.4 5 分钟 Hello Agentao
 
-目标：从零跑通**两条路径**各一个最小示例。全程 5 分钟，不写任何自定义代码。
+目标：跑通最小的 Python 嵌入示例，**不用写任何自定义代码**。
 
-## 前置条件
+> 想先尝鲜非 Python 路径？跳到 [3.1 ACP Quick Try](/zh/part-3/1-acp-tour#60-秒快速尝鲜)。
+
+::: tip ⚡ 端到端可跑（约 3 分钟）
+**产出** —— Agent 思考、调用 `glob` + `run_shell_command`，打印 cwd 下最大的 3 个文件。
+**技术栈** —— `pip install 'agentao>=0.4.0'` + 3 个环境变量 + 6 行 Python。
+**运行** —— 粘贴 Step 3 的代码后跑 `python hello.py`。
+:::
+
+## 第 1 步 · 安装（1 分钟）
 
 ```bash
-# 1. 安装 uv（Python 包管理器）
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. 装 Agentao 并加上 CLI extras（示例 B 走 `agentao` 命令行）
-pip install 'agentao[cli]'      # 或：uv pip install 'agentao[cli]'
-# 嵌入路径（示例 A）裸装 `pip install agentao` 即可。
-# 或从源码：
-git clone https://github.com/jin-bo/agentao && cd agentao && uv sync
-
-# 3. 配置 LLM 凭据
-export OPENAI_API_KEY="sk-..."
-# 可选：切换到其他兼容端点
-# export OPENAI_BASE_URL="https://api.deepseek.com"
-# export OPENAI_MODEL="deepseek-chat"
+pip install 'agentao>=0.4.0'
 ```
 
-## 示例 A · Python SDK（约 20 行）
+`pip install agentao` 只装嵌入核心。`[web]` / `[cli]` / `[i18n]` 等 extras 按需后加，见 [1.5 运行环境](./5-requirements)。
 
-把下面的代码保存为 `hello_sdk.py`：
+## 第 2 步 · 配置凭据（1 分钟）
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export OPENAI_BASE_URL="https://api.openai.com/v1"   # 或任意 OpenAI 兼容端点
+export OPENAI_MODEL="gpt-5.4"
+```
+
+三个变量都必需。DeepSeek / Gemini / vLLM 用法一致，把 `OPENAI_BASE_URL` 和 `OPENAI_MODEL` 指向对应端点即可。
+
+## 第 3 步 · 运行（1 分钟）
+
+保存为 `hello.py`：
 
 ```python
-"""最小可运行的 Agentao 嵌入示例。
-运行：OPENAI_API_KEY=sk-... python hello_sdk.py
-"""
+from pathlib import Path
+from agentao import Agentao
+
+agent = Agentao(working_directory=Path.cwd())
+print(agent.chat("列出当前目录下 3 个最大的文件。"))
+agent.close()
+```
+
+```bash
+python hello.py
+```
+
+你会看到 Agentao 思考、调用 `run_shell_command` / `glob`，最后打印类似：
+
+```text
+当前目录下最大的 3 个文件：
+1. ./node_modules/.cache/...   (12 MB)
+2. ./dist/bundle.js            (4.1 MB)
+3. ./README.md                 (38 KB)
+```
+
+## 刚刚发生了什么
+
+- `Agentao(...)` 创建了**一个有状态的会话** —— 历史、工具、记忆都绑定到这个实例
+- `chat()` 跑完了完整的 LLM 循环：思考 → 调工具 → 观察结果 → 再思考 → 回答
+- `working_directory` 把文件/Shell 工具锚定到当前目录。**生产环境务必显式传 `Path`**，多实例并发时不能共享 `Path.cwd()`
+- `close()` 释放 MCP 子进程和 DB 句柄。真实代码里要放在 `try/finally` 中
+
+## 加上流式输出（再 5 行）
+
+```python
 from pathlib import Path
 from agentao import Agentao
 from agentao.transport import SdkTransport
 
-# 1. 定义一个可选的事件监听器（可省略）
-def on_event(event):
-    # event.type ∈ {TURN_START, TOOL_START, LLM_TEXT, THINKING, ...}
-    if event.type.name == "LLM_TEXT":
-        print(event.data.get("chunk", ""), end="", flush=True)
+def stream(ev):
+    if ev.type.name == "LLM_TEXT":
+        print(ev.data["chunk"], end="", flush=True)
 
-# 2. 工具确认回调（生产环境应接入你的 UI 做审批）
-def confirm_tool(name, description, args):
-    print(f"\n[auto-approve] {name}({args})")
-    return True
-
-transport = SdkTransport(on_event=on_event, confirm_tool=confirm_tool)
-
-# 3. 构造 Agent —— working_directory 务必显式指定
 agent = Agentao(
-    transport=transport,
     working_directory=Path.cwd(),
+    transport=SdkTransport(on_event=stream),
 )
-
-# 4. 开始对话
-reply = agent.chat("帮我列出当前目录下 3 个最大的文件")
-print(f"\n\n=== Final reply ===\n{reply}")
-
-# 5. 优雅清理
+agent.chat("列出当前目录下 3 个最大的文件。")
 agent.close()
 ```
 
-运行：
+整个集成模式就这两步：`Agentao(...)` + `chat(...)`。工具确认、自定义工具、权限、记忆等所有其他能力都是从这两个调用扩展出来的。
 
-```bash
-python hello_sdk.py
-```
+## 常见问题
 
-你会看到 Agent 通过工具调用（`run_shell_command`、`glob` 等）完成任务，流式输出最终答复。
+| 现象 | 原因 |
+|------|------|
+| `ImportError: cannot import name 'Agentao'` | 没装包，或从 `agentao.agent`（非公开路径）导入 |
+| `ValueError: OPENAI_API_KEY is not set` | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` 三者都必需 |
+| Agent 一直回复 `Tool execution cancelled by user` | 默认权限拒绝了写操作，见 [5.4 权限引擎](/zh/part-5/4-permissions) |
+| `chat()` 永不返回 | 多半是工具死循环或缺 `ask_user` 回调，见 [附录 F.2](/zh/appendix/f-faq#f-2-runtime-behavior) |
 
-### 关键点
+完整排错：[附录 F](/zh/appendix/f-faq)。
 
-- `from agentao import Agentao` 是唯一入口
-- `SdkTransport` 把所有交互收敛为 4 类回调
-- `working_directory=` **必须显式传入**，否则多实例场景会串扰（第 7.1 节）
-- `agent.chat()` 是阻塞调用；异步封装见第 2.6 节
+## 下一步去哪
 
-## 示例 B · ACP 协议（任意语言）
-
-打开**两个终端**：
-
-**终端 1 —— 启动 Agentao 作为 ACP Server：**
-
-```bash
-agentao --acp --stdio
-```
-
-此时进程通过 stdin 读入 JSON-RPC 请求、通过 stdout 写出响应和通知。
-
-**终端 2 —— 手工喂几条协议消息（演示用）：**
-
-你也可以直接往终端 1 粘贴下面这几行（每行一条 NDJSON）：
-
-```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
-{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp"}}
-{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"<上一步返回的 id>","prompt":[{"type":"text","text":"你好"}]}}
-```
-
-你会看到：
-- `initialize` 响应中 Agent 宣告支持的能力（`loadSession`, `mcpCapabilities` 等）
-- `session/new` 返回新建的 `sessionId`
-- `session/prompt` 触发一系列 `session/update` 通知（流式文本、工具调用），最后返回一个响应表示轮次结束
-
-### 真实宿主的做法（Node 示例伪代码）
-
-```javascript
-import { spawn } from 'node:child_process';
-
-const proc = spawn('agentao', ['--acp', '--stdio']);
-let nextId = 1;
-
-function send(method, params) {
-  const msg = { jsonrpc: '2.0', id: nextId++, method, params };
-  proc.stdin.write(JSON.stringify(msg) + '\n');
-}
-
-proc.stdout.on('data', (buf) => {
-  for (const line of buf.toString().split('\n').filter(Boolean)) {
-    const msg = JSON.parse(line);
-    if (msg.method === 'session/update') {
-      // 流式文本、工具事件、思考过程 ...
-      handleUpdate(msg.params);
-    } else if (msg.method === 'session/request_permission') {
-      // 把工具确认弹窗给用户
-      showPermissionDialog(msg.params);
-    } else if (msg.id) {
-      // 响应
-      resolvePending(msg.id, msg);
-    }
-  }
-});
-
-send('initialize', { protocolVersion: 1, clientCapabilities: {} });
-// 稍后：send('session/new', { cwd: '/your/project' })
-// 再后：send('session/prompt', { sessionId, prompt: [{type:'text', text:'你好'}] })
-```
-
-### 关键点
-
-- 协议帧是 **NDJSON**（换行分隔的 JSON），不是 WebSocket 也不是纯 stdout
-- 先 `initialize` 握手，再 `session/new`，再 `session/prompt`
-- `session/update` 是**通知**（不带 `id`），不需要响应
-- `session/request_permission` 是**请求**（带 `id`），宿主必须在合理时间内回复
-
-## 下一步
-
-两个 Hello World 都跑通后，你可以：
-
-- 想快速上线：跳去 [第 2 部分 · Python 嵌入](/zh/part-2/)
-- 想做 IDE 插件：跳去 [第 3 部分 · ACP 协议](/zh/part-3/)
-- 先确认环境：继续看 [1.5 运行环境要求 →](./5-requirements)
+| 你想做… | 推荐章节 |
+|--------|---------|
+| 把自己的业务 API 包成工具 | [5.1 自定义工具](/zh/part-5/1-custom-tools) |
+| 在 FastAPI / Flask 里做 SSE 流式输出 | [2.7 FastAPI / Flask 嵌入](/zh/part-2/7-fastapi-flask-embed) |
+| 用 Node / Go / Rust / IDE 驱动 Agentao | [第 3 部分 · ACP](/zh/part-3/) |
+| 先确认环境是否满足 | [1.5 运行环境要求](./5-requirements) |
+| 理解核心名词（Agent / Tool / Skill / …） | [1.2 核心概念](./2-core-concepts) |

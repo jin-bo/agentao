@@ -1,6 +1,11 @@
 # 7.5 蓝图 E · 离线批处理 / 定时智能任务
 
-> **运行此例**：[`examples/batch-scheduler/`](https://github.com/jin-bo/agentao/tree/main/examples/batch-scheduler) —— `uv run python -m src.daily_digest`
+::: tip ⚡ 端到端可跑
+**产出** —— cron 驱动的 `prompt_once` 任务，汇总昨天 GitHub 动态成日报；无用户、退出码确定、出错就响亮报警。
+**技术栈** —— Python · `prompt_once`（不走 chat 循环）· 技能 + cron · 给无人值守跑的结构化日志。
+**源代码** —— [`examples/batch-scheduler/`](https://github.com/jin-bo/agentao/tree/main/examples/batch-scheduler)
+**运行** —— `uv run python -m src.daily_digest`
+:::
 
 **场景**：每晚跑一个 cron，汇总昨天的 GitHub 动态、用 RSS 写周报、从昨天的订单里找异常。**没有人在线看**——agent 要自己判断、执行，或者干净地失败、响亮地报警。
 
@@ -202,7 +207,11 @@ result = ACPManager().prompt_once(
 print(result.stop_reason)
 ```
 
-## 陷阱
+## ⚠️ 陷阱
+
+::: warning 批处理 / 定时任务真实部署中的 Day-2 bug
+下面每一行都是一次真实的生产事故。**上线前先扫一遍**——现在改便宜，事后查代价大。
+:::
 
 | 上线第二天的 bug | 根因 | 修法 |
 |------------------|------|------|

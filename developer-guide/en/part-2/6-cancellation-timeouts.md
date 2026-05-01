@@ -1,5 +1,10 @@
 # 2.6 Cancellation & Timeouts
 
+> **What you'll learn**
+> - The three mechanisms that bound runtime: `CancellationToken` / `asyncio.wait_for` / `max_iterations`
+> - How to wire client disconnects and "Stop" buttons to a token
+> - Why `max_iterations` alone is insufficient and what to layer on top
+
 `chat()` is a synchronous call that may last minutes — tool loops, LLM streaming, MCP sub-processes. If your host can't stop it mid-flight, you can't offer "Stop" buttons, enforce SLAs, or honor cancellation from client connections. This section is about the three mechanisms that bound runtime, ordered from most-to-least granular.
 
 ## 2.6.1 Three bounding mechanisms
@@ -190,6 +195,13 @@ Before shipping a turn-based UI:
 - [ ] A "Stop" button triggers `token.cancel("user-stop-button")`
 - [ ] A per-turn timeout guard exists (either via `wait_for` or a background watcher)
 - [ ] `max_iterations` is tuned down from 100 if you pay per call
+
+## TL;DR
+
+- **Three bounding mechanisms, layered**: `CancellationToken` (caller-driven, granular) · `asyncio.wait_for` (hard wall-clock) · `max_iterations` (loop cap, last resort).
+- `chat()` does **not** raise on cancel — it returns `"[Cancelled: <reason>]"`. Detect the prefix at the call site.
+- Wire a token to: client disconnect events, "Stop" UI buttons, parent-task cancellation. Pass it on every `chat()`.
+- `max_iterations` alone isn't enough — a single tool call can hang indefinitely. Always pair it with `wait_for` or a watcher.
 
 ---
 

@@ -1,5 +1,10 @@
 # 6.5 Secrets Management & Prompt-Injection Defense
 
+> **What you'll learn**
+> - The four places secrets typically leak from: env / logs / LLM replies / tool output
+> - A scrubbing filter that runs **before** logs are written
+> - How to defend against prompt injection from user input, web pages, and tool output
+
 Credential leakage and prompt injection are the **most stealthy** and **most common** agent-security incidents. The first leaks invisibly; the second makes the LLM actively help the attacker.
 
 ## One: Five commandments for secrets
@@ -224,7 +229,15 @@ def test_refuses_prompt_injection():
 
 Run after every AGENTAO.md / rule / tool change.
 
-## Common pitfalls
+## ⚠️ Common pitfalls
+
+::: warning Don't ship without these
+- ❌ **Relying on "LLM is smart enough to notice"** — it's not, and it shouldn't have to be
+- ❌ **Only defending against user input, not tool output** — tool output is just as untrusted (web pages, PDFs, error messages)
+- ❌ **Realizing secrets hit the log only after it happens** — write the scrubbing filter before deploying
+
+Each pitfall below has the full fix.
+:::
 
 ### ❌ Relying on "LLM is smart enough to notice"
 
@@ -237,5 +250,12 @@ Instructions in web / file / DB returns are **equally dangerous**. Tag tool outp
 ### ❌ Realizing secrets hit the log only after it happens
 
 Write the scrubbing filter **before** deploying, not after the first leak.
+
+## TL;DR
+
+- Secrets leak from 4 places: process env (visible in `ps`), logs, LLM replies, tool output. Address all four.
+- Install a `logging.Filter` that scrubs API keys / tokens / passwords **before** any handler writes — retro-fitting after a leak is too late.
+- Tool output is **untrusted input** — wrap it in `<tool_output>...</tool_output>` tags so the LLM can distinguish from user prompts; reject `IGNORE PREVIOUS INSTRUCTIONS`-style hijacks.
+- AGENTAO.md should encode hard rules ("never reveal credentials, tenant_ids, internal URLs in user-visible replies") — these survive prompt-injection attempts better than runtime checks.
 
 → [6.6 Observability & Audit](./6-observability)

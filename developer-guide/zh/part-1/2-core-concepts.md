@@ -1,5 +1,10 @@
 # 1.2 核心概念
 
+> **本节你会学到**
+> - 后续章节都依赖的 6 个核心名词
+> - 一张图看清它们如何协作
+> - 每个名词在代码里的锚点，方便你深挖
+
 在开始写任何集成代码之前，先熟悉 Agentao 的 6 个核心名词。后面所有章节都会反复用到它们。
 
 ## 概念地图
@@ -114,5 +119,14 @@ Agentao 内置 3 个 Transport：
 | Transport | `agentao/transport/` | 实例化 `SdkTransport` |
 | Session | `agent.messages` | 管理生命周期、并发 |
 | System Prompt | `agent._build_system_prompt()` | 写 `AGENTAO.md` |
+
+## TL;DR
+
+- **Agent = 一个有状态的会话**。每个用户/对话一个实例，新会话重新构造。
+- **Tool = 能力单元**。Python 类，含 `name` / `description` / `parameters` / `execute()`。把业务 API 包成工具。
+- **Skill = 按需的提示知识**。Markdown 包，需要显式激活；它不是代码。
+- **Transport = UI 桥**。4 个回调：emit / confirm / ask_user / on_max_iterations。
+- **Working directory = 进程内会话根目录**。**永远显式传 `Path`**。
+- **System prompt = 每轮重新组装**：AGENTAO.md + 日期 + 技能 + 记忆。
 
 下一节：[1.3 两种集成模式 →](./3-integration-modes)

@@ -1,5 +1,10 @@
 # 4.6 最大迭代数兜底策略
 
+> **本节你会学到**
+> - `on_max_iterations` 的契约和 3 种返回动作（`continue` / `stop` / `new_instruction`）
+> - 什么时候问用户、什么时候自动停、什么时候注入"总结后收尾"
+> - 生产环境的合理默认
+
 `max_iterations`（默认 100）是防止 Agent 陷入死循环的**保险丝**。当 Agent 连续调用了 100 轮工具还没给出最终回复时，Agentao 调用 `transport.on_max_iterations(count, messages)` 让你决定怎么办。
 
 ## 接口约定
@@ -246,6 +251,13 @@ def on_event(ev):
 
 ---
 
-**第 4 部分到此完成。** 你现在掌握了从 Agent 事件到用户 UI 的完整桥接路径。下一部分讲如何让 Agent **理解你的业务**——通过自定义工具、技能、MCP、权限。
+你现在掌握了从 Agent 事件到用户 UI 的完整桥接路径。进入第 5 部分之前，下一节讲**稳定的宿主合约**—— `agent.events()` 与 `active_permissions()` —— 用来搭建跨版本不会断的审计和可观测流水线。
 
-→ [第 5 部分 · 扩展点](/zh/part-5/)（撰写中）
+## TL;DR
+
+- `on_max_iterations` 返回 `{"action": ...}`——3 种动作：`continue`（提高上限继续跑）、`stop`（直接返回半截回复）、`new_instruction`（注入文本并重置计数）。
+- 生产环境默认用 `stop`——静默死循环会真的烧钱。按次付费场景把 `max_iterations` 调到 ~30。
+- 用 `new_instruction` 推动模型"总结一下你已有的、给最终答复"——比放任挂着好。
+- 永远要把命中次数和最近几轮工具调用记下来，方便事后排查为什么收敛不了。
+
+→ 下一节：[4.7 嵌入式 Harness 合约](./7-harness-contract)

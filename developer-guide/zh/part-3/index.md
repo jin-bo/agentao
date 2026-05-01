@@ -2,6 +2,15 @@
 
 **跨语言的嵌入路径**：任何能启动子进程 + 读写 stdio 的语言（Node / Go / Rust / Kotlin / Swift / C# / Java …）都能把 Agentao 作为 ACP Server 驱动。
 
+::: info 本部分关键词
+线协议层反复出现的词汇 —— 完整词汇表见 [附录 G.3](/zh/appendix/g-glossary#g-3-acp-相关术语)。
+- **ACP** — Agent Client Protocol；宿主（Client）↔ Agent 运行时（Server）的 stdio JSON-RPC 2.0 协议 · [§3.1](/zh/part-3/1-acp-tour)、[G.3](/zh/appendix/g-glossary#g-3-acp-相关术语)
+- **NDJSON** — 换行分隔的 JSON，每行一个完整对象；stdout 被污染 = 协议崩 · [§3.1](/zh/part-3/1-acp-tour#协议特征)
+- **session/prompt** — 宿主发起的请求，启动一轮对话（返回时带 `stopReason`） · [§3.2](/zh/part-3/2-agentao-as-server#发送提示-session-prompt)
+- **session/update** — Server 推送的**通知**（无 `id`，禁止回复）—— 流式文本、思考、工具事件 · [§3.2](/zh/part-3/2-agentao-as-server#流式更新-session-update通知)
+- **session/request_permission** — Server 推送的**请求**（带 `id`，宿主必须响应），用于工具审批 · [§3.2](/zh/part-3/2-agentao-as-server#工具确认-session-request-permission请求)
+:::
+
 ## 本部分覆盖
 
 - [**3.1 ACP 协议速览**](./1-acp-tour) — 协议定位、与 MCP 的关系、消息四象限、ACP v1 能力边界

@@ -1,5 +1,10 @@
 # 6.8 容器化、灰度与回滚
 
+> **本节你会学到**
+> - Agent 部署与普通 Web 服务的 3 个关键区别（容器长寿、依赖重、灰度维度多）
+> - 不把 `uv` 带进 runtime 的多阶段 Dockerfile
+> - K8s 模式：`StatefulSet`、PVC、`sessionAffinity` 做粘性会话
+
 Agent 的部署与普通 Web 服务有三点不同：**每个容器长寿**（会话状态）、**依赖重**（Python + openai + mcp）、**可灰度的维度多**（模型、技能、规则都可以独立版本化）。
 
 ## Dockerfile 模板
@@ -225,5 +230,12 @@ def on_sigterm(signum, frame):
 ---
 
 **第 6 部分到此完成。** 你现在有了从沙箱到部署的完整生产化知识栈。最后一部分讲把所有这些编织成**典型集成蓝图**——客户真实场景的手把手示例。
+
+## TL;DR
+
+- 多阶段 Dockerfile：用 `uv` 构建，runtime 阶段只装解析后的 venv + 你的代码。**不要把 `uv` 带到 runtime**。
+- 会话有粘性时用 `StatefulSet`（不是 `Deployment`），配 PVC 挂 `/data`，Service 设 `sessionAffinity: ClientIP`。
+- 按**维度**灰度——模型、技能、权限规则各自一个独立旋钮。**不要捆在一起灰**。
+- 回滚演练：上一版的模型 + 上一版的技能包始终可秒级热切换；LLM 这层是最不稳定的依赖。
 
 → [第 7 部分 · 典型集成蓝图](/zh/part-7/)（撰写中）

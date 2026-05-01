@@ -1,5 +1,10 @@
 # 4.4 Streaming UI: SSE / WebSocket Bridging
 
+> **What you'll learn**
+> - The thread / event-loop boundary problem and how to bridge it cleanly
+> - SSE for unidirectional server → browser streaming
+> - WebSocket when you need bidirectional (e.g., user types while streaming)
+
 Agent events are **in-process Python objects**. To make them visible to a browser frontend, translate `AgentEvent` into a wire protocol. This section shows SSE and WebSocket bridges.
 
 ## Overall architecture
@@ -258,5 +263,13 @@ def on_event(ev):
     logger.info("agent_event", extra={"type": ev.type.value, **ev.data})
     metrics.counter(f"agent.{ev.type.value}").inc()
 ```
+
+## TL;DR
+
+- The agent loop runs on a worker thread; the event loop runs on the main thread. Bridge with `loop.call_soon_threadsafe(queue.put_nowait, ev)`.
+- **SSE** for the common case (one-way streaming, browsers handle reconnect, simple).
+- **WebSocket** when the user needs to type / cancel / confirm mid-stream.
+- Always send periodic keep-alive frames (`: keepalive\n\n` for SSE, ping/pong for WS) — proxies and browsers kill idle long-polls.
+- Cancel cleanly when the client disconnects: `request.is_disconnected()` (FastAPI) or `ws.close()` event handler — and call `token.cancel()`.
 
 → Next: [4.5 Tool Confirmation UI](./5-tool-confirmation-ui)

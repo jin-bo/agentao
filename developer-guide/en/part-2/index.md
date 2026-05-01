@@ -2,6 +2,15 @@
 
 The **shortest integration path** for Python hosts: `from agentao import Agentao` and drive the runtime with method calls — no protocol overhead.
 
+::: info Key terms in this Part
+Five vocabulary items you'll see throughout — bookmark [Appendix G](/en/appendix/g-glossary) for the full glossary.
+- **Agentao instance** — one constructor call → one stateful session; `close()` is mandatory · [§2.3](/en/part-2/3-lifecycle), [G.1](/en/appendix/g-glossary#g-1-core-concepts)
+- **Working directory (cwd)** — file-tool root, MCP cwd, `AGENTAO.md` lookup; frozen at construction · [§2.2](/en/part-2/2-constructor-reference), [G.1](/en/appendix/g-glossary#g-1-core-concepts)
+- **Transport** — push-style callback (`emit(event)`) for streaming UI · [§2.7](/en/part-2/7-fastapi-flask-embed), [G.2](/en/appendix/g-glossary#g-2-extension-points)
+- **CancellationToken** — host-side handle to abort an in-flight `chat()` · [§2.6](/en/part-2/6-cancellation-timeouts), [G.1](/en/appendix/g-glossary#g-1-core-concepts)
+- **extra_mcp_servers** — per-session MCP injection (different tenants → different tokens) · [§2.2](/en/part-2/2-constructor-reference#tier-2-common-production-params-8-more)
+:::
+
 ## Coverage
 
 - [**2.1 Install & Import**](./1-install-import) — version pinning, extras, lazy loading

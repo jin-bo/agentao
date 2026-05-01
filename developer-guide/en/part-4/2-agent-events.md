@@ -1,23 +1,26 @@
 # 4.2 AgentEvent Reference
 
+> **What you'll learn**
+> - When to use `AgentEvent` (UI / debug / replay) vs. `HarnessEvent` (stable host contract)
+> - The complete catalog of event types, triggers, and `data` payloads
+> - How to safely serialize events for SSE / WebSocket transport
+
 The agent pushes structured events through `transport.emit(event)`. This section is the **complete event catalog** — triggers, `data` payloads, typical use.
 
-::: warning HarnessEvent vs AgentEvent — pick the right surface
-The events documented here are **internal transport events**. They drive the CLI, replay, and debug tooling, and they are richer than what hosts need. Their fields and `EventType` enum values may change between releases.
+::: warning Building a production audit pipeline? Use `HarnessEvent` instead.
+The events on **this page** are the **internal transport events** — they drive the CLI, replay, and debug tooling, and their fields/enum values may change between releases. They're the right pick for **streaming UI** (LLM_TEXT chunks, THINKING bubbles, in-flight tool views).
 
-If you are embedding Agentao in another application, prefer the **stable host-facing surface** instead:
+For **production audit / observability / SIEM pipelines**, use the **stable host contract** in **[4.7 Embedded Harness Contract](./7-harness-contract)** instead. Quick comparison:
 
 | Surface | Where | Stability | When to use |
 |---|---|---|---|
-| `agentao.harness.HarnessEvent` (`ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`) | `agent.events()` async iterator | Stable, schema-snapshotted | Production hosts, audit pipelines, multi-tenant deployments |
-| `agentao.transport.AgentEvent` | `Transport.emit()` callback | Internal — may change per release | CLI/UI integrations that need rich streaming detail and accept churn |
+| `agentao.transport.AgentEvent` (this page) | `Transport.emit()` push callback | Internal — may change per release | CLI / streaming UI that needs rich detail |
+| `agentao.harness.HarnessEvent` ([4.7](./7-harness-contract)) | `agent.events()` async pull iterator | **Stable**, schema-snapshotted, CI-enforced | Production audit, billing, multi-tenant compliance |
 
-The two surfaces coexist on purpose: harness events are a deliberate **redacted projection** of the runtime, not a one-to-one mirror of `AgentEvent`. See [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-harness-contract) and [`docs/api/harness.md`](../../../docs/api/harness.md) for the host-facing contract.
+The two surfaces are **complementary, not alternatives** — most production deployments use both: Transport for UI, `events()` for audit. They share zero code paths.
 :::
 
 ## `AgentEvent` data structure
-
-Source: `agentao/transport/events.py`
 
 ```python
 @dataclass
@@ -281,5 +284,12 @@ def event_from_json(j: str) -> AgentEvent:
     obj = json.loads(j)
     return AgentEvent(type=EventType(obj["type"]), data=obj["data"])
 ```
+
+## TL;DR
+
+- `AgentEvent` is **internal** — fields and `EventType` values may change between releases. For a stable host surface (audit / observability), use `HarnessEvent` — see **[4.7 Embedded Harness Contract](./7-harness-contract)**.
+- The most common types you'll handle: `LLM_TEXT` (streaming chunks), `TOOL_START` / `TOOL_COMPLETE`, `THINKING`, `ERROR`.
+- Treat unknown event types defensively — new ones are added across releases. Always have a default branch.
+- Serialize via `event.type.value` + `event.data` (already JSON-safe) — don't pickle.
 
 → Next: [4.3 SdkTransport Bridging](./3-sdk-transport)

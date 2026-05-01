@@ -236,12 +236,15 @@ Week 3 把历史裸字符串形式下掉了。新形态是结构化对象：
 
 Tool 就是普通类——`MyTool().execute(**args)`，不需要 Agentao 实例。要动磁盘的传临时 `working_directory`。
 
+要端到端测试钻机——`agent` / `agent_with_reply` / `fake_llm_client` 三个 pytest fixture + 通过的烟雾测试——见 [`examples/pytest-fixture/`](https://github.com/jin-bo/agentao/tree/main/examples/pytest-fixture)。把 fixture drop 进自己测试套件，立刻获得无 `OPENAI_API_KEY` 依赖的密闭 Agentao 测试。
+
 ### "怎么断言 agent 做对了事"
 
 不要对 LLM 文本断言（不确定）。改为：
 
 - 用 `SdkTransport(on_event=spy)` 监听 `EventType.TOOL_START`；断言工具以预期参数被调
 - 或把工具 mock 了，断言交互
+- 复用 [`examples/pytest-fixture/`](https://github.com/jin-bo/agentao/tree/main/examples/pytest-fixture) 里的 `fake_llm_client` fixture，按轮次脚本化 LLM 回复
 
 ### "测试时 LLM 响应每次不一样"
 

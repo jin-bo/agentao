@@ -1,5 +1,10 @@
 # 6.3 网络与 SSRF 防护
 
+> **本节你会学到**
+> - 为什么 Agent 是天然的 SSRF 探针，以及默认黑名单覆盖什么
+> - 4 层网络防御：域名规则 → 重定向阻断 → egress 防火墙 → DNS rebinding
+> - 生产模式：VPC egress 白名单、`web_fetch` 禁重定向
+
 Agent 能访问网络的三个工具：`web_fetch`、`web_search`、以及通过 MCP 的各种服务。本节讲如何把它们的访问面缩到**最小必要**。
 
 ## 三层网络防线
@@ -211,7 +216,15 @@ def on_event(ev):
 
 `agentao.log` 默认已经记录工具调用的完整参数——日志脱敏请看 [6.5 密钥管理](./5-secrets-injection)。
 
-## 常见陷阱
+## ⚠️ 常见陷阱
+
+::: warning 上线前先确认这几条
+- ❌ **只有 allowlist 没有 blocklist** —— `*.example.com` 放行，但 `169.254.169.254` 没禁，重定向后还是中招
+- ❌ **相信 LLM 不会去访问内网** —— 系统提示扛不住 Prompt 注入，必须在规则层强制
+- ❌ **重定向未受保护** —— `https://good.com` → 302 → `http://169.254.169.254/` 默认会跟随
+
+下面每一条都附完整修法。
+:::
 
 ### ❌ 只有 allowlist 没有 blocklist
 
@@ -229,5 +242,12 @@ Prompt injection 可以**骗**LLM 访问任何 URL。不要依赖 LLM 的"常识
 ### ❌ 重定向未受保护
 
 `web_fetch https://good.com` → 302 → `http://169.254.169.254/` 会被内置 `httpx` 跟随。生产上考虑用自定义 `web_fetch` 禁重定向。
+
+## TL;DR
+
+- **默认 SSRF 黑名单已覆盖** localhost、`127.0.0.1`、`169.254.169.254`（云元数据）、RFC1918 私网。**不要禁用它**。
+- 第 4 层（规则引擎）是**应用侧**；第 7 层（VPC / egress 防火墙）是**基础设施侧**——两者都要。应用可被骗，基础设施才是硬墙。
+- 生产环境 `web_fetch` **永远禁重定向**——`https://good.com` → 302 → 云元数据 IP 是经典绕过手法。
+- 业务真要访问的内部 API，写显式 allowlist；不要去放宽全局黑名单。
 
 → [6.4 多租户隔离与文件系统](./4-multi-tenant-fs)

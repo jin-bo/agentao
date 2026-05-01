@@ -1,5 +1,10 @@
 # 6.7 资源治理与并发
 
+> **本节你会学到**
+> - 4 个控制点：`max_iterations`、每轮超时、单工具超时、token 预算
+> - 带 TTL + LRU 的会话池模式
+> - 不丢正在跑的请求的优雅关闭
+
 Agent 是**资源不可预测**的工作负载——一轮简单问答可能 200ms，一轮复杂任务可能 10 分钟、跑几十次工具。生产上不治理，轻则拖垮服务，重则烧钱烧到合规告警。
 
 ## 四种资源：要各自限制
@@ -249,5 +254,12 @@ signal.signal(signal.SIGINT, shutdown)
 - [ ] 会话池 TTL 与 max_sessions
 - [ ] 优雅关闭逻辑
 - [ ] 监控：活跃会话数、MCP 子进程数、每 session 内存
+
+## TL;DR
+
+- 显式设 4 个上限：`max_iterations`（循环上限）、每轮超时（用 `wait_for` 设墙时钟）、单工具超时（HTTP / shell）、token 预算（按会话/租户）。
+- 会话池：TTL + LRU 淘汰，按 `(tenant_id, session_id)` 索引。淘汰时务必 `close()` 释放 MCP 子进程。
+- 优雅关闭：停止接新请求 → 等待 in-flight 直到关闭超时 → 通过 token 强取消 → 关池。**`SIGKILL` 是最后手段。**
+- 监控活跃会话数、MCP 子进程数、每会话内存。任何一项超出容量规划要告警。
 
 → [6.8 容器化与部署](./8-deployment)

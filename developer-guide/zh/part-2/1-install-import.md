@@ -1,5 +1,10 @@
 # 2.1 安装与包导入
 
+> **本节你会学到**
+> - 选哪条 install 命令对应你的用法（extras 矩阵）
+> - 永远要用的两个 import
+> - 懒加载机制让 `import agentao` 即使依赖很重也保持便宜
+
 ## 安装
 
 按你的使用场景选安装行。0.4.0 起 `pip install agentao` 只装嵌入用的最小核心，
@@ -50,7 +55,7 @@ from agentao.tools.base import Tool, ToolRegistry  # 写自定义工具时
 
 ## 懒加载优化
 
-`agentao/__init__.py` 使用 **PEP 562 `__getattr__`** 做了懒加载，自 0.3.4（P0.5）起延迟范围进一步扩大——`from agentao import Agentao` 不再拉入 OpenAI SDK、BeautifulSoup、jieba、filelock、rich、prompt_toolkit、readchar、click、pygments、starlette、uvicorn。
+`agentao/__init__.py` 使用 **PEP 562 `__getattr__`** 做了懒加载——`from agentao import Agentao` 不会拉入 OpenAI SDK、BeautifulSoup、jieba、filelock、rich、prompt_toolkit、readchar、click、pygments、starlette、uvicorn。
 
 当前还会被 lazy 的依赖（首次运行时再加载）：
 
@@ -120,5 +125,17 @@ def on_event_is_text(ev) -> bool:
 ```
 
 每个参数的含义见下一节。
+
+## TL;DR
+
+- `pip install 'agentao>=0.4.0'` 是嵌入最小集——按需加 `[web]` / `[i18n]` / `[cli]` / `[full]` 等 extras。
+- 永远要用的两个 import：`from agentao import Agentao` + `from agentao.transport import SdkTransport`。
+- `import agentao` 是**便宜**的——重依赖（`openai` / `bs4` / `jieba` / `mcp` / `rich` …）都被延迟到首次运行时才加载。
+- 生产环境锁定版本范围：`agentao>=0.4.0,<0.5`。
+
+::: info 版本说明
+- **0.4.0** — `pip install agentao` 现在只装嵌入核心；`[web]` / `[cli]` / `[i18n]` 等改为显式 extras。`[full]` 复刻 0.3.x 的依赖闭包。详见[迁移指南](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.3.x-to-0.4.0.md)。
+- **0.3.4** — 懒加载延迟范围扩展到全部 opt-in 依赖（OpenAI SDK、BeautifulSoup、jieba、filelock、rich、prompt_toolkit、readchar、click、pygments、starlette、uvicorn）。`tests/test_no_cli_deps_in_core.py` 与 `tests/test_import_cost.py` 强制约束。
+:::
 
 → [2.2 构造器完整参数表](./2-constructor-reference)

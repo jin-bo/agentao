@@ -1,17 +1,46 @@
 # 1.1 What is Agentao
 
-**Agentao is a governed agent runtime** for local-first, private-first, embeddable AI agents.
+> **What you'll learn**
+> - What Agentao actually is, in 5 lines of code
+> - What's in the box vs. what your app provides
+> - How it differs from LangChain / a chatbot / a generic AI assistant
 
-It lets you drop LLM-powered capability — tool use, project-aware reasoning, multi-turn loops, permissions, memory, and protocol connectivity — into your own application without giving up control.
+**Agentao is an embeddable Python agent runtime.** Three lines of code give your app a stateful, tool-using assistant — one that reads files, runs commands, calls your APIs, and remembers context across turns:
 
-## From CLI to Embeddable Framework
+```python
+from pathlib import Path
+from agentao import Agentao
 
-Agentao started as a command-line tool: `uv run agentao` opens a terminal REPL where it reads files, runs commands, and queries docs. But the CLI is just the default skin, not the product boundary. Since v0.2.10, the core runtime is decoupled and exposes two stable embedding surfaces:
+agent = Agentao(working_directory=Path.cwd())
+print(agent.chat("Summarize the last 5 commits."))
+```
 
-- **Python in-process SDK** — `from agentao import Agentao` hands you a live agent instance
-- **ACP protocol server** — `agentao --acp --stdio` speaks a standard JSON-RPC protocol any language can drive
+That's the whole minimum. No web server, no extra services. The same runtime also speaks the **ACP** stdio JSON-RPC protocol, so non-Python hosts (IDE plugins, Node, Go, Rust) can drive it without re-implementing anything:
 
-> **Harness** remains a useful explanatory term here, but not the primary product label. It refers to the **runtime skeleton** that orchestrates the LLM loop, tool invocation, permissions, memory, sessions, and sandboxing. Your application provides the "business muscles" (your APIs, your database, your UI); Agentao provides the "nervous system" (decision loop, state, safety rails).
+```bash
+agentao --acp --stdio
+```
+
+## What you get out of the box
+
+- **Built-in tools** — file read/write/edit, shell, web fetch, search, glob/grep, MCP bridge
+- **Permissions** — rule-based engine + interactive confirm before risky actions
+- **Memory** — SQLite-backed, project + user scopes, persists across sessions
+- **Sessions** — conversation compression, working-directory isolation, multi-instance friendly
+- **Two embedding paths** — direct Python import (shortest), or stdio JSON-RPC (any language)
+- **LLM portability** — OpenAI / Anthropic / Gemini / DeepSeek / vLLM / any OpenAI-compatible endpoint
+- **Forward-compatible host contract** — `agentao.harness` ships a frozen, schema-snapshotted API so production code keeps working across releases ([4.7](/en/part-4/7-harness-contract))
+
+## From CLI to embeddable runtime
+
+Agentao started as a command-line tool — `uv run agentao` opens a terminal REPL. But the CLI is just one skin. Since v0.2.10 the core runtime is decoupled with two stable embedding surfaces:
+
+- **Python in-process SDK** — `from agentao import Agentao` gives you a live agent instance
+- **ACP protocol server** — `agentao --acp --stdio` speaks JSON-RPC any language can drive
+
+::: info Vocabulary note
+You'll see the word **harness** in places — it refers to the runtime skeleton that orchestrates the LLM loop, tools, permissions, memory, and sandboxing. Your app provides the "business muscles" (APIs, DB, UI); Agentao provides the "nervous system" (decision loop, state, safety rails). Treat it as an explanatory label, not the product name.
+:::
 
 ## What Agentao is not
 
@@ -39,5 +68,12 @@ Agentao started as a command-line tool: `uv run agentao` opens a terminal REPL w
 - **Part 5**: Six extension points — make Agentao speak **your** business
 - **Parts 6 – 7**: Security and production deployment
 - **Part 8**: Five cookbook blueprints
+
+## TL;DR
+
+- Agentao = **embeddable Python agent runtime**. `from agentao import Agentao` and you have a stateful tool-using assistant.
+- Two embedding paths: **Python in-process SDK** (shortest) or **ACP stdio JSON-RPC** (any language).
+- Batteries included: tools, permissions, memory, sessions, multi-tenant working dirs, MCP client.
+- Your app provides the business muscles (APIs / DB / UI); Agentao provides the nervous system.
 
 Next: [1.2 Core Concepts →](./2-core-concepts)

@@ -1,5 +1,10 @@
 # 5.4 Permission Engine
 
+> **What you'll learn**
+> - The two-layer model: rule-engine first, `confirm_tool` only for ASKs
+> - The 4 preset modes (`READ_ONLY` / `WORKSPACE_WRITE` / `FULL_ACCESS` / `PLAN`)
+> - The domain rule semantics for `web_fetch` (allowlist, blocklist, exact vs. suffix match)
+
 **The PermissionEngine is Agentao's first line of defense.** It makes a rule-based decision **before** the tool actually runs, automatically handling "clearly safe" and "clearly dangerous" requests and leaving only edge cases to `confirm_tool()` ([Part 4.5](/en/part-4/5-tool-confirmation-ui)).
 
 ## Two-layer defense model
@@ -20,8 +25,6 @@ Layer 1 is **zero-latency** (rule match); layer 2 is **seconds** (user clicks). 
 
 ## PermissionDecision
 
-Source: `agentao/permissions.py:11-14`
-
 ```python
 class PermissionDecision(Enum):
     ALLOW = "allow"   # execute
@@ -32,8 +35,6 @@ class PermissionDecision(Enum):
 If no rule matches (`decide()` returns `None`), the agent falls back to the tool's own `requires_confirmation`.
 
 ## PermissionMode: four presets
-
-Source: `agentao/permissions.py:17-21`
 
 | Mode | Writes | Shell | Web | Best for |
 |------|--------|-------|-----|----------|
@@ -221,7 +222,7 @@ snap = agent.active_permissions()
 
 The snapshot is cached; the cache is invalidated on `set_mode()` and on `add_loaded_source(...)` **with a new label** (duplicate labels are coalesced and do not force a rebuild). Direct mutation of `engine.rules` does not invalidate the cache — if you mutate rules in place, follow up with `set_mode(engine.active_mode)` (a no-op-mode set still clears the cache) or label the change via `add_loaded_source("injected:<unique-name>")`.
 
-The same surface drives `PermissionDecisionEvent.loaded_sources` on the public event stream — see [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-harness-contract).
+The same surface drives `PermissionDecisionEvent.loaded_sources` on the public event stream. **For the full how-to** (including audit-pipeline patterns), see **[4.7 Embedded Harness Contract](/en/part-4/7-harness-contract#4-7-6-agent-active-permissions-policy-snapshots)**. For the dense field reference, see [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-harness-contract).
 
 ## Common templates
 
@@ -296,7 +297,16 @@ for tool, args in [
 
 Turn this into a unit test — guarantee the rules you expect to hit are hit before deploying.
 
-## Common pitfalls
+## ⚠️ Common pitfalls
+
+::: warning Don't ship without these
+- ❌ **Wrong rule order** — first match wins, deny rules placed after allow rules never fire
+- ❌ **No catch-all** — undefined tool calls fall through to defaults you didn't audit
+- ❌ **Unescaped regex** — `.` matches everything, not just a literal dot
+- ❌ **`"github.com"` thinking it's a suffix match** — without the leading dot it's exact match
+
+Each pitfall below has the full fix.
+:::
 
 ### ❌ Wrong rule order
 
@@ -327,5 +337,12 @@ In JSON, backslashes double: `"rm\\s+-rf"`.
 ### ❌ `"github.com"` thinking it's a suffix match
 
 Missing the leading dot means **exact**. For subdomain matches write `".github.com"`.
+
+## TL;DR
+
+- Two layers: **rule engine** (zero-latency, ALLOW / DENY / ASK) → **`confirm_tool`** (seconds, only for ASK).
+- Pick a preset to start: `WORKSPACE_WRITE` is the production default. `READ_ONLY` for audit. `FULL_ACCESS` only for trusted local dev. `PLAN` for read-only pre-commit review.
+- Domain rules: `".github.com"` (leading dot) = suffix; `"github.com"` (no dot) = exact. SSRF blocklist (localhost / `169.254.169.254` / RFC1918) is on by default.
+- Layer rules over presets — write rules for *your* tools and MCP servers; defaults rarely cover them.
 
 → Next: [5.5 Memory System](./5-memory)

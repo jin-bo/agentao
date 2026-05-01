@@ -1,5 +1,10 @@
 # 5.4 权限引擎（PermissionEngine）
 
+> **本节你会学到**
+> - 两层模型：先规则引擎 → 只有 ASK 才走 `confirm_tool`
+> - 4 种预设模式（`READ_ONLY` / `WORKSPACE_WRITE` / `FULL_ACCESS` / `PLAN`）
+> - `web_fetch` 的域名规则语义（allowlist / blocklist、精确 vs 后缀匹配）
+
 **PermissionEngine 是 Agentao 的第一道防线**——它在工具真正执行前做规则判决，把"明显安全"和"明显危险"两类请求自动处理掉，只让边缘情况进入 `confirm_tool()`（[第 4.5 节](/zh/part-4/5-tool-confirmation-ui)）。
 
 ## 两层防御模型
@@ -20,8 +25,6 @@
 
 ## PermissionDecision
 
-源码：`agentao/permissions.py:11-14`
-
 ```python
 class PermissionDecision(Enum):
     ALLOW = "allow"   # 直接执行
@@ -32,8 +35,6 @@ class PermissionDecision(Enum):
 如果所有规则都不匹配（`decide()` 返回 `None`），Agent 回退到工具自己的 `requires_confirmation` 属性决定是否问。
 
 ## PermissionMode：四种预设
-
-源码：`agentao/permissions.py:17-21`
 
 | 模式 | 写操作 | Shell | Web | 适合 |
 |------|-------|-------|-----|------|
@@ -224,7 +225,7 @@ snap = agent.active_permissions()
 
 快照带缓存；缓存在 `set_mode()` 时失效，在 `add_loaded_source(...)` **传入新标签** 时失效（重复标签会被合并、不触发重建）。直接修改 `engine.rules` 不会让缓存失效 —— 原地改完后请补一次 `set_mode(engine.active_mode)`（同模式重设也会清缓存）或 `add_loaded_source("injected:<unique-name>")` 触发重建。
 
-同一份数据也驱动公共事件流上 `PermissionDecisionEvent.loaded_sources` —— 详见[附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)。
+同一份数据也驱动公共事件流上的 `PermissionDecisionEvent.loaded_sources`。**完整教学**（含审计流水线模式）见 **[4.7 嵌入式 Harness 合约](/zh/part-4/7-harness-contract#4-7-6-agent-active-permissions-策略快照)**；密集字段速查见 [附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)。
 
 ## 典型配置模板
 
@@ -300,7 +301,16 @@ for tool, args in [
 
 部署前把这段 sanity check 做成单元测试，保证预期的规则都命中。
 
-## 常见陷阱
+## ⚠️ 常见陷阱
+
+::: warning 上线前先确认这几条
+- ❌ **规则顺序写反了** —— 命中即返回，deny 写在 allow 之后永远不触发
+- ❌ **没有兜底规则** —— 未定义的工具会落到你没审过的默认行为
+- ❌ **正则没转义** —— `.` 是任意字符匹配，不是字面点
+- ❌ **allowlist 写成 `"github.com"` 想做后缀匹配** —— 没前导点就是精确匹配
+
+下面每一条都附完整修法。
+:::
 
 ### ❌ 规则顺序写反了
 
@@ -331,5 +341,12 @@ JSON 里 `\` 要写两次：`"rm\\s+-rf"`。
 ### ❌ allowlist 写成 `"github.com"` 想做后缀匹配
 
 少了前导点就是**精确匹配**。想匹配所有子域名要写 `".github.com"`。
+
+## TL;DR
+
+- 两层：**规则引擎**（零延迟，ALLOW / DENY / ASK）→ **`confirm_tool`**（秒级，只在 ASK 时触发）。
+- 起步选预设：`WORKSPACE_WRITE` 是生产默认；`READ_ONLY` 用于审计；`FULL_ACCESS` 仅给可信本地开发；`PLAN` 用于只读 pre-commit review。
+- 域名规则：`".github.com"`（前导点）= 后缀匹配；`"github.com"`（无点）= 精确匹配。SSRF 黑名单（localhost / `169.254.169.254` / RFC1918）默认开。
+- 在预设之上**叠加规则**——为你自己的工具和 MCP server 写规则；默认规则覆盖不到它们。
 
 → 下一节：[5.5 记忆系统](./5-memory)

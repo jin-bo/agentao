@@ -1,5 +1,10 @@
 # 2.5 Runtime LLM Switching
 
+> **What you'll learn**
+> - The three public APIs to swap model / provider mid-session
+> - Routing patterns: cheap-vs-expensive, primary-with-fallback, A/B
+> - Why there's no `OpenAIProvider` / `AnthropicProvider` abstraction
+
 One running `Agentao` is bound to one LLM at construction. But you often want to **change which model answers the next turn**: route cheap models for small talk, expensive models for planning, fall back to a secondary provider when the primary times out. This section covers the three public APIs that let you do that without rebuilding the agent.
 
 ## 2.5.1 The three methods
@@ -152,6 +157,13 @@ You might notice `Agentao(...)` takes `api_key / base_url / model` directly but 
 - "Switching provider" is just "switching key + base_url + model"
 
 So there's no `OpenAIProvider` / `AnthropicProvider` / `GoogleProvider` abstraction — keep your routing code simple. If you need native Anthropic or Gemini, put them behind an OpenAI-compatible gateway.
+
+## TL;DR
+
+- Three APIs: `set_provider(api_key, base_url, model)` (full swap) · `set_model(name)` (model only) · `get_current_model()` (read).
+- Swapping does **not** clear history — the next `chat()` continues on the same context with the new model.
+- All providers are hit via the OpenAI schema; no per-vendor `Provider` abstraction. For native Anthropic / Gemini, put them behind an OpenAI-compatible gateway.
+- Common routing: **cheap-then-expensive** (small talk vs. planning), **primary-with-fallback** (timeout switch), **A/B** (eval different models on the same session).
 
 ---
 

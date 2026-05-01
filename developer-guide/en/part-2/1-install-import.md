@@ -1,5 +1,10 @@
 # 2.1 Install & Import
 
+> **What you'll learn**
+> - Which install line matches your usage (extras matrix)
+> - The two imports you'll always need
+> - How lazy loading keeps `import agentao` cheap even with heavy deps
+
 ## Install
 
 Pick the install line that matches your usage. Starting in 0.4.0,
@@ -51,7 +56,7 @@ from agentao.tools.base import Tool, ToolRegistry  # when authoring custom tools
 
 ## Lazy loading
 
-`agentao/__init__.py` uses **PEP 562 `__getattr__`** to defer heavy imports, and since 0.3.4 (P0.5) the deferral covers a much wider set of libraries — `from agentao import Agentao` no longer pulls the OpenAI SDK, BeautifulSoup, jieba, filelock, rich, prompt_toolkit, readchar, click, pygments, starlette, or uvicorn.
+`agentao/__init__.py` uses **PEP 562 `__getattr__`** to defer heavy imports — `from agentao import Agentao` does not pull the OpenAI SDK, BeautifulSoup, jieba, filelock, rich, prompt_toolkit, readchar, click, pygments, starlette, or uvicorn.
 
 What stays lazy now (load on first runtime use):
 
@@ -121,5 +126,17 @@ def on_event_is_text(ev) -> bool:
 ```
 
 Parameter meanings are covered next.
+
+## TL;DR
+
+- `pip install 'agentao>=0.4.0'` is the embedding-only minimum — add `[web]` / `[i18n]` / `[cli]` / `[full]` etc. as needed.
+- Two imports you'll always need: `from agentao import Agentao` + `from agentao.transport import SdkTransport`.
+- `import agentao` is cheap — heavy libs (`openai`, `bs4`, `jieba`, `mcp`, `rich` …) are deferred to first runtime use.
+- Pin in production: `agentao>=0.4.0,<0.5`.
+
+::: info Version note
+- **0.4.0** — `pip install agentao` now ships embedding-only core; `[web]`, `[cli]`, `[i18n]`, etc. are opt-in extras. `[full]` reproduces the 0.3.x dependency closure. See [migration guide](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.3.x-to-0.4.0.md).
+- **0.3.4** — Lazy-import deferral expanded to cover the full opt-in surface (OpenAI SDK, BeautifulSoup, jieba, filelock, rich, prompt_toolkit, readchar, click, pygments, starlette, uvicorn). Invariant enforced by `tests/test_no_cli_deps_in_core.py` and `tests/test_import_cost.py`.
+:::
 
 → [2.2 Constructor Reference](./2-constructor-reference)

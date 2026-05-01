@@ -260,7 +260,7 @@ From a headless-operations point of view, you can reduce that further:
 
 ## 3.4.7 Lifecycle & recovery
 
-Week 4 pins the behaviour of three common failure scenarios so embedders don't have to hand-roll recovery:
+Three common failure scenarios have pinned behaviour so embedders don't have to hand-roll recovery:
 
 **Cancel / timeout → next turn is safe.** Turn-slot, per-server lock, and the pending prompt slot all release inside `finally` blocks, in a fixed order. The first `send_prompt` / `prompt_once` after a cancel or timeout sees a ready server with no residual state.
 
@@ -326,7 +326,7 @@ for s in mgr.get_status():             # each s: ServerStatus
         print(f"{s.server} failed: {info.last_error}")
 ```
 
-Core fields (frozen at Week 1):
+Core fields:
 
 - `server: str` — name from `.agentao/acp.json`
 - `state: str` — `ServerState` enum value
@@ -335,14 +335,14 @@ Core fields (frozen at Week 1):
   slot; stays `True` for the full lifetime of a turn, including
   in-flight interactions
 
-The same dataclass additively exposes Week 2 diagnostic fields —
+Diagnostic fields (additive on the same dataclass):
 `last_error`, `last_error_at`, `active_session_id`, `inbox_pending`,
-`interaction_pending`, `config_warnings` — on top of the Week 1 core.
+`interaction_pending`, `config_warnings`.
 Read them directly off `ServerStatus`; `mgr.get_handle(name).info` and
 `mgr.inbox` / `mgr.interactions` remain available for the raw handle
 view. See
 [`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)
-for the full field list and migration table from the pre-Week-1 dict
+for the full field list and migration table from the pre-typed dict
 shape.
 
 Log files from the sub-agent land in `<server cwd>/agentao.log` (for Agentao-type sub-agents) or wherever that agent chooses. Always set `cwd` in `.agentao/acp.json` to a writable dir so logs don't get lost.

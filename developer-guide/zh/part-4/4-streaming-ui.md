@@ -1,5 +1,10 @@
 # 4.4 构建流式 UI：SSE / WebSocket 转译
 
+> **本节你会学到**
+> - 线程 / 事件循环边界问题，以及如何干净地桥接
+> - 单向场景用 SSE（服务端 → 浏览器）
+> - 需要双向（用户边接收边输入）时用 WebSocket
+
 Agent 事件是**后端内部**的 Python 对象。要让前端实时看到 Agent 的响应，需要把 `AgentEvent` 翻译成网络协议。本节给出 SSE 与 WebSocket 两种典型桥接。
 
 ## 总体架构
@@ -269,5 +274,13 @@ def on_event(ev):
     # 3. 指标
     metrics.counter(f"agent.{ev.type.value}").inc()
 ```
+
+## TL;DR
+
+- Agent 循环跑在 worker 线程，事件循环跑在主线程。用 `loop.call_soon_threadsafe(queue.put_nowait, ev)` 桥接。
+- **SSE** 适合常规场景（单向流式、浏览器自动重连、简单）。
+- **WebSocket** 适合用户在流式过程中需要打字 / 取消 / 确认。
+- 永远要发周期性 keep-alive（SSE 用 `: keepalive\n\n`，WS 用 ping/pong）——代理和浏览器会杀掉 idle 长连接。
+- 客户端断连时干净取消：FastAPI 用 `request.is_disconnected()`，WS 用 close handler，并调 `token.cancel()`。
 
 → 下一节：[4.5 工具确认 UI](./5-tool-confirmation-ui)

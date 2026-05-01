@@ -2,6 +2,14 @@
 
 **把 Agent 装进用户能用的产品**比让它在开发者本机跑难 10 倍。这部分合并了"安全防护"和"生产部署"两个主题——它们本来就分不开。
 
+::: info 本部分关键词
+- **多层防御（Defense-in-Depth）** — 每一层都假定上一层会失守；安全不在单点 · [§6.1](/zh/part-6/1-defense-model)、[G.5](/zh/appendix/g-glossary#g-5-安全术语)
+- **SSRF 黑名单** — 默认封禁 `127.0.0.1`、`169.254.169.254`、链路本地、RFC1918；**只能扩，不能关** · [§6.3](/zh/part-6/3-network-ssrf)、[G.5](/zh/appendix/g-glossary#g-5-安全术语)
+- **Working-directory 黄金规则** — 一个租户 = 一个 CWD；绝不共享 —— 文件工具都在这里寻址 · [§6.4](/zh/part-6/4-multi-tenant-fs)
+- **会话池** — 以 `(tenant_id, session_id)` 为键，TTL + LRU 淘汰；生产侧生命周期模式 · [§6.7](/zh/part-6/7-resource-concurrency)
+- **Sticky session** — `StatefulSet` + PVC + `sessionAffinity`；同会话落到同 Pod 的方式 · [§6.8](/zh/part-6/8-deployment)
+:::
+
 ## 本部分覆盖
 
 - [**6.1 多层防御模型**](./1-defense-model) — 7 层防御栈、5 类威胁模型、最小 vs 理想

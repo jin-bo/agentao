@@ -1,148 +1,104 @@
 # 1.4 Hello Agentao in 5 min
 
-Goal: get a minimal run through **both embedding paths**. Five minutes, no custom code.
+Goal: get a minimal Python embedding running. Pure SDK path, **no custom code**.
 
-## Prerequisites
+> Want a non-Python first taste? Jump to [3.1 ACP Quick Try](/en/part-3/1-acp-tour#quick-try-in-60-seconds) instead.
+
+::: tip ⚡ Runnable end-to-end (≈ 3 minutes)
+**Outcome** — agent thinks, runs `glob` + `run_shell_command`, prints the 3 largest files under cwd.
+**Stack** — `pip install 'agentao>=0.4.0'` + 3 env vars + 6 lines of Python.
+**Run** — `python hello.py` (after pasting the snippet from Step 3 below).
+:::
+
+## Step 1 · Install (1 minute)
 
 ```bash
-# 1. Install uv (Python package manager)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install Agentao with the CLI extras (Example B uses the `agentao` console script)
-pip install 'agentao[cli]'      # or: uv pip install 'agentao[cli]'
-# Embedding-only paths (Example A) work with bare `pip install agentao`.
-# Or from source:
-git clone https://github.com/jin-bo/agentao && cd agentao && uv sync
-
-# 3. Configure LLM credentials
-export OPENAI_API_KEY="sk-..."
-# Optional: switch to another OpenAI-compatible endpoint
-# export OPENAI_BASE_URL="https://api.deepseek.com"
-# export OPENAI_MODEL="deepseek-chat"
+pip install 'agentao>=0.4.0'
 ```
 
-## Example A · Python SDK (~20 lines)
+`pip install agentao` ships the embedding-only core. Add extras (`[web]`, `[cli]`, `[i18n]`, …) later as needed — see [1.5 Requirements](./5-requirements).
 
-Save as `hello_sdk.py`:
+## Step 2 · Configure credentials (1 minute)
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export OPENAI_BASE_URL="https://api.openai.com/v1"   # or any OpenAI-compatible endpoint
+export OPENAI_MODEL="gpt-5.4"
+```
+
+All three are required. DeepSeek / Gemini / vLLM work the same way — just point `OPENAI_BASE_URL` and `OPENAI_MODEL` at them.
+
+## Step 3 · Run (1 minute)
+
+Save as `hello.py`:
 
 ```python
-"""Minimal embedded Agentao example.
-Run: OPENAI_API_KEY=sk-... python hello_sdk.py
-"""
+from pathlib import Path
+from agentao import Agentao
+
+agent = Agentao(working_directory=Path.cwd())
+print(agent.chat("List the 3 largest files under the current directory."))
+agent.close()
+```
+
+```bash
+python hello.py
+```
+
+You'll see Agentao think, call `run_shell_command` / `glob`, and print a final answer like:
+
+```text
+The three largest files under the current directory are:
+1. ./node_modules/.cache/...   (12 MB)
+2. ./dist/bundle.js            (4.1 MB)
+3. ./README.md                 (38 KB)
+```
+
+## What just happened
+
+- `Agentao(...)` created **one stateful session** — history, tools, and memory are bound to this instance
+- `chat()` ran the full LLM loop: think → call tool → observe → think → answer
+- `working_directory` rooted file/shell tools at the current dir. **Always pass an explicit `Path` in production** so concurrent instances don't share `Path.cwd()`
+- `close()` released MCP subprocesses and DB handles — wrap in `try/finally` in real code
+
+## Add streaming output (5 more lines)
+
+```python
 from pathlib import Path
 from agentao import Agentao
 from agentao.transport import SdkTransport
 
-# 1. Optional event listener
-def on_event(event):
-    # event.type ∈ {TURN_START, TOOL_START, LLM_TEXT, THINKING, ...}
-    if event.type.name == "LLM_TEXT":
-        print(event.data.get("chunk", ""), end="", flush=True)
+def stream(ev):
+    if ev.type.name == "LLM_TEXT":
+        print(ev.data["chunk"], end="", flush=True)
 
-# 2. Tool confirmation callback (in production, wire to your approval UI)
-def confirm_tool(name, description, args):
-    print(f"\n[auto-approve] {name}({args})")
-    return True
-
-transport = SdkTransport(on_event=on_event, confirm_tool=confirm_tool)
-
-# 3. Construct the agent — always pass working_directory explicitly
 agent = Agentao(
-    transport=transport,
     working_directory=Path.cwd(),
+    transport=SdkTransport(on_event=stream),
 )
-
-# 4. Chat
-reply = agent.chat("List the 3 largest files under the current directory")
-print(f"\n\n=== Final reply ===\n{reply}")
-
-# 5. Clean up
+agent.chat("List the 3 largest files under the current directory.")
 agent.close()
 ```
 
-Run:
+That's the whole pattern. Tool confirmations, custom tools, permissions, memory — every other feature extends from these two calls (`Agentao(...)` + `chat(...)`).
 
-```bash
-python hello_sdk.py
-```
+## Troubleshooting
 
-You'll see the agent invoke tools (`run_shell_command`, `glob`, …) and stream its final answer.
+| Symptom | Likely cause |
+|---------|--------------|
+| `ImportError: cannot import name 'Agentao'` | Forgot `pip install agentao`, or imported from `agentao.agent` (not the public path) |
+| `ValueError: OPENAI_API_KEY is not set` | All three of `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` are required |
+| Agent says `Tool execution cancelled by user` | Default permissions denied a write — see [5.4](/en/part-5/4-permissions) |
+| `chat()` never returns | Likely tool loop or no `ask_user` callback — see [Appendix F.2](/en/appendix/f-faq#f-2-runtime-behavior) |
 
-### Key points
+Full FAQ: [Appendix F](/en/appendix/f-faq).
 
-- `from agentao import Agentao` is the only entry point
-- `SdkTransport` funnels all interaction through four callbacks
-- **Always pass `working_directory=`** — otherwise multi-instance setups will cross-contaminate (Part 7.1)
-- `agent.chat()` is blocking; see Part 2.6 for async wrappers
+## Where to go next
 
-## Example B · ACP Protocol (any language)
-
-Open **two terminals**:
-
-**Terminal 1 — launch Agentao as an ACP server:**
-
-```bash
-agentao --acp --stdio
-```
-
-The process now reads JSON-RPC requests on stdin, writes responses and notifications on stdout.
-
-**Terminal 2 — or, simply paste these lines into Terminal 1** (one NDJSON message per line):
-
-```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
-{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp"}}
-{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"<id from previous step>","prompt":[{"type":"text","text":"hello"}]}}
-```
-
-You'll see:
-
-- `initialize` response announces capabilities (`loadSession`, `mcpCapabilities`, …)
-- `session/new` returns a fresh `sessionId`
-- `session/prompt` triggers a stream of `session/update` notifications (streaming text, tool events), then a final response when the turn ends
-
-### Real host (Node pseudocode)
-
-```javascript
-import { spawn } from 'node:child_process';
-
-const proc = spawn('agentao', ['--acp', '--stdio']);
-let nextId = 1;
-
-function send(method, params) {
-  const msg = { jsonrpc: '2.0', id: nextId++, method, params };
-  proc.stdin.write(JSON.stringify(msg) + '\n');
-}
-
-proc.stdout.on('data', (buf) => {
-  for (const line of buf.toString().split('\n').filter(Boolean)) {
-    const msg = JSON.parse(line);
-    if (msg.method === 'session/update') {
-      handleUpdate(msg.params);              // streamed text, tool events, thinking
-    } else if (msg.method === 'session/request_permission') {
-      showPermissionDialog(msg.params);       // show your approval UI
-    } else if (msg.id) {
-      resolvePending(msg.id, msg);            // response
-    }
-  }
-});
-
-send('initialize', { protocolVersion: 1, clientCapabilities: {} });
-// Later: send('session/new', { cwd: '/your/project' })
-// Then:  send('session/prompt', { sessionId, prompt: [{type:'text', text:'hello'}] })
-```
-
-### Key points
-
-- Framing is **NDJSON** (newline-delimited), not WebSocket, not raw stdout
-- Handshake order: `initialize` → `session/new` → `session/prompt`
-- `session/update` is a **notification** (no `id`) — do not respond
-- `session/request_permission` is a **request** (has `id`) — the host must reply in reasonable time
-
-## Next steps
-
-With both Hello Worlds running:
-
-- Ship fast? Go to [Part 2 · Python Embedding](/en/part-2/)
-- Building an IDE plugin? Jump to [Part 3 · ACP Protocol](/en/part-3/)
-- Double-check environment? Continue to [1.5 Requirements →](./5-requirements)
+| If you want to… | Read |
+|----------------|------|
+| Wire one of your business APIs as a tool | [5.1 Custom Tools](/en/part-5/1-custom-tools) |
+| Embed in FastAPI / Flask with SSE streaming | [2.7 FastAPI / Flask Embedding](/en/part-2/7-fastapi-flask-embed) |
+| Drive Agentao from Node / Go / Rust / IDE | [Part 3 · ACP](/en/part-3/) |
+| Verify environment requirements first | [1.5 Requirements](./5-requirements) |
+| Understand the core nouns (Agent / Tool / Skill / …) | [1.2 Core Concepts](./2-core-concepts) |

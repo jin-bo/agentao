@@ -1,13 +1,175 @@
 # 2.2 构造器完整参数表
 
-现在有**两条稳定的构造路径**，按宿主已掌握的信息选择：
+> **本节你会学到**
+> - **必传的 3 个参数**及为什么必传
+> - **生产环境通常会用到的 8 个参数**（transport / permissions / MCP …）
+> - 给需要完全控制的宿主用的**高级注入面**
+> - 两种工厂路径（直接 `Agentao(...)` vs `build_from_environment(...)`）以及如何选
 
-- **`agentao.embedding.build_from_environment(...)`** —— CLI 风格的自动发现：读 `.env`、`LLM_PROVIDER`、`<wd>/.agentao/permissions.json`、`<wd>/.agentao/mcp.json`、内存目录，然后帮你构造 `Agentao`。当宿主沿用 CLI 的项目目录约定时使用。
-- **直接 `Agentao(...)`** —— 显式注入：你已经持有 `LLMClient`、`PermissionEngine` 等子系统，构造时不希望发生任何 env / 磁盘副作用。
+## 两种构造路径
 
-**重要（0.3.0）**：不传 `working_directory=` 调用 `Agentao()` 现在会从 Python 签名分派直接抛 `TypeError`——软废弃周期已经走完。请显式传入 `Path`，或走 `build_from_environment()`。完整的嵌入式接入实践见 [`docs/EMBEDDING.md`](../../../docs/EMBEDDING.md)。
+| 路径 | 适用场景 |
+|------|---------|
+| **直接 `Agentao(...)`** | 想完全显式——构造时不要任何 env / 磁盘副作用。本节主体讲这条 |
+| **`agentao.embedding.build_from_environment(...)`** | 宿主沿用 CLI 的项目目录约定。会读 `.env`、`permissions.json`、`mcp.json`、内存目录后帮你把 `Agentao` 拼好。详见 [§ 工厂路径](#工厂路径-build-from-environment) |
 
-## 工厂：`build_from_environment()`
+两条路径最终都是产出一个 `Agentao` 实例。**选一条**——不要混用。
+
+---
+
+## 第 1 档 · 最少必备（3 个参数）
+
+**这 3 个必须传，其他都有合理默认。**
+
+```python
+from pathlib import Path
+from agentao import Agentao
+
+agent = Agentao(
+    api_key="sk-...",
+    model="gpt-5.4",
+    working_directory=Path("/tmp/my-session"),
+)
+```
+
+| 参数 | 类型 | 为什么必传 |
+|------|------|----------|
+| `api_key` | `str` | LLM 凭据。也可以走 env `OPENAI_API_KEY`，或传入预构造的 `llm_client=` |
+| `model` | `str` | 模型 ID。也可以走 env `OPENAI_MODEL` |
+| `working_directory` | `Path` | 这个会话的项目根目录。**构造时冻结**——文件 / Shell / 记忆全部相对它 |
+
+> 端点不是 OpenAI 时（DeepSeek / Gemini gateway / vLLM …）还要传 `base_url`，或走 env `OPENAI_BASE_URL`。
+
+::: warning 千万别省略 `working_directory`
+Web 服务 / 多租户进程里 `Path.cwd()` 是**进程全局**——并发会话会互相污染。0.3.0 起这个关键字必传，不传会从 Python 签名分派直接抛 `TypeError`。
+:::
+
+---
+
+## 第 2 档 · 生产常用（再加 8 个）
+
+这套搭配能覆盖大多数生产嵌入：
+
+```python
+from agentao import Agentao
+from agentao.transport import SdkTransport
+from agentao.permissions import PermissionEngine, PermissionMode
+
+engine = PermissionEngine(project_root=workdir)
+engine.set_mode(PermissionMode.WORKSPACE_WRITE)
+
+transport = SdkTransport(on_event=..., confirm_tool=..., ask_user=...)
+
+agent = Agentao(
+    api_key="sk-...",
+    base_url="https://api.openai.com/v1",
+    model="gpt-5.4",
+    temperature=0.1,
+    working_directory=workdir,
+    transport=transport,
+    permission_engine=engine,
+    max_context_tokens=128_000,
+    extra_mcp_servers={...},
+)
+```
+
+| 参数 | 类型 | 默认 | 作用 |
+|------|------|------|------|
+| `base_url` | `str` | OpenAI 默认 | 切换到任意 OpenAI 兼容端点 |
+| `temperature` | `float` | `0.2` | 采样温度 |
+| `transport` | `Transport` | `NullTransport()` | UI 桥：事件流 + 工具确认 + ask_user + 最大迭代回调，详见 [第 4 部分](/zh/part-4/) |
+| `permission_engine` | `PermissionEngine` | 工厂自动建一个根在 `working_directory` | 规则级权限引擎，详见 [5.4](/zh/part-5/4-permissions) |
+| `max_context_tokens` | `int` | `200_000` | 超过即触发对话压缩 |
+| `extra_mcp_servers` | `Dict[str,Dict]` | `None` | 给单个会话注入 MCP 服务器，不动 `.agentao/mcp.json`；同名会覆盖。适合按租户切换 token |
+| `llm_client` | `LLMClient` | （由凭据自动构造） | 注入预构造客户端，完全控制 logger / 日志文件。**与 `api_key` / `base_url` / `model` / `temperature` 互斥** |
+| `project_instructions` | `str` | （从 `<wd>/AGENTAO.md` 读） | 直接传 AGENTAO.md 内容，跳过磁盘读 |
+
+::: tip 异步宿主走 `arun()`
+`agent.chat(...)` 是同步的。异步宿主用 `await agent.arun(user_message)`，内部通过 `loop.run_in_executor` 桥接。取消、replay、`max_iterations` 在两条接口上语义完全一致。
+:::
+
+---
+
+## 第 3 档 · 高级注入
+
+大多数嵌入用不到这些。点开你需要的那个即可。
+
+::: details Capability 协议 — `filesystem` / `shell`
+注入你自己的 `FileSystem` / `ShellExecutor`，把 IO 路由到 Docker exec、虚拟文件系统、审计代理或远程 runner。默认实现与 0.2.16 之前的 Agentao 字节级一致。
+
+```python
+from agentao.harness.protocols import FileSystem, ShellExecutor
+from agentao.capabilities import LocalFileSystem, LocalShellExecutor
+
+agent = Agentao(
+    working_directory=workdir,
+    filesystem=MyDockerExecFileSystem(...),
+    shell=MyAuditingShellExecutor(...),
+)
+```
+
+**协议** 始终从 `agentao.harness.protocols` 导入（公共表面）。默认实现住在 `agentao.capabilities`。多租户 FS 隔离见 [6.4](/zh/part-6/4-multi-tenant-fs)。
+:::
+
+::: details 记忆 / 技能 / MCP 管理器 — `memory_manager` / `skill_manager` / `mcp_manager` / `mcp_registry`
+当你不想让 Agentao 用默认值构造某个子系统时——典型场景：管理器是跨会话共享的，或者想用程序化配置而不是磁盘查找。
+
+| 参数 | 替代的默认行为 |
+|------|--------------|
+| `memory_manager` | 默认会打开 `<wd>/.agentao/memory.db` 的 `MemoryManager` |
+| `skill_manager` | 自带技能扫描 |
+| `mcp_manager` | `.agentao/mcp.json` 发现 + 生命周期。**与 `extra_mcp_servers=` 和 `mcp_registry=` 互斥** |
+| `mcp_registry` | `load_mcp_config(...)` 配置源。要程序化注册就传 `InMemoryMCPRegistry`。**与 `mcp_manager=` 互斥** |
+:::
+
+::: details 可选启用的子系统 — `bg_store` / `sandbox_policy` / `replay_config`
+**默认 `None` = 完全禁用**。不用就不付任何代价。
+
+| 参数 | `None` 时 |
+|------|----------|
+| `bg_store` | 后台任务工具（`check_background_agent` / `cancel_background_agent`）不注册；子 agent 的工具 schema 抠掉 `run_in_background` 字段；`/agent bg\|dashboard\|cancel\|delete\|logs\|result` 等 CLI 子命令 no-op + 警告 |
+| `sandbox_policy` | Shell 不套 macOS `sandbox-exec` |
+| `replay_config` | 不读 `<wd>/.agentao/replay.json`，agent 用空 recorder |
+:::
+
+::: details Logger 注入 — `logger`
+传 `logger=app.logger` 后跳过 `LLMClient.__init__` 里对包根 logger 的 level/handler 改动，宿主日志栈保持不变。
+:::
+
+::: details 已废弃的 8 个回调（仍接收）
+0.2.10 之前的接口。内部由 `build_compat_transport()` 翻译成 `SdkTransport`。新代码请直接走 Transport。
+
+| 旧参数 | 替代 |
+|-------|------|
+| `confirmation_callback` | `SdkTransport(confirm_tool=...)` |
+| `step_callback` | `on_event=` + `TOOL_START` / `TURN_START` |
+| `thinking_callback` | `on_event=` + `THINKING` |
+| `ask_user_callback` | `SdkTransport(ask_user=...)` |
+| `output_callback` | `on_event=` + `TOOL_OUTPUT` |
+| `tool_complete_callback` | `on_event=` + `TOOL_COMPLETE` |
+| `llm_text_callback` | `on_event=` + `LLM_TEXT` |
+| `on_max_iterations_callback` | `SdkTransport(on_max_iterations=...)` |
+
+⚠️ 同时传 `transport=` 和 legacy 回调时，legacy 的会被**静默忽略**。选一条路。
+:::
+
+---
+
+## 互斥规则
+
+违反以下任一条都会在构造时抛 `ValueError`：
+
+| 不能同时传 | 原因 |
+|------------|------|
+| `llm_client=` + 任意 `api_key` / `base_url` / `model` / `temperature` | 注入的 client 已经是凭据源 |
+| `mcp_manager=` + `extra_mcp_servers=` | 会话级合并需要 Agentao 自己构造的 manager |
+| `mcp_manager=` + `mcp_registry=` | Registry 是配置源，manager 是构造结果 |
+
+---
+
+## 工厂路径：`build_from_environment()`
+
+宿主沿用 CLI 约定（项目级 `.env`、`.agentao/` 配置、内存目录）时用：
 
 ```python
 from pathlib import Path
@@ -22,231 +184,17 @@ agent = build_from_environment(
 
 它做的事：
 
-1. 解析 `working_directory`（默认 `Path.cwd()`），冻结成绝对路径。
-2. `<wd>/.env` 存在则按它 `load_dotenv`，否则全局回落。
-3. 读 `LLM_PROVIDER` 与对应的 `*_API_KEY` / `*_BASE_URL` / `*_MODEL`。
-4. 构造 `PermissionEngine(project_root=wd, user_root=user_root())`，构造 `MemoryManager`（项目 store 用 `SQLiteMemoryStore.open_or_memory(wd / ".agentao" / "memory.db")`，用户 store 用 `SQLiteMemoryStore.open(...)`，写不进去就降级到禁用），构造 `FileBackedMCPRegistry(project_root=wd, user_root=user_root())`（#16/#17 起）。
-5. 把所有显式参数传入 `Agentao(...)`。**调用方传入的 `**overrides` 优先**。
+1. 解析 `working_directory`（默认 `Path.cwd()`）并冻结
+2. `<wd>/.env` 存在则按它 `load_dotenv`，否则全局回落
+3. 读 `LLM_PROVIDER` 与对应的 `*_API_KEY` / `*_BASE_URL` / `*_MODEL`
+4. 在 `wd` 上构造 `PermissionEngine`、`MemoryManager`、`FileBackedMCPRegistry`
+5. 全部显式传给 `Agentao(...)` —— **调用方的 `**overrides` 优先**
 
-整个代码库里只有这一处会在启动时读 env / dotenv / `.agentao/*.json`。不希望发生这些副作用的宿主直接构造 `Agentao` 即可。
+整个代码库**只有这一处**会在启动时读 env / dotenv / `.agentao/*.json`。不希望发生这些副作用的宿主直接构造 `Agentao` 即可。
 
-## `Agentao.__init__` 完整签名（`agentao/agent.py`）
+---
 
-```python
-Agentao(
-    api_key:          Optional[str]    = None,
-    base_url:         Optional[str]    = None,
-    model:            Optional[str]    = None,
-    temperature:      Optional[float]  = None,
-    # ── 已废弃的 legacy 回调（仍保留向后兼容） ──
-    confirmation_callback:      Optional[Callable] = None,
-    max_context_tokens:         int                = 200_000,
-    step_callback:              Optional[Callable] = None,
-    thinking_callback:          Optional[Callable] = None,
-    ask_user_callback:          Optional[Callable] = None,
-    output_callback:            Optional[Callable] = None,
-    tool_complete_callback:     Optional[Callable] = None,
-    llm_text_callback:          Optional[Callable] = None,
-    permission_engine:          Optional[PermissionEngine] = None,
-    on_max_iterations_callback: Optional[Callable] = None,
-    transport:                  Optional[Transport]        = None,
-    plan_session:               Optional[PlanSession]      = None,
-    *,
-    working_directory:  Path,                                  # 0.3.0 起必传
-    extra_mcp_servers:  Optional[Dict[str, Dict[str, Any]]] = None,
-    # ── 嵌入式 harness 显式注入参数 ──
-    llm_client:           Optional[LLMClient]         = None,
-    logger:               Optional[logging.Logger]    = None,
-    memory_manager:       Optional[MemoryManager]     = None,
-    skill_manager:        Optional[SkillManager]      = None,
-    project_instructions: Optional[str]               = None,
-    mcp_manager:          Optional[McpClientManager]  = None,
-    mcp_registry:         Optional[MCPRegistry]       = None,  # 0.3.0+ (#17)
-    filesystem:           Optional[FileSystem]        = None,
-    shell:                Optional[ShellExecutor]     = None,
-    # ── 可选启用的子系统（None = 完全禁用） ──
-    bg_store:             Optional[BackgroundTaskStore] = None,
-    sandbox_policy:       Optional[SandboxPolicy]       = None,
-    replay_config:        Optional[ReplayConfig]        = None,
-)
-```
-
-## LLM 凭据（前 4 个参数）
-
-| 参数 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `api_key` | `str` | —— 必须显式传入或来自 `llm_client=` | LLM 凭据 |
-| `base_url` | `str` | —— | 切换兼容端点（DeepSeek / Gemini gateway / vLLM 等） |
-| `model` | `str` | —— | 模型 ID |
-| `temperature` | `float` | `0.2` | 采样温度 |
-
-要么 4 个全部显式传入，要么传入已经构造好的 `llm_client=`（见下文）。**互斥**：同时传 `llm_client=` 与任意原始 LLM 参数会抛 `ValueError`。
-
-多租户/多会话场景下：每个会话可以有**不同的凭据**（比如按客户区分），详见第 7.2 节。
-
-## 嵌入式 harness 显式注入
-
-不希望 `Agentao()` 用默认值构造某个子系统时，把你自己的实例注入进来：
-
-| 参数 | 类型 | 注入后跳过的行为 |
-|------|------|-----------------|
-| `llm_client` | `LLMClient` | 不再构造 `LLMClient(...)`，凭据相关的 env 读取被跳过 |
-| `logger` | `logging.Logger` | 跳过 `LLMClient.__init__` 里对包根 logger 的 level/handler 改动——你的日志栈保持不变 |
-| `memory_manager` | `MemoryManager` | 启动时不再打开 `<wd>/.agentao/memory.db` |
-| `skill_manager` | `SkillManager` | 跳过自带技能扫描，按你给的实例原样使用 |
-| `project_instructions` | `str` | 跳过 `<wd>/AGENTAO.md` 的磁盘读取，按你给的字符串原样使用 |
-| `mcp_manager` | `McpClientManager` | 不读 `.agentao/mcp.json`，由你掌控 MCP 生命周期 |
-| `mcp_registry` (0.3.0+) | `MCPRegistry` | 替代 `init_mcp` 里的隐式 `load_mcp_config(...)`。默认 `FileBackedMCPRegistry` 与 #17 之前的磁盘读一致；要程序化注册就传 `InMemoryMCPRegistry`。与 `mcp_manager=` 互斥。 |
-| `filesystem` | `FileSystem` | 文件 / 搜索工具走你提供的 `FileSystem`（详见 6.4 节） |
-| `shell` | `ShellExecutor` | Shell 工具走你提供的 `ShellExecutor` |
-| `bg_store`（可选） | `BackgroundTaskStore` | 后台工具状态持久化。`None` 时 `check_background_agent` 等不注册，子 agent 的 `run_in_background` 字段从 schema 里抠掉。 |
-| `sandbox_policy`（可选） | `SandboxPolicy` | Shell 沙箱。`None` 时不套 macOS `sandbox-exec`。 |
-| `replay_config`（可选） | `ReplayConfig` | 确定性回放。`None` 时使用空 recorder。 |
-
-这是宿主在"我要 Agentao 的运行时但不要它的 CLI 风格隐式读取"场景下的桥梁。可以自由组合：
-
-```python
-from agentao import Agentao
-from agentao.llm import LLMClient
-from agentao.capabilities import LocalFileSystem
-
-agent = Agentao(
-    working_directory=Path("/srv/agent-workdir"),
-    llm_client=LLMClient(
-        api_key=secrets.openai_api_key,
-        base_url="https://api.openai.com/v1",
-        model="gpt-5.4",
-        log_file=None,            # 不落本地日志
-        logger=app.logger,        # 走宿主自己的 logger
-    ),
-    skill_manager=preloaded_skill_manager,
-    filesystem=LocalFileSystem(),  # 或者你自己的沙盒 FS
-    transport=my_transport,
-)
-```
-
-### Capability 协议
-
-`FileSystem` / `ShellExecutor` 是 runtime-checkable `Protocol`。0.3.4 起这些协议在公共 harness 表面有 re-export——**请始终从 `agentao.harness.protocols` 导入**，不要伸手到内部的 `agentao.capabilities.*`（后者是内部实现，可能会移动）。默认实现 `LocalFileSystem` / `LocalShellExecutor` 仍住在 `agentao.capabilities` 中，行为与 0.2.16 之前的 Agentao 字节级一致。宿主把要注入的协议替换为基于 Docker exec、虚拟文件系统、审计代理或远程 runner 的实现即可。
-
-```python
-from agentao.harness.protocols import (
-    FileSystem, FileEntry, FileStat,
-    ShellExecutor, ShellRequest, ShellResult, BackgroundHandle,
-)
-from agentao.capabilities import LocalFileSystem, LocalShellExecutor  # 默认实现
-```
-
-多租户文件隔离方式参考 6.4 节。
-
-## Transport（推荐）
-
-| 参数 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `transport` | `Transport` | `NullTransport()` | UI 交互与事件流 |
-
-只要传入一个 `Transport` 实现，就涵盖了所有交互：工具确认、用户追问、事件流、最大迭代回调。**构造时不传 = 全部自动批准 + 无事件监听**（`NullTransport` 行为），适合无人值守批处理。
-
-```python
-from agentao.transport import SdkTransport
-
-transport = SdkTransport(
-    on_event=handle_event,
-    confirm_tool=ask_approval,
-    ask_user=prompt_user,
-    on_max_iterations=lambda n, msgs: {"action": "stop"},
-)
-agent = Agentao(transport=transport, working_directory=workdir, ...)
-```
-
-自己实现 Transport Protocol 参见 [第 4 部分](/zh/part-4/)。
-
-## 已废弃的 8 个回调（legacy）
-
-| 参数 | 替代方案 |
-|------|---------|
-| `confirmation_callback` | `SdkTransport(confirm_tool=...)` |
-| `step_callback` | `on_event=` + 监听 `TOOL_START` / `TURN_START` |
-| `thinking_callback` | `on_event=` + 监听 `THINKING` |
-| `ask_user_callback` | `SdkTransport(ask_user=...)` |
-| `output_callback` | `on_event=` + 监听 `TOOL_OUTPUT` |
-| `tool_complete_callback` | `on_event=` + 监听 `TOOL_COMPLETE` |
-| `llm_text_callback` | `on_event=` + 监听 `LLM_TEXT` |
-| `on_max_iterations_callback` | `SdkTransport(on_max_iterations=...)` |
-
-**这 8 个参数仍然被接收并工作**——Agentao 内部 `build_compat_transport()` 会把它们翻译成一个 `SdkTransport`。但新写的代码应直接用 Transport 路径。
-
-## 运行时行为控制
-
-| 参数 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `max_context_tokens` | `int` | `200_000` | 超过触发上下文压缩（第 7.3 节） |
-| `plan_session` | `PlanSession` | `None` | 启用 Plan 模式；一般宿主无需设置 |
-| `permission_engine` | `PermissionEngine` | `None`（工厂会建一个 `project_root=wd` 的） | 权限规则引擎（第 5.4 / 6.3 节） |
-
-## 会话隔离（关键！）
-
-| 参数 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `working_directory` | `Path` | —— （0.3.0 起必传） | **构造时冻结** |
-
-**为什么重要**（0.3.0 起）：
-- 必传关键字参数——软废弃周期已结束。不传会从 Python 签名分派直接抛 `TypeError`。
-- 路径在构造时被 `expanduser().resolve()` 一次冻结。之后所有文件操作、`AGENTAO.md`、`.agentao/` 配置、Shell CWD 全部相对它；宿主进程后续 `os.chdir` 不会影响已构造好的 Agent。
-
-嵌入场景（Web 服务器、ACP sessions）里，`Path.cwd()` 是进程全局状态；两个并发会话原本会**互相污染**——必传 `working_directory` 把这个坑封住了。
-
-```python
-# ❌ 0.3.0 之前：依赖 Path.cwd()——现在直接 TypeError
-agent_a = Agentao(...)
-agent_b = Agentao(...)
-
-# ✅ 正确：每个会话独立根
-agent_a = Agentao(..., working_directory=Path("/tmp/tenant-a"))
-agent_b = Agentao(..., working_directory=Path("/tmp/tenant-b"))
-```
-
-## 会话级 MCP 服务器
-
-| 参数 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `extra_mcp_servers` | `Dict[str, Dict]` | `None` | 程序式注入 MCP 服务器 |
-
-用于给**单个会话**加 MCP 服务器而**不触碰项目的 `.agentao/mcp.json`**。典型场景：按用户身份切换不同 GitHub Token 的 MCP 服务器。
-
-```python
-agent = Agentao(
-    working_directory=tenant_dir,
-    extra_mcp_servers={
-        "github-per-tenant": {
-            "command": "npx",
-            "args": ["-y", "@modelcontextprotocol/server-github"],
-            "env": {"GITHUB_TOKEN": tenant.github_token},
-        },
-    },
-)
-```
-
-合并策略：**同名键会覆盖** `.agentao/mcp.json` 里的同名服务器。
-
-**与 `mcp_manager=` 互斥**：要么传已经构造好的 manager，要么传待合并的 dict，不能两个都传。
-
-## 异步宿主：`Agentao.arun()`
-
-同步调用方仍然用 `agent.chat(user_message)`；异步宿主用 `await agent.arun(user_message)`。
-
-```python
-async def handle_request(request):
-    response = await agent.arun(
-        request.text,
-        cancellation_token=request.cancel_token,
-    )
-    return {"reply": response}
-```
-
-`arun()` 通过 `asyncio.get_running_loop().run_in_executor(None, self.chat, ...)` 把（仍是同步的）chat 循环桥到线程池。取消、replay、`max_iterations` 在两条接口上的语义完全一致。运行时内部刻意保持同步——它本质是顺序 I/O，自上而下的异步会扩大表面但不带来收益。
-
-## 全量示例：生产嵌入模板
+## 完整生产模板
 
 ```python
 from pathlib import Path
@@ -290,7 +238,7 @@ def make_agent_for_session(
     )
 ```
 
-如果宿主沿用 CLI 的目录约定，可以走工厂：
+或者，宿主已经按 CLI 约定走：
 
 ```python
 from agentao.embedding import build_from_environment
@@ -302,4 +250,22 @@ agent = build_from_environment(
 )
 ```
 
-下一节：[2.3 生命周期管理 →](./3-lifecycle)
+---
+
+::: info 版本说明
+- **0.3.4** — Capability 协议（`FileSystem` / `ShellExecutor`）在 `agentao.harness.protocols` 上 re-export。**始终从这里导入**，不要伸手到内部的 `agentao.capabilities.*`。
+- **0.3.0** — `working_directory=` 必传（不传抛 `TypeError`）。新增 `mcp_registry=` 作为稳定的配置源；默认 `FileBackedMCPRegistry` 与 #17 之前的磁盘读一致。
+- **0.2.16** — 显式注入面（`memory_manager` / `skill_manager` / `mcp_manager` / `filesystem` / `shell` …）落地；`replay_config` / `sandbox_policy` / `bg_store` 默认改为 `None`。
+- **0.2.10** — 核心运行时与 CLI 解耦；8 个 legacy 回调通过 `build_compat_transport()` 仍可用。
+
+完整的嵌入接入实践见 [`docs/EMBEDDING.md`](https://github.com/jin-bo/agentao/blob/main/docs/EMBEDDING.md)。
+:::
+
+## TL;DR
+
+- **必传 3 个**：`api_key`、`model`、`working_directory`（`Path`，构造时冻结）。
+- **生产常用 8 个**：+ `base_url`、`temperature`、`transport`、`permission_engine`、`max_context_tokens`、`extra_mcp_servers`、`llm_client`、`project_instructions`。
+- **其他全部是可选 / 高级** —— 能力协议、自定义管理器、沙箱 / replay / 后台子系统。
+- **两条工厂**：`build_from_environment()` 走 CLI 约定；直接 `Agentao(...)` 走显式控制。**不要混用。**
+
+→ 下一节：[2.3 生命周期管理](./3-lifecycle)

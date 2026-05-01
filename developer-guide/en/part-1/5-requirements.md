@@ -1,5 +1,10 @@
 # 1.5 Requirements
 
+> **What you'll learn**
+> - The Python / OS / network / disk requirements before embedding
+> - Which extras to install for the features you want
+> - A 7-line checklist to verify your environment is ready
+
 Verify your environment before embedding Agentao.
 
 ## Python version
@@ -144,5 +149,13 @@ python -c "from agentao.transport import SdkTransport; print('OK')"
 ```
 
 Environment green — move on to Part 2 for actual integration work.
+
+## TL;DR
+
+- **Python ≥ 3.10** required; 3.11 / 3.12 recommended.
+- **3 env vars** required: `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` (constructor args also work).
+- **Default install is embedding-only**. Add extras as needed: `[web]`, `[i18n]`, `[cli]`, `[pdf]`, `[excel]`, `[image]`, `[full]` (everything).
+- **No inbound port** — agent is a library or stdio subprocess; outbound goes to your LLM endpoint and any tool URLs.
+- **Pin a version range** in production: `agentao>=0.4.0,<0.5`.
 
 → [Part 2 · Python In-Process Embedding](/en/part-2/)

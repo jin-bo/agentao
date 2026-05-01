@@ -235,6 +235,30 @@ v1 `prompt` 数组里只能放 `{"type":"text", "text": ...}`。
 2. 用户选择 → 立即 `result` 响应
 3. 若用户超时不响应，宿主主动响应 `{"outcome":"cancelled"}` 并可选 `session/cancel`
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 终端用户
+    participant H as 宿主 UI
+    participant S as agentao server
+
+    S--)H: session/update {tool_call started, status:pending}
+    S->>H: session/request_permission {id:42, toolCall, options}
+    H->>U: 弹出审批框（title/参数/按钮）
+    alt 用户点 "本次允许"
+        U->>H: 选择 allow_once
+        H-->>S: result {outcome:{outcome:"selected", optionId:"allow_once"}}
+        S--)H: session/update {tool_call_update completed}
+    else 用户点 "拒绝"
+        U->>H: 选择 reject_once
+        H-->>S: result {outcome:{outcome:"selected", optionId:"reject_once"}}
+        Note right of S: 工具返回 "[Cancelled by user]" 给 LLM
+    else 用户超时 / 关闭对话框
+        H-->>S: result {outcome:{outcome:"cancelled"}}
+        H-)S: session/cancel（可选，整轮终止）
+    end
+```
+
 ## 取消 `session/cancel`
 
 ```json
@@ -242,6 +266,25 @@ v1 `prompt` 数组里只能放 `{"type":"text", "text": ...}`。
 ```
 
 效果：当前 `session/prompt` 的轮次会以 `stopReason:"cancelled"` 结束。幂等——重复调用不会出错。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as 宿主
+    participant S as agentao server
+
+    H->>S: session/prompt {sessionId, prompt}
+    S--)H: session/update {agent_message_chunk} ...
+    S--)H: session/update {tool_call started}
+    Note over H: 用户点击 Stop
+    H-)S: session/cancel {sessionId}
+    Note over S: 触发 CancellationToken；<br/>正在执行的工具收到取消钩子
+    S--)H: session/update {tool_call_update cancelled}
+    S-->>H: result {id:<prompt_id>, stopReason:"cancelled"}
+    Note over H,S: 连接保持开启；<br/>下一次 session/prompt 可立即发起
+```
+
+**幂等性** —— 当前轮次已结束后再发一次 `session/cancel` 不会报错（不会抛、不会再发额外通知）。
 
 ## 恢复会话 `session/load`
 
@@ -263,15 +306,24 @@ v1 `prompt` 数组里只能放 `{"type":"text", "text": ...}`。
 }
 ```
 
-## 常见陷阱
+## ⚠️ 常见陷阱
 
+::: warning ACP 协议层最容易踩的坑
 1. **帧格式**：一定是 NDJSON，JSON 里**不能有裸换行**——写 JSON 库时注意 compact 模式
 2. **stdout 污染**：Agentao 保证所有日志走 `agentao.log` + stderr，**不污染 stdout**。你的 Client 读 stdout 一定拿到纯 JSON
 3. **stdin 阻塞**：如果 Client 在发送请求后不读 stdout，Server 的 stdout buffer 会撑爆。用异步 I/O 或专门读取线程
-4. **版本字段类型**：见前述——必须 int
+4. **版本字段类型**：`protocolVersion` 必须 int，不是日期字符串
 5. **`session/update` 不回应**：JSON-RPC 2.0 禁止为通知发响应
+:::
 
 ## 端到端最小宿主（Python 实现，仅作演示）
+
+::: tip ⚡ 端到端可跑（约 5 分钟）
+**产出** —— 从 50 行 Python 客户端驱动 `agentao --acp --stdio`；能看到 `session/update` 流式通知 + 最终 `stopReason`。
+**技术栈** —— `pip install 'agentao[cli]>=0.4.0'` + 3 个环境变量；下方 Python 即所需的全部宿主代码。
+**运行** —— 粘贴到 `acp_demo.py`，然后 `python acp_demo.py`。
+**宿主不是 Python？** —— 读懂线协议流后，照 [3.3 宿主作为 ACP Client](./3-host-client-architecture) 翻译到目标语言。
+:::
 
 即便你的宿主不是 Python，这个例子也帮助理解协议流：
 

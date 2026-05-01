@@ -1,5 +1,10 @@
 # 6.1 Defense-in-Depth Model
 
+> **What you'll learn**
+> - The 7-layer defense stack and what fails when each layer is missing
+> - Five agent-specific risks and which layer mitigates each
+> - The minimum viable security posture vs. the production-grade one
+
 Embedding an agent into your product isn't about one security boundary — it's layered. Each layer is independent. Never bet safety on a single layer.
 
 ## Seven-layer defense stack
@@ -118,5 +123,12 @@ Subsequent sections land each layer.
 - [ ] `agentao.log` path is writable and persisted
 - [ ] Unit tests cover "expected rule hits"
 - [ ] Alerts: tool failure rate, LLM 5xx rate, confirm-timeout rate
+
+## TL;DR
+
+- **Never bet safety on a single layer.** 7 stacked layers + cross-cutting audit.
+- The five agent-specific risks: prompt injection, credential leakage, privilege escalation, SSRF, resource exhaustion.
+- Minimum viable: API key off git + `WORKSPACE_WRITE` preset + per-session `working_directory` + basic `confirm_tool` + default log.
+- Production-grade: per-tenant STS + custom `PermissionEngine` + container isolation + sandbox-exec / seccomp + VPC egress rules + SIEM logs + red-team drills.
 
 → [6.2 Shell Sandbox & Command Control](./2-shell-sandbox)

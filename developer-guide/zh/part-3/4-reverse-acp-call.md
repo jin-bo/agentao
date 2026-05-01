@@ -203,7 +203,7 @@ mgr = ACPManager(config, notification_callback=on_notification)
 
 - `cwd` 相对路径相对于项目根（含 `.agentao/` 的目录）解析
 - `env` 值里的 `$VAR` / `${VAR}` 会展开成宿主进程的环境变量
-- `nonInteractivePolicy` 是结构化对象 `{"mode": "reject_all" | "accept_all"}`。缺省等价于 `{"mode": "reject_all"}`。Week 3 之前的裸字符串形式（`"reject_all"` / `"accept_all"`）在配置加载阶段**直接报错**，迁移见 [附录 E](/zh/appendix/e-migration)
+- `nonInteractivePolicy` 是结构化对象 `{"mode": "reject_all" | "accept_all"}`。缺省等价于 `{"mode": "reject_all"}`。旧版裸字符串形式（`"reject_all"` / `"accept_all"`）现在在配置加载阶段**直接报错**，迁移见 [附录 E](/zh/appendix/e-migration)
 - 生产用 `reject_all`。在 `send_prompt` / `prompt_once` 上传 `interaction_policy=` 可对单次 turn 覆盖 server 默认
 
 完整字段见[附录 B · 配置键](/zh/appendix/b-config-keys)。
@@ -260,7 +260,7 @@ mgr.prompt_once(
 
 ## 3.4.7 生命周期与恢复
 
-Week 4 固化了三种常见失败场景的行为，embedder 不用自己卷恢复逻辑：
+三种常见失败场景的行为已被固化，embedder 不用自己卷恢复逻辑：
 
 **取消 / 超时 → 下一次 turn 安全**。turn 槽、per-server 锁、pending prompt 槽都在 `finally` 里按固定顺序释放。取消或超时之后第一个 `send_prompt` / `prompt_once` 看到的是一个 ready、没有残留状态的 server。
 
@@ -325,7 +325,7 @@ for s in mgr.get_status():             # 每个 s 都是 ServerStatus
         print(f"{s.server} 失败：{info.last_error}")
 ```
 
-Week 1 冻结的核心字段：
+核心字段：
 
 - `server: str` — `.agentao/acp.json` 里的 server 名
 - `state: str` — `ServerState` 枚举的字符串值
@@ -333,10 +333,10 @@ Week 1 冻结的核心字段：
 - `has_active_turn: bool` — 由 manager 的活跃 turn 槽派生；turn
   全生命周期（含 in-flight interaction 阶段）内都为 `True`
 
-同一个 dataclass 在 Week 1 核心字段之上，加量式地暴露 Week 2
-诊断字段：`last_error`、`last_error_at`、`active_session_id`、
-`inbox_pending`、`interaction_pending`、`config_warnings`。直接从
-`ServerStatus` 上读即可；`mgr.get_handle(name).info` 和 `mgr.inbox` /
+诊断字段（同一个 dataclass 上加量式暴露）：
+`last_error`、`last_error_at`、`active_session_id`、`inbox_pending`、
+`interaction_pending`、`config_warnings`。直接从 `ServerStatus`
+上读即可；`mgr.get_handle(name).info` 和 `mgr.inbox` /
 `mgr.interactions` 仍然保留，作为原始 handle 视图。完整字段说明与
 从旧 dict 形态迁移的映射表见
 [`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)。

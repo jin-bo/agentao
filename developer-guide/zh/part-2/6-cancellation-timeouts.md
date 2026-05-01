@@ -1,5 +1,10 @@
 # 2.6 取消与超时
 
+> **本节你会学到**
+> - 给 `chat()` 设边界的三种机制：`CancellationToken` / `asyncio.wait_for` / `max_iterations`
+> - 怎样把客户端断连和"停止"按钮接到 token 上
+> - 为什么单靠 `max_iterations` 不够，要叠加什么
+
 `chat()` 是同步调用，可能跑几分钟——工具回路、LLM 流式、MCP 子进程都在里面。如果你的宿主没法中途叫停它，就做不了"停止"按钮、撑不了 SLA、也响应不了客户端断连。本节介绍三种给运行时设边界的机制，按粒度由细到粗排列。
 
 ## 2.6.1 三种边界机制
@@ -188,6 +193,13 @@ agent.chat("干 20 件事", max_iterations=20)
 - [ ] 停止按钮触发 `token.cancel("user-stop-button")`
 - [ ] 每轮有硬超时护栏（`wait_for` 或后台 watcher）
 - [ ] 按次付费的场景，把 `max_iterations` 从 100 调下来
+
+## TL;DR
+
+- **三种机制叠加**：`CancellationToken`（调用方主动、粒度细）·`asyncio.wait_for`（硬墙时钟）·`max_iterations`（循环上限，兜底）。
+- `chat()` 取消时**不抛异常**——返回 `"[Cancelled: <reason>]"`。在调用点识别这个前缀。
+- 把 token 接到：客户端断连事件、UI"停止"按钮、父任务取消。每次 `chat()` 都传它。
+- `max_iterations` 单独不够——单个工具调用可能无限挂。一定要配合 `wait_for` 或后台 watcher。
 
 ---
 

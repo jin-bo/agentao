@@ -236,12 +236,15 @@ Compare `LLM_TEXT` event token counts from yesterday vs today. Session replay ([
 
 Tools are plain classes — `MyTool().execute(**args)`. No Agentao instance needed. For tools that touch disk, pass a `working_directory` temp dir.
 
+For an end-to-end testing rig — `agent`, `agent_with_reply`, and `fake_llm_client` pytest fixtures with passing smoke tests — see [`examples/pytest-fixture/`](https://github.com/jin-bo/agentao/tree/main/examples/pytest-fixture). Drop the fixtures into your own test suite and you get hermetic Agentao tests with no `OPENAI_API_KEY` requirement.
+
 ### "How do I assert the agent did the right thing?"
 
 Don't assert on LLM output text (non-deterministic). Instead:
 
 - Spy on `EventType.TOOL_START` events via `SdkTransport(on_event=spy)`; assert the tool was called with expected args
 - Or mock the tool and assert interactions
+- Reuse the `fake_llm_client` fixture from [`examples/pytest-fixture/`](https://github.com/jin-bo/agentao/tree/main/examples/pytest-fixture) to script LLM responses turn-by-turn
 
 ### "LLM responses are non-deterministic across test runs"
 

@@ -1,5 +1,10 @@
 # 2.3 生命周期管理
 
+> **本节你会学到**
+> - 标准 4 步生命周期（`Agentao()` → `chat()` → … → `close()`）
+> - 单实例为什么不是线程安全的，以及如何正确串行化
+> - 一个能正确处理并发会话的 FastAPI 模板
+
 一个 `Agentao` 实例 = 一次完整的对话会话。掌握它的生老病死对生产嵌入至关重要。
 
 ## 标准生命周期
@@ -205,5 +210,13 @@ async def end_session(session_id: str):
 - 显式 `DELETE` 端点触发 `close()` 释放 MCP
 
 生产部署下你还需要加 TTL 淘汰、内存上限、崩溃重启等——见 [第 7 部分](/zh/part-7/)。
+
+## TL;DR
+
+- **一个 agent = 一个有状态会话**。不要每轮重建——会丢上下文。
+- `chat()` 是**阻塞且非线程安全**的。同会话加锁 + 异步宿主用 `asyncio.to_thread`。
+- 永远要 `close()`（或用 context manager）——否则会泄露 MCP 子进程和 DB 句柄。
+- `clear_history()` 只清 `messages`；**记忆 DB 故意保留**。
+- 用 `set_provider()` / `set_model()` 运行时切换模型；历史不变。
 
 → 更多参数与扩展：[第 5 部分 · 扩展点](/zh/part-5/)（撰写中）

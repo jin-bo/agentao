@@ -8,6 +8,11 @@ Canonical EN ↔ ZH terms used in this guide. If you find a translation that doe
 |---------|------|------------|
 | Agent | 智能体 / Agent | The LLM-driven loop that calls tools and returns text. In this guide, an **instance of `Agentao`** |
 | Harness | 框架 / 运行容器 | The reusable runtime that wraps an agent — Agentao itself |
+| Embedded Harness Contract | 嵌入式 Harness 合约 / 前向兼容宿主合约 | The **stable host-facing API** at `agentao.harness` (since 0.3.1): Pydantic-modeled events, policy snapshot, and capability protocols whose wire form is schema-snapshotted and CI-enforced. Hosts that target only this surface stay forward-compatible across releases. See [4.7](/en/part-4/7-harness-contract). |
+| Harness event | Harness 事件 | One of `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` — the schema-stable projection consumed via `agent.events()` (distinct from internal `AgentEvent`) |
+| Active permissions snapshot | 策略快照 / 当前权限快照 | The `ActivePermissions` value returned by `agent.active_permissions()` — `mode` + `rules` + `loaded_sources`, JSON-safe and pinnable into audit logs |
+| Capability protocol | 能力协议 | `FileSystem` / `ShellExecutor` runtime-checkable Protocols at `agentao.harness.protocols`, injected at construction time to route IO through Docker / virtual FS / audit proxies |
+| Schema snapshot | Schema 快照 | The checked-in JSON schema files (`docs/schema/harness.events.v1.json`, `harness.acp.v1.json`) re-generated from the Pydantic models and CI-asserted byte-equal — the wire-form contract |
 | Session | 会话 | One agent instance's lifetime of conversation, bound to a `working_directory` |
 | Turn | 一轮 / 一次 | One `chat()` call; may fire many tool calls internally |
 | Iteration | 迭代 | Each LLM round within a single turn, capped by `max_iterations` |

@@ -1,5 +1,10 @@
 # 6.6 Observability & Audit
 
+> **What you'll learn**
+> - The four observation axes: structured logs, metrics, traces, session replay
+> - The minimum metrics every production deployment should emit
+> - When session replay is the only thing that lets you diagnose a "why did the agent do that?" incident
+
 Agents are classic "long-tail bug" workloads — fine 90% of the time, then 10% of incomprehensible behavior. No observability = no diagnosis = no improvement.
 
 ## Four observation axes
@@ -254,5 +259,12 @@ On a budget:
 4. No OpenTelemetry
 
 Enough for 99% of small/mid SaaS. Add APM when you scale.
+
+## TL;DR
+
+- **Four axes**: structured logs (`agentao.log`), metrics (Prometheus / StatsD), traces (OpenTelemetry), session replay.
+- Minimum metrics: tool call rate by name, tool failure rate, LLM 5xx rate, confirm-timeout rate, turn duration p50/p95/p99, max-iterations hit rate.
+- **Session replay** is the killer feature — when "why did the agent do X?" comes up, replay deterministically with `replay_config=` and step through.
+- Cost monitoring is a first-class observable: track tokens-per-turn and tokens-per-tenant; sudden 2× spikes usually mean a model swap or skill change.
 
 → [6.7 Resource Governance & Concurrency](./7-resource-concurrency)

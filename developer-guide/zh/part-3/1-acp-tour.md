@@ -4,6 +4,72 @@
 
 官方规范：<https://agentclientprotocol.com/>
 
+## 60 秒快速尝鲜
+
+在读完整协议拆解之前，先跑一次真实握手，感受一下形态：
+
+```bash
+pip install 'agentao[cli]>=0.4.0'
+export OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://api.openai.com/v1 OPENAI_MODEL=gpt-5.4
+
+agentao --acp --stdio
+```
+
+此时进程通过 stdin 读 JSON-RPC 请求，stdout 写响应和通知。把下面 3 条 NDJSON（每行一条）粘进同一个终端：
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
+{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp"}}
+{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"<上一步返回的 id>","prompt":[{"type":"text","text":"你好"}]}}
+```
+
+你会依次看到：
+
+- `initialize` 响应——Agentao 宣告自己支持的能力（`loadSession`、`mcpCapabilities` 等）
+- `session/new` 响应——返回新建的 `sessionId`
+- 一连串 `session/update` 通知——流式文本、工具调用开始、思考过程
+- 最后一个带 `stopReason` 的响应表示本轮结束
+
+### 真实宿主的做法（Node 骨架）
+
+```javascript
+import { spawn } from 'node:child_process';
+
+const proc = spawn('agentao', ['--acp', '--stdio']);
+let nextId = 1;
+
+function send(method, params) {
+  const msg = { jsonrpc: '2.0', id: nextId++, method, params };
+  proc.stdin.write(JSON.stringify(msg) + '\n');
+}
+
+proc.stdout.on('data', (buf) => {
+  for (const line of buf.toString().split('\n').filter(Boolean)) {
+    const msg = JSON.parse(line);
+    if (msg.method === 'session/update') {
+      handleUpdate(msg.params);              // 流式文本、工具事件、思考
+    } else if (msg.method === 'session/request_permission') {
+      showPermissionDialog(msg.params);       // 弹出确认 UI
+    } else if (msg.id) {
+      resolvePending(msg.id, msg);            // 响应
+    }
+  }
+});
+
+send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+// 然后：send('session/new', { cwd: '/your/project' })
+// 再然后：send('session/prompt', { sessionId, prompt: [{type:'text', text:'你好'}] })
+```
+
+::: tip 第一次接触最容易踩的 4 个点
+- 协议帧是 **NDJSON**（按换行分隔的 JSON）——不是 WebSocket，也不是裸 stdout
+- 握手顺序固定：`initialize` → `session/new` → `session/prompt`
+- `session/update` 是**通知**（不带 `id`）——不要回它
+- `session/request_permission` 是**请求**（带 `id`）——宿主必须在合理时间内回复
+:::
+
+后面的小节会逐一解释这 4 点为什么是这样。
+
 ## 与 MCP 的关系
 
 MCP 和 ACP 是**互补**而非竞争：
@@ -61,34 +127,41 @@ Client
 
 ## 典型一次完整交互
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client（宿主）
+    participant S as Server（agentao）
+
+    Note over C,S: 1. 握手
+    C->>S: initialize {protocolVersion:1, clientCapabilities}
+    S-->>C: result {protocolVersion, agentCapabilities, agentInfo}
+
+    Note over C,S: 2. 会话生命周期
+    C->>S: session/new {cwd, mcpServers?}
+    S-->>C: result {sessionId}
+
+    Note over C,S: 3. Prompt 一轮（流式 + 工具审批）
+    C->>S: session/prompt {sessionId, prompt:[...]}
+    S--)C: session/update {agent_thought_chunk}
+    S--)C: session/update {agent_message_chunk}
+    S--)C: session/update {tool_call started}
+    S->>C: session/request_permission {id, tool, args}
+    C-->>S: result {outcome: allow_once}
+    S--)C: session/update {tool_call_update completed}
+    S--)C: session/update {agent_message_chunk}
+    S-->>C: result {id:<prompt_id>, stopReason: end_turn}
+
+    Note over C,S: 4. 可选后续
+    C-)S: session/cancel（中途取消，幂等）
+    C->>S: session/new ...（下一段对话）
 ```
-Client                                              Server
-  │                                                   │
-  │  → {"jsonrpc":"2.0","id":1,"method":"initialize",  │
-  │     "params":{"protocolVersion":1,...}}           │
-  │                                                   │
-  │  ← {"jsonrpc":"2.0","id":1,"result":              │
-  │     {"protocolVersion":1,"agentCapabilities":{...}│
-  │     ,"agentInfo":{"name":"agentao",...}}}        │
-  │                                                   │
-  │  → session/new {cwd, mcpServers?}                 │
-  │  ← {sessionId}                                    │
-  │                                                   │
-  │  → session/prompt {sessionId, prompt:[...]}       │
-  │                                                   │
-  │  ← session/update {stream: thinking}              │
-  │  ← session/update {stream: text chunk}            │
-  │  ← session/update {stream: tool_call started}     │
-  │  → session/request_permission {id, tool, args}   │
-  │  ← (client responds: {granted:true})             │
-  │  ← session/update {stream: tool_call completed}  │
-  │  ← session/update {stream: text chunk}            │
-  │                                                   │
-  │  ← {jsonrpc, id:<prompt_id>, result:{stopReason}}│
-  │                                                   │
-  │  → session/cancel (可选，中途取消)                  │
-  │  → session/new ...（下一段对话）                    │
-```
+
+::: tip 怎么读这张图
+- **实线箭头**（→）= JSON-RPC **请求**（带 `id`，必须回复）
+- **虚线箭头**（-->）= 对前一个请求的 **响应**
+- **`--)`** = JSON-RPC **通知**（无 `id`，禁止回复）
+:::
 
 ## 扩展：`_agentao.cn/ask_user`
 

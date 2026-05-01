@@ -1,6 +1,11 @@
 # 7.3 蓝图 C · 客服 / 工单自动化
 
-> **运行此例**：[`examples/ticket-automation/`](https://github.com/jin-bo/agentao/tree/main/examples/ticket-automation) —— `uv run python -m src.triage "工单内容"`
+::: tip ⚡ 端到端可跑
+**产出** —— 异步处理器读工单 → 分类 → 拉 CRM 上下文 → 草拟回复，仅在置信度高时自动发，否则交人工。
+**技术栈** —— Python · `prompt_once` 形式（无流式 UI）· 自定义 CRM 工具 · PermissionEngine 把"自动发"卡死。
+**源代码** —— [`examples/ticket-automation/`](https://github.com/jin-bo/agentao/tree/main/examples/ticket-automation)
+**运行** —— `uv run python -m src.triage "工单内容"`
+:::
 
 **场景**：工单进来的速度比客服分拣的速度快。你希望 Agentao 读新工单 → 分类 → 从 CRM 拉上下文 → 草拟回复 → **只在置信度够高时自动发**，否则留个草稿给人工审核。
 
@@ -193,7 +198,11 @@ agent = Agentao(transport=SdkTransport(on_event=archive), ...)
 
 审核员会查："上周所有 confidence 在 0.85–0.92 之间的案子"——这就是你持续训练的信号。
 
-## 陷阱
+## ⚠️ 陷阱
+
+::: warning 工单自动化真实部署中的 Day-2 bug
+下面每一行都是一次真实的生产事故。**上线前先扫一遍**——现在改便宜，事后查代价大。
+:::
 
 | 上线第二天的 bug | 根因 | 修法 |
 |------------------|------|------|

@@ -4,6 +4,72 @@
 
 Spec: <https://agentclientprotocol.com/>
 
+## Quick try in 60 seconds
+
+Before reading the full protocol breakdown, run a real handshake to feel the shape:
+
+```bash
+pip install 'agentao[cli]>=0.4.0'
+export OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://api.openai.com/v1 OPENAI_MODEL=gpt-5.4
+
+agentao --acp --stdio
+```
+
+The process now reads JSON-RPC requests on stdin and writes responses + notifications on stdout. Paste these three NDJSON lines (one per line) into the same terminal:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
+{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp"}}
+{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"<id from step 2>","prompt":[{"type":"text","text":"hello"}]}}
+```
+
+You'll see, in order:
+
+- `initialize` response — Agentao announces capabilities (`loadSession`, `mcpCapabilities`, …)
+- `session/new` response — a fresh `sessionId`
+- `session/update` notifications — streaming text, tool starts, thinking
+- a final response with `stopReason` when the turn ends
+
+### Real host (Node skeleton)
+
+```javascript
+import { spawn } from 'node:child_process';
+
+const proc = spawn('agentao', ['--acp', '--stdio']);
+let nextId = 1;
+
+function send(method, params) {
+  const msg = { jsonrpc: '2.0', id: nextId++, method, params };
+  proc.stdin.write(JSON.stringify(msg) + '\n');
+}
+
+proc.stdout.on('data', (buf) => {
+  for (const line of buf.toString().split('\n').filter(Boolean)) {
+    const msg = JSON.parse(line);
+    if (msg.method === 'session/update') {
+      handleUpdate(msg.params);              // streamed text, tool events, thinking
+    } else if (msg.method === 'session/request_permission') {
+      showPermissionDialog(msg.params);       // your approval UI
+    } else if (msg.id) {
+      resolvePending(msg.id, msg);            // response
+    }
+  }
+});
+
+send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+// next: send('session/new', { cwd: '/your/project' })
+// then: send('session/prompt', { sessionId, prompt: [{type:'text', text:'hello'}] })
+```
+
+::: tip Four things that catch first-timers
+- Framing is **NDJSON** (newline-delimited JSON) — not WebSocket, not raw stdout
+- Handshake order is mandatory: `initialize` → `session/new` → `session/prompt`
+- `session/update` is a **notification** (no `id`) — do not respond to it
+- `session/request_permission` is a **request** (has `id`) — the host must reply in reasonable time
+:::
+
+The rest of this section explains *why* each of those four exists.
+
 ## How ACP relates to MCP
 
 ACP and MCP are **complementary**, not competitors:
@@ -62,34 +128,41 @@ Client
 
 ## A full round-trip
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client (host)
+    participant S as Server (agentao)
+
+    Note over C,S: 1. Handshake
+    C->>S: initialize {protocolVersion:1, clientCapabilities}
+    S-->>C: result {protocolVersion, agentCapabilities, agentInfo}
+
+    Note over C,S: 2. Session lifecycle
+    C->>S: session/new {cwd, mcpServers?}
+    S-->>C: result {sessionId}
+
+    Note over C,S: 3. Prompt turn (streaming + tool approval)
+    C->>S: session/prompt {sessionId, prompt:[...]}
+    S--)C: session/update {agent_thought_chunk}
+    S--)C: session/update {agent_message_chunk}
+    S--)C: session/update {tool_call started}
+    S->>C: session/request_permission {id, tool, args}
+    C-->>S: result {outcome: allow_once}
+    S--)C: session/update {tool_call_update completed}
+    S--)C: session/update {agent_message_chunk}
+    S-->>C: result {id:<prompt_id>, stopReason: end_turn}
+
+    Note over C,S: 4. Optional follow-ups
+    C-)S: session/cancel (mid-turn, idempotent)
+    C->>S: session/new ... (next conversation)
 ```
-Client                                              Server
-  │                                                   │
-  │  → {"jsonrpc":"2.0","id":1,"method":"initialize",  │
-  │     "params":{"protocolVersion":1,...}}           │
-  │                                                   │
-  │  ← {"jsonrpc":"2.0","id":1,"result":              │
-  │     {"protocolVersion":1,"agentCapabilities":{...}│
-  │     ,"agentInfo":{"name":"agentao",...}}}         │
-  │                                                   │
-  │  → session/new {cwd, mcpServers?}                 │
-  │  ← {sessionId}                                    │
-  │                                                   │
-  │  → session/prompt {sessionId, prompt:[...]}       │
-  │                                                   │
-  │  ← session/update {stream: thinking}              │
-  │  ← session/update {stream: text chunk}            │
-  │  ← session/update {stream: tool_call started}     │
-  │  → session/request_permission {id, tool, args}   │
-  │  ← (client responds: {granted:true})             │
-  │  ← session/update {stream: tool_call completed}  │
-  │  ← session/update {stream: text chunk}            │
-  │                                                   │
-  │  ← {jsonrpc, id:<prompt_id>, result:{stopReason}}│
-  │                                                   │
-  │  → session/cancel (optional, mid-turn)            │
-  │  → session/new ... (next conversation)            │
-```
+
+::: tip Reading the diagram
+- **Solid arrow** (→) = JSON-RPC **request** (has `id`, must be answered)
+- **Dashed arrow** (-->) = JSON-RPC **response** to a prior request
+- **`--)`** = JSON-RPC **notification** (no `id`, no reply allowed)
+:::
 
 ## Extension: `_agentao.cn/ask_user`
 

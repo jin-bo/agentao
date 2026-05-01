@@ -1,6 +1,11 @@
 # 7.3 Blueprint C · Customer-Support Ticket Automation
 
-> **Run this example**: [`examples/ticket-automation/`](https://github.com/jin-bo/agentao/tree/main/examples/ticket-automation) — `uv run python -m src.triage "ticket text"`
+::: tip ⚡ Runnable end-to-end
+**Outcome** — async handler that reads a ticket, classifies it, fetches CRM context, drafts a reply, and only auto-sends when confidence is high; otherwise hands off to a human.
+**Stack** — Python · `prompt_once` style (no streaming UI) · custom CRM tools · PermissionEngine for "auto-send" gating.
+**Source** — [`examples/ticket-automation/`](https://github.com/jin-bo/agentao/tree/main/examples/ticket-automation)
+**Run** — `uv run python -m src.triage "ticket text"`
+:::
 
 **Scenario**: incoming support tickets pile up faster than your agents can triage. You want Agentao to read each new ticket, classify it, pull context from the CRM, propose a reply, and **only auto-send when confidence is high** — otherwise leave a draft for a human.
 
@@ -193,7 +198,11 @@ agent = Agentao(transport=SdkTransport(on_event=archive), ...)
 
 Reviewers query: "show me all cases where confidence was 0.85–0.92 last week" — that's your continuous-training signal.
 
-## Pitfalls
+## ⚠️ Pitfalls
+
+::: warning Day-2 bugs from real ticket-automation deployments
+Each row below is a real production incident. Skim them before you ship — the fixes are cheap *now* and expensive *later*.
+:::
 
 | Day-2 bug | Root cause | Fix |
 |-----------|------------|-----|

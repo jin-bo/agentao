@@ -1,10 +1,13 @@
 # 5.6 System Prompt Customization
 
+> **What you'll learn**
+> - The 11 blocks the system prompt is composed from each turn
+> - Which 3 you actually own (AGENTAO.md, skills, custom Tool descriptions)
+> - Which 8 are runtime-injected and not safe to override
+
 The agent's system prompt is **rebuilt every `chat()` turn**, not a static string. This section walks through the 11 stitched blocks — where each comes from, which you can customize, and which you shouldn't touch.
 
 ## System prompt structure
-
-Source: `agentao/prompts/builder.py::SystemPromptBuilder.build()` (composition), invoked via the `agentao/agent.py::_build_system_prompt()` facade.
 
 ```
 ┌────────────────────────────────────────────┐
@@ -202,7 +205,15 @@ agent = MyAgentao(working_directory=Path.cwd())
 
 ⚠️ Relies on a private method name; retest on every version upgrade. **Prefer AGENTAO.md + skills**.
 
-## Common pitfalls
+## ⚠️ Common pitfalls
+
+::: warning Don't ship without these
+- ❌ **Oversized AGENTAO.md** — long preambles dilute the model's attention to the actual user message
+- ❌ **Shared AGENTAO.md across sessions** — one tenant's rules apply to another
+- ❌ **Sensitive info in AGENTAO.md** — gets shipped to every LLM call (and possibly logged)
+
+Each pitfall below has the full fix.
+:::
 
 ### ❌ Oversized AGENTAO.md
 
@@ -219,5 +230,12 @@ AGENTAO.md is a project file — it may land in git, in memory, or in logs. **Ne
 ---
 
 **End of Part 5.** You now have the full toolkit to teach the agent your business: tools, skills, MCP, permissions, memory, system prompt. Next: safely running all of this in production.
+
+## TL;DR
+
+- The system prompt is **rebuilt every turn** — never assume it's a static string you can cache.
+- You own 3 of 11 blocks: **`AGENTAO.md`** (project hard rules), **skill bodies** (activated knowledge), **custom Tool descriptions** (when/how to call).
+- The other 8 — date, working directory, available tools/skills catalog, memory recall, todos, etc. — are runtime-injected and should not be overridden.
+- Keep `AGENTAO.md` short and absolute ("never run X", "always use Y format") — long preambles dilute attention.
 
 → [Part 6 · Security & Sandbox](/en/part-6/) (coming soon)

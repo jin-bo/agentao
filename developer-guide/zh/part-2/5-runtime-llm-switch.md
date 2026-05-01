@@ -1,5 +1,10 @@
 # 2.5 运行时切换 LLM
 
+> **本节你会学到**
+> - 会话中切换模型 / provider 的三个公开 API
+> - 路由模式：便宜-vs-贵、主-备、A/B
+> - 为什么没有 `OpenAIProvider` / `AnthropicProvider` 抽象
+
 一个 `Agentao` 实例构造时绑定一个 LLM。但你常常想**动态决定下一轮用哪个模型**：小问题走便宜模型、规划类问题走贵模型、主 provider 超时就退到备用。本节讲三个公开 API，教你不重建 agent 就做到这件事。
 
 ## 2.5.1 三个方法
@@ -152,6 +157,13 @@ except RuntimeError:
 - "切换 provider" 就等于"切换 key + base_url + model"
 
 所以没有 `OpenAIProvider` / `AnthropicProvider` / `GoogleProvider` 抽象——路由代码保持简单。需要原生 Anthropic / Gemini 请套一个 OpenAI 兼容网关。
+
+## TL;DR
+
+- 三个 API：`set_provider(api_key, base_url, model)`（整套切换）·`set_model(name)`（只换模型）·`get_current_model()`（读取）。
+- 切换**不会**清历史——下一轮 `chat()` 会用新模型继续同一上下文。
+- 所有 provider 都走 OpenAI schema；不存在按厂商分的 `Provider` 抽象。要原生 Anthropic / Gemini，请套 OpenAI 兼容网关。
+- 常见路由：**便宜→贵**（小问题/规划）、**主+备**（超时切换）、**A/B**（同会话评测不同模型）。
 
 ---
 

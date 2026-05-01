@@ -1,8 +1,19 @@
 # 2.7 FastAPI / Flask Embedding — Production Template
 
+> **What you'll learn**
+> - A copy-paste-ready FastAPI + SSE streaming template (modern async, recommended)
+> - A Flask + long-polling alternative for WSGI deployments
+> - How session pool, cancellation, auth, and structured errors wire together
+
 This section is a **copy-paste-ready** template for exposing Agentao through an HTTP API. Two flavors: **FastAPI + SSE streaming** (modern async, recommended) and **Flask + long-polling** (when you're stuck with WSGI). Both include session pooling, cancellation wiring, authentication, and structured errors.
 
 These templates consolidate the patterns from [2.3 lifecycle](./3-lifecycle), [2.4 session state](./4-session-state), and [2.6 cancellation](./6-cancellation-timeouts). If any primitive here is unfamiliar, jump back.
+
+::: tip Runnable minimum-shape sample
+[`examples/fastapi-background/`](https://github.com/jin-bo/agentao/tree/main/examples/fastapi-background) is the offline-smoke companion: a FastAPI route + asyncio background task with one `Agentao` per request, runnable with `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/`. No `OPENAI_API_KEY` needed — uses a fake LLM. Read this chapter for the production template; clone the sample to see the pieces wired together with passing tests.
+
+For the full production blueprint with SSE streaming + session pool + auth, see [`examples/saas-assistant/`](https://github.com/jin-bo/agentao/tree/main/examples/saas-assistant) (Part 7.1).
+:::
 
 ## 2.7.1 FastAPI + SSE (recommended)
 
@@ -365,6 +376,13 @@ For a new project, use FastAPI. For an existing Flask monolith, take the Flask t
 - Swap models at runtime: [2.5 runtime LLM switch](./5-runtime-llm-switch)
 - Wire the SSE stream into a React UI: [Part 4](/en/part-4/) (coming soon)
 - Production concerns (observability, rate-limiting, sandboxing): [Part 6](/en/part-6/) and [Part 7](/en/part-7/)
+
+## TL;DR
+
+- **FastAPI + SSE** is the recommended modern path; **Flask + long-polling** when you're stuck with WSGI.
+- Session pool is keyed by `(tenant_id, session_id)` with TTL eviction — never share an agent across tenants.
+- Always wire `CancellationToken` to client disconnects (FastAPI) or session timeouts (Flask).
+- Errors as structured JSON `{code, message, details}` — never expose stack traces over the wire.
 
 ---
 

@@ -1,6 +1,11 @@
 # 7.1 蓝图 A · SaaS 产品内置助手
 
-> **运行此例**：[`examples/saas-assistant/`](https://github.com/jin-bo/agentao/tree/main/examples/saas-assistant) —— `uv sync && uv run uvicorn app.main:app --reload`
+::: tip ⚡ 端到端可跑
+**产出** —— 带 SSE 流式 + 租户级会话池 + 权限规则的 FastAPI 应用；浏览器对话，Agent 调业务工具。
+**技术栈** —— Python · FastAPI · SSE · 自定义 Tool · PermissionEngine · 带 TTL 的会话池。
+**源代码** —— [`examples/saas-assistant/`](https://github.com/jin-bo/agentao/tree/main/examples/saas-assistant)
+**运行** —— `uv sync && uv run uvicorn app.main:app --reload`
+:::
 
 **场景**：你做的是一款项目管理 SaaS。用户希望在产品里说"帮我排一下这个项目的计划"或者"总结上周任务"。你想把 Agentao 当作大脑嵌进去，只暴露它需要的那几个工具，流式返回给前端。
 
@@ -190,7 +195,11 @@ es.onmessage = (e) => {
 es.addEventListener("done", (e) => { finalize(JSON.parse(e.data).text); es.close(); });
 ```
 
-## 陷阱
+## ⚠️ 陷阱
+
+::: warning SaaS 真实部署中的 Day-2 bug
+下面每一行都是一次真实的生产事故。**上线前先扫一遍**——现在改便宜，事后查代价大。
+:::
 
 | 上线第二天的 bug | 根因 | 修法 |
 |------------------|------|------|

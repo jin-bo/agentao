@@ -1,10 +1,13 @@
 # 5.1 自定义工具（Custom Tools）
 
+> **本节你会学到**
+> - `Tool` 子类的 6 大要素：name / description / parameters / execute / requires_confirmation / is_read_only
+> - 怎样写一个 LLM 真用得上的 description（这件事比代码本身更重要）
+> - Tool / Skill / MCP 三选一的判断标准
+
 **自定义工具是让 Agent 调用你的业务 API 的首选方式**——比起让 LLM 读你的 OpenAPI 规范再生成 HTTP 请求，直接写一个 `Tool` 子类既更可靠又更安全。
 
 ## Tool 基类回顾
-
-源码：`agentao/tools/base.py:11-115`
 
 ```python
 from abc import ABC, abstractmethod
@@ -245,7 +248,18 @@ def make_agent_for_tenant(tenant, backend):
     return agent
 ```
 
-## 写 Tool 的常见陷阱
+## ⚠️ 写 Tool 的常见陷阱
+
+::: warning 上线前先确认这几条
+真实生产 bug，每一条都付过学费：
+- ❌ **在 `execute()` 里抛异常** —— 整个 `chat()` 调用直接挂掉
+- ❌ **description 写得太泛** —— LLM 会到处误调
+- ❌ **有副作用的工具忘了 `requires_confirmation=True`** —— 等于把上膛的枪交给 LLM
+- ❌ **参数没边界** —— LLM 可能传 `limit=99999`
+- ❌ **返回数据太大** —— 直接撑爆上下文窗口
+
+下面每一条都附完整模式 + 修法。
+:::
 
 ### ❌ 在 `execute` 里抛异常
 
@@ -308,5 +322,13 @@ return json.dumps({
 | 集成外部现成的工具服务（GitHub、文件系统、数据库） | **MCP**（[5.3](./3-mcp)） |
 
 一个产品通常三者混用：工具封自己的业务、MCP 接第三方、技能统一风格。
+
+## TL;DR
+
+- Tool 必须返回**字符串**（`role:tool` 消息）；不能直接返回 dict 或 bytes。业务数据要 JSON-stringify 并控制大小。
+- **description 是 LLM 决策的唯一输入**：明确 *什么时候用*、参数含义、返回结构、硬规则。
+- 有副作用（写、删、网络、执行）的工具一律 `requires_confirmation=True`；纯读的设 `is_read_only=True`，让 PermissionEngine 和 Plan 模式能优化。
+- `execute()` 里捕获异常并返回错误字符串——未捕获的异常会让整个 `chat()` 调用挂掉。
+- 一个工具一个聚焦的职责。description 含糊会被到处误调。
 
 → 下一节：[5.2 技能与插件目录](./2-skills)

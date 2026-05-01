@@ -1,5 +1,10 @@
 # 1.5 运行环境要求
 
+> **本节你会学到**
+> - 嵌入 Agentao 之前对 Python / OS / 网络 / 磁盘的要求
+> - 按你需要的功能选哪些 extras
+> - 7 行命令的环境就绪自检清单
+
 把 Agentao 嵌入你的产品前，先核对环境。
 
 ## Python 版本
@@ -141,5 +146,13 @@ python -c "from agentao.transport import SdkTransport; print('OK')"
 ```
 
 环境就绪，进入第 2 部分真正开始集成。
+
+## TL;DR
+
+- **Python ≥ 3.10** 必需，推荐 3.11 / 3.12。
+- **3 个环境变量必填**：`OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`（也可走构造器参数）。
+- **默认装包只含嵌入核心**，按需加 extras：`[web]` / `[i18n]` / `[cli]` / `[pdf]` / `[excel]` / `[image]` / `[full]`（全装）。
+- **不监听任何入站端口**——Agentao 要么是库、要么是 stdio 子进程；出站只会去你的 LLM 端点和工具 URL。
+- **生产环境务必锁定版本范围**：`agentao>=0.4.0,<0.5`。
 
 → [第 2 部分 · Python 进程内嵌入](/zh/part-2/)

@@ -1,10 +1,13 @@
 # 4.3 SdkTransport Bridging
 
+> **What you'll learn**
+> - The four optional callbacks `SdkTransport` exposes and their fallbacks
+> - Idiomatic patterns: dispatcher, fan-out, class-grouped state
+> - Common pitfalls: hangs, exceptions, mixing transport with legacy callbacks
+
 `SdkTransport` is Agentao's official **general-purpose Transport implementation** — four callbacks that cover 90% of embeddings.
 
 ## Constructor
-
-Source: `agentao/transport/sdk.py`
 
 ```python
 class SdkTransport:
@@ -184,7 +187,15 @@ agent = Agentao(transport=SdkTransport(
 
 See [2.2 Deprecated 8 callbacks](/en/part-2/2-constructor-reference#deprecated-8-callbacks-legacy).
 
-## Common pitfalls
+## ⚠️ Common pitfalls
+
+::: warning Don't ship without these
+- ❌ **Raising inside `on_event`** — `emit` swallows it but downstream side-effects may be half-done
+- ❌ **Hanging forever in `confirm_tool`** — the agent loop hangs along with you
+- ❌ **Mixing `transport=` with legacy callbacks** — legacy ones are silently ignored
+
+Each pitfall below has the full fix.
+:::
 
 ### ❌ Raising inside `on_event`
 
@@ -274,5 +285,12 @@ agent = Agentao(transport=transport, working_directory=Path.cwd())
 print(agent.chat("hello"))
 agent.close()
 ```
+
+## TL;DR
+
+- 4 optional callbacks; each missing one falls back to `NullTransport` behavior (silent / auto-approve / non-interactive string / `{"action": "stop"}`).
+- Group callbacks in a class when they share UI state or session id — closures + per-session `self` is the cleanest pattern.
+- Fan out events with a small dispatcher when multiple consumers (DB log + WebSocket + UI) need them.
+- **Never raise inside `on_event`** — wrap each branch in try/except, or `SdkTransport.emit` will swallow it for you (but downstream side-effects may be half-done).
 
 → Next: [4.4 Streaming UI](./4-streaming-ui)

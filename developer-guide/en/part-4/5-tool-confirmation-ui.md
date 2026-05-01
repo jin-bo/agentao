@@ -1,5 +1,10 @@
 # 4.5 Tool Confirmation UI
 
+> **What you'll learn**
+> - Why `confirm_tool` is synchronous — and how to bridge to async UIs cleanly
+> - CLI / web modal / IDE / Slack patterns, with full code
+> - "Allow once" vs "always allow" vs auto-approve thresholds
+
 `confirm_tool(name, desc, args) -> bool` is the agent's safety valve. This section shows how to implement it correctly across different UI shapes.
 
 ## Core challenge: synchronous blocking
@@ -225,5 +230,12 @@ class SmartConfirm:
             return True
         return resp == "allow_once"
 ```
+
+## TL;DR
+
+- `confirm_tool` is **blocking** — the agent loop waits for your bool. Never return `None`, never `await` inside it directly.
+- Async UI bridge: `asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=…)` from the worker thread; the event loop handles the modal.
+- **Always** give the wait a finite timeout — UI bugs that never respond would hang the whole agent.
+- Combine with `PermissionEngine` (5.4) so 90% of safe calls bypass the user entirely; `confirm_tool` only fires for the genuine ASKs.
 
 → Next: [4.6 Max-Iterations Fallback](./6-max-iterations)

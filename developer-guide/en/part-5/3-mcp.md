@@ -1,5 +1,10 @@
 # 5.3 MCP Server Integration
 
+> **What you'll learn**
+> - When MCP is the right answer vs. a custom Tool
+> - The two transport types Agentao supports (stdio + SSE; **not** HTTP)
+> - Multi-tenant patterns: per-session `extra_mcp_servers`, env-var expansion, `trust:` caveats
+
 **MCP (Model Context Protocol)** is the de-facto standard for tool interoperability. Agentao is an MCP client — it can connect to any MCP-compliant server (GitHub, filesystem, Postgres, Slack, Jira, your own…), and every tool the server exposes shows up in the agent's registry as `mcp_{server}_{tool}` automatically.
 
 ## What MCP is good for
@@ -101,8 +106,6 @@ Merge rule: **same-name entries override** those from `.agentao/mcp.json`.
 ⚠️ **HTTP is not supported**: Agentao's MCP client only imports `stdio_client` and `sse_client`; `http`-type MCP servers can't connect (ACP handshake also advertises `mcpCapabilities.http: false`).
 
 ## Env var expansion
-
-Source: `agentao/mcp/config.py:28-36`
 
 ```json
 "env": {
@@ -235,7 +238,15 @@ Or control with fine-grained permission rules:
 
 Full permission details: [5.4](./4-permissions).
 
-## Common pitfalls
+## ⚠️ Common pitfalls
+
+::: warning Don't ship without these
+- ❌ **Server fails but the agent keeps going silently** — no surfaced error in `agent.chat()` if MCP init fails
+- ❌ **Tool name too long** — provider truncation breaks function calling
+- ❌ **`trust: true` set too permissively** — bypasses every safety prompt
+
+Each pitfall below has the full fix.
+:::
 
 ### ❌ Server fails but the agent keeps going silently
 
@@ -255,5 +266,13 @@ Some MCP servers have long tool names. With the `mcp_{server}_` prefix, they may
 ### ❌ `trust: true` too permissive
 
 Don't lightly set `trust: true` on servers that can write/delete — you bypass all safety prompts. Only for pure-read servers or servers with their own robust permission layer.
+
+## TL;DR
+
+- Use **MCP** to consume an existing third-party tool ecosystem (GitHub, filesystem, Postgres, Slack…); use **custom Tool** for your own business logic.
+- Two transports: **stdio** subprocess or **SSE** URL. **HTTP is not supported.**
+- Per-tenant tokens: pass `extra_mcp_servers` at construction (`{name: {command, args, env}}`); merges over `.agentao/mcp.json`.
+- Tool naming: `mcp_{server}_{tool}` — auto-prefixed to avoid name collisions across servers.
+- Never set `trust: true` on write-capable servers — it bypasses confirmation entirely.
 
 → Next: [5.4 Permission Engine](./4-permissions)

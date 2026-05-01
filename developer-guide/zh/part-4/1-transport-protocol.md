@@ -1,10 +1,13 @@
 # 4.1 Transport Protocol
 
+> **本节你会学到**
+> - 构成 Transport 接口的全部 4 个方法
+> - 每个方法的契约：哪个阻塞、哪个 fire-and-forget
+> - `NullTransport` 的行为以及什么时候它就是合适的默认
+
 Transport 是 Agent 运行时与宿主 UI/业务逻辑之间的**唯一接口**。理解它的四个方法，你就能在任何 UI 框架下集成 Agentao。
 
 ## 协议定义
-
-源码：`agentao/transport/base.py`
 
 ```python
 @runtime_checkable
@@ -205,5 +208,12 @@ def test_my_transport():
     r = t.on_max_iterations(100, [])
     assert r["action"] in {"continue", "stop", "new_instruction"}
 ```
+
+## TL;DR
+
+- Transport = **4 个方法**：`emit`（fire-and-forget）·`confirm_tool`（阻塞 bool）·`ask_user`（阻塞 str）·`on_max_iterations`（阻塞 dict）。
+- `emit` 抛出的异常会被吞；其他三个的异常会向上传播。
+- `NullTransport` = 静默 + 自动批准——适合测试和无人值守批处理。
+- 自己实现 Transport 时 4 个方法都要给（哪怕是 no-op stub），让 Agent 循环在所有路径上都安全。
 
 → 下一节：[4.2 AgentEvent 事件清单](./2-agent-events)

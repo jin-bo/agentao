@@ -1,5 +1,10 @@
 # 6.4 Multi-Tenant & Filesystem Isolation
 
+> **What you'll learn**
+> - The cross-tenant bleed pattern (and why it's almost always a config issue, not a bug)
+> - The three FS isolation layers: `working_directory` → user namespace → container/VM
+> - A pre-launch checklist to confirm you're tenant-safe before going live
+
 The most common security incident in multi-tenant agent embeddings: **cross-tenant data bleed**. Root cause is usually **sharing `working_directory`** or **sharing process-level resources**, not a code vulnerability.
 
 ## The golden rule: one session = one directory = one instance
@@ -228,5 +233,12 @@ Before deployment, answer "if two tenants use the product simultaneously, could 
 - [ ] Share `/tmp`? (container / isolation)
 - [ ] Cross-tenant queries from business tools? (tenant_id guard in Tool)
 - [ ] Mixed logs? (agentao.log path)
+
+## TL;DR
+
+- **One session = one `working_directory` = one `Agentao` instance.** Never share an agent across tenants — even briefly.
+- Three layers of isolation, stack as needed: per-session `working_directory`, OS user namespace, container/VM.
+- Memory user-scope (`~/.agentao/memory.db`) is **process-global** — disable it in multi-tenant or key memories by `tenant_id+user_id`.
+- Custom Tools that capture `tenant_id` at construction must be **created per session**, not pulled from a process-wide pool.
 
 → [6.5 Secrets & Prompt Injection](./5-secrets-injection)

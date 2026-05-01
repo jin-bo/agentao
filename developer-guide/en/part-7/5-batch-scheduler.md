@@ -1,6 +1,11 @@
 # 7.5 Blueprint E · Offline Batch & Scheduled Intelligent Jobs
 
-> **Run this example**: [`examples/batch-scheduler/`](https://github.com/jin-bo/agentao/tree/main/examples/batch-scheduler) — `uv run python -m src.daily_digest`
+::: tip ⚡ Runnable end-to-end
+**Outcome** — cron-driven `prompt_once` job that summarizes yesterday's GitHub activity into a daily digest; no user, deterministic exit code, fail-loud on errors.
+**Stack** — Python · `prompt_once` (no chat loop) · skills + cron · structured logging for unattended ops.
+**Source** — [`examples/batch-scheduler/`](https://github.com/jin-bo/agentao/tree/main/examples/batch-scheduler)
+**Run** — `uv run python -m src.daily_digest`
+:::
 
 **Scenario**: a nightly cron summarizes yesterday's GitHub activity, drafts a weekly newsletter from RSS feeds, or flags anomalies in yesterday's order data. **No user in the loop** — the agent must decide, act, and report cleanly or fail loud.
 
@@ -202,7 +207,11 @@ result = ACPManager().prompt_once(
 print(result.stop_reason)
 ```
 
-## Pitfalls
+## ⚠️ Pitfalls
+
+::: warning Day-2 bugs from real batch / scheduler deployments
+Each row below is a real production incident. Skim them before you ship — the fixes are cheap *now* and expensive *later*.
+:::
 
 | Day-2 bug | Root cause | Fix |
 |-----------|------------|-----|

@@ -2,6 +2,14 @@
 
 The six extension points are Agentao's **business interface**. After this part you can shape the agent into an assistant that genuinely understands your domain.
 
+::: info Key terms in this Part
+- **Tool subclass** — the canonical way to expose a business capability: `name` / `description` / `parameters` / `execute()` · [§5.1](/en/part-5/1-custom-tools), [G.2](/en/appendix/g-glossary#g-2-extension-points)
+- **`requires_confirmation`** — Tool flag → triggers the `ask_confirmation` UI for side-effecting calls · [§5.1](/en/part-5/1-custom-tools), [§5.4](/en/part-5/4-permissions)
+- **PermissionEngine** — Tier 0 hard guards + presets + custom rules; the rule-based defense layer · [§5.4](/en/part-5/4-permissions), [G.5](/en/appendix/g-glossary#g-5-security-vocabulary)
+- **Skill** — `SKILL.md` + YAML front-matter, dynamically discovered from `skills/`; LLM-side instructions · [§5.2](/en/part-5/2-skills), [G.2](/en/appendix/g-glossary#g-2-extension-points)
+- **MemoryManager** — SQLite-backed dual-scope (`project` + `user`) persistent + session memory · [§5.5](/en/part-5/5-memory), [G.1](/en/appendix/g-glossary#g-1-core-concepts)
+:::
+
 ## Coverage
 
 - [**5.1 Custom Tools**](./1-custom-tools) — the preferred way to expose business APIs to the LLM

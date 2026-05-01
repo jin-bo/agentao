@@ -1,8 +1,19 @@
 # 2.7 FastAPI / Flask 嵌入 — 生产级模板
 
+> **本节你会学到**
+> - 一份可直接复制的 FastAPI + SSE 流式模板（现代异步，推荐）
+> - 一份 Flask + 长轮询的 WSGI 备选
+> - 会话池、取消、鉴权、结构化错误如何串成一个整体
+
 本节是**可直接复制**的 HTTP API 模板。两种口味：**FastAPI + SSE 流式**（现代异步，推荐）和 **Flask + 长轮询**（还困在 WSGI 上的时候）。两份都包含会话池、取消接线、鉴权、结构化错误。
 
 模板综合了 [2.3 生命周期](./3-lifecycle)、[2.4 会话状态](./4-session-state)、[2.6 取消与超时](./6-cancellation-timeouts) 的模式。遇到不熟悉的原语请回去查。
+
+::: tip 离线可跑的最小形态样板
+[`examples/fastapi-background/`](https://github.com/jin-bo/agentao/tree/main/examples/fastapi-background) 是配套的离线烟雾测试样板：FastAPI 路由 + asyncio 后台任务 + 每请求一个 `Agentao`，`uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` 即跑。**不需要 `OPENAI_API_KEY`** —— 用 fake LLM。本章读生产模板，clone 样板看接线和通过的测试。
+
+要 SSE 流式 + 会话池 + 鉴权的完整生产蓝图，见 [`examples/saas-assistant/`](https://github.com/jin-bo/agentao/tree/main/examples/saas-assistant)（第 7.1 节）。
+:::
 
 ## 2.7.1 FastAPI + SSE（推荐）
 
@@ -364,6 +375,13 @@ uv run gunicorn --worker-class gthread --threads 8 --workers 2 \
 - 运行时切换模型：[2.5 运行时切换 LLM](./5-runtime-llm-switch)
 - 把 SSE 流接到 React UI：[Part 4](/zh/part-4/)（待上线）
 - 生产关切（观测、限流、沙箱）：[Part 6](/zh/part-6/) 和 [Part 7](/zh/part-7/)
+
+## TL;DR
+
+- **FastAPI + SSE** 是推荐的现代路径；**Flask + 长轮询** 用于 WSGI 旧栈。
+- 会话池按 `(tenant_id, session_id)` 索引、TTL 淘汰——**绝对不要跨租户共享 agent**。
+- 永远把 `CancellationToken` 接到 FastAPI 客户端断连或 Flask 会话超时上。
+- 错误统一为结构化 JSON `{code, message, details}`——不要把堆栈跟踪暴露给客户端。
 
 ---
 

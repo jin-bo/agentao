@@ -1,5 +1,10 @@
 # 1.2 Core Concepts
 
+> **What you'll learn**
+> - The six nouns the rest of this guide depends on
+> - How they fit together in one diagram
+> - Where each one is anchored in code, so you can dig further
+
 Before writing integration code, learn Agentao's six core nouns. Every chapter that follows uses them.
 
 ## Concept map
@@ -114,5 +119,14 @@ Hosts inject business knowledge here by writing `AGENTAO.md` or custom skills (P
 | Transport | `agentao/transport/` | Instantiate `SdkTransport` |
 | Session | `agent.messages` | Lifecycle + concurrency |
 | System Prompt | `agent._build_system_prompt()` | Author `AGENTAO.md` |
+
+## TL;DR
+
+- **Agent = one stateful session.** One per user/conversation; rebuild for the next session.
+- **Tool = capability.** Python class with `name` / `description` / `parameters` / `execute()`. Wrap your business APIs as tools.
+- **Skill = on-demand prompt knowledge.** Markdown bundle activated explicitly; not code.
+- **Transport = the UI bridge.** 4 callbacks: emit / confirm / ask_user / on_max_iterations.
+- **Working directory = process-isolated session root.** Always pass an explicit `Path`.
+- **System prompt = composed each turn** from AGENTAO.md + date + skills + memory.
 
 Next: [1.3 Integration Modes →](./3-integration-modes)

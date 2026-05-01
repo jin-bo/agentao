@@ -1,5 +1,10 @@
 # 6.7 Resource Governance & Concurrency
 
+> **What you'll learn**
+> - Four control points: `max_iterations`, per-turn timeout, tool timeout, token budget
+> - Session pool patterns with TTL + LRU eviction
+> - Graceful shutdown that doesn't drop in-flight turns
+
 Agents are **unpredictable workloads** — a simple Q&A may take 200 ms; a complex task may run 10 minutes and call dozens of tools. Without governance you either DoS yourself or light the cloud bill on fire.
 
 ## Four resources to cap separately
@@ -242,5 +247,12 @@ Without this, SIGTERM leaves MCP subprocesses orphaned.
 - [ ] Session pool TTL and max_sessions
 - [ ] Graceful shutdown
 - [ ] Monitoring: active sessions, MCP subprocesses, memory per session
+
+## TL;DR
+
+- Four caps to set explicitly: `max_iterations` (loop), per-turn timeout via `wait_for` (wall clock), per-tool timeout (HTTP / shell), token budget per session/tenant.
+- Session pool: TTL + LRU eviction, keyed by `(tenant_id, session_id)`. Always `close()` evicted entries to free MCP subprocesses.
+- Graceful shutdown: stop accepting new turns → wait for in-flight ≤ shutdown timeout → force-cancel via tokens → close pools. **SIGKILL only as last resort.**
+- Track active sessions, MCP subprocess count, memory-per-session. Alert when any exceeds your capacity plan.
 
 → [6.8 Deployment, Canary & Rollback](./8-deployment)

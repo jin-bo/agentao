@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
 // Bilingual (ZH/EN) developer guide for Agentao harness embedding.
 // Route layout:
@@ -7,6 +8,13 @@ import { defineConfig } from 'vitepress'
 //   /en/...      → English
 
 const zhSidebar = [
+  {
+    text: 'Recipes · 高频任务直链',
+    collapsed: false,
+    items: [
+      { text: '一键到答案', link: '/zh/recipes/' },
+    ],
+  },
   {
     text: '第一部分 · 起步与心智模型',
     collapsed: false,
@@ -55,6 +63,7 @@ const zhSidebar = [
       { text: '4.4 构建流式 UI', link: '/zh/part-4/4-streaming-ui' },
       { text: '4.5 工具确认 UI', link: '/zh/part-4/5-tool-confirmation-ui' },
       { text: '4.6 最大迭代数兜底', link: '/zh/part-4/6-max-iterations' },
+      { text: '4.7 嵌入式 Harness 合约', link: '/zh/part-4/7-harness-contract' },
     ],
   },
   {
@@ -115,6 +124,13 @@ const zhSidebar = [
 
 const enSidebar = [
   {
+    text: 'Recipes · Common tasks',
+    collapsed: false,
+    items: [
+      { text: '1-click to the answer', link: '/en/recipes/' },
+    ],
+  },
+  {
     text: 'Part 1 · Getting Started',
     collapsed: false,
     items: [
@@ -162,6 +178,7 @@ const enSidebar = [
       { text: '4.4 Streaming UI', link: '/en/part-4/4-streaming-ui' },
       { text: '4.5 Tool Confirmation UI', link: '/en/part-4/5-tool-confirmation-ui' },
       { text: '4.6 Max-Iterations Fallback', link: '/en/part-4/6-max-iterations' },
+      { text: '4.7 Embedded Harness Contract', link: '/en/part-4/7-harness-contract' },
     ],
   },
   {
@@ -220,7 +237,7 @@ const enSidebar = [
   },
 ]
 
-export default defineConfig({
+export default withMermaid(defineConfig({
   title: 'Agentao Developer Guide',
   description: 'Embed the Agentao harness into your application',
   // Served from custom domain agentao.cn at the root. Override with DOCS_BASE only
@@ -257,6 +274,7 @@ export default defineConfig({
         nav: [
           { text: '首页', link: '/zh/' },
           { text: '第一部分', link: '/zh/part-1/1-what-is-agentao' },
+          { text: 'Recipes', link: '/zh/recipes/' },
           {
             text: '按角色阅读',
             items: [
@@ -289,6 +307,7 @@ export default defineConfig({
         nav: [
           { text: 'Home', link: '/en/' },
           { text: 'Part 1', link: '/en/part-1/1-what-is-agentao' },
+          { text: 'Recipes', link: '/en/recipes/' },
           {
             text: 'By role',
             items: [
@@ -306,4 +325,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

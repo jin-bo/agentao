@@ -1,6 +1,11 @@
 # 7.1 Blueprint A · SaaS In-Product Assistant
 
-> **Run this example**: [`examples/saas-assistant/`](https://github.com/jin-bo/agentao/tree/main/examples/saas-assistant) — `uv sync && uv run uvicorn app.main:app --reload`
+::: tip ⚡ Runnable end-to-end
+**Outcome** — FastAPI app with SSE streaming + per-tenant agent pool + permission rules; chat from the browser, agent calls scoped business tools.
+**Stack** — Python · FastAPI · SSE · custom Tools · PermissionEngine · session pool with TTL.
+**Source** — [`examples/saas-assistant/`](https://github.com/jin-bo/agentao/tree/main/examples/saas-assistant)
+**Run** — `uv sync && uv run uvicorn app.main:app --reload`
+:::
 
 **Scenario**: you run a project-management SaaS. Users want "help me schedule this project plan" or "summarize last week's tasks" inside the product. You want to embed Agentao as the brain, expose only the tools it needs, and stream responses to the browser.
 
@@ -190,7 +195,11 @@ es.onmessage = (e) => {
 es.addEventListener("done", (e) => { finalize(JSON.parse(e.data).text); es.close(); });
 ```
 
-## Pitfalls
+## ⚠️ Pitfalls
+
+::: warning Day-2 bugs from real SaaS deployments
+Each row below is a real production incident. Skim them before you ship — the fixes are cheap *now* and expensive *later*.
+:::
 
 | Day-2 bug | Root cause | Fix |
 |-----------|------------|-----|

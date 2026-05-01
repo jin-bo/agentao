@@ -1,5 +1,10 @@
 # 5.2 Skills & Plugin Directories
 
+> **What you'll learn**
+> - The skill directory layout (`SKILL.md` + optional `reference/*.md`)
+> - The three-layer search (user / project-config / project-repo) and override semantics
+> - How to write a skill the LLM activates at the right time — and only then
+
 **Skills are not code — they are Markdown instructions for the LLM.** When "make the agent follow our company's conventions" needs new constraints or workflows (not new capabilities), a skill beats writing a tool by 10x.
 
 ## Skill shape
@@ -56,8 +61,6 @@ Two fields:
 The `description` is injected into the system prompt's skills catalog. When the LLM sees the user's request match that description, it calls `activate_skill` itself.
 
 ## Three-layer directory search
-
-Source: `agentao/skills/manager.py:27-43`
 
 ```
 1. ~/.agentao/skills/             ← global (shared across projects)
@@ -236,5 +239,12 @@ print(agent.skill_manager.get_skills_context())
 | "Upload a file to S3" | **Tool** |
 
 **Slogan**: new *ability* → Tool; new *constraint* → Skill.
+
+## TL;DR
+
+- A skill is a **directory** with `SKILL.md` (YAML frontmatter + body) and optional `reference/*.md` loaded on activation.
+- The `description` decides *when* the LLM activates the skill — write it from the LLM's POV ("activate this when the user asks about X").
+- 3 search layers: `~/.agentao/skills/` (global) → `<wd>/.agentao/skills/` → `<wd>/skills/`. Project-local wins.
+- Many small specific skills > one monster skill. Activating a skill costs context tokens; small ones stay cheap.
 
 → Next: [5.3 MCP Integration](./3-mcp)
