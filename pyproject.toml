@@ -64,7 +64,7 @@ path = "agentao/__init__.py"
 exclude = [
     "workspace", "docs", "developer-guide", "examples", "agentao.log", "main.py", "run.sh", "AGENTAO.md", ".agentao",
 ]
-force-include = {"skills/skill-creator" = "skills/skill-creator"}
+force-include = {"skills/skill-creator" = "skills/skill-creator", "agentao/py.typed" = "agentao/py.typed"}
 
 [tool.hatch.build.targets.sdist]
 exclude = [

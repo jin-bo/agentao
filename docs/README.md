@@ -8,9 +8,10 @@ Use the root [README.md](../README.md) for the product overview and first-run pa
 
 Pick the path that matches your goal:
 
-- First-time setup: [QUICKSTART.md](QUICKSTART.md)
+- Embed in your Python project (primary use case): [EMBEDDING.md](EMBEDDING.md) → [api/harness.md](api/harness.md)
+- First-time CLI setup: [QUICKSTART.md](QUICKSTART.md)
 - Daily command lookup: [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
-- Embedding and protocol entrypoints: [ACP.md](ACP.md)
+- Cross-language protocol entrypoints: [ACP.md](ACP.md)
 - Logging and debugging: [LOGGING.md](LOGGING.md)
 - Model and provider switching: [MODEL_SWITCHING.md](MODEL_SWITCHING.md)
 - Skills and runtime extension: [SKILLS_GUIDE.md](SKILLS_GUIDE.md)
@@ -23,6 +24,7 @@ Pick the path that matches your goal:
 
 ### User Guides
 
+- [EMBEDDING.md](EMBEDDING.md)
 - [QUICKSTART.md](QUICKSTART.md)
 - [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
 - [ACP.md](ACP.md)

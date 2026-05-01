@@ -7,6 +7,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-04-30
+
+First release executing the **Path A roadmap** (see
+`docs/design/path-a-roadmap.md`). Pure-additive patch. No required
+code change to upgrade.
+
+### Added
+
+- **PEP 561 `py.typed` marker** — `agentao/py.typed` ships in wheel
+  and sdist so downstream `mypy` / `pyright` consumers pick up
+  Agentao's type hints instead of treating the package as untyped.
+
+### Changed
+
+- **README leads with embedding (`## Embed in 30 lines`)** — the
+  CLI walkthrough is preserved verbatim under `## CLI Quickstart`.
+  Reflects the locked Path A positioning: `agentao` is primarily a
+  library to embed in Python hosts.
+
+### Internal
+
+- CI smoke job now asserts `py.typed` presence in the installed
+  wheel and verifies bare `Agentao(...)` construction (the README
+  snippet, verbatim) succeeds without env discovery or network.
+
 ## [0.3.1] — 2026-04-30
 
 Added-only patch in the 0.3.x series. Lands the **embedded harness

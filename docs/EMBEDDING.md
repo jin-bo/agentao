@@ -414,11 +414,13 @@ renaming requires a schema version bump.
 
 ---
 
-## 8. Migration guide: 0.2.15 → 0.2.16 → 0.3.0 → 0.3.1
+## 8. Migration guide: 0.2.15 → 0.2.16 → 0.3.0 → 0.3.1 → 0.3.3
 
-The embedded-harness epic shipped over four releases. Code that
-worked on 0.2.15 should land on 0.3.1 with two mechanical changes;
-0.3.0 → 0.3.1 itself requires no host code changes.
+The embedded-harness epic shipped over four releases (0.2.15 →
+0.3.1); 0.3.3 is the first patch in the Path A roadmap and is
+additive only. Code that worked on 0.2.15 should land on 0.3.3 with
+two mechanical changes; every 0.3.x → 0.3.x step requires no host
+code changes.
 
 ### From 0.2.15
 
@@ -472,6 +474,14 @@ The full 0.3.0 changelog block lives in [`CHANGELOG.md`](../CHANGELOG.md).
 backwards-compatible. **No required code change** to upgrade. Existing
 calls into `Agentao(...)`, `build_from_environment(...)`, capability
 protocols, and the transport layer keep working unchanged.
+
+### From 0.3.1
+
+`0.3.3` is also an Added-only patch — strictly backwards-compatible.
+The only user-visible additions are the PEP 561 `py.typed` marker
+(downstream `mypy` / `pyright` now picks up Agentao's type hints) and
+the README's new `## Embed in 30 lines` lead section. No host code
+change required.
 
 What's available to opt into:
 

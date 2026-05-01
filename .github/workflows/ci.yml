@@ -121,6 +121,28 @@ jobs:
           print('Public API OK')
           "
 
+      - name: PEP 561 — py.typed marker present in installed package
+        run: python -c "from importlib.resources import files; assert files('agentao').joinpath('py.typed').is_file(), 'py.typed missing'; print('py.typed OK')"
+
+      - name: Embedded-construct smoke (matches README "Embed in 30 lines")
+        run: |
+          python -c "
+          import tempfile
+          from pathlib import Path
+          from agentao import Agentao
+          from agentao.llm import LLMClient
+          from agentao.transport import NullTransport
+          agent = Agentao(
+              working_directory=Path(tempfile.mkdtemp()),
+              llm_client=LLMClient(api_key='dummy', base_url='http://localhost:1', model='dummy'),
+              transport=NullTransport(),
+          )
+          try:
+              print('Embedded construct OK')
+          finally:
+              agent.close()
+          "
+
       - name: Import check — CLI entry point importable
         run: python -c "from agentao.cli import entrypoint; print('CLI entrypoint OK')"
 

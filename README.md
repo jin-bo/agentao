@@ -20,11 +20,52 @@ Built with Python, Agentao gives developers and teams a governed runtime they ca
 
 ---
 
-## Quick Start
+## Embed in 30 lines
 
-Get Agentao running in about 3 minutes:
+Embedding `agentao` in a Python host (FastAPI route, pytest fixture, Jupyter
+kernel, batch job) is the primary use case. The snippet below constructs an
+agent with **no env-discovery, no implicit network, no global state** — the
+host owns every input.
 
-1. Install the package:
+```bash
+pip install agentao
+```
+
+```python
+from pathlib import Path
+from agentao import Agentao
+from agentao.llm import LLMClient
+from agentao.transport import NullTransport
+
+agent = Agentao(
+    working_directory=Path("/tmp/agent-run-1"),
+    llm_client=LLMClient(
+        api_key="sk-...",
+        base_url="https://api.openai.com/v1",
+        model="gpt-5.4",
+    ),
+    transport=NullTransport(),
+)
+reply = agent.chat("Summarize today's logs.")
+print(reply)
+agent.close()
+```
+
+For env-driven discovery (`.env`, `~/.agentao/`, `<wd>/.agentao/*`) use
+`agentao.embedding.build_from_environment(working_directory=...)` instead — it
+is what the CLI uses internally. See [docs/EMBEDDING.md](docs/EMBEDDING.md)
+for the full embedding contract and [docs/api/harness.md](docs/api/harness.md)
+for the public API surface (`Agentao.events()`, `active_permissions()`,
+capability injection).
+
+---
+
+## CLI Quickstart
+
+If you want to drive Agentao interactively from a terminal instead of
+embedding it, the CLI gets you running in about 3 minutes:
+
+1. Install the package (with CLI extras for terminal UI):
 
 ```bash
 pip install agentao
@@ -60,7 +101,8 @@ If you hit a startup error, jump directly to [Troubleshooting common startup fai
 
 Choose the path that matches what you want to do:
 
-- New to Agentao: [Quick Start](#quick-start) → [Minimum Viable Configuration](#minimum-viable-configuration) → [Usage](#usage)
+- Embed in your Python project: [Embed in 30 lines](#embed-in-30-lines) → [docs/EMBEDDING.md](docs/EMBEDDING.md) → [docs/api/harness.md](docs/api/harness.md)
+- New to Agentao (CLI): [CLI Quickstart](#cli-quickstart) → [Minimum Viable Configuration](#minimum-viable-configuration) → [Usage](#usage)
 - Need the minimum setup only: [Installation](#installation) → [Required environment variable](#required-environment-variable) → [Minimal runnable example](#minimal-runnable-example)
 - Want to switch models or providers: [Using with Different Providers](#using-with-different-providers)
 - Want MCP tools: [MCP Server Configuration](#mcp-server-configuration) → [MCP (Model Context Protocol) Support](#-mcp-model-context-protocol-support)
@@ -72,7 +114,8 @@ Choose the path that matches what you want to do:
 
 ### User Guide
 
-- [Quick Start](#quick-start)
+- [Embed in 30 lines](#embed-in-30-lines)
+- [CLI Quickstart](#cli-quickstart)
 - [Start Here](#start-here)
 - [First Commands](#first-commands)
 - [Why Agentao?](#why-agentao)
@@ -145,7 +188,7 @@ If you're not sure how to approach Agentao yet, follow one of these paths:
 
 | Goal | What to read | What to try |
 |------|--------------|-------------|
-| Get the first successful run | [Quick Start](#quick-start) → [Minimum Viable Configuration](#minimum-viable-configuration) | `agentao -p "Reply with the single word: OK"` |
+| Get the first successful run | [CLI Quickstart](#cli-quickstart) → [Minimum Viable Configuration](#minimum-viable-configuration) | `agentao -p "Reply with the single word: OK"` |
 | Start using it in a real repo | [Starting the Agent](#starting-the-agent) → [Project Instructions (AGENTAO.md)](#project-instructions-agentaomd) | `agentao` then `/status` |
 | Use another provider or model | [Using with Different Providers](#using-with-different-providers) → [Commands](#commands) | `/provider` then `/model` |
 | Add external tools | [MCP Server Configuration](#mcp-server-configuration) → [MCP (Model Context Protocol) Support](#-mcp-model-context-protocol-support) | create `.agentao/mcp.json` then `/mcp list` |
