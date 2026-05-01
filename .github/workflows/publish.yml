@@ -50,8 +50,15 @@ jobs:
       - name: Install Python 3.12
         run: uv python install 3.12
 
-      - name: Install dependencies
-        run: uv sync --python 3.12
+      - name: Install dependencies (with cli/web/i18n extras for CLI-dependent unit tests)
+        # Mirrors the same install matrix used by .github/workflows/ci.yml's
+        # Test job. After P0.9 the bundled CLI deps live in `[cli]`;
+        # tests/test_menu_confirmation.py, test_readchar_confirmation.py,
+        # test_cli_dashboard.py, test_skill_crystallize_enhancement.py, etc.
+        # all import from agentao.cli or read prompt_toolkit/readchar at
+        # collect time. Without these extras the test step fails before
+        # build/publish run.
+        run: uv sync --python 3.12 --extra cli --extra web --extra i18n
 
       - name: Run tests in CI offline mode
         env:
