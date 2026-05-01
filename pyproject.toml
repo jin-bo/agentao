@@ -20,20 +20,18 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 dependencies = [
-    # P0.9 core — minimum needed to construct Agentao() and call chat()
-    # against an OpenAI-compatible endpoint. CLI / web-fetch / Chinese
-    # tokenization are opt-in extras.
+    # Core: minimum needed to construct Agentao() and call chat() against
+    # an OpenAI-compatible endpoint. CLI / web-fetch / Chinese tokenization
+    # are opt-in extras.
     "openai>=1.0.0",
     "httpx>=0.25.0",
     "pydantic>=2",
     "pyyaml>=6.0.3",
     "mcp>=1.26.0",
     "python-dotenv>=1.0.0",
-    # Used by agentao/skills/registry.py for cross-process locking when
-    # the skills registry is mutated. P0.5 made the import lazy, but it
-    # is still functionally required for any host that activates skills.
-    # Kept in core (deviation from §9.9's literal "6 items") to avoid
-    # surprising ImportError at runtime.
+    # Required at runtime by agentao/skills/registry.py for cross-process
+    # locking. Lazy-imported, but kept in core because any host that
+    # activates skills will trip ImportError otherwise.
     "filelock>=1.4.0",
 ]
 
@@ -107,6 +105,7 @@ dev = [
     "pytest>=9.0.2",
     "twine>=6.1.0",
     "mypy>=1.13.0",
+    "packaging>=25.0",
 ]
 
 [tool.mypy]

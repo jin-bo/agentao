@@ -1,67 +1,62 @@
-"""CLI interface for Agentao.
+"""CLI surface for Agentao.
 
-P0.10 — the console-script ``entrypoint()`` is intentionally defined
-inline (no module-level imports of rich / prompt_toolkit / readchar /
-pygments) so a core-only install can print a friendly missing-dep
-message and exit 2 instead of crashing with an opaque
-``ModuleNotFoundError: rich``. All other public names are loaded
-lazily via PEP 562 ``__getattr__`` so existing imports
-(``from agentao.cli import AgentaoCLI``, ``from agentao.cli import
-_build_parser``, etc.) continue to resolve when the ``[cli]`` extra
-is installed.
+Defining ``entrypoint()`` inline keeps ``agentao.cli`` import-light so a
+core-only install (no ``[cli]`` extra) can print a friendly missing-dep
+message instead of crashing with ``ModuleNotFoundError: rich``. All
+other public names load lazily via PEP 562 ``__getattr__``.
 """
 
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 
-__all__ = [
-    "AgentaoCLI",
-    "console",
-    "entrypoint",
-    "main",
-    "run_print_mode",
-    "run_init_wizard",
-    "run_acp_mode",
-    "_build_parser",
-    "_PROVIDER_DEFAULTS",
-    "handle_skill_subcommand",
-    "handle_plugin_subcommand",
-    "_skill_list",
-    "_skill_remove",
-    "_skill_install",
-    "_skill_update",
-    "_plugin_list_cli",
-    "_load_and_register_plugins",
-    "_handle_plugins_interactive",
-]
+if TYPE_CHECKING:
+    # Type checkers and IDEs see explicit names; the runtime path uses __getattr__.
+    from .app import AgentaoCLI
+    from ._globals import console
+    from .entrypoints import (
+        _build_parser,
+        _PROVIDER_DEFAULTS,
+        main,
+        run_acp_mode,
+        run_init_wizard,
+        run_print_mode,
+    )
+    from .subcommands import (
+        _handle_plugins_interactive,
+        _load_and_register_plugins,
+        _plugin_list_cli,
+        _skill_install,
+        _skill_list,
+        _skill_remove,
+        _skill_update,
+        handle_plugin_subcommand,
+        handle_skill_subcommand,
+    )
 
 
-# Map each public name to the (relative-module, attribute) pair that
-# resolves it. The lazy load happens on first attribute access so the
-# module-level import of ``agentao.cli`` itself stays free of rich /
-# prompt_toolkit / readchar / pygments.
+def _names(mod: str, *names: str) -> dict[str, tuple[str, str]]:
+    return {name: (mod, name) for name in names}
+
+
 _LAZY_NAMES: dict[str, tuple[str, str]] = {
-    "AgentaoCLI":                   (".app", "AgentaoCLI"),
-    "console":                      ("._globals", "console"),
-    "main":                         (".entrypoints", "main"),
-    "run_print_mode":               (".entrypoints", "run_print_mode"),
-    "run_init_wizard":              (".entrypoints", "run_init_wizard"),
-    "run_acp_mode":                 (".entrypoints", "run_acp_mode"),
-    "_build_parser":                (".entrypoints", "_build_parser"),
-    "_PROVIDER_DEFAULTS":           (".entrypoints", "_PROVIDER_DEFAULTS"),
-    "handle_skill_subcommand":      (".subcommands", "handle_skill_subcommand"),
-    "handle_plugin_subcommand":     (".subcommands", "handle_plugin_subcommand"),
-    "_skill_list":                  (".subcommands", "_skill_list"),
-    "_skill_remove":                (".subcommands", "_skill_remove"),
-    "_skill_install":               (".subcommands", "_skill_install"),
-    "_skill_update":                (".subcommands", "_skill_update"),
-    "_plugin_list_cli":             (".subcommands", "_plugin_list_cli"),
-    "_load_and_register_plugins":   (".subcommands", "_load_and_register_plugins"),
-    "_handle_plugins_interactive":  (".subcommands", "_handle_plugins_interactive"),
+    "AgentaoCLI": (".app", "AgentaoCLI"),
+    "console":    ("._globals", "console"),
+    **_names(".entrypoints",
+        "main", "run_print_mode", "run_init_wizard", "run_acp_mode",
+        "_build_parser", "_PROVIDER_DEFAULTS",
+    ),
+    **_names(".subcommands",
+        "handle_skill_subcommand", "handle_plugin_subcommand",
+        "_skill_list", "_skill_remove", "_skill_install", "_skill_update",
+        "_plugin_list_cli", "_load_and_register_plugins", "_handle_plugins_interactive",
+    ),
 }
+
+
+__all__ = ["entrypoint", *sorted(_LAZY_NAMES.keys())]
 
 
 _MISSING_DEP_MESSAGE = (
@@ -73,27 +68,23 @@ _MISSING_DEP_MESSAGE = (
 
 
 def entrypoint() -> None:
-    """Console-script ``agentao`` entry point.
-
-    Wraps the first heavy CLI import in try/except so a user with a
-    core-only install (no ``[cli]`` extra) gets a one-line actionable
-    error instead of an opaque ``ModuleNotFoundError``.
-    """
+    """Console-script entry point with a friendly missing-dep guard."""
     try:
         from .entrypoints import entrypoint as _real_entrypoint
     except ImportError as exc:
-        missing = exc.name or "a CLI dependency"
-        sys.stderr.write(_MISSING_DEP_MESSAGE.format(missing=missing))
+        sys.stderr.write(_MISSING_DEP_MESSAGE.format(missing=exc.name or "a CLI dependency"))
         sys.exit(2)
     _real_entrypoint()
 
 
 def __getattr__(name: str) -> Any:
-    """PEP 562 — lazy-load public re-exports on first attribute access."""
     if name in _LAZY_NAMES:
         from importlib import import_module
 
         mod_path, attr = _LAZY_NAMES[name]
-        mod = import_module(mod_path, package=__name__)
-        return getattr(mod, attr)
+        return getattr(import_module(mod_path, package=__name__), attr)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(list(globals().keys()) + __all__))
