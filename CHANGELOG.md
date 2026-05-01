@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Targeting **0.4.0** — the single break release of the Path A P0 plan
+(see `docs/design/path-a-roadmap.md` §3.2). Two work items remain:
+
+- **P0.9 dependency split** — `pyproject.toml` core deps shrink to
+  6 packages; CLI / web / i18n / full move into `[project.optional-dependencies]`.
+- **P0.10 friendly missing-dep error + migration doc** — the `agentao`
+  console script prints a one-line actionable message
+  (`pip install 'agentao[cli]'`) instead of an opaque
+  `ModuleNotFoundError: rich`; new `docs/migration/0.3.x-to-0.4.0.md`.
+
+Pre-tag protocol per §13.1 (T-7 dress rehearsal) and §13.2 (pre-announce)
+must complete before the tag.
+
+### Breaking changes
+
+_(P0.9 migration table goes here when the dependency split lands)_
+
+### Added
+
+_(P0.10 entries go here)_
+
 ## [0.3.4] — 2026-05-01
 
 Second release executing the **Path A roadmap** (see
