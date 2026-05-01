@@ -232,16 +232,4 @@ uv sync && uv run python -m src.daily_digest
 
 ---
 
-## End of Part 7 — and of the guide's main arc
-
-You now have:
-
-- Two embedding paths ([Part 2](/en/part-2/) SDK, [Part 3](/en/part-3/) ACP)
-- Event + UI integration ([Part 4](/en/part-4/))
-- Six extension points ([Part 5](/en/part-5/))
-- Security + production deployment ([Part 6](/en/part-6/))
-- Five real-world blueprints (this part)
-
-The appendices — full API reference, config key index, ACP message fields, error codes, migration notes, FAQ, glossary — are what you'll reach for as you build. They follow.
-
-→ Appendices (coming soon)
+→ [7.6 WeChat Intelligent Bot](./6-wechat-bot)

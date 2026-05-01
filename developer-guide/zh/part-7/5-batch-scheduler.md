@@ -232,16 +232,4 @@ uv sync && uv run python -m src.daily_digest
 
 ---
 
-## Part 7 结束——也是主干内容的终点
-
-到这里你已经拥有：
-
-- 两条嵌入路径（[Part 2](/zh/part-2/) SDK、[Part 3](/zh/part-3/) ACP）
-- 事件 + UI 集成（[Part 4](/zh/part-4/)）
-- 六个扩展点（[Part 5](/zh/part-5/)）
-- 安全 + 生产部署（[Part 6](/zh/part-6/)）
-- 五个真实蓝图（本部分）
-
-接下来的附录——完整 API 参考、配置键索引、ACP 消息字段、错误码、框架迁移、FAQ、术语表——是落地过程中常翻的查询手册，紧随其后。
-
-→ 附录（即将推出）
+→ [7.6 微信智能机器人](./6-wechat-bot)

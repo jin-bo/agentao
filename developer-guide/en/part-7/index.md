@@ -15,9 +15,10 @@ Each blueprint answers the same four questions:
 - **Ticket automation** — async handler reading from a queue; `prompt_once` style, no streaming UI · [§7.3](/en/part-7/3-ticket-automation), [G.4](/en/appendix/g-glossary#g-4-integration-patterns)
 - **Data workbench** — interactive analyst session with shell + sandbox + skills · [§7.4](/en/part-7/4-data-workbench)
 - **Batch scheduler** — cron-driven `prompt_once` for offline / nightly jobs; no end-user · [§7.5](/en/part-7/5-batch-scheduler), [G.4](/en/appendix/g-glossary#g-4-integration-patterns)
+- **WeChat intelligent bot (ilink-style)** — long-polling personal-account bot API; one agent per message; contact-scoped permissions · [§7.6](/en/part-7/6-wechat-bot)
 :::
 
-## The five blueprints
+## The six blueprints
 
 | # | Blueprint | Integration mode | Star extensions |
 |---|-----------|-------------------|------------------|
@@ -26,6 +27,7 @@ Each blueprint answers the same four questions:
 | [7.3](./3-ticket-automation) | Customer-support / ticket automation | In-process SDK | Custom tools hitting CRM |
 | [7.4](./4-data-workbench) | Data analyst workbench | In-process SDK | Shell + sandbox + custom skill |
 | [7.5](./5-batch-scheduler) | Offline batch / scheduled jobs | `prompt_once` | Skills + cron |
+| [7.6](./6-wechat-bot) | WeChat intelligent bot (ilink-style) | `asyncio` long-poll daemon | `WeChatClient` Protocol + contact-scoped permissions |
 
 ## How to read this part
 
