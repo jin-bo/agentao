@@ -88,7 +88,10 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--tb=short"
+addopts = "--tb=short -m 'not slow'"
+markers = [
+    "slow: tests that build / install / boot subprocess venvs (P0.7 clean-install smoke)",
+]
 
 [dependency-groups]
 dev = [
