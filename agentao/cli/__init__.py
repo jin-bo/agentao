@@ -66,14 +66,32 @@ _MISSING_DEP_MESSAGE = (
     "See docs/migration/0.3.x-to-0.4.0.md for details.\n"
 )
 
+# Probed up-front by entrypoint() before dispatching. Keep in sync with
+# `[project.optional-dependencies].cli` in pyproject.toml.
+_CLI_EXTRA_PACKAGES: tuple[str, ...] = ("rich", "prompt_toolkit", "readchar", "pygments")
+
 
 def entrypoint() -> None:
-    """Console-script entry point with a friendly missing-dep guard."""
-    try:
-        from .entrypoints import entrypoint as _real_entrypoint
-    except ImportError as exc:
-        sys.stderr.write(_MISSING_DEP_MESSAGE.format(missing=exc.name or "a CLI dependency"))
+    """Console-script entry point with a friendly missing-dep guard.
+
+    Pre-flights every [cli] dep before delegating. Wrapping the dispatch
+    call alone is not enough: ``entrypoints.run_init_wizard`` has a
+    broad ``except Exception`` that swallows deep ``ImportError`` and
+    re-emits a generic "Fatal error" — so a partial install (rich
+    present, prompt_toolkit missing) would otherwise bypass this guard.
+    """
+    import importlib.util
+
+    for name in _CLI_EXTRA_PACKAGES:
+        try:
+            if importlib.util.find_spec(name) is not None:
+                continue
+        except (ImportError, ValueError):
+            pass
+        sys.stderr.write(_MISSING_DEP_MESSAGE.format(missing=name))
         sys.exit(2)
+
+    from .entrypoints import entrypoint as _real_entrypoint
     _real_entrypoint()
 
 

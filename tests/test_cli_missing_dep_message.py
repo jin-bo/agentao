@@ -77,3 +77,25 @@ def test_core_only_can_import_agentao_cli_entrypoint(tmp_path: Path) -> None:
         f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     )
     assert "import OK" in proc.stdout
+
+
+def test_partial_cli_install_still_hits_friendly_path(tmp_path: Path) -> None:
+    """Rich installed but other [cli] deps missing must still exit 2 cleanly.
+
+    Without an upfront preflight, ``entrypoints.run_init_wizard``'s broad
+    ``except Exception`` would swallow the deep ``ModuleNotFoundError``
+    and emit a generic "Fatal error" — bypassing the friendly path that
+    points at ``pip install 'agentao[cli]'``.
+    """
+    wheel = require_wheel()
+    venv = make_venv(tmp_path)
+    venv.pip_install(str(wheel), "rich")  # rich only — prompt_toolkit/readchar/pygments still missing
+
+    proc = subprocess.run([str(venv.agentao_script)], capture_output=True, text=True)
+
+    assert proc.returncode == 2, (
+        f"expected exit code 2 in partial install, got {proc.returncode}.\n"
+        f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+    assert "agentao CLI requires extra packages" in proc.stderr
+    assert "Fatal error" not in proc.stdout and "Fatal error" not in proc.stderr
