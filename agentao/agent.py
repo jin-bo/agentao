@@ -304,23 +304,17 @@ class Agentao:
         else:
             self.mcp_manager = self._init_mcp()
 
-        # Initialize agent manager and register agent tools. Built-in
-        # sub-agents are opt-in so the default tool schema stays compact;
-        # project/plugin agents remain available when configured.
-        self.agent_manager = AgentManager(
-            project_root=self._working_directory,
-            include_builtin_agents=enable_builtin_agents,
-        )
-        self._register_agent_tools()
-
-        if self.bg_store is not None:
-            self.bg_store.recover()
-
         # Plugin hook rules — populated by _load_and_register_plugins() in cli.py.
         self._plugin_hook_rules: list = []
         self._loaded_plugins: list = []
-        # Session ID for plugin hook payloads — set by CLI after session start.
-        self._session_id: Optional[str] = None
+        # Construction-time UUID fallback so the public harness contract
+        # reports a non-empty ``session_id`` before the CLI/ACP layer
+        # assigns a persisted id. Hosts overwrite this directly.
+        from .runtime.identity import new_session_id as _new_sid
+        self._session_id: str = _new_sid()
+        from .harness.events import EventStream
+        self._harness_events: EventStream = EventStream()
+        self._current_turn_id: Optional[str] = None
 
         # Per-turn cancellation token (set at the start of each chat() call)
         self._current_token: Optional[CancellationToken] = None
@@ -346,6 +340,43 @@ class Agentao:
         self._replay_adapter: Optional[ReplayAdapter] = None
         self._replay_config: ReplayConfig = replay_config or ReplayConfig()
 
+        # Harness emitter setup MUST run before ``_register_agent_tools``
+        # so the sub-agent wrapper captures a live ``HarnessSubagentEmitter``
+        # instead of ``None`` — otherwise no subagent lifecycle events
+        # ever reach the public stream for normal Agentao instances.
+        from .harness.projection import (
+            HarnessPermissionEmitter,
+            HarnessSubagentEmitter,
+            HarnessToolEmitter,
+        )
+        self._harness_tool_emitter = HarnessToolEmitter(
+            self._harness_events,
+            session_id_provider=lambda: self._session_id,
+            turn_id_provider=lambda: self._current_turn_id,
+        )
+        self._harness_permission_emitter = HarnessPermissionEmitter(
+            self._harness_events,
+            session_id_provider=lambda: self._session_id,
+            turn_id_provider=lambda: self._current_turn_id,
+            active_permissions_provider=self.active_permissions,
+        )
+        self._harness_subagent_emitter = HarnessSubagentEmitter(
+            self._harness_events,
+            parent_session_id_provider=lambda: self._session_id,
+        )
+
+        # Initialize agent manager and register agent tools. Built-in
+        # sub-agents are opt-in so the default tool schema stays compact;
+        # project/plugin agents remain available when configured.
+        self.agent_manager = AgentManager(
+            project_root=self._working_directory,
+            include_builtin_agents=enable_builtin_agents,
+        )
+        self._register_agent_tools()
+
+        if self.bg_store is not None:
+            self.bg_store.recover()
+
         # Initialize tool runner (encapsulates 4-phase tool execution pipeline)
         self.tool_runner = ToolRunner(
             tools=self.tools,
@@ -353,6 +384,8 @@ class Agentao:
             transport=self.transport,
             logger=self.llm.logger,
             sandbox_policy=self.sandbox_policy,
+            harness_tool_emitter=self._harness_tool_emitter,
+            harness_permission_emitter=self._harness_permission_emitter,
         )
 
     @property
@@ -370,6 +403,48 @@ class Agentao:
             "temperature": self.llm.temperature,
             "max_tokens": self.llm.max_tokens,
         }
+
+    def events(self, session_id: Optional[str] = None):
+        """Return an async iterator over public harness events.
+
+        Delivery semantics (see ``docs/api/harness.md`` for the full
+        contract):
+
+        - No replay: events emitted before the first subscription are
+          discarded.
+        - Same-session ordering is guaranteed.
+        - Bounded backpressure: a slow consumer blocks the producer for
+          matching events rather than dropping them.
+        - Cancellation of the iterator releases queue resources.
+
+        ``session_id=None`` subscribes to every session owned by this
+        ``Agentao`` instance; passing a string narrows the filter.
+        """
+        return self._harness_events.subscribe(session_id=session_id)
+
+    def active_permissions(self):
+        """Return a host-facing :class:`ActivePermissions` snapshot.
+
+        The runtime delegates to :meth:`PermissionEngine.active_permissions`
+        when an engine is configured. When the host has not injected an
+        engine, the runtime falls back to per-tool ``requires_confirmation``
+        — write-capable tools are NOT categorically blocked, only those
+        that flag themselves prompt for confirmation. Reporting
+        ``mode="read-only"`` would be stricter than the runtime
+        actually enforces and would mislead status displays and public
+        permission-decision events. ``workspace-write`` is the closest
+        public mode to the engine-less behaviour; the
+        ``no-engine`` source label tells hosts they are seeing the
+        permissive fallback rather than a configured policy.
+        """
+        from .harness.models import ActivePermissions
+        if self.permission_engine is not None:
+            return self.permission_engine.active_permissions()
+        return ActivePermissions(
+            mode="workspace-write",
+            rules=[],
+            loaded_sources=["default:no-engine"],
+        )
 
     @property
     def working_directory(self) -> Path:

@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 from ..cancellation import AgentCancelledError, CancellationToken
+from .identity import new_turn_id
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
     from ..agent import Agentao
@@ -56,6 +57,9 @@ def run_turn(
     """
     token = cancellation_token or CancellationToken()
     agent._current_token = token
+    # Public lifecycle events read this via ``agent._current_turn_id``;
+    # cleared in ``finally`` so events between turns carry ``turn_id=None``.
+    agent._current_turn_id = new_turn_id()
     # Reset the per-turn LLM-call counters so ``attempt`` numbers in
     # LLM_CALL_* events restart at 1 and ``delta_start_index`` tracks
     # only messages added in the current chat() invocation.
@@ -113,3 +117,4 @@ def run_turn(
             except Exception:
                 pass
         agent._current_token = None
+        agent._current_turn_id = None

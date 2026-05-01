@@ -1,0 +1,413 @@
+{
+  "$defs": {
+    "ActivePermissions": {
+      "additionalProperties": false,
+      "description": "Read-only projection of the currently active permission policy.\n\n``loaded_sources`` carries stable string labels:\n\n- ``preset:<mode>``\n- ``project:<relative-or-absolute-path>``\n- ``user:<path>``\n- ``injected:<name>``\n\nMVP intentionally does not expose per-rule provenance; hosts that\nneed user-facing provenance can combine ``loaded_sources`` with\ntheir own injected policy metadata.",
+      "properties": {
+        "loaded_sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Loaded Sources",
+          "type": "array"
+        },
+        "mode": {
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "full-access",
+            "plan"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "rules": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Rules",
+          "type": "array"
+        }
+      },
+      "required": [
+        "mode",
+        "rules",
+        "loaded_sources"
+      ],
+      "title": "ActivePermissions",
+      "type": "object"
+    },
+    "PermissionDecisionEvent": {
+      "additionalProperties": false,
+      "description": "Public projection of a single permission decision.\n\nFires on **every** decision; hosts that do not render ``allow``\ndecisions must still drain the iterator to avoid backpressure.\n\n``matched_rule`` intentionally has no per-rule source label in MVP.\nUse ``loaded_sources`` for global context. ``reason`` is a\nredacted/truncated host-facing string.",
+      "properties": {
+        "decided_at": {
+          "description": "RFC 3339 UTC timestamp with the canonical 'Z' suffix; offsets such as +00:00 are intentionally rejected for canonical form.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Decided At",
+          "type": "string"
+        },
+        "decision_id": {
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "permission_decision",
+          "default": "permission_decision",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "loaded_sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Loaded Sources",
+          "type": "array"
+        },
+        "matched_rule": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Matched Rule"
+        },
+        "mode": {
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "full-access",
+            "plan"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "allow",
+            "deny",
+            "prompt"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Call Id"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        }
+      },
+      "required": [
+        "session_id",
+        "tool_name",
+        "decision_id",
+        "outcome",
+        "mode",
+        "loaded_sources",
+        "decided_at"
+      ],
+      "title": "PermissionDecisionEvent",
+      "type": "object"
+    },
+    "SubagentLifecycleEvent": {
+      "additionalProperties": false,
+      "description": "Public lineage fact for a sub-agent task/session.\n\nUnlike :class:`ToolLifecycleEvent`, this model exposes ``cancelled``\nas a distinct phase because sub-agent lineage tracking benefits from\nexplicit cancellation in the phase value. ``ToolLifecycleEvent``\nkeeps cancellation under ``phase=\"failed\", outcome=\"cancelled\"`` to\nkeep the tool-call shape compact.\n\n``task_summary`` is redacted/truncated, never raw user input or raw\nchild-agent prompt text.",
+      "properties": {
+        "child_session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Child Session Id"
+        },
+        "child_task_id": {
+          "title": "Child Task Id",
+          "type": "string"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "description": "RFC 3339 UTC timestamp with the canonical 'Z' suffix; offsets such as +00:00 are intentionally rejected for canonical form.",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed At"
+        },
+        "error_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Type"
+        },
+        "event_type": {
+          "const": "subagent_lifecycle",
+          "default": "subagent_lifecycle",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "parent_session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Session Id"
+        },
+        "parent_task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Task Id"
+        },
+        "phase": {
+          "enum": [
+            "spawned",
+            "completed",
+            "failed",
+            "cancelled"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "started_at": {
+          "description": "RFC 3339 UTC timestamp with the canonical 'Z' suffix; offsets such as +00:00 are intentionally rejected for canonical form.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Started At",
+          "type": "string"
+        },
+        "task_summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Summary"
+        }
+      },
+      "required": [
+        "session_id",
+        "child_task_id",
+        "phase",
+        "started_at"
+      ],
+      "title": "SubagentLifecycleEvent",
+      "type": "object"
+    },
+    "ToolLifecycleEvent": {
+      "additionalProperties": false,
+      "description": "Public lifecycle envelope for a single tool call.\n\nMust not include full tool args, raw stdout/stderr, raw diffs, MCP\nraw responses, or unredacted large outputs. ``summary`` is a\nredacted/truncated host-facing string.\n\n``phase=\"failed\"`` covers both execution errors and cancellation;\nhosts read ``outcome`` to distinguish error from cancelled. For\ncancellation, ``error_type`` is ``None``.",
+      "properties": {
+        "completed_at": {
+          "anyOf": [
+            {
+              "description": "RFC 3339 UTC timestamp with the canonical 'Z' suffix; offsets such as +00:00 are intentionally rejected for canonical form.",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed At"
+        },
+        "error_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Type"
+        },
+        "event_type": {
+          "const": "tool_lifecycle",
+          "default": "tool_lifecycle",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "ok",
+                "error",
+                "cancelled"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome"
+        },
+        "phase": {
+          "enum": [
+            "started",
+            "completed",
+            "failed"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "started_at": {
+          "description": "RFC 3339 UTC timestamp with the canonical 'Z' suffix; offsets such as +00:00 are intentionally rejected for canonical form.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+          "title": "Started At",
+          "type": "string"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "tool_call_id": {
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        }
+      },
+      "required": [
+        "session_id",
+        "tool_call_id",
+        "tool_name",
+        "phase",
+        "started_at"
+      ],
+      "title": "ToolLifecycleEvent",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Public harness payload models: HarnessEvent (discriminated union of tool/subagent/permission lifecycle events) plus the ActivePermissions snapshot.",
+  "discriminator": {
+    "mapping": {
+      "permission_decision": "#/$defs/PermissionDecisionEvent",
+      "subagent_lifecycle": "#/$defs/SubagentLifecycleEvent",
+      "tool_lifecycle": "#/$defs/ToolLifecycleEvent"
+    },
+    "propertyName": "event_type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/ToolLifecycleEvent"
+    },
+    {
+      "$ref": "#/$defs/SubagentLifecycleEvent"
+    },
+    {
+      "$ref": "#/$defs/PermissionDecisionEvent"
+    }
+  ],
+  "title": "AgentaoHarnessEvents"
+}

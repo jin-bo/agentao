@@ -1,0 +1,1352 @@
+{
+  "$defs": {
+    "AcpAgentCapabilities": {
+      "additionalProperties": true,
+      "description": "Capabilities Agentao advertises in the ``initialize`` response.",
+      "properties": {
+        "loadSession": {
+          "default": true,
+          "title": "Loadsession",
+          "type": "boolean"
+        },
+        "mcpCapabilities": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "title": "Mcpcapabilities",
+          "type": "object"
+        },
+        "promptCapabilities": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "title": "Promptcapabilities",
+          "type": "object"
+        }
+      },
+      "title": "AcpAgentCapabilities",
+      "type": "object"
+    },
+    "AcpAgentInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "AcpAgentInfo",
+      "type": "object"
+    },
+    "AcpAskUserAnswered": {
+      "additionalProperties": false,
+      "description": "``ask_user`` reply when the user typed an answer.",
+      "properties": {
+        "outcome": {
+          "const": "answered",
+          "default": "answered",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AcpAskUserAnswered",
+      "type": "object"
+    },
+    "AcpAskUserCancelled": {
+      "additionalProperties": false,
+      "description": "``ask_user`` reply when the user dismissed the prompt.",
+      "properties": {
+        "outcome": {
+          "const": "cancelled",
+          "default": "cancelled",
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "title": "AcpAskUserCancelled",
+      "type": "object"
+    },
+    "AcpAskUserParams": {
+      "additionalProperties": false,
+      "properties": {
+        "question": {
+          "title": "Question",
+          "type": "string"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "question"
+      ],
+      "title": "AcpAskUserParams",
+      "type": "object"
+    },
+    "AcpAskUserResponse": {
+      "discriminator": {
+        "mapping": {
+          "answered": "#/$defs/AcpAskUserAnswered",
+          "cancelled": "#/$defs/AcpAskUserCancelled"
+        },
+        "propertyName": "outcome"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AcpAskUserAnswered"
+        },
+        {
+          "$ref": "#/$defs/AcpAskUserCancelled"
+        }
+      ]
+    },
+    "AcpClientCapabilities": {
+      "additionalProperties": true,
+      "description": "Capabilities the client advertises during ``initialize``.\n\nKept open (extra=\"allow\") because ACP defines a flexible capability\nnamespace; hosts may attach private capability flags that the agent\nignores. The runtime only inspects ``fs`` and ``terminal``.",
+      "properties": {
+        "fs": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fs"
+        },
+        "terminal": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Terminal"
+        }
+      },
+      "title": "AcpClientCapabilities",
+      "type": "object"
+    },
+    "AcpClientInfo": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "title": "AcpClientInfo",
+      "type": "object"
+    },
+    "AcpError": {
+      "additionalProperties": false,
+      "description": "JSON-RPC error payload \u2014 ``code``/``message``/``data``.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "integer"
+        },
+        "data": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "AcpError",
+      "type": "object"
+    },
+    "AcpInitializeExtension": {
+      "additionalProperties": true,
+      "description": "One advertised extension method on the ``initialize`` response.\n\nAgentao advertises ``_agentao.cn/ask_user`` so hosts know they may be\nasked free-form questions over the same JSON-RPC channel. The shape\nis intentionally open (extra=\"allow\") so future extensions can add\nfields without breaking existing schema-following clients.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        }
+      },
+      "required": [
+        "method"
+      ],
+      "title": "AcpInitializeExtension",
+      "type": "object"
+    },
+    "AcpInitializeRequest": {
+      "additionalProperties": false,
+      "description": "``initialize`` request params (one handshake per stdio connection).",
+      "properties": {
+        "clientCapabilities": {
+          "$ref": "#/$defs/AcpClientCapabilities"
+        },
+        "clientInfo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AcpClientInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "protocolVersion": {
+          "title": "Protocolversion",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "clientCapabilities"
+      ],
+      "title": "AcpInitializeRequest",
+      "type": "object"
+    },
+    "AcpInitializeResponse": {
+      "additionalProperties": false,
+      "description": "``initialize`` response result.",
+      "properties": {
+        "agentCapabilities": {
+          "$ref": "#/$defs/AcpAgentCapabilities"
+        },
+        "agentInfo": {
+          "$ref": "#/$defs/AcpAgentInfo"
+        },
+        "authMethods": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Authmethods",
+          "type": "array"
+        },
+        "extensions": {
+          "items": {
+            "$ref": "#/$defs/AcpInitializeExtension"
+          },
+          "title": "Extensions",
+          "type": "array"
+        },
+        "protocolVersion": {
+          "title": "Protocolversion",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "agentCapabilities",
+        "agentInfo"
+      ],
+      "title": "AcpInitializeResponse",
+      "type": "object"
+    },
+    "AcpMcpEnvVar": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "AcpMcpEnvVar",
+      "type": "object"
+    },
+    "AcpMcpHeader": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "AcpMcpHeader",
+      "type": "object"
+    },
+    "AcpMcpServer": {
+      "additionalProperties": false,
+      "description": "A session-scoped MCP server config passed in ``session/new``.\n\n``type`` discriminates ``stdio`` (command/args/env) vs ``sse``\n(url/headers). The agent ignores ``http`` because Agentao's MCP\nclient only supports ``stdio`` and ``sse`` in v1. ``type`` defaults\nto ``\"stdio\"`` because the runtime parser treats a missing ``type``\nfield as stdio for compatibility with the established wire form\nthat historical clients send (just ``{name, command}``); making\nthe schema strict here would reject runtime-valid payloads.",
+      "properties": {
+        "args": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "env": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/AcpMcpEnvVar"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Env"
+        },
+        "headers": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/AcpMcpHeader"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Headers"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "default": "stdio",
+          "enum": [
+            "stdio",
+            "sse"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "AcpMcpServer",
+      "type": "object"
+    },
+    "AcpModelInfo": {
+      "additionalProperties": true,
+      "description": "One entry in ``session/list_models`` response.\n\nOpen shape (extra=\"allow\") \u2014 providers add fields like\n``contextLength``, ``displayName``, etc. that the runtime\nforwards verbatim.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "AcpModelInfo",
+      "type": "object"
+    },
+    "AcpPermissionOption": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "allow_once",
+            "reject_once",
+            "allow_always",
+            "reject_always"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "optionId": {
+          "title": "Optionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "optionId",
+        "name",
+        "kind"
+      ],
+      "title": "AcpPermissionOption",
+      "type": "object"
+    },
+    "AcpRequestPermissionCancelled": {
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "const": "cancelled",
+          "default": "cancelled",
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "title": "AcpRequestPermissionCancelled",
+      "type": "object"
+    },
+    "AcpRequestPermissionParams": {
+      "additionalProperties": false,
+      "properties": {
+        "options": {
+          "items": {
+            "$ref": "#/$defs/AcpPermissionOption"
+          },
+          "title": "Options",
+          "type": "array"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "toolCall": {
+          "$ref": "#/$defs/AcpToolCallSummary"
+        }
+      },
+      "required": [
+        "sessionId",
+        "toolCall",
+        "options"
+      ],
+      "title": "AcpRequestPermissionParams",
+      "type": "object"
+    },
+    "AcpRequestPermissionResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "discriminator": {
+            "mapping": {
+              "cancelled": "#/$defs/AcpRequestPermissionCancelled",
+              "selected": "#/$defs/AcpRequestPermissionSelected"
+            },
+            "propertyName": "outcome"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AcpRequestPermissionSelected"
+            },
+            {
+              "$ref": "#/$defs/AcpRequestPermissionCancelled"
+            }
+          ],
+          "title": "Outcome"
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "title": "AcpRequestPermissionResponse",
+      "type": "object"
+    },
+    "AcpRequestPermissionSelected": {
+      "additionalProperties": false,
+      "properties": {
+        "optionId": {
+          "title": "Optionid",
+          "type": "string"
+        },
+        "outcome": {
+          "const": "selected",
+          "default": "selected",
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "optionId"
+      ],
+      "title": "AcpRequestPermissionSelected",
+      "type": "object"
+    },
+    "AcpResourceLinkBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "type": {
+          "const": "resource_link",
+          "default": "resource_link",
+          "title": "Type",
+          "type": "string"
+        },
+        "uri": {
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "title": "AcpResourceLinkBlock",
+      "type": "object"
+    },
+    "AcpSessionCancelRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "title": "AcpSessionCancelRequest",
+      "type": "object"
+    },
+    "AcpSessionCancelResponse": {
+      "additionalProperties": false,
+      "description": "``session/cancel`` returns an empty result object.",
+      "properties": {},
+      "title": "AcpSessionCancelResponse",
+      "type": "object"
+    },
+    "AcpSessionListModelsRequest": {
+      "additionalProperties": false,
+      "description": "``session/list_models`` request params (sessionId only).",
+      "properties": {
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "title": "AcpSessionListModelsRequest",
+      "type": "object"
+    },
+    "AcpSessionListModelsResponse": {
+      "additionalProperties": false,
+      "description": "Available-models catalog. ``warning`` is set when the underlying\nprovider lookup failed and the runtime returned its cached list.",
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/$defs/AcpModelInfo"
+          },
+          "title": "Models",
+          "type": "array"
+        },
+        "warning": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Warning"
+        }
+      },
+      "title": "AcpSessionListModelsResponse",
+      "type": "object"
+    },
+    "AcpSessionLoadRequest": {
+      "additionalProperties": false,
+      "description": "``session/load`` request params.\n\nMirrors ``session/new`` (cwd + mcpServers) plus the persisted\n``sessionId`` to reload. The advertised ``loadSession: true``\ncapability documents support; the schema pins the wire shape so\nschema-following hosts can validate before sending. ``mcpServers``\nis required for the same reason as ``session/new`` \u2014 the runtime\nparser rejects ``None``.",
+      "properties": {
+        "cwd": {
+          "title": "Cwd",
+          "type": "string"
+        },
+        "mcpServers": {
+          "items": {
+            "$ref": "#/$defs/AcpMcpServer"
+          },
+          "title": "Mcpservers",
+          "type": "array"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "cwd",
+        "mcpServers"
+      ],
+      "title": "AcpSessionLoadRequest",
+      "type": "object"
+    },
+    "AcpSessionLoadResponse": {
+      "additionalProperties": false,
+      "description": "``session/load`` returns an empty result object.\n\nThe handler emits the persisted history as ``session/update``\nnotifications before responding, so the response itself carries\nno payload \u2014 callers consume the replay stream instead.",
+      "properties": {},
+      "title": "AcpSessionLoadResponse",
+      "type": "object"
+    },
+    "AcpSessionNewRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "cwd": {
+          "title": "Cwd",
+          "type": "string"
+        },
+        "mcpServers": {
+          "items": {
+            "$ref": "#/$defs/AcpMcpServer"
+          },
+          "title": "Mcpservers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "cwd",
+        "mcpServers"
+      ],
+      "title": "AcpSessionNewRequest",
+      "type": "object"
+    },
+    "AcpSessionNewResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "models": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Models"
+        },
+        "modes": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modes"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "title": "AcpSessionNewResponse",
+      "type": "object"
+    },
+    "AcpSessionPromptRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "prompt": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "resource_link": "#/$defs/AcpResourceLinkBlock",
+                "text": "#/$defs/AcpTextContentBlock"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/AcpTextContentBlock"
+              },
+              {
+                "$ref": "#/$defs/AcpResourceLinkBlock"
+              }
+            ]
+          },
+          "title": "Prompt",
+          "type": "array"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "prompt"
+      ],
+      "title": "AcpSessionPromptRequest",
+      "type": "object"
+    },
+    "AcpSessionPromptResponse": {
+      "additionalProperties": false,
+      "description": "``session/prompt`` response result.\n\n``stopReason`` is the ACP enum: ``end_turn``, ``cancelled``,\n``max_turn_requests``, ``refusal``. The agent currently emits only\n``end_turn`` and ``cancelled``; the other values are listed in the\nenum so hosts that consume the schema can rely on the closed set.",
+      "properties": {
+        "stopReason": {
+          "enum": [
+            "end_turn",
+            "cancelled",
+            "max_turn_requests",
+            "refusal"
+          ],
+          "title": "Stopreason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stopReason"
+      ],
+      "title": "AcpSessionPromptResponse",
+      "type": "object"
+    },
+    "AcpSessionSetModeRequest": {
+      "additionalProperties": false,
+      "description": "``session/set_mode`` request params.\n\n``mode`` is constrained to the PermissionMode values the runtime\nactually accepts; ``handle_session_set_mode`` parses any other\nstring into a ``-32602`` error, so the schema must reflect the\nclosed set or schema-following clients would generate requests\nthat fail at runtime. New presets require both a runtime change\nand a snapshot bump (a load-bearing pairing).",
+      "properties": {
+        "mode": {
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "full-access",
+            "plan"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "mode"
+      ],
+      "title": "AcpSessionSetModeRequest",
+      "type": "object"
+    },
+    "AcpSessionSetModeResponse": {
+      "additionalProperties": false,
+      "description": "The active mode after the update \u2014 confirms which preset is live.",
+      "properties": {
+        "mode": {
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "full-access",
+            "plan"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "AcpSessionSetModeResponse",
+      "type": "object"
+    },
+    "AcpSessionSetModelRequest": {
+      "additionalProperties": false,
+      "description": "``session/set_model`` request params.\n\nConstraints mirror ``handle_session_set_model``: at least one of\n``model`` / ``contextLength`` / ``maxTokens`` must be set; ``model``\nwhen present must be a non-empty string; ``contextLength`` and\n``maxTokens`` when present must be positive integers. Without\nthese constraints schema-validating clients could generate\npayloads (empty body, empty model string, zero token caps) that\nthe runtime rejects with ``-32602``.",
+      "properties": {
+        "contextLength": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contextlength"
+        },
+        "maxTokens": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maxtokens"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "title": "AcpSessionSetModelRequest",
+      "type": "object"
+    },
+    "AcpSessionSetModelResponse": {
+      "additionalProperties": false,
+      "description": "Post-update knob values; lets the front end confirm what landed.",
+      "properties": {
+        "contextLength": {
+          "title": "Contextlength",
+          "type": "integer"
+        },
+        "maxTokens": {
+          "title": "Maxtokens",
+          "type": "integer"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "contextLength",
+        "maxTokens"
+      ],
+      "title": "AcpSessionSetModelResponse",
+      "type": "object"
+    },
+    "AcpSessionUpdateContentBlock": {
+      "additionalProperties": false,
+      "description": "Inner content block carried on most session/update variants.",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AcpSessionUpdateContentBlock",
+      "type": "object"
+    },
+    "AcpSessionUpdateMessageChunk": {
+      "additionalProperties": false,
+      "description": "``agent_message_chunk`` / ``agent_thought_chunk`` /\n``user_message_chunk`` carry a single content block.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/AcpSessionUpdateContentBlock"
+        },
+        "schema_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema Version"
+        },
+        "sessionUpdate": {
+          "enum": [
+            "agent_message_chunk",
+            "agent_thought_chunk",
+            "user_message_chunk"
+          ],
+          "title": "Sessionupdate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionUpdate",
+        "content"
+      ],
+      "title": "AcpSessionUpdateMessageChunk",
+      "type": "object"
+    },
+    "AcpSessionUpdateParams": {
+      "additionalProperties": false,
+      "description": "Top-level params for the ``session/update`` notification.",
+      "properties": {
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "update": {
+          "discriminator": {
+            "mapping": {
+              "agent_message_chunk": "#/$defs/AcpSessionUpdateMessageChunk",
+              "agent_thought_chunk": "#/$defs/AcpSessionUpdateMessageChunk",
+              "tool_call": "#/$defs/AcpSessionUpdateToolCall",
+              "tool_call_update": "#/$defs/AcpSessionUpdateToolCallUpdate",
+              "user_message_chunk": "#/$defs/AcpSessionUpdateMessageChunk"
+            },
+            "propertyName": "sessionUpdate"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AcpSessionUpdateMessageChunk"
+            },
+            {
+              "$ref": "#/$defs/AcpSessionUpdateToolCall"
+            },
+            {
+              "$ref": "#/$defs/AcpSessionUpdateToolCallUpdate"
+            }
+          ],
+          "title": "Update"
+        }
+      },
+      "required": [
+        "sessionId",
+        "update"
+      ],
+      "title": "AcpSessionUpdateParams",
+      "type": "object"
+    },
+    "AcpSessionUpdateToolCall": {
+      "additionalProperties": false,
+      "description": "``tool_call`` notifies the host that a tool is starting.\n\nShape mirrors :class:`AcpToolCallSummary` so hosts can render with\na single widget for both ``session/update`` and the\n``request_permission`` confirmation dialog.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "read",
+            "edit",
+            "search",
+            "execute",
+            "fetch",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "rawInput": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rawinput"
+        },
+        "schema_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema Version"
+        },
+        "sessionUpdate": {
+          "const": "tool_call",
+          "default": "tool_call",
+          "title": "Sessionupdate",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "toolCallId": {
+          "title": "Toolcallid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "toolCallId",
+        "title",
+        "kind",
+        "status"
+      ],
+      "title": "AcpSessionUpdateToolCall",
+      "type": "object"
+    },
+    "AcpSessionUpdateToolCallUpdate": {
+      "additionalProperties": false,
+      "description": "``tool_call_update`` carries incremental output and terminal status.",
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/AcpToolCallContentEntry"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content"
+        },
+        "schema_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema Version"
+        },
+        "sessionUpdate": {
+          "const": "tool_call_update",
+          "default": "tool_call_update",
+          "title": "Sessionupdate",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "toolCallId": {
+          "title": "Toolcallid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "toolCallId",
+        "status"
+      ],
+      "title": "AcpSessionUpdateToolCallUpdate",
+      "type": "object"
+    },
+    "AcpTextContentBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AcpTextContentBlock",
+      "type": "object"
+    },
+    "AcpToolCallContentEntry": {
+      "additionalProperties": false,
+      "description": "One entry in ``AcpToolCallSummary.content``.\n\nMirrors the runtime shape ``{\"type\": \"content\", \"content\":\n{\"type\": \"text\", \"text\": ...}}`` produced by ``confirm_tool`` when\nthe tool has a description to render in the host's confirmation\ndialog.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/AcpToolCallTextBlock"
+        },
+        "type": {
+          "const": "content",
+          "default": "content",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "title": "AcpToolCallContentEntry",
+      "type": "object"
+    },
+    "AcpToolCallSummary": {
+      "additionalProperties": false,
+      "description": "Tool-call payload mirrored into ``request_permission``.\n\nHosts render this with the same widget as ``session/update`` tool\ncall notifications.",
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/AcpToolCallContentEntry"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content"
+        },
+        "kind": {
+          "enum": [
+            "read",
+            "edit",
+            "search",
+            "execute",
+            "fetch",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "rawInput": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rawinput"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "toolCallId": {
+          "title": "Toolcallid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "toolCallId",
+        "title",
+        "kind",
+        "status"
+      ],
+      "title": "AcpToolCallSummary",
+      "type": "object"
+    },
+    "AcpToolCallTextBlock": {
+      "additionalProperties": false,
+      "description": "Inner content block for ``AcpToolCallContentEntry``.",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AcpToolCallTextBlock",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Public host-facing ACP payload models: initialize, session/* request/response, request_permission, ask_user, and the shared error envelope.",
+  "title": "AgentaoHarnessACP"
+}

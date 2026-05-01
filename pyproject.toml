@@ -32,6 +32,7 @@ dependencies = [
     "mcp>=1.26.0",
     "filelock>=1.4.0",
     "jieba>=0.42.1",
+    "pydantic>=2",
 ]
 
 [project.optional-dependencies]
