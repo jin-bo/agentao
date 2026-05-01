@@ -7,6 +7,155 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-04-30
+
+Added-only patch in the 0.3.x series. Lands the **embedded harness
+contract** as the stable host-facing API surface for embedding
+Agentao: typed event stream, JSON-safe permission snapshot, and
+checked-in JSON schema snapshots for both events and ACP payloads.
+No required code change to upgrade from 0.3.0.
+
+### Added
+
+- **`agentao.harness` public package** — the host-facing
+  compatibility boundary for embedding Agentao. Exports the
+  Pydantic event models, the `EventStream` primitive, the
+  `ActivePermissions` snapshot, and schema export helpers:
+  ```python
+  from agentao.harness import (
+      ActivePermissions,
+      EventStream,
+      StreamSubscribeError,
+      HarnessEvent,
+      ToolLifecycleEvent,
+      SubagentLifecycleEvent,
+      PermissionDecisionEvent,
+      RFC3339UTCString,
+      export_harness_event_json_schema,
+      export_harness_acp_json_schema,
+  )
+  ```
+  Internal runtime types (`AgentEvent`, `ToolExecutionResult`,
+  `PermissionEngine`) are intentionally **not** re-exported — the
+  harness package is the version-stable boundary. Hosts that target
+  only `agentao.harness` (plus the `Agentao(...)` constructor and
+  the new methods below) stay forward-compatible across releases.
+
+- **`Agentao.events(session_id: str | None = None)`** — async
+  iterator over `HarnessEvent`. No replay; bounded backpressure
+  (slow consumers block the producer for matching events rather
+  than dropping them). Same-session ordering is guaranteed; within
+  one `tool_call_id`, `PermissionDecisionEvent` precedes
+  `ToolLifecycleEvent(phase="started")`. MVP supports one stream
+  consumer per `Agentao` instance; a second concurrent subscriber
+  for the same `session_id` filter raises `StreamSubscribeError`.
+
+- **`Agentao.active_permissions() -> ActivePermissions`** — JSON-safe
+  snapshot of the active permission policy (`mode`, `rules`,
+  `loaded_sources`). Cached; invalidated on `set_mode()` and on
+  `add_loaded_source(...)` with a new label.
+
+- **`PermissionEngine.active_permissions()` + `add_loaded_source()`**
+  — engine-level snapshot getter and a host-injection point for
+  provenance labels. `loaded_sources` carries stable string labels:
+  `preset:<mode>`, `project:<path>`, `user:<path>`,
+  `injected:<name>`. MVP intentionally does not expose per-rule
+  provenance.
+
+- **Three public lifecycle event families:**
+  - `ToolLifecycleEvent` — phase ∈ `{started, completed, failed}`;
+    cancellation surfaces as `phase="failed", outcome="cancelled",
+    error_type=None`. Raw args / outputs are never present on the
+    public payload (redacted/truncated `summary` only).
+  - `SubagentLifecycleEvent` — phase ∈ `{spawned, completed, failed,
+    cancelled}` (cancelled is a distinct phase here). Parent/child
+    ids captured at spawn time, not inferred at completion.
+  - `PermissionDecisionEvent` — fires on every decision
+    (`allow` / `deny` / `prompt`), not only deny/prompt. Per-call
+    `decision_id`; `matched_rule` projected when a rule fires,
+    `None` on fallback semantics.
+
+- **ACP host-facing Pydantic schema** (`agentao.acp.schema`) —
+  `initialize`, `session/new`, `session/load`, `session/prompt`,
+  `session/cancel`, `session/setModel`, `session/setMode`,
+  `session/listModels`, `session/update` notifications,
+  `request_permission`, `ask_user`, and the shared `AcpError`
+  envelope as Pydantic models.
+
+- **JSON schema snapshots** under `docs/schema/`:
+  `harness.events.v1.json` (events + permissions) and
+  `harness.acp.v1.json` (ACP payloads). Generated from the Pydantic
+  models, byte-equality-checked by `tests/test_harness_schema.py`
+  and `tests/test_acp_schema.py`. A model change that shifts the
+  wire form must update the snapshot in the same PR.
+
+- **CI fast-fail schema drift check** —
+  `scripts/write_harness_schema.py --check` runs in `.github/workflows/ci.yml`
+  Job 0 alongside the existing replay-schema check, so harness
+  schema drift fails CI before the test matrix.
+
+- **Runtime identity helpers** (`agentao.runtime.identity`,
+  internal) — `session_id` / `turn_id` / `tool_call_id` /
+  `decision_id` generation and normalization. Public events depend
+  on stable id propagation; the helpers are not re-exported from
+  `agentao.harness`.
+
+- **`examples/harness_events.py`** — single-file runnable demo
+  showing `agent.events()` + `agent.active_permissions()` wired
+  alongside `agent.arun(...)` via `asyncio.gather`. Exits cleanly
+  with instructions when `OPENAI_API_KEY` is missing.
+
+- **`docs/api/harness.md`** + `docs/api/harness.zh.md` — public
+  API reference, schema-snapshot policy, runtime identity contract,
+  and event delivery semantics. **`docs/design/embedded-harness-contract.md`**
+  documents the design decision and non-goals.
+
+- **`docs/EMBEDDING.md` §7 "Host-facing harness contract"** — full
+  embedding-shaped walkthrough with the `asyncio.gather` pattern;
+  §8 migration guide extended with a "From 0.3.0" subsection.
+
+- **Developer guide updates** — Appendix A.10 lists the
+  `agentao.harness` exports; A.1 Methods table marks `events()` and
+  `active_permissions()` as `(0.3.1+)`; Part 4.2 adds an admonition
+  distinguishing `HarnessEvent` (host-stable) from `AgentEvent`
+  (internal); Part 5.4 gains a "Reading the active policy from the
+  host" subsection.
+
+### Changed
+
+- `agentao.runtime.sanitize.normalize_tool_calls` now synthesizes a
+  UUID4 `tool_call_id` when the LLM provider returns a missing or
+  empty `id`, using the same `runtime.identity.normalize_tool_call_id`
+  helper the planner uses downstream. Strict Chat Completions APIs
+  reject mismatched `tool_call_id` between assistant and tool roles;
+  before this fix, a missing provider id left the assistant message
+  with no id while the planner synthesized one for the tool result,
+  producing a 400 on the next turn.
+
+- `cli /status` permission-mode banner now reads from
+  `agent.active_permissions()` instead of reaching into private
+  `PermissionEngine` state, and displays `loaded_sources` for
+  transparency. The CLI consumes the same public surface that
+  external embedders see.
+
+- ACP `session/new` and `session/load` now bind the session id onto
+  the agent at session creation/load time so harness lifecycle
+  events for that session carry the id the host knows it by.
+
+### Dependencies
+
+- **New direct dependency: `pydantic>=2`.** If your environment
+  pins Pydantic v1, lift the pin before upgrading.
+
+### Notes
+
+- This is an **Added-only patch** — the 0.3.x series treats
+  additive public surfaces as patch-eligible during pre-1.0. Strict
+  SemVer consumers should read it as equivalent to a minor bump.
+- Public events deliberately omit raw tool args, raw stdout/stderr,
+  raw diffs, and MCP raw responses. Only redacted/truncated
+  `summary` / `task_summary` / `reason` strings reach hosts.
+
 ## [0.3.0] — 2026-04-29
 
 ### Added
