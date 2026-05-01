@@ -28,8 +28,12 @@ def export_harness_event_json_schema() -> Dict[str, Any]:
     union) and ``ActivePermissions`` together. Hosts that consume
     individual models can still pick them out by ``$defs`` name.
     """
-    event_adapter = TypeAdapter(HarnessEvent)
-    perms_adapter = TypeAdapter(ActivePermissions)
+    # ``HarnessEvent`` is an ``Annotated[Union[...], Field(...)]`` alias, not
+    # a class, so its ``TypeAdapter`` resolves through Pydantic's runtime
+    # introspection. Annotate as ``TypeAdapter[Any]`` to satisfy mypy --strict;
+    # the runtime schema is unchanged.
+    event_adapter: TypeAdapter[Any] = TypeAdapter(HarnessEvent)
+    perms_adapter: TypeAdapter[ActivePermissions] = TypeAdapter(ActivePermissions)
     event_schema = event_adapter.json_schema(ref_template="#/$defs/{model}")
     perms_schema = perms_adapter.json_schema(ref_template="#/$defs/{model}")
 

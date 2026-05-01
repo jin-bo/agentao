@@ -35,7 +35,7 @@ import asyncio
 import concurrent.futures
 import logging
 import threading
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 
 _logger = logging.getLogger(__name__)
 
@@ -97,7 +97,9 @@ class _Subscriber:
         # ``asyncio.Task`` produced by ``loop.create_task``. Both
         # expose a ``cancel()`` method, which is the only operation
         # cleanup needs to release blocked / queued work.
-        self.pending_puts: List[Any] = []
+        self.pending_puts: List[
+            Union["asyncio.Task[Any]", "concurrent.futures.Future[Any]"]
+        ] = []
 
     def matches(self, event: _PublishedEvent) -> bool:
         if self.filter_session_id is None:
@@ -122,6 +124,13 @@ class EventStream:
         self._max_queue_size = max_queue_size
         self._lock = threading.Lock()
         self._subscribers: List[_Subscriber] = []
+        # Synchronous observers — fire inline inside :meth:`publish` so
+        # downstream sinks (replay recorder, audit log) see every event
+        # without competing with the async subscriber queue. Observers
+        # MUST be cheap and non-blocking; raised exceptions are logged
+        # at WARNING and swallowed so a broken sink never breaks the
+        # runtime publish path.
+        self._observers: List[Callable[["_PublishedEvent"], None]] = []
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     # ------------------------------------------------------------------
@@ -137,6 +146,36 @@ class EventStream:
                     "construct a new stream rather than rebinding."
                 )
             self._loop = loop
+
+    def add_observer(
+        self, callback: Callable[["_PublishedEvent"], None]
+    ) -> Callable[["_PublishedEvent"], None]:
+        """Register a synchronous observer fired inside :meth:`publish`.
+
+        The callback runs on the producer thread, before async
+        subscribers are notified. It must be cheap and non-blocking; a
+        raised exception is logged and discarded so a broken sink can't
+        take down the runtime. Returns the same callback so callers can
+        keep a stable handle for :meth:`remove_observer`.
+        """
+        with self._lock:
+            self._observers.append(callback)
+        return callback
+
+    def remove_observer(
+        self, callback: Callable[["_PublishedEvent"], None]
+    ) -> bool:
+        """Detach a previously registered observer.
+
+        Returns ``True`` when the observer was found and removed,
+        ``False`` otherwise. Idempotent — duplicate detaches are safe.
+        """
+        with self._lock:
+            try:
+                self._observers.remove(callback)
+                return True
+            except ValueError:
+                return False
 
     def publish(self, event: _PublishedEvent) -> None:
         """Drop the event if no subscriber is attached; otherwise enqueue.
@@ -163,6 +202,19 @@ class EventStream:
         still-pending task, so a cancelled iterator does not leave
         events stranded on the loop.
         """
+        # Snapshot observers under the lock; fire them outside the lock
+        # so a slow callback can't block other producers. Observer
+        # exceptions are isolated — one broken sink does not affect the
+        # async subscribers that follow.
+        with self._lock:
+            observers_snapshot = list(self._observers)
+        for observer in observers_snapshot:
+            try:
+                observer(event)
+            except Exception as exc:
+                _logger.warning(
+                    "EventStream observer raised; dropping: %s", exc,
+                )
         # Fast-path: list-truthiness is a single GIL-protected read on
         # CPython, so we can skip the lock+copy in the common case
         # (no subscriber attached). Worst case a subscriber attaches
@@ -225,7 +277,9 @@ class EventStream:
                     else:
                         sub.pending_puts.append(task)
 
-                def _on_done(t: "asyncio.Task[Any]", _sub=sub) -> None:
+                def _on_done(
+                    t: "asyncio.Task[Any]", _sub: "_Subscriber" = sub
+                ) -> None:
                     with self._lock:
                         try:
                             _sub.pending_puts.remove(t)

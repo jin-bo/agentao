@@ -33,6 +33,28 @@ jobs:
         run: uv run --python 3.12 python scripts/write_harness_schema.py --check
 
   # ─────────────────────────────────────────────────────────────
+  # Job 0b · P0.4 typing gate — mypy --strict on agentao.harness
+  # ─────────────────────────────────────────────────────────────
+  typing-gate:
+    name: Typing gate (mypy --strict on harness)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (incl. dev group for mypy)
+        run: uv sync --python 3.12 --group dev
+
+      - name: mypy --strict --package agentao.harness
+        run: uv run --python 3.12 mypy --strict --package agentao.harness
+
+  # ─────────────────────────────────────────────────────────────
   # Job 1 · Unit tests across Python 3.10 / 3.11 / 3.12
   # ─────────────────────────────────────────────────────────────
   test:
