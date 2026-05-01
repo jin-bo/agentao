@@ -8,9 +8,16 @@ Get the CLI up and running in under 2 minutes.
 
 ## 1. Install
 
+This guide drives the `agentao` console script, which lives in the `[cli]`
+extra (rich, prompt-toolkit, readchar, pygments) starting in 0.4.0:
+
 ```bash
-pip install agentao
+pip install 'agentao[cli]'
 ```
+
+Plain `pip install agentao` installs the embedding-only core. See
+[`migration/0.3.x-to-0.4.0.md`](migration/0.3.x-to-0.4.0.md) if you
+are upgrading from 0.3.x.
 
 ## 2. Set Up Your Provider Variables
 
@@ -137,7 +144,10 @@ You: Use the codebase investigator to analyze the project structure
 ## Troubleshooting
 
 **Problem**: `command not found: agentao`
-**Solution**: Make sure the install completed: `pip install agentao`; or check that your Python scripts directory is on your PATH.
+**Solution**: Make sure the install completed with the CLI extras: `pip install 'agentao[cli]'`; or check that your Python scripts directory is on your PATH.
+
+**Problem**: `agentao CLI requires extra packages (missing: rich)` and exit 2
+**Solution**: You installed only the embedding core. Run `pip install 'agentao[cli]'` to add the terminal UI deps.
 
 **Problem**: API key error
 **Solution**: Make sure `.env` file exists and contains a valid `OPENAI_API_KEY`.

@@ -2,18 +2,29 @@
 
 ## 安装
 
+按你的使用场景选安装行。0.4.0 起 `pip install agentao` 只装嵌入用的最小核心，
+CLI / web fetch / 中文分词都是显式声明的 extras。
+
 ```bash
-# 推荐：pin 一个精确版本
-pip install 'agentao==0.2.14'
+# 嵌入宿主（`from agentao import Agentao`）—— 闭包最小
+pip install 'agentao>=0.4.0'
 
-# uv 用户
-uv add 'agentao==0.2.14'
+# 用 web_fetch / web_search 工具 —— 加上 beautifulsoup4
+pip install 'agentao[web]>=0.4.0'
 
-# 带可选工具包
-pip install 'agentao[pdf,excel,tokenizer]==0.2.14'
+# 用中文记忆召回 —— 加上 jieba
+pip install 'agentao[i18n]>=0.4.0'
+
+# CLI 用户 —— 加上 rich/prompt-toolkit/readchar/pygments
+pip install 'agentao[cli]>=0.4.0'
+
+# 从 0.3.x 升级且要零行为变更
+pip install 'agentao[full]>=0.4.0'
 ```
 
-可选 extras 见 [1.5 运行环境要求](/zh/part-1/5-requirements)。
+完整 extras 矩阵见 [1.5 运行环境要求](/zh/part-1/5-requirements)。
+0.3.x → 0.4.0 迁移指南：
+[`docs/migration/0.3.x-to-0.4.0.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.3.x-to-0.4.0.md)。
 
 ## 两个核心导入
 
@@ -46,8 +57,8 @@ from agentao.tools.base import Tool, ToolRegistry  # 写自定义工具时
 | 库 | 首次触发点 |
 |---|---|
 | `openai` | `LLMClient(...)` 构造（仅默认 LLM 客户端会用到——宿主自己注入 `llm_client=` 永远不加载） |
-| `bs4` / `httpx` | `WebFetchTool.execute()` / `WebSearchTool.execute()` |
-| `jieba` | 首次进入 `MemoryRetriever` 的 recall 打分 |
+| `bs4` / `httpx` | `WebFetchTool.execute()` / `WebSearchTool.execute()` —— 注：0.4.0 起若 `bs4` 缺失，这两个工具在注册阶段就被跳过（`[web]` extra 是显式 opt-in），LLM 看不到一个会执行失败的工具 |
+| `jieba` | 含 CJK 字符的查询触发 `MemoryRetriever`——纯 Latin 查询完全跳过 jieba；若 `[i18n]` 缺失，CJK 召回会一次性 warning 并降级为空 |
 | `filelock` | `SkillRegistry.save()`（CLI / `agentao plugin install`） |
 | `mcp` SDK（`McpClientManager`、`McpTool`） | 首次接入 MCP server（`init_mcp` 或宿主传 `mcp_manager=`） |
 | `rich`、`prompt_toolkit`、`readchar`、`click`、`pygments` | 只有 `agentao/cli/*` 会加载——嵌入路径完全不碰 |
@@ -75,7 +86,7 @@ def get_agent():
 
 ```python
 import agentao
-print(agentao.__version__)   # "0.2.14"
+print(agentao.__version__)   # "0.4.0"
 ```
 
 生产代码建议在启动时校验：
@@ -84,7 +95,7 @@ print(agentao.__version__)   # "0.2.14"
 import agentao
 from packaging.version import Version
 
-MIN = Version("0.2.14")
+MIN = Version("0.4.0")
 if Version(agentao.__version__) < MIN:
     raise RuntimeError(f"Need agentao >= {MIN}, got {agentao.__version__}")
 ```

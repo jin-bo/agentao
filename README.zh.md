@@ -659,9 +659,10 @@ agentao
 | `AuthenticationError` | API key 无效 | 检查 `.env` 中的 key 值是否正确 |
 | `NotFoundError: model not found` | 模型名与 provider 不匹配 | 确认该模型在你的 provider 下可用 |
 | `APIConnectionError` | 网络/防火墙/代理问题 | 检查网络；如有代理请设置 `OPENAI_BASE_URL` |
-| `command not found: agentao` | CLI 不在 PATH 中 | 确认安装成功；将 `~/.local/bin`（Linux/Mac）或 `Scripts\`（Windows）加入 `$PATH` |
+| `command not found: agentao` | CLI 不在 PATH 中或缺 `[cli]` extras | 执行 `pip install 'agentao[cli]'`；将 `~/.local/bin`（Linux/Mac）或 `Scripts\`（Windows）加入 `$PATH` |
+| `agentao CLI requires extra packages (missing: rich)` | 0.4.0 起裸装核心不带 CLI | 执行 `pip install 'agentao[cli]'`——见 [`docs/migration/0.3.x-to-0.4.0.md`](docs/migration/0.3.x-to-0.4.0.md) |
 | 启动后报 provider 错误 | `LLM_PROVIDER` 与 key 不匹配 | 确保 `LLM_PROVIDER` 与提供的 key 对应（如 `LLM_PROVIDER=OPENAI` 配 `OPENAI_API_KEY`） |
-| 启动时 `ModuleNotFoundError` | 安装不完整 | 重新执行 `pip install agentao`；确认 Python 版本 ≥ 3.10 |
+| 启动时 `ModuleNotFoundError` | 安装不完整 | CLI 用户重新执行 `pip install 'agentao[cli]'`；要 0.3.x 等价闭包用 `pip install 'agentao[full]'`；确认 Python 版本 ≥ 3.10 |
 | `.env` 未加载 | 文件不在当前目录 | 在包含 `.env` 的目录中运行 `agentao`，或将其放到 `~/.env` |
 
 ---

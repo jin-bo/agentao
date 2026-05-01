@@ -2,18 +2,30 @@
 
 ## Install
 
+Pick the install line that matches your usage. Starting in 0.4.0,
+`pip install agentao` ships an embedding-only core — CLI / web fetch /
+Chinese tokenization are opt-in extras.
+
 ```bash
-# Recommended: pin an exact version
-pip install 'agentao==0.2.14'
+# Embedding host (`from agentao import Agentao`) — minimum closure
+pip install 'agentao>=0.4.0'
 
-# uv users
-uv add 'agentao==0.2.14'
+# Need the web_fetch / web_search tools — adds beautifulsoup4
+pip install 'agentao[web]>=0.4.0'
 
-# With optional extras
-pip install 'agentao[pdf,excel,tokenizer]==0.2.14'
+# Need Chinese-text memory recall — adds jieba
+pip install 'agentao[i18n]>=0.4.0'
+
+# CLI users only — adds rich/prompt-toolkit/readchar/pygments
+pip install 'agentao[cli]>=0.4.0'
+
+# Upgrading from 0.3.x and want zero behaviour change
+pip install 'agentao[full]>=0.4.0'
 ```
 
-Extras are listed in [1.5 Requirements](/en/part-1/5-requirements).
+Extras matrix is documented in [1.5 Requirements](/en/part-1/5-requirements).
+0.3.x → 0.4.0 migration guide:
+[`docs/migration/0.3.x-to-0.4.0.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.3.x-to-0.4.0.md).
 
 ## The two imports you always need
 
@@ -46,8 +58,8 @@ What stays lazy now (load on first runtime use):
 | Library | First triggered by |
 |---|---|
 | `openai` | `LLMClient(...)` construction (default LLM client only — hosts that inject `llm_client=` never load it) |
-| `bs4` / `httpx` | `WebFetchTool.execute()` / `WebSearchTool.execute()` |
-| `jieba` | first call into `MemoryRetriever` recall scoring |
+| `bs4` / `httpx` | `WebFetchTool.execute()` / `WebSearchTool.execute()` — note: post-0.4.0 these tools are skipped at registration if `bs4` is absent (the `[web]` extra is opt-in), so the model never sees a tool whose execute would fail |
+| `jieba` | CJK-bearing query through `MemoryRetriever` — pure-Latin queries skip jieba entirely; if `[i18n]` is absent, CJK recall degrades to empty with a one-time warning |
 | `filelock` | `SkillRegistry.save()` (CLI / `agentao plugin install`) |
 | `mcp` SDK (`McpClientManager`, `McpTool`) | first MCP server attach (`init_mcp` or hosts that pass `mcp_manager=`) |
 | `rich`, `prompt_toolkit`, `readchar`, `click`, `pygments` | only loaded by `agentao/cli/*` — never on the embed path |
@@ -75,7 +87,7 @@ def get_agent():
 
 ```python
 import agentao
-print(agentao.__version__)   # "0.2.14"
+print(agentao.__version__)   # "0.4.0"
 ```
 
 In production, verify at startup:
@@ -84,7 +96,7 @@ In production, verify at startup:
 import agentao
 from packaging.version import Version
 
-MIN = Version("0.2.14")
+MIN = Version("0.4.0")
 if Version(agentao.__version__) < MIN:
     raise RuntimeError(f"Need agentao >= {MIN}, got {agentao.__version__}")
 ```

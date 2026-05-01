@@ -8,8 +8,9 @@ Goal: get a minimal run through **both embedding paths**. Five minutes, no custo
 # 1. Install uv (Python package manager)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2. Install Agentao
-pip install agentao      # or: uv pip install agentao
+# 2. Install Agentao with the CLI extras (Example B uses the `agentao` console script)
+pip install 'agentao[cli]'      # or: uv pip install 'agentao[cli]'
+# Embedding-only paths (Example A) work with bare `pip install agentao`.
 # Or from source:
 git clone https://github.com/jin-bo/agentao && cd agentao && uv sync
 

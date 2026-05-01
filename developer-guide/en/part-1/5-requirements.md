@@ -12,12 +12,24 @@ Verify your environment before embedding Agentao.
 
 Agentao's own repo uses **`uv`**. When embedding, **pip is fine** — `agentao` is a standard PyPI package.
 
+Starting in 0.4.0, `pip install agentao` ships only the embedding core; pick the
+install line that matches your usage:
+
 ```bash
-# Pip
+# Embedding host (`from agentao import Agentao`) — minimum closure
 pip install agentao
 
-# uv (recommended)
-uv add agentao
+# Need the web_fetch / web_search tools — adds beautifulsoup4
+pip install 'agentao[web]'
+
+# Need Chinese-text memory recall — adds jieba
+pip install 'agentao[i18n]'
+
+# CLI users (the `agentao` console script) — adds rich/prompt-toolkit/readchar/pygments
+pip install 'agentao[cli]'
+
+# uv users mirror the same pattern
+uv add 'agentao[cli]'
 ```
 
 ## LLM credentials
@@ -75,25 +87,47 @@ In production, set `<working_directory>` to a **per-tenant / per-session temp di
 
 ## Optional dependencies
 
-Advanced tools are extras:
+Capabilities split into extras post-0.4.0; combine them with comma syntax
+(`agentao[cli,web]`):
 
 ```bash
-pip install 'agentao[pdf]'       # PDF reading
-pip install 'agentao[excel]'     # Excel read/write
-pip install 'agentao[image]'     # Image processing
-pip install 'agentao[tokenizer]' # Precise token accounting
-pip install 'agentao[full]'      # Everything
+# CLI / interactive UI (P0.9 demoted these from the bundled core)
+pip install 'agentao[cli]'       # rich + prompt-toolkit + readchar + pygments
+pip install 'agentao[web]'       # beautifulsoup4 — required for web_fetch / web_search
+pip install 'agentao[i18n]'      # jieba — Chinese-text memory recall
+
+# Heavy file-format tools
+pip install 'agentao[pdf]'       # PDF reading (pymupdf, pdfplumber)
+pip install 'agentao[excel]'     # Excel read/write (pandas, openpyxl)
+pip install 'agentao[image]'     # Image processing (Pillow)
+pip install 'agentao[crypto]'    # pycryptodome
+pip install 'agentao[google]'    # google-genai
+pip install 'agentao[crawl4ai]'  # crawl4ai
+pip install 'agentao[tokenizer]' # tiktoken — precise token accounting
+
+# Meta extras
+pip install 'agentao[full]'      # Everything (0.3.x-equivalent closure)
 ```
 
-Install only what you need to keep the dependency surface minimal.
+> Without `[web]`, the registry **omits** `web_fetch` and `web_search` entirely
+> — the model will not see them in its tool schema, avoiding the trap where a
+> model calls a tool that fails with a generic ImportError. Without `[i18n]`,
+> CJK memory recall degrades gracefully (one-time warning + empty CJK tokens);
+> Latin queries skip jieba entirely so they pay no cost. The `[cli]` extra is
+> required to run the `agentao` console script — bare installs print a friendly
+> `pip install agentao[cli]` hint and exit 2.
+
+See [`docs/migration/0.3.x-to-0.4.0.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.3.x-to-0.4.0.md) for the full 0.3.x → 0.4.0 migration matrix.
 
 ## Version compatibility
 
 - Agentao is currently in **0.x (Beta)**. Breaking changes can land between minor versions — pin exact versions:
   ```
-  agentao==0.2.14     # or >=0.2.14,<0.3
+  agentao>=0.4.0,<0.5
   ```
-- This guide targets **v0.2.14 GA**. Version-specific notes will be flagged inline.
+- This guide targets **v0.4.0 GA**. Version-specific notes will be flagged inline.
+- The single break in 0.4.0 is the dependency split (P0.9). 0.3.x users who
+  want zero behaviour change can use `pip install 'agentao[full]'`.
 
 ## Checklist
 
