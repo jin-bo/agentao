@@ -104,6 +104,7 @@ const zhSidebar = [
       { text: '7.3 工单自动化', link: '/zh/part-7/3-ticket-automation' },
       { text: '7.4 数据分析工作台', link: '/zh/part-7/4-data-workbench' },
       { text: '7.5 批处理与定时任务', link: '/zh/part-7/5-batch-scheduler' },
+      { text: '7.6 微信智能机器人', link: '/zh/part-7/6-wechat-bot' },
     ],
   },
   {
@@ -219,6 +220,7 @@ const enSidebar = [
       { text: '7.3 Ticket Automation', link: '/en/part-7/3-ticket-automation' },
       { text: '7.4 Data Workbench', link: '/en/part-7/4-data-workbench' },
       { text: '7.5 Batch & Scheduler', link: '/en/part-7/5-batch-scheduler' },
+      { text: '7.6 WeChat Intelligent Bot', link: '/en/part-7/6-wechat-bot' },
     ],
   },
   {
