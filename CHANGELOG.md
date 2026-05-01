@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+> **Migration heads-up — 0.4.0 break approaching.** `pip install agentao`
+> will shrink to an embedding-only core (7 packages). `rich` /
+> `prompt-toolkit` / `readchar` / `pygments` move to `[cli]`;
+> `beautifulsoup4` to `[web]`; `jieba` to `[i18n]`. The public Python API
+> is unchanged. CLI users want `pip install 'agentao[cli]'`. The
+> zero-behaviour-change upgrade line is `pip install 'agentao[full]'`.
+> Full guide: [`docs/migration/0.3.x-to-0.4.0.md`](docs/migration/0.3.x-to-0.4.0.md).
+
 Targeting **0.4.0** — the single break release of the Path A P0 plan
 (see `docs/design/path-a-roadmap.md` §3.2). The break is a packaging
 change only; no public Python API is renamed, removed, or signature-

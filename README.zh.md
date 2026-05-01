@@ -512,6 +512,11 @@ Agentao 围绕三个基础原则构建：
 
 ## 安装
 
+> **预告：0.4.0 break 即将到来。** 裸装 `pip install agentao` 将只装嵌入核心。
+> CLI 用户用 `pip install 'agentao[cli]'`；要 0.3.x 等价闭包用
+> `pip install 'agentao[full]'`。完整迁移指南：
+> [`docs/migration/0.3.x-to-0.4.0.md`](docs/migration/0.3.x-to-0.4.0.md)。
+
 如果你的目标只是“先把 Agentao 跑起来”，这一节和[最小可运行配置](#最小可运行配置)一起看就够了。如果你是准备参与代码贡献，可以直接跳到[贡献者 / 源码安装](#贡献者--源码安装)。
 
 ### 前置条件
