@@ -466,12 +466,300 @@ P0.1, P0.2, P0.7     ─►  （无硬依赖）
 | P0.1 `py.typed` | **已落地（0.3.3，工作树）** | `agentao/py.typed` 已存在；`pyproject.toml` `force-include` 把它打进 wheel + sdist |
 | P0.2 README 嵌入优先 | **已落地（0.3.3，工作树）** | `README.md` / `README.zh.md` 首段是 `## Embed in 30 lines` / `## 30 行嵌入`；CLI 走读放在 `## CLI Quickstart` / `## CLI 快速开始` |
 | P0.3 clean-install smoke | **已落地（0.3.3，工作树）** | `.github/workflows/ci.yml` smoke job 用 README 片段原样构造 `Agentao(...)`，并断言 `py.typed` 在安装包内 |
-| P0.4 typing gate | **部分** | `agentao/harness/__init__.py` 已导出干净表面；无 `mypy --strict` CI；无 `agentao.harness.protocols` 重导 |
-| P0.5 lazy imports | **部分** | `agentao/__init__.py` 已用 PEP 562 懒导出 `Agentao`/`SkillManager`；§9.5 列的 eager 顶层 import 仍在 |
-| P0.6 示例 | **部分** | `examples/` 有 5 目录 + 2 单文件，但 FastAPI/pytest/Jupyter/Slack 一个没有，4 个全部净新增 |
-| P0.7 回归测试 | **大部分已有** | 列出的 17 个测试已存在；§9.7 的 4 个新测试是缺口 |
-| P0.8 audit sink | **部分** | `agentao/replay/events.py` 在 v1.1；v1.2 词表、schema 文件、harness→replay projection 全部净新增 |
+| P0.4 typing gate | **已落地（PR 1，工作树）** | `mypy --strict --package agentao.harness` 干净；新增 `agentao/harness/protocols.py` re-export；CI `Typing gate` Job 强制；`tests/test_harness_typing.py` 覆盖包 + 模拟下游消费者 + `__all__` drift |
+| P0.5 lazy imports | **已落地（PR 2，工作树）** | `from agentao import Agentao` 不再拉 bs4/jieba/openai/rich/filelock/click/pygments/starlette/uvicorn（即 §9.5 不变量）；`display.py` 移到 `agentao/cli/` 下；新增 `tests/test_no_cli_deps_in_core.py`（AST 扫描）+ `tests/test_import_cost.py`（子进程 `python -X importtime`）双重把关 |
+| P0.6 示例 | **已落地（PR 5，工作树）** | 新增五个目录：`fastapi-background/`、`pytest-fixture/`、`jupyter-session/`、`slack-bot/`、`wechat-bot/`（最后一个借鉴 `Wechat-ggGitHub/wechat-claude-code`，通过 `WeChatClient` Protocol 与具体传输解耦）——每个都有自己的 `pyproject.toml` + `tests/test_smoke.py`，使用 fake LLM 离线运行；CI `examples` matrix 跑每个 smoke 套件；`examples/README.md` 增加经典形态对照表 |
+| P0.7 回归测试 | **已落地（PR 3，工作树）** | 旧 17 个 + 新 4 个：`test_no_host_logger_pollution.py`、`test_multi_agentao_isolation.py`、`test_arun_events_cancel.py`、`test_clean_install_smoke.py`（标 slow，CI 专用）；`slow` marker 在 `pyproject.toml` 注册 |
+| P0.8 audit sink | **已落地（PR 4，工作树）** | `agentao/replay/events.py` 声明 `V1_2_NEW`；`schemas/replay-event-1.2.json` 落地，per-kind payload 由 Pydantic 模型生成；`agentao.harness.replay_projection` 提供 `HarnessReplaySink` + 反向投影；`tests/test_harness_to_replay_projection.py` 覆盖往返 + schema 验证 |
 | P0.9 依赖切分 | **未做** | `pyproject.toml` `dependencies` 仍捆 13 个包，含 CLI/web/i18n |
 | P0.10 友好错误 | **未做** | `agentao/cli/__init__.py` 无 shim；entrypoint 直接 import rich/prompt_toolkit |
 
 净新增工作量加总约 **2 周专注工程**，与 §3.2 的 release 节奏（端到端约 2 个月，含评审、发版仪式、lighthouse 拓展）对得上。
+
+---
+
+## 12. 0.3.4 PR 计划（接下来 2 周）
+
+§11 说"剩什么"，本节说"按什么顺序发"。五个分支、五个 PR，每个 diff 控制在 ~400 行内、可一次评审完。顺序设计为最小化 rebase 痛苦：typing 改动先于 lazy-import 重构（让重构继承到带类型的签名），examples 放最后（让它们 pin 到最终 0.3.4 wheel）。
+
+### 12.1 PR 顺序
+
+| # | 分支 | 范围 | 依赖 | 净新增 diff（估） |
+|---|---|---|---|---:|
+| **1** | `roadmap/p0-4-typing-gate` | 仅 P0.4 —— `mypy --strict --package agentao.harness` 干净；新增 `agentao/harness/protocols.py` re-export；CI step | — | ~250 行 |
+| **2** | `roadmap/p0-5-lazy-imports` | 仅 P0.5 —— 延迟 `bs4`/`jieba`/`openai`/`rich`/`prompt_toolkit`/`readchar`/`filelock`；新增 `tests/test_no_cli_deps_in_core.py` + `tests/test_import_cost.py` | PR 1（typed kwargs） | ~350 行 |
+| **3** | `roadmap/p0-7-regression-tests` | 仅 P0.7 —— §9.7 的 4 个新测试（`test_multi_agentao_isolation.py`、`test_arun_events_cancel.py`、`test_no_host_logger_pollution.py`、`test_clean_install_smoke.py`） | PR 2（host-logger cleanliness 在 lazy 后更易做） | ~200 行 |
+| **4** | `roadmap/p0-8-replay-v1-2` | 仅 P0.8 —— replay schema v1.2、harness→replay projection、`tests/test_harness_to_replay_projection.py` | —（独立） | ~300 行 |
+| **5** | `roadmap/p0-6-examples` | 仅 P0.6 —— 4 个新示例目录（每个有自己的 `pyproject.toml`）、`examples` CI matrix step | PR 1–4（examples pin 到 0.3.4 wheel） | ~600 行（多为新文件） |
+
+**并行余量：** PR 4（replay v1.2）没有依赖，任何一周拿起都行。如果评审队列卡住，可以直接对 `main` 起 PR 4，不用等 PR 1–3。
+
+### 12.2 单 PR 关卡（合并前 CI 必须绿）
+
+| PR | 本 PR 引入的新关卡（必须绿） |
+|---|---|
+| 1 | `uv run mypy --strict --package agentao.harness` 退出 0；`tests/test_harness_typing.py` 在 dev 内可跑 |
+| 2 | `python -X importtime -c "import agentao"` 输出**不**含 `bs4`/`jieba`/`openai`/`rich`/`prompt_toolkit`/`readchar`/`filelock`；`tests/test_no_cli_deps_in_core.py` 绿 |
+| 3 | §9.7 的四个新测试全绿；整个 suite 仍绿 |
+| 4 | `scripts/write_replay_schema.py --check` 对 v1.2 干净；`tests/test_harness_to_replay_projection.py` 绿 |
+| 5 | `examples` CI Job 在新 venv 里以 fake LLM 跑全部 4 个示例 smoke |
+
+### 12.3 0.3.4 打 tag
+
+只有当 5 个 PR 全部合入、且 §10.2 中 0.3.4 行的全部关卡都绿，才打 tag。在收尾 PR 内同时把 `agentao/__init__.py` `__version__` bump 到 `0.3.4`、追加 CHANGELOG 条目；**不要在长期挂着的 release-prep 分支上打 tag**——保持单一 release-cut PR 以避免分叉。
+
+如果有 PR 滑到第三周，把已合入的子集发为 0.3.4，剩余的发为 0.3.5——**Path A 下发版节奏比 batch 完整性更重要**。每月 PyPI 下载差更容易归因到一个小 release，而不是一个大 release。
+
+---
+
+## 13. 0.4.0 break dress-rehearsal（兼容性预演）
+
+P0.9 是整个 P0 计划里**唯一**一个 break。§3.2 把它排在 week 5–8，但最贵的失败模式是"用户在生产 `pip install -U agentao` 才发现 break"。本节就是阻止这种失败的预演协议。
+
+### 13.1 Pre-tag 预演（0.4.0 tag 前 7 天）
+
+在 macOS + Linux 各一台 fresh runner 上、**没有任何 agentao 残留**的 venv 里跑：
+
+```bash
+# 1. 装候选 wheel（来自 release-prep 分支） —— 仅 core
+pip install ./dist/agentao-0.4.0-py3-none-any.whl
+
+# 2. 仅嵌入 smoke —— 没有 CLI、没有 rich、没有 prompt_toolkit
+python -c "
+from pathlib import Path
+from agentao import Agentao
+a = Agentao(working_directory=Path('.'),
+            api_key='dummy', base_url='http://localhost:1', model='dummy',
+            project_instructions='hi')
+a.close()
+"
+
+# 3. CLI 走 friendly-error 路径（rich 未装）
+agentao   # 必须以 §9.10 的提示退码 2；**不能** ModuleNotFoundError
+
+# 4. 加 CLI extra；CLI 现在能起
+pip install 'agentao[cli]'
+agentao --help  # 必须能跑
+
+# 5. 加 full extra；pip freeze 必须与 0.3.x baseline 一致
+pip install 'agentao[full]'
+diff <(pip freeze | sort) tests/data/full_extras_baseline.txt
+# 期望：除补丁级版本漂移外零 diff
+```
+
+任一步 2–5 失败都会阻塞 tag。步骤 3、5 是最常见两个失败模式——3 抓住意外的顶层 `rich` import；5 抓住 `full` meta-extra 的依赖意外掉链。
+
+### 13.2 提前公告窗口
+
+0.4.0 tag 前 7 天，在以下三处贴一条 0.3.x → 0.4.0 迁移提示：
+
+- `CHANGELOG.md` `[Unreleased]` 段，文件顶部
+- `README.md` 安装段（一条 banner："0.4.0 即将发布；如果你依赖 `agentao`，请阅读迁移说明"）
+- 最近一份 0.3.x release notes（原地编辑，加 "### Heads-up" 子段链接迁移文档）
+
+纪律是：**break 在发版前公告，而不是发版后**。0.3.x 用户至少有一个完整 release 周期看到警告，再被 CI 流水线吵醒。
+
+### 13.3 Post-tag 回滚标准
+
+0.4.0 上 PyPI 后 48 小时内，**如果有 1 个以上**外部 issue 报 break 且 `[full]` 也无法搞定，**立即 yank 这个 release**（`twine upload --skip-existing` 不能撤稿，但 PyPI "yank" 可以阻止 `pip install` 拉取）。回滚路径：
+
+1. PyPI 管理面板 yank `agentao 0.4.0`。
+2. 立刻 cut `0.4.1`，恢复"自带依赖"默认（仍发布 `cli`/`web`/`i18n` extras 作为可加项——不必整个回退 P0.9）。
+3. 开 30 天调查窗口；下一个 0.5.0 带着已识别的缺失项重做拆分。
+
+这不是悲观主义——是为 §2.1 的"零公开 API break"指标付出的代价。依赖切分是**打包**层面的 break，不是 API 层面的；yank-and-redo 来回比侵蚀这个指标便宜。
+
+---
+
+## 14. Lighthouse 拓展计划
+
+§7.1 Mode 2 把这条列为最大的非工程风险："P0 全部交付，但 6 个月仍无 adopter"。光做工程不会拉动 PyPI dependents；必须搭配主动的 outreach。本节把 §6 的"挑 1 个 lighthouse"具化为 12 周的日程。
+
+### 14.1 候选标准（按优先级）
+
+一个值 100 stars 的 lighthouse adopter 必须**全部**满足：
+
+1. **活跃项目** —— 最近 30 天有 commit；≥ 3 个贡献者；不是个人 scratch repo。
+2. **真实"Agent 形态"用例** —— 项目里某处已有 TODO 或 open issue 描述了一个能从 LLM 驱动的工具循环受益的工作流（test triage、文档生成、ticket 预分类、code review 预处理）。
+3. **Python 为主语言** —— Path A 的卖点是"嵌入 Python 宿主"。一个 vendor 了 Python sidecar 的 TypeScript repo 接得很别扭。
+4. **maintainer 可触达** —— 公开 GitHub email 或非空的 `CODEOWNERS` / `MAINTAINERS`。冷启 discussions/issues 有效；冷邮件给陌生人无效。
+
+否决项：业余项目、归档项目、README 明写"不接 LLM"的项目。
+
+### 14.2 候选 shortlist（每季度刷新）
+
+按照四种形态（与 §9.6 对齐）建一个 10–15 个的清单：
+
+| 形态 | 在哪找 | 门槛 |
+|---|---|---|
+| FastAPI 工具 | github.com 搜 `language:Python topic:fastapi pushed:>2026-01-01 stars:50..2000`，再用 description 含 "ticket / issue / triage" 过滤 | ≥ 3 个贡献者 |
+| pytest 插件 | github.com 搜 `language:Python topic:pytest topic:plugin pushed:>2026-01-01` | 上一季度内有 ≥ 1 个 release |
+| Jupyter / notebook 工具 | 搜 `language:Python topic:jupyter`，加上手工扫 JupyterLab extension registry | 最近 60 天内活跃 |
+| Slack / chat bot 框架 | github.com `topic:slack-bot language:Python` | 真有部署（不是模板项目） |
+
+清单维护在私有文件（`docs/dev-notes/lighthouse-candidates.md`，gitignored 或 `private/` 前缀）——不要进公开 roadmap。在公开 roadmap 里 commit 到具体 repo 会带来社交压力，让 outreach 变得别扭。
+
+### 14.3 Outreach 节奏
+
+12 周三阶段：
+
+| 周次 | 动作 | 量 |
+|---|---|---|
+| W1–W2 | 建 shortlist。每个候选读 README + 最近 5 个 issue。**还不发消息**——没上下文的 outreach 必败。 | 10–15 候选 |
+| W3–W4 | 在每个候选 repo 开 discussion / draft issue："有没有人考虑过给 [maintainer 关心的具体用例] 加一个可选的 `agentao` 集成？" 附 30 行用对方真实代码写的片段。 | 每周 ≤ 3 条——量小代表诚意，不是 spam |
+| W5–W12 | 对每个回应正面的候选，**自己提集成 PR**。PR 范围：把 `agentao` 作为 `[ai]` extra 的可选依赖、新增 1 个模块、1 个示例、1 个测试。diff < 500 行。 | 1–2 PR / 月 |
+
+预期命中率很低：10–15 候选 → 也许 4 个回应 → 也许 6 个月内 1–2 个合并。这是预期的吞吐——§2.1 把 6 个月 3 个 lighthouse 设为目标，平均每 ~6 周 outreach 出一个合并就达标。
+
+### 14.4 集成 PR 的样子
+
+PR 描述用以下模板（英文写主体；如果宿主项目以中文为主，再镜像中文）：
+
+> **What:** 给 [具体 feature 名] 增加可选的 `agentao` 集成。
+>
+> **Why:** [复述 maintainer 在自己 issue / discussion 里给出的问题陈述]。把 `agentao` 作为可选依赖后，[feature] 可以 [具体能力——预分类 / test triage / 文档草稿 / X]。
+>
+> **Cost:** 对现有用户零影响——`agentao` 在 `[ai]` extra、由环境变量控制、可完全卸载。[链接到对应 Path A 保证：`docs/EMBEDDING.md` 讲能力注入、`docs/api/harness.md` 讲公开 API。]
+>
+> **Test plan:** [maintainer 本地能跑的两三个具体检查]
+
+PR 必须能在没有 API key 的情况下跑（测试里用 fake LLM client）。maintainer 不会合"必须有 OpenAI key 才能跑测试"的代码。
+
+### 14.5 Tracking 信号
+
+每个合并的集成 PR 是 §11 后续表（"lighthouse adopters"）的一行。每月复查：
+
+- 集成是否还在宿主 `pyproject.toml` 里？（drift 检测）
+- 我们发版后宿主有没有跟着 bump `agentao` 版本？（参与度）
+- 宿主 repo 是否有提到 `agentao` 的 issue 出现？（真实使用）
+
+合了 PR 但 6 个月不 bump 版本的 lighthouse **不是** lighthouse——是过期依赖。§2.1 的目标是 6 个月 3 个**活跃** lighthouse，不是 3 个历史 lighthouse。
+
+### 14.6 失败模式
+
+第 12 周还是零 PR 合并的话，问题不在候选——在**我们**。回头读 discussion 帖子：消息开头是 `agentao` 的 feature，还是 maintainer 的问题？maintainer 对"我能解决你的 X"的回应远高于"看这个酷工具"。换一个更尖锐的开场，重启节奏。
+
+这是整份 roadmap 唯一不以代码进度衡量的章节。§7.2 硬护栏依然适用：PyPI dependents 三个月持平触发 Path B/C 评审，无论你开了多少 outreach 帖子。
+
+---
+
+## 15. 指标采集 playbook
+
+§2.1 列了六个指标；§7.2 写"每月查 `pypistats.org/agentao` 与 GitHub dependents"。两处都没说**怎么查**。本节就是可执行脚本——M+1 到来时，maintainer 从这里复制粘贴，不要现编。
+
+### 15.1 月度快照——精确命令
+
+把每月运行结果存到 `docs/dev-notes/metrics/YYYY-MM.md`（gitignored 或 `private/` 前缀；含 outreach 状态）。文件保持小——这些是 §7.2 趋势的锚点，不是 dashboard。
+
+```bash
+# 1. PyPI 周下载量（目标：M+6 500，M+12 2000）
+curl -s 'https://pypistats.org/api/packages/agentao/recent' | python -m json.tool
+# 记录：data.last_week
+
+# 2. GitHub dependents（目标：M+6 3，M+12 15）
+# 没有公开 API；爬 dependents 页。Repo 与 package 数都记。
+curl -sL 'https://github.com/jin-bo/agentao/network/dependents' \
+  | grep -oE '[0-9,]+\s+(Repositories|Packages)'
+
+# 3. 别人 pyproject.toml 出现 agentao（目标：M+6 5 个 repo，M+12 30 个）
+# grep.app —— 查询：file:pyproject.toml agentao
+# 手工记录；fork 去重。URL：
+#   https://grep.app/search?q=agentao&filter[file][0]=pyproject.toml
+
+# 4. 嵌入形态 vs CLI 形态 issue 比（目标：M+6 ≥1:1，M+12 ≥2:1）
+# 手工分类最近 30 天的 issue。
+gh issue list --repo jin-bo/agentao --state all --limit 100 \
+  --search "created:>$(date -v-30d +%Y-%m-%d)" \
+  --json number,title,labels,createdAt
+# 给每条打 embed/cli/neutral 标签；记录比例。
+
+# 5. agentao.harness 公开 API break 数（目标：0）
+git log --since="30 days ago" --oneline -- agentao/harness/ \
+  | grep -iE 'breaking|break:|!:' || echo "0 breaks"
+# 加：每个 release 上 tests/test_harness_schema.py 必须绿。
+
+# 6. 下游 example mypy strict 通过率（目标：100%）
+# 每个 release 之后跑；每个 example 的 CI step 记录 pass/fail。
+gh run list --repo jin-bo/agentao --workflow ci.yml --limit 1 \
+  --json conclusion,headSha
+```
+
+### 15.2 快照模板
+
+每个 `metrics/YYYY-MM.md` 用以下最小形态：
+
+```
+# 指标快照 —— YYYY-MM
+
+| 指标 | 目标 M+6 | 目标 M+12 | 现在 | Δ vs 上月 |
+|---|---:|---:|---:|---:|
+| PyPI 周下载量 | 500 | 2000 | __ | __ |
+| GitHub dependents（repo + package） | 3 | 15 | __ | __ |
+| pyproject.toml 出现次数（grep.app） | 5 | 30 | __ | __ |
+| 嵌入:CLI issue 比（30d） | ≥1:1 | ≥2:1 | __:__ | __ |
+| 公开 API break 数（30d） | 0 | 0 | __ | __ |
+| 示例 mypy strict 通过率 | 100% | 100% | __% | __ |
+
+## 备注
+- Lighthouse 状态（按行）：adopter X 已从 0.3.4 → 0.3.5 ✔
+- Outreach：__ 个开放讨论，__ 个 PR 在路上
+- 异常：任一指标朝错误方向变动
+```
+
+### 15.3 趋势规则（什么时候动手）
+
+- **任一指标持平 1 个月** → 下月快照里写一笔，不动作。
+- **任一指标持平 2 个月** → 复盘 §14 outreach 质量（消息更尖锐，刷新 shortlist）。
+- **PyPI 下载量或 GitHub dependents 持平 3 个月** → §7.2 硬护栏触发。开一份独立的 Path B/C 评审文档；**不要改本 roadmap 来绕开护栏**。
+- **反指标触发**（star 暴涨而 dependents 持平——见 §2.2） → 下一份快照必须含一段"流量从哪来？"调查。**不要**为此优化 CLI UX。
+
+### 15.4 自动化上限
+
+按住建 metrics dashboard 的冲动。月度节奏本身就是要点——高频自动 polling 产生噪声，月度手工采集逼出解读。如果快照文件膨胀到两屏以上，就裁——目标是"maintainer 60 秒内能看明白的一段"。
+
+唯一值得自动化的是快照**模板**：一个 `scripts/metrics_snapshot.sh` 跑 §15.1 命令、预填 "现在" 列。"Δ vs 上月" 与 "备注" 列保持手工——那是判断力的位置。
+
+---
+
+## 16. 战略评审 checkpoint
+
+§7.2 列了失败侧护栏（持平三个月 → 评审）。本节加上成功侧 checkpoint——日历日期，maintainer 在那一刻停下来，看 §15 的快照，决定策略是否还匹配数据。
+
+这些不是状态汇报，是决策事件。每个 checkpoint 可能以"不变"、"在 Path A 内调参"、"开一份 Path B/C 文档"收尾。跳过 checkpoint 与跳过 §7.2 护栏是同一种失败模式。
+
+### 16.1 Checkpoint 日历
+
+| 日期 | 类型 | 输入 | 决策事项 |
+|---|---|---|---|
+| **2026-07-31（M+3）** | 轻评审 | 前 3 份月度快照；0.3.4 + 0.4.0 release retro | P0 关卡是否在按计划完成？outreach 是否在产出回应（还谈不上 PR）？如果 W3–W4 零回应就调整节奏。 |
+| **2026-10-31（M+6）** | 重评审 | 6 份月度快照；lighthouse adopter 数；嵌入:CLI issue 比 | 是否命中 `3 个 lighthouse` + `周下载 500`？命中则 P1 解锁（§4 触发条件）。未命中则 §7.1 Mode 2 协议触发——停 P1 设计，把精力转向 distribution。 |
+| **2027-01-31（M+9）** | 轻评审 | 9 个月趋势；如果已经动 P1，看 P1 进度 | P1 工作是不是 demand-driven（§4 纪律仍有效），还是已经飘进了 speculative build？砍掉所有没有具名 adopter 的 P1 项。 |
+| **2027-04-30（M+12）** | 战略评审 | 全部 12 份快照；§2.1 12 个月目标 | 命中 2k 下载 / 15 dependents / 30 pyproject.toml 出现？命中则写 "Path A v2" 后继文档。未命中则强制 Path B/C 评审——本 roadmap 无论如何在此退役。 |
+
+### 16.2 Checkpoint 前一周纪律
+
+每个 checkpoint 前一周：
+
+1. 把最近 N 份月度快照连着读。看趋势斜率，不要看绝对数字。
+2. 重读本 roadmap 的 §1–§8（战略部分）。问：成功画面还是不是该有的成功画面？外部环境变化（例如上游协议固化、对手转向）可能已经改变"嵌入"的含义。
+3. 列出**一个**——若知道答案就会改变结论的——问题。Checkpoint 的工作是回答这个问题，而不是产出泛泛状态报告。
+
+### 16.3 Checkpoint 后产出
+
+每次 checkpoint 产出一个、且仅一个文件：`docs/dev-notes/checkpoints/YYYY-MM-DD.md`。三个段，不多写：
+
+- **快照在说什么**（≤ 5 个 bullet，事实）。
+- **我们将要改什么**（≤ 3 个 bullet，具体；可以是"啥也不改"）。
+- **本 roadmap 应该怎么改**（要落到 `path-a-roadmap.md` 的 edits，或"无 edit"）。
+
+如果 checkpoint 不产出对 roadmap 的改动**且**快照无异常，那就是 checkpoint 在干它该干的——这是成功状态，不是浪费一小时。
+
+### 16.4 Roadmap 退役
+
+本 roadmap 在以下任一发生时退役：
+
+- **2027-04-30 战略评审** 写出后继文档（成功路径）。
+- **§7.2 硬护栏** 提前触发（失败路径；Path B/C 文档接管）。
+- **外部环境** 让"嵌入优先"论题失效（例如某个 Python 原生 Agent runtime 以 stdlib 级分发上线；那时 agentao 变基础设施而非产品，单独写一份退役文档解释 pivot）。
+
+退役后文件留在仓内作为带日期的记录。**退役后不要改锁定的 §1–§8**——把后继文档写成单独文件，让历史决策原样保留。§9–§16 可以做一次"实际交付"备注，但只能是只读注解，不是策略修订。

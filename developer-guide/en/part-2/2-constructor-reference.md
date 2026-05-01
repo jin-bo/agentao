@@ -127,13 +127,14 @@ agent = Agentao(
 
 ### Capability protocols
 
-`FileSystem` / `ShellExecutor` are runtime-checkable `Protocol`s defined in `agentao.capabilities`. The package exports default `LocalFileSystem` / `LocalShellExecutor` implementations that match Agentao's pre-0.2.16 behavior byte-for-byte. Hosts replace them to route IO through Docker exec, virtual filesystems, audit proxies, or remote runners.
+`FileSystem` / `ShellExecutor` are runtime-checkable `Protocol`s. Since 0.3.4 they are re-exported on the public harness surface — **always import from `agentao.harness.protocols`** rather than reaching into `agentao.capabilities.*` (which is internal and may move). The default `LocalFileSystem` / `LocalShellExecutor` implementations live in `agentao.capabilities`; their behavior matches Agentao's pre-0.2.16 byte-for-byte. Hosts replace the injected protocol to route IO through Docker exec, virtual filesystems, audit proxies, or remote runners.
 
 ```python
-from agentao.capabilities import (
+from agentao.harness.protocols import (
     FileSystem, FileEntry, FileStat,
     ShellExecutor, ShellRequest, ShellResult, BackgroundHandle,
 )
+from agentao.capabilities import LocalFileSystem, LocalShellExecutor  # default impls
 ```
 
 See Part 6.4 for the multi-tenant filesystem isolation pattern.

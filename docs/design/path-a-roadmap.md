@@ -466,12 +466,300 @@ This audit tells the executor what *not* to redo. Verified against the working t
 | P0.1 `py.typed` | **done (0.3.3, working tree)** | `agentao/py.typed` present; `pyproject.toml` `force-include` ships it in wheel + sdist |
 | P0.2 README embed-first | **done (0.3.3, working tree)** | `README.md` / `README.zh.md` lead with `## Embed in 30 lines`; CLI walkthrough preserved under `## CLI Quickstart` |
 | P0.3 clean-install smoke | **done (0.3.3, working tree)** | `.github/workflows/ci.yml` smoke job constructs `Agentao(...)` from the README snippet verbatim and asserts `py.typed` presence |
-| P0.4 typing gate | **partly done** | `agentao/harness/__init__.py` exports a clean surface; no `mypy --strict` CI; no `agentao.harness.protocols` re-export |
-| P0.5 lazy imports | **partly done** | `agentao/__init__.py` already uses PEP 562 for `Agentao`/`SkillManager`; the offending eager imports listed in §9.5 are still top-level |
-| P0.6 examples | **partly done** | `examples/` has 5 directories + 2 standalone scripts, but none is FastAPI/pytest/Jupyter/Slack — those four are net-new |
-| P0.7 regression tests | **largely done** | 17 listed tests already exist; the 4 new tests in §9.7 are the gap |
-| P0.8 audit sink | **partly done** | `agentao/replay/events.py` is at v1.1; v1.2 vocabulary, schema file, and harness→replay projection are net-new |
+| P0.4 typing gate | **done (PR 1, working tree)** | `mypy --strict --package agentao.harness` clean; `agentao/harness/protocols.py` re-export added; CI `Typing gate` job enforces; `tests/test_harness_typing.py` covers package + downstream-shaped consumer + `__all__` drift |
+| P0.5 lazy imports | **done (PR 2, working tree)** | `from agentao import Agentao` no longer pulls bs4/jieba/openai/rich/filelock/click/pygments/starlette/uvicorn (the §9.5 invariant); `display.py` moved under `agentao/cli/`; new `tests/test_no_cli_deps_in_core.py` (AST walk) + `tests/test_import_cost.py` (subprocess `python -X importtime`) enforce both shapes |
+| P0.6 examples | **done (PR 5, working tree)** | Five new dirs added: `fastapi-background/`, `pytest-fixture/`, `jupyter-session/`, `slack-bot/`, `wechat-bot/` (the last inspired by `Wechat-ggGitHub/wechat-claude-code`, transport-agnostic via a `WeChatClient` Protocol) — each with own `pyproject.toml` + `tests/test_smoke.py` running offline against a fake LLM; CI `examples` matrix runs each smoke suite; `examples/README.md` gains the canonical-shapes table |
+| P0.7 regression tests | **done (PR 3, working tree)** | 17 prior + 4 new: `test_no_host_logger_pollution.py`, `test_multi_agentao_isolation.py`, `test_arun_events_cancel.py`, `test_clean_install_smoke.py` (slow-marked); `slow` marker registered in `pyproject.toml` |
+| P0.8 audit sink | **done (PR 4, working tree)** | `agentao/replay/events.py` declares `V1_2_NEW`; `schemas/replay-event-1.2.json` ships with Pydantic-derived per-kind payload schemas; `agentao.harness.replay_projection` provides `HarnessReplaySink` + reverse projection; `tests/test_harness_to_replay_projection.py` covers round-trip + schema validation |
 | P0.9 dependency split | **not done** | `pyproject.toml` `dependencies` still bundles 13 packages including CLI/web/i18n |
 | P0.10 friendly error | **not done** | `agentao/cli/__init__.py` has no shim; entrypoint imports rich/prompt_toolkit directly |
 
 The net-new work, summed across items, is roughly **2 weeks of focused engineering**, matching the §3.2 release plan (2 months end-to-end including review, release rituals, and lighthouse outreach).
+
+---
+
+## 12. 0.3.4 PR plan (next 2 weeks)
+
+§11 says what's left; this section says the order to ship it. Five branches, five PRs, sized so each one stays under ~400 lines of diff and reviewable in one sitting. The order minimizes rebase pain: typing changes land before the lazy-import refactor (so the refactor inherits typed signatures), examples land last (so they pin against the final 0.3.4 wheel).
+
+### 12.1 PR sequence
+
+| # | Branch | Scope | Depends on | Net-new diff (est.) |
+|---|---|---|---|---:|
+| **1** | `roadmap/p0-4-typing-gate` | P0.4 only — `mypy --strict --package agentao.harness` clean; new `agentao/harness/protocols.py` re-export; CI step | — | ~250 lines |
+| **2** | `roadmap/p0-5-lazy-imports` | P0.5 only — defer `bs4`/`jieba`/`openai`/`rich`/`prompt_toolkit`/`readchar`/`filelock`; add `tests/test_no_cli_deps_in_core.py` + `tests/test_import_cost.py` | PR 1 (typed kwargs) | ~350 lines |
+| **3** | `roadmap/p0-7-regression-tests` | P0.7 only — the 4 new tests from §9.7 (`test_multi_agentao_isolation.py`, `test_arun_events_cancel.py`, `test_no_host_logger_pollution.py`, `test_clean_install_smoke.py`) | PR 2 (host-logger cleanliness easier post-lazy) | ~200 lines |
+| **4** | `roadmap/p0-8-replay-v1-2` | P0.8 only — replay schema v1.2, harness→replay projection, `tests/test_harness_to_replay_projection.py` | — (independent) | ~300 lines |
+| **5** | `roadmap/p0-6-examples` | P0.6 only — 4 new example directories with their own `pyproject.toml`, `examples` CI matrix step | PRs 1–4 (examples pin against 0.3.4 wheel) | ~600 lines (mostly new files) |
+
+**Parallel slack:** PR 4 (replay v1.2) has no dependency and can be picked up in any week. If review queue stalls, start PR 4 against `main` directly while waiting on PRs 1–3.
+
+### 12.2 Per-PR gate (CI must pass before merge)
+
+| PR | Gate added by this PR (must be green) |
+|---|---|
+| 1 | `uv run mypy --strict --package agentao.harness` exits 0; `tests/test_harness_typing.py` runs in dev |
+| 2 | `python -X importtime -c "import agentao"` does **not** mention `bs4`/`jieba`/`openai`/`rich`/`prompt_toolkit`/`readchar`/`filelock`; `tests/test_no_cli_deps_in_core.py` green |
+| 3 | All four new tests in §9.7 green; full suite still green |
+| 4 | `scripts/write_replay_schema.py --check` clean for v1.2; `tests/test_harness_to_replay_projection.py` green |
+| 5 | `examples` CI job runs all 4 example smoke commands against a fresh venv with fake LLM |
+
+### 12.3 0.3.4 release tagging
+
+Tag only after all five PRs are merged AND the §10.2 0.3.4 row's full gate set is green. Bump `agentao/__init__.py` `__version__` to `0.3.4` and append the CHANGELOG entry in the same PR that closes the release; **do not tag from a release-prep branch that lingers** — keep it to one release-cut PR to avoid divergence.
+
+If any PR slips into a third week, ship the merged subset as 0.3.4 and the rest as 0.3.5 — **release cadence is more valuable than batch completeness** under Path A. PyPI download deltas are easier to attribute to one small release than to a big one.
+
+---
+
+## 13. 0.4.0 break dress-rehearsal
+
+P0.9 is the single break in the entire P0 plan. §3.2 schedules it as week 5–8, but the most expensive failure mode is "users discover the break only after `pip install -U agentao` runs in production." This section is the rehearsal protocol that prevents that failure mode.
+
+### 13.1 Pre-tag rehearsal (T-7 days before 0.4.0)
+
+Run on a fresh macOS + a fresh Linux runner, in a venv with **no other agentao install present**:
+
+```bash
+# 1. Install the candidate wheel (built from release-prep branch) — core only
+pip install ./dist/agentao-0.4.0-py3-none-any.whl
+
+# 2. Embed-only smoke — no CLI, no rich, no prompt_toolkit
+python -c "
+from pathlib import Path
+from agentao import Agentao
+a = Agentao(working_directory=Path('.'),
+            api_key='dummy', base_url='http://localhost:1', model='dummy',
+            project_instructions='hi')
+a.close()
+"
+
+# 3. CLI runs the friendly-error path (rich not installed)
+agentao   # must exit 2 with the §9.10 message; must NOT raise ModuleNotFoundError
+
+# 4. Add CLI extra; CLI now boots
+pip install 'agentao[cli]'
+agentao --help  # must work
+
+# 5. Add full extra; pip freeze must match the 0.3.x baseline
+pip install 'agentao[full]'
+diff <(pip freeze | sort) tests/data/full_extras_baseline.txt
+# expected: zero diff except patch-level version drift
+```
+
+Any of steps 2–5 failing blocks the tag. Steps 3 and 5 are the two most likely failure modes — step 3 catches an accidental top-level `rich` import; step 5 catches an accidental dependency drop from the `full` meta-extra.
+
+### 13.2 Pre-announce window
+
+7 days before 0.4.0 tag, post a 0.3.x → 0.4.0 migration note in:
+
+- `CHANGELOG.md` `[Unreleased]` section, top of file
+- `README.md` install section (single banner line: "0.4.0 is approaching; if you depend on `agentao`, see migration note")
+- the most recent 0.3.x release notes (edit in place, append "### Heads-up" subsection linking the migration doc)
+
+The discipline here is: **the break is announced before it ships, not after**. Users on 0.3.x get one full release cycle to see the warning before their CI pipeline breaks.
+
+### 13.3 Post-tag rollback criteria
+
+If within 48 hours of 0.4.0 hitting PyPI, more than one external issue reports the break with no `[full]` workaround clearing it, **yank the release** (`twine upload --skip-existing` cannot un-publish, but PyPI's "yank" flag prevents `pip install` from picking it). Rollback path:
+
+1. Yank `agentao 0.4.0` on PyPI (admin UI).
+2. Cut `0.4.1` immediately, restoring the bundled-deps default (still publishing the `cli`/`web`/`i18n` extras as additive — no need to revert P0.9 entirely).
+3. Open a 30-day investigation window; the next 0.5.0 retries the split with whatever was missing identified.
+
+This is not pessimism — it is the cost of preserving Path A's "zero public-API breaks" metric (§2.1). The dependency split is a *packaging* break, not an API break, and a yank-and-redo round trip is cheaper than eroding the metric.
+
+---
+
+## 14. Lighthouse outreach plan
+
+§7.1 Mode 2 names this as the dominant non-engineering risk: "P0 fully shipped but no adopter at month 6." Engineering work alone does not move PyPI dependents; it has to be paired with deliberate outreach. This section concretizes §6's "Pick 1 lighthouse candidate" line into a 12-week schedule.
+
+### 14.1 Candidate criteria (in priority order)
+
+A lighthouse adopter is worth 100 stars only if it meets **all** of:
+
+1. **Active project** — committed in the last 30 days; ≥ 3 contributors; not a personal scratch repo.
+2. **Has a real "agent-shaped" use case** — somewhere in the project there is already a TODO or open issue describing a workflow that would benefit from an LLM-driven loop with tools (test triage, doc generation, ticket pre-classification, code review preprocessing).
+3. **Python primary** — Path A is "embed in Python host." A TypeScript repo that vendors a Python sidecar is harder to land cleanly.
+4. **Maintainer reachable** — public GitHub email or a non-empty `CODEOWNERS` / `MAINTAINERS` file. Cold outreach via discussions/issues works; cold-emailing strangers does not.
+
+Disqualifiers: hobby projects, archived projects, projects whose maintainers explicitly say "no LLM features" in their README.
+
+### 14.2 Candidate shortlist (refresh quarterly)
+
+Build a list of 10–15 candidates split across four shapes (mirroring §9.6):
+
+| Shape | Where to look | Bar |
+|---|---|---|
+| FastAPI utility | github.com search `language:Python topic:fastapi pushed:>2026-01-01 stars:50..2000` filtered by "ticket / issue / triage" in description | ≥ 3 contributors |
+| pytest plugin | github.com search `language:Python topic:pytest topic:plugin pushed:>2026-01-01` | ≥ 1 release in the last quarter |
+| Jupyter / notebook tool | search `language:Python topic:jupyter` plus a manual scan of the JupyterLab extension registry | active in the last 60 days |
+| Slack / chat bot framework | github.com `topic:slack-bot language:Python` | actually deployed (not template-only) |
+
+Maintain the list in a private file (`docs/dev-notes/lighthouse-candidates.md`, gitignored or `private/`-prefixed) — not in the public roadmap. Public commitment to specific repos creates social pressure that makes outreach awkward.
+
+### 14.3 Outreach cadence
+
+Twelve weeks, three phases:
+
+| Week | Action | Volume |
+|---|---|---|
+| W1–W2 | Build the shortlist. Read each candidate's README + last 5 issues. **Do not message yet** — outreach without context fails. | 10–15 candidates |
+| W3–W4 | Open a discussion / draft issue on each candidate's repo: "Has anyone considered adding an opt-in `agentao` integration for [specific use case the maintainer cares about]?" Include a 30-line snippet using their actual code. | ≤ 3 messages per week — slower volume signals quality, not spam |
+| W5–W12 | For each candidate that responds positively, **submit the integration PR yourself**. PR scope: optional dependency on `agentao` (in `[ai]` extra), one new module, one example, one test. Keep diff < 500 lines. | 1–2 PRs/month |
+
+The expected hit rate is low: 10–15 candidates, perhaps 4 responses, perhaps 1–2 merges by month 6. That is the intended throughput — three lighthouse adopters at month 6 is the §2.1 target, and one merge per ~6 weeks of outreach hits it.
+
+### 14.4 What the integration PR looks like
+
+Use this template for the PR description (English; mirror in Chinese if the host project is Chinese-led):
+
+> **What:** optional `agentao` integration for [specific feature name].
+>
+> **Why:** [restate the maintainer's existing problem statement from their issue/discussion]. With `agentao` as an opt-in dependency, [feature] gains [concrete capability — pre-classification / test triage / doc draft / X].
+>
+> **Cost:** zero impact on existing users — `agentao` is in the `[ai]` extra, gated by an env var, fully removable. [Link to the relevant Path A guarantees: `docs/EMBEDDING.md` for capability injection, `docs/api/harness.md` for the public surface.]
+>
+> **Test plan:** [two or three concrete checks the maintainer can run locally]
+
+The PR must work with no API key (use a fake LLM client in the test). Maintainers will not merge code that requires them to have an OpenAI key to run tests.
+
+### 14.5 Tracking signal
+
+Each merged integration PR is one row in §11's eventual successor — a "lighthouse adopters" table. Re-check monthly:
+
+- Is the integration still in the host's `pyproject.toml`? (drift detection)
+- Did the host bump `agentao` versions when we released? (engagement)
+- Did issues mentioning `agentao` get filed on the host repo? (real usage)
+
+A lighthouse that merged the PR but never bumped the version after six months is **not** a lighthouse — it is a stale dependency. The §2.1 target is 3 *active* lighthouses at month 6, not 3 historical ones.
+
+### 14.6 Failure mode
+
+If at week 12 zero PRs are merged, the failure is not in the candidates — it is in **us**. Re-read the discussion threads: did we lead with `agentao`'s features, or with the maintainer's problem? Maintainers respond to "I think I can solve your X" far more than "look at this cool tool." Restart the cadence with a sharper opening message.
+
+This is the only section of this roadmap that does not measure progress in code. The §7.2 hard guardrail still applies: three months of flat PyPI dependents triggers a Path B/C review, regardless of how many outreach threads are open.
+
+---
+
+## 15. Metrics collection playbook
+
+§2.1 names six metrics; §7.2 says "monthly check `pypistats.org/agentao` and GitHub dependents." Neither says *how*. This section is the runnable script — when month +1 arrives, the maintainer copy-pastes from here, not improvises.
+
+### 15.1 Monthly snapshot — exact commands
+
+Save the output of each month's run to `docs/dev-notes/metrics/YYYY-MM.md` (gitignored or `private/`-prefixed; it includes outreach status). Keep the file small — these are anchor points for the §7.2 trend, not a dashboard.
+
+```bash
+# 1. PyPI weekly downloads (target: 500 @ M+6, 2000 @ M+12)
+curl -s 'https://pypistats.org/api/packages/agentao/recent' | python -m json.tool
+# Record: data.last_week
+
+# 2. GitHub dependents (target: 3 @ M+6, 15 @ M+12)
+# No public API; scrape the dependents page. Record both counts (repos + packages).
+curl -sL 'https://github.com/jin-bo/agentao/network/dependents' \
+  | grep -oE '[0-9,]+\s+(Repositories|Packages)'
+
+# 3. agentao in pyproject.toml elsewhere (target: 5 repos @ M+6, 30 @ M+12)
+# grep.app — query: file:pyproject.toml agentao
+# Record manually; deduplicate forks. URL:
+#   https://grep.app/search?q=agentao&filter[file][0]=pyproject.toml
+
+# 4. Embed-shaped vs CLI-shaped issues (target: ≥1:1 @ M+6, ≥2:1 @ M+12)
+# Manual classification of issues opened in the last 30 days.
+gh issue list --repo jin-bo/agentao --state all --limit 100 \
+  --search "created:>$(date -v-30d +%Y-%m-%d)" \
+  --json number,title,labels,createdAt
+# Tag each as embed/cli/neutral; record ratio.
+
+# 5. agentao.harness public-API breaks (target: 0)
+git log --since="30 days ago" --oneline -- agentao/harness/ \
+  | grep -iE 'breaking|break:|!:' || echo "0 breaks"
+# Plus: tests/test_harness_schema.py must be green on every release.
+
+# 6. Downstream example mypy strict (target: 100%)
+# Run after each release; per-example CI step records pass/fail.
+gh run list --repo jin-bo/agentao --workflow ci.yml --limit 1 \
+  --json conclusion,headSha
+```
+
+### 15.2 Snapshot template
+
+Each `metrics/YYYY-MM.md` follows this minimal shape:
+
+```
+# Metrics snapshot — YYYY-MM
+
+| Metric | Target M+6 | Target M+12 | Now | Δ vs last month |
+|---|---:|---:|---:|---:|
+| PyPI weekly downloads | 500 | 2000 | __ | __ |
+| GitHub dependents (repos + packages) | 3 | 15 | __ | __ |
+| pyproject.toml hits (grep.app) | 5 | 30 | __ | __ |
+| Embed:CLI issue ratio (30d) | ≥1:1 | ≥2:1 | __:__ | __ |
+| Public-API breaks (30d) | 0 | 0 | __ | __ |
+| Example mypy strict pass rate | 100% | 100% | __% | __ |
+
+## Notes
+- Lighthouse status (per row): adopter X bumped from 0.3.4 → 0.3.5 ✔
+- Outreach: __ open threads, __ PRs in flight
+- Anomalies: any single metric moving in the wrong direction
+```
+
+### 15.3 Trend rules (when to act)
+
+- **Any one metric flat for 1 month** → note in next month's snapshot, no action.
+- **Any one metric flat for 2 months** → review §14 outreach quality (sharpen messaging, refresh shortlist).
+- **PyPI downloads OR GitHub dependents flat for 3 months** → §7.2 hard guardrail fires. Open a separate Path B/C review document; **do not edit this roadmap to argue around the guardrail**.
+- **Anti-metric tripped** (stars surging while dependents flat — see §2.2) → the next snapshot must include a "where is the traffic from?" investigation. Do not optimize CLI UX in response.
+
+### 15.4 Automation cap
+
+Resist the urge to build a metrics dashboard. The monthly cadence is the point — frequent automated polling produces noise, monthly hand-collection forces interpretation. If the snapshot file ever balloons past two screens, prune it; the goal is "one paragraph the maintainer can grok in 60 seconds."
+
+The only piece worth automating is the snapshot **template** itself: a `scripts/metrics_snapshot.sh` that runs the §15.1 commands and pre-fills the template's "Now" column. The "Δ vs last month" and "Notes" columns must stay manual — that is where judgment lives.
+
+---
+
+## 16. Strategic review checkpoints
+
+§7.2 names the failure-side guardrail (three flat months → review). This section adds the success-side checkpoints — calendar dates where the maintainer pauses, looks at §15's snapshots, and decides whether the strategy still fits the data.
+
+These are not status updates; they are decision events. Each checkpoint may end with "no change," "retune within Path A," or "open a Path B/C document." Skipping a checkpoint is the same failure mode as skipping the §7.2 guardrail.
+
+### 16.1 Checkpoint calendar
+
+| Date | Type | Inputs | Decisions to make |
+|---|---|---|---|
+| **2026-07-31 (M+3)** | Light review | First 3 monthly snapshots; 0.3.4 + 0.4.0 release retros | Are P0 gates being met? Is outreach producing responses (not yet PRs)? Adjust cadence if W3–W4 produced zero replies. |
+| **2026-10-31 (M+6)** | Heavy review | 6 monthly snapshots; lighthouse adopter count; embed:CLI issue ratio | Did we hit `3 lighthouse adopters` and `500 weekly downloads`? If yes, P1 unlocks (§4 trigger). If no, the §7.1 Mode 2 protocol fires — stop P1 design, shift effort to distribution. |
+| **2027-01-31 (M+9)** | Light review | Trend over 9 months; P1 progress if started | Is P1 work demand-driven (§4 discipline holding) or has it drifted into speculative builds? Cut any P1 item without a named adopter. |
+| **2027-04-30 (M+12)** | Strategic review | All 12 snapshots; §2.1 12-month targets | Hit the 2k downloads / 15 dependents / 30 pyproject.toml hits? If yes, write the "Path A v2" successor to this document. If no, mandatory Path B/C review — this roadmap retires either way. |
+
+### 16.2 Pre-checkpoint discipline
+
+One week before each checkpoint:
+
+1. Read the last N monthly snapshots back-to-back. Look for trend slope, not absolute numbers.
+2. Re-read this roadmap's §1–§8 (the strategy). Ask: is the success picture still the right success picture? External shifts (e.g., an upstream protocol stabilizes, a competitor pivots) may have changed what "embedded" means.
+3. List one question that *would* change the answer if you knew it. The checkpoint's job is to answer that question — not to produce a generic status update.
+
+### 16.3 Post-checkpoint output
+
+Each checkpoint produces exactly one file: `docs/dev-notes/checkpoints/YYYY-MM-DD.md`. Three sections, no more:
+
+- **What the snapshots say** (≤ 5 bullets, factual).
+- **What we are changing** (≤ 3 bullets, concrete; can be "nothing").
+- **What this roadmap should say differently** (edits to apply to `path-a-roadmap.md`, or "no edits").
+
+If a checkpoint produces no edits to this roadmap *and* the snapshots show no anomaly, the checkpoint is doing its job — that is the success state, not a wasted hour.
+
+### 16.4 Roadmap retirement
+
+This roadmap retires when one of:
+
+- **2027-04-30 strategic review** writes the successor (success path).
+- **§7.2 hard guardrail** fires earlier (failure path; Path B/C document supersedes).
+- **An external shift** invalidates the embed-first thesis (e.g., a Python-native agent runtime ships with stdlib-level distribution; in that case agentao becomes infrastructure, not the product, and a separate retirement doc explains the pivot).
+
+When the roadmap retires, the file stays in-tree as a dated record. **Do not edit the locked sections (§1–§8) post-retirement** — write the successor as a separate document so the historical decision is preserved verbatim. §9–§16 may receive a final "as-shipped" annotation pass, but that pass is read-only commentary, not strategy revision.

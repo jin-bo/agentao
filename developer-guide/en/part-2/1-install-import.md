@@ -39,19 +39,26 @@ from agentao.tools.base import Tool, ToolRegistry  # when authoring custom tools
 
 ## Lazy loading
 
-The `agentao/__init__.py` uses **PEP 562 `__getattr__`** to defer heavy imports:
+`agentao/__init__.py` uses **PEP 562 `__getattr__`** to defer heavy imports, and since 0.3.4 (P0.5) the deferral covers a much wider set of libraries — `from agentao import Agentao` no longer pulls the OpenAI SDK, BeautifulSoup, jieba, filelock, rich, prompt_toolkit, readchar, click, pygments, starlette, or uvicorn.
 
-```python
-# Actual behavior
-__all__ = ["Agentao", "SkillManager"]
-# Agentao and SkillManager pull openai / mcp / tools only on first access.
-```
+What stays lazy now (load on first runtime use):
+
+| Library | First triggered by |
+|---|---|
+| `openai` | `LLMClient(...)` construction (default LLM client only — hosts that inject `llm_client=` never load it) |
+| `bs4` / `httpx` | `WebFetchTool.execute()` / `WebSearchTool.execute()` |
+| `jieba` | first call into `MemoryRetriever` recall scoring |
+| `filelock` | `SkillRegistry.save()` (CLI / `agentao plugin install`) |
+| `mcp` SDK (`McpClientManager`, `McpTool`) | first MCP server attach (`init_mcp` or hosts that pass `mcp_manager=`) |
+| `rich`, `prompt_toolkit`, `readchar`, `click`, `pygments` | only loaded by `agentao/cli/*` — never on the embed path |
 
 For embedders:
 
-- `import agentao` is **cheap** (no openai / mcp import)
-- Accessing `agentao.Agentao` or `from agentao import Agentao` triggers the full load
-- `from agentao.memory import ...` stays standalone — no LLM stack loaded
+- `import agentao` is **cheap** — none of the above touch your import-time graph.
+- Accessing `agentao.Agentao` triggers the agent module, which still avoids the deferred libs above.
+- Hosts that pass their own `llm_client=` / `mcp_registry=` / file-system / shell never pay for the OpenAI SDK or the MCP SDK at all.
+- `from agentao.memory import ...` stays standalone — no LLM stack loaded.
+- The invariant is enforced by `tests/test_no_cli_deps_in_core.py` (AST walk; fails if a top-level import of a deferred module slips outside `agentao/cli/`) and `tests/test_import_cost.py` (`python -X importtime` subprocess; fails if any of the deferred names appear in the trace of `import agentao`).
 
 You can treat Agentao as a "conditional dependency": import cost only when you actually use it.
 
@@ -60,7 +67,7 @@ You can treat Agentao as a "conditional dependency": import cost only when you a
 import agentao  # lightweight, no side effects
 
 def get_agent():
-    from agentao import Agentao  # full load happens now
+    from agentao import Agentao  # agent module loads, but openai/bs4/jieba do not
     return Agentao(...)
 ```
 

@@ -27,6 +27,80 @@ intentionally not part of this surface.
 | `RFC3339UTCString` | Constrained timestamp type used by all public events. |
 | `export_harness_event_json_schema()` | Canonical JSON schema for the events + permissions surface. |
 | `export_harness_acp_json_schema()` | Canonical JSON schema for the host-facing ACP payload surface. |
+| `agentao.harness.replay_projection` | Submodule bridging `EventStream` ⇄ replay JSONL — see [Replay projection](#replay-projection-agentaoharnessreplay_projection) below. |
+
+## Capability protocols (`agentao.harness.protocols`)
+
+Embedded hosts override IO by injecting these `Protocol` types into
+`Agentao(filesystem=..., shell=..., mcp_registry=..., memory_store=...)`.
+The submodule is a stable re-export of the protocols and their value
+shapes; **always import from `agentao.harness.protocols` rather than
+reaching into `agentao.capabilities.*`** (which is internal and may
+move).
+
+```python
+from agentao.harness.protocols import (
+    FileSystem, ShellExecutor, MCPRegistry, MemoryStore,
+    FileEntry, FileStat, ShellRequest, ShellResult, BackgroundHandle,
+)
+```
+
+| Symbol | Purpose |
+|---|---|
+| `FileSystem` | Protocol for filesystem IO (`read_text`, `write_text`, `iter_dir`, …). |
+| `ShellExecutor` | Protocol for shell execution + background handles. |
+| `MCPRegistry` | Protocol for MCP server / tool discovery used by the runtime. |
+| `MemoryStore` | Protocol for persistent memory storage backends. |
+| `FileEntry`, `FileStat` | Value shapes returned by `FileSystem` implementations. |
+| `ShellRequest`, `ShellResult`, `BackgroundHandle` | Value shapes for `ShellExecutor` implementations. |
+
+The `Local*` defaults (e.g. `LocalFileSystem`, `LocalShellExecutor`)
+remain in `agentao.capabilities` because they are reference
+implementations, not part of the public host-injection surface.
+
+## Replay projection (`agentao.harness.replay_projection`)
+
+The harness event stream and the replay JSONL are two views of the
+same facts. This submodule bridges them so embedded hosts have one
+audit artifact instead of two parallel streams.
+
+```python
+from agentao.harness.replay_projection import (
+    HarnessReplaySink,
+    replay_payload_to_harness_event,
+    harness_event_to_replay_kind,
+    harness_event_to_replay_payload,
+)
+```
+
+| Symbol | Purpose |
+|---|---|
+| `HarnessReplaySink(recorder, *, stream=None)` | Forward projection. Pass `stream=agent._harness_events` to auto-register as a synchronous observer; every published `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` is then written into `recorder` as a v1.2 replay event. Errors during write are logged at WARNING and swallowed — audit storage failure never breaks the runtime. |
+| `replay_payload_to_harness_event(kind, payload)` | Reverse projection. Rehydrates a `HarnessEvent` Pydantic model from a replay JSONL line. Strips the sanitizer's optional projection metadata (`redaction_hits`, `redacted`, `redacted_fields`) so a redacted line still validates against the public `extra="forbid"` models. |
+| `harness_event_to_replay_kind(event)` / `harness_event_to_replay_payload(event)` | Lower-level helpers used by sinks and tests. Return `None` / `model_dump(mode="json")` respectively. |
+
+`Agentao.start_replay()` auto-instantiates `HarnessReplaySink` against
+the agent's `EventStream`; `end_replay()` detaches and clears the sink.
+Hosts that drive the replay subsystem manually can do the same wiring
+themselves.
+
+The on-disk shape is the public Pydantic model's `model_dump(mode="json")`
+— byte-equivalent to what the v1.2 replay schema's `oneOf` discriminator
+matches. See [`docs/replay/schema-policy.md`](../replay/schema-policy.md)
+for the version compatibility contract.
+
+## Typing gate
+
+`agentao.harness` ships clean under `mypy --strict`:
+
+```
+uv run mypy --strict --package agentao.harness
+```
+
+CI's `Typing gate` job enforces this on every PR. Downstream projects
+running `mypy --strict` against their own code paths inherit clean
+types from this surface — `tests/test_harness_typing.py` includes a
+downstream-shaped consumer that exercises every public name.
 
 ## Schema snapshot policy
 

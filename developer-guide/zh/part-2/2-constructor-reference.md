@@ -127,13 +127,14 @@ agent = Agentao(
 
 ### Capability 协议
 
-`FileSystem` / `ShellExecutor` 是 `agentao.capabilities` 里的 runtime-checkable `Protocol`。包同时导出默认实现 `LocalFileSystem` / `LocalShellExecutor`，行为与 0.2.16 之前的 Agentao 字节级一致。宿主可替换为基于 Docker exec、虚拟文件系统、审计代理或远程 runner 的实现。
+`FileSystem` / `ShellExecutor` 是 runtime-checkable `Protocol`。0.3.4 起这些协议在公共 harness 表面有 re-export——**请始终从 `agentao.harness.protocols` 导入**，不要伸手到内部的 `agentao.capabilities.*`（后者是内部实现，可能会移动）。默认实现 `LocalFileSystem` / `LocalShellExecutor` 仍住在 `agentao.capabilities` 中，行为与 0.2.16 之前的 Agentao 字节级一致。宿主把要注入的协议替换为基于 Docker exec、虚拟文件系统、审计代理或远程 runner 的实现即可。
 
 ```python
-from agentao.capabilities import (
+from agentao.harness.protocols import (
     FileSystem, FileEntry, FileStat,
     ShellExecutor, ShellRequest, ShellResult, BackgroundHandle,
 )
+from agentao.capabilities import LocalFileSystem, LocalShellExecutor  # 默认实现
 ```
 
 多租户文件隔离方式参考 6.4 节。

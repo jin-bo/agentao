@@ -39,19 +39,26 @@ from agentao.tools.base import Tool, ToolRegistry  # 写自定义工具时
 
 ## 懒加载优化
 
-Agentao 的 `__init__.py` 使用 **PEP 562 `__getattr__`** 做了懒加载：
+`agentao/__init__.py` 使用 **PEP 562 `__getattr__`** 做了懒加载，自 0.3.4（P0.5）起延迟范围进一步扩大——`from agentao import Agentao` 不再拉入 OpenAI SDK、BeautifulSoup、jieba、filelock、rich、prompt_toolkit、readchar、click、pygments、starlette、uvicorn。
 
-```python
-# agentao/__init__.py 实际行为
-__all__ = ["Agentao", "SkillManager"]
-# Agentao / SkillManager 在首次访问时才导入 openai / mcp / tools 栈
-```
+当前还会被 lazy 的依赖（首次运行时再加载）：
 
-影响你嵌入时：
+| 库 | 首次触发点 |
+|---|---|
+| `openai` | `LLMClient(...)` 构造（仅默认 LLM 客户端会用到——宿主自己注入 `llm_client=` 永远不加载） |
+| `bs4` / `httpx` | `WebFetchTool.execute()` / `WebSearchTool.execute()` |
+| `jieba` | 首次进入 `MemoryRetriever` 的 recall 打分 |
+| `filelock` | `SkillRegistry.save()`（CLI / `agentao plugin install`） |
+| `mcp` SDK（`McpClientManager`、`McpTool`） | 首次接入 MCP server（`init_mcp` 或宿主传 `mcp_manager=`） |
+| `rich`、`prompt_toolkit`、`readchar`、`click`、`pygments` | 只有 `agentao/cli/*` 会加载——嵌入路径完全不碰 |
 
-- `import agentao` 本身**很轻**（不拉 openai / mcp 依赖）
-- 首次访问 `agentao.Agentao` 或 `from agentao import Agentao` 才会触发完整加载
-- `from agentao.memory import ...` 可以独立使用而不触发 LLM 栈导入
+对嵌入者意味着：
+
+- `import agentao` 本身**很轻**——上述依赖都不会进入你的 import 时图。
+- 访问 `agentao.Agentao` 会加载 agent 模块，但仍然不触发上面列出的 lazy 依赖。
+- 宿主自己传入 `llm_client=` / `mcp_registry=` / filesystem / shell 时，OpenAI SDK 与 MCP SDK 永远不会被加载。
+- `from agentao.memory import ...` 可以独立使用而不触发 LLM 栈导入。
+- 不变量由两个测试守住：`tests/test_no_cli_deps_in_core.py`（AST 扫描；任何 lazy 依赖被顶层 import 到 `agentao/cli/` 之外即失败）与 `tests/test_import_cost.py`（子进程 `python -X importtime`；`import agentao` 跑出来的 trace 里不能出现这些名字）。
 
 这让你可以把 Agentao 当作"条件依赖"——只有真正调用 Agent 功能时才承担导入成本。例如：
 
@@ -59,9 +66,8 @@ __all__ = ["Agentao", "SkillManager"]
 # 你的 FastAPI app 模块级
 import agentao  # 轻量，没有实际副作用
 
-# 只在需要时才实例化
 def get_agent():
-    from agentao import Agentao  # 此时才真正加载
+    from agentao import Agentao  # 加载 agent 模块；openai / bs4 / jieba 仍不会被拉
     return Agentao(...)
 ```
 

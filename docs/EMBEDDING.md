@@ -180,17 +180,21 @@ when the host is done with the session.
 ## 3. Capability injection
 
 Beyond LLM / memory / MCP / permissions, four narrower capabilities
-let you intercept IO without subclassing tools:
+let you intercept IO without subclassing tools. The Protocols are
+re-exported on the public harness surface — **always import from
+`agentao.harness.protocols`** rather than reaching into
+`agentao.capabilities.*`, which is internal and may move:
 
-| Protocol | Default | Purpose |
+| Protocol | Default (in `agentao.capabilities`) | Purpose |
 |---|---|---|
-| `agentao.capabilities.FileSystem` | `LocalFileSystem` | Backs `read_file`, `write_file`, `glob`, `search_file_content`, `list_directory`. Inject to redirect through Docker exec, virtual filesystems, audit proxies. |
-| `agentao.capabilities.ShellExecutor` | `LocalShellExecutor` | Backs `run_shell_command`. Inject to route shell through a remote runner / sandbox. |
-| `agentao.capabilities.MemoryStore` | `SQLiteMemoryStore` | Persistent-memory storage. Inject to back memory with Redis, Postgres, in-process dict, remote API. |
-| `agentao.capabilities.MCPRegistry` | `FileBackedMCPRegistry` | Source of MCP server configs. Inject to register servers programmatically. |
+| `agentao.harness.protocols.FileSystem` | `LocalFileSystem` | Backs `read_file`, `write_file`, `glob`, `search_file_content`, `list_directory`. Inject to redirect through Docker exec, virtual filesystems, audit proxies. |
+| `agentao.harness.protocols.ShellExecutor` | `LocalShellExecutor` | Backs `run_shell_command`. Inject to route shell through a remote runner / sandbox. |
+| `agentao.harness.protocols.MemoryStore` | `SQLiteMemoryStore` | Persistent-memory storage. Inject to back memory with Redis, Postgres, in-process dict, remote API. |
+| `agentao.harness.protocols.MCPRegistry` | `FileBackedMCPRegistry` | Source of MCP server configs. Inject to register servers programmatically. |
 
 ```python
-from agentao.capabilities import FileSystem, ShellExecutor
+from agentao.harness.protocols import FileSystem, ShellExecutor
+from agentao.capabilities import LocalFileSystem  # default impl
 
 class AuditedFileSystem:        # duck-types FileSystem
     def __init__(self, inner): self.inner = inner
@@ -205,9 +209,10 @@ agent = build_from_environment(
 ```
 
 All four protocols are `Protocol`s (PEP 544) — no inheritance required;
-just match the method signatures. The Protocols are documented in
-`agentao/capabilities/*.py`; the SQLite memory store and the file-backed
-MCP registry are byte-equivalent reference implementations.
+just match the method signatures. The reference implementations
+(`LocalFileSystem`, `LocalShellExecutor`, `SQLiteMemoryStore`,
+`FileBackedMCPRegistry`) stay in `agentao.capabilities` because they
+are not part of the public host-injection surface.
 
 ---
 
@@ -513,7 +518,8 @@ What stays internal (do **not** depend on for forward compatibility):
 |---|---|
 | `Agentao(...)` signature | [`agentao/agent.py`](../agentao/agent.py) |
 | `build_from_environment(...)` | [`agentao/embedding/factory.py`](../agentao/embedding/factory.py) |
-| Capability protocols | [`agentao/capabilities/`](../agentao/capabilities/) |
+| Capability protocols (public surface) | [`agentao/harness/protocols.py`](../agentao/harness/protocols.py) — re-exports `FileSystem`, `ShellExecutor`, `MCPRegistry`, `MemoryStore` and their value shapes |
+| Capability defaults / reference impls | [`agentao/capabilities/`](../agentao/capabilities/) — `LocalFileSystem`, `LocalShellExecutor`, etc. (not part of the public surface) |
 | Default IO impls | `LocalFileSystem`, `LocalShellExecutor`, `SQLiteMemoryStore`, `FileBackedMCPRegistry` |
 | Host-facing harness contract | [`agentao/harness/`](../agentao/harness/) — public types; full reference at [`docs/api/harness.md`](api/harness.md) |
 | Schema snapshots | [`docs/schema/harness.events.v1.json`](schema/harness.events.v1.json), [`docs/schema/harness.acp.v1.json`](schema/harness.acp.v1.json) |
