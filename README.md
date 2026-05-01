@@ -65,11 +65,18 @@ capability injection).
 If you want to drive Agentao interactively from a terminal instead of
 embedding it, the CLI gets you running in about 3 minutes:
 
-1. Install the package (with CLI extras for terminal UI):
+1. Install the package with the CLI extras (rich, prompt-toolkit, readchar,
+   pygments). Plain `pip install agentao` installs the embedding-only core
+   in 0.4.0+; the `[cli]` extra adds the terminal UI:
 
 ```bash
-pip install agentao
+pip install 'agentao[cli]'
 ```
+
+> **Upgrading from 0.3.x?** `pip install agentao` previously bundled the
+> CLI deps automatically. From 0.4.0 they live in `[cli]`. The fastest
+> "no-change" upgrade line is `pip install 'agentao[full]'`. See
+> [docs/migration/0.3.x-to-0.4.0.md](docs/migration/0.3.x-to-0.4.0.md).
 
 2. Create a local `.env` file. Agentao requires **all three** provider variables at startup — missing `OPENAI_BASE_URL` or `OPENAI_MODEL` raises `ValueError` immediately:
 
@@ -519,9 +526,23 @@ If your goal is simply "get Agentao running", read this section together with [M
 
 ### Install
 
+Pick the install line that matches your usage. From 0.4.0 the package ships
+a small embedding-only core; CLI / web fetch / Chinese tokenization are
+opt-in extras.
+
 ```bash
+# Embedding host (Python `from agentao import Agentao`) — smallest closure
 pip install agentao
+
+# CLI user (`agentao` console script) — adds rich/prompt-toolkit/readchar/pygments
+pip install 'agentao[cli]'
+
+# Upgrading from 0.3.x and want zero behaviour change — exact 0.3.x closure
+pip install 'agentao[full]'
 ```
+
+See [docs/migration/0.3.x-to-0.4.0.md](docs/migration/0.3.x-to-0.4.0.md) for
+the full migration guide and dependency map.
 
 Then create a `.env` file. Agentao requires **all three** provider variables at startup — `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`:
 
@@ -615,7 +636,7 @@ ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
 ### Minimal runnable example
 
 ```bash
-pip install agentao
+pip install 'agentao[cli]'
 printf "OPENAI_API_KEY=sk-your-key-here\nOPENAI_BASE_URL=https://api.openai.com/v1\nOPENAI_MODEL=gpt-5.4\n" > .env
 
 # Verify it works without a UI (exits after one response)
