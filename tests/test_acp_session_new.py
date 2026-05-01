@@ -589,3 +589,29 @@ def test_generate_session_id_format():
 def test_generate_session_id_is_unique():
     ids = {acp_session_new._generate_session_id() for _ in range(1000)}
     assert len(ids) == 1000
+
+
+# ---------------------------------------------------------------------------
+# Harness session id binding
+# ---------------------------------------------------------------------------
+
+def test_session_new_assigns_session_id_to_agent(initialized_server, abs_tmp_dir):
+    """The agent's ``_session_id`` must reflect the persisted ACP session
+    id, not the construction-time UUID4 fallback. Hosts that subscribe
+    via ``agent.events(session_id=<ACP id>)`` rely on this binding —
+    without it harness lifecycle events carry an unrelated UUID and the
+    session-filtered iterator drops every event for the session.
+    """
+    factory, calls = make_recording_factory()
+
+    result = acp_session_new.handle_session_new(
+        initialized_server, _minimal_params(abs_tmp_dir), agent_factory=factory
+    )
+    session_id = result["sessionId"]
+    state = initialized_server.sessions.require(session_id)
+
+    assert state.agent._session_id == session_id
+    # Same agent instance is the one the factory yielded.
+    assert state.agent is calls[0]["transport"]._server.sessions.require(
+        session_id
+    ).agent

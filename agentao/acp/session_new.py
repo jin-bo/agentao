@@ -324,6 +324,21 @@ def handle_session_new(
             mcp_servers=mcp_servers_internal,
         )
 
+        # Bind the persisted ACP session id onto the agent so harness
+        # event payloads carry ``sessionId`` (instead of the agent's
+        # construction-time UUID4 fallback) and ``agent.events(session_id=
+        # <ACP id>)`` actually delivers events for this session. Set
+        # before any tool can run so no event is emitted under the
+        # placeholder id. Best-effort — older Agentao surfaces without
+        # ``_session_id`` should not block ACP startup.
+        try:
+            agent._session_id = session_id
+        except Exception:
+            logger.exception(
+                "acp: session/new could not bind session id %s to agent",
+                session_id,
+            )
+
         # Begin a replay instance for this ACP session when recording is
         # enabled in ``<cwd>/.agentao/settings.json``. Creating the
         # recorder at session birth (rather than first prompt) means the

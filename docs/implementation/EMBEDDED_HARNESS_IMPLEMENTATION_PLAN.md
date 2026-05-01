@@ -3,6 +3,8 @@
 **Date:** 2026-04-27
 **Status:** Strategy locked in;待执行
 **Source PLAN:** `workspace/reports/agentao-embedded-harness-feature-review-2026-04-27.md`
+**Related design:** `docs/design/embedded-harness-contract.md`
+**Follow-up plan:** `docs/implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md`
 **Scope:** 评审 Codex 给出的"如何落地"建议,并基于用户决策定稿为可执行的 PR 序列。
 
 ---
@@ -324,4 +326,3 @@ def __init__(self, ..., working_directory: Optional[Path] = None, ...):
 1. **AGENTAO.md 的处理** —— 现在 `_load_project_instructions` 直接从 `working_directory` 读。in-place 路线下,这个文件读取可以保留在 `Agentao` 里(因为它必然依赖 workspace),但不应该 fallback `Path.cwd()`。PR 3 同步迁过去即可;无需额外讨论 —— 列在这里只是提醒实施时不要漏。
 
 2. ~~PR 5(workspace 必传)的发布时机~~ **已确认:0.2.16 patch 走 soft deprecation,0.3.0 minor 做 hard break(标准 SemVer breaking)。** 拆成 PR 5a(soft + 内部下游迁移,在 0.2.16 与 PR 3b 同 release)+ PR 5b(hard break,0.3.0)。详见第四节 PR 5。决策证据:`Agentao` 在 `agentao/__init__.py:19` 是 `__all__` 暴露的 public API;README + 多处 docs + 自带 `examples/data-workbench` 与 `examples/batch-scheduler` 都直接 `from agentao import Agentao` + `Agentao()`,PyPI 已发布。Hard break 会让 README 抄作业的下游拿到 `TypeError`,而 soft deprecation 的代价仅 ~5 行 `warnings.warn`,不延误清理目标。
-

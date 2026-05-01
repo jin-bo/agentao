@@ -216,6 +216,18 @@ def handle_session_load(
             model=model or None,  # forward persisted model; "" → default
         )
 
+        # Bind the persisted ACP session id onto the agent so subsequent
+        # harness lifecycle events carry the same id the host loaded
+        # against. Done before history hydration so any event the
+        # transport eventually re-emits is correlated correctly.
+        try:
+            agent._session_id = session_id
+        except Exception:
+            logger.exception(
+                "acp: session/load could not bind session id %s to agent",
+                session_id,
+            )
+
         # 6) Hydrate runtime BEFORE replay so subsequent prompts see the
         #    full historical context. We assign through the public
         #    ``messages`` attribute (set by ``Agentao.__init__``) — that

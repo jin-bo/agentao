@@ -702,6 +702,24 @@ class TestSessionLoadHappyPath:
         # Two non-system messages → at least 2 notifications.
         assert out.count(METHOD_SESSION_UPDATE) >= 2
 
+    def test_load_assigns_session_id_to_agent(
+        self, initialized_server, tmp_path
+    ):
+        """Same binding contract as ``session/new``: the agent's
+        ``_session_id`` must reflect the persisted ACP session id so
+        harness lifecycle events are filterable from the host side."""
+        sid = "44444444-4444-4444-4444-444444444444"
+        history = [{"role": "user", "content": "hi"}]
+        _persist_session(tmp_path, sid, history)
+
+        fake = FakeAgent()
+        acp_session_load.handle_session_load(
+            initialized_server,
+            _load_params(tmp_path, sid),
+            agent_factory=make_factory(fake),
+        )
+        assert fake._session_id == sid
+
     def test_load_agent_factory_failure_cleans_up(
         self, initialized_server, tmp_path
     ):

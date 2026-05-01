@@ -75,14 +75,24 @@ def show_status(cli: "AgentaoCLI") -> None:
     summary = cli.agent.get_conversation_summary()
     console.print(f"\n[info]Status:[/info]\n{summary}")
 
-    from ..permissions import PermissionMode
+    # Permission mode label is derived from the public
+    # ``active_permissions()`` snapshot so the CLI reads the same
+    # contract a host application would, instead of reaching into
+    # private ``PermissionEngine`` state.
+    snapshot = cli.agent.active_permissions()
     _mode_labels = {
-        PermissionMode.READ_ONLY:       ("[red]read-only[/red]",       "write & shell tools are blocked"),
-        PermissionMode.WORKSPACE_WRITE: ("[green]workspace-write[/green]", "file writes & safe shell allowed, web asks"),
-        PermissionMode.FULL_ACCESS:     ("[yellow]full-access[/yellow]",   "all tools allowed without prompting"),
+        "read-only":       ("[red]read-only[/red]",       "write & shell tools are blocked"),
+        "workspace-write": ("[green]workspace-write[/green]", "file writes & safe shell allowed, web asks"),
+        "full-access":     ("[yellow]full-access[/yellow]",   "all tools allowed without prompting"),
+        "plan":            ("[cyan]plan[/cyan]",              "research-only mode"),
     }
-    _label, _desc = _mode_labels.get(cli.current_mode, (cli.current_mode.value, ""))
+    _label, _desc = _mode_labels.get(snapshot.mode, (snapshot.mode, ""))
     console.print(f"[info]Permission Mode:[/info] {_label}  [dim]({_desc})[/dim]")
+    if snapshot.loaded_sources:
+        console.print(
+            "[info]Loaded sources:[/info] "
+            + ", ".join(f"[dim]{s}[/dim]" for s in snapshot.loaded_sources)
+        )
 
     md_state = "[green]ON[/green]" if cli.markdown_mode else "[yellow]OFF[/yellow]"
     console.print(f"[info]Markdown Rendering:[/info] {md_state}")
