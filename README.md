@@ -665,9 +665,10 @@ agentao
 | `AuthenticationError` | Invalid API key | Verify the key value in `.env` |
 | `NotFoundError: model not found` | Model name doesn't match provider | Confirm the model is available for your provider |
 | `APIConnectionError` | Network / firewall / proxy issue | Check your internet connection; set `OPENAI_BASE_URL` if behind a proxy |
-| `command not found: agentao` | CLI not on PATH | Confirm install succeeded; add `~/.local/bin` (Linux/Mac) or `Scripts\` (Windows) to `$PATH` |
+| `command not found: agentao` | CLI not on PATH or `[cli]` extra missing | Run `pip install 'agentao[cli]'`; add `~/.local/bin` (Linux/Mac) or `Scripts\` (Windows) to `$PATH` |
+| `agentao CLI requires extra packages (missing: rich)` | Bare core install (post-0.4.0) | Run `pip install 'agentao[cli]'` — see [`docs/migration/0.3.x-to-0.4.0.md`](docs/migration/0.3.x-to-0.4.0.md) |
 | Starts but gives wrong-provider errors | `LLM_PROVIDER` mismatch | Make sure `LLM_PROVIDER` matches the key you provided (e.g. `LLM_PROVIDER=OPENAI` with `OPENAI_API_KEY`) |
-| `ModuleNotFoundError` on startup | Incomplete install | Re-run `pip install agentao`; check Python version ≥ 3.10 |
+| `ModuleNotFoundError` on startup | Incomplete install | Re-run `pip install 'agentao[cli]'` for CLI use, `pip install 'agentao[full]'` for the 0.3.x-equivalent closure; check Python version ≥ 3.10 |
 | `.env` not loaded | File in wrong directory | Run `agentao` from the directory containing `.env`, or place it in `~/.env` |
 
 ---

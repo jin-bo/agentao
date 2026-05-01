@@ -8,8 +8,9 @@
 # 1. 安装 uv（Python 包管理器）
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2. 克隆或安装 Agentao
-pip install agentao      # 或：uv pip install agentao
+# 2. 装 Agentao 并加上 CLI extras（示例 B 走 `agentao` 命令行）
+pip install 'agentao[cli]'      # 或：uv pip install 'agentao[cli]'
+# 嵌入路径（示例 A）裸装 `pip install agentao` 即可。
 # 或从源码：
 git clone https://github.com/jin-bo/agentao && cd agentao && uv sync
 
