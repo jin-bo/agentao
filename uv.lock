@@ -18,22 +18,22 @@ resolution-markers = [
 name = "agentao"
 source = { editable = "." }
 dependencies = [
-    { name = "beautifulsoup4" },
     { name = "filelock" },
     { name = "httpx" },
-    { name = "jieba" },
     { name = "mcp" },
     { name = "openai" },
-    { name = "prompt-toolkit" },
     { name = "pydantic" },
-    { name = "pygments" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
-    { name = "readchar" },
-    { name = "rich" },
 ]
 
 [package.optional-dependencies]
+cli = [
+    { name = "prompt-toolkit" },
+    { name = "pygments" },
+    { name = "readchar" },
+    { name = "rich" },
+]
 crawl4ai = [
     { name = "crawl4ai" },
 ]
@@ -46,19 +46,28 @@ excel = [
     { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 full = [
+    { name = "beautifulsoup4" },
     { name = "crawl4ai" },
     { name = "google-genai" },
+    { name = "jieba" },
     { name = "openpyxl" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pdfplumber" },
     { name = "pillow" },
+    { name = "prompt-toolkit" },
     { name = "pycryptodome" },
+    { name = "pygments" },
     { name = "pymupdf" },
+    { name = "readchar" },
+    { name = "rich" },
     { name = "tiktoken" },
 ]
 google = [
     { name = "google-genai" },
+]
+i18n = [
+    { name = "jieba" },
 ]
 image = [
     { name = "pillow" },
@@ -69,6 +78,9 @@ pdf = [
 ]
 tokenizer = [
     { name = "tiktoken" },
+]
+web = [
+    { name = "beautifulsoup4" },
 ]
 
 [package.dev-dependencies]
@@ -81,14 +93,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "beautifulsoup4", marker = "extra == 'full'", specifier = ">=4.12.0" },
+    { name = "beautifulsoup4", marker = "extra == 'web'", specifier = ">=4.12.0" },
     { name = "crawl4ai", marker = "extra == 'crawl4ai'", specifier = ">=0.8.0" },
     { name = "crawl4ai", marker = "extra == 'full'", specifier = ">=0.8.0" },
     { name = "filelock", specifier = ">=1.4.0" },
     { name = "google-genai", marker = "extra == 'full'", specifier = ">=1.0.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.25.0" },
-    { name = "jieba", specifier = ">=0.42.1" },
+    { name = "jieba", marker = "extra == 'full'", specifier = ">=0.42.1" },
+    { name = "jieba", marker = "extra == 'i18n'", specifier = ">=0.42.1" },
     { name = "mcp", specifier = ">=1.26.0" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "openpyxl", marker = "extra == 'excel'", specifier = ">=3.1.5" },
@@ -99,21 +113,25 @@ requires-dist = [
     { name = "pdfplumber", marker = "extra == 'pdf'", specifier = ">=0.11.9" },
     { name = "pillow", marker = "extra == 'full'", specifier = ">=10.0.0" },
     { name = "pillow", marker = "extra == 'image'", specifier = ">=10.0.0" },
-    { name = "prompt-toolkit", specifier = ">=3.0.52" },
+    { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3.0.52" },
+    { name = "prompt-toolkit", marker = "extra == 'full'", specifier = ">=3.0.52" },
     { name = "pycryptodome", marker = "extra == 'crypto'", specifier = ">=3.23.0" },
     { name = "pycryptodome", marker = "extra == 'full'", specifier = ">=3.23.0" },
     { name = "pydantic", specifier = ">=2" },
-    { name = "pygments", specifier = ">=2.16.0" },
+    { name = "pygments", marker = "extra == 'cli'", specifier = ">=2.16.0" },
+    { name = "pygments", marker = "extra == 'full'", specifier = ">=2.16.0" },
     { name = "pymupdf", marker = "extra == 'full'", specifier = ">=1.27.1" },
     { name = "pymupdf", marker = "extra == 'pdf'", specifier = ">=1.27.1" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "readchar", specifier = ">=4.2.1" },
-    { name = "rich", specifier = ">=13.0.0" },
+    { name = "readchar", marker = "extra == 'cli'", specifier = ">=4.2.1" },
+    { name = "readchar", marker = "extra == 'full'", specifier = ">=4.2.1" },
+    { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
+    { name = "rich", marker = "extra == 'full'", specifier = ">=13.0.0" },
     { name = "tiktoken", marker = "extra == 'full'", specifier = ">=0.7.0" },
     { name = "tiktoken", marker = "extra == 'tokenizer'", specifier = ">=0.7.0" },
 ]
-provides-extras = ["crawl4ai", "crypto", "excel", "full", "google", "image", "pdf", "tokenizer"]
+provides-extras = ["cli", "crawl4ai", "crypto", "excel", "full", "google", "i18n", "image", "pdf", "tokenizer", "web"]
 
 [package.metadata.requires-dev]
 dev = [

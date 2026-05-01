@@ -131,8 +131,31 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install wheel into a clean environment
+      - name: Install wheel into a clean environment (core only)
         run: pip install dist/*.whl
+
+      - name: Core-only embed construct (P0.9 — no [cli]/[web]/[i18n] extras)
+        run: |
+          python -c "
+          import tempfile
+          from pathlib import Path
+          from agentao import Agentao
+          from agentao.llm import LLMClient
+          from agentao.transport import NullTransport
+          agent = Agentao(
+              working_directory=Path(tempfile.mkdtemp()),
+              llm_client=LLMClient(api_key='dummy', base_url='http://localhost:1', model='dummy'),
+              transport=NullTransport(),
+              project_instructions='hi',
+          )
+          try:
+              print('Core-only construct OK')
+          finally:
+              agent.close()
+          "
+
+      - name: Add [cli] extra for CLI surface checks
+        run: pip install 'dist/*.whl[cli]'
 
       - name: Import check — package and public API
         run: |

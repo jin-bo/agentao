@@ -20,30 +20,38 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 dependencies = [
+    # P0.9 core — minimum needed to construct Agentao() and call chat()
+    # against an OpenAI-compatible endpoint. CLI / web-fetch / Chinese
+    # tokenization are opt-in extras.
     "openai>=1.0.0",
-    "rich>=13.0.0",
-    "python-dotenv>=1.0.0",
     "httpx>=0.25.0",
-    "beautifulsoup4>=4.12.0",
-    "pygments>=2.16.0",
-    "readchar>=4.2.1",
-    "prompt-toolkit>=3.0.52",
+    "pydantic>=2",
     "pyyaml>=6.0.3",
     "mcp>=1.26.0",
+    "python-dotenv>=1.0.0",
+    # Used by agentao/skills/registry.py for cross-process locking when
+    # the skills registry is mutated. P0.5 made the import lazy, but it
+    # is still functionally required for any host that activates skills.
+    # Kept in core (deviation from §9.9's literal "6 items") to avoid
+    # surprising ImportError at runtime.
     "filelock>=1.4.0",
-    "jieba>=0.42.1",
-    "pydantic>=2",
 ]
 
 [project.optional-dependencies]
-pdf      = ["pymupdf>=1.27.1", "pdfplumber>=0.11.9"]
-excel    = ["pandas>=2.0", "openpyxl>=3.1.5"]
-image    = ["Pillow>=10.0.0"]
-crypto   = ["pycryptodome>=3.23.0"]
-google   = ["google-genai>=1.0.0"]
-crawl4ai = ["crawl4ai>=0.8.0"]
+# CLI surface — `agentao` console script + interactive UI
+cli       = ["rich>=13.0.0", "prompt-toolkit>=3.0.52", "readchar>=4.2.1", "pygments>=2.16.0"]
+# Web fetch tool — HTML parsing
+web       = ["beautifulsoup4>=4.12.0"]
+# Chinese-text tokenization for memory keyword retrieval
+i18n      = ["jieba>=0.42.1"]
+pdf       = ["pymupdf>=1.27.1", "pdfplumber>=0.11.9"]
+excel     = ["pandas>=2.0", "openpyxl>=3.1.5"]
+image     = ["Pillow>=10.0.0"]
+crypto    = ["pycryptodome>=3.23.0"]
+google    = ["google-genai>=1.0.0"]
+crawl4ai  = ["crawl4ai>=0.8.0"]
 tokenizer = ["tiktoken>=0.7.0"]
-full     = ["agentao[pdf,excel,image,crypto,google,crawl4ai,tokenizer]"]
+full      = ["agentao[cli,web,i18n,pdf,excel,image,crypto,google,crawl4ai,tokenizer]"]
 
 [project.urls]
 Homepage = "https://github.com/jin-bo/agentao"
