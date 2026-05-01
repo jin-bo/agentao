@@ -182,3 +182,38 @@ jobs:
           assert 'skill-creator' in skills, f'skill-creator not found in {bundled}: {skills}'
           print('Bundled skills OK:', skills)
           "
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 4 · Embedding examples (P0.6) — each runs its own smoke
+  # ─────────────────────────────────────────────────────────────
+  examples:
+    name: Examples · ${{ matrix.example }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example:
+          - fastapi-background
+          - pytest-fixture
+          - jupyter-session
+          - slack-bot
+          - wechat-bot
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Sync example dependencies (with dev extras)
+        working-directory: examples/${{ matrix.example }}
+        run: uv sync --python 3.12 --extra dev
+
+      - name: Run example smoke
+        working-directory: examples/${{ matrix.example }}
+        env:
+          PYTHONPATH: .
+        run: uv run --python 3.12 pytest tests/ -v --tb=short

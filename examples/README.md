@@ -2,6 +2,20 @@
 
 Runnable companions to [Part 7 of the developer guide](../developer-guide/en/part-7/). Each subdirectory is a self-contained project — `cd` in, install, run.
 
+## Canonical embedding shapes (P0.6 — offline smoke in CI)
+
+Four minimum-shape samples that run end-to-end against a fake LLM, no API key required. Each has its own `pyproject.toml`, ≤ 50-line README, and a `tests/` smoke suite.
+
+| Directory | Host shape | Smoke |
+|-----------|------------|-------|
+| [`fastapi-background/`](./fastapi-background/) | FastAPI route + asyncio background task; per-request `Agentao` | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
+| [`pytest-fixture/`](./pytest-fixture/) | Drop-in `agent` / `agent_with_reply` / `fake_llm_client` fixtures | `uv sync --extra dev && uv run pytest tests/` |
+| [`jupyter-session/`](./jupyter-session/) | One `Agentao` per kernel; `events()` drives display | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
+| [`slack-bot/`](./slack-bot/) | slack-bolt `app_mention` → one turn; channel-scoped permissions | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
+| [`wechat-bot/`](./wechat-bot/) | WeChat polling daemon → one turn; contact-scoped permissions | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
+
+## Larger blueprints (live LLM, end-to-end stacks)
+
 | # | Directory | Blueprint | Stack | Run |
 |---|-----------|-----------|-------|-----|
 | A | [`saas-assistant/`](./saas-assistant/) | SaaS assistant API | Python · FastAPI · SSE | `uv run uvicorn app.main:app --reload` |
