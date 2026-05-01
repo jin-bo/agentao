@@ -91,6 +91,23 @@ def start_replay(
         agent.tool_runner._transport = adapter
     except Exception:
         pass
+    # Bridge the public harness EventStream into the same recorder so
+    # tool_lifecycle / subagent_lifecycle / permission_decision events
+    # land in one audit artifact instead of two parallel streams. The
+    # sink registers as a synchronous observer on the stream; end_replay
+    # detaches it so a later start cycle gets a fresh sink.
+    try:
+        from ..harness.replay_projection import HarnessReplaySink
+
+        agent._harness_replay_sink = HarnessReplaySink(
+            recorder, stream=agent._harness_events,
+        )
+    except Exception as exc:
+        # Audit storage failure must never break the runtime.
+        agent.llm.logger.warning(
+            "replay: harness sink attach failed: %s", exc,
+        )
+        agent._harness_replay_sink = None
     recorder.record(
         _ReplayKind.SESSION_STARTED,
         payload={
@@ -144,6 +161,15 @@ def end_replay(agent: "Agentao") -> None:
                 agent.tool_runner._transport = inner
         except Exception:
             pass
+    # Detach the harness→replay observer so the next start_replay()
+    # gets a fresh registration and we never double-write events.
+    sink = getattr(agent, "_harness_replay_sink", None)
+    if sink is not None:
+        try:
+            sink.detach()
+        except Exception:
+            pass
+        agent._harness_replay_sink = None
     agent._replay_recorder = None
     agent._replay_adapter = None
     # Best-effort retention pass: instance ended.

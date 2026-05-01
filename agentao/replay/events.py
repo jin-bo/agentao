@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 
 
 class EventKind:
@@ -30,6 +30,15 @@ class EventKind:
       ``memory_cleared``, ``model_changed``,
       ``permission_mode_changed`` / ``readonly_mode_changed``,
       ``plugin_hook_fired``, ``session_loaded`` / ``session_forked``.
+    - 1.2 — adds three harness-projected lifecycle kinds so embedded
+      hosts have a single audit artifact instead of two parallel
+      streams (replay JSONL + harness ``events()``):
+      ``tool_lifecycle``, ``subagent_lifecycle``, ``permission_decision``.
+      Their payload shapes mirror the public Pydantic models in
+      :mod:`agentao.harness.models`; the v1.2 schema embeds those
+      payload schemas as the per-kind variant. v1.0 / v1.1 schemas
+      remain frozen and continue to validate older replays — see
+      ``docs/replay/schema-policy.md``.
     """
 
     REPLAY_HEADER = "replay_header"
@@ -128,9 +137,25 @@ class EventKind:
 
     V1_1 = V1_0 | V1_1_NEW
 
+    # v1.2 event kinds — harness lifecycle projections. Each maps 1:1
+    # to a public model in :mod:`agentao.harness.models`; the schema
+    # generator embeds the Pydantic-derived payload schema in the v1.2
+    # ``oneOf`` variant.
+    TOOL_LIFECYCLE = "tool_lifecycle"
+    SUBAGENT_LIFECYCLE = "subagent_lifecycle"
+    PERMISSION_DECISION = "permission_decision"
+
+    V1_2_NEW = frozenset({
+        TOOL_LIFECYCLE,
+        SUBAGENT_LIFECYCLE,
+        PERMISSION_DECISION,
+    })
+
+    V1_2 = V1_1 | V1_2_NEW
+
     # Back-compat alias. Existing callers that imported ``EventKind.ALL``
     # keep working; new code should pick the version-specific set.
-    ALL = V1_1
+    ALL = V1_2
 
 
 @dataclass

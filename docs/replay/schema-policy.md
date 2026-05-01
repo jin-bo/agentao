@@ -1,7 +1,7 @@
 # Replay schema versioning policy
 
 This document defines how the JSON Schema files under `schemas/` evolve.
-It exists so that "what does `SCHEMA_VERSION = "1.1"` mean?" has a
+It exists so that "what does `SCHEMA_VERSION = "1.2"` mean?" has a
 machine-checkable answer instead of living in a dataclass docstring.
 
 ## Source of truth
@@ -55,8 +55,10 @@ Required when:
 - Tightening a payload schema in a way that existing on-disk replays
   would fail validation.
 
-Major bumps freeze the previous schema file. `schemas/replay-event-1.1.json`
-keeps validating every replay file written under `1.x`, indefinitely.
+Major bumps freeze the previous schema file. `schemas/replay-event-1.0.json`,
+`schemas/replay-event-1.1.json`, and `schemas/replay-event-1.2.json` each
+keep validating every replay file written under their respective minor,
+indefinitely.
 
 ### Deprecation
 
@@ -75,12 +77,23 @@ Removal is a major bump; deprecation alone never is.
 |----------|-------------------------------------|----------------------------------------------------------------------|
 | Envelope | `additionalProperties: false`       | The envelope is small and shared. Surprises here mean a bug.         |
 | `kind`   | `enum` of the version's vocabulary  | Discriminator must be exhaustive for `oneOf` to type-check cleanly.  |
-| Payload  | `additionalProperties: true` (now)  | Per-kind payloads are still being modelled. Lenient until tightened. |
+| Payload  | mixed — see below                   | v1.2 starts the per-kind tightening; everything else stays lenient.  |
 
-When per-kind payloads land, each variant should pick its own
-`additionalProperties` setting. Long-tail diagnostic kinds may stay
-lenient; protocol-shaped kinds (everything that another runtime might
-re-emit) should be strict.
+Per-kind payload policy:
+
+- **v1.2 harness-projected kinds** (`tool_lifecycle`,
+  `subagent_lifecycle`, `permission_decision`) — payload is a typed
+  schema derived from the public Pydantic model in
+  `agentao.harness.models` (`extra="forbid"`, so
+  `additionalProperties: false`), extended with the sanitizer's
+  optional projection metadata (`redaction_hits`, `redacted`,
+  `redacted_fields`). A model field rename / removal therefore
+  surfaces as schema drift in CI rather than silently producing
+  replays that fail downstream validators.
+- **All other kinds** — payload is `additionalProperties: true`. Long-tail
+  diagnostic kinds may stay lenient; protocol-shaped kinds
+  (everything that another runtime might re-emit) follow the v1.2
+  pattern when they are tightened.
 
 ## Backward-compatibility guarantees
 
@@ -119,3 +132,20 @@ belongs in `agentao/replay/schema.py` so it is unit-testable.
   model_changed, permission_mode_changed, readonly_mode_changed,
   plugin_hook_fired, session_loaded, session_forked. Backward-compatible
   with 1.0 — every 1.0 kind survives.
+- **1.2** — adds three harness-projected lifecycle kinds so embedded
+  hosts have a single audit artifact instead of two parallel streams
+  (`Agentao.events()` + replay JSONL): `tool_lifecycle`,
+  `subagent_lifecycle`, `permission_decision`. Each new variant carries
+  a **typed payload** generated from the matching public Pydantic model
+  (`ToolLifecycleEvent` / `SubagentLifecycleEvent` /
+  `PermissionDecisionEvent`) in `agentao.harness.models`, extended with
+  the sanitizer's optional projection metadata
+  (`redaction_hits`, `redacted`, `redacted_fields` — see
+  `agentao.replay.sanitize.SANITIZER_INJECTED_FIELDS`, which is the
+  single source of truth shared with the schema generator). Forward
+  projection (`HarnessReplaySink`) and reverse projection
+  (`replay_payload_to_harness_event`) live in
+  `agentao.harness.replay_projection`; `start_replay()` auto-attaches
+  the sink so every published harness event also lands in the JSONL.
+  Backward-compatible with 1.1 — every 1.1 kind survives, and a 1.0 /
+  1.1 reader treats the three new kinds as unknown and skips them.

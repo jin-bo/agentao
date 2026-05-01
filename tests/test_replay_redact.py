@@ -339,14 +339,15 @@ def test_recorder_event_line_has_per_event_redaction_hits(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Schema 1.1: header capture_flags, replay_footer
+# Schema 1.2: header capture_flags, replay_footer
 # ---------------------------------------------------------------------------
 
 
-def test_header_declares_schema_1_1():
+def test_header_declares_latest_schema_version():
+    """SCHEMA_VERSION tracks the highest supported version."""
     from agentao.replay.events import SCHEMA_VERSION
 
-    assert SCHEMA_VERSION == "1.1"
+    assert SCHEMA_VERSION == "1.2"
 
 
 def test_header_records_capture_flags_when_provided(tmp_path):
@@ -360,7 +361,9 @@ def test_header_records_capture_flags_when_provided(tmp_path):
     rec.close()
     first = json.loads(rec.path.read_text().splitlines()[0])
     assert first["kind"] == "replay_header"
-    assert first["payload"]["schema_version"] == "1.1"
+    from agentao.replay.events import SCHEMA_VERSION
+
+    assert first["payload"]["schema_version"] == SCHEMA_VERSION
     assert first["payload"]["capture_flags"] == flags
 
 

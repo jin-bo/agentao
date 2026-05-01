@@ -1,0 +1,963 @@
+{
+  "$id": "urn:agentao:schema:replay-event:1.2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One JSONL line in a replay file. Source of truth: agentao/replay/events.py - regenerate via scripts/write_replay_schema.py.",
+  "oneOf": [
+    {
+      "properties": {
+        "kind": {
+          "const": "ask_user_answered"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "ask_user_requested"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "assistant_text_chunk"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "assistant_thought_chunk"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "background_notification_injected"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "context_compressed"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "error"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "llm_call_completed"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "llm_call_delta"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "llm_call_io"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "llm_call_started"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "memory_cleared"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "memory_delete"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "memory_write"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "model_changed"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "permission_decision"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "description": "Public projection of a single permission decision.\n\nFires on **every** decision; hosts that do not render ``allow``\ndecisions must still drain the iterator to avoid backpressure.\n\n``matched_rule`` intentionally has no per-rule source label in MVP.\nUse ``loaded_sources`` for global context. ``reason`` is a\nredacted/truncated host-facing string.",
+          "properties": {
+            "decided_at": {
+              "description": "RFC 3339 UTC timestamp with the canonical 'Z' suffix; offsets such as +00:00 are intentionally rejected for canonical form.",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+              "title": "Decided At",
+              "type": "string"
+            },
+            "decision_id": {
+              "title": "Decision Id",
+              "type": "string"
+            },
+            "event_type": {
+              "const": "permission_decision",
+              "default": "permission_decision",
+              "title": "Event Type",
+              "type": "string"
+            },
+            "loaded_sources": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Loaded Sources",
+              "type": "array"
+            },
+            "matched_rule": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Matched Rule"
+            },
+            "mode": {
+              "enum": [
+                "read-only",
+                "workspace-write",
+                "full-access",
+                "plan"
+              ],
+              "title": "Mode",
+              "type": "string"
+            },
+            "outcome": {
+              "enum": [
+                "allow",
+                "deny",
+                "prompt"
+              ],
+              "title": "Outcome",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reason"
+            },
+            "redacted": {
+              "type": "string"
+            },
+            "redacted_fields": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "redaction_hits": {
+              "additionalProperties": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "session_id": {
+              "title": "Session Id",
+              "type": "string"
+            },
+            "tool_call_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Tool Call Id"
+            },
+            "tool_name": {
+              "title": "Tool Name",
+              "type": "string"
+            },
+            "turn_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Turn Id"
+            }
+          },
+          "required": [
+            "session_id",
+            "tool_name",
+            "decision_id",
+            "outcome",
+            "mode",
+            "loaded_sources",
+            "decided_at"
+          ],
+          "title": "PermissionDecisionEvent",
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "permission_mode_changed"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "plugin_hook_fired"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "readonly_mode_changed"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "replay_footer"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "replay_header"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "session_ended"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "session_forked"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "session_loaded"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "session_saved"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "session_started"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "session_summary_written"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "skill_activated"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "skill_deactivated"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "subagent_completed"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "subagent_lifecycle"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "description": "Public lineage fact for a sub-agent task/session.\n\nUnlike :class:`ToolLifecycleEvent`, this model exposes ``cancelled``\nas a distinct phase because sub-agent lineage tracking benefits from\nexplicit cancellation in the phase value. ``ToolLifecycleEvent``\nkeeps cancellation under ``phase=\"failed\", outcome=\"cancelled\"`` to\nkeep the tool-call shape compact.\n\n``task_summary`` is redacted/truncated, never raw user input or raw\nchild-agent prompt text.",
+          "properties": {
+            "child_session_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Child Session Id"
+            },
+            "child_task_id": {
+              "title": "Child Task Id",
+              "type": "string"
+            },
+            "completed_at": {
+              "anyOf": [
+                {
+                  "description": "RFC 3339 UTC timestamp with the canonical 'Z' suffix; offsets such as +00:00 are intentionally rejected for canonical form.",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Completed At"
+            },
+            "error_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Error Type"
+            },
+            "event_type": {
+              "const": "subagent_lifecycle",
+              "default": "subagent_lifecycle",
+              "title": "Event Type",
+              "type": "string"
+            },
+            "parent_session_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Parent Session Id"
+            },
+            "parent_task_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Parent Task Id"
+            },
+            "phase": {
+              "enum": [
+                "spawned",
+                "completed",
+                "failed",
+                "cancelled"
+              ],
+              "title": "Phase",
+              "type": "string"
+            },
+            "redacted": {
+              "type": "string"
+            },
+            "redacted_fields": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "redaction_hits": {
+              "additionalProperties": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "session_id": {
+              "title": "Session Id",
+              "type": "string"
+            },
+            "started_at": {
+              "description": "RFC 3339 UTC timestamp with the canonical 'Z' suffix; offsets such as +00:00 are intentionally rejected for canonical form.",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+              "title": "Started At",
+              "type": "string"
+            },
+            "task_summary": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Task Summary"
+            }
+          },
+          "required": [
+            "session_id",
+            "child_task_id",
+            "phase",
+            "started_at"
+          ],
+          "title": "SubagentLifecycleEvent",
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "subagent_started"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_completed"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_confirmation_requested"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_confirmation_resolved"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_lifecycle"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "description": "Public lifecycle envelope for a single tool call.\n\nMust not include full tool args, raw stdout/stderr, raw diffs, MCP\nraw responses, or unredacted large outputs. ``summary`` is a\nredacted/truncated host-facing string.\n\n``phase=\"failed\"`` covers both execution errors and cancellation;\nhosts read ``outcome`` to distinguish error from cancelled. For\ncancellation, ``error_type`` is ``None``.",
+          "properties": {
+            "completed_at": {
+              "anyOf": [
+                {
+                  "description": "RFC 3339 UTC timestamp with the canonical 'Z' suffix; offsets such as +00:00 are intentionally rejected for canonical form.",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Completed At"
+            },
+            "error_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Error Type"
+            },
+            "event_type": {
+              "const": "tool_lifecycle",
+              "default": "tool_lifecycle",
+              "title": "Event Type",
+              "type": "string"
+            },
+            "outcome": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "ok",
+                    "error",
+                    "cancelled"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Outcome"
+            },
+            "phase": {
+              "enum": [
+                "started",
+                "completed",
+                "failed"
+              ],
+              "title": "Phase",
+              "type": "string"
+            },
+            "redacted": {
+              "type": "string"
+            },
+            "redacted_fields": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "redaction_hits": {
+              "additionalProperties": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "session_id": {
+              "title": "Session Id",
+              "type": "string"
+            },
+            "started_at": {
+              "description": "RFC 3339 UTC timestamp with the canonical 'Z' suffix; offsets such as +00:00 are intentionally rejected for canonical form.",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+              "title": "Started At",
+              "type": "string"
+            },
+            "summary": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Summary"
+            },
+            "tool_call_id": {
+              "title": "Tool Call Id",
+              "type": "string"
+            },
+            "tool_name": {
+              "title": "Tool Name",
+              "type": "string"
+            },
+            "turn_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Turn Id"
+            }
+          },
+          "required": [
+            "session_id",
+            "tool_call_id",
+            "tool_name",
+            "phase",
+            "started_at"
+          ],
+          "title": "ToolLifecycleEvent",
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_output_chunk"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_result"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "tool_started"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "turn_completed"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "turn_started"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "user_message"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    }
+  ],
+  "properties": {
+    "event_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "instance_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "ask_user_answered",
+        "ask_user_requested",
+        "assistant_text_chunk",
+        "assistant_thought_chunk",
+        "background_notification_injected",
+        "context_compressed",
+        "error",
+        "llm_call_completed",
+        "llm_call_delta",
+        "llm_call_io",
+        "llm_call_started",
+        "memory_cleared",
+        "memory_delete",
+        "memory_write",
+        "model_changed",
+        "permission_decision",
+        "permission_mode_changed",
+        "plugin_hook_fired",
+        "readonly_mode_changed",
+        "replay_footer",
+        "replay_header",
+        "session_ended",
+        "session_forked",
+        "session_loaded",
+        "session_saved",
+        "session_started",
+        "session_summary_written",
+        "skill_activated",
+        "skill_deactivated",
+        "subagent_completed",
+        "subagent_lifecycle",
+        "subagent_started",
+        "tool_completed",
+        "tool_confirmation_requested",
+        "tool_confirmation_resolved",
+        "tool_lifecycle",
+        "tool_output_chunk",
+        "tool_result",
+        "tool_started",
+        "turn_completed",
+        "turn_started",
+        "user_message"
+      ],
+      "type": "string"
+    },
+    "parent_turn_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "payload": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "seq": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "session_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "ts": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "turn_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "event_id",
+    "session_id",
+    "instance_id",
+    "seq",
+    "ts",
+    "kind",
+    "payload"
+  ],
+  "title": "Agentao replay event (v1.2)",
+  "type": "object"
+}

@@ -23,9 +23,18 @@ is written to return a best-effort result rather than raise.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from .redact import merge_hits, scan_recursive
+
+
+# Top-level field names :func:`sanitize_event` may inject into the
+# cleaned payload as projection metadata. Shared so the JSON schema
+# generator and reverse-projection helpers stay in sync with the
+# fields actually written here.
+SANITIZER_INJECTED_FIELDS: FrozenSet[str] = frozenset(
+    {"redacted", "redacted_fields", "redaction_hits"}
+)
 
 
 # ---------------------------------------------------------------------------

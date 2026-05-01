@@ -58,11 +58,18 @@ def test_render_is_deterministic() -> None:
 # ---------------------------------------------------------------------------
 
 
+_VERSION_KINDS = {
+    "1.0": EventKind.V1_0,
+    "1.1": EventKind.V1_1,
+    "1.2": EventKind.V1_2,
+}
+
+
 @pytest.mark.parametrize("version", SUPPORTED_VERSIONS)
 def test_kind_enum_matches_eventkind(version: str) -> None:
     schema = build_event_schema(version)
     enum_kinds = set(schema["properties"]["kind"]["enum"])
-    expected = EventKind.V1_0 if version == "1.0" else EventKind.V1_1
+    expected = _VERSION_KINDS[version]
     assert enum_kinds == set(expected)
 
 
@@ -109,6 +116,41 @@ def test_payload_remains_lenient_until_per_kind_modeling(version: str) -> None:
 def test_v11_is_superset_of_v10() -> None:
     """Backward-compat promise: 1.0 vocabulary survives into 1.1."""
     assert EventKind.V1_0 <= EventKind.V1_1
+
+
+def test_v12_is_superset_of_v11() -> None:
+    """Backward-compat promise: 1.1 vocabulary survives into 1.2."""
+    assert EventKind.V1_1 <= EventKind.V1_2
+
+
+def test_v12_adds_only_harness_projection_kinds() -> None:
+    """v1.2's net-new kinds are the three harness-projection kinds."""
+    assert EventKind.V1_2_NEW == frozenset({
+        EventKind.TOOL_LIFECYCLE,
+        EventKind.SUBAGENT_LIFECYCLE,
+        EventKind.PERMISSION_DECISION,
+    })
+
+
+def test_v12_kinds_have_typed_payloads() -> None:
+    """The v1.2 harness-projection variants must carry a typed payload schema.
+
+    Drift tripwire: a maintainer who removes the per-kind payload
+    derivation in :mod:`agentao.replay.schema` must update this test
+    too — silently regressing the payload to ``{}`` would defeat the
+    schema as an audit-validation contract.
+    """
+    schema = build_event_schema("1.2")
+    variants = {
+        v["properties"]["kind"]["const"]: v for v in schema["oneOf"]
+    }
+    for kind in EventKind.V1_2_NEW:
+        payload = variants[kind]["properties"].get("payload")
+        assert payload is not None, f"v1.2 kind {kind!r} has no typed payload"
+        # Pydantic-derived payloads always have ``properties`` and at
+        # least the ``event_type`` discriminator field.
+        assert "properties" in payload
+        assert "event_type" in payload["properties"]
 
 
 def test_schema_version_constant_matches_latest_supported() -> None:
