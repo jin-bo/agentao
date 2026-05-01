@@ -155,7 +155,11 @@ jobs:
           "
 
       - name: Add [cli] extra for CLI surface checks
-        run: pip install 'dist/*.whl[cli]'
+        run: |
+          # Glob expansion happens in the shell, not in pip — so resolve
+          # the concrete wheel path first and then append the extra.
+          WHEEL=$(ls dist/agentao-*.whl)
+          pip install "${WHEEL}[cli]"
 
       - name: Import check — package and public API
         run: |
