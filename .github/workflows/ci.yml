@@ -74,8 +74,13 @@ jobs:
       - name: Install Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: uv sync --python ${{ matrix.python-version }}
+      - name: Install dependencies (with cli/web/i18n extras for CLI-dependent unit tests)
+        # Default unit tests import agentao.cli.AgentaoCLI / web fetch tool /
+        # jieba memory paths, which after the P0.9 dependency split live
+        # in optional extras. Install all three so the existing test
+        # surface still resolves; the core-only contract is separately
+        # validated by the smoke job and tests/test_dependency_split.py.
+        run: uv sync --python ${{ matrix.python-version }} --extra cli --extra web --extra i18n
 
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short
