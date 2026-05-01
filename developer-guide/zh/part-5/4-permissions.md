@@ -197,6 +197,35 @@ agent = Agentao(
 )
 ```
 
+### 从宿主侧读取当前策略
+
+需要在自家 UI 上展示当前策略（或写入审计日志）的宿主，调用 harness 合约里的稳定 getter `agent.active_permissions()`：
+
+```python
+snap = agent.active_permissions()
+# snap.mode            -> "workspace-write"
+# snap.rules           -> [...]                 # list[dict]，JSON-safe
+# snap.loaded_sources  -> ["preset:workspace-write",
+#                          "project:.agentao/permissions.json",
+#                          "user:/Users/me/.agentao/permissions.json"]
+```
+
+`loaded_sources` 是稳定字符串标签：`preset:<mode>`、`project:<path>`、`user:<path>`、`injected:<name>`。MVP **不** 暴露逐规则 provenance —— 需要规则级 provenance 的宿主应将 `loaded_sources` 与自己注入的策略元数据组合。
+
+宿主在引擎之上叠加额外策略时（运行期计算的 allowlist、租户级 overlay 等），通过 `add_loaded_source(...)` 标注自己的 provenance：
+
+```python
+engine.rules.insert(0, {"tool": "mcp_slack_*", "action": "ask"})
+engine.add_loaded_source("injected:tenant-overlay")
+
+snap = agent.active_permissions()
+# snap.loaded_sources 中包含 "injected:tenant-overlay"
+```
+
+快照带缓存；缓存在 `set_mode()` 时失效，在 `add_loaded_source(...)` **传入新标签** 时失效（重复标签会被合并、不触发重建）。直接修改 `engine.rules` 不会让缓存失效 —— 原地改完后请补一次 `set_mode(engine.active_mode)`（同模式重设也会清缓存）或 `add_loaded_source("injected:<unique-name>")` 触发重建。
+
+同一份数据也驱动公共事件流上 `PermissionDecisionEvent.loaded_sources` —— 详见[附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)。
+
 ## 典型配置模板
 
 ### 模板 A · 严格生产（客户端产品）

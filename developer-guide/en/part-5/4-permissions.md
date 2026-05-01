@@ -194,6 +194,35 @@ agent = Agentao(
 )
 ```
 
+### Reading the active policy from the host
+
+Hosts that need to render the current policy in their own UI (or pin it into an audit log) call `agent.active_permissions()` — the host-stable getter on the harness contract:
+
+```python
+snap = agent.active_permissions()
+# snap.mode            -> "workspace-write"
+# snap.rules           -> [...]                 # list[dict], JSON-safe
+# snap.loaded_sources  -> ["preset:workspace-write",
+#                          "project:.agentao/permissions.json",
+#                          "user:/Users/me/.agentao/permissions.json"]
+```
+
+`loaded_sources` carries stable string labels: `preset:<mode>`, `project:<path>`, `user:<path>`, `injected:<name>`. The MVP intentionally does **not** expose per-rule provenance — hosts that need rule-level provenance combine `loaded_sources` with their own injected policy metadata.
+
+If the host layers extra policy on top of the engine (a runtime-computed allowlist, a tenant-scoped overlay, etc.), it labels its own provenance via `add_loaded_source(...)`:
+
+```python
+engine.rules.insert(0, {"tool": "mcp_slack_*", "action": "ask"})
+engine.add_loaded_source("injected:tenant-overlay")
+
+snap = agent.active_permissions()
+# snap.loaded_sources includes "injected:tenant-overlay"
+```
+
+The snapshot is cached; the cache is invalidated on `set_mode()` and on `add_loaded_source(...)` **with a new label** (duplicate labels are coalesced and do not force a rebuild). Direct mutation of `engine.rules` does not invalidate the cache — if you mutate rules in place, follow up with `set_mode(engine.active_mode)` (a no-op-mode set still clears the cache) or label the change via `add_loaded_source("injected:<unique-name>")`.
+
+The same surface drives `PermissionDecisionEvent.loaded_sources` on the public event stream — see [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-harness-contract).
+
 ## Common templates
 
 ### Template A · Strict production (customer product)

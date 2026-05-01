@@ -770,6 +770,8 @@ For fully silent headless use with no callbacks, call `build_from_environment(wo
 
 For end-to-end embedding patterns — capability injection (`FileSystem` / `ShellExecutor` / `MemoryStore` / `MCPRegistry`), async usage (`agent.arun(...)`), opt-in `replay` / `sandbox` / `bg_store`, and the 0.2.15 → 0.3.0 migration guide — see **[docs/EMBEDDING.md](docs/EMBEDDING.md)**.
 
+The host-stable observation surface lives in `agentao.harness`: `agent.events()` returns an async iterator over `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent`, and `agent.active_permissions()` returns a JSON-safe `ActivePermissions` snapshot (with `loaded_sources` provenance). Internal `AgentEvent` / `Transport.emit()` are richer but not version-stable — production hosts should target the harness contract. Full reference: **[docs/api/harness.md](docs/api/harness.md)**.
+
 ### ACP (Agent Client Protocol) Mode
 
 Launch Agentao as an [ACP](https://github.com/zed-industries/agent-client-protocol) stdio JSON-RPC server so ACP-compatible clients (e.g. Zed) can drive Agentao as their agent runtime:

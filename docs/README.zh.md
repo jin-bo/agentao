@@ -15,6 +15,8 @@
 - 模型和 provider 切换：[MODEL_SWITCHING.md](MODEL_SWITCHING.md)
 - 技能系统使用：[SKILLS_GUIDE.md](SKILLS_GUIDE.md)
 - 查看具体功能说明：见下方[功能文档](#功能文档)
+- 宿主稳定面（事件流、权限快照、Schema 快照）：见下方 [API 参考](#api-参考)
+- 嵌入 harness 的设计记录：见下方 [设计记录](#设计记录)
 - 查看实现与设计资料：见下方[实现说明](#实现说明)
 
 ## 文档目录
@@ -39,8 +41,21 @@
 - [features/CHATAGENT_MD_FEATURE.md](features/CHATAGENT_MD_FEATURE.md)
 - [features/funds-data-cleaning-parallelism.md](features/funds-data-cleaning-parallelism.md)
 
+### API 参考
+
+- [api/harness.md](api/harness.md) — `agentao.harness` 宿主稳定面：`ActivePermissions`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`PermissionDecisionEvent`、`EventStream`
+- [api/harness.zh.md](api/harness.zh.md) — 上文中文镜像
+- [schema/harness.events.v1.json](schema/harness.events.v1.json) — 公共事件 + 权限快照面的 JSON schema 快照
+- [schema/harness.acp.v1.json](schema/harness.acp.v1.json) — 宿主面 ACP 载荷的 JSON schema 快照
+
+### 设计记录
+
+- [design/embedded-harness-contract.md](design/embedded-harness-contract.md)
+- [design/metacognitive-boundary.md](design/metacognitive-boundary.md)
+
 ### 贡献者与内部资料
 
+- [implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md](implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md)
 - [implementation/TOOL_CONFIRMATION.md](implementation/TOOL_CONFIRMATION.md)
 - [implementation/ACP_CLIENT_PROJECT_SERVERS.md](implementation/ACP_CLIENT_PROJECT_SERVERS.md)
 - [implementation/PLUGIN_SYSTEM_MVP_PLAN.md](implementation/PLUGIN_SYSTEM_MVP_PLAN.md)
@@ -101,6 +116,28 @@
 | [features/DATE_CONTEXT_FEATURE.md](features/DATE_CONTEXT_FEATURE.md) | 日期时间上下文注入 |
 | [features/CHATAGENT_MD_FEATURE.md](features/CHATAGENT_MD_FEATURE.md) | 项目指令自动加载 |
 | [features/funds-data-cleaning-parallelism.md](features/funds-data-cleaning-parallelism.md) | 一个特定功能工作流说明 |
+
+## API 参考
+
+这些文档构成嵌入 Agentao 的稳定宿主合约。只面向这一层的宿主可以在版本升级中保持前向兼容。内部运行时类型（`AgentEvent`、`ToolExecutionResult`、`PermissionEngine`）刻意不在该面内 —— 边界划分见下方[设计记录](#设计记录)。
+
+| 文档 | 范围 |
+|------|------|
+| [api/harness.md](api/harness.md) | `agentao.harness` 包：`ActivePermissions`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`PermissionDecisionEvent`、`EventStream`、schema 导出辅助；运行时身份契约；事件投递语义 |
+| [api/harness.zh.md](api/harness.zh.md) | 上文中文镜像 |
+| [schema/harness.events.v1.json](schema/harness.events.v1.json) | 公共事件 + 权限快照面的发布期 schema 快照；`tests/test_harness_schema.py` 强制字节相等 |
+| [schema/harness.acp.v1.json](schema/harness.acp.v1.json) | 宿主面 ACP 载荷的发布期 schema 快照 |
+
+Schema 快照已 check-in。任何改变 wire form 的 model 变更必须在同一 PR 内同时更新 Pydantic 模型与快照。
+
+## 设计记录
+
+这些文档记录架构决定与宿主面合约。它们本身不是实现计划，但实现计划在涉及对外行为时应当回链到这里。
+
+| 文档 | 范围 |
+|------|------|
+| [design/embedded-harness-contract.md](design/embedded-harness-contract.md) | 宿主面 harness 合约：schema 纪律、事件流 MVP、CLI 与 harness 边界 |
+| [design/metacognitive-boundary.md](design/metacognitive-boundary.md) | 宿主可注入的"自我 vs 项目"边界协议 |
 
 ## 实现说明
 

@@ -2,6 +2,19 @@
 
 Agent 在运行过程中通过 `transport.emit(event)` 推送结构化事件。本节是**全量事件参考**——每个事件的触发时机、`data` 负载、典型用法。
 
+::: warning HarnessEvent vs AgentEvent —— 选对面
+本节文档化的是**内部 transport 事件**，它们驱动 CLI、replay 与调试工具，比宿主真正需要的更丰富。其字段与 `EventType` 枚举值可能随版本变化。
+
+把 Agentao 嵌入其他应用时，优先使用**宿主面稳定面**：
+
+| 面 | 在哪里 | 稳定性 | 何时使用 |
+|---|---|---|---|
+| `agentao.harness.HarnessEvent`（`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`PermissionDecisionEvent`） | `agent.events()` 异步迭代器 | 稳定，附 schema 快照 | 生产宿主、审计管线、多租户部署 |
+| `agentao.transport.AgentEvent` | `Transport.emit()` 回调 | 内部 —— 可能随版本变化 | 需要丰富流式细节并接受变更的 CLI / UI 集成 |
+
+两者并存是有意为之：harness 事件是运行时的**红线投影**，不是 `AgentEvent` 的一对一镜像。完整宿主合约见 [附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约) 与 [`docs/api/harness.md`](../../../docs/api/harness.md)。
+:::
+
 ## `AgentEvent` 数据结构
 
 源码：`agentao/transport/events.py`

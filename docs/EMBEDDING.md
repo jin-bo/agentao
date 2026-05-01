@@ -308,7 +308,113 @@ agent = Agentao(
 
 ---
 
-## 7. Migration guide: 0.2.15 → 0.2.16 → 0.3.0
+## 7. Host-facing harness contract
+
+`Agentao(...)` and the embedding factory cover *constructing* an agent.
+The **harness contract** covers everything a host needs to *observe* a
+running agent without reaching into internals: the active permission
+policy, what the agent is doing, what sub-agents it spawned, and why
+each capability was allowed or denied.
+
+The stable surface lives in `agentao.harness`. Internal runtime types
+(`AgentEvent`, `ToolExecutionResult`, `PermissionEngine`) are deliberately
+**not** part of this contract — they may change in any release.
+
+```python
+from agentao.harness import (
+    ActivePermissions,
+    HarnessEvent,
+    PermissionDecisionEvent,
+    SubagentLifecycleEvent,
+    ToolLifecycleEvent,
+)
+```
+
+### `agent.active_permissions()`
+
+Returns a JSON-safe `ActivePermissions` snapshot of the policy used by
+the next tool decision:
+
+```python
+snap = agent.active_permissions()
+# snap.mode            -> "workspace-write"
+# snap.rules           -> [...]
+# snap.loaded_sources  -> ["preset:workspace-write",
+#                          "project:.agentao/permissions.json",
+#                          "user:/Users/me/.agentao/permissions.json",
+#                          "injected:host"]
+```
+
+Hosts that layer policy on top of the engine call
+`agent.permission_engine.add_loaded_source("injected:<name>")` so the
+snapshot reflects their provenance. The snapshot is cached; the cache
+is invalidated on `set_mode()` and `add_loaded_source()`.
+
+### `agent.events(session_id=None)` — async iterator
+
+Returns an async iterator over `HarnessEvent` (a discriminated union of
+`ToolLifecycleEvent`, `SubagentLifecycleEvent`, and
+`PermissionDecisionEvent`). Pass `session_id=` to filter; pass `None`
+to subscribe to all sessions on this `Agentao` instance.
+
+```python
+async def watch(agent):
+    async for ev in agent.events():
+        if isinstance(ev, ToolLifecycleEvent):
+            print(ev.tool_name, ev.phase, ev.outcome)
+        elif isinstance(ev, PermissionDecisionEvent):
+            print("perm", ev.tool_name, ev.outcome, ev.matched_rule)
+        elif isinstance(ev, SubagentLifecycleEvent):
+            print("subagent", ev.child_session_id, ev.phase)
+```
+
+Delivery semantics (the full contract is in
+[`docs/api/harness.md`](api/harness.md)):
+
+- Same-session ordering is guaranteed.
+- Within one `tool_call_id`, `PermissionDecisionEvent` is emitted before
+  `ToolLifecycleEvent(phase="started")`.
+- Cross-session global ordering is not guaranteed.
+- **No replay.** Events emitted before the first subscription are
+  dropped; a subscriber that starts mid-turn receives only future
+  events.
+- Backpressure is host-pulled. When the bounded subscription queue is
+  full, the producer blocks for matching events — Agentao does not grow
+  an unbounded queue.
+- Cancelling the iterator releases queue/subscription resources.
+- MVP supports one public stream consumer per `Agentao` instance.
+
+### What is *not* on the harness surface
+
+These are deliberately deferred (see
+[`docs/design/embedded-harness-contract.md`](design/embedded-harness-contract.md)):
+
+- Public agent graph / descendants store API.
+- Host-facing hooks list/disable API.
+- Host-facing MCP reload / lifecycle events.
+- Local plugin export/import; remote plugin share.
+- External session import.
+- Generated client SDKs.
+
+The CLI may build on the same events for its own UI, but its stores and
+commands are not promoted to the harness API.
+
+### Schema snapshots
+
+Each release ships checked-in JSON schema snapshots:
+
+- `docs/schema/harness.events.v1.json` — events + permissions surface
+- `docs/schema/harness.acp.v1.json` — host-facing ACP payloads
+
+`tests/test_harness_schema.py` regenerates the schemas from the
+Pydantic models and asserts byte-equality. A model change that shifts
+the wire form must update both the model and the snapshot in the same
+PR. Adding an optional field is backwards-compatible; removing or
+renaming requires a schema version bump.
+
+---
+
+## 8. Migration guide: 0.2.15 → 0.2.16 → 0.3.0
 
 The embedded-harness epic shipped over three releases. Code that
 worked on 0.2.15 should land on 0.3.0 with two mechanical changes.
@@ -369,6 +475,8 @@ The full 0.3.0 changelog block lives in [`CHANGELOG.md`](../CHANGELOG.md).
 | `build_from_environment(...)` | [`agentao/embedding/factory.py`](../agentao/embedding/factory.py) |
 | Capability protocols | [`agentao/capabilities/`](../agentao/capabilities/) |
 | Default IO impls | `LocalFileSystem`, `LocalShellExecutor`, `SQLiteMemoryStore`, `FileBackedMCPRegistry` |
+| Host-facing harness contract | [`agentao/harness/`](../agentao/harness/) — public types; full reference at [`docs/api/harness.md`](api/harness.md) |
+| Schema snapshots | [`docs/schema/harness.events.v1.json`](schema/harness.events.v1.json), [`docs/schema/harness.acp.v1.json`](schema/harness.acp.v1.json) |
 | Working examples | [`examples/`](../examples/) — `data-workbench`, `batch-scheduler`, `ticket-automation`, `saas-assistant`, `headless_worker.py` |
 | Transport API | [`docs/ACP.md`](ACP.md) (also covers headless / SDK transport) |
 | Permission rules | [`docs/features/TOOL_CONFIRMATION_FEATURE.md`](features/TOOL_CONFIRMATION_FEATURE.md) |

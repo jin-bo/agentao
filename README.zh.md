@@ -762,6 +762,8 @@ response = agent.chat("总结当前目录")
 
 完整的嵌入实践——能力注入（`FileSystem` / `ShellExecutor` / `MemoryStore` / `MCPRegistry`）、异步用法（`agent.arun(...)`）、可选的 `replay` / `sandbox` / `bg_store`，以及 0.2.15 → 0.3.0 迁移指南——请参阅 **[docs/EMBEDDING.md](docs/EMBEDDING.md)**。
 
+宿主侧的稳定观察面在 `agentao.harness`：`agent.events()` 返回 `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` 的异步迭代器；`agent.active_permissions()` 返回 JSON-safe 的 `ActivePermissions` 快照（含 `loaded_sources` provenance）。内部的 `AgentEvent` / `Transport.emit()` 信息更丰富但不保证版本稳定 —— 生产宿主请对齐 harness 合约。完整参考：**[docs/api/harness.md](docs/api/harness.md)**。
+
 ### ACP（Agent Client Protocol）模式
 
 将 Agentao 作为 [ACP](https://github.com/zed-industries/agent-client-protocol) stdio JSON-RPC 服务器启动，让兼容 ACP 的客户端（如 Zed）将 Agentao 作为其智能体运行时驱动：

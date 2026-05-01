@@ -13,6 +13,7 @@ Authoritative `__all__`:
 - `from agentao.memory.manager import MemoryManager`
 - `from agentao.cancellation import ...` → `CancellationToken`, `AgentCancelledError`
 - `from agentao.acp_client import ...` → `ACPManager`, `ACPClient`, `AcpClientError`, `AcpErrorCode`, `AcpRpcError`, `AcpInteractionRequiredError`, `AcpClientConfig`, `AcpServerConfig`, `AcpConfigError`, `PromptResult`, `ServerState`, `load_acp_client_config` (and lower-level re-exports — see `agentao.acp_client.__init__.py` docstring for which are "stable embedding surface" vs. "implementation detail")
+- `from agentao.harness import ...` → `ActivePermissions`, `EventStream`, `StreamSubscribeError`, `HarnessEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `RFC3339UTCString`, `export_harness_event_json_schema`, `export_harness_acp_json_schema` — host-facing harness contract, see [A.10](#a-10-embedded-harness-contract)
 
 ## A.1 `Agentao`
 
@@ -94,6 +95,8 @@ CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars
 | `close` | `close() -> None` | Release MCP subprocesses, close DB handles. Call in `finally:`. |
 | `set_provider` | `set_provider(api_key: str, base_url: str | None = None, model: str | None = None) -> None` | Runtime LLM swap. |
 | `set_model` | `set_model(model: str) -> str` | Swap model only; returns the previous id. |
+| `events` | `events(session_id: str | None = None) -> AsyncIterator[HarnessEvent]` | Subscribe to public harness events (tool / sub-agent / permission lifecycle). No replay; bounded backpressure. See [A.10](#a-10-embedded-harness-contract). |
+| `active_permissions` | `active_permissions() -> ActivePermissions` | Snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). JSON-safe. See [A.10](#a-10-embedded-harness-contract). |
 
 ### Attributes
 
@@ -488,6 +491,105 @@ Loaded lazily via `from agentao import SkillManager`. Most callers reach it via 
 | `get_skill_info(name) -> dict | None` | Returns `{name, description, path, ...}` |
 | `activate_skill(name, task_description)` | Turn on — injects SKILL.md + active reference files into system prompt |
 | `enable_skill(name)` / `disable_skill(name)` | Persistent enable/disable in config |
+
+## A.10 Embedded Harness Contract
+
+The `agentao.harness` package is the **stable host-facing API surface** for embedding Agentao. Internal runtime types (`AgentEvent`, `ToolExecutionResult`, `PermissionEngine`) are intentionally not part of this surface — they may change in any release. Hosts that target only `agentao.harness` (plus the `Agentao(...)` constructor and the methods marked above) stay forward-compatible.
+
+Full reference: [`docs/api/harness.md`](../../../docs/api/harness.md). Design rationale: [`docs/design/embedded-harness-contract.md`](../../../docs/design/embedded-harness-contract.md).
+
+### Public exports
+
+```python
+from agentao.harness import (
+    ActivePermissions,
+    EventStream,
+    StreamSubscribeError,
+    HarnessEvent,
+    ToolLifecycleEvent,
+    SubagentLifecycleEvent,
+    PermissionDecisionEvent,
+    RFC3339UTCString,
+    export_harness_event_json_schema,
+    export_harness_acp_json_schema,
+)
+```
+
+| Symbol | Purpose |
+|---|---|
+| `ActivePermissions` | Read-only snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). |
+| `ToolLifecycleEvent` | Public envelope for one tool call. `phase ∈ {started, completed, failed}`; cancellation surfaces as `phase="failed", outcome="cancelled"`. |
+| `SubagentLifecycleEvent` | Lineage fact for a sub-agent task/session. `phase ∈ {spawned, completed, failed, cancelled}` — `cancelled` is a distinct phase here. |
+| `PermissionDecisionEvent` | Per-decision projection. Fires on `allow` / `deny` / `prompt`; consumers must drain even allow events. |
+| `HarnessEvent` | Discriminated union of the three event models (Pydantic discriminator: `event_type`). |
+| `RFC3339UTCString` | Constrained timestamp type. Canonical `Z` suffix only — `+00:00` offsets are rejected. |
+| `EventStream` | Runtime side of `Agentao.events()`. Producers call `publish()`; consumers iterate `subscribe()`. |
+| `StreamSubscribeError` | Raised when a second concurrent subscriber for the same `session_id` filter is requested (MVP supports one stream consumer per `Agentao` instance). |
+| `export_harness_event_json_schema()` | Emit the canonical JSON schema for events + permissions. Used by `tests/test_harness_schema.py` for byte-equality against `docs/schema/harness.events.v1.json`. |
+| `export_harness_acp_json_schema()` | Emit the canonical JSON schema for host-facing ACP payloads. Snapshot lives at `docs/schema/harness.acp.v1.json`. |
+
+### `agent.events(session_id=None)`
+
+Returns an async iterator over `HarnessEvent`. Pass `session_id=` to filter; pass `None` to subscribe to every session owned by this `Agentao` instance.
+
+```python
+async for ev in agent.events():
+    if isinstance(ev, ToolLifecycleEvent):
+        ...
+    elif isinstance(ev, PermissionDecisionEvent):
+        ...
+    elif isinstance(ev, SubagentLifecycleEvent):
+        ...
+```
+
+Delivery contract:
+
+- Same-session ordering is guaranteed; cross-session global ordering is not.
+- Within one `tool_call_id`, `PermissionDecisionEvent` precedes `ToolLifecycleEvent(phase="started")`.
+- **No replay.** Events emitted before the first subscription are dropped.
+- Backpressure is host-pulled via a bounded queue — slow consumers block the producer for matching events rather than dropping them.
+- Cancelling the iterator releases queue/subscription resources.
+- MVP supports one public stream consumer per `Agentao` instance.
+
+### `agent.active_permissions()`
+
+Returns a JSON-safe `ActivePermissions` snapshot:
+
+```python
+snap = agent.active_permissions()
+# snap.mode            -> "workspace-write" (Literal-typed)
+# snap.rules           -> list[dict]
+# snap.loaded_sources  -> ["preset:workspace-write",
+#                          "project:.agentao/permissions.json",
+#                          "user:/Users/me/.agentao/permissions.json",
+#                          "injected:host"]
+```
+
+`loaded_sources` carries stable string labels: `preset:<mode>`, `project:<path>`, `user:<path>`, `injected:<name>`. The MVP does **not** expose per-rule provenance — hosts that need it combine `loaded_sources` with their own injected policy metadata.
+
+If no `permission_engine` is configured, the runtime returns a permissive fallback: `mode="workspace-write"`, empty `rules`, `loaded_sources=["default:no-engine"]`. The label tells hosts they're seeing the engine-less fallback rather than a configured policy.
+
+Hosts that layer policy on top of the engine call `agent.permission_engine.add_loaded_source("injected:<name>")` so the snapshot reflects their provenance. The cache is invalidated on `set_mode()` and `add_loaded_source()`.
+
+### Schema snapshots
+
+Each release ships checked-in JSON schema snapshots:
+
+- [`docs/schema/harness.events.v1.json`](../../../docs/schema/harness.events.v1.json) — events + permissions surface
+- [`docs/schema/harness.acp.v1.json`](../../../docs/schema/harness.acp.v1.json) — host-facing ACP payloads
+
+`tests/test_harness_schema.py` regenerates the schemas from the Pydantic models and asserts byte-equality. A model change that shifts the wire form must update both the model and the snapshot in the same PR. Adding an optional field is backwards-compatible; removing or renaming requires a schema version bump.
+
+### Non-goals (explicitly outside the contract)
+
+- Public agent graph / descendants store API
+- Host-facing hooks list/disable API
+- Host-facing MCP reload / lifecycle events
+- Local plugin export/import; remote plugin share
+- External session import
+- Generated client SDKs
+
+The CLI may build on the same events for its own UI, but its stores and commands are not promoted to the harness API.
 
 ---
 

@@ -2,6 +2,19 @@
 
 The agent pushes structured events through `transport.emit(event)`. This section is the **complete event catalog** — triggers, `data` payloads, typical use.
 
+::: warning HarnessEvent vs AgentEvent — pick the right surface
+The events documented here are **internal transport events**. They drive the CLI, replay, and debug tooling, and they are richer than what hosts need. Their fields and `EventType` enum values may change between releases.
+
+If you are embedding Agentao in another application, prefer the **stable host-facing surface** instead:
+
+| Surface | Where | Stability | When to use |
+|---|---|---|---|
+| `agentao.harness.HarnessEvent` (`ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`) | `agent.events()` async iterator | Stable, schema-snapshotted | Production hosts, audit pipelines, multi-tenant deployments |
+| `agentao.transport.AgentEvent` | `Transport.emit()` callback | Internal — may change per release | CLI/UI integrations that need rich streaming detail and accept churn |
+
+The two surfaces coexist on purpose: harness events are a deliberate **redacted projection** of the runtime, not a one-to-one mirror of `AgentEvent`. See [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-harness-contract) and [`docs/api/harness.md`](../../../docs/api/harness.md) for the host-facing contract.
+:::
+
 ## `AgentEvent` data structure
 
 Source: `agentao/transport/events.py`
