@@ -414,10 +414,11 @@ renaming requires a schema version bump.
 
 ---
 
-## 8. Migration guide: 0.2.15 → 0.2.16 → 0.3.0
+## 8. Migration guide: 0.2.15 → 0.2.16 → 0.3.0 → 0.3.1
 
-The embedded-harness epic shipped over three releases. Code that
-worked on 0.2.15 should land on 0.3.0 with two mechanical changes.
+The embedded-harness epic shipped over four releases. Code that
+worked on 0.2.15 should land on 0.3.1 with two mechanical changes;
+0.3.0 → 0.3.1 itself requires no host code changes.
 
 ### From 0.2.15
 
@@ -464,6 +465,35 @@ dispatch. Add `working_directory=` and you are done.
   directory. The deprecation warning is gone with the fallback.
 
 The full 0.3.0 changelog block lives in [`CHANGELOG.md`](../CHANGELOG.md).
+
+### From 0.3.0
+
+`0.3.1` is an Added-only patch in the 0.3.x series — strictly
+backwards-compatible. **No required code change** to upgrade. Existing
+calls into `Agentao(...)`, `build_from_environment(...)`, capability
+protocols, and the transport layer keep working unchanged.
+
+What's available to opt into:
+
+- `agent.events(session_id=None)` — async iterator over `HarnessEvent`
+  (`ToolLifecycleEvent` / `SubagentLifecycleEvent` /
+  `PermissionDecisionEvent`). Stable host-facing observation surface;
+  see [section 7](#7-host-facing-harness-contract) above.
+- `agent.active_permissions()` — JSON-safe `ActivePermissions` snapshot
+  (`mode`, `rules`, `loaded_sources`).
+- `agentao.harness` — public package with `ActivePermissions`,
+  `ToolLifecycleEvent`, `SubagentLifecycleEvent`,
+  `PermissionDecisionEvent`, `EventStream`, `HarnessEvent`,
+  `RFC3339UTCString`, and the schema export helpers.
+- New direct dependency: `pydantic>=2`. If your environment already
+  pins Pydantic v1, lift the pin before upgrading.
+
+What stays internal (do **not** depend on for forward compatibility):
+
+- `agentao.transport.AgentEvent` and `Transport.emit(...)` — richer but
+  may change between releases.
+- `agentao.runtime.identity.*` — id helpers; private to the runtime.
+- `agentao.harness.projection.*` — internal redaction layer.
 
 ---
 

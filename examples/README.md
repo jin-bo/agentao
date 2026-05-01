@@ -10,6 +10,13 @@ Runnable companions to [Part 7 of the developer guide](../developer-guide/en/par
 | D | [`data-workbench/`](./data-workbench/) | Data analysis workbench | Python · DuckDB · matplotlib | `uv run python -m src.workbench` |
 | E | [`batch-scheduler/`](./batch-scheduler/) | Nightly scheduled job | Python · cron / CronJob | `uv run python -m src.daily_digest` |
 
+## Single-file demos
+
+| File | What it shows | Run |
+|------|---------------|-----|
+| [`headless_worker.py`](./headless_worker.py) | `ACPManager` driving an inline mock ACP server (success / interaction-required / cancel paths). Authoritative Week 1 regression fixture for [`docs/features/headless-runtime.md`](../docs/features/headless-runtime.md). | `uv run python examples/headless_worker.py` |
+| [`harness_events.py`](./harness_events.py) | Public harness contract (since 0.3.1): `agent.events()` async iterator + `agent.active_permissions()` snapshot, wired alongside `agent.arun(...)` via `asyncio.gather`. See [`docs/api/harness.md`](../docs/api/harness.md). | `OPENAI_API_KEY=sk-... uv run python examples/harness_events.py` |
+
 ## Conventions
 
 - **Independent dependencies** — each project has its own `pyproject.toml` or `package.json`; nothing is shared. Install inside each directory.

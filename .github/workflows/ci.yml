@@ -29,6 +29,9 @@ jobs:
       - name: Verify replay schemas match agentao/replay/events.py
         run: uv run --python 3.12 python scripts/write_replay_schema.py --check
 
+      - name: Verify harness schemas match agentao/harness/models.py + agentao/acp/schema.py
+        run: uv run --python 3.12 python scripts/write_harness_schema.py --check
+
   # ─────────────────────────────────────────────────────────────
   # Job 1 · Unit tests across Python 3.10 / 3.11 / 3.12
   # ─────────────────────────────────────────────────────────────
