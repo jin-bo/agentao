@@ -95,8 +95,8 @@ CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars
 | `close` | `close() -> None` | Release MCP subprocesses, close DB handles. Call in `finally:`. |
 | `set_provider` | `set_provider(api_key: str, base_url: str | None = None, model: str | None = None) -> None` | Runtime LLM swap. |
 | `set_model` | `set_model(model: str) -> str` | Swap model only; returns the previous id. |
-| `events` | `events(session_id: str | None = None) -> AsyncIterator[HarnessEvent]` | Subscribe to public harness events (tool / sub-agent / permission lifecycle). No replay; bounded backpressure. See [A.10](#a-10-embedded-harness-contract). |
-| `active_permissions` | `active_permissions() -> ActivePermissions` | Snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). JSON-safe. See [A.10](#a-10-embedded-harness-contract). |
+| `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncIterator[HarnessEvent]` | Subscribe to public harness events (tool / sub-agent / permission lifecycle). No replay; bounded backpressure. See [A.10](#a-10-embedded-harness-contract). |
+| `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | Snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). JSON-safe. See [A.10](#a-10-embedded-harness-contract). |
 
 ### Attributes
 
@@ -493,6 +493,8 @@ Loaded lazily via `from agentao import SkillManager`. Most callers reach it via 
 | `enable_skill(name)` / `disable_skill(name)` | Persistent enable/disable in config |
 
 ## A.10 Embedded Harness Contract
+
+*Stable since 0.3.1.*
 
 The `agentao.harness` package is the **stable host-facing API surface** for embedding Agentao. Internal runtime types (`AgentEvent`, `ToolExecutionResult`, `PermissionEngine`) are intentionally not part of this surface — they may change in any release. Hosts that target only `agentao.harness` (plus the `Agentao(...)` constructor and the methods marked above) stay forward-compatible.
 
