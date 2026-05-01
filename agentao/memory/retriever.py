@@ -107,6 +107,11 @@ _CJK_BOUNDARY_RE = re.compile(
 _CONTENT_SNIPPET_LEN = 500
 
 
+# Module-level latch so the jieba-missing warning fires once per process,
+# not once per recall. Guarded by reads inside ``_cjk_segment``.
+_jieba_missing_warned = False
+
+
 # ---------------------------------------------------------------------------
 # Token normalization helpers
 # ---------------------------------------------------------------------------
@@ -144,8 +149,21 @@ def _cjk_segment(text: str) -> set:
     (mirrors the Latin path's len > 1 filter, since single Chinese chars are
     too ambiguous to carry useful retrieval signal and would flood the inverted
     index with high-frequency function words like "的"/"了").
+
+    Degrades to an empty set with a one-time warning if ``jieba`` is not
+    installed (the ``[i18n]`` extra is opt-in post-0.4.0).
     """
-    import jieba
+    try:
+        import jieba
+    except ImportError:
+        global _jieba_missing_warned
+        if not _jieba_missing_warned:
+            logger.warning(
+                "jieba is not installed; CJK memory retrieval is degraded. "
+                "Run `pip install 'agentao[i18n]'` to enable Chinese-text recall."
+            )
+            _jieba_missing_warned = True
+        return set()
 
     _ensure_jieba_ready()
     result: set = set()
@@ -306,7 +324,12 @@ class MemoryRetriever:
                 tokens.add(norm)
 
         # --- CJK path (jieba segmentation on CJK runs in the original text) ---
-        tokens.update(_cjk_segment(text))
+        # Skip the import + lazy-init entirely for pure-Latin text so that
+        # an embedded host without `[i18n]` installed pays no cost on the
+        # common case AND never trips the jieba-missing branch unless the
+        # query actually contains CJK characters.
+        if _CJK_RE.search(text):
+            tokens.update(_cjk_segment(text))
 
         return tokens
 
