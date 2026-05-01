@@ -96,7 +96,8 @@ See [TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md) for wh
 - **Paths.**
   1. `~/.agentao/permissions.json` (user-level) — loaded first.
   2. `<cwd>/.agentao/permissions.json` (project-level) — **prepended** to the rule list so it is evaluated **before** user rules.
-- **Loader.** `permissions.py::PermissionEngine._load_file`. Missing file or malformed JSON → empty rule list (no startup error).
+- **Loader.** `permissions.py::PermissionEngine._load_file`. Missing file or malformed JSON → empty rule list (no startup error). A file that loads successfully also contributes a `loaded_sources` label (`project:.agentao/permissions.json`, `user:<path>`) returned from `PermissionEngine.active_permissions()` and `Agentao.active_permissions()` — see [`docs/api/harness.md`](api/harness.md).
+- **Public getter.** `PermissionEngine.active_permissions()` returns a cached, JSON-safe `ActivePermissions` snapshot (`mode`, `rules`, `loaded_sources`). Hosts that layer policy on top can call `add_loaded_source("injected:<name>")` so the snapshot reflects their provenance. The cache is invalidated on `set_mode()` and `add_loaded_source()`.
 - **Evaluation order.**
   - Modes `read-only` / `workspace-write`: `[project rules] → [user rules] → [active mode preset rules]` (first match wins).
   - Modes `full-access` / `plan`: `[active mode preset rules] → [project rules] → [user rules]` — presets cannot be overridden.
