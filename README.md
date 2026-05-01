@@ -518,11 +518,6 @@ Agentao is built around three foundational principles:
 
 ## Installation
 
-> **Heads-up: 0.4.0 break approaching.** Bare `pip install agentao` will
-> install the embedding-only core. CLI users want `pip install 'agentao[cli]'`;
-> for the 0.3.x bundled closure use `pip install 'agentao[full]'`.
-> Migration guide: [`docs/migration/0.3.x-to-0.4.0.md`](docs/migration/0.3.x-to-0.4.0.md).
-
 If your goal is simply "get Agentao running", read this section together with [Minimum Viable Configuration](#minimum-viable-configuration). If you're contributing to the codebase, you can jump to [For contributors (source install)](#for-contributors-source-install).
 
 ### Prerequisites

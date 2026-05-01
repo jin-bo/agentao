@@ -7,22 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-> **Migration heads-up — 0.4.0 break approaching.** `pip install agentao`
-> will shrink to an embedding-only core (7 packages). `rich` /
-> `prompt-toolkit` / `readchar` / `pygments` move to `[cli]`;
-> `beautifulsoup4` to `[web]`; `jieba` to `[i18n]`. The public Python API
-> is unchanged. CLI users want `pip install 'agentao[cli]'`. The
-> zero-behaviour-change upgrade line is `pip install 'agentao[full]'`.
-> Full guide: [`docs/migration/0.3.x-to-0.4.0.md`](docs/migration/0.3.x-to-0.4.0.md).
+## [0.4.0] — 2026-05-01
 
-Targeting **0.4.0** — the single break release of the Path A P0 plan
+The single break release of the Path A P0 plan
 (see `docs/design/path-a-roadmap.md` §3.2). The break is a packaging
-change only; no public Python API is renamed, removed, or signature-
+change only — no public Python API is renamed, removed, or signature-
 changed. The "no-change" upgrade line is `pip install 'agentao[full]'`,
-which reproduces the 0.3.x bundled closure exactly.
-
-Pre-tag protocol per §13.1 (T-7 dress rehearsal) and §13.2 (pre-announce)
-must complete before the tag.
+which reproduces the 0.3.x bundled closure exactly (CI-enforced against
+a 122-package baseline).
 
 ### Breaking changes
 
@@ -67,16 +59,51 @@ must complete before the tag.
 
   Implementation: `agentao/cli/__init__.py` defines `entrypoint()`
   inline (no module-level imports of rich / prompt_toolkit / readchar /
-  pygments) so the module load itself stays free of CLI deps; the
-  first heavy import is wrapped in try/except. All other public names
-  in `agentao.cli` lazy-load via PEP 562 `__getattr__`. Three new
-  slow-marked tests in `tests/test_cli_missing_dep_message.py` cover
-  the friendly-message path, the post-`[cli]` boot path, and the
-  no-trace-leak invariant.
+  pygments) so the module load itself stays free of CLI deps; every
+  `[cli]` dep is preflighted via `importlib.util.find_spec` so a
+  partial install (rich present, prompt_toolkit missing) still hits
+  the friendly path instead of leaking a "Fatal error" from
+  `entrypoints.run_init_wizard`'s broad `except Exception`. All other
+  public names in `agentao.cli` lazy-load via PEP 562 `__getattr__`.
+  Slow-marked tests in `tests/test_cli_missing_dep_message.py` cover
+  the friendly-message path, the post-`[cli]` boot path, the
+  no-trace-leak invariant, and the partial-install regression.
 
 - **`docs/migration/0.3.x-to-0.4.0.md`** — full migration guide with
   install matrix, dependency map, common project-shape recipes, and
   a `[full]` fallback for any path the migration may have missed.
+
+### Changed
+
+- **Web tools omitted from the registry without `[web]`** —
+  `WebFetchTool` and `WebSearchTool` register only when
+  `beautifulsoup4` is importable. In a core install the model never
+  sees `web_fetch` / `web_search` in its tool schema (vs. the previous
+  behaviour of registering them and failing at execute time with an
+  opaque ImportError). Mirrors the existing `bg_store is not None`
+  pattern that already conditionally registers the background-agent
+  tools.
+
+- **Memory recall degrades gracefully without `[i18n]`** —
+  `MemoryRetriever.tokenize()` skips the jieba code path entirely
+  when the query has no CJK characters (cheap regex check). On a
+  CJK-bearing query in a `[i18n]`-less install, `_cjk_segment()`
+  returns an empty set with a one-time warning pointing at
+  `pip install 'agentao[i18n]'` instead of silently failing.
+
+- **CI test environment installs `[cli,web,i18n]`** — the existing
+  unit-test surface imports `from agentao.cli import AgentaoCLI`,
+  the web-fetch tool, and the jieba memory path. The default `Test`
+  matrix job now installs those three extras so the suite still
+  resolves in the core-split world. The core-only contract is
+  independently validated by the smoke job and
+  `tests/test_dependency_split.py`.
+
+- **Shared test helper `tests/support/wheel.py`** — `REPO_ROOT`,
+  `find_wheel()`, `require_wheel()`, and `make_venv()` centralized
+  out of the venv-creation pattern that was duplicated across
+  `test_clean_install_smoke.py`, `test_dependency_split.py`, and
+  `test_cli_missing_dep_message.py`.
 
 ## [0.3.4] — 2026-05-01
 
