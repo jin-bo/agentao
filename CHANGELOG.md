@@ -7,6 +7,87 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-05-01
+
+Second release executing the **Path A roadmap** (see
+`docs/design/path-a-roadmap.md`). Lands the §11 P0.4–P0.8 working set
+in five logical commits. Still fully additive — no required code
+change to upgrade from 0.3.3 (the only namespace move,
+`agentao/display.py` → `agentao/cli/display.py`, had no in-tree
+consumers).
+
+### Added
+
+- **P0.4 typing gate** — `agentao.harness` now ships clean under
+  `mypy --strict`. New `agentao.harness.protocols` submodule re-exports
+  the capability `Protocol` types (`FileSystem`, `ShellExecutor`,
+  `MCPRegistry`, `MemoryStore`) plus their value shapes so embedding
+  hosts have one stable import path instead of reaching into
+  `agentao.capabilities.*`. CI gains a `Typing gate` job; tests cover
+  the package, a downstream-shaped consumer, and `__all__` drift.
+- **P0.5 lazy imports** — `from agentao import Agentao` no longer pulls
+  in the OpenAI SDK, BeautifulSoup, jieba, filelock, or rich (or their
+  transitive click/pygments/starlette/uvicorn closure via the MCP SDK).
+  Embedded hosts pay only for what they use; the deferred libs load on
+  first runtime use. Two new enforcement tests
+  (`tests/test_no_cli_deps_in_core.py`, `tests/test_import_cost.py`)
+  catch regressions both statically (AST walk for top-level imports
+  outside `agentao/cli/`) and at runtime (`python -X importtime`).
+- **P0.7 embedded-contract regression tests** — four new test files
+  guard the host-facing properties most likely to silently break:
+  `tests/test_no_host_logger_pollution.py` (no root-logger mutation
+  through import + construction), `tests/test_multi_agentao_isolation.py`
+  (two `Agentao()` instances share no state across messages, tools,
+  skills, working_directory, or session_id), `tests/test_arun_events_cancel.py`
+  (asyncio cancellation propagates to the chat token; events drain;
+  no orphan tasks), and `tests/test_clean_install_smoke.py` (slow,
+  CI-only — installs the wheel into a fresh venv and runs the README
+  embed snippet). A `slow` pytest marker is registered; default runs
+  skip it.
+- **P0.8 replay schema v1.2 + harness→replay projection** — the
+  replay JSONL format gains three harness-projected event kinds
+  (`tool_lifecycle`, `subagent_lifecycle`, `permission_decision`) and
+  `start_replay()` auto-wires a `HarnessReplaySink` that observes the
+  agent's harness `EventStream` and projects every published event
+  into the recorder, so embedded hosts have one audit artifact
+  instead of two parallel streams. Each new kind's `oneOf` variant carries a typed payload
+  derived from the public Pydantic model in `agentao.harness.models`,
+  so a model field rename / removal surfaces as schema drift in CI.
+  v1.0 / v1.1 schemas remain frozen and continue to validate older
+  replays. New `agentao.harness.replay_projection` module:
+  `HarnessReplaySink` (forward projection), `replay_payload_to_harness_event`
+  (reverse). The typed payload schemas explicitly allow the sanitizer's
+  optional projection metadata (`redaction_hits`, `redacted`,
+  `redacted_fields`) so a redacted harness event still validates against
+  the v1.2 schema while genuine model drift still surfaces as a property
+  mismatch. New `tests/test_harness_to_replay_projection.py` covers the
+  round trip, validates produced payloads against the v1.2 schema, and
+  verifies a redacted payload (with a planted SECRET_PATTERN-shaped
+  string) still passes schema validation. `SCHEMA_VERSION` bumps from
+  `1.1` → `1.2`.
+- **P0.6 five canonical embedding examples** — minimum-shape samples
+  that run end-to-end against a fake LLM (no API key) under their own
+  `pyproject.toml`: `examples/fastapi-background/` (per-request agent
+  + asyncio background task), `examples/pytest-fixture/` (drop-in
+  `agent` / `agent_with_reply` / `fake_llm_client` fixtures),
+  `examples/jupyter-session/` (one agent per kernel, `events()`
+  driving display, with a runnable `session.ipynb`),
+  `examples/slack-bot/` (slack-bolt `app_mention` handler with
+  channel-scoped `PermissionEngine` injection), and
+  `examples/wechat-bot/` (polling daemon with contact-scoped
+  `PermissionEngine`, transport-agnostic via a `WeChatClient`
+  Protocol — inspired by `Wechat-ggGitHub/wechat-claude-code`). New CI
+  `examples` job matrix runs each example's smoke suite in a fresh
+  venv. `examples/README.md` gains a top-of-file table mapping each
+  host shape to its directory.
+
+### Changed
+
+- **`agentao/display.py` moved to `agentao/cli/display.py`** — the
+  `DisplayController` was used only by the CLI. Hosts that imported
+  `agentao.display` directly should now import from `agentao.cli.display`
+  (no in-tree consumers were affected).
+
 ## [0.3.3] — 2026-04-30
 
 First release executing the **Path A roadmap** (see
