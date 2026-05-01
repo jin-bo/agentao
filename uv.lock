@@ -87,6 +87,7 @@ web = [
 dev = [
     { name = "build" },
     { name = "mypy" },
+    { name = "packaging" },
     { name = "pytest" },
     { name = "twine" },
 ]
@@ -137,6 +138,7 @@ provides-extras = ["cli", "crawl4ai", "crypto", "excel", "full", "google", "i18n
 dev = [
     { name = "build", specifier = ">=1.2.2" },
     { name = "mypy", specifier = ">=1.13.0" },
+    { name = "packaging", specifier = ">=25.0" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "twine", specifier = ">=6.1.0" },
 ]
