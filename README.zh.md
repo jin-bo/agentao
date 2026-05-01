@@ -62,11 +62,18 @@ agent.close()
 
 如果你想从终端交互式驱动 Agentao 而不是嵌入它，走 CLI 路径，3 分钟可跑起来：
 
-1. 安装：
+1. 安装并加上 CLI extras（rich、prompt-toolkit、readchar、pygments）。
+   0.4.0 起 `pip install agentao` 只装嵌入用的最小核心，CLI 终端 UI
+   通过 `[cli]` 显式声明：
 
 ```bash
-pip install agentao
+pip install 'agentao[cli]'
 ```
+
+> **从 0.3.x 升级？** 0.3.x 的 `pip install agentao` 默认捆绑 CLI 依赖。
+> 0.4.0 把这些包搬进 `[cli]`。最快"零变更"升级行：
+> `pip install 'agentao[full]'`。详见
+> [docs/migration/0.3.x-to-0.4.0.md](docs/migration/0.3.x-to-0.4.0.md)。
 
 2. 创建本地 `.env`。Agentao 启动时严格校验三个 provider 变量，缺任何一个都会立刻抛 `ValueError`：
 
@@ -514,9 +521,22 @@ Agentao 围绕三个基础原则构建：
 
 ### 安装
 
+按使用场景选安装行。0.4.0 起包默认只装嵌入核心，CLI / web fetch /
+中文分词为可选 extras：
+
 ```bash
+# 嵌入用（Python `from agentao import Agentao`）—— 闭包最小
 pip install agentao
+
+# CLI 用户（`agentao` 命令行）—— 加上 rich/prompt-toolkit/readchar/pygments
+pip install 'agentao[cli]'
+
+# 从 0.3.x 升级且要零行为变更 —— 与 0.3.x 闭包完全等价
+pip install 'agentao[full]'
 ```
+
+完整迁移指南和依赖映射见
+[docs/migration/0.3.x-to-0.4.0.md](docs/migration/0.3.x-to-0.4.0.md)。
 
 创建 `.env` 文件。Agentao 要求同时设置 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL` 三个变量：
 
@@ -610,7 +630,7 @@ ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
 ### 最小可运行示例
 
 ```bash
-pip install agentao
+pip install 'agentao[cli]'
 printf "OPENAI_API_KEY=sk-your-key-here\nOPENAI_BASE_URL=https://api.openai.com/v1\nOPENAI_MODEL=gpt-5.4\n" > .env
 
 # 无 UI 验证是否正常工作（响应后退出）

@@ -8,25 +8,67 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 Targeting **0.4.0** — the single break release of the Path A P0 plan
-(see `docs/design/path-a-roadmap.md` §3.2). Two work items remain:
-
-- **P0.9 dependency split** — `pyproject.toml` core deps shrink to
-  6 packages; CLI / web / i18n / full move into `[project.optional-dependencies]`.
-- **P0.10 friendly missing-dep error + migration doc** — the `agentao`
-  console script prints a one-line actionable message
-  (`pip install 'agentao[cli]'`) instead of an opaque
-  `ModuleNotFoundError: rich`; new `docs/migration/0.3.x-to-0.4.0.md`.
+(see `docs/design/path-a-roadmap.md` §3.2). The break is a packaging
+change only; no public Python API is renamed, removed, or signature-
+changed. The "no-change" upgrade line is `pip install 'agentao[full]'`,
+which reproduces the 0.3.x bundled closure exactly.
 
 Pre-tag protocol per §13.1 (T-7 dress rehearsal) and §13.2 (pre-announce)
 must complete before the tag.
 
 ### Breaking changes
 
-_(P0.9 migration table goes here when the dependency split lands)_
+- **P0.9 dependency split** — `pip install agentao` now installs only
+  the core (7 packages) needed to construct an `Agentao()` instance and
+  call `chat()` against an OpenAI-compatible endpoint. CLI, web fetch,
+  and Chinese tokenization become opt-in extras.
+
+  | 0.3.x direct dep | 0.4.0 location |
+  |---|---|
+  | `openai` / `httpx` / `pydantic` / `pyyaml` / `mcp` / `python-dotenv` / `filelock` | core |
+  | `rich` / `prompt-toolkit` / `readchar` / `pygments` | `[cli]` |
+  | `beautifulsoup4` | `[web]` |
+  | `jieba` | `[i18n]` |
+
+  Migration matrix:
+
+  | You are… | Install line |
+  |---|---|
+  | Embedding host (Python `from agentao import Agentao`) | `pip install agentao` |
+  | CLI user (`agentao` console script) | `pip install 'agentao[cli]'` |
+  | Want zero behaviour change | `pip install 'agentao[full]'` |
+
+  Closure equivalence is enforced by `tests/test_dependency_split.py`
+  against `tests/data/full_extras_baseline.txt` (122 packages frozen
+  on 2026-05-01). See `docs/migration/0.3.x-to-0.4.0.md` for the full
+  guide.
 
 ### Added
 
-_(P0.10 entries go here)_
+- **P0.10 friendly missing-dep error** — running the `agentao` CLI in
+  a core-only install (no `[cli]` extra) now exits 2 with a one-line
+  actionable message instead of crashing with an opaque
+  `ModuleNotFoundError: rich`:
+
+  ```
+  agentao CLI requires extra packages (missing: rich).
+    pip install 'agentao[cli]'   # CLI surface only
+    pip install 'agentao[full]'  # 0.3.x-equivalent closure
+  See docs/migration/0.3.x-to-0.4.0.md for details.
+  ```
+
+  Implementation: `agentao/cli/__init__.py` defines `entrypoint()`
+  inline (no module-level imports of rich / prompt_toolkit / readchar /
+  pygments) so the module load itself stays free of CLI deps; the
+  first heavy import is wrapped in try/except. All other public names
+  in `agentao.cli` lazy-load via PEP 562 `__getattr__`. Three new
+  slow-marked tests in `tests/test_cli_missing_dep_message.py` cover
+  the friendly-message path, the post-`[cli]` boot path, and the
+  no-trace-leak invariant.
+
+- **`docs/migration/0.3.x-to-0.4.0.md`** — full migration guide with
+  install matrix, dependency map, common project-shape recipes, and
+  a `[full]` fallback for any path the migration may have missed.
 
 ## [0.3.4] — 2026-05-01
 
