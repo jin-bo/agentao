@@ -11,31 +11,27 @@ resolution-markers = [
 name = "agentao"
 source = { editable = "../../" }
 dependencies = [
-    { name = "beautifulsoup4" },
     { name = "filelock" },
     { name = "httpx" },
-    { name = "jieba" },
     { name = "mcp" },
     { name = "openai" },
-    { name = "prompt-toolkit" },
     { name = "pydantic" },
-    { name = "pygments" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
-    { name = "readchar" },
-    { name = "rich" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "beautifulsoup4", marker = "extra == 'full'", specifier = ">=4.12.0" },
+    { name = "beautifulsoup4", marker = "extra == 'web'", specifier = ">=4.12.0" },
     { name = "crawl4ai", marker = "extra == 'crawl4ai'", specifier = ">=0.8.0" },
     { name = "crawl4ai", marker = "extra == 'full'", specifier = ">=0.8.0" },
     { name = "filelock", specifier = ">=1.4.0" },
     { name = "google-genai", marker = "extra == 'full'", specifier = ">=1.0.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.25.0" },
-    { name = "jieba", specifier = ">=0.42.1" },
+    { name = "jieba", marker = "extra == 'full'", specifier = ">=0.42.1" },
+    { name = "jieba", marker = "extra == 'i18n'", specifier = ">=0.42.1" },
     { name = "mcp", specifier = ">=1.26.0" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "openpyxl", marker = "extra == 'excel'", specifier = ">=3.1.5" },
@@ -46,21 +42,25 @@ requires-dist = [
     { name = "pdfplumber", marker = "extra == 'pdf'", specifier = ">=0.11.9" },
     { name = "pillow", marker = "extra == 'full'", specifier = ">=10.0.0" },
     { name = "pillow", marker = "extra == 'image'", specifier = ">=10.0.0" },
-    { name = "prompt-toolkit", specifier = ">=3.0.52" },
+    { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3.0.52" },
+    { name = "prompt-toolkit", marker = "extra == 'full'", specifier = ">=3.0.52" },
     { name = "pycryptodome", marker = "extra == 'crypto'", specifier = ">=3.23.0" },
     { name = "pycryptodome", marker = "extra == 'full'", specifier = ">=3.23.0" },
     { name = "pydantic", specifier = ">=2" },
-    { name = "pygments", specifier = ">=2.16.0" },
+    { name = "pygments", marker = "extra == 'cli'", specifier = ">=2.16.0" },
+    { name = "pygments", marker = "extra == 'full'", specifier = ">=2.16.0" },
     { name = "pymupdf", marker = "extra == 'full'", specifier = ">=1.27.1" },
     { name = "pymupdf", marker = "extra == 'pdf'", specifier = ">=1.27.1" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "readchar", specifier = ">=4.2.1" },
-    { name = "rich", specifier = ">=13.0.0" },
+    { name = "readchar", marker = "extra == 'cli'", specifier = ">=4.2.1" },
+    { name = "readchar", marker = "extra == 'full'", specifier = ">=4.2.1" },
+    { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
+    { name = "rich", marker = "extra == 'full'", specifier = ">=13.0.0" },
     { name = "tiktoken", marker = "extra == 'full'", specifier = ">=0.7.0" },
     { name = "tiktoken", marker = "extra == 'tokenizer'", specifier = ">=0.7.0" },
 ]
-provides-extras = ["crawl4ai", "crypto", "excel", "full", "google", "image", "pdf", "tokenizer"]
+provides-extras = ["cli", "crawl4ai", "crypto", "excel", "full", "google", "i18n", "image", "pdf", "tokenizer", "web"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -607,7 +607,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -843,12 +843,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/72/3a/79a912fbd4d8dd6fb
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c0/5a/9cac0c82afec3d09ccd97c8b6502d48f165f9124db81b4bcb90b4af974ee/jedi-0.19.2-py2.py3-none-any.whl", hash = "sha256:a8ef22bde8490f57fe5c7681a3c83cb58874daf72b4784de3cce5b6ef6edb5b9", size = 1572278, upload-time = "2024-11-11T01:41:40.175Z" },
 ]
-
-[[package]]
-name = "jieba"
-version = "0.42.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c6/cb/18eeb235f833b726522d7ebed54f2278ce28ba9438e3135ab0278d9792a2/jieba-0.42.1.tar.gz", hash = "sha256:055ca12f62674fafed09427f176506079bc135638a14e23e25be909131928db2", size = 19214172, upload-time = "2020-01-20T14:27:23.5Z" }
 
 [[package]]
 name = "jinja2"
@@ -1234,18 +1228,6 @@ wheels = [
 ]
 
 [[package]]
-name = "markdown-it-py"
-version = "4.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "mdurl" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5b/f5/4ec618ed16cc4f8fb3b701563655a69816155e79e24a17b651541804721d/markdown_it_py-4.0.0.tar.gz", hash = "sha256:cb0a2b4aa34f932c007117b194e945bd74e0ec24133ceb5bac59009cda1cb9f3", size = 73070, upload-time = "2025-08-11T12:57:52.854Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/54/e7d793b573f298e1c9013b8c4dade17d481164aa517d1d7148619c2cedbf/markdown_it_py-4.0.0-py3-none-any.whl", hash = "sha256:87327c59b172c5011896038353a81343b6754500a08cd7a4973bb48c6d578147", size = 87321, upload-time = "2025-08-11T12:57:51.923Z" },
-]
-
-[[package]]
 name = "markupsafe"
 version = "3.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1365,15 +1347,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8b/eb/c0cfc62075dc6e1ec1c64d352ae09ac051d9334311ed226f1f425312848a/mcp-1.27.0.tar.gz", hash = "sha256:d3dc35a7eec0d458c1da4976a48f982097ddaab87e278c5511d5a4a56e852b83", size = 607509, upload-time = "2026-04-02T14:48:08.88Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9c/46/f6b4ad632c67ef35209a66127e4bddc95759649dd595f71f13fba11bdf9a/mcp-1.27.0-py3-none-any.whl", hash = "sha256:5ce1fa81614958e267b21fb2aa34e0aea8e2c6ede60d52aba45fd47246b4d741", size = 215967, upload-time = "2026-04-02T14:48:07.24Z" },
-]
-
-[[package]]
-name = "mdurl"
-version = "0.1.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
 ]
 
 [[package]]
@@ -2051,15 +2024,6 @@ wheels = [
 ]
 
 [[package]]
-name = "readchar"
-version = "4.2.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ed/49/a10341024c45bed95d13197ec9ef0f4e2fd10b5ca6e7f8d7684d18082398/readchar-4.2.2.tar.gz", hash = "sha256:e3b270fe16fc90c50ac79107700330a133dd4c63d22939f5b03b4f24564d5dd8", size = 9762, upload-time = "2026-04-06T19:45:54.226Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/ca/36133653e00939922dd1416f4c56177361289172a30563fcb9552c9ccde4/readchar-4.2.2-py3-none-any.whl", hash = "sha256:92daf7e42c52b0787e6c75d01ecfb9a94f4ceff3764958b570c1dddedd47b200", size = 9401, upload-time = "2026-04-06T19:45:52.993Z" },
-]
-
-[[package]]
 name = "referencing"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2119,19 +2083,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2c/06/37c1a5557acf449e8e406a830a05bf885ac47d33270aec454ef78675008d/rfc3987_syntax-1.1.0.tar.gz", hash = "sha256:717a62cbf33cffdd16dfa3a497d81ce48a660ea691b1ddd7be710c22f00b4a0d", size = 14239, upload-time = "2025-07-18T01:05:05.015Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/71/44ce230e1b7fadd372515a97e32a83011f906ddded8d03e3c6aafbdedbb7/rfc3987_syntax-1.1.0-py3-none-any.whl", hash = "sha256:6c3d97604e4c5ce9f714898e05401a0445a641cfa276432b0a648c80856f6a3f", size = 8046, upload-time = "2025-07-18T01:05:03.843Z" },
-]
-
-[[package]]
-name = "rich"
-version = "15.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "markdown-it-py" },
-    { name = "pygments" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c0/8f/0722ca900cc807c13a6a0c696dacf35430f72e0ec571c4275d2371fca3e9/rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36", size = 230680, upload-time = "2026-04-12T08:24:00.75Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl", hash = "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb", size = 310654, upload-time = "2026-04-12T08:24:02.83Z" },
 ]
 
 [[package]]
