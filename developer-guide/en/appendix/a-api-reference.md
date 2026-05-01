@@ -13,7 +13,7 @@ Authoritative `__all__`:
 - `from agentao.memory.manager import MemoryManager`
 - `from agentao.cancellation import ...` → `CancellationToken`, `AgentCancelledError`
 - `from agentao.acp_client import ...` → `ACPManager`, `ACPClient`, `AcpClientError`, `AcpErrorCode`, `AcpRpcError`, `AcpInteractionRequiredError`, `AcpClientConfig`, `AcpServerConfig`, `AcpConfigError`, `PromptResult`, `ServerState`, `load_acp_client_config` (and lower-level re-exports — see `agentao.acp_client.__init__.py` docstring for which are "stable embedding surface" vs. "implementation detail")
-- `from agentao.harness import ...` → `ActivePermissions`, `EventStream`, `StreamSubscribeError`, `HarnessEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `RFC3339UTCString`, `export_harness_event_json_schema`, `export_harness_acp_json_schema` — host-facing harness contract, see [A.10](#a-10-embedded-harness-contract)
+- `from agentao.host import ...` → `ActivePermissions`, `EventStream`, `StreamSubscribeError`, `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `RFC3339UTCString`, `export_host_event_json_schema`, `export_host_acp_json_schema` — host-facing harness contract, see [A.10](#a-10-embedded-host-contract)
 
 ## A.1 `Agentao`
 
@@ -95,8 +95,8 @@ CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars
 | `close` | `close() -> None` | Release MCP subprocesses, close DB handles. Call in `finally:`. |
 | `set_provider` | `set_provider(api_key: str, base_url: str | None = None, model: str | None = None) -> None` | Runtime LLM swap. |
 | `set_model` | `set_model(model: str) -> str` | Swap model only; returns the previous id. |
-| `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncIterator[HarnessEvent]` | Subscribe to public harness events (tool / sub-agent / permission lifecycle). No replay; bounded backpressure. See [A.10](#a-10-embedded-harness-contract). |
-| `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | Snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). JSON-safe. See [A.10](#a-10-embedded-harness-contract). |
+| `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncIterator[HostEvent]` | Subscribe to public harness events (tool / sub-agent / permission lifecycle). No replay; bounded backpressure. See [A.10](#a-10-embedded-host-contract). |
+| `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | Snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). JSON-safe. See [A.10](#a-10-embedded-host-contract). |
 
 ### Attributes
 
@@ -492,28 +492,30 @@ Loaded lazily via `from agentao import SkillManager`. Most callers reach it via 
 | `activate_skill(name, task_description)` | Turn on — injects SKILL.md + active reference files into system prompt |
 | `enable_skill(name)` / `disable_skill(name)` | Persistent enable/disable in config |
 
-## A.10 Embedded Harness Contract
+## A.10 Embedded Host Contract
 
-*Stable since 0.3.1.*
+*Stable since 0.3.1. Package renamed `agentao.harness` → `agentao.host` in 0.4.2.*
 
-The `agentao.harness` package is the **stable host-facing API surface** for embedding Agentao. Internal runtime types (`AgentEvent`, `ToolExecutionResult`, `PermissionEngine`) are intentionally not part of this surface — they may change in any release. Hosts that target only `agentao.harness` (plus the `Agentao(...)` constructor and the methods marked above) stay forward-compatible.
+The `agentao.host` package is the **stable host-facing API surface** for embedding Agentao. Internal runtime types (`AgentEvent`, `ToolExecutionResult`, `PermissionEngine`) are intentionally not part of this surface — they may change in any release. Hosts that target only `agentao.host` (plus the `Agentao(...)` constructor and the methods marked above) stay forward-compatible.
 
-Full reference: [`docs/api/harness.md`](../../../docs/api/harness.md). Design rationale: [`docs/design/embedded-harness-contract.md`](../../../docs/design/embedded-harness-contract.md).
+> **Naming.** "Harness" still refers to *Agentao itself running embedded in a host application* (the conceptual framing in `docs/design/embedded-host-contract.md`); the contract package was renamed to `agentao.host` to make `from agentao.host import HostEvent` read consistently. The old `agentao.harness` import path and old symbol names (`HarnessEvent`, `HarnessReplaySink`, `export_harness_*`) remain as a deprecated alias through 0.5.0 and emit one `DeprecationWarning` on first import.
+
+Full reference: [`docs/api/host.md`](../../../docs/api/host.md). Design rationale: [`docs/design/embedded-host-contract.md`](../../../docs/design/embedded-host-contract.md).
 
 ### Public exports
 
 ```python
-from agentao.harness import (
+from agentao.host import (
     ActivePermissions,
     EventStream,
     StreamSubscribeError,
-    HarnessEvent,
+    HostEvent,
     ToolLifecycleEvent,
     SubagentLifecycleEvent,
     PermissionDecisionEvent,
     RFC3339UTCString,
-    export_harness_event_json_schema,
-    export_harness_acp_json_schema,
+    export_host_event_json_schema,
+    export_host_acp_json_schema,
 )
 ```
 
@@ -523,16 +525,16 @@ from agentao.harness import (
 | `ToolLifecycleEvent` | Public envelope for one tool call. `phase ∈ {started, completed, failed}`; cancellation surfaces as `phase="failed", outcome="cancelled"`. |
 | `SubagentLifecycleEvent` | Lineage fact for a sub-agent task/session. `phase ∈ {spawned, completed, failed, cancelled}` — `cancelled` is a distinct phase here. |
 | `PermissionDecisionEvent` | Per-decision projection. Fires on `allow` / `deny` / `prompt`; consumers must drain even allow events. |
-| `HarnessEvent` | Discriminated union of the three event models (Pydantic discriminator: `event_type`). |
+| `HostEvent` | Discriminated union of the three event models (Pydantic discriminator: `event_type`). |
 | `RFC3339UTCString` | Constrained timestamp type. Canonical `Z` suffix only — `+00:00` offsets are rejected. |
 | `EventStream` | Runtime side of `Agentao.events()`. Producers call `publish()`; consumers iterate `subscribe()`. |
 | `StreamSubscribeError` | Raised when a second concurrent subscriber for the same `session_id` filter is requested (MVP supports one stream consumer per `Agentao` instance). |
-| `export_harness_event_json_schema()` | Emit the canonical JSON schema for events + permissions. Used by `tests/test_harness_schema.py` for byte-equality against `docs/schema/harness.events.v1.json`. |
-| `export_harness_acp_json_schema()` | Emit the canonical JSON schema for host-facing ACP payloads. Snapshot lives at `docs/schema/harness.acp.v1.json`. |
+| `export_host_event_json_schema()` | Emit the canonical JSON schema for events + permissions. Used by `tests/test_host_schema.py` for byte-equality against `docs/schema/host.events.v1.json`. |
+| `export_host_acp_json_schema()` | Emit the canonical JSON schema for host-facing ACP payloads. Snapshot lives at `docs/schema/host.acp.v1.json`. |
 
 ### `agent.events(session_id=None)`
 
-Returns an async iterator over `HarnessEvent`. Pass `session_id=` to filter; pass `None` to subscribe to every session owned by this `Agentao` instance.
+Returns an async iterator over `HostEvent`. Pass `session_id=` to filter; pass `None` to subscribe to every session owned by this `Agentao` instance.
 
 ```python
 async for ev in agent.events():
@@ -577,10 +579,10 @@ Hosts that layer policy on top of the engine call `agent.permission_engine.add_l
 
 Each release ships checked-in JSON schema snapshots:
 
-- [`docs/schema/harness.events.v1.json`](../../../docs/schema/harness.events.v1.json) — events + permissions surface
-- [`docs/schema/harness.acp.v1.json`](../../../docs/schema/harness.acp.v1.json) — host-facing ACP payloads
+- [`docs/schema/host.events.v1.json`](../../../docs/schema/host.events.v1.json) — events + permissions surface
+- [`docs/schema/host.acp.v1.json`](../../../docs/schema/host.acp.v1.json) — host-facing ACP payloads
 
-`tests/test_harness_schema.py` regenerates the schemas from the Pydantic models and asserts byte-equality. A model change that shifts the wire form must update both the model and the snapshot in the same PR. Adding an optional field is backwards-compatible; removing or renaming requires a schema version bump.
+`tests/test_host_schema.py` regenerates the schemas from the Pydantic models and asserts byte-equality. A model change that shifts the wire form must update both the model and the snapshot in the same PR. Adding an optional field is backwards-compatible; removing or renaming requires a schema version bump.
 
 ### Non-goals (explicitly outside the contract)
 
@@ -591,7 +593,7 @@ Each release ships checked-in JSON schema snapshots:
 - External session import
 - Generated client SDKs
 
-The CLI may build on the same events for its own UI, but its stores and commands are not promoted to the harness API.
+The CLI may build on the same events for its own UI, but its stores and commands are not promoted to the host contract.
 
 ---
 

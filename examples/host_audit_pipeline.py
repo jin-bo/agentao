@@ -5,27 +5,27 @@ canonical "drain ``agent.events()`` into a database" pattern:
 
 - Pin ``agent.active_permissions()`` once per session (audit-log
   enrichment).
-- Stream :class:`agentao.harness.HarnessEvent` into a local SQLite
+- Stream :class:`agentao.host.HostEvent` into a local SQLite
   ``agent_audit`` table while ``agent.arun(...)`` is running.
 - Print the table after the turn so you can see the schema-stable shape
   that survives Agentao release upgrades.
 
 The schema only references fields documented in
-``agentao/harness/models.py``. New optional fields landing in future
+``agentao/host/models.py``. New optional fields landing in future
 minor releases are *additive* — this script (and your real audit
 pipeline) keep working without changes.
 
 Run from the repository root::
 
-    OPENAI_API_KEY=sk-... uv run python examples/harness_audit_pipeline.py
+    OPENAI_API_KEY=sk-... uv run python examples/host_audit_pipeline.py
 
 Without ``OPENAI_API_KEY`` (or another ``LLM_PROVIDER``-prefixed
 credential), the script exits with code 2 and instructions rather than
 crashing at the first LLM call.
 
 For the full host-facing contract — delivery semantics, schema
-snapshots, redaction rules — see ``developer-guide/en/part-4/7-harness-contract.md``
-and ``docs/api/harness.md``.
+snapshots, redaction rules — see ``developer-guide/en/part-4/7-host-contract.md``
+and ``docs/api/host.md``.
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ from pathlib import Path
 from typing import Any, Dict
 
 from agentao.embedding import build_from_environment
-from agentao.harness import (
-    HarnessEvent,
+from agentao.host import (
+    HostEvent,
     PermissionDecisionEvent,
     SubagentLifecycleEvent,
     ToolLifecycleEvent,
@@ -82,8 +82,8 @@ CREATE TABLE IF NOT EXISTS active_policy_snapshot (
 """
 
 
-def _project_event(tenant_id: str, ev: HarnessEvent) -> Dict[str, Any]:
-    """Map a HarnessEvent to a JSON-safe audit row.
+def _project_event(tenant_id: str, ev: HostEvent) -> Dict[str, Any]:
+    """Map a HostEvent to a JSON-safe audit row.
 
     Field selection mirrors the documented Pydantic models exactly — no
     invented fields, no internal types. Future minor releases may add
@@ -142,7 +142,7 @@ def _project_event(tenant_id: str, ev: HarnessEvent) -> Dict[str, Any]:
         )
     else:
         # Forward-compatible fallback: a future release ships a new
-        # HarnessEvent variant. Record the discriminator so downstream
+        # HostEvent variant. Record the discriminator so downstream
         # ETL can route it later, but never crash.
         base.update({"ts": "", "raw": ev.model_dump()})
 

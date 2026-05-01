@@ -3,7 +3,7 @@
 Demonstrates the host-stable observation surface added in 0.3.1:
 
 - ``Agentao.events(session_id=None)`` — async iterator over
-  :class:`agentao.harness.HarnessEvent`.
+  :class:`agentao.host.HostEvent`.
 - ``Agentao.active_permissions()`` — JSON-safe snapshot of the active
   permission policy.
 
@@ -14,13 +14,13 @@ events arrive synchronously with the turn — no thread bridging needed.
 
 Running from the repository root::
 
-    OPENAI_API_KEY=sk-... uv run python examples/harness_events.py
+    OPENAI_API_KEY=sk-... uv run python examples/host_events.py
 
 Without ``OPENAI_API_KEY``, the script exits early with instructions
 rather than crashing at first LLM call.
 
 For the full host-facing contract — delivery semantics, schema
-snapshots, redaction rules — see ``docs/api/harness.md``.
+snapshots, redaction rules — see ``docs/api/host.md``.
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ import tempfile
 from pathlib import Path
 
 from agentao.embedding import build_from_environment
-from agentao.harness import (
-    HarnessEvent,
+from agentao.host import (
+    HostEvent,
     PermissionDecisionEvent,
     SubagentLifecycleEvent,
     ToolLifecycleEvent,
@@ -57,7 +57,7 @@ async def consume_events(agent) -> None:
         _print_event(ev)
 
 
-def _print_event(ev: HarnessEvent) -> None:
+def _print_event(ev: HostEvent) -> None:
     if isinstance(ev, ToolLifecycleEvent):
         print(
             f"[tool] {ev.tool_name} phase={ev.phase} "
@@ -74,7 +74,7 @@ def _print_event(ev: HarnessEvent) -> None:
             f"phase={ev.phase} task_id={ev.child_task_id}"
         )
     else:
-        # Forward-compatible fallback in case new HarnessEvent variants
+        # Forward-compatible fallback in case new HostEvent variants
         # land in a future minor release.
         print(f"[event] {ev!r}")
 

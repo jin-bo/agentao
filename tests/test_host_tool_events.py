@@ -1,7 +1,7 @@
 """Tool lifecycle public-event tests (PR 5).
 
 Drives the runtime ``ToolExecutor`` directly with a real
-:class:`HarnessToolEmitter` wired to a real :class:`EventStream`, and
+:class:`HostToolEmitter` wired to a real :class:`EventStream`, and
 asserts the public envelope shape: started/completed/failed phases,
 ``error_type`` stability across runs, no raw args/output leaks, and the
 AsyncTool cancellation path emits exactly one terminal envelope after
@@ -20,9 +20,9 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from agentao.cancellation import CancellationToken
-from agentao.harness.events import EventStream
-from agentao.harness.models import ToolLifecycleEvent
-from agentao.harness.projection import HarnessToolEmitter
+from agentao.host.events import EventStream
+from agentao.host.models import ToolLifecycleEvent
+from agentao.host.projection import HostToolEmitter
 from agentao.runtime.tool_executor import ToolExecutor
 from agentao.runtime.tool_planning import ToolCallDecision, ToolCallPlan
 from agentao.tools import AsyncToolBase, Tool
@@ -118,7 +118,7 @@ class _Harness:
 
     Avoids the asyncio loop binding inside ``EventStream`` for unit
     testing — we install a fake stream that records ``publish`` calls
-    directly. The HarnessToolEmitter behaviour itself is identical
+    directly. The HostToolEmitter behaviour itself is identical
     regardless of the underlying stream.
     """
 
@@ -128,7 +128,7 @@ class _Harness:
         class _FakeStream:
             def publish(_self, event):
                 self.events.append(event)
-        self.emitter = HarnessToolEmitter(
+        self.emitter = HostToolEmitter(
             _FakeStream(),
             session_id_provider=lambda: session_id,
             turn_id_provider=lambda: turn_id,
@@ -140,7 +140,7 @@ def _make_executor(emitter) -> ToolExecutor:
         _NullTransport(),
         logging.getLogger("test.harness_tool_events"),
         sandbox_policy=None,
-        harness_tool_emitter=emitter,
+        host_tool_emitter=emitter,
     )
 
 

@@ -7,6 +7,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-05-01
+
+### Changed
+
+- **Public package rename: `agentao.harness` → `agentao.host`** (with
+  matching renames to public types, schema-export functions, and wire
+  schema file names). The host-facing contract package is renamed to
+  reflect what it actually is — the surface a host application talks
+  to, around the Agentao runtime (the design doc still calls Agentao
+  itself the "harness" embedded inside the host). The old names are
+  inconsistent under the new package (`from agentao.host import
+  HarnessEvent` reads wrong), so the cleanup is bundled.
+
+  Renamed surface:
+
+  | Old | New |
+  |---|---|
+  | `agentao.harness` (module path) | `agentao.host` |
+  | `HarnessEvent` | `HostEvent` |
+  | `export_harness_event_json_schema()` | `export_host_event_json_schema()` |
+  | `export_harness_acp_json_schema()` | `export_host_acp_json_schema()` |
+  | `HarnessReplaySink` | `HostReplaySink` |
+  | `harness_event_to_replay_kind()` | `host_event_to_replay_kind()` |
+  | `harness_event_to_replay_payload()` | `host_event_to_replay_payload()` |
+  | `replay_payload_to_harness_event()` | `replay_payload_to_host_event()` |
+  | `docs/schema/harness.events.v1.json` | `docs/schema/host.events.v1.json` |
+  | `docs/schema/harness.acp.v1.json` | `docs/schema/host.acp.v1.json` |
+
+  All old names continue to work as deprecated aliases on the
+  `agentao.harness` shim package, with one `DeprecationWarning` on
+  first import naming the new path. The whole alias surface — package,
+  types, functions — is scheduled for removal in 0.5.0.
+
+  Migration is a literal find/replace:
+
+  ```diff
+  - from agentao.harness import HarnessEvent, EventStream
+  + from agentao.host    import HostEvent,    EventStream
+
+  - from agentao.harness.protocols import FileSystem, ShellExecutor
+  + from agentao.host.protocols    import FileSystem, ShellExecutor
+
+  - export_harness_event_json_schema()
+  + export_host_event_json_schema()
+  ```
+
+  Wire schema bytes are byte-for-byte regenerated from the same
+  Pydantic models; the only differences vs. the 0.4.1 snapshots are the
+  identifier names (`HostEvent` instead of `HarnessEvent`) and the
+  top-level title (`AgentaoHostEvents`). The `v1` lineage is unchanged
+  — adding optional fields stays in v1; removing or renaming a field
+  still requires a v2 bump.
+
 ## [0.4.0] — 2026-05-01
 
 The single break release of the Path A P0 plan
@@ -145,7 +198,7 @@ consumers).
 - **P0.8 replay schema v1.2 + harness→replay projection** — the
   replay JSONL format gains three harness-projected event kinds
   (`tool_lifecycle`, `subagent_lifecycle`, `permission_decision`) and
-  `start_replay()` auto-wires a `HarnessReplaySink` that observes the
+  `start_replay()` auto-wires a `HostReplaySink` that observes the
   agent's harness `EventStream` and projects every published event
   into the recorder, so embedded hosts have one audit artifact
   instead of two parallel streams. Each new kind's `oneOf` variant carries a typed payload
@@ -153,12 +206,12 @@ consumers).
   so a model field rename / removal surfaces as schema drift in CI.
   v1.0 / v1.1 schemas remain frozen and continue to validate older
   replays. New `agentao.harness.replay_projection` module:
-  `HarnessReplaySink` (forward projection), `replay_payload_to_harness_event`
+  `HostReplaySink` (forward projection), `replay_payload_to_host_event`
   (reverse). The typed payload schemas explicitly allow the sanitizer's
   optional projection metadata (`redaction_hits`, `redacted`,
   `redacted_fields`) so a redacted harness event still validates against
   the v1.2 schema while genuine model drift still surfaces as a property
-  mismatch. New `tests/test_harness_to_replay_projection.py` covers the
+  mismatch. New `tests/test_host_to_replay_projection.py` covers the
   round trip, validates produced payloads against the v1.2 schema, and
   verifies a redacted payload (with a planted SECRET_PATTERN-shaped
   string) still passes schema validation. `SCHEMA_VERSION` bumps from
@@ -230,13 +283,13 @@ No required code change to upgrade from 0.3.0.
       ActivePermissions,
       EventStream,
       StreamSubscribeError,
-      HarnessEvent,
+      HostEvent,
       ToolLifecycleEvent,
       SubagentLifecycleEvent,
       PermissionDecisionEvent,
       RFC3339UTCString,
-      export_harness_event_json_schema,
-      export_harness_acp_json_schema,
+      export_host_event_json_schema,
+      export_host_acp_json_schema,
   )
   ```
   Internal runtime types (`AgentEvent`, `ToolExecutionResult`,
@@ -246,7 +299,7 @@ No required code change to upgrade from 0.3.0.
   the new methods below) stay forward-compatible across releases.
 
 - **`Agentao.events(session_id: str | None = None)`** — async
-  iterator over `HarnessEvent`. No replay; bounded backpressure
+  iterator over `HostEvent`. No replay; bounded backpressure
   (slow consumers block the producer for matching events rather
   than dropping them). Same-session ordering is guaranteed; within
   one `tool_call_id`, `PermissionDecisionEvent` precedes
@@ -287,14 +340,14 @@ No required code change to upgrade from 0.3.0.
   envelope as Pydantic models.
 
 - **JSON schema snapshots** under `docs/schema/`:
-  `harness.events.v1.json` (events + permissions) and
-  `harness.acp.v1.json` (ACP payloads). Generated from the Pydantic
-  models, byte-equality-checked by `tests/test_harness_schema.py`
+  `host.events.v1.json` (events + permissions) and
+  `host.acp.v1.json` (ACP payloads). Generated from the Pydantic
+  models, byte-equality-checked by `tests/test_host_schema.py`
   and `tests/test_acp_schema.py`. A model change that shifts the
   wire form must update the snapshot in the same PR.
 
 - **CI fast-fail schema drift check** —
-  `scripts/write_harness_schema.py --check` runs in `.github/workflows/ci.yml`
+  `scripts/write_host_schema.py --check` runs in `.github/workflows/ci.yml`
   Job 0 alongside the existing replay-schema check, so harness
   schema drift fails CI before the test matrix.
 
@@ -304,14 +357,14 @@ No required code change to upgrade from 0.3.0.
   on stable id propagation; the helpers are not re-exported from
   `agentao.harness`.
 
-- **`examples/harness_events.py`** — single-file runnable demo
+- **`examples/host_events.py`** — single-file runnable demo
   showing `agent.events()` + `agent.active_permissions()` wired
   alongside `agent.arun(...)` via `asyncio.gather`. Exits cleanly
   with instructions when `OPENAI_API_KEY` is missing.
 
-- **`docs/api/harness.md`** + `docs/api/harness.zh.md` — public
+- **`docs/api/host.md`** + `docs/api/host.zh.md` — public
   API reference, schema-snapshot policy, runtime identity contract,
-  and event delivery semantics. **`docs/design/embedded-harness-contract.md`**
+  and event delivery semantics. **`docs/design/embedded-host-contract.md`**
   documents the design decision and non-goals.
 
 - **`docs/EMBEDDING.md` §7 "Host-facing harness contract"** — full
@@ -321,7 +374,7 @@ No required code change to upgrade from 0.3.0.
 - **Developer guide updates** — Appendix A.10 lists the
   `agentao.harness` exports; A.1 Methods table marks `events()` and
   `active_permissions()` as `(0.3.1+)`; Part 4.2 adds an admonition
-  distinguishing `HarnessEvent` (host-stable) from `AgentEvent`
+  distinguishing `HostEvent` (host-stable) from `AgentEvent`
   (internal); Part 5.4 gains a "Reading the active policy from the
   host" subsection.
 

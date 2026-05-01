@@ -54,7 +54,7 @@ agent.close()
 改用 `agentao.embedding.build_from_environment(working_directory=...)`——CLI
 内部就用它。完整嵌入契约见 [docs/EMBEDDING.md](docs/EMBEDDING.md)，公开 API
 （`Agentao.events()`、`active_permissions()`、能力注入）见
-[docs/api/harness.md](docs/api/harness.md)。
+[docs/api/host.md](docs/api/host.md)。
 
 ---
 
@@ -105,7 +105,7 @@ agentao
 
 按你的目标选择阅读路径：
 
-- 把 Agentao 嵌入你的 Python 项目：[30 行嵌入](#30-行嵌入) → [docs/EMBEDDING.md](docs/EMBEDDING.md) → [docs/api/harness.md](docs/api/harness.md)
+- 把 Agentao 嵌入你的 Python 项目：[30 行嵌入](#30-行嵌入) → [docs/EMBEDDING.md](docs/EMBEDDING.md) → [docs/api/host.md](docs/api/host.md)
 - 第一次使用 Agentao（CLI）：[CLI 快速开始](#cli-快速开始) → [最小可运行配置](#最小可运行配置) → [使用方法](#使用方法)
 - 只想先跑通最小配置：[安装](#安装) → [必需的环境变量](#必需的环境变量) → [最小可运行示例](#最小可运行示例)
 - 想切换模型或 provider：[使用不同提供商](#使用不同提供商)
@@ -823,7 +823,7 @@ response = agent.chat("总结当前目录")
 
 完整的嵌入实践——能力注入（`FileSystem` / `ShellExecutor` / `MemoryStore` / `MCPRegistry`）、异步用法（`agent.arun(...)`）、可选的 `replay` / `sandbox` / `bg_store`，以及 0.2.15 → 0.3.0 迁移指南——请参阅 **[docs/EMBEDDING.md](docs/EMBEDDING.md)**。
 
-宿主侧的稳定观察面在 `agentao.harness`：`agent.events()` 返回 `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` 的异步迭代器；`agent.active_permissions()` 返回 JSON-safe 的 `ActivePermissions` 快照（含 `loaded_sources` provenance）。内部的 `AgentEvent` / `Transport.emit()` 信息更丰富但不保证版本稳定 —— 生产宿主请对齐 harness 合约。完整参考：**[docs/api/harness.md](docs/api/harness.md)**。
+宿主侧的稳定观察面在 `agentao.host`：`agent.events()` 返回 `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` 的异步迭代器；`agent.active_permissions()` 返回 JSON-safe 的 `ActivePermissions` 快照（含 `loaded_sources` provenance）。内部的 `AgentEvent` / `Transport.emit()` 信息更丰富但不保证版本稳定 —— 生产宿主请对齐 harness 合约。完整参考：**[docs/api/host.md](docs/api/host.md)**。
 
 ### ACP（Agent Client Protocol）模式
 

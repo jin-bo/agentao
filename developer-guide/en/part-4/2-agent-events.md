@@ -1,21 +1,21 @@
 # 4.2 AgentEvent Reference
 
 > **What you'll learn**
-> - When to use `AgentEvent` (UI / debug / replay) vs. `HarnessEvent` (stable host contract)
+> - When to use `AgentEvent` (UI / debug / replay) vs. `HostEvent` (stable host contract)
 > - The complete catalog of event types, triggers, and `data` payloads
 > - How to safely serialize events for SSE / WebSocket transport
 
 The agent pushes structured events through `transport.emit(event)`. This section is the **complete event catalog** — triggers, `data` payloads, typical use.
 
-::: warning Building a production audit pipeline? Use `HarnessEvent` instead.
+::: warning Building a production audit pipeline? Use `HostEvent` instead.
 The events on **this page** are the **internal transport events** — they drive the CLI, replay, and debug tooling, and their fields/enum values may change between releases. They're the right pick for **streaming UI** (LLM_TEXT chunks, THINKING bubbles, in-flight tool views).
 
-For **production audit / observability / SIEM pipelines**, use the **stable host contract** in **[4.7 Embedded Harness Contract](./7-harness-contract)** instead. Quick comparison:
+For **production audit / observability / SIEM pipelines**, use the **stable host contract** in **[4.7 Embedded Harness Contract](./7-host-contract)** instead. Quick comparison:
 
 | Surface | Where | Stability | When to use |
 |---|---|---|---|
 | `agentao.transport.AgentEvent` (this page) | `Transport.emit()` push callback | Internal — may change per release | CLI / streaming UI that needs rich detail |
-| `agentao.harness.HarnessEvent` ([4.7](./7-harness-contract)) | `agent.events()` async pull iterator | **Stable**, schema-snapshotted, CI-enforced | Production audit, billing, multi-tenant compliance |
+| `agentao.host.HostEvent` ([4.7](./7-host-contract)) | `agent.events()` async pull iterator | **Stable**, schema-snapshotted, CI-enforced | Production audit, billing, multi-tenant compliance |
 
 The two surfaces are **complementary, not alternatives** — most production deployments use both: Transport for UI, `events()` for audit. They share zero code paths.
 :::
@@ -287,7 +287,7 @@ def event_from_json(j: str) -> AgentEvent:
 
 ## TL;DR
 
-- `AgentEvent` is **internal** — fields and `EventType` values may change between releases. For a stable host surface (audit / observability), use `HarnessEvent` — see **[4.7 Embedded Harness Contract](./7-harness-contract)**.
+- `AgentEvent` is **internal** — fields and `EventType` values may change between releases. For a stable host surface (audit / observability), use `HostEvent` — see **[4.7 Embedded Harness Contract](./7-host-contract)**.
 - The most common types you'll handle: `LLM_TEXT` (streaming chunks), `TOOL_START` / `TOOL_COMPLETE`, `THINKING`, `ERROR`.
 - Treat unknown event types defensively — new ones are added across releases. Always have a default branch.
 - Serialize via `event.type.value` + `event.data` (already JSON-safe) — don't pickle.

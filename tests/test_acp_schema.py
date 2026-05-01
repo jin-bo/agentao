@@ -2,7 +2,7 @@
 
 Hosts integrating Agentao over ACP rely on these payloads as the wire
 contract. Schema changes must update both the Pydantic model and the
-checked-in snapshot in ``docs/schema/harness.acp.v1.json``.
+checked-in snapshot in ``docs/schema/host.acp.v1.json``.
 """
 
 from __future__ import annotations
@@ -34,15 +34,15 @@ from agentao.acp.schema import (
     AcpSessionSetModelResponse,
     AcpSessionUpdateParams,
 )
-from agentao.harness.schema import (
-    export_harness_acp_json_schema,
+from agentao.host.schema import (
+    export_host_acp_json_schema,
     normalized_schema_json,
 )
 
 
 SNAPSHOT_PATH = (
     Path(__file__).resolve().parents[1]
-    / "docs" / "schema" / "harness.acp.v1.json"
+    / "docs" / "schema" / "host.acp.v1.json"
 )
 
 
@@ -52,13 +52,13 @@ SNAPSHOT_PATH = (
 
 
 def test_acp_schema_matches_snapshot():
-    generated = normalized_schema_json(export_harness_acp_json_schema())
+    generated = normalized_schema_json(export_host_acp_json_schema())
     snapshot = SNAPSHOT_PATH.read_text()
     snapshot_norm = normalized_schema_json(json.loads(snapshot))
     assert generated == snapshot_norm, (
         "Generated harness ACP schema diverged from "
         f"{SNAPSHOT_PATH}. Regenerate via "
-        "agentao.harness.schema.export_harness_acp_json_schema() and re-run."
+        "agentao.host.schema.export_host_acp_json_schema() and re-run."
     )
 
 
@@ -69,7 +69,7 @@ def test_acp_schema_is_independent_from_event_schema():
     the public surface keeps them separate so a payload change on one
     does not flap the other test.
     """
-    event_path = SNAPSHOT_PATH.parent / "harness.events.v1.json"
+    event_path = SNAPSHOT_PATH.parent / "host.events.v1.json"
     event = json.loads(event_path.read_text())
     acp = json.loads(SNAPSHOT_PATH.read_text())
     event_defs = set(event.get("$defs", {}).keys())

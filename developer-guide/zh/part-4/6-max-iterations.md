@@ -260,4 +260,4 @@ def on_event(ev):
 - 用 `new_instruction` 推动模型"总结一下你已有的、给最终答复"——比放任挂着好。
 - 永远要把命中次数和最近几轮工具调用记下来，方便事后排查为什么收敛不了。
 
-→ 下一节：[4.7 嵌入式 Harness 合约](./7-harness-contract)
+→ 下一节：[4.7 嵌入式 Harness 合约](./7-host-contract)

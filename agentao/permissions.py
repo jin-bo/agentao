@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
-    from .harness.models import ActivePermissions
+    from .host.models import ActivePermissions
 
 
 class PermissionDecision(Enum):
@@ -423,7 +423,7 @@ class PermissionEngine:
             return self._active_cache
         # Lazy import to keep ``agentao.permissions`` free of a hard
         # dependency on the harness package at module-load time.
-        from .harness.models import ActivePermissions
+        from .host.models import ActivePermissions
         loaded_sources = [f"preset:{self.active_mode.value}"]
         loaded_sources.extend(self._file_sources)
         loaded_sources.extend(self._injected_sources)

@@ -19,7 +19,7 @@ from typing import List
 
 import pytest
 
-from agentao.harness.models import ActivePermissions
+from agentao.host.models import ActivePermissions
 from agentao.permissions import PermissionEngine, PermissionMode
 
 
@@ -156,7 +156,7 @@ def test_agent_active_permissions_falls_back_when_no_engine(tmp_path):
     ``workspace-write`` plus the ``default:no-engine`` source label
     is the closest accurate projection.
     """
-    from agentao.harness.models import ActivePermissions
+    from agentao.host.models import ActivePermissions
 
     # Build an Agentao without invoking the LLM stack: stub out the
     # heavy bits so we can assert the active_permissions surface only.

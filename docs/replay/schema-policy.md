@@ -84,7 +84,7 @@ Per-kind payload policy:
 - **v1.2 harness-projected kinds** (`tool_lifecycle`,
   `subagent_lifecycle`, `permission_decision`) — payload is a typed
   schema derived from the public Pydantic model in
-  `agentao.harness.models` (`extra="forbid"`, so
+  `agentao.host.models` (`extra="forbid"`, so
   `additionalProperties: false`), extended with the sanitizer's
   optional projection metadata (`redaction_hits`, `redacted`,
   `redacted_fields`). A model field rename / removal therefore
@@ -138,14 +138,14 @@ belongs in `agentao/replay/schema.py` so it is unit-testable.
   `subagent_lifecycle`, `permission_decision`. Each new variant carries
   a **typed payload** generated from the matching public Pydantic model
   (`ToolLifecycleEvent` / `SubagentLifecycleEvent` /
-  `PermissionDecisionEvent`) in `agentao.harness.models`, extended with
+  `PermissionDecisionEvent`) in `agentao.host.models`, extended with
   the sanitizer's optional projection metadata
   (`redaction_hits`, `redacted`, `redacted_fields` — see
   `agentao.replay.sanitize.SANITIZER_INJECTED_FIELDS`, which is the
   single source of truth shared with the schema generator). Forward
-  projection (`HarnessReplaySink`) and reverse projection
-  (`replay_payload_to_harness_event`) live in
-  `agentao.harness.replay_projection`; `start_replay()` auto-attaches
+  projection (`HostReplaySink`) and reverse projection
+  (`replay_payload_to_host_event`) live in
+  `agentao.host.replay_projection`; `start_replay()` auto-attaches
   the sink so every published harness event also lands in the JSONL.
   Backward-compatible with 1.1 — every 1.1 kind survives, and a 1.0 /
   1.1 reader treats the three new kinds as unknown and skips them.

@@ -54,9 +54,9 @@
 
 ### …keep my host code working across Agentao releases (audit pipeline / observability)
 
-→ **[4.7 Embedded Harness Contract](/en/part-4/7-harness-contract)** — the `agentao.harness` package is the **stable**, schema-snapshotted host API. Use `agent.events()` (async pull iterator) for audit / SIEM / billing, and `agent.active_permissions()` for policy-snapshot UIs. Don't touch internal `AgentEvent` from production code.
+→ **[4.7 Embedded Harness Contract](/en/part-4/7-host-contract)** — the `agentao.host` package is the **stable**, schema-snapshotted host API. Use `agent.events()` (async pull iterator) for audit / SIEM / billing, and `agent.active_permissions()` for policy-snapshot UIs. Don't touch internal `AgentEvent` from production code.
 
-Two runnable starting points: [`examples/harness_events.py`](https://github.com/jin-bo/agentao/blob/main/examples/harness_events.py) (~50 lines, prints to stdout) and [`examples/harness_audit_pipeline.py`](https://github.com/jin-bo/agentao/blob/main/examples/harness_audit_pipeline.py) (full SQLite audit loop).
+Two runnable starting points: [`examples/host_events.py`](https://github.com/jin-bo/agentao/blob/main/examples/host_events.py) (~50 lines, prints to stdout) and [`examples/host_audit_pipeline.py`](https://github.com/jin-bo/agentao/blob/main/examples/host_audit_pipeline.py) (full SQLite audit loop).
 
 ### …embed Agentao in a Jupyter notebook
 

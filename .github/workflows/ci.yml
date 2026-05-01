@@ -29,14 +29,14 @@ jobs:
       - name: Verify replay schemas match agentao/replay/events.py
         run: uv run --python 3.12 python scripts/write_replay_schema.py --check
 
-      - name: Verify harness schemas match agentao/harness/models.py + agentao/acp/schema.py
-        run: uv run --python 3.12 python scripts/write_harness_schema.py --check
+      - name: Verify host schemas match agentao/host/models.py + agentao/acp/schema.py
+        run: uv run --python 3.12 python scripts/write_host_schema.py --check
 
   # ─────────────────────────────────────────────────────────────
-  # Job 0b · P0.4 typing gate — mypy --strict on agentao.harness
+  # Job 0b · P0.4 typing gate — mypy --strict on agentao.host
   # ─────────────────────────────────────────────────────────────
   typing-gate:
-    name: Typing gate (mypy --strict on harness)
+    name: Typing gate (mypy --strict on host)
     runs-on: ubuntu-latest
 
     steps:
@@ -51,8 +51,8 @@ jobs:
       - name: Install dependencies (incl. dev group for mypy)
         run: uv sync --python 3.12 --group dev
 
-      - name: mypy --strict --package agentao.harness
-        run: uv run --python 3.12 mypy --strict --package agentao.harness
+      - name: mypy --strict --package agentao.host
+        run: uv run --python 3.12 mypy --strict --package agentao.host
 
   # ─────────────────────────────────────────────────────────────
   # Job 1 · Unit tests across Python 3.10 / 3.11 / 3.12

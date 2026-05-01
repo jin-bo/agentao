@@ -1,14 +1,14 @@
-"""Regenerate harness JSON Schema snapshots under ``docs/schema/``.
+"""Regenerate ``agentao.host`` JSON Schema snapshots under ``docs/schema/``.
 
 Usage::
 
-    uv run python scripts/write_harness_schema.py          # rewrite files
-    uv run python scripts/write_harness_schema.py --check  # CI drift check
+    uv run python scripts/write_host_schema.py          # rewrite files
+    uv run python scripts/write_host_schema.py --check  # CI drift check
 
 In ``--check`` mode the script writes nothing; it compares the generator
 output to the committed file and exits non-zero on any drift, listing
 which schemas need regeneration. Mirrors ``scripts/write_replay_schema.py``
-so harness schemas get the same fast-fail anti-drift signal in CI Job 0
+so host schemas get the same fast-fail anti-drift signal in CI Job 0
 instead of waiting for the test matrix to surface a Pydantic model
 divergence.
 """
@@ -19,23 +19,23 @@ import argparse
 import sys
 from pathlib import Path
 
-# Allow running as ``python scripts/write_harness_schema.py`` from the repo root.
+# Allow running as ``python scripts/write_host_schema.py`` from the repo root.
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agentao.harness.schema import (  # noqa: E402
-    export_harness_acp_json_schema,
-    export_harness_event_json_schema,
+from agentao.host.schema import (  # noqa: E402
+    export_host_acp_json_schema,
+    export_host_event_json_schema,
     normalized_schema_json,
 )
 
 
 # (snapshot-name, exporter) pairs. Add new entries here when a new
-# harness schema surface is frozen for release.
+# host schema surface is frozen for release.
 _SNAPSHOTS = (
-    ("harness.events.v1.json", export_harness_event_json_schema),
-    ("harness.acp.v1.json", export_harness_acp_json_schema),
+    ("host.events.v1.json", export_host_event_json_schema),
+    ("host.acp.v1.json", export_host_acp_json_schema),
 )
 
 
@@ -52,12 +52,12 @@ def _check() -> int:
         if expected != actual:
             drift.append(path)
     if drift:
-        print("Harness schema drift detected. Regenerate with:", file=sys.stderr)
-        print("    uv run python scripts/write_harness_schema.py", file=sys.stderr)
+        print("Host schema drift detected. Regenerate with:", file=sys.stderr)
+        print("    uv run python scripts/write_host_schema.py", file=sys.stderr)
         for path in drift:
             print(f"  - {path.relative_to(ROOT)}", file=sys.stderr)
         return 1
-    print("Harness schemas up to date.")
+    print("Host schemas up to date.")
     return 0
 
 

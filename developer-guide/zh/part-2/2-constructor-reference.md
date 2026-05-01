@@ -98,7 +98,7 @@ agent = Agentao(
 注入你自己的 `FileSystem` / `ShellExecutor`，把 IO 路由到 Docker exec、虚拟文件系统、审计代理或远程 runner。默认实现与 0.2.16 之前的 Agentao 字节级一致。
 
 ```python
-from agentao.harness.protocols import FileSystem, ShellExecutor
+from agentao.host.protocols import FileSystem, ShellExecutor
 from agentao.capabilities import LocalFileSystem, LocalShellExecutor
 
 agent = Agentao(
@@ -108,7 +108,7 @@ agent = Agentao(
 )
 ```
 
-**协议** 始终从 `agentao.harness.protocols` 导入（公共表面）。默认实现住在 `agentao.capabilities`。多租户 FS 隔离见 [6.4](/zh/part-6/4-multi-tenant-fs)。
+**协议** 始终从 `agentao.host.protocols` 导入（公共表面）。默认实现住在 `agentao.capabilities`。多租户 FS 隔离见 [6.4](/zh/part-6/4-multi-tenant-fs)。
 :::
 
 ::: details 记忆 / 技能 / MCP 管理器 — `memory_manager` / `skill_manager` / `mcp_manager` / `mcp_registry`
@@ -253,7 +253,7 @@ agent = build_from_environment(
 ---
 
 ::: info 版本说明
-- **0.3.4** — Capability 协议（`FileSystem` / `ShellExecutor`）在 `agentao.harness.protocols` 上 re-export。**始终从这里导入**，不要伸手到内部的 `agentao.capabilities.*`。
+- **0.3.4** — Capability 协议（`FileSystem` / `ShellExecutor`）在 `agentao.host.protocols` 上 re-export。**始终从这里导入**，不要伸手到内部的 `agentao.capabilities.*`。
 - **0.3.0** — `working_directory=` 必传（不传抛 `TypeError`）。新增 `mcp_registry=` 作为稳定的配置源；默认 `FileBackedMCPRegistry` 与 #17 之前的磁盘读一致。
 - **0.2.16** — 显式注入面（`memory_manager` / `skill_manager` / `mcp_manager` / `filesystem` / `shell` …）落地；`replay_config` / `sandbox_policy` / `bg_store` 默认改为 `None`。
 - **0.2.10** — 核心运行时与 CLI 解耦；8 个 legacy 回调通过 `build_compat_transport()` 仍可用。

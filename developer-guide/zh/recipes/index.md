@@ -54,9 +54,9 @@
 
 ### …让我的宿主代码跨 Agentao 版本不断（审计流水线 / 可观测）
 
-→ **[4.7 嵌入式 Harness 合约](/zh/part-4/7-harness-contract)** —— `agentao.harness` 是**稳定的**、附 schema 快照的宿主 API。审计 / SIEM / 计费用 `agent.events()`（异步 pull 迭代器），策略快照 UI 用 `agent.active_permissions()`。**不要在生产代码里直接用内部 `AgentEvent`**。
+→ **[4.7 嵌入式 Harness 合约](/zh/part-4/7-host-contract)** —— `agentao.host` 是**稳定的**、附 schema 快照的宿主 API。审计 / SIEM / 计费用 `agent.events()`（异步 pull 迭代器），策略快照 UI 用 `agent.active_permissions()`。**不要在生产代码里直接用内部 `AgentEvent`**。
 
-两个可直接跑的入口：[`examples/harness_events.py`](https://github.com/jin-bo/agentao/blob/main/examples/harness_events.py)（~50 行，打到 stdout）和 [`examples/harness_audit_pipeline.py`](https://github.com/jin-bo/agentao/blob/main/examples/harness_audit_pipeline.py)（完整 SQLite 审计循环）。
+两个可直接跑的入口：[`examples/host_events.py`](https://github.com/jin-bo/agentao/blob/main/examples/host_events.py)（~50 行，打到 stdout）和 [`examples/host_audit_pipeline.py`](https://github.com/jin-bo/agentao/blob/main/examples/host_audit_pipeline.py)（完整 SQLite 审计循环）。
 
 ### …在 Jupyter Notebook 里嵌入 Agentao
 

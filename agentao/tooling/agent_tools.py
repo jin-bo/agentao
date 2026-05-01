@@ -90,7 +90,7 @@ def register_agent_tools(agent: "Agentao") -> None:
         permission_mode_getter=lambda: getattr(agent.tool_runner, '_permission_engine', None) and agent.tool_runner._permission_engine.active_mode,
         permission_user_root_getter=lambda: getattr(getattr(agent.tool_runner, '_permission_engine', None), '_user_root', None),
         sandbox_policy=getattr(agent, "sandbox_policy", None),
-        subagent_emitter=getattr(agent, "_harness_subagent_emitter", None),
+        subagent_emitter=getattr(agent, "_host_subagent_emitter", None),
     )
     for agent_tool in agent_tools:
         agent.tools.register(agent_tool)

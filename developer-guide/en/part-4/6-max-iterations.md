@@ -257,4 +257,4 @@ You now have the full bridging path from agent events to user UI. Before moving 
 - Use `new_instruction` to nudge the model with "summarize what you have and finish" — better than letting it hang.
 - Always log the count and the last few tool calls so you can post-mortem why the loop didn't converge.
 
-→ Next: [4.7 Embedded Harness Contract](./7-harness-contract)
+→ Next: [4.7 Embedded Harness Contract](./7-host-contract)

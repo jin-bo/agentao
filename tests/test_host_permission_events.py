@@ -1,7 +1,7 @@
 """Permission decision public-event tests (PR 6).
 
 Drives the runtime ``ToolRunner`` directly, pumping a real
-``HarnessPermissionEmitter`` and ``HarnessToolEmitter`` over the same
+``HostPermissionEmitter`` and ``HostToolEmitter`` over the same
 fake stream so we can assert ordering: the
 ``PermissionDecisionEvent`` for one ``tool_call_id`` must precede the
 matching ``ToolLifecycleEvent(phase="started")``.
@@ -17,14 +17,14 @@ from typing import Any, Dict, List
 
 import pytest
 
-from agentao.harness.models import (
+from agentao.host.models import (
     ActivePermissions,
     PermissionDecisionEvent,
     ToolLifecycleEvent,
 )
-from agentao.harness.projection import (
-    HarnessPermissionEmitter,
-    HarnessToolEmitter,
+from agentao.host.projection import (
+    HostPermissionEmitter,
+    HostToolEmitter,
 )
 from agentao.permissions import PermissionEngine
 from agentao.runtime.tool_runner import ToolRunner
@@ -100,13 +100,13 @@ def _build_runner(
         registry.register(t)
 
     perms_provider = lambda: permission_engine.active_permissions()
-    perm_emitter = HarnessPermissionEmitter(
+    perm_emitter = HostPermissionEmitter(
         stream,
         session_id_provider=lambda: "s-1",
         turn_id_provider=lambda: "t-1",
         active_permissions_provider=perms_provider,
     )
-    tool_emitter = HarnessToolEmitter(
+    tool_emitter = HostToolEmitter(
         stream,
         session_id_provider=lambda: "s-1",
         turn_id_provider=lambda: "t-1",
@@ -118,8 +118,8 @@ def _build_runner(
         transport=transport,
         logger=logging.getLogger("test.harness_perm_events"),
         sandbox_policy=None,
-        harness_tool_emitter=tool_emitter,
-        harness_permission_emitter=perm_emitter,
+        host_tool_emitter=tool_emitter,
+        host_permission_emitter=perm_emitter,
     )
     return runner, stream, transport
 

@@ -4,7 +4,7 @@
 **Status:** Current-state addendum. The only outstanding P0 decision documented here is `AsyncTool`; everything else listed under "Already in master" is shipped and not re-opened.
 **Related docs:** `docs/implementation/EMBEDDED_HARNESS_IMPLEMENTATION_PLAN.md`,
 `docs/implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md`,
-`docs/design/embedded-harness-contract.md`
+`docs/design/embedded-host-contract.md`
 **Companion:** `EMBEDDED_HARNESS_PROTOCOL_PLAN.zh.md`
 
 ---

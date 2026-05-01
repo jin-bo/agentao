@@ -29,7 +29,7 @@ agentao --acp --stdio
 - **会话治理** — 对话压缩、`working_directory` 隔离、多实例友好
 - **两条嵌入路径** — Python 直接 import（最短），或 stdio JSON-RPC（任意语言）
 - **模型可移植** — OpenAI / Anthropic / Gemini / DeepSeek / vLLM / 任意 OpenAI 兼容端点
-- **前向兼容的宿主合约** — `agentao.harness` 是冻结的、有 schema 快照的 API，生产代码跨版本升级不会断（[4.7](/zh/part-4/7-harness-contract)）
+- **前向兼容的宿主合约** — `agentao.host` 是冻结的、有 schema 快照的 API，生产代码跨版本升级不会断（[4.7](/zh/part-4/7-host-contract)）
 
 ## 从 CLI 到可嵌入运行时
 

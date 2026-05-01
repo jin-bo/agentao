@@ -1,11 +1,30 @@
 # Embedded Harness Contract
 
-**Status:** Design record. Decision captured 2026-04-30. Implementation: 0.3.1 (`agentao.harness`).
+**Status:** Design record. Decision captured 2026-04-30. Implementation: 0.3.1 (`agentao.host`).
 **Audience:** Agentao maintainers and host application integrators.
 **Related docs:** `docs/implementation/EMBEDDED_HARNESS_IMPLEMENTATION_PLAN.md`,
 `docs/implementation/EMBEDDED_HARNESS_PROTOCOL_PLAN.md`,
 `docs/implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md`,
 `docs/design/metacognitive-boundary.md`.
+
+## Scope (read this first)
+
+The harness contract covers three pillars: **observability events**
+(tool / subagent / permission-decision lifecycle), the **ACP schema
+surface** (host-facing request, response, notification models), and
+**permission state** (`ActivePermissions` snapshot).
+
+It is **not** a complete chat runtime. To drive an agent turn, hosts
+call `Agentao.arun()`. To render streaming chat UI, hosts consume the
+internal `Transport` / `AgentEvent` stream or the ACP protocol — those
+carry the assistant text, reasoning, and raw tool I/O that this stable
+contract intentionally omits. The harness exists so an embedder can
+audit, visualise, and gate Agentao without coupling to internal event
+shapes; it does not replace the in-process runtime entry points.
+
+When extending this document, do not refer to `HostEvent` as the
+whole of the harness contract. The events surface is one of three
+pillars, not the contract itself.
 
 ## Problem
 

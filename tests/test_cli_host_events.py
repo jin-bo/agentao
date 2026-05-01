@@ -1,6 +1,6 @@
 """CLI host-adapter smoke tests (PR 8).
 
-The CLI is the canonical first host of the harness contract. PR 8 wires
+The CLI is the canonical first host of the host contract. PR 8 wires
 the status/mode display through ``Agentao.active_permissions()`` and
 demonstrates that a CLI-side consumer can render tool lifecycle state
 from ``Agentao.events()`` without reaching into private runtime state.
@@ -20,9 +20,9 @@ from typing import Any, Dict, List
 
 import pytest
 
-from agentao.harness.events import EventStream
-from agentao.harness.models import ToolLifecycleEvent
-from agentao.harness.projection import HarnessToolEmitter
+from agentao.host.events import EventStream
+from agentao.host.models import ToolLifecycleEvent
+from agentao.host.projection import HostToolEmitter
 from agentao.runtime.tool_executor import ToolExecutor
 from agentao.runtime.tool_planning import ToolCallDecision, ToolCallPlan
 from agentao.tools import Tool
@@ -67,7 +67,7 @@ class _NullTransport:
 # ---------------------------------------------------------------------------
 
 
-def test_cli_can_render_basic_tool_state_from_harness_event_stream(tmp_path):
+def test_cli_can_render_basic_tool_state_from_host_event_stream(tmp_path):
     """Demonstrates the PR 8 contract end-to-end:
 
     A "CLI" reads the public ``EventStream`` and updates its display
@@ -75,16 +75,16 @@ def test_cli_can_render_basic_tool_state_from_harness_event_stream(tmp_path):
     subscribing to the runtime's internal ``Transport``.
     """
     stream = EventStream()
-    emitter = HarnessToolEmitter(
+    emitter = HostToolEmitter(
         stream,
         session_id_provider=lambda: "s-1",
         turn_id_provider=lambda: "t-1",
     )
     executor = ToolExecutor(
         _NullTransport(),
-        logging.getLogger("test.cli_harness_events"),
+        logging.getLogger("test.cli_host_events"),
         sandbox_policy=None,
-        harness_tool_emitter=emitter,
+        host_tool_emitter=emitter,
     )
 
     async def runner():
@@ -124,7 +124,7 @@ def test_cli_show_status_reads_from_active_permissions(tmp_path, monkeypatch, ca
     ``active_permissions()`` snapshot, not from private engine
     attributes."""
     from agentao.cli import ui as cli_ui
-    from agentao.harness.models import ActivePermissions
+    from agentao.host.models import ActivePermissions
     from agentao.permissions import PermissionMode
 
     snapshot = ActivePermissions(

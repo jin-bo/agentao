@@ -2,7 +2,7 @@
 
 These tests guard the host-facing wire shape: any model change that
 shifts the JSON schema must be reflected in the checked-in snapshot at
-``docs/schema/harness.events.v1.json``. Hosts depend on that file as
+``docs/schema/host.events.v1.json``. Hosts depend on that file as
 the compatibility contract.
 """
 
@@ -14,21 +14,21 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from agentao.harness import (
+from agentao.host import (
     ActivePermissions,
-    HarnessEvent,
+    HostEvent,
     PermissionDecisionEvent,
     SubagentLifecycleEvent,
     ToolLifecycleEvent,
-    export_harness_event_json_schema,
+    export_host_event_json_schema,
 )
-from agentao.harness.schema import normalized_schema_json
+from agentao.host.schema import normalized_schema_json
 from agentao.runtime import identity as runtime_identity
 
 
 SNAPSHOT_PATH = (
     Path(__file__).resolve().parents[1]
-    / "docs" / "schema" / "harness.events.v1.json"
+    / "docs" / "schema" / "host.events.v1.json"
 )
 
 
@@ -38,13 +38,13 @@ SNAPSHOT_PATH = (
 
 
 def test_event_schema_matches_snapshot():
-    """The generated JSON schema must match docs/schema/harness.events.v1.json.
+    """The generated JSON schema must match docs/schema/host.events.v1.json.
 
     Comparison uses canonical JSON (sort_keys=True) so a Pydantic patch
     release that only reorders ``$defs`` keys does not flap the test.
     To regenerate: run the export helper and overwrite the file.
     """
-    generated = normalized_schema_json(export_harness_event_json_schema())
+    generated = normalized_schema_json(export_host_event_json_schema())
     snapshot = SNAPSHOT_PATH.read_text()
     # Re-normalize the snapshot: canonical form must round-trip even if
     # someone hand-edited the file with reordered keys.
@@ -53,7 +53,7 @@ def test_event_schema_matches_snapshot():
         "Generated harness event schema diverged from "
         f"{SNAPSHOT_PATH.relative_to(Path.cwd()) if SNAPSHOT_PATH.is_relative_to(Path.cwd()) else SNAPSHOT_PATH}. "
         "If the change is intentional, regenerate the snapshot via "
-        "agentao.harness.schema.export_harness_event_json_schema() and re-run."
+        "agentao.host.schema.export_host_event_json_schema() and re-run."
     )
 
 
@@ -62,7 +62,7 @@ def test_event_schema_matches_snapshot():
 # ---------------------------------------------------------------------------
 
 
-HARNESS_ADAPTER = TypeAdapter(HarnessEvent)
+HARNESS_ADAPTER = TypeAdapter(HostEvent)
 
 
 def _now() -> str:
@@ -70,7 +70,7 @@ def _now() -> str:
 
 
 def test_discriminated_union_routes_each_event_type():
-    """``HarnessEvent`` validates the right concrete model per event_type."""
+    """``HostEvent`` validates the right concrete model per event_type."""
     tool_event = HARNESS_ADAPTER.validate_python({
         "event_type": "tool_lifecycle",
         "session_id": "s-1",

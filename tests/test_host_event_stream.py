@@ -24,12 +24,12 @@ import time
 
 import pytest
 
-from agentao.harness.events import (
+from agentao.host.events import (
     DEFAULT_SUBSCRIBER_QUEUE_SIZE,
     EventStream,
     StreamSubscribeError,
 )
-from agentao.harness.models import ToolLifecycleEvent
+from agentao.host.models import ToolLifecycleEvent
 from agentao.runtime import identity as runtime_identity
 
 
@@ -526,7 +526,7 @@ def test_on_loop_publish_caps_pending_puts(caplog):
         consume_task = asyncio.create_task(gen.__anext__())
         await asyncio.sleep(0)
 
-        with caplog.at_level(logging.WARNING, "agentao.harness.events"):
+        with caplog.at_level(logging.WARNING, "agentao.host.events"):
             # max_queue_size=2 → cap on pending tasks is 2. Total
             # in-flight ceiling: 2 (queue) + 2 (pending) = 4.
             # Publishing 6 should drop at least 2 events.
@@ -582,7 +582,7 @@ def test_on_loop_publish_does_not_drop_when_queue_full():
     assert received == ["a", "b", "c"]
 
 
-def test_subagent_tools_capture_live_harness_emitter(tmp_path, monkeypatch):
+def test_subagent_tools_capture_live_host_emitter(tmp_path, monkeypatch):
     """``Agentao.__init__`` previously created the harness subagent emitter
     AFTER ``_register_agent_tools`` ran, so every ``AgentToolWrapper`` saw
     ``None`` and the lifecycle emitter was a no-op. Hoisting the harness
@@ -601,7 +601,7 @@ def test_subagent_tools_capture_live_harness_emitter(tmp_path, monkeypatch):
     ]
     assert wrappers, "expected at least one built-in agent tool"
     for w in wrappers:
-        assert w._subagent_emitter is agent._harness_subagent_emitter, (
+        assert w._subagent_emitter is agent._host_subagent_emitter, (
             "AgentToolWrapper captured a stale subagent emitter — "
             "harness setup must run before _register_agent_tools()"
         )

@@ -1,7 +1,7 @@
 """Internal id generation and normalization helpers for the runtime.
 
 Public events depend on a small set of stable id fields that the
-:mod:`agentao.harness` schema treats as the compatibility contract:
+:mod:`agentao.host` schema treats as the compatibility contract:
 
 - ``session_id`` — the harness session id (persisted session id when
   available, construction-time UUID fallback otherwise).
@@ -12,7 +12,7 @@ Public events depend on a small set of stable id fields that the
 - ``child_task_id`` / ``child_session_id`` — captured at sub-agent spawn
   time, not inferred from global state at completion.
 
-These helpers stay internal: ``agentao.harness`` exports the resulting id
+These helpers stay internal: ``agentao.host`` exports the resulting id
 fields on public models, but never exposes the generators or normalizers.
 That keeps host-facing surface narrow and lets us evolve id provenance
 without breaking the public contract.
@@ -66,7 +66,7 @@ def utc_now_rfc3339() -> str:
     """Return the current UTC time as a canonical ``Z``-suffix RFC 3339 string.
 
     Public timestamp fields use this exact form (matching
-    :data:`agentao.harness.models.RFC3339UTCString`); offsets such as
+    :data:`agentao.host.models.RFC3339UTCString`); offsets such as
     ``+00:00`` are intentionally rejected to keep snapshot diffs and
     host parsing stable.
     """

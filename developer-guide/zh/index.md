@@ -39,8 +39,8 @@ features:
     linkText: Web 后端嵌入 →
   - icon: 📐
     title: 我要让宿主代码跨版本不断
-    details: "`agentao.harness` 是稳定的、附 schema 快照的宿主 API。审计 / 可观测 / 计费流水线就用它。"
-    link: /zh/part-4/7-harness-contract
+    details: "`agentao.host` 是稳定的、附 schema 快照的宿主 API。审计 / 可观测 / 计费流水线就用它。"
+    link: /zh/part-4/7-host-contract
     linkText: Harness 合约 →
   - icon: 🆘
     title: 出问题了

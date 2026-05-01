@@ -3,7 +3,7 @@
 **Date:** 2026-04-27
 **Status:** Strategy locked in;待执行
 **Source PLAN:** `workspace/reports/agentao-embedded-harness-feature-review-2026-04-27.md`
-**Related design:** `docs/design/embedded-harness-contract.md`
+**Related design:** `docs/design/embedded-host-contract.md`
 **Follow-up plan:** `docs/implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md`
 **Scope:** 评审 Codex 给出的"如何落地"建议,并基于用户决策定稿为可执行的 PR 序列。
 

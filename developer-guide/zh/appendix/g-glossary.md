@@ -8,11 +8,11 @@
 |---------|------|------|
 | Agent | 智能体 / Agent | 调工具、返回文本的 LLM 驱动循环。本指南里特指**一个 `Agentao` 实例** |
 | Harness | 框架 / 运行容器 | 封装 agent 的可复用运行时——Agentao 本身 |
-| Embedded Harness Contract | 嵌入式 Harness 合约 / 前向兼容宿主合约 | `agentao.harness` 暴露的**稳定宿主 API**（自 0.3.1）：Pydantic 建模的事件、策略快照、能力协议；wire 形态有 schema 快照并在 CI 强制。只触这个面的宿主代码可以跨版本不断。详见 [4.7](/zh/part-4/7-harness-contract)。 |
+| Embedded Harness Contract | 嵌入式 Harness 合约 / 前向兼容宿主合约 | `agentao.host` 暴露的**稳定宿主 API**（自 0.3.1）：Pydantic 建模的事件、策略快照、能力协议；wire 形态有 schema 快照并在 CI 强制。只触这个面的宿主代码可以跨版本不断。详见 [4.7](/zh/part-4/7-host-contract)。 |
 | Harness event | Harness 事件 | `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` 三种之一——schema 稳定的投影，通过 `agent.events()` 消费（与内部 `AgentEvent` 不同） |
 | Active permissions snapshot | 策略快照 / 当前权限快照 | `agent.active_permissions()` 返回的 `ActivePermissions`：`mode` + `rules` + `loaded_sources`，JSON 安全，可钉进审计日志 |
-| Capability protocol | 能力协议 | `agentao.harness.protocols` 下的 `FileSystem` / `ShellExecutor` 运行时可检 Protocol，构造时注入，把 IO 路由到 Docker / 虚拟 FS / 审计代理 |
-| Schema snapshot | Schema 快照 | 仓库里 checked-in 的 JSON schema 文件（`docs/schema/harness.events.v1.json`、`harness.acp.v1.json`），由 Pydantic 模型重生成并 CI 断言字节级一致——是 wire 形态的合约 |
+| Capability protocol | 能力协议 | `agentao.host.protocols` 下的 `FileSystem` / `ShellExecutor` 运行时可检 Protocol，构造时注入，把 IO 路由到 Docker / 虚拟 FS / 审计代理 |
+| Schema snapshot | Schema 快照 | 仓库里 checked-in 的 JSON schema 文件（`docs/schema/host.events.v1.json`、`host.acp.v1.json`），由 Pydantic 模型重生成并 CI 断言字节级一致——是 wire 形态的合约 |
 | Session | 会话 | 一个 agent 实例的完整对话生命周期，绑定在一个 `working_directory` 上 |
 | Turn | 一轮 / 一次 | 一次 `chat()` 调用；内部可能触发多次工具调用 |
 | Iteration | 迭代 | 单轮内的每一次 LLM 循环，受 `max_iterations` 限制 |

@@ -34,7 +34,7 @@ from . import identity as _identity
 from .tool_planning import ToolCallDecision, ToolCallPlan
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
-    from ..harness.projection import HarnessToolEmitter
+    from ..host.projection import HostToolEmitter
 
 
 # Bounded ack timeout for AsyncTool cancellation. Long enough for typical
@@ -91,12 +91,12 @@ class ToolExecutor:
         logger,
         sandbox_policy: Optional[SandboxPolicy] = None,
         *,
-        harness_tool_emitter: Optional["HarnessToolEmitter"] = None,
+        host_tool_emitter: Optional["HostToolEmitter"] = None,
     ):
         self._transport = transport
         self._logger = logger
         self._sandbox_policy = sandbox_policy
-        self._harness_tool_emitter = harness_tool_emitter
+        self._host_tool_emitter = host_tool_emitter
         # Adapter is stateless; reuse a single instance across calls.
         from ..plugins.hooks import ClaudeHookPayloadAdapter
         self._hook_adapter = ClaudeHookPayloadAdapter()
@@ -207,7 +207,7 @@ class ToolExecutor:
                     f"by the current permission rules."
                 )
             self._emit_complete(fn, call_id, "cancelled", 0, "denied by permission engine")
-            self._emit_harness_terminal_cancelled(
+            self._emit_host_terminal_cancelled(
                 fn, call_id, summary="denied by permission engine",
             )
             return call_id, ToolExecutionResult(
@@ -221,7 +221,7 @@ class ToolExecutor:
                 f"The user declined to execute {fn}."
             )
             self._emit_complete(fn, call_id, "cancelled", 0, "cancelled by user")
-            self._emit_harness_terminal_cancelled(
+            self._emit_host_terminal_cancelled(
                 fn, call_id, summary="cancelled by user",
             )
             return call_id, ToolExecutionResult(
@@ -239,14 +239,14 @@ class ToolExecutor:
         # permission/cancel guards but before execution. The
         # PermissionDecisionEvent for the same tool_call_id is emitted
         # earlier by the runner so the ordering contract holds.
-        harness_started_at: Optional[str] = None
-        if self._harness_tool_emitter is not None:
+        host_started_at: Optional[str] = None
+        if self._host_tool_emitter is not None:
             try:
-                harness_started_at = self._harness_tool_emitter.started(
+                host_started_at = self._host_tool_emitter.started(
                     tool_call_id=call_id, tool_name=fn,
                 )
             except Exception:
-                harness_started_at = None
+                host_started_at = None
 
         # Pre-execution cancellation check (e.g. Ctrl+C fired while other
         # parallel tools were executing).
@@ -254,9 +254,9 @@ class ToolExecutor:
             result_text = f"[Operation Cancelled] {cancellation_token.reason}"
             duration_ms = round((time.monotonic() - t0) * 1000)
             self._emit_complete(fn, call_id, "cancelled", duration_ms, "cancelled by user")
-            self._emit_harness_terminal_cancelled(
+            self._emit_host_terminal_cancelled(
                 fn, call_id,
-                started_at=harness_started_at,
+                started_at=host_started_at,
                 summary="cancelled by user",
             )
             return call_id, ToolExecutionResult(
@@ -342,12 +342,12 @@ class ToolExecutor:
         # AsyncTool token-cancel short-circuit: TOOL_COMPLETE already
         # emitted inside _run_async_tool; bypass the success/error tail
         # (no post-tool hook, matches DENY / pre-cancel paths). The
-        # public harness terminal event is emitted from inside
-        # _run_async_tool too — see _emit_async_cancel_harness().
+        # public host terminal event is emitted via
+        # _emit_host_terminal_cancelled below.
         if async_cancel_outcome is not None:
-            self._emit_harness_terminal_cancelled(
+            self._emit_host_terminal_cancelled(
                 fn, call_id,
-                started_at=harness_started_at,
+                started_at=host_started_at,
                 summary=async_cancel_outcome.error or "cancelled",
             )
             return call_id, async_cancel_outcome
@@ -355,7 +355,7 @@ class ToolExecutor:
         status = "error" if errored else "ok"
         duration_ms = round((time.monotonic() - t0) * 1000)
         self._emit_complete(fn, call_id, status, duration_ms, error_msg)
-        if self._harness_tool_emitter is not None:
+        if self._host_tool_emitter is not None:
             try:
                 if errored:
                     # ``error_msg`` is ``str(exc)[:200]`` — exception text
@@ -366,10 +366,10 @@ class ToolExecutor:
                     # ``redact_summary`` only collapses whitespace and
                     # truncates. Surface a generic terminal label so
                     # hosts get a stable, non-sensitive line.
-                    self._harness_tool_emitter.failed(
+                    self._host_tool_emitter.failed(
                         tool_call_id=call_id,
                         tool_name=fn,
-                        started_at=harness_started_at or _identity.utc_now_rfc3339(),
+                        started_at=host_started_at or _identity.utc_now_rfc3339(),
                         error_type=error_type_name,
                         summary=f"{fn} failed",
                     )
@@ -379,11 +379,11 @@ class ToolExecutor:
                     # or shell stdout. Hosts that need the full output
                     # consume the internal ``TOOL_RESULT`` transport
                     # event (with its own redaction policy); the public
-                    # harness summary stays a non-sensitive status line.
-                    self._harness_tool_emitter.completed(
+                    # host summary stays a non-sensitive status line.
+                    self._host_tool_emitter.completed(
                         tool_call_id=call_id,
                         tool_name=fn,
-                        started_at=harness_started_at or _identity.utc_now_rfc3339(),
+                        started_at=host_started_at or _identity.utc_now_rfc3339(),
                         summary=f"{fn} succeeded",
                     )
             except Exception:
@@ -531,7 +531,7 @@ class ToolExecutor:
             "duration_ms": duration_ms, "error": error,
         }))
 
-    def _emit_harness_terminal_cancelled(
+    def _emit_host_terminal_cancelled(
         self,
         fn: str,
         call_id: str,
@@ -549,10 +549,10 @@ class ToolExecutor:
         valid; hosts can detect this case via
         ``started_at == completed_at``.
         """
-        if self._harness_tool_emitter is None:
+        if self._host_tool_emitter is None:
             return
         try:
-            self._harness_tool_emitter.cancelled(
+            self._host_tool_emitter.cancelled(
                 tool_call_id=call_id,
                 tool_name=fn,
                 started_at=started_at or _identity.utc_now_rfc3339(),

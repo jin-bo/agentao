@@ -1,6 +1,6 @@
 """Subagent lifecycle public-event tests (PR 7).
 
-Drives ``HarnessSubagentEmitter`` directly with a fake stream and
+Drives ``HostSubagentEmitter`` directly with a fake stream and
 verifies the four phases (spawned, completed, failed, cancelled) keep
 parent/child ids correlated and surface redacted task summaries
 without raw user input.
@@ -12,8 +12,8 @@ from typing import Any, Dict, List
 
 import pytest
 
-from agentao.harness.models import SubagentLifecycleEvent
-from agentao.harness.projection import HarnessSubagentEmitter
+from agentao.host.models import SubagentLifecycleEvent
+from agentao.host.projection import HostSubagentEmitter
 
 
 class _FakeStream:
@@ -24,8 +24,8 @@ class _FakeStream:
         self.events.append(event)
 
 
-def _emitter(stream, *, parent_session_id: str = "parent-s") -> HarnessSubagentEmitter:
-    return HarnessSubagentEmitter(
+def _emitter(stream, *, parent_session_id: str = "parent-s") -> HostSubagentEmitter:
+    return HostSubagentEmitter(
         stream,
         parent_session_id_provider=lambda: parent_session_id,
     )
@@ -155,7 +155,7 @@ def test_background_pending_cancel_emits_terminal_so_no_orphan_spawn():
     from typing import List
 
     from agentao.agents.tools import AgentToolWrapper
-    from agentao.harness.projection import HarnessSubagentEmitter
+    from agentao.host.projection import HostSubagentEmitter
 
     captured: List[Any] = []
 
@@ -163,7 +163,7 @@ def test_background_pending_cancel_emits_terminal_so_no_orphan_spawn():
         def publish(self, event: Any) -> None:
             captured.append(event)
 
-    emitter = HarnessSubagentEmitter(
+    emitter = HostSubagentEmitter(
         _CaptureStream(),
         parent_session_id_provider=lambda: "parent-s",
     )
@@ -203,7 +203,7 @@ def test_terminal_event_keeps_spawn_time_parent_session_id():
     ``ctx`` so the terminal event ignores any provider drift."""
     stream = _FakeStream()
     current = {"sid": "parent-original"}
-    em = HarnessSubagentEmitter(
+    em = HostSubagentEmitter(
         stream,
         parent_session_id_provider=lambda: current["sid"],
     )
@@ -234,7 +234,7 @@ def test_agent_tool_wrapper_task_summary_excludes_raw_user_task():
     from typing import List
 
     from agentao.agents.tools import AgentToolWrapper
-    from agentao.harness.projection import HarnessSubagentEmitter
+    from agentao.host.projection import HostSubagentEmitter
 
     captured: List[Any] = []
 
@@ -242,7 +242,7 @@ def test_agent_tool_wrapper_task_summary_excludes_raw_user_task():
         def publish(self, event: Any) -> None:
             captured.append(event)
 
-    emitter = HarnessSubagentEmitter(
+    emitter = HostSubagentEmitter(
         _CaptureStream(),
         parent_session_id_provider=lambda: "parent-s",
     )

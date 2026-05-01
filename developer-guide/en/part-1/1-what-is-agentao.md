@@ -29,7 +29,7 @@ agentao --acp --stdio
 - **Sessions** — conversation compression, working-directory isolation, multi-instance friendly
 - **Two embedding paths** — direct Python import (shortest), or stdio JSON-RPC (any language)
 - **LLM portability** — OpenAI / Anthropic / Gemini / DeepSeek / vLLM / any OpenAI-compatible endpoint
-- **Forward-compatible host contract** — `agentao.harness` ships a frozen, schema-snapshotted API so production code keeps working across releases ([4.7](/en/part-4/7-harness-contract))
+- **Forward-compatible host contract** — `agentao.host` ships a frozen, schema-snapshotted API so production code keeps working across releases ([4.7](/en/part-4/7-host-contract))
 
 ## From CLI to embeddable runtime
 

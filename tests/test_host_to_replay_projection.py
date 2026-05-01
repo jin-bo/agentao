@@ -1,14 +1,14 @@
-"""P0.8 round-trip: HarnessEvent ↔ ReplayRecorder JSONL.
+"""P0.8 round-trip: HostEvent ↔ ReplayRecorder JSONL.
 
-The v1.2 replay schema bundles the three harness lifecycle events as
+The v1.2 replay schema bundles the three host lifecycle events as
 typed JSONL payloads so embedded hosts have one audit artifact instead
 of two parallel streams. This test asserts:
 
-1. ``HarnessReplaySink.record(event)`` writes a JSONL line with the
+1. ``HostReplaySink.record(event)`` writes a JSONL line with the
    v1.2 ``kind`` discriminator and a payload that matches the model
    shape exactly (``model_dump(mode="json")``).
 2. Reading the JSONL back and routing the payload through
-   ``replay_payload_to_harness_event(kind, payload)`` reproduces the
+   ``replay_payload_to_host_event(kind, payload)`` reproduces the
    original Pydantic model byte-for-byte.
 3. The generated v1.2 schema validates the produced payloads (catches
    schema drift the same day a model changes).
@@ -22,16 +22,16 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter
 
-from agentao.harness.models import (
+from agentao.host.models import (
     PermissionDecisionEvent,
     SubagentLifecycleEvent,
     ToolLifecycleEvent,
 )
-from agentao.harness.replay_projection import (
-    HarnessReplaySink,
-    harness_event_to_replay_kind,
-    harness_event_to_replay_payload,
-    replay_payload_to_harness_event,
+from agentao.host.replay_projection import (
+    HostReplaySink,
+    host_event_to_replay_kind,
+    host_event_to_replay_payload,
+    replay_payload_to_host_event,
 )
 from agentao.replay.events import EventKind
 from agentao.replay.recorder import ReplayRecorder
@@ -48,7 +48,7 @@ def _now() -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_kind_discriminator_for_each_harness_model() -> None:
+def test_kind_discriminator_for_each_host_model() -> None:
     """Each public model maps to its v1.2 kind name."""
     tool = ToolLifecycleEvent(
         session_id="s",
@@ -69,18 +69,18 @@ def test_kind_discriminator_for_each_harness_model() -> None:
         loaded_sources=[],
         decided_at=_now(),
     )
-    assert harness_event_to_replay_kind(tool) == EventKind.TOOL_LIFECYCLE
-    assert harness_event_to_replay_kind(sub) == EventKind.SUBAGENT_LIFECYCLE
-    assert harness_event_to_replay_kind(perm) == EventKind.PERMISSION_DECISION
+    assert host_event_to_replay_kind(tool) == EventKind.TOOL_LIFECYCLE
+    assert host_event_to_replay_kind(sub) == EventKind.SUBAGENT_LIFECYCLE
+    assert host_event_to_replay_kind(perm) == EventKind.PERMISSION_DECISION
 
 
 def test_unknown_model_returns_none() -> None:
-    """A model that is not on the v1.2 harness surface drops silently."""
+    """A model that is not on the v1.2 host surface drops silently."""
 
     class _NotHarness:
         pass
 
-    assert harness_event_to_replay_kind(_NotHarness()) is None  # type: ignore[arg-type]
+    assert host_event_to_replay_kind(_NotHarness()) is None  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ def _payload_lines_for_kind(events: list[dict], kind: str) -> list[dict]:
 def test_recorder_writes_three_kinds_round_trip(tmp_path: Path) -> None:
     """Project three events through a real recorder; rehydrate exactly."""
     recorder = ReplayRecorder.create("sess-x", tmp_path)
-    sink = HarnessReplaySink(recorder)
+    sink = HostReplaySink(recorder)
 
     tool = ToolLifecycleEvent(
         session_id="sess-x",
@@ -145,19 +145,19 @@ def test_recorder_writes_three_kinds_round_trip(tmp_path: Path) -> None:
 
     # Rehydrate and assert byte-equal Pydantic equality (model_dump
     # comparison; Pydantic models compare by field values).
-    rehydrated_tool = replay_payload_to_harness_event(
+    rehydrated_tool = replay_payload_to_host_event(
         EventKind.TOOL_LIFECYCLE,
         _payload_lines_for_kind(events, EventKind.TOOL_LIFECYCLE)[0],
     )
     assert rehydrated_tool == tool
 
-    rehydrated_sub = replay_payload_to_harness_event(
+    rehydrated_sub = replay_payload_to_host_event(
         EventKind.SUBAGENT_LIFECYCLE,
         _payload_lines_for_kind(events, EventKind.SUBAGENT_LIFECYCLE)[0],
     )
     assert rehydrated_sub == sub
 
-    rehydrated_perm = replay_payload_to_harness_event(
+    rehydrated_perm = replay_payload_to_host_event(
         EventKind.PERMISSION_DECISION,
         _payload_lines_for_kind(events, EventKind.PERMISSION_DECISION)[0],
     )
@@ -166,7 +166,7 @@ def test_recorder_writes_three_kinds_round_trip(tmp_path: Path) -> None:
 
 def test_sink_without_recorder_is_silent_noop() -> None:
     """A sink with ``recorder=None`` records nothing and reports False."""
-    sink = HarnessReplaySink(None)
+    sink = HostReplaySink(None)
     tool = ToolLifecycleEvent(
         session_id="s",
         tool_call_id="tc",
@@ -179,7 +179,7 @@ def test_sink_without_recorder_is_silent_noop() -> None:
 
 def test_sink_attach_then_record(tmp_path: Path) -> None:
     """``attach_recorder`` swaps an existing sink into write mode."""
-    sink = HarnessReplaySink(None)
+    sink = HostReplaySink(None)
     recorder = ReplayRecorder.create("sess-y", tmp_path)
     sink.attach_recorder(recorder)
 
@@ -230,7 +230,7 @@ def test_v1_2_schema_validates_each_projected_payload() -> None:
     cases = [
         (
             EventKind.TOOL_LIFECYCLE,
-            harness_event_to_replay_payload(
+            host_event_to_replay_payload(
                 ToolLifecycleEvent(
                     session_id="s",
                     tool_call_id="tc",
@@ -242,7 +242,7 @@ def test_v1_2_schema_validates_each_projected_payload() -> None:
         ),
         (
             EventKind.SUBAGENT_LIFECYCLE,
-            harness_event_to_replay_payload(
+            host_event_to_replay_payload(
                 SubagentLifecycleEvent(
                     session_id="s",
                     child_task_id="ct",
@@ -253,7 +253,7 @@ def test_v1_2_schema_validates_each_projected_payload() -> None:
         ),
         (
             EventKind.PERMISSION_DECISION,
-            harness_event_to_replay_payload(
+            host_event_to_replay_payload(
                 PermissionDecisionEvent(
                     session_id="s",
                     tool_name="write_file",
@@ -287,7 +287,7 @@ def test_v1_2_schema_validates_redacted_projected_payload(tmp_path: Path) -> Non
     import jsonschema
 
     recorder = ReplayRecorder.create("sess-redact", tmp_path)
-    sink = HarnessReplaySink(recorder)
+    sink = HostReplaySink(recorder)
 
     # ``summary`` is a free-form string on ToolLifecycleEvent; embedding
     # an OpenAI-shaped key here triggers the SECRET_PATTERNS scanner.
@@ -327,11 +327,11 @@ def test_v1_2_schema_validates_redacted_projected_payload(tmp_path: Path) -> Non
     jsonschema.validate(instance=payload, schema=payload_schema)
 
 
-def test_start_replay_auto_attaches_harness_sink(tmp_path: Path) -> None:
-    """``start_replay()`` must wire harness events into the recorder.
+def test_start_replay_auto_attaches_host_sink(tmp_path: Path) -> None:
+    """``start_replay()`` must wire host events into the recorder.
 
     Repro for the round-5 codex P2: without the auto-wire, events
-    published on ``Agentao._harness_events`` were never written to the
+    published on ``Agentao._host_events`` were never written to the
     replay JSONL — embedded hosts saw two parallel streams instead of
     one audit artifact.
     """
@@ -356,7 +356,7 @@ def test_start_replay_auto_attaches_harness_sink(tmp_path: Path) -> None:
         try:
             replay_path = agent.start_replay(session_id="sess-wired")
             assert replay_path is not None and replay_path.exists()
-            assert agent._harness_replay_sink is not None
+            assert agent._host_replay_sink is not None
 
             tool = ToolLifecycleEvent(
                 session_id="sess-wired",
@@ -367,11 +367,11 @@ def test_start_replay_auto_attaches_harness_sink(tmp_path: Path) -> None:
             )
             # Publish via the public stream the runtime actually uses;
             # the sink should observe and project into the recorder.
-            agent._harness_events.publish(tool)
+            agent._host_events.publish(tool)
 
             # End the replay so the file is flushed and the sink detached.
             agent.end_replay()
-            assert agent._harness_replay_sink is None
+            assert agent._host_replay_sink is None
         finally:
             agent.close()
 
@@ -382,7 +382,7 @@ def test_start_replay_auto_attaches_harness_sink(tmp_path: Path) -> None:
         f"replay file via the auto-wired sink; got: "
         f"{[e['kind'] for e in events]}"
     )
-    rehydrated = replay_payload_to_harness_event(
+    rehydrated = replay_payload_to_host_event(
         EventKind.TOOL_LIFECYCLE, tool_events[0]
     )
     assert isinstance(rehydrated, ToolLifecycleEvent)
@@ -393,14 +393,14 @@ def test_reverse_projection_strips_sanitizer_metadata(tmp_path: Path) -> None:
     """A redacted projected payload must round-trip through reverse projection.
 
     Repro for the codex P2: the v1.2 schema allows the sanitizer's
-    metadata fields, but the harness Pydantic models use
+    metadata fields, but the host Pydantic models use
     ``extra="forbid"``. Without explicit stripping in
-    :func:`replay_payload_to_harness_event`, a redacted
+    :func:`replay_payload_to_host_event`, a redacted
     ``tool_lifecycle`` line raises ``ValidationError`` on rehydration —
     breaking any reader that wants to rehydrate a redacted replay.
     """
     recorder = ReplayRecorder.create("sess-redact-rt", tmp_path)
-    sink = HarnessReplaySink(recorder)
+    sink = HostReplaySink(recorder)
 
     secret = "sk-proj-" + "Z" * 32
     tool = ToolLifecycleEvent(
@@ -422,7 +422,7 @@ def test_reverse_projection_strips_sanitizer_metadata(tmp_path: Path) -> None:
     payload = payloads[0]
     assert "redaction_hits" in payload, "sanitizer must have fired"
 
-    rehydrated = replay_payload_to_harness_event(
+    rehydrated = replay_payload_to_host_event(
         EventKind.TOOL_LIFECYCLE, payload
     )
     assert isinstance(rehydrated, ToolLifecycleEvent)

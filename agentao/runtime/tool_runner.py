@@ -18,7 +18,7 @@ from .tool_planning import (
 from .tool_result_formatter import ToolResultFormatter
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
-    from ..harness.projection import HarnessPermissionEmitter, HarnessToolEmitter
+    from ..host.projection import HostPermissionEmitter, HostToolEmitter
 
 
 _DOOM_HALT_MESSAGE = "Tool not executed (halted by doom-loop detection)."
@@ -53,8 +53,8 @@ class ToolRunner:
         logger,
         sandbox_policy: Optional[SandboxPolicy] = None,
         *,
-        harness_tool_emitter: Optional["HarnessToolEmitter"] = None,
-        harness_permission_emitter: Optional["HarnessPermissionEmitter"] = None,
+        host_tool_emitter: Optional["HostToolEmitter"] = None,
+        host_permission_emitter: Optional["HostPermissionEmitter"] = None,
         # ── Deprecated: kept for backward compatibility ──────────────────────
         confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
         step_callback: Optional[Callable[[Optional[str], Dict[str, Any]], None]] = None,
@@ -66,12 +66,12 @@ class ToolRunner:
         self._transport = transport
         self._logger = logger
         self._sandbox_policy = sandbox_policy
-        self._harness_tool_emitter = harness_tool_emitter
-        self._harness_permission_emitter = harness_permission_emitter
+        self._host_tool_emitter = host_tool_emitter
+        self._host_permission_emitter = host_permission_emitter
         self._planner = ToolCallPlanner(tools, permission_engine, logger)
         self._executor = ToolExecutor(
             transport, logger, sandbox_policy,
-            harness_tool_emitter=harness_tool_emitter,
+            host_tool_emitter=host_tool_emitter,
         )
         self._formatter = ToolResultFormatter(transport, logger)
         self.readonly_mode: bool = False
@@ -243,7 +243,7 @@ class ToolRunner:
         Falls back to ``True`` when the emitter has no stream handle to
         introspect — better to emit than silently drop.
         """
-        emitter = self._harness_permission_emitter
+        emitter = self._host_permission_emitter
         if emitter is None:
             return False
         stream = getattr(emitter, "_stream", None)
@@ -273,7 +273,7 @@ class ToolRunner:
         matched_rule = detail.matched_rule if detail is not None else None
         reason = detail.reason if detail is not None else None
         try:
-            self._harness_permission_emitter.emit(
+            self._host_permission_emitter.emit(
                 tool_name=plan.function_name,
                 tool_call_id=plan.tool_call_id,
                 decision_id=new_decision_id(),

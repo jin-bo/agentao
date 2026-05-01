@@ -98,7 +98,7 @@ Most embeddings never need these. Expand only what applies to you.
 Inject your own `FileSystem` / `ShellExecutor` to route IO through Docker exec, virtual filesystems, audit proxies, or remote runners. The defaults match Agentao's pre-0.2.16 byte-for-byte behavior.
 
 ```python
-from agentao.harness.protocols import FileSystem, ShellExecutor
+from agentao.host.protocols import FileSystem, ShellExecutor
 from agentao.capabilities import LocalFileSystem, LocalShellExecutor
 
 agent = Agentao(
@@ -108,7 +108,7 @@ agent = Agentao(
 )
 ```
 
-Always import the **protocols** from `agentao.harness.protocols` (public surface). Default impls live in `agentao.capabilities`. Multi-tenant FS isolation: [6.4](/en/part-6/4-multi-tenant-fs).
+Always import the **protocols** from `agentao.host.protocols` (public surface). Default impls live in `agentao.capabilities`. Multi-tenant FS isolation: [6.4](/en/part-6/4-multi-tenant-fs).
 :::
 
 ::: details Memory / Skills / MCP managers — `memory_manager`, `skill_manager`, `mcp_manager`, `mcp_registry`
@@ -253,7 +253,7 @@ agent = build_from_environment(
 ---
 
 ::: info Version note
-- **0.3.4** — Capability protocols (`FileSystem`, `ShellExecutor`) re-exported on `agentao.harness.protocols`. Always import from there, not internal `agentao.capabilities.*`.
+- **0.3.4** — Capability protocols (`FileSystem`, `ShellExecutor`) re-exported on `agentao.host.protocols`. Always import from there, not internal `agentao.capabilities.*`.
 - **0.3.0** — `working_directory=` became a required keyword (calls without it raise `TypeError`). `mcp_registry=` introduced as a stable config-source surface; default `FileBackedMCPRegistry` matches the pre-#17 disk read.
 - **0.2.16** — Explicit-injection surface added (`memory_manager`, `skill_manager`, `mcp_manager`, `filesystem`, `shell`, …); `replay_config`, `sandbox_policy`, `bg_store` defaulted to `None`.
 - **0.2.10** — Decoupled core runtime; the 8 legacy callbacks remain accepted via `build_compat_transport()`.

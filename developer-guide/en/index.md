@@ -39,8 +39,8 @@ features:
     linkText: Web backend embedding →
   - icon: 📐
     title: I want my host code to keep working across releases
-    details: "The `agentao.harness` package is the stable, schema-snapshotted host API. Use it for audit / observability / billing pipelines."
-    link: /en/part-4/7-harness-contract
+    details: "The `agentao.host` package is the stable, schema-snapshotted host API. Use it for audit / observability / billing pipelines."
+    link: /en/part-4/7-host-contract
     linkText: Harness contract →
   - icon: 🆘
     title: Something is broken

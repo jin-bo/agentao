@@ -1,21 +1,21 @@
 # 4.2 AgentEvent 事件清单
 
 > **本节你会学到**
-> - 什么时候用 `AgentEvent`（UI / 调试 / 回放）vs `HarnessEvent`（稳定的宿主合约）
+> - 什么时候用 `AgentEvent`（UI / 调试 / 回放）vs `HostEvent`（稳定的宿主合约）
 > - 全部事件类型的清单：触发条件、`data` 负载、典型用途
 > - 怎样把事件安全地序列化到 SSE / WebSocket
 
 Agent 在运行过程中通过 `transport.emit(event)` 推送结构化事件。本节是**全量事件参考**——每个事件的触发时机、`data` 负载、典型用法。
 
-::: warning 在做生产审计流水线？请用 `HarnessEvent`，不是本页的 `AgentEvent`
+::: warning 在做生产审计流水线？请用 `HostEvent`，不是本页的 `AgentEvent`
 **本页**的事件是**内部 transport 事件** —— 驱动 CLI、replay、调试工具，字段和枚举值会随版本演进。它们适合做**流式 UI**（LLM_TEXT 文本块、THINKING 气泡、in-flight 工具视图）。
 
-如果你在做**生产审计 / 可观测 / SIEM 流水线**，请用 **[4.7 嵌入式 Harness 合约](./7-harness-contract)** 的稳定宿主表面。快速对照：
+如果你在做**生产审计 / 可观测 / SIEM 流水线**，请用 **[4.7 嵌入式 Harness 合约](./7-host-contract)** 的稳定宿主表面。快速对照：
 
 | 面 | 在哪里 | 稳定性 | 何时使用 |
 |---|---|---|---|
 | `agentao.transport.AgentEvent`（本页） | `Transport.emit()` 推送回调 | 内部 —— 随版本可能变 | CLI / 流式 UI 需要细节 |
-| `agentao.harness.HarnessEvent`（[4.7](./7-harness-contract)） | `agent.events()` 异步 pull 迭代器 | **稳定**，schema 快照、CI 强制 | 生产审计、计费、多租户合规 |
+| `agentao.host.HostEvent`（[4.7](./7-host-contract)） | `agent.events()` 异步 pull 迭代器 | **稳定**，schema 快照、CI 强制 | 生产审计、计费、多租户合规 |
 
 两个面**互补，不是二选一** —— 大多数生产部署**两者都用**：Transport 给 UI，`events()` 给审计。它们零代码路径共享。
 :::
@@ -287,7 +287,7 @@ def event_from_json(j: str) -> AgentEvent:
 
 ## TL;DR
 
-- `AgentEvent` 是**内部接口**——字段和 `EventType` 取值在版本间可能变。需要稳定宿主面（审计 / 可观测）的请用 `HarnessEvent`，见 **[4.7 嵌入式 Harness 合约](./7-harness-contract)**。
+- `AgentEvent` 是**内部接口**——字段和 `EventType` 取值在版本间可能变。需要稳定宿主面（审计 / 可观测）的请用 `HostEvent`，见 **[4.7 嵌入式 Harness 合约](./7-host-contract)**。
 - 最常处理的几种类型：`LLM_TEXT`（流式文本）、`TOOL_START` / `TOOL_COMPLETE`、`THINKING`、`ERROR`。
 - 对未知类型保持防御——版本演进会新增。永远要有 default 分支。
 - 序列化用 `event.type.value` + `event.data`（已经 JSON 安全）——不要 pickle。

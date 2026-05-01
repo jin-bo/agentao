@@ -1,12 +1,12 @@
 # 4.7 嵌入式 Harness 合约 —— 你的稳定宿主 API
 
 > **本节你会学到**
-> - **为什么** `agentao.harness` 要和 Transport / AgentEvent 并存
+> - **为什么** `agentao.host` 要和 Transport / AgentEvent 并存
 > - 它暴露的**三个表面**（事件、策略快照、能力协议）以及各自解决的问题
 > - **`agent.events()` vs `Transport(on_event=…)`** —— 何时用哪个（或都用）
 > - **端到端**：~30 行写出一条租户审计流水线，跨 Agentao 版本升级也不会断
 
-如果你看完 [4.2 AgentEvent](./2-agent-events) 顶部的 `:::warning` 知道"生产环境用 `HarnessEvent`"，本章就是这条建议背后的**怎么做**。
+如果你看完 [4.2 AgentEvent](./2-agent-events) 顶部的 `:::warning` 知道"生产环境用 `HostEvent`"，本章就是这条建议背后的**怎么做**。
 
 ## 4.7.1 它解决什么问题
 
@@ -16,26 +16,34 @@
 
 这就是**字段漂移问题**。`AgentEvent` 是运行时的内部事件总线——驱动 CLI、调试 UI、replay 机制——这些消费方需要丰富细节，且能在每次发布时承受变更。**生产宿主承受不起这种代价**。
 
-**嵌入式 Harness 合约**就是答案：`agentao.harness` 下一组刻意的小表面，它的特征是：
+**嵌入式 Harness 合约**就是答案：`agentao.host` 下一组刻意的小表面，它的特征是：
 
 - **以 Pydantic 模型冻结** —— 字段和类型是公开合约的一部分
-- **schema 已快照**到 `docs/schema/harness.events.v1.json` —— CI 强制字节级一致
+- **schema 已快照**到 `docs/schema/host.events.v1.json` —— CI 强制字节级一致
 - **是内部事件的红线投影** —— 比如用户 prompt 文本不会出现在审计 body 里
 - **有版本号** —— 加可选字段向后兼容；删字段或改名要 schema 版本号升级
 
-只要你的代码只触到 `agentao.harness`（加上有文档保证的 `Agentao(...)` 构造器和 `chat()` / `events()` / `active_permissions()` 方法），你就能保持向前兼容。
+只要你的代码只触到 `agentao.host`（加上有文档保证的 `Agentao(...)` 构造器和 `chat()` / `events()` / `active_permissions()` 方法），你就能保持向前兼容。
+
+::: tip Harness 是运行时的*边界*，不是运行时本身。
+合约把 **观测**、**策略**、**wire schema** 三个表面，*围绕*一次 Agentao session 类型化。它**不是**一个 turnkey 聊天 runtime：驱动一轮还是用 `agent.arun()`（或 `agent.chat()`），流式 assistant 文本 / reasoning / 原始工具 I/O 还是要从 `Transport` 或 ACP 选一个面。把 harness 想成发动机外面的"整车厂连接器"，不是发动机本身。
+:::
 
 ## 4.7.2 三个表面
 
-`agentao.harness` 暴露三个不同的表面。它们住在同一个 package 是因为共享"稳定宿主合约"的承诺，但解决的问题不一样：
+`agentao.host` 暴露三个不同的表面。它们住在同一个 package 是因为共享"稳定宿主合约"的承诺，但解决的问题不一样：
 
 | 表面 | 你怎么用 | 拿到什么 | 出处 |
 |------|---------|---------|------|
-| **事件** | `agent.events()` 异步迭代器 | 一串 `HarnessEvent`（工具 / 子 agent / 权限三种生命周期） | 审计、可观测、实时 UI |
+| **事件** | `agent.events()` 异步迭代器 | 一串 `HostEvent`（工具 / 子 agent / 权限三种生命周期） | 审计、可观测、实时 UI |
 | **策略快照** | `agent.active_permissions()` | JSON 安全的 `ActivePermissions`（mode + rules + sources） | 设置 UI、审计富化、合规报告 |
-| **能力协议** | `from agentao.harness.protocols import FileSystem, ShellExecutor` | 可注入 Docker / 虚拟 FS / 审计代理的运行时 Protocol | 见 [2.2 第 3 档 · filesystem / shell](/zh/part-2/2-constructor-reference#第-3-档-高级注入) 与 [6.4](/zh/part-6/4-multi-tenant-fs) |
+| **能力协议** | `from agentao.host.protocols import FileSystem, ShellExecutor` | 可注入 Docker / 虚拟 FS / 审计代理的运行时 Protocol | 见 [2.2 第 3 档 · filesystem / shell](/zh/part-2/2-constructor-reference#第-3-档-高级注入) 与 [6.4](/zh/part-6/4-multi-tenant-fs) |
 
 本章聚焦**事件**和**策略快照**——大多数读者最先用到的两块。能力协议在它们的构造时上下文里已经讲过。
+
+::: info package 里还有第四件东西：ACP schema 面。
+`export_host_acp_json_schema()` 暴露的是 Pydantic 化的 wire schema，给那些通过 [ACP stdio 协议](/zh/part-3/1-acp-tour) **进程外**驱动 Agentao 的宿主用（IDE 插件、Node/Go/Rust 前端、微服务）。它不像上面三个那样是"消费 API"——而是给协议实现方的合约产物。**进程内嵌入可以忽略；进程外嵌入应该参考这份 snapshot，而不是从运行时 trace 里反推 payload 形状。**
+:::
 
 ## 4.7.3 三种事件类型
 
@@ -47,11 +55,11 @@
 | `PermissionDecisionEvent` | （单次决策，无阶段） | 每次权限决策：`allow` / `deny` / `prompt`。**消费方必须把 allow 也消化掉**——审计行需要它。 |
 | `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | 子 agent 任务的生命周期。注意：这里 `cancelled` 是**独立阶段**（与工具事件不同）。 |
 
-`HarnessEvent` 是这三者的 discriminated union。用 `isinstance` 分支：
+`HostEvent` 是这三者的 discriminated union。用 `isinstance` 分支：
 
 ```python
-from agentao.harness import (
-    HarnessEvent,
+from agentao.host import (
+    HostEvent,
     ToolLifecycleEvent,
     SubagentLifecycleEvent,
     PermissionDecisionEvent,
@@ -66,7 +74,7 @@ async for ev in agent.events():
         ...
 ```
 
-完整字段表：[附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)。schema 文件：[`docs/schema/harness.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/harness.events.v1.json)。
+完整字段表：[附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)。schema 文件：[`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json)。
 
 ## 4.7.4 `agent.events()` vs `Transport(on_event=…)` —— 怎么选
 
@@ -86,20 +94,20 @@ async for ev in agent.events():
 ## 4.7.5 端到端：租户级审计流水线
 
 ::: tip 两个可直接跑的入口
-- **入门** —— [`examples/harness_events.py`](https://github.com/jin-bo/agentao/blob/main/examples/harness_events.py)：最小版，每条 `HarnessEvent` 打到 stdout。~50 行，`OPENAI_API_KEY=sk-... uv run python examples/harness_events.py` 即跑。
-- **生产模式** —— [`examples/harness_audit_pipeline.py`](https://github.com/jin-bo/agentao/blob/main/examples/harness_audit_pipeline.py)：下面这套审计循环的完整版，带 SQLite 持久化 + 跑完后 dump 审计表。
+- **入门** —— [`examples/host_events.py`](https://github.com/jin-bo/agentao/blob/main/examples/host_events.py)：最小版，每条 `HostEvent` 打到 stdout。~50 行，`OPENAI_API_KEY=sk-... uv run python examples/host_events.py` 即跑。
+- **生产模式** —— [`examples/host_audit_pipeline.py`](https://github.com/jin-bo/agentao/blob/main/examples/host_audit_pipeline.py)：下面这套审计循环的完整版，带 SQLite 持久化 + 跑完后 dump 审计表。
 
 下面这套是 schema 稳定的代码骨架；任挑一个 example clone 下来 60 秒内就能看到真实输出。
 :::
 
-下面是完整模式。每个工具调用、权限决策、子 agent 动作都对应一行审计——schema 跨 Agentao 版本稳定。下面字段名都是 [`agentao/harness/models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/harness/models.py) 真实定义的；完整类型签名见 [附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)。
+下面是完整模式。每个工具调用、权限决策、子 agent 动作都对应一行审计——schema 跨 Agentao 版本稳定。下面字段名都是 [`agentao/host/models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/host/models.py) 真实定义的；完整类型签名见 [附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)。
 
 ```python
 """租户审计流水线。和 agent.arun() 并行运行。"""
 import asyncio
 import json
 from agentao import Agentao
-from agentao.harness import (
+from agentao.host import (
     ToolLifecycleEvent,
     PermissionDecisionEvent,
     SubagentLifecycleEvent,
@@ -197,12 +205,12 @@ snap.loaded_sources   # list[str] —— 来源标签
 
 ## 4.7.7 前向兼容承诺
 
-`agentao.harness` 承诺什么：
+`agentao.host` 承诺什么：
 
 - **加字段** = 向后兼容，你的代码继续工作。
-- **删字段或改名**要 schema 版本号升级（`harness.events.v1.json` → `v2`），并在 changelog 给出明确迁移指南。
+- **删字段或改名**要 schema 版本号升级（`host.events.v1.json` → `v2`），并在 changelog 给出明确迁移指南。
 - **内部类型**（`agentao.transport.AgentEvent` / `agentao.tools.ToolExecutionResult` / `agentao.permissions.PermissionEngine`）任何版本都可能变。**不要直接 import 进生产代码路径**。
-- **schema 快照由 CI 强制**：`tests/test_harness_schema.py` 会从 Pydantic 模型重生成 schema，做字节级断言——一个改动同时改了模型和 wire 形状但忘了更新 schema 时，CI 会失败。
+- **schema 快照由 CI 强制**：`tests/test_host_schema.py` 会从 Pydantic 模型重生成 schema，做字节级断言——一个改动同时改了模型和 wire 形状但忘了更新 schema 时，CI 会失败。
 
 运营上这给你什么：**生产环境可以放心 pin `agentao>=0.4.0,<1.0`**，0.9.x 时 harness 合约还是同一份合约。
 
@@ -219,12 +227,15 @@ Harness 故意不暴露：
 
 CLI 可能基于同一套事件构建自己的 UI，但它的 stores 和命令**不会被提升**到 harness API 表面。
 
-如果你发现非伸手到 `agentao.harness` 之外才能拿到的东西——**先开 issue**，不要依赖内部类型。
+如果你发现非伸手到 `agentao.host` 之外才能拿到的东西——**先开 issue**，不要依赖内部类型。
 
 ## 4.7.9 决策流速查
 
 ```
 Q: 我要消费 Agent 事件，用哪个表面？
+│
+├─ 驱动一轮 / 拿最终回答？
+│      → agent.arun() 或 agent.chat()  (Part 2)
 │
 ├─ 流式 UI（文本块、thinking、in-flight 工具视图）？
 │      → Transport(on_event=…)         (Part 4.3)
@@ -236,22 +247,26 @@ Q: 我要消费 Agent 事件，用哪个表面？
 │      → agent.active_permissions()    (§ 4.7.6)
 │
 ├─ 把 IO 路由到 Docker / 虚拟 FS / 审计代理？
-│      → from agentao.harness.protocols import FileSystem, ShellExecutor
+│      → from agentao.host.protocols import FileSystem, ShellExecutor
 │        (Part 2.2 / Part 6.4)
+│
+├─ 从非 Python 宿主（IDE、Node、Go、Rust）驱动 Agentao？
+│      → ACP stdio 协议                (Part 3.1)
+│        （wire 类型用 export_host_acp_json_schema()）
 │
 └─ 其他？ → 先看附录 A.10，再考虑提 issue。
 ```
 
 ## TL;DR
 
-- **`agentao.harness` 是稳定的、schema 快照的、前向兼容的宿主表面。** 生产代码就 pin 这个。
+- **`agentao.host` 是稳定的、schema 快照的、前向兼容的宿主表面。** 生产代码就 pin 这个。
 - **三个表面**：`events()` 接事件流、`active_permissions()` 取策略快照、`harness.protocols` 注入能力。
 - **`events()` 不是 Transport 的替代** —— 它们互补。UI 流式用 Transport，审计 / 可观测用 `events()`。
-- **`isinstance` 分派 `HarnessEvent`** 把事件路由到对应 handler。三种事件是正交的生命周期事实，不是层级关系。
+- **`isinstance` 分派 `HostEvent`** 把事件路由到对应 handler。三种事件是正交的生命周期事实，不是层级关系。
 - **30 行 + 一张数据库表**就能落出能扛住版本升级的租户审计流水线。
 
 → 参考速查：[附录 A.10 · 嵌入 Harness 合约](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)
-→ Schema：[`docs/schema/harness.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/harness.events.v1.json)
-→ 设计文档：[`docs/design/embedded-harness-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-harness-contract.md)
+→ Schema：[`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json)
+→ 设计文档：[`docs/design/embedded-host-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-host-contract.md)
 
 → 下一节：[第 5 部分 · 扩展点](/zh/part-5/)

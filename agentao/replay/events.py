@@ -35,7 +35,7 @@ class EventKind:
       streams (replay JSONL + harness ``events()``):
       ``tool_lifecycle``, ``subagent_lifecycle``, ``permission_decision``.
       Their payload shapes mirror the public Pydantic models in
-      :mod:`agentao.harness.models`; the v1.2 schema embeds those
+      :mod:`agentao.host.models`; the v1.2 schema embeds those
       payload schemas as the per-kind variant. v1.0 / v1.1 schemas
       remain frozen and continue to validate older replays — see
       ``docs/replay/schema-policy.md``.
@@ -138,7 +138,7 @@ class EventKind:
     V1_1 = V1_0 | V1_1_NEW
 
     # v1.2 event kinds — harness lifecycle projections. Each maps 1:1
-    # to a public model in :mod:`agentao.harness.models`; the schema
+    # to a public model in :mod:`agentao.host.models`; the schema
     # generator embeds the Pydantic-derived payload schema in the v1.2
     # ``oneOf`` variant.
     TOOL_LIFECYCLE = "tool_lifecycle"

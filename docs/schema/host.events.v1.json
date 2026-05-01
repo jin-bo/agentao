@@ -389,7 +389,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Public harness payload models: HarnessEvent (discriminated union of tool/subagent/permission lifecycle events) plus the ActivePermissions snapshot.",
+  "description": "Public host payload models: HostEvent (discriminated union of tool/subagent/permission lifecycle events) plus the ActivePermissions snapshot.",
   "discriminator": {
     "mapping": {
       "permission_decision": "#/$defs/PermissionDecisionEvent",
@@ -409,5 +409,5 @@
       "$ref": "#/$defs/PermissionDecisionEvent"
     }
   ],
-  "title": "AgentaoHarnessEvents"
+  "title": "AgentaoHostEvents"
 }

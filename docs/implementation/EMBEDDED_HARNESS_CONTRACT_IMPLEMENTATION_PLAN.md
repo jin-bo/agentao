@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-30
 **Status:** Draft implementation plan; design locked in
-**Source design:** `docs/design/embedded-harness-contract.md`
+**Source design:** `docs/design/embedded-host-contract.md`
 **Scope:** Turn the embedded harness contract into a staged PR plan with concrete
 code targets, tests, and non-goals.
 
@@ -121,8 +121,8 @@ any other package are not acceptable for this public API surface.
 Add public API docs in PR 1:
 
 ```text
-docs/api/harness.md
-docs/api/harness.zh.md
+docs/api/host.md
+docs/api/host.zh.md
 ```
 
 These docs should describe the public models, schema snapshot policy, event
@@ -399,10 +399,10 @@ Files:
 - `agentao/harness/projection.py`
 - `agentao/harness/schema.py`
 - `agentao/runtime/identity.py`
-- `tests/test_harness_schema.py`
+- `tests/test_host_schema.py`
 - `docs/schema/harness.events.v1.json`
-- `docs/api/harness.md`
-- `docs/api/harness.zh.md`
+- `docs/api/host.md`
+- `docs/api/host.zh.md`
 
 Work:
 
@@ -421,14 +421,14 @@ Work:
 5. Add `export_harness_event_json_schema()`.
 6. Add checked-in event schema snapshot:
    `docs/schema/harness.events.v1.json`.
-7. Add `docs/api/harness.md` and `docs/api/harness.zh.md` with public model and
+7. Add `docs/api/host.md` and `docs/api/host.zh.md` with public model and
    event subscription semantics.
 8. Test that generated event schema matches the checked-in snapshot using
    normalized JSON.
 
 Acceptance:
 
-- `uv run pytest tests/test_harness_schema.py` passes.
+- `uv run pytest tests/test_host_schema.py` passes.
 - `pyproject.toml` directly declares `pydantic>=2`.
 - `agentao/runtime/identity.py` owns id generation/normalization helpers; the
   public harness package does not export them.
@@ -516,7 +516,7 @@ Files:
 - `agentao/harness/events.py`
 - `agentao/agent.py`
 - `agentao/runtime/turn.py`
-- `tests/test_harness_event_stream.py`
+- `tests/test_host_event_stream.py`
 
 Work:
 
@@ -556,7 +556,7 @@ Files:
 - `agentao/runtime/tool_runner.py`
 - `agentao/harness/projection.py`
 - `agentao/harness/models.py`
-- `tests/test_harness_tool_events.py`
+- `tests/test_host_tool_events.py`
 
 Work:
 
@@ -591,7 +591,7 @@ Files:
 - `agentao/runtime/tool_runner.py`
 - `agentao/harness/projection.py`
 - `agentao/harness/models.py`
-- `tests/test_harness_permission_events.py`
+- `tests/test_host_permission_events.py`
 
 Work:
 
@@ -624,7 +624,7 @@ Files:
 - `agentao/agents/tools.py`
 - `agentao/harness/projection.py`
 - `agentao/harness/models.py`
-- `tests/test_harness_subagent_events.py`
+- `tests/test_host_subagent_events.py`
 
 Work:
 
@@ -650,7 +650,7 @@ Files:
 
 - `agentao/cli/*`
 - `agentao/display.py`
-- `tests/test_cli_harness_events.py` or focused existing CLI tests
+- `tests/test_cli_host_events.py` or focused existing CLI tests
 
 Work:
 
@@ -754,7 +754,7 @@ bounded stream.
 
 Required tests across the plan:
 
-- `tests/test_harness_schema.py`
+- `tests/test_host_schema.py`
   - event schema snapshot matches generated schema using normalized JSON;
   - discriminated union validates each event type;
   - timestamp fields accept RFC 3339 UTC strings and reject timezone-less
@@ -764,7 +764,7 @@ Required tests across the plan:
     JSON.
 - `tests/test_active_permissions.py`
   - mode, rules, and loaded sources are correct across config combinations.
-- `tests/test_harness_event_stream.py`
+- `tests/test_host_event_stream.py`
   - ordering;
   - no-subscriber drop and no replay;
   - bounded backpressure behavior;
@@ -777,19 +777,19 @@ Required tests across the plan:
   - tool call id prefers the LLM id and falls back to UUID;
   - decision id uniqueness per permission decision;
   - `(session_id, turn_id, tool_call_id)` scoped uniqueness.
-- `tests/test_harness_tool_events.py`
+- `tests/test_host_tool_events.py`
   - started/completed/failed;
   - sync and async tools;
   - raw args/output not leaked;
   - same exception class produces the same `error_type` value across runs;
   - cancelled executions use `phase="failed"` with `outcome="cancelled"` and
     `error_type=None`.
-- `tests/test_harness_permission_events.py`
+- `tests/test_host_permission_events.py`
   - allow/deny/prompt;
   - every decision fires;
   - matched rule is projected correctly;
   - permission decision precedes tool lifecycle started for one tool call.
-- `tests/test_harness_subagent_events.py`
+- `tests/test_host_subagent_events.py`
   - spawned/completed/failed/cancelled;
   - parent/child ids remain correlated;
   - cancelled tasks use `phase="cancelled"` and `error_type=None`;
@@ -798,9 +798,9 @@ Required tests across the plan:
 Recommended focused regression runs after each PR:
 
 ```bash
-uv run pytest tests/test_harness_schema.py
+uv run pytest tests/test_host_schema.py
 uv run pytest tests/test_active_permissions.py
-uv run pytest tests/test_harness_event_stream.py
+uv run pytest tests/test_host_event_stream.py
 ```
 
 Full regression should run before merging PRs 5-8 because those touch runtime

@@ -1348,5 +1348,5 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Public host-facing ACP payload models: initialize, session/* request/response, request_permission, ask_user, and the shared error envelope.",
-  "title": "AgentaoHarnessACP"
+  "title": "AgentaoHostACP"
 }

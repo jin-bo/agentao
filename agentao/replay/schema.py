@@ -12,7 +12,7 @@ Design notes:
   shapes are lenient by default; v1.2 introduces typed payloads for the
   three harness-projected kinds (``tool_lifecycle`` / ``subagent_lifecycle``
   / ``permission_decision``) by deriving them from the Pydantic models
-  in :mod:`agentao.harness.models`, so a payload-shape change there is
+  in :mod:`agentao.host.models`, so a payload-shape change there is
   caught here as schema drift.
 - The envelope is strict (``additionalProperties: false``). Adding a new
   envelope field is a breaking change; payload extensibility is what
@@ -117,7 +117,7 @@ def _harness_payload_schema(model_name: str) -> dict:
     validates. Genuine model drift remains caught because the explicit
     property list still rejects unknown names.
     """
-    from ..harness.models import (  # local: avoid eager harness import
+    from ..host.models import (  # local: avoid eager harness import
         PermissionDecisionEvent,
         SubagentLifecycleEvent,
         ToolLifecycleEvent,
@@ -161,7 +161,7 @@ def _kind_variant(kind: str) -> dict:
     Most kinds keep a lenient payload (``object``, additional properties
     allowed) because their payload shape has not been modeled yet. The
     three v1.2 harness-projected kinds get a typed payload derived from
-    :mod:`agentao.harness.models` so a model change is caught as drift.
+    :mod:`agentao.host.models` so a model change is caught as drift.
     """
     variant: Dict[str, Any] = {
         "type": "object",

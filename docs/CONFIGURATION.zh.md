@@ -96,7 +96,7 @@
 - **路径。**
   1. `~/.agentao/permissions.json`（用户级）—— 先加载。
   2. `<cwd>/.agentao/permissions.json`（项目级）—— **前置**到规则列表头，**先于**用户规则求值。
-- **Loader。** `permissions.py::PermissionEngine._load_file`。文件缺失或 JSON 损坏 → 空规则列表（不报错）。成功加载的文件还会贡献 `loaded_sources` 标签（`project:.agentao/permissions.json`、`user:<path>`），由 `PermissionEngine.active_permissions()` 与 `Agentao.active_permissions()` 暴露 —— 详见 [`docs/api/harness.md`](api/harness.md)。
+- **Loader。** `permissions.py::PermissionEngine._load_file`。文件缺失或 JSON 损坏 → 空规则列表（不报错）。成功加载的文件还会贡献 `loaded_sources` 标签（`project:.agentao/permissions.json`、`user:<path>`），由 `PermissionEngine.active_permissions()` 与 `Agentao.active_permissions()` 暴露 —— 详见 [`docs/api/host.md`](api/host.md)。
 - **公共 getter。** `PermissionEngine.active_permissions()` 返回一个缓存的、JSON 安全的 `ActivePermissions` 快照（`mode`、`rules`、`loaded_sources`）。叠加策略的宿主可调用 `add_loaded_source("injected:<name>")` 让快照反映其 provenance。`set_mode()` 与 `add_loaded_source()` 会使缓存失效。
 - **求值顺序。**
   - `read-only` / `workspace-write` 模式：`[项目规则] → [用户规则] → [当前 mode 的 preset 规则]`，首个命中胜出。

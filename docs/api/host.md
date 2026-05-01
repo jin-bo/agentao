@@ -1,8 +1,8 @@
 # Embedded Harness API
 
-**Package:** `agentao.harness`
+**Package:** `agentao.host`
 **Status:** Stable, since 0.3.1.
-**Source design:** [`docs/design/embedded-harness-contract.md`](../design/embedded-harness-contract.md)
+**Source design:** [`docs/design/embedded-host-contract.md`](../design/embedded-host-contract.md)
 **Implementation plan (historical):** [`docs/implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md`](../implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md)
 
 The harness API is the host-facing compatibility boundary for embedding
@@ -10,9 +10,19 @@ Agentao inside another application. Internal runtime types
 (`AgentEvent`, `ToolExecutionResult`, `PermissionEngine`) are
 intentionally not part of this surface.
 
-> **Import discipline.** All public types live on the `agentao.harness`
+> **Scope.** This package is the stability boundary for hosts embedding
+> Agentao, covering three pillars: **observability events**
+> (`ToolLifecycleEvent`, `SubagentLifecycleEvent`,
+> `PermissionDecisionEvent`), the **ACP schema surface** (host-facing
+> request/response/notification models), and **permission state**
+> (`ActivePermissions`). It is **not** a complete chat runtime — use
+> `Agentao.arun()` to drive a turn, and `Transport`/ACP for streaming
+> chat UI (assistant text, reasoning, raw tool I/O are intentionally
+> outside this contract).
+
+> **Import discipline.** All public types live on the `agentao.host`
 > module — they are deliberately **not** re-exported from the top-level
-> `agentao` package. Always `from agentao.harness import ...`; do not
+> `agentao` package. Always `from agentao.host import ...`; do not
 > rely on `agentao.ToolLifecycleEvent` or similar to exist.
 
 ## Public exports
@@ -23,23 +33,23 @@ intentionally not part of this surface.
 | `ToolLifecycleEvent` | Public envelope for one tool call's lifecycle. |
 | `SubagentLifecycleEvent` | Lineage fact for a sub-agent task/session. |
 | `PermissionDecisionEvent` | Per-decision permission projection. |
-| `HarnessEvent` | Discriminated union of the three event models. |
+| `HostEvent` | Discriminated union of the three event models. |
 | `RFC3339UTCString` | Constrained timestamp type used by all public events. |
-| `export_harness_event_json_schema()` | Canonical JSON schema for the events + permissions surface. |
-| `export_harness_acp_json_schema()` | Canonical JSON schema for the host-facing ACP payload surface. |
-| `agentao.harness.replay_projection` | Submodule bridging `EventStream` ⇄ replay JSONL — see [Replay projection](#replay-projection-agentaoharnessreplay_projection) below. |
+| `export_host_event_json_schema()` | Canonical JSON schema for the events + permissions surface. |
+| `export_host_acp_json_schema()` | Canonical JSON schema for the host-facing ACP payload surface. |
+| `agentao.host.replay_projection` | Submodule bridging `EventStream` ⇄ replay JSONL — see [Replay projection](#replay-projection-agentaohostreplay_projection) below. |
 
-## Capability protocols (`agentao.harness.protocols`)
+## Capability protocols (`agentao.host.protocols`)
 
 Embedded hosts override IO by injecting these `Protocol` types into
 `Agentao(filesystem=..., shell=..., mcp_registry=..., memory_store=...)`.
 The submodule is a stable re-export of the protocols and their value
-shapes; **always import from `agentao.harness.protocols` rather than
+shapes; **always import from `agentao.host.protocols` rather than
 reaching into `agentao.capabilities.*`** (which is internal and may
 move).
 
 ```python
-from agentao.harness.protocols import (
+from agentao.host.protocols import (
     FileSystem, ShellExecutor, MCPRegistry, MemoryStore,
     FileEntry, FileStat, ShellRequest, ShellResult, BackgroundHandle,
 )
@@ -58,28 +68,28 @@ The `Local*` defaults (e.g. `LocalFileSystem`, `LocalShellExecutor`)
 remain in `agentao.capabilities` because they are reference
 implementations, not part of the public host-injection surface.
 
-## Replay projection (`agentao.harness.replay_projection`)
+## Replay projection (`agentao.host.replay_projection`)
 
 The harness event stream and the replay JSONL are two views of the
 same facts. This submodule bridges them so embedded hosts have one
 audit artifact instead of two parallel streams.
 
 ```python
-from agentao.harness.replay_projection import (
-    HarnessReplaySink,
-    replay_payload_to_harness_event,
-    harness_event_to_replay_kind,
-    harness_event_to_replay_payload,
+from agentao.host.replay_projection import (
+    HostReplaySink,
+    replay_payload_to_host_event,
+    host_event_to_replay_kind,
+    host_event_to_replay_payload,
 )
 ```
 
 | Symbol | Purpose |
 |---|---|
-| `HarnessReplaySink(recorder, *, stream=None)` | Forward projection. Pass `stream=agent._harness_events` to auto-register as a synchronous observer; every published `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` is then written into `recorder` as a v1.2 replay event. Errors during write are logged at WARNING and swallowed — audit storage failure never breaks the runtime. |
-| `replay_payload_to_harness_event(kind, payload)` | Reverse projection. Rehydrates a `HarnessEvent` Pydantic model from a replay JSONL line. Strips the sanitizer's optional projection metadata (`redaction_hits`, `redacted`, `redacted_fields`) so a redacted line still validates against the public `extra="forbid"` models. |
-| `harness_event_to_replay_kind(event)` / `harness_event_to_replay_payload(event)` | Lower-level helpers used by sinks and tests. Return `None` / `model_dump(mode="json")` respectively. |
+| `HostReplaySink(recorder, *, stream=None)` | Forward projection. Pass `stream=agent._host_events` to auto-register as a synchronous observer; every published `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` is then written into `recorder` as a v1.2 replay event. Errors during write are logged at WARNING and swallowed — audit storage failure never breaks the runtime. |
+| `replay_payload_to_host_event(kind, payload)` | Reverse projection. Rehydrates a `HostEvent` Pydantic model from a replay JSONL line. Strips the sanitizer's optional projection metadata (`redaction_hits`, `redacted`, `redacted_fields`) so a redacted line still validates against the public `extra="forbid"` models. |
+| `host_event_to_replay_kind(event)` / `host_event_to_replay_payload(event)` | Lower-level helpers used by sinks and tests. Return `None` / `model_dump(mode="json")` respectively. |
 
-`Agentao.start_replay()` auto-instantiates `HarnessReplaySink` against
+`Agentao.start_replay()` auto-instantiates `HostReplaySink` against
 the agent's `EventStream`; `end_replay()` detaches and clears the sink.
 Hosts that drive the replay subsystem manually can do the same wiring
 themselves.
@@ -91,25 +101,25 @@ for the version compatibility contract.
 
 ## Typing gate
 
-`agentao.harness` ships clean under `mypy --strict`:
+`agentao.host` ships clean under `mypy --strict`:
 
 ```
-uv run mypy --strict --package agentao.harness
+uv run mypy --strict --package agentao.host
 ```
 
 CI's `Typing gate` job enforces this on every PR. Downstream projects
 running `mypy --strict` against their own code paths inherit clean
-types from this surface — `tests/test_harness_typing.py` includes a
+types from this surface — `tests/test_host_typing.py` includes a
 downstream-shaped consumer that exercises every public name.
 
 ## Schema snapshot policy
 
 Each release ships a checked-in JSON schema snapshot:
 
-- `docs/schema/harness.events.v1.json` — events + permissions
-- `docs/schema/harness.acp.v1.json` — ACP payloads
+- `docs/schema/host.events.v1.json` — events + permissions
+- `docs/schema/host.acp.v1.json` — ACP payloads
 
-`tests/test_harness_schema.py` regenerates the schema from the Pydantic
+`tests/test_host_schema.py` regenerates the schema from the Pydantic
 models and asserts byte-equality with the snapshot using canonical JSON
 (`json.dumps(..., sort_keys=True)`). A model change that shifts the
 wire form must update both the model and the snapshot in the same PR.
@@ -122,7 +132,7 @@ Compatibility rules:
   note.
 - Public events must not reuse the internal `AgentEvent.data` payload
   directly; projection/redaction lives in
-  `agentao/harness/projection.py`.
+  `agentao/host/projection.py`.
 - Public summary fields (`summary`, `task_summary`, `reason`) are
   redacted/truncated host-facing strings — never raw user input,
   arguments, tool output, or policy internals.
@@ -151,7 +161,7 @@ provider-generated ids are not assumed globally unique.
 ## Event subscription semantics
 
 `Agentao.events(session_id: str | None = None)` returns an async
-iterator over `HarnessEvent`. Pass `session_id=` to filter; pass `None`
+iterator over `HostEvent`. Pass `session_id=` to filter; pass `None`
 to subscribe to every session owned by this `Agentao` instance.
 
 - Same-session ordering is guaranteed.

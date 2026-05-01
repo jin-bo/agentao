@@ -268,8 +268,8 @@ class AgentToolWrapper(Tool):
         self._permission_mode_getter = permission_mode_getter
         self._permission_user_root_getter = permission_user_root_getter
         self._sandbox_policy = sandbox_policy
-        # Public harness emitter for sub-agent lineage events. ``None``
-        # for hosts that haven't wired the harness; the call sites
+        # Public host emitter for sub-agent lineage events. ``None``
+        # for hosts that haven't wired the emitter; the call sites
         # short-circuit when the emitter is missing.
         self._subagent_emitter = subagent_emitter
         # Set by ToolRunner just before execute() to propagate the per-turn token
@@ -657,7 +657,7 @@ class AgentToolWrapper(Tool):
                 # Pending-cancel race: the agent was cancelled before
                 # the worker started running. ``spawned`` already fired
                 # outside this thread, so without an explicit terminal
-                # event harness subscribers would see a child task that
+                # event host subscribers would see a child task that
                 # never completes. Emit ``cancelled`` so the lifecycle
                 # pair is closed.
                 self._terminal_subagent_event(subagent_ctx, "cancelled", task_summary)

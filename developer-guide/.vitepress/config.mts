@@ -63,7 +63,7 @@ const zhSidebar = [
       { text: '4.4 构建流式 UI', link: '/zh/part-4/4-streaming-ui' },
       { text: '4.5 工具确认 UI', link: '/zh/part-4/5-tool-confirmation-ui' },
       { text: '4.6 最大迭代数兜底', link: '/zh/part-4/6-max-iterations' },
-      { text: '4.7 嵌入式 Harness 合约', link: '/zh/part-4/7-harness-contract' },
+      { text: '4.7 嵌入式 Host 合约', link: '/zh/part-4/7-host-contract' },
     ],
   },
   {
@@ -178,7 +178,7 @@ const enSidebar = [
       { text: '4.4 Streaming UI', link: '/en/part-4/4-streaming-ui' },
       { text: '4.5 Tool Confirmation UI', link: '/en/part-4/5-tool-confirmation-ui' },
       { text: '4.6 Max-Iterations Fallback', link: '/en/part-4/6-max-iterations' },
-      { text: '4.7 Embedded Harness Contract', link: '/en/part-4/7-harness-contract' },
+      { text: '4.7 Embedded Host Contract', link: '/en/part-4/7-host-contract' },
     ],
   },
   {

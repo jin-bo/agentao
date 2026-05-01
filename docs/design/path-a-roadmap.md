@@ -3,16 +3,16 @@
 **Status:** Strategic decision record. Locked 2026-04-30, converged across 5 rounds of internal review.
 **Audience:** Agentao maintainers and strategic reviewers.
 **Related docs:**
-- `docs/design/embedded-harness-contract.md` — embedded-contract design rationale
+- `docs/design/embedded-host-contract.md` — embedded-contract design rationale
 - `docs/design/metacognitive-boundary.md` — injectable metacognitive boundary
 - `docs/EMBEDDING.md` — embedding patterns walkthrough
-- `docs/api/harness.md` — `agentao.harness` public API reference
+- `docs/api/host.md` — `agentao.host` public API reference
 
 ---
 
 ## 1. Problem: why this roadmap exists
 
-After 0.3.1 shipped the `agentao.harness` public contract, the next-step roadmap drifted away from agentao's stated embedded positioning across multiple "compare with competitors" review rounds. AGENTS.md, an `agentao serve` daemon, cross-platform sandbox, a benchmark platform — these accumulated into P0/P1, but more than half of them actually serve CLI users, remote deployers, or marketing narratives, **not the embedding host** (the README's self-stated "local-first, private-first, embeddable AI agents" persona).
+After 0.3.1 shipped the `agentao.host` public contract, the next-step roadmap drifted away from agentao's stated embedded positioning across multiple "compare with competitors" review rounds. AGENTS.md, an `agentao serve` daemon, cross-platform sandbox, a benchmark platform — these accumulated into P0/P1, but more than half of them actually serve CLI users, remote deployers, or marketing narratives, **not the embedding host** (the README's self-stated "local-first, private-first, embeddable AI agents" persona).
 
 After round 4's reverse review identified the positioning drift and round 5 caught operational bugs, this document fixes "Path A: be embedded as a dependency by Python projects" as the single strategic anchor and lays out the corresponding slim roadmap.
 
@@ -28,7 +28,7 @@ The success signal of agentao at 12 months is **being depended on**, observable 
 | GitHub real dependents (lighthouse adoption) | 3 | 15 | github.com/jin-bo/agentao/network/dependents |
 | `agentao` appears in others' `pyproject.toml` | 5 repos | 30 repos | grep.app + sourcegraph |
 | Embed-shaped issues ÷ CLI-shaped issues | ≥ 1:1 | ≥ 2:1 | manual labels |
-| `agentao.harness` public-API breaks | 0 | 0 | `tests/test_harness_schema.py` |
+| `agentao.host` public-API breaks | 0 | 0 | `tests/test_host_schema.py` |
 | Downstream embedding examples passing mypy strict | 100% | 100% | example-repo CI |
 
 ### 2.2 Anti-metrics (signals we drifted to Path B/C)
@@ -63,7 +63,7 @@ P0's goal is not "add new capabilities" but "remove embedding friction" so host 
 | P0.1 | `py.typed` marker + wheel force-include | additive | 1h |
 | P0.2 | README top flip: embed-first 30-line example up top, CLI moved down | additive | 4h |
 | P0.3 | clean-install + embed construct smoke CI (`pip install . && python -c "from agentao import Agentao; Agentao(project_instructions='hi')"`) | additive | 1h |
-| P0.4 | Public harness API typing gate: `agentao.harness`, `Agentao.events()`, `active_permissions()`, capability injection params consumable by downstream strict type checkers | additive | 3-5d |
+| P0.4 | Public harness API typing gate: `agentao.host`, `Agentao.events()`, `active_permissions()`, capability injection params consumable by downstream strict type checkers | additive | 3-5d |
 | P0.5 | Lazy imports across the package (31 eager → lazy): `tools/web.py:10` `bs4`, `memory/retriever.py:11` `jieba`, all of `cli/*` | additive | 1w |
 | P0.6 | 4 embedding examples: FastAPI background task / pytest fixture / Jupyter session / Slack bot | additive | 3-5d |
 | P0.7 | Contract regression tests: multi-`Agentao()` no shared state / full capability injection paths / `arun` + `events` + `cancel` concurrency / no host-logger pollution / clean-install smoke | additive | 1w |
@@ -234,7 +234,7 @@ Format per item: **Goal → Files → Changes → Accept → Tests → Risk**.
   - Above the current `## Quick Start` (`README.md:21`), insert a new `## Embed in 30 lines` section with:
     1. one-line install: `pip install agentao` (intentionally *not* `[full]` — embedded users want the smallest core after 0.4.0)
     2. minimal pure-injection snippet (mirror `docs/EMBEDDING.md` "Pure-injection" block, not the env-discovery one — pure injection is the Path A north star)
-    3. one-line teaser to `docs/EMBEDDING.md` and `docs/api/harness.md`.
+    3. one-line teaser to `docs/EMBEDDING.md` and `docs/api/host.md`.
   - Move the current `## Quick Start` content under a new `## CLI Quickstart` heading immediately after the embed section.
   - Mirror identically in `README.zh.md`.
 - **Accept:**
@@ -274,22 +274,22 @@ Format per item: **Goal → Files → Changes → Accept → Tests → Risk**.
 
 ### 9.4 P0.4 — public harness API typing gate (3-5d, additive)
 
-- **Goal:** downstream projects running `mypy --strict` against `agentao.harness` get zero errors. The harness package is the compatibility boundary — it must read cleanly to a strict type checker.
+- **Goal:** downstream projects running `mypy --strict` against `agentao.host` get zero errors. The harness package is the compatibility boundary — it must read cleanly to a strict type checker.
 - **Files:**
-  - audit: `agentao/harness/__init__.py`, `agentao/harness/models.py`, `agentao/harness/events.py`, `agentao/harness/projection.py`, `agentao/harness/schema.py`
+  - audit: `agentao/host/__init__.py`, `agentao/host/models.py`, `agentao/host/events.py`, `agentao/host/projection.py`, `agentao/host/schema.py`
   - audit: `Agentao.events()` and `Agentao.active_permissions()` return-type annotations in `agentao/agent.py`
   - audit: every capability-injection kwarg in `Agentao.__init__` (the block starting at `agentao/agent.py:75` — `llm_client`, `logger`, `memory_manager`, `skill_manager`, `project_instructions`, `mcp_manager`, `mcp_registry`, `filesystem`, `shell`, `bg_store`, `sandbox_policy`, `replay_config`)
 - **Changes:**
-  1. Run `mypy --strict --package agentao.harness` and fix every reported error inside the package (not by `# type: ignore`).
-  2. Replace any `Any` in public signatures with concrete `Protocol`/Pydantic types. The capability protocols already exist under `agentao/capabilities/`; re-export the public ones from `agentao.harness` so hosts have one import path.
-  3. Add `agentao/harness/protocols.py` re-exporting `FileSystem`, `MCPRegistry`, `ShellExecutor` (currently under `agentao.capabilities`) so embed users do not need to reach into `agentao.capabilities.*`.
-  4. Update `docs/api/harness.md` import examples accordingly.
+  1. Run `mypy --strict --package agentao.host` and fix every reported error inside the package (not by `# type: ignore`).
+  2. Replace any `Any` in public signatures with concrete `Protocol`/Pydantic types. The capability protocols already exist under `agentao/capabilities/`; re-export the public ones from `agentao.host` so hosts have one import path.
+  3. Add `agentao/host/protocols.py` re-exporting `FileSystem`, `MCPRegistry`, `ShellExecutor` (currently under `agentao.capabilities`) so embed users do not need to reach into `agentao.capabilities.*`.
+  4. Update `docs/api/host.md` import examples accordingly.
 - **Accept:**
-  - `uv run mypy --strict --package agentao.harness` exits 0.
+  - `uv run mypy --strict --package agentao.host` exits 0.
   - A downstream example repo (created in P0.6) with `strict = true` mypy config passes against the wheel.
 - **Tests:**
-  - extend `tests/test_harness_schema.py` with a runtime check that `agentao.harness.__all__` matches the documented set in `docs/api/harness.md` (drift detection).
-  - new `tests/test_harness_typing.py`: subprocess `mypy --strict` against a tiny script importing the entire public surface; skipped if `mypy` is not installed in the dev group.
+  - extend `tests/test_host_schema.py` with a runtime check that `agentao.host.__all__` matches the documented set in `docs/api/host.md` (drift detection).
+  - new `tests/test_host_typing.py`: subprocess `mypy --strict` against a tiny script importing the entire public surface; skipped if `mypy` is not installed in the dev group.
 - **Risk:** typing the capability protocols may require touching `agentao/capabilities/*.py`. Keep changes additive — do not narrow existing runtime types in ways that break in-tree consumers.
 
 ### 9.5 P0.5 — lazy imports across the package (1w, additive)
@@ -322,7 +322,7 @@ Format per item: **Goal → Files → Changes → Accept → Tests → Risk**.
 ### 9.6 P0.6 — four embedding examples (3-5d, additive)
 
 - **Goal:** four runnable example projects, each demonstrating one canonical embedding shape. Examples are first-class: each ships its own `pyproject.toml`, `README.md`, and CI step.
-- **Existing assets (do not duplicate):** `examples/harness_events.py`, `examples/headless_worker.py`, `examples/batch-scheduler/`, `examples/data-workbench/`, `examples/ide-plugin-ts/`, `examples/saas-assistant/`, `examples/ticket-automation/`. These are useful primitives but none of them is the canonical "host-app one-liner" we need.
+- **Existing assets (do not duplicate):** `examples/host_events.py`, `examples/headless_worker.py`, `examples/batch-scheduler/`, `examples/data-workbench/`, `examples/ide-plugin-ts/`, `examples/saas-assistant/`, `examples/ticket-automation/`. These are useful primitives but none of them is the canonical "host-app one-liner" we need.
 - **Files (new):**
   - `examples/fastapi-background/` — FastAPI route enqueues an Agentao job to a background task; demonstrates per-request `Agentao(working_directory=...)`, transport injection, and `arun()` cancellation on client disconnect. Distinct from `examples/saas-assistant/` (which is multi-tenant SaaS) — this one is the minimum 1-route sample.
   - `examples/pytest-fixture/` — `pytest` fixture yielding an `Agentao` per-test with a fake `LLMClient` (re-using `tests/support/`) so downstream test suites can copy-paste.
@@ -340,7 +340,7 @@ Format per item: **Goal → Files → Changes → Accept → Tests → Risk**.
 ### 9.7 P0.7 — embedded-contract regression tests (1w, additive)
 
 - **Goal:** every property the embedded contract promises has at least one test that fails loudly when broken.
-- **Existing tests (audit; do not duplicate):** `test_harness_event_stream.py`, `test_active_permissions.py`, `test_harness_permission_events.py`, `test_harness_subagent_events.py`, `test_harness_tool_events.py`, `test_harness_schema.py`, `test_filesystem_capability_swap.py`, `test_mcp_registry_swap.py`, `test_shell_capability_swap.py`, `test_memory_store_swap.py`, `test_skill_manager_injection.py`, `test_mcp_manager_injection.py`, `test_llm_client_logger_injection.py`, `test_factory_build_from_environment.py`, `test_async_chat.py`, `test_no_subsystem_fallback_reads.py`, `test_per_session_cwd.py`.
+- **Existing tests (audit; do not duplicate):** `test_host_event_stream.py`, `test_active_permissions.py`, `test_host_permission_events.py`, `test_host_subagent_events.py`, `test_host_tool_events.py`, `test_host_schema.py`, `test_filesystem_capability_swap.py`, `test_mcp_registry_swap.py`, `test_shell_capability_swap.py`, `test_memory_store_swap.py`, `test_skill_manager_injection.py`, `test_mcp_manager_injection.py`, `test_llm_client_logger_injection.py`, `test_factory_build_from_environment.py`, `test_async_chat.py`, `test_no_subsystem_fallback_reads.py`, `test_per_session_cwd.py`.
 - **New tests required:**
   1. `tests/test_multi_agentao_isolation.py` — construct two `Agentao()` instances in one process, run a turn on each, assert no cross-contamination of: message history, skill activations, permission state, MCP tool sets, memory writes, replay records.
   2. `tests/test_arun_events_cancel.py` — start `agent.arun(prompt)`, attach an `events()` subscriber on another task, fire `cancel()` mid-run, assert: cancellation reaches tool layer, events stream drains cleanly, no orphan asyncio tasks.
@@ -357,15 +357,15 @@ Format per item: **Goal → Files → Changes → Accept → Tests → Risk**.
   - `agentao/replay/events.py` — declare new `EventKind` constants and a v1.2 vocabulary partition (`V1_2_NEW`, `V1_2`)
   - `agentao/replay/schema.py` — extend `_kinds_for_version("1.2")` and emit `schemas/replay-event-1.2.json`
   - `scripts/write_replay_schema.py` — bump to write the v1.2 file
-  - `agentao/harness/projection.py` — add a sink that translates each `HarnessEvent` into the matching `ReplayEvent` and hands it to the replay recorder when one is wired
+  - `agentao/host/projection.py` — add a sink that translates each `HostEvent` into the matching `ReplayEvent` and hands it to the replay recorder when one is wired
   - `agentao/replay/recorder.py` — accept the new kinds in its allow-set
 - **Changes:**
   - Schema version becomes `1.2`. v1.0 and v1.1 schemas remain frozen and continue to validate older replays — backward-compatibility promise from `docs/replay/schema-policy.md` holds.
-  - Payload shapes for the three new kinds borrow from `agentao/harness/models.py` (already Pydantic) — generate JSON-Schema fragments via `model_json_schema()` and embed them as the per-kind variant in `_kind_variant`.
+  - Payload shapes for the three new kinds borrow from `agentao/host/models.py` (already Pydantic) — generate JSON-Schema fragments via `model_json_schema()` and embed them as the per-kind variant in `_kind_variant`.
 - **Accept:**
   - `uv run python scripts/write_replay_schema.py` produces `schemas/replay-event-1.2.json`; `--check` mode passes in CI (drift detection already wired in `.github/workflows/ci.yml:30`).
   - Round-trip test: emit a `tool_lifecycle` harness event → recorder writes JSONL → reader parses → projection back to `ToolLifecycleEvent` produces the same Pydantic model.
-- **Tests:** extend `tests/test_replay_schema.py` and `tests/test_event_schema_version.py`; add `tests/test_harness_to_replay_projection.py`.
+- **Tests:** extend `tests/test_replay_schema.py` and `tests/test_event_schema_version.py`; add `tests/test_host_to_replay_projection.py`.
 - **Risk:** Pydantic-derived schemas may diverge from hand-rolled JSON Schema styling. Mitigation: keep one shared helper in `agentao/replay/schema.py` so harness and replay always go through the same emitter.
 
 ### 9.9 P0.9 — dependency split into core + extras (2-3d, **break**)
@@ -466,11 +466,11 @@ This audit tells the executor what *not* to redo. Verified against the working t
 | P0.1 `py.typed` | **done (0.3.3, working tree)** | `agentao/py.typed` present; `pyproject.toml` `force-include` ships it in wheel + sdist |
 | P0.2 README embed-first | **done (0.3.3, working tree)** | `README.md` / `README.zh.md` lead with `## Embed in 30 lines`; CLI walkthrough preserved under `## CLI Quickstart` |
 | P0.3 clean-install smoke | **done (0.3.3, working tree)** | `.github/workflows/ci.yml` smoke job constructs `Agentao(...)` from the README snippet verbatim and asserts `py.typed` presence |
-| P0.4 typing gate | **done (PR 1, working tree)** | `mypy --strict --package agentao.harness` clean; `agentao/harness/protocols.py` re-export added; CI `Typing gate` job enforces; `tests/test_harness_typing.py` covers package + downstream-shaped consumer + `__all__` drift |
+| P0.4 typing gate | **done (PR 1, working tree)** | `mypy --strict --package agentao.host` clean; `agentao/host/protocols.py` re-export added; CI `Typing gate` job enforces; `tests/test_host_typing.py` covers package + downstream-shaped consumer + `__all__` drift |
 | P0.5 lazy imports | **done (PR 2, working tree)** | `from agentao import Agentao` no longer pulls bs4/jieba/openai/rich/filelock/click/pygments/starlette/uvicorn (the §9.5 invariant); `display.py` moved under `agentao/cli/`; new `tests/test_no_cli_deps_in_core.py` (AST walk) + `tests/test_import_cost.py` (subprocess `python -X importtime`) enforce both shapes |
 | P0.6 examples | **done (PR 5, working tree)** | Five new dirs added: `fastapi-background/`, `pytest-fixture/`, `jupyter-session/`, `slack-bot/`, `wechat-bot/` (the last inspired by `Wechat-ggGitHub/wechat-claude-code`, transport-agnostic via a `WeChatClient` Protocol) — each with own `pyproject.toml` + `tests/test_smoke.py` running offline against a fake LLM; CI `examples` matrix runs each smoke suite; `examples/README.md` gains the canonical-shapes table |
 | P0.7 regression tests | **done (PR 3, working tree)** | 17 prior + 4 new: `test_no_host_logger_pollution.py`, `test_multi_agentao_isolation.py`, `test_arun_events_cancel.py`, `test_clean_install_smoke.py` (slow-marked); `slow` marker registered in `pyproject.toml` |
-| P0.8 audit sink | **done (PR 4, working tree)** | `agentao/replay/events.py` declares `V1_2_NEW`; `schemas/replay-event-1.2.json` ships with Pydantic-derived per-kind payload schemas; `agentao.harness.replay_projection` provides `HarnessReplaySink` + reverse projection; `tests/test_harness_to_replay_projection.py` covers round-trip + schema validation |
+| P0.8 audit sink | **done (PR 4, working tree)** | `agentao/replay/events.py` declares `V1_2_NEW`; `schemas/replay-event-1.2.json` ships with Pydantic-derived per-kind payload schemas; `agentao.host.replay_projection` provides `HostReplaySink` + reverse projection; `tests/test_host_to_replay_projection.py` covers round-trip + schema validation |
 | P0.9 dependency split | **not done** | `pyproject.toml` `dependencies` still bundles 13 packages including CLI/web/i18n |
 | P0.10 friendly error | **not done** | `agentao/cli/__init__.py` has no shim; entrypoint imports rich/prompt_toolkit directly |
 
@@ -486,10 +486,10 @@ The net-new work, summed across items, is roughly **2 weeks of focused engineeri
 
 | # | Branch | Scope | Depends on | Net-new diff (est.) |
 |---|---|---|---|---:|
-| **1** | `roadmap/p0-4-typing-gate` | P0.4 only — `mypy --strict --package agentao.harness` clean; new `agentao/harness/protocols.py` re-export; CI step | — | ~250 lines |
+| **1** | `roadmap/p0-4-typing-gate` | P0.4 only — `mypy --strict --package agentao.host` clean; new `agentao/host/protocols.py` re-export; CI step | — | ~250 lines |
 | **2** | `roadmap/p0-5-lazy-imports` | P0.5 only — defer `bs4`/`jieba`/`openai`/`rich`/`prompt_toolkit`/`readchar`/`filelock`; add `tests/test_no_cli_deps_in_core.py` + `tests/test_import_cost.py` | PR 1 (typed kwargs) | ~350 lines |
 | **3** | `roadmap/p0-7-regression-tests` | P0.7 only — the 4 new tests from §9.7 (`test_multi_agentao_isolation.py`, `test_arun_events_cancel.py`, `test_no_host_logger_pollution.py`, `test_clean_install_smoke.py`) | PR 2 (host-logger cleanliness easier post-lazy) | ~200 lines |
-| **4** | `roadmap/p0-8-replay-v1-2` | P0.8 only — replay schema v1.2, harness→replay projection, `tests/test_harness_to_replay_projection.py` | — (independent) | ~300 lines |
+| **4** | `roadmap/p0-8-replay-v1-2` | P0.8 only — replay schema v1.2, harness→replay projection, `tests/test_host_to_replay_projection.py` | — (independent) | ~300 lines |
 | **5** | `roadmap/p0-6-examples` | P0.6 only — 4 new example directories with their own `pyproject.toml`, `examples` CI matrix step | PRs 1–4 (examples pin against 0.3.4 wheel) | ~600 lines (mostly new files) |
 
 **Parallel slack:** PR 4 (replay v1.2) has no dependency and can be picked up in any week. If review queue stalls, start PR 4 against `main` directly while waiting on PRs 1–3.
@@ -498,10 +498,10 @@ The net-new work, summed across items, is roughly **2 weeks of focused engineeri
 
 | PR | Gate added by this PR (must be green) |
 |---|---|
-| 1 | `uv run mypy --strict --package agentao.harness` exits 0; `tests/test_harness_typing.py` runs in dev |
+| 1 | `uv run mypy --strict --package agentao.host` exits 0; `tests/test_host_typing.py` runs in dev |
 | 2 | `python -X importtime -c "import agentao"` does **not** mention `bs4`/`jieba`/`openai`/`rich`/`prompt_toolkit`/`readchar`/`filelock`; `tests/test_no_cli_deps_in_core.py` green |
 | 3 | All four new tests in §9.7 green; full suite still green |
-| 4 | `scripts/write_replay_schema.py --check` clean for v1.2; `tests/test_harness_to_replay_projection.py` green |
+| 4 | `scripts/write_replay_schema.py --check` clean for v1.2; `tests/test_host_to_replay_projection.py` green |
 | 5 | `examples` CI job runs all 4 example smoke commands against a fresh venv with fake LLM |
 
 ### 12.3 0.3.4 release tagging
@@ -619,7 +619,7 @@ Use this template for the PR description (English; mirror in Chinese if the host
 >
 > **Why:** [restate the maintainer's existing problem statement from their issue/discussion]. With `agentao` as an opt-in dependency, [feature] gains [concrete capability — pre-classification / test triage / doc draft / X].
 >
-> **Cost:** zero impact on existing users — `agentao` is in the `[ai]` extra, gated by an env var, fully removable. [Link to the relevant Path A guarantees: `docs/EMBEDDING.md` for capability injection, `docs/api/harness.md` for the public surface.]
+> **Cost:** zero impact on existing users — `agentao` is in the `[ai]` extra, gated by an env var, fully removable. [Link to the relevant Path A guarantees: `docs/EMBEDDING.md` for capability injection, `docs/api/host.md` for the public surface.]
 >
 > **Test plan:** [two or three concrete checks the maintainer can run locally]
 
@@ -673,10 +673,10 @@ gh issue list --repo jin-bo/agentao --state all --limit 100 \
   --json number,title,labels,createdAt
 # Tag each as embed/cli/neutral; record ratio.
 
-# 5. agentao.harness public-API breaks (target: 0)
-git log --since="30 days ago" --oneline -- agentao/harness/ \
+# 5. agentao.host public-API breaks (target: 0)
+git log --since="30 days ago" --oneline -- agentao/host/ \
   | grep -iE 'breaking|break:|!:' || echo "0 breaks"
-# Plus: tests/test_harness_schema.py must be green on every release.
+# Plus: tests/test_host_schema.py must be green on every release.
 
 # 6. Downstream example mypy strict (target: 100%)
 # Run after each release; per-example CI step records pass/fail.

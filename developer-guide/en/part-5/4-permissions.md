@@ -222,7 +222,7 @@ snap = agent.active_permissions()
 
 The snapshot is cached; the cache is invalidated on `set_mode()` and on `add_loaded_source(...)` **with a new label** (duplicate labels are coalesced and do not force a rebuild). Direct mutation of `engine.rules` does not invalidate the cache — if you mutate rules in place, follow up with `set_mode(engine.active_mode)` (a no-op-mode set still clears the cache) or label the change via `add_loaded_source("injected:<unique-name>")`.
 
-The same surface drives `PermissionDecisionEvent.loaded_sources` on the public event stream. **For the full how-to** (including audit-pipeline patterns), see **[4.7 Embedded Harness Contract](/en/part-4/7-harness-contract#4-7-6-agent-active-permissions-policy-snapshots)**. For the dense field reference, see [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-harness-contract).
+The same surface drives `PermissionDecisionEvent.loaded_sources` on the public event stream. **For the full how-to** (including audit-pipeline patterns), see **[4.7 Embedded Harness Contract](/en/part-4/7-host-contract#4-7-6-agent-active-permissions-policy-snapshots)**. For the dense field reference, see [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-host-contract).
 
 ## Common templates
 

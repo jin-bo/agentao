@@ -8,7 +8,7 @@ Use the root [README.md](../README.md) for the product overview and first-run pa
 
 Pick the path that matches your goal:
 
-- Embed in your Python project (primary use case): [EMBEDDING.md](EMBEDDING.md) → [api/harness.md](api/harness.md)
+- Embed in your Python project (primary use case): [EMBEDDING.md](EMBEDDING.md) → [api/host.md](api/host.md)
 - First-time CLI setup: [QUICKSTART.md](QUICKSTART.md)
 - Daily command lookup: [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
 - Cross-language protocol entrypoints: [ACP.md](ACP.md)
@@ -46,14 +46,14 @@ Pick the path that matches your goal:
 
 ### API Reference
 
-- [api/harness.md](api/harness.md) — `agentao.harness` host-facing contract: `ActivePermissions`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `EventStream`
-- [api/harness.zh.md](api/harness.zh.md) — Chinese mirror of the harness API doc
-- [schema/harness.events.v1.json](schema/harness.events.v1.json) — checked-in JSON schema snapshot for the public events + permissions surface
-- [schema/harness.acp.v1.json](schema/harness.acp.v1.json) — checked-in JSON schema snapshot for the host-facing ACP payloads
+- [api/host.md](api/host.md) — `agentao.host` host-facing contract: `ActivePermissions`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `EventStream`
+- [api/host.zh.md](api/host.zh.md) — Chinese mirror of the harness API doc
+- [schema/host.events.v1.json](schema/host.events.v1.json) — checked-in JSON schema snapshot for the public events + permissions surface
+- [schema/host.acp.v1.json](schema/host.acp.v1.json) — checked-in JSON schema snapshot for the host-facing ACP payloads
 
 ### Contributor and Internal Notes
 
-- [design/embedded-harness-contract.md](design/embedded-harness-contract.md)
+- [design/embedded-host-contract.md](design/embedded-host-contract.md)
 - [design/metacognitive-boundary.md](design/metacognitive-boundary.md)
 - [implementation/TOOL_CONFIRMATION.md](implementation/TOOL_CONFIRMATION.md)
 - [implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md](implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md)
@@ -129,10 +129,10 @@ the boundary rationale.
 
 | Document | Scope |
 |----------|-------|
-| [api/harness.md](api/harness.md) | `agentao.harness` package: `ActivePermissions`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `EventStream`, schema export helpers; runtime identity contract; event delivery semantics |
-| [api/harness.zh.md](api/harness.zh.md) | Chinese mirror of the harness API doc |
-| [schema/harness.events.v1.json](schema/harness.events.v1.json) | Release schema snapshot for the public events + permissions surface; `tests/test_harness_schema.py` asserts byte-equality |
-| [schema/harness.acp.v1.json](schema/harness.acp.v1.json) | Release schema snapshot for the host-facing ACP payloads |
+| [api/host.md](api/host.md) | `agentao.host` package: `ActivePermissions`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `EventStream`, schema export helpers; runtime identity contract; event delivery semantics |
+| [api/host.zh.md](api/host.zh.md) | Chinese mirror of the harness API doc |
+| [schema/host.events.v1.json](schema/host.events.v1.json) | Release schema snapshot for the public events + permissions surface; `tests/test_host_schema.py` asserts byte-equality |
+| [schema/host.acp.v1.json](schema/host.acp.v1.json) | Release schema snapshot for the host-facing ACP payloads |
 
 Schema snapshots are checked in. A model change that shifts the wire form must
 update both the Pydantic model and the snapshot in the same PR.
@@ -145,7 +145,7 @@ to them when they affect public behavior.
 
 | Document | Scope |
 |----------|-------|
-| [design/embedded-harness-contract.md](design/embedded-harness-contract.md) | Host-facing harness contract: schema discipline, event stream MVP, and CLI vs harness boundary |
+| [design/embedded-host-contract.md](design/embedded-host-contract.md) | Host-facing harness contract: schema discipline, event stream MVP, and CLI vs harness boundary |
 | [design/metacognitive-boundary.md](design/metacognitive-boundary.md) | Host-injectable self-vs-project boundary protocol |
 
 ## Implementation Notes
@@ -154,7 +154,7 @@ These are contributor-oriented design and implementation documents. Some are pla
 
 Treat these as engineering context, not the canonical user surface:
 
-- [design/embedded-harness-contract.md](design/embedded-harness-contract.md)
+- [design/embedded-host-contract.md](design/embedded-host-contract.md)
 - [design/metacognitive-boundary.md](design/metacognitive-boundary.md)
 - [implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md](implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md)
 - [implementation/TOOL_CONFIRMATION.md](implementation/TOOL_CONFIRMATION.md)

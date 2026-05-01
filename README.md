@@ -54,7 +54,7 @@ agent.close()
 For env-driven discovery (`.env`, `~/.agentao/`, `<wd>/.agentao/*`) use
 `agentao.embedding.build_from_environment(working_directory=...)` instead — it
 is what the CLI uses internally. See [docs/EMBEDDING.md](docs/EMBEDDING.md)
-for the full embedding contract and [docs/api/harness.md](docs/api/harness.md)
+for the full embedding contract and [docs/api/host.md](docs/api/host.md)
 for the public API surface (`Agentao.events()`, `active_permissions()`,
 capability injection).
 
@@ -108,7 +108,7 @@ If you hit a startup error, jump directly to [Troubleshooting common startup fai
 
 Choose the path that matches what you want to do:
 
-- Embed in your Python project: [Embed in 30 lines](#embed-in-30-lines) → [docs/EMBEDDING.md](docs/EMBEDDING.md) → [docs/api/harness.md](docs/api/harness.md)
+- Embed in your Python project: [Embed in 30 lines](#embed-in-30-lines) → [docs/EMBEDDING.md](docs/EMBEDDING.md) → [docs/api/host.md](docs/api/host.md)
 - New to Agentao (CLI): [CLI Quickstart](#cli-quickstart) → [Minimum Viable Configuration](#minimum-viable-configuration) → [Usage](#usage)
 - Need the minimum setup only: [Installation](#installation) → [Required environment variable](#required-environment-variable) → [Minimal runnable example](#minimal-runnable-example)
 - Want to switch models or providers: [Using with Different Providers](#using-with-different-providers)
@@ -835,7 +835,7 @@ For fully silent headless use with no callbacks, call `build_from_environment(wo
 
 For end-to-end embedding patterns — capability injection (`FileSystem` / `ShellExecutor` / `MemoryStore` / `MCPRegistry`), async usage (`agent.arun(...)`), opt-in `replay` / `sandbox` / `bg_store`, and the 0.2.15 → 0.3.0 migration guide — see **[docs/EMBEDDING.md](docs/EMBEDDING.md)**.
 
-The host-stable observation surface lives in `agentao.harness`: `agent.events()` returns an async iterator over `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent`, and `agent.active_permissions()` returns a JSON-safe `ActivePermissions` snapshot (with `loaded_sources` provenance). Internal `AgentEvent` / `Transport.emit()` are richer but not version-stable — production hosts should target the harness contract. Full reference: **[docs/api/harness.md](docs/api/harness.md)**.
+The host-stable observation surface lives in `agentao.host`: `agent.events()` returns an async iterator over `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent`, and `agent.active_permissions()` returns a JSON-safe `ActivePermissions` snapshot (with `loaded_sources` provenance). Internal `AgentEvent` / `Transport.emit()` are richer but not version-stable — production hosts should target the harness contract. Full reference: **[docs/api/host.md](docs/api/host.md)**.
 
 ### ACP (Agent Client Protocol) Mode
 

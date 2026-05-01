@@ -1,12 +1,12 @@
 # 4.7 The Embedded Harness Contract — Your Stable Host API
 
 > **What you'll learn**
-> - **Why** there's a separate `agentao.harness` package alongside Transport / AgentEvent
+> - **Why** there's a separate `agentao.host` package alongside Transport / AgentEvent
 > - The **three surfaces** it exposes (events, policy snapshot, capability protocols) and which problem each solves
 > - **`agent.events()` vs. `Transport(on_event=…)`** — when to use which (or both)
 > - **End-to-end**: a tenant-scoped audit pipeline in ~30 lines that won't break on the next Agentao release
 
-If you've read [4.2 AgentEvent](./2-agent-events) and the `:::warning` told you "use `HarnessEvent` instead for production", this chapter is the **how** behind that advice.
+If you've read [4.2 AgentEvent](./2-agent-events) and the `:::warning` told you "use `HostEvent` instead for production", this chapter is the **how** behind that advice.
 
 ## 4.7.1 The problem this solves
 
@@ -16,26 +16,34 @@ You build it on top of `AgentEvent` (Part 4.2), it works, you ship. Three months
 
 This is the **churn problem**. `AgentEvent` is the runtime's internal event bus — it powers the CLI, debug UI, and replay machinery, all of which need rich detail and can absorb churn release-by-release. **A production host can't.**
 
-The **embedded harness contract** is the answer: a deliberately small surface at `agentao.harness` that's:
+The **embedded harness contract** is the answer: a deliberately small surface at `agentao.host` that's:
 
 - **Frozen as Pydantic models** — fields and types are part of the public contract
-- **Schema-snapshotted** in `docs/schema/harness.events.v1.json` — byte-equality enforced in CI
+- **Schema-snapshotted** in `docs/schema/host.events.v1.json` — byte-equality enforced in CI
 - **A redacted projection** of internal events — e.g. user prompt text isn't in the audit body
 - **Versioned** — adding optional fields is backwards-compatible; removing or renaming requires a schema bump
 
-If your code only touches `agentao.harness` (plus the documented `Agentao(...)` constructor and `chat()` / `events()` / `active_permissions()` methods), you stay forward-compatible.
+If your code only touches `agentao.host` (plus the documented `Agentao(...)` constructor and `chat()` / `events()` / `active_permissions()` methods), you stay forward-compatible.
+
+::: tip Harness wraps the runtime — it doesn't replace it.
+The harness contract types the **observability**, **policy**, and **wire-schema** surfaces *around* an Agentao session. It is **not** a turnkey chat runtime: you still call `agent.arun()` (or `agent.chat()`) to drive a turn, and you still pick a streaming surface (`Transport` or ACP) for assistant text / reasoning / raw tool I/O. Think of harness as the OEM connector around the engine, not the engine itself.
+:::
 
 ## 4.7.2 The three surfaces
 
-`agentao.harness` exposes three distinct surfaces. They live in one package because they share the "stable host contract" promise, but they solve different problems:
+`agentao.host` exposes three distinct surfaces. They live in one package because they share the "stable host contract" promise, but they solve different problems:
 
 | Surface | What you call | What it gives you | Used in |
 |---------|---------------|-------------------|---------|
-| **Events** | `agent.events()` async iterator | A stream of `HarnessEvent` (tool / sub-agent / permission lifecycle) | Audit pipelines, observability, real-time UI |
+| **Events** | `agent.events()` async iterator | A stream of `HostEvent` (tool / sub-agent / permission lifecycle) | Audit pipelines, observability, real-time UI |
 | **Policy snapshot** | `agent.active_permissions()` | A JSON-safe `ActivePermissions` (mode + rules + sources) | Settings UI, audit-log enrichment, compliance reports |
-| **Capability protocols** | `from agentao.harness.protocols import FileSystem, ShellExecutor` | Runtime-checkable Protocols you implement to inject Docker / virtual FS / audit proxies | See [2.2 Tier 3 · filesystem / shell](/en/part-2/2-constructor-reference#tier-3-advanced-injections) and [6.4](/en/part-6/4-multi-tenant-fs) |
+| **Capability protocols** | `from agentao.host.protocols import FileSystem, ShellExecutor` | Runtime-checkable Protocols you implement to inject Docker / virtual FS / audit proxies | See [2.2 Tier 3 · filesystem / shell](/en/part-2/2-constructor-reference#tier-3-advanced-injections) and [6.4](/en/part-6/4-multi-tenant-fs) |
 
 This chapter focuses on **events** and **policy snapshot** — the parts most readers reach for first. Capability protocols are already covered in their construction-time context.
+
+::: info There's also a fourth artifact in the package: the ACP schema surface.
+`export_host_acp_json_schema()` exposes the Pydantic-typed wire schema for hosts that drive Agentao **out-of-process** (IDE plugin, Node/Go/Rust frontend, microservice) over the [ACP stdio protocol](/en/part-3/1-acp-tour). It isn't a consumption API like the three above — it's a contract artifact for protocol implementers. **In-process embedders can ignore it; out-of-process embedders should reference the snapshot rather than reverse-engineering payloads from runtime traces.**
+:::
 
 ## 4.7.3 The three event types
 
@@ -47,11 +55,11 @@ Three orthogonal lifecycle facts. Each is a Pydantic model carrying just enough 
 | `PermissionDecisionEvent` | (no phases — single decision per call) | Every permission decision: `allow` / `deny` / `prompt`. **Consumers must drain even allow events** — the audit row needs them. |
 | `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | Sub-agent task lifecycle. Note: `cancelled` is a **distinct phase** here (unlike tools). |
 
-`HarnessEvent` is the discriminated union of these three. Use `isinstance` to branch:
+`HostEvent` is the discriminated union of these three. Use `isinstance` to branch:
 
 ```python
-from agentao.harness import (
-    HarnessEvent,
+from agentao.host import (
+    HostEvent,
     ToolLifecycleEvent,
     SubagentLifecycleEvent,
     PermissionDecisionEvent,
@@ -66,7 +74,7 @@ async for ev in agent.events():
         ...
 ```
 
-Full field list: [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-harness-contract). The schemas live at [`docs/schema/harness.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/harness.events.v1.json).
+Full field list: [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-host-contract). The schemas live at [`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json).
 
 ## 4.7.4 `agent.events()` vs. `Transport(on_event=…)` — when to use which
 
@@ -86,20 +94,20 @@ Most production deployments use **both**: Transport drives the streaming UI; `ev
 ## 4.7.5 End-to-end: tenant-scoped audit pipeline
 
 ::: tip Two runnable starting points
-- **First taste** — [`examples/harness_events.py`](https://github.com/jin-bo/agentao/blob/main/examples/harness_events.py): minimal, prints each `HarnessEvent` to stdout. ~50 lines, run with `OPENAI_API_KEY=sk-... uv run python examples/harness_events.py`.
-- **Production pattern** — [`examples/harness_audit_pipeline.py`](https://github.com/jin-bo/agentao/blob/main/examples/harness_audit_pipeline.py): the full audit-loop below, with SQLite persistence + after-turn table dump.
+- **First taste** — [`examples/host_events.py`](https://github.com/jin-bo/agentao/blob/main/examples/host_events.py): minimal, prints each `HostEvent` to stdout. ~50 lines, run with `OPENAI_API_KEY=sk-... uv run python examples/host_events.py`.
+- **Production pattern** — [`examples/host_audit_pipeline.py`](https://github.com/jin-bo/agentao/blob/main/examples/host_audit_pipeline.py): the full audit-loop below, with SQLite persistence + after-turn table dump.
 
 Read on for the schema-stable pattern; clone either example to get hands-on output in 60 seconds.
 :::
 
-Here's a complete pattern. Every tool call, permission decision, and sub-agent action gets one row in your audit table — schema-stable across Agentao releases. Field names below are the actual ones in [`agentao/harness/models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/harness/models.py); compare with [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-harness-contract) for the full type signatures.
+Here's a complete pattern. Every tool call, permission decision, and sub-agent action gets one row in your audit table — schema-stable across Agentao releases. Field names below are the actual ones in [`agentao/host/models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/host/models.py); compare with [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-host-contract) for the full type signatures.
 
 ```python
 """Tenant audit pipeline. Run alongside agent.arun()."""
 import asyncio
 import json
 from agentao import Agentao
-from agentao.harness import (
+from agentao.host import (
     ToolLifecycleEvent,
     PermissionDecisionEvent,
     SubagentLifecycleEvent,
@@ -171,7 +179,7 @@ async def handle_request(tenant_id: str, message: str, db):
 - Same-session ordering is guaranteed by the contract — your audit row order matches event order.
 - `PermissionDecisionEvent` precedes the matching `ToolLifecycleEvent(phase="started")` (same `tool_call_id`) so downstream views can stitch them.
 - Dropping a slow consumer doesn't drop events: backpressure is host-pulled via a bounded queue. Events block the producer rather than silently get dropped.
-- When Agentao 0.5 ships and adds a new internal event variant, your audit pipeline doesn't notice — that event isn't projected to harness, and any new `HarnessEvent` variant the projection *does* gain only adds optional fields.
+- When Agentao 0.5 ships and adds a new internal event variant, your audit pipeline doesn't notice — that event isn't projected to harness, and any new `HostEvent` variant the projection *does* gain only adds optional fields.
 
 ## 4.7.6 `agent.active_permissions()` — policy snapshots
 
@@ -197,12 +205,12 @@ Pin this snapshot into your audit log on session start so you can later answer "
 
 ## 4.7.7 Forward-compatibility guarantees
 
-What `agentao.harness` promises:
+What `agentao.host` promises:
 
 - **Adding a field** to any model = backwards-compatible. Your code keeps working.
-- **Removing or renaming a field** requires a schema version bump (`harness.events.v1.json` → `v2`) and a clear migration in the changelog.
+- **Removing or renaming a field** requires a schema version bump (`host.events.v1.json` → `v2`) and a clear migration in the changelog.
 - **Internal types** (`agentao.transport.AgentEvent`, `agentao.tools.ToolExecutionResult`, `agentao.permissions.PermissionEngine`) may change in any release. **Don't import them directly into production code paths.**
-- **Schema snapshots are CI-enforced** via `tests/test_harness_schema.py` — a model change that shifts the wire form fails the build until both the model and the snapshot are updated together.
+- **Schema snapshots are CI-enforced** via `tests/test_host_schema.py` — a model change that shifts the wire form fails the build until both the model and the snapshot are updated together.
 
 What this gives you operationally: **you can pin `agentao>=0.4.0,<1.0` in production** with confidence that the harness contract is the contract you'll have at 0.9.x.
 
@@ -219,12 +227,15 @@ The harness deliberately doesn't expose:
 
 The CLI may build on the same events for its own UI, but its stores and commands are **not promoted** to the harness API.
 
-If you find yourself wanting to reach past `agentao.harness` for something missing, file an issue rather than relying on internal types.
+If you find yourself wanting to reach past `agentao.host` for something missing, file an issue rather than relying on internal types.
 
 ## 4.7.9 Quick decision flow
 
 ```
 Q: I need to react to agent events. Which surface?
+│
+├─ Driving a turn / getting the final reply?
+│      → agent.arun() or agent.chat()  (Part 2)
 │
 ├─ Streaming UI (text chunks, thinking, in-flight tool view)?
 │      → Transport(on_event=…)         (Part 4.3)
@@ -236,22 +247,26 @@ Q: I need to react to agent events. Which surface?
 │      → agent.active_permissions()    (§ 4.7.6)
 │
 ├─ Routing IO through Docker / virtual FS / audit proxy?
-│      → from agentao.harness.protocols import FileSystem, ShellExecutor
+│      → from agentao.host.protocols import FileSystem, ShellExecutor
 │        (Part 2.2 / Part 6.4)
+│
+├─ Driving Agentao from a non-Python host (IDE, Node, Go, Rust)?
+│      → ACP stdio protocol            (Part 3.1)
+│        (use export_host_acp_json_schema() for the wire types)
 │
 └─ Anything else? → check Appendix A.10, then file an issue.
 ```
 
 ## TL;DR
 
-- **`agentao.harness` is the stable, schema-snapshotted, forward-compatible host surface.** Pin to it for production code.
+- **`agentao.host` is the stable, schema-snapshotted, forward-compatible host surface.** Pin to it for production code.
 - **Three surfaces**: `events()` for streams, `active_permissions()` for policy snapshots, `harness.protocols` for capability injection.
 - **`events()` is not a replacement for Transport** — they're complementary. Use Transport for UI streaming, `events()` for audit / observability.
-- **`isinstance`-dispatch on `HarnessEvent`** to route to the right handler. The three event types are orthogonal lifecycle facts, not a hierarchy.
+- **`isinstance`-dispatch on `HostEvent`** to route to the right handler. The three event types are orthogonal lifecycle facts, not a hierarchy.
 - **30 lines + a database** is all it takes to ship a tenant audit pipeline that survives release upgrades.
 
-→ Reference dive: [Appendix A.10 · Embedded Harness Contract](/en/appendix/a-api-reference#a-10-embedded-harness-contract)
-→ Schemas: [`docs/schema/harness.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/harness.events.v1.json)
-→ Design rationale: [`docs/design/embedded-harness-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-harness-contract.md)
+→ Reference dive: [Appendix A.10 · Embedded Harness Contract](/en/appendix/a-api-reference#a-10-embedded-host-contract)
+→ Schemas: [`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json)
+→ Design rationale: [`docs/design/embedded-host-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-host-contract.md)
 
 → Next: [Part 5 · Extensibility](/en/part-5/)

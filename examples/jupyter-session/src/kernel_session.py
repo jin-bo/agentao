@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from agentao import Agentao
-from agentao.harness.models import HarnessEvent
+from agentao.host.models import HostEvent
 from agentao.llm import LLMClient
 
 
@@ -24,7 +24,7 @@ class KernelSession:
     """Kernel-scoped state. Construct once per notebook."""
 
     agent: Agentao
-    history: list[HarnessEvent] = field(default_factory=list)
+    history: list[HostEvent] = field(default_factory=list)
 
 
 def build_session(
@@ -53,17 +53,17 @@ def build_session(
 async def drain_events_into(
     session: KernelSession,
     *,
-    on_event: Callable[[HarnessEvent], None] = lambda _e: None,
+    on_event: Callable[[HostEvent], None] = lambda _e: None,
     until_count: int = 1,
     timeout: float = 5.0,
-) -> list[HarnessEvent]:
+) -> list[HostEvent]:
     """Iterate ``session.agent.events()`` until ``until_count`` events.
 
     A real notebook would attach an ``ipywidgets`` Output and update it
     on each event; this helper centralises the iteration loop so a
     smoke test can assert the wiring without rendering anything.
     """
-    received: list[HarnessEvent] = []
+    received: list[HostEvent] = []
 
     async def _drain() -> None:
         async for event in session.agent.events():
@@ -82,7 +82,7 @@ async def drain_events_into(
 
 async def turn(
     session: KernelSession, prompt: str
-) -> tuple[str, list[HarnessEvent]]:
+) -> tuple[str, list[HostEvent]]:
     """Run one turn and concurrently drain a few harness events.
 
     Returns ``(reply, events_seen_during_turn)``. The notebook cell

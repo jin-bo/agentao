@@ -182,18 +182,18 @@ when the host is done with the session.
 Beyond LLM / memory / MCP / permissions, four narrower capabilities
 let you intercept IO without subclassing tools. The Protocols are
 re-exported on the public harness surface — **always import from
-`agentao.harness.protocols`** rather than reaching into
+`agentao.host.protocols`** rather than reaching into
 `agentao.capabilities.*`, which is internal and may move:
 
 | Protocol | Default (in `agentao.capabilities`) | Purpose |
 |---|---|---|
-| `agentao.harness.protocols.FileSystem` | `LocalFileSystem` | Backs `read_file`, `write_file`, `glob`, `search_file_content`, `list_directory`. Inject to redirect through Docker exec, virtual filesystems, audit proxies. |
-| `agentao.harness.protocols.ShellExecutor` | `LocalShellExecutor` | Backs `run_shell_command`. Inject to route shell through a remote runner / sandbox. |
-| `agentao.harness.protocols.MemoryStore` | `SQLiteMemoryStore` | Persistent-memory storage. Inject to back memory with Redis, Postgres, in-process dict, remote API. |
-| `agentao.harness.protocols.MCPRegistry` | `FileBackedMCPRegistry` | Source of MCP server configs. Inject to register servers programmatically. |
+| `agentao.host.protocols.FileSystem` | `LocalFileSystem` | Backs `read_file`, `write_file`, `glob`, `search_file_content`, `list_directory`. Inject to redirect through Docker exec, virtual filesystems, audit proxies. |
+| `agentao.host.protocols.ShellExecutor` | `LocalShellExecutor` | Backs `run_shell_command`. Inject to route shell through a remote runner / sandbox. |
+| `agentao.host.protocols.MemoryStore` | `SQLiteMemoryStore` | Persistent-memory storage. Inject to back memory with Redis, Postgres, in-process dict, remote API. |
+| `agentao.host.protocols.MCPRegistry` | `FileBackedMCPRegistry` | Source of MCP server configs. Inject to register servers programmatically. |
 
 ```python
-from agentao.harness.protocols import FileSystem, ShellExecutor
+from agentao.host.protocols import FileSystem, ShellExecutor
 from agentao.capabilities import LocalFileSystem  # default impl
 
 class AuditedFileSystem:        # duck-types FileSystem
@@ -321,14 +321,14 @@ running agent without reaching into internals: the active permission
 policy, what the agent is doing, what sub-agents it spawned, and why
 each capability was allowed or denied.
 
-The stable surface lives in `agentao.harness`. Internal runtime types
+The stable surface lives in `agentao.host`. Internal runtime types
 (`AgentEvent`, `ToolExecutionResult`, `PermissionEngine`) are deliberately
 **not** part of this contract — they may change in any release.
 
 ```python
-from agentao.harness import (
+from agentao.host import (
     ActivePermissions,
-    HarnessEvent,
+    HostEvent,
     PermissionDecisionEvent,
     SubagentLifecycleEvent,
     ToolLifecycleEvent,
@@ -357,7 +357,7 @@ is invalidated on `set_mode()` and `add_loaded_source()`.
 
 ### `agent.events(session_id=None)` — async iterator
 
-Returns an async iterator over `HarnessEvent` (a discriminated union of
+Returns an async iterator over `HostEvent` (a discriminated union of
 `ToolLifecycleEvent`, `SubagentLifecycleEvent`, and
 `PermissionDecisionEvent`). Pass `session_id=` to filter; pass `None`
 to subscribe to all sessions on this `Agentao` instance.
@@ -374,7 +374,7 @@ async def watch(agent):
 ```
 
 Delivery semantics (the full contract is in
-[`docs/api/harness.md`](api/harness.md)):
+[`docs/api/host.md`](api/host.md)):
 
 - Same-session ordering is guaranteed.
 - Within one `tool_call_id`, `PermissionDecisionEvent` is emitted before
@@ -392,7 +392,7 @@ Delivery semantics (the full contract is in
 ### What is *not* on the harness surface
 
 These are deliberately deferred (see
-[`docs/design/embedded-harness-contract.md`](design/embedded-harness-contract.md)):
+[`docs/design/embedded-host-contract.md`](design/embedded-host-contract.md)):
 
 - Public agent graph / descendants store API.
 - Host-facing hooks list/disable API.
@@ -408,10 +408,10 @@ commands are not promoted to the harness API.
 
 Each release ships checked-in JSON schema snapshots:
 
-- `docs/schema/harness.events.v1.json` — events + permissions surface
-- `docs/schema/harness.acp.v1.json` — host-facing ACP payloads
+- `docs/schema/host.events.v1.json` — events + permissions surface
+- `docs/schema/host.acp.v1.json` — host-facing ACP payloads
 
-`tests/test_harness_schema.py` regenerates the schemas from the
+`tests/test_host_schema.py` regenerates the schemas from the
 Pydantic models and asserts byte-equality. A model change that shifts
 the wire form must update both the model and the snapshot in the same
 PR. Adding an optional field is backwards-compatible; removing or
@@ -490,15 +490,15 @@ change required.
 
 What's available to opt into:
 
-- `agent.events(session_id=None)` — async iterator over `HarnessEvent`
+- `agent.events(session_id=None)` — async iterator over `HostEvent`
   (`ToolLifecycleEvent` / `SubagentLifecycleEvent` /
   `PermissionDecisionEvent`). Stable host-facing observation surface;
   see [section 7](#7-host-facing-harness-contract) above.
 - `agent.active_permissions()` — JSON-safe `ActivePermissions` snapshot
   (`mode`, `rules`, `loaded_sources`).
-- `agentao.harness` — public package with `ActivePermissions`,
+- `agentao.host` — public package with `ActivePermissions`,
   `ToolLifecycleEvent`, `SubagentLifecycleEvent`,
-  `PermissionDecisionEvent`, `EventStream`, `HarnessEvent`,
+  `PermissionDecisionEvent`, `EventStream`, `HostEvent`,
   `RFC3339UTCString`, and the schema export helpers.
 - New direct dependency: `pydantic>=2`. If your environment already
   pins Pydantic v1, lift the pin before upgrading.
@@ -508,7 +508,7 @@ What stays internal (do **not** depend on for forward compatibility):
 - `agentao.transport.AgentEvent` and `Transport.emit(...)` — richer but
   may change between releases.
 - `agentao.runtime.identity.*` — id helpers; private to the runtime.
-- `agentao.harness.projection.*` — internal redaction layer.
+- `agentao.host.projection.*` — internal redaction layer.
 
 ---
 
@@ -518,11 +518,11 @@ What stays internal (do **not** depend on for forward compatibility):
 |---|---|
 | `Agentao(...)` signature | [`agentao/agent.py`](../agentao/agent.py) |
 | `build_from_environment(...)` | [`agentao/embedding/factory.py`](../agentao/embedding/factory.py) |
-| Capability protocols (public surface) | [`agentao/harness/protocols.py`](../agentao/harness/protocols.py) — re-exports `FileSystem`, `ShellExecutor`, `MCPRegistry`, `MemoryStore` and their value shapes |
+| Capability protocols (public surface) | [`agentao/host/protocols.py`](../agentao/host/protocols.py) — re-exports `FileSystem`, `ShellExecutor`, `MCPRegistry`, `MemoryStore` and their value shapes |
 | Capability defaults / reference impls | [`agentao/capabilities/`](../agentao/capabilities/) — `LocalFileSystem`, `LocalShellExecutor`, etc. (not part of the public surface) |
 | Default IO impls | `LocalFileSystem`, `LocalShellExecutor`, `SQLiteMemoryStore`, `FileBackedMCPRegistry` |
-| Host-facing harness contract | [`agentao/harness/`](../agentao/harness/) — public types; full reference at [`docs/api/harness.md`](api/harness.md) |
-| Schema snapshots | [`docs/schema/harness.events.v1.json`](schema/harness.events.v1.json), [`docs/schema/harness.acp.v1.json`](schema/harness.acp.v1.json) |
+| Host-facing harness contract | [`agentao/host/`](../agentao/host/) — public types; full reference at [`docs/api/host.md`](api/host.md) |
+| Schema snapshots | [`docs/schema/host.events.v1.json`](schema/host.events.v1.json), [`docs/schema/host.acp.v1.json`](schema/host.acp.v1.json) |
 | Working examples | [`examples/`](../examples/) — `data-workbench`, `batch-scheduler`, `ticket-automation`, `saas-assistant`, `headless_worker.py` |
 | Transport API | [`docs/ACP.md`](ACP.md) (also covers headless / SDK transport) |
 | Permission rules | [`docs/features/TOOL_CONFIRMATION_FEATURE.md`](features/TOOL_CONFIRMATION_FEATURE.md) |

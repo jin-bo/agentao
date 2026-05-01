@@ -26,7 +26,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from agentao.cancellation import CancellationToken
-from agentao.harness.models import ToolLifecycleEvent
+from agentao.host.models import ToolLifecycleEvent
 from agentao.runtime import identity as runtime_identity
 
 
@@ -70,11 +70,11 @@ def test_arun_events_cancel_drains_and_propagates(tmp_path: Path) -> None:
     def _fake_chat(user_message, max_iterations, cancellation_token):
         """Stand-in for the chat loop: publish two events, then block until cancelled."""
         seen_token["t"] = cancellation_token
-        # Publish two harness events so a subscriber has something to drain.
-        agent._harness_events.publish(
+        # Publish two host events so a subscriber has something to drain.
+        agent._host_events.publish(
             _tool_event(session_id, tool_call_id="tc-1", phase="started")
         )
-        agent._harness_events.publish(
+        agent._host_events.publish(
             _tool_event(session_id, tool_call_id="tc-1", phase="completed")
         )
         # Signal the loop that we're inside the executor.
@@ -87,7 +87,7 @@ def test_arun_events_cancel_drains_and_propagates(tmp_path: Path) -> None:
 
     async def _run():
         main_loop_holder["loop"] = asyncio.get_running_loop()
-        agent._harness_events.bind_loop(main_loop_holder["loop"])
+        agent._host_events.bind_loop(main_loop_holder["loop"])
 
         received: list[ToolLifecycleEvent] = []
 
@@ -162,7 +162,7 @@ def test_subscriber_iterator_releases_on_cancel(tmp_path: Path) -> None:
     session_id = agent._session_id
 
     async def _run():
-        agent._harness_events.bind_loop(asyncio.get_running_loop())
+        agent._host_events.bind_loop(asyncio.get_running_loop())
 
         async def _drain():
             async for _event in agent.events(session_id=session_id):
@@ -183,7 +183,7 @@ def test_subscriber_iterator_releases_on_cancel(tmp_path: Path) -> None:
         loop = asyncio.get_running_loop()
         t0 = loop.time()
         for i in range(50):
-            agent._harness_events.publish(
+            agent._host_events.publish(
                 _tool_event(session_id, tool_call_id=f"tc-{i}", phase="started")
             )
         return loop.time() - t0

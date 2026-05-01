@@ -109,13 +109,13 @@ dev = [
 ]
 
 [tool.mypy]
-# P0.4 typing gate — strict only on the public harness boundary; the rest of
+# P0.4 typing gate — strict only on the public host boundary; the rest of
 # the codebase is untouched until separate items raise its bar.
 python_version = "3.10"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["agentao.harness.*"]
+module = ["agentao.host.*"]
 strict = true
 warn_unused_ignores = true
 disallow_any_explicit = false

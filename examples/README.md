@@ -29,8 +29,8 @@ Four minimum-shape samples that run end-to-end against a fake LLM, no API key re
 | File | What it shows | Run |
 |------|---------------|-----|
 | [`headless_worker.py`](./headless_worker.py) | `ACPManager` driving an inline mock ACP server (success / interaction-required / cancel paths). Authoritative Week 1 regression fixture for [`docs/features/headless-runtime.md`](../docs/features/headless-runtime.md). | `uv run python examples/headless_worker.py` |
-| [`harness_events.py`](./harness_events.py) | Public harness contract (since 0.3.1): `agent.events()` async iterator + `agent.active_permissions()` snapshot, wired alongside `agent.arun(...)` via `asyncio.gather`. See [`docs/api/harness.md`](../docs/api/harness.md). | `OPENAI_API_KEY=sk-... uv run python examples/harness_events.py` |
-| [`harness_audit_pipeline.py`](./harness_audit_pipeline.py) | End-to-end tenant audit pipeline: drains `agent.events()` into a local SQLite `agent_audit` table, pins an `active_permissions()` snapshot at session start, dumps the table after the turn. Companion to [`developer-guide §4.7`](../developer-guide/en/part-4/7-harness-contract.md). | `OPENAI_API_KEY=sk-... uv run python examples/harness_audit_pipeline.py` |
+| [`host_events.py`](./host_events.py) | Public harness contract (since 0.3.1): `agent.events()` async iterator + `agent.active_permissions()` snapshot, wired alongside `agent.arun(...)` via `asyncio.gather`. See [`docs/api/host.md`](../docs/api/host.md). | `OPENAI_API_KEY=sk-... uv run python examples/host_events.py` |
+| [`host_audit_pipeline.py`](./host_audit_pipeline.py) | End-to-end tenant audit pipeline: drains `agent.events()` into a local SQLite `agent_audit` table, pins an `active_permissions()` snapshot at session start, dumps the table after the turn. Companion to [`developer-guide §4.7`](../developer-guide/en/part-4/7-host-contract.md). | `OPENAI_API_KEY=sk-... uv run python examples/host_audit_pipeline.py` |
 
 ## Conventions
 
