@@ -13,6 +13,14 @@ Agentao internals.
 > Audience: developers integrating Agentao into a webapp, batch job,
 > IDE plugin, evaluation harness, sandbox runner, or research notebook.
 
+> **Is in-process embedding what you want?** If your host is **not** a
+> Python process (an editor, IDE extension, non-Python sandbox runner),
+> see [`ACP.md`](ACP.md) for the stdio ACP server instead. If you want
+> Agentao to drive *other* ACP agents (Claude Code, Codex, …) as
+> backends, see [`features/acp-client.md`](features/acp-client.md). For
+> a side-by-side comparison of all four surfaces, see
+> [`architecture/embedding-vs-acp.md`](architecture/embedding-vs-acp.md).
+
 ---
 
 ## TL;DR

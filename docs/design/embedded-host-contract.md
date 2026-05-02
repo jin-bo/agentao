@@ -9,18 +9,33 @@
 
 ## Scope (read this first)
 
-The harness contract covers three pillars: **observability events**
-(tool / subagent / permission-decision lifecycle), the **ACP schema
-surface** (host-facing request, response, notification models), and
-**permission state** (`ActivePermissions` snapshot).
+The harness contract is the stability boundary for **in-process**
+embedding of Agentao. Three pillars:
+
+- **Observability events** — tool / subagent / permission-decision
+  lifecycle.
+- **Permission state** — `ActivePermissions` snapshot.
+- **ACP schema surface** — versioned Pydantic models for the ACP
+  wire payloads. Exported *only* for the long-tail case of an
+  in-process host that also re-exposes Agentao via the ACP wire to
+  its own clients; vanilla in-process hosts ignore this surface.
 
 It is **not** a complete chat runtime. To drive an agent turn, hosts
 call `Agentao.arun()`. To render streaming chat UI, hosts consume the
-internal `Transport` / `AgentEvent` stream or the ACP protocol — those
-carry the assistant text, reasoning, and raw tool I/O that this stable
-contract intentionally omits. The harness exists so an embedder can
-audit, visualise, and gate Agentao without coupling to internal event
-shapes; it does not replace the in-process runtime entry points.
+internal `Transport` / `AgentEvent` stream — that carries the
+assistant text, reasoning, and raw tool I/O the stable contract
+intentionally omits.
+
+The ACP server (`agentao --acp --stdio`) and the ACP client
+(`ACPManager`) are **separate deployment models**, not transports
+inside this contract. See
+[`docs/architecture/embedding-vs-acp.md`](../architecture/embedding-vs-acp.md)
+for the disambiguation between in-process embedding, ACP server, ACP
+client, and the ACP schema surface.
+
+The harness exists so an embedder can audit, visualise, and gate
+Agentao without coupling to internal event shapes; it does not
+replace the in-process runtime entry points.
 
 When extending this document, do not refer to `HostEvent` as the
 whole of the harness contract. The events surface is one of three
@@ -282,14 +297,32 @@ The following are valid harness candidates, but not MVP:
    `disabled_hook_keys`.
 2. **`disabled_hook_keys` constructor/session parameter.**
    Only expose this after hook keys are stable.
-3. **MCP lifecycle events.**
-   Candidate phases: `starting`, `connected`, `auth_failed`,
-   `tool_discovery_failed`, `disconnected`.
+3. **MCP lifecycle events.** **In flight** — see
+   [`docs/implementation/PUBLIC_EVENT_PROMOTION_PLAN.md`](../implementation/PUBLIC_EVENT_PROMOTION_PLAN.md)
+   (Pillar 1). Candidate phases: `connecting`, `connected`,
+   `auth_failed`, `tool_discovery_failed`, `disconnected`. Promotion
+   driven by the absence of any internal channel for MCP outage —
+   hosts otherwise have to poll `McpClientManager.get_status()`.
 4. **Hook lifecycle events.**
    Candidate phases: `started`, `completed`, `failed`, `skipped`.
-5. **Per-session stream dispatch and multi-subscriber fan-out.**
-   MVP hosts can filter one stream by `session_id`. Separate independent
-   iterators require a tested pub/sub layer and are deferred.
+   Blocked on item #1 (hook key contract). Internal
+   `PLUGIN_HOOK_FIRED` covers non-stable consumers in the meantime.
+4a. **`LLMCallEvent` promotion.** **In flight** — see
+   [`docs/implementation/PUBLIC_EVENT_PROMOTION_PLAN.md`](../implementation/PUBLIC_EVENT_PROMOTION_PLAN.md)
+   (Pillar 2). Phases: `started`, `completed`, `failed` (with
+   structured `error_type` covering rate-limit, timeout, auth, etc).
+   Internal `LLM_CALL_*` events already exist; promotion adds the
+   public Pydantic projection and schema snapshot for cost/billing/
+   compliance hosts.
+5. **Per-session stream dispatch and multi-async-iterator fan-out.**
+   MVP hosts can filter one async iterator by `session_id`; a second
+   iterator with the same filter raises `StreamSubscribeError`.
+   Separate independent iterators (each owning its own backpressure
+   queue) require a tested pub/sub layer and are deferred. *Synchronous*
+   fan-out via `EventStream.add_observer` is **already shipped** and
+   covers the audit / metrics / replay sinks the MVP contract was
+   originally written for (`HostReplaySink` is the canonical user); the
+   deferred item is strictly about the async-iterator surface.
 
 ## CLI and Local Product Surface
 

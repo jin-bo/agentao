@@ -6,6 +6,8 @@
 
 ## 从这里开始
 
+> **不确定该用哪一面？** 先看 [architecture/embedding-vs-acp.zh.md](architecture/embedding-vs-acp.zh.md)——它把 in-process embedding、ACP server、ACP client 以及 ACP schema surface 区分清楚（这四者可以任意组合）。
+
 按目标选择阅读路径：
 
 - 第一次安装和启动：[QUICKSTART.md](QUICKSTART.md)

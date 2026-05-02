@@ -6,6 +6,8 @@ Use the root [README.md](../README.md) for the product overview and first-run pa
 
 ## Start Here
 
+> **Not sure which surface to use?** Read [architecture/embedding-vs-acp.md](architecture/embedding-vs-acp.md) first — it disambiguates in-process embedding, ACP server, ACP client, and the ACP schema surface (all of which can combine).
+
 Pick the path that matches your goal:
 
 - Embed in your Python project (primary use case): [EMBEDDING.md](EMBEDDING.md) → [api/host.md](api/host.md)
