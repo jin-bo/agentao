@@ -32,6 +32,10 @@ Four minimum-shape samples that run end-to-end against a fake LLM, no API key re
 | [`host_events.py`](./host_events.py) | Public harness contract (since 0.3.1): `agent.events()` async iterator + `agent.active_permissions()` snapshot, wired alongside `agent.arun(...)` via `asyncio.gather`. See [`docs/api/host.md`](../docs/api/host.md). | `OPENAI_API_KEY=sk-... uv run python examples/host_events.py` |
 | [`host_audit_pipeline.py`](./host_audit_pipeline.py) | End-to-end tenant audit pipeline: drains `agent.events()` into a local SQLite `agent_audit` table, pins an `active_permissions()` snapshot at session start, dumps the table after the turn. Companion to [`developer-guide §4.7`](../developer-guide/en/part-4/7-host-contract.md). | `OPENAI_API_KEY=sk-... uv run python examples/host_audit_pipeline.py` |
 
+## Persona gallery (`AGENTAO.md` only — no code)
+
+Not an integration example — a collection of `AGENTAO.md` files (project-level prompt configurations) drawn from real use. Drop one into your project root and edit. See [`personas/`](./personas/README.md) ([中文](./personas/README.zh.md)).
+
 ## Conventions
 
 - **Independent dependencies** — each project has its own `pyproject.toml` or `package.json`; nothing is shared. Install inside each directory.
