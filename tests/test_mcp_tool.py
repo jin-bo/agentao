@@ -220,6 +220,27 @@ def test_destructive_hint_overrides_trust():
     assert t.requires_confirmation is True
 
 
+def test_destructive_hint_blocks_is_read_only_even_with_read_only_hint():
+    """A contradictory annotation pair (both ``readOnlyHint=true`` and
+    ``destructiveHint=true``) must not classify the tool as read-only.
+
+    Otherwise the read-only-mode gate in the runner would let the call
+    through and only ask for confirmation later — even though the
+    server itself flagged the op as destructive.
+    """
+    t = McpTool(
+        "srv",
+        _make_mcp_tool_def(annotations={
+            "readOnlyHint": True,
+            "destructiveHint": True,
+        }),
+        call_fn=Mock(),
+        trusted=True,
+    )
+    assert t.is_read_only is False
+    assert t.requires_confirmation is True
+
+
 def test_destructive_hint_ignored_for_untrusted_is_already_confirming():
     """Untrusted servers always require confirmation regardless of hints."""
     t = McpTool(

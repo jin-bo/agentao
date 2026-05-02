@@ -92,7 +92,16 @@ class McpTool(Tool):
     @property
     def is_read_only(self) -> bool:
         # Per MCP spec: never honor annotations from an untrusted server.
-        return self._trusted and self.mcp_annotations.get("readOnlyHint") is True
+        # destructiveHint=true overrides readOnlyHint when a server sends
+        # both — a contradictory pair must not let the call slip through
+        # the read-only gate. Security-positive: assume destructive in doubt.
+        if not self._trusted:
+            return False
+        ann = self.mcp_annotations
+        return (
+            ann.get("readOnlyHint") is True
+            and ann.get("destructiveHint") is not True
+        )
 
     @property
     def requires_confirmation(self) -> bool:
