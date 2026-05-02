@@ -70,6 +70,10 @@
 
 → **[`examples/pytest-fixture/`](https://github.com/jin-bo/agentao/tree/main/examples/pytest-fixture)** 提供可直接 drop-in 的 `agent` / `agent_with_reply` / `fake_llm_client` fixture。密闭、不需要 `OPENAI_API_KEY`。配 [附录 F.8](/zh/appendix/f-faq#f-8-开发与测试) 看断言模式。
 
+### …把 Agentao 的 IO 面（FS / shell / MCP / memory）替换成自己的后端
+
+→ **[2.2 能力协议](/zh/part-2/2-constructor-reference#第-3-档-高级注入)** 列了四个 host→Agentao 注入槽（`filesystem` / `shell` / `mcp_registry` / `memory_manager`）以及每个的绑定时机。**TL;DR**：从 `agentao.host.protocols` 导入 Protocol，把实现传给 `Agentao(...)` 构造器——传 `None` 是回退到本地默认，**不是**禁用。可运行端到端形态：**[`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)** 用四个小适配器替换全部槽位，并用 6 条 smoke 测试断言每个槽位被实际调用（无需 API key）。
+
 ## 没找到你的任务？
 
 - **所有可跑的 examples** —— [`examples/README.md`](https://github.com/jin-bo/agentao/blob/main/examples/README.md) 列出每个样例的技术栈、运行命令、演示内容。

@@ -94,21 +94,39 @@ agent = Agentao(
 
 Most embeddings never need these. Expand only what applies to you.
 
-::: details Capability protocols — `filesystem`, `shell`
-Inject your own `FileSystem` / `ShellExecutor` to route IO through Docker exec, virtual filesystems, audit proxies, or remote runners. The defaults match Agentao's pre-0.2.16 byte-for-byte behavior.
+::: details Capability protocols — `filesystem`, `shell`, `mcp_registry`, `memory_manager`
+Four host→Agentao injection slots cover every IO surface tools touch. Replace any one to route IO through Docker exec, virtual filesystems, audit proxies, plugin-driven MCP discovery, or a remote memory backend. The defaults match Agentao's pre-0.2.16 byte-for-byte behavior.
+
+| Slot | Protocol | Default | Bound at |
+|------|----------|---------|----------|
+| `filesystem` | `FileSystem` | `LocalFileSystem` | Tool registration → `tool.filesystem` on every file/search tool |
+| `shell` | `ShellExecutor` | `LocalShellExecutor` | Tool registration → `tool.shell` on the shell tool |
+| `mcp_registry` | `MCPRegistry` | `FileBackedMCPRegistry` | `Agentao.__init__` reads `list_servers()` once during MCP init |
+| `memory_manager` (wraps `MemoryStore`) | `MemoryStore` | `SQLiteMemoryStore` under `<wd>/.agentao/memory.db` | Held on `agent._memory_manager`; the `save_memory` tool delegates here |
 
 ```python
-from agentao.host.protocols import FileSystem, ShellExecutor
-from agentao.capabilities import LocalFileSystem, LocalShellExecutor
+from agentao import Agentao
+from agentao.host.protocols import FileSystem, ShellExecutor, MCPRegistry, MemoryStore
+from agentao.memory import MemoryManager
 
 agent = Agentao(
     working_directory=workdir,
-    filesystem=MyDockerExecFileSystem(...),
-    shell=MyAuditingShellExecutor(...),
+    filesystem=MyDockerExecFileSystem(...),         # FileSystem
+    shell=MyAuditingShellExecutor(...),             # ShellExecutor
+    mcp_registry=MyPluginMCPRegistry(...),          # MCPRegistry
+    memory_manager=MemoryManager(                   # MemoryStore wrapped in a manager
+        project_store=MyRedisMemoryStore(...),
+    ),
 )
 ```
 
-Always import the **protocols** from `agentao.host.protocols` (public surface). Default impls live in `agentao.capabilities`. Multi-tenant FS isolation: [6.4](/en/part-6/4-multi-tenant-fs).
+Always import the **protocols** from `agentao.host.protocols` (public surface). Default impls live in `agentao.capabilities` and `agentao.memory`. `None` for any slot means *fall back to the local default*, not *disable*; to disable a capability, inject an implementation that raises on call.
+
+::: tip Runnable end-to-end example — [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)
+Replaces all four slots with small adapters (in-memory FS, audit-logging shell, dict-backed memory store, programmatic MCP registry) and asserts each one is consulted via 6 smoke tests. No `OPENAI_API_KEY` required. Run with `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/`.
+:::
+
+Multi-tenant FS isolation: [6.4](/en/part-6/4-multi-tenant-fs).
 :::
 
 ::: details Memory / Skills / MCP managers — `memory_manager`, `skill_manager`, `mcp_manager`, `mcp_registry`

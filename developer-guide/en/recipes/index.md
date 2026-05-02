@@ -70,6 +70,10 @@ Two runnable starting points: [`examples/host_events.py`](https://github.com/jin
 
 → **[`examples/pytest-fixture/`](https://github.com/jin-bo/agentao/tree/main/examples/pytest-fixture)** ships drop-in `agent` / `agent_with_reply` / `fake_llm_client` fixtures. Hermetic, no `OPENAI_API_KEY` needed. Pair with [Appendix F.8](/en/appendix/f-faq#f-8-development-testing) for the assertion patterns.
 
+### …replace Agentao's IO surfaces (FS / shell / MCP / memory) with my own backend
+
+→ **[2.2 Capability protocols](/en/part-2/2-constructor-reference#tier-3-advanced-injections)** lists all four host→Agentao injection slots (`filesystem` / `shell` / `mcp_registry` / `memory_manager`) and how each is bound. **TL;DR**: import the Protocols from `agentao.host.protocols`, pass implementations into the `Agentao(...)` constructor — `None` falls back to local defaults, not "disabled". Runnable end-to-end shape: **[`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)** replaces all four slots with small adapters and asserts each one is consulted (6 smoke tests, no API key).
+
 ## Don't see your task?
 
 - **All runnable examples** — [`examples/README.md`](https://github.com/jin-bo/agentao/blob/main/examples/README.md) lists every sample with stack, run command, and what it shows.

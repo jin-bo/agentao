@@ -94,21 +94,39 @@ agent = Agentao(
 
 大多数嵌入用不到这些。点开你需要的那个即可。
 
-::: details Capability 协议 — `filesystem` / `shell`
-注入你自己的 `FileSystem` / `ShellExecutor`，把 IO 路由到 Docker exec、虚拟文件系统、审计代理或远程 runner。默认实现与 0.2.16 之前的 Agentao 字节级一致。
+::: details Capability 协议 — `filesystem` / `shell` / `mcp_registry` / `memory_manager`
+四个 host → Agentao 注入槽，覆盖工具会触达的所有 IO 面。替换任何一个，就能把 IO 路由到 Docker exec、虚拟文件系统、审计代理、插件式 MCP 发现，或远程记忆后端。默认实现与 0.2.16 之前的 Agentao 字节级一致。
+
+| 槽位 | 协议 | 默认实现 | 绑定时机 |
+|------|------|----------|----------|
+| `filesystem` | `FileSystem` | `LocalFileSystem` | 工具注册时拷到每个文件/搜索 tool 的 `tool.filesystem` |
+| `shell` | `ShellExecutor` | `LocalShellExecutor` | 工具注册时拷到 shell tool 的 `tool.shell` |
+| `mcp_registry` | `MCPRegistry` | `FileBackedMCPRegistry` | `Agentao.__init__` 期间 MCP 初始化读一次 `list_servers()` |
+| `memory_manager`（包裹 `MemoryStore`） | `MemoryStore` | `<wd>/.agentao/memory.db` 上的 `SQLiteMemoryStore` | 落到 `agent._memory_manager`；`save_memory` 工具委派给它 |
 
 ```python
-from agentao.host.protocols import FileSystem, ShellExecutor
-from agentao.capabilities import LocalFileSystem, LocalShellExecutor
+from agentao import Agentao
+from agentao.host.protocols import FileSystem, ShellExecutor, MCPRegistry, MemoryStore
+from agentao.memory import MemoryManager
 
 agent = Agentao(
     working_directory=workdir,
-    filesystem=MyDockerExecFileSystem(...),
-    shell=MyAuditingShellExecutor(...),
+    filesystem=MyDockerExecFileSystem(...),         # FileSystem
+    shell=MyAuditingShellExecutor(...),             # ShellExecutor
+    mcp_registry=MyPluginMCPRegistry(...),          # MCPRegistry
+    memory_manager=MemoryManager(                   # MemoryStore 用 manager 包一层
+        project_store=MyRedisMemoryStore(...),
+    ),
 )
 ```
 
-**协议** 始终从 `agentao.host.protocols` 导入（公共表面）。默认实现住在 `agentao.capabilities`。多租户 FS 隔离见 [6.4](/zh/part-6/4-multi-tenant-fs)。
+**协议**始终从 `agentao.host.protocols` 导入（公共表面）。默认实现住在 `agentao.capabilities` 和 `agentao.memory`。任何槽位传 `None` 表示*回退到本地默认*，**不是** *禁用*；要真正禁用某个能力，请注入一个调用即抛错的实现。
+
+::: tip 端到端可运行示例 — [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)
+用四个小适配器（内存 FS、审计日志 shell、dict 记忆存储、程序化 MCP registry）替换全部四个槽位，再通过 6 条 smoke 测试断言每个槽位都被实际调用。无需 `OPENAI_API_KEY`，运行 `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/`。
+:::
+
+多租户 FS 隔离见 [6.4](/zh/part-6/4-multi-tenant-fs)。
 :::
 
 ::: details 记忆 / 技能 / MCP 管理器 — `memory_manager` / `skill_manager` / `mcp_manager` / `mcp_registry`

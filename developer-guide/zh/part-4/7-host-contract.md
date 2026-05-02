@@ -37,9 +37,9 @@
 |------|---------|---------|------|
 | **事件** | `agent.events()` 异步迭代器 | 一串 `HostEvent`（工具 / 子 agent / 权限三种生命周期） | 审计、可观测、实时 UI |
 | **策略快照** | `agent.active_permissions()` | JSON 安全的 `ActivePermissions`（mode + rules + sources） | 设置 UI、审计富化、合规报告 |
-| **能力协议** | `from agentao.host.protocols import FileSystem, ShellExecutor` | 可注入 Docker / 虚拟 FS / 审计代理的运行时 Protocol | 见 [2.2 第 3 档 · filesystem / shell](/zh/part-2/2-constructor-reference#第-3-档-高级注入) 与 [6.4](/zh/part-6/4-multi-tenant-fs) |
+| **能力协议** | `from agentao.host.protocols import FileSystem, ShellExecutor, MCPRegistry, MemoryStore` | 可注入 Docker / 虚拟 FS / 审计代理 / 程序化 MCP / 远程记忆后端的运行时 Protocol | 见 [2.2 第 3 档 · 能力协议](/zh/part-2/2-constructor-reference#第-3-档-高级注入) 与 [6.4](/zh/part-6/4-multi-tenant-fs)；端到端示例 [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection) |
 
-本章聚焦**事件**和**策略快照**——大多数读者最先用到的两块。能力协议在它们的构造时上下文里已经讲过。
+本章聚焦**事件**和**策略快照**——大多数读者最先用到的两块。能力协议在它们的构造时上下文里已经讲过；想看一次性替换全部四个槽位的可运行端到端形态，见 [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)。
 
 ::: info package 里还有第四件东西：ACP schema 面。
 `export_host_acp_json_schema()` 暴露的是 Pydantic 化的 wire schema，给那些通过 [ACP stdio 协议](/zh/part-3/1-acp-tour) **进程外**驱动 Agentao 的宿主用（IDE 插件、Node/Go/Rust 前端、微服务）。它不像上面三个那样是"消费 API"——而是给协议实现方的合约产物。**进程内嵌入可以忽略；进程外嵌入应该参考这份 snapshot，而不是从运行时 trace 里反推 payload 形状。**

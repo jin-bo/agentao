@@ -13,6 +13,7 @@ Four minimum-shape samples that run end-to-end against a fake LLM, no API key re
 | [`jupyter-session/`](./jupyter-session/) | One `Agentao` per kernel; `events()` drives display | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 | [`slack-bot/`](./slack-bot/) | slack-bolt `app_mention` → one turn; channel-scoped permissions | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 | [`wechat-bot/`](./wechat-bot/) | WeChat polling daemon → one turn; contact-scoped permissions | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
+| [`protocol-injection/`](./protocol-injection/) | All four `agentao.host.protocols` slots replaced (in-memory FS, audit shell, programmatic MCP registry, dict MemoryStore) | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 
 ## Larger blueprints (live LLM, end-to-end stacks)
 
