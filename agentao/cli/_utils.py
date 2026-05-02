@@ -46,6 +46,7 @@ _SLASH_COMMANDS = [
     '/plugins', '/plugins list',
     '/replay', '/replay list', '/replay on', '/replay off',
     '/replay show', '/replay tail', '/replay prune',
+    '/replay delete', '/replay delete all',
     '/skills', '/skills activate', '/skills deactivate',
     '/skills disable', '/skills enable', '/skills reload', '/status', '/temperature',
     '/todos', '/tools',
@@ -84,6 +85,7 @@ _SLASH_COMMAND_HINTS = {
     '/mcp remove': '<name>',
     '/replay show': '<id>',
     '/replay tail': '<id> [n]',
+    '/replay delete': '<id> | all',
 }
 
 

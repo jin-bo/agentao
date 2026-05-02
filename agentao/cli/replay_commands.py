@@ -9,12 +9,14 @@ Subcommands:
 - ``/replay show <id> [--raw|--turn <tid>|--kind <k>|--errors]`` — render events
 - ``/replay tail <id> [n]`` — flat tail of last N events
 - ``/replay prune`` — delete instances beyond ``replay.max_instances``
+- ``/replay delete <id>`` / ``/replay delete all`` — remove specific or all replay files
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
+import readchar
 from rich.markup import escape as markup_escape
 
 from ..session import strip_system_reminders
@@ -27,12 +29,16 @@ from .replay_render import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ..replay import ReplayMeta
     from .app import AgentaoCLI
 
 
 _USAGE = (
     "Usage: /replay [list | on | off | show <id> "
-    "[--raw|--turn <tid>|--kind <k>|--errors] | tail <id> [n] | prune]"
+    "[--raw|--turn <tid>|--kind <k>|--errors] | tail <id> [n] | "
+    "prune | delete <id> | delete all]"
 )
 
 _USER_MSG_PREVIEW_MAX = 80
@@ -44,6 +50,42 @@ def _summarize_user_message(text: str) -> str:
     if len(cleaned) > _USER_MSG_PREVIEW_MAX:
         return cleaned[: _USER_MSG_PREVIEW_MAX - 1] + "…"
     return cleaned
+
+
+def _resolve_replay_or_print(
+    target: str,
+    project_root: "Path",
+) -> Optional["ReplayMeta"]:
+    """Resolve a replay-id prefix to a single match, or print and return None.
+
+    Shared by every subcommand that takes ``<id>`` (show, tail, delete) so
+    the no-match / ambiguous-prefix UI stays consistent.
+    """
+    from ..replay import find_replay_candidates
+
+    candidates = find_replay_candidates(target, project_root)
+    if not candidates:
+        console.print(
+            f"\n[error]No replay matches id '{target}'. "
+            f"Use /replay list to see available instances.[/error]\n"
+        )
+        return None
+    if len(candidates) > 1:
+        console.print(
+            f"\n[warning]Prefix '{target}' is ambiguous — "
+            f"{len(candidates)} replays match:[/warning]"
+        )
+        for m in candidates[:10]:
+            console.print(
+                f"  [cyan]{m.short_id}[/cyan]  "
+                f"[dim]{markup_escape(_format_ts_local(m.updated_at))}  "
+                f"{m.event_count} events, {m.turn_count} turns[/dim]"
+            )
+        if len(candidates) > 10:
+            console.print(f"  [dim]… and {len(candidates) - 10} more[/dim]")
+        console.print("[dim]Type more characters to disambiguate.[/dim]\n")
+        return None
+    return candidates[0]
 
 
 def handle_replay_command(cli: AgentaoCLI, args: str) -> None:
@@ -61,6 +103,10 @@ def handle_replay_command(cli: AgentaoCLI, args: str) -> None:
 
     if sub == "prune":
         _handle_prune(cli)
+        return
+
+    if sub == "delete":
+        _handle_delete(cli, args)
         return
 
     if sub in ("show", "tail"):
@@ -185,12 +231,103 @@ def _handle_prune(cli: AgentaoCLI) -> None:
 
 
 # ---------------------------------------------------------------------------
+# /replay delete <id> | /replay delete all
+# ---------------------------------------------------------------------------
+
+
+def _active_replay_path(cli: AgentaoCLI):
+    """Path of the currently-recording replay file, or None."""
+    recorder = getattr(cli.agent, "_replay_recorder", None)
+    if recorder is None:
+        return None
+    return getattr(recorder, "path", None)
+
+
+def _handle_delete(cli: AgentaoCLI, args: str) -> None:
+    raw_tokens = args.strip().split()[1:]  # drop leading "delete"
+    if not raw_tokens:
+        console.print(
+            "\n[error]Usage: /replay delete <id>  or  /replay delete all[/error]\n"
+        )
+        return
+    if raw_tokens[0] == "all":
+        _handle_delete_all(cli)
+    else:
+        _handle_delete_one(cli, raw_tokens[0])
+
+
+def _handle_delete_all(cli: AgentaoCLI) -> None:
+    from ..replay import list_replays
+
+    project_root = cli.agent.working_directory
+    metas = list_replays(project_root)
+    if not metas:
+        console.print("\n[warning]No replay files to delete.[/warning]\n")
+        return
+    console.print(
+        f"\n[warning]Delete all {len(metas)} replay file(s)? "
+        "Press 1 to confirm, any other key to cancel.[/warning]"
+    )
+    if readchar.readkey() != "1":
+        console.print("\n[info]Cancelled.[/info]\n")
+        return
+    active_path = _active_replay_path(cli)
+    deleted = 0
+    skipped_active = False
+    for meta in metas:
+        if active_path is not None and meta.path == active_path:
+            skipped_active = True
+            continue
+        try:
+            meta.path.unlink()
+            deleted += 1
+        except OSError as exc:
+            console.print(
+                f"  [error]Could not delete {meta.path.name}: {exc}[/error]"
+            )
+    console.print(f"\n[success]Deleted {deleted} replay file(s).[/success]")
+    if skipped_active:
+        console.print(
+            "[dim]Skipped the currently-recording replay; it will be "
+            "removed on the next /replay prune cycle after this session "
+            "ends.[/dim]"
+        )
+    console.print()
+
+
+def _handle_delete_one(cli: AgentaoCLI, target: str) -> None:
+    project_root = cli.agent.working_directory
+    meta = _resolve_replay_or_print(target, project_root)
+    if meta is None:
+        return
+    active_path = _active_replay_path(cli)
+    if active_path is not None and meta.path == active_path:
+        console.print(
+            f"\n[warning]Replay [cyan]{meta.short_id}[/cyan] is currently "
+            "being recorded — finish the session (or run /clear) before "
+            "deleting it.[/warning]\n"
+        )
+        return
+    try:
+        meta.path.unlink()
+    except OSError as exc:
+        console.print(
+            f"\n[error]Could not delete {meta.path.name}: {exc}[/error]\n"
+        )
+        return
+    console.print(
+        f"\n[success]Deleted replay [cyan]{meta.short_id}[/cyan] "
+        f"([dim]{meta.path.name}[/dim]).[/success]\n"
+    )
+
+
+# ---------------------------------------------------------------------------
 # /replay show <id> | /replay tail <id> [n]
 # ---------------------------------------------------------------------------
 
 
 def _handle_show_or_tail(cli: AgentaoCLI, args: str, sub: str) -> None:
-    from ..replay import find_replay_candidates, open_replay
+    from ..replay import open_replay
 
     project_root = cli.agent.working_directory
     raw_tokens = args.strip().split()[1:]  # drop leading "show"/"tail"
@@ -198,31 +335,9 @@ def _handle_show_or_tail(cli: AgentaoCLI, args: str, sub: str) -> None:
         suffix = "[n]" if sub == "tail" else "[--raw] [--turn <id>] [--kind <k>] [--errors]"
         console.print(f"\n[warning]Usage: /replay {sub} <id> {suffix}[/warning]\n")
         return
-    requested = raw_tokens[0]
-    candidates = find_replay_candidates(requested, project_root)
-    if not candidates:
-        console.print(
-            f"\n[error]No replay matches id '{requested}'. "
-            f"Use /replay list to see available instances.[/error]\n"
-        )
+    meta = _resolve_replay_or_print(raw_tokens[0], project_root)
+    if meta is None:
         return
-    if len(candidates) > 1:
-        console.print(
-            f"\n[warning]Prefix '{requested}' is ambiguous — "
-            f"{len(candidates)} replays match:[/warning]"
-        )
-        for m in candidates[:10]:
-            console.print(
-                f"  [cyan]{m.short_id}[/cyan]  "
-                f"[dim]{markup_escape(_format_ts_local(m.updated_at))}  "
-                f"{m.event_count} events, {m.turn_count} turns[/dim]"
-            )
-        if len(candidates) > 10:
-            console.print(f"  [dim]… and {len(candidates) - 10} more[/dim]")
-        console.print("[dim]Type more characters to disambiguate.[/dim]\n")
-        return
-
-    meta = candidates[0]
     reader = open_replay(meta.session_id, meta.instance_id, project_root)
     if reader is None:
         console.print(f"\n[error]Could not open replay {meta.short_id}.[/error]\n")
