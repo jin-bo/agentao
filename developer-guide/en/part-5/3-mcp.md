@@ -23,12 +23,16 @@ Win: **no `Tool` subclass needed** — the community has already written and mai
 
 ### Mode A · JSON config file
 
-**Locations** (project overrides user):
+**Locations** (user wins on name collision; project file is **add-only**):
 
 ```
-~/.agentao/mcp.json               ← user-level (cross-project)
-<working_dir>/.agentao/mcp.json   ← project-level (higher priority)
+~/.agentao/mcp.json               ← user-level (cross-project; authoritative for any name it declares)
+<working_dir>/.agentao/mcp.json   ← project-level (may declare new names only — cannot override user-scope names)
 ```
+
+::: tip Why add-only?
+A project `mcp.json` checked into git could otherwise silently redirect a known server name (e.g. `github`) to a different transport or endpoint. Collisions log a warning and skip the project entry. Rename the project entry or remove the user-scope one to resolve.
+:::
 
 **Format**:
 
@@ -238,6 +242,19 @@ Or control with fine-grained permission rules:
 
 Full permission details: [5.4](./4-permissions).
 
+### MCP tool annotations: `readOnlyHint` / `destructiveHint`
+
+If a server declares standard MCP `ToolAnnotations`, Agentao consults them — **but only when `trust: true`** (per the MCP spec: clients must not make tool-use decisions on annotations from untrusted servers).
+
+| `trust` | annotation | effect |
+|---|---|---|
+| `false` (default) | any | hints ignored — server may lie; confirmation always required |
+| `true` | `readOnlyHint: true` | `is_read_only=True` (read-only mode permits the call), no confirmation |
+| `true` | `destructiveHint: true` | confirmation required — overrides the trust default |
+| `true` | none / neither | current trusted behavior — no confirmation |
+
+This is a **security-positive** wiring: hints can *add* friction (a trusted server flagging an op as destructive triggers confirmation) but never *remove* friction on the untrusted path. Hosts can read the raw dict via `McpTool.mcp_annotations` for richer projection.
+
 ## ⚠️ Common pitfalls
 
 ::: warning Don't ship without these
@@ -271,7 +288,7 @@ Don't lightly set `trust: true` on servers that can write/delete — you bypass 
 
 - Use **MCP** to consume an existing third-party tool ecosystem (GitHub, filesystem, Postgres, Slack…); use **custom Tool** for your own business logic.
 - Two transports: **stdio** subprocess or **SSE** URL. **HTTP is not supported.**
-- Per-tenant tokens: pass `extra_mcp_servers` at construction (`{name: {command, args, env}}`); merges over `.agentao/mcp.json`.
+- Per-tenant tokens: pass `extra_mcp_servers` at construction (`{name: {command, args, env}}`); merges over `.agentao/mcp.json`. Project `.agentao/mcp.json` is **add-only** — it cannot override a user-scope name.
 - Tool naming: `mcp_{server}_{tool}` — auto-prefixed to avoid name collisions across servers.
 - Never set `trust: true` on write-capable servers — it bypasses confirmation entirely.
 

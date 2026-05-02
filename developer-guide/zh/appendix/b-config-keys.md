@@ -41,8 +41,9 @@ MCP 服务器和自定义工具通常有自己的 env 键——写在 `.agentao/
 
 磁盘 JSON 的合并规则因配置面而异：
 
-- **`sandbox.json` / `mcp.json`** — 项目文件覆盖用户文件中的同名键。
-- **`permissions.json`** — 两个文件都加载；**项目规则前置**，先于用户规则求值。模式预设规则最后跑（在 `full-access` / `plan` 模式下预设最先跑且不可覆盖）。
+- **`sandbox.json`** — 项目文件覆盖用户文件中的同名键。
+- **`mcp.json`** — 两个文件都加载；同名冲突时**用户胜**，项目级是**仅可新增**的（可声明新 server name，但不能覆盖用户级同名条目；冲突时打 warning 并跳过）。
+- **`permissions.json`** — **仅用户级**。`<cwd>/.agentao/permissions.json` 故意不加载（一条 checked-in `{"tool": "*", "action": "allow"}` 会因首个命中即返回而当场作废用户策略）。模式预设规则最后跑（在 `full-access` / `plan` 模式下预设最先跑且不可覆盖）。
 - **`memory.db`** — 项目与用户两个 store **独立**读取；prompt 渲染器同时可见两者；项目并不覆盖用户。
 - **`acp.json`、`settings.json`、`skills_config.json`、`AGENTAO.md`** — 仅项目级；不做合并。
 
@@ -52,8 +53,8 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
 
 | 文件 | 作用域 | 章节 | 作用 |
 |------|--------|------|------|
-| `mcp.json` | 项目 + 用户 | [5.3](/zh/part-5/3-mcp) | MCP 服务器（stdio / SSE） |
-| `permissions.json` | 项目 + 用户 | [5.4](/zh/part-5/4-permissions) | 单工具权限规则 |
+| `mcp.json` | 项目（仅可新增） + 用户 | [5.3](/zh/part-5/3-mcp) | MCP 服务器（stdio / SSE） |
+| `permissions.json` | 仅用户 *（项目级文件被忽略）* | [5.4](/zh/part-5/4-permissions) | 单工具权限规则 |
 | `sandbox.json` | 项目 + 用户 | [6.2](/zh/part-6/2-shell-sandbox) | Shell 沙箱 profile |
 | `acp.json` | 仅项目 | [3.2](/zh/part-3/2-agentao-as-server) | ACP 子智能体注册表（Agentao 作为客户端时） |
 | `settings.json` | 仅项目 | [6.6](/zh/part-6/6-observability) | 持久化的权限模式、built-in agents 开关、replay 块 |
@@ -92,7 +93,7 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
 | `cwd` | string | stdio 子进程的 cwd |
 | `url` | string | SSE 服务器 URL |
 | `headers` | object | SSE 请求头（`$VAR` 展开） |
-| `trust` | bool | 该服务器的工具跳过确认 |
+| `trust` | bool | 该服务器的工具跳过确认。当 `true` 时，server 的 `ToolAnnotations`（`readOnlyHint`、`destructiveHint`）也会被读取；`destructiveHint=true` 会重新引入对该 op 的确认。`trust` 为 `false` 时注解被完全忽略。 |
 | `timeout` | number (秒) | 单次工具调用超时 |
 
 **不**支持 HTTP 传输，只支持 stdio + SSE。
@@ -127,9 +128,11 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
 
 求值顺序：
 
-- `read-only` / `workspace-write`：`[项目规则] → [用户规则] → [当前模式预设]`，命中即停。
-- `full-access` / `plan`：`[当前模式预设] → [项目规则] → [用户规则]`，预设不可覆盖。
+- `read-only` / `workspace-write`：`[用户规则] → [当前模式预设]`，命中即停。
+- `full-access` / `plan`：`[当前模式预设] → [用户规则]`，预设不可覆盖。
 - 都未命中 → 回退到该工具的 `requires_confirmation` 属性。
+
+项目级 `<cwd>/.agentao/permissions.json` **不会**被加载 —— 见 B.2。
 
 ### B.3.3 `sandbox.json`
 

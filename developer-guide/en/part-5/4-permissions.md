@@ -55,12 +55,15 @@ Switchable at runtime — takes effect on the next tool call.
 
 ## Rule JSON format
 
-**Locations**:
+**Location**:
 
 ```
-~/.agentao/permissions.json           ← user-level
-<cwd>/.agentao/permissions.json       ← project-level (higher priority)
+~/.agentao/permissions.json           ← user-level (only file-based source)
 ```
+
+::: warning Project-scope file is ignored
+A `<cwd>/.agentao/permissions.json` is **not** loaded — the engine logs a warning and ignores it. A checked-in `{"tool": "*", "action": "allow"}` would defeat the user policy on first match (the engine returns at the first matching rule), so project files cannot grant capabilities. Permissions are a user/host concern, not a cwd concern — same model OS permissions and IDE workspace-trust use. If you need project-aware policy, inject it from the host: see [4.7.6 active_permissions](/en/part-4/7-host-contract#4-7-6-agent-active-permissions-policy-snapshots).
+:::
 
 **Structure**:
 
@@ -80,8 +83,8 @@ Switchable at runtime — takes effect on the next tool call.
 
 | Mode | Order |
 |------|-------|
-| FULL_ACCESS / PLAN | Preset rules → project JSON → user JSON |
-| Others | Project JSON → user JSON → preset rules |
+| FULL_ACCESS / PLAN | Preset rules → user JSON |
+| Others | User JSON → preset rules |
 
 ## Rule fields
 
@@ -204,11 +207,10 @@ snap = agent.active_permissions()
 # snap.mode            -> "workspace-write"
 # snap.rules           -> [...]                 # list[dict], JSON-safe
 # snap.loaded_sources  -> ["preset:workspace-write",
-#                          "project:.agentao/permissions.json",
 #                          "user:/Users/me/.agentao/permissions.json"]
 ```
 
-`loaded_sources` carries stable string labels: `preset:<mode>`, `project:<path>`, `user:<path>`, `injected:<name>`. The MVP intentionally does **not** expose per-rule provenance — hosts that need rule-level provenance combine `loaded_sources` with their own injected policy metadata.
+`loaded_sources` carries stable string labels: `preset:<mode>`, `user:<path>`, `injected:<name>`. (The `project:<path>` label is no longer emitted — see the warning above.) The MVP intentionally does **not** expose per-rule provenance — hosts that need rule-level provenance combine `loaded_sources` with their own injected policy metadata.
 
 If the host layers extra policy on top of the engine (a runtime-computed allowlist, a tenant-scoped overlay, etc.), it labels its own provenance via `add_loaded_source(...)`:
 

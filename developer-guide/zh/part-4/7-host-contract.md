@@ -196,10 +196,11 @@ snap.loaded_sources   # list[str] —— 来源标签
 `loaded_sources` 用稳定字符串标签：
 
 - `preset:<mode>` —— 内置预设（如 `preset:workspace-write`）
-- `project:<path>` —— `<wd>/.agentao/permissions.json` 加载的项目级 JSON
 - `user:<path>` —— `~/.agentao/permissions.json` 的用户级
 - `injected:<name>` —— 宿主用 `add_loaded_source()` 注入的策略
 - `default:no-engine` —— 没配引擎时的兜底
+
+> **没有 `project:<path>` 标签。** 项目级 `<wd>/.agentao/permissions.json` 故意**不**加载 —— 见 [5.4](/zh/part-5/4-permissions)。需要项目感知策略的 host 应通过 `add_loaded_source("injected:<name>")` + 自己的规则层注入。
 
 会话开始时把这个快照钉进审计日志，事后查"那时候到底是什么策略生效"就不用回放整个引擎。
 

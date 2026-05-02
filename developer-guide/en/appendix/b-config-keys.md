@@ -41,8 +41,9 @@ For every setting: **constructor argument > environment variable > on-disk JSON 
 
 On-disk JSON layering varies by surface:
 
-- **`sandbox.json` / `mcp.json`** — project file overrides user file on the same key.
-- **`permissions.json`** — both files are loaded; **project rules are prepended** so they evaluate before user rules. Mode preset rules then run last (or first in `full-access` / `plan`, where they cannot be overridden).
+- **`sandbox.json`** — project file overrides user file on the same key.
+- **`mcp.json`** — both files are loaded; user wins on name collision and the project entry is **add-only** (it may declare new server names but cannot override a user-scope name; collisions warn and skip).
+- **`permissions.json`** — **user-scope only**. A `<cwd>/.agentao/permissions.json` is intentionally not loaded (a checked-in `{"tool": "*", "action": "allow"}` would defeat the user policy on first match). Mode preset rules run last (or first in `full-access` / `plan`, where they cannot be overridden).
 - **`memory.db`** — project and user stores are read **independently**; both are visible to the prompt renderer. Project does not override user.
 - **`acp.json`, `settings.json`, `skills_config.json`, `AGENTAO.md`** — project-only; no merge.
 
@@ -52,8 +53,8 @@ JSON config files live in an `.agentao/` directory (project at `<working_directo
 
 | File | Scope | Section | Purpose |
 |------|-------|---------|---------|
-| `mcp.json` | project + user | [5.3](/en/part-5/3-mcp) | MCP servers (stdio / SSE) |
-| `permissions.json` | project + user | [5.4](/en/part-5/4-permissions) | Per-tool permission rules |
+| `mcp.json` | project (add-only) + user | [5.3](/en/part-5/3-mcp) | MCP servers (stdio / SSE) |
+| `permissions.json` | user only *(project file is ignored)* | [5.4](/en/part-5/4-permissions) | Per-tool permission rules |
 | `sandbox.json` | project + user | [6.2](/en/part-6/2-shell-sandbox) | Shell sandbox profile selection |
 | `acp.json` | project only | [3.2](/en/part-3/2-agentao-as-server) | ACP subagent registry (when Agentao runs as client) |
 | `settings.json` | project only | [6.6](/en/part-6/6-observability) | Persisted permission mode, builtin-agents flag, replay block |
@@ -92,7 +93,7 @@ JSON config files live in an `.agentao/` directory (project at `<working_directo
 | `cwd` | string | stdio subprocess cwd |
 | `url` | string | SSE server URL |
 | `headers` | object | SSE request headers (`$VAR` expanded) |
-| `trust` | bool | Skip confirmation prompt for tools from this server |
+| `trust` | bool | Skip confirmation prompt for tools from this server. When `true`, the server's `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) are also consulted; `destructiveHint=true` re-introduces confirmation for that op. Hints are ignored entirely when `trust` is `false`. |
 | `timeout` | number (s) | Per-tool-call timeout |
 
 HTTP transport is **not** supported; stdio + SSE only.
@@ -127,9 +128,11 @@ The `mode` field is **not** stored in `permissions.json` — it lives in `settin
 
 Evaluation order:
 
-- `read-only` / `workspace-write`: `[project rules] → [user rules] → [active mode preset]` — first match wins.
-- `full-access` / `plan`: `[active mode preset] → [project rules] → [user rules]` — presets cannot be overridden.
+- `read-only` / `workspace-write`: `[user rules] → [active mode preset]` — first match wins.
+- `full-access` / `plan`: `[active mode preset] → [user rules]` — presets cannot be overridden.
 - No match → falls back to the tool's own `requires_confirmation` attribute.
+
+Project-scope `<cwd>/.agentao/permissions.json` is **not** loaded — see B.2.
 
 ### B.3.3 `sandbox.json`
 

@@ -58,9 +58,12 @@ agent.permission_engine.set_mode(PermissionMode.READ_ONLY)
 **加载位置**：
 
 ```
-~/.agentao/permissions.json      ← 用户级
-<cwd>/.agentao/permissions.json  ← 项目级（优先级更高）
+~/.agentao/permissions.json      ← 用户级（唯一基于文件的来源）
 ```
+
+::: warning 项目级文件被忽略
+`<cwd>/.agentao/permissions.json` **不会**被加载——引擎会打 warning 并跳过。一条 checked-in 的 `{"tool": "*", "action": "allow"}` 会因引擎首个命中即返回而**当场作废整个用户策略**，所以项目级文件不能授予任何能力。权限是用户/host 的事，不是 cwd 的事 —— 与 OS 权限模型、IDE workspace-trust 同构。如果确需项目感知策略，请由 host 注入：见 [4.7.6 active_permissions](/zh/part-4/7-host-contract#4-7-6-agent-active-permissions-策略快照)。
+:::
 
 **基本结构**：
 
@@ -80,8 +83,8 @@ agent.permission_engine.set_mode(PermissionMode.READ_ONLY)
 
 | 模式 | 规则顺序 |
 |------|---------|
-| FULL_ACCESS / PLAN | 预设规则 → 项目 JSON → 用户 JSON |
-| 其他 | 项目 JSON → 用户 JSON → 预设规则 |
+| FULL_ACCESS / PLAN | 预设规则 → 用户 JSON |
+| 其他 | 用户 JSON → 预设规则 |
 
 ## 规则字段详解
 
@@ -207,11 +210,10 @@ snap = agent.active_permissions()
 # snap.mode            -> "workspace-write"
 # snap.rules           -> [...]                 # list[dict]，JSON-safe
 # snap.loaded_sources  -> ["preset:workspace-write",
-#                          "project:.agentao/permissions.json",
 #                          "user:/Users/me/.agentao/permissions.json"]
 ```
 
-`loaded_sources` 是稳定字符串标签：`preset:<mode>`、`project:<path>`、`user:<path>`、`injected:<name>`。MVP **不** 暴露逐规则 provenance —— 需要规则级 provenance 的宿主应将 `loaded_sources` 与自己注入的策略元数据组合。
+`loaded_sources` 是稳定字符串标签：`preset:<mode>`、`user:<path>`、`injected:<name>`。（`project:<path>` 标签已不再发出 —— 见上方 warning。）MVP **不** 暴露逐规则 provenance —— 需要规则级 provenance 的宿主应将 `loaded_sources` 与自己注入的策略元数据组合。
 
 宿主在引擎之上叠加额外策略时（运行期计算的 allowlist、租户级 overlay 等），通过 `add_loaded_source(...)` 标注自己的 provenance：
 
