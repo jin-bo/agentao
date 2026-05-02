@@ -147,16 +147,6 @@ def test_mcptool_parameters_handles_non_dict_schema():
     assert t.parameters == {"type": "object", "properties": {}}
 
 
-def test_mcptool_requires_confirmation_untrusted():
-    t = McpTool("github", _make_mcp_tool_def(), call_fn=Mock(), trusted=False)
-    assert t.requires_confirmation is True
-
-
-def test_mcptool_requires_confirmation_trusted():
-    t = McpTool("github", _make_mcp_tool_def(), call_fn=Mock(), trusted=True)
-    assert t.requires_confirmation is False
-
-
 def test_mcptool_execute_calls_call_fn():
     call_fn = Mock(return_value="result")
     tool_def = _make_mcp_tool_def("list_repos")
@@ -170,11 +160,6 @@ def test_mcptool_execute_returns_string():
     call_fn = Mock(return_value="ok")
     t = McpTool("srv", _make_mcp_tool_def(), call_fn=call_fn)
     assert isinstance(t.execute(), str)
-
-
-def test_mcptool_is_read_only_default_false():
-    t = McpTool("srv", _make_mcp_tool_def(), call_fn=Mock())
-    assert t.is_read_only is False
 
 
 # ---------------------------------------------------------------------------

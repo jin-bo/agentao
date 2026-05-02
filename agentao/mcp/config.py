@@ -120,10 +120,9 @@ def load_mcp_config(
     for name, cfg in project_servers.items():
         if name in servers:
             _logger.warning(
-                "Project mcp.json entry %r collides with a user-scope server "
-                "of the same name; ignoring the project entry. (Project "
-                "files cannot override user-scope MCP servers — rename the "
-                "project entry or remove the user-scope one.)",
+                "Project mcp.json entry %r collides with a user-scope "
+                "server; ignoring (project cannot override user). Rename "
+                "the project entry or remove the user-scope one.",
                 name,
             )
             continue
