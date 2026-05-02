@@ -5,8 +5,10 @@ Pulls in everything ``Agentao.__init__`` used to read implicitly:
 - ``.env`` via :func:`dotenv.load_dotenv`
 - ``LLM_PROVIDER`` and provider-prefixed env vars
 - ``working_directory or Path.cwd()`` resolved to absolute
-- ``<wd>/.agentao/permissions.json`` + ``~/.agentao/permissions.json``
-- ``<wd>/.agentao/mcp.json`` + ``~/.agentao/mcp.json``
+- ``~/.agentao/permissions.json`` (project-scope file is intentionally
+  not loaded — see :class:`agentao.permissions.PermissionEngine`)
+- ``<wd>/.agentao/mcp.json`` + ``~/.agentao/mcp.json`` (user wins on
+  name collision; project entries may only declare new server names)
 - memory roots (``<wd>/.agentao`` + ``~/.agentao``)
 
 Then constructs subsystems explicitly and forwards them to

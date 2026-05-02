@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import re
 from enum import Enum
 from pathlib import Path
@@ -10,6 +11,8 @@ from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from .host.models import ActivePermissions
+
+_logger = logging.getLogger(__name__)
 
 
 class PermissionDecision(Enum):
@@ -198,9 +201,17 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
 class PermissionEngine:
     """Evaluates permission rules to decide tool execution policy.
 
-    Rules are loaded from (higher priority listed first):
-    - .agentao/permissions.json  (project-level)
-    - ~/.agentao/permissions.json (user-level)
+    Rules are loaded from user scope only (``<user_root>/permissions.json``).
+    Hosts may inject additional policy via :meth:`add_loaded_source`.
+
+    Project-scope ``.agentao/permissions.json`` is intentionally NOT
+    loaded: a checked-in rule could grant the agent capabilities the
+    user never approved (e.g. ``{"tool": "*", "action": "allow"}``
+    inside a cloned repo would defeat the entire user policy because
+    the engine returns on the first matching rule). Permissions are a
+    user/host concern, not a cwd concern — the same model OS
+    permissions and IDE workspace-trust use. If such a file exists, it
+    is ignored with a warning.
 
     Rule format::
 
@@ -225,14 +236,14 @@ class PermissionEngine:
         """Initialize the permission engine.
 
         Args:
-            project_root: Project directory whose
-                ``<project_root>/.agentao/permissions.json`` is loaded
-                for project-level rules. Required: the engine performs
-                no implicit cwd resolution.
+            project_root: Project directory. Used to detect (and warn
+                on) a stray ``<project_root>/.agentao/permissions.json``
+                that this engine no longer honors. Required so the
+                warning's path is self-explanatory.
             user_root: Optional user-scope directory whose
-                ``<user_root>/permissions.json`` is loaded for
-                cross-project rules. ``None`` (the default) skips the
-                user-scope read; pass an explicit path (typically
+                ``<user_root>/permissions.json`` is loaded as the only
+                file-based rule source. ``None`` (the default) skips
+                the read; pass an explicit path (typically
                 ``~/.agentao``) to opt in.
         """
         if project_root is None:
@@ -277,7 +288,12 @@ class PermissionEngine:
             self._active_cache = None
 
     def _load_rules(self):
-        """Load rules from user then project config files (project takes priority)."""
+        """Load rules from user scope only.
+
+        Project-scope ``.agentao/permissions.json`` is intentionally
+        skipped (see class docstring). If present, log a single
+        warning so users discover the change.
+        """
         sources: List[str] = []
         if self._user_root is not None:
             user_path = self._user_root / "permissions.json"
@@ -286,16 +302,18 @@ class PermissionEngine:
                 sources.append(f"user:{user_path}")
         else:
             user_rules = []
+
         project_path = self._project_root / ".agentao" / "permissions.json"
-        project_rules, project_loaded = self._load_file(project_path)
-        if project_loaded:
-            try:
-                rel = project_path.relative_to(self._project_root)
-                sources.insert(0, f"project:{rel}")
-            except ValueError:
-                sources.insert(0, f"project:{project_path}")
-        # Project rules prepended so they are evaluated first
-        self.rules = project_rules + user_rules
+        if project_path.exists():
+            _logger.warning(
+                "Ignoring %s: project-scope permission rules are no longer "
+                "honored (a checked-in allow-rule could grant the agent "
+                "capabilities the user never approved). Move custom rules to "
+                "the user-scope file.",
+                project_path,
+            )
+
+        self.rules = list(user_rules)
         self._file_sources = sources
         self._active_cache = None
 
@@ -322,7 +340,7 @@ class PermissionEngine:
 
         Evaluation order (first match wins):
           - full-access / plan mode: mode preset rules run first (can't be overridden)
-          - all other modes: project JSON → user JSON → mode preset rules
+          - all other modes: user JSON rules → mode preset rules
 
         Returns:
             PermissionDecision.ALLOW / DENY / ASK for the first matching rule,
@@ -472,7 +490,8 @@ class PermissionEngine:
                 lines.append(line)
         else:
             lines.append(
-                "No custom rules. Create .agentao/permissions.json to add rules.\n\n"
+                "No custom rules. Create ~/.agentao/permissions.json to add rules.\n"
+                "(Project-scope .agentao/permissions.json is no longer honored.)\n\n"
                 "Example:\n"
                 '  {"rules": [\n'
                 '    {"tool": "run_shell_command", "args": {"command": "^git "}, "action": "allow"},\n'

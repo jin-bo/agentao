@@ -16,8 +16,8 @@
 |---|---|---|---|---|---|
 | 1 | LLM 环境变量 | `.env`（cwd） | shell env | `dotenv.load_dotenv` → `discover_llm_kwargs` | —（参见 `.env.example`） |
 | 2 | 运行模式 + 内置子代理 | `.agentao/settings.json` | — | `embedding/factory.py::_load_settings`、`plan/controller.py::_load_settings` | [TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md) |
-| 3 | 工具权限规则 | `.agentao/permissions.json` | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md) |
-| 4 | MCP 服务器 | `.agentao/mcp.json` | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry`（见 `mcp/config.py`） | `CLAUDE.md` § MCP |
+| 3 | 工具权限规则 | — *（仅用户级；项目级文件被忽略）* | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md) |
+| 4 | MCP 服务器 | `.agentao/mcp.json` *（仅可新增名字，不能覆盖用户级同名服务器）* | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry`（见 `mcp/config.py`） | `CLAUDE.md` § MCP |
 | 5 | ACP 子代理 | `.agentao/acp.json` | — *（仅项目级）* | `acp_client/config.py` | [acp-client.md](features/acp-client.md) / [acp-embedding.md](features/acp-embedding.md) |
 | 6 | 禁用 skill 列表 | `.agentao/skills_config.json` | — | `skills/manager.py` | [SKILLS_GUIDE.md](SKILLS_GUIDE.md) |
 | 7 | 项目说明 | `AGENTAO.md`（cwd） | — | `agent.py::_build_system_prompt` | [CHATAGENT_MD_FEATURE.md](features/CHATAGENT_MD_FEATURE.md) |
@@ -33,9 +33,9 @@
 
 **优先级规则**（仅适用于同时存在项目与用户两份的配置面）：
 
-- **Permissions** — 先读 user 文件，再把 project 文件**前置**到规则列表头。Project 规则**先于** user 规则求值（首个命中的规则胜出）。custom 规则之后，当前 mode 的 **preset** 规则放在最后求值（例外：`full-access` / `plan` 模式下，preset 规则放在**最前**且无法被覆盖）。
-- **MCP** — 两份文件都会读；命名冲突时的覆盖策略由 `FileBackedMCPRegistry` 决定（依赖具体行为前请到该处确认）。
-- **Memory** — project DB 与 user DB **独立读取**；prompt 里两者都可见，project 不会覆盖 user。
+- **Permissions** —— user 文件是**唯一**的规则来源。项目级 `.agentao/permissions.json` 会被**忽略**并打 warning（一条 checked-in `{"tool": "*", "action": "allow"}` 会因首个命中规则胜出而当场作废用户策略）。custom 规则之后，当前 mode 的 **preset** 规则放在最后求值（例外：`full-access` / `plan` 模式下，preset 规则放在**最前**且无法被覆盖）。
+- **MCP** —— 两份文件都会读。**项目级仅可新增**：项目级条目可以声明*新的* server name，但不能覆盖用户级同名条目（冲突时打 warning + 跳过项目项）。这防止了 checked-in `mcp.json` 静默把已知 server name（如 `github`）重定向到不同 transport。
+- **Memory** —— project DB 与 user DB **独立读取**；prompt 里两者都可见，project 不会覆盖 user。
 - 其他用户级配置面均为项目级独占——不存在合并。
 
 ---
@@ -94,14 +94,16 @@
 ## 4. `permissions.json` — 按工具的权限规则
 
 - **路径。**
-  1. `~/.agentao/permissions.json`（用户级）—— 先加载。
-  2. `<cwd>/.agentao/permissions.json`（项目级）—— **前置**到规则列表头，**先于**用户规则求值。
-- **Loader。** `permissions.py::PermissionEngine._load_file`。文件缺失或 JSON 损坏 → 空规则列表（不报错）。成功加载的文件还会贡献 `loaded_sources` 标签（`project:.agentao/permissions.json`、`user:<path>`），由 `PermissionEngine.active_permissions()` 与 `Agentao.active_permissions()` 暴露 —— 详见 [`docs/api/host.md`](api/host.md)。
+  1. `~/.agentao/permissions.json`（用户级）—— 唯一基于文件的规则来源。
+  2. `<cwd>/.agentao/permissions.json`（项目级）—— **被忽略**并打 warning。原因见下方"为何不再支持项目级？"。
+- **Loader。** `permissions.py::PermissionEngine._load_file`。文件缺失或 JSON 损坏 → 空规则列表（不报错）。成功加载的文件会贡献 `loaded_sources` 标签（`user:<path>`），由 `PermissionEngine.active_permissions()` 与 `Agentao.active_permissions()` 暴露 —— 详见 [`docs/api/host.md`](api/host.md)。
 - **公共 getter。** `PermissionEngine.active_permissions()` 返回一个缓存的、JSON 安全的 `ActivePermissions` 快照（`mode`、`rules`、`loaded_sources`）。叠加策略的宿主可调用 `add_loaded_source("injected:<name>")` 让快照反映其 provenance。`set_mode()` 与 `add_loaded_source()` 会使缓存失效。
 - **求值顺序。**
-  - `read-only` / `workspace-write` 模式：`[项目规则] → [用户规则] → [当前 mode 的 preset 规则]`，首个命中胜出。
-  - `full-access` / `plan` 模式：`[当前 mode 的 preset 规则] → [项目规则] → [用户规则]`——preset 不可被覆盖。
+  - `read-only` / `workspace-write` 模式：`[用户规则] → [当前 mode 的 preset 规则]`，首个命中胜出。
+  - `full-access` / `plan` 模式：`[当前 mode 的 preset 规则] → [用户规则]`——preset 不可被覆盖。
   - 没有命中 → `decide()` 返回 `None`；runner 退回到工具自身的 `requires_confirmation` 属性。
+
+> **为何不再支持项目级？** 权限是用户/host 的事，不是 cwd 的事 —— 与 OS 权限模型、IDE workspace-trust 同构。一份 checked-in 的 `{"tool": "*", "action": "allow"}` 会因引擎首个命中即返回，**当场作废整个用户策略**。如果确需项目感知策略，请由 host 通过 `add_loaded_source("injected:<name>")` + 自定义规则层注入。
 
 ### Schema
 
@@ -141,8 +143,8 @@
 ## 5. `mcp.json` — MCP 服务器注册表
 
 - **路径。**
-  1. `~/.agentao/mcp.json`（用户级）—— 先加载。
-  2. `<cwd>/.agentao/mcp.json`（项目级）—— 命名冲突时覆盖用户级。
+  1. `~/.agentao/mcp.json`（用户级）—— 任何在该文件声明的 server name 都以此为准。
+  2. `<cwd>/.agentao/mcp.json`（项目级）—— **仅可新增**：可以声明*新*的 server name，但不能覆盖用户级同名条目。冲突时打 warning + 跳过项目项。
 - **Loader。** `mcp/config.py`。值里的环境变量会被展开（`$VAR` 形式）。
 
 ### Schema

@@ -1,7 +1,7 @@
 """MCP tool wrapper that adapts MCP-discovered tools to the Agentao Tool interface."""
 
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from mcp.types import Tool as McpToolDef
 
@@ -81,8 +81,51 @@ class McpTool(Tool):
         return schema
 
     @property
+    def mcp_annotations(self) -> Dict[str, Any]:
+        """Return the MCP tool annotations as a plain dict.
+
+        ``ToolAnnotations`` is a Pydantic model in the MCP SDK; we
+        flatten it so hosts and tests can introspect hints without
+        depending on the SDK's internal types. Returns an empty dict
+        when the server provided no annotations.
+        """
+        ann = getattr(self._mcp_tool, "annotations", None)
+        if ann is None:
+            return {}
+        try:
+            return ann.model_dump(exclude_none=True)
+        except AttributeError:
+            return dict(ann) if isinstance(ann, dict) else {}
+
+    @property
+    def is_read_only(self) -> bool:
+        """Honor ``readOnlyHint`` only when the server is trusted.
+
+        Per the MCP spec: clients must not make tool-use decisions
+        based on annotations from untrusted servers — a malicious
+        server could lie about being read-only.
+        """
+        if not self._trusted:
+            return False
+        return self.mcp_annotations.get("readOnlyHint") is True
+
+    @property
     def requires_confirmation(self) -> bool:
-        return not self._trusted
+        """Apply trust hints with a security-positive bias.
+
+        - Untrusted server: confirm (ignore hints; spec says so).
+        - Trusted server with ``destructiveHint=True``: confirm anyway
+          — the server itself flagged the call as destructive, so the
+          ``trusted=True`` blanket ought to step aside for that op.
+        - Trusted server otherwise: skip confirmation (current
+          behavior). ``readOnlyHint`` does not need to suppress
+          confirmation here because trusted servers already do.
+        """
+        if not self._trusted:
+            return True
+        if self.mcp_annotations.get("destructiveHint") is True:
+            return True
+        return False
 
     def execute(self, **kwargs) -> str:
         return self._call_fn(self._server_name, self._mcp_tool.name, kwargs)

@@ -13,7 +13,13 @@ from agentao.permissions import PermissionDecision, PermissionEngine, Permission
 # ---------------------------------------------------------------------------
 
 def _engine(tmp_path, monkeypatch, project_rules=None, user_rules=None):
-    """Build a PermissionEngine with optional project/user JSON rules in tmp_path."""
+    """Build a PermissionEngine with optional user JSON rules in tmp_path.
+
+    ``project_rules`` is accepted for legacy parity but written to a
+    file the engine deliberately ignores (see ``permissions.py``); it
+    is preserved here so collision/precedence tests can still assert
+    that a stray project file does not leak into the rule set.
+    """
     user_root = tmp_path / "home" / ".agentao"
 
     if project_rules is not None:
@@ -224,26 +230,37 @@ def test_plan_mode_asks_web_fetch(tmp_path, monkeypatch):
 # Custom rules
 # ---------------------------------------------------------------------------
 
-def test_custom_project_rule_allow_overrides_preset(tmp_path, monkeypatch):
+def test_custom_user_rule_allow_overrides_preset(tmp_path, monkeypatch):
     # In workspace-write mode, web_fetch would ASK; custom allow overrides
-    e = _engine(tmp_path, monkeypatch, project_rules=[allow("web_fetch")])
+    e = _engine(tmp_path, monkeypatch, user_rules=[allow("web_fetch")])
     assert e.decide("web_fetch", {"url": "https://x.com"}) == PermissionDecision.ALLOW
 
 
-def test_custom_project_rule_deny_overrides_preset(tmp_path, monkeypatch):
+def test_custom_user_rule_deny_overrides_preset(tmp_path, monkeypatch):
     # write_file is allowed in workspace-write; custom deny overrides
-    e = _engine(tmp_path, monkeypatch, project_rules=[deny("write_file")])
+    e = _engine(tmp_path, monkeypatch, user_rules=[deny("write_file")])
     assert e.decide("write_file", {"path": "x"}) == PermissionDecision.DENY
 
 
-def test_custom_user_rule_evaluated_after_project(tmp_path, monkeypatch):
-    # project allow wins over user deny for same tool
-    e = _engine(
-        tmp_path, monkeypatch,
-        project_rules=[allow("web_fetch")],
-        user_rules=[deny("web_fetch")],
+def test_project_rules_are_ignored_user_wins(tmp_path, monkeypatch, caplog):
+    """A stray project-scope rule must not influence decisions; only the
+    user rule applies, and the engine logs a warning that the project
+    file was ignored. This is the load-bearing invariant from the
+    config-trust-boundary change.
+    """
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="agentao.permissions"):
+        e = _engine(
+            tmp_path, monkeypatch,
+            project_rules=[allow("web_fetch")],   # would have allowed
+            user_rules=[deny("web_fetch")],        # actually applies
+        )
+    assert e.decide("web_fetch", {"url": "x"}) == PermissionDecision.DENY
+    assert any(
+        "project-scope permission rules are no longer honored" in rec.getMessage()
+        for rec in caplog.records
     )
-    assert e.decide("web_fetch", {"url": "x"}) == PermissionDecision.ALLOW
 
 
 def test_user_rule_applies_when_no_project_rule(tmp_path, monkeypatch):
@@ -251,10 +268,18 @@ def test_user_rule_applies_when_no_project_rule(tmp_path, monkeypatch):
     assert e.decide("web_fetch", {"url": "x"}) == PermissionDecision.ALLOW
 
 
-def test_custom_rule_loaded_from_project_config(tmp_path, monkeypatch):
+def test_custom_rule_loaded_from_user_config(tmp_path, monkeypatch):
     rules = [allow("web_search")]
-    e = _engine(tmp_path, monkeypatch, project_rules=rules)
+    e = _engine(tmp_path, monkeypatch, user_rules=rules)
     assert e.decide("web_search", {"query": "test"}) == PermissionDecision.ALLOW
+
+
+def test_project_rules_ignored_falls_back_to_preset(tmp_path, monkeypatch):
+    """Project-only rule file: rule is ignored, preset semantics apply."""
+    e = _engine(tmp_path, monkeypatch, project_rules=[allow("web_fetch")])
+    # web_fetch in workspace-write preset is ASK (not ALLOW from the project rule)
+    assert e.decide("web_fetch", {"url": "https://x.com"}) == PermissionDecision.ASK
+    assert e.rules == []
 
 
 # ---------------------------------------------------------------------------
@@ -263,19 +288,19 @@ def test_custom_rule_loaded_from_project_config(tmp_path, monkeypatch):
 
 def test_arg_level_rule_matches_regex(tmp_path, monkeypatch):
     rules = [{"tool": "run_shell_command", "args": {"command": r"^pytest"}, "action": "allow"}]
-    e = _engine(tmp_path, monkeypatch, project_rules=rules)
+    e = _engine(tmp_path, monkeypatch, user_rules=rules)
     assert e.decide("run_shell_command", {"command": "pytest tests/ -q"}) == PermissionDecision.ALLOW
 
 
 def test_arg_level_rule_no_match_falls_through(tmp_path, monkeypatch):
     rules = [{"tool": "run_shell_command", "args": {"command": r"^pytest"}, "action": "allow"}]
-    e = _engine(tmp_path, monkeypatch, project_rules=rules)
+    e = _engine(tmp_path, monkeypatch, user_rules=rules)
     # "make test" doesn't match "^pytest" so falls to preset (workspace-write asks)
     assert e.decide("run_shell_command", {"command": "make test"}) == PermissionDecision.ASK
 
 
 def test_wildcard_tool_rule(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch, project_rules=[{"tool": "*", "action": "allow"}])
+    e = _engine(tmp_path, monkeypatch, user_rules=[{"tool": "*", "action": "allow"}])
     assert e.decide("anything_at_all", {}) == PermissionDecision.ALLOW
 
 
@@ -283,11 +308,20 @@ def test_wildcard_tool_rule(tmp_path, monkeypatch):
 # Error handling
 # ---------------------------------------------------------------------------
 
-def test_invalid_json_config_graceful_fallback(tmp_path):
+def test_invalid_json_user_config_graceful_fallback(tmp_path):
+    user_root = tmp_path / "home" / ".agentao"
+    user_root.mkdir(parents=True)
+    (user_root / "permissions.json").write_text("not valid json", encoding="utf-8")
+    e = PermissionEngine(project_root=tmp_path, user_root=user_root)  # should not raise
+    assert e.rules == []
+
+
+def test_stray_project_config_does_not_raise(tmp_path):
+    """A stale project-scope file must not break startup."""
     cfg = tmp_path / ".agentao"
     cfg.mkdir()
     (cfg / "permissions.json").write_text("not valid json", encoding="utf-8")
-    e = PermissionEngine(project_root=tmp_path)  # should not raise
+    e = PermissionEngine(project_root=tmp_path)
     assert e.rules == []
 
 
@@ -307,7 +341,7 @@ def test_get_rules_display_contains_mode(tmp_path, monkeypatch):
 
 
 def test_get_rules_display_custom_rule_shown(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch, project_rules=[allow("web_fetch")])
+    e = _engine(tmp_path, monkeypatch, user_rules=[allow("web_fetch")])
     display = e.get_rules_display()
     assert "web_fetch" in display
     assert "ALLOW" in display
@@ -410,9 +444,9 @@ def test_domain_userinfo_bypass_attempt(tmp_path, monkeypatch):
 
 
 def test_domain_custom_allowlist_overrides_preset_blocklist(tmp_path, monkeypatch):
-    """Project-level custom domain allowlist can override preset blocklist."""
+    """User-level custom domain allowlist can override preset blocklist."""
     rules = [{"tool": "web_fetch", "domain": {"allowlist": ["localhost"]}, "action": "allow"}]
-    e = _engine(tmp_path, monkeypatch, project_rules=rules)
+    e = _engine(tmp_path, monkeypatch, user_rules=rules)
     # Custom rule evaluated first in workspace-write mode
     assert e.decide("web_fetch", {"url": "http://localhost:8080/"}) == PermissionDecision.ALLOW
 
@@ -434,7 +468,7 @@ def test_domain_plan_mode_blocklist(tmp_path, monkeypatch):
 def test_domain_display_shows_allowlist(tmp_path, monkeypatch):
     """get_rules_display shows domain allowlist entries."""
     rules = [{"tool": "web_fetch", "domain": {"allowlist": [".example.com"]}, "action": "allow"}]
-    e = _engine(tmp_path, monkeypatch, project_rules=rules)
+    e = _engine(tmp_path, monkeypatch, user_rules=rules)
     display = e.get_rules_display()
     assert "domain allowlist" in display
     assert ".example.com" in display

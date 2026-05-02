@@ -88,11 +88,25 @@ def test_parse_mcp_tool_name_invalid_prefix():
 # McpTool
 # ---------------------------------------------------------------------------
 
-def _make_mcp_tool_def(name="list_repos", description="List repos", schema=None):
+def _make_mcp_tool_def(name="list_repos", description="List repos", schema=None, annotations=None):
+    """Build a stub MCP tool definition.
+
+    ``annotations`` accepts either ``None`` (server provided none),
+    a real ``ToolAnnotations`` Pydantic instance, or a dict that we
+    convert to one so production-realistic ``model_dump`` paths are
+    exercised.
+    """
     mcp_tool = MagicMock()
     mcp_tool.name = name
     mcp_tool.description = description
     mcp_tool.inputSchema = schema or {"type": "object", "properties": {}}
+    if annotations is None:
+        mcp_tool.annotations = None
+    elif isinstance(annotations, dict):
+        from mcp.types import ToolAnnotations
+        mcp_tool.annotations = ToolAnnotations(**annotations)
+    else:
+        mcp_tool.annotations = annotations
     return mcp_tool
 
 
@@ -160,5 +174,85 @@ def test_mcptool_execute_returns_string():
 
 def test_mcptool_is_read_only_default_false():
     t = McpTool("srv", _make_mcp_tool_def(), call_fn=Mock())
-    # Tool base class default — McpTool doesn't override is_read_only
     assert t.is_read_only is False
+
+
+# ---------------------------------------------------------------------------
+# MCP annotation hints (readOnlyHint / destructiveHint)
+# ---------------------------------------------------------------------------
+
+def test_mcp_annotations_empty_when_none():
+    t = McpTool("srv", _make_mcp_tool_def(annotations=None), call_fn=Mock())
+    assert t.mcp_annotations == {}
+
+
+def test_mcp_annotations_exposed_as_dict():
+    t = McpTool(
+        "srv",
+        _make_mcp_tool_def(annotations={"readOnlyHint": True, "title": "X"}),
+        call_fn=Mock(),
+    )
+    ann = t.mcp_annotations
+    assert ann["readOnlyHint"] is True
+    assert ann["title"] == "X"
+
+
+def test_read_only_hint_ignored_for_untrusted_server():
+    """Spec: never make tool-use decisions on annotations from untrusted servers."""
+    t = McpTool(
+        "srv",
+        _make_mcp_tool_def(annotations={"readOnlyHint": True}),
+        call_fn=Mock(),
+        trusted=False,
+    )
+    assert t.is_read_only is False
+    assert t.requires_confirmation is True
+
+
+def test_read_only_hint_honored_when_trusted():
+    t = McpTool(
+        "srv",
+        _make_mcp_tool_def(annotations={"readOnlyHint": True}),
+        call_fn=Mock(),
+        trusted=True,
+    )
+    assert t.is_read_only is True
+    assert t.requires_confirmation is False  # trusted + read-only
+
+
+def test_destructive_hint_overrides_trust():
+    """Trusted server flagging an op as destructive should still prompt.
+
+    This is the security-positive direction the spec allows: hints can
+    add friction but must never remove it on the untrusted path.
+    """
+    t = McpTool(
+        "srv",
+        _make_mcp_tool_def(annotations={"destructiveHint": True}),
+        call_fn=Mock(),
+        trusted=True,
+    )
+    assert t.requires_confirmation is True
+
+
+def test_destructive_hint_ignored_for_untrusted_is_already_confirming():
+    """Untrusted servers always require confirmation regardless of hints."""
+    t = McpTool(
+        "srv",
+        _make_mcp_tool_def(annotations={"destructiveHint": False}),
+        call_fn=Mock(),
+        trusted=False,
+    )
+    # destructiveHint=False from an untrusted server should NOT downgrade
+    # confirmation — that would be the spec violation we're guarding against.
+    assert t.requires_confirmation is True
+
+
+def test_no_hints_falls_back_to_trust_default():
+    """With no annotations the legacy trusted/untrusted contract holds."""
+    t_untrusted = McpTool("srv", _make_mcp_tool_def(annotations=None), call_fn=Mock(), trusted=False)
+    t_trusted = McpTool("srv", _make_mcp_tool_def(annotations=None), call_fn=Mock(), trusted=True)
+    assert t_untrusted.requires_confirmation is True
+    assert t_trusted.requires_confirmation is False
+    assert t_untrusted.is_read_only is False
+    assert t_trusted.is_read_only is False

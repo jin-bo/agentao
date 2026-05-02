@@ -223,30 +223,40 @@ def test_shell_tool_default_wd_resolves_to_session_cwd(tmp_path):
 # PermissionEngine scoping
 # ---------------------------------------------------------------------------
 
-def test_permission_engine_reads_project_root(tmp_path):
+def test_permission_engine_ignores_project_scope_rules(tmp_path):
+    """Project-scope ``.agentao/permissions.json`` is no longer honored.
+
+    A checked-in allow-rule must not slip into the rule set; the file
+    is dropped and a warning is logged. This is the load-bearing
+    config-trust-boundary invariant.
+    """
     (tmp_path / ".agentao").mkdir()
     rules = {"rules": [{"tool": "custom_tool_a", "action": "allow"}]}
     (tmp_path / ".agentao" / "permissions.json").write_text(json.dumps(rules), encoding="utf-8")
 
     engine = PermissionEngine(project_root=tmp_path)
 
-    assert any(r.get("tool") == "custom_tool_a" for r in engine.rules)
+    assert engine.rules == []
 
 
-def test_permission_engines_for_different_projects_are_independent(tmp_path):
-    dir_a = tmp_path / "a"
-    dir_b = tmp_path / "b"
-    (dir_a / ".agentao").mkdir(parents=True)
-    (dir_b / ".agentao").mkdir(parents=True)
-    (dir_a / ".agentao" / "permissions.json").write_text(
+def test_permission_engines_isolate_by_user_root(tmp_path):
+    """Engines bound to different ``user_root`` directories load
+    different rule sets — demonstrating that rule provenance lives in
+    user scope and is not shared across processes that pick a
+    different home."""
+    user_a = tmp_path / "user_a"
+    user_b = tmp_path / "user_b"
+    user_a.mkdir()
+    user_b.mkdir()
+    (user_a / "permissions.json").write_text(
         json.dumps({"rules": [{"tool": "only_in_a", "action": "allow"}]}), encoding="utf-8"
     )
-    (dir_b / ".agentao" / "permissions.json").write_text(
+    (user_b / "permissions.json").write_text(
         json.dumps({"rules": [{"tool": "only_in_b", "action": "allow"}]}), encoding="utf-8"
     )
 
-    engine_a = PermissionEngine(project_root=dir_a)
-    engine_b = PermissionEngine(project_root=dir_b)
+    engine_a = PermissionEngine(project_root=tmp_path, user_root=user_a)
+    engine_b = PermissionEngine(project_root=tmp_path, user_root=user_b)
 
     assert any(r.get("tool") == "only_in_a" for r in engine_a.rules)
     assert not any(r.get("tool") == "only_in_a" for r in engine_b.rules)

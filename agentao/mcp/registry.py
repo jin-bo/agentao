@@ -2,7 +2,8 @@
 
 - :class:`FileBackedMCPRegistry` is the CLI/ACP default and matches the
   pre-Protocol behavior (reads ``<wd>/.agentao/mcp.json`` plus
-  ``~/.agentao/mcp.json``, project overrides global, env vars expanded).
+  ``~/.agentao/mcp.json``; user wins on name collision, project entries
+  may only declare new server names; env vars expanded).
 - :class:`InMemoryMCPRegistry` is the programmatic counterpart for
   embedded hosts and tests; it holds a dict and returns a copy.
 

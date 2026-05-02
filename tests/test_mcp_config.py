@@ -136,7 +136,15 @@ def test_load_mcp_config_project_only(tmp_path):
     assert "project-server" in result
 
 
-def test_load_mcp_config_project_overrides_global(tmp_path):
+def test_load_mcp_config_user_wins_on_name_collision(tmp_path, caplog):
+    """Project-scope entry with the same name as a user entry is ignored.
+
+    Locks in the load-bearing security invariant: a checked-in
+    ``.agentao/mcp.json`` cannot silently redirect a known server
+    name (e.g. ``github``) to a different transport.
+    """
+    import logging
+
     user_root = tmp_path / "home" / ".agentao"
     _write_mcp(user_root / "mcp.json", {
         "shared": {"command": "global-cmd", "args": []}
@@ -144,8 +152,28 @@ def test_load_mcp_config_project_overrides_global(tmp_path):
     _write_mcp(tmp_path / ".agentao" / "mcp.json", {
         "shared": {"command": "project-cmd", "args": []}
     })
+    with caplog.at_level(logging.WARNING, logger="agentao.mcp.config"):
+        result = load_mcp_config(project_root=tmp_path, user_root=user_root)
+    assert result["shared"]["command"] == "global-cmd"
+    assert any(
+        "collides with a user-scope server" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
+def test_load_mcp_config_project_can_add_new_names(tmp_path):
+    """Project-scope may declare *new* server names that do not exist
+    in user scope. Both end up in the merged result."""
+    user_root = tmp_path / "home" / ".agentao"
+    _write_mcp(user_root / "mcp.json", {
+        "user-only": {"command": "u", "args": []}
+    })
+    _write_mcp(tmp_path / ".agentao" / "mcp.json", {
+        "project-only": {"command": "p", "args": []}
+    })
     result = load_mcp_config(project_root=tmp_path, user_root=user_root)
-    assert result["shared"]["command"] == "project-cmd"
+    assert result["user-only"]["command"] == "u"
+    assert result["project-only"]["command"] == "p"
 
 
 def test_load_mcp_config_merged(tmp_path):

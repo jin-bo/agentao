@@ -345,7 +345,6 @@ snap = agent.active_permissions()
 # snap.mode            -> "workspace-write"
 # snap.rules           -> [...]
 # snap.loaded_sources  -> ["preset:workspace-write",
-#                          "project:.agentao/permissions.json",
 #                          "user:/Users/me/.agentao/permissions.json",
 #                          "injected:host"]
 ```
