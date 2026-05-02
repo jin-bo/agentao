@@ -3,9 +3,11 @@
 import json
 import logging
 import logging.handlers
+import random
 import sys
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 # `openai` is deferred (P0.5): merely importing ``LLMClient`` should not pull
 # in the OpenAI SDK. Hosts that inject their own ``llm_client=`` never load
@@ -32,6 +34,155 @@ def __getattr__(name: str):
     if name == "OpenAI":
         return _openai_client_cls()
     raise AttributeError(f"module 'agentao.llm.client' has no attribute {name!r}")
+
+
+# ---------------------------------------------------------------------------
+# HTTP-level retry policy
+#
+# OpenAI SDK's built-in retry is disabled (max_retries=0) so this layer owns
+# the policy end-to-end: a fixed status-code allowlist, Retry-After honored
+# when present, otherwise jittered exponential backoff with a per-step ceiling
+# and a global wall-clock budget so a misbehaving provider can't pin us
+# forever. Keep these as module-level constants — tests monkeypatch them.
+# ---------------------------------------------------------------------------
+
+RETRYABLE_STATUS_CODES = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
+MAX_RETRY_ATTEMPTS = 5            # total attempts including the first (≤ 4 retries)
+BASE_BACKOFF_SECONDS = 1.5        # 1.5 * 2^attempt
+MAX_BACKOFF_SECONDS = 30.0        # per-step ceiling
+MAX_TOTAL_RETRY_SECONDS = 60.0    # wall-clock budget across all attempts
+JITTER_FRACTION = 0.3             # uniform(0, base * 0.3) added on top of base
+
+
+def _classify_retry(exc: BaseException) -> Tuple[bool, Optional[int], Optional[str]]:
+    """Decide whether ``exc`` is worth retrying.
+
+    Returns ``(retryable, status_code, retry_after_header)``. Network-level
+    failures (``APIConnectionError`` / ``APITimeoutError``) are retryable
+    with no status. ``APIStatusError`` is retryable only when its status is
+    in :data:`RETRYABLE_STATUS_CODES`. Anything else (auth, validation,
+    non-OpenAI exceptions) is not retryable so the caller raises it.
+    """
+    try:
+        from openai import (
+            APIConnectionError,
+            APIStatusError,
+            APITimeoutError,
+            RateLimitError,
+        )
+    except ImportError:
+        return (False, None, None)
+
+    if isinstance(exc, RateLimitError):
+        retry_after = None
+        if getattr(exc, "response", None) is not None:
+            retry_after = exc.response.headers.get("retry-after")
+        return (True, 429, retry_after)
+
+    if isinstance(exc, APIStatusError):
+        status = getattr(exc, "status_code", None)
+        if status in RETRYABLE_STATUS_CODES:
+            retry_after = None
+            if getattr(exc, "response", None) is not None:
+                retry_after = exc.response.headers.get("retry-after")
+            return (True, status, retry_after)
+        return (False, status, None)
+
+    if isinstance(exc, (APITimeoutError, APIConnectionError)):
+        return (True, None, None)
+
+    return (False, None, None)
+
+
+def _parse_retry_after(header: Optional[str]) -> Optional[float]:
+    """Parse a ``Retry-After`` header (seconds or HTTP-date) into seconds."""
+    if not header:
+        return None
+    try:
+        return max(0.0, float(header))
+    except (TypeError, ValueError):
+        pass
+    try:
+        from datetime import datetime, timezone
+        from email.utils import parsedate_to_datetime
+        target = parsedate_to_datetime(header)
+        if target.tzinfo is None:
+            target = target.replace(tzinfo=timezone.utc)
+        delta = (target - datetime.now(timezone.utc)).total_seconds()
+        if delta > 0:
+            return delta
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+# Phrases providers actually use when they reject ``stream=True``. We match
+# against full phrases (not bare "stream"/"streaming") so that proxy errors
+# whose messages contain words like "upstream" — common in 502/503 — don't
+# accidentally trigger the non-streaming fallback and bypass the retry
+# policy that would have honored ``Retry-After``.
+_STREAMING_UNSUPPORTED_PHRASES = (
+    "does not support streaming",
+    "does not support stream",
+    "streaming is not supported",
+    "stream is not supported",
+    "streaming not supported",
+    "stream not supported",
+    "stream=true is not supported",
+    "stream=true not supported",
+    "streaming mode is not supported",
+)
+
+
+def _is_streaming_unsupported(err_str: str) -> bool:
+    """True when an error message explicitly says streaming is unsupported."""
+    return any(phrase in err_str for phrase in _STREAMING_UNSUPPORTED_PHRASES)
+
+
+def _compute_backoff_delay(attempt: int, retry_after_header: Optional[str] = None) -> float:
+    """Compute the next sleep duration. Honors ``Retry-After`` when present."""
+    parsed = _parse_retry_after(retry_after_header)
+    if parsed is not None:
+        return min(parsed, MAX_BACKOFF_SECONDS)
+    base = min(BASE_BACKOFF_SECONDS * (2 ** attempt), MAX_BACKOFF_SECONDS)
+    jitter = base * JITTER_FRACTION * random.random()
+    return min(base + jitter, MAX_BACKOFF_SECONDS)
+
+
+def _interruptible_sleep(delay: float, cancellation_token: Optional[Any] = None) -> bool:
+    """Sleep up to ``delay`` seconds; return False if cancelled mid-sleep.
+
+    Polls ``cancellation_token.is_cancelled`` every 100ms so that a Ctrl+C
+    or ACP cancel during a long ``Retry-After`` window doesn't strand the
+    user. With no token this is a plain ``time.sleep``.
+    """
+    if delay <= 0:
+        return True
+    if cancellation_token is None:
+        time.sleep(delay)
+        return True
+    deadline = time.monotonic() + delay
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return True
+        if getattr(cancellation_token, "is_cancelled", False):
+            return False
+        time.sleep(min(0.1, remaining))
+
+
+def _mark_streamed(exc: BaseException, value: bool) -> None:
+    """Tag ``exc`` with ``.streamed`` for ``runtime/llm_call.py`` to read.
+
+    Best-effort: SDK exception classes that pin ``__slots__`` will raise on
+    assignment, in which case the host falls back to counting ``LLM_TEXT``
+    events. Mirrors the same defensive pattern used in
+    ``runtime/tool_planning.py`` for foreign-object mutation.
+    """
+    try:
+        exc.streamed = value  # type: ignore[attr-defined]
+    except (AttributeError, TypeError):
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +319,15 @@ class LLMClient:
         # Set to True after detecting the model requires max_completion_tokens
         self._use_max_completion_tokens: bool = False
 
+        # max_retries=0: defer retry policy to _classify_retry / _compute_backoff_delay
+        # so 408/409/425/429/5xx/529 + Retry-After + cancellation are handled
+        # uniformly across non-stream and stream paths. Two layers of retry
+        # would otherwise compound (SDK default is 2) and ignore Retry-After
+        # the way our caller expects.
         self.client = _openai_client_cls()(
             api_key=self.api_key,
             base_url=self.base_url,
+            max_retries=0,
         )
 
         # Injected logger → host owns the stack; skip package-root mutation.
@@ -288,6 +445,7 @@ class LLMClient:
         self.client = _openai_client_cls()(
             api_key=self.api_key,
             base_url=self.base_url,
+            max_retries=0,
         )
         self.logger.info(
             f"LLMClient reconfigured: model={self.model}, base_url={self.base_url}"
@@ -329,43 +487,61 @@ class LLMClient:
         # Log request
         self._log_request(request_id, kwargs)
 
-        try:
-            # Make API call
-            raw = self.client.chat.completions.with_raw_response.create(**kwargs)
-            response = raw.parse()
+        deadline = time.monotonic() + MAX_TOTAL_RETRY_SECONDS
+        attempt = 0  # number of retries performed; first try is attempt 0
+        while True:
+            try:
+                raw = self.client.chat.completions.with_raw_response.create(**kwargs)
+                response = raw.parse()
 
-            # Accumulate session token totals
-            if hasattr(response, "usage") and response.usage:
-                self.total_prompt_tokens += response.usage.prompt_tokens or 0
-                self.total_completion_tokens += response.usage.completion_tokens or 0
+                if hasattr(response, "usage") and response.usage:
+                    self.total_prompt_tokens += response.usage.prompt_tokens or 0
+                    self.total_completion_tokens += response.usage.completion_tokens or 0
 
-            # Log response
-            self._log_response(request_id, response)
+                self._log_response(request_id, response)
+                return response
 
-            return response
+            except Exception as e:
+                # max_tokens vs max_completion_tokens param mismatch is a one-shot
+                # fix-up, not a retry — does not consume retry budget. The flag is
+                # latched to True after the first hit so this branch can fire at
+                # most once per LLMClient instance.
+                if (
+                    not self._use_max_completion_tokens
+                    and "max_tokens" in str(e)
+                    and "max_completion_tokens" in str(e)
+                ):
+                    self._use_max_completion_tokens = True
+                    self.logger.info("Switching to max_completion_tokens for this model")
+                    if "max_tokens" in kwargs:
+                        kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+                    continue
 
-        except Exception as e:
-            if not self._use_max_completion_tokens and "max_tokens" in str(e) and "max_completion_tokens" in str(e):
-                # Model requires max_completion_tokens; switch and retry
-                self._use_max_completion_tokens = True
-                self.logger.info("Switching to max_completion_tokens for this model")
-                if "max_tokens" in kwargs:
-                    kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
-                try:
-                    raw = self.client.chat.completions.with_raw_response.create(**kwargs)
-                    response = raw.parse()
-                    if hasattr(response, "usage") and response.usage:
-                        self.total_prompt_tokens += response.usage.prompt_tokens or 0
-                        self.total_completion_tokens += response.usage.completion_tokens or 0
-                    self._log_response(request_id, response)
-                    return response
-                except Exception as retry_e:
+                retryable, status, retry_after = _classify_retry(e)
+                if not retryable or attempt >= MAX_RETRY_ATTEMPTS - 1:
                     import traceback
-                    self.logger.error(f"[{request_id}] Retry failed: {str(retry_e)}\n{traceback.format_exc()}")
-                    raise retry_e
-            import traceback
-            self.logger.error(f"[{request_id}] API call failed: {str(e)}\n{traceback.format_exc()}")
-            raise
+                    self.logger.error(
+                        f"[{request_id}] API call failed: {str(e)}\n{traceback.format_exc()}"
+                    )
+                    raise
+
+                delay = _compute_backoff_delay(attempt, retry_after)
+                remaining = deadline - time.monotonic()
+                if delay > remaining:
+                    import traceback
+                    self.logger.error(
+                        f"[{request_id}] retry budget exhausted after "
+                        f"{attempt + 1} attempt(s): {str(e)}\n{traceback.format_exc()}"
+                    )
+                    raise
+
+                label = f"status={status}" if status is not None else type(e).__name__
+                self.logger.info(
+                    f"[{request_id}] retryable error ({label}); "
+                    f"attempt {attempt + 1} sleeping {delay:.2f}s"
+                )
+                time.sleep(delay)
+                attempt += 1
 
     def _log_request(self, request_id: str, kwargs: Dict[str, Any]) -> None:
         """Log LLM request details.
@@ -552,160 +728,193 @@ class LLMClient:
         log_kwargs = {k: v for k, v in kwargs.items() if k != "stream"}
         self._log_request(request_id, log_kwargs)
 
-        try:
-            stream = self.client.chat.completions.create(**kwargs)
-
+        deadline = time.monotonic() + MAX_TOTAL_RETRY_SECONDS
+        attempt = 0  # number of retries performed; first try is attempt 0
+        while True:
             content_parts: List[str] = []
             reasoning_parts: List[str] = []
             tool_calls_data: Dict[int, Dict[str, str]] = {}
             finish_reason = "stop"
             response_model = self.model
             usage_data = None
+            # True only after on_text_chunk has fired with non-empty text — i.e.,
+            # an LLM_TEXT event has reached the host. Role-only first chunks,
+            # usage-only chunks, and tool-call/reasoning-only chunks all consume
+            # iterations without exposing anything to the host, so they must
+            # NOT block the pre-output retry path.
+            progress_made = False
 
-            for chunk in stream:
-                if cancellation_token and cancellation_token.is_cancelled:
-                    break
-                # Capture usage from final usage-only chunk (stream_options include_usage)
-                if hasattr(chunk, "usage") and chunk.usage:
-                    usage_data = chunk.usage
-                if not chunk.choices:
-                    continue
-                choice = chunk.choices[0]
-                delta = choice.delta
+            try:
+                stream = self.client.chat.completions.create(**kwargs)
 
-                # Accumulate text content and fire callback
-                if delta and delta.content:
-                    content_parts.append(delta.content)
-                    if on_text_chunk:
-                        on_text_chunk(delta.content)
+                for chunk in stream:
+                    if cancellation_token and cancellation_token.is_cancelled:
+                        break
+                    # Capture usage from final usage-only chunk (stream_options include_usage)
+                    if hasattr(chunk, "usage") and chunk.usage:
+                        usage_data = chunk.usage
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    delta = choice.delta
 
-                # Accumulate reasoning_content (DeepSeek/MiniMax/Kimi-style thinking
-                # field). Non-streaming exposes it on message.reasoning_content;
-                # without this branch the streaming path would silently drop it.
-                if delta and getattr(delta, "reasoning_content", None):
-                    reasoning_parts.append(delta.reasoning_content)
+                    # Accumulate text content and fire callback
+                    if delta and delta.content:
+                        content_parts.append(delta.content)
+                        if on_text_chunk:
+                            on_text_chunk(delta.content)
+                            progress_made = True
 
-                # Accumulate tool call deltas
-                if delta and delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        if idx not in tool_calls_data:
-                            tool_calls_data[idx] = {"id": "", "name": "", "arguments": ""}
-                        if tc_delta.id:
-                            tool_calls_data[idx]["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                tool_calls_data[idx]["name"] += tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
-                            # Gemini thinking models: preserve thought_signature
-                            thought_sig = getattr(tc_delta.function, "thought_signature", None)
-                            if thought_sig is not None:
-                                tool_calls_data[idx]["thought_signature"] = thought_sig
+                    # Accumulate reasoning_content (DeepSeek/MiniMax/Kimi-style thinking
+                    # field). Non-streaming exposes it on message.reasoning_content;
+                    # without this branch the streaming path would silently drop it.
+                    if delta and getattr(delta, "reasoning_content", None):
+                        reasoning_parts.append(delta.reasoning_content)
 
-                if choice.finish_reason:
-                    finish_reason = choice.finish_reason
+                    # Accumulate tool call deltas
+                    if delta and delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            idx = tc_delta.index
+                            if idx not in tool_calls_data:
+                                tool_calls_data[idx] = {"id": "", "name": "", "arguments": ""}
+                            if tc_delta.id:
+                                tool_calls_data[idx]["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    tool_calls_data[idx]["name"] += tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
+                                # Gemini thinking models: preserve thought_signature
+                                thought_sig = getattr(tc_delta.function, "thought_signature", None)
+                                if thought_sig is not None:
+                                    tool_calls_data[idx]["thought_signature"] = thought_sig
 
-                if hasattr(chunk, "model") and chunk.model:
-                    response_model = chunk.model
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
 
-            # Accumulate session token totals
-            if usage_data is not None:
-                self.total_prompt_tokens += getattr(usage_data, "prompt_tokens", 0) or 0
-                self.total_completion_tokens += getattr(usage_data, "completion_tokens", 0) or 0
+                    if hasattr(chunk, "model") and chunk.model:
+                        response_model = chunk.model
 
-            # Build a duck-type response that agent.py can consume like a ChatCompletion
-            response = _StreamResponse(
-                model=response_model,
-                content="".join(content_parts) if content_parts else None,
-                tool_calls_data=tool_calls_data,
-                finish_reason=finish_reason,
-                usage=usage_data,
-                reasoning_content="".join(reasoning_parts) if reasoning_parts else None,
-            )
+                # Accumulate session token totals
+                if usage_data is not None:
+                    self.total_prompt_tokens += getattr(usage_data, "prompt_tokens", 0) or 0
+                    self.total_completion_tokens += getattr(usage_data, "completion_tokens", 0) or 0
 
-            self._log_response(request_id, response)
-            return response
+                # Build a duck-type response that agent.py can consume like a ChatCompletion
+                response = _StreamResponse(
+                    model=response_model,
+                    content="".join(content_parts) if content_parts else None,
+                    tool_calls_data=tool_calls_data,
+                    finish_reason=finish_reason,
+                    usage=usage_data,
+                    reasoning_content="".join(reasoning_parts) if reasoning_parts else None,
+                )
 
-        except Exception as e:
-            err_str = str(e).lower()
-            if not self._use_max_completion_tokens and "max_tokens" in err_str and "max_completion_tokens" in err_str:
-                # Model requires max_completion_tokens; switch and retry via non-streaming fallback
-                self._use_max_completion_tokens = True
-                self.logger.info("Switching to max_completion_tokens for this model (stream retry)")
-                if "max_tokens" in kwargs:
-                    kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
-                try:
-                    stream = self.client.chat.completions.create(**kwargs)
-                    content_parts2: List[str] = []
-                    reasoning_parts2: List[str] = []
-                    tool_calls_data2: Dict[int, Dict[str, str]] = {}
-                    finish_reason2 = "stop"
-                    response_model2 = self.model
-                    usage_data2 = None
-                    for chunk in stream:
-                        if hasattr(chunk, "usage") and chunk.usage:
-                            usage_data2 = chunk.usage
-                        if not chunk.choices:
-                            continue
-                        choice = chunk.choices[0]
-                        delta = choice.delta
-                        if delta and delta.content:
-                            content_parts2.append(delta.content)
-                            if on_text_chunk:
-                                on_text_chunk(delta.content)
-                        if delta and getattr(delta, "reasoning_content", None):
-                            reasoning_parts2.append(delta.reasoning_content)
-                        if delta and delta.tool_calls:
-                            for tc_delta in delta.tool_calls:
-                                idx = tc_delta.index
-                                if idx not in tool_calls_data2:
-                                    tool_calls_data2[idx] = {"id": "", "name": "", "arguments": ""}
-                                if tc_delta.id:
-                                    tool_calls_data2[idx]["id"] = tc_delta.id
-                                if tc_delta.function:
-                                    if tc_delta.function.name:
-                                        tool_calls_data2[idx]["name"] += tc_delta.function.name
-                                    if tc_delta.function.arguments:
-                                        tool_calls_data2[idx]["arguments"] += tc_delta.function.arguments
-                        if choice.finish_reason:
-                            finish_reason2 = choice.finish_reason
-                        if hasattr(chunk, "model") and chunk.model:
-                            response_model2 = chunk.model
-                    if usage_data2 is not None:
-                        self.total_prompt_tokens += getattr(usage_data2, "prompt_tokens", 0) or 0
-                        self.total_completion_tokens += getattr(usage_data2, "completion_tokens", 0) or 0
-                    response = _StreamResponse(
-                        model=response_model2,
-                        content="".join(content_parts2) if content_parts2 else None,
-                        tool_calls_data=tool_calls_data2,
-                        finish_reason=finish_reason2,
-                        usage=usage_data2,
-                        reasoning_content="".join(reasoning_parts2) if reasoning_parts2 else None,
+                self._log_response(request_id, response)
+                return response
+
+            except Exception as e:
+                err_str = str(e).lower()
+
+                # max_tokens vs max_completion_tokens param mismatch — one-shot
+                # fix-up. Only safe at zero progress (otherwise we'd re-emit
+                # content via on_text_chunk). Latched flag prevents loops.
+                if (
+                    not progress_made
+                    and not self._use_max_completion_tokens
+                    and "max_tokens" in err_str
+                    and "max_completion_tokens" in err_str
+                ):
+                    self._use_max_completion_tokens = True
+                    self.logger.info(
+                        "Switching to max_completion_tokens for this model (stream retry)"
                     )
-                    self._log_response(request_id, response)
-                    return response
-                except Exception as retry_e:
+                    if "max_tokens" in kwargs:
+                        kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+                    continue
+
+                # Status-based retry classification — done up front so a
+                # retryable upstream/proxy failure (whose message often
+                # contains "upstream") doesn't get mis-routed into the
+                # streaming-unsupported fallback below.
+                retryable, status, retry_after = _classify_retry(e)
+
+                # Provider rejected stream=True altogether — fall back to
+                # non-streaming chat(). One-shot, only at zero progress, and
+                # only for clearly non-retryable errors that explicitly say
+                # streaming is unsupported (never bare "stream"/"streaming",
+                # which also matches "upstream" in 502/503 proxy errors).
+                if (
+                    not progress_made
+                    and not retryable
+                    and _is_streaming_unsupported(err_str)
+                ):
+                    self.logger.info(
+                        f"[{request_id}] Streaming not supported by provider; "
+                        "falling back to non-streaming"
+                    )
+                    try:
+                        response = self.chat(messages, tools=tools, max_tokens=max_tokens)
+                        if on_text_chunk:
+                            content = response.choices[0].message.content
+                            if content:
+                                on_text_chunk(content)
+                        return response
+                    except Exception as fallback_e:
+                        import traceback
+                        self.logger.error(
+                            f"[{request_id}] Non-streaming fallback also failed: "
+                            f"{str(fallback_e)}\n{traceback.format_exc()}"
+                        )
+                        _mark_streamed(fallback_e, False)
+                        raise fallback_e
+
+                # Mid-stream failures cannot be retried safely —
+                # on_text_chunk has already fired and the duck-type
+                # response would otherwise duplicate content.
+                # Attach .streamed so callers (and the runtime's
+                # LLM_CALL_COMPLETED error payload) can distinguish "host
+                # already saw partial chunks" from "nothing reached the host".
+                _mark_streamed(e, progress_made)
+                if (
+                    not retryable
+                    or progress_made
+                    or attempt >= MAX_RETRY_ATTEMPTS - 1
+                ):
                     import traceback
-                    self.logger.error(f"[{request_id}] Stream retry failed: {str(retry_e)}\n{traceback.format_exc()}")
-                    raise retry_e
-            # Provider doesn't support streaming — fall back to non-streaming chat()
-            if "stream" in err_str or "streaming" in err_str:
-                self.logger.info(f"[{request_id}] Streaming not supported by provider; falling back to non-streaming")
-                try:
-                    response = self.chat(messages, tools=tools, max_tokens=max_tokens)
-                    if on_text_chunk:
-                        content = response.choices[0].message.content
-                        if content:
-                            on_text_chunk(content)
-                    return response
-                except Exception as fallback_e:
+                    if progress_made and retryable:
+                        self.logger.error(
+                            f"[{request_id}] mid-stream failure (cannot retry safely): "
+                            f"{str(e)}\n{traceback.format_exc()}"
+                        )
+                    else:
+                        self.logger.error(
+                            f"[{request_id}] Streaming API call failed: "
+                            f"{str(e)}\n{traceback.format_exc()}"
+                        )
+                    raise
+
+                delay = _compute_backoff_delay(attempt, retry_after)
+                remaining = deadline - time.monotonic()
+                if delay > remaining:
                     import traceback
-                    self.logger.error(f"[{request_id}] Non-streaming fallback also failed: {str(fallback_e)}\n{traceback.format_exc()}")
-                    raise fallback_e
-            import traceback
-            self.logger.error(f"[{request_id}] Streaming API call failed: {str(e)}\n{traceback.format_exc()}")
-            raise
+                    self.logger.error(
+                        f"[{request_id}] retry budget exhausted after "
+                        f"{attempt + 1} attempt(s): {str(e)}\n{traceback.format_exc()}"
+                    )
+                    raise
+
+                label = f"status={status}" if status is not None else type(e).__name__
+                self.logger.info(
+                    f"[{request_id}] retryable streaming error ({label}); "
+                    f"attempt {attempt + 1} sleeping {delay:.2f}s"
+                )
+                if not _interruptible_sleep(delay, cancellation_token):
+                    self.logger.info(
+                        f"[{request_id}] retry sleep interrupted by cancellation"
+                    )
+                    raise
+                attempt += 1
 
     def _log_response(self, request_id: str, response: Any) -> None:
         """Log LLM response details.

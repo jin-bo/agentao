@@ -119,12 +119,19 @@ def run_llm_call(
             cancellation_token=cancellation_token,
         )
     except Exception as exc:
+        # `streamed` is attached by LLMClient.chat_stream before raising:
+        # True iff at least one delta reached on_text_chunk (and therefore
+        # an LLM_TEXT event reached the host). Hosts use it to choose
+        # between regenerate-from-scratch and resume-style retry without
+        # having to count emitted LLM_TEXT events themselves.
+        streamed = bool(getattr(exc, "streamed", False))
         agent.transport.emit(AgentEvent(EventType.LLM_CALL_COMPLETED, {
             "attempt": attempt,
             "status": "error",
             "duration_ms": round((time.monotonic() - t0) * 1000),
             "error_class": type(exc).__name__,
             "error_message": str(exc)[:500],
+            "streamed": streamed,
             "finish_reason": None,
             "prompt_tokens": None,
             "completion_tokens": None,
