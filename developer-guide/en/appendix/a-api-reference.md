@@ -83,7 +83,7 @@ def build_from_environment(
     ...
 ```
 
-CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars, `<wd>/.agentao/permissions.json`, `<wd>/.agentao/mcp.json`, memory roots; constructs `Agentao` with the discovered values. **Caller-supplied `**overrides` win** over auto-discovered ones. Raises `ValueError` on the same mutual-exclusion conflicts as the constructor (if `llm_client` is in `overrides`, the factory's discovered `api_key` / `base_url` / `model` are dropped before forwarding).
+CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars, `~/.agentao/permissions.json` (project-scope file is intentionally not loaded — see [5.4](/en/part-5/4-permissions)), `<wd>/.agentao/mcp.json` + `~/.agentao/mcp.json` (user wins on name collision; project is add-only), memory roots; constructs `Agentao` with the discovered values. **Caller-supplied `**overrides` win** over auto-discovered ones. Raises `ValueError` on the same mutual-exclusion conflicts as the constructor (if `llm_client` is in `overrides`, the factory's discovered `api_key` / `base_url` / `model` are dropped before forwarding).
 
 ### Methods
 
@@ -252,7 +252,7 @@ PermissionEngine(
 )
 ```
 
-Both arguments are explicit since 0.2.16 — passing `project_root=None` (or omitting it) raises `TypeError`. Project rules load from `<project_root>/.agentao/permissions.json`; user rules load from `<user_root>/permissions.json` (typically `~/.agentao/permissions.json` if `user_root=Path.home() / ".agentao"`). Pass `user_root=None` to disable user-scope rules entirely. Switch the preset mode after construction with `set_mode()`.
+Both arguments are explicit since 0.2.16 — passing `project_root=None` (or omitting it) raises `TypeError`. User rules load from `<user_root>/permissions.json` (typically `~/.agentao/permissions.json` if `user_root=Path.home() / ".agentao"`); pass `user_root=None` to disable user-scope rules entirely. `project_root` is used only to detect (and warn on) a stray `<project_root>/.agentao/permissions.json` — that file is **not** loaded as a rule source (see [5.4](/en/part-5/4-permissions) for why). Switch the preset mode after construction with `set_mode()`.
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
@@ -350,7 +350,7 @@ Source of MCP server configs. The `Agentao(mcp_registry=...)` kwarg is the injec
 
 | Concrete class | Purpose |
 |---|---|
-| `FileBackedMCPRegistry(project_root, user_root=None)` | CLI/ACP default. Reads `<wd>/.agentao/mcp.json` + `<user_root>/mcp.json` on every `list_servers()`. |
+| `FileBackedMCPRegistry(project_root, user_root=None)` | CLI/ACP default. Reads `<wd>/.agentao/mcp.json` + `<user_root>/mcp.json` on every `list_servers()`. **User wins on name collision**; project entries may only declare new server names (collisions log a warning and skip the project entry). |
 | `InMemoryMCPRegistry(servers=None)` | Programmatic counterpart for tests / embedded hosts. Constructor input is shallow-copied. |
 
 ## A.7 Cancellation
@@ -564,12 +564,11 @@ snap = agent.active_permissions()
 # snap.mode            -> "workspace-write" (Literal-typed)
 # snap.rules           -> list[dict]
 # snap.loaded_sources  -> ["preset:workspace-write",
-#                          "project:.agentao/permissions.json",
 #                          "user:/Users/me/.agentao/permissions.json",
 #                          "injected:host"]
 ```
 
-`loaded_sources` carries stable string labels: `preset:<mode>`, `project:<path>`, `user:<path>`, `injected:<name>`. The MVP does **not** expose per-rule provenance — hosts that need it combine `loaded_sources` with their own injected policy metadata.
+`loaded_sources` carries stable string labels: `preset:<mode>`, `user:<path>`, `injected:<name>`. (`project:<path>` is no longer emitted — project-scope permissions are not loaded; see [5.4](/en/part-5/4-permissions).) The MVP does **not** expose per-rule provenance — hosts that need it combine `loaded_sources` with their own injected policy metadata.
 
 If no `permission_engine` is configured, the runtime returns a permissive fallback: `mode="workspace-write"`, empty `rules`, `loaded_sources=["default:no-engine"]`. The label tells hosts they're seeing the engine-less fallback rather than a configured policy.
 

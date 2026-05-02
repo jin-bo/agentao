@@ -196,10 +196,11 @@ snap.loaded_sources   # list[str] — provenance labels
 `loaded_sources` carries stable string labels:
 
 - `preset:<mode>` — built-in preset (e.g. `preset:workspace-write`)
-- `project:<path>` — project-scoped JSON loaded from `<wd>/.agentao/permissions.json`
 - `user:<path>` — user-scoped JSON from `~/.agentao/permissions.json`
 - `injected:<name>` — host-supplied policy via `add_loaded_source()`
 - `default:no-engine` — fallback when no engine is configured
+
+> **No `project:<path>` label.** Project-scope `<wd>/.agentao/permissions.json` is intentionally **not** loaded — see [5.4](/en/part-5/4-permissions). Hosts that need project-aware policy should inject it via `add_loaded_source("injected:<name>")` plus their own rule layer.
 
 Pin this snapshot into your audit log on session start so you can later answer "what policy was active when this happened?" without replaying the whole engine.
 

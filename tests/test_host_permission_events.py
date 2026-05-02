@@ -159,12 +159,12 @@ def test_allow_decision_emits_allow_event_and_precedes_started(tmp_path):
 
 
 def test_deny_decision_emits_deny_event_and_no_started(tmp_path):
-    perms_path = tmp_path / ".agentao" / "permissions.json"
-    perms_path.parent.mkdir(parents=True, exist_ok=True)
-    perms_path.write_text(json.dumps({
+    user_root = tmp_path / "user"
+    user_root.mkdir()
+    (user_root / "permissions.json").write_text(json.dumps({
         "rules": [{"tool": "write_thing", "action": "deny"}]
     }))
-    engine = PermissionEngine(project_root=tmp_path)
+    engine = PermissionEngine(project_root=tmp_path, user_root=user_root)
     runner, stream, _ = _build_runner(permission_engine=engine)
     runner.execute([_tool_call("write_thing")])
 
@@ -180,15 +180,15 @@ def test_deny_decision_emits_deny_event_and_no_started(tmp_path):
 
 
 def test_prompt_decision_emits_prompt_event_for_ask_path(tmp_path):
-    perms_path = tmp_path / ".agentao" / "permissions.json"
-    perms_path.parent.mkdir(parents=True, exist_ok=True)
+    user_root = tmp_path / "user"
+    user_root.mkdir()
     # ASK rule on a tool that ``requires_confirmation``: the planner
     # routes this to ToolCallDecision.ASK, so the public event must
     # surface ``outcome="prompt"`` before user confirmation runs.
-    perms_path.write_text(json.dumps({
+    (user_root / "permissions.json").write_text(json.dumps({
         "rules": [{"tool": "write_thing", "action": "ask"}]
     }))
-    engine = PermissionEngine(project_root=tmp_path)
+    engine = PermissionEngine(project_root=tmp_path, user_root=user_root)
     runner, stream, transport = _build_runner(permission_engine=engine, confirm=True)
     runner.execute([_tool_call("write_thing")])
 
@@ -263,13 +263,16 @@ def test_requires_confirmation_fallback_emits_prompt_with_no_matched_rule(tmp_pa
 
 
 def test_loaded_sources_is_engine_snapshot(tmp_path):
-    perms_path = tmp_path / ".agentao" / "permissions.json"
-    perms_path.parent.mkdir(parents=True, exist_ok=True)
-    perms_path.write_text(json.dumps({
+    user_root = tmp_path / "user"
+    user_root.mkdir()
+    (user_root / "permissions.json").write_text(json.dumps({
         "rules": [{"tool": "read_thing", "action": "allow"}]
     }))
-    engine = PermissionEngine(project_root=tmp_path)
+    engine = PermissionEngine(project_root=tmp_path, user_root=user_root)
     runner, stream, _ = _build_runner(permission_engine=engine)
     runner.execute([_tool_call("read_thing")])
     perm_events = [e for e in stream.events if isinstance(e, PermissionDecisionEvent)]
-    assert any(s.startswith("project:") for s in perm_events[0].loaded_sources)
+    # The engine now records user-scope rules only; project-scope is
+    # ignored by design (see ``permissions.py`` class docstring).
+    assert any(s.startswith("user:") for s in perm_events[0].loaded_sources)
+    assert all(not s.startswith("project:") for s in perm_events[0].loaded_sources)

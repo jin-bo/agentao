@@ -2,9 +2,9 @@
 
 Covers the matrix the harness contract requires:
 
-- preset-only (no project / user files)
-- project-only file
-- project + user files
+- preset-only (no user file)
+- user-only file
+- a stray project file is ignored (no ``project:`` source ever appears)
 - injected source label appended by the host
 - mode switch invalidates the cached snapshot
 - the snapshot is a deep copy (mutation does not leak back into the engine)
@@ -37,19 +37,25 @@ def test_preset_only(tmp_path):
     assert snap.rules  # preset rules populate the list
 
 
-def test_project_file_loaded_source(tmp_path):
+def test_user_file_loaded_source(tmp_path):
     rules = [{"tool": "write_file", "action": "ask"}]
-    _write_perms(tmp_path / ".agentao" / "permissions.json", rules)
-    engine = PermissionEngine(project_root=tmp_path)
+    user_root = tmp_path / "user"
+    _write_perms(user_root / "permissions.json", rules)
+    engine = PermissionEngine(project_root=tmp_path, user_root=user_root)
     snap = engine.active_permissions()
-    assert any(s.startswith("project:") for s in snap.loaded_sources)
+    assert any(s.startswith("user:") for s in snap.loaded_sources)
     assert any(
         r.get("tool") == "write_file" and r.get("action") == "ask"
         for r in snap.rules
-    ), "project rule must appear in the projected rule list"
+    ), "user rule must appear in the projected rule list"
 
 
-def test_user_and_project_files_both_recorded(tmp_path):
+def test_stray_project_file_is_not_recorded(tmp_path):
+    """A ``.agentao/permissions.json`` in the project tree must NOT
+    produce a ``project:`` loaded-source entry, and its rules must not
+    appear in the projection. The engine logs a warning when the file
+    exists; this test asserts the silent-but-firm policy.
+    """
     proj_root = tmp_path / "proj"
     user_root = tmp_path / "user"
     _write_perms(proj_root / ".agentao" / "permissions.json", [
@@ -62,10 +68,13 @@ def test_user_and_project_files_both_recorded(tmp_path):
     snap = engine.active_permissions()
     sources = snap.loaded_sources
     assert sources[0] == "preset:workspace-write"
-    # Project listed before user (matches the engine's evaluation order).
-    project_idx = next(i for i, s in enumerate(sources) if s.startswith("project:"))
-    user_idx = next(i for i, s in enumerate(sources) if s.startswith("user:"))
-    assert project_idx < user_idx
+    assert all(not s.startswith("project:") for s in sources)
+    assert any(s.startswith("user:") for s in sources)
+    # Project rule must not have leaked into the projection.
+    assert not any(
+        r.get("tool") == "write_file" and r.get("action") == "deny"
+        for r in snap.rules
+    )
 
 
 def test_user_root_without_file_is_not_recorded(tmp_path):
@@ -102,10 +111,11 @@ def test_mode_switch_invalidates_cache(tmp_path):
 
 
 def test_snapshot_rules_are_deep_copied(tmp_path):
-    _write_perms(tmp_path / ".agentao" / "permissions.json", [
+    user_root = tmp_path / "user"
+    _write_perms(user_root / "permissions.json", [
         {"tool": "write_file", "args": {"path": "."}, "action": "ask"},
     ])
-    engine = PermissionEngine(project_root=tmp_path)
+    engine = PermissionEngine(project_root=tmp_path, user_root=user_root)
     snap = engine.active_permissions()
     # Mutate the projection — the engine must not pick up the change.
     snap.rules[0]["action"] = "allow"
@@ -125,10 +135,11 @@ def test_active_permissions_does_not_re_read_disk(tmp_path, monkeypatch):
     The cache must be hit on the second call without touching the
     filesystem (no extra ``_load_file`` invocations).
     """
-    _write_perms(tmp_path / ".agentao" / "permissions.json", [
+    user_root = tmp_path / "user"
+    _write_perms(user_root / "permissions.json", [
         {"tool": "write_file", "action": "ask"},
     ])
-    engine = PermissionEngine(project_root=tmp_path)
+    engine = PermissionEngine(project_root=tmp_path, user_root=user_root)
 
     calls: List[Path] = []
     real_load = engine._load_file
@@ -178,10 +189,11 @@ def test_agent_active_permissions_falls_back_when_no_engine(tmp_path):
 
 def test_engine_decide_unaffected_by_loaded_sources_tracking(tmp_path):
     """Adding loaded-source labels must not change ``decide`` behavior."""
-    _write_perms(tmp_path / ".agentao" / "permissions.json", [
+    user_root = tmp_path / "user"
+    _write_perms(user_root / "permissions.json", [
         {"tool": "write_file", "action": "deny"},
     ])
-    engine = PermissionEngine(project_root=tmp_path)
+    engine = PermissionEngine(project_root=tmp_path, user_root=user_root)
     engine.add_loaded_source("injected:host")
     from agentao.permissions import PermissionDecision
     assert engine.decide("write_file", {}) == PermissionDecision.DENY

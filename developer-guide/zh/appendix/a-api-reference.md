@@ -83,7 +83,7 @@ def build_from_environment(
     ...
 ```
 
-CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变量、`<wd>/.agentao/permissions.json`、`<wd>/.agentao/mcp.json`、内存目录，然后用发现到的值构造 `Agentao`。**调用方传入的 `**overrides` 优先**。同样会触发上面构造器的互斥校验（如果 `overrides` 含 `llm_client`，工厂会先把发现到的 `api_key` / `base_url` / `model` 丢掉再转发）。
+CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变量、`~/.agentao/permissions.json`（项目级文件故意不加载 —— 见 [5.4](/zh/part-5/4-permissions)）、`<wd>/.agentao/mcp.json` + `~/.agentao/mcp.json`（同名冲突时用户胜；项目级仅可新增）、内存目录，然后用发现到的值构造 `Agentao`。**调用方传入的 `**overrides` 优先**。同样会触发上面构造器的互斥校验（如果 `overrides` 含 `llm_client`，工厂会先把发现到的 `api_key` / `base_url` / `model` 丢掉再转发）。
 
 ### 方法
 
@@ -252,7 +252,7 @@ PermissionEngine(
 )
 ```
 
-0.2.16 起两个参数都显式传——`project_root=None`（或不传）会抛 `TypeError`。项目规则从 `<project_root>/.agentao/permissions.json` 加载；用户规则从 `<user_root>/permissions.json` 加载（一般 `user_root=Path.home() / ".agentao"`，对应 `~/.agentao/permissions.json`）。传 `user_root=None` 可完全禁用用户态规则。构造后用 `set_mode()` 切换预设模式。
+0.2.16 起两个参数都显式传——`project_root=None`（或不传）会抛 `TypeError`。用户规则从 `<user_root>/permissions.json` 加载（一般 `user_root=Path.home() / ".agentao"`，对应 `~/.agentao/permissions.json`）；传 `user_root=None` 可完全禁用用户态规则。`project_root` 仅用于检测（并 warn）一份残留的 `<project_root>/.agentao/permissions.json` —— 该文件**不会**作为规则源加载（原因见 [5.4](/zh/part-5/4-permissions)）。构造后用 `set_mode()` 切换预设模式。
 
 | 方法 | 签名 | 作用 |
 |------|------|------|
@@ -350,7 +350,7 @@ MCP 服务器配置的来源。`Agentao(mcp_registry=...)` 是注入点；`mcp_m
 
 | 具体实现 | 作用 |
 |---|---|
-| `FileBackedMCPRegistry(project_root, user_root=None)` | CLI/ACP 默认。每次 `list_servers()` 都重读 `<wd>/.agentao/mcp.json` + `<user_root>/mcp.json`。 |
+| `FileBackedMCPRegistry(project_root, user_root=None)` | CLI/ACP 默认。每次 `list_servers()` 都重读 `<wd>/.agentao/mcp.json` + `<user_root>/mcp.json`。**同名冲突时用户胜**；项目级条目仅可声明新 server name（冲突打 warning 并跳过项目项）。 |
 | `InMemoryMCPRegistry(servers=None)` | 测试 / 嵌入式 host 用的程序化版本。构造入参做浅拷贝。 |
 
 ## A.7 取消
@@ -565,12 +565,11 @@ snap = agent.active_permissions()
 # snap.mode            -> "workspace-write"（Literal 类型）
 # snap.rules           -> list[dict]
 # snap.loaded_sources  -> ["preset:workspace-write",
-#                          "project:.agentao/permissions.json",
 #                          "user:/Users/me/.agentao/permissions.json",
 #                          "injected:host"]
 ```
 
-`loaded_sources` 是稳定的字符串标签：`preset:<mode>`、`project:<path>`、`user:<path>`、`injected:<name>`。MVP **不** 暴露逐规则 provenance —— 需要细到规则级的宿主请把 `loaded_sources` 与自己注入的策略元数据组合。
+`loaded_sources` 是稳定的字符串标签：`preset:<mode>`、`user:<path>`、`injected:<name>`。（`project:<path>` 已不再发出 —— 项目级权限不会被加载，见 [5.4](/zh/part-5/4-permissions)。）MVP **不** 暴露逐规则 provenance —— 需要细到规则级的宿主请把 `loaded_sources` 与自己注入的策略元数据组合。
 
 未配置 `permission_engine` 时，运行时返回宽松回退：`mode="workspace-write"`、空 `rules`、`loaded_sources=["default:no-engine"]`。该标签明确告诉宿主："看到的是无引擎回退而非配置策略"。
 

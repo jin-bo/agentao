@@ -1,7 +1,7 @@
 """MCP tool wrapper that adapts MCP-discovered tools to the Agentao Tool interface."""
 
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from mcp.types import Tool as McpToolDef
 
@@ -81,8 +81,35 @@ class McpTool(Tool):
         return schema
 
     @property
+    def mcp_annotations(self) -> Dict[str, Any]:
+        """Return the server-supplied ``ToolAnnotations`` as a plain
+        dict so hosts can introspect hints without importing MCP SDK
+        types. Empty dict when the server provided no annotations.
+        """
+        ann = self._mcp_tool.annotations
+        return ann.model_dump(exclude_none=True) if ann is not None else {}
+
+    @property
+    def is_read_only(self) -> bool:
+        # Per MCP spec: never honor annotations from an untrusted server.
+        # destructiveHint=true overrides readOnlyHint when a server sends
+        # both — a contradictory pair must not let the call slip through
+        # the read-only gate. Security-positive: assume destructive in doubt.
+        if not self._trusted:
+            return False
+        ann = self.mcp_annotations
+        return (
+            ann.get("readOnlyHint") is True
+            and ann.get("destructiveHint") is not True
+        )
+
+    @property
     def requires_confirmation(self) -> bool:
-        return not self._trusted
+        # Untrusted: always confirm (annotations ignored). Trusted: skip
+        # confirmation unless the server itself flagged the op destructive.
+        if not self._trusted:
+            return True
+        return self.mcp_annotations.get("destructiveHint") is True
 
     def execute(self, **kwargs) -> str:
         return self._call_fn(self._server_name, self._mcp_tool.name, kwargs)

@@ -177,7 +177,7 @@ uv run python test_tool_confirmation.py
 
 ### 自定义配置
 
-在 `.agentao/permissions.json` 中添加自定义域名规则：
+在 `~/.agentao/permissions.json`（用户级，唯一文件来源）中添加自定义域名规则。项目级 `.agentao/permissions.json` 已不再加载（详见 [CONFIGURATION.zh.md §4](../CONFIGURATION.zh.md)）：
 
 ```json
 {

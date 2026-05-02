@@ -46,8 +46,7 @@ The most common security incident in multi-tenant agent embeddings: **cross-tena
 │   ├── AGENTAO.md            ← acme's project doc
 │   ├── .agentao/
 │   │   ├── memory.db          ← memory
-│   │   ├── permissions.json   ← permission rules
-│   │   ├── mcp.json           ← MCP config
+│   │   ├── mcp.json           ← MCP config (add-only — see below)
 │   │   └── sandbox.json       ← sandbox rules
 │   ├── skills/                ← skills
 │   └── workspace/             ← agent-writable temp area
@@ -61,7 +60,26 @@ Construction:
 agent = Agentao(working_directory=Path(f"/data/tenant-{tenant.id}"))
 ```
 
-**Benefits**: all config, permissions, memory, skills are auto-isolated — no tenant_id filtering logic in code.
+**Benefits**: directory-anchored config (memory, MCP add-on servers, skills, sandbox, project doc) is auto-isolated — no tenant_id filtering logic in code.
+
+::: warning Permissions don't live here
+There is **no `permissions.json`** in the per-tenant directory. The engine deliberately ignores `<wd>/.agentao/permissions.json` (a checked-in allow-rule could escalate any tenant). For per-tenant policy, build a `PermissionEngine` programmatically and inject it:
+
+```python
+engine = PermissionEngine(
+    project_root=Path(f"/data/tenant-{tenant.id}"),
+    user_root=None,  # do not load any file
+)
+engine.add_loaded_source(f"injected:tenant-{tenant.id}")
+# ... apply tenant-specific rules via your own layer ...
+agent = Agentao(
+    working_directory=Path(f"/data/tenant-{tenant.id}"),
+    permission_engine=engine,
+)
+```
+
+Project `mcp.json` is loaded as **add-only**: a tenant directory may declare new MCP servers, but cannot override a user-scope entry with the same name (collisions warn and skip).
+:::
 
 ### Layout B · Ephemeral workdir
 

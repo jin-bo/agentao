@@ -16,8 +16,8 @@ User-facing configuration files (the surfaces you may hand-edit):
 |---|---|---|---|---|---|
 | 1 | LLM env | `.env` (cwd) | shell env | `dotenv.load_dotenv` → `discover_llm_kwargs` | — (see `.env.example`) |
 | 2 | Runtime mode + builtin agents | `.agentao/settings.json` | — | `embedding/factory.py::_load_settings`, `plan/controller.py::_load_settings` | [TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md) |
-| 3 | Tool permissions | `.agentao/permissions.json` | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md) |
-| 4 | MCP servers | `.agentao/mcp.json` | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry` (see `mcp/config.py`) | `CLAUDE.md` § MCP |
+| 3 | Tool permissions | — *(user-only; project file is ignored)* | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md) |
+| 4 | MCP servers | `.agentao/mcp.json` *(add-only — cannot override user-scope names)* | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry` (see `mcp/config.py`) | `CLAUDE.md` § MCP |
 | 5 | ACP subagents | `.agentao/acp.json` | — *(project-only)* | `acp_client/config.py` | [acp-client.md](features/acp-client.md) / [acp-embedding.md](features/acp-embedding.md) |
 | 6 | Skills disable list | `.agentao/skills_config.json` | — | `skills/manager.py` | [SKILLS_GUIDE.md](SKILLS_GUIDE.md) |
 | 7 | Project instructions | `AGENTAO.md` (cwd) | — | `agent.py::_build_system_prompt` | [CHATAGENT_MD_FEATURE.md](features/CHATAGENT_MD_FEATURE.md) |
@@ -33,8 +33,8 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 
 **Precedence rules** (applies only to surfaces with both project and user variants):
 
-- **Permissions** — user file loaded first, then project file is **prepended** to the rule list. Project rules are evaluated **before** user rules (first match wins). After custom rules, the active mode's **preset rules** run last (except in `full-access` / `plan` modes, where presets run **first** and cannot be overridden).
-- **MCP** — both files are read; behavior on name collision is owned by `FileBackedMCPRegistry` (verify there before relying on a specific override direction).
+- **Permissions** — user-scope file is the *only* rule source. A project-scope `.agentao/permissions.json` is **ignored** with a warning (a checked-in `{"tool": "*", "action": "allow"}` would defeat the user policy on the first match). After custom user rules, the active mode's **preset rules** run last (except in `full-access` / `plan` modes, where presets run **first** and cannot be overridden).
+- **MCP** — both files are read. **Add-only for project scope**: a project entry may declare a *new* server name, but cannot override a user entry with the same name (warning + skip on collision). This prevents a checked-in `mcp.json` from silently redirecting a known server name (e.g. `github`) to a different transport.
 - **Memory** — project DB and user DB are read **independently**; both are visible in the prompt. Project does not override user.
 - All other user-facing surfaces are project-only — no merge.
 
@@ -94,14 +94,16 @@ See [TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md) for wh
 ## 4. `permissions.json` — per-tool permission rules
 
 - **Paths.**
-  1. `~/.agentao/permissions.json` (user-level) — loaded first.
-  2. `<cwd>/.agentao/permissions.json` (project-level) — **prepended** to the rule list so it is evaluated **before** user rules.
-- **Loader.** `permissions.py::PermissionEngine._load_file`. Missing file or malformed JSON → empty rule list (no startup error). A file that loads successfully also contributes a `loaded_sources` label (`project:.agentao/permissions.json`, `user:<path>`) returned from `PermissionEngine.active_permissions()` and `Agentao.active_permissions()` — see [`docs/api/host.md`](api/host.md).
+  1. `~/.agentao/permissions.json` (user-level) — the only file-based rule source.
+  2. `<cwd>/.agentao/permissions.json` (project-level) — **ignored** with a warning. See "Why no project scope?" below.
+- **Loader.** `permissions.py::PermissionEngine._load_file`. Missing file or malformed JSON → empty rule list (no startup error). A file that loads successfully contributes a `loaded_sources` label (`user:<path>`) returned from `PermissionEngine.active_permissions()` and `Agentao.active_permissions()` — see [`docs/api/host.md`](api/host.md).
 - **Public getter.** `PermissionEngine.active_permissions()` returns a cached, JSON-safe `ActivePermissions` snapshot (`mode`, `rules`, `loaded_sources`). Hosts that layer policy on top can call `add_loaded_source("injected:<name>")` so the snapshot reflects their provenance. The cache is invalidated on `set_mode()` and `add_loaded_source()`.
 - **Evaluation order.**
-  - Modes `read-only` / `workspace-write`: `[project rules] → [user rules] → [active mode preset rules]` (first match wins).
-  - Modes `full-access` / `plan`: `[active mode preset rules] → [project rules] → [user rules]` — presets cannot be overridden.
+  - Modes `read-only` / `workspace-write`: `[user rules] → [active mode preset rules]` (first match wins).
+  - Modes `full-access` / `plan`: `[active mode preset rules] → [user rules]` — presets cannot be overridden.
   - No match → `decide()` returns `None`; the runner falls back to the tool's own `requires_confirmation` attribute.
+
+> **Why no project scope?** Permissions are a user/host concern, not a cwd concern — same model OS permissions and IDE workspace-trust use. A checked-in project file with `{"tool": "*", "action": "allow"}` would defeat the entire user policy because the engine returns on the first matching rule. If you need project-aware policy, inject it from the host via `add_loaded_source("injected:<name>")` plus your own rule layer.
 
 ### Schema
 
@@ -141,8 +143,8 @@ Full rule taxonomy, examples, and runtime semantics → [TOOL_CONFIRMATION_FEATU
 ## 5. `mcp.json` — MCP server registry
 
 - **Paths (load order).**
-  1. `~/.agentao/mcp.json` (user-level)
-  2. `<cwd>/.agentao/mcp.json` (project-level — overrides user on collision)
+  1. `~/.agentao/mcp.json` (user-level) — authoritative for any name it declares.
+  2. `<cwd>/.agentao/mcp.json` (project-level) — **add-only**: may declare new server names, but cannot override a user-scope name with the same key. Collisions log a warning and skip the project entry.
 - **Loader.** `mcp/config.py`. Env vars in values are expanded (`$VAR` form).
 
 ### Schema

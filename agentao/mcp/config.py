@@ -1,10 +1,13 @@
 """MCP server configuration loading and env var expansion."""
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+_logger = logging.getLogger(__name__)
 
 
 McpServerConfig = Dict[str, Any]
@@ -72,7 +75,14 @@ def load_mcp_config(
 ) -> Dict[str, McpServerConfig]:
     """Load MCP server configs from user-scope and project-scope files.
 
-    Project-level configs override user-scope ones for the same server name.
+    Merge policy is **add-only for project scope**: a project-level
+    entry may declare a *new* server name, but it cannot override a
+    user-level entry with the same name. Name collisions are resolved
+    in favor of the user file and a warning is logged. This prevents a
+    checked-in ``.agentao/mcp.json`` from silently redirecting a
+    well-known server name (e.g. ``github``) to a different transport
+    or endpoint.
+
     Environment variables in config values are expanded.
 
     Args:
@@ -98,12 +108,25 @@ def load_mcp_config(
         _load_json_file(user_root / "mcp.json") if user_root is not None else {}
     )
 
-    # Merge: project overrides global
-    servers: Dict[str, McpServerConfig] = {}
-    for cfg in (global_cfg, project_cfg):
-        mcp_servers = cfg.get("mcpServers", {})
-        if isinstance(mcp_servers, dict):
-            servers.update(mcp_servers)
+    user_servers = global_cfg.get("mcpServers", {})
+    if not isinstance(user_servers, dict):
+        user_servers = {}
+    project_servers = project_cfg.get("mcpServers", {})
+    if not isinstance(project_servers, dict):
+        project_servers = {}
+
+    # User scope wins on name collision; project may only add new names.
+    servers: Dict[str, McpServerConfig] = dict(user_servers)
+    for name, cfg in project_servers.items():
+        if name in servers:
+            _logger.warning(
+                "Project mcp.json entry %r collides with a user-scope "
+                "server; ignoring (project cannot override user). Rename "
+                "the project entry or remove the user-scope one.",
+                name,
+            )
+            continue
+        servers[name] = cfg
 
     # Expand env vars in each server config
     return {name: _expand_config_env(conf) for name, conf in servers.items()}

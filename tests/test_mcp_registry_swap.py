@@ -54,7 +54,13 @@ class TestFileBackedMCPRegistry:
         assert "alpha" in servers
         assert servers["alpha"]["command"] == "echo"
 
-    def test_project_overrides_user(self, tmp_path):
+    def test_user_wins_on_name_collision(self, tmp_path):
+        """User-scope wins on collision; the project entry is ignored.
+
+        Locks in the security invariant: a checked-in
+        ``.agentao/mcp.json`` cannot silently redirect a known server
+        name (e.g. ``github``) to a different transport or endpoint.
+        """
         user_dir = tmp_path / "user"
         user_dir.mkdir()
         (user_dir / "mcp.json").write_text(
@@ -69,7 +75,7 @@ class TestFileBackedMCPRegistry:
             project_root=tmp_path / "proj",
             user_root=user_dir,
         )
-        assert reg.list_servers()["shared"]["command"] == "proj-bin"
+        assert reg.list_servers()["shared"]["command"] == "user-bin"
 
     def test_re_reads_disk_on_each_call(self, tmp_path):
         cfg_dir = tmp_path / ".agentao"

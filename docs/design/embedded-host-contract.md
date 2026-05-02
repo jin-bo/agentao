@@ -104,7 +104,7 @@ Expose a small typed getter for the currently active permission policy:
     "rules": [...],
     "loaded_sources": [
         "preset:workspace-write",
-        "project:.agentao/permissions.json",
+        "user:/Users/me/.agentao/permissions.json",
         "injected:host"
     ]
 }
