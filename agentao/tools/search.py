@@ -1,17 +1,98 @@
 """Search tools."""
 
+import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional
 import fnmatch
 import re
 
 from .base import Tool
 from ..capabilities import FileSystem, LocalFileSystem
 
+
+def _find_executable(name: str) -> Optional[str]:
+    """Locate an external binary on PATH (absolute path) or return None."""
+    return shutil.which(name)
+
 # Files modified within this window are sorted by recency
 RECENCY_THRESHOLD = 86400  # 24 hours
+
+# Directories almost no one wants searched: build outputs, vendored deps,
+# language caches, VCS internals. Skipping them keeps search_file_content
+# from melting on large trees. A caller who explicitly references one of
+# these names in `directory` or `file_pattern` opts back in (see
+# `_effective_skip_dirs`).
+DEFAULT_SKIP_DIRS: FrozenSet[str] = frozenset({
+    ".git",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".tox",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    ".nuxt",
+    ".cache",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+})
+
+
+def _effective_skip_dirs(file_pattern: str, directory: str) -> FrozenSet[str]:
+    """Drop any skip-dir name the caller explicitly asks for.
+
+    If the user passes ``file_pattern='node_modules/lodash/**/*.js'`` or
+    ``directory='node_modules/foo'`` they clearly want results from there,
+    so we remove ``node_modules`` from the skip set for that call.
+    """
+    referenced: set = set()
+    for raw in (file_pattern or "", directory or ""):
+        for part in raw.replace("\\", "/").split("/"):
+            if part in DEFAULT_SKIP_DIRS:
+                referenced.add(part)
+    if not referenced:
+        return DEFAULT_SKIP_DIRS
+    return frozenset(DEFAULT_SKIP_DIRS - referenced)
+
+
+def _any_part_in_skip(path_str: str, skip: FrozenSet[str]) -> bool:
+    """True if any '/'- or '\\'-separated component of ``path_str`` is in ``skip``."""
+    if not skip:
+        return False
+    return any(p in skip for p in path_str.replace("\\", "/").split("/"))
+
+
+def _path_in_skip_dirs(file_path: Path, base: Path, skip: FrozenSet[str]) -> bool:
+    """True if any path component (relative to ``base``) is a skip-dir name."""
+    if not skip:
+        return False
+    try:
+        rel = file_path.relative_to(base)
+    except ValueError:
+        return False
+    return any(part in skip for part in rel.parts)
+
+
+def _format_grep_output(stdout: str, pattern: str, skip: FrozenSet[str]) -> str:
+    """Shared formatter for ``git grep -n`` / ``rg --line-number`` output.
+
+    Both engines emit ``path:lineno:content`` lines, so skip-list filtering
+    and the 100-match truncation are identical.
+    """
+    lines = stdout.strip().splitlines()
+    if skip:
+        lines = [ln for ln in lines if not _any_part_in_skip(ln.split(":", 1)[0], skip)]
+    if not lines:
+        return f"No matches found for pattern: {pattern}"
+    header = f"Found {len(lines)} match(es):\n\n"
+    if len(lines) > 100:
+        return header + "\n".join(lines[:100]) + f"\n\n... and {len(lines) - 100} more matches"
+    return header + "\n".join(lines)
 
 
 class FindFilesTool(Tool):
@@ -102,7 +183,13 @@ class SearchTextTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Search for text patterns in files. Supports regex patterns and can search across multiple files."
+        return (
+            "Search for text patterns in files. Supports regex patterns and "
+            "can search across multiple files. Heavyweight directories "
+            "(.git, node_modules, .venv, dist, build, __pycache__, language "
+            "caches) are skipped by default; reference one explicitly in "
+            "`directory` or `file_pattern` to include it."
+        )
 
     @property
     def parameters(self) -> Dict[str, Any]:
@@ -158,6 +245,7 @@ class SearchTextTool(Tool):
         file_pattern: str,
         case_sensitive: bool,
         regex: bool,
+        skip: FrozenSet[str] = frozenset(),
     ) -> Optional[str]:
         """Try searching with git grep. Returns formatted result string, or None if git grep fails."""
         try:
@@ -189,26 +277,50 @@ class SearchTextTool(Tool):
             )
 
             if result.returncode == 1:
-                # No matches
                 return f"No matches found for pattern: {pattern}"
             if result.returncode != 0:
-                # git grep error, fall back
                 return None
+            return _format_grep_output(result.stdout, pattern, skip)
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return None
 
-            lines = result.stdout.strip().splitlines()
-            total = len(lines)
+    def _ripgrep(
+        self,
+        directory: Path,
+        pattern: str,
+        file_pattern: str,
+        case_sensitive: bool,
+        regex: bool,
+        skip: FrozenSet[str] = frozenset(),
+    ) -> Optional[str]:
+        """Search using ripgrep. Caller must probe rg via ``_find_executable`` first."""
+        try:
+            cmd = ["rg", "--line-number", "--no-heading", "--color=never"]
+            if not case_sensitive:
+                cmd.append("-i")
+            if not regex:
+                cmd.append("-F")  # fixed-string (literal) mode
 
-            if total == 0:
+            # ripgrep's --glob handles ``**`` natively — no rewrite needed.
+            if file_pattern and file_pattern != "**/*":
+                cmd.extend(["--glob", file_pattern])
+
+            cmd.extend([pattern, "."])
+
+            result = subprocess.run(
+                cmd,
+                cwd=str(directory),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            # rg exit codes: 0 = matches, 1 = no matches, 2 = error.
+            if result.returncode == 1:
                 return f"No matches found for pattern: {pattern}"
-
-            result_text = f"Found {total} match(es):\n\n"
-            if total > 100:
-                result_text += "\n".join(lines[:100])
-                result_text += f"\n\n... and {total - 100} more matches"
-            else:
-                result_text += "\n".join(lines)
-
-            return result_text
+            if result.returncode != 0:
+                return None
+            return _format_grep_output(result.stdout, pattern, skip)
         except (subprocess.SubprocessError, FileNotFoundError):
             return None
 
@@ -220,19 +332,30 @@ class SearchTextTool(Tool):
         case_sensitive: bool = True,
         regex: bool = False,
     ) -> str:
-        """Search for text in files. Uses git grep when available for performance."""
+        """Search for text in files. Uses git grep or ripgrep when available for performance."""
         try:
             path = self._resolve_directory(directory)
             fs = self._get_fs()
             if not fs.exists(path):
                 return f"Error: Directory {directory} does not exist"
 
+            skip = _effective_skip_dirs(file_pattern, directory)
+
             # Try git grep first (much faster in git repos), but only when the
             # filesystem capability is the local default. An injected FileSystem
             # may be virtual or remote, so the on-disk git repo at ``path``
             # would return results unrelated to the injected view.
             if isinstance(fs, LocalFileSystem) and self._is_git_repo(path):
-                result = self._git_grep(path, pattern, file_pattern, case_sensitive, regex)
+                result = self._git_grep(path, pattern, file_pattern, case_sensitive, regex, skip)
+                if result is not None:
+                    return result
+
+            # Then try ripgrep — works in any tree (no git repo required) and is
+            # the rescue path on Windows boxes that have rg.exe but no git.
+            # Same LocalFileSystem gate as git grep: a virtual / Docker / remote
+            # FS would have rg search the wrong tree.
+            if isinstance(fs, LocalFileSystem) and _find_executable("rg") is not None:
+                result = self._ripgrep(path, pattern, file_pattern, case_sensitive, regex, skip)
                 if result is not None:
                     return result
 
@@ -253,6 +376,10 @@ class SearchTextTool(Tool):
 
             results = []
             for file_path in files_to_search:
+                # Skip heavyweight dirs before the stat call: cheap string
+                # check, saves an open() on every node_modules/.git file.
+                if _path_in_skip_dirs(file_path, path, skip):
+                    continue
                 if not fs.is_file(file_path):
                     continue
 
