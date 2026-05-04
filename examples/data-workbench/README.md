@@ -7,7 +7,7 @@ Corresponds to [Part 7.4 of the developer guide](../../developer-guide/en/part-7
 ## What it demonstrates
 
 - **Shell tool** used for `duckdb` / `python` invocations (sandbox-scoped to the workspace)
-- **Two skills active at once** — `duckdb-analyst` and `matplotlib-charts` compose cleanly
+- **Two skills active at once** — `duckdb-analyst` and `matplotlib-charts` compose cleanly. Both live under [`.agentao/skills/`](./.agentao/skills/) because they're tightly coupled to this blueprint's `[CHART]` contract and parquet workspace; reusable skills go in the host-agnostic [skills gallery](../skills/README.md) instead.
 - **Chart-marker contract** — `[CHART] <path>` line parsed from `LLM_TEXT` events via `SdkTransport(on_event=...)`
 - **Read-only data layout** — `./data/*.parquet` is a symlinked shared pool; analysts can't mutate it
 - **Headless matplotlib** — `MPLBACKEND=Agg` set in the entrypoint

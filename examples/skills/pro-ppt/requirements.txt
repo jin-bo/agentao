@@ -1,0 +1,3 @@
+# pro-ppt has no scripts of its own — it reuses zootopia-ppt/scripts/image_gen_ppt.py.
+# Install both skills together.
+-r ../zootopia-ppt/requirements.txt
