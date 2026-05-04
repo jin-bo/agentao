@@ -9,7 +9,7 @@ Corresponds to [Part 7.3 of the developer guide](../../developer-guide/en/part-7
 - **Custom `Tool` subclasses** — `GetCustomerProfile`, `SearchKb`, `DraftReply`, `SendReply`
 - **`PermissionEngine` subclass** — `ConfidenceGatedEngine` reads `confidence` from tool args and allows only `>= 0.9`
 - **Per-session working dir** — each ticket gets its own `runs/<ticket-id>/` folder
-- **Skill-shaped behavior** — tone, escalation matrix, and output contract live in `.agentao/skills/support-triage/SKILL.md`
+- **Skill-shaped behavior** — tone, escalation matrix, and output contract live in [`.agentao/skills/support-triage/SKILL.md`](./.agentao/skills/support-triage/SKILL.md). Co-located rather than in the [skills gallery](../skills/README.md) because the policy references this blueprint's `ConfidenceGatedEngine` thresholds and would be meaningless lifted out.
 - **In-memory mocks** — `_CUSTOMERS` / `_KB` / `_OUTBOX` stand in for real CRM systems; replace with HTTP clients in production
 
 ## How to run

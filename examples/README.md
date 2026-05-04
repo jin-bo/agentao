@@ -1,5 +1,7 @@
 # Agentao Integration Examples
 
+> 中文版: [README.zh.md](./README.zh.md)
+
 Runnable companions to [Part 7 of the developer guide](../developer-guide/en/part-7/). Each subdirectory is a self-contained project — `cd` in, install, run.
 
 ## Canonical embedding shapes (P0.6 — offline smoke in CI)
@@ -36,6 +38,12 @@ Four minimum-shape samples that run end-to-end against a fake LLM, no API key re
 ## Persona gallery (`AGENTAO.md` only — no code)
 
 Not an integration example — a collection of `AGENTAO.md` files (project-level prompt configurations) drawn from real use. Drop one into your project root and edit. See [`personas/`](./personas/README.md) ([中文](./personas/README.zh.md)).
+
+## Skills gallery (`SKILL.md` + helper scripts — drop-in capability packs)
+
+Host-agnostic skills the embedded agent can activate at runtime — the "what to give the agent to do" counterpart to the host-integration samples above. Today: `zootopia-ppt`, `pro-ppt`, `ocr`. Copy a directory into `~/.agentao/skills/` (global), `<project>/.agentao/skills/` (per-project), or `<project>/skills/` (repo-root) and the `SkillManager` will pick it up. See [`skills/`](./skills/README.md) ([中文](./skills/README.zh.md)).
+
+> Skills can also be **co-located** with a host example when they only make sense alongside that host's tools or output contract. Three blueprints already do this: [`data-workbench`](./data-workbench/.agentao/skills/) (`duckdb-analyst` + `matplotlib-charts`), [`ticket-automation`](./ticket-automation/.agentao/skills/) (`support-triage`), and [`batch-scheduler`](./batch-scheduler/.agentao/skills/) (`daily-digest`). The gallery above is for the host-agnostic counterpart.
 
 ## Conventions
 

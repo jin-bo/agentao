@@ -1,0 +1,16 @@
+# Core (always required)
+python-dotenv>=1.0
+pyyaml>=6.0
+requests>=2.31
+Pillow>=10.0
+
+# Backend: TensorsLab (image_gen_ppt.py — default) — only needs requests, no SDK
+
+# Backend: OpenRouter / GPT-Image (image_gen_ppt_gpt.py)
+openai>=1.40
+
+# Backend: Gemini Imagen (image_gen_ppt_nb.py) — install only if you use this script
+google-genai>=0.3
+
+# Backend: DashScope Wan (image_gen_ppt_wan.py) — install only if you use this script
+dashscope>=1.20
