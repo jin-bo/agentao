@@ -98,6 +98,38 @@ def _extract_domain(url: str) -> Optional[str]:
         return None
 
 
+# Shell-rc and credential-file writes via redirection / mover utilities.
+# Mode-scoped to ``workspace-write`` and emits ASK — installers (Homebrew,
+# pyenv, rustup) and devops scripts legitimately edit these files.
+# ``full-access`` deliberately doesn't carry this rule: that mode promises
+# literal full access, and disk-wipe-class attacks already trip the hardline
+# floor.
+#
+# Known coverage gap (a ``bashlex`` pass would close it): variable
+# indirection (``dst=~/.bashrc; echo X > "$dst"``), process-substitution
+# wrappers, and literal expanded paths (``/Users/<u>/.bashrc``) that need
+# user enumeration to detect.
+_SHELL_SENSITIVE_FILE_RE = (
+    r"(?:~|\$HOME|\$\{HOME\})/"
+    r"\.(?:bashrc|zshrc|profile|bash_profile|zprofile|netrc|pgpass|npmrc|pypirc)"
+    # Strict terminator — ``\b`` would match ``~/.bashrc.bak`` and
+    # ``~/.bashrc-old`` because ``c`` ↔ ``.``/``-`` is a word boundary.
+    r"(?=\s|[;|&)>'\"<]|$)"
+)
+
+_SHELL_SENSITIVE_WRITE_RE = "(?:" + "|".join([
+    # Redirect (``>``, ``>>``, optional space). ``re.search`` finds the ``>``
+    # anywhere in the command, so an FD prefix like ``2>`` is handled
+    # without an explicit token here.
+    rf">>?\s*{_SHELL_SENSITIVE_FILE_RE}",
+    rf"\btee\b(?:\s+-\S+)*\s+{_SHELL_SENSITIVE_FILE_RE}",
+    rf"\b(?:cp|mv)\b(?:\s+-\S+)*\s+\S+\s+{_SHELL_SENSITIVE_FILE_RE}",
+    # Require the literal ``-i`` / ``-i.bak`` token before the file. Lazy
+    # ``\S+`` quantifiers let the engine backtrack to the trailing file.
+    rf"\bsed\b(?:\s+\S+)*?\s+-i(?:\.\S+)?(?:\s+\S+)*?\s+{_SHELL_SENSITIVE_FILE_RE}",
+]) + ")"
+
+
 def _domain_matches(hostname: str, patterns: List[str]) -> bool:
     """Check if hostname matches any pattern in the list.
 
@@ -159,6 +191,15 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
             "tool": "run_shell_command",
             "args": {"command": r"rm\s+-rf|sudo\s|mkfs|dd\s+if="},
             "action": "deny",
+        },
+        # ASK — not DENY — so installers/devops scripts can proceed with
+        # operator confirmation. Inspectable via ``active_permissions()`` so
+        # a host UI can render "shell-rc writes will prompt" without
+        # reverse-engineering the engine.
+        {
+            "tool": "run_shell_command",
+            "args": {"command": _SHELL_SENSITIVE_WRITE_RE},
+            "action": "ask",
         },
         {"tool": "run_shell_command", "action": "ask"},
         # Domain-tiered web_fetch: allowlist auto-allows, blocklist auto-denies, rest asks
