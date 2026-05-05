@@ -1,6 +1,6 @@
 # 权限地板化方案
 
-**状态：** 实施计划，rev 3。2026-05-03 起草，跨 4 轮评审。**PR 1（P0 正确性修复）与 PR 2（P1 可选 hardline 层）于 2026-05-03 已合入。** PR 3–5（P2/P3 便利项与 `~/.bashrc`/`~/.netrc` 敏感写入预设）尚未发布 —— 排期见 §9。
+**状态：** 实施计划，rev 3。2026-05-03 起草，跨 4 轮评审。**PR 1（P0 正确性修复）、PR 2（P1 可选 hardline 层）、PR 3–5（P2/P3 便利项与敏感写入预设）均已于 2026-05-04 全部合入。** 本计划已收口；后续加固工作另行追踪。详见 §9 各 PR 落点；§10 保留遗留的开放追踪项（主要是 PR 5 正则层向 `bashlex` 解析的演进）。
 **读者：** 接手实施的 agentao 维护者；后续 PR 的评审者。
 **配套：**
 - `docs/design/embedded-host-contract.md` — `PermissionDecisionEvent` 在此定义
@@ -313,38 +313,66 @@ def test_no_floor_ask_tier_exists():
 ## 9. PR 分批
 
 ```
-PR 1 (P0)  permissions 正确性          ─ isinstance(dict) 防御、
+PR 1 (P0)  permissions 正确性          ✓ 2026-05-03 已合入
+                                          ─ isinstance(dict) 防御、
                                           MCP 错误分类、
                                           ToolRunner copy_context() 传播
                                           + 传播/隔离测试。
                                           零策略立场。先发车。
 
-PR 2 (P1)  可选 hardline 层            ─ enable_hardline flag、
-                                          _hardline_check() 前置检查、
+PR 2 (P1)  可选 hardline 层            ✓ 2026-05-03 已合入
+                                          ─ enable_hardline flag、
+                                          _hardline_check() 前置检查
+                                          (实际落在 agentao/permissions_hardline.py，
+                                          permissions.py 只导入入口；规则评估
+                                          按 §5.1 仍内联)、
                                           双契约测试（默认开启 DENY +
                                           opt-out ALLOW + §7 哨兵测试）、
                                           PermissionDecisionEvent
                                           策略来源 reason 分类。
 
-PR 3 (P2)  windows utf-8 兜底         ─ win32 上 stdout/stderr 强制 utf-8。
+PR 3 (P2)  windows utf-8 兜底         ✓ 2026-05-04 已合入
+                                          ─ agentao/__init__.py::_ensure_utf8()
+                                          强制 CP_UTF8 + 重配置
+                                          stdin/stdout/stderr；
+                                          sys.platform == "win32" 才走；
+                                          POSIX 契约测试在
+                                          tests/test_init_utf8.py。
 
-PR 4 (P2)  mask_secret + redact       ─ 规范 helper + 迁移。
+PR 4 (P2)  mask_secret + redact       ✓ 2026-05-04 已合入
+                                          ─ agentao/redact.py::mask_secret；
+                                          P0/P1 阶段排查未发现需要迁移的
+                                          ad-hoc 调用点。helper 是面向
+                                          PermissionDecisionEvent 投影
+                                          + 未来 /provider UI 的前置铺垫。
 
-PR 5 (P3)  shell 敏感写入 preset      ─ mode-scoped preset 规则，覆盖
-                                          shell 重定向写 ~/.bashrc /
-                                          ~/.netrc 等；配 rev 2 的
-                                          正向 + 负向测试矩阵。
-                                          不是地板。不是 P0。
+PR 5 (P3)  shell 敏感写入 preset      ✓ 2026-05-04 已合入
+                                          ─ _SHELL_SENSITIVE_WRITE_RE +
+                                          workspace-write preset 规则。
+                                          ASK，非 DENY。仅 mode-scoped：
+                                          full-access 故意不带这条规则
+                                          (字面 full-access 原则，§5.1)。
+                                          覆盖盲区（间接赋值、字面展开
+                                          路径）作为 §10 的 bashlex
+                                          follow-up 跟踪。
+
 ```
 
-PR 1 和 PR 2 故意解耦。PR 1 是无争议的正确性，不需要任何人在策略上达成一致就能发车。PR 2 是策略选择，可以被讨论、推迟或修改，不会卡住正确性。
+PR 1 和 PR 2 故意解耦。PR 1 是无争议的正确性，不需要任何人在策略上达成一致就发车。PR 2 是策略选择，但双契约测试把唯一的歧义点解决之后，第二天就跟着发车。PRs 3–5 在第二天作为便利批合入。
 
-Rev 2 方案把 hardline 捆进 PR 1 是因为两者都被打了 P0 标签。Round 4 把它们拆开：正确性不带策略立场，hardline 是宿主可以 opt out 的策略选择。再把它们捆在一起会重新耦合决策。
+Rev 2 方案把 hardline 捆进 PR 1 是因为两者都被打了 P0 标签。Round 4 把它们拆开：正确性不带策略立场，hardline 是宿主可以 opt out 的策略选择。保留独立 PR 让这个区分在 git log 里也保留。
 
-## 10. 待解决问题
+## 10. 开放追踪项与发车后续
 
-- **`enable_hardline` 给终端用户怎么配？** 嵌入式宿主用构造函数参数没问题。问题是 CLI 用户：要不要让 `.agentao/permissions.json` 设置 `"hardline": false`？**暂定答案：不要。** CLI 用户通过配置关闭 hardline 正是地板要保护的"没想清楚"那种情形。如果 CLI 真的需要一个 opt-out，作为 CLI flag 暴露（`--no-hardline`），让它要求每次调用都刻意指定，不是持久配置。
-- **`HOME` 解析。** Hardline pattern 用 `~ / $HOME / ${HOME}`。`sudo` 调用要不要也解 `getpwuid(0).pw_dir`？大概率要——留给 PR 2 评审。
-- **容器后端绕过。** Hermes 让容器后端跳过它的 hardline。Agentao 在容器里跑 + `enable_hardline=True`——是宿主用 `enable_hardline=False` opt out，还是 Agentao 自己检测容器自动 opt out？**暂定答案：** 显式宿主 opt-out。自检"我在容器里"很脆弱，给宿主制造意外。
-- **Reason 受众。** `reason="hardline:recursive delete of root filesystem"`——给用户看还是给运营看？**暂定答案：** 面向运营（审计日志、宿主 UI 调试面板）。给用户看的措辞是宿主的责任。
-- **PR 5 的 shell-parsing follow-up。** 何时把敏感写入 preset 规则的 regex 层补上 `bashlex` 解析层？PR 5 发车时新建独立 issue 跟踪；不要让它阻塞 PR 5。
+下面这些问题来自 rev 3 发车前的清单，标注了已落地内容与剩余工作。
+
+- **`enable_hardline` 给终端用户怎么配？** **按暂定答案敲定（不通过 `.agentao/permissions.json`）。** PR 2 仅暴露构造函数参数；没有加 `--no-hardline` CLI flag —— CLI 实际用例没有迫切需求，凭空加会跟"嵌入式 harness、宿主决定策略"的原则相左。CLI 用户真的要关，就走嵌入入口设 `enable_hardline=False`；如果将来出现真实工作流缺口，再重开此问题。
+- **`sudo` 下的 `HOME` 解析。** **保留为开放项。** Hardline pattern 仍只在语法层匹配 `~ / $HOME / ${HOME}`。`sudo rm -rf $HOME` 在特权进程里 `$HOME` 会被重新求值为 root 的家目录，但 regex 不论求值结果都会捕获字面 token —— 现实风险反而是反向案例：`sudo` 用的家目录变量名不同。等到收到真实 bug 报告再修；不做臆测性补强。
+- **容器后端绕过。** **按暂定答案敲定（显式宿主 opt-out）。** Agentao 不做容器自检；做沙箱的宿主自己设 `enable_hardline=False`。要重新讨论，必须有具体宿主后端能证明运行时检测有正向收益。
+- **Reason 受众。** **按暂定答案敲定（面向运营）。** `reason="hardline:recursive delete of root filesystem"` 当作审计 / 调试文案。给用户看的措辞继续由宿主负责 —— ACP 的 `request_permission` 载荷照样把原始 reason 字符串往上抛，宿主自己决定怎么渲染。
+- **PR 5 的 `bashlex` 演进。** **唯一遗留的开放追踪项。** PR 5 的 regex 命中常见形态（重定向、tee、cp/mv、sed -i）针对 `~`/`$HOME` 前缀的敏感文件。无法命中：
+    1. shell 变量间接赋值：`dst=~/.bashrc; echo X > "$dst"`。
+    2. 字面展开路径：`/Users/<u>/.bashrc`、`/home/<u>/.bashrc`。
+    3. 进程替换包装：`tee >(cat > ~/.bashrc)`。
+    用 `bashlex` 解析 —— 跟 hardline shell 安全扫描器处理 `rm -rf` 间接赋值的方案一样 —— 能解决 (1) 和 (3)。(2) 需要运行时知道用户家目录，会引入宿主耦合，先放一放，等具体攻击面浮现再补。
+    不阻塞 —— workspace-write 对所有未在只读白名单的命令本来就 ASK，所以今天的 regex 层是"文档 + 未来防御"，并不是关键的拦截门。

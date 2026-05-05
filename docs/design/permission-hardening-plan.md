@@ -1,6 +1,6 @@
 # Permission Hardening Plan
 
-**Status:** Implementation plan, rev 3. Drafted 2026-05-03 across four review rounds. **PR 1 (P0 correctness) and PR 2 (P1 optional hardline) landed 2026-05-03.** PRs 3–5 (P2/P3 convenience and the `~/.bashrc`/`~/.netrc` sensitive-write preset) remain unshipped — see §9 for sequencing.
+**Status:** Implementation plan, rev 3. Drafted 2026-05-03 across four review rounds. **PR 1 (P0 correctness), PR 2 (P1 optional hardline), and PRs 3–5 (P2/P3 convenience + sensitive-write preset) all landed 2026-05-04.** Plan is closed; future hardening work tracked separately. See §9 for what shipped where; §10 carries open follow-ups (notably the `bashlex`-based supersedence of PR 5's regex tier).
 **Audience:** Agentao maintainers picking up the work; reviewers of subsequent PRs.
 **Related docs:**
 - `docs/design/embedded-host-contract.md` — `PermissionDecisionEvent` lives here
@@ -313,39 +313,68 @@ If a future change reintroduces a FLOOR_ASK tier, this test fails — forcing th
 ## 9. PR sequencing
 
 ```
-PR 1 (P0)  permissions correctness      ─ isinstance(dict) guard,
+PR 1 (P0)  permissions correctness      ✓ landed 2026-05-03
+                                          ─ isinstance(dict) guard,
                                           MCP error classification,
                                           ToolRunner copy_context() propagation
                                           + propagation/isolation tests.
-                                          Zero policy stance. Ships first.
+                                          Zero policy stance. Shipped first.
 
-PR 2 (P1)  optional hardline layer      ─ enable_hardline flag,
-                                          _hardline_check() pre-check,
+PR 2 (P1)  optional hardline layer      ✓ landed 2026-05-03
+                                          ─ enable_hardline flag,
+                                          _hardline_check() pre-check
+                                          (in agentao/permissions_hardline.py,
+                                          imported by permissions.py — the
+                                          rule logic stayed inline per §5.1),
                                           dual-contract tests (default-on
                                           DENY + opt-out ALLOW + sentinel
                                           test from §7),
                                           policy-source reason taxonomy
                                           on PermissionDecisionEvent.
 
-PR 3 (P2)  windows utf-8 enforcement    ─ stdout/stderr force-utf-8 on win32.
+PR 3 (P2)  windows utf-8 enforcement    ✓ landed 2026-05-04
+                                          ─ agentao/__init__.py::_ensure_utf8()
+                                          forces CP_UTF8 + reconfigures
+                                          stdin/stdout/stderr; gated on
+                                          sys.platform == "win32"; POSIX
+                                          contract test in
+                                          tests/test_init_utf8.py.
 
-PR 4 (P2)  mask_secret + redact         ─ canonical helper + migrations.
+PR 4 (P2)  mask_secret + redact         ✓ landed 2026-05-04
+                                          ─ agentao/redact.py::mask_secret;
+                                          no ad-hoc sites needed migration
+                                          (P0/P1 walk-through found none).
+                                          Helper is forward-looking for
+                                          PermissionDecisionEvent
+                                          projection + future /provider UI.
 
-PR 5 (P3)  shell sensitive-write preset ─ mode-scoped preset rule for
-                                          ~/.bashrc / ~/.netrc / etc. via
-                                          shell redirection; with positive +
-                                          negative test matrix from rev 2.
-                                          NOT a floor. NOT P0.
+PR 5 (P3)  shell sensitive-write preset ✓ landed 2026-05-04
+                                          ─ _SHELL_SENSITIVE_WRITE_RE +
+                                          workspace-write preset rule.
+                                          ASK, not DENY. Mode-scoped:
+                                          full-access deliberately not
+                                          carrying the rule (literal
+                                          full-access principle, §5.1).
+                                          Coverage gap (indirection,
+                                          literal-expanded paths) tracked
+                                          in §10's bashlex follow-up.
 ```
 
-PR 1 and PR 2 are deliberately decoupled. PR 1 is uncontroversial correctness and can ship without anyone needing to agree on policy. PR 2 is the policy choice and can be debated, deferred, or modified without holding up correctness.
+PR 1 and PR 2 were deliberately decoupled. PR 1 was uncontroversial correctness and shipped without anyone needing to agree on policy. PR 2 was the policy choice and shipped immediately after, since the dual-contract tests removed the only remaining ambiguity. PRs 3–5 followed the day after as a convenience batch.
 
-The rev 2 plan bundled hardline into PR 1 because both were tagged P0. Round 4 split them: correctness has no policy stance, hardline is a policy choice that hosts opt out of. Bundling them again would re-couple the decisions.
+The rev 2 plan bundled hardline into PR 1 because both were tagged P0. Round 4 split them: correctness had no policy stance, hardline was a policy choice that hosts opt out of. Keeping them as separate PRs preserved that distinction in the git log.
 
-## 10. Open questions
+## 10. Open questions and post-ship follow-ups
 
-- **Where does `enable_hardline` get configured for end users?** Constructor argument is fine for embedded hosts. For CLI users, the question is: should `.agentao/permissions.json` be allowed to set `"hardline": false`? **Tentative answer: no.** A CLI user setting hardline-off via config is exactly the "didn't think it through" case the floor is designed to protect. If the CLI ever needs an opt-out, expose it as a CLI flag (`--no-hardline`) so it requires deliberate per-invocation action, not a persistent config.
-- **`HOME` resolution.** Hardline patterns use `~ / $HOME / ${HOME}`. For `sudo` invocations, also resolve `getpwuid(0).pw_dir`? Probably yes — defer to PR 2 review.
-- **Container-backend bypass.** Hermes lets container backends skip its hardline. Agentao with `enable_hardline=True` running inside a container — should the host opt out via `enable_hardline=False`, or should Agentao detect the container and opt itself out? **Tentative answer:** explicit host opt-out. Self-detecting "I'm in a container" is fragile and surprises the host.
-- **Reason audience.** `reason="hardline:recursive delete of root filesystem"` — user-facing or operator-facing? **Tentative answer:** operator-facing (audit logs, host UI debug pane). User-facing wording is the host's responsibility.
-- **Shell-parsing follow-up for PR 5.** When does the regex tier in the sensitive-write preset rule get supplemented with `bashlex`-based detection? Tracked as a separate issue at PR 5 ship time; do not block PR 5 on it.
+The questions below are carried over from rev 3's pre-ship list, annotated with what landed and what remains.
+
+- **Where does `enable_hardline` get configured for end users?** **Decided as tentative answer (no `.agentao/permissions.json` flag).** PR 2 shipped constructor-only opt-out. No CLI flag (`--no-hardline`) was added — the CLI never grew an explicit need, and adding one speculatively would have cut against the "embedded harness, host decides policy" principle. If a CLI user genuinely needs hardline off, they can `enable_hardline=False` via the embedded entry point; reopening this question requires a real workflow that demonstrates the gap.
+- **`HOME` resolution under `sudo`.** **Open.** Hardline patterns still match only `~ / $HOME / ${HOME}` syntactically. A `sudo rm -rf $HOME` re-evaluates `$HOME` to root's home in the privileged process, but the regex catches the literal `$HOME` token regardless — so the practical risk is the inverse case: `sudo` with a different home variable. Track as a real bug if/when reported; no speculative fix.
+- **Container-backend bypass.** **Decided as tentative answer (explicit host opt-out).** Agentao does not container-detect; hosts that sandbox set `enable_hardline=False` themselves. Re-litigate only if a host backend ships that needs runtime detection.
+- **Reason audience.** **Decided as tentative answer (operator-facing).** `reason="hardline:recursive delete of root filesystem"` is treated as audit / debug copy. User-facing wording stays the host's responsibility — the ACP `request_permission` payload still carries the raw reason string and hosts choose how to render it.
+- **`bashlex` supersedence of PR 5's regex.** **Open, tracked here as the only inherited follow-up.** PR 5's regex catches the common shapes (redirect, tee, cp/mv, sed -i) targeting `~`/`$HOME`-prefixed sensitive files. It cannot catch:
+    1. Indirection via shell variables: `dst=~/.bashrc; echo X > "$dst"`.
+    2. Literal expanded paths: `/Users/<u>/.bashrc`, `/home/<u>/.bashrc`.
+    3. Process substitution wrappers: `tee >(cat > ~/.bashrc)`.
+    A `bashlex`-based pass — the same approach the hardline shell-safety scanner uses for `rm -rf` indirection — would close (1) and (3). (2) needs the runtime to know the user's home dir at policy-evaluation time, which adds host coupling we may not want; defer that piece until a concrete attack surfaces.
+    Not blocking — workspace-write already ASKs on everything not on the read-only allowlist, so the regex tier today is "documentation + future-proofing," not a load-bearing gate.
