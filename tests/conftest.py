@@ -1,6 +1,10 @@
 """Shared pytest fixtures for the agentao test suite."""
 
 import os
+from pathlib import Path
+from types import SimpleNamespace
+from typing import List
+
 import pytest
 
 
@@ -40,3 +44,33 @@ def _agentao_env_default_credentials(monkeypatch, _stub_llm_credentials):
         _orig_init(self, *args, **kwargs)
 
     monkeypatch.setattr(Agentao, "__init__", _patched_init)
+
+
+@pytest.fixture
+def search_tool(tmp_path: Path):
+    """SearchTextTool wired to ``tmp_path`` as its working directory."""
+    from agentao.tools.search import SearchTextTool
+
+    tool = SearchTextTool()
+    tool.working_directory = tmp_path
+    return tool
+
+
+@pytest.fixture
+def capture_subprocess_run(monkeypatch) -> List[List[str]]:
+    """Replace ``search.subprocess.run`` with an argv-capturing stub.
+
+    Returns the list that captured argv lists are appended to.  The stub
+    returns ``returncode=1`` so the caller hits the "no matches" branch
+    and exits without real I/O — keeping tests focused on argv shape.
+    """
+    from agentao.tools import search as search_mod
+
+    captured: List[List[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        captured.append(cmd)
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(search_mod.subprocess, "run", fake_run)
+    return captured

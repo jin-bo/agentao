@@ -255,18 +255,18 @@ class SearchTextTool(Tool):
             if not regex:
                 cmd.append("-F")  # fixed string (literal) mode
 
-            # File pattern filter
+            # Pattern: use -e to safely accept patterns starting with '-'.
+            # For git grep, `--` is the pathspec separator (not an option
+            # terminator), so a leading-`-` pattern would still be parsed
+            # as a flag without -e.
+            cmd.extend(["-e", pattern])
+
+            # File pattern filter (after the pattern, separated by --).
             if file_pattern and file_pattern != "**/*":
                 # Convert glob to git pathspec
                 # e.g., "*.py" -> "*.py", "**/*.py" -> "*.py"
                 clean_pattern = file_pattern.replace("**/", "")
                 cmd.extend(["--", clean_pattern])
-
-            # Insert pattern before pathspec args
-            if file_pattern and file_pattern != "**/*":
-                cmd.insert(-2, pattern)
-            else:
-                cmd.append(pattern)
 
             result = subprocess.run(
                 cmd,
@@ -293,7 +293,14 @@ class SearchTextTool(Tool):
         regex: bool,
         skip: FrozenSet[str] = frozenset(),
     ) -> Optional[str]:
-        """Search using ripgrep. Caller must probe rg via ``_find_executable`` first."""
+        """Search using ripgrep. Caller must probe rg via ``_find_executable`` first.
+
+        Primary territory: non-git host trees. ``execute()`` only reaches this
+        branch when the directory is not a git repo (or ``git grep`` itself
+        failed), so we cannot rely on ``.gitignore`` semantics to prune heavy
+        directories — we translate ``skip`` into ``--glob '!<dir>'`` ourselves
+        to skip them at the source rather than post-filter rg's output.
+        """
         try:
             cmd = ["rg", "--line-number", "--no-heading", "--color=never"]
             if not case_sensitive:
@@ -305,7 +312,23 @@ class SearchTextTool(Tool):
             if file_pattern and file_pattern != "**/*":
                 cmd.extend(["--glob", file_pattern])
 
-            cmd.extend([pattern, "."])
+            # Source-level exclusion of skip dirs: gitignore-style, so a bare
+            # name matches at any depth. Cheaper than rg-then-filter, and
+            # essential in non-git trees where there's no .gitignore to lean
+            # on. ``skip`` already honors caller opt-in (see
+            # ``_effective_skip_dirs``), so a user who explicitly references
+            # ``node_modules`` in their query won't have it excluded here.
+            # Order matters: rg gives *later* matching globs precedence, so
+            # the negative skip globs MUST come after the positive
+            # ``file_pattern`` glob. Reversed, ``--glob '**/*.js'`` would
+            # re-enable matches inside ``node_modules/`` and defeat the
+            # skip set.
+            for d in sorted(skip):
+                cmd.extend(["--glob", f"!{d}"])
+
+            # `--` terminates ripgrep options so a pattern like
+            # `--pre=/tmp/payload.sh` is treated as text, not a flag.
+            cmd.extend(["--", pattern, "."])
 
             result = subprocess.run(
                 cmd,
@@ -341,19 +364,24 @@ class SearchTextTool(Tool):
 
             skip = _effective_skip_dirs(file_pattern, directory)
 
-            # Try git grep first (much faster in git repos), but only when the
-            # filesystem capability is the local default. An injected FileSystem
-            # may be virtual or remote, so the on-disk git repo at ``path``
-            # would return results unrelated to the injected view.
+            # Prefer ``git grep`` in git repos: it constrains the search space
+            # to tracked files (which usually matches "search project code"
+            # intent and excludes build artifacts / vendored deps for free)
+            # and reuses git's universally-available binary. This is a
+            # *semantic* preference — rg's raw scan is faster, but searching
+            # a smaller, intent-aligned file set wins end-to-end on most
+            # repos. Gate on ``LocalFileSystem`` so an injected virtual /
+            # remote FS doesn't get bypassed by the on-disk git repo at
+            # ``path`` returning unrelated results.
             if isinstance(fs, LocalFileSystem) and self._is_git_repo(path):
                 result = self._git_grep(path, pattern, file_pattern, case_sensitive, regex, skip)
                 if result is not None:
                     return result
 
-            # Then try ripgrep — works in any tree (no git repo required) and is
-            # the rescue path on Windows boxes that have rg.exe but no git.
-            # Same LocalFileSystem gate as git grep: a virtual / Docker / remote
-            # FS would have rg search the wrong tree.
+            # Fall through to ripgrep for non-git trees and as a rescue when
+            # ``git grep`` errored. Same ``LocalFileSystem`` gate as git grep:
+            # a virtual / Docker / remote FS would have rg search the wrong
+            # tree.
             if isinstance(fs, LocalFileSystem) and _find_executable("rg") is not None:
                 result = self._ripgrep(path, pattern, file_pattern, case_sensitive, regex, skip)
                 if result is not None:
