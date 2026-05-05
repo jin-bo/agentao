@@ -4,7 +4,7 @@ import difflib
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .base import Tool
 from ..security import PathPolicy, PathPolicyError
@@ -15,6 +15,36 @@ MAX_LINES_DEFAULT = 2000
 MAX_LINE_LENGTH = 2000
 # Bytes to check for binary detection
 BINARY_CHECK_SIZE = 8192
+
+# Codepoint table copied from codex-rs/apply-patch/src/seek_sequence.rs:79-92.
+# Mirrors the fuzzy behaviour of `git apply` — applied as the final fallback
+# in EditTool's match pyramid so byte-identical edits are unaffected.
+_EDIT_DASHES = "‐‑‒–—―−"
+_EDIT_SQUOTES = "‘’‚‛"
+_EDIT_DQUOTES = "“”„‟"
+_EDIT_SPACES = (
+    "            　"
+)
+
+_EDIT_NORMALIZE_TABLE = str.maketrans(
+    {
+        **{c: "-" for c in _EDIT_DASHES},
+        **{c: "'" for c in _EDIT_SQUOTES},
+        **{c: '"' for c in _EDIT_DQUOTES},
+        **{c: " " for c in _EDIT_SPACES},
+    }
+)
+
+
+def _edit_normalize_for_match(s: str) -> str:
+    """Map common typographic codepoints to ASCII for fuzzy edit matching."""
+    return s.translate(_EDIT_NORMALIZE_TABLE)
+
+
+# Success-message suffixes for non-exact match tiers. Tests assert against these,
+# so they live as named constants instead of duplicated string literals.
+_EDIT_SUFFIX_FLEXIBLE = " (flexible whitespace match)"
+_EDIT_SUFFIX_UNICODE = " (unicode-normalized match)"
 
 
 class ReadFileTool(Tool):
@@ -216,29 +246,84 @@ class EditTool(Tool):
         lines = text.splitlines()
         return "\n".join(line.rstrip() for line in lines)
 
-    def _flexible_match(self, content: str, old_text: str) -> Optional[Tuple[int, int]]:
-        """Try whitespace-normalized matching. Returns (start, end) indices in content, or None."""
+    def _line_window_matches(
+        self,
+        content: str,
+        old_text: str,
+        line_transform: Callable[[str], str] = lambda s: s,
+    ) -> List[Tuple[int, int]]:
+        """Find all non-overlapping spans where ``old_text`` matches ``content``.
+
+        Comparison key per line is ``line_transform(line).strip()``. With the
+        identity default this is the tier-2 whitespace-flexible match; with
+        ``_edit_normalize_for_match`` it's the tier-3 typographic-Unicode match
+        (mirrors `git apply` fuzzy behaviour). Returns ``(start, end)`` byte
+        offsets in the *original* content; empty list if no match. ``replace_all``
+        relies on getting *every* normalized-equivalent span here — delegating
+        to ``str.replace`` only catches byte-identical copies of the first span.
+        """
         norm_old_lines = self._normalize_whitespace(old_text).splitlines()
-        content_lines = content.splitlines()
+        # keepends=True so the prefix table accounts for the *actual* line
+        # ending of each line — CRLF stays 2 bytes, LF stays 1, and a final
+        # line without a trailing newline contributes only its content length.
+        # Comparison still works because ``.strip()`` drops the trailing
+        # ending bytes after ``line_transform``.
+        content_lines = content.splitlines(keepends=True)
 
-        if not norm_old_lines:
-            return None
+        if not norm_old_lines or len(content_lines) < len(norm_old_lines):
+            return []
 
-        norm_content_lines = [line.rstrip() for line in content_lines]
+        pat = [line_transform(l).strip() for l in norm_old_lines]
+        norm_content = [line_transform(l).strip() for l in content_lines]
 
-        for i in range(len(content_lines) - len(norm_old_lines) + 1):
-            candidate = norm_content_lines[i : i + len(norm_old_lines)]
-            # Compare stripped versions (ignoring leading/trailing whitespace per line)
-            if [l.strip() for l in candidate] == [l.strip() for l in norm_old_lines]:
-                # Found a match — compute character offsets in original content
-                # Sum lengths of lines before match start, plus newlines
-                start = sum(len(line) + 1 for line in content_lines[:i])
-                end = sum(len(line) + 1 for line in content_lines[: i + len(norm_old_lines)])
-                # Adjust: don't count trailing newline if content doesn't end with one
-                if not content.endswith("\n"):
-                    end = min(end, len(content))
-                return (start, end)
-        return None
+        prefix = [0]
+        for line in content_lines:
+            prefix.append(prefix[-1] + len(line))
+
+        matches: List[Tuple[int, int]] = []
+        n = len(norm_old_lines)
+        i = 0
+        while i <= len(content_lines) - n:
+            if norm_content[i : i + n] == pat:
+                matches.append((prefix[i], prefix[i + n]))
+                i += n
+            else:
+                i += 1
+        return matches
+
+    def _apply_match(
+        self,
+        path: Path,
+        content: str,
+        matches: List[Tuple[int, int]],
+        old_text: str,
+        new_text: str,
+        replace_all: bool,
+        suffix: str,
+        file_path: str,
+    ) -> str:
+        """Splice ``new_text`` at one (first match) or all matched spans and write back.
+
+        Spans are spliced in descending offset order so earlier spans remain
+        valid mid-loop. Each span's trailing newline is dropped if ``old_text``
+        does not itself end with one (matches the legacy single-tier behaviour).
+        """
+        spans = matches if replace_all else matches[:1]
+        new_content = content
+        for start, end in sorted(spans, reverse=True):
+            # If old_text doesn't end with a newline, drop the matched span's
+            # trailing line ending so the splice preserves it. Handle CRLF
+            # before LF — half-trimming a CRLF would leave a stray '\r'.
+            if not old_text.endswith("\n"):
+                if content[end - 2 : end] == "\r\n":
+                    end -= 2
+                elif content[end - 1 : end] == "\n":
+                    end -= 1
+            new_content = new_content[:start] + new_text + new_content[end:]
+        count = len(spans)
+
+        self._get_fs().write_text(path, new_content)
+        return f"Replaced {count} occurrence(s) in {file_path}{suffix}"
 
     def _not_found_hint(self, content: str, old_text: str, file_path: str) -> str:
         """Return an error message with the most similar snippet from content."""
@@ -290,26 +375,22 @@ class EditTool(Tool):
                 return f"Replaced {count} occurrence(s) in {file_path}"
 
             # 2. Flexible match: whitespace-normalized comparison
-            match = self._flexible_match(content, old_text)
-            if match:
-                start, end = match
-                matched_text = content[start:end]
-                # Strip trailing newline from matched_text if old_text doesn't end with one
-                if not old_text.endswith("\n") and matched_text.endswith("\n"):
-                    matched_text = matched_text[:-1]
-                    end -= 1
+            matches = self._line_window_matches(content, old_text)
+            if matches:
+                return self._apply_match(
+                    path, content, matches, old_text, new_text,
+                    replace_all, _EDIT_SUFFIX_FLEXIBLE, file_path,
+                )
 
-                if replace_all:
-                    new_content = content.replace(matched_text, new_text)
-                    count = content.count(matched_text)
-                else:
-                    new_content = content[:start] + new_text + content[end:]
-                    count = 1
+            # 3. Unicode-fuzzy match: typographic codepoints normalized to ASCII
+            matches = self._line_window_matches(content, old_text, _edit_normalize_for_match)
+            if matches:
+                return self._apply_match(
+                    path, content, matches, old_text, new_text,
+                    replace_all, _EDIT_SUFFIX_UNICODE, file_path,
+                )
 
-                fs.write_text(path, new_content)
-                return f"Replaced {count} occurrence(s) in {file_path} (flexible whitespace match)"
-
-            # 3. Not found — return hint with most similar snippet
+            # 4. Not found — return hint with most similar snippet
             return self._not_found_hint(content, old_text, file_path)
         except Exception as e:
             return f"Error editing file: {str(e)}"
