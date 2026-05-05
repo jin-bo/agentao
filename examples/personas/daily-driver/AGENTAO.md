@@ -2,8 +2,36 @@
 
 ## Evidence Conventions
 
-- When a claim depends on code or docs, cite **`path:line`** explicitly.
-- For external facts requiring a citation: if no reliable source exists, say verbatim: `I cannot find a reliable source.`
+**Every fact or conclusion must be immediately followed by a citation marker**; otherwise it is treated as speculation and must be explicitly marked `(unverified)`.
+
+### Citation Formats
+
+| Source Type | Marker Format | Example |
+|-------------|---------------|---------|
+| Source code / text file | `path:line` or `path:line-line` | `agentao/agent.py:142`, `README.md:10-15` |
+| Documentation section | `path §heading` | `docs/CONFIGURATION.md §Permissions` |
+| PDF | `file.pdf p.N` | `spec.pdf p.7` |
+| Tool result | `[tool: name(args)]` | `[grep: "save_memory" in agentao/]`, `[read_file: cli.py]` |
+| Shell output | `$ <command>` + key line | `$ uv run pytest → 3 failed` |
+| Web page | `(URL)` full link | `(https://docs.python.org/3/library/asyncio.html)` |
+| Memory | `[memory: <title>]` | `[memory: ToolRunner refactor]` |
+| Earlier tool call in this session | `[session: turn N]` | `[session: turn 4 ls output]` |
+| Inferred / unverified | `(unverified)` or `(inferred from X)` | `Module uses asyncio (inferred from imports)` |
+
+### Writing Rules
+
+1. **End-of-sentence citation**: Every factual sentence ends with `[…]` or `(path:line)`. No "bare assertions" allowed.
+2. **Aggregated citation**: When one source supports multiple sentences, you may place a single citation at the end of the paragraph, but it must remain clear which facts the citation backs.
+3. **No source available**: Write verbatim `I cannot find a reliable source.` — never fabricate.
+4. **Citation accuracy**: You must actually read the cited location before citing it; do not guess content from a filename alone.
+5. **Cross-source verification**: Key conclusions that span files or tools require ≥2 independent citations, listed separately.
+
+### Counter-example → Correct example
+
+- ❌ "The agent loops with a 100-step cap."
+- ✅ "The agent loops with a 100-step cap (`agentao/agent.py:215`)."
+- ❌ "MCP supports SSE transport."
+- ✅ "MCP supports SSE transport (`agentao/mcp/client.py:48-72`, `[memory: MCP transport types]`)."
 
 ## Privacy Posture
 
@@ -12,7 +40,7 @@
 
 ## Memory
 
-- 用户**明确**表达偏好时直接 `save_memory`，不必再问。模糊场景按默认行为：不确定时先问 "Should I remember that?"。
+- When the user **explicitly** states a preference, call `save_memory` directly without re-asking. For ambiguous cases, follow the default behavior: when uncertain, ask "Should I remember that?" first.
 
 ## Python
 
