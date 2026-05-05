@@ -17,6 +17,86 @@ from .config import McpServerConfig
 logger = logging.getLogger("agentao.mcp")
 
 
+class McpErrorKind(str, Enum):
+    """Outcome of classifying an exception raised by ``ClientSession.call_tool``.
+
+    Drives the retry policy in :meth:`McpClient.call_tool`:
+    ``AUTH`` surfaces immediately (creds won't change on retry);
+    ``SESSION_EXPIRED`` and ``TRANSPORT_DROPPED`` reconnect-and-retry once;
+    ``OTHER`` surfaces without reconnecting.
+    """
+
+    AUTH = "auth"
+    SESSION_EXPIRED = "session_expired"
+    TRANSPORT_DROPPED = "transport_dropped"
+    OTHER = "other"
+
+
+# Each entry: (kind, markers, match_type_name).
+# Order matters: AUTH wins over session/transport because a server can
+# stuff multiple signals into one message (e.g. ``401 Unauthorized: session
+# expired``) and retrying with the same credentials only produces another
+# 401/403 and a noisy reconnect storm. ``connection refused`` is
+# intentionally absent from TRANSPORT_DROPPED: that means the server isn't
+# listening at all, so a reconnect would fail the same way.
+_ERROR_RULES: Tuple[Tuple[McpErrorKind, Tuple[str, ...], bool], ...] = (
+    (
+        McpErrorKind.AUTH,
+        ("401", "403", "unauthorized", "forbidden"),
+        False,
+    ),
+    (
+        McpErrorKind.SESSION_EXPIRED,
+        (
+            "session expired",
+            "session not found",
+            "unknown session",
+            "session terminated",
+        ),
+        False,
+    ),
+    (
+        McpErrorKind.TRANSPORT_DROPPED,
+        (
+            # anyio resource errors (matched on the type name; str() may be empty)
+            "closedresourceerror",
+            "brokenresourceerror",
+            "endofstream",
+            # httpx remote-disconnect (SSE transports)
+            "remoteprotocolerror",
+            # Common stringified disconnects across stdlib + httpx + httpcore
+            "connection reset",
+            "connection closed",
+            "closed connection",       # "peer closed connection without ..."
+            "connection was closed",   # alternate phrasing
+            "connection aborted",
+            "server disconnected",
+            "broken pipe",
+            "transport closed",
+            "stream closed",
+        ),
+        True,
+    ),
+)
+
+
+def classify_mcp_error(exc: Exception) -> McpErrorKind:
+    """Categorize an MCP call_tool exception for retry decisions.
+
+    Some anyio types stringify to an empty body but their class name
+    carries the signal, so transport markers are matched against both
+    ``str(exc).lower()`` and ``type(exc).__name__.lower()``.
+    """
+    msg = str(exc).lower()
+    type_name = type(exc).__name__.lower()
+    haystack_with_type = f"{msg} {type_name}"
+    for kind, markers, match_type_name in _ERROR_RULES:
+        haystack = haystack_with_type if match_type_name else msg
+        if any(marker in haystack for marker in markers):
+            return kind
+    return McpErrorKind.OTHER
+
+
 class ServerStatus(str, Enum):
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
@@ -132,8 +212,11 @@ class McpClient:
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Call a tool on this server and return the result as text.
 
-        Attempts one automatic reconnect if the server is disconnected or the
-        first call fails, then retries the tool call once.
+        Retry policy is driven by :func:`classify_mcp_error`:
+        ``AUTH`` surfaces immediately (retrying with the same credentials
+        only produces another 401/403); ``SESSION_EXPIRED`` and
+        ``TRANSPORT_DROPPED`` reconnect-and-retry once; ``OTHER``
+        surfaces without reconnecting.
         """
         for attempt in range(2):
             if not self._session or self.status != ServerStatus.CONNECTED:
@@ -146,10 +229,22 @@ class McpClient:
             try:
                 result = await self._session.call_tool(tool_name, arguments)
             except Exception as e:
-                if attempt == 0:
-                    logger.warning(f"MCP '{self.name}' call failed, retrying after reconnect: {e}")
-                    self.status = ServerStatus.ERROR
-                    self._session = None
+                kind = classify_mcp_error(e)
+                if kind is McpErrorKind.AUTH:
+                    return f"MCP auth error: {e}"
+                if attempt == 0 and kind in (
+                    McpErrorKind.SESSION_EXPIRED,
+                    McpErrorKind.TRANSPORT_DROPPED,
+                ):
+                    logger.warning(
+                        f"MCP '{self.name}' transient {type(e).__name__}, "
+                        f"retrying after reconnect: {e}"
+                    )
+                    # Tear down the live transport before reconnecting;
+                    # otherwise connect() overwrites _exit_stack and the
+                    # old subprocess / SSE stream leaks for the lifetime
+                    # of this manager.
+                    await self.disconnect()
                     continue
                 return f"MCP tool error: {e}"
 
@@ -175,7 +270,7 @@ class McpClient:
                 return f"MCP tool error: {text}"
             return text
 
-        return f"MCP tool error: failed after reconnect attempt"
+        return "MCP tool error: failed after reconnect attempt"
 
     async def disconnect(self) -> None:
         """Disconnect from the server."""
