@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextvars
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -144,9 +145,16 @@ class ToolExecutor:
             )
             results[call_id] = info
         else:
+            # Capture contextvars on the parent thread (calling it inside
+            # the worker would copy the worker's empty context) and use
+            # a fresh ``Context`` per submission — ``Context.run()`` can
+            # be invoked at most once per Context object.
             with ThreadPoolExecutor(max_workers=8) as pool:
-                futures = {
-                    pool.submit(
+                futures = {}
+                for p in plans:
+                    ctx = contextvars.copy_context()
+                    futures[pool.submit(
+                        ctx.run,
                         self._execute_one,
                         p,
                         tool_locks,
@@ -155,9 +163,7 @@ class ToolExecutor:
                         hook_rules=hook_rules,
                         hook_cwd=hook_cwd,
                         hook_session_id=hook_session_id,
-                    ): p
-                    for p in plans
-                }
+                    )] = p
                 for future in as_completed(futures):
                     call_id, info = future.result()
                     results[call_id] = info

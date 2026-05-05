@@ -24,8 +24,9 @@ from agentao.host.events import EventStream
 from agentao.host.models import ToolLifecycleEvent
 from agentao.host.projection import HostToolEmitter
 from agentao.runtime.tool_executor import ToolExecutor
-from agentao.runtime.tool_planning import ToolCallDecision, ToolCallPlan
 from agentao.tools import Tool
+
+from tests.support.host_events import NullTransport, make_plan
 
 
 # ---------------------------------------------------------------------------
@@ -42,24 +43,6 @@ class _Echo(Tool):
     def parameters(self) -> Dict[str, Any]: return {"type": "object"}
     def execute(self, **kwargs) -> str:
         return f"got:{kwargs.get('x', '')}"
-
-
-def _make_plan(tool, *, args=None, call_id="call-1"):
-    tc = SimpleNamespace(id=call_id, function=SimpleNamespace(name=tool.name, arguments="{}"))
-    return ToolCallPlan(
-        tool_call=tc,
-        function_name=tool.name,
-        function_args=args or {},
-        tool=tool,
-        decision=ToolCallDecision.ALLOW,
-    )
-
-
-class _NullTransport:
-    def emit(self, _ev): pass
-    def confirm_tool(self, *_a, **_kw): return True
-    def ask_user(self, _q): return ""
-    def on_max_iterations(self, _c, _m): return {"action": "stop"}
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +64,7 @@ def test_cli_can_render_basic_tool_state_from_host_event_stream(tmp_path):
         turn_id_provider=lambda: "t-1",
     )
     executor = ToolExecutor(
-        _NullTransport(),
+        NullTransport(),
         logging.getLogger("test.cli_host_events"),
         sandbox_policy=None,
         host_tool_emitter=emitter,
@@ -100,7 +83,7 @@ def test_cli_can_render_basic_tool_state_from_host_event_stream(tmp_path):
         await asyncio.sleep(0)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(
-            None, lambda: executor.execute_batch([_make_plan(_Echo())]),
+            None, lambda: executor.execute_batch([make_plan(_Echo())]),
         )
         await asyncio.wait_for(consumer, timeout=2.0)
         return events

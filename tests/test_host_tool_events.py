@@ -24,27 +24,15 @@ from agentao.host.events import EventStream
 from agentao.host.models import ToolLifecycleEvent
 from agentao.host.projection import HostToolEmitter
 from agentao.runtime.tool_executor import ToolExecutor
-from agentao.runtime.tool_planning import ToolCallDecision, ToolCallPlan
+from agentao.runtime.tool_planning import ToolCallDecision
 from agentao.tools import AsyncToolBase, Tool
+
+from tests.support.host_events import NullTransport, make_plan
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-class _NullTransport:
-    def emit(self, event):
-        pass
-
-    def confirm_tool(self, *_a, **_kw):
-        return True
-
-    def ask_user(self, _q):
-        return ""
-
-    def on_max_iterations(self, _c, _m):
-        return {"action": "stop"}
 
 
 class _SyncEcho(Tool):
@@ -99,20 +87,6 @@ class _AsyncEcho(AsyncToolBase):
         return f"async:{kwargs.get('x', '')}"
 
 
-def _make_plan(tool, *, decision=ToolCallDecision.ALLOW, args=None, call_id="call-1"):
-    tc = SimpleNamespace(
-        id=call_id,
-        function=SimpleNamespace(name=tool.name, arguments="{}"),
-    )
-    return ToolCallPlan(
-        tool_call=tc,
-        function_name=tool.name,
-        function_args=args or {},
-        tool=tool,
-        decision=decision,
-    )
-
-
 class _Harness:
     """Test harness: collects published events synchronously.
 
@@ -137,7 +111,7 @@ class _Harness:
 
 def _make_executor(emitter) -> ToolExecutor:
     return ToolExecutor(
-        _NullTransport(),
+        NullTransport(),
         logging.getLogger("test.harness_tool_events"),
         sandbox_policy=None,
         host_tool_emitter=emitter,
@@ -153,7 +127,7 @@ def test_sync_tool_emits_started_and_completed():
     h = _Harness()
     executor = _make_executor(h.emitter)
     tool = _SyncEcho()
-    executor.execute_batch([_make_plan(tool, args={"x": "hello"})])
+    executor.execute_batch([make_plan(tool, args={"x": "hello"})])
     phases = [e.phase for e in h.events]
     assert phases == ["started", "completed"]
     started, completed = h.events
@@ -171,10 +145,10 @@ def test_sync_tool_failure_emits_failed_with_stable_error_type():
     h = _Harness()
     executor = _make_executor(h.emitter)
     tool = _Boom()
-    executor.execute_batch([_make_plan(tool, call_id="boom-1")])
+    executor.execute_batch([make_plan(tool, call_id="boom-1")])
     h2 = _Harness()
     executor2 = _make_executor(h2.emitter)
-    executor2.execute_batch([_make_plan(tool, call_id="boom-2")])
+    executor2.execute_batch([make_plan(tool, call_id="boom-2")])
     failed_first = [e for e in h.events if e.phase == "failed"][0]
     failed_second = [e for e in h2.events if e.phase == "failed"][0]
     # Stable identifier — same exception class, same wire value.
@@ -198,7 +172,7 @@ def test_started_event_does_not_leak_raw_args():
     executor = _make_executor(h.emitter)
     tool = _SyncEcho()
     secret = "--SECRET-VALUE-XYZ--"
-    executor.execute_batch([_make_plan(tool, args={"x": secret})])
+    executor.execute_batch([make_plan(tool, args={"x": secret})])
     started = h.events[0]
     # Public envelope intentionally has no ``args`` field.
     serialized = started.model_dump()
@@ -226,7 +200,7 @@ def test_completed_event_redacts_output():
         def execute(self, **kwargs) -> str:
             return big_text
 
-    executor.execute_batch([_make_plan(_Big())])
+    executor.execute_batch([make_plan(_Big())])
     completed = [e for e in h.events if e.phase == "completed"][0]
     assert completed.summary is not None
     assert len(completed.summary) <= 240
@@ -247,7 +221,7 @@ def test_deny_decision_emits_cancelled_terminal_only():
     h = _Harness()
     executor = _make_executor(h.emitter)
     tool = _SyncEcho()
-    executor.execute_batch([_make_plan(tool, decision=ToolCallDecision.DENY)])
+    executor.execute_batch([make_plan(tool, decision=ToolCallDecision.DENY)])
     phases = [e.phase for e in h.events]
     # Plan: started fires only on the ALLOW path (after permission +
     # pre-cancel guards). DENY emits exactly the cancelled terminal.
@@ -260,7 +234,7 @@ def test_user_cancelled_emits_cancelled_terminal_only():
     h = _Harness()
     executor = _make_executor(h.emitter)
     tool = _SyncEcho()
-    executor.execute_batch([_make_plan(tool, decision=ToolCallDecision.CANCELLED)])
+    executor.execute_batch([make_plan(tool, decision=ToolCallDecision.CANCELLED)])
     phases = [e.phase for e in h.events]
     assert phases == ["failed"]
     assert h.events[0].outcome == "cancelled"
@@ -282,7 +256,7 @@ def test_async_tool_success_through_arun_path():
         token.runtime_loop = loop
         await loop.run_in_executor(
             None,
-            lambda: executor.execute_batch([_make_plan(tool)], cancellation_token=token),
+            lambda: executor.execute_batch([make_plan(tool)], cancellation_token=token),
         )
 
     asyncio.run(runner())
@@ -323,7 +297,7 @@ def test_async_tool_cancellation_emits_one_terminal_after_cleanup():
 
         def execute_in_thread():
             return executor.execute_batch(
-                [_make_plan(tool)], cancellation_token=token,
+                [make_plan(tool)], cancellation_token=token,
             )
 
         fut = loop.run_in_executor(None, execute_in_thread)
