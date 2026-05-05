@@ -1,4 +1,10 @@
-"""Declarative permission rule engine for tool execution control."""
+"""Declarative permission rule engine for tool execution control.
+
+The hardline shell-safety scanner that pre-empts unrecoverable
+operations lives in :mod:`agentao.permissions_hardline`; this module
+imports its single entry point :func:`hardline_check` and wraps any
+non-``None`` return into a DENY decision before rule evaluation.
+"""
 
 import copy
 import json
@@ -6,8 +12,10 @@ import logging
 import re
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse
+
+from .permissions_hardline import hardline_check
 
 if TYPE_CHECKING:
     from .host.models import ActivePermissions
@@ -19,6 +27,24 @@ class PermissionDecision(Enum):
     ALLOW = "allow"
     DENY = "deny"
     ASK = "ask"
+
+
+# Maps the rule "action" string (allow/deny/ask) to the decision enum.
+# Unknown actions fall through to ASK — the safe-by-default behavior the
+# engine has always had.
+_ACTION_TO_DECISION: Dict[str, PermissionDecision] = {
+    "allow": PermissionDecision.ALLOW,
+    "deny": PermissionDecision.DENY,
+    "ask": PermissionDecision.ASK,
+}
+
+# Stable policy-source prefixes for ``PermissionDecisionDetail.reason``.
+# Hosts and audit displays may rely on these prefixes; they are part of
+# the public event contract once a ``PermissionDecisionEvent`` is emitted
+# with the ``reason`` field. The ``hardline`` prefix lives in
+# :mod:`.permissions_hardline` (re-exported as ``REASON_HARDLINE``).
+_REASON_MODE_PRESET = "mode-preset"
+_REASON_USER_RULE = "user-rule"
 
 
 class PermissionDecisionDetail:
@@ -232,6 +258,7 @@ class PermissionEngine:
         *,
         project_root: Path,
         user_root: Optional[Path] = None,
+        enable_hardline: bool = True,
     ):
         """Initialize the permission engine.
 
@@ -245,6 +272,15 @@ class PermissionEngine:
                 file-based rule source. ``None`` (the default) skips
                 the read; pass an explicit path (typically
                 ``~/.agentao``) to opt in.
+            enable_hardline: When ``True`` (the default), a small set
+                of *unrecoverable* operations (rm -rf /, mkfs, dd to
+                raw block devices, fork bombs, shutdown / reboot, …)
+                are denied before any rule is consulted — including
+                ``full-access``. Embedded hosts that take policy
+                responsibility themselves (typically because Agentao
+                is sandboxed in a container or the host has its own
+                deny pipeline) can pass ``False`` to make
+                ``full-access`` literally mean full access.
         """
         if project_root is None:
             raise TypeError(
@@ -252,6 +288,7 @@ class PermissionEngine:
             )
         self._project_root: Path = project_root
         self._user_root: Optional[Path] = user_root
+        self._enable_hardline: bool = enable_hardline
         self.rules: List[Dict[str, Any]] = []
         self._mode_rules: List[Dict[str, Any]] = []
         self.active_mode: PermissionMode = PermissionMode.WORKSPACE_WRITE
@@ -331,6 +368,8 @@ class PermissionEngine:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            if not isinstance(data, dict):
+                return [], False
             return data.get("rules", []), True
         except (IOError, json.JSONDecodeError):
             return [], False
@@ -358,34 +397,54 @@ class PermissionEngine:
 
         Returns ``None`` when no rule matches (the runtime falls back to
         the tool's own ``requires_confirmation`` attribute). The
-        ``reason`` field is a short, stable string suitable for
-        projection into a public event ``reason`` field.
+        ``reason`` field is a short, stable, **policy-source-tagged**
+        string suitable for projection into a public event ``reason``
+        field. Source prefixes:
+
+        - ``hardline:<description>`` — opt-out floor refused the call
+        - ``mode-preset:<rule_tool>`` — preset rule matched
+        - ``user-rule:<rule_tool>`` — user JSON rule matched
         """
+        # Hardline pre-check runs before mode/preset/user-rule routing
+        # so a ``full-access`` ``allow:*`` rule cannot silently shadow
+        # it. When the host has disabled the floor the caller has
+        # accepted policy responsibility — fall through.
+        if self._enable_hardline:
+            reason = hardline_check(tool_name, tool_args)
+            if reason is not None:
+                return PermissionDecisionDetail(
+                    PermissionDecision.DENY,
+                    matched_rule=None,
+                    reason=reason,
+                )
+
+        # ``full-access`` and ``plan`` modes evaluate preset rules first
+        # so a stray user rule cannot shadow the mode's promise; every
+        # other mode evaluates user rules first so they can override.
+        # Source-tagging is deferred until the matching rule is found —
+        # iterating two lists with literal source strings avoids
+        # allocating a wrapped (rule, source) list on every call.
         if self.active_mode in (PermissionMode.FULL_ACCESS, PermissionMode.PLAN):
-            rule_order = self._mode_rules + self.rules
+            sources: List[Tuple[List[Dict[str, Any]], str]] = [
+                (self._mode_rules, _REASON_MODE_PRESET),
+                (self.rules, _REASON_USER_RULE),
+            ]
         else:
-            rule_order = self.rules + self._mode_rules
-        for rule in rule_order:
-            if self._matches(rule, tool_name, tool_args):
+            sources = [
+                (self.rules, _REASON_USER_RULE),
+                (self._mode_rules, _REASON_MODE_PRESET),
+            ]
+        for rules, source in sources:
+            for rule in rules:
+                if not self._matches(rule, tool_name, tool_args):
+                    continue
                 action = rule.get("action", "ask").lower()
-                if action == "allow":
-                    return PermissionDecisionDetail(
-                        PermissionDecision.ALLOW,
-                        matched_rule=rule,
-                        reason=f"matched rule for tool={rule.get('tool', '*')}",
-                    )
-                elif action == "deny":
-                    return PermissionDecisionDetail(
-                        PermissionDecision.DENY,
-                        matched_rule=rule,
-                        reason=f"deny rule for tool={rule.get('tool', '*')}",
-                    )
-                else:
-                    return PermissionDecisionDetail(
-                        PermissionDecision.ASK,
-                        matched_rule=rule,
-                        reason=f"ask rule for tool={rule.get('tool', '*')}",
-                    )
+                decision = _ACTION_TO_DECISION.get(action, PermissionDecision.ASK)
+                return PermissionDecisionDetail(
+                    decision,
+                    matched_rule=rule,
+                    reason=f"{source}:{rule.get('tool', '*')}",
+                )
         return None
 
     def _matches(self, rule: Dict[str, Any], tool_name: str, tool_args: Dict[str, Any]) -> bool:
