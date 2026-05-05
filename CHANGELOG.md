@@ -7,6 +7,184 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-05-04
+
+A permission-hardening + LLM-resilience release. **No breaking changes;
+no public API or wire-format change.** `pip install -U agentao` upgrades
+in place from any 0.4.x release.
+
+### Added
+
+- **Hardline shell-safety floor** — a new
+  `agentao/permissions_hardline.py` denies unrecoverable shell
+  operations (`rm -rf /`, `mkfs`, `dd of=/dev/sda`, fork bombs,
+  `shutdown`/`reboot`/`halt`, `init 0|6`, `systemctl poweroff|reboot`)
+  *before* any rule — including `full-access` — is evaluated. The pattern
+  set handles `sudo`/`env` wrappers (with flags and value args), quoted
+  paths (`"$HOME"`, `'/etc/passwd'`), split rm flags (`-r -f`,
+  `--recursive --force`), path-qualified `rm` (`/bin/rm`), `;`/`&&`/`||`
+  + newline separators, and command substitution. Embedded hosts that
+  take policy responsibility themselves can opt out via
+  `PermissionEngine(enable_hardline=False)`. Decision results now carry
+  a stable `reason` taxonomy (`hardline:*`, `mode-preset:*`,
+  `user-rule:*`) that hosts can render in audit UIs without parsing
+  free-form text. Design rationale in
+  `docs/design/permission-hardening-plan.{md,zh.md}`.
+
+- **Workspace-write sensitive-write preset** — a mode-scoped
+  preset rule flags shell writes to `~/.bashrc`, `~/.zshrc`, `~/.netrc`,
+  `~/.pgpass`, `~/.npmrc`, `~/.pypirc`, and friends via redirection
+  (`>`, `>>`, `2>`), `tee`, `cp`/`mv`, or `sed -i`. The rule emits
+  **ASK**, not DENY — installers (Homebrew, pyenv, rustup, nvm) and
+  devops scripts legitimately edit these files, so the operator gets a
+  prompt rather than a wall. `full-access` deliberately doesn't carry
+  the rule (literal full access stays literal).
+
+- **MCP `call_tool` error classification** — replaces "retry once on
+  any failure" with explicit buckets (`AUTH`, `SESSION_EXPIRED`,
+  `TRANSPORT_DROPPED`, `OTHER`). 401/403 surfaces immediately (no
+  reconnect storm); session-expired and transport-dropped reconnect
+  and retry once; everything else surfaces without reconnecting.
+  `connection refused` is intentionally not classified as transport-
+  dropped — the server isn't listening at all. The live transport is
+  now disconnected before reconnecting so the old subprocess / SSE
+  stream doesn't leak for the manager's lifetime. New
+  `agentao.mcp.client.classify_mcp_error` + `McpErrorKind` are public.
+
+- **Explicit LLM HTTP retry policy with progress-aware streaming** —
+  `LLMClient` now controls retries end-to-end (the OpenAI SDK's built-
+  in retry is disabled with `max_retries=0`):
+
+  | Aspect | Behavior |
+  |---|---|
+  | Retryable | 429 + 5xx + connection errors |
+  | Non-retryable | 4xx other than 429 |
+  | Backoff | `Retry-After` if present (seconds or HTTP-date), capped at `MAX_BACKOFF_SECONDS`; otherwise jittered exponential |
+  | Wall-clock budget | `MAX_TOTAL_RETRY_SECONDS` so a long `Retry-After` cannot strand the caller |
+  | Cancellation | Sleeps run through `_interruptible_sleep`; a cancelled token aborts the loop immediately |
+  | Streaming | `chat_stream` retries only **before** any chunk has reached `on_text_chunk` — once text is delivered, mid-stream errors propagate so retrying doesn't replay text the user already saw |
+
+  Raised exceptions carry a `.streamed` flag so hosts (and the
+  `LLM_CALL_COMPLETED` error event in `runtime/llm_call.py`) can pick
+  between regenerate-from-scratch and resume-style retry without
+  counting `LLM_TEXT` events themselves. Guards against the historical
+  "upstream" substring matching `502` bodies and silently falling back
+  to non-streaming, bypassing the retry policy.
+
+- **Tightened config trust boundary** — three escalation paths closed
+  (#25):
+
+  1. `PermissionEngine` no longer loads project-scope
+     `.agentao/permissions.json`. A checked-in
+     `{"tool": "*", "action": "allow"}` would have defeated the user
+     policy because the engine returns on the first matching rule. Only
+     `<user_root>/permissions.json` is honored; a stray project file is
+     logged once and ignored. Permissions are a user/host concern, not
+     a cwd concern.
+  2. Project `.agentao/mcp.json` is **add-only** — it may declare new
+     server names but cannot override a user-scope entry with the same
+     key. Collisions warn and skip. Prevents a checked-in `mcp.json`
+     from silently redirecting a known name (e.g. `"github"`) to a
+     different transport.
+  3. `McpTool` surfaces MCP `readOnlyHint` / `destructiveHint`
+     annotations as protocol hints — but only when the server is
+     trusted, and only to **add** friction (`destructiveHint=true` →
+     confirm anyway, regardless of `readOnlyHint`). Per spec, we never
+     make tool-use decisions from annotations on untrusted servers.
+     New `McpTool.mcp_annotations` property for host introspection.
+
+- **`SearchTextTool` skip-list + ripgrep fallback** — kills the
+  "effectively stuck on large trees" failure mode. Default-skips
+  `.git`, `node_modules`, `.venv`/`venv`, `__pycache__`, `.tox`,
+  `dist`, `build`, `target`, `.next`/`.nuxt`, and the usual language
+  caches. Fallback chain becomes `git grep` → `rg` → Python, so
+  non-git trees and Windows boxes with `rg.exe` but no `git` are
+  rescued. Caller opts back in by naming a skip-dir in `directory` or
+  `file_pattern`. Cross-platform via `shutil.which`; no
+  `IS_WINDOWS` branching.
+
+- **`/replay delete <id>` and `/replay delete all`** — mirrors
+  `/sessions delete`. Removes specific replay files by id-prefix or
+  wipes them all (single-key confirmation). The active recorder's file
+  is skipped/refused so an in-flight write isn't orphaned.
+
+- **`agentao.redact.mask_secret`** — canonical helper for hiding
+  credentials in logs, audit events, and host UIs. Default shape
+  `sk-A...3xZk` for long values, `********` (same length) for short
+  values, `(not set)` for missing. Forward-looking: no internal
+  callers migrated in this release; replaces the next ad-hoc
+  truncation site that needs it.
+
+- **Windows UTF-8 console enforcement** — `agentao/__init__.py`
+  now calls `_ensure_utf8()` at package import. On Windows, sets
+  `PYTHONIOENCODING=utf-8` (only if unset), switches the console
+  code page to CP_UTF8 via `kernel32.SetConsoleOutputCP/SetConsoleCP`,
+  and reconfigures `sys.stdin`/`stdout`/`stderr` with
+  encoding=utf-8 + lenient error handler. POSIX is a single-instruction
+  no-op. Embedded hosts that import Agentao from a Windows console
+  no longer hit `UnicodeEncodeError` on CJK file paths, curly quotes
+  from skill metadata, or model-output emoji.
+
+### Fixed
+
+- **`ToolExecutor` parallel batches now propagate contextvars** —
+  `ThreadPoolExecutor` workers don't inherit the parent thread's
+  context, so `contextvars.ContextVar` state set on the orchestration
+  thread (host turn IDs, request metadata, structured-logging scopes)
+  was lost when tools ran in parallel. Capture
+  `contextvars.copy_context()` on the **parent** thread per submission
+  and dispatch through `Context.run()` — calling `copy_context()`
+  inside the worker would copy the worker's empty context. Each plan
+  gets a fresh context (`Context.run()` may be invoked at most once per
+  object).
+
+- **MCP `destructiveHint=true` no longer bypasses read-only mode**
+  when `readOnlyHint=true` is also set on the same trusted server. The
+  conflict resolves security-positive: destructive wins. Caught by
+  Codex review during #25's `/simplify` pass.
+
+### Documentation
+
+- **Developer guide §7.6 — WeChat bot blueprint** (mirrored to
+  `examples/wechat-bot/`): a long-polling daemon that runs one Agentao
+  turn per inbound message, with a `WeChatClient` Protocol that fits
+  ilink / wechaty / itchat alike and a contact-scoped permission preset
+  (allowlist → `WORKSPACE_WRITE`, otherwise `READ_ONLY`). Up-front
+  contrast table draws a hard line between this personal-account path
+  and the Official Account / Enterprise WeChat webhook track.
+- **Host contract clarifications** — `EventStream.add_observer`
+  fan-out documented; new `architecture/embedding-vs-acp.{md,zh.md}`
+  decision tree distinguishing in-process embedding vs ACP server vs
+  ACP client vs ACP schema surface; internal Transport / `AgentEvent`
+  channel documented as a peer surface (`SdkTransport.on_event`) with
+  full inventory and stability comparison; new
+  `PUBLIC_EVENT_PROMOTION_PLAN.md` staging `MCPLifecycleEvent` and
+  `LLMCallEvent` promotion to the stable contract.
+- **`examples/protocol-injection/`** — runnable end-to-end sample
+  replacing every host→Agentao injection slot with a small adapter
+  (in-memory FileSystem, audit-logging ShellExecutor, dict-backed
+  MemoryStore, programmatic MCPRegistry). Six smoke tests assert each
+  slot is actually consulted; no `OPENAI_API_KEY` required. Wired into
+  developer-guide Part 2.2 and Part 4.7.
+- **`examples/personas/`** — new home for prompt-configuration
+  samples (as opposed to host-integration code). Seeded with
+  `daily-driver` (evidence-first daily assistant, citation-format
+  table) and `kawaii-buddy` (情绪价值小助手 with mascot board).
+- **`examples/skills/`** — host-agnostic skill gallery (#26):
+  `zootopia-ppt`, `pro-ppt`, `ocr`, plus bilingual README explaining
+  the three `SkillManager` discovery paths and the dual-placement
+  story. Co-located skills in `data-workbench`, `ticket-automation`,
+  and `batch-scheduler` now carry one-line callouts pointing back to
+  the gallery and explaining why they can't be lifted out.
+- **`docs/design/permission-hardening-plan.{md,zh.md}` rev 3** —
+  status updated to mark PRs 1–5 all landed (PR 1 + PR 2 on
+  2026-05-03; PR 3 + PR 4 + PR 5 on 2026-05-04). §10 reframed as
+  post-ship follow-ups; only the `bashlex` supersedence of PR 5's
+  regex tier remains open.
+- **`docs/design/pi-mono-borrow-review.{md,zh.md}`** — decision
+  record from surveying ~590 commits in `pi-mono` between v0.66 and
+  v0.73. Keep / cut / reframe verdicts for each candidate.
+
 ## [0.4.2] — 2026-05-01
 
 ### Changed
