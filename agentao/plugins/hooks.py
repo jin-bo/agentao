@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 import uuid as _uuid
 from dataclasses import field
@@ -20,9 +21,11 @@ from pathlib import Path
 from typing import Any
 
 from .models import (
+    CLAUDE_FLAT_EVENTS,
     KNOWN_UNSUPPORTED_HOOK_TYPES,
     SUPPORTED_HOOK_EVENTS,
     SUPPORTED_HOOK_TYPES,
+    SUPPORTED_HOOK_TYPES_BY_EVENT,
     HookAttachmentRecord,
     LoadedPlugin,
     ParsedHookRule,
@@ -139,6 +142,23 @@ class ClaudeHooksParser:
                     )
                     continue
 
+                allowed_for_event = SUPPORTED_HOOK_TYPES_BY_EVENT.get(
+                    event_name, SUPPORTED_HOOK_TYPES,
+                )
+                if hook_type not in allowed_for_event:
+                    warnings.append(
+                        PluginWarning(
+                            plugin_name=plugin_name,
+                            message=(
+                                f"Hook type '{hook_type}' is not supported for event "
+                                f"'{event_name}' — skipped. (Allowed for this event: "
+                                f"{sorted(allowed_for_event)})"
+                            ),
+                            field="hooks",
+                        )
+                    )
+                    continue
+
                 try:
                     timeout = int(entry.get("timeout", 60))
                 except (ValueError, TypeError):
@@ -151,6 +171,21 @@ class ClaudeHooksParser:
                     )
                     timeout = 60
 
+                matcher = entry.get("matcher")
+                if matcher is not None and not isinstance(matcher, dict):
+                    warnings.append(
+                        PluginWarning(
+                            plugin_name=plugin_name,
+                            message=(
+                                f"Hook rule under '{event_name}' has non-object matcher "
+                                f"of type {type(matcher).__name__}; matcher must be an object "
+                                f"like {{\"trigger\": \"manual|auto\"}} — rule skipped."
+                            ),
+                            field="hooks",
+                        )
+                    )
+                    continue
+
                 rules.append(
                     ParsedHookRule(
                         event=event_name,
@@ -158,7 +193,7 @@ class ClaudeHooksParser:
                         command=entry.get("command"),
                         prompt=entry.get("prompt"),
                         timeout=timeout,
-                        matcher=entry.get("matcher"),
+                        matcher=matcher,
                         plugin_name=plugin_name,
                     )
                 )
@@ -306,6 +341,53 @@ class ClaudeHookPayloadAdapter:
             },
         }
 
+    # Stop / PreCompact use Claude Code's flat snake_case top-level schema
+    # rather than the {event, data} envelope used by the events above.
+    # This keeps a hook script reading from stdin Claude-compatible.
+    # _matches in PluginHookDispatcher handles the dual shape.
+
+    def build_stop(
+        self,
+        *,
+        session_id: str | None = None,
+        cwd: Path | None = None,
+        last_assistant_message: str = "",
+        stop_hook_active: bool = False,
+        turn_end_reason: str = "final_response",
+        permission_mode: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "hook_event_name": "Stop",
+            "session_id": session_id or "",
+            "transcript_path": None,
+            "cwd": str(cwd or Path.cwd()),
+            "permission_mode": permission_mode or "workspace-write",
+            "stop_hook_active": bool(stop_hook_active),
+            "last_assistant_message": last_assistant_message or "",
+            "turn_end_reason": turn_end_reason,
+        }
+
+    def build_pre_compact(
+        self,
+        *,
+        session_id: str | None = None,
+        cwd: Path | None = None,
+        compaction_type: str,
+        reason: str,
+        permission_mode: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "hook_event_name": "PreCompact",
+            "session_id": session_id or "",
+            "transcript_path": None,
+            "cwd": str(cwd or Path.cwd()),
+            "permission_mode": permission_mode or "workspace-write",
+            "trigger": "auto",
+            "custom_instructions": "",
+            "compaction_type": compaction_type,
+            "reason": reason,
+        }
+
 
 # =========================================================================
 # PluginHookDispatcher
@@ -366,6 +448,39 @@ class PluginHookDispatcher:
     ) -> list[HookAttachmentRecord]:
         return self._dispatch_lifecycle("PostToolUseFailure", payload, rules)
 
+    def dispatch_stop(
+        self,
+        *,
+        payload: dict[str, Any],
+        rules: list[ParsedHookRule],
+    ) -> list[HookAttachmentRecord]:
+        return self._dispatch_lifecycle("Stop", payload, rules)
+
+    def dispatch_pre_compact(
+        self,
+        *,
+        payload: dict[str, Any],
+        rules: list[ParsedHookRule],
+    ) -> list[HookAttachmentRecord]:
+        return self._dispatch_lifecycle("PreCompact", payload, rules)
+
+    def select_matching_rules(
+        self,
+        event: str,
+        payload: dict[str, Any],
+        rules: list[ParsedHookRule],
+    ) -> list[ParsedHookRule]:
+        """Canonical Stop / PreCompact selection filter.
+
+        Applies event + is_supported + _matches. Callers use this both to
+        count matched rules for the A5 emit gate and to feed an
+        already-filtered list to the corresponding dispatch_* method.
+        """
+        return [
+            r for r in rules
+            if r.event == event and r.is_supported and self._matches(r, payload)
+        ]
+
     def _dispatch_lifecycle(
         self,
         event: str,
@@ -394,9 +509,34 @@ class PluginHookDispatcher:
         if rule.matcher is None:
             return True
 
-        data = payload.get("data", {})
+        # Defense-in-depth: parser drops non-dict matchers, but a future
+        # caller could construct ParsedHookRule directly. None ≡ "match
+        # everything" at the top of this method, so degrading a bad matcher
+        # to no-match (rather than match-everything) preserves the user's
+        # filter intent.
+        if not isinstance(rule.matcher, dict):
+            logger.warning(
+                "Hook rule for event %r has non-dict matcher %r; "
+                "treating as no-match. Matchers must be objects, e.g. "
+                "{\"trigger\": \"manual|auto\"}.",
+                rule.event, rule.matcher,
+            )
+            return False
 
-        # Tool-name matcher (PreToolUse / PostToolUse / PostToolUseFailure).
+        # Claude-flat events read fields from the top level of the payload.
+        event = payload.get("hook_event_name") or rule.event
+        if event in CLAUDE_FLAT_EVENTS:
+            if event == "PreCompact":
+                trigger_pattern = rule.matcher.get("trigger")
+                if trigger_pattern is not None:
+                    payload_trigger = payload.get("trigger", "")
+                    if not _regex_match_full(trigger_pattern, payload_trigger):
+                        return False
+            # Stop: no documented matcher in Claude Code; always fire.
+            return True
+
+        # Agentao-envelope events use the {event, data} shape and globs.
+        data = payload.get("data", {})
         tool_name_pattern = rule.matcher.get("toolName")
         if tool_name_pattern is not None:
             payload_tool = data.get("toolName", "")
@@ -842,3 +982,23 @@ def _glob_match(pattern: str, value: str) -> bool:
     # Fallback: use fnmatch.
     import fnmatch
     return fnmatch.fnmatch(value, pattern)
+
+
+def _regex_match_full(pattern: str, value: str) -> bool:
+    """Anchored full-match regex used by Claude-compat event matchers."""
+    if not isinstance(pattern, str) or not isinstance(value, str):
+        # Non-string matcher field (e.g. ``trigger: ["auto"]``) or payload
+        # field. ``re.fullmatch`` would raise ``TypeError``; degrade to
+        # no-match so a malformed plugin config doesn't crash dispatch.
+        logger.warning(
+            "Regex matcher requires string pattern and value; got "
+            "pattern=%r value=%r — treating as no-match.",
+            pattern, value,
+        )
+        return False
+    try:
+        return re.fullmatch(pattern, value) is not None
+    except re.error:
+        # A malformed pattern degrades to exact-equality so the rule is
+        # not silently dropped at runtime.
+        return pattern == value

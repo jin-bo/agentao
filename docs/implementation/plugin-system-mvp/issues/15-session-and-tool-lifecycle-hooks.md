@@ -8,6 +8,8 @@ Issue index: [Plugin System MVP Issues](README.md)
 
 实现 `SessionStart`、`SessionEnd`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure` 的 command hook 执行路径。
 
+> `Stop` 与 `PreCompact` 的事件面在 [`STOP_PRECOMPACT_HOOKS_PLAN.md`](../../STOP_PRECOMPACT_HOOKS_PLAN.md) PR-1 (Phase A) 单独落地。两者在 dispatcher 层共用 `_dispatch_lifecycle`，但负载使用 Claude flat snake_case 顶层 schema，并且 chat-loop helper 自带 `select_matching_rules` no-emit gate；详见该 plan 的 A2/A3/A5。
+
 ## Scope
 
 - session lifecycle dispatch
@@ -60,3 +62,4 @@ Issue index: [Plugin System MVP Issues](README.md)
 
 - tool input/output mutation
 - HTTP/agent hooks
+- `Stop` / `PreCompact`（已在 [`STOP_PRECOMPACT_HOOKS_PLAN.md`](../../STOP_PRECOMPACT_HOOKS_PLAN.md) 独立交付；本 issue 仅覆盖 Phase 6 阶段定义的 5 个 lifecycle 事件）

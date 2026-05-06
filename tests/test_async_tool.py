@@ -62,32 +62,12 @@ from agentao.tools import AsyncToolBase, RegistrableTool, Tool, ToolRegistry
 from agentao.tools.base import _BaseTool
 from agentao.transport import AgentEvent, EventType
 
+from tests.support.host_events import CapturingTransport as _CapturingTransport
+
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
-
-
-class _CapturingTransport:
-    """Transport that records every emitted event for later assertions."""
-
-    def __init__(self) -> None:
-        self.events: List[AgentEvent] = []
-
-    def emit(self, event: AgentEvent) -> None:
-        self.events.append(event)
-
-    def confirm_tool(self, tool_name, description, args):
-        return True
-
-    def ask_user(self, question):
-        return ""
-
-    def on_max_iterations(self, count, messages):
-        return {"action": "stop"}
-
-    def by_type(self, event_type: EventType) -> List[AgentEvent]:
-        return [e for e in self.events if e.type == event_type]
 
 
 class _SyncEcho(Tool):

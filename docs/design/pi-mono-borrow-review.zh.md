@@ -11,7 +11,7 @@
 
 - **立即做（1）：** grep 参数注入修复。`agentao/tools/search.py` 已确认在三处存在该漏洞（一处 ripgrep，两处 git-grep 分支）。
 - **尽快做（1）：** 项目上下文文件（`AGENTAO.md` / `CLAUDE.md` / `SKILL.md`）的紧凑 `read` 渲染。
-- **作为协议补全做（1）：** 在现有 plugin-hook 体系内增加 `Stop` / `PreCompact` 事件类型。**不是**移植——agentao 已经有 Claude-Code 风格的 hook 协议，这是补齐缺失的事件类型。
+- **作为定向事件覆盖做（1）：** 在现有 plugin-hook 体系内增加 `Stop` / `PreCompact` 事件类型。**不是**移植——agentao 已经有 Claude-Code 风格的 hook 协议，这里只补齐 `shouldStopAfterTurn` 类 / 压缩前回调类用例所需的两个事件。Claude Code 的其它事件（如 `Notification`、`SubagentStop`、`PostToolBatch`、`StopFailure`）当前同样未覆盖，但不在本评审范围内。
 - **Backlog（4）：** `prepareArguments` per-tool 归一化钩子、stale-extension-context 探测、OSC 9;4 进度、堆叠式 autocomplete。模式有用，但没有当前痛点。
 - **砍掉（2）：** `shouldStopAfterTurn`（与现有 hook 重复）、self-update / 批量包更新（npm-only，与 `uv` 无关）。
 - **重新框定 / 等待（3）：** `terminate: true` 工具结果提示、per-tool `executionMode = "sequential"`、bash 增量流式输出。每条在 pi-mono 都有真实但**不同的**用例；agentao 对应的需求要么不存在，要么语义不重叠，要么已被另一种机制覆盖。
@@ -25,11 +25,13 @@
 #### `shouldStopAfterTurn` post-turn callback（pi-agent-core v0.72.0）
 **结论：** 砍掉。与现有基础设施重复。
 
-pi-mono 在 turn 边界增加 `shouldStopAfterTurn(...)` 这个低层 callback，是因为它的低层 loop 没有别的扩展点。agentao 已经有完整的、对照 Claude Code 设计的 plugin-hook 协议（`agentao/plugins/hooks.py` + `models.py`）：`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`。`chat_loop.py:140` 已经支持在 turn 边界 block / 注入 context / 提前 return。
+pi-mono 在 turn 边界增加 `shouldStopAfterTurn(...)` 这个低层 callback，是因为它的低层 loop 没有别的扩展点。agentao 已经有对照 Claude Code 设计的 plugin-hook 协议（`agentao/plugins/hooks.py` + `models.py`）。当前 `SUPPORTED_HOOK_EVENTS`（`agentao/plugins/models.py:197`）：`UserPromptSubmit`、`SessionStart`、`SessionEnd`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`。`agentao/runtime/chat_loop.py:140` 已经支持在 turn 边界 block / 注入 context / 提前 return。
 
-真正缺的是**事件类型覆盖**，而不是新的 callback 形态。Claude Code 定义了 `Stop` 和 `PreCompact` 两个事件，agentao 还没支持。把这两个加进现有的 `_dispatch_lifecycle` 流水线，能拿到 `shouldStopAfterTurn` 的全部能力，并且只维护一个有文档的协议表面。
+真正缺的是针对 `shouldStopAfterTurn` 用例的**定向事件覆盖**，而不是新的 callback 形态。Claude Code 公布的事件中，与之相关的是 `Stop` 和 `PreCompact` 两个，agentao 都还未发出。
 
-这是"补齐自己的协议"，不是"借鉴 pi-mono"。
+实现注意——只把这两个塞进 `_dispatch_lifecycle` 流水线**并不**等价于 `shouldStopAfterTurn`。当前 dispatcher 明确是 "side-effect only"（`_dispatch_lifecycle` 定义 + docstring，`agentao/plugins/hooks.py:369-378`）：非零退出码只记一条 warning，stdout 作为 hook-success record 透传，不解析 `preventContinuation` / `blockingError` / `continue=false`。控制结果解析目前只在 `UserPromptSubmit` 路径上（`_parse_command_output`，`hooks.py:535+`）。所以要对齐 pi-mono 的表达力，需要**两件事**：(1) 从 chat loop 在正确边界发出事件；(2) 给 `Stop` 增加 control-aware 的结果处理（参照现有 `UserPromptSubmit` 路径），并在 `chat_loop` 里依据该结果决定停止或继续。`PreCompact` 需要单独决策：保持 side-effect-only（仅观察）还是同样作为压缩步骤的 gate。要 ship 哪一层是设计工作的一部分，不是登记事件之后就免费送的副产物。（Claude Code 还有若干其它事件——如 `Notification`、`SubagentStop`、`PostToolBatch`、`StopFailure`——当前同样未发出，但不在本评审范围内。）
+
+这是"定向事件覆盖"，不是"借鉴 pi-mono"。
 
 #### Self-update + 批量包更新（pi-coding-agent v0.68.0 / v0.70.3）
 **结论：** 砍掉。不适用。
@@ -99,9 +101,14 @@ pi-mono 的修复套路——`rg -- <pattern> <path>` 让 `--pre=/tmp/payload.sh
 `read` 读 `AGENTS.md` / `CLAUDE.md` / `SKILL.md`（及对应物）时在交互输出里默认折叠，附行号范围提示。agentao 的 read 工具当前每次都把项目上下文文件全文 dump，浪费屏幕和渲染后 transcript 的 token。机械改动，无协议影响。
 
 #### plugin-hook 体系增加 `Stop` / `PreCompact` 事件
-**结论：** P2。协议补全，不是借鉴。
+**结论：** P2。定向事件覆盖，不是借鉴。
 
-列在这里是为了对比 `shouldStopAfterTurn` 的替代方案。agentao 的 hook 协议相对 Claude Code 公布的接口是不完整的。在现有 `agentao/plugins/hooks.py` 调度器里补齐这两个事件类型是正确的形态：已经实现 Claude-Code 风格 hook 的 host 即插即用，agentao 拿到 pi-mono 用 `shouldStopAfterTurn` 加上的同等表达力，且不需要发明并行的 callback 路径。
+列在这里是为了对比 `shouldStopAfterTurn` 的替代方案。agentao 的 hook 协议目前覆盖六个事件（`UserPromptSubmit`、`SessionStart`、`SessionEnd`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`）；`shouldStopAfterTurn` 类 / 压缩前回调类用例所需的两个事件（`Stop`、`PreCompact`）当前还未发出。正确的入口仍然是现有 `agentao/plugins/hooks.py` 调度器，但范围必须明确切分成两层：
+
+1. **事件表面（小）**——从 chat loop 在正确位置发出 `Stop` / `PreCompact`。已经实现 Claude-Code 风格 hook 的 host 在这两个事件上即插即用，可以观察。
+2. **post-turn / pre-compaction gate（对齐 `shouldStopAfterTurn` 的部分）**——当前 `_dispatch_lifecycle` 是 side-effect-only，单独存在并不能让 loop 停下。要对齐 pi-mono 的表达力，需要给 `Stop` 加 control-aware 的结果处理（对照 `UserPromptSubmit` / `_parse_command_output` 路径），并让 `chat_loop` 根据该结果决定继续或停止。`PreCompact` 需要单独决策：保持 side-effect-only，还是同样作为压缩步骤的 gate。
+
+只 ship (1) 而不做 (2)，是一个站得住的最小可发布版本（host 可观察 lifecycle）；两层都做，才能与 `shouldStopAfterTurn` 持平。无论哪种范围，都不需要发明并行的 callback 路径。（更全面的 Claude Code 事件覆盖——`Notification`、`SubagentStop` 等——是另一个更大的话题。）
 
 延后到具体 host 工作流提出需求（compaction gate、cost gate、post-turn review）。触发时预计 1-2 天。
 
@@ -111,7 +118,7 @@ pi-mono 的修复套路——`rg -- <pattern> <path>` 让 `--pre=/tmp/payload.sh
 |---|---|---|---|
 | grep 参数注入修复 | T1 | **立即做** | 已确认 3 处漏洞（rg + 2 个 git-grep 分支）|
 | 紧凑 read 渲染 | T3 | **尽快做** | 零风险 UX |
-| `Stop` / `PreCompact` hook 事件 | （原：shouldStopAfterTurn T1） | **触发时做** | 重新框定为协议补全，不是移植 |
+| `Stop` / `PreCompact` hook 事件 | （原：shouldStopAfterTurn T1） | **触发时做** | 重新框定为定向事件覆盖，不是移植 |
 | `prepareArguments` per-tool 钩子 | T2 | Backlog | 无当前痛点 |
 | Stale-extension-context 探测 | T2 | Backlog | 还没 session fork |
 | OSC 9;4 进度 | T3 | Backlog | Polish |

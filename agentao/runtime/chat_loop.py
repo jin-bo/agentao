@@ -269,7 +269,26 @@ class ChatLoopRunner:
                 )
                 agent.messages.extend(tool_results)
                 if doom_triggered:
-                    break
+                    doom_content = (assistant_msg.get("content") or "").strip()
+                    last_assistant_message = (
+                        doom_content
+                        or "Tool execution halted by doom-loop detection."
+                    )
+                    self._dispatch_stop(
+                        turn_end_reason="doom_loop",
+                        last_assistant_message=last_assistant_message,
+                    )
+                    final_msg: Dict[str, Any] = {
+                        "role": "assistant",
+                        "content": last_assistant_message,
+                    }
+                    _attach_reasoning(final_msg, reasoning_content)
+                    if sanitize_assistant_message(final_msg):
+                        agent.llm.logger.warning(
+                            "Sanitised lone surrogates in doom-loop assistant message"
+                        )
+                    agent.messages.append(final_msg)
+                    return last_assistant_message
                 if token.is_cancelled:
                     raise AgentCancelledError(token.reason)
 
@@ -302,6 +321,10 @@ class ChatLoopRunner:
                         "Sanitised lone surrogates in final assistant message "
                         "(iteration %d)", iteration,
                     )
+                self._dispatch_stop(
+                    turn_end_reason="final_response",
+                    last_assistant_message=assistant_content,
+                )
                 agent.messages.append(final_msg)
                 return assistant_content
 
@@ -320,6 +343,10 @@ class ChatLoopRunner:
             agent.llm.logger.warning(
                 "Sanitised lone surrogates in max-iteration assistant message"
             )
+        self._dispatch_stop(
+            turn_end_reason="max_iterations",
+            last_assistant_message=assistant_content,
+        )
         agent.messages.append(final_msg)
         return assistant_content
 
@@ -389,6 +416,94 @@ class ChatLoopRunner:
             user_message = extra + "\n" + user_message
         return _HookOutcome(early_return=None, user_message=user_message)
 
+    def _dispatch_stop(
+        self,
+        *,
+        turn_end_reason: str,
+        last_assistant_message: str,
+    ) -> None:
+        """Stop dispatch — side-effect only; never changes control flow.
+
+        Returns without emitting ``PLUGIN_HOOK_FIRED`` when no Stop rule
+        matches the payload (the no-emit gate).
+        """
+        agent = self._agent
+        if not agent._plugin_hook_rules:
+            return
+        from ..plugins.hooks import (
+            ClaudeHookPayloadAdapter,
+            PluginHookDispatcher,
+        )
+        cwd = agent.working_directory
+        payload = ClaudeHookPayloadAdapter().build_stop(
+            session_id=agent._session_id,
+            cwd=cwd,
+            last_assistant_message=last_assistant_message or "",
+            stop_hook_active=False,
+            turn_end_reason=turn_end_reason,
+            permission_mode=agent.active_permissions().mode,
+        )
+        dispatcher = PluginHookDispatcher(cwd=cwd)
+        matched = dispatcher.select_matching_rules(
+            "Stop", payload, agent._plugin_hook_rules,
+        )
+        if not matched:
+            return
+        dispatcher.dispatch_stop(payload=payload, rules=matched)
+        try:
+            agent.transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
+                "hook_name": "Stop",
+                "outcome": "allow",
+                "turn_end_reason": turn_end_reason,
+                "at_max_iter": turn_end_reason == "max_iterations",
+                "matched_rule_count": len(matched),
+            }))
+        except Exception:
+            pass
+
+    def _dispatch_pre_compact(
+        self,
+        *,
+        compaction_type: str,
+        reason: str,
+    ) -> None:
+        """PreCompact dispatch — fires before the about-to-mutate
+        compaction site; side-effect only with the same no-emit gate as
+        ``_dispatch_stop``.
+        """
+        agent = self._agent
+        if not agent._plugin_hook_rules:
+            return
+        from ..plugins.hooks import (
+            ClaudeHookPayloadAdapter,
+            PluginHookDispatcher,
+        )
+        cwd = agent.working_directory
+        payload = ClaudeHookPayloadAdapter().build_pre_compact(
+            session_id=agent._session_id,
+            cwd=cwd,
+            compaction_type=compaction_type,
+            reason=reason,
+            permission_mode=agent.active_permissions().mode,
+        )
+        dispatcher = PluginHookDispatcher(cwd=cwd)
+        matched = dispatcher.select_matching_rules(
+            "PreCompact", payload, agent._plugin_hook_rules,
+        )
+        if not matched:
+            return
+        dispatcher.dispatch_pre_compact(payload=payload, rules=matched)
+        try:
+            agent.transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
+                "hook_name": "PreCompact",
+                "outcome": "allow",
+                "compaction_type": compaction_type,
+                "trigger": "auto",
+                "matched_rule_count": len(matched),
+            }))
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------
     # Context-management steps run before each LLM call
     # ------------------------------------------------------------------
@@ -401,6 +516,10 @@ class ChatLoopRunner:
         agent = self._agent
         if not agent.context_manager.needs_microcompaction(messages_with_system):
             return messages_with_system, system_prompt
+        self._dispatch_pre_compact(
+            compaction_type="microcompact",
+            reason="microcompact_threshold",
+        )
         t0 = time.monotonic()
         pre_tokens = agent.context_manager.estimate_tokens(messages_with_system)
         pre_msgs = len(agent.messages)
@@ -427,6 +546,10 @@ class ChatLoopRunner:
         agent = self._agent
         if not agent.context_manager.needs_compression(messages_with_system):
             return messages_with_system, system_prompt
+        self._dispatch_pre_compact(
+            compaction_type="full",
+            reason="compression_threshold",
+        )
         agent.llm.logger.info("Context compression triggered inside loop")
         t0 = time.monotonic()
         pre_tokens = agent.context_manager.estimate_tokens(messages_with_system)
@@ -523,6 +646,10 @@ class ChatLoopRunner:
                 agent.messages.append({"role": "assistant", "content": err_msg})
                 return ChatLoopRunner._LlmOutcome(error_return=err_msg)
             agent.llm.logger.warning(f"Context overflow from API, forcing compression: {e}")
+            self._dispatch_pre_compact(
+                compaction_type="full",
+                reason="api_overflow",
+            )
             t0 = time.monotonic()
             pre_msgs = len(agent.messages)
             agent.messages = agent.context_manager.compress_messages(agent.messages)
@@ -552,6 +679,10 @@ class ChatLoopRunner:
                 if is_context_too_long_error(e2):
                     agent.llm.logger.warning(
                         "Context still too long after compression, keeping minimal history"
+                    )
+                    self._dispatch_pre_compact(
+                        compaction_type="minimal_history",
+                        reason="api_overflow_after_compression",
                     )
                     pre = len(agent.messages)
                     agent.messages = agent.messages[-2:]
