@@ -220,7 +220,7 @@ What this gives you operationally: **you can pin `agentao>=0.4.0,<1.0` in produc
 The harness deliberately doesn't expose:
 
 - Public agent graph / descendants store API
-- Host-facing hooks list/disable API
+- Host-facing hooks list/disable API (rule-author guide: [§5.7 Plugin Hooks](/en/part-5/7-plugin-hooks))
 - Host-facing MCP reload / lifecycle events
 - Local plugin export/import; remote plugin share
 - External session import

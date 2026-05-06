@@ -586,7 +586,7 @@ Each release ships checked-in JSON schema snapshots:
 ### Non-goals (explicitly outside the contract)
 
 - Public agent graph / descendants store API
-- Host-facing hooks list/disable API
+- Host-facing hooks list/disable API (rule-author guide: [§5.7 Plugin Hooks](/en/part-5/7-plugin-hooks))
 - Host-facing MCP reload / lifecycle events
 - Local plugin export/import; remote plugin share
 - External session import

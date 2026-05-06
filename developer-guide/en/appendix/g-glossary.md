@@ -34,6 +34,8 @@ Canonical EN ↔ ZH terms used in this guide. If you find a translation that doe
 | MCP | MCP / Model Context Protocol | Third-party tool server protocol (stdio / SSE) |
 | Sandbox | 沙箱 | macOS `sandbox-exec` profile wrapping the shell tool |
 | Skill activation | 激活技能 | Turning a skill on for the current agent so its prompt text is injected |
+| Plugin Hook | 插件 Hook | Control-plane extension: intercept, inject, or continue at agent lifecycle points (`UserPromptSubmit` / `PreToolUse` / `Stop`, …) — see [§5.7](/en/part-5/7-plugin-hooks) |
+| Hook Rule | Hook 规则 | A single `ParsedHookRule` in `hooks.json` (`event` + `type` + `command|prompt` + optional `matcher`/`timeout`) — see [§5.7.3](/en/part-5/7-plugin-hooks#5-7-3-writing-a-rule) |
 
 ## G.3 ACP terms
 

@@ -34,6 +34,8 @@
 | MCP | MCP / Model Context Protocol | 第三方工具服务器协议（stdio / SSE） |
 | Sandbox | 沙箱 | macOS `sandbox-exec` 对 shell 工具的封装 |
 | Skill activation | 激活技能 | 把技能对当前 agent 打开，让它的提示文本被注入 |
+| Plugin Hook | 插件 Hook | 控制平面扩展：在 agent 生命周期点（`UserPromptSubmit` / `PreToolUse` / `Stop` 等）拦截、注入或续轮——见 [§5.7](/zh/part-5/7-plugin-hooks) |
+| Hook Rule | Hook 规则 | `hooks.json` 中的一条 `ParsedHookRule`（`event` + `type` + `command|prompt` + 可选 `matcher`/`timeout`）——见 [§5.7.3](/zh/part-5/7-plugin-hooks#5-7-3-写一条规则) |
 
 ## G.3 ACP 相关
 

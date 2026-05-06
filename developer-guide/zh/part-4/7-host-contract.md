@@ -220,7 +220,7 @@ snap.loaded_sources   # list[str] —— 来源标签
 Harness 故意不暴露：
 
 - 公开 agent graph / descendants store API
-- 宿主侧的 hooks list / disable API
+- 宿主侧的 hooks list / disable API（规则作者视角见 [§5.7 插件 Hooks](/zh/part-5/7-plugin-hooks)）
 - 宿主侧的 MCP reload / lifecycle 事件
 - 本地插件 export/import；远程插件分享
 - 外部会话 import

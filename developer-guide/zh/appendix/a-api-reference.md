@@ -587,7 +587,7 @@ snap = agent.active_permissions()
 ### 不在合约内（明确不做）
 
 - 公共 agent graph / descendants 存储 API
-- 宿主面 hooks list/disable API
+- 宿主面 hooks list/disable API（规则作者视角见 [§5.7 插件 Hooks](/zh/part-5/7-plugin-hooks)）
 - 宿主面 MCP reload / 生命周期事件
 - 本地 plugin export/import；远程 plugin 共享
 - 外部会话 import
