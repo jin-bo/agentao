@@ -1,6 +1,6 @@
-# Part 5 · Teach the Agent Your Business
+# Part 5 · Extend Agent Behavior
 
-The first six sections form Agentao's **capability interface** — extend along them and you can shape the agent into an assistant that genuinely understands your domain. The seventh section adds a different axis: the **control plane** — intercepting at lifecycle points the agent already passes through.
+This part has two axes: the **capability plane** gives the agent business capabilities, knowledge, and rules; the **control plane** lets you intervene at lifecycle points the agent already passes through. The first six sections are capability-plane extensions. The seventh is the control plane.
 
 ::: info Key terms in this Part
 - **Tool subclass** — the canonical way to expose a business capability: `name` / `description` / `parameters` / `execute()` · [§5.1](/en/part-5/1-custom-tools), [G.2](/en/appendix/g-glossary#g-2-extension-points)
@@ -26,17 +26,16 @@ The first six sections form Agentao's **capability interface** — extend along 
 
 - [**5.7 Plugin Hooks**](./7-plugin-hooks) — `hooks.json` rules; injection and interception at `UserPromptSubmit` / `PreToolUse` / `Stop` / `PreCompact` and other lifecycle points
 
-## How to choose
+## Read by task
 
-| Need | Best extension point |
-|------|---------------------|
-| Agent needs to call your business API | 5.1 Tools |
-| Agent must follow company conventions | 5.2 Skills + 5.6 AGENTAO.md |
-| Integrate GitHub / DB / Slack / etc. | 5.3 MCP |
-| Control "what is allowed, what isn't" | 5.4 Permissions |
-| Remember user preferences, project facts | 5.5 Memory |
-| Inject project-wide hard constraints | 5.6 AGENTAO.md |
-| Intercept / audit / continue at lifecycle points | 5.7 Hooks |
+| What you are building | Recommended path | You should be able to |
+|-----------------------|------------------|------------------------|
+| Let the agent call your business API | [5.1](./1-custom-tools) → [5.4](./4-permissions) | Write a Tool and add confirmation or permission boundaries for side effects |
+| Make the agent follow team conventions | [5.2](./2-skills) → [5.6](./6-system-prompt) | Separate on-demand Skills from project-wide prompt instructions |
+| Integrate an existing service ecosystem | [5.3](./3-mcp) → [5.4](./4-permissions) | Connect MCP while constraining tool visibility and execution scope |
+| Remember long-term facts or user preferences | [5.5](./5-memory) → [6.4](/en/part-6/4-multi-tenant-fs) | Design memory scope, cleanup, and tenant boundaries |
+| Intercept, inject, or continue at lifecycle points | [5.7](./7-plugin-hooks) → [4.7](/en/part-4/7-host-contract) | Write `hooks.json` and know when stable event streams are the right audit surface |
+| Choose between Tool, Skill, MCP, and Hook | [5.1](./1-custom-tools) → [5.2](./2-skills) → [5.3](./3-mcp) → [5.7](./7-plugin-hooks) | Decide by capability, instruction, external ecosystem, and lifecycle intervention |
 
 ## Three pragmatic rules
 

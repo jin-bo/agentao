@@ -238,4 +238,4 @@ AGENTAO.md is a project file — it may land in git, in memory, or in logs. **Ne
 - The other 8 — date, working directory, available tools/skills catalog, memory recall, todos, etc. — are runtime-injected and should not be overridden.
 - Keep `AGENTAO.md` short and absolute ("never run X", "always use Y format") — long preambles dilute attention.
 
-→ [Part 6 · Security & Sandbox](/en/part-6/) (coming soon)
+→ [Part 6 · Security & Production](/en/part-6/)

@@ -262,10 +262,10 @@ You now have:
 
 - Two embedding paths ([Part 2](/en/part-2/) SDK, [Part 3](/en/part-3/) ACP)
 - Event + UI integration ([Part 4](/en/part-4/))
-- Six extension points ([Part 5](/en/part-5/))
+- Extend agent behavior: capability plane + control plane ([Part 5](/en/part-5/))
 - Security + production deployment ([Part 6](/en/part-6/))
 - Six real-world blueprints (this part)
 
 The appendices — full API reference, config key index, ACP message fields, error codes, migration notes, FAQ, glossary — are what you'll reach for as you build. They follow.
 
-→ Appendices (coming soon)
+→ [Appendices](/en/appendix/)

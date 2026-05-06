@@ -270,4 +270,4 @@ Q: I need to react to agent events. Which surface?
 → Schemas: [`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json)
 → Design rationale: [`docs/design/embedded-host-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-host-contract.md)
 
-→ Next: [Part 5 · Extensibility](/en/part-5/)
+→ Next: [Part 5 · Extend Agent Behavior](/en/part-5/)

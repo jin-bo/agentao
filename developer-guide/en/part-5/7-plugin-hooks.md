@@ -6,11 +6,11 @@
 > - **Authoring a rule**: `hooks.json` fields, command vs. prompt, per-event constraints
 > - **Verdicts**: the four attachment types, `UserPromptSubmitResult` / `StopHookResult`, and the `matched_rule_count == 0` silent-emit rule
 
-§5.1–§5.6 all live on the capability plane. This section adds the seventh axis: the control plane.
+§5.1–§5.6 all live on the capability plane. This section switches to the other axis: the control plane.
 
 ## 5.7.1 The problem this solves
 
-The previous six extension points (Tool / Skill / MCP / Permission / Memory / SystemPrompt) all answer the **same** question:
+The first six capability-plane sections (Tool / Skill / MCP / Permission / Memory / SystemPrompt) all answer the **same** question:
 
 > "How do I teach the agent a new capability?"
 

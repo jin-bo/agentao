@@ -25,6 +25,16 @@ Agent 运行时与你的用户界面之间的唯一接口就是 **Transport**。
 - [2.2 构造器完整参数表](/zh/part-2/2-constructor-reference) — `transport` 参数语义
 - [2.3 生命周期管理](/zh/part-2/3-lifecycle) — `chat()` 的阻塞特性
 
+## 按任务阅读
+
+| 你要做什么 | 推荐路径 | 读完应能完成 |
+|-----------|---------|-------------|
+| 把 Agent 输出流接进 Web / App UI | [4.1](./1-transport-protocol) → [4.3](./3-sdk-transport) → [4.4](./4-streaming-ui) | 选定 Transport 形态，把 token、工具状态和错误稳定推到前端 |
+| 做工具确认、审批或人工介入 | [4.1](./1-transport-protocol) → [4.5](./5-tool-confirmation-ui) → [5.4](/zh/part-5/4-permissions) | 分清 UI 确认、权限规则和无人值守策略 |
+| 接审计、计费或 SIEM 流水线 | [4.7](./7-host-contract) → [6.6](/zh/part-6/6-observability) | 使用稳定 HostEvent，而不是依赖内部 AgentEvent |
+| 查某个事件字段或调试 UI 状态 | [4.2](./2-agent-events) → [4.7](./7-host-contract) | 知道哪些事件可用于调试，哪些 API 可用于生产 |
+| 避免 Agent 卡死或无限循环 | [4.6](./6-max-iterations) → [2.6](/zh/part-2/6-cancellation-timeouts) | 设计最大轮次、超时和兜底回复 |
+
 ## 心智模型
 
 > Transport 是你的"UI 代言人"——

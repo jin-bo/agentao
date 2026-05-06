@@ -219,4 +219,4 @@ async def end_session(session_id: str):
 - `clear_history()` 只清 `messages`；**记忆 DB 故意保留**。
 - 用 `set_provider()` / `set_model()` 运行时切换模型；历史不变。
 
-→ 更多参数与扩展：[第 5 部分 · 扩展点](/zh/part-5/)（撰写中）
+→ 更多参数与扩展：[第 5 部分 · 扩展 Agent 行为](/zh/part-5/)

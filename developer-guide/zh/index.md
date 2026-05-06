@@ -42,6 +42,16 @@ features:
     details: "`agentao.host` 是稳定的、附 schema 快照的宿主 API。审计 / 可观测 / 计费流水线就用它。"
     link: /zh/part-4/7-host-contract
     linkText: Harness 合约 →
+  - icon: 🧭
+    title: 我要在生命周期点介入
+    details: 用插件 Hooks 在 UserPromptSubmit / PreToolUse / Stop / PreCompact 等节点审计、注入或续轮。
+    link: /zh/part-5/7-plugin-hooks
+    linkText: 插件 Hooks →
+  - icon: 🗺️
+    title: 我要看完整集成样板
+    details: SaaS、IDE、工单、数据工作台、批处理、微信机器人六个端到端蓝图。
+    link: /zh/part-7/
+    linkText: 集成蓝图 →
   - icon: 🆘
     title: 出问题了
     details: 按症状索引的 FAQ、错误码参考、版本迁移指南。
@@ -62,8 +72,10 @@ Agentao 是一个**可嵌入的 Python Agent 运行时**——`from agentao impo
 | 只想先试试 | [1.4 Hello](/zh/part-1/4-hello-agentao) → [1.2 核心概念](/zh/part-1/2-core-concepts) |
 | Python 后端工程师，要上线一个功能 | [1.4](/zh/part-1/4-hello-agentao) → [第 2 部分](/zh/part-2/) → [5.1 自定义工具](/zh/part-5/1-custom-tools) → [第 6 部分](/zh/part-6/) |
 | 做 IDE / 编辑器插件 | [1.3 集成模式](/zh/part-1/3-integration-modes) → [第 3 部分 · ACP](/zh/part-3/) → [第 4 部分 · 事件](/zh/part-4/) |
+| 做平台扩展 / 审计自动化 | [第 5 部分 · 扩展 Agent 行为](/zh/part-5/) → [5.7 插件 Hooks](/zh/part-5/7-plugin-hooks) → [4.7 Harness 合约](/zh/part-4/7-host-contract) |
+| 已经有明确产品形态 | [第 7 部分 · 集成蓝图](/zh/part-7/) → 对应蓝图 → 回链参考章节 |
 | DevOps / SRE | [1.5 运行环境](/zh/part-1/5-requirements) → [第 6 部分](/zh/part-6/) |
-| 安全审计 | [第 6 部分 · 防御](/zh/part-6/) + [附录 D · 错误码](/zh/appendix/d-error-codes) |
+| 安全审计 | [第 6 部分 · 防御](/zh/part-6/) → [5.4 权限引擎](/zh/part-5/4-permissions) → [6.5 密钥与注入](/zh/part-6/5-secrets-injection) |
 
 Prefer English? → [English version](/en/)
 

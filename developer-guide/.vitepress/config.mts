@@ -19,6 +19,7 @@ const zhSidebar = [
     text: '第一部分 · 起步与心智模型',
     collapsed: false,
     items: [
+      { text: '概述', link: '/zh/part-1/' },
       { text: '1.1 Agentao 是什么', link: '/zh/part-1/1-what-is-agentao' },
       { text: '1.2 核心概念', link: '/zh/part-1/2-core-concepts' },
       { text: '1.3 两种集成模式', link: '/zh/part-1/3-integration-modes' },
@@ -67,7 +68,7 @@ const zhSidebar = [
     ],
   },
   {
-    text: '第五部分 · 扩展点',
+    text: '第五部分 · 扩展 Agent 行为',
     collapsed: true,
     items: [
       { text: '概述', link: '/zh/part-5/' },
@@ -77,6 +78,7 @@ const zhSidebar = [
       { text: '5.4 权限引擎', link: '/zh/part-5/4-permissions' },
       { text: '5.5 记忆系统', link: '/zh/part-5/5-memory' },
       { text: '5.6 系统提示定制', link: '/zh/part-5/6-system-prompt' },
+      { text: '5.7 插件 Hooks', link: '/zh/part-5/7-plugin-hooks' },
     ],
   },
   {
@@ -135,6 +137,7 @@ const enSidebar = [
     text: 'Part 1 · Getting Started',
     collapsed: false,
     items: [
+      { text: 'Overview', link: '/en/part-1/' },
       { text: '1.1 What is Agentao', link: '/en/part-1/1-what-is-agentao' },
       { text: '1.2 Core Concepts', link: '/en/part-1/2-core-concepts' },
       { text: '1.3 Integration Modes', link: '/en/part-1/3-integration-modes' },
@@ -183,7 +186,7 @@ const enSidebar = [
     ],
   },
   {
-    text: 'Part 5 · Extensibility',
+    text: 'Part 5 · Extend Agent Behavior',
     collapsed: true,
     items: [
       { text: 'Overview', link: '/en/part-5/' },
@@ -193,6 +196,7 @@ const enSidebar = [
       { text: '5.4 Permission Engine', link: '/en/part-5/4-permissions' },
       { text: '5.5 Memory System', link: '/en/part-5/5-memory' },
       { text: '5.6 System Prompt', link: '/en/part-5/6-system-prompt' },
+      { text: '5.7 Plugin Hooks', link: '/en/part-5/7-plugin-hooks' },
     ],
   },
   {
@@ -275,15 +279,17 @@ export default withMermaid(defineConfig({
       themeConfig: {
         nav: [
           { text: '首页', link: '/zh/' },
-          { text: '第一部分', link: '/zh/part-1/1-what-is-agentao' },
+          { text: '第一部分', link: '/zh/part-1/' },
           { text: 'Recipes', link: '/zh/recipes/' },
           {
             text: '按角色阅读',
             items: [
               { text: '后端工程师 · Python 嵌入', link: '/zh/part-2/' },
               { text: 'IDE 插件作者 · ACP', link: '/zh/part-3/' },
+              { text: '平台扩展 · Hooks 与审计', link: '/zh/part-5/7-plugin-hooks' },
+              { text: '产品集成 · 六个蓝图', link: '/zh/part-7/' },
               { text: 'DevOps · 生产部署', link: '/zh/part-6/' },
-              { text: '安全审计 · 沙箱与权限', link: '/zh/part-6/1-defense-model' },
+              { text: '安全审计 · 沙箱与权限', link: '/zh/part-6/' },
             ],
           },
           { text: '附录', link: '/zh/appendix/' },
@@ -308,15 +314,17 @@ export default withMermaid(defineConfig({
       themeConfig: {
         nav: [
           { text: 'Home', link: '/en/' },
-          { text: 'Part 1', link: '/en/part-1/1-what-is-agentao' },
+          { text: 'Part 1', link: '/en/part-1/' },
           { text: 'Recipes', link: '/en/recipes/' },
           {
             text: 'By role',
             items: [
               { text: 'Backend engineer · Python embed', link: '/en/part-2/' },
               { text: 'IDE plugin author · ACP', link: '/en/part-3/' },
+              { text: 'Platform extension · hooks & audit', link: '/en/part-5/7-plugin-hooks' },
+              { text: 'Product integration · six blueprints', link: '/en/part-7/' },
               { text: 'DevOps · Production', link: '/en/part-6/' },
-              { text: 'Security review · sandbox & perms', link: '/en/part-6/1-defense-model' },
+              { text: 'Security review · sandbox & perms', link: '/en/part-6/' },
             ],
           },
           { text: 'Appendix', link: '/en/appendix/' },

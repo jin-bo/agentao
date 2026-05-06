@@ -6,11 +6,11 @@
 > - **写一条规则**：`hooks.json` 字段、command vs prompt、per-event 限制
 > - **裁决**：四种附件、`UserPromptSubmitResult` 与 `StopHookResult`、`matched_rule_count == 0` 的静默规则
 
-§5.1–§5.6 都在能力平面上做文章。这一节加上第七个轴：控制平面。
+§5.1–§5.6 都在能力平面上做文章。这一节换到另一条轴：控制平面。
 
 ## 5.7.1 它解决什么问题
 
-前六节列出的扩展点（Tool / Skill / MCP / Permission / Memory / SystemPrompt）都在回答**同一个问题**：
+前六节的能力平面（Tool / Skill / MCP / Permission / Memory / SystemPrompt）都在回答**同一个问题**：
 
 > "怎么给 agent 加新能力？"
 

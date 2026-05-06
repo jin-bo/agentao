@@ -8,6 +8,14 @@
 
 → **[5.1 Custom Tools](/en/part-5/1-custom-tools)** — `Tool` subclass with name / description / parameters / execute; production template at the end. **TL;DR**: return a JSON string, set `requires_confirmation=True` for side effects, write the description as if for the LLM.
 
+### …choose between Tool, Skill, MCP, Permission, and Hook
+
+→ **[Part 5 · Extend Agent Behavior](/en/part-5/)** — start with the "Read by task" table: business APIs use Tools, LLM-side conventions use Skills / AGENTAO.md, existing external services use MCP, safety boundaries use Permissions, lifecycle interception / audit / continuation use Hooks.
+
+### …audit, intercept, or continue at lifecycle points
+
+→ **[5.7 Plugin Hooks](/en/part-5/7-plugin-hooks)** — `hooks.json` rules, 8 events, command vs. prompt, `StopHookResult`, and the `matched_rule_count == 0` silent rule. Event payload reference lives in **[4.2 AgentEvent](/en/part-4/2-agent-events)**.
+
 ### …stream agent output to a browser
 
 → **[4.4 Streaming UI](/en/part-4/4-streaming-ui)** — SSE and WebSocket templates, thread / event-loop bridge with `loop.call_soon_threadsafe`, keep-alive frames. Pair with **[2.7 FastAPI / Flask](/en/part-2/7-fastapi-flask-embed)** for a copy-paste production endpoint.

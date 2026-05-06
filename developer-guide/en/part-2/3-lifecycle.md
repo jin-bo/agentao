@@ -218,4 +218,4 @@ For production you still need TTL eviction, memory caps, crash recovery — cove
 - `clear_history()` resets `messages` only; **memory DB persists** by design.
 - Swap models at runtime via `set_provider()` / `set_model()`; history continues unchanged.
 
-→ More parameters and extensibility: [Part 5 · Extensibility](/en/part-5/) (coming soon)
+→ More parameters and extensibility: [Part 5 · Extend Agent Behavior](/en/part-5/)

@@ -170,7 +170,7 @@ agent.chat("干 20 件事", max_iterations=20)
 
 - 计**工具回路**数，不是墙钟时间
 - 默认 100——已经宽松了；如果按 token 付费请调低
-- 超过时触发 Transport 的 `on_max_iterations()`，返回 `True` 让 agent 继续，`False` 停。参见 [Part 4](/zh/part-4/)（待上线）
+- 超过时触发 Transport 的 `on_max_iterations()`，返回 `True` 让 agent 继续，`False` 停。参见 [4.6 最大迭代数兜底策略](/zh/part-4/6-max-iterations)。
 
 按次付费的聊天 UI，`max_iterations=20-30` 是不错的默认——一轮里用户很少需要 100 次工具调用，一个失控回路按 \$0.50/轮 很快就烧掉很多钱。
 

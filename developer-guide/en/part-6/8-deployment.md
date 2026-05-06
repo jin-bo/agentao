@@ -229,4 +229,4 @@ Clients reopen sessions via `session/load` (ACP) or your SDK-side `add_message()
 - Canary by **dimension** — model, skills, permission rules each get their own rollout knob. Don't bundle them.
 - Rollback drill: keep N-1 model + N-1 skill bundle hot-swappable in seconds; the LLM tier is your most volatile dependency.
 
-→ [Part 7 · Integration Blueprints](/en/part-7/) (coming soon)
+→ [Part 7 · Integration Blueprints](/en/part-7/)

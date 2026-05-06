@@ -1,6 +1,6 @@
-# 第五部分 · 让 Agent 理解你的业务
+# 第五部分 · 扩展 Agent 行为
 
-前六节构成 Agentao 的**业务化能力接口**——按它们扩展，你能把 Agent 调教成真正"懂你业务"的智能助理。第七节换一条轴：**控制平面**——在 agent 走到关键步骤时介入。
+这一部分分成两条轴：**能力平面**让 Agent 获得业务能力、知识和规则；**控制平面**让你在 Agent 走到关键生命周期点时介入。前六节是能力平面，第七节是控制平面。
 
 ::: info 本部分关键词
 - **Tool 子类** — 暴露业务能力的标准形式：`name` / `description` / `parameters` / `execute()` · [§5.1](/zh/part-5/1-custom-tools)、[G.2](/zh/appendix/g-glossary#g-2-扩展点)
@@ -26,17 +26,16 @@
 
 - [**5.7 插件 Hooks**](./7-plugin-hooks) — `hooks.json` 规则；UserPromptSubmit / PreToolUse / Stop / PreCompact 等生命周期点的注入与拦截
 
-## 如何挑选
+## 按任务阅读
 
-| 你的需求 | 最佳扩展点 |
-|---------|----------|
-| 让 Agent 能调用你的业务 API | 5.1 工具 |
-| 让 Agent 按公司规范说话/做事 | 5.2 技能 + 5.6 AGENTAO.md |
-| 接入 GitHub / 数据库 / Slack 等现成服务 | 5.3 MCP |
-| 控制"什么能做、什么不行" | 5.4 权限 |
-| 记住用户偏好、项目事实 | 5.5 记忆 |
-| 注入项目级硬约束 | 5.6 AGENTAO.md |
-| 在生命周期点拦截 / 审计 / 续轮 | 5.7 Hooks |
+| 你要做什么 | 推荐路径 | 读完应能完成 |
+|-----------|---------|-------------|
+| 让 Agent 调你的业务 API | [5.1](./1-custom-tools) → [5.4](./4-permissions) | 写一个 Tool，并给副作用能力加确认或权限边界 |
+| 让 Agent 遵守团队规范 | [5.2](./2-skills) → [5.6](./6-system-prompt) | 区分“按需触发的技能”和“全局生效的项目提示” |
+| 接入已有服务生态 | [5.3](./3-mcp) → [5.4](./4-permissions) | 接入 MCP，同时限制工具可见性和可执行范围 |
+| 记住长期事实或用户偏好 | [5.5](./5-memory) → [6.4](/zh/part-6/4-multi-tenant-fs) | 设计记忆作用域、清理策略和租户边界 |
+| 在生命周期点拦截、注入或续轮 | [5.7](./7-plugin-hooks) → [4.7](/zh/part-4/7-host-contract) | 写 `hooks.json`，并知道何时该用稳定事件流做审计 |
+| 不确定该选 Tool、Skill、MCP 还是 Hook | [5.1](./1-custom-tools) → [5.2](./2-skills) → [5.3](./3-mcp) → [5.7](./7-plugin-hooks) | 按能力、指令、外部生态、生命周期介入四类做取舍 |
 
 ## 三条落地建议
 

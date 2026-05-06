@@ -8,6 +8,14 @@
 
 → **[5.1 自定义工具](/zh/part-5/1-custom-tools)** — `Tool` 子类的 name / description / parameters / execute，文末有完整生产模板。**要点**：返回 JSON 字符串、有副作用的设 `requires_confirmation=True`、description 按 LLM 第一视角写。
 
+### …不知道该用 Tool、Skill、MCP、Permission 还是 Hook
+
+→ **[第 5 部分 · 扩展 Agent 行为](/zh/part-5/)** — 先用“按任务阅读”表判断：业务 API 用 Tool，LLM 侧操作规范用 Skill / AGENTAO.md，现成外部服务用 MCP，安全边界用 Permission，生命周期拦截 / 审计 / 续轮用 Hook。
+
+### …在生命周期点审计、拦截或给 Stop 续轮
+
+→ **[5.7 插件 Hooks](/zh/part-5/7-plugin-hooks)** — `hooks.json` 规则、8 个事件、command vs prompt、`StopHookResult`、`matched_rule_count == 0` 静默规则。事件 payload 参考见 **[4.2 AgentEvent](/zh/part-4/2-agent-events)**。
+
 ### …把 Agent 输出流式推到浏览器
 
 → **[4.4 构建流式 UI](/zh/part-4/4-streaming-ui)** — SSE 和 WebSocket 双模板、用 `loop.call_soon_threadsafe` 跨线程桥接、keep-alive 帧。配合 **[2.7 FastAPI / Flask](/zh/part-2/7-fastapi-flask-embed)** 拿到可直接复制的生产 endpoint。

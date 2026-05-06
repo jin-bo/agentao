@@ -270,4 +270,4 @@ Q: 我要消费 Agent 事件，用哪个表面？
 → Schema：[`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json)
 → 设计文档：[`docs/design/embedded-host-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-host-contract.md)
 
-→ 下一节：[第 5 部分 · 扩展点](/zh/part-5/)
+→ 下一节：[第 5 部分 · 扩展 Agent 行为](/zh/part-5/)

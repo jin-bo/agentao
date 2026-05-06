@@ -181,7 +181,7 @@ The `PermissionEngine` makes a fast decision from JSON rules. `confirm_tool` is 
 - Clearly-dangerous actions (disallowed commands) are blocked silently
 - Edge cases (write outside project, fetch unknown domain) reach `confirm_tool`
 
-Permission engine details: [Part 5.4](/en/part-5/) (coming soon).
+Permission engine details: [5.4 Permission Engine](/en/part-5/4-permissions).
 
 ## Preview events & UI priming
 

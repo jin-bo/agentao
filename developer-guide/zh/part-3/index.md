@@ -19,6 +19,15 @@
 - [**3.4 反向调用外部 ACP Agent**](./4-reverse-acp-call) — `ACPManager.prompt_once()`、委派子 agent、`.agentao/acp.json`
 - [**3.5 Zed / IDE 集成范例**](./5-zed-ide-integration) — Zed 配置、线协议轨迹、多 workspace、升级路径
 
+## 按任务阅读
+
+| 你现在要做什么 | 最短路径 |
+|---------------|----------|
+| 先确认 ACP 是否适合 | [3.1 ACP 协议速览](./1-acp-tour) → [1.3 两种集成模式](/zh/part-1/3-integration-modes) |
+| 手写一个最小 ACP Client | [3.2 启动命令与最小宿主](./2-agentao-as-server) |
+| 做生产级 IDE / 服务宿主 | [3.3 宿主架构](./3-host-client-architecture) → [3.5 IDE 集成](./5-zed-ide-integration) |
+| 查协议字段 / 错误码 | [附录 C · ACP 消息字段参考](/zh/appendix/c-acp-messages) 和 [附录 D · 错误码](/zh/appendix/d-error-codes) |
+
 ## 开始之前
 
 - [1.3 两种集成模式](/zh/part-1/3-integration-modes) — 确认 ACP 适合你的宿主

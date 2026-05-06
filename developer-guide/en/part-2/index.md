@@ -21,6 +21,15 @@ Five vocabulary items you'll see throughout — bookmark [Appendix G](/en/append
 - [**2.6 Cancellation & timeouts**](./6-cancellation-timeouts) — `CancellationToken`, disconnect wiring, hard timeouts, `max_iterations`
 - [**2.7 FastAPI / Flask embedding**](./7-fastapi-flask-embed) — production templates with SSE, session pool, auth, cancellation
 
+## Read by task
+
+| What you're doing now | Shortest path |
+|-----------------------|---------------|
+| Embed the Python SDK in a script | [2.1 Install & Import](./1-install-import) → [2.2 Minimum constructor params](./2-constructor-reference) → [2.3 Standard lifecycle](./3-lifecycle) |
+| Wire it into a FastAPI / Flask product | [2.7 Production template](./7-fastapi-flask-embed) → [2.6 Cancellation & timeouts](./6-cancellation-timeouts) → [2.4 Session state](./4-session-state) |
+| Build multi-tenant / multi-session pooling | [2.2 Constructor params](./2-constructor-reference) → [2.4 Session state](./4-session-state) → [2.7 Session-pool template](./7-fastapi-flask-embed) |
+| Look up a specific API | [2.2 Constructor Reference](./2-constructor-reference) or [Appendix A · API Reference](/en/appendix/a-api-reference) |
+
 ## Before you start
 
 Make sure you've read:

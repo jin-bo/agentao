@@ -172,7 +172,7 @@ agent.chat("Do 20 things", max_iterations=20)
 
 - Counts **tool-call rounds**, not elapsed time
 - Default is 100 — that's already generous; lower it for cost control
-- On exceeding: Transport's `on_max_iterations()` fires (returning `True` lets the agent continue, `False` stops). See [Part 4](/en/part-4/) (coming soon) for the hook.
+- On exceeding: Transport's `on_max_iterations()` fires (returning `True` lets the agent continue, `False` stops). See [4.6 Max-Iterations Fallback](/en/part-4/6-max-iterations).
 
 If you're paying per token, `max_iterations=20-30` is a good default for a chat UI — your users rarely need 100 tool rounds in one turn, and a runaway loop at $0.50/round adds up fast.
 

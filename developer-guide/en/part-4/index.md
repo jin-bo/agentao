@@ -25,6 +25,16 @@ The only interface between the agent runtime and your UI is the **Transport**. T
 - [2.2 Constructor Reference](/en/part-2/2-constructor-reference) — semantics of the `transport` parameter
 - [2.3 Lifecycle](/en/part-2/3-lifecycle) — `chat()` blocking semantics
 
+## Read by task
+
+| What you are building | Recommended path | You should be able to |
+|-----------------------|------------------|------------------------|
+| Stream agent output into a web or app UI | [4.1](./1-transport-protocol) → [4.3](./3-sdk-transport) → [4.4](./4-streaming-ui) | Choose a Transport shape and push tokens, tool states, and errors to the frontend |
+| Build tool confirmation, approval, or human-in-the-loop flows | [4.1](./1-transport-protocol) → [4.5](./5-tool-confirmation-ui) → [5.4](/en/part-5/4-permissions) | Separate UI confirmation, permission rules, and unattended policy |
+| Feed audit, billing, or SIEM pipelines | [4.7](./7-host-contract) → [6.6](/en/part-6/6-observability) | Use stable HostEvent data instead of internal AgentEvent details |
+| Look up an event field or debug UI state | [4.2](./2-agent-events) → [4.7](./7-host-contract) | Know which events are for debugging and which APIs are production-safe |
+| Prevent stuck agents or infinite loops | [4.6](./6-max-iterations) → [2.6](/en/part-2/6-cancellation-timeouts) | Design max-iteration, timeout, and fallback behavior |
+
 ## Mental model
 
 > Transport is your "UI spokesperson" —

@@ -374,7 +374,7 @@ For a new project, use FastAPI. For an existing Flask monolith, take the Flask t
 
 - Persist messages across restarts: [2.4 session state](./4-session-state)
 - Swap models at runtime: [2.5 runtime LLM switch](./5-runtime-llm-switch)
-- Wire the SSE stream into a React UI: [Part 4](/en/part-4/) (coming soon)
+- Wire the SSE stream into a React UI: [4.4 Streaming UI](/en/part-4/4-streaming-ui)
 - Production concerns (observability, rate-limiting, sandboxing): [Part 6](/en/part-6/) and [Part 7](/en/part-7/)
 
 ## TL;DR

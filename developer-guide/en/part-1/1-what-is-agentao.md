@@ -65,9 +65,9 @@ You'll see the word **harness** in places — it refers to the runtime skeleton 
 - **Part 2**: Python in-process embedding (shortest path)
 - **Part 3**: ACP protocol for non-Python hosts
 - **Part 4**: Event layer & UI integration (streaming, confirm, ask)
-- **Part 5**: Six extension points — make Agentao speak **your** business
-- **Parts 6 – 7**: Security and production deployment
-- **Part 8**: Five cookbook blueprints
+- **Part 5**: Extend agent behavior across the capability plane and control plane
+- **Part 6**: Security and production deployment
+- **Part 7**: Six cookbook blueprints
 
 ## TL;DR
 

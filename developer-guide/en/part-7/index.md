@@ -1,6 +1,6 @@
 # Part 7 · Integration Blueprints
 
-The first six parts are a reference. This part is a **cookbook** — five end-to-end blueprints that weave sandbox, permission, event, and skill into real customer scenarios.
+The first six parts are a reference. This part is a **cookbook** — six end-to-end blueprints that weave sandbox, permission, event, and skill into real customer scenarios.
 
 Each blueprint answers the same four questions:
 
@@ -32,11 +32,22 @@ Each blueprint answers the same four questions:
 ## How to read this part
 
 - **If you already picked your scenario**, jump straight to that section.
-- **If you're undecided**, 7.1 covers the most common case (in-product assistant) — the other four are specializations.
+- **If you're undecided**, 7.1 covers the most common case (in-product assistant) — the other five are specializations.
 - Every blueprint links back to the relevant reference sections so you can drill down when needed.
+
+## Choose by product shape
+
+| Product you are building | Start with | Why |
+|--------------------------|------------|-----|
+| Chat assistant inside a SaaS page | [7.1](./1-saas-assistant) | Covers the main path: web UI, FastAPI, tools, and permissions |
+| IDE, editor, or desktop host | [7.2](./2-ide-plugin) | ACP, stdio, permission requests, and session loading are the key differences |
+| Queue-driven background automation | [7.3](./3-ticket-automation) | Focuses on idempotency, retries, CRM tools, and unattended policy |
+| Analyst workbench or notebook-like product | [7.4](./4-data-workbench) | Focuses on shell, sandboxing, file isolation, and analysis skills |
+| Nightly jobs, reporting, or offline processing | [7.5](./5-batch-scheduler) | Focuses on `prompt_once`, scheduling, budgets, and failure handling |
+| IM / WeChat / enterprise messaging bot | [7.6](./6-wechat-bot) | Focuses on long polling, contact-scoped permissions, and per-message isolation |
 
 ## Runnable code
 
-All five blueprints ship as self-contained projects inside the main repo at [`examples/`](https://github.com/jin-bo/agentao/tree/main/examples) — each subdirectory (`saas-assistant/`, `ide-plugin-ts/`, `ticket-automation/`, `data-workbench/`, `batch-scheduler/`) is a standalone `uv run` / `npm run` project. Every blueprint page below links to its matching subdirectory.
+All six blueprints ship as self-contained projects inside the main repo at [`examples/`](https://github.com/jin-bo/agentao/tree/main/examples) — each subdirectory (`saas-assistant/`, `ide-plugin-ts/`, `ticket-automation/`, `data-workbench/`, `batch-scheduler/`, `wechat-bot/`) is a standalone `uv run` / `npm run` project. Every blueprint page below links to its matching subdirectory.
 
 → [Start with 7.1 SaaS Assistant →](./1-saas-assistant)

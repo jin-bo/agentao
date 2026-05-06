@@ -373,7 +373,7 @@ uv run gunicorn --worker-class gthread --threads 8 --workers 2 \
 
 - 跨重启持久化消息：[2.4 会话状态](./4-session-state)
 - 运行时切换模型：[2.5 运行时切换 LLM](./5-runtime-llm-switch)
-- 把 SSE 流接到 React UI：[Part 4](/zh/part-4/)（待上线）
+- 把 SSE 流接到 React UI：[4.4 构建流式 UI](/zh/part-4/4-streaming-ui)
 - 生产关切（观测、限流、沙箱）：[Part 6](/zh/part-6/) 和 [Part 7](/zh/part-7/)
 
 ## TL;DR

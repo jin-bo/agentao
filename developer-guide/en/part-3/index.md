@@ -19,6 +19,15 @@ Wire-level vocabulary you'll see throughout — full glossary in [Appendix G.3](
 - [**3.4 Reverse: calling external ACP agents**](./4-reverse-acp-call) — `ACPManager.prompt_once()`, delegating sub-agents, `.agentao/acp.json`
 - [**3.5 Zed / IDE integration walkthrough**](./5-zed-ide-integration) — Zed config, wire trace, multi-workspace, upgrade path
 
+## Read by task
+
+| What you're doing now | Shortest path |
+|-----------------------|---------------|
+| Decide whether ACP fits | [3.1 ACP Protocol Tour](./1-acp-tour) → [1.3 Integration Modes](/en/part-1/3-integration-modes) |
+| Hand-write a minimal ACP client | [3.2 Launch command and minimal host](./2-agentao-as-server) |
+| Build a production IDE / service host | [3.3 Host architecture](./3-host-client-architecture) → [3.5 IDE integration](./5-zed-ide-integration) |
+| Look up protocol fields / errors | [Appendix C · ACP message fields](/en/appendix/c-acp-messages) and [Appendix D · Error codes](/en/appendix/d-error-codes) |
+
 ## Before you start
 
 - [1.3 Integration Modes](/en/part-1/3-integration-modes) — confirm ACP is the right fit

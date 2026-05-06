@@ -378,7 +378,7 @@ cli.call("session/prompt", {
 })
 ```
 
-Production-grade patterns (error handling, UI bridging, timeouts) live in [3.3](#) (coming soon).
+Production-grade patterns (error handling, UI bridging, timeouts) live in [3.3 Host Client Architecture](./3-host-client-architecture).
 
 ## Key source locations
 
@@ -391,4 +391,4 @@ Production-grade patterns (error handling, UI bridging, timeouts) live in [3.3](
 | Session creation | `agentao/acp/session_new.py` |
 | Prompt handling | `agentao/acp/session_prompt.py` |
 
-→ [Part 4 · Event Layer & UI Integration](/en/part-4/) (coming soon)
+→ [Part 4 · Event Layer & UI Integration](/en/part-4/)

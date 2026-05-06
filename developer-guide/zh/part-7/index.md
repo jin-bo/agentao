@@ -1,6 +1,6 @@
 # 第七部分 · 典型集成蓝图
 
-前六部分是参考手册，这一部分是**实用蓝图**——把沙箱、权限、事件、技能等能力编织成五个真实客户场景。
+前六部分是参考手册，这一部分是**实用蓝图**——把沙箱、权限、事件、技能等能力编织成六个真实客户场景。
 
 每个蓝图都回答同样的四个问题：
 
@@ -32,11 +32,22 @@
 ## 如何阅读本部分
 
 - **场景已经明确**：直接跳到对应的蓝图
-- **还在犹豫**：7.1 是最典型的情形（内嵌助手），其余四种是特化
+- **还在犹豫**：7.1 是最典型的情形（内嵌助手），其余五种是特化
 - 每个蓝图都会回链到相关参考章节，方便你按需下钻
+
+## 按产品形态选择
+
+| 你正在做的产品 | 先读 | 为什么 |
+|---------------|------|--------|
+| SaaS 页面里的对话助手 | [7.1](./1-saas-assistant) | 覆盖 Web UI、FastAPI、工具和权限的主路径 |
+| IDE、编辑器或桌面宿主 | [7.2](./2-ide-plugin) | ACP、stdio、权限请求和会话加载是核心差异 |
+| 队列驱动的后台自动化 | [7.3](./3-ticket-automation) | 重点是幂等、重试、CRM 工具和无人值守策略 |
+| 分析师工作台或 Notebook 类产品 | [7.4](./4-data-workbench) | 重点是 Shell、沙箱、文件隔离和分析技能 |
+| 夜间任务、报表或离线处理 | [7.5](./5-batch-scheduler) | 重点是 `prompt_once`、调度、预算和失败处理 |
+| IM / 微信 / 企业消息机器人 | [7.6](./6-wechat-bot) | 重点是长轮询、联系人级权限和每条消息的隔离 |
 
 ## 可运行代码
 
-五个蓝图以独立项目形式就放在主仓 [`examples/`](https://github.com/jin-bo/agentao/tree/main/examples) 下——每个子目录（`saas-assistant/`、`ide-plugin-ts/`、`ticket-automation/`、`data-workbench/`、`batch-scheduler/`）都是独立的 `uv run` / `npm run` 项目。每个蓝图页会链向它对应的子目录。
+六个蓝图以独立项目形式就放在主仓 [`examples/`](https://github.com/jin-bo/agentao/tree/main/examples) 下——每个子目录（`saas-assistant/`、`ide-plugin-ts/`、`ticket-automation/`、`data-workbench/`、`batch-scheduler/`、`wechat-bot/`）都是独立的 `uv run` / `npm run` 项目。每个蓝图页会链向它对应的子目录。
 
 → [从 7.1 SaaS 助手开始 →](./1-saas-assistant)

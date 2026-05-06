@@ -377,7 +377,7 @@ cli.call("session/prompt", {
 })
 ```
 
-生产级 Client 代码范式（错误处理、UI 桥接、超时）见 [3.3](#)（撰写中）。
+生产级 Client 代码范式（错误处理、UI 桥接、超时）见 [3.3 宿主作为 ACP 客户端架构](./3-host-client-architecture)。
 
 ## 关键源码位置
 
@@ -390,4 +390,4 @@ cli.call("session/prompt", {
 | 会话创建 | `agentao/acp/session_new.py` |
 | Prompt 处理 | `agentao/acp/session_prompt.py` |
 
-→ [第 4 部分 · 事件层与 UI 集成](/zh/part-4/)（撰写中）
+→ [第 4 部分 · 事件层与 UI 集成](/zh/part-4/)

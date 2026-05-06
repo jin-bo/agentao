@@ -30,6 +30,25 @@
 | Platform engineer | 6.1 → 6.2 → 6.3 → 6.4 |
 | PM (understand risk) | 6.1 → 6.5 risk sections |
 
+## Read by task
+
+| What you're doing now | Shortest path |
+|-----------------------|---------------|
+| Establish a production security baseline | [6.1 Defense-in-depth](./1-defense-model) → [6.4 Multi-tenant isolation](./4-multi-tenant-fs) → [6.5 Secrets & prompt injection](./5-secrets-injection) |
+| Tighten tool / shell / network boundaries | [6.2 Shell sandbox](./2-shell-sandbox) → [6.3 Network & SSRF](./3-network-ssrf) → [5.4 Permission Engine](/en/part-5/4-permissions) |
+| Prepare launch and operations | [6.6 Observability](./6-observability) → [6.7 Resource governance](./7-resource-concurrency) → [6.8 Deployment](./8-deployment) |
+| Run a pre-launch review | [6.1 Pre-deployment checklist](./1-defense-model#pre-deployment-checklist) → [6.4 Self-check](./4-multi-tenant-fs#self-check) → [6.7 Pre-load-test checklist](./7-resource-concurrency#pre-load-test-checklist) |
+
+## Minimum pre-launch checks
+
+- **Isolation**: each tenant has a separate `working_directory`, and file tools cannot escape it.
+- **Permissions**: high-risk tools use `requires_confirmation` or permission rules, with a deny policy for batch mode.
+- **Network**: SSRF blocklists stay enabled, and MCP / HTTP tools can reach only expected domains.
+- **Secrets**: secrets are injected at runtime, with no plaintext credentials in logs, prompts, or memory.
+- **Observability**: tool calls, permission denials, confirmations, errors, and token cost are traceable.
+- **Resources**: session pools have TTL / LRU behavior, and load tests cover peak concurrency, long sessions, and abnormal exits.
+- **Rollback**: deployment has a canary dimension, and agent, tool, and prompt versions can be tied back to logs.
+
 ## Mental model
 
 > Security is layered, not a single checkpoint; production is governance, not luck.
