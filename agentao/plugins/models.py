@@ -296,3 +296,27 @@ class UserPromptSubmitResult:
     stop_reason: str | None = None
     additional_contexts: list[str] = field(default_factory=list)
     messages: list[HookAttachmentRecord] = field(default_factory=list)
+
+
+@dataclass
+class StopHookResult:
+    """Aggregated result of all hooks for a single Stop event.
+
+    ``force_continue`` is the meaningful continuation signal: when True
+    the chat loop appends ``follow_up_message`` as a user turn and
+    reissues one more LLM call. ``suppress_output`` is recorded for
+    replay fidelity; the chat loop also honors it as a guard against
+    echoing ``additional_contexts`` onto the assistant's final answer.
+    ``matched_rule_count`` is the selection count (not execution count)
+    and gates emission of ``PLUGIN_HOOK_FIRED``.
+    """
+
+    blocking_error: str | None = None
+    force_continue: bool = False
+    follow_up_message: str | None = None
+    additional_contexts: list[str] = field(default_factory=list)
+    stop_reason: str | None = None
+    suppress_output: bool = False
+    system_message: str | None = None
+    messages: list[HookAttachmentRecord] = field(default_factory=list)
+    matched_rule_count: int = 0

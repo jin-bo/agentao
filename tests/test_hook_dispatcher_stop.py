@@ -1,10 +1,10 @@
 """Direct dispatcher-level test for the Stop event.
 
-Exercises ``PluginHookDispatcher.dispatch_stop`` with a matching command
-rule and asserts the returned attachment list contains a ``hook_success``
-``HookAttachmentRecord``. Phase A treats the dispatcher boundary as the
-authoritative observer of attachments — chat-loop call sites discard the
-return value.
+Phase B upgrade — ``dispatch_stop`` now returns a ``StopHookResult``
+carrying both the aggregated control verdict and the legacy attachment
+list (under ``result.messages``). The dispatcher boundary remains the
+authoritative observer of attachments — chat-loop call sites consume
+the result for force_continue / blocking_error branching.
 """
 
 from __future__ import annotations
@@ -13,14 +13,16 @@ from agentao.plugins.hooks import (
     ClaudeHookPayloadAdapter,
     PluginHookDispatcher,
 )
-from agentao.plugins.models import ParsedHookRule
+from agentao.plugins.models import ParsedHookRule, StopHookResult
 
 
 def test_dispatch_stop_returns_hook_success_attachment(tmp_path):
+    """A clean exit-0 hook with no stdout produces a single
+    ``hook_success`` attachment under ``result.messages``."""
     rule = ParsedHookRule(
         event="Stop",
         hook_type="command",
-        command="echo done",
+        command="true",  # exit 0, empty stdout — generic-success branch
         plugin_name="t",
     )
     payload = ClaudeHookPayloadAdapter().build_stop(
@@ -33,10 +35,14 @@ def test_dispatch_stop_returns_hook_success_attachment(tmp_path):
     )
 
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
-    attachments = dispatcher.dispatch_stop(payload=payload, rules=[rule])
+    result = dispatcher.dispatch_stop(payload=payload, rules=[rule])
 
-    assert len(attachments) == 1
-    att = attachments[0]
+    assert isinstance(result, StopHookResult)
+    assert result.matched_rule_count == 1
+    assert result.force_continue is False
+    assert result.blocking_error is None
+    assert len(result.messages) == 1
+    att = result.messages[0]
     assert att.attachment_type == "hook_success"
     assert att.hook_event == "Stop"
 

@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from agentao.cancellation import CancellationToken
-from agentao.plugins.models import ParsedHookRule
+from agentao.plugins.models import ParsedHookRule, StopHookResult
 
 from tests.support.stop_precompact import make_runner_with_rules
 
@@ -32,11 +32,15 @@ def test_doom_loop_dispatches_stop_exactly_once(tmp_path, monkeypatch):
 
     calls: list[dict] = []
 
-    def fake_dispatch_stop(*, turn_end_reason: str, last_assistant_message: str) -> None:
+    def fake_dispatch_stop(*, turn_end_reason: str, last_assistant_message: str) -> StopHookResult:
         calls.append({
             "turn_end_reason": turn_end_reason,
             "last_assistant_message": last_assistant_message,
         })
+        # Phase B: helper must return StopHookResult — a clean "allow"
+        # path with no force_continue / blocking_error so the chat loop
+        # finalizes the doom-arm normally.
+        return StopHookResult(matched_rule_count=1)
 
     monkeypatch.setattr(runner, "_dispatch_stop", fake_dispatch_stop)
     monkeypatch.setattr(runner, "_maybe_microcompact", lambda m, s: (m, s))

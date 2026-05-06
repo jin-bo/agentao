@@ -1,11 +1,11 @@
 """End-to-end Stop helper test — runs a real subprocess and asserts the
-emit dict matches the A5 schema.
+emit dict matches the post-Phase-B schema.
 
-The ``turn_end_reason`` assertion is the load-bearing one: it guards the
-B7 disambiguation contract, so a refactor that drops the field from
-``_emit_stop_hook_fired``'s emit dict would silently break dashboard
-consumers (the field's only purpose on the transport channel is to
-disambiguate ``outcome="continue"`` across emit sites).
+The ``turn_end_reason`` assertion is the load-bearing one: it guards
+the B7 disambiguation contract, so a refactor that drops the field
+from ``_emit_stop_hook_fired``'s emit dict would silently break
+dashboard consumers (the field's only purpose on the transport channel
+is to disambiguate ``outcome="continue"`` across emit sites).
 """
 
 from __future__ import annotations
@@ -29,12 +29,19 @@ def test_stop_hook_subprocess_invoked_and_emits_allow(tmp_path):
     runner, transport = make_runner_with_rules(tmp_path, rules=[rule])
     agent = runner._agent
     pre_messages = list(agent.messages)
-    runner._dispatch_stop(
+    stop_result = runner._dispatch_stop(
         turn_end_reason="final_response",
         last_assistant_message="here is the final answer",
     )
+    runner._emit_stop_hook_fired(
+        outcome="allow",
+        turn_end_reason="final_response",
+        stop_result=stop_result,
+    )
 
     assert capture.exists()
+    assert stop_result.matched_rule_count == 1
+    assert stop_result.force_continue is False
 
     fired = transport.hook_fired_events("Stop")
     assert len(fired) == 1
@@ -44,5 +51,5 @@ def test_stop_hook_subprocess_invoked_and_emits_allow(tmp_path):
     assert data["at_max_iter"] is False
     assert data["matched_rule_count"] == 1
 
-    # Side-effect only — the helper must not mutate agent.messages.
+    # Helper-side: dispatch must not mutate agent.messages.
     assert agent.messages == pre_messages
