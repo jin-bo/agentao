@@ -102,7 +102,10 @@ def test_no_subprocess_invoked_for_empty_rules(tmp_path, monkeypatch):
         turn_end_reason="final_response",
     )
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
-    attachments = dispatcher.dispatch_stop(payload=payload, rules=rules)
+    result = dispatcher.dispatch_stop(payload=payload, rules=rules)
 
-    assert attachments == []
+    # Phase B: dispatch_stop returns StopHookResult; empty rule list
+    # produces a result with matched_rule_count == 0 and no attachments.
+    assert result.matched_rule_count == 0
+    assert result.messages == []
     assert calls == []

@@ -221,7 +221,7 @@ if event.type == EventType.ERROR:
 | `MEMORY_WRITE` / `MEMORY_DELETE` / `MEMORY_CLEARED` | Memory 变更 |
 | `MODEL_CHANGED` | 运行时模型切换 |
 | `PERMISSION_MODE_CHANGED` / `READONLY_MODE_CHANGED` | 运行时安全模式变化 |
-| `PLUGIN_HOOK_FIRED` | 插件 hook 已运行。`data["hook_name"]` 取值为 `UserPromptSubmit` / `SessionStart` / `SessionEnd` / `PreToolUse` / `PostToolUse` / `PostToolUseFailure` / `Stop` / `PreCompact` 之一。各 hook_name 携带不同的字段——例如 `Stop` 带 `turn_end_reason ∈ {"final_response", "max_iterations", "doom_loop"}` 和 `at_max_iter`；`PreCompact` 带 `compaction_type ∈ {"microcompact", "full", "minimal_history"}` 与 `trigger="auto"`。所有 emit 都带 `outcome`（`Stop` / `PreCompact` 当前恒为 `"allow"`）和 `matched_rule_count`（被选派的规则数；为 0 时**完全不发出事件**）。 |
+| `PLUGIN_HOOK_FIRED` | 插件 hook 已运行。`data["hook_name"]` 取值为 `UserPromptSubmit` / `SessionStart` / `SessionEnd` / `PreToolUse` / `PostToolUse` / `PostToolUseFailure` / `Stop` / `PreCompact` 之一。各 hook_name 携带不同的字段——例如 `Stop` 带 `turn_end_reason ∈ {"final_response", "max_iterations", "doom_loop"}`、`at_max_iter`、`added_context_count` 与 `suppress_output`；`PreCompact` 带 `compaction_type ∈ {"microcompact", "full", "minimal_history"}` 与 `trigger="auto"`。所有 emit 都带 `outcome` 与 `matched_rule_count`（被选派的规则数；为 0 时**完全不发出事件**）。`Stop` 的 `outcome ∈ {"allow", "block", "continue", "continue_at_max_iter", "reentry_capped"}`，反映该退出点的 chat-loop 判决（`continue` 与 `continue_at_max_iter` 用来区分是哪一个退出点接受了 `force_continue`；`reentry_capped` 表示循环拒绝再次重入）。`PreCompact` 的 `outcome` 仍恒为 `"allow"`（仅观察）。 |
 
 ## 枚举值的字符串形态
 

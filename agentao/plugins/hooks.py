@@ -34,6 +34,7 @@ from .models import (
     PluginWarningSeverity,
     PreparedTurnMessage,
     PreparedUserTurn,
+    StopHookResult,
     UserPromptSubmitResult,
 )
 
@@ -453,8 +454,23 @@ class PluginHookDispatcher:
         *,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
-        return self._dispatch_lifecycle("Stop", payload, rules)
+    ) -> StopHookResult:
+        """Run matching Stop hooks; return aggregated control signal.
+
+        Honors Claude Code's full control surface (exit code 2,
+        ``decision: "block"``, ``continue: false``, etc.).
+        ``result.messages`` carries the per-rule attachment list.
+        Idempotent on a pre-filtered ``rules`` list.
+        """
+        result = StopHookResult()
+        stop_rules = self.select_matching_rules("Stop", payload, rules)
+        result.matched_rule_count = len(stop_rules)
+        for rule in stop_rules:
+            if rule.hook_type == "command":
+                self._run_stop_command_hook(rule, payload, result)
+            if result.blocking_error or result.force_continue:
+                break
+        return result
 
     def dispatch_pre_compact(
         self,
@@ -761,6 +777,222 @@ class PluginHookDispatcher:
                 data,
                 hook_name=rule.command or "",
                 hook_event=rule.event,
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # Stop-specific runner (Claude Code exit-2 + JSON contract)
+    # ------------------------------------------------------------------
+
+    def _run_stop_command_hook(
+        self,
+        rule: ParsedHookRule,
+        payload: dict[str, Any],
+        result: StopHookResult,
+    ) -> None:
+        """Stop-specific runner.
+
+        Honors Claude Code's exit-code-2 contract (block the stop and
+        feed stderr back as the follow-up reason). ``_run_command_hook``
+        cannot be reused because it demotes nonzero+empty-stdout to a
+        benign warning, which would silently drop the most common Claude
+        Stop control signal.
+        """
+        if not rule.command:
+            return
+
+        payload_json = json.dumps(payload)
+        try:
+            proc = subprocess.run(
+                rule.command,
+                input=payload_json,
+                capture_output=True,
+                text=True,
+                timeout=rule.timeout,
+                shell=True,
+                cwd=str(self._cwd),
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "Stop hook timed out after %ds: %s", rule.timeout, rule.command,
+            )
+            result.messages.append(
+                _make_attachment(
+                    "hook_success",
+                    {"warning": f"Hook timed out after {rule.timeout}s"},
+                    hook_name=rule.command,
+                    hook_event="Stop",
+                )
+            )
+            return
+        except OSError as exc:
+            logger.warning("Stop hook failed to run: %s (%s)", rule.command, exc)
+            return
+
+        # Exit code 2 is checked BEFORE the JSON parser so ``continue:
+        # false`` in stdout cannot countermand it (Claude Code precedence).
+        if proc.returncode == 2:
+            stderr = (proc.stderr or "").strip() or "Stop hook blocked via exit 2"
+            result.force_continue = True
+            result.follow_up_message = stderr
+            result.stop_reason = stderr
+            result.messages.append(
+                _make_attachment(
+                    "hook_stop_blocked_via_exit2",
+                    {"stderr": stderr[:500]},
+                    hook_name=rule.command,
+                    hook_event="Stop",
+                )
+            )
+            return
+
+        # Nonzero exit with no JSON output — not a control signal.
+        if proc.returncode != 0 and not (proc.stdout or "").strip():
+            logger.warning(
+                "Stop hook exited %d: %s (stderr: %s)",
+                proc.returncode, rule.command, (proc.stderr or "")[:200],
+            )
+            result.messages.append(
+                _make_attachment(
+                    "hook_success",
+                    {
+                        "warning": f"Hook exited with code {proc.returncode}",
+                        "stderr": (proc.stderr or "")[:500],
+                    },
+                    hook_name=rule.command,
+                    hook_event="Stop",
+                )
+            )
+            return
+
+        # JSON path — Claude Code Stop output schema.
+        self._parse_stop_command_output(proc.stdout, rule, result)
+
+    def _parse_stop_command_output(
+        self,
+        stdout: str,
+        rule: ParsedHookRule,
+        result: StopHookResult,
+    ) -> None:
+        """Parse structured JSON output from a Stop command hook.
+
+        Implements Claude Code's Stop JSON contract. ``continue: false``
+        overrides any ``force_continue``-producing field on the same
+        output. ``blocking_error`` is independent of ``continue: false``
+        because both intents agree on "stop the turn."
+        """
+        stdout = stdout.strip()
+        if not stdout:
+            result.messages.append(
+                _make_attachment(
+                    "hook_success",
+                    {},
+                    hook_name=rule.command or "",
+                    hook_event="Stop",
+                )
+            )
+            return
+
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError:
+            # Non-JSON output is treated as additional context.
+            result.additional_contexts.append(stdout)
+            result.messages.append(
+                _make_attachment(
+                    "hook_additional_context",
+                    {"context": stdout},
+                    hook_name=rule.command or "",
+                    hook_event="Stop",
+                )
+            )
+            return
+
+        if not isinstance(data, dict):
+            result.additional_contexts.append(str(data))
+            return
+
+        # ``continue: false`` overrides any force_continue-producing field.
+        continue_false = data.get("continue") is False
+
+        decision = data.get("decision")
+        reason = data.get("reason")
+        if decision == "block" and isinstance(reason, str):
+            if continue_false:
+                result.stop_reason = reason
+            else:
+                result.force_continue = True
+                result.follow_up_message = reason
+                result.stop_reason = reason
+
+        stop_reason = data.get("stopReason")
+        if isinstance(stop_reason, str):
+            result.stop_reason = stop_reason
+
+        if data.get("suppressOutput") is True:
+            result.suppress_output = True
+
+        system_message = data.get("systemMessage")
+        if isinstance(system_message, str):
+            result.system_message = system_message
+            result.additional_contexts.append(system_message)
+
+        hook_specific = data.get("hookSpecificOutput")
+        if isinstance(hook_specific, dict):
+            ctx = hook_specific.get("additionalContext")
+            if isinstance(ctx, str):
+                result.additional_contexts.append(ctx)
+            elif isinstance(ctx, list):
+                result.additional_contexts.extend(str(c) for c in ctx)
+
+        # Tolerated for hook scripts that use the top-level field.
+        legacy_ctx = data.get("additionalContext")
+        if isinstance(legacy_ctx, str):
+            result.additional_contexts.append(legacy_ctx)
+        elif isinstance(legacy_ctx, list):
+            result.additional_contexts.extend(str(c) for c in legacy_ctx)
+
+        # ``blockingError`` is independent of ``continue: false``.
+        blocking_error = data.get("blockingError")
+        if isinstance(blocking_error, str):
+            result.blocking_error = blocking_error
+            result.messages.append(
+                _make_attachment(
+                    "hook_blocking_error",
+                    {"error": blocking_error},
+                    hook_name=rule.command or "",
+                    hook_event="Stop",
+                )
+            )
+            return
+
+        # ``preventContinuation: true`` — Agentao internal legacy field
+        # tolerated for hook scripts authored against UserPromptSubmit.
+        # Honors ``continue: false`` precedence.
+        if data.get("preventContinuation") is True and not continue_false:
+            reason = data.get("stopReason") or "Hook prevented continuation"
+            follow_up = data.get("stopReason") or "Stop hook requested continuation"
+            result.force_continue = True
+            result.stop_reason = reason
+            result.follow_up_message = follow_up
+            result.messages.append(
+                _make_attachment(
+                    "hook_stopped_continuation",
+                    {"reason": reason},
+                    hook_name=rule.command or "",
+                    hook_event="Stop",
+                )
+            )
+            return
+
+        # Generic success path — record the parse so the dispatcher
+        # boundary always observes a non-empty attachment list.
+        result.messages.append(
+            _make_attachment(
+                "hook_success",
+                data,
+                hook_name=rule.command or "",
+                hook_event="Stop",
             )
         )
 

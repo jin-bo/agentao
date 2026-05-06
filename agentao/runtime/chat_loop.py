@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple
 
 from ..cancellation import AgentCancelledError, CancellationToken
 from ..context_manager import is_context_too_long_error
+from ..plugins.models import StopHookResult
 from ..transport import AgentEvent, EventType
 from .sanitize import canonicalize_tool_arguments, sanitize_assistant_message
 
@@ -109,8 +110,17 @@ class _HookOutcome:
 class ChatLoopRunner:
     """Run one ``chat()`` turn for an :class:`agentao.agent.Agentao`."""
 
-    def __init__(self, agent: "Agentao") -> None:
+    def __init__(
+        self,
+        agent: "Agentao",
+        *,
+        stop_reentry_cap: int = 3,
+    ) -> None:
         self._agent = agent
+        # Counter resets per chat() because ChatLoopRunner is
+        # instantiated fresh by Agentao._chat_inner.
+        self._stop_reentries: int = 0
+        self._stop_reentry_cap: int = stop_reentry_cap
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -183,7 +193,99 @@ class ChatLoopRunner:
                             {"role": "system", "content": system_prompt}
                         ] + agent.messages
                 else:  # "stop"
-                    break
+                    # Finalize max-iter inside the loop body so a Stop
+                    # hook ``force_continue`` can re-enter ``while True``.
+                    agent.llm.logger.warning(
+                        f"Maximum tool call iterations ({max_iterations}) reached"
+                    )
+                    assistant_content_max = (
+                        assistant_message.content if assistant_message else None
+                    ) or "Maximum tool call iterations reached."
+                    reasoning_content_max = (
+                        getattr(assistant_message, "reasoning_content", None)
+                        if assistant_message else None
+                    )
+                    final_msg_max: Dict[str, Any] = {
+                        "role": "assistant",
+                        "content": assistant_content_max,
+                    }
+                    _attach_reasoning(final_msg_max, reasoning_content_max)
+                    if sanitize_assistant_message(final_msg_max):
+                        agent.llm.logger.warning(
+                            "Sanitised lone surrogates in max-iteration assistant message"
+                        )
+
+                    stop_result = self._dispatch_stop(
+                        turn_end_reason="max_iterations",
+                        last_assistant_message=assistant_content_max,
+                    )
+
+                    if stop_result.blocking_error:
+                        blocked = f"[Blocked by Stop hook] {stop_result.blocking_error}"
+                        final_msg_max["content"] = blocked
+                        agent.messages.append(final_msg_max)
+                        self._emit_stop_hook_fired(
+                            outcome="block",
+                            turn_end_reason="max_iterations",
+                            stop_result=stop_result,
+                        )
+                        return blocked
+
+                    if stop_result.force_continue:
+                        # Cap check FIRST — without it a cap-hit would
+                        # fall through to allow and silently mask the
+                        # pathological hook.
+                        if self._stop_reentries >= self._stop_reentry_cap:
+                            agent.llm.logger.warning(
+                                "Stop hook reentry cap (%d) hit at max-iterations; ending turn.",
+                                self._stop_reentry_cap,
+                            )
+                            agent.messages.append(final_msg_max)
+                            self._emit_stop_hook_fired(
+                                outcome="reentry_capped",
+                                turn_end_reason="max_iterations",
+                                stop_result=stop_result,
+                            )
+                            return assistant_content_max
+                        follow_up = (
+                            stop_result.follow_up_message
+                            or stop_result.stop_reason
+                            or "Stop hook requested continuation"
+                        )
+                        self._stop_reentries += 1
+                        agent.llm.logger.warning(
+                            "Stop hook force_continue at max-iterations; "
+                            "resetting iteration counter (outcome=continue_at_max_iter)."
+                        )
+                        agent.messages.append(final_msg_max)
+                        agent.messages.append({
+                            "role": "user",
+                            "content": (
+                                "<system-reminder>Stop hook injected this</system-reminder>\n"
+                                f"{follow_up}"
+                            ),
+                        })
+                        messages_with_system = [
+                            {"role": "system", "content": system_prompt}
+                        ] + agent.messages
+                        iteration = 0
+                        self._emit_stop_hook_fired(
+                            outcome="continue_at_max_iter",
+                            turn_end_reason="max_iterations",
+                            stop_result=stop_result,
+                        )
+                        continue
+
+                    # Max-iter does not echo additional_contexts —
+                    # decorating the cap fallback string would be
+                    # unhelpful UX.
+                    agent.messages.append(final_msg_max)
+                    self._emit_stop_hook_fired(
+                        outcome="allow",
+                        turn_end_reason="max_iterations",
+                        stop_result=stop_result,
+                    )
+                    return assistant_content_max
 
             iteration += 1
             agent.llm.logger.info(f"LLM iteration {iteration}/{max_iterations}")
@@ -270,25 +372,91 @@ class ChatLoopRunner:
                 agent.messages.extend(tool_results)
                 if doom_triggered:
                     doom_content = (assistant_msg.get("content") or "").strip()
-                    last_assistant_message = (
+                    assistant_content_doom = (
                         doom_content
                         or "Tool execution halted by doom-loop detection."
                     )
-                    self._dispatch_stop(
-                        turn_end_reason="doom_loop",
-                        last_assistant_message=last_assistant_message,
-                    )
-                    final_msg: Dict[str, Any] = {
+                    final_msg_doom: Dict[str, Any] = {
                         "role": "assistant",
-                        "content": last_assistant_message,
+                        "content": assistant_content_doom,
                     }
-                    _attach_reasoning(final_msg, reasoning_content)
-                    if sanitize_assistant_message(final_msg):
+                    _attach_reasoning(final_msg_doom, reasoning_content)
+                    if sanitize_assistant_message(final_msg_doom):
                         agent.llm.logger.warning(
                             "Sanitised lone surrogates in doom-loop assistant message"
                         )
-                    agent.messages.append(final_msg)
-                    return last_assistant_message
+
+                    stop_result = self._dispatch_stop(
+                        turn_end_reason="doom_loop",
+                        last_assistant_message=assistant_content_doom,
+                    )
+
+                    if stop_result.blocking_error:
+                        blocked = f"[Blocked by Stop hook] {stop_result.blocking_error}"
+                        final_msg_doom["content"] = blocked
+                        agent.messages.append(final_msg_doom)
+                        self._emit_stop_hook_fired(
+                            outcome="block",
+                            turn_end_reason="doom_loop",
+                            stop_result=stop_result,
+                        )
+                        return blocked
+
+                    if stop_result.force_continue:
+                        if self._stop_reentries >= self._stop_reentry_cap:
+                            agent.llm.logger.warning(
+                                "Stop hook reentry cap (%d) hit at doom-loop; ending turn.",
+                                self._stop_reentry_cap,
+                            )
+                            agent.messages.append(final_msg_doom)
+                            self._emit_stop_hook_fired(
+                                outcome="reentry_capped",
+                                turn_end_reason="doom_loop",
+                                stop_result=stop_result,
+                            )
+                            return assistant_content_doom
+                        follow_up = (
+                            stop_result.follow_up_message
+                            or stop_result.stop_reason
+                            or "Stop hook requested continuation"
+                        )
+                        self._stop_reentries += 1
+                        # ToolRunner's doom counter is NOT reset here —
+                        # re-tripping doom is a reasonable outcome of
+                        # "host insisted on continuing despite the model
+                        # misbehaving."
+                        agent.llm.logger.warning(
+                            "Stop hook force_continue at doom-loop"
+                        )
+                        agent.messages.append(final_msg_doom)
+                        agent.messages.append({
+                            "role": "user",
+                            "content": (
+                                "<system-reminder>Stop hook injected this</system-reminder>\n"
+                                f"{follow_up}"
+                            ),
+                        })
+                        messages_with_system = [
+                            {"role": "system", "content": system_prompt}
+                        ] + agent.messages
+                        iteration = 0
+                        self._emit_stop_hook_fired(
+                            outcome="continue",
+                            turn_end_reason="doom_loop",
+                            stop_result=stop_result,
+                        )
+                        continue
+
+                    # Doom-loop does not echo additional_contexts —
+                    # decorating the halt-detection fallback would be
+                    # unhelpful UX.
+                    agent.messages.append(final_msg_doom)
+                    self._emit_stop_hook_fired(
+                        outcome="allow",
+                        turn_end_reason="doom_loop",
+                        stop_result=stop_result,
+                    )
+                    return assistant_content_doom
                 if token.is_cancelled:
                     raise AgentCancelledError(token.reason)
 
@@ -321,34 +489,86 @@ class ChatLoopRunner:
                         "Sanitised lone surrogates in final assistant message "
                         "(iteration %d)", iteration,
                     )
-                self._dispatch_stop(
+
+                # Dispatch Stop before appending so blocking_error can
+                # rewrite final_msg.content without leaving the original
+                # answer in history.
+                stop_result = self._dispatch_stop(
                     turn_end_reason="final_response",
                     last_assistant_message=assistant_content,
                 )
-                agent.messages.append(final_msg)
-                return assistant_content
 
-        # Hit max iterations
-        agent.llm.logger.warning(f"Maximum tool call iterations ({max_iterations}) reached")
-        assistant_content = (
-            assistant_message.content if assistant_message else None
-        ) or "Maximum tool call iterations reached."
-        reasoning_content = (
-            getattr(assistant_message, "reasoning_content", None)
-            if assistant_message else None
-        )
-        final_msg: Dict[str, Any] = {"role": "assistant", "content": assistant_content}
-        _attach_reasoning(final_msg, reasoning_content)
-        if sanitize_assistant_message(final_msg):
-            agent.llm.logger.warning(
-                "Sanitised lone surrogates in max-iteration assistant message"
-            )
-        self._dispatch_stop(
-            turn_end_reason="max_iterations",
-            last_assistant_message=assistant_content,
-        )
-        agent.messages.append(final_msg)
-        return assistant_content
+                if stop_result.blocking_error:
+                    blocked = f"[Blocked by Stop hook] {stop_result.blocking_error}"
+                    final_msg["content"] = blocked
+                    agent.messages.append(final_msg)
+                    self._emit_stop_hook_fired(
+                        outcome="block",
+                        turn_end_reason="final_response",
+                        stop_result=stop_result,
+                    )
+                    return blocked
+
+                if stop_result.force_continue:
+                    follow_up = (
+                        stop_result.follow_up_message
+                        or stop_result.stop_reason
+                        or "Stop hook requested continuation"
+                    )
+                    if self._stop_reentries >= self._stop_reentry_cap:
+                        agent.llm.logger.warning(
+                            "Stop hook reentry cap (%d) hit; ending turn.",
+                            self._stop_reentry_cap,
+                        )
+                        agent.messages.append(final_msg)
+                        self._emit_stop_hook_fired(
+                            outcome="reentry_capped",
+                            turn_end_reason="final_response",
+                            stop_result=stop_result,
+                        )
+                        return assistant_content
+                    self._stop_reentries += 1
+                    # Preserve the answer being continued from.
+                    agent.messages.append(final_msg)
+                    agent.messages.append({
+                        "role": "user",
+                        "content": (
+                            "<system-reminder>Stop hook injected this</system-reminder>\n"
+                            f"{follow_up}"
+                        ),
+                    })
+                    messages_with_system = [
+                        {"role": "system", "content": system_prompt}
+                    ] + agent.messages
+                    iteration = 0  # honest budget reset for the new sub-turn
+                    self._emit_stop_hook_fired(
+                        outcome="continue",
+                        turn_end_reason="final_response",
+                        stop_result=stop_result,
+                    )
+                    continue
+
+                # additional_contexts ride on the answer as a
+                # ``<stop-hook>`` block unless the hook set
+                # ``suppressOutput: true`` (Agentao extension to the
+                # Claude semantic, which documents only stdout suppression).
+                if (
+                    stop_result.additional_contexts
+                    and not stop_result.suppress_output
+                ):
+                    extra = "\n".join(
+                        f"<stop-hook>\n{ctx}\n</stop-hook>"
+                        for ctx in stop_result.additional_contexts
+                    )
+                    final_msg["content"] = f"{assistant_content}\n{extra}"
+                    assistant_content = final_msg["content"]
+                agent.messages.append(final_msg)
+                self._emit_stop_hook_fired(
+                    outcome="allow",
+                    turn_end_reason="final_response",
+                    stop_result=stop_result,
+                )
+                return assistant_content
 
     # ------------------------------------------------------------------
     # Plugin-hook dispatch
@@ -419,17 +639,20 @@ class ChatLoopRunner:
     def _dispatch_stop(
         self,
         *,
-        turn_end_reason: str,
+        turn_end_reason: Literal[
+            "final_response", "max_iterations", "doom_loop",
+        ],
         last_assistant_message: str,
-    ) -> None:
-        """Stop dispatch — side-effect only; never changes control flow.
+    ) -> StopHookResult:
+        """Run Stop hooks; return the aggregated control signal.
 
-        Returns without emitting ``PLUGIN_HOOK_FIRED`` when no Stop rule
-        matches the payload (the no-emit gate).
+        Does NOT emit ``PLUGIN_HOOK_FIRED`` — the outcome label depends
+        on caller-side branching (cap check) the helper does not see.
+        See ``_emit_stop_hook_fired``.
         """
         agent = self._agent
         if not agent._plugin_hook_rules:
-            return
+            return StopHookResult()
         from ..plugins.hooks import (
             ClaudeHookPayloadAdapter,
             PluginHookDispatcher,
@@ -439,24 +662,50 @@ class ChatLoopRunner:
             session_id=agent._session_id,
             cwd=cwd,
             last_assistant_message=last_assistant_message or "",
-            stop_hook_active=False,
+            stop_hook_active=(self._stop_reentries > 0),
             turn_end_reason=turn_end_reason,
             permission_mode=agent.active_permissions().mode,
         )
         dispatcher = PluginHookDispatcher(cwd=cwd)
+        # Pre-filter so the early-return path skips the subprocess fork.
         matched = dispatcher.select_matching_rules(
             "Stop", payload, agent._plugin_hook_rules,
         )
         if not matched:
+            return StopHookResult()
+        return dispatcher.dispatch_stop(payload=payload, rules=matched)
+
+    def _emit_stop_hook_fired(
+        self,
+        *,
+        outcome: Literal[
+            "allow", "block", "continue",
+            "continue_at_max_iter", "reentry_capped",
+        ],
+        turn_end_reason: Literal[
+            "final_response", "max_iterations", "doom_loop",
+        ],
+        stop_result: StopHookResult,
+    ) -> None:
+        """Emit ``PLUGIN_HOOK_FIRED`` for a Stop dispatch.
+
+        Gated on ``matched_rule_count > 0`` so a turn with no matching
+        Stop hooks does not emit ``outcome="allow"``. ``turn_end_reason``
+        disambiguates ``outcome="continue"`` across the natural-turn
+        and doom-loop emit sites.
+        """
+        if stop_result.matched_rule_count == 0:
             return
-        dispatcher.dispatch_stop(payload=payload, rules=matched)
+        agent = self._agent
         try:
             agent.transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
                 "hook_name": "Stop",
-                "outcome": "allow",
-                "turn_end_reason": turn_end_reason,
+                "outcome": outcome,
                 "at_max_iter": turn_end_reason == "max_iterations",
-                "matched_rule_count": len(matched),
+                "turn_end_reason": turn_end_reason,
+                "matched_rule_count": stop_result.matched_rule_count,
+                "added_context_count": len(stop_result.additional_contexts),
+                "suppress_output": stop_result.suppress_output,
             }))
         except Exception:
             pass
