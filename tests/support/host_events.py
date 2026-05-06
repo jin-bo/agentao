@@ -9,9 +9,10 @@ keeps the surface stable as the executor / transport contracts evolve.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from agentao.runtime.tool_planning import ToolCallDecision, ToolCallPlan
+from agentao.transport import AgentEvent, EventType
 
 
 class NullTransport:
@@ -33,6 +34,40 @@ class NullTransport:
 
     def on_max_iterations(self, _c: Any, _m: Any) -> Dict[str, str]:
         return {"action": "stop"}
+
+
+class CapturingTransport:
+    """Transport that records every emitted event for later assertions.
+
+    Drop-in for ``NullTransport`` whenever a test needs to inspect the
+    event stream. ``by_type`` filters by ``EventType``; ``by_name``
+    filters by the runtime ``hook_name`` payload field used by
+    ``PLUGIN_HOOK_FIRED``.
+    """
+
+    def __init__(self) -> None:
+        self.events: List[AgentEvent] = []
+
+    def emit(self, event: AgentEvent) -> None:
+        self.events.append(event)
+
+    def confirm_tool(self, *_a: Any, **_kw: Any) -> bool:
+        return True
+
+    def ask_user(self, *_a: Any, **_kw: Any) -> str:
+        return ""
+
+    def on_max_iterations(self, *_a: Any, **_kw: Any) -> Dict[str, str]:
+        return {"action": "stop"}
+
+    def by_type(self, event_type: EventType) -> List[AgentEvent]:
+        return [e for e in self.events if e.type == event_type]
+
+    def hook_fired_events(self, hook_name: Optional[str] = None) -> List[AgentEvent]:
+        events = self.by_type(EventType.PLUGIN_HOOK_FIRED)
+        if hook_name is None:
+            return events
+        return [e for e in events if e.data.get("hook_name") == hook_name]
 
 
 def make_plan(

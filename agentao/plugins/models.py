@@ -201,10 +201,33 @@ SUPPORTED_HOOK_EVENTS: set[str] = {
     "PreToolUse",
     "PostToolUse",
     "PostToolUseFailure",
+    "Stop",
+    "PreCompact",
 }
 
 # Hook types supported at runtime.
 SUPPORTED_HOOK_TYPES: set[str] = {"command", "prompt"}
+
+# Per-event hook-type allowlist. Events not listed here fall back to
+# SUPPORTED_HOOK_TYPES. Stop and PreCompact deliberately exclude "prompt":
+# at runtime _dispatch_lifecycle (and Phase B's Stop-specific runner) only
+# invoke command hooks for these events, so a prompt-type rule would parse
+# as supported but be silently dropped at dispatch — surface it as a parser
+# warning instead.
+SUPPORTED_HOOK_TYPES_BY_EVENT: dict[str, set[str]] = {
+    "UserPromptSubmit": {"command", "prompt"},
+    "SessionStart": {"command"},
+    "SessionEnd": {"command"},
+    "PreToolUse": {"command"},
+    "PostToolUse": {"command"},
+    "PostToolUseFailure": {"command"},
+    "Stop": {"command"},
+    "PreCompact": {"command"},
+}
+
+# Events whose on-wire payload uses Claude Code's flat snake_case
+# top-level schema instead of Agentao's {event, data} envelope.
+CLAUDE_FLAT_EVENTS: set[str] = {"Stop", "PreCompact"}
 
 # Hook types recognised but not yet runnable.
 KNOWN_UNSUPPORTED_HOOK_TYPES: set[str] = {"http", "agent"}
@@ -224,7 +247,10 @@ class ParsedHookRule:
 
     @property
     def is_supported(self) -> bool:
-        return self.hook_type in SUPPORTED_HOOK_TYPES and self.event in SUPPORTED_HOOK_EVENTS
+        if self.event not in SUPPORTED_HOOK_EVENTS:
+            return False
+        allowed = SUPPORTED_HOOK_TYPES_BY_EVENT.get(self.event, SUPPORTED_HOOK_TYPES)
+        return self.hook_type in allowed
 
 
 @dataclass

@@ -15,6 +15,8 @@ Issue index: [Plugin System MVP Issues](README.md)
 - matcher schema
 - hook type schema
 - runtime support validation
+- per-event hook-type allowlist (`SUPPORTED_HOOK_TYPES_BY_EVENT`) — added by [`STOP_PRECOMPACT_HOOKS_PLAN.md`](../../STOP_PRECOMPACT_HOOKS_PLAN.md) §A1; rejects `prompt`-type rules under `Stop` / `PreCompact` at parse time
+- non-object matcher rejection at parse time — same plan §A2 (drop the rule rather than normalize to `None`, which would silently match every event)
 
 ## Deliverables
 
@@ -46,6 +48,8 @@ Issue index: [Plugin System MVP Issues](README.md)
 - unsupported hook type warns
 - unsupported event warns
 - `UserPromptSubmit.prompt` allowed, others skipped
+- `Stop` / `PreCompact` `prompt`-type rules dropped at parse time with event-specific warning (see `tests/test_hooks_stop_precompact_reject_prompt_type.py`)
+- non-object matcher (string / list) dropped at parse time (see `tests/test_hooks_pre_compact_matcher_non_dict_guard.py`)
 
 ## Acceptance Criteria
 

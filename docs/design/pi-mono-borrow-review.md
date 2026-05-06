@@ -11,7 +11,7 @@
 
 - **Do now (1):** grep/find argument-injection fix. Confirmed vulnerability at three sites in `agentao/tools/search.py` (one ripgrep, two git-grep branches).
 - **Do soon (1):** compact `read` rendering for context files (`AGENTAO.md`, `CLAUDE.md`, `SKILL.md`).
-- **Do as protocol completion (1):** add `Stop` / `PreCompact` event types to the existing plugin-hook system. *Not* a port — agentao already has a Claude-Code-style hook protocol; this is filling in missing event types.
+- **Do as targeted event coverage (1):** add `Stop` / `PreCompact` event types to the existing plugin-hook system. *Not* a port — agentao already has a Claude-Code-style hook protocol; this fills in the two events needed for `shouldStopAfterTurn`-style / pre-compaction use cases. Other Claude Code events (e.g., `Notification`, `SubagentStop`, `PostToolBatch`, `StopFailure`) remain uncovered and are out of scope here.
 - **Backlog (4):** `prepareArguments` per-tool normalize hook, stale-extension-context detection, OSC 9;4 progress, stacked autocomplete. Useful patterns, no current pain.
 - **Cut (2):** `shouldStopAfterTurn` (redundant with existing hooks), self-update / batch package update (npm-only, doesn't apply to `uv` world).
 - **Reframe / wait (3):** `terminate: true` tool-result hint, per-tool `executionMode = "sequential"`, bash incremental streaming. Each has a real-but-different use case in pi-mono; agentao's equivalent need is either absent, semantically non-overlapping, or already covered by a different mechanism.
@@ -25,11 +25,13 @@ The honest meta-finding: the first-pass list was biased toward "architecturally 
 #### `shouldStopAfterTurn` post-turn callback (pi-agent-core v0.72.0)
 **Verdict:** Cut. Redundant with existing infrastructure.
 
-pi-mono added a low-level `shouldStopAfterTurn(...)` callback at the turn boundary because its low-level loop has no other extensibility seam. agentao already has a complete plugin-hook protocol (`agentao/plugins/hooks.py` + `models.py`) modeled on Claude Code: `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`. `chat_loop.py:140` already supports block / inject context / early-return at the turn boundary.
+pi-mono added a low-level `shouldStopAfterTurn(...)` callback at the turn boundary because its low-level loop has no other extensibility seam. agentao already has a Claude-Code-style plugin-hook protocol (`agentao/plugins/hooks.py` + `models.py`). Current `SUPPORTED_HOOK_EVENTS` (`agentao/plugins/models.py:197`): `UserPromptSubmit`, `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`. `agentao/runtime/chat_loop.py:140` already supports block / inject context / early-return at the turn boundary.
 
-What's actually missing is **event-type coverage**, not a new callback shape. Claude Code defines `Stop` and `PreCompact` events that agentao does not yet emit. Adding those to the existing `_dispatch_lifecycle` pipeline gets the same outcome as `shouldStopAfterTurn` while keeping a single, documented protocol surface.
+What's actually missing is **targeted event coverage** for the use cases `shouldStopAfterTurn` solves, not a new callback shape. Among Claude Code's documented events, `Stop` and `PreCompact` are the two relevant ones, and neither is currently emitted by agentao.
 
-This is "complete your own protocol," not "borrow from pi-mono."
+Implementation caveat — registering them in `_dispatch_lifecycle` alone is **not** equivalent to `shouldStopAfterTurn`. The current dispatcher is documented as "side-effect only" (`_dispatch_lifecycle` def + docstring, `agentao/plugins/hooks.py:369-378`): nonzero exit codes only log a warning, and stdout is attached as a hook-success record without parsing `preventContinuation` / `blockingError` / `continue=false`. Control-result parsing today lives only on the `UserPromptSubmit` path (`_parse_command_output`, `hooks.py:535+`). So matching pi-mono's expressiveness requires **two** pieces of work: (1) emit the events from the chat loop at the right boundaries, (2) give `Stop` control-aware result handling — modeled on the existing `UserPromptSubmit` path — and let `chat_loop` consult that result to halt or continue. `PreCompact` needs a separate decision: side-effect-only (observation), or also gating the compaction step. Specifying which scope ships is part of the work, not a free side-effect of registering the events. (Several other Claude Code events — e.g., `Notification`, `SubagentStop`, `PostToolBatch`, `StopFailure` — are also not yet emitted; they are out of scope for this review.)
+
+This is "targeted event coverage," not "borrow from pi-mono."
 
 #### Self-update + batched package updates (pi-coding-agent v0.68.0 / v0.70.3)
 **Verdict:** Cut. Doesn't apply.
@@ -99,9 +101,14 @@ Net change is ~6 lines plus a regression test that exercises both backends with 
 `read` of `AGENTS.md` / `CLAUDE.md` / `SKILL.md` (and equivalents) collapses by default in interactive output, with line-range hints. agentao's read tool currently dumps the full content of project context files every time, wasting screen and tokens in the rendered transcript. Mechanical change, no protocol impact.
 
 #### Add `Stop` / `PreCompact` event types to plugin-hook system
-**Verdict:** P2. Protocol completion, not a borrow.
+**Verdict:** P2. Targeted event coverage, not a borrow.
 
-Listed here to frame the alternative to `shouldStopAfterTurn`. agentao's hook protocol is incomplete relative to Claude Code's published surface. Closing that gap inside the existing `agentao/plugins/hooks.py` dispatcher is the right shape: hosts that already implement Claude-Code-style hooks get drop-in compatibility, and agentao gets the same expressiveness pi-mono added with `shouldStopAfterTurn` without inventing a parallel callback path.
+Listed here to frame the alternative to `shouldStopAfterTurn`. agentao's hook protocol covers six events today (`UserPromptSubmit`, `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`); the two events relevant to `shouldStopAfterTurn`-style and compaction-gate use cases (`Stop`, `PreCompact`) are not yet emitted. The right entry point is the existing `agentao/plugins/hooks.py` dispatcher, but the scope needs to be specified explicitly — the work splits into two layers:
+
+1. **Event surface (small)** — emit `Stop` / `PreCompact` from the chat loop. Hosts that already implement Claude-Code-style hooks get drop-in observability.
+2. **Post-turn / pre-compaction gate (the part that matches `shouldStopAfterTurn`)** — `_dispatch_lifecycle` is currently side-effect-only, so on its own it cannot halt the loop. Matching pi-mono's expressiveness requires `Stop` to use a control-aware result handler (mirror the `UserPromptSubmit` / `_parse_command_output` path), and `chat_loop` to consult that result. `PreCompact` needs its own decision: stay side-effect-only, or also gate the compaction step.
+
+Shipping (1) without (2) is a defensible minimum (host-observable lifecycle); shipping both is what reaches feature parity with `shouldStopAfterTurn`. Either way, no parallel callback path is needed. (Wider Claude-Code-event coverage — `Notification`, `SubagentStop`, etc. — is a separate, larger conversation.)
 
 Defer until a concrete host workflow asks for it (compaction gates, cost gates, post-turn review). Estimated 1–2 days when triggered.
 
@@ -111,7 +118,7 @@ Defer until a concrete host workflow asks for it (compaction gates, cost gates, 
 |---|---|---|---|
 | grep argument-injection fix | T1 | **DO NOW** | Confirmed vuln at 3 sites (rg + 2 git-grep branches) |
 | Compact read rendering | T3 | **DO SOON** | Zero-risk UX |
-| `Stop` / `PreCompact` hook events | (was: shouldStopAfterTurn T1) | **DO WHEN TRIGGERED** | Reframed: protocol completion, not port |
+| `Stop` / `PreCompact` hook events | (was: shouldStopAfterTurn T1) | **DO WHEN TRIGGERED** | Reframed: targeted event coverage, not port |
 | `prepareArguments` per-tool hook | T2 | Backlog | No current pain |
 | Stale-extension-context detection | T2 | Backlog | No session fork yet |
 | OSC 9;4 progress | T3 | Backlog | Polish |

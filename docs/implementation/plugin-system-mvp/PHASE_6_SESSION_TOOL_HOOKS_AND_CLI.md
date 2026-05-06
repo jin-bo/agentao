@@ -17,6 +17,8 @@
 - `PreToolUse`
 - `PostToolUse`
 - `PostToolUseFailure`
+- `Stop`（PR-1 补齐 — Phase A 事件面，参见 `STOP_PRECOMPACT_HOOKS_PLAN.md`）
+- `PreCompact`（PR-1 补齐 — Phase A 事件面，参见 `STOP_PRECOMPACT_HOOKS_PLAN.md`）
 - command hook execution
 - tool alias matching
 - repeatable `--plugin-dir`
@@ -27,7 +29,7 @@
 
 - `http` hooks
 - `agent` hooks
-- 非 `UserPromptSubmit` 的 `prompt` hooks
+- 非 `UserPromptSubmit` 的 `prompt` hooks（`Stop` / `PreCompact` 仅接受 `command`，`prompt` 在解析时即被拒绝）
 - marketplace / install / remove
 
 ## Dependencies
@@ -47,11 +49,13 @@
 - `PreToolUse`
 - `PostToolUse`
 - `PostToolUseFailure`
+- `Stop`（仅 `command`，参见 `STOP_PRECOMPACT_HOOKS_PLAN.md`）
+- `PreCompact`（仅 `command`，参见 `STOP_PRECOMPACT_HOOKS_PLAN.md`）
 
 支持的 hook type：
 
-- `command`: supported
-- `prompt`: warning + skip
+- `command`: supported (所有事件)
+- `prompt`: 仅 `UserPromptSubmit` 支持；`Stop` / `PreCompact` 在解析时拒绝并发出 `PluginWarning`
 - `http`: warning + skip
 - `agent`: warning + skip
 

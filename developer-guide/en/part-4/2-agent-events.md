@@ -221,7 +221,7 @@ These events are emitted for session replay and operational audit. Most interact
 | `MEMORY_WRITE` / `MEMORY_DELETE` / `MEMORY_CLEARED` | Memory mutations |
 | `MODEL_CHANGED` | Runtime model switched |
 | `PERMISSION_MODE_CHANGED` / `READONLY_MODE_CHANGED` | Runtime safety mode changed |
-| `PLUGIN_HOOK_FIRED` | Plugin hook ran |
+| `PLUGIN_HOOK_FIRED` | A plugin hook ran. `data["hook_name"]` is one of `UserPromptSubmit` / `SessionStart` / `SessionEnd` / `PreToolUse` / `PostToolUse` / `PostToolUseFailure` / `Stop` / `PreCompact`. The hook-name-specific fields differ — for example `Stop` carries `turn_end_reason ∈ {"final_response", "max_iterations", "doom_loop"}` and `at_max_iter`; `PreCompact` carries `compaction_type ∈ {"microcompact", "full", "minimal_history"}` and `trigger="auto"`. Every emit also carries `outcome` (currently always `"allow"` for `Stop` / `PreCompact`) and `matched_rule_count` (the count of rules selected for dispatch — when zero, **no event is emitted**). |
 
 ## Enum as string
 
