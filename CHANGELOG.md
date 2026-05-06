@@ -7,6 +7,110 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-05-06
+
+A Claude-Code compatibility + tool-hardening release. **No breaking
+changes; no public API or wire-format change.** `pip install -U agentao`
+upgrades in place from any 0.4.x release.
+
+### Added
+
+- **`Stop` and `PreCompact` lifecycle hooks** — two new plugin-hook
+  events alongside the six existing lifecycle events
+  (`UserPromptSubmit`, `SessionStart`, `SessionEnd`, `PreToolUse`,
+  `PostToolUse`, `PostToolUseFailure`). Wire shape is Claude Code's
+  flat snake_case top-level payload — a hook script written against
+  Claude Code's documented Stop / PreCompact stdin shape runs
+  unchanged. Stop dispatches at three turn-end sites (`final_response`
+  / `max_iterations` / `doom_loop`); PreCompact dispatches at four
+  compaction sites (`microcompact`, `full` from `compression_threshold`
+  or `api_overflow`, `minimal_history`). `select_matching_rules`
+  filters `event + is_supported + _matches` and gates the
+  `PLUGIN_HOOK_FIRED` emit so zero-match dispatch produces no event.
+  Per-event hook-type allowlist (`SUPPORTED_HOOK_TYPES_BY_EVENT`)
+  rejects `prompt`-type rules under Stop / PreCompact at parse time.
+  Design rationale in
+  `docs/implementation/STOP_PRECOMPACT_HOOKS_PLAN.{md,zh.md}`.
+
+- **Stop control-aware gate** — Stop hooks honor Claude Code's full
+  Stop output schema: exit code 2 (block + stderr-as-reason), JSON
+  `decision: "block"` + `reason`, plus the documented common output
+  fields (`continue`, `stopReason`, `suppressOutput`, `systemMessage`,
+  `hookSpecificOutput.additionalContext`). The chat loop is wired at
+  three exit sites (natural turn / max-iter / doom-loop) with a
+  per-`chat()` re-entry cap to prevent infinite `force_continue`
+  loops. `_dispatch_stop` returns a `StopHookResult` and a separate
+  `_emit_stop_hook_fired` emits `PLUGIN_HOOK_FIRED` with the
+  branch-specific outcome label. Schema additions on the Stop emit:
+  `outcome ∈ {"allow", "block", "continue", "continue_at_max_iter",
+  "reentry_capped"}`, `turn_end_reason` (discriminator for `continue`
+  emits across the three exit sites), `added_context_count`,
+  `suppress_output`. PreCompact stays observe-only; PreCompact gate
+  is intentionally out of scope (see "Out of scope" below).
+
+- **Edit tool — unicode-fuzzy tier-3 match** — `EditTool` gains a
+  third match tier that maps typographic codepoints (smart quotes
+  `“ ” ‘ ’`, em-/en-dash `—`/`–`, NBSP, ideographic space, …) to
+  ASCII before line-window comparison, mirroring `git apply` fuzzy
+  behaviour. Tiers 1 (byte-exact) and 2 (whitespace-flex) hit first;
+  the shared `_line_window_matches` / `_apply_match` helpers preserve
+  CRLF byte offsets and `replace_all` spans every normalized-equivalent
+  occurrence. New `tests/test_edit_unicode_fuzzy.py` covers tier-3
+  hits, `replace_all` across mixed dash variants, CRLF preservation,
+  and tier-precedence (byte-exact and whitespace-flex must hit before
+  tier 3).
+
+### Changed
+
+- **`SearchTextTool` argv hardening** — `_git_grep` now passes the
+  pattern via `-e <pattern>` (git grep's `--` is the *pathspec*
+  separator, not an option terminator); `_ripgrep` places the pattern
+  after `--`. A user-supplied pattern beginning with `-` (`--help`,
+  `--pre=...`, a leading `-e` payload) can no longer be parsed as a
+  flag by the underlying engine. New
+  `tests/test_search_argument_injection.py` covers both engines.
+
+- **`SearchTextTool` rg source-level skip pruning** — `_ripgrep` now
+  translates the effective `skip` set into `--glob '!<dir>'` flags so
+  heavyweight directories (`node_modules`, `build`, `target`, …) are
+  excluded by rg itself rather than post-filtered out of its output.
+  Matters most in the non-git fallback path where there is no
+  `.gitignore` to lean on. Negative globs are appended *after* the
+  positive `file_pattern` glob because rg gives later globs precedence
+  — a regression test locks in the ordering. `_effective_skip_dirs`
+  opt-in semantics are preserved (a caller who explicitly references
+  `node_modules` in their query still searches it).
+
+### Fixed
+
+- **Doom-loop turn finalizer no longer double-dispatches Stop.**
+  Previously the `doom_triggered` branch dispatched Stop once and then
+  `break`'d into the max-iter finalizer, which dispatched Stop a
+  second time with the wrong `turn_end_reason`. The branch now
+  finalizes the assistant message and returns directly. Pinned by
+  `tests/test_hooks_stop_doom_loop_no_double_dispatch.py`.
+
+- **Hook parser non-string trigger no longer raises.** `_regex_match_full`
+  guards non-string trigger / value with an `isinstance` check so a
+  malformed config degrades to no-match instead of raising
+  `TypeError` from `re.fullmatch`.
+
+### Documentation
+
+- **`docs/implementation/STOP_PRECOMPACT_HOOKS_PLAN.{md,zh.md}`** —
+  full two-phase plan with Claude Code compatibility matrix, payload
+  shape, dispatcher signatures, replay-event projection, and
+  `matched_rule_count` no-emit gate semantics.
+- **Developer guide `part-4/2-agent-events.md`** (en + zh) — the
+  `PLUGIN_HOOK_FIRED` row now lists `Stop` / `PreCompact` in the
+  `hook_name` enumeration with per-name fields and the five-label
+  Stop `outcome` matrix.
+- **`docs/design/pi-mono-borrow-review.{md,zh.md}`** — reframed as
+  Phase A event surface vs Phase B control-aware gate.
+- **`docs/design/pi-mono-tools-review.{md,zh.md}`** — new decision
+  record covering the Edit tier-3 match and Search argv hardening
+  borrow candidates.
+
 ## [0.4.3] — 2026-05-04
 
 A permission-hardening + LLM-resilience release. **No breaking changes;
