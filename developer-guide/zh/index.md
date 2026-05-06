@@ -12,6 +12,11 @@ hero:
       text: Recipes（一键到答案）
       link: /zh/recipes/
 features:
+  - icon: 🖥️
+    title: 我用的是终端 CLI
+    details: Slash 命令、plan 模式、子 agent、记忆、回放、非交互入口 — 终端侧的全部能力，12 章覆盖。
+    link: /zh/cli/
+    linkText: CLI 命令手册 →
   - icon: ⚡
     title: 我先想试一下
     details: 3 行 Python 拿到流式回复。无需 Web 服务器、无需额外组件。

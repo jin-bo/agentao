@@ -9,6 +9,25 @@ import { withMermaid } from 'vitepress-plugin-mermaid'
 
 const zhSidebar = [
   {
+    text: 'CLI · 终端命令手册',
+    collapsed: false,
+    items: [
+      { text: '概述', link: '/zh/cli/' },
+      { text: '1. 起步', link: '/zh/cli/1-getting-started' },
+      { text: '2. 模型与 Provider', link: '/zh/cli/2-models-providers' },
+      { text: '3. 权限与模式', link: '/zh/cli/3-permissions-modes' },
+      { text: '4. Plan 模式', link: '/zh/cli/4-plan-mode' },
+      { text: '5. Skills 与 Crystallize', link: '/zh/cli/5-skills-crystallize' },
+      { text: '6. 记忆', link: '/zh/cli/6-memory' },
+      { text: '7. 上下文与状态', link: '/zh/cli/7-context-status' },
+      { text: '8. MCP / ACP / 插件', link: '/zh/cli/8-mcp-acp-plugins' },
+      { text: '9. 回放与输出', link: '/zh/cli/9-replay-output' },
+      { text: '10. 配置文件参考', link: '/zh/cli/10-config-reference' },
+      { text: '11. 会话、子 Agent 与任务', link: '/zh/cli/11-sessions-agents' },
+      { text: '12. 非交互入口', link: '/zh/cli/12-non-interactive' },
+    ],
+  },
+  {
     text: 'Recipes · 高频任务直链',
     collapsed: false,
     items: [
@@ -126,6 +145,25 @@ const zhSidebar = [
 ]
 
 const enSidebar = [
+  {
+    text: 'CLI · Terminal Reference',
+    collapsed: false,
+    items: [
+      { text: 'Overview', link: '/en/cli/' },
+      { text: '1. Getting Started', link: '/en/cli/1-getting-started' },
+      { text: '2. Models & Providers', link: '/en/cli/2-models-providers' },
+      { text: '3. Permissions & Modes', link: '/en/cli/3-permissions-modes' },
+      { text: '4. Plan Mode', link: '/en/cli/4-plan-mode' },
+      { text: '5. Skills & Crystallize', link: '/en/cli/5-skills-crystallize' },
+      { text: '6. Memory', link: '/en/cli/6-memory' },
+      { text: '7. Context & Status', link: '/en/cli/7-context-status' },
+      { text: '8. MCP / ACP / Plugins', link: '/en/cli/8-mcp-acp-plugins' },
+      { text: '9. Replay & Output', link: '/en/cli/9-replay-output' },
+      { text: '10. Configuration Reference', link: '/en/cli/10-config-reference' },
+      { text: '11. Sessions, Agents & Tasks', link: '/en/cli/11-sessions-agents' },
+      { text: '12. Non-Interactive Entry Points', link: '/en/cli/12-non-interactive' },
+    ],
+  },
   {
     text: 'Recipes · Common tasks',
     collapsed: false,
@@ -279,6 +317,7 @@ export default withMermaid(defineConfig({
       themeConfig: {
         nav: [
           { text: '首页', link: '/zh/' },
+          { text: 'CLI', link: '/zh/cli/' },
           { text: '第一部分', link: '/zh/part-1/' },
           { text: 'Recipes', link: '/zh/recipes/' },
           {
@@ -314,6 +353,7 @@ export default withMermaid(defineConfig({
       themeConfig: {
         nav: [
           { text: 'Home', link: '/en/' },
+          { text: 'CLI', link: '/en/cli/' },
           { text: 'Part 1', link: '/en/part-1/' },
           { text: 'Recipes', link: '/en/recipes/' },
           {

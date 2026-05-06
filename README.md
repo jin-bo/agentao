@@ -204,7 +204,17 @@ If you're not sure how to approach Agentao yet, follow one of these paths:
 
 ## Documentation Map
 
-Use the README for the main path, and jump to the docs below when you need depth:
+Two audiences, two paths:
+
+| Audience | Where to read | Production site |
+|---|---|---|
+| **CLI users** — using `agentao` in the terminal | [`developer-guide/en/cli/`](developer-guide/en/cli/) (12 chapters: slash commands, plan mode, memory, replay, …) | [agentao.cn/en/cli/](https://agentao.cn/en/cli/) |
+| **Embedding developers** — building Agentao into your own app | [`developer-guide/en/`](developer-guide/en/) (Parts 1–7 + Appendix) | [agentao.cn](https://agentao.cn) |
+| **中文版本** | [`developer-guide/zh/cli/`](developer-guide/zh/cli/) · [`developer-guide/zh/`](developer-guide/zh/) | [agentao.cn/zh/cli/](https://agentao.cn/zh/cli/) · [agentao.cn/zh/](https://agentao.cn/zh/) |
+
+Run `cd developer-guide && npx vitepress dev` to browse the full guide locally.
+
+For depth on a specific topic, the canonical references stay in `docs/`:
 
 | Topic | Document |
 |------|----------|
@@ -220,7 +230,6 @@ Use the README for the main path, and jump to the docs below when you need depth
 | Headless runtime contract | [docs/features/headless-runtime.md](docs/features/headless-runtime.md) |
 | Session replay | [docs/features/session-replay.md](docs/features/session-replay.md) |
 | macOS sandbox-exec | [docs/features/macos-sandbox-exec.md](docs/features/macos-sandbox-exec.md) |
-| Developer guide | [developer-guide/](developer-guide/) (run `cd developer-guide && npx vitepress dev` to browse locally) |
 | Integration examples | [examples/](examples/) — five runnable blueprints (SaaS API, IDE plugin, ticket triage, data workbench, batch job) |
 
 **One-liner demo** — try it right after install:

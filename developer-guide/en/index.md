@@ -12,6 +12,11 @@ hero:
       text: Recipes (1-click)
       link: /en/recipes/
 features:
+  - icon: 🖥️
+    title: I'm here for the terminal CLI
+    details: Slash commands, plan mode, sub-agents, memory, replay, non-interactive entry points — everything terminal-side, in 12 chapters.
+    link: /en/cli/
+    linkText: CLI reference →
   - icon: ⚡
     title: I just want to try it
     details: 3 lines of Python, get a streaming reply. No web server, no extra services.

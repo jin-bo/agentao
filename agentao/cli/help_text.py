@@ -13,11 +13,17 @@ All commands start with `/`:
 - `/provider` - List or switch API providers
   - `/provider` - Show current provider and available providers
   - `/provider <NAME>` - Switch to provider (reads XXXX_API_KEY, XXXX_BASE_URL, XXXX_MODEL from env)
-- `/clear` - End current session (saves it) and start a new one
-  - Clears conversation history, all memories, and resets permission mode to workspace-write
+- `/clear` - Save current session, clear conversation + all memories, and start a new one
+  - Resets permission mode to workspace-write
   - `/clear all` - Alias for `/clear` (backward compatible)
-- `/new` - Alias for `/clear`; start a fresh session
+- `/new` - Save current session and start a fresh conversation
+  - Preserves long-term memories; resets permission mode to workspace-write
 - `/status` - Show conversation status
+- `/sessions [subcommand]` - Manage saved sessions
+  - `/sessions` or `/sessions list` - List saved sessions
+  - `/sessions resume <id>` - Resume a saved session by id prefix
+  - `/sessions delete <id>` - Delete a saved session
+  - `/sessions delete all` - Delete all saved sessions (requires confirmation)
 - `/temperature [value]` - Show or set LLM temperature (0.0-2.0)
 - `/mode [read-only|workspace-write|full-access]` - Set permission mode
   - `/mode` - Show current mode
@@ -30,7 +36,13 @@ All commands start with `/`:
   - `/plan implement` - Exit plan mode, restore prior permissions, show plan
   - `/plan clear` - Archive and clear the current plan
   - `/plan history` - List recent archived plans
-- `/skills` - List available skills
+- `/skills [subcommand]` - List and manage skills in the current session
+  - `/skills` - List available and active skills
+  - `/skills activate <name>` - Activate a skill for this session
+  - `/skills deactivate <name>` - Deactivate a skill for this session
+  - `/skills disable <name>` - Persistently disable a skill for this project
+  - `/skills enable <name>` - Re-enable a disabled skill
+  - `/skills reload` - Re-scan skill directories
 - `/crystallize [subcommand]` - Draft a reusable skill from the current session
   - `/crystallize` or `/crystallize suggest` - Analyze the session and generate a skill draft
   - `/crystallize feedback <text>` - Add feedback and rewrite the current draft
@@ -46,9 +58,15 @@ All commands start with `/`:
   - `/memory tag <tag>` - Filter memories by tag
   - `/memory delete <key>` - Delete a specific memory
   - `/memory clear` - Clear all memories (requires confirmation)
+  - `/memory user` / `/memory project` - Show one memory scope
+  - `/memory session` - Show recent session summaries
+  - `/memory status` - Show memory diagnostics
+  - `/memory crystallize` - Extract review candidates from this session
+  - `/memory review [approve|reject <id>]` - Review crystallized memory candidates
 - `/context` - Show context window token usage and limit
   - `/context limit <n>` - Set max context tokens (default: 200,000)
 - `/plugins` - List loaded plugins with diagnostics
+- `/permission` - Show active permission rules
 - `/mcp [subcommand]` - Manage MCP servers
   - `/mcp` or `/mcp list` - List MCP servers with status and tools
   - `/mcp add <name> <command|url>` - Add an MCP server
@@ -75,6 +93,17 @@ All commands start with `/`:
   - `/replay delete all` - Delete all replay files (requires confirmation; skips the active one)
 - `/copy` - Copy the last assistant response (Markdown) to clipboard
 - `/markdown` - Toggle Markdown rendering ON/OFF (default: ON)
+- `/agent [subcommand]` - List or run sub-agents
+  - `/agent` or `/agent list` - List available sub-agents
+  - `/agent <name> <task>` - Run a sub-agent in the foreground
+  - `/agent bg <name> <task>` - Run a sub-agent in the background
+  - `/agent status [id]` - Show background agent status or result
+  - `/agent dashboard` - Show a live background-agent dashboard
+  - `/agent cancel <id>` - Cancel a background agent
+  - `/agent delete <id>` - Delete a background-agent record
+- `/agents` - Alias for `/agent dashboard`
+- `/todos` - Show the current task list
+- `/tools [name]` - List registered tools or show one tool's schema
 - `/exit` or `/quit` - Exit the program
 
 **Available Tools:**
