@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from .models import (
+from agentao.plugins.models import (
     PluginAuthor,
     PluginCommandMetadata,
     PluginDependencyRef,

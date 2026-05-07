@@ -1,6 +1,6 @@
 """Resolve plugin agent definitions from LoadedPlugin agent_paths.
 
-CLI/loader-path module — see :mod:`agentao.plugins.resolvers` for the
+Loader-path module — see :mod:`agentao.embedding.plugins` for the
 runtime/loader split rationale. Validators
 (``validate_no_external_collisions``) remain in
 :mod:`agentao.plugins.agents`.
@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from ..models import (
+from agentao.plugins.models import (
     LoadedPlugin,
     PluginAgentDefinition,
     PluginLoadError,

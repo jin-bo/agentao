@@ -16,7 +16,7 @@
 
 **做（按顺序）：**
 
-> **进度，2026-05-07：** 项目 #1 已落地（commit `0310eda`），#3（session.py 搬迁，commit `838a952`）已落地。#2（构造函数 callback 收紧）已落地（commit `e467c95`）。#4（权限引擎 API 重新设计）已落地（commit `0bb4a06`）。#5a（plugin validator/resolver 拆分）已落地（commit `c600cd4`）。表格保留原状以备追溯，已加 ✅ 标记。
+> **进度，2026-05-07：** 项目 #1 已落地（commit `0310eda`），#3（session.py 搬迁，commit `838a952`）已落地。#2（构造函数 callback 收紧）已落地（commit `e467c95`）。#4（权限引擎 API 重新设计）已落地（commit `0bb4a06`）。#5a（plugin validator/resolver 拆分）已落地（commit `c600cd4`）。#5b（plugin loader 外移到 `embedding/plugins/`）已落地（commit `<TBD>`）。表格保留原状以备追溯，已加 ✅ 标记。
 
 1. ✅ **已完成。** **`replay/` 改成 `Transport` 订阅者。** 完全外移（让 replay 从 core facade 上彻底消失）涉及四类构件：
    - **顶层 import** —— `agent.py:25,31,36` 共 3 条语句，10 个名字。
@@ -213,9 +213,22 @@ codex 把 plugin **加载**（manifest 解析、市场同步、安装）和 plug
 
 **测试：** 2549 通过、2 跳过。无回归。
 
-**没做的事：** 阶段 5b 仍待执行——`manager.py`、`manifest.py`、`diagnostics.py`、`mcp.py` 加新的 `resolvers/` 包还没真的搬到 `embedding/plugins/`。本轮拆分是让 5b 变成纯机械搬迁的前置（resolver 不再混 validator），实际搬迁按优先表的安排另起 PR。
+**没做的事：** 阶段 5b 紧随其后落地（见下文 5b 章节）。本轮拆分把 5b 变成纯机械搬迁的前置——resolver 不再混 validator，loader 整体搬到 `embedding/plugins/` 时不会牵扯到 runtime 路径。
 
-**阶段 5b（机械，1 天）：** 5a 落地后，把 `manager.py` + `manifest.py` + `diagnostics.py` + `mcp.py` + 新 resolver 一起外移到 `agentao-plugins-loader/`（或 `embedding/plugins/`）。`runtime/` 和 `agent.py` 一行 import 都不用改。
+**阶段 5b（机械，1 天）：** ✅ **已完成。** 5a 落地后，把 `manager.py` + `manifest.py` + `diagnostics.py` + `mcp.py` + 新 resolver 一起外移到 `agentao-plugins-loader/`（或 `embedding/plugins/`）。`runtime/` 和 `agent.py` 一行 import 都不用改。
+
+**实际落地内容（2026-05-07）：**
+- 新建 `agentao/embedding/plugins/` 包，收纳 `manager.py`、`manifest.py`、`diagnostics.py`、`mcp.py` 和 `resolvers/` 子包（共 8 个文件，全部用 `git mv` 搬迁以保留 blame）。包的 `__init__.py` 重导出公共面（`PluginManager`、`PluginManifestParser`、`PluginDiagnostics`、`build_diagnostics`、`merge_plugin_mcp_servers`、`resolve_plugin_mcp_servers`、`resolve_plugin_agents`、`resolve_plugin_entries`），并把 runtime-vs-loader 的拆分写进 docstring。
+- 跨包 import 从 `from .models import ...`（搬完就坏的相对 import）改成 `from agentao.plugins.models import ...`（绝对 import），4 个搬迁模块都改。两个 `resolvers/*.py` 把 `from ..models import ...` 也按同样方式迁移。
+- `agentao/plugins/__init__.py` 的 docstring 重写：明确这层是 runtime-only 面（models、hooks、validators），并指向 `agentao.embedding.plugins`。validator-only 的 `plugins/skills.py` 和 `plugins/agents.py` 的 docstring 也更新为指向新的 resolver 位置。
+- CLI `agentao/cli/subcommands.py` 改指：`_plugin_list_cli`、`_load_and_register_plugins`、`_handle_plugins_interactive` 共 8 条 import 全部切到 `..embedding.plugins.{manager,manifest,diagnostics,mcp,resolvers.*}`。
+- 测试 import 更新跨 6 个文件：`test_plugin_loader.py`、`test_plugin_lifecycle.py`、`test_plugin_mcp.py`、`test_plugin_manifest.py`、`test_plugin_skills.py`、`test_plugin_agents.py`。无测试逻辑改动。
+- 开发者指南引用更新：`developer-guide/{en,zh}/cli/8-mcp-acp-plugins.md` 中 `PluginManager` / `build_diagnostics` 的模块路径切到新位置。
+- 旧路径 `agentao/plugins/{manager,manifest,diagnostics,mcp,resolvers}` 不留向后兼容 shim。它们从来不在 `agentao.plugins.__all__`，调用方全是一方代码——加重导出 shim 只会变成"形状不对的噪声"，与 5a 一致。
+
+**测试：** 2549 通过、2 跳过。`runtime/` 和 `agent.py` 的 import 一行未改，正如文档预言——grep 验证。
+
+**没做的事：** 没做物理 wheel 拆分。Loader 现在住在同一包内的 `agentao/embedding/plugins/`；如果将来某次发版要把它单独出 `agentao-plugins-loader` 分发包，那是叠在本次搬迁之上的打包变更，不是代码变更。
 
 **为什么推迟：** validator/resolver 拆分要小心穿过 `SkillManager.__init__` / `AgentManager.__init__`。在赶进度时改这块容易在没明显测试信号的情况下破坏 plugin 发现路径。#1–#4 ROI 更高，先落地。
 
@@ -302,7 +315,7 @@ codex 通过 #21278 把消息历史外移（独立 `message-history` crate），
 | 3 | `session.py` → `embedding/sessions.py`；按 call site 显式传 `project_root`（生产 7 处调用中 6 处需要新 plumbing，第 7 处 ACP load 只需切 import path）；shim 保留 `Path.cwd()` fallback + 可选 `project_root` 直到 0.5.0；新路径上删除两者 | 1 天 | 低 | 🟢 高 |
 | 4 | Permissions 文件 I/O 上移 `embedding/`——**engine API 重新设计**（构造函数改造 + 4 处 caller 更新） | 1–1.5 天 | 中 | 🟡 中 |
 | 5a | ✅ `plugins/skills.py`、`plugins/agents.py`——拆 validator/resolver | 2–3 天 | 中 | 🟡 中 |
-| 5b | 5a 落地后外移 `plugins/{manager, manifest, diagnostics, resolvers}` | 1 天 | 低 | ⚪ 长期 |
+| 5b | ✅ 5a 落地后外移 `plugins/{manager, manifest, diagnostics, mcp, resolvers}` | 1 天 | 低 | ⚪ 长期 |
 | 6 | `acp/` 拆 wheel | — | — | ⚪ 长期（无逻辑耦合） |
 | 7 | 0.5.0 删 `agentao.harness/` 别名 | 半小时 | 零 | ⚪ 已计划 |
 

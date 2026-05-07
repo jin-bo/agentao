@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from agentao.plugins.diagnostics import PluginDiagnostics, build_diagnostics
-from agentao.plugins.manager import PluginManager
+from agentao.embedding.plugins.diagnostics import PluginDiagnostics, build_diagnostics
+from agentao.embedding.plugins.manager import PluginManager
 from agentao.plugins.models import LoadedPlugin, PluginLoadError, PluginWarning
 
 
@@ -51,7 +51,7 @@ class TestDiscovery:
         _write_local_plugin(global_plugins, "plug-a")
         _write_local_plugin(project_plugins, "plug-b")
 
-        from agentao.plugins.manifest import PluginManifestParser
+        from agentao.embedding.plugins.manifest import PluginManifestParser
         from agentao.plugins.models import PluginCandidate
 
         parser = PluginManifestParser()
@@ -370,7 +370,7 @@ class TestNoManifestLoading:
         mgr = PluginManager(cwd=tmp_path / "project")
         loaded = mgr.load_plugins()
         plugin = next(p for p in loaded if p.name == "bare-plugin")
-        from agentao.plugins.resolvers.skills import resolve_plugin_entries
+        from agentao.embedding.plugins.resolvers.skills import resolve_plugin_entries
         entries, _, _ = resolve_plugin_entries(plugin)
         assert any("greet" in e.runtime_name for e in entries)
 
@@ -405,7 +405,7 @@ class TestNoManifestLoading:
         mgr = PluginManager(cwd=tmp_path / "project")
         loaded = mgr.load_plugins()
         plugin = next(p for p in loaded if p.name == "bare-plugin")
-        from agentao.plugins.resolvers.skills import resolve_plugin_entries
+        from agentao.embedding.plugins.resolvers.skills import resolve_plugin_entries
         entries, _, _ = resolve_plugin_entries(plugin)
         assert any("hello" in e.runtime_name for e in entries)
 

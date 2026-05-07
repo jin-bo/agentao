@@ -1,4 +1,4 @@
-"""Plugin resolvers — CLI/loader-path manifest-to-entry conversion.
+"""Plugin resolvers — loader-path manifest-to-entry conversion.
 
 The resolvers walk a :class:`~agentao.plugins.models.LoadedPlugin`'s
 declared/auto-discovered directories and produce
@@ -13,10 +13,6 @@ Validators (``validate_no_external_collisions``) deliberately stay in
 ``SkillManager.register_plugin_skills`` and
 ``AgentManager.register_plugin_agents`` invoke them on every plugin
 registration, which sits on the agent-init runtime path.
-
-Earmarked for relocation alongside ``plugins/{manager, manifest,
-diagnostics, mcp}`` when the plugin loader externalizes (Phase 5b in
-``docs/design/core-boundary-review.md``).
 """
 
 from .agents import resolve_plugin_agents

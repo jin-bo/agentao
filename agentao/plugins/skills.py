@@ -4,7 +4,7 @@ Runtime-path module — invoked by
 :meth:`agentao.skills.manager.SkillManager.register_plugin_skills` on
 agent init / `_load_and_register_plugins`. Resolution
 (``resolve_plugin_entries`` and its private helpers) lives in
-:mod:`agentao.plugins.resolvers.skills`.
+:mod:`agentao.embedding.plugins.resolvers.skills`.
 """
 
 from __future__ import annotations

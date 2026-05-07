@@ -213,7 +213,7 @@ Errors: 0
 ::: info 这一章在体系里的位置
 - MCP：`agent.mcp_manager` — 嵌入式宿主可以调 `manager.get_server_status()` 拿到本页一样的数据
 - ACP：`agent.acp_manager` — ACP 状态、send、cancel 同上
-- Plugins：`PluginManager` — 诊断报告由 `agentao.plugins.diagnostics.build_diagnostics` 生成，宿主也可以调。完整的可编程接口见 [Part 5.7](/zh/part-5/7-plugin-hooks)
+- Plugins：`PluginManager`（在 `agentao.embedding.plugins.manager`）— 诊断报告由 `agentao.embedding.plugins.diagnostics.build_diagnostics` 生成，宿主也可以调。完整的可编程接口见 [Part 5.7](/zh/part-5/7-plugin-hooks)
 :::
 
 ::: tip 真相源头

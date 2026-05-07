@@ -1,6 +1,6 @@
 """Resolve plugin skills and commands into PluginSkillEntry lists.
 
-CLI/loader-path module — see :mod:`agentao.plugins.resolvers` for the
+Loader-path module — see :mod:`agentao.embedding.plugins` for the
 runtime/loader split rationale. Validators
 (``validate_no_external_collisions``) remain in
 :mod:`agentao.plugins.skills`.
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from ..models import (
+from agentao.plugins.models import (
     LoadedPlugin,
     PluginCommandMetadata,
     PluginLoadError,

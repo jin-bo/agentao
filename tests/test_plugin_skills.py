@@ -13,7 +13,7 @@ from agentao.plugins.models import (
     PluginManifest,
     PluginSkillEntry,
 )
-from agentao.plugins.resolvers.skills import resolve_plugin_entries
+from agentao.embedding.plugins.resolvers.skills import resolve_plugin_entries
 from agentao.plugins.skills import validate_no_external_collisions
 
 

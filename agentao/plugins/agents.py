@@ -4,7 +4,7 @@ Runtime-path module — invoked by
 :meth:`agentao.agents.manager.AgentManager.register_plugin_agents` on
 agent init / `_load_and_register_plugins`. Resolution
 (``resolve_plugin_agents`` and its private helpers) lives in
-:mod:`agentao.plugins.resolvers.agents`.
+:mod:`agentao.embedding.plugins.resolvers.agents`.
 """
 
 from __future__ import annotations

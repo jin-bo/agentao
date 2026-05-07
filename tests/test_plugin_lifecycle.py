@@ -19,8 +19,8 @@ from agentao.plugins.models import (
     ParsedHookRule,
     PluginManifest,
 )
-from agentao.plugins.diagnostics import PluginDiagnostics, build_diagnostics
-from agentao.plugins.manager import PluginManager
+from agentao.embedding.plugins.diagnostics import PluginDiagnostics, build_diagnostics
+from agentao.embedding.plugins.manager import PluginManager
 
 
 # ======================================================================
@@ -330,7 +330,7 @@ class TestPluginListCli:
         with unittest.mock.patch.object(PluginManager, "__init__", lambda self, **kw: (
             setattr(self, '_cwd', tmp_path.resolve()),
             setattr(self, '_inline_dirs', []),
-            setattr(self, '_parser', __import__('agentao.plugins.manifest', fromlist=['PluginManifestParser']).PluginManifestParser()),
+            setattr(self, '_parser', __import__('agentao.embedding.plugins.manifest', fromlist=['PluginManifestParser']).PluginManifestParser()),
             setattr(self, '_loaded', []),
             setattr(self, '_warnings', []),
             setattr(self, '_errors', []),
@@ -355,7 +355,7 @@ class TestPluginListCli:
         with unittest.mock.patch.object(PluginManager, "__init__", lambda self, **kw: (
             setattr(self, '_cwd', tmp_path.resolve()),
             setattr(self, '_inline_dirs', []),
-            setattr(self, '_parser', __import__('agentao.plugins.manifest', fromlist=['PluginManifestParser']).PluginManifestParser()),
+            setattr(self, '_parser', __import__('agentao.embedding.plugins.manifest', fromlist=['PluginManifestParser']).PluginManifestParser()),
             setattr(self, '_loaded', []),
             setattr(self, '_warnings', []),
             setattr(self, '_errors', []),
