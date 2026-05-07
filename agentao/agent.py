@@ -117,7 +117,7 @@ class Agentao:
             output_callback, tool_complete_callback, llm_text_callback,
             on_max_iterations_callback.
 
-        Passing any of the eight raises a single ``DeprecationWarning``.
+        Passing any of the eight emits a single ``DeprecationWarning``.
         Embedded hosts should construct an
         :class:`agentao.transport.SdkTransport` directly (preferred) or,
         when rewiring the host onto :class:`AgentEvent` would be too
@@ -237,17 +237,24 @@ class Agentao:
         self.permission_engine = permission_engine
 
         # Resolve transport: explicit > compat shim from old callbacks > NullTransport.
-        # The legacy 8-callback path emits a single DeprecationWarning so
-        # embedded hosts get a clear migration signal. Hosts that need the
-        # callback shape long-term should call
-        # :func:`agentao.embedding.compat.build_compat_transport` directly
-        # and pass ``transport=`` here — that path is warning-free.
         _has_legacy = any([
             confirmation_callback, step_callback, thinking_callback, ask_user_callback,
             output_callback, tool_complete_callback, llm_text_callback,
             on_max_iterations_callback,
         ])
         if transport is not None:
+            if _has_legacy:
+                # Mid-migration footgun: a host that wires a Transport
+                # *and* passes legacy callbacks would silently drop the
+                # callbacks — the explicit transport always wins. Warn
+                # so the host can delete the dead kwargs.
+                warnings.warn(
+                    "Agentao(): legacy callback kwargs were passed alongside "
+                    "transport=, so the callbacks are ignored. Drop them — "
+                    "the transport= path supersedes them.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
             self.transport = transport
         elif _has_legacy:
             warnings.warn(

@@ -24,11 +24,6 @@ The recommended migration path for embedded hosts:
 Both paths bypass the deprecation warning and route through the
 public Transport contract — the constructor's legacy kwargs become
 opt-out rather than opt-in.
-
-This module is the **documented** public surface. The actual
-implementation still lives in :mod:`agentao.transport.sdk`; nothing
-moved physically. Importing through ``agentao.transport`` keeps
-working but is not recommended for new code.
 """
 
 from ..transport.sdk import build_compat_transport
