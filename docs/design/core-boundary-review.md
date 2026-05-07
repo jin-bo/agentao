@@ -16,7 +16,7 @@ Four concrete items shouldn't be in agentao's core, ranked by ROI. Three further
 
 **Do (in order):**
 
-> **Status, 2026-05-07:** items #1, #2 (constructor callback tightening), #3 (session.py migration), #4 (permission engine API redesign) shipped. Commits: `838a952` (#3), `0310eda` (#1), `e467c95` (#2), `0bb4a06` (#4). Original priority table preserved below; checkboxes added.
+> **Status, 2026-05-07:** items #1, #2 (constructor callback tightening), #3 (session.py migration), #4 (permission engine API redesign), #5a (plugin validator/resolver split) shipped. Commits: `838a952` (#3), `0310eda` (#1), `e467c95` (#2), `0bb4a06` (#4), `<TBD>` (#5a). Original priority table preserved below; checkboxes added.
 
 1. **`replay/` → `Transport` subscriber.** ✅ **Done.** Full extraction (so replay disappears from the core facade entirely) covers four artifact classes:
    - **Top-level imports** — 10 names across 3 statements at `agent.py:25,31,36`.
@@ -201,7 +201,19 @@ Mapping that to agentao:
 
 Not a quick win. Two-phase split:
 
-**Phase 5a (sensitive, 2–3 days):** within `plugins/skills.py` and `plugins/agents.py`, separate validators (runtime path) from resolvers (CLI). Validators stay in core; resolvers move to a new `plugins/resolvers/` or to embedding. `plugins/mcp.py` does not need this split — it has no validator surface.
+**Phase 5a (sensitive, 2–3 days):** ✅ **Done.** Within `plugins/skills.py` and `plugins/agents.py`, separate validators (runtime path) from resolvers (CLI). Validators stay in core; resolvers move to a new `plugins/resolvers/` or to embedding. `plugins/mcp.py` does not need this split — it has no validator surface.
+
+**What actually shipped (2026-05-07):**
+- New `agentao/plugins/resolvers/` package: `resolvers/skills.py` houses `resolve_plugin_entries` plus all eight private helpers (`_resolve_skills`, `_parse_skill_md`, `_resolve_commands`, `_scan_commands_dir`, `_md_file_to_entry`, `_metadata_to_entry`, `_check_internal_collisions`, `_parse_yaml_frontmatter`); `resolvers/agents.py` houses `resolve_plugin_agents` plus its four private helpers. The `__init__.py` re-exports `resolve_plugin_entries` and `resolve_plugin_agents`, and its module docstring spells out the runtime/loader split rationale + the 5b relocation plan.
+- `agentao/plugins/skills.py` and `agentao/plugins/agents.py` slimmed to validators-only — each module now exports a single `validate_no_external_collisions` function. Module docstrings call out the runtime path (`SkillManager.register_plugin_skills` / `AgentManager.register_plugin_agents`) and point at the resolvers package for the loader-side functions.
+- Dead code dropped: `PluginSkillCollisionError` (defined in the old `plugins/skills.py` but never imported anywhere — verified by grep) was deleted rather than carried into either side of the split.
+- Two CLI import sites in `agentao/cli/subcommands.py` (`_plugin_list_cli` and `_load_and_register_plugins`) repointed to `..plugins.resolvers.skills` / `..plugins.resolvers.agents`. Runtime callers (`agentao/skills/manager.py:378`, `agentao/agents/manager.py:106`) keep importing `validate_no_external_collisions` from `agentao.plugins.skills` / `agentao.plugins.agents` — those paths are now validator-only and no longer load any resolution code.
+- Three test files migrated their imports: `tests/test_plugin_skills.py` and `tests/test_plugin_agents.py` split their imports between the resolvers and validator modules; `tests/test_plugin_loader.py` repointed two `resolve_plugin_entries` imports.
+- No back-compat shim left in `plugins/skills.py` / `plugins/agents.py`. Resolvers and validators are private package surface (not in `agentao.plugins.__all__`); only first-party callers were touched, so a redirect re-export would be wrong-shaped noise.
+
+**Tests:** 2549 passed, 2 skipped. No regressions.
+
+**What did not happen:** Phase 5b is still pending — `manager.py`, `manifest.py`, `diagnostics.py`, `mcp.py`, and the new `resolvers/` package have not yet relocated to `embedding/plugins/`. The split shipped here is the prerequisite that makes 5b mechanical (no validator-vs-resolver entanglement remaining), but the actual move belongs in its own PR per the priority table.
 
 **Phase 5b (mechanical, 1 day):** once 5a lands, move `manager.py` + `manifest.py` + `diagnostics.py` + `mcp.py` + the new resolvers into `agentao-plugins-loader/` (or `embedding/plugins/`). `runtime/` and `agent.py` will not need any import changes.
 
@@ -289,7 +301,7 @@ Move to `agentao/embedding/sessions.py`. Order matters — making `project_root`
 | 2 | Tighten `Agentao.__init__`: 8 deprecated callbacks → `embedding/compat.py` | 1 day | Low | 🟢 High |
 | 3 | `session.py` → `embedding/sessions.py`; per-call-site `project_root` plumbing (6 of 7 production calls need new plumbing; 7th — ACP load — only needs import-path swap); shim keeps `Path.cwd()` fallback + optional `project_root` until 0.5.0; new path drops both | ~1 day | Low | 🟢 High |
 | 4 | Permissions file I/O up to `embedding/` — **engine API redesign** (constructor change + 4 caller updates) | 1–1.5 days | Medium | 🟡 Medium |
-| 5a | `plugins/skills.py`, `plugins/agents.py` — validator/resolver split | 2–3 days | Medium | 🟡 Medium |
+| 5a | ✅ `plugins/skills.py`, `plugins/agents.py` — validator/resolver split | 2–3 days | Medium | 🟡 Medium |
 | 5b | Externalize `plugins/{manager, manifest, diagnostics, resolvers}` once 5a lands | 1 day | Low | ⚪ Long-term |
 | 6 | `acp/` wheel split | — | — | ⚪ Long-term (no logical coupling) |
 | 7 | Remove `agentao.harness/` alias in 0.5.0 | ~half hour | Zero | ⚪ Already scheduled |

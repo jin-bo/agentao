@@ -16,7 +16,7 @@
 
 **做（按顺序）：**
 
-> **进度，2026-05-07：** 项目 #1 已落地（commit `0310eda`），#3（session.py 搬迁，commit `838a952`）已落地。#2（构造函数 callback 收紧）已落地（commit `e467c95`）。#4（权限引擎 API 重新设计）已落地（commit `0bb4a06`）。表格保留原状以备追溯，已加 ✅ 标记。
+> **进度，2026-05-07：** 项目 #1 已落地（commit `0310eda`），#3（session.py 搬迁，commit `838a952`）已落地。#2（构造函数 callback 收紧）已落地（commit `e467c95`）。#4（权限引擎 API 重新设计）已落地（commit `0bb4a06`）。#5a（plugin validator/resolver 拆分）已落地（commit `<TBD>`）。表格保留原状以备追溯，已加 ✅ 标记。
 
 1. ✅ **已完成。** **`replay/` 改成 `Transport` 订阅者。** 完全外移（让 replay 从 core facade 上彻底消失）涉及四类构件：
    - **顶层 import** —— `agent.py:25,31,36` 共 3 条语句，10 个名字。
@@ -201,7 +201,19 @@ codex 把 plugin **加载**（manifest 解析、市场同步、安装）和 plug
 
 不是快速可完成的事。两阶段拆：
 
-**阶段 5a（敏感，2–3 天）：** 在 `plugins/skills.py` 和 `plugins/agents.py` 内部把 validator（runtime 路径）和 resolver（CLI）分开。Validator 留 core；resolver 外移到新的 `plugins/resolvers/` 或 embedding。`plugins/mcp.py` 不需要做这层拆分——它没有 validator 面。
+**阶段 5a（敏感，2–3 天）：** ✅ **已完成。** 在 `plugins/skills.py` 和 `plugins/agents.py` 内部把 validator（runtime 路径）和 resolver（CLI）分开。Validator 留 core；resolver 外移到新的 `plugins/resolvers/` 或 embedding。`plugins/mcp.py` 不需要做这层拆分——它没有 validator 面。
+
+**实际落地内容（2026-05-07）：**
+- 新增 `agentao/plugins/resolvers/` 包：`resolvers/skills.py` 收纳 `resolve_plugin_entries` 加 8 个私有 helper（`_resolve_skills`、`_parse_skill_md`、`_resolve_commands`、`_scan_commands_dir`、`_md_file_to_entry`、`_metadata_to_entry`、`_check_internal_collisions`、`_parse_yaml_frontmatter`）；`resolvers/agents.py` 收纳 `resolve_plugin_agents` 加 4 个私有 helper。`__init__.py` 重导出 `resolve_plugin_entries` / `resolve_plugin_agents`，模块 docstring 把 runtime/loader 拆分原由和 5b 外移计划写清。
+- `agentao/plugins/skills.py` 和 `agentao/plugins/agents.py` 瘦身成只剩 validator——每个模块只导出一个 `validate_no_external_collisions` 函数。模块 docstring 注明 runtime 调用路径（`SkillManager.register_plugin_skills` / `AgentManager.register_plugin_agents`）并指向 resolver 包。
+- 顺手删了死代码：旧 `plugins/skills.py` 里定义的 `PluginSkillCollisionError` 全仓库 grep 无任何引用——拆分时直接删掉，不带进任一侧。
+- `agentao/cli/subcommands.py` 的两处 CLI import 站点（`_plugin_list_cli` 和 `_load_and_register_plugins`）改指 `..plugins.resolvers.skills` / `..plugins.resolvers.agents`。Runtime 调用方（`agentao/skills/manager.py:378`、`agentao/agents/manager.py:106`）继续从 `agentao.plugins.skills` / `agentao.plugins.agents` 导入 `validate_no_external_collisions`——这两个路径现在已经是纯 validator，不再加载任何 resolution 代码。
+- 三个测试文件迁移 import：`tests/test_plugin_skills.py` 和 `tests/test_plugin_agents.py` 把 import 拆向 resolver 模块和 validator 模块；`tests/test_plugin_loader.py` 改了两处 `resolve_plugin_entries` import。
+- `plugins/skills.py` / `plugins/agents.py` **没有**留向后兼容 shim。Resolver 和 validator 都是包内私有面（不在 `agentao.plugins.__all__` 里），调用方全是一方代码——加重导出 shim 只会变成"形状不对的噪声"。
+
+**测试：** 2549 通过、2 跳过。无回归。
+
+**没做的事：** 阶段 5b 仍待执行——`manager.py`、`manifest.py`、`diagnostics.py`、`mcp.py` 加新的 `resolvers/` 包还没真的搬到 `embedding/plugins/`。本轮拆分是让 5b 变成纯机械搬迁的前置（resolver 不再混 validator），实际搬迁按优先表的安排另起 PR。
 
 **阶段 5b（机械，1 天）：** 5a 落地后，把 `manager.py` + `manifest.py` + `diagnostics.py` + `mcp.py` + 新 resolver 一起外移到 `agentao-plugins-loader/`（或 `embedding/plugins/`）。`runtime/` 和 `agent.py` 一行 import 都不用改。
 
@@ -289,7 +301,7 @@ codex 通过 #21278 把消息历史外移（独立 `message-history` crate），
 | 2 | 收紧 `Agentao.__init__`：8 个 deprecated callback 移到 `embedding/compat.py` | 1 天 | 低 | 🟢 高 |
 | 3 | `session.py` → `embedding/sessions.py`；按 call site 显式传 `project_root`（生产 7 处调用中 6 处需要新 plumbing，第 7 处 ACP load 只需切 import path）；shim 保留 `Path.cwd()` fallback + 可选 `project_root` 直到 0.5.0；新路径上删除两者 | 1 天 | 低 | 🟢 高 |
 | 4 | Permissions 文件 I/O 上移 `embedding/`——**engine API 重新设计**（构造函数改造 + 4 处 caller 更新） | 1–1.5 天 | 中 | 🟡 中 |
-| 5a | `plugins/skills.py`、`plugins/agents.py`——拆 validator/resolver | 2–3 天 | 中 | 🟡 中 |
+| 5a | ✅ `plugins/skills.py`、`plugins/agents.py`——拆 validator/resolver | 2–3 天 | 中 | 🟡 中 |
 | 5b | 5a 落地后外移 `plugins/{manager, manifest, diagnostics, resolvers}` | 1 天 | 低 | ⚪ 长期 |
 | 6 | `acp/` 拆 wheel | — | — | ⚪ 长期（无逻辑耦合） |
 | 7 | 0.5.0 删 `agentao.harness/` 别名 | 半小时 | 零 | ⚪ 已计划 |

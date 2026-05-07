@@ -5,10 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from agentao.plugins.agents import (
-    resolve_plugin_agents,
-    validate_no_external_collisions,
-)
+from agentao.plugins.agents import validate_no_external_collisions
+from agentao.plugins.resolvers.agents import resolve_plugin_agents
 from agentao.plugins.models import (
     LoadedPlugin,
     PluginAgentDefinition,

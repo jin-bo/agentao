@@ -370,7 +370,7 @@ class TestNoManifestLoading:
         mgr = PluginManager(cwd=tmp_path / "project")
         loaded = mgr.load_plugins()
         plugin = next(p for p in loaded if p.name == "bare-plugin")
-        from agentao.plugins.skills import resolve_plugin_entries
+        from agentao.plugins.resolvers.skills import resolve_plugin_entries
         entries, _, _ = resolve_plugin_entries(plugin)
         assert any("greet" in e.runtime_name for e in entries)
 
@@ -405,7 +405,7 @@ class TestNoManifestLoading:
         mgr = PluginManager(cwd=tmp_path / "project")
         loaded = mgr.load_plugins()
         plugin = next(p for p in loaded if p.name == "bare-plugin")
-        from agentao.plugins.skills import resolve_plugin_entries
+        from agentao.plugins.resolvers.skills import resolve_plugin_entries
         entries, _, _ = resolve_plugin_entries(plugin)
         assert any("hello" in e.runtime_name for e in entries)
 
