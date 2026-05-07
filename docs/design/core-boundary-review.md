@@ -218,17 +218,13 @@ Not a quick win. Two-phase split:
 **Phase 5b (mechanical, 1 day):** ✅ **Done.** Once 5a lands, move `manager.py` + `manifest.py` + `diagnostics.py` + `mcp.py` + the new resolvers into `agentao-plugins-loader/` (or `embedding/plugins/`). `runtime/` and `agent.py` will not need any import changes.
 
 **What actually shipped (2026-05-07):**
-- New `agentao/embedding/plugins/` package contains `manager.py`, `manifest.py`, `diagnostics.py`, `mcp.py`, and the `resolvers/` subpackage (8 files, all moved via `git mv` to preserve blame). The package `__init__.py` re-exports the public surface (`PluginManager`, `PluginManifestParser`, `PluginDiagnostics`, `build_diagnostics`, `merge_plugin_mcp_servers`, `resolve_plugin_mcp_servers`, `resolve_plugin_agents`, `resolve_plugin_entries`) and documents the runtime-vs-loader split.
-- Cross-package imports converted from `from .models import ...` (relative, broken after move) to `from agentao.plugins.models import ...` (absolute) inside the four moved modules. The two `resolvers/*.py` files migrated their `from ..models import ...` the same way.
-- `agentao/plugins/__init__.py` docstring rewritten to describe the runtime-only surface (models, hooks, validators) and point at `agentao.embedding.plugins` for the loader. The validator-only `plugins/skills.py` and `plugins/agents.py` docstrings updated to reference the new resolver location.
-- CLI `agentao/cli/subcommands.py` repointed: 8 import statements across `_plugin_list_cli`, `_load_and_register_plugins`, and `_handle_plugins_interactive` switched to `..embedding.plugins.{manager,manifest,diagnostics,mcp,resolvers.*}`.
-- Test imports updated across 6 files: `test_plugin_loader.py`, `test_plugin_lifecycle.py`, `test_plugin_mcp.py`, `test_plugin_manifest.py`, `test_plugin_skills.py`, `test_plugin_agents.py`. No test logic changed.
-- Developer-guide references updated in `developer-guide/{en,zh}/cli/8-mcp-acp-plugins.md` to point at the new module paths for `PluginManager` / `build_diagnostics`.
-- No back-compat shim left at the old `agentao/plugins/{manager,manifest,diagnostics,mcp,resolvers}` paths. They were never in `agentao.plugins.__all__` and only first-party callers were touched, so a redirect re-export would be wrong-shaped noise — same call as in 5a.
+- 8 files moved via `git mv` into `agentao/embedding/plugins/` (loader + resolvers); `agentao/plugins/` retains models/hooks/validators only. The new package `__init__.py` re-exports the loader surface.
+- Cross-package imports inside the moved files switched from `from .models` / `from ..models` to absolute `from agentao.plugins.models`, since the relative paths no longer resolve.
+- No back-compat shim at the old paths. The loader symbols were never in `agentao.plugins.__all__` and all callers are first-party — same call as 5a.
 
-**Tests:** 2549 passed, 2 skipped. `runtime/` and `agent.py` imports unchanged, exactly as the doc predicted — verified by grep.
+**Tests:** 2549 passed, 2 skipped. `runtime/` and `agent.py` imports unchanged, as predicted.
 
-**What did not happen:** No physical wheel split. The loader lives at `agentao/embedding/plugins/` inside the same package; if a future release decides to publish it as a separate `agentao-plugins-loader` distribution, that's a packaging change layered on top of this move, not a code change.
+**What did not happen:** No physical wheel split. If a future release publishes `agentao-plugins-loader` as a separate distribution, that's a packaging change layered on top of this move, not a code change.
 
 **Why deferred:** the validator/resolver split requires careful threading through `SkillManager.__init__` and `AgentManager.__init__`. Moving that under time pressure risks breaking plugin discovery without a clear test signal. Items #1–#4 are higher-ROI and should land first.
 

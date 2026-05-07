@@ -1,24 +1,10 @@
 """Plugin loader — manifest parsing, discovery, MCP merge, and diagnostics.
 
-Phase 5b of ``docs/design/core-boundary-review.md``: the plugin loader
-lives here, alongside the rest of the embedding/factory layer, because
-it is reached only from CLI subcommands and the loader phase of
-``_load_and_register_plugins`` — never from the runtime hot path.
-
-Runtime-path modules stay in :mod:`agentao.plugins`:
-
-* :mod:`agentao.plugins.models` — dataclasses imported by
-  ``runtime/chat_loop.py`` (``StopHookResult``).
-* :mod:`agentao.plugins.hooks` — hook dispatcher invoked per turn /
-  per tool call.
-* :mod:`agentao.plugins.skills` /
-  :mod:`agentao.plugins.agents` — ``validate_no_external_collisions``
-  invoked by ``SkillManager.register_plugin_skills`` /
-  ``AgentManager.register_plugin_agents`` on agent init.
-
-This package re-exports the symbols a CLI/embedded host actually
-consumes; first-party callers may also import the submodules
-directly when the convenience surface isn't enough.
+Lives under ``embedding/`` because it is reached only from CLI
+subcommands and the loader phase of ``_load_and_register_plugins`` —
+never from the runtime hot path. Runtime-path modules (models, hooks,
+validators) stay in :mod:`agentao.plugins`. See Phase 5b of
+``docs/design/core-boundary-review.md`` for the split rationale.
 """
 
 from .diagnostics import PluginDiagnostics, build_diagnostics
