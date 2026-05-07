@@ -47,6 +47,13 @@ class Transport(Protocol):
         Implementations that do not maintain a subscriber list may omit
         this method; consumers should ``getattr(transport, "subscribe", None)``
         before calling.
+
+        **Lifecycle:** the transport holds a strong reference to every
+        registered listener. Hosts MUST call the returned unsubscribe
+        before dropping the listener — otherwise the listener (and
+        anything its closure captures) will not be garbage-collected
+        for the lifetime of the transport. A typical pattern is to
+        unsubscribe in the host's session-end / teardown hook.
         """
         ...
 

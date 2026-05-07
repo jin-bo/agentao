@@ -1,32 +1,20 @@
-"""Replay lifecycle owner — moved out of :class:`agentao.agent.Agentao`.
+"""Replay lifecycle owner.
 
-A :class:`ReplayManager` owns everything the previous four agent
-attributes used to: ``_replay_recorder``, ``_replay_adapter``,
-``_host_replay_sink``, ``_replay_config``. The factory layer
-(``embedding/``) creates one and assigns ``agent.replay_manager``;
-old agent facade methods (``start_replay`` / ``end_replay`` /
-``reload_replay_config``) delegate here and are scheduled for removal
-in 0.5.0.
+A :class:`ReplayManager` owns the recorder, adapter, host event sink,
+and config for one agent. The factory layer (``embedding/``) creates
+one and assigns it to ``agent.replay_manager``.
 
 State machine (idempotent at every edge):
 
 * ``start(session_id)`` — no-op when ``config.enabled`` is false or a
   recorder is already open. Creates the recorder, splices the
   :class:`ReplayAdapter` in front of the bound transport, attaches a
-  :class:`HostReplaySink` to the host event stream, listens for
-  ``TURN_BEGIN`` / ``TURN_END`` events on the transport so per-turn
-  state stays inside the manager.
+  :class:`HostReplaySink` to the host event stream.
 * ``end()`` — flushes ``SESSION_ENDED``, closes the recorder, restores
-  the inner transport, detaches the host sink, and unsubscribes the
-  turn listener. Safe to call repeatedly.
+  the inner transport, detaches the host sink. Safe to call repeatedly.
 * ``reload_config()`` — re-reads ``replay`` from
   ``.agentao/settings.json``. Toggles take effect on the next
   ``start()``; the currently-open instance is intentionally untouched.
-
-The agent object is passed to :meth:`__init__` so the manager can
-mutate ``agent.transport`` / ``agent.tool_runner._transport`` while
-splicing the adapter, the same dance the old ``replay/lifecycle.py``
-module did before this refactor.
 """
 
 from __future__ import annotations
@@ -116,10 +104,7 @@ class ReplayManager:
         adapter = ReplayAdapter(agent.transport, recorder)
         self._adapter = adapter
         agent.transport = adapter
-        try:
-            agent.tool_runner._transport = adapter
-        except Exception:
-            pass
+        agent.tool_runner._transport = adapter
         # Bridge the public host EventStream into the same recorder so
         # tool_lifecycle / subagent_lifecycle / permission_decision events
         # land in one audit artifact. ``end()`` detaches.
@@ -133,11 +118,10 @@ class ReplayManager:
                 "replay: host sink attach failed: %s", exc,
             )
             self._host_replay_sink = None
-        # TURN_BEGIN / TURN_END events the runtime emits on
-        # ``agent.transport`` (now the adapter) get translated into
-        # ``adapter.begin_turn`` / ``end_turn`` by the adapter's mirror
-        # path — see ``replay/adapter.py``. No separate listener is
-        # needed; the splice itself routes them.
+        # TURN_BEGIN / TURN_END events the runtime emits on the
+        # transport are translated into recorder turn writes by
+        # ``ReplayAdapter._mirror`` — the splice above is what routes
+        # them, no separate listener is needed.
         recorder.record(
             _ReplayKind.SESSION_STARTED,
             payload={
@@ -174,14 +158,11 @@ class ReplayManager:
             except Exception:
                 pass
         if adapter is not None:
-            try:
-                inner = adapter._inner
-                if agent.transport is adapter:
-                    agent.transport = inner
-                if agent.tool_runner._transport is adapter:
-                    agent.tool_runner._transport = inner
-            except Exception:
-                pass
+            inner = adapter.inner
+            if agent.transport is adapter:
+                agent.transport = inner
+            if agent.tool_runner._transport is adapter:
+                agent.tool_runner._transport = inner
         sink = self._host_replay_sink
         if sink is not None:
             try:

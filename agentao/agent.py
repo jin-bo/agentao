@@ -317,17 +317,12 @@ class Agentao:
         else:
             self.project_instructions = self._load_project_instructions()
 
-        # Replay state lives on a separate ``ReplayManager`` owned by
-        # the host (factory wires it in ``embedding/factory.py``); core
-        # carries one nullable reference. Old internal attrs
-        # (``_replay_recorder`` / ``_replay_adapter`` / ``_host_replay_sink``
-        # / ``_replay_config``) and the matching facade methods now
-        # delegate through this single attribute.
+        # Replay state lives on a separate ``ReplayManager``; the host
+        # factory (``embedding/factory.py``) attaches it. Hosts that
+        # construct ``Agentao`` directly leave ``replay_manager`` as
+        # ``None`` (no recording).
         self.replay_manager: Optional["ReplayManager"] = None
         if replay_config is not None:
-            # Back-compat: ``replay_config=`` kwarg is deprecated but
-            # still wires up the manager during the 0.4.x migration
-            # window so existing tests + factory paths keep working.
             from .replay import ReplayManager as _ReplayManager
             self.replay_manager = _ReplayManager(self, config=replay_config)
 
@@ -529,11 +524,9 @@ class Agentao:
 
     @property
     def _replay_config(self) -> "ReplayConfig":
+        """Active replay config, or a fresh disabled default when no manager is attached."""
         if self.replay_manager is not None:
             return self.replay_manager.config
-        # Tests assert ``isinstance(agent._replay_config, ReplayConfig)``
-        # even when no replay is configured — return a fresh disabled
-        # default to keep that contract.
         from .replay import ReplayConfig
         return ReplayConfig()
 

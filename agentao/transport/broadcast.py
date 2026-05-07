@@ -10,8 +10,6 @@ Listener errors are swallowed — subscription is a side channel and
 must never break the primary emit path.
 """
 
-from __future__ import annotations
-
 from typing import Callable, List
 
 from .events import AgentEvent
@@ -38,12 +36,12 @@ class EventBroadcaster:
         return _unsubscribe
 
     def notify(self, event: AgentEvent) -> None:
-        """Call every listener in order; swallow any exceptions they raise.
-
-        Iterating over a snapshot keeps mid-notify subscribe/unsubscribe
-        from skipping or double-firing listeners — the new listener (or
-        the absent unsubscribed one) takes effect on the *next* event.
-        """
+        """Call every listener in order; swallow any exceptions they raise."""
+        if not self._listeners:
+            return
+        # Snapshot iteration keeps mid-notify subscribe/unsubscribe from
+        # skipping or double-firing listeners — the change takes effect
+        # on the *next* event.
         for listener in list(self._listeners):
             try:
                 listener(event)

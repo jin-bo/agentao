@@ -5,7 +5,7 @@ Owns the cross-cutting concerns of a single turn:
 - Cancellation-token assignment (``agent._current_token``)
 - Per-turn LLM-call counter reset
 - Session-summary id snapshot
-- Replay ``begin_turn`` / ``end_turn`` with status tracking
+- TURN_BEGIN / TURN_END transport events with status tracking
 - ``KeyboardInterrupt`` / ``AgentCancelledError`` / generic exception
   handling around the inner loop
 
@@ -20,6 +20,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 from ..cancellation import AgentCancelledError, CancellationToken
+from ..replay.observability import latest_session_summary_id
+from ..transport import AgentEvent, EventType
 from .identity import new_turn_id
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
@@ -46,9 +48,9 @@ def run_turn(
     - ``agent._last_session_summary_id`` is snapshot up-front so the
       inner loop's compression paths can fire
       ``SESSION_SUMMARY_WRITTEN`` exactly once per new summary.
-    - The replay adapter (if any) is captured at entry so ``end_turn``
-      fires in ``finally`` even when ``end_replay()`` concurrently
-      clears ``agent._replay_adapter`` (e.g. ACP session teardown).
+    - TURN_BEGIN / TURN_END transport events frame the turn so the
+      ``finally`` TURN_END fires even when ``replay_manager.end()``
+      concurrently swaps the adapter out (e.g. ACP session teardown).
     - ``KeyboardInterrupt`` is mapped to a ``[Interrupted by user]``
       assistant message + ``status="cancelled"``.
     - ``AgentCancelledError`` is mapped to ``[Cancelled: <reason>]`` +
@@ -75,16 +77,11 @@ def run_turn(
     # fire SESSION_SUMMARY_WRITTEN each time compress_messages writes
     # a new one. Held on the instance so compression paths inside the
     # retry branches can update it without threading it through args.
-    from ..replay.observability import latest_session_summary_id
     agent._last_session_summary_id = latest_session_summary_id(agent)
-    # TURN_BEGIN flows through the transport — when a ReplayManager has
-    # spliced its ReplayAdapter into ``agent.transport``, the adapter's
-    # _mirror translates this into a recorder turn write. The runtime
-    # never reaches into the manager directly, so concurrent
-    # ``replay_manager.end()`` (e.g. ACP session teardown) can safely
-    # swap the adapter out mid-turn — the matching TURN_END below
-    # simply lands on whatever transport is bound at finally-time.
-    from ..transport import AgentEvent, EventType
+    # TURN_BEGIN/TURN_END flow through the transport so concurrent
+    # ``replay_manager.end()`` (e.g. ACP session teardown) can swap the
+    # adapter out mid-turn without breaking the finally block — the
+    # TURN_END below lands on whatever transport is bound at the time.
     try:
         agent.transport.emit(AgentEvent(EventType.TURN_BEGIN, {
             "user_message": user_message,

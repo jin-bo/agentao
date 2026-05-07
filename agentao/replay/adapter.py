@@ -45,6 +45,11 @@ class ReplayAdapter:
     def recorder(self) -> ReplayRecorder:
         return self._recorder
 
+    @property
+    def inner(self) -> Any:
+        """The wrapped transport — used by lifecycle code to restore on teardown."""
+        return self._inner
+
     def begin_turn(self, user_message: str) -> str:
         """Start a new replay turn and return its ``turn_id``."""
         turn_id = _short_id()
