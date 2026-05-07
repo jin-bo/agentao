@@ -19,13 +19,17 @@ class Transport(Protocol):
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool: ...
     def ask_user(self, question: str) -> str: ...
     def on_max_iterations(self, count: int, messages: list) -> dict: ...
+
+    # Optional fan-out (declared on the base; not all implementations expose it)
+    def subscribe(self, listener: Callable[[AgentEvent], None]) -> Callable[[], None]: ...
 ```
 
 **Key design**:
 
-- `Transport` is a `Protocol` (PEP 544) — **you do not inherit any base class**; implementing the four methods is enough
+- `Transport` is a `Protocol` (PEP 544) — **you do not inherit any base class**; implementing the four required methods is enough
 - `@runtime_checkable` makes `isinstance(x, Transport)` available (but it doesn't verify method signatures — use a static type checker for that)
-- Four methods split 1 + 3: **one-way event push** + **three synchronous Q&A**
+- The four required methods split 1 + 3: **one-way event push** + **three synchronous Q&A**
+- `subscribe(listener)` is **optional** — the Protocol declares it; `NullTransport` and `SdkTransport` provide it by composing the `EventBroadcaster` helper; bespoke implementations may omit it. Probe with `getattr(transport, "subscribe", None)`.
 
 ## Method 1: `emit(event)` — push events
 
@@ -117,6 +121,56 @@ def on_max_iterations(self, count, messages):
 ```
 
 Deep-dive: [4.6 Max-iterations strategies](./6-max-iterations).
+
+## Optional method: `subscribe(listener)` — fan-out without re-emit
+
+```python
+def subscribe(
+    self, listener: Callable[[AgentEvent], None]
+) -> Callable[[], None]:
+    """Register an extra listener that receives every emitted event.
+    Returns an idempotent unsubscribe function."""
+```
+
+**Why it exists** — replay recorders, audit pipelines, and metrics collectors need to observe every event without becoming the *primary* transport. `subscribe()` lets multiple consumers attach to a single transport instance without manual fan-out.
+
+**When called**:
+- The host attaches a listener once (e.g. at agent construction); the listener stays registered until the returned callable is invoked
+- Listeners receive a snapshot of subscribers at notify time, so subscribing or unsubscribing mid-emit is safe
+- Errors raised by a listener are swallowed — they must not poison the runtime emit path
+
+**Used internally by**:
+- The replay recorder (subscribes to `TURN_BEGIN` / `TURN_END` / tool / sub-agent events instead of being reached through agent state)
+- The host event stream backing `agent.events()` (see [4.7](./7-host-contract))
+
+**Probe before calling** — bespoke implementations from path C below may omit this method entirely:
+
+```python
+sub = getattr(transport, "subscribe", None)
+if sub is not None:
+    unsubscribe = sub(my_listener)
+    try:
+        ...
+    finally:
+        unsubscribe()
+```
+
+`NullTransport` and `SdkTransport` get `subscribe()` by composing `agentao.transport.EventBroadcaster`. From-scratch transports (e.g. ACP) can opt in the same way:
+
+```python
+from agentao.transport import EventBroadcaster
+
+class MyTransport:
+    def __init__(self):
+        self._broadcast = EventBroadcaster()
+
+    def emit(self, event):
+        # ... your real send path ...
+        self._broadcast.notify(event)
+
+    def subscribe(self, listener):
+        return self._broadcast.subscribe(listener)
+```
 
 ## Three implementation paths
 

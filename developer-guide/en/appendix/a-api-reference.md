@@ -50,7 +50,7 @@ Agentao(
     replay_config: ReplayConfig | None = None,
     sandbox_policy: SandboxPolicy | None = None,
     bg_store: BackgroundTaskStore | None = None,
-    # Legacy callbacks (prefer `transport=`)
+    # Legacy callbacks (deprecated — emit DeprecationWarning; removed in 0.5.0)
     output_callback: Callable[[str], None] | None = None,
     confirmation_callback: Callable[[str, str, dict], bool] | None = None,
     ask_user_callback: Callable[[str], str] | None = None,
@@ -140,7 +140,7 @@ Any unset callback falls back to `NullTransport` behavior (allow, empty answer, 
 
 ### `build_compat_transport`
 
-Helper that builds a `Transport` from the legacy per-callback constructor args. You rarely need this directly — `Agentao` uses it internally when you pass `confirmation_callback=` et al.
+Helper that builds a `Transport` from the legacy per-callback constructor args. Lives in `agentao.embedding.compat` and is the **documented migration surface** for hosts still on the pre-0.2.10 callback shape — call it explicitly to opt out of the constructor-level `DeprecationWarning`. You rarely need it directly otherwise; `Agentao(...)` uses it internally when you pass `confirmation_callback=` et al. (and emits a single `DeprecationWarning` per construction). The 8 legacy callback kwargs themselves will be removed from the `Agentao(...)` signature in **0.5.0**; `build_compat_transport()` itself remains available.
 
 ### `AgentEvent` / `EventType`
 

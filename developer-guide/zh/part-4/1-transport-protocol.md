@@ -19,13 +19,17 @@ class Transport(Protocol):
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool: ...
     def ask_user(self, question: str) -> str: ...
     def on_max_iterations(self, count: int, messages: list) -> dict: ...
+
+    # 可选 fan-out（基类声明；并非所有实现都暴露）
+    def subscribe(self, listener: Callable[[AgentEvent], None]) -> Callable[[], None]: ...
 ```
 
 **关键设计**：
 
-- `Transport` 是一个 `Protocol`（PEP 544）——**你不必继承任何基类**，只要实现这 4 个方法就算 Transport
+- `Transport` 是一个 `Protocol`（PEP 544）——**你不必继承任何基类**，实现这 4 个必填方法就算 Transport
 - `@runtime_checkable` 让 `isinstance(x, Transport)` 可用（但不保证方法类型正确；类型检查应依赖静态工具）
-- 四个方法一分为二：**1 个单向推送事件** + **3 个同步问答**
+- 四个必填方法一分为二：**1 个单向推送事件** + **3 个同步问答**
+- `subscribe(listener)` 是**可选**的——Protocol 里有声明；`NullTransport` 和 `SdkTransport` 通过组合 `EventBroadcaster` helper 提供；自定义实现可以不实现。访问前用 `getattr(transport, "subscribe", None)` 探测。
 
 ## 方法一：`emit(event)` — 推事件
 
@@ -113,6 +117,56 @@ def on_max_iterations(self, count, messages):
 ```
 
 详细策略见 [4.6 最大迭代数兜底](./6-max-iterations)。
+
+## 可选方法：`subscribe(listener)` —— 不重发地 fan-out
+
+```python
+def subscribe(
+    self, listener: Callable[[AgentEvent], None]
+) -> Callable[[], None]:
+    """注册一个额外 listener，每个被 emit 的事件都会回调它。
+    返回一个幂等的 unsubscribe 函数。"""
+```
+
+**为什么需要它** —— replay 录制器、审计流水线、指标采集等都需要观察所有事件，但不应**取代**主 Transport。`subscribe()` 让多个消费者挂到同一个 transport 实例上，省去手动 fan-out。
+
+**何时调用**：
+- 宿主在构造期挂一个 listener，直到调用返回的 unsubscribe 才解除注册
+- 通知时以快照方式遍历 listeners，所以 emit 过程中订阅/取消订阅是安全的
+- listener 抛出的异常会被吞掉——绝不能污染运行时的 emit 路径
+
+**框架内置使用方**：
+- replay 录制器（订阅 `TURN_BEGIN` / `TURN_END` / 工具 / 子 agent 事件，替代过去从 agent 状态直接调 replay adapter 的路径）
+- `agent.events()` 背后的宿主事件流（见 [4.7](./7-host-contract)）
+
+**调用前先探测** —— 路径 C 的自定义实现可能完全不实现该方法：
+
+```python
+sub = getattr(transport, "subscribe", None)
+if sub is not None:
+    unsubscribe = sub(my_listener)
+    try:
+        ...
+    finally:
+        unsubscribe()
+```
+
+`NullTransport` 和 `SdkTransport` 通过组合 `agentao.transport.EventBroadcaster` 拿到 `subscribe()`。从零实现的 transport（如 ACP）想要 fan-out，可以照搬同样的写法：
+
+```python
+from agentao.transport import EventBroadcaster
+
+class MyTransport:
+    def __init__(self):
+        self._broadcast = EventBroadcaster()
+
+    def emit(self, event):
+        # ... 你真正的发送路径 ...
+        self._broadcast.notify(event)
+
+    def subscribe(self, listener):
+        return self._broadcast.subscribe(listener)
+```
 
 ## 三种实现路径
 
