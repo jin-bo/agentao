@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
@@ -110,10 +111,20 @@ class Agentao:
                 extras", which is the CLI default and produces the legacy
                 file-only behavior.
 
-        Deprecated args (still accepted for backward compatibility):
+        Deprecated args (still accepted for backward compatibility,
+        scheduled for removal in 0.5.0):
             confirmation_callback, step_callback, thinking_callback, ask_user_callback,
             output_callback, tool_complete_callback, llm_text_callback,
             on_max_iterations_callback.
+
+        Passing any of the eight raises a single ``DeprecationWarning``.
+        Embedded hosts should construct an
+        :class:`agentao.transport.SdkTransport` directly (preferred) or,
+        when rewiring the host onto :class:`AgentEvent` would be too
+        invasive, call
+        :func:`agentao.embedding.compat.build_compat_transport` to wrap
+        the legacy callbacks into a single transport and pass
+        ``transport=`` here. Both paths bypass the warning.
         """
         # A fully-constructed object always wins over its raw-config
         # sibling; supplying both is a programmer error.
@@ -225,7 +236,12 @@ class Agentao:
         self.todo_tool = TodoWriteTool()
         self.permission_engine = permission_engine
 
-        # Resolve transport: explicit > compat shim from old callbacks > NullTransport
+        # Resolve transport: explicit > compat shim from old callbacks > NullTransport.
+        # The legacy 8-callback path emits a single DeprecationWarning so
+        # embedded hosts get a clear migration signal. Hosts that need the
+        # callback shape long-term should call
+        # :func:`agentao.embedding.compat.build_compat_transport` directly
+        # and pass ``transport=`` here — that path is warning-free.
         _has_legacy = any([
             confirmation_callback, step_callback, thinking_callback, ask_user_callback,
             output_callback, tool_complete_callback, llm_text_callback,
@@ -234,6 +250,17 @@ class Agentao:
         if transport is not None:
             self.transport = transport
         elif _has_legacy:
+            warnings.warn(
+                "Agentao(): the legacy callback kwargs "
+                "(confirmation_callback, step_callback, thinking_callback, "
+                "ask_user_callback, output_callback, tool_complete_callback, "
+                "llm_text_callback, on_max_iterations_callback) are deprecated "
+                "and will be removed in 0.5.0. Build an SdkTransport directly "
+                "or call agentao.embedding.compat.build_compat_transport(...) "
+                "and pass transport= instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             self.transport = build_compat_transport(
                 confirmation_callback=confirmation_callback,
                 step_callback=step_callback,

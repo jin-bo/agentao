@@ -19,6 +19,7 @@ from ._globals import console, _plugin_inline_dirs
 def run_print_mode(prompt: str) -> int:
     """Non-interactive print mode: send prompt, print response, exit. Returns exit code."""
     from ..embedding import build_from_environment
+    from ..transport import SdkTransport
     from .subcommands import _load_and_register_plugins
 
     max_iterations_reached = [False]
@@ -33,7 +34,7 @@ def run_print_mode(prompt: str) -> int:
         return {"action": "stop"}
 
     agent = build_from_environment(
-        on_max_iterations_callback=_on_max_iterations,
+        transport=SdkTransport(on_max_iterations=_on_max_iterations),
     )
     agent._session_id = str(_uuid_mod.uuid4())
     agent.tool_runner._session_id = agent._session_id
