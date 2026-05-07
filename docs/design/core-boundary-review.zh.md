@@ -16,7 +16,7 @@
 
 **做（按顺序）：**
 
-> **进度，2026-05-07：** 项目 #1 已落地（commit `0310eda`），#3（session.py 搬迁，commit `838a952`）已落地。#2（构造函数 callback 收紧）已落地（commit `e467c95`）。#4（权限引擎 API 重新设计）已落地（commit `0bb4a06`）。#5a（plugin validator/resolver 拆分）已落地（commit `c600cd4`）。#5b（plugin loader 外移到 `embedding/plugins/`）已落地（commit `010ec4e`）。表格保留原状以备追溯，已加 ✅ 标记。
+> **进度，2026-05-07：** 项目 #1 已落地（commit `0310eda`），#3（session.py 搬迁，commit `838a952`）已落地。#2（构造函数 callback 收紧）已落地（commit `e467c95`）。#4（权限引擎 API 重新设计）已落地（commit `0bb4a06`）。#5a（plugin validator/resolver 拆分）已落地（commit `c600cd4`）。#5b（plugin loader 外移到 `embedding/plugins/`）已落地（commit `010ec4e`）。#6 边界整改（`host` → `acp` 惰性委托）已落地（commit `3eb5546`）。表格保留原状以备追溯，已加 ✅ 标记。
 
 1. ✅ **已完成。** **`replay/` 改成 `Transport` 订阅者。** 完全外移（让 replay 从 core facade 上彻底消失）涉及四类构件：
    - **顶层 import** —— `agent.py:25,31,36` 共 3 条语句，10 个名字。
@@ -68,7 +68,7 @@
 **推迟（需要更深拆解或等 wheel 拆分阶段）：**
 
 5. **`plugins/` 部分外移。** `plugins/models.py` + `hooks.py` **该留 core**（runtime 依赖它们）。`plugins/manager.py` + `manifest.py` + `diagnostics.py` 的 import 图里 `runtime/` 摸不到，可以外移。但 `plugins/skills.py` 和 `plugins/agents.py` 里**混了**runtime-path 的 validator 和 CLI-only 的 resolver，必须先拆开。2–3 天，敏感。
-6. **`acp/` 拆 wheel。** 依赖方向是单向的：ACP 会 import core（`acp/models.py:25` 和 `acp/session_new.py:43` 都 `from agentao.agent import Agentao`，惰性 / TYPE_CHECKING），但 **core 不反向 import ACP**——grep `agent.py` / `runtime/` / `tools/` 找 `acp` 零命中。拆 wheel 安全，因为 ACP 可以作为下游 wheel 依赖 `agentao-core`；这是发包问题，不是 API 问题。
+6. **`acp/` 拆 wheel。** 依赖方向是单向的：ACP 会 import core（`acp/models.py:25` 和 `acp/session_new.py:43` 都 `from agentao.agent import Agentao`，惰性 / TYPE_CHECKING）。第二轮 grep 范围只看 `agent.py` / `runtime/` / `tools/`，得出 "core 完全不反向 import ACP" 的结论；扩面再查发现一个漏网点：`agentao/host/schema.py:21` 顶层 `from ..acp import schema as _acp_schema_models`，用来支撑 `agentao.host.export_host_acp_json_schema()` 这个对外暴露的 schema 导出函数——这违反了拆 wheel 的前置条件。✅ **边界整改已落地**——把实现搬到 `agentao/acp/schema_export.py::build_host_acp_json_schema`，`host/schema.py::export_host_acp_json_schema` 改成在函数体内惰性 import 的薄包装。验证：`import agentao.host` 不再把 `agentao.acp` 拉进 `sys.modules`。对外 API 不变，调用方不变。真正的 wheel 拆分（把 `agentao-acp` 作为独立发行包）依然延后——那是依赖发版流水线和 CI 改造的发包工作，不是代码问题。
 7. **`harness/` 别名删除。** 已经排在 0.5.0。
 
 **从清单移除（事实错误）：**
@@ -312,7 +312,7 @@ codex 通过 #21278 把消息历史外移（独立 `message-history` crate），
 | 4 | Permissions 文件 I/O 上移 `embedding/`——**engine API 重新设计**（构造函数改造 + 4 处 caller 更新） | 1–1.5 天 | 中 | 🟡 中 |
 | 5a | ✅ `plugins/skills.py`、`plugins/agents.py`——拆 validator/resolver | 2–3 天 | 中 | 🟡 中 |
 | 5b | ✅ 5a 落地后外移 `plugins/{manager, manifest, diagnostics, mcp, resolvers}` | 1 天 | 低 | ⚪ 长期 |
-| 6 | `acp/` 拆 wheel | — | — | ⚪ 长期（无逻辑耦合） |
+| 6 | `acp/` 拆 wheel —— 边界整改 ✅（host→acp 惰性委托），发包延后 | — | 低 | ⚪ 长期（整改后无逻辑耦合） |
 | 7 | 0.5.0 删 `agentao.harness/` 别名 | 半小时 | 零 | ⚪ 已计划 |
 
 从优先表删除的项：

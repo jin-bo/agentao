@@ -16,7 +16,7 @@ Four concrete items shouldn't be in agentao's core, ranked by ROI. Three further
 
 **Do (in order):**
 
-> **Status, 2026-05-07:** items #1, #2 (constructor callback tightening), #3 (session.py migration), #4 (permission engine API redesign), #5a (plugin validator/resolver split), #5b (plugin loader → `embedding/plugins/`) shipped. Commits: `838a952` (#3), `0310eda` (#1), `e467c95` (#2), `0bb4a06` (#4), `c600cd4` (#5a), `010ec4e` (#5b). Original priority table preserved below; checkboxes added.
+> **Status, 2026-05-07:** items #1, #2 (constructor callback tightening), #3 (session.py migration), #4 (permission engine API redesign), #5a (plugin validator/resolver split), #5b (plugin loader → `embedding/plugins/`), #6 boundary prep (`host` → `acp` lazy delegation) shipped. Commits: `838a952` (#3), `0310eda` (#1), `e467c95` (#2), `0bb4a06` (#4), `c600cd4` (#5a), `010ec4e` (#5b), `3eb5546` (#6 prep). Original priority table preserved below; checkboxes added.
 
 1. **`replay/` → `Transport` subscriber.** ✅ **Done.** Full extraction (so replay disappears from the core facade entirely) covers four artifact classes:
    - **Top-level imports** — 10 names across 3 statements at `agent.py:25,31,36`.
@@ -68,7 +68,7 @@ Four concrete items shouldn't be in agentao's core, ranked by ROI. Three further
 **Defer (deeper analysis or wheel-split phase):**
 
 5. **`plugins/` partial split.** `plugins/models.py` + `hooks.py` correctly stay in core (runtime depends on them). `plugins/manager.py` + `manifest.py` + `diagnostics.py` are import-graph-isolated from `runtime/` and could externalize, but `plugins/skills.py` and `plugins/agents.py` mix runtime-path validators with CLI-only resolvers and need to split first. 2–3 days; sensitive.
-6. **`acp/` wheel split.** Dependency direction is one-way: ACP imports core (`acp/models.py:25` and `acp/session_new.py:43` both `from agentao.agent import Agentao`, lazy/TYPE_CHECKING), but **core never reverse-imports ACP** — grep `agent.py` / `runtime/` / `tools/` for `acp` returns zero hits. Wheel-split is safe because ACP can be a downstream consumer of a `agentao-core` wheel; the split affects packaging, not API.
+6. **`acp/` wheel split.** Dependency direction is one-way: ACP imports core (`acp/models.py:25` and `acp/session_new.py:43` both `from agentao.agent import Agentao`, lazy/TYPE_CHECKING). The earlier round-2 grep (limited to `agent.py` / `runtime/` / `tools/`) reported zero core→ACP imports, but a fuller audit caught one site: `agentao/host/schema.py:21` did `from ..acp import schema as _acp_schema_models` to power the public `agentao.host.export_host_acp_json_schema()` exporter. That contradicted the wheel-split prerequisite. ✅ **Boundary fix shipped** — the implementation moved to `agentao/acp/schema_export.py::build_host_acp_json_schema`, and `host/schema.py::export_host_acp_json_schema` is now a thin wrapper that lazy-imports it. Verified: `import agentao.host` no longer pulls `agentao.acp` into `sys.modules`. Public API unchanged, callers unchanged. The actual wheel split (publishing `agentao-acp` as a separate distribution) remains deferred — it's packaging work that depends on release-train and CI changes, not code.
 7. **`harness/` alias removal.** Already on the 0.5.0 schedule.
 
 **Removed from backlog (first-pass errors):**
@@ -312,7 +312,7 @@ Move to `agentao/embedding/sessions.py`. Order matters — making `project_root`
 | 4 | Permissions file I/O up to `embedding/` — **engine API redesign** (constructor change + 4 caller updates) | 1–1.5 days | Medium | 🟡 Medium |
 | 5a | ✅ `plugins/skills.py`, `plugins/agents.py` — validator/resolver split | 2–3 days | Medium | 🟡 Medium |
 | 5b | ✅ Externalize `plugins/{manager, manifest, diagnostics, mcp, resolvers}` once 5a lands | 1 day | Low | ⚪ Long-term |
-| 6 | `acp/` wheel split | — | — | ⚪ Long-term (no logical coupling) |
+| 6 | `acp/` wheel split — boundary prep ✅ (host→acp lazy delegation), packaging deferred | — | Low | ⚪ Long-term (no logical coupling after prep) |
 | 7 | Remove `agentao.harness/` alias in 0.5.0 | ~half hour | Zero | ⚪ Already scheduled |
 
 Item dropped from the table:
