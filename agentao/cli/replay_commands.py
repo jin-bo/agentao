@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Optional
 import readchar
 from rich.markup import escape as markup_escape
 
-from ..session import strip_system_reminders
+from ..embedding.sessions import strip_system_reminders
 from ._globals import console
 from .replay_render import (
     _format_ts_local,

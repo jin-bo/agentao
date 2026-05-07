@@ -516,12 +516,14 @@ def handle_sandbox_command(cli: AgentaoCLI, args: str) -> None:
 
 def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /sessions command."""
-    from ..session import (
+    from ..embedding.sessions import (
         delete_all_sessions,
         delete_session,
         format_session_time_local,
         list_sessions,
     )
+
+    project_root = cli.agent.working_directory
 
     args = args.strip()
     parts = args.split(None, 1) if args else []
@@ -529,7 +531,7 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
     sub_arg = parts[1].strip() if len(parts) > 1 else ""
 
     if sub in ("", "list"):
-        sessions = list_sessions()
+        sessions = list_sessions(project_root=project_root)
         if not sessions:
             console.print("\n[warning]No saved sessions found.[/warning]\n")
             return
@@ -557,14 +559,14 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
 
     elif sub == "delete":
         if sub_arg == "all":
-            sessions = list_sessions()
+            sessions = list_sessions(project_root=project_root)
             if not sessions:
                 console.print("\n[warning]No saved sessions to delete.[/warning]\n")
                 return
             console.print(f"\n[warning]Delete all {len(sessions)} session(s)? Press 1 to confirm, any other key to cancel.[/warning]")
             key = readchar.readkey()
             if key == "1":
-                count = delete_all_sessions()
+                count = delete_all_sessions(project_root=project_root)
                 console.print(f"\n[success]Deleted {count} session(s).[/success]\n")
             else:
                 console.print("\n[info]Cancelled.[/info]\n")
@@ -572,7 +574,7 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
         if not sub_arg:
             console.print("\n[error]Usage: /sessions delete <session-id>  or  /sessions delete all[/error]\n")
             return
-        if delete_session(sub_arg):
+        if delete_session(sub_arg, project_root=project_root):
             console.print(f"\n[success]Session '{sub_arg}' deleted.[/success]\n")
         else:
             console.print(f"\n[warning]Session '{sub_arg}' not found.[/warning]\n")
@@ -585,9 +587,10 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
 def resume_session(cli: AgentaoCLI, session_id: Optional[str] = None) -> None:
     """Load a previously saved session into the current agent."""
     import uuid as _uuid_mod
-    from ..session import list_sessions, load_session
+    from ..embedding.sessions import list_sessions, load_session
 
-    sessions = list_sessions()
+    project_root = cli.agent.working_directory
+    sessions = list_sessions(project_root=project_root)
     if not sessions:
         console.print("\n[error]No saved sessions found.[/error]\n")
         return
@@ -606,7 +609,7 @@ def resume_session(cli: AgentaoCLI, session_id: Optional[str] = None) -> None:
         match = sessions[0]  # newest
 
     try:
-        messages, model, active_skills = load_session(match["id"])
+        messages, model, active_skills = load_session(match["id"], project_root=project_root)
     except FileNotFoundError as e:
         console.print(f"\n[error]Could not resume session: {e}[/error]\n")
         return
