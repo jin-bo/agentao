@@ -16,7 +16,7 @@ Four concrete items shouldn't be in agentao's core, ranked by ROI. Three further
 
 **Do (in order):**
 
-> **Status, 2026-05-07:** items #1, #2-via-#1-side-effects (no separate work — see below), #3 (session.py migration), and #4 still call permission engine API redesign — landed in commits `838a952` (#3) and `<#1 hash>` (#1). Original priority table preserved below; checkboxes added.
+> **Status, 2026-05-07:** items #1, #2-via-#1-side-effects (no separate work — see below), #3 (session.py migration), and #4 still call permission engine API redesign — landed in commits `838a952` (#3) and `0310eda` (#1). Original priority table preserved below; checkboxes added.
 
 1. **`replay/` → `Transport` subscriber.** ✅ **Done.** Full extraction (so replay disappears from the core facade entirely) covers four artifact classes:
    - **Top-level imports** — 10 names across 3 statements at `agent.py:25,31,36`.
