@@ -1,4 +1,4 @@
-"""Permission-rule file loader (extracted from :class:`PermissionEngine`).
+"""Permission-rule file loader.
 
 :func:`load_permission_rules` reads ``<user_root>/permissions.json`` and
 returns the parsed rule list plus the source labels the engine surfaces
@@ -7,12 +7,6 @@ through :meth:`PermissionEngine.active_permissions`. Project-scope
 loaded — see :class:`agentao.permissions.PermissionEngine` for the
 reasoning — but its presence triggers a one-line warning so users
 discover the policy.
-
-Hosts that pre-load rules and pass them explicitly to
-``PermissionEngine(rules=..., loaded_sources=...)`` bypass disk
-I/O entirely. The legacy ``PermissionEngine(project_root=..., user_root=...)``
-constructor path still auto-loads via this function — the engine no
-longer reads files itself; it lazy-imports this helper.
 """
 
 from __future__ import annotations
@@ -54,7 +48,7 @@ def load_permission_rules(
         user_rules, user_loaded = _read_rule_file(user_path)
         if user_loaded:
             sources.append(f"user:{user_path}")
-            rules = list(user_rules)
+            rules = user_rules
 
     project_path = project_root / ".agentao" / "permissions.json"
     if project_path.exists():
@@ -77,13 +71,10 @@ def _read_rule_file(path: Path) -> Tuple[List[Dict[str, Any]], bool]:
     malformed files return ``loaded=False`` so
     :meth:`active_permissions` reports only sources actually consulted.
     """
-    if not path.exists():
-        return [], False
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return [], False
-        return data.get("rules", []), True
-    except (IOError, json.JSONDecodeError):
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return [], False
+    if not isinstance(data, dict):
+        return [], False
+    return data.get("rules", []), True

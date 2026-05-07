@@ -344,7 +344,6 @@ class PermissionEngine:
             raise TypeError(
                 "PermissionEngine requires a project_root keyword argument."
             )
-        self._project_root: Path = project_root
         self._user_root: Optional[Path] = user_root
         self._enable_hardline: bool = enable_hardline
         self._mode_rules: List[Dict[str, Any]] = []
@@ -363,15 +362,11 @@ class PermissionEngine:
             self.rules: List[Dict[str, Any]] = list(rules)
             self._file_sources: List[str] = list(loaded_sources or [])
         else:
-            # Legacy auto-load path. File I/O lives in embedding/
-            # — lazy-imported here to keep ``permissions`` module-load
-            # free of any subpackage dependency.
+            # Lazy import: avoid module-load dep on agentao.embedding.
             from .embedding.permission_loader import load_permission_rules
-            loaded_rules, loaded_src = load_permission_rules(
+            self.rules, self._file_sources = load_permission_rules(
                 project_root=project_root, user_root=user_root,
             )
-            self.rules = loaded_rules
-            self._file_sources = loaded_src
 
         self._mode_rules = _PRESET_RULES[self.active_mode.value]
 

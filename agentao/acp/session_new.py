@@ -297,10 +297,9 @@ def handle_session_new(
 
     transport = ACPTransport(server=server, session_id=session_id)
 
-    # Pre-load user-scope rules through embedding.permission_loader so
-    # the engine itself does no disk I/O. Passing ``project_root=cwd``
-    # (Issue 05) isolates the engine from the process cwd so two
-    # sessions running in different directories see independent rules.
+    # Passing ``project_root=cwd`` (Issue 05) isolates the engine from
+    # the process cwd so two sessions running in different directories
+    # see independent rules.
     from agentao.embedding.permission_loader import load_permission_rules
     from agentao.paths import user_root
     from agentao.permissions import PermissionEngine
