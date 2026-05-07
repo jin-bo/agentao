@@ -68,12 +68,6 @@ def export_host_acp_json_schema() -> Dict[str, Any]:
     Kept in a separate snapshot from
     :func:`export_host_event_json_schema` so a payload change on one
     surface does not flap the other.
-
-    The implementation lives in :mod:`agentao.acp.schema_export` because
-    it inspects ACP wire models. This wrapper imports it lazily so
-    ``import agentao.host`` does not eagerly load ``agentao.acp`` — the
-    boundary the planned wheel split (Phase 6 of the core-boundary
-    review) needs.
     """
     from agentao.acp.schema_export import build_host_acp_json_schema
 

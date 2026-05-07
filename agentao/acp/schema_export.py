@@ -1,17 +1,7 @@
 """ACP schema-export implementation.
 
-Lives under ``agentao.acp`` because the function inspects ACP wire
-models and produces a JSON schema for them — that's an ACP concern, not
-a host-package concern. The public entry point is
-:func:`agentao.host.schema.export_host_acp_json_schema`, which is a
-thin lazy delegate to :func:`build_host_acp_json_schema` here.
-
-This module exists so ``agentao.host`` does not eagerly import
-``agentao.acp`` at package load. After the planned ``acp/`` wheel split
-(see Phase 6 of ``docs/design/core-boundary-review.md``),
-``agentao-core`` will not declare ``agentao-acp`` as a hard dependency;
-the lazy delegate raises ``ImportError`` with a clear install hint when
-ACP is not installed.
+Public entry point is :func:`agentao.host.schema.export_host_acp_json_schema`,
+which lazy-imports :func:`build_host_acp_json_schema` from here.
 """
 
 from __future__ import annotations
@@ -53,12 +43,7 @@ _ACP_PUBLIC_MODELS = (
 
 
 def build_host_acp_json_schema() -> Dict[str, Any]:
-    """Build the JSON schema for host-facing ACP payload models.
-
-    Implementation behind
-    :func:`agentao.host.schema.export_host_acp_json_schema`. Kept here so
-    ``agentao.host`` can stay free of an eager ACP import.
-    """
+    """Build the JSON schema for host-facing ACP payload models."""
     defs: Dict[str, Any] = {}
     for name in _ACP_PUBLIC_MODELS:
         model = getattr(_acp_schema_models, name)

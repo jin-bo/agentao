@@ -68,7 +68,7 @@
 **推迟（需要更深拆解或等 wheel 拆分阶段）：**
 
 5. **`plugins/` 部分外移。** `plugins/models.py` + `hooks.py` **该留 core**（runtime 依赖它们）。`plugins/manager.py` + `manifest.py` + `diagnostics.py` 的 import 图里 `runtime/` 摸不到，可以外移。但 `plugins/skills.py` 和 `plugins/agents.py` 里**混了**runtime-path 的 validator 和 CLI-only 的 resolver，必须先拆开。2–3 天，敏感。
-6. **`acp/` 拆 wheel。** 依赖方向是单向的：ACP 会 import core（`acp/models.py:25` 和 `acp/session_new.py:43` 都 `from agentao.agent import Agentao`，惰性 / TYPE_CHECKING）。第二轮 grep 范围只看 `agent.py` / `runtime/` / `tools/`，得出 "core 完全不反向 import ACP" 的结论；扩面再查发现一个漏网点：`agentao/host/schema.py:21` 顶层 `from ..acp import schema as _acp_schema_models`，用来支撑 `agentao.host.export_host_acp_json_schema()` 这个对外暴露的 schema 导出函数——这违反了拆 wheel 的前置条件。✅ **边界整改已落地**——把实现搬到 `agentao/acp/schema_export.py::build_host_acp_json_schema`，`host/schema.py::export_host_acp_json_schema` 改成在函数体内惰性 import 的薄包装。验证：`import agentao.host` 不再把 `agentao.acp` 拉进 `sys.modules`。对外 API 不变，调用方不变。真正的 wheel 拆分（把 `agentao-acp` 作为独立发行包）依然延后——那是依赖发版流水线和 CI 改造的发包工作，不是代码问题。
+6. **`acp/` 拆 wheel。** ACP → core 是单向的（`acp/models.py:25`、`acp/session_new.py:43`，惰性 / TYPE_CHECKING）。第二轮 grep 漏掉一个反向 import：`host/schema.py:21` 顶层 import `..acp.schema`，用来支撑公开的 `export_host_acp_json_schema()` 导出函数。✅ **边界整改已落地**——实现搬到 `agentao/acp/schema_export.py::build_host_acp_json_schema`，`host/schema.py::export_host_acp_json_schema` 改成在函数体内惰性 import 的薄包装。`import agentao.host` 不再把 `agentao.acp` 拉进 `sys.modules`；对外 API 不变。真正的 wheel 拆分（把 `agentao-acp` 单独发包）依然延后——那是发包侧工作，不是代码问题。
 7. **`harness/` 别名删除。** 已经排在 0.5.0。
 
 **从清单移除（事实错误）：**
