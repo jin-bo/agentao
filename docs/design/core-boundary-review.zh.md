@@ -16,7 +16,7 @@
 
 **做（按顺序）：**
 
-> **进度，2026-05-07：** 项目 #1 已落地（commit `0310eda`），#3（session.py 搬迁，commit `838a952`）已落地。#2（构造函数 callback 收紧）已落地（commit `e467c95`）。#4（权限引擎 API 重新设计）已落地（commit `0bb4a06`）。#5a（plugin validator/resolver 拆分）已落地（commit `<TBD>`）。表格保留原状以备追溯，已加 ✅ 标记。
+> **进度，2026-05-07：** 项目 #1 已落地（commit `0310eda`），#3（session.py 搬迁，commit `838a952`）已落地。#2（构造函数 callback 收紧）已落地（commit `e467c95`）。#4（权限引擎 API 重新设计）已落地（commit `0bb4a06`）。#5a（plugin validator/resolver 拆分）已落地（commit `c600cd4`）。表格保留原状以备追溯，已加 ✅ 标记。
 
 1. ✅ **已完成。** **`replay/` 改成 `Transport` 订阅者。** 完全外移（让 replay 从 core facade 上彻底消失）涉及四类构件：
    - **顶层 import** —— `agent.py:25,31,36` 共 3 条语句，10 个名字。
