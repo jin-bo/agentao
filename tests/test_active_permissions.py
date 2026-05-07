@@ -133,7 +133,8 @@ def test_active_permissions_does_not_re_read_disk(tmp_path, monkeypatch):
     """Permission decisions may call ``active_permissions`` on the hot path.
 
     The cache must be hit on the second call without touching the
-    filesystem (no extra ``_load_file`` invocations).
+    filesystem (no extra ``load_permission_rules`` invocations after
+    construction).
     """
     user_root = tmp_path / "user"
     _write_perms(user_root / "permissions.json", [
@@ -141,14 +142,16 @@ def test_active_permissions_does_not_re_read_disk(tmp_path, monkeypatch):
     ])
     engine = PermissionEngine(project_root=tmp_path, user_root=user_root)
 
+    from agentao.embedding import permission_loader as _loader_mod
+
     calls: List[Path] = []
-    real_load = engine._load_file
+    real_load = _loader_mod.load_permission_rules
 
-    def spy_load(path: Path):
-        calls.append(path)
-        return real_load(path)
+    def spy_load(*, project_root: Path, user_root):
+        calls.append(project_root)
+        return real_load(project_root=project_root, user_root=user_root)
 
-    monkeypatch.setattr(engine, "_load_file", spy_load)
+    monkeypatch.setattr(_loader_mod, "load_permission_rules", spy_load)
 
     engine.active_permissions()
     engine.active_permissions()

@@ -7,8 +7,6 @@ non-``None`` return into a DENY decision before rule evaluation.
 """
 
 import copy
-import json
-import logging
 import re
 from enum import Enum
 from pathlib import Path
@@ -19,8 +17,6 @@ from .permissions_hardline import hardline_check
 
 if TYPE_CHECKING:
     from .host.models import ActivePermissions
-
-_logger = logging.getLogger(__name__)
 
 
 class PermissionDecision(Enum):
@@ -268,7 +264,7 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
 class PermissionEngine:
     """Evaluates permission rules to decide tool execution policy.
 
-    Rules are loaded from user scope only (``<user_root>/permissions.json``).
+    Rules are sourced from the user scope (``<user_root>/permissions.json``).
     Hosts may inject additional policy via :meth:`add_loaded_source`.
 
     Project-scope ``.agentao/permissions.json`` is intentionally NOT
@@ -279,6 +275,14 @@ class PermissionEngine:
     user/host concern, not a cwd concern — the same model OS
     permissions and IDE workspace-trust use. If such a file exists, it
     is ignored with a warning.
+
+    **Two construction modes.** First-party callers pre-load rules via
+    :func:`agentao.embedding.permission_loader.load_permission_rules`
+    and pass them explicitly with ``rules=`` / ``loaded_sources=``; the
+    engine then performs **no disk I/O** of its own. Legacy callers
+    that pass only ``project_root`` / ``user_root`` still work — the
+    engine lazy-delegates to the embedding loader to fill in the
+    rules — but the file I/O is no longer part of this module.
 
     Rule format::
 
@@ -299,20 +303,33 @@ class PermissionEngine:
         *,
         project_root: Path,
         user_root: Optional[Path] = None,
+        rules: Optional[List[Dict[str, Any]]] = None,
+        loaded_sources: Optional[List[str]] = None,
         enable_hardline: bool = True,
     ):
         """Initialize the permission engine.
 
         Args:
-            project_root: Project directory. Used to detect (and warn
-                on) a stray ``<project_root>/.agentao/permissions.json``
-                that this engine no longer honors. Required so the
-                warning's path is self-explanatory.
+            project_root: Project directory. Used (a) to detect and
+                warn on a stray ``<project_root>/.agentao/permissions.json``
+                on the legacy auto-load path, and (b) as a label
+                attribute on the engine. Required so the warning's
+                path is self-explanatory.
             user_root: Optional user-scope directory whose
-                ``<user_root>/permissions.json`` is loaded as the only
-                file-based rule source. ``None`` (the default) skips
-                the read; pass an explicit path (typically
-                ``~/.agentao``) to opt in.
+                ``<user_root>/permissions.json`` is loaded on the
+                legacy auto-load path. Ignored when ``rules=`` is
+                passed (the caller has already loaded). ``None`` on
+                the auto-load path skips the user-scope read.
+            rules: Pre-loaded rule list. When provided (the
+                recommended path), the engine treats it as the sole
+                file-source rule list and does **not** read disk.
+                Pair with ``loaded_sources`` so
+                :meth:`active_permissions` reports correct provenance.
+                Use :func:`agentao.embedding.permission_loader.load_permission_rules`
+                to produce both values.
+            loaded_sources: Source labels (e.g. ``"user:/path/to/permissions.json"``)
+                that match ``rules``. Defaults to an empty list when
+                ``rules`` is provided without explicit sources.
             enable_hardline: When ``True`` (the default), a small set
                 of *unrecoverable* operations (rm -rf /, mkfs, dd to
                 raw block devices, fork bombs, shutdown / reboot, …)
@@ -330,20 +347,32 @@ class PermissionEngine:
         self._project_root: Path = project_root
         self._user_root: Optional[Path] = user_root
         self._enable_hardline: bool = enable_hardline
-        self.rules: List[Dict[str, Any]] = []
         self._mode_rules: List[Dict[str, Any]] = []
         self.active_mode: PermissionMode = PermissionMode.WORKSPACE_WRITE
-        # File-source labels populated during ``_load_rules``; the preset
-        # source is composed dynamically from ``active_mode`` so a mode
-        # switch is reflected without re-reading disk. ``injected:*``
-        # entries are appended by hosts via :meth:`add_loaded_source`.
-        self._file_sources: List[str] = []
+        # ``injected:*`` entries are appended by hosts via
+        # :meth:`add_loaded_source`. Preset source is composed
+        # dynamically from ``active_mode`` so a mode switch is
+        # reflected without re-reading disk.
         self._injected_sources: List[str] = []
         # Cached :class:`ActivePermissions` projection. Invalidated by
         # mode switches and source-list mutations so the permission
         # decision hot path can call ``active_permissions()`` cheaply.
         self._active_cache: Optional["ActivePermissions"] = None
-        self._load_rules()
+
+        if rules is not None:
+            self.rules: List[Dict[str, Any]] = list(rules)
+            self._file_sources: List[str] = list(loaded_sources or [])
+        else:
+            # Legacy auto-load path. File I/O lives in embedding/
+            # — lazy-imported here to keep ``permissions`` module-load
+            # free of any subpackage dependency.
+            from .embedding.permission_loader import load_permission_rules
+            loaded_rules, loaded_src = load_permission_rules(
+                project_root=project_root, user_root=user_root,
+            )
+            self.rules = loaded_rules
+            self._file_sources = loaded_src
+
         self._mode_rules = _PRESET_RULES[self.active_mode.value]
 
     def set_mode(self, mode: PermissionMode) -> None:
@@ -364,56 +393,6 @@ class PermissionEngine:
         if label not in self._injected_sources:
             self._injected_sources.append(label)
             self._active_cache = None
-
-    def _load_rules(self):
-        """Load rules from user scope only.
-
-        Project-scope ``.agentao/permissions.json`` is intentionally
-        skipped (see class docstring). If present, log a single
-        warning so users discover the change.
-        """
-        sources: List[str] = []
-        if self._user_root is not None:
-            user_path = self._user_root / "permissions.json"
-            user_rules, user_loaded = self._load_file(user_path)
-            if user_loaded:
-                sources.append(f"user:{user_path}")
-        else:
-            user_rules = []
-
-        project_path = self._project_root / ".agentao" / "permissions.json"
-        if project_path.exists():
-            _logger.warning(
-                "Ignoring %s: project-scope permission rules are no longer "
-                "honored (a checked-in allow-rule could grant the agent "
-                "capabilities the user never approved). Move custom rules to "
-                "the user-scope file.",
-                project_path,
-            )
-
-        self.rules = list(user_rules)
-        self._file_sources = sources
-        self._active_cache = None
-
-    def _load_file(self, path: Path) -> tuple[List[Dict[str, Any]], bool]:
-        """Return ``(rules, loaded)``.
-
-        ``loaded`` is ``True`` only when the file actually existed and
-        parsed cleanly — even if the rule list inside is empty. A
-        non-existent file or unreadable/malformed JSON returns
-        ``loaded=False`` so :meth:`active_permissions` can report only
-        sources that were genuinely consulted.
-        """
-        if not path.exists():
-            return [], False
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if not isinstance(data, dict):
-                return [], False
-            return data.get("rules", []), True
-        except (IOError, json.JSONDecodeError):
-            return [], False
 
     def decide(self, tool_name: str, tool_args: Dict[str, Any]) -> Optional[PermissionDecision]:
         """Evaluate rules for a tool call.

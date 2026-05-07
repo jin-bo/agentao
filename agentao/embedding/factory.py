@@ -118,6 +118,7 @@ def build_from_environment(
     from ..permissions import PermissionEngine
     from ..replay import ReplayManager, load_replay_config
     from ..sandbox import SandboxPolicy
+    from .permission_loader import load_permission_rules
 
     wd = (working_directory or Path.cwd()).expanduser().resolve()
     settings = _load_settings(wd)
@@ -138,9 +139,15 @@ def build_from_environment(
 
     permission_engine = overrides.pop("permission_engine", None)
     if permission_engine is None:
+        ur = user_root()
+        rules, loaded_sources = load_permission_rules(
+            project_root=wd, user_root=ur,
+        )
         permission_engine = PermissionEngine(
             project_root=wd,
-            user_root=user_root(),
+            user_root=ur,
+            rules=rules,
+            loaded_sources=loaded_sources,
         )
 
     memory_manager = overrides.pop("memory_manager", None)

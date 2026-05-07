@@ -16,7 +16,7 @@
 
 **做（按顺序）：**
 
-> **进度，2026-05-07：** 项目 #1 已落地（commit `0310eda`），#3（session.py 搬迁，commit `838a952`）已落地。#2（构造函数 callback 收紧）已落地（commit `e467c95`）。#4 仍待办。表格保留原状以备追溯，已加 ✅ 标记。
+> **进度，2026-05-07：** 项目 #1 已落地（commit `0310eda`），#3（session.py 搬迁，commit `838a952`）已落地。#2（构造函数 callback 收紧）已落地（commit `e467c95`）。#4（权限引擎 API 重新设计）已落地（commit `<#4-pending>`）。表格保留原状以备追溯，已加 ✅ 标记。
 
 1. ✅ **已完成。** **`replay/` 改成 `Transport` 订阅者。** 完全外移（让 replay 从 core facade 上彻底消失）涉及四类构件：
    - **顶层 import** —— `agent.py:25,31,36` 共 3 条语句，10 个名字。
@@ -51,7 +51,19 @@
 
    **没有发生的事：** 文档 "API tightening" 的最终意图是从签名上彻底删掉这些 kwargs，但那是硬 breaking change，要等 0.5.0。这次 PR 让 deprecation 真正生效（warning + 明确迁移目标）；签名手术与 `harness/` / `agentao/session.py` 一起在 0.5.0 alias-removal release 里完成。
 3. **`agentao/session.py` → `agentao/embedding/sessions.py`。** 纯磁盘持久化（305 行，`.agentao/sessions/*.json` 的 save/load/list/delete + 轮转）。`agent.py` / `runtime/` 都不 import 它。**生产侧 5 处 import + 7 处调用**总计；其中 **6 处需要新增显式 `project_root` plumbing**：`cli/session.py:55`、`cli/commands.py:532,560,567,575,590,609`。第 7 处 `acp/session_load.py:176` 已经在传 `project_root=cwd`（`cwd` 是 L160 `_parse_cwd(...)` 得到的局部变量），只需把 import path 切到新模块。**测试 4 处**：`tests/test_session.py:10,11,131`、`tests/test_acp_multi_session.py:80`、`tests/test_acp_session_load.py:55`、`tests/test_acp_mcp_injection.py:42`。迁移顺序：**(1) 一次变更里同时新增 `agentao/embedding/sessions.py` 并把 `agentao/session.py` 替换为包装 shim** —— 旧路径在整个迁移期间通过 shim 保持可用。(2) 更新生产 caller 显式向新路径传 `project_root`。(3) **然后才**在新路径上把 `project_root` 改为必填、删 `Path.cwd()` fallback（shim 上的 fallback 保留到 0.5.0）。测试侧 import 改写延后到 0.5.0 删 shim 时与 `harness/` 别名一起处理。1 天。
-4. **权限文件 I/O 上移 `embedding/`——这是 engine API 重新设计，不是搬代码。** `PermissionEngine.__init__`（`permissions.py:297-346`）当前自己调 `self._load_rules()`，后者读 `<user_root>/permissions.json`（`permissions.py:368-388`）。4 处构造点都传 `project_root` + `user_root` 并依赖 engine 自己加载：`embedding/factory.py:141`、`agents/tools.py:585`、`acp/session_new.py:306`、`acp/session_load.py:199`。要么 (a) 改造构造函数接受 pre-loaded rules，4 处 caller 一起改；要么 (b) 把 `_load_rules` 抽成 classmethod / 工厂函数，由 caller 显式调用。1–1.5 天，中风险（同时触及 embedding + ACP + agents 三个子系统）。
+4. **权限文件 I/O 上移 `embedding/`。** ✅ **已落地。** 这是 engine API 重新设计，不是搬代码。`PermissionEngine.__init__` 之前自己调 `self._load_rules()` 读 `<user_root>/permissions.json`。4 处构造点都传 `project_root` + `user_root` 并依赖 engine 自己加载：`embedding/factory.py:141`、`agents/tools.py:585`、`acp/session_new.py:306`、`acp/session_load.py:199`。
+
+   **实际落地（2026-05-07）：**
+   - 新增 `agentao/embedding/permission_loader.py`，对外暴露 `load_permission_rules(*, project_root, user_root) -> (rules, sources)`，作为公开迁移面——一方调用方与嵌入 host 都通过它来预加载。
+   - `PermissionEngine.__init__` 增加两个 keyword-only kwargs：`rules: Optional[List[Dict]]` 与 `loaded_sources: Optional[List[str]]`。当传入 `rules` 时（推荐路径），引擎**完全不读盘**，直接使用调用方预加载结果。
+   - `_load_rules` 与 `_load_file` 已从 `PermissionEngine` 删除——文件 I/O 在物理上离开 `agentao/permissions.py`（同时清掉了不再用的 `json`、`logging` 导入）。老式 `PermissionEngine(project_root=..., user_root=...)` 形式仍然兼容：当 `rules is None` 时，构造器懒加载 `agentao.embedding.permission_loader.load_permission_rules` 并使用其返回。懒加载保证 `permissions.py` 模块加载图不依赖 `embedding/` 任何子包。
+   - `embedding/__init__.py` 重新导出 `load_permission_rules`，让 host 可以从 `agentao.embedding` 直接导入。
+   - 4 处一方调用点都改为先预加载：`embedding/factory.py`、`agents/tools.py`（子 agent 权限设置）、`acp/session_new.py`、`acp/session_load.py`。每处都用 `rules=` / `loaded_sources=` 构造引擎，所以生产时永远不走老式 auto-load 路径。
+   - 测试保留老式 auto-load 路径——117+ 个测试位点用 `PermissionEngine(project_root=tmp_path, ...)` 当便利构造，并不测试文件加载本身，因此**没有**加 DeprecationWarning（加了反而会变成无意义噪声）。一个测试（`tests/test_active_permissions.py::test_active_permissions_does_not_re_read_disk`）原本 spy `engine._load_file` 来验证热路径无重复读盘，因为 `_load_file` 已删除，spy 改为 `agentao.embedding.permission_loader.load_permission_rules`；测试意图（active_permissions 不重复读盘）保持不变。
+
+   **测试：** 2549 通过，2 跳过，无回归。
+
+   **没做的部分：** 老式 auto-load 构造路径（`PermissionEngine(project_root=..., user_root=...)` 不传 `rules=`）保留，没有硬性 deprecate。把它收紧成硬错误属于未来 0.5.0 的 API 收尾，与其他 API 手术一起做；现在通过懒加载委托到 `embedding/permission_loader.py` 已经满足边界意图（文件 I/O 出 core），同时不会破坏 117+ 测试位点和已发布 example 中的便利写法。
 
 **推迟（需要更深拆解或等 wheel 拆分阶段）：**
 
