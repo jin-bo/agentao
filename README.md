@@ -22,7 +22,7 @@ The full handbook lives in `developer-guide/` (VitePress, bilingual). Production
 
 | Audience | Read | Site |
 |---|---|---|
-| **CLI users** — driving `agentao` in the terminal | [`developer-guide/en/cli/`](developer-guide/en/cli/) (11 chapters: slash commands · plan mode · memory · replay · …) | [agentao.cn/en/cli/](https://agentao.cn/en/cli/) |
+| **CLI users** — driving `agentao` in the terminal | [`developer-guide/en/cli/`](developer-guide/en/cli/) (12 chapters: slash commands · plan mode · memory · replay · …) | [agentao.cn/en/cli/](https://agentao.cn/en/cli/) |
 | **Embedding developers** — building Agentao into your app | [`developer-guide/en/`](developer-guide/en/) (Parts 1–7 + Appendix) | [agentao.cn](https://agentao.cn) |
 | **中文** | [`developer-guide/zh/cli/`](developer-guide/zh/cli/) · [`developer-guide/zh/`](developer-guide/zh/) | [agentao.cn/zh/cli/](https://agentao.cn/zh/cli/) · [agentao.cn/zh/](https://agentao.cn/zh/) |
 
@@ -98,7 +98,7 @@ First commands once the REPL is up:
 /exit       Leave cleanly (don't Ctrl+C)
 ```
 
-CLI handbook: **[agentao.cn/en/cli/](https://agentao.cn/en/cli/)** — 11 chapters covering every slash command and the mental model behind them.
+CLI handbook: **[agentao.cn/en/cli/](https://agentao.cn/en/cli/)** — 12 chapters covering every slash command and the mental model behind them.
 
 ---
 

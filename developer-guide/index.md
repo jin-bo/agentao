@@ -14,7 +14,9 @@ hero:
 features:
   - icon: 🖥️
     title: CLI · Terminal Reference / 终端命令手册
-    details: "Slash commands, plan mode, memory, replay — bilingual: /en/cli/ · /zh/cli/"
+    details: "Slash commands, plan mode, memory, replay — 12 chapters · bilingual: /en/cli/ · /zh/cli/"
+    link: /en/cli/
+    linkText: "Open English CLI handbook →"
   - icon: 🐍
     title: Python In-Process SDK
     details: Instantiate Agentao directly in Python hosts via SdkTransport + callbacks. Shortest path for Python backends.
