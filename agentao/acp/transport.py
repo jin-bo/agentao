@@ -263,6 +263,8 @@ class ACPTransport:
     def __init__(self, server: "AcpServer", session_id: str) -> None:
         self._server = server
         self._session_id = session_id
+        from ..transport.broadcast import EventBroadcaster
+        self._broadcast = EventBroadcaster()
 
     # -- One-way events ----------------------------------------------------
 
@@ -275,20 +277,26 @@ class ACPTransport:
         """
         try:
             update = self._build_update(event)
-            if update is None:
-                return  # silent event (e.g. TURN_START)
-            # Stamp the runtime payload version (independent of ACP_PROTOCOL_VERSION).
-            update["schema_version"] = event.schema_version
-            self._server.write_notification(
-                METHOD_SESSION_UPDATE,
-                {"sessionId": self._session_id, "update": update},
-            )
+            if update is not None:
+                # Stamp the runtime payload version (independent of ACP_PROTOCOL_VERSION).
+                update["schema_version"] = event.schema_version
+                self._server.write_notification(
+                    METHOD_SESSION_UPDATE,
+                    {"sessionId": self._session_id, "update": update},
+                )
         except Exception:
             logger.exception(
                 "acp: failed to emit session/update for event %s on session %s",
                 event.type,
                 self._session_id,
             )
+        # Always notify subscribers (replay recorder, etc.) — including
+        # for events the ACP wire intentionally drops (TURN_START,
+        # TOOL_CONFIRMATION). Subscribers see the full runtime stream.
+        self._broadcast.notify(event)
+
+    def subscribe(self, listener):
+        return self._broadcast.subscribe(listener)
 
     # -- Mapping -----------------------------------------------------------
 

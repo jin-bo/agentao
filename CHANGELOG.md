@@ -7,6 +7,171 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.5] — 2026-05-07
+
+A core-boundary review release. Architectural cleanup of the embedded-host
+boundary — replay state externalized from `Agentao`, persistent-session
+module relocated, `PermissionEngine` file I/O extracted, plugin loader
+relocated, and the legacy `Agentao(...)` callback surface formally
+deprecated. **No breaking changes; no public API or wire-format change.**
+`pip install -U agentao` upgrades in place from any 0.4.x release.
+
+### Added
+
+- **`Transport.subscribe(listener)`** — optional fan-out method on the
+  `Transport` Protocol. Returns an idempotent unsubscribe callable;
+  notify uses snapshot iteration so subscribing or unsubscribing
+  mid-emit is safe; listener exceptions are swallowed and never poison
+  the runtime emit path. `NullTransport` and `SdkTransport` provide it
+  by composing `agentao.transport.EventBroadcaster` (also re-exported
+  from `agentao.transport`) so from-scratch transports (ACP, message
+  queues) can opt in the same way. Probe with
+  `getattr(transport, "subscribe", None)` since bespoke implementations
+  may omit it.
+
+- **`TURN_BEGIN` / `TURN_END` event types** — fire **once per
+  user-driven turn**, distinct from `TURN_START` (which fires once per
+  LLM iteration inside the turn). `TURN_BEGIN` carries the user
+  message; `TURN_END` carries final assistant text + `status` (`ok` /
+  `error` / `cancelled`) + `error`. Replay recorders subscribe to these
+  via `Transport.subscribe()` instead of being reached through agent
+  state, removing the runtime-to-replay-adapter direct call path.
+
+- **`agentao.embedding.permission_loader`** — new module hosting the
+  on-disk loading of `permissions.json` (project + user scope, JSON
+  parsing, env-var expansion). The `PermissionEngine` constructor now
+  accepts `rules=` / `loaded_sources=` kwargs to skip disk reads
+  entirely — relevant for embedded hosts that build rule sets
+  programmatically. The legacy auto-load constructor path
+  (`PermissionEngine(project_root=...)` without explicit `rules=`) is
+  preserved via lazy delegation to the loader and is **not** deprecated
+  in this release.
+
+- **`agentao.embedding.sessions`** — new module hosting
+  `save_session` / `load_session` / `list_sessions` /
+  `delete_session` / `delete_all_sessions` and their helpers.
+  `agentao/session.py` becomes a deprecation shim that wraps the new
+  module with the old permissive signature
+  (`project_root: Optional[Path] = None`, falling back to
+  `Path.cwd()`); the new module's API will require `project_root`
+  explicitly once the shim is removed in 0.5.0.
+
+- **`agentao.embedding.plugins/*`** — plugin loader (`manager`,
+  `manifest`, `diagnostics`, `mcp`, `resolvers/{skills,agents}`)
+  relocated from `agentao/plugins/` to `agentao/embedding/plugins/`.
+  `agentao/plugins/` is now runtime-only (validators + LLM-facing
+  surfaces); the boundary between "what core needs at runtime" and
+  "what the embedding layer needs to discover from disk" matches the
+  rest of `agentao.embedding`.
+
+- **`agentao.acp.schema_export`** — host-facing
+  `export_host_acp_json_schema()` now lazy-delegates here so
+  `agentao.host.schema` no longer eagerly imports `agentao.acp` at
+  import time. Function signature, return type, and the snapshot at
+  `docs/schema/host.acp.v1.json` are unchanged.
+
+### Changed
+
+- **Replay state externalized into `ReplayManager`.** The `Agentao`
+  facade's replay surface (`replay_config` constructor kwarg + 4
+  instance attributes + 6 facade methods + `close()` teardown leg) is
+  consolidated behind `agentao.replay.manager.ReplayManager`. The
+  recorder is now wired by `agentao.embedding.factory` as a
+  `Transport.subscribe()` listener, so `chat_loop` no longer reaches
+  into `agent._emit_*(...)` and `runtime/turn.py` /
+  `runtime/llm_call.py` no longer read agent attributes directly. Six
+  deprecated facade methods (`replay_*` etc.) and the
+  `replay_config=` kwarg remain as back-compat shims; **scheduled
+  removal in 0.5.0**. Touched: `agentao/agent.py`,
+  `agentao/transport/{base,broadcast,events,null,sdk}.py`,
+  `agentao/replay/{adapter,lifecycle,manager}.py`,
+  `agentao/runtime/{turn,llm_call}.py`, `agentao/embedding/factory.py`,
+  `agentao/acp/transport.py`.
+
+- **Eight `Agentao(...)` legacy callback kwargs now emit a single
+  `DeprecationWarning` per construction.** `confirmation_callback`,
+  `step_callback`, `thinking_callback`, `ask_user_callback`,
+  `output_callback`, `tool_complete_callback`, `llm_text_callback`,
+  `on_max_iterations_callback` — passing any of them surfaces one
+  warning that names all eight and points at
+  `agentao.embedding.compat.build_compat_transport` as the documented
+  migration path. Mixing `transport=` with legacy callbacks (which
+  silently ignored the callbacks) now also emits a warning so the
+  dead kwargs surface in test runs. Hosts that already pass
+  `transport=SdkTransport(...)` or build a compat transport directly
+  bypass the warning entirely. The kwargs themselves remain accepted;
+  **scheduled removal in 0.5.0**.
+
+- **Plugin validators split from resolvers.** `agentao/plugins/skills.py`
+  and `agentao/plugins/agents.py` are now validators-only (runtime
+  shape checks, LLM-facing surfaces); resolution (front-matter parsing,
+  manifest reading, file discovery) moved to
+  `agentao/plugins/resolvers/{skills,agents}.py`. Prerequisite for the
+  loader relocation under `agentao/embedding/plugins/`.
+
+- **Persistent-session module path migration.** Production import sites
+  in `cli/{commands,session,replay_commands}.py` and
+  `acp/session_load.py` now import from `agentao.embedding.sessions`
+  and pass `project_root` explicitly. The legacy import path
+  (`agentao.session.*`) keeps working through the wrapper shim;
+  external test files migrate at 0.5.0 alongside the shim removal.
+
+### Documentation
+
+- **Developer guide — full CLI section ported.** New `cli/` subtree
+  (12 chapters in `developer-guide/{en,zh}/cli/`) covering install,
+  config, slash commands, sessions, replay, plugins, and the embedding
+  cross-references. `developer-guide/index.md` hoisted to top; README
+  slimmed to ~210 lines.
+
+- **Developer guide §5.7 Plugin Hooks** — rule-author guide for the
+  plugin-hook system (`UserPromptSubmit` / `SessionStart` /
+  `SessionEnd` / `PreToolUse` / `PostToolUse` / `PostToolUseFailure` /
+  `Stop` / `PreCompact`).
+
+- **Developer guide §4.1 Transport Protocol** (en + zh) — full
+  `Transport.subscribe()` section with semantics, probe-before-call
+  recipe, and an `EventBroadcaster` composition example for from-scratch
+  transports.
+
+- **Developer guide §4.2 AgentEvent Reference** (en + zh) — event-group
+  tree updated to wrap `TURN_START` inside the new `TURN_BEGIN` /
+  `TURN_END` outer pair; per-event detail blocks added for the two new
+  types with the per-turn-vs-per-iteration semantics call-out.
+
+- **Developer guide §2.2 Constructor Reference** (en + zh) and
+  **Appendix A API Reference** (en + zh) — legacy-callback collapsible
+  relabeled "removed in 0.5.0"; new version-note entries for the
+  0.4.x `DeprecationWarning` emission and the 0.5.0 planned
+  signature surgery; `build_compat_transport` doc expanded to mark
+  `agentao.embedding.compat` as the documented migration surface.
+
+- **`docs/design/core-boundary-review.{md,zh.md}`** — full audit
+  doc with verified reverse-import maps, codex baseline comparison,
+  per-PR commit-hash backfills, and the priority-table execution log.
+  This release ships PRs #1–#5b plus the #6 acp/ wheel-split boundary
+  prep; #7 (`agentao.harness/` alias removal) remains scheduled for
+  0.5.0.
+
+### 0.5.0 runway (no action required for 0.4.x users)
+
+The following surgeries are scheduled for **0.5.0** and deliberately
+**not** shipped here:
+
+- **Eight legacy callback kwargs** removed from the `Agentao(...)`
+  signature. Migrate via `transport=SdkTransport(...)` or
+  `agentao.embedding.compat.build_compat_transport(...)`.
+- **`agentao/session.py` shim** removed; callers migrate to
+  `agentao.embedding.sessions` with explicit `project_root=`. The
+  shim's `Path.cwd()` fallback is removed at the same time.
+- **`agentao.harness` alias** removed (carried over from 0.4.x —
+  use `agentao.host` instead). One `DeprecationWarning` emitted on
+  first import in 0.4.x.
+- **Six `Agentao.replay_*` facade methods** plus the
+  `replay_config=` constructor kwarg removed; embedded hosts that need
+  the recorder wire it through `agentao.embedding.factory` (already
+  the default since 0.4.5).
+
 ## [0.4.4] — 2026-05-06
 
 A Claude-Code compatibility + tool-hardening release. **No breaking

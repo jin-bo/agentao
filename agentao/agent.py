@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
@@ -22,22 +23,6 @@ from .prompts import (
 )
 from .skills import SkillManager
 from .context_manager import ContextManager
-from .replay import (
-    ReplayAdapter,
-    ReplayConfig,
-    ReplayRecorder,
-    load_replay_config,
-)
-from .replay.lifecycle import (
-    end_replay as _end_replay_impl,
-    reload_replay_config as _reload_replay_config_impl,
-    start_replay as _start_replay_impl,
-)
-from .replay.observability import (
-    emit_context_compressed as _emit_context_compressed_impl,
-    emit_session_summary_if_new as _emit_session_summary_if_new_impl,
-    latest_session_summary_id as _latest_session_summary_id_impl,
-)
 from .sandbox import SandboxPolicy
 from .transport import NullTransport, build_compat_transport
 
@@ -46,6 +31,7 @@ if TYPE_CHECKING:
     from .capabilities import FileSystem, MCPRegistry, ShellExecutor
     from .mcp import McpClientManager  # type-only; MCP SDK is heavy
     from .memory import MemoryManager  # noqa: F401
+    from .replay import ReplayConfig, ReplayManager  # type-only — replay no longer in core surface
 
 
 class Agentao:
@@ -88,7 +74,7 @@ class Agentao:
         # wires CLI defaults from ``<wd>/.agentao/*``.
         bg_store: Optional["BackgroundTaskStore"] = None,
         sandbox_policy: Optional[SandboxPolicy] = None,
-        replay_config: Optional[ReplayConfig] = None,
+        replay_config: Optional["ReplayConfig"] = None,
         enable_builtin_agents: bool = False,
     ):
         """Initialize Agentao agent.
@@ -125,10 +111,20 @@ class Agentao:
                 extras", which is the CLI default and produces the legacy
                 file-only behavior.
 
-        Deprecated args (still accepted for backward compatibility):
+        Deprecated args (still accepted for backward compatibility,
+        scheduled for removal in 0.5.0):
             confirmation_callback, step_callback, thinking_callback, ask_user_callback,
             output_callback, tool_complete_callback, llm_text_callback,
             on_max_iterations_callback.
+
+        Passing any of the eight emits a single ``DeprecationWarning``.
+        Embedded hosts should construct an
+        :class:`agentao.transport.SdkTransport` directly (preferred) or,
+        when rewiring the host onto :class:`AgentEvent` would be too
+        invasive, call
+        :func:`agentao.embedding.compat.build_compat_transport` to wrap
+        the legacy callbacks into a single transport and pass
+        ``transport=`` here. Both paths bypass the warning.
         """
         # A fully-constructed object always wins over its raw-config
         # sibling; supplying both is a programmer error.
@@ -240,15 +236,38 @@ class Agentao:
         self.todo_tool = TodoWriteTool()
         self.permission_engine = permission_engine
 
-        # Resolve transport: explicit > compat shim from old callbacks > NullTransport
+        # Resolve transport: explicit > compat shim from old callbacks > NullTransport.
         _has_legacy = any([
             confirmation_callback, step_callback, thinking_callback, ask_user_callback,
             output_callback, tool_complete_callback, llm_text_callback,
             on_max_iterations_callback,
         ])
         if transport is not None:
+            if _has_legacy:
+                # Mid-migration footgun: a host that wires a Transport
+                # *and* passes legacy callbacks would silently drop the
+                # callbacks — the explicit transport always wins. Warn
+                # so the host can delete the dead kwargs.
+                warnings.warn(
+                    "Agentao(): legacy callback kwargs were passed alongside "
+                    "transport=, so the callbacks are ignored. Drop them — "
+                    "the transport= path supersedes them.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
             self.transport = transport
         elif _has_legacy:
+            warnings.warn(
+                "Agentao(): the legacy callback kwargs "
+                "(confirmation_callback, step_callback, thinking_callback, "
+                "ask_user_callback, output_callback, tool_complete_callback, "
+                "llm_text_callback, on_max_iterations_callback) are deprecated "
+                "and will be removed in 0.5.0. Build an SdkTransport directly "
+                "or call agentao.embedding.compat.build_compat_transport(...) "
+                "and pass transport= instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             self.transport = build_compat_transport(
                 confirmation_callback=confirmation_callback,
                 step_callback=step_callback,
@@ -332,17 +351,14 @@ class Agentao:
         else:
             self.project_instructions = self._load_project_instructions()
 
-        # Replay recorder + adapter are created lazily in
-        # ``start_replay()``; the no-op ``ReplayConfig()`` stays in
-        # place when no config is injected so the transport stack
-        # carries zero replay overhead.
-        self._replay_recorder: Optional[ReplayRecorder] = None
-        self._replay_adapter: Optional[ReplayAdapter] = None
-        # Lazy: ``start_replay()`` instantiates a HostReplaySink that
-        # observes ``self._host_events`` and routes each event into
-        # the recorder. ``end_replay()`` detaches and clears.
-        self._host_replay_sink: Optional[Any] = None
-        self._replay_config: ReplayConfig = replay_config or ReplayConfig()
+        # Replay state lives on a separate ``ReplayManager``; the host
+        # factory (``embedding/factory.py``) attaches it. Hosts that
+        # construct ``Agentao`` directly leave ``replay_manager`` as
+        # ``None`` (no recording).
+        self.replay_manager: Optional["ReplayManager"] = None
+        if replay_config is not None:
+            from .replay import ReplayManager as _ReplayManager
+            self.replay_manager = _ReplayManager(self, config=replay_config)
 
         # Host emitter setup MUST run before ``_register_agent_tools``
         # so the sub-agent wrapper captures a live ``HostSubagentEmitter``
@@ -498,10 +514,11 @@ class Agentao:
         close() on every exit path.  We intentionally do NOT duplicate
         the dispatch here to avoid double-firing.
         """
-        try:
-            self.end_replay()
-        except Exception:
-            pass
+        if self.replay_manager is not None:
+            try:
+                self.replay_manager.end()
+            except Exception:
+                pass
         if self.mcp_manager is not None:
             try:
                 self.mcp_manager.disconnect_all()
@@ -510,22 +527,52 @@ class Agentao:
             self.mcp_manager = None
 
     # ------------------------------------------------------------------
-    # Session Replay lifecycle
+    # Session Replay lifecycle — back-compat shims (remove in 0.5.0)
+    # Real lifecycle lives on :class:`agentao.replay.ReplayManager`.
+    # Hosts that need replay should call ``agent.replay_manager.start()``
+    # / ``end()`` / ``reload_config()`` directly.
     # ------------------------------------------------------------------
 
+    def _ensure_replay_manager(self) -> "ReplayManager":
+        if self.replay_manager is None:
+            from .replay import ReplayManager
+            self.replay_manager = ReplayManager(self)
+        return self.replay_manager
+
+    # ── Back-compat property views for the four old private attrs ──
+    # Tests and CLI code still reach for ``agent._replay_recorder`` /
+    # ``_replay_adapter`` / ``_replay_config`` / ``_host_replay_sink``
+    # directly. These return the manager's state, or a no-op fallback
+    # when no manager is attached. Scheduled for removal in 0.5.0.
+    @property
+    def _replay_recorder(self):
+        return self.replay_manager.recorder if self.replay_manager else None
+
+    @property
+    def _replay_adapter(self):
+        return self.replay_manager.adapter if self.replay_manager else None
+
+    @property
+    def _host_replay_sink(self):
+        return self.replay_manager.host_replay_sink if self.replay_manager else None
+
+    @property
+    def _replay_config(self) -> "ReplayConfig":
+        """Active replay config, or a fresh disabled default when no manager is attached."""
+        if self.replay_manager is not None:
+            return self.replay_manager.config
+        from .replay import ReplayConfig
+        return ReplayConfig()
+
     def start_replay(self, session_id: Optional[str] = None) -> Optional[Path]:
-        # Implementation lives in :mod:`agentao.replay.lifecycle`. Kept as
-        # a thin facade so the CLI, ACP session/new & session/load, and
-        # the test suite can continue to call this as an agent method.
-        return _start_replay_impl(self, session_id)
+        return self._ensure_replay_manager().start(session_id)
 
     def end_replay(self) -> None:
-        # Implementation lives in :mod:`agentao.replay.lifecycle`.
-        _end_replay_impl(self)
+        if self.replay_manager is not None:
+            self.replay_manager.end()
 
-    def reload_replay_config(self) -> ReplayConfig:
-        # Implementation lives in :mod:`agentao.replay.lifecycle`.
-        return _reload_replay_config_impl(self)
+    def reload_replay_config(self) -> "ReplayConfig":
+        return self._ensure_replay_manager().reload_config()
 
     def _register_agent_tools(self):
         # Implementation lives in ``agentao.tooling.agent_tools`` — see
@@ -548,14 +595,15 @@ class Agentao:
         return extract_context_hints(self.messages)
 
     # ------------------------------------------------------------------
-    # Replay observability helpers (v1.1)
-    # Implementation lives in :mod:`agentao.replay.observability`; these
-    # stay as thin facades so :mod:`agentao.runtime.chat_loop` and any
-    # test patches continue to invoke them as agent methods.
+    # Replay observability helpers — back-compat shims (remove in 0.5.0)
+    # The real helpers live in :mod:`agentao.replay.observability` and
+    # are imported directly by :mod:`agentao.runtime.chat_loop`. These
+    # delegations remain for tests that patch them on the agent.
     # ------------------------------------------------------------------
 
     def _latest_session_summary_id(self) -> Optional[str]:
-        return _latest_session_summary_id_impl(self)
+        from .replay.observability import latest_session_summary_id
+        return latest_session_summary_id(self)
 
     def _emit_context_compressed(
         self,
@@ -568,7 +616,8 @@ class Agentao:
         post_tokens: Optional[int] = None,
         duration_ms: Optional[int] = None,
     ) -> None:
-        _emit_context_compressed_impl(
+        from .replay.observability import emit_context_compressed
+        emit_context_compressed(
             self,
             compression_type=compression_type,
             reason=reason,
@@ -580,7 +629,8 @@ class Agentao:
         )
 
     def _emit_session_summary_if_new(self, previous_summary_id: Optional[str]) -> Optional[str]:
-        return _emit_session_summary_if_new_impl(self, previous_summary_id)
+        from .replay.observability import emit_session_summary_if_new
+        return emit_session_summary_if_new(self, previous_summary_id)
 
     def _llm_call(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]],
                   cancellation_token: Optional[CancellationToken] = None) -> Any:

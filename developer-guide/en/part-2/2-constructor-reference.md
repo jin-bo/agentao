@@ -154,8 +154,8 @@ Inject pre-built managers when you don't want Agentao to construct them from def
 Pass `logger=app.logger` to skip Agentao's package-root level / handler mutation in `LLMClient.__init__`. Your logging stack stays untouched.
 :::
 
-::: details Legacy 8 callbacks (still accepted, deprecated)
-Pre-0.2.10 API. Internally wrapped via `build_compat_transport()` into an `SdkTransport`. New code should go straight through `Transport`.
+::: details Legacy 8 callbacks (still accepted, deprecated — removed in 0.5.0)
+Pre-0.2.10 API. Internally wrapped via `build_compat_transport()` into an `SdkTransport`. **Passing any of these now emits a single `DeprecationWarning`**; the constructor signature itself will be removed in **0.5.0**. New code should go straight through `Transport`.
 
 | Legacy param | Replacement |
 |--------------|-------------|
@@ -168,7 +168,7 @@ Pre-0.2.10 API. Internally wrapped via `build_compat_transport()` into an `SdkTr
 | `llm_text_callback` | `on_event=` + `LLM_TEXT` |
 | `on_max_iterations_callback` | `SdkTransport(on_max_iterations=...)` |
 
-⚠️ Mixing `transport=` with legacy callbacks silently **ignores** the legacy ones. Pick one path.
+⚠️ Mixing `transport=` with legacy callbacks **ignores** the legacy ones and now also emits a `DeprecationWarning` so the dead kwargs surface in test runs. Pick one path.
 :::
 
 ---
@@ -271,6 +271,8 @@ agent = build_from_environment(
 ---
 
 ::: info Version note
+- **0.5.0 (planned)** — The 8 legacy callback kwargs (`confirmation_callback`, `step_callback`, `thinking_callback`, `ask_user_callback`, `output_callback`, `tool_complete_callback`, `llm_text_callback`, `on_max_iterations_callback`) will be **removed** from the `Agentao(...)` signature. Migrate to `transport=SdkTransport(...)` before then.
+- **0.4.x** — The 8 legacy callbacks now emit a single `DeprecationWarning` per construction. `agentao.embedding.compat` is the documented migration surface.
 - **0.3.4** — Capability protocols (`FileSystem`, `ShellExecutor`) re-exported on `agentao.host.protocols`. Always import from there, not internal `agentao.capabilities.*`.
 - **0.3.0** — `working_directory=` became a required keyword (calls without it raise `TypeError`). `mcp_registry=` introduced as a stable config-source surface; default `FileBackedMCPRegistry` matches the pre-#17 disk read.
 - **0.2.16** — Explicit-injection surface added (`memory_manager`, `skill_manager`, `mcp_manager`, `filesystem`, `shell`, …); `replay_config`, `sandbox_policy`, `bg_store` defaulted to `None`.

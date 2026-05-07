@@ -1,5 +1,6 @@
 """Transport layer — decouples Agentao core runtime from UI and transport implementations."""
 
+from .broadcast import EventBroadcaster
 from .events import AgentEvent, EventType
 from .base import Transport
 from .null import NullTransport
@@ -11,5 +12,6 @@ __all__ = [
     "Transport",
     "NullTransport",
     "SdkTransport",
+    "EventBroadcaster",
     "build_compat_transport",
 ]

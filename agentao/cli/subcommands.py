@@ -247,8 +247,8 @@ def handle_plugin_subcommand(args) -> None:
 
 def _plugin_list_cli(args) -> None:
     """``agentao plugin list`` — show loaded plugins with diagnostics."""
-    from ..plugins.diagnostics import build_diagnostics
-    from ..plugins.manager import PluginManager
+    from ..embedding.plugins.diagnostics import build_diagnostics
+    from ..embedding.plugins.manager import PluginManager
 
     _top = getattr(args, "plugin_dirs", []) or []
     _sub = getattr(args, "sub_plugin_dirs", None) or []
@@ -259,8 +259,8 @@ def _plugin_list_cli(args) -> None:
     # Simulate registration checks so the listing reflects post-load
     # failures (e.g. skill/agent name collisions) that would cause
     # _load_and_register_plugins() to reject a plugin at runtime.
-    from ..plugins.skills import resolve_plugin_entries
-    from ..plugins.agents import resolve_plugin_agents
+    from ..embedding.plugins.resolvers.agents import resolve_plugin_agents
+    from ..embedding.plugins.resolvers.skills import resolve_plugin_entries
 
     all_warnings = list(mgr.get_warnings())
     all_errors = list(mgr.get_errors())
@@ -311,11 +311,11 @@ def _plugin_list_cli(args) -> None:
 
 def _load_and_register_plugins(agent) -> None:
     """Load plugins and register their skills, agents, and MCP servers on *agent*."""
-    from ..plugins.diagnostics import build_diagnostics
-    from ..plugins.manager import PluginManager
-    from ..plugins.skills import resolve_plugin_entries
-    from ..plugins.agents import resolve_plugin_agents
-    from ..plugins.mcp import merge_plugin_mcp_servers
+    from ..embedding.plugins.diagnostics import build_diagnostics
+    from ..embedding.plugins.manager import PluginManager
+    from ..embedding.plugins.mcp import merge_plugin_mcp_servers
+    from ..embedding.plugins.resolvers.agents import resolve_plugin_agents
+    from ..embedding.plugins.resolvers.skills import resolve_plugin_entries
 
     mgr = PluginManager(inline_dirs=_plugin_inline_dirs or None)
     loaded = mgr.load_plugins()
@@ -407,8 +407,8 @@ def _load_and_register_plugins(agent) -> None:
 
 def _handle_plugins_interactive() -> None:
     """Handle the interactive ``/plugins`` command."""
-    from ..plugins.diagnostics import build_diagnostics
-    from ..plugins.manager import PluginManager
+    from ..embedding.plugins.diagnostics import build_diagnostics
+    from ..embedding.plugins.manager import PluginManager
 
     mgr = PluginManager(inline_dirs=_plugin_inline_dirs or None)
     loaded = mgr.load_plugins()

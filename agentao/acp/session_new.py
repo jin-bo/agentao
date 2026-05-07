@@ -297,15 +297,21 @@ def handle_session_new(
 
     transport = ACPTransport(server=server, session_id=session_id)
 
-    # PermissionEngine reads project-level rules from ``<cwd>/.agentao/
-    # permissions.json``. Passing ``project_root=cwd`` (Issue 05) isolates
-    # the engine from the process cwd so two sessions running in different
-    # directories see independent rules.
+    # Passing ``project_root=cwd`` (Issue 05) isolates the engine from
+    # the process cwd so two sessions running in different directories
+    # see independent rules.
+    from agentao.embedding.permission_loader import load_permission_rules
     from agentao.paths import user_root
     from agentao.permissions import PermissionEngine
+    ur = user_root()
+    rules, loaded_sources = load_permission_rules(
+        project_root=cwd, user_root=ur,
+    )
     permission_engine = PermissionEngine(
         project_root=cwd,
-        user_root=user_root(),
+        user_root=ur,
+        rules=rules,
+        loaded_sources=loaded_sources,
     )
 
     # Translate ACP-shape MCP server entries to Agentao internal config

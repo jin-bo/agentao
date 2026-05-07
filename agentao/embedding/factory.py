@@ -116,8 +116,9 @@ def build_from_environment(
     from ..memory import MemoryManager, SQLiteMemoryStore
     from ..paths import user_root
     from ..permissions import PermissionEngine
-    from ..replay import load_replay_config
+    from ..replay import ReplayManager, load_replay_config
     from ..sandbox import SandboxPolicy
+    from .permission_loader import load_permission_rules
 
     wd = (working_directory or Path.cwd()).expanduser().resolve()
     settings = _load_settings(wd)
@@ -138,9 +139,15 @@ def build_from_environment(
 
     permission_engine = overrides.pop("permission_engine", None)
     if permission_engine is None:
+        ur = user_root()
+        rules, loaded_sources = load_permission_rules(
+            project_root=wd, user_root=ur,
+        )
         permission_engine = PermissionEngine(
             project_root=wd,
-            user_root=user_root(),
+            user_root=ur,
+            rules=rules,
+            loaded_sources=loaded_sources,
         )
 
     memory_manager = overrides.pop("memory_manager", None)
@@ -179,13 +186,17 @@ def build_from_environment(
         overrides["bg_store"] = BackgroundTaskStore(persistence_dir=wd)
     if "sandbox_policy" not in overrides:
         overrides["sandbox_policy"] = SandboxPolicy(project_root=wd)
-    if "replay_config" not in overrides:
-        # Best-effort: a missing/malformed replay config must not abort
-        # session startup.
+    # Replay state lives outside the agent core (per the May 2026 core-
+    # boundary review). Pop ``replay_config`` from overrides so it does
+    # not flow through the deprecated ctor kwarg path; the manager is
+    # attached post-construction below. Best-effort: a missing/malformed
+    # replay config must not abort session startup.
+    replay_config = overrides.pop("replay_config", None)
+    if replay_config is None:
         try:
-            overrides["replay_config"] = load_replay_config(wd)
+            replay_config = load_replay_config(wd)
         except Exception:
-            pass
+            replay_config = None
     if "enable_builtin_agents" not in overrides:
         overrides["enable_builtin_agents"] = _builtin_agents_enabled(settings)
     # Issue #17: default MCP registry reads the same on-disk files the
@@ -210,4 +221,7 @@ def build_from_environment(
         kwargs.update(discovered_llm)
     kwargs.update(overrides)
 
-    return Agentao(**kwargs)
+    agent = Agentao(**kwargs)
+    if replay_config is not None:
+        agent.replay_manager = ReplayManager(agent, config=replay_config)
+    return agent

@@ -50,7 +50,7 @@ Agentao(
     replay_config: ReplayConfig | None = None,
     sandbox_policy: SandboxPolicy | None = None,
     bg_store: BackgroundTaskStore | None = None,
-    # 老式回调（建议改用 `transport=`）
+    # 老式回调（已废弃 —— 会发 DeprecationWarning；0.5.0 移除）
     output_callback: Callable[[str], None] | None = None,
     confirmation_callback: Callable[[str, str, dict], bool] | None = None,
     ask_user_callback: Callable[[str], str] | None = None,
@@ -140,7 +140,7 @@ SdkTransport(
 
 ### `build_compat_transport`
 
-从老式分立回调参数构造 `Transport` 的 helper。一般不会直接用——`Agentao` 在你传 `confirmation_callback=` 等参数时会自动调。
+从老式分立回调参数构造 `Transport` 的 helper。位于 `agentao.embedding.compat`，是仍在用 0.2.10 之前回调形态的宿主**有文档保证的迁移面**——显式调用它即可避开构造期的 `DeprecationWarning`。一般也不会直接用——`Agentao(...)` 在你传 `confirmation_callback=` 等参数时会自动调（并在每次构造时发一次 `DeprecationWarning`）。8 个 legacy 回调 kwarg 本身将在 **0.5.0** 从 `Agentao(...)` 签名中移除；`build_compat_transport()` 自身保留。
 
 ### `AgentEvent` / `EventType`
 

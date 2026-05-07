@@ -571,6 +571,7 @@ class AgentToolWrapper(Tool):
         if self._permission_mode_getter:
             mode = self._permission_mode_getter()
             if mode is not None:
+                from ..embedding.permission_loader import load_permission_rules
                 from ..permissions import PermissionEngine
                 # Anchor the sub-agent's permission engine to the parent's
                 # working directory so the same project rules apply, and
@@ -582,9 +583,15 @@ class AgentToolWrapper(Tool):
                     if self._permission_user_root_getter is not None
                     else None
                 )
+                rules, loaded_sources = load_permission_rules(
+                    project_root=sub_agent.working_directory,
+                    user_root=user_root,
+                )
                 engine = PermissionEngine(
                     project_root=sub_agent.working_directory,
                     user_root=user_root,
+                    rules=rules,
+                    loaded_sources=loaded_sources,
                 )
                 engine.set_mode(mode)
                 sub_agent.tool_runner._permission_engine = engine

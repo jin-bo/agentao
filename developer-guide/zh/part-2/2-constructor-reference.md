@@ -154,8 +154,8 @@ agent = Agentao(
 传 `logger=app.logger` 后跳过 `LLMClient.__init__` 里对包根 logger 的 level/handler 改动，宿主日志栈保持不变。
 :::
 
-::: details 已废弃的 8 个回调（仍接收）
-0.2.10 之前的接口。内部由 `build_compat_transport()` 翻译成 `SdkTransport`。新代码请直接走 Transport。
+::: details 已废弃的 8 个回调（仍接收 —— 0.5.0 将移除）
+0.2.10 之前的接口。内部由 `build_compat_transport()` 翻译成 `SdkTransport`。**任意一个被传入现在都会发出一次 `DeprecationWarning`**；构造函数签名本身将在 **0.5.0** 移除。新代码请直接走 Transport。
 
 | 旧参数 | 替代 |
 |-------|------|
@@ -168,7 +168,7 @@ agent = Agentao(
 | `llm_text_callback` | `on_event=` + `LLM_TEXT` |
 | `on_max_iterations_callback` | `SdkTransport(on_max_iterations=...)` |
 
-⚠️ 同时传 `transport=` 和 legacy 回调时，legacy 的会被**静默忽略**。选一条路。
+⚠️ 同时传 `transport=` 和 legacy 回调时，legacy 的会被**忽略**，并发出一次 `DeprecationWarning`，让测试里能看见这些没生效的 kwargs。选一条路。
 :::
 
 ---
@@ -271,6 +271,8 @@ agent = build_from_environment(
 ---
 
 ::: info 版本说明
+- **0.5.0（计划）** —— 8 个 legacy 回调 kwarg（`confirmation_callback` / `step_callback` / `thinking_callback` / `ask_user_callback` / `output_callback` / `tool_complete_callback` / `llm_text_callback` / `on_max_iterations_callback`）将从 `Agentao(...)` 签名中**移除**。请在此之前迁移到 `transport=SdkTransport(...)`。
+- **0.4.x** —— 8 个 legacy 回调每次构造发一次 `DeprecationWarning`；`agentao.embedding.compat` 是有文档保证的迁移面。
 - **0.3.4** — Capability 协议（`FileSystem` / `ShellExecutor`）在 `agentao.host.protocols` 上 re-export。**始终从这里导入**，不要伸手到内部的 `agentao.capabilities.*`。
 - **0.3.0** — `working_directory=` 必传（不传抛 `TypeError`）。新增 `mcp_registry=` 作为稳定的配置源；默认 `FileBackedMCPRegistry` 与 #17 之前的磁盘读一致。
 - **0.2.16** — 显式注入面（`memory_manager` / `skill_manager` / `mcp_manager` / `filesystem` / `shell` …）落地；`replay_config` / `sandbox_policy` / `bg_store` 默认改为 `None`。

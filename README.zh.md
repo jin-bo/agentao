@@ -22,7 +22,7 @@
 
 | 受众 | 阅读 | 站点 |
 |---|---|---|
-| **CLI 用户** —— 终端跑 `agentao` | [`developer-guide/zh/cli/`](developer-guide/zh/cli/)（11 章：slash 命令 · plan 模式 · 记忆 · 回放 · …） | [agentao.cn/zh/cli/](https://agentao.cn/zh/cli/) |
+| **CLI 用户** —— 终端跑 `agentao` | [`developer-guide/zh/cli/`](developer-guide/zh/cli/)（12 章：slash 命令 · plan 模式 · 记忆 · 回放 · …） | [agentao.cn/zh/cli/](https://agentao.cn/zh/cli/) |
 | **嵌入式开发者** —— 把 Agentao 嵌进自己的 app | [`developer-guide/zh/`](developer-guide/zh/)（Part 1–7 + 附录） | [agentao.cn/zh/](https://agentao.cn/zh/) |
 | **English** | [`developer-guide/en/cli/`](developer-guide/en/cli/) · [`developer-guide/en/`](developer-guide/en/) | [agentao.cn/en/cli/](https://agentao.cn/en/cli/) · [agentao.cn](https://agentao.cn) |
 
@@ -98,7 +98,7 @@ REPL 起来后最先用的几个命令：
 /exit       干净地退出（不要 Ctrl+C）
 ```
 
-CLI 手册：**[agentao.cn/zh/cli/](https://agentao.cn/zh/cli/)** —— 11 章覆盖每一个 slash 命令以及背后的心智模型。
+CLI 手册：**[agentao.cn/zh/cli/](https://agentao.cn/zh/cli/)** —— 12 章覆盖每一个 slash 命令以及背后的心智模型。
 
 ---
 

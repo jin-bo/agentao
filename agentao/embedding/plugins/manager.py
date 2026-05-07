@@ -7,13 +7,14 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from .manifest import PluginManifestParser
-from .models import (
+from agentao.plugins.models import (
     LoadedPlugin,
     PluginCandidate,
     PluginLoadError,
     PluginWarning,
 )
+
+from .manifest import PluginManifestParser
 
 logger = logging.getLogger(__name__)
 

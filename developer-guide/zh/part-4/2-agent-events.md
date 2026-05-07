@@ -34,32 +34,56 @@ class AgentEvent:
 ## 事件分组
 
 ```
-TURN_START -> (LLM call starts)
-├── LLM_CALL_STARTED        (调用 provider 前的元数据)
-├── THINKING *              (可选，0 或多次)
-├── LLM_TEXT *              (用户可见的流式 chunk)
-├── LLM_CALL_DELTA          (本次调用新增的 messages)
-├── LLM_CALL_COMPLETED      (usage + finish reason)
-├── TOOL_START              (工具开始)
-│   ├── TOOL_CONFIRMATION   (可选，确认弹窗镜像事件)
-│   ├── TOOL_OUTPUT *       (流式 chunk)
-│   ├── TOOL_COMPLETE       (状态 + 耗时)
-│   └── TOOL_RESULT         (最终内容 / hash / 落盘元数据)
-├── AGENT_START / AGENT_END (sub-agent 生命周期)
-├── ERROR                   (可选，出错时)
-└── replay-only observability events
+TURN_BEGIN -> (用户消息到达——turn 开始；携带 user 文本)
+└── TURN_START -> (LLM 调用开始；重置流式 UI)
+    ├── LLM_CALL_STARTED        (调用 provider 前的元数据)
+    ├── THINKING *              (可选，0 或多次)
+    ├── LLM_TEXT *              (用户可见的流式 chunk)
+    ├── LLM_CALL_DELTA          (本次调用新增的 messages)
+    ├── LLM_CALL_COMPLETED      (usage + finish reason)
+    ├── TOOL_START              (工具开始)
+    │   ├── TOOL_CONFIRMATION   (可选，确认弹窗镜像事件)
+    │   ├── TOOL_OUTPUT *       (流式 chunk)
+    │   ├── TOOL_COMPLETE       (状态 + 耗时)
+    │   └── TOOL_RESULT         (最终内容 / hash / 落盘元数据)
+    ├── AGENT_START / AGENT_END (sub-agent 生命周期)
+    ├── ERROR                   (可选，出错时)
+    └── replay-only observability events
+TURN_END   -> (turn 结束；携带最终 assistant 文本 + status/error)
 ```
+
+`TURN_BEGIN` / `TURN_END` **每个用户驱动的 turn 各发一次**；`TURN_START` 是 turn 内**每次 LLM 迭代**都发（一个 turn 内可能很多次）。Replay 录制器通过 `Transport.subscribe()`（见 [4.1](./1-transport-protocol)）订阅外层这一对，替代了过去从 agent 内部状态直接调用 replay adapter 的路径。
 
 大多数 UI 只需要处理 `LLM_TEXT`、`THINKING`、`TOOL_START`、`TOOL_OUTPUT`、`TOOL_COMPLETE`、`TOOL_CONFIRMATION`、`AGENT_START`、`AGENT_END` 和 `ERROR`。
 其他事件主要服务于 session replay、审计、指标和调试。
 
 ## 单事件详解
 
+### `TURN_BEGIN`
+
+| 字段 | 说明 |
+|------|------|
+| 触发时机 | 每个用户驱动 turn 开始时**一次**，在任何 LLM 迭代之前 |
+| `data` | `{"user_message": "..."}` |
+| 典型用法 | 在 replay 日志 / 审计流中开一个新的 turn 帧；通过 `Transport.subscribe()` 订阅 |
+
+与 `TURN_START`（每个 LLM 迭代各发一次）语义不同。`TURN_BEGIN` 携带用户输入，并与 `TURN_END` 1:1 配对。
+
+### `TURN_END`
+
+| 字段 | 说明 |
+|------|------|
+| 触发时机 | 每个用户驱动 turn 结束时**一次**，在最终 assistant 回复之后（或出错 / 被取消时） |
+| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None}` |
+| 典型用法 | 关闭 turn 帧；刷出 per-turn 指标 |
+
+Replay 录制器靠它和 `TURN_BEGIN` 配对来界定一个 turn。它替代了运行时直接调用 replay adapter 的旧路径。
+
 ### `TURN_START`
 
 | 字段 | 说明 |
 |------|------|
-| 触发时机 | 每次调用 LLM 前 |
+| 触发时机 | turn 内**每次 LLM 迭代**前（同一个 turn 可能发很多次） |
 | `data` | `{}` 空对象 |
 | 典型用法 | 重置 UI 显示、切换 spinner 到 "Thinking…" |
 

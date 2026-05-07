@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agentao.plugins.manifest import PluginManifestParser
+from agentao.embedding.plugins.manifest import PluginManifestParser
 from agentao.plugins.models import (
     PluginCommandMetadata,
     PluginLoadError,

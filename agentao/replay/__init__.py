@@ -18,6 +18,7 @@ from .events import (
     EventKind,
     ReplayEvent,
 )
+from .manager import ReplayManager
 from .meta import ReplayMeta
 from .reader import (
     ReplayReader,
@@ -35,6 +36,7 @@ __all__ = [
     "ReplayEvent",
     "ReplayAdapter",
     "ReplayConfig",
+    "ReplayManager",
     "ReplayRecorder",
     "ReplayReader",
     "ReplayMeta",

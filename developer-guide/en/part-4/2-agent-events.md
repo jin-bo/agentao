@@ -34,32 +34,56 @@ The **JSON-serializable** constraint means every `data` payload can ship over SS
 ## Event groups
 
 ```
-TURN_START -> (LLM call starts)
-├── LLM_CALL_STARTED        (metadata before the provider call)
-├── THINKING *              (optional, 0 or more)
-├── LLM_TEXT *              (visible streaming chunks)
-├── LLM_CALL_DELTA          (new messages since previous call)
-├── LLM_CALL_COMPLETED      (usage + finish reason)
-├── TOOL_START              (tool begins)
-│   ├── TOOL_CONFIRMATION   (optional, mirrors confirm prompt)
-│   ├── TOOL_OUTPUT *       (streaming chunks)
-│   ├── TOOL_COMPLETE       (status + duration)
-│   └── TOOL_RESULT         (final content/hash/disk metadata)
-├── AGENT_START / AGENT_END (sub-agent lifecycle)
-├── ERROR                   (optional, on errors)
-└── replay-only observability events
+TURN_BEGIN -> (user message arrives — turn begins; carries the user text)
+└── TURN_START -> (LLM call starts; resets streaming UI)
+    ├── LLM_CALL_STARTED        (metadata before the provider call)
+    ├── THINKING *              (optional, 0 or more)
+    ├── LLM_TEXT *              (visible streaming chunks)
+    ├── LLM_CALL_DELTA          (new messages since previous call)
+    ├── LLM_CALL_COMPLETED      (usage + finish reason)
+    ├── TOOL_START              (tool begins)
+    │   ├── TOOL_CONFIRMATION   (optional, mirrors confirm prompt)
+    │   ├── TOOL_OUTPUT *       (streaming chunks)
+    │   ├── TOOL_COMPLETE       (status + duration)
+    │   └── TOOL_RESULT         (final content/hash/disk metadata)
+    ├── AGENT_START / AGENT_END (sub-agent lifecycle)
+    ├── ERROR                   (optional, on errors)
+    └── replay-only observability events
+TURN_END   -> (turn ends; carries final assistant text + status/error)
 ```
+
+`TURN_BEGIN` / `TURN_END` fire **once per user-driven turn**; `TURN_START` fires **once per LLM iteration** inside that turn. Replay recorders subscribe to the outer pair via `Transport.subscribe()` (see [4.1](./1-transport-protocol)) instead of being reached through agent state.
 
 Most UIs only need `LLM_TEXT`, `THINKING`, `TOOL_START`, `TOOL_OUTPUT`, `TOOL_COMPLETE`, `TOOL_CONFIRMATION`, `AGENT_START`, `AGENT_END`, and `ERROR`.
 The rest are primarily for session replay, audit, metrics, and debugging.
 
 ## Per-event details
 
+### `TURN_BEGIN`
+
+| Field | Description |
+|-------|-------------|
+| Trigger | Once at the start of each user-driven turn, **before** any LLM iteration |
+| `data` | `{"user_message": "..."}` |
+| Typical use | Open a new turn frame in the replay log / audit stream; subscribe via `Transport.subscribe()` |
+
+Distinct from `TURN_START` (which fires per LLM iteration). `TURN_BEGIN` carries the user input and pairs 1-to-1 with `TURN_END`.
+
+### `TURN_END`
+
+| Field | Description |
+|-------|-------------|
+| Trigger | Once at the end of each user-driven turn, after the final assistant reply (or on error / cancellation) |
+| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None}` |
+| Typical use | Close the turn frame; flush per-turn metrics |
+
+Replay recorders pair this with `TURN_BEGIN` to delimit a turn. Drives the runtime → replay handoff that used to be a direct call into the replay adapter.
+
 ### `TURN_START`
 
 | Field | Description |
 |-------|-------------|
-| Trigger | Before each LLM call |
+| Trigger | Before **each LLM iteration** inside a turn (a single turn can fire many) |
 | `data` | `{}` empty |
 | Typical use | Reset UI display, set spinner to "Thinking…" |
 

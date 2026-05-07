@@ -9,10 +9,12 @@ the conversation from where it left off.
 Architectural choices
 ---------------------
 
-- **Reuses :func:`agentao.session.load_session`**, which already
-  handles UUID prefix lookup, timestamp prefix fallback, latest-wins
-  ordering, and error reporting via :class:`FileNotFoundError`. This
-  is the same code path the CLI ``/load`` command uses.
+- **Reuses :func:`agentao.embedding.sessions.load_session`**, which
+  already handles UUID prefix lookup, timestamp prefix fallback,
+  latest-wins ordering, and error reporting via
+  :class:`FileNotFoundError`. This is the same code path the CLI
+  ``/load`` command uses (the legacy ``agentao.session`` shim
+  delegates here).
 
 - **Replays through :meth:`ACPTransport.replay_history`** so the
   mapping from persisted OpenAI-format messages to ACP update events
@@ -65,7 +67,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List
 
-from agentao.session import load_session
+from agentao.embedding.sessions import load_session
 
 from .mcp_translate import translate_acp_mcp_servers
 from .models import AcpSessionState
@@ -194,11 +196,18 @@ def handle_session_load(
     client_capabilities_snapshot = dict(server.state.client_capabilities)
     transport = ACPTransport(server=server, session_id=session_id)
 
+    from agentao.embedding.permission_loader import load_permission_rules
     from agentao.paths import user_root
     from agentao.permissions import PermissionEngine
+    ur = user_root()
+    rules, loaded_sources = load_permission_rules(
+        project_root=cwd, user_root=ur,
+    )
     permission_engine = PermissionEngine(
         project_root=cwd,
-        user_root=user_root(),
+        user_root=ur,
+        rules=rules,
+        loaded_sources=loaded_sources,
     )
 
     # Translate any ACP-provided MCP server entries (Issue 11). Same

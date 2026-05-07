@@ -45,6 +45,11 @@ class ReplayAdapter:
     def recorder(self) -> ReplayRecorder:
         return self._recorder
 
+    @property
+    def inner(self) -> Any:
+        """The wrapped transport — used by lifecycle code to restore on teardown."""
+        return self._inner
+
     def begin_turn(self, user_message: str) -> str:
         """Start a new replay turn and return its ``turn_id``."""
         turn_id = _short_id()
@@ -172,6 +177,29 @@ class ReplayAdapter:
     def _mirror(self, event: AgentEvent) -> None:
         data = event.data or {}
         kind = event.type
+
+        # Per-turn state — runtime emits TURN_BEGIN/TURN_END on the
+        # transport once per user-driven turn; the adapter translates
+        # them into recorder turn writes via begin_turn / end_turn.
+        # Direct calls to begin_turn / end_turn from tests (and from
+        # any host that wants synchronous turn boundaries) keep working.
+        if kind == EventType.TURN_BEGIN:
+            try:
+                self.begin_turn(str(data.get("user_message", "") or ""))
+            except Exception:
+                pass
+            return
+
+        if kind == EventType.TURN_END:
+            try:
+                self.end_turn(
+                    str(data.get("final_text", "") or ""),
+                    status=str(data.get("status", "ok") or "ok"),
+                    error=data.get("error"),
+                )
+            except Exception:
+                pass
+            return
 
         if kind == EventType.LLM_TEXT:
             chunk = data.get("chunk", "")
