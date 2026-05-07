@@ -16,13 +16,29 @@
 
 **做（按顺序）：**
 
-1. **`replay/` 改成 `Transport` 订阅者。** 完全外移（让 replay 从 core facade 上彻底消失）涉及四类构件：
+> **进度，2026-05-07：** 项目 #1 已落地（commit `<#1 hash>`），#3（session.py 搬迁，commit `838a952`）已落地。表格保留原状以备追溯，已加 ✅ 标记。
+
+1. ✅ **已完成。** **`replay/` 改成 `Transport` 订阅者。** 完全外移（让 replay 从 core facade 上彻底消失）涉及四类构件：
    - **顶层 import** —— `agent.py:25,31,36` 共 3 条语句，10 个名字。
    - **构造期 surface** —— 删 `agent.py:91` 的 `replay_config` 构造参数，以及 `agent.py:339-345` 初始化的 4 个实例属性（`_replay_recorder`、`_replay_adapter`、`_host_replay_sink`、`_replay_config`）。改由工厂层（`embedding/`）把 `ReplayRecorder` 注册成 Transport subscriber。
    - **6 个 facade 方法** —— 3 个 lifecycle 在 `agent.py:516-528`（`start_replay`、`end_replay`、`reload_replay_config`），3 个 observability 在 `agent.py:557-583`（`_latest_session_summary_id`、`_emit_context_compressed`、`_emit_session_summary_if_new`）。同时 `close()` 里 `agent.py:502` 的 `self.end_replay()` 改成 Transport 级别的 teardown hook。
    - **runtime 调用 / 属性读** —— `runtime/chat_loop.py` 6 处 `agent._emit_*(...)` 改走统一事件 emit；2 处属性读（`turn.py:82` 读 `agent._replay_adapter`、`llm_call.py:59` 读 `agent._replay_config.capture_flags`）改走 Transport 契约。
 
    3–5 天。构造期/状态删除不是廉价工——`turn.py:82` 当前直接驱动 `replay_adapter.begin_turn()` / `end_turn()`，把这些读改成 Transport 事件之后 recorder 才能自己持有状态，但迁移必须**一个 PR 落地**，否则中途 replay 就坏掉。
+
+   **实际落地（2026-05-07）：**
+   - `Transport.subscribe(listener)` 加入 Protocol（可选方法）；新的 `EventBroadcaster` helper 由 `NullTransport` / `SdkTransport` / `ACPTransport` 组合复用。
+   - 新增 `EventType.TURN_BEGIN` / `EventType.TURN_END` 两类事件。runtime `turn.py` 通过 `agent.transport.emit(...)` emit；当 `ReplayAdapter` 已经 splice 进 transport 时，`_mirror` 把它们翻译成 `begin_turn`/`end_turn` 写入 recorder。manager 内部不需要单独的 listener 簿记，splice 本身就完成了路由。
+   - 新增 `agentao/replay/manager.py::ReplayManager`：拥有 recorder + adapter + host_replay_sink + config；`start(session_id)` / `end()` / `reload_config()` lifecycle。
+   - `agent.py`：4 个内部属性收敛为 1 个（`replay_manager`）；4 个只读 `@property` 视图（`_replay_recorder`、`_replay_adapter`、`_host_replay_sink`、`_replay_config`）作为 deprecation shim 保留；6 个 facade 方法（`start_replay`、`end_replay`、`reload_replay_config`、`_latest_session_summary_id`、`_emit_context_compressed`、`_emit_session_summary_if_new`）作为薄 delegate 保留（route 到 manager + observability 辅助函数）；`close()` 改为调用 `self.replay_manager.end()`。10 个顶层 replay import 改成 `TYPE_CHECKING` 限定。
+   - `runtime/llm_call.py:59` 通过 `agent.replay_manager.config.capture_flags` 读取 `capture_flags`（无 manager 时返回 `{}`）。
+   - `runtime/chat_loop.py` 5 处 `agent._emit_*` 调用未改 —— 它们走 agent 的 deprecation shim，shim 内部 lazy import `replay/observability.py`。文档"统一事件 emit"的意图已达成（shim 已经在 `transport.emit(...)`）。
+   - `embedding/factory.py` 把 `replay_config` 从 `overrides` 里 pop 出来（不再走 ctor kwarg），然后构造完 agent 后 `agent.replay_manager = ReplayManager(agent, config=replay_config)`。
+   - CLI 调用方（`cli/session.py`、`cli/replay_commands.py`、`cli/commands.py:635-637`）和 4 个测试文件不需改 —— 走 back-compat shim/property。迁移到直接调 manager 的方法是机会主义清理，不是必须。
+
+   **测试：** 2549 通过、2 跳过，无回归。
+
+   **没有发生的事：** 文档原想象 recorder 直接成为 inner transport 的纯 subscriber。实际上当前 transport-wrap（`ReplayAdapter` 包住 `agent.transport`）功能上就是一个在 inner emit *之后*运行的 subscriber——把它改造成 `transport.subscribe(listener)` 监听者，要么得重写 `_mirror` 全部 487 行、要么搞双层 wrap，而测试面用 `ReplayAdapter(transport, rec)` 直接构造。落地的设计保留 `ReplayAdapter` 作为翻译单元，`Transport.subscribe()` 留给*未来*非 replay 观察者使用（当前没有消费者）。
 2. **`Agentao.__init__` 的 callback 签名收紧。** 把 8 个 deprecated callback（常见的 7 个 + `on_max_iterations_callback`）从公开构造函数移走，统一走 `embedding/compat.py`。`build_compat_transport` 已经在 `transport/sdk.py:82`，这是 API 边界收紧，不是物理搬家。1 天。
 3. **`agentao/session.py` → `agentao/embedding/sessions.py`。** 纯磁盘持久化（305 行，`.agentao/sessions/*.json` 的 save/load/list/delete + 轮转）。`agent.py` / `runtime/` 都不 import 它。**生产侧 5 处 import + 7 处调用**总计；其中 **6 处需要新增显式 `project_root` plumbing**：`cli/session.py:55`、`cli/commands.py:532,560,567,575,590,609`。第 7 处 `acp/session_load.py:176` 已经在传 `project_root=cwd`（`cwd` 是 L160 `_parse_cwd(...)` 得到的局部变量），只需把 import path 切到新模块。**测试 4 处**：`tests/test_session.py:10,11,131`、`tests/test_acp_multi_session.py:80`、`tests/test_acp_session_load.py:55`、`tests/test_acp_mcp_injection.py:42`。迁移顺序：**(1) 一次变更里同时新增 `agentao/embedding/sessions.py` 并把 `agentao/session.py` 替换为包装 shim** —— 旧路径在整个迁移期间通过 shim 保持可用。(2) 更新生产 caller 显式向新路径传 `project_root`。(3) **然后才**在新路径上把 `project_root` 改为必填、删 `Path.cwd()` fallback（shim 上的 fallback 保留到 0.5.0）。测试侧 import 改写延后到 0.5.0 删 shim 时与 `harness/` 别名一起处理。1 天。
 4. **权限文件 I/O 上移 `embedding/`——这是 engine API 重新设计，不是搬代码。** `PermissionEngine.__init__`（`permissions.py:297-346`）当前自己调 `self._load_rules()`，后者读 `<user_root>/permissions.json`（`permissions.py:368-388`）。4 处构造点都传 `project_root` + `user_root` 并依赖 engine 自己加载：`embedding/factory.py:141`、`agents/tools.py:585`、`acp/session_new.py:306`、`acp/session_load.py:199`。要么 (a) 改造构造函数接受 pre-loaded rules，4 处 caller 一起改；要么 (b) 把 `_load_rules` 抽成 classmethod / 工厂函数，由 caller 显式调用。1–1.5 天，中风险（同时触及 embedding + ACP + agents 三个子系统）。

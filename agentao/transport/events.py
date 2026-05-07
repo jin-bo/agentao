@@ -7,6 +7,14 @@ from typing import Any, Dict
 
 class EventType(str, Enum):
     TURN_START    = "turn_start"    # about to call LLM (reset display, spinner to "Thinking…")
+    # ── Replay turn semantics (distinct from TURN_START's per-LLM-iteration reset) ──
+    # TURN_BEGIN fires once at the start of each user-driven turn carrying
+    # the user message. TURN_END fires once at the end carrying the final
+    # assistant text + status/error. They replace direct calls into the
+    # replay adapter from runtime/turn.py so the recorder can subscribe
+    # to the Transport instead of being reached through agent state.
+    TURN_BEGIN    = "turn_begin"
+    TURN_END      = "turn_end"
     TOOL_START    = "tool_start"    # tool execution starting
     TOOL_OUTPUT   = "tool_output"   # streaming chunk from a tool
     TOOL_COMPLETE = "tool_complete" # tool execution finished (status + duration)

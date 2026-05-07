@@ -173,6 +173,29 @@ class ReplayAdapter:
         data = event.data or {}
         kind = event.type
 
+        # Per-turn state — runtime emits TURN_BEGIN/TURN_END on the
+        # transport once per user-driven turn; the adapter translates
+        # them into recorder turn writes via begin_turn / end_turn.
+        # Direct calls to begin_turn / end_turn from tests (and from
+        # any host that wants synchronous turn boundaries) keep working.
+        if kind == EventType.TURN_BEGIN:
+            try:
+                self.begin_turn(str(data.get("user_message", "") or ""))
+            except Exception:
+                pass
+            return
+
+        if kind == EventType.TURN_END:
+            try:
+                self.end_turn(
+                    str(data.get("final_text", "") or ""),
+                    status=str(data.get("status", "ok") or "ok"),
+                    error=data.get("error"),
+                )
+            except Exception:
+                pass
+            return
+
         if kind == EventType.LLM_TEXT:
             chunk = data.get("chunk", "")
             if chunk:

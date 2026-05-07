@@ -7,6 +7,7 @@ API that existed before the Transport abstraction was introduced.
 import warnings
 from typing import Any, Callable, Dict, List, Optional
 
+from .broadcast import EventBroadcaster
 from .events import AgentEvent, EventType
 from .null import NullTransport
 
@@ -48,6 +49,7 @@ class SdkTransport:
         self._confirm_tool = confirm_tool
         self._ask_user = ask_user
         self._on_max_iterations = on_max_iterations
+        self._broadcast = EventBroadcaster()
 
     # ── Transport protocol ────────────────────────────────────────────────────
 
@@ -57,6 +59,10 @@ class SdkTransport:
                 self._on_event(event)
             except Exception:
                 pass  # never let a callback crash the runtime
+        self._broadcast.notify(event)
+
+    def subscribe(self, listener: Callable[[AgentEvent], None]) -> Callable[[], None]:
+        return self._broadcast.subscribe(listener)
 
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
         if self._confirm_tool:

@@ -1,5 +1,8 @@
 """NullTransport — silent default used when no transport is configured."""
 
+from typing import Callable
+
+from .broadcast import EventBroadcaster
 from .events import AgentEvent
 
 
@@ -8,10 +11,19 @@ class NullTransport:
 
     Used as the default when ``Agentao`` is instantiated without a transport,
     enabling headless / programmatic use with no configuration required.
+
+    Subscribers still see every event (so a replay recorder attached to a
+    Null transport works in headless tests).
     """
 
+    def __init__(self) -> None:
+        self._broadcast = EventBroadcaster()
+
     def emit(self, event: AgentEvent) -> None:
-        pass
+        self._broadcast.notify(event)
+
+    def subscribe(self, listener: Callable[[AgentEvent], None]) -> Callable[[], None]:
+        return self._broadcast.subscribe(listener)
 
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
         return True

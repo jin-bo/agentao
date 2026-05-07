@@ -1,6 +1,6 @@
 """Transport protocol — the single interface between Agentao runtime and UI/transport."""
 
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 from .events import AgentEvent
 
@@ -21,12 +21,33 @@ class Transport(Protocol):
 
     Implementing all methods is not required — use ``NullTransport`` as a
     base or mixin if you only care about a subset.
+
+    Optionally a Transport may also expose ``subscribe(listener)`` so
+    side-channel observers (e.g. the replay recorder) can mirror the
+    event stream without wrapping the transport. The base contract is
+    unchanged — implementations that don't care about subscribers may
+    omit the method.
     """
 
     # ── One-way events ────────────────────────────────────────────────────────
 
     def emit(self, event: AgentEvent) -> None:
         """Receive a runtime event.  Must not raise; errors should be swallowed."""
+        ...
+
+    # ── Optional: side-channel observers ─────────────────────────────────────
+
+    def subscribe(self, listener: Callable[[AgentEvent], None]) -> Callable[[], None]:
+        """Register ``listener`` to receive every emitted event after the inner emit.
+
+        Returns an idempotent unsubscribe function. Errors raised by the
+        listener must be swallowed by the transport; subscription is a
+        side channel and never affects the primary emit path.
+
+        Implementations that do not maintain a subscriber list may omit
+        this method; consumers should ``getattr(transport, "subscribe", None)``
+        before calling.
+        """
         ...
 
     # ── Request-response interactions ────────────────────────────────────────

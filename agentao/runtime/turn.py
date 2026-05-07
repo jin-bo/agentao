@@ -75,16 +75,22 @@ def run_turn(
     # fire SESSION_SUMMARY_WRITTEN each time compress_messages writes
     # a new one. Held on the instance so compression paths inside the
     # retry branches can update it without threading it through args.
-    agent._last_session_summary_id = agent._latest_session_summary_id()
-    # Snapshot the adapter so the finally block can emit end_turn even if
-    # end_replay() is called concurrently (e.g. ACP session teardown) and
-    # clears agent._replay_adapter before this turn finishes unwinding.
-    replay_adapter = agent._replay_adapter
-    if replay_adapter is not None:
-        try:
-            replay_adapter.begin_turn(user_message)
-        except Exception:
-            pass
+    from ..replay.observability import latest_session_summary_id
+    agent._last_session_summary_id = latest_session_summary_id(agent)
+    # TURN_BEGIN flows through the transport — when a ReplayManager has
+    # spliced its ReplayAdapter into ``agent.transport``, the adapter's
+    # _mirror translates this into a recorder turn write. The runtime
+    # never reaches into the manager directly, so concurrent
+    # ``replay_manager.end()`` (e.g. ACP session teardown) can safely
+    # swap the adapter out mid-turn — the matching TURN_END below
+    # simply lands on whatever transport is bound at finally-time.
+    from ..transport import AgentEvent, EventType
+    try:
+        agent.transport.emit(AgentEvent(EventType.TURN_BEGIN, {
+            "user_message": user_message,
+        }))
+    except Exception:
+        pass
     final_text = ""
     status = "ok"
     error_detail: Optional[str] = None
@@ -109,12 +115,13 @@ def run_turn(
         error_detail = str(e)
         raise
     finally:
-        if replay_adapter is not None:
-            try:
-                replay_adapter.end_turn(
-                    final_text, status=status, error=error_detail,
-                )
-            except Exception:
-                pass
+        try:
+            agent.transport.emit(AgentEvent(EventType.TURN_END, {
+                "final_text": final_text,
+                "status": status,
+                "error": error_detail,
+            }))
+        except Exception:
+            pass
         agent._current_token = None
         agent._current_turn_id = None

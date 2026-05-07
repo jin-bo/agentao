@@ -56,7 +56,11 @@ def run_llm_call(
         json.dumps(tool_names).encode("utf-8"),
     ).hexdigest()[:16]
 
-    capture_flags = agent._replay_config.capture_flags if agent._replay_config else {}
+    capture_flags = (
+        agent.replay_manager.config.capture_flags
+        if agent.replay_manager is not None
+        else {}
+    )
 
     started_payload: Dict[str, Any] = {
         "attempt": attempt,
