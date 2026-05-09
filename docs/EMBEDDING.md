@@ -183,6 +183,70 @@ when the host is done with the session.
 | `mcp_registry` | No | Defaults to no MCP servers (the file-backed registry is only wired by the factory). |
 | `transport` | No | Defaults to `NullTransport()`. |
 
+### Optional: silencing or redirecting `agentao.log`
+
+By default, `Agentao(...)` writes a rolling debug log to
+`<working_directory>/agentao.log` and elevates the package-root
+`"agentao"` logger to `DEBUG`. Both behaviors are knobs the embedded
+host can disable explicitly — `LLMClient.__init__`
+(`agentao/llm/client.py`) documents the contract:
+
+| What you want | How to pass it |
+|---|---|
+| Stop writing the `agentao.log` file | `log_file=None` on `LLMClient` |
+| Stop touching `logging.getLogger("agentao")` (no level set, no handlers attached, no marker eviction) | `logger=<your_logger>` on `Agentao` *or* `LLMClient` |
+| Both — full host control | inject `logger=` (sufficient on its own; see below) |
+
+The cleanest path is to inject a logger into the `Agentao(...)` call
+directly:
+
+```python
+import logging
+from pathlib import Path
+from agentao import Agentao
+
+quiet = logging.getLogger("myhost.agentao")
+quiet.addHandler(logging.NullHandler())   # full silence
+quiet.propagate = False                    # don't bubble up to root
+
+agent = Agentao(
+    api_key=..., base_url=..., model=...,
+    working_directory=Path("/srv/run-1"),
+    logger=quiet,                          # ← skips package-root mutation
+)
+```
+
+`Agentao` still passes `log_file=<wd>/agentao.log` to the internal
+`LLMClient` here, but the injected-logger branch in `LLMClient.__init__`
+short-circuits before any `FileHandler` is built — no file is created.
+
+If you build `LLMClient` yourself, you can be explicit on both axes:
+
+```python
+from agentao.llm import LLMClient
+from agentao import Agentao
+
+llm = LLMClient(
+    api_key=..., base_url=..., model=...,
+    log_file=None,        # don't write agentao.log
+    logger=quiet,         # don't mutate the "agentao" package logger
+)
+agent = Agentao(llm_client=llm, working_directory=Path("/srv/run-1"))
+```
+
+**Gotcha:** passing only `log_file=None` (without `logger=`) still
+elevates `logging.getLogger("agentao")` to `DEBUG` — the file handler
+is skipped, but every `getLogger(__name__)` inside `agentao.*` will
+emit at DEBUG into whatever handlers are attached upstream. Hosts that
+care about not having their root logger touched at all must pass
+`logger=`.
+
+The rest of the package — `getLogger("agentao.tools.web")`,
+`getLogger("agentao.acp_client")`, `getLogger("agentao.mcp")`, etc. —
+never attaches its own handlers. With a host-supplied `logger=`, those
+named loggers follow whatever propagation/handler config the host
+already has in place.
+
 ---
 
 ## 3. Capability injection

@@ -182,6 +182,22 @@ client = LLMClient(
 )
 ```
 
+### 关闭日志文件 / 让 host 完全接管日志栈（嵌入场景）
+
+嵌入式 host 想完全关掉 `agentao.log`、或不让 LLMClient 改写
+`logging.getLogger("agentao")`（package-root level、handler）时，有两个独立的钮：
+
+| 想关掉的东西 | 怎么传 |
+|---|---|
+| `agentao.log` 文件 | `log_file=None` 给 `LLMClient` |
+| 对 `"agentao"` 包级 logger 的 level / handler 改写 | `logger=<your_logger>` 给 `Agentao` 或 `LLMClient` |
+
+最简洁的写法是直接在 `Agentao(...)` 里注入 logger —
+`LLMClient.__init__` 在收到非空 `logger=` 时会走早返回分支，根本不会建 file handler，
+所以即使 `Agentao` 仍按默认把 `<wd>/agentao.log` 作为 `log_file=` 传下去，也不会产生文件。
+完整说明、踩坑提醒和 `NullHandler + propagate=False` 静默写法见
+**[docs/EMBEDDING.md §2 → "Optional: silencing or redirecting agentao.log"](EMBEDDING.md#optional-silencing-or-redirecting-agentaolog)**。
+
 ## 日志格式
 
 ### 时间戳格式

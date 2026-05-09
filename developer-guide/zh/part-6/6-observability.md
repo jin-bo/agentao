@@ -46,19 +46,50 @@ Agent 是"长尾出 bug"的典型——90% 时间好好的，10% 出现让你无
 
 ### 接管 Agentao 的 logger
 
+`LLMClient.__init__` 默认会改写 `logging.getLogger("agentao")` ——
+把 level 设成 `DEBUG`、挂一个写到 `<wd>/agentao.log` 的
+`RotatingFileHandler`、重建时还会驱逐自己 marker 标记的 handler。
+宿主想完全掌控日志栈，应该**显式注入 logger**，让这套改写根本不发生：
+
 ```python
 import logging
+from agentao import Agentao
 
-# 全部事件都在这个 logger 下
-agentao_logger = logging.getLogger("agentao")
-
-# 加一个 JSON 格式的 handler 推给 Loki / CloudWatch / ELK
+# 自己的 logger ——JSON handler 推给 Loki / CloudWatch / ELK
 import pythonjsonlogger.jsonlogger as jl
+my_logger = logging.getLogger("myapp.agentao")
 handler = logging.StreamHandler()
 handler.setFormatter(jl.JsonFormatter())
-agentao_logger.addHandler(handler)
-agentao_logger.setLevel(logging.INFO)
+my_logger.addHandler(handler)
+my_logger.setLevel(logging.INFO)
+
+agent = Agentao(
+    api_key=..., base_url=..., model=...,
+    working_directory=workdir,
+    logger=my_logger,            # ← 跳过对包根 logger 的改写
+)
 ```
+
+只要传了 `logger=`，`LLMClient` 在建 file handler **之前**就早返回，
+所以默认那条 `<wd>/agentao.log` 也不会被创建。
+完全静默的写法配 `NullHandler`：
+
+```python
+quiet = logging.getLogger("myapp.agentao")
+quiet.addHandler(logging.NullHandler())
+quiet.propagate = False
+agent = Agentao(..., logger=quiet)
+```
+
+::: warning 踩坑提醒
+在 `getLogger("agentao")` 上 `addHandler(...)` 而**不**传 `logger=`，handler 是会生效，
+但包根 logger 的 level 仍被强行改成 `DEBUG`，rolling 的 `agentao.log` 文件也照样在
+你的 handler 旁边继续写。要彻底关掉那个文件：要么注入自己的 logger（上文），
+要么自己构造 `LLMClient` 时传 `log_file=None`。
+:::
+
+完整说明（开关矩阵、代码锚点、直接走 `LLMClient` 的写法）见
+[`docs/EMBEDDING.md` §2 → "Optional: silencing or redirecting agentao.log"](https://github.com/jin-bo/agentao/blob/main/docs/EMBEDDING.md#optional-silencing-or-redirecting-agentaolog)。
 
 ### 关键字段
 
