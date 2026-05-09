@@ -158,7 +158,12 @@ class WriteFileTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Write content to a file. Creates the file if it doesn't exist. Supports append mode."
+        return (
+            "Write content to a file. Creates the file if it doesn't exist. "
+            "Supports append mode. Best for new or small files; for surgical "
+            "changes to existing files, prefer `replace` to minimize token "
+            "usage and simplify review."
+        )
 
     @property
     def parameters(self) -> Dict[str, Any]:
@@ -209,7 +214,12 @@ class EditTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Edit a file by replacing old text with new text. The old text must match exactly. Use replace_all to replace all occurrences."
+        return (
+            "Edit a file by replacing old text with new text. The old text "
+            "must match exactly. Use replace_all to replace all occurrences. "
+            "Preferred for surgical edits to existing files: minimizes token "
+            "usage, simplifies review, and avoids accidental deletions."
+        )
 
     @property
     def parameters(self) -> Dict[str, Any]:
