@@ -1,113 +1,38 @@
-"""ChatLoopRunner — owns the per-turn chat loop body.
+"""``ChatLoopRunner`` — the inner chat loop body executed by ``Agentao.chat()``.
 
-``Agentao.chat()`` still owns the turn lifecycle (cancellation token,
-replay begin_turn/end_turn, ``_current_token`` bookkeeping) and
-delegates the loop body here.
+The loop reads and mutates the same agent state (``messages``,
+``context_manager``, ``_last_session_summary_id``, ``_last_user_message``,
+``_llm_call_seq`` / ``_llm_call_last_msg_count``) — no shadow copies. The
+agent retains the per-turn lifecycle (cancellation token, replay
+begin_turn/end_turn, ``_current_token`` bookkeeping) and delegates the
+loop body here.
 
-Behavioral contract preserved:
-
-- The loop reads and mutates the same agent state (``messages``,
-  ``context_manager``, ``_last_session_summary_id``, ``_last_user_message``,
-  ``_llm_call_seq`` / ``_llm_call_last_msg_count``) — no shadow copies.
-- ``_build_system_prompt``, ``_llm_call``, ``_emit_context_compressed``
-  and ``_emit_session_summary_if_new`` are still invoked as agent
-  methods so any subclass override or test patch continues to apply.
-- All ``transport.emit`` event types and payload shapes are unchanged.
+Plugin-hook dispatch and pre-LLM compaction live in sibling mix-in
+modules so the file you're reading is mostly the long ``run()`` method
+plus the three helpers it calls (``_inject_background_notifications``,
+``_call_llm_with_overflow_recovery``, ``_emit_skill_and_memory_diffs``).
 """
 
 from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Optional
 
-from ..cancellation import AgentCancelledError, CancellationToken
-from ..context_manager import is_context_too_long_error
-from ..plugins.models import StopHookResult
-from ..transport import AgentEvent, EventType
-from .sanitize import canonicalize_tool_arguments, sanitize_assistant_message
+from ...cancellation import AgentCancelledError, CancellationToken
+from ...context_manager import is_context_too_long_error
+from ...transport import AgentEvent, EventType
+from ..sanitize import canonicalize_tool_arguments, sanitize_assistant_message
+from ._compaction import _CompactionMixin
+from ._hook_dispatch import _HookDispatchMixin
+from ._outcomes import _HookOutcome
+from ._serialize import _attach_reasoning, _serialize_tool_call
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
-    from ..agent import Agentao
+    from ...agent import Agentao
 
 
-MAX_REASONING_HISTORY_CHARS = 500  # Truncate reasoning_content in history to ~125 tokens
-
-
-def _attach_reasoning(msg: Dict[str, Any], reasoning_content: Optional[str]) -> None:
-    """Attach a truncated copy of ``reasoning_content`` to ``msg`` (in place).
-
-    No-op when ``reasoning_content`` is ``None``. Truncation cap matches
-    the prompt-budget assumption that reasoning shouldn't dominate
-    history. The trailing ellipsis flags the truncation to the model.
-    """
-    if reasoning_content is None:
-        return
-    stored = reasoning_content[:MAX_REASONING_HISTORY_CHARS]
-    if len(reasoning_content) > MAX_REASONING_HISTORY_CHARS:
-        stored += "..."
-    msg["reasoning_content"] = stored
-
-
-def _serialize_tool_call(tc, *, logger=None) -> dict:
-    """Serialize a tool call object to a dict for conversation history.
-
-    Uses model_dump() to preserve ALL Pydantic extra fields at their correct
-    level. This handles Gemini's thought_signature (and similar fields)
-    regardless of which level they appear at in the response.
-
-    The ``function.arguments`` string is round-tripped through the repair
-    pipeline and re-emitted as canonical compact JSON so downstream API
-    proxies receive valid JSON even when the model emitted malformed args.
-    """
-    if hasattr(tc, "model_dump"):
-        entry = tc.model_dump()
-    else:
-        entry: Dict[str, Any] = {
-            "id": tc.id,
-            "type": "function",
-            "function": {
-                "name": tc.function.name,
-                "arguments": tc.function.arguments,
-            },
-        }
-        thought_sig = getattr(tc.function, "thought_signature", None)
-        if thought_sig is None:
-            thought_sig = getattr(tc, "thought_signature", None)
-        if thought_sig is not None:
-            entry["function"]["thought_signature"] = thought_sig
-
-    fn = entry.get("function")
-    if isinstance(fn, dict):
-        fn["arguments"] = canonicalize_tool_arguments(
-            fn.get("arguments", ""),
-            tool_name=fn.get("name", "?"),
-            logger=logger,
-        )
-    return entry
-
-
-class _HookOutcome:
-    """Result of UserPromptSubmit plugin-hook dispatch.
-
-    One of three shapes:
-
-    - ``early_return`` is a string → the loop should return that string
-      immediately without calling the LLM (block / stop verdicts).
-    - ``early_return`` is ``None`` and ``user_message`` is unchanged →
-      no hook fired, or hooks ran with no effect.
-    - ``early_return`` is ``None`` and ``user_message`` was rewritten →
-      hooks injected additional context that should be prepended.
-    """
-
-    __slots__ = ("early_return", "user_message")
-
-    def __init__(self, *, early_return: Optional[str], user_message: str) -> None:
-        self.early_return = early_return
-        self.user_message = user_message
-
-
-class ChatLoopRunner:
+class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
     """Run one ``chat()`` turn for an :class:`agentao.agent.Agentao`."""
 
     def __init__(
@@ -573,256 +498,6 @@ class ChatLoopRunner:
     # ------------------------------------------------------------------
     # Plugin-hook dispatch
     # ------------------------------------------------------------------
-
-    def _dispatch_user_prompt_submit(self, user_message: str) -> _HookOutcome:
-        agent = self._agent
-        if not agent._plugin_hook_rules:
-            return _HookOutcome(early_return=None, user_message=user_message)
-
-        from ..plugins.hooks import (
-            ClaudeHookPayloadAdapter,
-            PluginHookDispatcher,
-        )
-
-        cwd = agent.working_directory
-        adapter = ClaudeHookPayloadAdapter()
-        payload = adapter.build_user_prompt_submit(
-            user_message=user_message, session_id=agent._session_id, cwd=cwd,
-        )
-        dispatcher = PluginHookDispatcher(cwd=cwd)
-        ups_result = dispatcher.dispatch_user_prompt_submit(
-            payload=payload, rules=agent._plugin_hook_rules,
-        )
-        # Replay event — plugin hook dispatch outcome. We only surface
-        # verdict + counts here; the hook output itself is neither known
-        # nor stored at this layer.
-        outcome_label = "allow"
-        if ups_result.blocking_error:
-            outcome_label = "block"
-        elif ups_result.prevent_continuation:
-            outcome_label = "stop"
-        elif ups_result.additional_contexts:
-            outcome_label = "modify"
-        try:
-            agent.transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
-                "hook_name": "UserPromptSubmit",
-                "rule_count": len(agent._plugin_hook_rules),
-                "outcome": outcome_label,
-                "blocking_error": ups_result.blocking_error or None,
-                "stop_reason": ups_result.stop_reason or None,
-                "added_context_count": len(ups_result.additional_contexts or []),
-            }))
-        except Exception:
-            pass
-
-        if ups_result.blocking_error:
-            return _HookOutcome(
-                early_return=f"[Blocked by hook] {ups_result.blocking_error}",
-                user_message=user_message,
-            )
-        if ups_result.prevent_continuation:
-            return _HookOutcome(
-                early_return=(
-                    f"[Hook stopped] "
-                    f"{ups_result.stop_reason or 'Hook prevented continuation'}"
-                ),
-                user_message=user_message,
-            )
-        if ups_result.additional_contexts:
-            extra = "\n".join(
-                f"<user-prompt-submit-hook>\n{ctx}\n</user-prompt-submit-hook>"
-                for ctx in ups_result.additional_contexts
-            )
-            user_message = extra + "\n" + user_message
-        return _HookOutcome(early_return=None, user_message=user_message)
-
-    def _dispatch_stop(
-        self,
-        *,
-        turn_end_reason: Literal[
-            "final_response", "max_iterations", "doom_loop",
-        ],
-        last_assistant_message: str,
-    ) -> StopHookResult:
-        """Run Stop hooks; return the aggregated control signal.
-
-        Does NOT emit ``PLUGIN_HOOK_FIRED`` — the outcome label depends
-        on caller-side branching (cap check) the helper does not see.
-        See ``_emit_stop_hook_fired``.
-        """
-        agent = self._agent
-        if not agent._plugin_hook_rules:
-            return StopHookResult()
-        from ..plugins.hooks import (
-            ClaudeHookPayloadAdapter,
-            PluginHookDispatcher,
-        )
-        cwd = agent.working_directory
-        payload = ClaudeHookPayloadAdapter().build_stop(
-            session_id=agent._session_id,
-            cwd=cwd,
-            last_assistant_message=last_assistant_message or "",
-            stop_hook_active=(self._stop_reentries > 0),
-            turn_end_reason=turn_end_reason,
-            permission_mode=agent.active_permissions().mode,
-        )
-        dispatcher = PluginHookDispatcher(cwd=cwd)
-        # Pre-filter so the early-return path skips the subprocess fork.
-        matched = dispatcher.select_matching_rules(
-            "Stop", payload, agent._plugin_hook_rules,
-        )
-        if not matched:
-            return StopHookResult()
-        return dispatcher.dispatch_stop(payload=payload, rules=matched)
-
-    def _emit_stop_hook_fired(
-        self,
-        *,
-        outcome: Literal[
-            "allow", "block", "continue",
-            "continue_at_max_iter", "reentry_capped",
-        ],
-        turn_end_reason: Literal[
-            "final_response", "max_iterations", "doom_loop",
-        ],
-        stop_result: StopHookResult,
-    ) -> None:
-        """Emit ``PLUGIN_HOOK_FIRED`` for a Stop dispatch.
-
-        Gated on ``matched_rule_count > 0`` so a turn with no matching
-        Stop hooks does not emit ``outcome="allow"``. ``turn_end_reason``
-        disambiguates ``outcome="continue"`` across the natural-turn
-        and doom-loop emit sites.
-        """
-        if stop_result.matched_rule_count == 0:
-            return
-        agent = self._agent
-        try:
-            agent.transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
-                "hook_name": "Stop",
-                "outcome": outcome,
-                "at_max_iter": turn_end_reason == "max_iterations",
-                "turn_end_reason": turn_end_reason,
-                "matched_rule_count": stop_result.matched_rule_count,
-                "added_context_count": len(stop_result.additional_contexts),
-                "suppress_output": stop_result.suppress_output,
-            }))
-        except Exception:
-            pass
-
-    def _dispatch_pre_compact(
-        self,
-        *,
-        compaction_type: str,
-        reason: str,
-    ) -> None:
-        """PreCompact dispatch — fires before the about-to-mutate
-        compaction site; side-effect only with the same no-emit gate as
-        ``_dispatch_stop``.
-        """
-        agent = self._agent
-        if not agent._plugin_hook_rules:
-            return
-        from ..plugins.hooks import (
-            ClaudeHookPayloadAdapter,
-            PluginHookDispatcher,
-        )
-        cwd = agent.working_directory
-        payload = ClaudeHookPayloadAdapter().build_pre_compact(
-            session_id=agent._session_id,
-            cwd=cwd,
-            compaction_type=compaction_type,
-            reason=reason,
-            permission_mode=agent.active_permissions().mode,
-        )
-        dispatcher = PluginHookDispatcher(cwd=cwd)
-        matched = dispatcher.select_matching_rules(
-            "PreCompact", payload, agent._plugin_hook_rules,
-        )
-        if not matched:
-            return
-        dispatcher.dispatch_pre_compact(payload=payload, rules=matched)
-        try:
-            agent.transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
-                "hook_name": "PreCompact",
-                "outcome": "allow",
-                "compaction_type": compaction_type,
-                "trigger": "auto",
-                "matched_rule_count": len(matched),
-            }))
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------------
-    # Context-management steps run before each LLM call
-    # ------------------------------------------------------------------
-
-    def _maybe_microcompact(
-        self,
-        messages_with_system: list,
-        system_prompt: str,
-    ) -> Tuple[list, str]:
-        agent = self._agent
-        if not agent.context_manager.needs_microcompaction(messages_with_system):
-            return messages_with_system, system_prompt
-        self._dispatch_pre_compact(
-            compaction_type="microcompact",
-            reason="microcompact_threshold",
-        )
-        t0 = time.monotonic()
-        pre_tokens = agent.context_manager.estimate_tokens(messages_with_system)
-        pre_msgs = len(agent.messages)
-        agent.messages = agent.context_manager.microcompact_messages(agent.messages)
-        messages_with_system = [
-            {"role": "system", "content": system_prompt}
-        ] + agent.messages
-        agent._emit_context_compressed(
-            compression_type="microcompact",
-            reason="microcompact_threshold",
-            pre_msgs=pre_msgs,
-            post_msgs=len(agent.messages),
-            pre_tokens=pre_tokens,
-            post_tokens=agent.context_manager.estimate_tokens(messages_with_system),
-            duration_ms=round((time.monotonic() - t0) * 1000),
-        )
-        return messages_with_system, system_prompt
-
-    def _maybe_full_compress(
-        self,
-        messages_with_system: list,
-        system_prompt: str,
-    ) -> Tuple[list, str]:
-        agent = self._agent
-        if not agent.context_manager.needs_compression(messages_with_system):
-            return messages_with_system, system_prompt
-        self._dispatch_pre_compact(
-            compaction_type="full",
-            reason="compression_threshold",
-        )
-        agent.llm.logger.info("Context compression triggered inside loop")
-        t0 = time.monotonic()
-        pre_tokens = agent.context_manager.estimate_tokens(messages_with_system)
-        pre_msgs = len(agent.messages)
-        agent.messages = agent.context_manager.compress_messages(agent.messages, is_auto=True)
-        agent.context_manager._last_api_prompt_tokens = None  # stale after compression
-        system_prompt = agent._build_system_prompt()
-        messages_with_system = [
-            {"role": "system", "content": system_prompt}
-        ] + agent.messages
-        agent.llm.logger.info(f"Context compressed to {len(agent.messages)} messages")
-        agent._emit_context_compressed(
-            compression_type="full",
-            reason="compression_threshold",
-            pre_msgs=pre_msgs,
-            post_msgs=len(agent.messages),
-            pre_tokens=pre_tokens,
-            post_tokens=agent.context_manager.estimate_tokens(messages_with_system),
-            duration_ms=round((time.monotonic() - t0) * 1000),
-        )
-        agent._last_session_summary_id = agent._emit_session_summary_if_new(
-            agent._last_session_summary_id,
-        )
-        return messages_with_system, system_prompt
 
     def _inject_background_notifications(
         self,
