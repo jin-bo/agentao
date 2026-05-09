@@ -1,222 +1,33 @@
-"""SubAgent tool wrappers — core components for the agent-as-tool pattern.
+"""``AgentToolWrapper`` — wraps an agent definition as a callable Tool.
 
-Background-task state (registry, cancellation tokens, notification queue,
-persistence) lives on a per-Agentao :class:`BackgroundTaskStore`. The
-three tools here take a store reference at construction time and read
-or write through it.
+The largest piece of the sub-agent system: turns a YAML-style agent
+definition (name + description + system prompt + scoped tools + max
+turns) into something the parent LLM can invoke via OpenAI function
+calling. The wrapper's ``execute`` decides sync vs background dispatch,
+builds the parent-context block, scopes the sub-agent's ToolRegistry,
+spawns a fresh :class:`Agentao` for the sub-task, and emits public
+``SubagentLifecycleEvent`` pairs so hosts can observe lineage.
+
+Kept as a single file because the public surface is one class — the
+sub-helpers (parent-context builder, sync runner, background launcher,
+prefixed step callback) all read closures over the same constructor-
+captured callbacks and would just leak that state across files if
+extracted.
 """
+
+from __future__ import annotations
 
 import threading
 import time
 import uuid
-from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..cancellation import AgentCancelledError, CancellationToken
-from ..tools.base import RegistrableTool, Tool, ToolRegistry
-from .bg_store import BackgroundTaskStore, BgTaskStatus
+from ...cancellation import AgentCancelledError, CancellationToken
+from ...tools.base import RegistrableTool, Tool, ToolRegistry
+from ..bg_store import BackgroundTaskStore
+from ._complete import CompleteTaskTool, TaskComplete
+from ._progress import SubagentProgress
 
-
-# ---------------------------------------------------------------------------
-# SubagentProgress — structured sub-agent lifecycle event
-# ---------------------------------------------------------------------------
-
-@dataclass
-class SubagentProgress:
-    """Structured sub-agent lifecycle event, passed via step_callback.
-
-    Replaces plain-text sentinel strings (_AGENT_START / _AGENT_END).
-    The step_callback receives (sentinel_name, SubagentProgress) where
-    sentinel_name is AgentToolWrapper._AGENT_START or _AGENT_END.
-    """
-    agent_name: str
-    state: BgTaskStatus
-    task: str = ""
-    max_turns: int = 0
-    turns: int = 0
-    tool_calls: int = 0
-    tokens: int = 0
-    duration_ms: int = 0
-    result: Optional[str] = None
-    error: Optional[str] = None
-
-
-# ---------------------------------------------------------------------------
-# TaskComplete — sub-agent completion signal
-# ---------------------------------------------------------------------------
-
-class TaskComplete(Exception):
-    """Raised by CompleteTaskTool to signal sub-agent task completion."""
-
-    def __init__(self, result: str):
-        self.result = result
-
-
-class CompleteTaskTool(Tool):
-    """Tool that sub-agents call to return their result."""
-
-    @property
-    def is_read_only(self) -> bool:
-        return True
-
-    @property
-    def name(self) -> str:
-        return "complete_task"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Call this tool when you have completed the assigned task. "
-            "Pass the final result as a string. You MUST call this tool to finish."
-        )
-
-    @property
-    def parameters(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "result": {
-                    "type": "string",
-                    "description": "The final result of the completed task",
-                }
-            },
-            "required": ["result"],
-        }
-
-    def execute(self, result: str) -> str:
-        raise TaskComplete(result)
-
-
-# ---------------------------------------------------------------------------
-# CheckBackgroundAgentTool
-# ---------------------------------------------------------------------------
-
-class CheckBackgroundAgentTool(Tool):
-    """Poll the status of a background sub-agent and retrieve its result."""
-
-    def __init__(self, bg_store: BackgroundTaskStore):
-        super().__init__()
-        self.bg_store = bg_store
-
-    @property
-    def is_read_only(self) -> bool:
-        return True
-
-    @property
-    def name(self) -> str:
-        return "check_background_agent"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Check the status of a background sub-agent previously launched with "
-            "run_in_background=true. Returns 'pending', 'running', 'completed' (with result), "
-            "or 'failed' (with error). Pass agent_id='' to list all background agents."
-        )
-
-    @property
-    def parameters(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "agent_id": {
-                    "type": "string",
-                    "description": (
-                        "The agent ID returned when the background agent was launched. "
-                        "Pass empty string to list all background agents."
-                    ),
-                }
-            },
-            "required": ["agent_id"],
-        }
-
-    def execute(self, agent_id: str) -> str:
-        if not agent_id:
-            tasks = self.bg_store.list()
-            if not tasks:
-                return "No background agents have been launched in this session."
-            lines = ["Background agents:"]
-            for t in tasks:
-                if t.get("finished_at") and t.get("started_at"):
-                    elapsed = f"{t['finished_at'] - t['started_at']:.1f}s"
-                elif t.get("started_at"):
-                    elapsed = f"{time.time() - t['started_at']:.0f}s running"
-                elif t.get("status") == "cancelled" and t.get("finished_at"):
-                    elapsed = "cancelled before start"
-                else:
-                    elapsed = "queued"
-                lines.append(
-                    f"  [{t['id']}] {t['agent_name']} — {t['status']} ({elapsed}): "
-                    f"{t['task'][:60]}"
-                )
-            return "\n".join(lines)
-
-        rec = self.bg_store.get(agent_id)
-        if rec is None:
-            return f"No background agent found with ID: {agent_id}"
-
-        status = rec["status"]
-        name = rec["agent_name"]
-        if status == "pending":
-            return f"Agent '{name}' ({agent_id}) is queued, not yet started."
-        elif status == "running":
-            elapsed = time.time() - rec["started_at"]
-            return f"Agent '{name}' ({agent_id}) is still running… ({elapsed:.0f}s elapsed)"
-        elif status == "completed":
-            elapsed = rec["finished_at"] - rec["started_at"]
-            return (
-                f"Agent '{name}' ({agent_id}) completed "
-                f"({elapsed:.1f}s):\n\n{rec['result']}"
-            )
-        elif status == "cancelled":
-            return f"Agent '{name}' ({agent_id}) was cancelled."
-        else:
-            return f"Agent '{name}' ({agent_id}) failed: {rec['error']}"
-
-
-# ---------------------------------------------------------------------------
-# CancelBackgroundAgentTool
-# ---------------------------------------------------------------------------
-
-class CancelBackgroundAgentTool(Tool):
-    """Cancel a running or pending background sub-agent."""
-
-    def __init__(self, bg_store: BackgroundTaskStore):
-        super().__init__()
-        self.bg_store = bg_store
-
-    @property
-    def name(self) -> str:
-        return "cancel_background_agent"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Cancel a background sub-agent that was launched with run_in_background=true. "
-            "Works on both pending (not yet started) and running agents. "
-            "Completed or failed agents cannot be cancelled."
-        )
-
-    @property
-    def parameters(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "agent_id": {
-                    "type": "string",
-                    "description": "The agent ID returned when the background agent was launched.",
-                }
-            },
-            "required": ["agent_id"],
-        }
-
-    def execute(self, agent_id: str) -> str:
-        return self.bg_store.cancel(agent_id)
-
-
-# ---------------------------------------------------------------------------
-# AgentToolWrapper
-# ---------------------------------------------------------------------------
 
 class AgentToolWrapper(Tool):
     """Wraps an agent definition as a callable Tool for the parent LLM."""
@@ -495,8 +306,8 @@ class AgentToolWrapper(Tool):
                 display callbacks are suppressed so the background thread does
                 not interleave output with the foreground session.
         """
-        from ..agent import Agentao
-        from ..skills import SkillManager
+        from ...agent import Agentao
+        from ...skills import SkillManager
 
         # Build scoped ToolRegistry
         scoped_registry = ToolRegistry()
@@ -571,8 +382,8 @@ class AgentToolWrapper(Tool):
         if self._permission_mode_getter:
             mode = self._permission_mode_getter()
             if mode is not None:
-                from ..embedding.permission_loader import load_permission_rules
-                from ..permissions import PermissionEngine
+                from ...embedding.permission_loader import load_permission_rules
+                from ...permissions import PermissionEngine
                 # Anchor the sub-agent's permission engine to the parent's
                 # working directory so the same project rules apply, and
                 # pass through the parent's ``user_root`` so user-scope
