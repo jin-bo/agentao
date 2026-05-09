@@ -250,7 +250,11 @@ def test_registrable_tool_is_published_on_public_surfaces():
     from agentao.agents.manager import AgentManager
     from agentao.agents.tools import AgentToolWrapper
     from agentao.agents import manager as manager_mod
-    from agentao.agents import tools as agents_tools_mod
+    # AgentToolWrapper.__init__ lives in ._wrapper after the agents/tools/
+    # package split (commit f5a1b44); resolve its string-form annotations
+    # against that submodule's globalns rather than the package facade so
+    # the package surface stays free of typing/RegistrableTool re-imports.
+    from agentao.agents.tools import _wrapper as wrapper_mod
 
     extra_locals = {
         "BackgroundTaskStore": _bg_store_mod.BackgroundTaskStore,
@@ -265,7 +269,7 @@ def test_registrable_tool_is_published_on_public_surfaces():
 
     atw_hints = get_type_hints(
         AgentToolWrapper.__init__,
-        globalns=vars(agents_tools_mod),
+        globalns=vars(wrapper_mod),
         localns=extra_locals,
     )
     assert atw_hints["all_tools"] == Dict[str, expected]

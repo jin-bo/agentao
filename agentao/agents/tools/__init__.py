@@ -14,14 +14,6 @@ Layout (each row only depends on rows above):
 
 from __future__ import annotations
 
-# Re-imported so ``test_async_tool.py`` can resolve ``AgentToolWrapper.__init__``'s
-# string-form annotations against ``vars(agentao.agents.tools)``: the test passes
-# the package globalns to :func:`typing.get_type_hints`, which fails when the
-# referenced names live only in ``_wrapper``'s namespace post-split.
-# noqa: F401 — names are intentionally bound on the package surface.
-from typing import Any, Callable, Dict, List, Optional, Tuple  # noqa: F401
-
-from ...tools.base import RegistrableTool  # noqa: F401
 from ._bg_tools import CancelBackgroundAgentTool, CheckBackgroundAgentTool
 from ._complete import CompleteTaskTool, TaskComplete
 from ._progress import SubagentProgress

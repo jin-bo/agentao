@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...context_manager import is_context_too_long_error

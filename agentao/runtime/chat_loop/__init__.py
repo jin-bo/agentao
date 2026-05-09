@@ -13,9 +13,12 @@ Layering (each row only depends on rows above):
     _compaction    ← _CompactionMixin (microcompact / full compress)
     _runner        ← ChatLoopRunner (__init__ + run + 3 remaining helpers)
 
-The mix-in pattern mirrors ``acp_client.manager.turns.TurnsMixin``;
-each mix-in reads ``self._agent`` and (for ``_HookDispatchMixin``)
-``self._stop_reentries`` from the runner instance.
+An internal-mixin variant of the ``acp_client.manager`` mixin pattern:
+the latter exposes ``TurnsMixin`` / ``LifecycleMixin`` etc. as public
+names because ``ACPClient`` composes them at the package boundary; here
+``_CompactionMixin`` / ``_HookDispatchMixin`` are runner-private and
+underscored to match. Each mix-in reads ``self._agent`` (and, for
+``_HookDispatchMixin``, ``self._stop_reentries``) from the runner.
 """
 
 from __future__ import annotations

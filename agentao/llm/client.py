@@ -31,7 +31,6 @@ from ._retry import (
     MAX_RETRY_ATTEMPTS,
     MAX_TOTAL_RETRY_SECONDS,
     RETRYABLE_STATUS_CODES,
-    _STREAMING_UNSUPPORTED_PHRASES,
     _classify_retry,
     _compute_backoff_delay,
     _interruptible_sleep,
@@ -39,13 +38,7 @@ from ._retry import (
     _mark_streamed,
     _parse_retry_after,
 )
-from ._stream_response import (
-    _StreamChoice,
-    _StreamFunction,
-    _StreamMessage,
-    _StreamResponse,
-    _StreamToolCall,
-)
+from ._stream_response import _StreamResponse
 
 # `openai` is deferred (P0.5): merely importing ``LLMClient`` should not pull
 # in the OpenAI SDK. Hosts that inject their own ``llm_client=`` never load
