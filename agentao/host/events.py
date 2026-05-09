@@ -397,6 +397,17 @@ class EventStream:
         with self._lock:
             return any(not s.closed for s in self._subscribers)
 
+    def _has_listeners(self) -> bool:
+        """Return True when an async subscriber OR a sync observer is attached.
+
+        ``_has_subscribers`` is kept as a narrower check for callers
+        that care specifically about async-subscriber state.
+        """
+        with self._lock:
+            if self._observers:
+                return True
+            return any(not s.closed for s in self._subscribers)
+
 
 __all__ = [
     "DEFAULT_SUBSCRIBER_QUEUE_SIZE",

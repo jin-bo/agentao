@@ -46,18 +46,52 @@ This is your most important **debugging tool**. In production:
 
 ### Take over Agentao's logger
 
+By default `LLMClient.__init__` mutates `logging.getLogger("agentao")` —
+sets level to `DEBUG`, attaches a `RotatingFileHandler` for
+`<wd>/agentao.log`, and evicts its own marker-tagged handlers on
+re-construction. Hosts that want to own their logging stack should
+**inject a logger explicitly** so that mutation never runs:
+
 ```python
 import logging
+from agentao import Agentao
 
-agentao_logger = logging.getLogger("agentao")
-
-# JSON handler to Loki / CloudWatch / ELK
+# Your own logger — JSON handler shipped to Loki / CloudWatch / ELK
 import pythonjsonlogger.jsonlogger as jl
+my_logger = logging.getLogger("myapp.agentao")
 handler = logging.StreamHandler()
 handler.setFormatter(jl.JsonFormatter())
-agentao_logger.addHandler(handler)
-agentao_logger.setLevel(logging.INFO)
+my_logger.addHandler(handler)
+my_logger.setLevel(logging.INFO)
+
+agent = Agentao(
+    api_key=..., base_url=..., model=...,
+    working_directory=workdir,
+    logger=my_logger,            # ← skips package-root mutation
+)
 ```
+
+When you pass `logger=`, `LLMClient` short-circuits before building any
+file handler — so even the default `<wd>/agentao.log` is **not** created.
+For a fully silent agent, use a `NullHandler`:
+
+```python
+quiet = logging.getLogger("myapp.agentao")
+quiet.addHandler(logging.NullHandler())
+quiet.propagate = False
+agent = Agentao(..., logger=quiet)
+```
+
+::: warning Gotcha
+Adding a handler to `getLogger("agentao")` **without** also passing
+`logger=` works, but the package-root level still gets forced to `DEBUG`
+and the rolling `agentao.log` file still gets written alongside your
+handler. To fully suppress the file, either inject your own logger
+(above) or pass `log_file=None` when building `LLMClient` yourself.
+:::
+
+Full reference (knob matrix, code anchors, `LLMClient` direct path) in
+[`docs/EMBEDDING.md` §2 → "Optional: silencing or redirecting agentao.log"](https://github.com/jin-bo/agentao/blob/main/docs/EMBEDDING.md#optional-silencing-or-redirecting-agentaolog).
 
 ### Essential fields
 

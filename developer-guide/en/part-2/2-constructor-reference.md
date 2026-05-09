@@ -151,7 +151,9 @@ Inject pre-built managers when you don't want Agentao to construct them from def
 :::
 
 ::: details Logger injection — `logger`
-Pass `logger=app.logger` to skip Agentao's package-root level / handler mutation in `LLMClient.__init__`. Your logging stack stays untouched.
+Pass `logger=app.logger` to skip Agentao's package-root level / handler mutation in `LLMClient.__init__`. Your logging stack stays untouched, and the default rolling `<wd>/agentao.log` file is **not** created (the file-handler branch is skipped along with the rest of the mutation).
+
+To control the file-handler axis independently, build `LLMClient` yourself and pass `log_file=None` (skip file) or `log_file="custom.log"` (redirect). Note: passing only `log_file=None` *without* `logger=` still elevates `getLogger("agentao")` to `DEBUG`. See [6.6 Observability → Take over Agentao's logger](/en/part-6/6-observability#take-over-agentaos-logger) for the full matrix and a fully-silent recipe.
 :::
 
 ::: details Legacy 8 callbacks (still accepted, deprecated — removed in 0.5.0)

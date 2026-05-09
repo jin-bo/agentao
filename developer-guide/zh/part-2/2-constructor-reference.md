@@ -151,7 +151,9 @@ agent = Agentao(
 :::
 
 ::: details Logger 注入 — `logger`
-传 `logger=app.logger` 后跳过 `LLMClient.__init__` 里对包根 logger 的 level/handler 改动，宿主日志栈保持不变。
+传 `logger=app.logger` 后跳过 `LLMClient.__init__` 里对包根 logger 的 level/handler 改动，宿主日志栈保持不变。这条路径**也不会**创建默认的 `<wd>/agentao.log` 文件——file handler 分支随这次改写一并跳过。
+
+要单独控制 file handler 这一根开关，自己构造 `LLMClient`，传 `log_file=None`（不写文件）或 `log_file="custom.log"`（重定向）。注意：只传 `log_file=None` 而**不**传 `logger=` 时，`getLogger("agentao")` 仍会被强制设成 `DEBUG`。完整开关矩阵和"完全静默"配方见 [6.6 可观测性 → 接管 Agentao 的 logger](/zh/part-6/6-observability#接管-agentao-的-logger)。
 :::
 
 ::: details 已废弃的 8 个回调（仍接收 —— 0.5.0 将移除）

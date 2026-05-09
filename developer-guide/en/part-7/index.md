@@ -1,6 +1,6 @@
 # Part 7 · Integration Blueprints
 
-The first six parts are a reference. This part is a **cookbook** — six end-to-end blueprints that weave sandbox, permission, event, and skill into real customer scenarios.
+The first six parts are a reference. This part is a **cookbook** — seven end-to-end blueprints that weave sandbox, permission, event, and skill into real customer scenarios.
 
 Each blueprint answers the same four questions:
 
@@ -16,9 +16,10 @@ Each blueprint answers the same four questions:
 - **Data workbench** — interactive analyst session with shell + sandbox + skills · [§7.4](/en/part-7/4-data-workbench)
 - **Batch scheduler** — cron-driven `prompt_once` for offline / nightly jobs; no end-user · [§7.5](/en/part-7/5-batch-scheduler), [G.4](/en/appendix/g-glossary#g-4-integration-patterns)
 - **WeChat intelligent bot (ilink-style)** — long-polling personal-account bot API; one agent per message; contact-scoped permissions · [§7.6](/en/part-7/6-wechat-bot)
+- **Multi-agent kanban scheduling** — external derivative project (`agentao-kanban`); board-driven scheduler over `planner` / `worker` / `reviewer` sub-agents; per-card git worktree · [§7.7](/en/part-7/7-kanban-multiagent)
 :::
 
-## The six blueprints
+## The seven blueprints
 
 | # | Blueprint | Integration mode | Star extensions |
 |---|-----------|-------------------|------------------|
@@ -28,6 +29,7 @@ Each blueprint answers the same four questions:
 | [7.4](./4-data-workbench) | Data analyst workbench | In-process SDK | Shell + sandbox + custom skill |
 | [7.5](./5-batch-scheduler) | Offline batch / scheduled jobs | `prompt_once` | Skills + cron |
 | [7.6](./6-wechat-bot) | WeChat intelligent bot (ilink-style) | `asyncio` long-poll daemon | `WeChatClient` Protocol + contact-scoped permissions |
+| [7.7](./7-kanban-multiagent) | Multi-agent kanban scheduling *(external repo)* | External orchestrator over agentao sub-agents + ACP CLIs | `planner`/`worker`/`reviewer` routing + per-card git worktree |
 
 ## How to read this part
 
@@ -45,9 +47,12 @@ Each blueprint answers the same four questions:
 | Analyst workbench or notebook-like product | [7.4](./4-data-workbench) | Focuses on shell, sandboxing, file isolation, and analysis skills |
 | Nightly jobs, reporting, or offline processing | [7.5](./5-batch-scheduler) | Focuses on `prompt_once`, scheduling, budgets, and failure handling |
 | IM / WeChat / enterprise messaging bot | [7.6](./6-wechat-bot) | Focuses on long polling, contact-scoped permissions, and per-message isolation |
+| Multi-agent system over a queue of work (CI, eval, autonomous research) | [7.7](./7-kanban-multiagent) | Focuses on external orchestrators, role routing across sub-agents and ACP CLIs, per-task isolation |
 
 ## Runnable code
 
-All six blueprints ship as self-contained projects inside the main repo at [`examples/`](https://github.com/jin-bo/agentao/tree/main/examples) — each subdirectory (`saas-assistant/`, `ide-plugin-ts/`, `ticket-automation/`, `data-workbench/`, `batch-scheduler/`, `wechat-bot/`) is a standalone `uv run` / `npm run` project. Every blueprint page below links to its matching subdirectory.
+Blueprints 7.1–7.6 ship as self-contained projects inside the main repo at [`examples/`](https://github.com/jin-bo/agentao/tree/main/examples) — each subdirectory (`saas-assistant/`, `ide-plugin-ts/`, `ticket-automation/`, `data-workbench/`, `batch-scheduler/`, `wechat-bot/`) is a standalone `uv run` / `npm run` project. Every blueprint page below links to its matching subdirectory.
+
+Blueprint 7.7 lives in a separate repository — [`jin-bo/agentao-kanban`](https://github.com/jin-bo/agentao-kanban) — because it's a derivative project with its own release cadence, not an in-tree example.
 
 → [Start with 7.1 SaaS Assistant →](./1-saas-assistant)

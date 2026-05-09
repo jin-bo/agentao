@@ -228,6 +228,18 @@ codex 把 plugin **加载**（manifest 解析、市场同步、安装）和 plug
 
 **为什么推迟：** validator/resolver 拆分要小心穿过 `SkillManager.__init__` / `AgentManager.__init__`。在赶进度时改这块容易在没明显测试信号的情况下破坏 plugin 发现路径。#1–#4 ROI 更高，先落地。
 
+### 5a/5b 落地后的 import 表
+
+当前**有意不存在 public plugin SDK 面**。除 `models` 外的符号全部是第一方专用——没有 shim、没有 facade、没有重导出。未来贡献者下手前先对照这张表：
+
+| 层级 | 路径 | 受众 | 说明 |
+|---|---|---|---|
+| 公开 runtime 模型 | `agentao.plugins`、`agentao.plugins.models` | 对外 + 第一方 | 唯一进 `agentao.plugins.__all__` 的项。 |
+| 第一方 runtime 助手 | `agentao.plugins.skills`、`agentao.plugins.agents`、`agentao.plugins.hooks` | 仅第一方 | runtime 热路径上的 validator + hook 派发。不在 `__all__`。 |
+| 第一方 loader | `agentao.embedding.plugins.{manager, manifest, diagnostics, mcp}`、`agentao.embedding.plugins.resolvers.*` | 仅第一方（CLI / `_load_and_register_plugins`） | agent 初始化与 CLI 子命令中走的路径。会拉 YAML。不得出现在 runtime 热路径上。 |
+
+**边界契约测试：** `tests/test_plugin_boundary_contract.py` 在干净子进程里断言 `import agentao.plugins` 不会传递性加载 loader 包或 YAML。这把 runtime/loader 拆分从约定变成可执行不变量。
+
 ---
 
 ## 6. 深入调研：顶层 `session.py`

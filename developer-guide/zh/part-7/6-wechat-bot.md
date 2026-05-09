@@ -264,8 +264,10 @@ asyncio.run(run_polling_loop(IlinkClient()))
 - 事件 + UI 集成（[Part 4](/zh/part-4/)）
 - 扩展 Agent 行为：能力平面 + 控制平面（[Part 5](/zh/part-5/)）
 - 安全 + 生产部署（[Part 6](/zh/part-6/)）
-- 六个真实蓝图（本部分）
+- 六个本仓蓝图 + 一个外部案例（本部分）
 
-接下来的附录——完整 API 参考、配置键索引、ACP 消息字段、错误码、框架迁移、FAQ、术语表——是落地过程中常翻的查询手册，紧随其后。
+[§7.7 多 Agent 看板调度](./7-kanban-multiagent) 是 bonus 蓝图，指向衍生项目 [`agentao-kanban`](https://github.com/jin-bo/agentao-kanban)——如果你在做任何"工作队列"形态的产品（CI、批量评估、自主研究），值得读。
 
-→ [附录](/zh/appendix/)
+接下来的附录——完整 API 参考、配置键索引、ACP 消息字段、错误码、框架迁移、FAQ、术语表——是落地过程中常翻的查询手册。
+
+→ [7.7 多 Agent 看板调度](./7-kanban-multiagent) · [附录](/zh/appendix/)

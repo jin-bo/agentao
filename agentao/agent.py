@@ -424,6 +424,21 @@ class Agentao:
             "max_tokens": self.llm.max_tokens,
         }
 
+    def add_event_observer(self, callback):
+        """Register a synchronous observer on the public host event stream.
+
+        Pass-through to :meth:`EventStream.add_observer` for sync
+        consumers that cannot drive the async ``events()`` iterator.
+        The callback fires inline on the producer thread; it must be
+        cheap and non-blocking. Raised exceptions are logged and
+        discarded by :class:`EventStream`.
+        """
+        return self._host_events.add_observer(callback)
+
+    def remove_event_observer(self, callback) -> bool:
+        """Detach a previously registered observer. Idempotent."""
+        return self._host_events.remove_observer(callback)
+
     def events(self, session_id: Optional[str] = None):
         """Return an async iterator over public host events.
 

@@ -7,6 +7,154 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.6] — 2026-05-08
+
+A non-interactive automation release on top of 0.4.5. The new
+`agentao run` subcommand is the headline; `agentao -p` is
+reimplemented as a thin shim so both surfaces share one structured
+result envelope and one exit-code table. **No public Python API or
+wire-format change**, but `-p` callers that script on exit codes
+must read the migration note below — `max_iterations` moved from
+exit `2` to exit `4`, and exit `2` now means "invalid usage / spec
+validation failed". Everything else upgrades in place via
+`pip install -U agentao`.
+
+### Added
+
+- **`agentao run` subcommand (M0).** Structured automation surface:
+  YAML/JSON spec on stdin or `--spec FILE`, merged with explicit
+  CLI overrides, executed as one Agentao turn, emitting either the
+  final assistant text (`--format text`) or one machine-readable
+  envelope (`--format json`). The spec contract (`RunSpec` /
+  `RunPermissionRule(s)` / `RunOutputOptions`) and the result
+  envelope (`RunResult` / `RunErrorEnvelope` / `RunUsage`) are
+  Pydantic models with `extra="forbid"`, so unknown spec fields
+  fail loudly (exit `2`). `--spec` and piped stdin are mutually
+  exclusive. Secrets (`api_key`) are never accepted in the spec —
+  they stay in the environment or in a host-injected client.
+  Inline `--prompt` is supported for ad-hoc callers who want
+  structured output without a YAML file. Full M0 design captured in
+  `docs/implementation/NON_INTERACTIVE_RUN_PLAN.{md,zh.md}` and
+  documented for users in
+  `developer-guide/{en,zh}/cli/12-non-interactive.md`.
+
+- **Unified exit-code table for `agentao run` and `agentao -p`.**
+  Both surfaces now exit `0` on success, `1` on runtime error, `2`
+  on invalid usage / spec validation failure / unknown spec field,
+  `3` on permission / interaction required (no interactive
+  approval), `4` on max iterations, and `130` on SIGINT / SIGTERM.
+  Implemented in `agentao/cli/run.py:_classify_outcome`.
+
+- **Non-interactive transport (`agentao.transport.non_interactive`).**
+  Records permission rejections, max-iteration hits, and
+  interaction-required prompts as `RunErrorEnvelope` shapes the run
+  pipeline can read off without touching `Agentao` internals.
+  Composes `EventBroadcaster`, so the run pipeline can subscribe to
+  `TOOL_COMPLETE` for the `tool_calls` counter.
+
+- **`Agentao.add_event_observer` / `Agentao.remove_event_observer`.**
+  Sync pass-throughs to `EventStream.add_observer` for consumers
+  (notably the `agentao run` pipeline) that cannot drive the async
+  `events()` iterator. The callback fires inline on the producer
+  thread; `EventStream` swallows raised exceptions.
+
+- **`EventStream._has_listeners()`.** Returns `True` when an async
+  subscriber **or** a sync observer is attached. The narrower
+  `_has_subscribers()` is kept for callers that care specifically
+  about async-subscriber state.
+
+- **§7.7 Multi-Agent Kanban Scheduling blueprint.** New cookbook
+  chapter in Part 7 of the developer guide that anchors on the
+  external derivative project
+  [`jin-bo/agentao-kanban`](https://github.com/jin-bo/agentao-kanban).
+  This is the first Part 7 blueprint that addresses the
+  "many specialized agents as a system" shape rather than
+  "embed one Agentao instance into a product"; it fills the gap
+  that 7.1–7.6 leave open.
+
+- **Plugin runtime/loader import-boundary contract test
+  (`tests/test_plugin_boundary_contract.py`).** Imports
+  `agentao.plugins` in a fresh subprocess and asserts that none of
+  `agentao.embedding.plugins.{manager, manifest, diagnostics, mcp,
+  resolvers}.*` and no YAML parser is pulled in transitively. Turns
+  the runtime/loader split that landed in 5a/5b into an executable
+  invariant rather than a convention. Documented under "Import map
+  after 5a/5b" in `docs/design/core-boundary-review.{md,zh.md}`.
+
+### Changed
+
+- **`agentao -p` is now a thin shim** over
+  `agentao run --format text --prompt …` (`run_print_mode` in
+  `agentao/cli/entrypoints.py`). The success path
+  (`prompt → final_text → exit 0`) and runtime-error path
+  (exit `1`) are unchanged. The behavior delta is the exit code
+  mapping listed above and the appearance of exit `3` for
+  permission / interaction requirements that previously never
+  surfaced from `-p` (it had no permission rejection path). Tests
+  covering the delta are in `tests/test_run_subcommand.py`.
+
+- **Spec-side permission rules layered on top of user rules.**
+  `PermissionEngine` now accepts spec-injected `allow` / `deny`
+  rules from `agentao run`'s spec without disturbing the existing
+  project + user precedence. Action injection is isolated in
+  `RunPermissionRule.to_engine_dict` so `extra="forbid"` can flatly
+  reject hand-written `action:` fields in YAML.
+
+- **Logger / `agentao.log` silencing knobs documented across the
+  embedding entrypoints.** New canonical anchor at `docs/EMBEDDING.md
+  §2 → "Optional: silencing or redirecting agentao.log"` with a knob
+  matrix and `Agentao(...)` / `LLMClient(...)` recipes; the rest of
+  the doc set
+  (`docs/LOGGING.md`, `developer-guide/{en,zh}/part-2/2-constructor-reference.md`,
+  `developer-guide/{en,zh}/part-6/6-observability.md`) crosslinks
+  to it. Pure documentation; the
+  `LLMClient.__init__` short-circuit on `logger=` and the
+  `log_file=None` knob both already exist.
+
+### Deferred
+
+Carried over from 0.4.5 unless noted:
+
+- `--format jsonl` live event stream + a new `RunLifecycleEvent`
+  type. Tracked in `NON_INTERACTIVE_RUN_PLAN.md` Post-MVP.
+- Spec `attachments:` / `provider:` (multi-provider env-var prefix
+  selection) / per-run `plugins:` fields. Same tracker.
+- SIGINT-precise JSONL termination (M0 ships best-effort signal
+  routing through `CancellationToken`).
+- Session resume from `agentao run`.
+- A checked-in JSON Schema snapshot for `RunSpec` / `RunResult`.
+- `agentao.harness` deprecated alias removal — still scheduled for
+  0.5.0.
+- The eight legacy `Agentao(...)` callback kwargs — signature
+  surgery scheduled for 0.5.0; they continue to emit a single
+  `DeprecationWarning` per construction.
+- `agentao/session.py` shim removal + `Path.cwd()` fallback removal
+  — scheduled for 0.5.0.
+- `PermissionEngine` legacy auto-load path tightening into a hard
+  error.
+- `bashlex`-based supersedence of the workspace-write
+  sensitive-write preset's regex tier. Carried over from 0.4.3.
+- PreCompact gate, `http`-type Stop hooks, plugin-hook events in
+  the host public model, hook attachment pipeline. All carried
+  over from 0.4.4.
+- `docs/releases/v0.4.0.md` and `v0.4.1.md` backfill.
+
+### Migration
+
+- **`-p` callers that script on exit codes:** the only mapping that
+  changed is `max_iterations`; if your CI checks
+  `[ $? -eq 2 ]` to detect "answer may be incomplete", change it to
+  `[ $? -eq 4 ]`. Treat `2` as "invalid usage / spec error" going
+  forward. New exits `3` (permission / interaction) and `130`
+  (SIGINT) are additive — they never appeared from `-p` before.
+- **Hosts that build `PermissionEngine` from a spec-shaped object**
+  can now pass `RunPermissionRule.to_engine_dict("allow"|"deny")`
+  to get an engine-ready dict, or use the existing
+  `PermissionEngine(rules=...)` ctor kwarg directly.
+- **Hosts that don't want `agentao` to mutate their root logger**
+  should pass `logger=` to `Agentao(...)` (or to `LLMClient` if
+  building it directly). That single switch also silences the
+  default `<wd>/agentao.log` file. See `docs/EMBEDDING.md §2`.
 ## [0.4.5] — 2026-05-07
 
 A core-boundary review release. Architectural cleanup of the embedded-host

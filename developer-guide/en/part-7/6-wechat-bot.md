@@ -264,8 +264,10 @@ You now have:
 - Event + UI integration ([Part 4](/en/part-4/))
 - Extend agent behavior: capability plane + control plane ([Part 5](/en/part-5/))
 - Security + production deployment ([Part 6](/en/part-6/))
-- Six real-world blueprints (this part)
+- Six in-repo blueprints + one external case study (this part)
 
-The appendices — full API reference, config key index, ACP message fields, error codes, migration notes, FAQ, glossary — are what you'll reach for as you build. They follow.
+[§7.7 Multi-Agent Kanban Scheduling](./7-kanban-multiagent) is a bonus blueprint pointing at the derivative project [`agentao-kanban`](https://github.com/jin-bo/agentao-kanban) — read it if you're building anything queue-shaped (CI, batch eval, autonomous research).
 
-→ [Appendices](/en/appendix/)
+The appendices — full API reference, config key index, ACP message fields, error codes, migration notes, FAQ, glossary — are what you'll reach for as you build.
+
+→ [7.7 Multi-Agent Kanban Scheduling](./7-kanban-multiagent) · [Appendices](/en/appendix/)

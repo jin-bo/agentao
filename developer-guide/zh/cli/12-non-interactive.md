@@ -30,13 +30,98 @@ agentao -p "总结 README"
 cat issue.md | agentao --print "根据下面内容生成修复计划"
 ```
 
-退出码：
+从 0.4.x 起，`-p` 是 `agentao run --format text --prompt …` 的薄壳，两者共用下文 [`agentao run`](#agentao-run-自动化结构化入口) 一节里的统一退出码表。
+
+> **升级提示（0.3.x → 0.4.x）：** 旧版 `-p` 把"达到最大工具迭代数"映射为退出码 `2`。0.4.x 起这种情况是 `4`；`2` 现在表示"用法或 spec 校验失败"。
+
+## `agentao run` — 自动化结构化入口
+
+`agentao run` 是面向自动化的稳定面：把结构化 spec（来自 stdin 或 `--spec`）与显式 CLI 覆盖合并，跑一个 Agentao turn，输出机器可读的结果。
+
+```bash
+# spec 从 stdin 进入
+agentao run --format json < task.yaml
+
+# spec 从文件进入，并用 flag 覆盖
+agentao run --spec .agentao/tasks/review.yaml --model gpt-5.5 --format json
+
+# 不写 spec 文件，直接给 prompt
+agentao run --prompt "总结当前目录" --format json
+```
+
+`--spec` 与管道 stdin 互斥，同时给会以退出码 `2` 失败。
+
+### M0 spec 结构
+
+```yaml
+prompt: string                 # 必填（或用 --prompt 传入）
+cwd: string                    # 这次 run 的工作目录
+model: string                  # 覆盖环境里的 LLM model
+base_url: string               # 覆盖环境里的 base URL
+permission_mode: read-only | workspace-write | full-access | plan
+interaction_policy: reject     # M0 仅接受 "reject"
+permissions:
+  allow:
+    - tool: string             # glob — 与 ~/.agentao/permissions.json 同语法
+      args: { ... }            # 可选参数模式
+      domain:                  # 可选 URL/domain 匹配
+        url_arg: string
+        allowlist: [string]
+        blocklist: [string]
+  deny:
+    - tool: string
+      args: { ... }
+      domain: { ... }
+max_iterations: int            # 默认 100
+skills: [string]               # 在自动发现的激活 skills 之上追加
+replay: boolean                # 这次 run 启用 ReplayManager
+output:
+  format: text | json
+```
+
+`extra="forbid"` —— 未知 spec 字段会以退出码 `2` 失败。secrets（`api_key`）**绝不**在 spec 里接收，必须留在环境变量或宿主注入的 client 里。
+
+CLI flag 只在用户**显式**提供时才覆盖 spec 值，argparse 默认值不会抹掉 spec 字段。
+
+### 输出契约
+
+`--format text`：stdout 上只写最终 assistant 文本；诊断信息走 stderr。最接近老 `agentao -p` 的形态。
+
+`--format json`：run 结束后输出一个 envelope：
+
+```json
+{
+  "status": "ok",
+  "session_id": "...",
+  "turn_id": "...",
+  "cwd": "/abs/path/to/project",
+  "model": "gpt-5.5",
+  "final_text": "...",
+  "replay_path": ".agentao/replays/<id>.jsonl",
+  "usage": {
+    "prompt_tokens": 12000,
+    "completion_tokens": 900,
+    "total_tokens": 12900
+  },
+  "tool_calls": 7,
+  "warnings": []
+}
+```
+
+失败时 `final_text` 为 `null`，`error` 字段携带 `{ type, message, tool_name?, tool_call_id?, question?, matched_rule? }`。`type` 取值：`permission_required`、`permission_denied`、`interaction_required`、`max_iterations`、`runtime_error`、`invalid_spec`、`interrupted`。消费方应把 envelope 视为前向兼容（多余字段直接忽略）。
+
+### 统一退出码（`agentao run` 与 `agentao -p` 共用）
 
 | 退出码 | 含义 |
-|---|---|
-| `0` | 正常完成 |
-| `1` | 运行出错 |
-| `2` | 达到最大工具迭代数，回答可能不完整 |
+|--------|------|
+| `0`    | 正常完成 |
+| `1`    | 运行时错误 |
+| `2`    | 用法错误 / spec 校验失败 / 未知 spec 字段 |
+| `3`    | 需要权限或交互（非交互环境无人审批） |
+| `4`    | 达到最大工具迭代数，回答可能不完整 |
+| `130`  | 被中断（SIGINT / SIGTERM） |
+
+完整 M0 设计 —— 合并规则、Non-goals、Post-MVP 范围（`jsonl` 事件流、`attachments`、`provider`、每次 run 的 `plugins`、session resume）—— 见 [docs/implementation/NON_INTERACTIVE_RUN_PLAN.md](https://github.com/jin-bo/agentao/blob/main/docs/implementation/NON_INTERACTIVE_RUN_PLAN.md)。
 
 ## `--resume` — 启动即恢复会话
 
@@ -91,5 +176,5 @@ agentao plugin list --json
 ---
 
 ::: tip 真相源头
-顶层参数 parser 在 [`agentao/cli/entrypoints.py:_build_parser`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/entrypoints.py)。非交互 print 模式在同文件的 `run_print_mode`。Skill / plugin 子命令在 [`agentao/cli/subcommands.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/subcommands.py)。
+顶层参数 parser 在 [`agentao/cli/entrypoints.py:_build_parser`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/entrypoints.py)。非交互 print 模式在同文件的 `run_print_mode`（薄壳，转发到 [`agentao/cli/run.py:execute`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run.py)）。Spec 模型在 [`agentao/cli/run_models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run_models.py)。Skill / plugin 子命令在 [`agentao/cli/subcommands.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/subcommands.py)。
 :::

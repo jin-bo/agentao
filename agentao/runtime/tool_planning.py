@@ -296,9 +296,13 @@ class ToolCallPlanner:
         right ``outcome``.
         """
         if readonly_mode and not tool.is_read_only:
+            # Use the ``mode-preset:`` reason family so the string is
+            # host-parseable like every other preset decision. The
+            # ``read-only`` preset rule list is intentionally empty —
+            # enforcement lives here via the ``readonly_mode`` flag.
             return ToolCallDecision.DENY, _synth(
                 PermissionDecision.DENY,
-                "readonly mode blocks non-read-only tools",
+                "mode-preset:read-only",
             )
 
         engine_detail = (
