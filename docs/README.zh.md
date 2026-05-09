@@ -58,6 +58,7 @@
 ### 贡献者与内部资料
 
 - [implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md](implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md)
+- [implementation/NON_INTERACTIVE_RUN_PLAN.md](implementation/NON_INTERACTIVE_RUN_PLAN.md)
 - [implementation/TOOL_CONFIRMATION.md](implementation/TOOL_CONFIRMATION.md)
 - [implementation/ACP_CLIENT_PROJECT_SERVERS.md](implementation/ACP_CLIENT_PROJECT_SERVERS.md)
 - [implementation/PLUGIN_SYSTEM_MVP_PLAN.md](implementation/PLUGIN_SYSTEM_MVP_PLAN.md)
@@ -147,6 +148,7 @@ Schema 快照已 check-in。任何改变 wire form 的 model 变更必须在同�
 
 把它们当作工程上下文，而不是规范用户入口：
 
+- [implementation/NON_INTERACTIVE_RUN_PLAN.md](implementation/NON_INTERACTIVE_RUN_PLAN.md)
 - [implementation/TOOL_CONFIRMATION.md](implementation/TOOL_CONFIRMATION.md)
 - [implementation/ACP_CLIENT_PROJECT_SERVERS.md](implementation/ACP_CLIENT_PROJECT_SERVERS.md)
 - [implementation/PLUGIN_SYSTEM_MVP_PLAN.md](implementation/PLUGIN_SYSTEM_MVP_PLAN.md)

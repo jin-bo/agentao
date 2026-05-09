@@ -5,7 +5,6 @@ from __future__ import annotations
 import atexit
 import os
 import sys
-import uuid as _uuid_mod
 from pathlib import Path
 from typing import Optional
 
@@ -17,65 +16,14 @@ from ._globals import console, _plugin_inline_dirs
 
 
 def run_print_mode(prompt: str) -> int:
-    """Non-interactive print mode: send prompt, print response, exit. Returns exit code."""
-    from ..embedding import build_from_environment
-    from ..transport import SdkTransport
-    from .subcommands import _load_and_register_plugins
+    """Non-interactive print mode: thin shim over ``agentao run``.
 
-    max_iterations_reached = [False]
-
-    def _on_max_iterations(max_iterations: int, pending_tools: list) -> dict:
-        max_iterations_reached[0] = True
-        print(
-            f"Warning: reached max tool call iterations ({max_iterations}), "
-            "stopping. Response may be incomplete.",
-            file=sys.stderr,
-        )
-        return {"action": "stop"}
-
-    agent = build_from_environment(
-        transport=SdkTransport(on_max_iterations=_on_max_iterations),
-    )
-    agent._session_id = str(_uuid_mod.uuid4())
-    agent.tool_runner._session_id = agent._session_id
-    _load_and_register_plugins(agent)
-
-    if agent._plugin_hook_rules:
-        try:
-            from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
-            _cwd = agent.working_directory
-            adapter = ClaudeHookPayloadAdapter()
-            payload = adapter.build_session_start(
-                session_id=agent._session_id, cwd=_cwd,
-            )
-            PluginHookDispatcher(cwd=_cwd).dispatch_session_start(
-                payload=payload, rules=agent._plugin_hook_rules,
-            )
-        except Exception:
-            pass
-
-    try:
-        response = agent.chat(prompt)
-        print(response)
-        return 2 if max_iterations_reached[0] else 0
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    finally:
-        if agent._plugin_hook_rules:
-            try:
-                from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
-                _cwd = agent.working_directory
-                adapter = ClaudeHookPayloadAdapter()
-                payload = adapter.build_session_end(
-                    session_id=agent._session_id, cwd=_cwd,
-                )
-                PluginHookDispatcher(cwd=_cwd).dispatch_session_end(
-                    payload=payload, rules=agent._plugin_hook_rules,
-                )
-            except Exception:
-                pass
-        agent.close()
+    Equivalent to ``agentao run --format text --prompt <text>``.
+    Inherits the unified exit-code table — notably, max-iterations is
+    exit ``4`` (was ``2`` before 0.4.x; documented in release notes).
+    """
+    from .run import execute as _run_execute
+    return _run_execute(["--format", "text", "--prompt", prompt])
 
 
 def main(resume_session: Optional[str] = None):
@@ -307,6 +255,9 @@ def _build_parser():
 
     subparsers.add_parser("init")
 
+    from .run import add_run_subparser
+    add_run_subparser(subparsers)
+
     _sub_plugin_dir_kwargs = dict(
         dest="sub_plugin_dirs", action="append", default=None,
         metavar="DIR", help="Load a plugin from DIR (repeatable).",
@@ -380,7 +331,7 @@ def entrypoint():
     import agentao.cli._globals as _g
 
     parser = _build_parser()
-    args, _ = parser.parse_known_args()
+    args, extras = parser.parse_known_args()
 
     if getattr(args, "show_help", False):
         parser.print_help()
@@ -401,6 +352,20 @@ def entrypoint():
 
     if args.subcommand == "init":
         _cli.run_init_wizard()
+    elif args.subcommand == "run":
+        # ``agentao run`` is automation-oriented — silently accepting
+        # an unknown flag (e.g. ``--max-iter`` instead of
+        # ``--max-iterations``) would let CI run with the wrong value.
+        # The top-level parser uses parse_known_args for legacy reasons,
+        # so we surface those leftovers here.
+        if extras:
+            sys.stderr.write(
+                "agentao run: unrecognized arguments: "
+                + " ".join(extras) + "\n"
+            )
+            sys.exit(2)
+        from .run import _execute_with_args
+        sys.exit(_execute_with_args(args))
     elif args.subcommand == "plugin":
         _cli.handle_plugin_subcommand(args)
     elif args.subcommand == "skill":

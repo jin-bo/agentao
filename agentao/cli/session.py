@@ -65,42 +65,50 @@ def on_session_end(cli: AgentaoCLI) -> None:
         pass  # Non-critical
 
 
-def _dispatch_session_start_hooks(cli: AgentaoCLI) -> None:
-    """Fire SessionStart plugin hooks with the current (final) session ID."""
-    if not cli.agent._plugin_hook_rules:
+def dispatch_plugin_session_start(agent, session_id: str) -> None:
+    """Fire SessionStart plugin hooks for ``agent``. Best-effort.
+
+    Both the interactive CLI and the ``agentao run`` pipeline use this
+    so plugin hooks remain consistent across surfaces.
+    """
+    if not agent._plugin_hook_rules:
         return
     try:
         from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
-        _cwd = cli.agent.working_directory
-        adapter = ClaudeHookPayloadAdapter()
-        payload = adapter.build_session_start(
-            session_id=cli.current_session_id, cwd=_cwd,
+        cwd = agent.working_directory
+        payload = ClaudeHookPayloadAdapter().build_session_start(
+            session_id=session_id, cwd=cwd,
         )
-        dispatcher = PluginHookDispatcher(cwd=_cwd)
-        dispatcher.dispatch_session_start(
-            payload=payload, rules=cli.agent._plugin_hook_rules,
+        PluginHookDispatcher(cwd=cwd).dispatch_session_start(
+            payload=payload, rules=agent._plugin_hook_rules,
         )
     except Exception:
-        pass  # Best-effort
+        pass
+
+
+def dispatch_plugin_session_end(agent, session_id: str) -> None:
+    """Fire SessionEnd plugin hooks for ``agent``. Best-effort."""
+    if not agent._plugin_hook_rules:
+        return
+    try:
+        from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
+        cwd = agent.working_directory
+        payload = ClaudeHookPayloadAdapter().build_session_end(
+            session_id=session_id, cwd=cwd,
+        )
+        PluginHookDispatcher(cwd=cwd).dispatch_session_end(
+            payload=payload, rules=agent._plugin_hook_rules,
+        )
+    except Exception:
+        pass
+
+
+def _dispatch_session_start_hooks(cli: AgentaoCLI) -> None:
+    dispatch_plugin_session_start(cli.agent, cli.current_session_id)
 
 
 def _dispatch_session_end_hooks(cli: AgentaoCLI) -> None:
-    """Fire SessionEnd plugin hooks with the current session ID."""
-    if not cli.agent._plugin_hook_rules:
-        return
-    try:
-        from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
-        _cwd = cli.agent.working_directory
-        adapter = ClaudeHookPayloadAdapter()
-        payload = adapter.build_session_end(
-            session_id=cli.current_session_id, cwd=_cwd,
-        )
-        dispatcher = PluginHookDispatcher(cwd=_cwd)
-        dispatcher.dispatch_session_end(
-            payload=payload, rules=cli.agent._plugin_hook_rules,
-        )
-    except Exception:
-        pass  # Best-effort
+    dispatch_plugin_session_end(cli.agent, cli.current_session_id)
 
 
 def save_session_on_exit(cli: AgentaoCLI) -> None:

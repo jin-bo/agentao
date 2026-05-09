@@ -239,15 +239,21 @@ class ToolRunner:
         """Skip per-plan emit when no host is listening.
 
         Avoids ``new_decision_id`` + ``ActivePermissions`` + Pydantic
-        construction per tool call in the (common) no-subscriber case.
-        Falls back to ``True`` when the emitter has no stream handle to
-        introspect — better to emit than silently drop.
+        construction per tool call in the (common) no-listener case.
+        ``_has_listeners`` covers async subscribers and sync observers;
+        the older ``_has_subscribers`` is a fallback for custom event
+        streams that haven't been updated. Falls back to ``True`` when
+        the emitter has no stream handle to introspect — better to
+        emit than silently drop.
         """
         emitter = self._host_permission_emitter
         if emitter is None:
             return False
         stream = getattr(emitter, "_stream", None)
-        check = getattr(stream, "_has_subscribers", None)
+        check = (
+            getattr(stream, "_has_listeners", None)
+            or getattr(stream, "_has_subscribers", None)
+        )
         if check is None:
             return True
         try:

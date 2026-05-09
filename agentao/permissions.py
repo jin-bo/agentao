@@ -41,6 +41,10 @@ _ACTION_TO_DECISION: Dict[str, PermissionDecision] = {
 # :mod:`.permissions_hardline` (re-exported as ``REASON_HARDLINE``).
 _REASON_MODE_PRESET = "mode-preset"
 _REASON_USER_RULE = "user-rule"
+# Pre-check tier for spec-injected deny rules. Evaluated after
+# hardline but before every other source so a per-run deny cannot be
+# shadowed by a user/project ``allow:*`` or a preset ``allow:*``.
+_REASON_INJECTED = "injected"
 
 
 class PermissionDecisionDetail:
@@ -368,6 +372,11 @@ class PermissionEngine:
                 project_root=project_root, user_root=user_root,
             )
 
+        # Spec-injected deny rules — see :meth:`add_run_rules`. Spec
+        # allow rules join ``self.rules`` and follow the standard
+        # per-mode ordering instead.
+        self._run_scope_rules: List[Dict[str, Any]] = []
+
         self._mode_rules = _PRESET_RULES[self.active_mode.value]
 
     def set_mode(self, mode: PermissionMode) -> None:
@@ -375,6 +384,38 @@ class PermissionEngine:
         self.active_mode = mode
         self._mode_rules = _PRESET_RULES[mode.value]
         self._active_cache = None
+
+    def add_run_rules(
+        self,
+        *,
+        allow: Optional[List[Dict[str, Any]]] = None,
+        deny: Optional[List[Dict[str, Any]]] = None,
+        source: str = "run-spec",
+    ) -> None:
+        """Inject per-run permission rules.
+
+        ``deny`` rules go into the pre-check tier
+        (:attr:`_run_scope_rules`) evaluated after hardline but before
+        any other source in every mode, so a per-run restriction
+        cannot be shadowed by a project/user ``allow:*`` or a preset
+        ``allow:*``. ``allow`` rules append to the standard user-rule
+        list and follow the engine's existing per-mode ordering —
+        they do **not** create a new priority tier.
+
+        Both lists must already be in engine dict shape; the caller
+        injects the ``action`` field (see
+        :meth:`agentao.cli.run_models.RunPermissionRule.to_engine_dict`).
+
+        Provenance is recorded once under ``"injected:<source>"``
+        (default ``"injected:run-spec"``).
+        """
+        if deny:
+            self._run_scope_rules.extend(deny)
+        if allow:
+            self.rules.extend(allow)
+        if allow or deny:
+            self.add_loaded_source(f"injected:{source}")
+            self._active_cache = None
 
     def add_loaded_source(self, label: str) -> None:
         """Record an injected policy source label (``injected:<name>``).
@@ -433,19 +474,20 @@ class PermissionEngine:
                     reason=reason,
                 )
 
-        # ``full-access`` and ``plan`` modes evaluate preset rules first
+        # ``full-access`` / ``plan`` modes evaluate preset rules first
         # so a stray user rule cannot shadow the mode's promise; every
         # other mode evaluates user rules first so they can override.
-        # Source-tagging is deferred until the matching rule is found —
-        # iterating two lists with literal source strings avoids
-        # allocating a wrapped (rule, source) list on every call.
+        # ``_run_scope_rules`` (spec deny) always evaluates first so a
+        # per-run restriction cannot be shadowed by any other source.
         if self.active_mode in (PermissionMode.FULL_ACCESS, PermissionMode.PLAN):
             sources: List[Tuple[List[Dict[str, Any]], str]] = [
+                (self._run_scope_rules, f"{_REASON_INJECTED}:run-spec"),
                 (self._mode_rules, _REASON_MODE_PRESET),
                 (self.rules, _REASON_USER_RULE),
             ]
         else:
             sources = [
+                (self._run_scope_rules, f"{_REASON_INJECTED}:run-spec"),
                 (self.rules, _REASON_USER_RULE),
                 (self._mode_rules, _REASON_MODE_PRESET),
             ]
@@ -522,13 +564,17 @@ class PermissionEngine:
         # Dedupe defensively while preserving order.
         seen: set = set()
         deduped = [s for s in loaded_sources if not (s in seen or seen.add(s))]
-        # Mirror :meth:`decide`'s rule-evaluation order so a host that
-        # walks ``rules`` sees the same precedence semantics as the
-        # engine itself.
+        # Mirror :meth:`decide`'s rule-evaluation order. Spec deny
+        # (``_run_scope_rules``) always sits in front because it
+        # pre-checks every mode after hardline.
         if self.active_mode in (PermissionMode.FULL_ACCESS, PermissionMode.PLAN):
-            ordered_rules = self._mode_rules + self.rules
+            ordered_rules = (
+                self._run_scope_rules + self._mode_rules + self.rules
+            )
         else:
-            ordered_rules = self.rules + self._mode_rules
+            ordered_rules = (
+                self._run_scope_rules + self.rules + self._mode_rules
+            )
         snapshot = ActivePermissions(
             mode=self.active_mode.value,  # type: ignore[arg-type]
             rules=copy.deepcopy(ordered_rules),
