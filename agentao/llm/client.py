@@ -1,4 +1,19 @@
-"""OpenAI-compatible LLM client."""
+"""OpenAI-compatible LLM client.
+
+The retry policy and streaming duck-types are split into sibling
+modules (``_retry``, ``_stream_response``) and re-imported here so the
+public + test-patch surface of ``agentao.llm.client`` is unchanged:
+``LLMClient``, ``OpenAI`` (via PEP 562), retry constants
+(``MAX_BACKOFF_SECONDS`` etc.), and the test-imported ``_classify_retry``
+/ ``_compute_backoff_delay`` / ``_interruptible_sleep`` /
+``_parse_retry_after`` helpers.
+
+Constants are imported (not aliased) so they bind into this module's
+namespace — that's load-bearing for ``monkeypatch.setattr(client_mod,
+"MAX_TOTAL_RETRY_SECONDS", 1.0)`` to affect the deadline reads in
+``chat()`` / ``chat_stream()`` (Python ``LOAD_GLOBAL`` resolves free
+variables against the function's owning module).
+"""
 
 import json
 import logging
@@ -7,7 +22,30 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from ._retry import (
+    BASE_BACKOFF_SECONDS,
+    JITTER_FRACTION,
+    MAX_BACKOFF_SECONDS,
+    MAX_RETRY_ATTEMPTS,
+    MAX_TOTAL_RETRY_SECONDS,
+    RETRYABLE_STATUS_CODES,
+    _STREAMING_UNSUPPORTED_PHRASES,
+    _classify_retry,
+    _compute_backoff_delay,
+    _interruptible_sleep,
+    _is_streaming_unsupported,
+    _mark_streamed,
+    _parse_retry_after,
+)
+from ._stream_response import (
+    _StreamChoice,
+    _StreamFunction,
+    _StreamMessage,
+    _StreamResponse,
+    _StreamToolCall,
+)
 
 # `openai` is deferred (P0.5): merely importing ``LLMClient`` should not pull
 # in the OpenAI SDK. Hosts that inject their own ``llm_client=`` never load
@@ -34,230 +72,6 @@ def __getattr__(name: str):
     if name == "OpenAI":
         return _openai_client_cls()
     raise AttributeError(f"module 'agentao.llm.client' has no attribute {name!r}")
-
-
-# ---------------------------------------------------------------------------
-# HTTP-level retry policy
-#
-# OpenAI SDK's built-in retry is disabled (max_retries=0) so this layer owns
-# the policy end-to-end: a fixed status-code allowlist, Retry-After honored
-# when present, otherwise jittered exponential backoff with a per-step ceiling
-# and a global wall-clock budget so a misbehaving provider can't pin us
-# forever. Keep these as module-level constants — tests monkeypatch them.
-# ---------------------------------------------------------------------------
-
-RETRYABLE_STATUS_CODES = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
-MAX_RETRY_ATTEMPTS = 5            # total attempts including the first (≤ 4 retries)
-BASE_BACKOFF_SECONDS = 1.5        # 1.5 * 2^attempt
-MAX_BACKOFF_SECONDS = 30.0        # per-step ceiling
-MAX_TOTAL_RETRY_SECONDS = 60.0    # wall-clock budget across all attempts
-JITTER_FRACTION = 0.3             # uniform(0, base * 0.3) added on top of base
-
-
-def _classify_retry(exc: BaseException) -> Tuple[bool, Optional[int], Optional[str]]:
-    """Decide whether ``exc`` is worth retrying.
-
-    Returns ``(retryable, status_code, retry_after_header)``. Network-level
-    failures (``APIConnectionError`` / ``APITimeoutError``) are retryable
-    with no status. ``APIStatusError`` is retryable only when its status is
-    in :data:`RETRYABLE_STATUS_CODES`. Anything else (auth, validation,
-    non-OpenAI exceptions) is not retryable so the caller raises it.
-    """
-    try:
-        from openai import (
-            APIConnectionError,
-            APIStatusError,
-            APITimeoutError,
-            RateLimitError,
-        )
-    except ImportError:
-        return (False, None, None)
-
-    if isinstance(exc, RateLimitError):
-        retry_after = None
-        if getattr(exc, "response", None) is not None:
-            retry_after = exc.response.headers.get("retry-after")
-        return (True, 429, retry_after)
-
-    if isinstance(exc, APIStatusError):
-        status = getattr(exc, "status_code", None)
-        if status in RETRYABLE_STATUS_CODES:
-            retry_after = None
-            if getattr(exc, "response", None) is not None:
-                retry_after = exc.response.headers.get("retry-after")
-            return (True, status, retry_after)
-        return (False, status, None)
-
-    if isinstance(exc, (APITimeoutError, APIConnectionError)):
-        return (True, None, None)
-
-    return (False, None, None)
-
-
-def _parse_retry_after(header: Optional[str]) -> Optional[float]:
-    """Parse a ``Retry-After`` header (seconds or HTTP-date) into seconds."""
-    if not header:
-        return None
-    try:
-        return max(0.0, float(header))
-    except (TypeError, ValueError):
-        pass
-    try:
-        from datetime import datetime, timezone
-        from email.utils import parsedate_to_datetime
-        target = parsedate_to_datetime(header)
-        if target.tzinfo is None:
-            target = target.replace(tzinfo=timezone.utc)
-        delta = (target - datetime.now(timezone.utc)).total_seconds()
-        if delta > 0:
-            return delta
-    except (TypeError, ValueError):
-        pass
-    return None
-
-
-# Phrases providers actually use when they reject ``stream=True``. We match
-# against full phrases (not bare "stream"/"streaming") so that proxy errors
-# whose messages contain words like "upstream" — common in 502/503 — don't
-# accidentally trigger the non-streaming fallback and bypass the retry
-# policy that would have honored ``Retry-After``.
-_STREAMING_UNSUPPORTED_PHRASES = (
-    "does not support streaming",
-    "does not support stream",
-    "streaming is not supported",
-    "stream is not supported",
-    "streaming not supported",
-    "stream not supported",
-    "stream=true is not supported",
-    "stream=true not supported",
-    "streaming mode is not supported",
-)
-
-
-def _is_streaming_unsupported(err_str: str) -> bool:
-    """True when an error message explicitly says streaming is unsupported."""
-    return any(phrase in err_str for phrase in _STREAMING_UNSUPPORTED_PHRASES)
-
-
-def _compute_backoff_delay(attempt: int, retry_after_header: Optional[str] = None) -> float:
-    """Compute the next sleep duration. Honors ``Retry-After`` when present."""
-    parsed = _parse_retry_after(retry_after_header)
-    if parsed is not None:
-        return min(parsed, MAX_BACKOFF_SECONDS)
-    base = min(BASE_BACKOFF_SECONDS * (2 ** attempt), MAX_BACKOFF_SECONDS)
-    jitter = base * JITTER_FRACTION * random.random()
-    return min(base + jitter, MAX_BACKOFF_SECONDS)
-
-
-def _interruptible_sleep(delay: float, cancellation_token: Optional[Any] = None) -> bool:
-    """Sleep up to ``delay`` seconds; return False if cancelled mid-sleep.
-
-    Polls ``cancellation_token.is_cancelled`` every 100ms so that a Ctrl+C
-    or ACP cancel during a long ``Retry-After`` window doesn't strand the
-    user. With no token this is a plain ``time.sleep``.
-    """
-    if delay <= 0:
-        return True
-    if cancellation_token is None:
-        time.sleep(delay)
-        return True
-    deadline = time.monotonic() + delay
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return True
-        if getattr(cancellation_token, "is_cancelled", False):
-            return False
-        time.sleep(min(0.1, remaining))
-
-
-def _mark_streamed(exc: BaseException, value: bool) -> None:
-    """Tag ``exc`` with ``.streamed`` for ``runtime/llm_call.py`` to read.
-
-    Best-effort: SDK exception classes that pin ``__slots__`` will raise on
-    assignment, in which case the host falls back to counting ``LLM_TEXT``
-    events. Mirrors the same defensive pattern used in
-    ``runtime/tool_planning.py`` for foreign-object mutation.
-    """
-    try:
-        exc.streamed = value  # type: ignore[attr-defined]
-    except (AttributeError, TypeError):
-        pass
-
-
-# ---------------------------------------------------------------------------
-# Duck-type response objects for the streaming path
-# agent.py accesses: response.choices[0].message.{content,tool_calls}
-# _serialize_tool_call accesses: tc.id, tc.function.name, tc.function.arguments
-# ---------------------------------------------------------------------------
-
-class _StreamFunction:
-    def __init__(self, name: str, arguments: str, thought_signature: Optional[str] = None):
-        self.name = name
-        self.arguments = arguments
-        if thought_signature is not None:
-            self.thought_signature = thought_signature
-
-
-class _StreamToolCall:
-    def __init__(self, id: str, function: _StreamFunction):
-        self.id = id
-        self.type = "function"
-        self.function = function
-
-
-class _StreamMessage:
-    def __init__(self, content, tool_calls, reasoning_content: Optional[str] = None):
-        self.content = content
-        self.tool_calls = tool_calls
-        self.role = "assistant"
-        # Mirrors the non-streaming `message.reasoning_content` attribute so
-        # chat_loop / context_manager / sanitize all see thinking-model output
-        # the same way regardless of streaming mode.
-        self.reasoning_content = reasoning_content
-
-
-class _StreamChoice:
-    def __init__(self, message: _StreamMessage, finish_reason: str):
-        self.message = message
-        self.finish_reason = finish_reason
-
-
-class _StreamResponse:
-    """Duck-type replacement for ChatCompletion returned by the streaming path."""
-
-    def __init__(
-        self,
-        model: str,
-        content: Optional[str],
-        tool_calls_data: Dict[int, Dict[str, str]],
-        finish_reason: str,
-        usage: Any = None,
-        reasoning_content: Optional[str] = None,
-    ):
-        self.model = model
-        self.usage = usage  # populated when provider supports stream_options include_usage
-
-        tool_calls = None
-        if tool_calls_data:
-            tool_calls = [
-                _StreamToolCall(
-                    id=tool_calls_data[idx]["id"],
-                    function=_StreamFunction(
-                        name=tool_calls_data[idx]["name"],
-                        arguments=tool_calls_data[idx]["arguments"],
-                        thought_signature=tool_calls_data[idx].get("thought_signature"),
-                    ),
-                )
-                for idx in sorted(tool_calls_data)
-            ]
-
-        message = _StreamMessage(
-            content=content,
-            tool_calls=tool_calls,
-            reasoning_content=reasoning_content,
-        )
-        self.choices = [_StreamChoice(message=message, finish_reason=finish_reason)]
 
 
 class LLMClient:
