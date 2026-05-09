@@ -228,6 +228,18 @@ Not a quick win. Two-phase split:
 
 **Why deferred:** the validator/resolver split requires careful threading through `SkillManager.__init__` and `AgentManager.__init__`. Moving that under time pressure risks breaking plugin discovery without a clear test signal. Items #1–#4 are higher-ROI and should land first.
 
+### Import map after 5a/5b
+
+There is intentionally **no public plugin SDK surface** today. All non-`models` symbols are first-party only — no shim, no facade, no re-export. Future contributors should consult this table before reaching for an `agentao.plugins.*` import:
+
+| Tier | Path | Audience | Notes |
+|---|---|---|---|
+| Public runtime models | `agentao.plugins`, `agentao.plugins.models` | external + first-party | The only entries in `agentao.plugins.__all__`. |
+| First-party runtime helpers | `agentao.plugins.skills`, `agentao.plugins.agents`, `agentao.plugins.hooks` | first-party only | Validators + hook dispatch on the runtime hot path. Not in `__all__`. |
+| First-party loader | `agentao.embedding.plugins.{manager, manifest, diagnostics, mcp}`, `agentao.embedding.plugins.resolvers.*` | first-party only (CLI / `_load_and_register_plugins`) | Reached at agent init and from CLI subcommands. Pulls YAML. Must not be imported on the runtime hot path. |
+
+**Boundary contract test:** `tests/test_plugin_boundary_contract.py` asserts in a clean subprocess that `import agentao.plugins` does not transitively load the loader package or YAML. That makes the runtime/loader split an executable invariant rather than a convention.
+
 ---
 
 ## 6. Deep investigation: top-level `session.py`
