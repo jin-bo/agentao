@@ -249,9 +249,15 @@ class ToolRegistry:
                 ``plan_finalize``) are omitted from the schema. The chat loop
                 passes the current plan-session state so the model only sees
                 these tools while plan mode is active.
+
+        Tools are emitted in alphabetical order by name so the LLM-facing
+        schema stays stable across sessions even when registration order
+        shifts (MCP discovery timing, plugin load order, mid-session skill
+        activation). An unstable tool prefix would invalidate the prompt
+        cache on every turn that re-orders.
         """
         return [
             tool.to_openai_format()
-            for tool in self.tools.values()
+            for tool in sorted(self.tools.values(), key=lambda t: t.name)
             if plan_mode or tool.name not in self._PLAN_ONLY_TOOLS
         ]
