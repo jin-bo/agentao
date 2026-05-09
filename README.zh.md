@@ -8,7 +8,7 @@
         |___/        (The Way of Agents)
 ```
 
-> **"乱中有序，智中有道。"**
+> **"秩序生于混沌，路径藏于智能。"**
 >
 > **Agentao** 是一套**Governed Agent Runtime（受治理的 Agent 运行时）** —— 面向 Python 宿主、本地优先、私有优先、可嵌入的 agent harness。权限、协议、记忆、插件、多会话控制都是一等公民。
 
