@@ -1,6 +1,6 @@
 # 第七部分 · 典型集成蓝图
 
-前六部分是参考手册，这一部分是**实用蓝图**——把沙箱、权限、事件、技能等能力编织成六个真实客户场景。
+前六部分是参考手册，这一部分是**实用蓝图**——把沙箱、权限、事件、技能等能力编织成七个真实客户场景。
 
 每个蓝图都回答同样的四个问题：
 
@@ -16,9 +16,10 @@
 - **数据工作台** —— 给分析师的交互会话；Shell + 沙箱 + 技能组合 · [§7.4](/zh/part-7/4-data-workbench)
 - **批处理调度** —— cron 驱动的 `prompt_once`，跑离线/夜间任务，没有终端用户 · [§7.5](/zh/part-7/5-batch-scheduler)、[G.4](/zh/appendix/g-glossary#g-4-集成模式)
 - **微信智能机器人（ilink-style）** —— 长轮询个人号 bot API；每条消息一个 agent；联系人级权限 · [§7.6](/zh/part-7/6-wechat-bot)
+- **多 Agent 看板调度** —— 外部衍生项目 `agentao-kanban`；用看板驱动 `planner` / `worker` / `reviewer` 三个 sub-agent；每张卡独立 git worktree · [§7.7](/zh/part-7/7-kanban-multiagent)
 :::
 
-## 六个蓝图
+## 七个蓝图
 
 | # | 蓝图 | 集成模式 | 明星扩展点 |
 |---|------|----------|------------|
@@ -28,6 +29,7 @@
 | [7.4](./4-data-workbench) | 数据分析工作台 | 进程内 SDK | Shell + 沙箱 + 自定义技能 |
 | [7.5](./5-batch-scheduler) | 离线批处理 / 定时任务 | `prompt_once` | 技能 + 调度器 |
 | [7.6](./6-wechat-bot) | 微信智能机器人（ilink-style） | `asyncio` 长轮询 daemon | `WeChatClient` Protocol + 联系人级权限 |
+| [7.7](./7-kanban-multiagent) | 多 Agent 看板调度 *(外部仓库)* | 外部 orchestrator 驱动 agentao sub-agent + ACP CLI | `planner`/`worker`/`reviewer` 路由 + 每卡 git worktree |
 
 ## 如何阅读本部分
 
@@ -45,9 +47,12 @@
 | 分析师工作台或 Notebook 类产品 | [7.4](./4-data-workbench) | 重点是 Shell、沙箱、文件隔离和分析技能 |
 | 夜间任务、报表或离线处理 | [7.5](./5-batch-scheduler) | 重点是 `prompt_once`、调度、预算和失败处理 |
 | IM / 微信 / 企业消息机器人 | [7.6](./6-wechat-bot) | 重点是长轮询、联系人级权限和每条消息的隔离 |
+| 围绕"工作队列"的多 Agent 系统（CI、批量评估、自主研究） | [7.7](./7-kanban-multiagent) | 重点是外部 orchestrator、跨 sub-agent 与 ACP CLI 的角色路由、每任务隔离 |
 
 ## 可运行代码
 
-六个蓝图以独立项目形式就放在主仓 [`examples/`](https://github.com/jin-bo/agentao/tree/main/examples) 下——每个子目录（`saas-assistant/`、`ide-plugin-ts/`、`ticket-automation/`、`data-workbench/`、`batch-scheduler/`、`wechat-bot/`）都是独立的 `uv run` / `npm run` 项目。每个蓝图页会链向它对应的子目录。
+7.1–7.6 以独立项目形式就放在主仓 [`examples/`](https://github.com/jin-bo/agentao/tree/main/examples) 下——每个子目录（`saas-assistant/`、`ide-plugin-ts/`、`ticket-automation/`、`data-workbench/`、`batch-scheduler/`、`wechat-bot/`）都是独立的 `uv run` / `npm run` 项目。每个蓝图页会链向它对应的子目录。
+
+7.7 在独立仓库 [`jin-bo/agentao-kanban`](https://github.com/jin-bo/agentao-kanban)——它是按自己节奏发版的衍生项目，不在本仓 examples 下。
 
 → [从 7.1 SaaS 助手开始 →](./1-saas-assistant)
