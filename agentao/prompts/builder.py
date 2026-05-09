@@ -228,19 +228,26 @@ class SystemPromptBuilder:
         skill_manager = self._agent.skill_manager
         available_skills = skill_manager.list_available_skills()
         active_names = set(skill_manager.get_active_skills().keys())
-        inactive_skills = [s for s in available_skills if s not in active_names]
-        if not inactive_skills:
+        # Skills with no description give the model nothing to match on, so
+        # rendering them as ``• name: `` (empty after the colon) just wastes
+        # tokens. Drop them from the prompt; ``/skills`` still lists them.
+        described_inactive = []
+        for s in available_skills:
+            if s in active_names:
+                continue
+            info = skill_manager.get_skill_info(s)
+            if info and (info.get('description') or '').strip():
+                described_inactive.append((s, info))
+        if not described_inactive:
             return ""
         out = "\n\n=== Available Skills ===\n"
         out += "You have access to specialized skills. Use the 'activate_skill' tool to activate them when needed.\n\n"
-        for skill_name in sorted(inactive_skills):
-            skill_info = skill_manager.get_skill_info(skill_name)
-            if skill_info:
-                description = skill_info.get('description', 'No description available')
-                when_to_use = skill_info.get('when_to_use', '')
-                out += f"• {skill_name}: {description}\n"
-                if when_to_use:
-                    out += f"  Activate when: {when_to_use}\n"
+        for skill_name, skill_info in sorted(described_inactive, key=lambda p: p[0]):
+            description = skill_info['description'].strip()
+            when_to_use = skill_info.get('when_to_use', '')
+            out += f"• {skill_name}: {description}\n"
+            if when_to_use:
+                out += f"  Activate when: {when_to_use}\n"
         out += "\nWhen the user's request matches a skill's description, use the activate_skill tool before proceeding with the task."
         return out
 
