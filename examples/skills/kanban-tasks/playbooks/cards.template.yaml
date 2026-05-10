@@ -1,0 +1,35 @@
+# Batch card creation template for `scripts/kanban_cards_from_yaml.py`.
+# Top-level can be a list directly, or `cards: [...]`.
+#
+# Per-card fields:
+#   title       (required)  one-line summary
+#   goal        (required)  what success looks like
+#   priority                LOW | MEDIUM | HIGH | CRITICAL  (default MEDIUM)
+#   name                    optional alias; later cards can `depends: [<name>]`
+#   depends                 list of names (resolved above) or full card UUIDs
+#   acceptance              list of strings, each a CI/human-checkable criterion
+#   context                 list of refs, either "path:lines" strings or
+#                           {path: "...", kind: required|optional, note: "..."}
+
+cards:
+  - name: split-ingest
+    title: 把 ingest.py 拆成 reader/parser 两个纯函数
+    goal:  降低 ingest.py 圈复杂度并允许独立单测
+    priority: MEDIUM
+    acceptance:
+      - "uv run pytest tests/ingest 全绿"
+      - "ingest.py 中无对全局状态的读写"
+    context:
+      - path: kanban/ingest.py:1-200
+        kind: required
+        note: 主体函数与现有调用点
+      - "tests/ingest/test_reader.py:1-40"
+
+  - name: write-tests
+    title: 给 reader 写表格驱动单测
+    goal:  覆盖 reader 的边界 case，保证后续重构有兜底
+    priority: MEDIUM
+    depends: [split-ingest]
+    acceptance:
+      - "tests/ingest/test_reader.py 至少 8 个 case"
+      - "uv run pytest tests/ingest -k reader 通过"

@@ -17,6 +17,7 @@ A skill is just a directory with a `SKILL.md` (YAML frontmatter + instructions) 
 | [`zootopia-ppt/`](./zootopia-ppt/) | Turn a presentation script into a PPT-ready image set in **anthropomorphic-animal 3D-animation** style. Three steps: outline → per-slide image prompts → batched image generation via `scripts/image_gen_ppt*.py`. | "make this deck in Zootopia / 3D-animation style" | `TENSORLAB_API_KEY` (default backend) — or `GEMINI_API_KEY` / `QWEN_API_KEY` / OpenRouter key for the alt backends |
 | [`pro-ppt/`](./pro-ppt/) | Same pipeline, **editorial-premium business** style (light-grey base + gold accents + deep navy, McKinsey/Apple-Keynote vibe). **Reuses** `zootopia-ppt/scripts/image_gen_ppt.py`, so install both together. | "make this deck in a premium / consulting / editorial style" | Same as `zootopia-ppt` |
 | [`ocr/`](./ocr/) | One-shot OCR on an image file via Qwen-VL (`scripts/ocr.py`). | "OCR this screenshot / extract text from this image" | `QWEN_API_KEY` + `QWEN_BASE_URL` in `.env` |
+| [`kanban-tasks/`](./kanban-tasks/) | Drive an `agentao-kanban` board: break a request into atomic cards, push them through `INBOX → READY → DOING → REVIEW → DONE`, start/stop the daemon + Web UI, locate artifacts. Compound triggers like "启动 kanban" / "停止 kanban" map to one-shot scripts. | "看板 / kanban / 拆任务 / task board / dispatcher / 启动 kanban …" | `agentao-kanban` installed in the project venv (`uv run kanban …`); a writable cwd for `.kanban/` + `workspace/board/` |
 
 ## Install
 
