@@ -121,18 +121,34 @@ agent._memory_manager = MemoryManager(
 
 即便 `working_directory` 隔离好了，`~/.agentao/memory.db` 是**进程级共享**的——两个租户的 Agent 会读写同一个用户级记忆库。
 
-**解决方案 A · 禁用用户级**：
+**解决方案 A · 能力注入**（多租户进程内首选）：
 
 ```python
-agent._memory_manager = MemoryManager(
-    project_store=SQLiteMemoryStore.open_or_memory(
-        workdir / ".agentao" / "memory.db"
+from pathlib import Path
+from agentao import Agentao
+from agentao.memory import MemoryManager, SQLiteMemoryStore
+
+agent = Agentao(
+    working_directory=tenant_dir,
+    filesystem=YourTenantFS(),          # agentao.capabilities.FileSystem 实现
+    memory_manager=MemoryManager(
+        project_store=SQLiteMemoryStore.open_or_memory(
+            tenant_dir / ".agentao" / "memory.db"
+        ),
+        # user_store=None 禁用进程级共享的 ~/.agentao/memory.db
     ),
-    # user_store=None — 完全不用用户级
 )
 ```
 
-**解决方案 B · 按租户改 HOME**：
+构造器注入取代私有属性变更（`agent._memory_manager = …`）——在构造时一次性注入，租户之间无共享可变状态。
+
+`FileSystem` 协议（`agentao.capabilities.FileSystem`）涵盖所有文件和搜索工具的 IO。任何符合协议的实现都可以直接替换：把读写委托给容器的 Docker-exec 后端、用于测试隔离的内存虚拟文件系统、或在委托给真实磁盘前记录每次访问的审计代理——无需修改任何工具代码。
+
+**解决方案 B · 每租户独立进程**（隔离最强，成本最高）：
+
+用 ACP 模式，每租户起一个 Agentao 子进程。进程级隔离最干净，资源开销最大。
+
+**解决方案 C · 按租户改 HOME**（不推荐）：
 
 ```python
 import os
@@ -140,11 +156,7 @@ os.environ["HOME"] = f"/data/tenant-{tenant.id}/home"
 agent = Agentao(working_directory=...)
 ```
 
-影响整个进程的 `Path.home()`——只在**每进程一租户**时适用（ACP 子进程模型）。
-
-**解决方案 C · 每租户独立进程**：
-
-用 ACP 模式，每租户起一个 Agentao 子进程。进程级隔离最干净，但成本最高。
+影响整个进程的 `Path.home()`——只在每进程一租户时适用（ACP 子进程模型）。**多租户进程内部署中切勿使用。**
 
 ## 文件系统写入边界
 
@@ -201,6 +213,20 @@ agent = Agentao(
 ```
 
 Agent 关闭时 `agent.close()` 会自动 disconnect MCP 子进程。
+
+如果宿主需要完全掌控 MCP 生命周期——管理服务器启动顺序、共享传输连接池或自定义认证——可以通过 `mcp_manager=` 注入一个已构建好的 `McpClientManager`，而非使用 `extra_mcp_servers=` 的字典合并模式：
+
+```python
+from agentao.mcp import McpClientManager
+
+manager = McpClientManager(...)   # 由宿主构建并连接
+agent = Agentao(
+    working_directory=workdir,
+    mcp_manager=manager,           # agent 不启动/停止子进程
+)
+```
+
+`mcp_manager=` 与 `extra_mcp_servers=` 互斥，同时传入会抛 `ValueError`。
 
 ## 温度数据：日志与临时文件
 

@@ -120,18 +120,34 @@ agent._memory_manager = MemoryManager(
 
 Even with `working_directory` isolated, `~/.agentao/memory.db` is **process-global** — two tenants' agents read/write the same user-level memory DB.
 
-**Solution A · Disable user-level**:
+**Solution A · Capability injection** (preferred for multi-tenant in-process):
 
 ```python
-agent._memory_manager = MemoryManager(
-    project_store=SQLiteMemoryStore.open_or_memory(
-        workdir / ".agentao" / "memory.db"
+from pathlib import Path
+from agentao import Agentao
+from agentao.memory import MemoryManager, SQLiteMemoryStore
+
+agent = Agentao(
+    working_directory=tenant_dir,
+    filesystem=YourTenantFS(),          # agentao.capabilities.FileSystem impl
+    memory_manager=MemoryManager(
+        project_store=SQLiteMemoryStore.open_or_memory(
+            tenant_dir / ".agentao" / "memory.db"
+        ),
+        # user_store=None disables the process-global ~/.agentao/memory.db
     ),
-    # user_store=None — no cross-project memory
 )
 ```
 
-**Solution B · Change HOME per tenant**:
+Constructor injection replaces private attribute mutation (`agent._memory_manager = …`) — inject once at construction, no shared mutable state between tenants.
+
+The `FileSystem` Protocol (`agentao.capabilities.FileSystem`) covers all file and search tool IO. Any compliant implementation works as a drop-in: a Docker-exec remote that delegates reads/writes into a container, an in-memory virtual filesystem for test isolation, or an audit proxy that logs every access before delegating to the real disk — without changing any tool code.
+
+**Solution B · One process per tenant** (strongest isolation, highest cost):
+
+Use ACP — each tenant gets its own Agentao subprocess. Cleanest isolation; most resource-intensive.
+
+**Solution C · Mutate HOME per tenant** (discouraged):
 
 ```python
 import os
@@ -139,11 +155,7 @@ os.environ["HOME"] = f"/data/tenant-{tenant.id}/home"
 agent = Agentao(working_directory=...)
 ```
 
-Affects the whole process's `Path.home()` — only works with **one tenant per process** (ACP subprocess model).
-
-**Solution C · One process per tenant**:
-
-Use ACP — each tenant gets its own Agentao subprocess. Cleanest isolation, highest cost.
+Affects the whole process's `Path.home()` — only works with one tenant per process (ACP subprocess model). **Do not use in multi-tenant in-process deployments.**
 
 ## Write boundaries
 
@@ -202,6 +214,20 @@ agent = Agentao(
 ```
 
 `agent.close()` disconnects MCP subprocesses on shutdown.
+
+If the host owns the MCP lifecycle entirely — managing server startup order, shared transport pools, or custom auth — pass a fully-built `McpClientManager` via `mcp_manager=` instead:
+
+```python
+from agentao.mcp import McpClientManager
+
+manager = McpClientManager(...)   # built and connected by the host
+agent = Agentao(
+    working_directory=workdir,
+    mcp_manager=manager,           # agent does not start/stop subprocesses
+)
+```
+
+`mcp_manager=` and `extra_mcp_servers=` are mutually exclusive; passing both raises `ValueError`.
 
 ## Warm state: logs & temp files
 

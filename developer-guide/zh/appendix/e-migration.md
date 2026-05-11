@@ -156,6 +156,57 @@ Week 3 之前的裸字符串形式不再接受。`AcpClientConfig.from_dict` / `
 3. **把用户和项目记忆混用** —— 默认就是租户隔离（见 [6.4](/zh/part-6/4-multi-tenant-fs)）；user 作用域仅限单用户场景
 4. **不开确认** —— 其他框架常常默认"什么都问"。Agentao 让你白名单——请在审过工具的爆炸半径之后再白名单
 
+## E.9 从 0.2.x 迁移到 0.3.0
+
+`working_directory=` 现在是必填关键字参数。0.2.16 在省略该参数时发出的 `DeprecationWarning` 已被替换为构造时直接抛出的 `TypeError`——不再有 `Path.cwd()` 懒惰回退。
+
+### 方案一——传入显式 `Path`（最简单）
+
+```python
+from pathlib import Path
+from agentao import Agentao
+
+agent = Agentao(working_directory=Path("/srv/agent-workdir"), ...)
+```
+
+绝大多数调用点只需这一处修改。传入前先解析为绝对路径，冻结值才始终可预期。
+
+### 方案二——用 `build_from_environment()` 进行 CLI 式自动发现
+
+```python
+from pathlib import Path
+from agentao.embedding import build_from_environment
+
+agent = build_from_environment(working_directory=Path("/srv/agent-workdir"))
+```
+
+`build_from_environment` 会读取 `.env`、发现 `.agentao/` 配置文件，并连接完整的 CLI 等价默认值（用户级记忆、MCP 文件配置、沙箱、回放）。显式传入 `working_directory=`；若省略，工厂回退到 `Path.cwd()`——CLI 入口点可接受，嵌入式宿主不应依赖此行为。
+
+### 方案三——曾测试懒惰 cwd 默认行为的测试
+
+在 0.2.x 中，有意不传 `working_directory=` 的测试会用以下方式压制警告：
+
+```python
+import warnings
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    agent = Agentao(...)   # 懒惰 cwd 行为
+```
+
+在 0.3.0 中，相同的调用会抛 `TypeError`。将这些测试改为：
+
+- 传入 `working_directory=tmp_path`（标准修法——当前测试套件的 `tests/test_per_session_cwd.py::_make_agent` 即采用此方式）。
+- 若测试本身就是为了验证无参形式被拒绝，改用 `pytest.raises(TypeError)` 断言硬中断。
+
+### 本地检查命令
+
+```bash
+pytest -W error::DeprecationWarning tests/
+```
+
+此命令将所有 `DeprecationWarning` 转为测试失败，在 0.3.0 静默破坏之前暴露仍在发出 0.2.x 警告的调用点。
+
 ---
 
 附录至此结束。
