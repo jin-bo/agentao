@@ -156,6 +156,57 @@ Notes:
 3. **Mixing user + project memory** — keep tenant isolation as the default (see [6.4](/en/part-6/4-multi-tenant-fs)); user-scope is for single-user setups only.
 4. **Leaving confirmations off** — other frameworks often default to "ask everything". Agentao lets you allow-list; use it, but only after you've audited the tool's blast radius.
 
+## E.9 Migrating from 0.2.x to 0.3.0
+
+`working_directory=` is now a required keyword argument. The `DeprecationWarning` emitted by 0.2.16 when the argument was omitted has been replaced by a `TypeError` raised at construction time — there is no longer a `Path.cwd()` lazy fallback.
+
+### Recipe 1 — Pass an explicit `Path` (simplest)
+
+```python
+from pathlib import Path
+from agentao import Agentao
+
+agent = Agentao(working_directory=Path("/srv/agent-workdir"), ...)
+```
+
+This is the right fix for the vast majority of call sites. Resolve the path before passing it so the frozen value is always absolute.
+
+### Recipe 2 — Use `build_from_environment()` for CLI-style auto-discovery
+
+```python
+from pathlib import Path
+from agentao.embedding import build_from_environment
+
+agent = build_from_environment(working_directory=Path("/srv/agent-workdir"))
+```
+
+`build_from_environment` reads `.env`, discovers `.agentao/` config files, and wires the full CLI-equivalent defaults (user-scope memory, MCP file config, sandbox, replay). Pass `working_directory=` explicitly; if omitted, the factory falls back to `Path.cwd()` — acceptable for CLI entry points, not for embedded hosts.
+
+### Recipe 3 — Tests that exercised the legacy lazy-cwd default
+
+In 0.2.x, tests that intentionally called `Agentao()` without `working_directory=` suppressed the warning with:
+
+```python
+import warnings
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    agent = Agentao(...)   # legacy lazy-cwd
+```
+
+In 0.3.0, the same call raises `TypeError`. Update those tests to either:
+
+- Pass `working_directory=tmp_path` (the standard fix — this is what `tests/test_per_session_cwd.py::_make_agent` does in the current test suite).
+- Assert the hard break with `pytest.raises(TypeError)` if the test is specifically verifying that the no-args form is rejected.
+
+### Local check
+
+```bash
+pytest -W error::DeprecationWarning tests/
+```
+
+This turns every `DeprecationWarning` into a test failure, surfacing any remaining call sites that still emit the 0.2.x warning before they silently break in 0.3.0.
+
 ---
 
 End of appendix.
