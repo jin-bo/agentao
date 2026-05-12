@@ -33,6 +33,12 @@ DOOM_LOOP_THRESHOLD = 3
 # garbage JSON for the same tool would loop forever.
 PARSE_FAILURE_THRESHOLD = 3
 
+# ``PermissionDecisionDetail.reason`` prefix stamped on decisions that
+# originate from a PreToolUse plugin hook (vs the permission engine).
+# ``ToolExecutor`` checks for it to tailor the model-facing deny message.
+# The full reason is either exactly this string or ``"<prefix>: <hook reason>"``.
+PRE_TOOL_HOOK_REASON = "pre-tool-hook"
+
 
 def _synth(
     decision: PermissionDecision,
@@ -41,6 +47,18 @@ def _synth(
     """Synthesize a public-event detail for paths with no matched rule."""
     return PermissionDecisionDetail(
         decision, matched_rule=None, reason=reason,
+    )
+
+
+def pre_tool_hook_reason(hook_reason: str | None) -> str:
+    """Build the ``PermissionDecisionDetail.reason`` for a hook decision."""
+    return f"{PRE_TOOL_HOOK_REASON}: {hook_reason}" if hook_reason else PRE_TOOL_HOOK_REASON
+
+
+def is_pre_tool_hook_reason(reason: str | None) -> bool:
+    """True if ``reason`` was produced by :func:`pre_tool_hook_reason`."""
+    return reason == PRE_TOOL_HOOK_REASON or (
+        reason is not None and reason.startswith(PRE_TOOL_HOOK_REASON + ": ")
     )
 
 

@@ -32,7 +32,7 @@ from ..sandbox import SandboxMisconfiguredError, SandboxPolicy
 from ..tools.base import AsyncToolBase
 from ..transport import AgentEvent, EventType
 from . import identity as _identity
-from .tool_planning import ToolCallDecision, ToolCallPlan
+from .tool_planning import ToolCallDecision, ToolCallPlan, is_pre_tool_hook_reason
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
     from ..host.projection import HostToolEmitter
@@ -196,29 +196,42 @@ class ToolExecutor:
         call_id = plan.tool_call_id
         t0 = time.monotonic()
 
+        # ``TOOL_START`` is emitted unconditionally — before the deny/cancel
+        # guards — so it always pairs with the ``TOOL_COMPLETE`` below for
+        # *every* call_id. ACP (``tool_call`` → ``tool_call_update``), replay
+        # (``TOOL_STARTED`` → ``TOOL_COMPLETED``), and the CLI run loop all
+        # rely on that pairing; a denied call still gets ``TOOL_START`` here
+        # and ``TOOL_COMPLETE`` with ``status="cancelled"`` just below. The
+        # *host* ``ToolLifecycleEvent(started)`` is the start signal that does
+        # NOT fire for denied calls — it's emitted only on the ALLOW path.
         self._transport.emit(AgentEvent(EventType.TOOL_START, {
             "tool": fn, "args": args, "call_id": call_id,
         }))
 
         if decision == ToolCallDecision.DENY:
             self._logger.info(f"Tool {fn} denied")
+            detail = plan.permission_detail
+            deny_reason = detail.reason if detail is not None else None
             if readonly_mode and not tool.is_read_only:
                 result_text = (
                     f"[Readonly mode] Tool '{fn}' is blocked — "
                     f"only read-only tools are permitted in readonly mode."
                 )
+                summary = "denied by permission engine"
+            elif is_pre_tool_hook_reason(deny_reason):
+                result_text = f"Tool execution blocked by a PreToolUse hook: '{fn}'."
+                summary = "denied by pre-tool-use hook"
             else:
                 result_text = (
                     f"Tool execution denied: '{fn}' is not permitted "
                     f"by the current permission rules."
                 )
-            self._emit_complete(fn, call_id, "cancelled", 0, "denied by permission engine")
-            self._emit_host_terminal_cancelled(
-                fn, call_id, summary="denied by permission engine",
-            )
+                summary = "denied by permission engine"
+            self._emit_complete(fn, call_id, "cancelled", 0, summary)
+            self._emit_host_terminal_cancelled(fn, call_id, summary=summary)
             return call_id, ToolExecutionResult(
                 fn_name=fn, result=result_text, status="cancelled",
-                duration_ms=0, error="denied by permission engine",
+                duration_ms=0, error=summary,
             )
 
         if decision == ToolCallDecision.CANCELLED:
@@ -269,10 +282,6 @@ class ToolExecutor:
                 fn_name=fn, result=result_text, status="cancelled",
                 duration_ms=duration_ms, error="cancelled by user",
             )
-
-        self._dispatch_pre_tool_hook(
-            fn, args, rules=hook_rules, cwd=hook_cwd, session_id=hook_session_id,
-        )
 
         # Inject macOS sandbox profile for run_shell_command when policy is
         # enabled. Private kwarg — never exposed to LLM or to plugin
@@ -569,28 +578,12 @@ class ToolExecutor:
 
     # ------------------------------------------------------------------
     # Plugin hook dispatch (each helper short-circuits on empty rules)
+    #
+    # PreToolUse is *not* dispatched here. It is decision-capable and
+    # runs in ``ToolRunner`` (Phase 1.5) before the PermissionDecisionEvent
+    # emit and before any tool ``started`` event, so a hook ``deny`` / ``ask``
+    # is reflected in the public event ordering without special-casing.
     # ------------------------------------------------------------------
-
-    def _dispatch_pre_tool_hook(
-        self,
-        tool_name: str,
-        tool_args: Dict[str, Any],
-        *,
-        rules: Optional[list],
-        cwd: Optional[Path],
-        session_id: Optional[str],
-    ) -> None:
-        if not rules:
-            return
-        try:
-            from ..plugins.hooks import PluginHookDispatcher
-            payload = self._hook_adapter.build_pre_tool_use(
-                tool_name=tool_name, tool_input=tool_args, session_id=session_id,
-            )
-            dispatcher = PluginHookDispatcher(cwd=cwd)
-            dispatcher.dispatch_pre_tool_use(payload=payload, rules=rules)
-        except Exception as exc:
-            self._logger.warning("PreToolUse hook dispatch error: %s", exc)
 
     def _dispatch_post_tool_hook(
         self,

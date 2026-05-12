@@ -299,6 +299,30 @@ class UserPromptSubmitResult:
 
 
 @dataclass
+class PreToolUseHookResult:
+    """Aggregated decision from all PreToolUse hooks for one tool call.
+
+    ``decision`` is the merged Claude Code-compatible
+    ``hookSpecificOutput.permissionDecision`` — ``"deny"`` / ``"ask"`` /
+    ``None`` (continue). Merge rule: the first ``deny`` wins; otherwise
+    the first ``ask`` wins; ``"allow"`` from a hook is a no-op and is
+    never recorded here. ``reason`` is the human-readable reason that
+    accompanied the winning decision, if any. ``additional_contexts`` is
+    parsed and recorded but intentionally NOT injected into the model or
+    tool execution path in this minimal version. ``matched_rule_count``
+    is the selection count and gates ``PLUGIN_HOOK_FIRED`` emission.
+
+    Exit-code-2 "block" is intentionally not honored — only the JSON
+    shape — matching the documented MVP scope.
+    """
+
+    decision: Literal["deny", "ask"] | None = None
+    reason: str | None = None
+    additional_contexts: list[str] = field(default_factory=list)
+    matched_rule_count: int = 0
+
+
+@dataclass
 class StopHookResult:
     """Aggregated result of all hooks for a single Stop event.
 
