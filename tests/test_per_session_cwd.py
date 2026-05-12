@@ -1,9 +1,16 @@
 """Tests for per-session working directory isolation (Issue 05).
 
+Since 0.3.0 ``working_directory`` is a required keyword argument: omitting
+it raises ``TypeError`` at construction (no ``Path.cwd()`` lazy fallback).
+The CLI-style auto-detection lives in
+``agentao.embedding.build_from_environment``, not in the constructor.
+
 Covers:
 
-- ``Agentao.working_directory`` property: ``None`` → lazy ``Path.cwd()``;
-  set → frozen resolved ``Path``
+- ``Agentao()`` without ``working_directory=`` raises ``TypeError``;
+  when passed, the value is frozen as a resolved absolute ``Path``
+- The ``_resolve_path`` helper: absolute pass-through, tilde expansion,
+  relative-against-wd, and relative-without-wd (returns the path unchanged)
 - Memory manager bound to session cwd (so two sessions don't share a
   SQLite database)
 - ``_load_project_instructions`` reads AGENTAO.md from session cwd
@@ -16,8 +23,7 @@ Covers:
   tool's session cwd
 - ACP ``session/new`` factory wires ``working_directory=cwd`` through to
   the constructed runtime
-- Default Agentao (no ``working_directory``) still reflects process cwd
-  (CLI compatibility)
+- ``agentao.log`` lands in the session cwd, not the process cwd
 """
 
 from __future__ import annotations

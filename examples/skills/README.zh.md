@@ -17,6 +17,7 @@
 | [`zootopia-ppt/`](./zootopia-ppt/) | 把演讲稿转成「**拟人化动物 · 3D 动画电影**」风格的整套 PPT 配图。三步走：理解讲稿 → 逐页生成图像提示词 → 调用 `scripts/image_gen_ppt*.py` 批量出图。 | "用疯狂动物城 / 3D 动画电影风格做这份演示" | `TENSORLAB_API_KEY`（默认后端）；或 `GEMINI_API_KEY` / `QWEN_API_KEY` / OpenRouter key 走备选后端 |
 | [`pro-ppt/`](./pro-ppt/) | 同一套流程的「**高端商务编辑**」风变体（极浅灰主色 + 金色点缀 + 深蓝灰背景，麦肯锡 / Apple Keynote 调性）。**复用** `zootopia-ppt/scripts/image_gen_ppt.py`，请一起安装。 | "做一份高级感 / 咨询风 / 编辑风的 PPT" | 同 `zootopia-ppt` |
 | [`ocr/`](./ocr/) | 用 Qwen-VL 做一次性图片 OCR（`scripts/ocr.py`）。 | "把这张截图里的文字提出来 / OCR 这张图" | `.env` 里配 `QWEN_API_KEY` + `QWEN_BASE_URL` |
+| [`kanban-tasks/`](./kanban-tasks/) | 驱动 `agentao-kanban` 看板：把需求拆成原子卡片，推它们走 `INBOX → READY → DOING → REVIEW → DONE`，启停 daemon + Web UI，定位产物。"启动 kanban" / "停止 kanban" 等复合短语对应一键脚本。 | "看板 / kanban / 拆任务 / task board / dispatcher / 启动 kanban …" | 项目 venv 里装好 `agentao-kanban`（统一走 `uv run kanban …`）；cwd 可写以便落 `.kanban/` 和 `workspace/board/` |
 
 ## 安装
 
