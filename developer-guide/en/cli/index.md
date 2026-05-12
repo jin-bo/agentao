@@ -24,7 +24,7 @@ You drop into a chat REPL. Type a normal sentence to talk to the agent. Type `/`
 - [**4. Plan Mode**](./4-plan-mode) — `/plan` workflow · read-only "think first, then commit" loop
 - [**5. Skills & Crystallize**](./5-skills-crystallize) — `/skills`, `/crystallize` · activate skills and distill new ones from a session
 - [**6. Memory**](./6-memory) — `/memory` · what gets remembered, where it lives, how to inspect and clear it
-- [**7. Context & Status**](./7-context-status) — `/context`, `/status` · token budget, compaction, session size
+- [**7. Context & Status**](./7-context-status) — `/context`, `/compact`, `/status` · token budget, compaction, session size
 - [**8. MCP / ACP / Plugins**](./8-mcp-acp-plugins) — `/mcp`, `/acp`, `/plugins` · attach external tool servers
 - [**9. Replay & Output**](./9-replay-output) — `/replay`, `/copy`, `/markdown` · record sessions, copy answers, render control
 - [**10. Configuration Reference**](./10-config-reference) — every config file the CLI reads, with paths and precedence

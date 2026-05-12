@@ -74,6 +74,33 @@ The summary lives both in the live message history (so the next turn sees it) an
 
 The "circuit breaker" is a safety: if compaction itself fails (LLM timeout, parse error) more than `CIRCUIT_BREAKER_LIMIT` times in a row, auto-compaction disables for the rest of the session — better to refuse a turn than spiral.
 
+## `/compact` — compact on demand
+
+`/compact` runs the *same* full-compaction path as the auto-compactor, but right now instead of waiting for the usage bar to climb.
+
+```text
+> /compact
+Compacted history: 54 → 19 messages, ~47,231 → ~12,880 tokens (6.4% of window).
+```
+
+What happens:
+
+- Calls `context_manager.compress_messages(..., is_auto=False)` — summarize an older block into a `[Conversation Summary]`, keep recent messages + the in-progress tool loop, re-inject recently-read files.
+- Fires the same `CONTEXT_COMPRESSED` and session-summary observability events as auto-compaction, and dispatches matching `PreCompact` plugin hooks (with `trigger="manual"`), so replay and hooks see manual `/compact` the same way they see the threshold-driven path.
+- Refreshes the context-usage % shown in the prompt.
+
+When to use it:
+
+- **Before a big task** — you know history is bloated and you'd rather pay the summarization cost now than have it land mid-turn.
+- **Right after `/sessions` resume** — squash a long restored history before the first new turn.
+- **Bills creeping up** — `/context` shows 50%+ but you're not near the auto-compaction trigger yet.
+
+Edge cases:
+
+- Fewer than 5 messages → `Not enough conversation history to compact yet.` (nothing to summarize).
+- If compaction can't make progress — circuit breaker open, no safe split point, or the summarization LLM call failed — you get `Compaction made no change …` and history is left untouched (check `agentao.log`).
+- Same lossiness as auto-compaction: anything not in the summary or in re-injected files is gone from the agent's perspective.
+
 ## `/status` quick-reference (full content in chapter 1)
 
 ```text
@@ -127,5 +154,5 @@ The context manager is `agent.context_manager`. Embedding hosts can read `cm.get
 :::
 
 ::: tip Authoritative help
-Command syntax: `/help`. `/context` body: [`agentao/cli/commands.py:handle_context_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands.py). Compaction logic: [`agentao/context_manager.py`](https://github.com/jin-bo/agentao/blob/main/agentao/context_manager.py).
+Command syntax: `/help`. `/context` body: [`agentao/cli/commands/context.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/context.py). `/compact` body: [`agentao/cli/commands/compact.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/compact.py). Compaction logic: [`agentao/context_manager.py`](https://github.com/jin-bo/agentao/blob/main/agentao/context_manager.py).
 :::
