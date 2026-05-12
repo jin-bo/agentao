@@ -65,6 +65,7 @@ All commands start with `/`:
   - `/memory review [approve|reject <id>]` - Review crystallized memory candidates
 - `/context` - Show context window token usage and limit
   - `/context limit <n>` - Set max context tokens (default: 200,000)
+- `/compact` - Summarize older history now into a compact block (manual compaction)
 - `/plugins` - List loaded plugins with diagnostics
 - `/permission` - Show active permission rules
 - `/mcp [subcommand]` - Manage MCP servers

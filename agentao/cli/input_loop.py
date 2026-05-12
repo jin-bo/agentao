@@ -148,7 +148,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
         handle_todos_command, handle_plan_command, handle_provider_command,
         handle_model_command, handle_temperature_command, handle_context_command,
         handle_mcp_command, handle_permission_command, handle_sessions_command,
-        handle_tools_command, handle_sandbox_command,
+        handle_tools_command, handle_sandbox_command, handle_compact_command,
     )
     from .replay_commands import handle_replay_command
     from .commands_ext import (
@@ -292,6 +292,10 @@ def run_loop(cli: "AgentaoCLI") -> None:
 
                 elif command == "context":
                     handle_context_command(cli, args)
+                    continue
+
+                elif command == "compact":
+                    handle_compact_command(cli, args)
                     continue
 
                 elif command == "mcp":
