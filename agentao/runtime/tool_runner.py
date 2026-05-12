@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING, Tuple
 
-from ..permissions import PermissionEngine
+from ..permissions import PermissionDecision, PermissionEngine
 from ..sandbox import SandboxPolicy
 from ..tools import ToolRegistry
 from ..transport import AgentEvent, EventType
@@ -13,7 +13,9 @@ from .tool_executor import ToolExecutor
 from .tool_planning import (
     ToolCallDecision,
     ToolCallPlanner,
+    _synth,
     make_tool_result_message,
+    pre_tool_hook_reason,
 )
 from .tool_result_formatter import ToolResultFormatter
 
@@ -185,6 +187,17 @@ class ToolRunner:
         if not _plans:
             return False, result_messages
 
+        # --- Phase 1.5: PreToolUse hook policy (decision-capable) ---
+        # A PreToolUse hook may deny a tool call outright or downgrade it
+        # to "ask" (which then flows through the same Phase 2 confirmation
+        # path). This runs *before* the PermissionDecisionEvent emit and
+        # *before* any tool starts, so a hook-derived decision lands in the
+        # public event ordering (decision precedes started) without
+        # special-casing. A hook ``allow`` is a no-op — it never downgrades
+        # an engine deny/ask or a tool's own requires_confirmation ask.
+        if self._plugin_hook_rules:
+            self._apply_pre_tool_use_hooks(_plans)
+
         # PermissionDecisionEvent must precede the tool's started event
         # for the same tool_call_id; firing here, before Phase 2 / 3,
         # honours that. Skip the per-plan loop entirely when no host is
@@ -230,6 +243,80 @@ class ToolRunner:
         # --- Phase 4: Result formatting (delegated to ToolResultFormatter) ---
         result_messages.extend(self._formatter.format_batch(_plans, _exec_results))
         return False, result_messages
+
+    # ------------------------------------------------------------------
+    # PreToolUse hook policy (Phase 1.5)
+    # ------------------------------------------------------------------
+
+    def _apply_pre_tool_use_hooks(self, plans) -> None:
+        """Let PreToolUse hooks deny / downgrade-to-ask each planned call.
+
+        Mutates ``plan.decision`` / ``plan.permission_detail`` in place so
+        the downstream PermissionDecisionEvent and Phase 2 confirmation see
+        the post-hook state. Hook-derived decisions are attributed via the
+        existing ``reason`` field (prefixed ``pre-tool-hook``); no new
+        public field is introduced. Dispatch errors are swallowed with a
+        warning — a broken hook must not wedge tool execution.
+        """
+        pre_rules = [
+            r for r in self._plugin_hook_rules
+            if r.event == "PreToolUse" and r.is_supported
+        ]
+        if not pre_rules:
+            return
+
+        from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
+
+        adapter = ClaudeHookPayloadAdapter()
+        dispatcher = PluginHookDispatcher(cwd=self._working_directory)
+        for plan in plans:
+            # An already-DENY plan can't be made "more denied"; skip the fork.
+            if plan.decision not in (ToolCallDecision.ALLOW, ToolCallDecision.ASK):
+                continue
+            payload = adapter.build_pre_tool_use(
+                tool_name=plan.function_name,
+                tool_input=plan.function_args,
+                session_id=self._session_id,
+            )
+            try:
+                hook_result = dispatcher.dispatch_pre_tool_use_decision(
+                    payload=payload, rules=pre_rules,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                self._logger.warning("PreToolUse hook dispatch error: %s", exc)
+                continue
+            if hook_result.matched_rule_count == 0:
+                continue
+
+            # Replay parity with the other hook sites.
+            try:
+                self._transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
+                    "hook_name": "PreToolUse",
+                    "tool": plan.function_name,
+                    "outcome": hook_result.decision or "allow",
+                    "matched_rule_count": hook_result.matched_rule_count,
+                    "added_context_count": len(hook_result.additional_contexts),
+                }))
+            except Exception:
+                pass
+
+            if hook_result.additional_contexts:
+                # MVP: recorded, not injected into the model or tool path.
+                self._logger.info(
+                    "PreToolUse hook returned additionalContext for '%s' "
+                    "(not injected): %d block(s)",
+                    plan.function_name, len(hook_result.additional_contexts),
+                )
+
+            reason = pre_tool_hook_reason(hook_result.reason)
+            if hook_result.decision == "deny":
+                plan.decision = ToolCallDecision.DENY
+                plan.permission_detail = _synth(PermissionDecision.DENY, reason)
+            elif hook_result.decision == "ask" and plan.decision == ToolCallDecision.ALLOW:
+                plan.decision = ToolCallDecision.ASK
+                plan.permission_detail = _synth(PermissionDecision.ASK, reason)
+            # ``allow`` / no decision → no-op (must not downgrade an existing
+            # engine deny/ask or a tool's own requires_confirmation ask).
 
     # ------------------------------------------------------------------
     # Public-event helpers

@@ -25,6 +25,7 @@ from ..models import (
     CLAUDE_FLAT_EVENTS,
     HookAttachmentRecord,
     ParsedHookRule,
+    PreToolUseHookResult,
     StopHookResult,
     UserPromptSubmitResult,
 )
@@ -72,7 +73,43 @@ class PluginHookDispatcher:
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
     ) -> list[HookAttachmentRecord]:
+        """Side-effect-only PreToolUse dispatch — returns attachments only.
+
+        .. deprecated::
+           Production code uses :meth:`dispatch_pre_tool_use_decision`,
+           which also parses the ``permissionDecision`` control surface.
+           This wrapper is kept for the lifecycle-dispatch tests.
+        """
         return self._dispatch_lifecycle("PreToolUse", payload, rules)
+
+    def dispatch_pre_tool_use_decision(
+        self,
+        *,
+        payload: dict[str, Any],
+        rules: list[ParsedHookRule],
+    ) -> PreToolUseHookResult:
+        """Run matching PreToolUse hooks; aggregate a permission decision.
+
+        Unlike :meth:`dispatch_pre_tool_use` (side-effect only, returns
+        attachments), this parses each hook's stdout for the Claude
+        Code-compatible ``hookSpecificOutput.permissionDecision`` shape
+        (``allow`` / ``deny`` / ``ask``) and merges the verdicts: the
+        first ``deny`` wins; otherwise the first ``ask`` wins; ``allow``
+        is a no-op. Stops forking subprocesses once a ``deny`` is seen.
+        Exit-code-2 "block" is intentionally NOT honored here — only the
+        JSON shape — matching the documented MVP scope. ``additionalContext``
+        is parsed and recorded on the result but not injected.
+        """
+        result = PreToolUseHookResult()
+        matched = self.select_matching_rules("PreToolUse", payload, rules)
+        result.matched_rule_count = len(matched)
+        for rule in matched:
+            if rule.hook_type != "command":
+                continue
+            self._run_pre_tool_use_command(rule, payload, result)
+            if result.decision == "deny":
+                break
+        return result
 
     def dispatch_post_tool_use(
         self,
@@ -202,18 +239,22 @@ class PluginHookDispatcher:
 
         return True
 
-    def _run_lifecycle_command(
-        self, rule: ParsedHookRule, payload: dict[str, Any]
-    ) -> HookAttachmentRecord | None:
-        """Execute a single lifecycle command hook.  Returns attachment or None."""
-        if not rule.command:
-            return None
+    def _run_subprocess(
+        self, rule: ParsedHookRule, payload: dict[str, Any],
+    ) -> tuple[subprocess.CompletedProcess[str] | None, bool]:
+        """Run ``rule.command`` with the JSON payload on stdin.
 
-        payload_json = json.dumps(payload)
+        Returns ``(proc, timed_out)``: ``proc`` is the completed process,
+        or ``None`` when the command timed out (``timed_out=True``), or
+        when it is empty / failed to start (``timed_out=False``). A
+        warning is logged on timeout and spawn failure.
+        """
+        if not rule.command:
+            return None, False
         try:
             proc = subprocess.run(
                 rule.command,
-                input=payload_json,
+                input=json.dumps(payload),
                 capture_output=True,
                 text=True,
                 timeout=rule.timeout,
@@ -221,15 +262,32 @@ class PluginHookDispatcher:
                 cwd=str(self._cwd),
             )
         except subprocess.TimeoutExpired:
-            logger.warning("Lifecycle hook timed out: %s (%s)", rule.event, rule.command)
-            return _make_attachment(
-                "hook_success",
-                {"warning": f"Hook timed out after {rule.timeout}s"},
-                hook_name=rule.command,
-                hook_event=rule.event,
+            logger.warning(
+                "%s hook timed out after %ds: %s", rule.event, rule.timeout, rule.command,
             )
+            return None, True
         except OSError as exc:
-            logger.warning("Lifecycle hook failed: %s (%s)", rule.command, exc)
+            logger.warning("%s hook failed to run: %s (%s)", rule.event, rule.command, exc)
+            return None, False
+        return proc, False
+
+    @staticmethod
+    def _timeout_attachment(rule: ParsedHookRule) -> HookAttachmentRecord:
+        return _make_attachment(
+            "hook_success",
+            {"warning": f"Hook timed out after {rule.timeout}s"},
+            hook_name=rule.command,
+            hook_event=rule.event,
+        )
+
+    def _run_lifecycle_command(
+        self, rule: ParsedHookRule, payload: dict[str, Any]
+    ) -> HookAttachmentRecord | None:
+        """Execute a single lifecycle command hook.  Returns attachment or None."""
+        proc, timed_out = self._run_subprocess(rule, payload)
+        if timed_out:
+            return self._timeout_attachment(rule)
+        if proc is None:
             return None
 
         if proc.returncode != 0:
@@ -244,6 +302,79 @@ class PluginHookDispatcher:
             hook_name=rule.command,
             hook_event=rule.event,
         )
+
+    # ------------------------------------------------------------------
+    # PreToolUse decision parsing (Phase 6, decision-capable)
+    # ------------------------------------------------------------------
+
+    def _run_pre_tool_use_command(
+        self,
+        rule: ParsedHookRule,
+        payload: dict[str, Any],
+        result: PreToolUseHookResult,
+    ) -> None:
+        """Run one PreToolUse command hook and fold its verdict into ``result``."""
+        proc, _timed_out = self._run_subprocess(rule, payload)
+        if proc is None:  # empty / timed out / failed to start — warning already logged
+            return
+
+        if proc.returncode != 0:
+            # MVP scope: exit-code-2 "block" is not honored — surface a
+            # warning like other lifecycle hooks. Any JSON on stdout is
+            # still parsed below.
+            logger.warning(
+                "PreToolUse hook exited %d: %s (stderr: %s)",
+                proc.returncode, rule.command, (proc.stderr or "")[:200],
+            )
+
+        stdout = (proc.stdout or "").strip()
+        if not stdout:
+            return
+
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError:
+            result.additional_contexts.append(stdout)
+            return
+        if not isinstance(data, dict):
+            result.additional_contexts.append(str(data))
+            return
+
+        decision: str | None = None
+        reason: str | None = None
+        hook_specific = data.get("hookSpecificOutput")
+        if isinstance(hook_specific, dict):
+            raw_decision = hook_specific.get("permissionDecision")
+            if isinstance(raw_decision, str) and raw_decision in ("allow", "deny", "ask"):
+                decision = raw_decision
+            for key in ("permissionDecisionReason", "reason"):
+                rv = hook_specific.get(key)
+                if isinstance(rv, str):
+                    reason = rv
+                    break
+            self._harvest_additional_context(hook_specific.get("additionalContext"), result)
+
+        # Tolerate top-level ``reason`` / ``additionalContext`` for hook
+        # scripts that don't nest under ``hookSpecificOutput``.
+        if reason is None and isinstance(data.get("reason"), str):
+            reason = data["reason"]
+        self._harvest_additional_context(data.get("additionalContext"), result)
+
+        # ``deny`` always wins (and the caller stops forking further hooks);
+        # ``ask`` only takes hold if nothing stronger has been seen.
+        if decision == "deny":
+            result.decision = "deny"
+            result.reason = reason
+        elif decision == "ask" and result.decision is None:
+            result.decision = "ask"
+            result.reason = reason
+
+    @staticmethod
+    def _harvest_additional_context(ctx: Any, result: PreToolUseHookResult) -> None:
+        if isinstance(ctx, str):
+            result.additional_contexts.append(ctx)
+        elif isinstance(ctx, list):
+            result.additional_contexts.extend(str(c) for c in ctx)
 
     # ------------------------------------------------------------------
     # UserPromptSubmit dispatch (Phase 5)
@@ -285,33 +416,11 @@ class PluginHookDispatcher:
         payload: dict[str, Any],
         result: UserPromptSubmitResult,
     ) -> None:
-        if not rule.command:
+        proc, timed_out = self._run_subprocess(rule, payload)
+        if timed_out:
+            result.messages.append(self._timeout_attachment(rule))
             return
-
-        payload_json = json.dumps(payload)
-        try:
-            proc = subprocess.run(
-                rule.command,
-                input=payload_json,
-                capture_output=True,
-                text=True,
-                timeout=rule.timeout,
-                shell=True,
-                cwd=str(self._cwd),
-            )
-        except subprocess.TimeoutExpired:
-            logger.warning("Hook command timed out after %ds: %s", rule.timeout, rule.command)
-            result.messages.append(
-                _make_attachment(
-                    "hook_success",
-                    {"warning": f"Hook timed out after {rule.timeout}s"},
-                    hook_name=rule.command,
-                    hook_event=rule.event,
-                )
-            )
-            return
-        except OSError as exc:
-            logger.warning("Hook command failed to run: %s (%s)", rule.command, exc)
+        if proc is None:
             return
 
         if proc.returncode != 0 and not proc.stdout.strip():
@@ -439,35 +548,11 @@ class PluginHookDispatcher:
         benign warning, which would silently drop the most common Claude
         Stop control signal.
         """
-        if not rule.command:
+        proc, timed_out = self._run_subprocess(rule, payload)
+        if timed_out:
+            result.messages.append(self._timeout_attachment(rule))
             return
-
-        payload_json = json.dumps(payload)
-        try:
-            proc = subprocess.run(
-                rule.command,
-                input=payload_json,
-                capture_output=True,
-                text=True,
-                timeout=rule.timeout,
-                shell=True,
-                cwd=str(self._cwd),
-            )
-        except subprocess.TimeoutExpired:
-            logger.warning(
-                "Stop hook timed out after %ds: %s", rule.timeout, rule.command,
-            )
-            result.messages.append(
-                _make_attachment(
-                    "hook_success",
-                    {"warning": f"Hook timed out after {rule.timeout}s"},
-                    hook_name=rule.command,
-                    hook_event="Stop",
-                )
-            )
-            return
-        except OSError as exc:
-            logger.warning("Stop hook failed to run: %s (%s)", rule.command, exc)
+        if proc is None:
             return
 
         # Exit code 2 is checked BEFORE the JSON parser so ``continue:
