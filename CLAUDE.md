@@ -183,6 +183,8 @@ User commands (start with `/`):
 - `/skills` - List available/active skills
 - `/memory` - Show saved memories
 - `/mcp` - List MCP servers and tools
+- `/context` - Show context-window token usage; `/context limit <n>` overrides max tokens
+- `/compact` - Manually run full history compaction (`compress_messages(is_auto=False)`); handler in `cli/commands/compact.py`
 - `/help` - Show help
 
 Session state `allow_all_tools` persists across tool confirmations within one session.

@@ -36,7 +36,7 @@ _SLASH_COMMANDS = [
     '/crystallize feedback', '/crystallize refine', '/crystallize revise',
     '/crystallize status', '/crystallize suggest',
     '/plan', '/plan clear', '/plan history', '/plan implement', '/plan show',
-    '/context', '/context limit', '/exit', '/help',
+    '/compact', '/context', '/context limit', '/exit', '/help',
     '/mcp', '/mcp add', '/mcp list', '/mcp remove',
     '/markdown',
     '/memory', '/memory clear', '/memory delete', '/memory list',
