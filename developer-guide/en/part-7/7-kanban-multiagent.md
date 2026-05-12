@@ -71,17 +71,17 @@ Rather than mirror code that will drift, here's the reading order that maps each
 | Read this in the kanban repo | What agentao surface it exercises | Reference here |
 |---|---|---|
 | `kanban/agents.py` + `kanban/defaults/*.md` | Sub-agent definition format (Markdown + YAML frontmatter) | [§3.1 Plugin model](/en/part-3/), [§6.x sub-agents](/en/part-6/) |
-| `kanban/orchestrator.py` | Single-writer state machine over agent results | [§4.7 Host contract](/en/part-4/7-host-contract) |
+| `kanban/orchestrator/` | Single-writer state machine over agent results | [§4.7 Host contract](/en/part-4/7-host-contract) |
 | `kanban/executors/multi_backend.py` + `agent_profiles.yaml` | Per-role routing between in-process sub-agent and external ACP CLI | [§3.3 Host-client architecture](/en/part-3/3-host-client-architecture), [§3.2 Agentao as ACP server](/en/part-3/2-agentao-as-server) |
-| `kanban/daemon.py` + `runtime/claims/*.json` | Multi-worker concurrency over a single board (O_EXCL CAS lease) | [§6.7 Resource & concurrency](/en/part-6/7-resource-concurrency) |
+| `kanban/daemon/` + `runtime/claims/*.json` | Multi-worker concurrency over a single board (O_EXCL CAS lease) | [§6.7 Resource & concurrency](/en/part-6/7-resource-concurrency) |
 | `workspace/worktrees/<card>/` machinery | Per-task sandbox isolation in a real codebase | [§6.x sandboxing](/en/part-6/) |
-| `kanban/mcp.py` (`kanban-mcp`) | Exposing the board as MCP tools to Claude Code / Codex | [§5 MCP](/en/part-5/) |
+| `kanban/mcp/` (`kanban-mcp`) | Exposing the board as MCP tools to Claude Code / Codex | [§5 MCP](/en/part-5/) |
 | `workspace/raw/<card>/<role>-<ts>.md` | Transcript + structured event capture for post-hoc audit | [§6 observability](/en/part-6/6-observability) |
 
 ## Minimal mental model (the 30-second version)
 
 ```python
-# pseudo-code — the actual code is in kanban/orchestrator.py
+# pseudo-code — the actual code is in kanban/orchestrator/
 while True:
     card = board.next_ready()              # uses WIP, deps, priority
     if not card:

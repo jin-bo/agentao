@@ -71,17 +71,17 @@
 | 在 kanban 仓库里读 | 用到的 agentao 接口 | 本指南对应章节 |
 |---|---|---|
 | `kanban/agents.py` + `kanban/defaults/*.md` | Sub-agent 定义格式（Markdown + YAML frontmatter） | [§3.1 插件模型](/zh/part-3/)、[§6.x sub-agent](/zh/part-6/) |
-| `kanban/orchestrator.py` | 基于 agent result 的单写者状态机 | [§4.7 宿主合约](/zh/part-4/7-host-contract) |
+| `kanban/orchestrator/` | 基于 agent result 的单写者状态机 | [§4.7 宿主合约](/zh/part-4/7-host-contract) |
 | `kanban/executors/multi_backend.py` + `agent_profiles.yaml` | 角色路由：进程内 sub-agent vs. 外部 ACP CLI | [§3.3 Host-client 架构](/zh/part-3/3-host-client-architecture)、[§3.2 Agentao 作为 ACP server](/zh/part-3/2-agentao-as-server) |
-| `kanban/daemon.py` + `runtime/claims/*.json` | 同一块板上的多 worker 并发（O_EXCL CAS 租约） | [§6.7 资源与并发](/zh/part-6/7-resource-concurrency) |
+| `kanban/daemon/` + `runtime/claims/*.json` | 同一块板上的多 worker 并发（O_EXCL CAS 租约） | [§6.7 资源与并发](/zh/part-6/7-resource-concurrency) |
 | `workspace/worktrees/<card>/` 机制 | 真实代码库里的"每任务沙箱" | [§6.x 沙箱](/zh/part-6/) |
-| `kanban/mcp.py`（`kanban-mcp`） | 把看板暴露为 Claude Code / Codex 的 MCP 工具 | [§5 MCP](/zh/part-5/) |
+| `kanban/mcp/`（`kanban-mcp`） | 把看板暴露为 Claude Code / Codex 的 MCP 工具 | [§5 MCP](/zh/part-5/) |
 | `workspace/raw/<card>/<role>-<ts>.md` | 事后审计用的 transcript + 结构化事件 | [§6 可观测性](/zh/part-6/6-observability) |
 
 ## 30 秒心智模型
 
 ```python
-# 伪代码 —— 真实代码在 kanban/orchestrator.py
+# 伪代码 —— 真实代码在 kanban/orchestrator/
 while True:
     card = board.next_ready()              # 看 WIP、依赖、优先级
     if not card:
