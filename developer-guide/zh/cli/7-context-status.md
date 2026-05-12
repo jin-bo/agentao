@@ -74,6 +74,33 @@ Context limit set to 500,000 tokens
 
 "熔断器"是兜底：如果压缩本身失败（LLM 超时、解析错）连续超过 `CIRCUIT_BREAKER_LIMIT` 次，本会话剩余时间自动压缩关闭 — 拒绝一轮总比螺旋崩溃好。
 
+## `/compact` — 手动立即压缩
+
+`/compact` 走的是和自动压缩**完全一样**的全量压缩路径，只是现在就执行，不等用量条爬上去。
+
+```text
+> /compact
+Compacted history: 54 → 19 messages, ~47,231 → ~12,880 tokens (6.4% of window).
+```
+
+发生了什么：
+
+- 调用 `context_manager.compress_messages(..., is_auto=False)` — 把较老的一块消息摘要成 `[Conversation Summary]`，保留最近的消息 + 正在进行的工具循环，重新挂回最近读过的文件。
+- 触发和自动压缩相同的 `CONTEXT_COMPRESSED`、session-summary 可观测事件，并派发匹配的 `PreCompact` 插件 hook（`trigger="manual"`）—— 所以 replay 和 hook 看到手动 `/compact` 和看到阈值触发的路径是一样的。
+- 刷新 prompt 里显示的上下文用量百分比。
+
+什么时候用：
+
+- **开一个大任务之前** —— 你知道历史已经臃肿，与其让压缩在某一轮中间发生，不如现在就付掉摘要成本。
+- **`/sessions` 恢复之后** —— 在第一轮新对话前先把恢复出来的长历史压一下。
+- **账单在涨** —— `/context` 显示 50%+ 但还没到自动压缩的触发点。
+
+边界情况：
+
+- 少于 5 条消息 → `Not enough conversation history to compact yet.`（没什么可摘要的）。
+- 压缩推进不了 —— 熔断器开着、找不到安全的切分点、或摘要 LLM 调用失败 —— 会得到 `Compaction made no change …`，历史原样不动（看 `agentao.log`）。
+- 和自动压缩一样有损：不在摘要里、也不在重新挂回的文件里的东西，从 agent 视角看就没了。
+
 ## `/status` 速查（完整在第 1 章）
 
 ```text
@@ -127,5 +154,5 @@ Context manager 是 `agent.context_manager`。嵌入式宿主可以读 `cm.get_u
 :::
 
 ::: tip 真相源头
-命令语法：`/help`。`/context` 实现：[`agentao/cli/commands.py:handle_context_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands.py)。压缩逻辑：[`agentao/context_manager.py`](https://github.com/jin-bo/agentao/blob/main/agentao/context_manager.py)。
+命令语法：`/help`。`/context` 实现：[`agentao/cli/commands/context.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/context.py)。`/compact` 实现：[`agentao/cli/commands/compact.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/compact.py)。压缩逻辑：[`agentao/context_manager.py`](https://github.com/jin-bo/agentao/blob/main/agentao/context_manager.py)。
 :::

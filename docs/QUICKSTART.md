@@ -83,6 +83,8 @@ All commands start with `/`:
   - `/model claude-sonnet-4-6` - Switch to Claude Sonnet
 - `/clear` - Clear conversation history
 - `/status` - Show conversation status (includes current model)
+- `/context` - Show context-window token usage (`/context limit <n>` to change it)
+- `/compact` - Summarize older history now into a compact block (manual compaction)
 - `/skills` - List available skills
 - `/memory` - Show saved memories
 - `/exit` or `/quit` - Exit the program

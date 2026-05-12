@@ -24,7 +24,7 @@ uv run agentao
 - [**4. Plan 模式**](./4-plan-mode) — `/plan` 工作流 · 只读的"先想清楚再动手"循环
 - [**5. Skills 与 Crystallize**](./5-skills-crystallize) — `/skills` `/crystallize` · 激活技能 / 从会话中析出新技能
 - [**6. 记忆**](./6-memory) — `/memory` · 什么被记住、存在哪里、怎么查、怎么清
-- [**7. 上下文与状态**](./7-context-status) — `/context` `/status` · token 预算、压缩、会话规模
+- [**7. 上下文与状态**](./7-context-status) — `/context` `/compact` `/status` · token 预算、压缩、会话规模
 - [**8. MCP / ACP / 插件**](./8-mcp-acp-plugins) — `/mcp` `/acp` `/plugins` · 接入外部工具服务器
 - [**9. 回放与输出**](./9-replay-output) — `/replay` `/copy` `/markdown` · 录会话、复制答案、控制渲染
 - [**10. 配置文件参考**](./10-config-reference) — CLI 读取的所有配置文件、路径与优先级
