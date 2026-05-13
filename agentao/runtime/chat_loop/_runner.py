@@ -411,8 +411,24 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 ] + agent.messages
             else:
                 agent.llm.logger.info(f"Reached final response in iteration {iteration}")
-                assistant_content = assistant_message.content or ""
                 reasoning_content = getattr(assistant_message, "reasoning_content", None)
+                assistant_content = assistant_message.content or ""
+                if not assistant_content.strip():
+                    # Some models (byte-level reasoning backends — Kimi,
+                    # GLM, Qwen-via-Ollama) end a turn with empty/whitespace
+                    # content and no tool calls. Persisting "" leaves a
+                    # contentless assistant message that strict API proxies
+                    # reject on the next turn. Substitute a neutral marker.
+                    assistant_content = (
+                        "[No text response]"
+                        if reasoning_content
+                        else "[No response]"
+                    )
+                    agent.llm.logger.warning(
+                        "Empty final assistant content in iteration %d; "
+                        "substituted placeholder to keep history valid",
+                        iteration,
+                    )
                 final_msg: Dict[str, Any] = {"role": "assistant", "content": assistant_content}
                 _attach_reasoning(final_msg, reasoning_content)
                 if sanitize_assistant_message(final_msg):
