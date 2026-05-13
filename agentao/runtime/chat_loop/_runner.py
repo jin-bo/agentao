@@ -295,6 +295,12 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     cancellation_token=token,
                 )
                 agent.messages.extend(tool_results)
+                # Turn-level telemetry: count tool calls the LLM made
+                # this iteration; run_turn reset this to 0 and TURN_END
+                # reports the total.
+                agent._turn_tool_count = (
+                    getattr(agent, "_turn_tool_count", 0) + len(clean_tool_calls)
+                )
                 if doom_triggered:
                     doom_content = (assistant_msg.get("content") or "").strip()
                     assistant_content_doom = (

@@ -73,6 +73,11 @@ def run_turn(
     # instead of replaying the entire accumulated conversation every turn.
     agent._llm_call_seq = 0
     agent._llm_call_last_msg_count = 1 + len(agent.messages)
+    # Turn-level tool-call counter. The chat loop bumps this by the
+    # number of tool calls in each LLM response; TURN_END reports the
+    # total so host telemetry can size a turn without replaying every
+    # TOOL_START. Reset per turn (and read defensively in the finally).
+    agent._turn_tool_count = 0
     # Snapshot the latest session-summary id so the inner loop can
     # fire SESSION_SUMMARY_WRITTEN each time compress_messages writes
     # a new one. Held on the instance so compression paths inside the
@@ -117,6 +122,7 @@ def run_turn(
                 "final_text": final_text,
                 "status": status,
                 "error": error_detail,
+                "tool_count": getattr(agent, "_turn_tool_count", 0),
             }))
         except Exception:
             pass

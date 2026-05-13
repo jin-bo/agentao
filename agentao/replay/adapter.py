@@ -72,18 +72,22 @@ class ReplayAdapter:
         *,
         status: str = "ok",
         error: Optional[str] = None,
+        tool_count: Optional[int] = None,
     ) -> None:
         turn_id = self._turn_id
         if turn_id is None:
             return
+        payload: Dict[str, Any] = {
+            "final_text": final_text or "",
+            "status": status,
+            "error": error,
+        }
+        if tool_count is not None:
+            payload["tool_count"] = tool_count
         self._recorder.record(
             EventKind.TURN_COMPLETED,
             turn_id=turn_id,
-            payload={
-                "final_text": final_text or "",
-                "status": status,
-                "error": error,
-            },
+            payload=payload,
         )
         self._turn_id = None
 
@@ -192,10 +196,12 @@ class ReplayAdapter:
 
         if kind == EventType.TURN_END:
             try:
+                tc = data.get("tool_count")
                 self.end_turn(
                     str(data.get("final_text", "") or ""),
                     status=str(data.get("status", "ok") or "ok"),
                     error=data.get("error"),
+                    tool_count=tc if isinstance(tc, int) else None,
                 )
             except Exception:
                 pass

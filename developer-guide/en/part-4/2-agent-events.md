@@ -74,8 +74,8 @@ Distinct from `TURN_START` (which fires per LLM iteration). `TURN_BEGIN` carries
 | Field | Description |
 |-------|-------------|
 | Trigger | Once at the end of each user-driven turn, after the final assistant reply (or on error / cancellation) |
-| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None}` |
-| Typical use | Close the turn frame; flush per-turn metrics |
+| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None, "tool_count": 3}` |
+| Typical use | Close the turn frame; flush per-turn metrics — `tool_count` is the number of tool calls the LLM made across all iterations of the turn, so a host can size a turn without replaying every `TOOL_START` |
 
 Replay recorders pair this with `TURN_BEGIN` to delimit a turn. Drives the runtime → replay handoff that used to be a direct call into the replay adapter.
 
@@ -182,8 +182,8 @@ For normal UI spinners, prefer `TOOL_COMPLETE`. Use `TOOL_RESULT` for replay, au
 | Field | Description |
 |-------|-------------|
 | Trigger | Around each provider call |
-| `data` | Provider-call metadata before the call; usage / finish metadata after the call |
-| Typical use | Metrics, cost tracking, debugging model behavior |
+| `data` | Provider-call metadata before the call; usage / finish metadata after the call. `LLM_CALL_COMPLETED` carries `duration_ms`, `model_latency_ms` (a stable intent-named alias of `duration_ms`), `first_token_ms` (time-to-first-token in ms, or `null` when the call streamed no text — e.g. a tool-only response or a failure before the first delta), `prompt_tokens`, `completion_tokens`, `finish_reason`, plus `status` / `error_class` / `error_message` / `streamed` on the error path |
+| Typical use | Metrics, cost tracking, debugging model behavior — `first_token_ms` vs `model_latency_ms` separates queueing/TTFT from total generation time |
 
 ### `LLM_CALL_DELTA`
 

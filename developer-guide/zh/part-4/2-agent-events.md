@@ -74,8 +74,8 @@ TURN_END   -> (turn 结束；携带最终 assistant 文本 + status/error)
 | 字段 | 说明 |
 |------|------|
 | 触发时机 | 每个用户驱动 turn 结束时**一次**，在最终 assistant 回复之后（或出错 / 被取消时） |
-| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None}` |
-| 典型用法 | 关闭 turn 帧；刷出 per-turn 指标 |
+| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None, "tool_count": 3}` |
+| 典型用法 | 关闭 turn 帧；刷出 per-turn 指标 —— `tool_count` 是这个 turn 内所有迭代里 LLM 发起的工具调用总数，宿主无需重放每个 `TOOL_START` 就能掂量这一 turn 的规模 |
 
 Replay 录制器靠它和 `TURN_BEGIN` 配对来界定一个 turn。它替代了运行时直接调用 replay adapter 的旧路径。
 
@@ -182,8 +182,8 @@ if event.type == EventType.TOOL_COMPLETE:
 | 字段 | 说明 |
 |------|------|
 | 触发时机 | 每次 provider 调用前后 |
-| `data` | 调用前元数据；调用后的 usage / finish 元数据 |
-| 典型用法 | 指标、成本统计、调试模型行为 |
+| `data` | 调用前元数据；调用后的 usage / finish 元数据。`LLM_CALL_COMPLETED` 携带 `duration_ms`、`model_latency_ms`（`duration_ms` 的稳定别名，命名更贴合意图）、`first_token_ms`（首 token 时延，毫秒；当本次调用没有流式文本——例如纯工具调用响应、或首个 delta 之前就失败——为 `null`）、`prompt_tokens`、`completion_tokens`、`finish_reason`，错误路径上还有 `status` / `error_class` / `error_message` / `streamed` |
+| 典型用法 | 指标、成本统计、调试模型行为 —— `first_token_ms` 与 `model_latency_ms` 把排队/TTFT 与总生成时间区分开 |
 
 ### `LLM_CALL_DELTA`
 

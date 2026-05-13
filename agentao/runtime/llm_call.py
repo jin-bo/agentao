@@ -112,14 +112,31 @@ def run_llm_call(
         }))
 
     t0 = time.monotonic()
+    # Time-to-first-token: monotonic stamp of the first streamed text
+    # chunk reaching ``on_text_chunk``. Stays ``None`` for calls that
+    # produce only tool_calls (no text deltas) or that fail before any
+    # delta. ``model_latency_ms`` on LLM_CALL_COMPLETED is the same
+    # value as ``duration_ms`` — a stable, intent-named alias for host
+    # telemetry consumers.
+    first_token_at: Optional[float] = None
+
+    def _on_text_chunk(chunk: str) -> None:
+        nonlocal first_token_at
+        if first_token_at is None:
+            first_token_at = time.monotonic()
+        agent.transport.emit(AgentEvent(EventType.LLM_TEXT, {"chunk": chunk}))
+
+    def _first_token_ms() -> Optional[int]:
+        if first_token_at is None:
+            return None
+        return round((first_token_at - t0) * 1000)
+
     try:
         response = agent.llm.chat_stream(
             messages=messages,
             tools=tools,
             max_tokens=agent.llm.max_tokens,
-            on_text_chunk=lambda chunk: agent.transport.emit(
-                AgentEvent(EventType.LLM_TEXT, {"chunk": chunk})
-            ),
+            on_text_chunk=_on_text_chunk,
             cancellation_token=cancellation_token,
         )
     except Exception as exc:
@@ -129,10 +146,13 @@ def run_llm_call(
         # between regenerate-from-scratch and resume-style retry without
         # having to count emitted LLM_TEXT events themselves.
         streamed = bool(getattr(exc, "streamed", False))
+        elapsed_ms = round((time.monotonic() - t0) * 1000)
         agent.transport.emit(AgentEvent(EventType.LLM_CALL_COMPLETED, {
             "attempt": attempt,
             "status": "error",
-            "duration_ms": round((time.monotonic() - t0) * 1000),
+            "duration_ms": elapsed_ms,
+            "model_latency_ms": elapsed_ms,
+            "first_token_ms": _first_token_ms(),
             "error_class": type(exc).__name__,
             "error_message": str(exc)[:500],
             "streamed": streamed,
@@ -156,10 +176,13 @@ def run_llm_call(
     except Exception:
         pass
 
+    elapsed_ms = round((time.monotonic() - t0) * 1000)
     agent.transport.emit(AgentEvent(EventType.LLM_CALL_COMPLETED, {
         "attempt": attempt,
         "status": "ok",
-        "duration_ms": round((time.monotonic() - t0) * 1000),
+        "duration_ms": elapsed_ms,
+        "model_latency_ms": elapsed_ms,
+        "first_token_ms": _first_token_ms(),
         "error_class": None,
         "error_message": None,
         "finish_reason": finish_reason,
