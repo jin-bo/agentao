@@ -222,6 +222,37 @@ Add only the small set needed to debug host integrations:
 covered. Do not introduce a large SQLite telemetry subsystem unless Agentao's
 deployment model changes.
 
+### Status — implemented 2026-05-12
+
+Landed (all as optional fields on existing transport/replay event payloads —
+no new event types, no public host-schema bump):
+
+- `runtime/llm_call.py`: `LLM_CALL_COMPLETED` now carries `model_latency_ms`
+  (a stable, intent-named alias of the existing `duration_ms`) and
+  `first_token_ms` (TTFT — monotonic stamp of the first streamed text chunk
+  reaching `on_text_chunk`, minus call start; `None` for tool-only responses
+  or failures before the first delta). Both the ok and error emit paths
+  include them. The streaming callback was promoted from a lambda to a named
+  closure so it can record the first-chunk timestamp.
+- `runtime/turn.py` + `runtime/chat_loop/_runner.py`: a per-turn
+  `agent._turn_tool_count` is reset in `run_turn`, bumped by
+  `len(clean_tool_calls)` after each tool batch in the chat loop, and reported
+  on `TURN_END` as `tool_count`. `replay/adapter.py` mirrors it onto the
+  `TURN_COMPLETED` replay record (`end_turn(..., tool_count=...)`).
+- Compaction duration was *already* covered: `CONTEXT_COMPRESSED` has carried
+  `duration_ms` (populated by every microcompaction / full-compaction call
+  site) and the replay adapter already records it — no change needed.
+- Tests: `tests/test_telemetry_increment.py` (TTFT/latency on the ok, error,
+  and tool-only paths; `tool_count` on `TURN_END` and the replay mirror).
+- Docs: `developer-guide/{en,zh}/part-4/2-agent-events.md` updated for the new
+  `LLM_CALL_COMPLETED` and `TURN_END` fields.
+
+Deliberately *not* done: `model_latency_ms` is not re-exposed on the public
+`agentao.host` Pydantic models — the host contract does not currently project
+LLM-call events at all, and adding that surface is a larger decision than this
+increment. Hosts that want latency today subscribe to the transport
+`LLM_CALL_COMPLETED` event (same as cost/usage tracking already does).
+
 ## P2: Permission Abstraction and Redaction
 
 Read denial is worth modeling in the permission abstraction, but OS-level
