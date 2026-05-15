@@ -57,6 +57,8 @@
 | `LLM_TEMPERATURE` | 否 | `0.2` | 范围 `0.0`–`2.0`。 |
 | `LLM_MAX_TOKENS` | 否 | — | 不设则使用 provider 缺省。 |
 | `BOCHA_API_KEY` | 否 | — | 设了之后 `web_search` 走 Bocha；否则回退到 DuckDuckGo。 |
+| `AGENTAO_WEB_FETCH_FALLBACK` | 否 | `none` | `web_fetch` 的 JS 渲染回退。可选值：`none` / `jina` / `crawl4ai`。默认 `none` —— 工具不会把用户给定的 URL 静默代理到第三方。`jina` 把 URL 发到 `https://r.jina.ai`（工具描述和结果首部的 `Fallback:` 行会显式说明）。`crawl4ai` 需要 `pip install 'agentao[crawl4ai]'` + `playwright install chromium`。仅在 `WebFetchTool` 构造时读一次；无效值会 warn 并降级到 `none`。 |
+| `JINA_API_KEY` | 否 | — | 可选。`AGENTAO_WEB_FETCH_FALLBACK=jina` 时，作为 `Authorization: Bearer <key>` 发出，获取更高的速率上限。 |
 
 > 标准范例：仓库根目录的 `.env.example`。
 

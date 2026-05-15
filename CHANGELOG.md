@@ -7,6 +7,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`web_fetch` no longer silently falls back to crawl4ai.** The previous
+  behavior auto-routed JS-rendered or failing fetches through a local
+  headless browser whenever `crawl4ai` was installed — meaning a `[full]`
+  install changed runtime behavior just by being present. The new model is
+  opt-in via the `AGENTAO_WEB_FETCH_FALLBACK` env var:
+  - `none` (default) — direct httpx fetch only; on a JS-detected page the
+    static shell is returned with a `Note:` line telling the LLM the content
+    is likely incomplete.
+  - `jina` — falls back to [Jina Reader](https://r.jina.ai); the URL is sent
+    to a third-party service, disclosed in the tool description and in a
+    `Fallback: jina reader (https://r.jina.ai/<url>)` line on the result so
+    the audit surface matches the actual outbound request.
+  - `crawl4ai` — falls back to the local headless browser (requires
+    `pip install agentao[crawl4ai]` and `playwright install chromium`).
+  Rationale: the confirmation prompt and host-visible URL must match the
+  actual outbound destination — silently proxying user-supplied URLs through
+  a third party breaks the audit contract embedded hosts depend on.
+
+### Added
+
+- **`AGENTAO_WEB_FETCH_FALLBACK`** env var (values: `none` | `jina` |
+  `crawl4ai`). Read once at `WebFetchTool` construction; invalid values log
+  a warning and degrade to `none`.
+- **`JINA_API_KEY`** env var (optional). When set, the Jina Reader fallback
+  sends `Authorization: Bearer <key>` for higher rate limits.
+
+### Internal
+
+- `crawl4ai` import moved from module top to inside `_fetch_with_crawl4ai()`
+  so `[full]` users no longer pay the Playwright/Chromium import cost on
+  `web.py` import.
+
 ## [0.4.6] — 2026-05-08
 
 A non-interactive automation release on top of 0.4.5. The new
