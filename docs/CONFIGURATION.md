@@ -57,6 +57,8 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 | `LLM_TEMPERATURE` | no | `0.2` | Range `0.0`–`2.0`. |
 | `LLM_MAX_TOKENS` | no | — | Provider-default if unset. |
 | `BOCHA_API_KEY` | no | — | If set, `web_search` uses Bocha; otherwise falls back to DuckDuckGo. |
+| `AGENTAO_WEB_FETCH_FALLBACK` | no | `none` | JS-rendering fallback for `web_fetch`. Allowed: `none` / `jina` / `crawl4ai`. Default `none` — the tool never silently proxies user-supplied URLs through a third party. `jina` sends the URL to `https://r.jina.ai` (disclosed in tool description + result `Fallback:` line). `crawl4ai` requires `pip install 'agentao[crawl4ai]'` + `playwright install chromium`. Read once at `WebFetchTool` construction; invalid values warn and degrade to `none`. |
+| `JINA_API_KEY` | no | — | Optional. When `AGENTAO_WEB_FETCH_FALLBACK=jina`, sent as `Authorization: Bearer <key>` for higher rate limits. |
 
 > Canonical example: `.env.example` in the repo root.
 

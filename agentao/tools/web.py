@@ -6,10 +6,10 @@ import os
 from typing import TYPE_CHECKING, Any, Dict
 from urllib.parse import quote_plus
 
-# `httpx` and `bs4` are deferred (P0.5): the web tools may never be
-# registered in an embedded host that doesn't expose web capabilities, so
-# importing this module should not pay for the parsing / HTTP stack until a
-# tool actually runs. ``execute()`` / ``_search_*()`` paths import locally.
+# `httpx`, `bs4`, and `crawl4ai` are deferred (P0.5): the web tools may
+# never be registered in an embedded host that doesn't expose web
+# capabilities, so importing this module should not pay for the parsing /
+# HTTP / headless-browser stack until a tool actually runs.
 if TYPE_CHECKING:
     from bs4 import BeautifulSoup as _BeautifulSoup_t
 
@@ -17,11 +17,25 @@ from .base import Tool
 
 logger = logging.getLogger("agentao.tools.web")
 
-try:
-    from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
-    _CRAWL4AI_AVAILABLE = True
-except ImportError:
-    _CRAWL4AI_AVAILABLE = False
+# Fallback when the fast httpx path doesn't yield usable content (JS-rendered
+# page or HTTP error). Default is "none" — the tool never silently proxies
+# the user-supplied URL through a third party. Hosts opt in explicitly.
+_FALLBACK_NONE = "none"
+_FALLBACK_JINA = "jina"
+_FALLBACK_CRAWL4AI = "crawl4ai"
+_VALID_FALLBACKS = {_FALLBACK_NONE, _FALLBACK_JINA, _FALLBACK_CRAWL4AI}
+
+
+def _read_fallback_setting() -> str:
+    raw = (os.getenv("AGENTAO_WEB_FETCH_FALLBACK") or "").strip().lower()
+    if raw in _VALID_FALLBACKS:
+        return raw
+    if raw:
+        logger.warning(
+            "Ignoring invalid AGENTAO_WEB_FETCH_FALLBACK=%r; expected one of %s",
+            raw, sorted(_VALID_FALLBACKS),
+        )
+    return _FALLBACK_NONE
 
 _JS_MARKERS = [
     "__NEXT_DATA__",        # Next.js
@@ -66,7 +80,22 @@ def _extract_text(soup: "_BeautifulSoup_t") -> str:
     return "\n".join(chunk for chunk in chunks if chunk)
 
 
+def _truncate(text: str, limit: int) -> str:
+    if len(text) > limit:
+        return text[:limit] + "\n\n[Content truncated...]"
+    return text
+
+
+def _format_fallback_body(url: str, label: str, body: str) -> str:
+    body = body or "[No content extracted]"
+    return f"URL: {url}\nFallback: {label}\n\n{_truncate(body, 20000)}"
+
+
 async def _fetch_with_crawl4ai(url: str) -> str:
+    # Deferred import: crawl4ai pulls in Playwright + Chromium; only
+    # imported when this fallback is actually selected and invoked.
+    from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+
     config = BrowserConfig(enable_stealth=True, headless=True, verbose=False)
     run_config = CrawlerRunConfig(verbose=False)
     async with AsyncWebCrawler(config=config) as crawler:
@@ -82,7 +111,33 @@ def _run_async(coro):
         return loop.run_until_complete(coro)
 
 
+def _jina_proxy_url(url: str) -> str:
+    return f"https://r.jina.ai/{url}"
+
+
+def _fetch_via_jina(url: str) -> str:
+    import httpx
+
+    proxy_url = _jina_proxy_url(url)
+    headers = {"Accept": "text/markdown, text/plain;q=0.9"}
+    api_key = os.getenv("JINA_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    with httpx.Client(follow_redirects=True, timeout=30.0) as client:
+        response = client.get(proxy_url, headers=headers)
+        response.raise_for_status()
+    return response.text or ""
+
+
 class WebFetchTool(Tool):
+    def __init__(self) -> None:
+        # Read env once at construction (matches WebSearchTool pattern). The
+        # fallback target is part of the audit surface — the description below
+        # tells the LLM and the host operator exactly where outbound traffic
+        # can go before the user is ever asked to confirm a fetch.
+        self._fallback = _read_fallback_setting()
+
     @property
     def is_read_only(self) -> bool:
         return True
@@ -93,11 +148,22 @@ class WebFetchTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Fetch content from a URL. Uses a fast HTTP fetch first; "
-            "automatically falls back to Crawl4AI (headless browser) if the "
-            "page requires JavaScript rendering."
-        )
+        base = "Fetch content from a URL via HTTP (GET) and extract readable text."
+        if self._fallback == _FALLBACK_JINA:
+            return (
+                base
+                + " If the page requires JavaScript rendering or the direct"
+                + " fetch fails, falls back to Jina Reader — the URL is sent"
+                + " to https://r.jina.ai and rendered server-side."
+            )
+        if self._fallback == _FALLBACK_CRAWL4AI:
+            return (
+                base
+                + " If the page requires JavaScript rendering or the direct"
+                + " fetch fails, falls back to a local headless browser"
+                + " (crawl4ai)."
+            )
+        return base + " No JS-rendering fallback is configured."
 
     @property
     def parameters(self) -> Dict[str, Any]:
@@ -137,42 +203,75 @@ class WebFetchTool(Tool):
             html = response.text
             soup = BeautifulSoup(html, "html.parser")
 
-            if _CRAWL4AI_AVAILABLE and _needs_js_rendering(html, soup):
-                logger.info("JS rendering detected for %s, using crawl4ai", url)
-                return self._crawl4ai_fetch(url)
+            js_detected = _needs_js_rendering(html, soup)
+            if js_detected:
+                fallback_result = self._run_fallback(
+                    url, reason="JS rendering detected"
+                )
+                if fallback_result is not None:
+                    return fallback_result
 
-            if extract_text:
-                text = _extract_text(soup)
-                if len(text) > 10000:
-                    text = text[:10000] + "\n\n[Content truncated...]"
-                return f"URL: {url}\nStatus: {response.status_code}\n\n{text}"
-            else:
-                content = html
-                if len(content) > 10000:
-                    content = content[:10000] + "\n\n[Content truncated...]"
-                return f"URL: {url}\nStatus: {response.status_code}\n\n{content}"
+            js_note = (
+                "Note: page appears to require JS rendering; only the static"
+                " shell was captured. Set AGENTAO_WEB_FETCH_FALLBACK=jina"
+                " (sends URL to r.jina.ai) or =crawl4ai (local headless"
+                " browser) to enable a fallback.\n"
+                if js_detected
+                else ""
+            )
+            body = _extract_text(soup) if extract_text else html
+            return (
+                f"URL: {url}\nStatus: {response.status_code}\n{js_note}\n"
+                f"{_truncate(body, 10000)}"
+            )
 
         except httpx.TimeoutException:
+            fallback_result = self._run_fallback(url, reason="httpx timeout")
+            if fallback_result is not None:
+                return fallback_result
             return f"Error: Request timed out for {url}"
         except httpx.HTTPError as e:
-            if _CRAWL4AI_AVAILABLE:
-                logger.warning("httpx failed for %s (%s), trying crawl4ai", url, e)
-                return self._crawl4ai_fetch(url)
+            fallback_result = self._run_fallback(url, reason=f"httpx error: {e}")
+            if fallback_result is not None:
+                return fallback_result
             return f"Error fetching URL: {e}"
         except Exception as e:
             return f"Error: {e}"
 
+    def _run_fallback(self, url: str, *, reason: str) -> str | None:
+        """Returns None when fallback is ``none``, signalling the caller to
+        keep the primary result."""
+        if self._fallback == _FALLBACK_NONE:
+            return None
+        if self._fallback == _FALLBACK_JINA:
+            logger.info("web_fetch fallback=jina for %s (%s)", url, reason)
+            return self._jina_fetch(url)
+        logger.info("web_fetch fallback=crawl4ai for %s (%s)", url, reason)
+        return self._crawl4ai_fetch(url)
+
+    def _jina_fetch(self, url: str) -> str:
+        label = f"jina reader ({_jina_proxy_url(url)})"
+        try:
+            markdown = _fetch_via_jina(url)
+        except Exception as e:
+            logger.warning("jina reader failed for %s: %s", url, e)
+            return f"URL: {url}\nFallback: {label}\nError: {e}"
+        return _format_fallback_body(url, label, markdown)
+
     def _crawl4ai_fetch(self, url: str) -> str:
+        label = "crawl4ai (headless browser)"
         try:
             markdown = _run_async(_fetch_with_crawl4ai(url))
-            if not markdown:
-                markdown = "[No content extracted]"
-            if len(markdown) > 20000:
-                markdown = markdown[:20000] + "\n\n[Content truncated...]"
-            return f"URL: {url}\n\n{markdown}"
+        except ImportError as e:
+            return (
+                f"URL: {url}\nFallback: {label}\nError: crawl4ai not"
+                f" installed — install with `pip install agentao[crawl4ai]`"
+                f" and run `playwright install chromium`. ({e})"
+            )
         except Exception as e:
             logger.warning("crawl4ai failed for %s: %s", url, e)
-            return f"Error: crawl4ai failed — {e}"
+            return f"URL: {url}\nFallback: {label}\nError: {e}"
+        return _format_fallback_body(url, label, markdown)
 
 
 class WebSearchTool(Tool):
