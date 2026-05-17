@@ -148,6 +148,7 @@ to them when they affect public behavior.
 
 | Document | Scope |
 |----------|-------|
+| [design/codex-reverse-review.md](design/codex-reverse-review.md) | Reverse review of Codex changes: what Agentao should adopt, what is already done, and what to defer |
 | [design/embedded-host-contract.md](design/embedded-host-contract.md) | Host-facing harness contract: schema discipline, event stream MVP, and CLI vs harness boundary |
 | [design/metacognitive-boundary.md](design/metacognitive-boundary.md) | Host-injectable self-vs-project boundary protocol |
 
@@ -158,6 +159,7 @@ These are contributor-oriented design and implementation documents. Some are pla
 Treat these as engineering context, not the canonical user surface:
 
 - [design/embedded-host-contract.md](design/embedded-host-contract.md)
+- [design/codex-reverse-review.md](design/codex-reverse-review.md)
 - [design/metacognitive-boundary.md](design/metacognitive-boundary.md)
 - [implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md](implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md)
 - [implementation/NON_INTERACTIVE_RUN_PLAN.md](implementation/NON_INTERACTIVE_RUN_PLAN.md)

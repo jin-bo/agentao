@@ -6,6 +6,8 @@
 
 中文版本：[CONFIGURATION.zh.md](CONFIGURATION.zh.md)。Both docs share the same structure, section numbering, and field tables — when editing one, update the other in the same change.
 
+> **Quick check.** To verify any of the files below without booting an agent, run `agentao config validate` (or `agentao doctor` for plugin / ACP / optional-dep coverage as well). Both support `--json`; errors exit 1, warnings exit 0. See [developer-guide CLI ch. 12](https://github.com/jin-bo/agentao/blob/main/developer-guide/en/cli/12-non-interactive.md#agentao-doctor-health-snapshot).
+
 ---
 
 ## 1. Configuration surfaces at a glance

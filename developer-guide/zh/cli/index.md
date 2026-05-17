@@ -29,7 +29,7 @@ uv run agentao
 - [**9. 回放与输出**](./9-replay-output) — `/replay` `/copy` `/markdown` · 录会话、复制答案、控制渲染
 - [**10. 配置文件参考**](./10-config-reference) — CLI 读取的所有配置文件、路径与优先级
 - [**11. 会话、子 Agent 与任务**](./11-sessions-agents) — `/sessions` `/agent` `/agents` `/todos` `/tools` · 恢复与并行工作台
-- [**12. 非交互入口**](./12-non-interactive) — `agentao init` `-p` `--resume` `--acp` · 脚本和宿主集成入口
+- [**12. 非交互入口**](./12-non-interactive) — `agentao init` `-p` `--resume` `--acp` `agentao doctor` `agentao config validate` · 脚本、CI 校验、宿主集成入口
 
 ## 怎么读
 

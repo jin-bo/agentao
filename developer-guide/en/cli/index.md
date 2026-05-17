@@ -29,7 +29,7 @@ You drop into a chat REPL. Type a normal sentence to talk to the agent. Type `/`
 - [**9. Replay & Output**](./9-replay-output) — `/replay`, `/copy`, `/markdown` · record sessions, copy answers, render control
 - [**10. Configuration Reference**](./10-config-reference) — every config file the CLI reads, with paths and precedence
 - [**11. Sessions, Agents & Tasks**](./11-sessions-agents) — `/sessions`, `/agent`, `/agents`, `/todos`, `/tools` · restore and parallel workbench
-- [**12. Non-Interactive Entry Points**](./12-non-interactive) — `agentao init`, `-p`, `--resume`, `--acp` · scripts and host integration
+- [**12. Non-Interactive Entry Points**](./12-non-interactive) — `agentao init`, `-p`, `--resume`, `--acp`, `agentao doctor`, `agentao config validate` · scripts, CI checks, and host integration
 
 ## How to read
 

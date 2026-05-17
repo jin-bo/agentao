@@ -247,43 +247,14 @@ def handle_plugin_subcommand(args) -> None:
 
 def _plugin_list_cli(args) -> None:
     """``agentao plugin list`` — show loaded plugins with diagnostics."""
-    from ..embedding.plugins.diagnostics import build_diagnostics
-    from ..embedding.plugins.manager import PluginManager
+    from ..embedding.plugins.diagnostics import collect_full_plugin_diagnostics
 
     _top = getattr(args, "plugin_dirs", []) or []
     _sub = getattr(args, "sub_plugin_dirs", None) or []
     inline_dirs = [Path(d) for d in _top + _sub]
-    mgr = PluginManager(inline_dirs=inline_dirs)
-    loaded = mgr.load_plugins()
-
-    # Simulate registration checks so the listing reflects post-load
-    # failures (e.g. skill/agent name collisions) that would cause
-    # _load_and_register_plugins() to reject a plugin at runtime.
-    from ..embedding.plugins.resolvers.agents import resolve_plugin_agents
-    from ..embedding.plugins.resolvers.skills import resolve_plugin_entries
-
-    all_warnings = list(mgr.get_warnings())
-    all_errors = list(mgr.get_errors())
-    failed_plugins: set[str] = set()
-
-    for plugin in loaded:
-        entries, pw, pe = resolve_plugin_entries(plugin)
-        all_warnings.extend(pw)
-        all_errors.extend(pe)
-        if pe:
-            failed_plugins.add(plugin.name)
-
-    for plugin in loaded:
-        if plugin.name in failed_plugins:
-            continue
-        defs, aw, ae = resolve_plugin_agents(plugin)
-        all_warnings.extend(aw)
-        all_errors.extend(ae)
-        if ae:
-            failed_plugins.add(plugin.name)
-
-    healthy = [p for p in loaded if p.name not in failed_plugins]
-    diag = build_diagnostics(healthy, all_warnings, all_errors)
+    loaded, failed_plugins, diag = collect_full_plugin_diagnostics(
+        inline_dirs=inline_dirs,
+    )
 
     if getattr(args, "json_output", False):
         import json as _json

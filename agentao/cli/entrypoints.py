@@ -316,6 +316,29 @@ def _build_parser():
         help="Scope to update (default: auto-detect)",
     )
 
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Aggregate Agentao health signals (config, plugins, permissions, …).",
+    )
+    doctor_parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Emit a single JSON document instead of a human-readable report.",
+    )
+
+    config_parser = subparsers.add_parser(
+        "config",
+        help="Inspect or validate Agentao configuration.",
+    )
+    config_sub = config_parser.add_subparsers(dest="config_action")
+    config_validate_p = config_sub.add_parser(
+        "validate",
+        help="Report config errors in settings, permissions, MCP, replay, memory.",
+    )
+    config_validate_p.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Emit a single JSON document instead of a human-readable report.",
+    )
+
     return parser
 
 
@@ -370,6 +393,25 @@ def entrypoint():
         _cli.handle_plugin_subcommand(args)
     elif args.subcommand == "skill":
         _cli.handle_skill_subcommand(args)
+    elif args.subcommand == "doctor":
+        # Automation-oriented like ``run``: a typo (``--jsno`` instead of
+        # ``--json``) must fail loudly so CI surfaces the broken invocation
+        # instead of exit-0 success against the wrong flag.
+        if extras:
+            sys.stderr.write(
+                "agentao doctor: unrecognized arguments: "
+                + " ".join(extras) + "\n"
+            )
+            sys.exit(2)
+        _cli.handle_doctor_subcommand(args)
+    elif args.subcommand == "config":
+        if extras:
+            sys.stderr.write(
+                "agentao config: unrecognized arguments: "
+                + " ".join(extras) + "\n"
+            )
+            sys.exit(2)
+        _cli.handle_config_subcommand(args)
     elif args.prompt is not None:
         stdin_text = "" if sys.stdin.isatty() else sys.stdin.read()
         parts = [p for p in [args.prompt.strip(), stdin_text.strip()] if p]

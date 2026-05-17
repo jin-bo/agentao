@@ -173,6 +173,44 @@ agentao plugin list --json
 
 This loads plugins and emits diagnostics, useful for CI or pre-release checks. REPL `/plugins` is the interactive version of the same surface.
 
+## `agentao doctor` — health snapshot
+
+```bash
+agentao doctor
+agentao doctor --json
+```
+
+Aggregates every health signal the harness already produces — `.env` provider check (API-key *presence*, never the value), `settings.json`, permissions, MCP, replay config, ACP schema export, project + user memory stores, plugin diagnostics, and optional-dep probes — into one report. `--json` is the contract surface for CI / hosts; the human-readable default is for terminal use.
+
+Output contract:
+
+- `{"ok": bool, "sections": {...}, "findings": [...]}`
+- `ok` is `false` iff at least one finding has `"level": "error"`; in that case the command exits **1**. Warnings (e.g. "API key not set" on a fresh clone) keep `ok=true` and exit **0** so they don't trip CI.
+- Findings carry `level` (`info` / `warning` / `error`), `area` (the section the issue belongs to), a human message, and `source` (path or env-var label).
+- Doctor is **read-only**: it never creates a memory DB or mutates files. Probing an absent `memory.db` reports `"absent"` without bootstrapping the file.
+- Unknown flags fail with exit **2** (like `agentao run`), so a CI typo (`--jsno`) surfaces instead of exiting 0 against the wrong invocation.
+
+## `agentao config validate` — explicit config check
+
+```bash
+agentao config validate
+agentao config validate --json
+```
+
+A narrower companion to `doctor` that *only* validates user-editable config — `settings.json`, `.env` provider variables, `permissions.json`, `mcp.json`, the `replay` block in `settings.json`, and the memory-store probe. Plugin discovery is intentionally excluded (use `doctor` or `plugin list`).
+
+Validation surfaces problems the runtime would otherwise swallow silently:
+
+- malformed JSON or non-object shapes in any of the above files;
+- `LLM_TEMPERATURE` / `LLM_MAX_TOKENS` that fail to parse;
+- per-server MCP entries that aren't objects, with non-string `env` / `headers` / `args` values that would crash `expand_env_vars` at runtime;
+- user/project `mcp.json` name collisions (project entries are dropped at runtime — validate warns so you notice);
+- replay block values that `ReplayConfig.from_mapping` silently coerces away (`max_instances: 0`, non-bool capture flags, unknown flag keys, …).
+
+Runtime behavior is **unchanged** — `agentao config validate` is the explicit surface. The factory stays best-effort so an embedded host with a bad optional config isn't blocked from running.
+
+Both commands honor `--plugin-dir DIR` (doctor uses it for plugin discovery) and require the `[cli]` extra to be installed; without it the standard missing-dep guard prints an install hint.
+
 ---
 
 ::: tip Authoritative reference
