@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.7] — 2026-05-17
+
 ### Added
 
 - **`agentao doctor` and `agentao config validate` — diagnostics CLI** (#45).
