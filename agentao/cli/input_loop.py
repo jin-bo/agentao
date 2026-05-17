@@ -63,7 +63,9 @@ def get_status_toolbar(cli: "AgentaoCLI") -> ANSI:
     DIM = "\x1b[2m"
 
     try:
-        model = cli.agent.get_current_model().split("/")[-1]
+        model_name = cli.agent.get_current_model().split("/")[-1]
+        provider = (getattr(cli, "current_provider", "") or "").lower()
+        model = f"{provider}/{model_name}" if provider else model_name
     except Exception:
         model = "—"
 
