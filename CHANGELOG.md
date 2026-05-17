@@ -9,27 +9,76 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **`agentao doctor` and `agentao config validate` — diagnostics CLI.** Two
-  new non-interactive subcommands that aggregate or validate the harness's
-  existing signals without instantiating an agent. `doctor` covers the `.env`
-  provider check (API-key *presence*, never the value), `settings.json`,
-  permissions, MCP, replay, ACP schema export, project + user memory stores,
-  plugin diagnostics, and optional-dep probes. `config validate` is the
-  narrower companion that only checks user-editable config (no plugin
-  section). Output contract is `{"ok": bool, "sections": {...}, "findings":
-  [...]}`; errors exit `1`, warnings keep exit `0`. `--json` is the contract
-  surface for CI/hosts, human-readable is the default. Both are **read-only**
-  (probing an absent `memory.db` reports `"absent"` instead of bootstrapping
-  it) and reject unknown flags with exit `2`. Implementation in
+- **`agentao doctor` and `agentao config validate` — diagnostics CLI** (#45).
+  Two new non-interactive subcommands that aggregate or validate the
+  harness's existing signals without instantiating an agent. `doctor`
+  covers the `.env` provider check (API-key *presence*, never the value),
+  `settings.json`, permissions, MCP, replay, ACP schema export, project +
+  user memory stores, plugin diagnostics, and optional-dep probes.
+  `config validate` is the narrower companion that only checks
+  user-editable config (no plugin section). Output contract is
+  `{"ok": bool, "sections": {...}, "findings": [...]}`; errors exit `1`,
+  warnings keep exit `0`. `--json` is the contract surface for CI/hosts,
+  human-readable is the default. Both are **read-only** (probing an
+  absent `memory.db` reports `"absent"` instead of bootstrapping it) and
+  reject unknown flags with exit `2`. Implementation in
   `agentao/cli/diagnostics_cli.py`; documented under
   `developer-guide/{en,zh}/cli/12-non-interactive.md`; design rationale in
   `docs/design/codex-reverse-review.md` (2026-05-17 follow-up).
 
-- **`collect_full_plugin_diagnostics()` helper** in
-  `agentao/embedding/plugins/diagnostics.py`. Shared by `agentao plugin list`
-  and `agentao doctor` so the two commands cannot drift on which plugins they
-  consider failed (it runs the post-load `resolve_plugin_entries` /
-  `resolve_plugin_agents` simulation in addition to `PluginManager.load_plugins`).
+- **`collect_full_plugin_diagnostics()` helper** (#45) in
+  `agentao/embedding/plugins/diagnostics.py`. Shared by
+  `agentao plugin list` and `agentao doctor` so the two commands cannot
+  drift on which plugins they consider failed (it runs the post-load
+  `resolve_plugin_entries` / `resolve_plugin_agents` simulation in
+  addition to `PluginManager.load_plugins`).
+
+- **`PreToolUse` plugin hooks are now decision-capable** (#39). A hook
+  returning `hookSpecificOutput.permissionDecision: "deny"` cancels the tool
+  call; `"ask"` flips the plan to the existing confirmation path; `"allow"`
+  is a no-op. First `deny` wins, then first `ask`; hook decisions cannot
+  override an engine `deny`/`ask`. The dispatch was moved to Phase 1.5 of
+  `ToolRunner` so the new `PermissionDecisionEvent` precedes any tool
+  `started` event (the ordering contract holds without an after-the-fact
+  `cancelled`). A `PLUGIN_HOOK_FIRED` replay event with
+  `hook_name: "PreToolUse"` is emitted for parity with the other hook sites.
+  MVP supports only the JSON `hookSpecificOutput.permissionDecision` shape;
+  exit-code-2 "block" parity, `additionalContext` injection into the model
+  prompt, and `updatedInput` rewriting stay out of scope. Full design in
+  `docs/design/codex-reverse-review.md`; tests in
+  `tests/test_hooks_pre_tool_use_decision.py`.
+
+- **Model latency / TTFT / per-turn tool count telemetry** (#41). Optional
+  fields on existing transport/replay events — *no new event types, no
+  public host-schema bump*:
+  - `LLM_CALL_COMPLETED` now carries `model_latency_ms` (a stable
+    intent-named alias of the existing `duration_ms`) and `first_token_ms`
+    (TTFT — the monotonic timestamp of the first streamed text chunk
+    minus call start; `None` for tool-only responses or failures before
+    the first delta). Both the ok and error emit paths include them.
+  - `TURN_END` carries `tool_count` (the per-turn count bumped after each
+    tool batch in the chat loop); the replay adapter mirrors it onto the
+    `TURN_COMPLETED` replay record.
+  - Compaction duration was already covered: `CONTEXT_COMPRESSED` has long
+    carried `duration_ms` and is now documented as the stable
+    compaction-duration field.
+  Hosts subscribe via the transport event stream (same path cost/usage
+  tracking already uses). Not re-exposed on `agentao.host` Pydantic models
+  yet — the host contract does not currently project LLM-call events, and
+  adding that surface is a larger decision than this increment.
+
+- **`/compact` manual-compaction command** (#38, #40). Runs full history
+  compaction (`compress_messages(is_auto=False)`) on demand, without waiting
+  for the auto-compaction threshold. Handler in
+  `agentao/cli/commands/compact.py`; documented in `CLAUDE.md` and in
+  `developer-guide/{en,zh}/cli/7-context-status.md`.
+
+### Fixed
+
+- **Empty final assistant content is no longer pushed into history** (#42).
+  The chat loop used to append an empty assistant message when the model
+  produced only a tool call and no text on the final iteration, leaving a
+  malformed history entry that some providers reject on the next turn.
 
 ### Changed
 
