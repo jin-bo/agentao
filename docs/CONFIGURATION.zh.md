@@ -6,6 +6,8 @@
 
 英文原版：[CONFIGURATION.md](CONFIGURATION.md)。两份文档结构、段号、字段表完全一致；如果某次改动只更新了其中一份，请同步另一份。
 
+> **快速校验。** 想不启动 agent 直接检查下面任意文件，跑 `agentao config validate`（或 `agentao doctor`，同时还覆盖插件 / ACP / 可选依赖）。两者都支持 `--json`：error 退出 1，warning 退出 0。详见 [developer-guide CLI 第 12 章](https://github.com/jin-bo/agentao/blob/main/developer-guide/zh/cli/12-non-interactive.md#agentao-doctor-健康快照)。
+
 ---
 
 ## 1. 配置面总览

@@ -173,6 +173,44 @@ agentao plugin list --json
 
 这会加载插件并输出诊断，适合 CI 或发布前检查。REPL 内的 `/plugins` 是同一类诊断的交互版。
 
+## `agentao doctor` —— 健康快照
+
+```bash
+agentao doctor
+agentao doctor --json
+```
+
+把 harness 已经能给出的所有健康信号汇总到一份报告里：`.env` 的 provider 检查（只看 API key **是否存在**，绝不输出 key 值）、`settings.json`、permissions、MCP、replay 配置、ACP schema 导出状态、项目 + 用户 memory store、插件诊断、可选依赖探测。`--json` 是给 CI / 宿主用的契约面，人类可读输出是终端默认。
+
+输出契约：
+
+- `{"ok": bool, "sections": {...}, "findings": [...]}`
+- `ok` 为 `false` 当且仅当至少一条 finding 的 `"level": "error"`，此时退出码为 **1**。Warning（例如刚 clone 时的 "API key not set"）保持 `ok=true`、退出 **0**，不会误绊 CI。
+- 每条 finding 含 `level`（`info` / `warning` / `error`）、`area`（所属 section）、可读 `message`、`source`（路径或环境变量标签）。
+- Doctor 是**只读**的：不会建 memory DB、不会改文件。探测一个不存在的 `memory.db` 会报 `"absent"`，绝不顺手把空文件创出来。
+- 未知 flag 退出码 **2**（与 `agentao run` 一致）—— 一旦 CI 写错（如 `--jsno`）会立即报错，不会用错误参数静默 exit 0。
+
+## `agentao config validate` —— 显式配置校验
+
+```bash
+agentao config validate
+agentao config validate --json
+```
+
+`doctor` 的窄版伙伴，**只**校验用户可编辑配置：`settings.json`、`.env` provider 变量、`permissions.json`、`mcp.json`、`settings.json` 的 `replay` 段、memory-store 探测。插件发现刻意排除（用 `doctor` 或 `plugin list`）。
+
+会显式报出运行时通常会**默默吞掉**的问题：
+
+- 上述文件的 JSON 损坏 / 顶层非 object 形态；
+- `LLM_TEMPERATURE` / `LLM_MAX_TOKENS` 解析失败；
+- MCP 单条 server 条目非 object，或其 `env` / `headers` / `args` 含非 string（运行时 `expand_env_vars` 会抛 `TypeError`）；
+- 用户级与项目级 `mcp.json` 同名碰撞（运行时会丢掉项目级条目，validate 会 warn 让你知道）；
+- `ReplayConfig.from_mapping` 会静默吞掉的 replay 设置（`max_instances: 0`、非 bool 的 capture flag、未知 flag 键等）。
+
+运行时行为**不变**——`agentao config validate` 是显式校验面。factory 仍是 best-effort，这样宿主带着可选配置坏掉时也不会被卡住启动。
+
+两个命令都支持 `--plugin-dir DIR`（doctor 用它来发现插件），且都依赖 `[cli]` extra；缺依赖时会走标准 missing-dep 守卫并打印安装提示。
+
 ---
 
 ::: tip 真相源头

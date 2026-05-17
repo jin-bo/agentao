@@ -6,6 +6,136 @@ This note records the reverse review of the latest Codex changes against
 Agentao's current architecture. The goal is to identify what Agentao actually
 needs, not to mirror Codex's product shape.
 
+## 2026-05-17 Follow-up: Diagnostics, Not Product Weight
+
+A later review against the 2026-05-17 Codex pull refined the conclusion. The
+important correction is that most of the apparent Codex-inspired work is either
+already present in Agentao or too early for Agentao's current scale.
+
+The current actionable scope is deliberately small:
+
+1. Add `agentao doctor --json`.
+2. Add `agentao config validate`.
+
+Both should be small wiring PRs over existing signals. They should not become a
+new app-server diagnostics subsystem, a stricter runtime startup path, or a
+plugin marketplace project.
+
+### Verified Current State
+
+This section records the code-grounded checks that drive the narrowed scope.
+
+| Area | Current Agentao state |
+|------|-----------------------|
+| `doctor` / `config validate` CLI | Missing from `agentao/cli/`; this is a real gap. |
+| Factory error handling | `agentao/embedding/factory.py` intentionally has best-effort paths that swallow load/open errors. These should remain safe at runtime but become visible through validation. |
+| Permission snapshot | Already shipped. `Agentao.active_permissions()` returns `ActivePermissions(mode, rules, loaded_sources)`, backed by `PermissionEngine.active_permissions()` and `agentao/host/models.py`. No permission-profile rewrite is needed. |
+| Correlation IDs | Partially present. Host projection and replay already carry `session_id`, `turn_id`, `tool_call_id`, and `call_id`. Cross LLM/tool/MCP/ACP trace stitching is not a current P0. |
+| Plugin diagnostics | Already has a base in `agentao/embedding/plugins/diagnostics.py` via `PluginDiagnostics` and `build_diagnostics()`. `doctor` should reuse it. |
+| Tool surface | Small enough that `ToolOutput` artifact/visibility restructuring is not justified without a real consumer. |
+
+### P0: `agentao doctor --json`
+
+Status — implemented 2026-05-16.
+
+Goal: aggregate existing health signals into one operator-facing command.
+
+This command should expose what Agentao already knows:
+
+- plugin diagnostics from `PluginDiagnostics` / `build_diagnostics()`;
+- active permission snapshot from `active_permissions()`;
+- replay schema version / replay configuration visibility;
+- ACP schema export status;
+- config/factory source and validation errors;
+- optional-dependency availability only where the feature is configured or
+  obviously requested.
+
+Non-goals:
+
+- no remote network probes;
+- no marketplace or plugin sharing behavior;
+- no new long-running daemon inspection protocol;
+- no new strict startup semantics;
+- no broad "system audit" beyond Agentao-owned inputs.
+
+Output contract:
+
+- default human-readable output can be added, but `--json` is mandatory for
+  host/CI usage;
+- diagnostics should be redaction-safe by default;
+- warnings and errors should include the source path when available.
+
+### P0: `agentao config validate`
+
+Status — implemented 2026-05-16.
+
+Goal: make configuration problems visible without changing runtime startup
+semantics.
+
+The factory path stays best-effort because Agentao is embedded-host friendly:
+bad optional config, unreadable user memory, or malformed settings should not
+unexpectedly break hosts that inject their own subsystems. Validation is a
+separate explicit command that reports those failures.
+
+Minimum scope:
+
+- validate `.agentao/settings.json` shape and JSON parse errors;
+- validate environment-derived provider fields where relevant;
+- report permission config source parse/load errors;
+- report MCP config parse/load errors;
+- report replay config parse/load errors;
+- report SQLite open failures for project/user memory stores as validation
+  findings instead of silent behavior.
+
+Non-goals:
+
+- no strict-on-startup mode;
+- no Codex-style layered `profile-v2`;
+- no migration of embedded constructor behavior;
+- no broad schema redesign.
+
+### Implementation notes (both commands, landed 2026-05-16)
+
+- Both handlers live in ``agentao/cli/diagnostics_cli.py`` and are wired
+  through the lazy-import surface in ``agentao/cli/__init__.py``; the
+  ``[cli]`` missing-dep guard in :func:`agentao.cli.entrypoint` still applies
+  to them as it does to ``plugin list`` and ``skill list``.
+- Neither command instantiates an :class:`Agentao`; both work off the same
+  on-disk signals the factory consults (``settings.json``, ``permissions.json``,
+  ``mcp.json``, replay block, memory DB probes) plus
+  :func:`agentao.embedding.plugins.diagnostics.build_diagnostics` for plugins.
+- Output is redaction-safe by design: the provider section reports
+  ``api_key_present`` (a boolean) and the model/base URL, but never the key
+  value itself; ``LLM_TEMPERATURE`` / ``LLM_MAX_TOKENS`` values are echoed only
+  in their raw form when they fail to parse, since those are not secrets.
+- ``--json`` returns ``{"ok": bool, "sections": {...}, "findings": [...]}``;
+  ``ok`` is ``False`` exactly when at least one finding has ``level == "error"``,
+  and that case maps to ``exit 1``. Warnings keep ``ok = True`` so a missing
+  API key (a normal fresh-clone state) never flunks CI.
+- ``config validate`` deliberately omits the ``plugins`` section — plugin
+  diagnostics already have a dedicated CLI (``agentao plugin list``) and a
+  doctor section, so duplicating them here would just blur the "config" scope.
+- Tests live in ``tests/test_diagnostics_cli.py`` (23 cases). Each test
+  monkeypatches ``Path.home`` to ``tmp_path`` so the developer's real
+  ``~/.agentao`` is not touched.
+
+### Explicitly Not Doing
+
+These are excluded until a real consumer or bug report creates pressure:
+
+- **Permission profile rewrite.** Agentao already has the lightweight
+  `ActivePermissions` snapshot it needs today.
+- **Structured `ToolOutput` overhaul.** The current tool count and consumers do
+  not justify artifact/visibility metadata across all tools.
+- **Large trace ID refactor.** Existing `session_id` / `turn_id` /
+  `tool_call_id` / `call_id` covers most debugging. Add one cross-layer field
+  later only if host integrations need LLM-to-MCP stitching.
+- **Plugin marketplace / share checkout.** The plugin system should stabilize
+  locally before distribution is expanded.
+- **TUI-style large module split.** Agentao's CLI is already split across
+  `app`, `input_loop`, `session`, and `subcommands`; Codex's TUI refactor was
+  debt repayment for a much larger UI.
+
 ## Summary
 
 Codex's recent architecture work is mostly driven by Codex-specific scale:

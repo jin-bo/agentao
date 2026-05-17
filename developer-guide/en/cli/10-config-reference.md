@@ -95,11 +95,26 @@ Files that exist under `.agentao/` but you should **not** hand-edit:
 
 Editing them while the CLI is running can desync state. Stop the CLI first if you must.
 
+## Verify your config
+
+Two non-interactive commands inspect the files in the tables above without starting an agent:
+
+```bash
+agentao config validate      # config files only (.env, settings, permissions, mcp, replay, memory)
+agentao config validate --json
+
+agentao doctor               # adds plugin diagnostics, ACP schema, optional-dep probes
+agentao doctor --json
+```
+
+Use them in CI, in a `make check` target, or right after editing one of the files in the table above. Errors (malformed JSON, non-object MCP entries, unparseable `LLM_TEMPERATURE`, etc.) exit **1**; warnings (missing API key on a fresh clone, user/project MCP collisions) keep exit **0** so CI doesn't trip on benign states. Full surface is documented in [chapter 12](./12-non-interactive#agentao-doctor-health-snapshot).
+
 ## Where to go next
 
 | Want to… | Read |
 |----------|------|
 | Full schema reference for any of the files above | [`docs/CONFIGURATION.md`](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md) |
+| Validate your config files from CI | [12. Non-Interactive Entry Points → `agentao config validate`](./12-non-interactive#agentao-config-validate-explicit-config-check) |
 | Change default permission rules with intent | [Part 5.4 · Permissions](/en/part-5/4-permissions) |
 | Author an `AGENTAO.md` for your project | [Part 5.6 · System Prompt Customization](/en/part-5/6-system-prompt) |
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 from agentao.plugins.models import LoadedPlugin, PluginLoadError, PluginWarning
 
@@ -72,3 +74,58 @@ def build_diagnostics(
         warnings=list(warnings),
         errors=list(errors),
     )
+
+
+def collect_full_plugin_diagnostics(
+    *,
+    inline_dirs: Optional[List[Path]] = None,
+) -> Tuple[List[LoadedPlugin], set[str], "PluginDiagnostics"]:
+    """Load plugins **and** simulate registration to surface post-load errors.
+
+    ``PluginManager.load_plugins`` alone misses the failures that only show up
+    once ``resolve_plugin_entries`` / ``resolve_plugin_agents`` run — for
+    example, skill or agent name collisions that would cause
+    ``_load_and_register_plugins`` to reject the plugin at runtime. Returning
+    just the manager's view would mean ``agentao doctor`` under-reports
+    compared to ``agentao plugin list``.
+
+    Returns ``(loaded, failed_names, diagnostics)``:
+
+    - ``loaded`` is the unfiltered list (callers that need per-plugin
+      ``"ok"`` / ``"failed"`` status pair it with ``failed_names``);
+    - ``failed_names`` is the set of plugin names that fell out during
+      registration simulation;
+    - ``diagnostics`` already has resolver warnings/errors folded in and its
+      ``loaded`` field contains only healthy plugins.
+    """
+    # Local imports keep the diagnostics module light on its own load path.
+    from .manager import PluginManager
+    from .resolvers.agents import resolve_plugin_agents
+    from .resolvers.skills import resolve_plugin_entries
+
+    mgr = PluginManager(inline_dirs=inline_dirs)
+    loaded = mgr.load_plugins()
+
+    all_warnings = list(mgr.get_warnings())
+    all_errors = list(mgr.get_errors())
+    failed_plugins: set[str] = set()
+
+    for plugin in loaded:
+        _entries, pw, pe = resolve_plugin_entries(plugin)
+        all_warnings.extend(pw)
+        all_errors.extend(pe)
+        if pe:
+            failed_plugins.add(plugin.name)
+
+    for plugin in loaded:
+        if plugin.name in failed_plugins:
+            continue
+        _defs, aw, ae = resolve_plugin_agents(plugin)
+        all_warnings.extend(aw)
+        all_errors.extend(ae)
+        if ae:
+            failed_plugins.add(plugin.name)
+
+    healthy = [p for p in loaded if p.name not in failed_plugins]
+    diag = build_diagnostics(healthy, all_warnings, all_errors)
+    return loaded, failed_plugins, diag

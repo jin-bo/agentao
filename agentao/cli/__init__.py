@@ -35,6 +35,11 @@ if TYPE_CHECKING:
         handle_plugin_subcommand,
         handle_skill_subcommand,
     )
+    from .diagnostics_cli import (
+        handle_config_subcommand,
+        handle_config_validate_subcommand,
+        handle_doctor_subcommand,
+    )
 
 
 def _names(mod: str, *names: str) -> dict[str, tuple[str, str]]:
@@ -52,6 +57,11 @@ _LAZY_NAMES: dict[str, tuple[str, str]] = {
         "handle_skill_subcommand", "handle_plugin_subcommand",
         "_skill_list", "_skill_remove", "_skill_install", "_skill_update",
         "_plugin_list_cli", "_load_and_register_plugins", "_handle_plugins_interactive",
+    ),
+    **_names(".diagnostics_cli",
+        "handle_doctor_subcommand",
+        "handle_config_subcommand",
+        "handle_config_validate_subcommand",
     ),
 }
 

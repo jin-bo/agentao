@@ -7,6 +7,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`agentao doctor` and `agentao config validate` — diagnostics CLI.** Two
+  new non-interactive subcommands that aggregate or validate the harness's
+  existing signals without instantiating an agent. `doctor` covers the `.env`
+  provider check (API-key *presence*, never the value), `settings.json`,
+  permissions, MCP, replay, ACP schema export, project + user memory stores,
+  plugin diagnostics, and optional-dep probes. `config validate` is the
+  narrower companion that only checks user-editable config (no plugin
+  section). Output contract is `{"ok": bool, "sections": {...}, "findings":
+  [...]}`; errors exit `1`, warnings keep exit `0`. `--json` is the contract
+  surface for CI/hosts, human-readable is the default. Both are **read-only**
+  (probing an absent `memory.db` reports `"absent"` instead of bootstrapping
+  it) and reject unknown flags with exit `2`. Implementation in
+  `agentao/cli/diagnostics_cli.py`; documented under
+  `developer-guide/{en,zh}/cli/12-non-interactive.md`; design rationale in
+  `docs/design/codex-reverse-review.md` (2026-05-17 follow-up).
+
+- **`collect_full_plugin_diagnostics()` helper** in
+  `agentao/embedding/plugins/diagnostics.py`. Shared by `agentao plugin list`
+  and `agentao doctor` so the two commands cannot drift on which plugins they
+  consider failed (it runs the post-load `resolve_plugin_entries` /
+  `resolve_plugin_agents` simulation in addition to `PluginManager.load_plugins`).
+
 ### Changed
 
 - **`web_fetch` no longer silently falls back to crawl4ai.** The previous
