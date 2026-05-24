@@ -25,7 +25,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 
-from dotenv import load_dotenv
+from .._env import safe_load_dotenv
 
 from ..agent import Agentao
 from .display import DisplayController
@@ -40,7 +40,7 @@ class AgentaoCLI:
 
     def __init__(self):
         """Initialize CLI."""
-        load_dotenv()
+        safe_load_dotenv()
 
         self.current_session_id: Optional[str] = str(_uuid_mod.uuid4())
         self.current_status = None

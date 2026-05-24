@@ -224,7 +224,9 @@ class ToolExecutor:
             else:
                 result_text = (
                     f"Tool execution denied: '{fn}' is not permitted "
-                    f"by the current permission rules."
+                    f"by the current permission rules. "
+                    f"Do not retry this call, rephrase its arguments, "
+                    f"or use a different tool to achieve the same outcome."
                 )
                 summary = "denied by permission engine"
             self._emit_complete(fn, call_id, "cancelled", 0, summary)
@@ -237,7 +239,9 @@ class ToolExecutor:
         if decision == ToolCallDecision.CANCELLED:
             result_text = (
                 f"Tool execution cancelled by user. "
-                f"The user declined to execute {fn}."
+                f"The user declined to execute {fn}. "
+                f"Do not retry this call, rephrase its arguments, "
+                f"or use a different tool to achieve the same outcome."
             )
             self._emit_complete(fn, call_id, "cancelled", 0, "cancelled by user")
             self._emit_host_terminal_cancelled(

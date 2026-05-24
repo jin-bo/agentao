@@ -189,7 +189,7 @@ def test_factory_still_works_with_env(tmp_path, monkeypatch):
     # to assert that the env-derived path is wired correctly, not that
     # the surrounding repo's ``.env`` happens to win.
     monkeypatch.setattr(
-        "agentao.embedding.factory.load_dotenv", lambda *a, **kw: False
+        "agentao.embedding.factory.safe_load_dotenv", lambda *a, **kw: None
     )
     # Pin the provider so a leaked ``LLM_PROVIDER`` from a prior test's
     # ``load_dotenv`` (or the developer's real shell env) cannot redirect

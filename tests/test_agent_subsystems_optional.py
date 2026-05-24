@@ -172,7 +172,7 @@ def _stub_factory_env(monkeypatch):
     """Defang the factory's ``.env`` auto-discovery and pin the LLM
     provider/credentials so the test sees a deterministic env."""
     monkeypatch.setattr(
-        "agentao.embedding.factory.load_dotenv", lambda *a, **kw: False
+        "agentao.embedding.factory.safe_load_dotenv", lambda *a, **kw: None
     )
     monkeypatch.setenv("LLM_PROVIDER", "OPENAI")
     monkeypatch.setenv("OPENAI_API_KEY", "k")

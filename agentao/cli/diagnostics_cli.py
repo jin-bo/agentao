@@ -35,7 +35,7 @@ def _load_dotenv(wd: Path) -> None:
     falsely warns that the API key is missing right after the user ran
     ``agentao init`` (which writes the key to ``.env``).
     """
-    from dotenv import load_dotenv as _ld
+    from .._env import safe_load_dotenv as _ld
 
     dotenv_path = wd / ".env"
     if dotenv_path.is_file():

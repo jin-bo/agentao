@@ -26,7 +26,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from dotenv import load_dotenv
+from .._env import safe_load_dotenv
 
 if TYPE_CHECKING:
     from ..agent import Agentao
@@ -125,9 +125,9 @@ def build_from_environment(
 
     dotenv_path = wd / ".env"
     if dotenv_path.is_file():
-        load_dotenv(dotenv_path)
+        safe_load_dotenv(dotenv_path)
     else:
-        load_dotenv()
+        safe_load_dotenv()
 
     # Skip env-driven LLM discovery when the caller supplies a pre-built
     # ``llm_client``: those env values are unused on that path, and a

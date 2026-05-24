@@ -8,7 +8,7 @@ from io import StringIO
 def test_menu_confirmation_yes():
     """Test selecting 'Yes' (option 1) in confirmation menu."""
 
-    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
         with patch('agentao.cli.app.Agentao') as mock_agent_class:
             with patch('agentao.cli.transport.readchar.readkey', return_value='1'):
                 from agentao.cli import AgentaoCLI
@@ -30,7 +30,7 @@ def test_menu_confirmation_yes():
 def test_menu_confirmation_yes_to_all():
     """Test selecting 'Yes to all' (option 2) in confirmation menu."""
 
-    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
         with patch('agentao.cli.app.Agentao') as mock_agent_class:
             with patch('agentao.cli.transport.readchar.readkey', return_value='2'):
                 from agentao.cli import AgentaoCLI
@@ -52,7 +52,7 @@ def test_menu_confirmation_yes_to_all():
 def test_menu_confirmation_no():
     """Test selecting 'No' (option 3) in confirmation menu."""
 
-    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
         with patch('agentao.cli.app.Agentao') as mock_agent_class:
             with patch('agentao.cli.transport.readchar.readkey', return_value='3'):
                 from agentao.cli import AgentaoCLI
@@ -74,7 +74,7 @@ def test_menu_confirmation_no():
 def test_allow_all_mode_bypass():
     """Test that allow_all mode bypasses confirmation prompt."""
 
-    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
         with patch('agentao.cli.app.Agentao') as mock_agent_class:
             from agentao.cli import AgentaoCLI
 
@@ -97,7 +97,7 @@ def test_allow_all_mode_bypass():
 def test_keyboard_interrupt_handling():
     """Test that Ctrl+C cancels confirmation."""
 
-    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
         with patch('agentao.cli.app.Agentao') as mock_agent_class:
             with patch('agentao.cli.transport.readchar.readkey', side_effect=KeyboardInterrupt):
                 from agentao.cli import AgentaoCLI
@@ -118,7 +118,7 @@ def test_keyboard_interrupt_handling():
 def test_session_state_initialization():
     """Test that CLI initializes with allow_all_tools = False."""
 
-    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
         with patch('agentao.cli.app.Agentao') as mock_agent_class:
             from agentao.cli import AgentaoCLI
 
@@ -132,7 +132,7 @@ def test_session_state_initialization():
 def test_allow_all_persists_across_calls():
     """Test that allow_all mode persists across multiple tool calls."""
 
-    with patch('agentao.cli.app.load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
+    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
         with patch('agentao.cli.app.Agentao') as mock_agent_class:
             with patch('agentao.cli.transport.readchar.readkey', return_value='2'):
                 from agentao.cli import AgentaoCLI
