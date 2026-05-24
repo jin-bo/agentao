@@ -54,7 +54,7 @@ intentionally not part of this surface.
 ## Capability protocols (`agentao.host.protocols`)
 
 Embedded hosts override IO by injecting these `Protocol` types into
-`Agentao(filesystem=..., shell=..., mcp_registry=..., memory_store=...)`.
+`Agentao(filesystem=..., shell=..., mcp_registry=..., memory_manager=...)`.
 The submodule is a stable re-export of the protocols and their value
 shapes; **always import from `agentao.host.protocols` rather than
 reaching into `agentao.capabilities.*`** (which is internal and may
@@ -97,7 +97,7 @@ from agentao.host.replay_projection import (
 
 | Symbol | Purpose |
 |---|---|
-| `HostReplaySink(recorder, *, stream=None)` | Forward projection. Pass `stream=agent._host_events` to auto-register as a synchronous observer; every published `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` is then written into `recorder` as a v1.2 replay event. Errors during write are logged at WARNING and swallowed — audit storage failure never breaks the runtime. |
+| `HostReplaySink(recorder, *, stream=None)` | Forward projection. `Agentao.start_replay()` wires this automatically; hosts that drive replay manually can pass a stream explicitly. Every published `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` is then written into `recorder` as a v1.2 replay event. Errors during write are logged at WARNING and swallowed — audit storage failure never breaks the runtime. |
 | `replay_payload_to_host_event(kind, payload)` | Reverse projection. Rehydrates a `HostEvent` Pydantic model from a replay JSONL line. Strips the sanitizer's optional projection metadata (`redaction_hits`, `redacted`, `redacted_fields`) so a redacted line still validates against the public `extra="forbid"` models. |
 | `host_event_to_replay_kind(event)` / `host_event_to_replay_payload(event)` | Lower-level helpers used by sinks and tests. Return `None` / `model_dump(mode="json")` respectively. |
 
@@ -209,19 +209,17 @@ delivery is independent and covered in the next section.
 When a host needs to deliver every event to several cheap sinks
 (audit log, metrics counters, replay recorder, debug printer) the
 single-consumer async iterator is the wrong tool — register
-synchronous observers on the underlying `EventStream` instead.
+synchronous observers on the agent instead.
 
 ```python
-stream = agent._host_events  # internal accessor; see note below
-
 def audit(event: HostEvent) -> None:
     audit_log.write(event.model_dump_json())
 
 def metrics(event: HostEvent) -> None:
     counter.labels(event.event_type).inc()
 
-stream.add_observer(audit)
-stream.add_observer(metrics)
+agent.add_host_event_observer(audit)
+agent.add_host_event_observer(metrics)
 ```
 
 Semantics:
@@ -235,18 +233,12 @@ Semantics:
   a broken sink never breaks the runtime.
 - Observers receive **every** event (no per-observer filter); filter
   by inspecting `event.session_id` inside the callback if needed.
-- `remove_observer(callback)` detaches; idempotent and safe to call
+- `agent.remove_host_event_observer(callback)` detaches; idempotent and safe to call
   twice.
 
 `HostReplaySink` is the canonical user of this mechanism — see
 [Replay projection](#replay-projection-agentaohostreplay_projection)
 above.
-
-> **Accessor note.** The runtime currently exposes the underlying
-> `EventStream` via `agent._host_events` — the leading underscore is
-> a known wart that will be promoted to a stable accessor in a
-> follow-up release. The shape of `add_observer` / `remove_observer`
-> itself is stable.
 
 ## Need richer events? The internal `Transport` channel
 

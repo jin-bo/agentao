@@ -4,7 +4,7 @@ This is the only inbound surface in ``agentao.host``: the other three
 pillars (events, ACP schema, permission state) flow Agentao → host;
 these protocols flow host → Agentao, letting embedded hosts override
 IO by injecting their own implementations into
-``Agentao(filesystem=..., shell=..., mcp_registry=..., memory_store=...)``.
+``Agentao(filesystem=..., shell=..., mcp_registry=..., memory_manager=...)``.
 
 Importing them directly from ``agentao.host.protocols`` keeps host code
 on the stable boundary instead of reaching into ``agentao.capabilities.*``,

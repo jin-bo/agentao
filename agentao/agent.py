@@ -424,7 +424,7 @@ class Agentao:
             "max_tokens": self.llm.max_tokens,
         }
 
-    def add_event_observer(self, callback):
+    def add_host_event_observer(self, callback):
         """Register a synchronous observer on the public host event stream.
 
         Pass-through to :meth:`EventStream.add_observer` for sync
@@ -435,9 +435,17 @@ class Agentao:
         """
         return self._host_events.add_observer(callback)
 
-    def remove_event_observer(self, callback) -> bool:
+    def remove_host_event_observer(self, callback) -> bool:
         """Detach a previously registered observer. Idempotent."""
         return self._host_events.remove_observer(callback)
+
+    def add_event_observer(self, callback):
+        """Backward-compatible alias for :meth:`add_host_event_observer`."""
+        return self.add_host_event_observer(callback)
+
+    def remove_event_observer(self, callback) -> bool:
+        """Backward-compatible alias for :meth:`remove_host_event_observer`."""
+        return self.remove_host_event_observer(callback)
 
     def events(self, session_id: Optional[str] = None):
         """Return an async iterator over public host events.
