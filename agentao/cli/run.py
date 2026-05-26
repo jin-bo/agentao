@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import stat
 import sys
@@ -25,6 +26,13 @@ from .run_models import (
     RunSpec,
     RunUsage,
 )
+from .run_template import RunTemplateError, render_spec
+
+
+# Same identifier rule as ``RunParameter.name`` — failing fast at the
+# CLI parse stage gives a sharper error than letting it fall through to
+# "unknown parameter" downstream.
+_PARAM_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 EXIT_OK = 0
@@ -72,6 +80,11 @@ def _attach_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--no-replay", dest="replay",
         action="store_const", const=False,
+    )
+    parser.add_argument(
+        "--param", dest="params", action="append", default=None,
+        metavar="KEY=VALUE",
+        help="Set a spec parameter. Repeatable. Example: --param depth=deep",
     )
 
 
@@ -181,6 +194,41 @@ def _parse_spec_text(text: str, *, source: str) -> RunSpec:
         raise _UsageError(
             f"agentao run: spec validation failed ({source}): {exc}"
         )
+
+
+def _parse_cli_params(items: Optional[List[str]]) -> Dict[str, str]:
+    """Parse repeated ``--param KEY=VALUE`` arguments into a dict.
+
+    All errors raise :class:`_UsageError` (exit 2). Duplicate keys
+    error rather than last-wins: silent override is more surprising
+    than a clear "supplied multiple times" message.
+    """
+    if not items:
+        return {}
+    out: Dict[str, str] = {}
+    for raw in items:
+        # ``split("=", 1)`` preserves further ``=`` chars inside the
+        # value — so ``--param expr=a=b`` yields ``("expr", "a=b")``.
+        if "=" not in raw:
+            raise _UsageError(
+                f"agentao run: malformed --param {raw!r} (expected KEY=VALUE)",
+            )
+        key, value = raw.split("=", 1)
+        if not key:
+            raise _UsageError(
+                f"agentao run: malformed --param {raw!r} (expected KEY=VALUE)",
+            )
+        if not _PARAM_KEY_RE.fullmatch(key):
+            raise _UsageError(
+                f"agentao run: --param {key!r} is not a valid identifier "
+                "(must match [A-Za-z_][A-Za-z0-9_]*)",
+            )
+        if key in out:
+            raise _UsageError(
+                f"agentao run: --param {key!r} supplied multiple times",
+            )
+        out[key] = value
+    return out
 
 
 def _apply_cli_overrides(spec: RunSpec, args: argparse.Namespace) -> RunSpec:
@@ -343,7 +391,28 @@ def _execute_with_args(args: argparse.Namespace) -> int:
     if spec.output is not None and spec.output.format is not None:
         output_format = spec.output.format
 
+    # Snapshot pre-render presence so the prompt-required diagnostic
+    # below can distinguish "no prompt supplied" from "template rendered
+    # to empty" — the former points at --prompt / spec.prompt, the
+    # latter at the param value that produced the empty render.
+    prompt_was_supplied = bool(spec.prompt)
+
+    # Render must come after _apply_cli_overrides (so a --prompt
+    # override can itself be a template against spec.parameters) and
+    # before the "prompt required" check.
+    try:
+        cli_params = _parse_cli_params(getattr(args, "params", None))
+        spec = render_spec(spec, cli_params)
+    except (_UsageError, RunTemplateError) as exc:
+        return _emit_invalid_usage(str(exc), output_format)
+
     if not spec.prompt:
+        if prompt_was_supplied:
+            return _emit_invalid_usage(
+                "agentao run: prompt template rendered to empty; "
+                "check --param values.",
+                output_format,
+            )
         return _emit_invalid_usage(
             "agentao run: prompt is required (set spec.prompt or pass --prompt).",
             output_format,
@@ -410,6 +479,16 @@ def _run_pipeline(
         factory_kwargs["model"] = spec.model
     if spec.base_url is not None:
         factory_kwargs["base_url"] = spec.base_url
+    # When the spec carries non-empty instructions, route them through
+    # the existing ``project_instructions`` kwarg on Agentao. The agent
+    # short-circuits the AGENTAO.md disk read for any non-None value,
+    # so a guard against both ``""`` and whitespace-only output is
+    # necessary to avoid silently nuking the AGENTAO.md fallback. The
+    # whitespace case shows up naturally with YAML block scalars
+    # (``instructions: |\n  {{ extra }}\n``) when ``extra`` is empty —
+    # Jinja's ``keep_trailing_newline=True`` leaves a bare ``"\n"``.
+    if spec.instructions and spec.instructions.strip():
+        factory_kwargs["project_instructions"] = spec.instructions
 
     try:
         agent = build_from_environment(**factory_kwargs)

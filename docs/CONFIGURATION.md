@@ -24,6 +24,7 @@ User-facing configuration files (the surfaces you may hand-edit):
 | 6 | Skills disable list | `.agentao/skills_config.json` | — | `skills/manager.py` | [SKILLS_GUIDE.md](SKILLS_GUIDE.md) |
 | 7 | Project instructions | `AGENTAO.md` (cwd) | — | `agent.py::_build_system_prompt` | [CHATAGENT_MD_FEATURE.md](features/CHATAGENT_MD_FEATURE.md) |
 | 8 | Memory store | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](features/memory-management.md) |
+| 9 | Run spec (`agentao run`) | any path passed to `--spec` (or stdin) | — | `cli/run_models.py::RunSpec`, `cli/run_template.py::render_spec` | [run-spec-parameters.md](design/run-spec-parameters.md) |
 
 Internal state files (auto-managed; documented for awareness, not for editing):
 
@@ -269,6 +270,81 @@ See [CHATAGENT_MD_FEATURE.md](features/CHATAGENT_MD_FEATURE.md) for prompt-compo
 - **Precedence.** Both DBs are read independently; both are visible to the prompt renderer. Project memory does not override user memory.
 
 Full schema, tables, and lifecycle → [memory-management.md](features/memory-management.md).
+
+---
+
+## 10. Run spec — `agentao run` invocation
+
+- **Paths.** No fixed location — `agentao run --spec PATH` (YAML or JSON) or piped on stdin.
+- **Loader.** `agentao/cli/run.py::_load_spec` + `_parse_spec_text` → `RunSpec.model_validate`. Templating: `cli/run_template.py::render_spec`.
+- **Scope.** Per-invocation; not merged with any global file.
+
+### Schema (top-level)
+
+| Key | Type | Notes |
+|---|---|---|
+| `prompt` | `str` | Required at run-time (after CLI merge + render). Templated. |
+| `instructions` | `str?` | Templated. When non-empty after `.strip()`, routes to `Agentao(project_instructions=…)` and short-circuits `AGENTAO.md`. |
+| `parameters` | `list[RunParameter]?` | See sub-schema below. Duplicates rejected. |
+| `cwd` | `str?` | Working directory; defaults to `os.getcwd()`. |
+| `model` / `base_url` | `str?` | LLM overrides. |
+| `permission_mode` | enum | `read-only` / `workspace-write` / `full-access` / `plan`. |
+| `interaction_policy` | `"reject"` | Only `reject` accepted in M0. |
+| `permissions` | `{allow, deny}` | Lists of `RunPermissionRule`. Spec writers never author `action:` — the loader injects it. |
+| `max_iterations` | `int?` | Default 100. |
+| `skills` | `list[str]?` | Must already exist; missing skills exit 2. |
+| `replay` | `bool?` | Authoritative; bypasses the factory's disk auto-load when set. |
+| `output` | `{format: "text"\|"json"}?` | Same effect as `--format`. |
+
+`extra="forbid"` on `RunSpec` — unknown top-level fields fail loudly.
+
+### `parameters[]` sub-schema (`RunParameter`)
+
+| Key | Type | Notes |
+|---|---|---|
+| `name` | `str` | ASCII identifier (`[A-Za-z_][A-Za-z0-9_]*`) AND not a Jinja-reserved name (constants `true/True/false/False/none/None`, keywords `for/if/in/set/...`, runtime-injected `self/parent`). |
+| `required` | `bool` | Mutually exclusive with `default`. |
+| `default` | `str?` | String-only in v1. Must be in `choices` if both are set. |
+| `choices` | `list[str]?` | Enum-style validation. |
+
+`extra="forbid"` on `RunParameter` — typos like `requierd:` fail validation.
+
+### `--param KEY=VALUE` (CLI)
+
+- Repeatable. Splits on the **first** `=` only — value may contain further `=` chars.
+- Empty key or missing `=` → exit 2, "expected KEY=VALUE".
+- Duplicate key → exit 2, "supplied multiple times" (no last-wins).
+- Non-identifier key → exit 2 with the identifier-rule message.
+
+### Templating
+
+- Jinja2 `SandboxedEnvironment` + `StrictUndefined` + `keep_trailing_newline=True`, `autoescape=False`.
+- Only `spec.prompt` and `spec.instructions` are rendered.
+- Trigger rule (no Jinja2 call when both empty):
+
+  | `spec.parameters` | CLI `--param` | Behavior |
+  |---|---|---|
+  | empty / unset | empty | No-op (literal `{{ }}` passes through). |
+  | empty / unset | non-empty | exit 2 (unknown parameter). |
+  | non-empty | any | Validate + render. |
+
+- Render errors → exit 2 / `invalid_spec`:
+  - `SecurityError` → "sandbox-blocked operation".
+  - `UndefinedError` (StrictUndefined) → "template uses undefined variable 'X' (declare it in spec.parameters)".
+  - Anything else from `template.render()` (e.g. `ZeroDivisionError`, `TypeError`, `TemplateNotFound`) → "template error in spec.\<field\>: …".
+
+### Exit codes (`agentao run`)
+
+| Code | Meaning |
+|---|---|
+| 0 | OK |
+| 1 | Runtime error |
+| 2 | Invalid usage / invalid spec |
+| 3 | Permission denied or interaction required |
+| 4 | Max iterations |
+| 130 | Interrupted (SIGINT) |
+
+Full design rationale → [run-spec-parameters.md](design/run-spec-parameters.md).
 
 ---
 

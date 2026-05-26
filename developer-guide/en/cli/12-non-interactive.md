@@ -54,7 +54,15 @@ agentao run --prompt "Summarize the current directory" --format json
 ### M0 spec shape
 
 ```yaml
-prompt: string                 # required (or pass via --prompt)
+prompt: string                 # required (or pass via --prompt). Templated.
+instructions: string           # appended to system prompt. Templated. Routes to
+                               # Agentao(project_instructions=…) when non-empty
+                               # after .strip(); skips AGENTAO.md disk read.
+parameters:                    # typed slots for spec-level --param substitution
+  - name: string               # ASCII identifier; not a Jinja-reserved name
+    required: boolean          # default false; mutually exclusive with `default`
+    default: string            # v1: string only. Must be in `choices` if set.
+    choices: [string]          # optional enum
 cwd: string                    # working directory for the run
 model: string                  # overrides env-derived LLM model
 base_url: string               # overrides env-derived base URL
@@ -82,6 +90,49 @@ output:
 `extra="forbid"` — unknown spec fields fail with exit `2`. Secrets (`api_key`) are **never** accepted in the spec; they stay in the environment or in a host-injected client.
 
 CLI flags only override spec values when explicitly provided (argparse defaults do not erase spec fields).
+
+### Parameters & templating (`--param`)
+
+`prompt` and `instructions` are Jinja2 templates rendered against typed parameter values. Other spec fields are not templated (templating `permissions` or `skills` invites footguns).
+
+```yaml
+# .agentao/runs/review-pr.yaml
+parameters:
+  - name: pr_number
+    required: true
+  - name: depth
+    default: shallow
+    choices: [shallow, deep]
+instructions: |
+  You are reviewing PR #{{ pr_number }}.
+  Use {{ depth }} mode: shallow = surface issues; deep = trace data flow.
+prompt: Review PR #{{ pr_number }}. Focus on correctness bugs.
+permission_mode: workspace-write
+max_iterations: 30
+```
+
+```bash
+agentao run --spec .agentao/runs/review-pr.yaml \
+            --param pr_number=142 --param depth=deep
+```
+
+`--param KEY=VALUE` is repeatable. Splits on the **first** `=` only — values may contain further `=` chars (e.g. `--param expr=a=b` → `expr` → `a=b`).
+
+**Trigger rule.** The renderer is skipped entirely when both `spec.parameters` and `--param` are empty — literal `{{ }}` in a parameterless spec passes through to the LLM untouched. When the spec has no `parameters` but the CLI supplies `--param`, the run exits `2` so typos surface.
+
+**Errors (all exit `2` / `invalid_spec`):**
+
+- Missing required param, unknown param, choices violation.
+- Malformed `--param` (`expected KEY=VALUE`, duplicate key, non-identifier key).
+- Undefined template variable (StrictUndefined): "template uses undefined variable 'X' (declare it in spec.parameters)".
+- Render-time errors propagated through Jinja (`{{ 1/0 }}` → `ZeroDivisionError`, `{% include %}` without loader, etc.) are caught and reported as "template error in spec.\<field\>".
+- Sandbox-blocked operation: the renderer uses `jinja2.sandbox.SandboxedEnvironment`, so attribute-walking escapes (e.g. `{{ ''.__class__.__mro__ }}`) are refused — recipes from shared/untrusted sources cannot reach Python internals before `permission_mode` and tool permissions apply.
+
+**Reserved parameter names.** Names that look like ASCII identifiers but are reserved by Jinja are rejected at spec-validation time: constants (`true`/`True`/`false`/`False`/`none`/`None`), keywords (`for`/`if`/`in`/`set`/`is`/`not`/`or`/…), and the runtime-injected names `self` / `parent`. The full list lives in `agentao/cli/run_models.py::_JINJA_RESERVED_NAMES`.
+
+**Instructions precedence.** When `spec.instructions` (after rendering) is non-empty and contains at least one non-whitespace char, it routes to `Agentao(project_instructions=…)` and the agent skips the `AGENTAO.md` disk read. Whitespace-only output (e.g. a YAML block scalar that renders to `"\n"`) falls through to `AGENTAO.md`, so a template that resolves to nothing doesn't silently nuke your project instructions.
+
+For the full design rationale — including v1 scope, deferred typing (`number` / `boolean`), and the goose-recipes comparison — see [docs/design/run-spec-parameters.md](https://github.com/jin-bo/agentao/blob/main/docs/design/run-spec-parameters.md).
 
 ### Output
 
@@ -214,5 +265,5 @@ Both commands honor `--plugin-dir DIR` (doctor uses it for plugin discovery) and
 ---
 
 ::: tip Authoritative reference
-The top-level parser lives in [`agentao/cli/entrypoints.py:_build_parser`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/entrypoints.py). Non-interactive print mode is `run_print_mode` in the same file (a shim over [`agentao/cli/run.py:execute`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run.py)). Spec models live in [`agentao/cli/run_models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run_models.py). Skill / plugin subcommands live in [`agentao/cli/subcommands.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/subcommands.py).
+The top-level parser lives in [`agentao/cli/entrypoints.py:_build_parser`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/entrypoints.py). Non-interactive print mode is `run_print_mode` in the same file (a shim over [`agentao/cli/run.py:execute`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run.py)). Spec models live in [`agentao/cli/run_models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run_models.py); the Jinja2 sandboxed renderer (`prompt` + `instructions`) lives in [`agentao/cli/run_template.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run_template.py). Skill / plugin subcommands live in [`agentao/cli/subcommands.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/subcommands.py).
 :::

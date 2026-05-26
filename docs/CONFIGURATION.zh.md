@@ -24,6 +24,7 @@
 | 6 | 禁用 skill 列表 | `.agentao/skills_config.json` | — | `skills/manager.py` | [SKILLS_GUIDE.md](SKILLS_GUIDE.md) |
 | 7 | 项目说明 | `AGENTAO.md`（cwd） | — | `agent.py::_build_system_prompt` | [CHATAGENT_MD_FEATURE.md](features/CHATAGENT_MD_FEATURE.md) |
 | 8 | 记忆库 | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](features/memory-management.md) |
+| 9 | Run spec（`agentao run`） | `--spec` 传入的任意路径（或 stdin） | — | `cli/run_models.py::RunSpec`、`cli/run_template.py::render_spec` | [run-spec-parameters.zh.md](design/run-spec-parameters.zh.md) |
 
 **内部状态文件**（自动管理；列出仅为告知，请勿手动编辑）：
 
@@ -272,11 +273,86 @@ prompt 组成规则与约定见 [CHATAGENT_MD_FEATURE.md](features/CHATAGENT_MD_
 
 ---
 
+## 10. Run spec —— `agentao run` 调用规约
+
+- **路径。** 无固定位置 —— `agentao run --spec PATH`（YAML 或 JSON），或从 stdin 管道传入。
+- **加载器。** `agentao/cli/run.py::_load_spec` + `_parse_spec_text` → `RunSpec.model_validate`。模板渲染：`cli/run_template.py::render_spec`。
+- **作用域。** 每次调用一份；不与任何全局文件合并。
+
+### Schema（顶层）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `prompt` | `str` | CLI 合并 + 渲染后必填。可模板化。 |
+| `instructions` | `str?` | 可模板化。`.strip()` 后非空时通过 `Agentao(project_instructions=…)` 注入，并跳过 `AGENTAO.md`。 |
+| `parameters` | `list[RunParameter]?` | 子 schema 见下；重名直接拒绝。 |
+| `cwd` | `str?` | 工作目录；默认 `os.getcwd()`。 |
+| `model` / `base_url` | `str?` | LLM 覆盖项。 |
+| `permission_mode` | enum | `read-only` / `workspace-write` / `full-access` / `plan`。 |
+| `interaction_policy` | `"reject"` | M0 仅接受 `reject`。 |
+| `permissions` | `{allow, deny}` | `RunPermissionRule` 列表。Spec 不允许手写 `action:` —— 由 loader 注入。 |
+| `max_iterations` | `int?` | 默认 100。 |
+| `skills` | `list[str]?` | 必须已存在；缺失 skill 退出 2。 |
+| `replay` | `bool?` | 权威；设置后绕过 factory 的磁盘自动加载。 |
+| `output` | `{format: "text"\|"json"}?` | 等效于 `--format`。 |
+
+`RunSpec` 的 `extra="forbid"` —— 顶层未知字段会失败。
+
+### `parameters[]` 子 schema（`RunParameter`）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `name` | `str` | 必须符合 ASCII 标识符（`[A-Za-z_][A-Za-z0-9_]*`）**且**不是 Jinja 保留名（常量 `true/True/false/False/none/None`、关键字 `for/if/in/set/…`、runtime 注入名 `self/parent`）。 |
+| `required` | `bool` | 与 `default` 互斥。 |
+| `default` | `str?` | v1 只支持字符串。若同时配置 `choices`，`default` 必须在其中。 |
+| `choices` | `list[str]?` | 枚举式校验。 |
+
+`RunParameter` 的 `extra="forbid"` —— 像 `requierd:` 这种拼写错误会被校验拒绝。
+
+### `--param KEY=VALUE`（CLI）
+
+- 可重复。只在**第一个** `=` 处切分 —— value 可以包含更多 `=` 字符。
+- 空 key 或缺 `=` → exit 2 "expected KEY=VALUE"。
+- 重复 key → exit 2 "supplied multiple times"（不做 last-wins）。
+- 非标识符 key → exit 2，附带 identifier-rule 的提示。
+
+### 模板渲染
+
+- Jinja2 `SandboxedEnvironment` + `StrictUndefined` + `keep_trailing_newline=True`、`autoescape=False`。
+- 仅 `spec.prompt` 与 `spec.instructions` 走渲染。
+- 触发规则（两侧都空时不调用 Jinja2）：
+
+  | `spec.parameters` | CLI `--param` | 行为 |
+  |---|---|---|
+  | 空 / 未设置 | 空 | no-op（字面量 `{{ }}` 原样透传）。 |
+  | 空 / 未设置 | 非空 | exit 2（unknown parameter）。 |
+  | 非空 | 任意 | 校验 + 渲染。 |
+
+- 渲染期错误 → exit 2 / `invalid_spec`：
+  - `SecurityError` → "sandbox-blocked operation"。
+  - `UndefinedError`（StrictUndefined） → "template uses undefined variable 'X' (declare it in spec.parameters)"。
+  - `template.render()` 抛出的其他任意异常（`ZeroDivisionError`、`TypeError`、`TemplateNotFound` 等）→ "template error in spec.\<field\>: …"。
+
+### 退出码（`agentao run`）
+
+| Code | 含义 |
+|---|---|
+| 0 | OK |
+| 1 | 运行时错误 |
+| 2 | 无效用法 / 无效 spec |
+| 3 | 权限拒绝或需要交互 |
+| 4 | 达到最大迭代次数 |
+| 130 | 被打断（SIGINT） |
+
+完整设计动机 → [run-spec-parameters.zh.md](design/run-spec-parameters.zh.md)。
+
+---
+
 ## 附录 A —— 新增配置面时的 checklist
 
 新增配置文件时，**两处必须同步更新**：
 
-1. 本文档（§1 加一行；像 §3–§9 那样补一节完整说明）。
+1. 本文档（§1 加一行；像 §3–§10 那样补一节完整说明）。
 2. 对应 feature 文档 —— *为什么*与*怎么用*留在那里，不要写到这里来。
 
 Checklist：

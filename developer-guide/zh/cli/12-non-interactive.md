@@ -54,7 +54,15 @@ agentao run --prompt "总结当前目录" --format json
 ### M0 spec 结构
 
 ```yaml
-prompt: string                 # 必填（或用 --prompt 传入）
+prompt: string                 # 必填（或用 --prompt 传入）。可模板化。
+instructions: string           # 追加到 system prompt。可模板化。`.strip()` 后非空时
+                               # 经 Agentao(project_instructions=…) 注入，并跳过
+                               # AGENTAO.md 的磁盘读取。
+parameters:                    # spec 级 --param 替换所用的类型化参数槽
+  - name: string               # ASCII 标识符；不能是 Jinja 保留名
+    required: boolean          # 默认 false；与 `default` 互斥
+    default: string            # v1 仅支持字符串；若有 `choices` 必须在其中
+    choices: [string]          # 可选枚举
 cwd: string                    # 这次 run 的工作目录
 model: string                  # 覆盖环境里的 LLM model
 base_url: string               # 覆盖环境里的 base URL
@@ -82,6 +90,49 @@ output:
 `extra="forbid"` —— 未知 spec 字段会以退出码 `2` 失败。secrets（`api_key`）**绝不**在 spec 里接收，必须留在环境变量或宿主注入的 client 里。
 
 CLI flag 只在用户**显式**提供时才覆盖 spec 值，argparse 默认值不会抹掉 spec 字段。
+
+### 参数与模板渲染（`--param`）
+
+`prompt` 与 `instructions` 是 Jinja2 模板，对类型化参数值做替换。其他 spec 字段**不**做模板化（给 `permissions` 或 `skills` 加模板容易引发陷阱）。
+
+```yaml
+# .agentao/runs/review-pr.yaml
+parameters:
+  - name: pr_number
+    required: true
+  - name: depth
+    default: shallow
+    choices: [shallow, deep]
+instructions: |
+  你正在审查 PR #{{ pr_number }}。
+  使用 {{ depth }} 模式：shallow = 只看表层；deep = 跨文件追踪数据流。
+prompt: 审查 PR #{{ pr_number }}，专注于正确性 bug。
+permission_mode: workspace-write
+max_iterations: 30
+```
+
+```bash
+agentao run --spec .agentao/runs/review-pr.yaml \
+            --param pr_number=142 --param depth=deep
+```
+
+`--param KEY=VALUE` 可重复。只在**第一个** `=` 处切分 —— value 可以包含更多 `=`（如 `--param expr=a=b` → `expr` → `a=b`）。
+
+**触发规则。** 当 `spec.parameters` 与 `--param` 两侧均为空时，渲染器完全不调用 —— 没声明 parameters 的 spec 里的字面 `{{ }}` 会**原样**透传给 LLM。当 spec 没有 `parameters` 但 CLI 传了 `--param` 时，运行退出码 `2`，确保拼写错误不会被吃掉。
+
+**错误（一律退出码 `2` / `invalid_spec`）：**
+
+- 缺 required 参数、未知参数、不在 choices 中。
+- `--param` 形态错误（`expected KEY=VALUE`、重复 key、非标识符 key）。
+- 模板里用到未声明变量（StrictUndefined）：`template uses undefined variable 'X' (declare it in spec.parameters)`。
+- Jinja 渲染期抛出的其他异常（`{{ 1/0 }}` → `ZeroDivisionError`、缺 loader 的 `{% include %}` 等）会被捕获并报为 `template error in spec.<field>`。
+- 沙箱拒绝：渲染器使用 `jinja2.sandbox.SandboxedEnvironment`，所以走属性链的逃逸（如 `{{ ''.__class__.__mro__ }}`）会被拒绝 —— 共享 / 不可信来源的 recipe 无法在 `permission_mode` 与工具权限生效之前访问 Python 内部。
+
+**保留参数名。** 看起来是 ASCII 标识符、但被 Jinja 保留的名字会在 spec 校验阶段被拒：常量（`true`/`True`/`false`/`False`/`none`/`None`）、关键字（`for`/`if`/`in`/`set`/`is`/`not`/`or`/…）以及 Jinja runtime 注入的 `self` / `parent`。完整清单见 `agentao/cli/run_models.py::_JINJA_RESERVED_NAMES`。
+
+**Instructions 优先级。** 渲染后的 `spec.instructions` 非空、且至少包含一个非空白字符时，会经 `Agentao(project_instructions=…)` 注入并跳过 `AGENTAO.md` 磁盘读取。**全空白**的输出（例如 YAML block scalar 渲染成 `"\n"`）会回落到 `AGENTAO.md`，从而保证渲染成空的模板不会静默把项目说明给抹掉。
+
+完整设计动机 —— 包括 v1 范围、延迟落地的 `number` / `boolean` 类型，以及 goose-recipes 的对比 —— 见 [docs/design/run-spec-parameters.zh.md](https://github.com/jin-bo/agentao/blob/main/docs/design/run-spec-parameters.zh.md)。
 
 ### 输出契约
 
@@ -214,5 +265,5 @@ agentao config validate --json
 ---
 
 ::: tip 真相源头
-顶层参数 parser 在 [`agentao/cli/entrypoints.py:_build_parser`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/entrypoints.py)。非交互 print 模式在同文件的 `run_print_mode`（薄壳，转发到 [`agentao/cli/run.py:execute`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run.py)）。Spec 模型在 [`agentao/cli/run_models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run_models.py)。Skill / plugin 子命令在 [`agentao/cli/subcommands.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/subcommands.py)。
+顶层参数 parser 在 [`agentao/cli/entrypoints.py:_build_parser`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/entrypoints.py)。非交互 print 模式在同文件的 `run_print_mode`（薄壳，转发到 [`agentao/cli/run.py:execute`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run.py)）。Spec 模型在 [`agentao/cli/run_models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run_models.py)；Jinja2 沙箱化渲染器（负责 `prompt` 与 `instructions`）在 [`agentao/cli/run_template.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/run_template.py)。Skill / plugin 子命令在 [`agentao/cli/subcommands.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/subcommands.py)。
 :::

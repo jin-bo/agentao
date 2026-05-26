@@ -21,9 +21,10 @@ hand in a spec file.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +109,90 @@ PermissionModeName = Literal[
 InteractionPolicy = Literal["reject"]
 
 
+# ASCII identifier rule for parameter names: matches Python identifier
+# syntax so Jinja `{{ name }}` resolves cleanly. Reused by the CLI
+# ``--param`` parser to give a uniform error message.
+_PARAMETER_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# Names Jinja2 reserves at the template-language level. Accepting any
+# of these as a parameter name produces wrong behavior at render time:
+# the constants (``true`` / ``True`` / ``false`` / ``False`` /
+# ``none`` / ``None``) silently win over context variables (so
+# ``{{ true }}`` resolves to Jinja's boolean, not the user's value),
+# and the keywords (``for`` / ``if`` / ``in`` / ...) produce template
+# syntax errors when referenced in ``{{ }}``. The list mirrors
+# ``jinja2.lexer.keywords`` and the literal-constant tokens — these
+# are stable across Jinja 3.x. Source isn't imported because the
+# attribute is undocumented internal API.
+_JINJA_RESERVED_NAMES: frozenset[str] = frozenset({
+    "True", "False", "None", "true", "false", "none",
+    "and", "as", "do", "else", "elif", "for", "if", "in", "is",
+    "not", "or", "recursive", "with", "without",
+    "block", "endblock", "call", "endcall", "endextends", "extends",
+    "endfilter", "endfor", "endif", "endmacro", "endset", "endwith",
+    "filter", "from", "import", "include", "macro", "set",
+    # Runtime-injected context names — Jinja overwrites these on every
+    # render (``self`` → TemplateReference, ``parent`` → block parent).
+    # Accepting them silently discards the supplied value.
+    "self", "parent",
+})
+
+
+class RunParameter(BaseModel):
+    """One string-typed parameter slot for spec-level Jinja substitution.
+
+    v1 supports string parameters only. ``number`` / ``boolean`` typing
+    is deferred until a consumer drives coercion-rule decisions.
+    """
+
+    name: str
+    required: bool = False
+    default: Optional[str] = None
+    choices: Optional[List[str]] = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("name")
+    @classmethod
+    def _name_must_be_identifier(cls, v: str) -> str:
+        # Without this, Jinja parses ``{{ pr-number }}`` as subtraction
+        # and chokes on whitespace in names like ``foo bar``.
+        if not _PARAMETER_NAME_RE.fullmatch(v):
+            raise ValueError(
+                f"parameter name {v!r} must be an ASCII identifier "
+                "(matching [A-Za-z_][A-Za-z0-9_]*)"
+            )
+        # Names like ``true`` / ``for`` pass the identifier regex but
+        # break Jinja templating — see ``_JINJA_RESERVED_NAMES``.
+        if v in _JINJA_RESERVED_NAMES:
+            raise ValueError(
+                f"parameter name {v!r} is reserved by Jinja2 "
+                "(constants and keywords cannot be parameter names)"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _required_and_default_are_exclusive(self) -> "RunParameter":
+        if self.required and self.default is not None:
+            raise ValueError(
+                f"parameter '{self.name}' cannot be both required and defaulted"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _default_must_be_in_choices(self) -> "RunParameter":
+        if (
+            self.default is not None
+            and self.choices is not None
+            and self.default not in self.choices
+        ):
+            raise ValueError(
+                f"parameter '{self.name}' default {self.default!r} is "
+                f"not in choices {self.choices}"
+            )
+        return self
+
+
 class RunSpec(BaseModel):
     """Structured spec for a single ``agentao run`` invocation.
 
@@ -127,8 +212,20 @@ class RunSpec(BaseModel):
     skills: Optional[List[str]] = None
     replay: Optional[bool] = None
     output: Optional[RunOutputOptions] = None
+    instructions: Optional[str] = None
+    parameters: Optional[List[RunParameter]] = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _no_duplicate_parameter_names(self) -> "RunSpec":
+        if self.parameters:
+            seen: set[str] = set()
+            for p in self.parameters:
+                if p.name in seen:
+                    raise ValueError(f"duplicate parameter '{p.name}'")
+                seen.add(p.name)
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +293,7 @@ __all__ = [
     "PermissionModeName",
     "RunErrorEnvelope",
     "RunOutputOptions",
+    "RunParameter",
     "RunPermissionDomainRule",
     "RunPermissionRule",
     "RunPermissionRules",
