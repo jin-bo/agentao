@@ -118,15 +118,15 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 
 `--param KEY=VALUE` 可重复。只在**第一个** `=` 处切分 —— value 可以包含更多 `=`（如 `--param expr=a=b` → `expr` → `a=b`）。
 
-**触发规则。** 当 `spec.parameters` 与 `--param` 两侧均为空时，渲染器完全不调用 —— 没声明 parameters 的 spec 里的字面 `{{ }}` 会**原样**透传给 LLM。当 spec 没有 `parameters` 但 CLI 传了 `--param` 时，运行退出码 `2`，确保拼写错误不会被吃掉。
+**触发规则。** 当 `spec.parameters` 与 `--param` 两侧均为空时，渲染器完全不调用 —— 没声明 parameters 的 spec 里的字面 <span v-pre>`{{ }}`</span> 会**原样**透传给 LLM。当 spec 没有 `parameters` 但 CLI 传了 `--param` 时，运行退出码 `2`，确保拼写错误不会被吃掉。
 
 **错误（一律退出码 `2` / `invalid_spec`）：**
 
 - 缺 required 参数、未知参数、不在 choices 中。
 - `--param` 形态错误（`expected KEY=VALUE`、重复 key、非标识符 key）。
 - 模板里用到未声明变量（StrictUndefined）：`template uses undefined variable 'X' (declare it in spec.parameters)`。
-- Jinja 渲染期抛出的其他异常（`{{ 1/0 }}` → `ZeroDivisionError`、缺 loader 的 `{% include %}` 等）会被捕获并报为 `template error in spec.<field>`。
-- 沙箱拒绝：渲染器使用 `jinja2.sandbox.SandboxedEnvironment`，所以走属性链的逃逸（如 `{{ ''.__class__.__mro__ }}`）会被拒绝 —— 共享 / 不可信来源的 recipe 无法在 `permission_mode` 与工具权限生效之前访问 Python 内部。
+- Jinja 渲染期抛出的其他异常（<span v-pre>`{{ 1/0 }}`</span> → `ZeroDivisionError`、缺 loader 的 `{% include %}` 等）会被捕获并报为 `template error in spec.<field>`。
+- 沙箱拒绝：渲染器使用 `jinja2.sandbox.SandboxedEnvironment`，所以走属性链的逃逸（如 <span v-pre>`{{ ''.__class__.__mro__ }}`</span>）会被拒绝 —— 共享 / 不可信来源的 recipe 无法在 `permission_mode` 与工具权限生效之前访问 Python 内部。
 
 **保留参数名。** 看起来是 ASCII 标识符、但被 Jinja 保留的名字会在 spec 校验阶段被拒：常量（`true`/`True`/`false`/`False`/`none`/`None`）、关键字（`for`/`if`/`in`/`set`/`is`/`not`/`or`/…）以及 Jinja runtime 注入的 `self` / `parent`。完整清单见 `agentao/cli/run_models.py::_JINJA_RESERVED_NAMES`。
 

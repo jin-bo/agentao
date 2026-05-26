@@ -118,15 +118,15 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 
 `--param KEY=VALUE` is repeatable. Splits on the **first** `=` only — values may contain further `=` chars (e.g. `--param expr=a=b` → `expr` → `a=b`).
 
-**Trigger rule.** The renderer is skipped entirely when both `spec.parameters` and `--param` are empty — literal `{{ }}` in a parameterless spec passes through to the LLM untouched. When the spec has no `parameters` but the CLI supplies `--param`, the run exits `2` so typos surface.
+**Trigger rule.** The renderer is skipped entirely when both `spec.parameters` and `--param` are empty — literal <span v-pre>`{{ }}`</span> in a parameterless spec passes through to the LLM untouched. When the spec has no `parameters` but the CLI supplies `--param`, the run exits `2` so typos surface.
 
 **Errors (all exit `2` / `invalid_spec`):**
 
 - Missing required param, unknown param, choices violation.
 - Malformed `--param` (`expected KEY=VALUE`, duplicate key, non-identifier key).
 - Undefined template variable (StrictUndefined): "template uses undefined variable 'X' (declare it in spec.parameters)".
-- Render-time errors propagated through Jinja (`{{ 1/0 }}` → `ZeroDivisionError`, `{% include %}` without loader, etc.) are caught and reported as "template error in spec.\<field\>".
-- Sandbox-blocked operation: the renderer uses `jinja2.sandbox.SandboxedEnvironment`, so attribute-walking escapes (e.g. `{{ ''.__class__.__mro__ }}`) are refused — recipes from shared/untrusted sources cannot reach Python internals before `permission_mode` and tool permissions apply.
+- Render-time errors propagated through Jinja (<span v-pre>`{{ 1/0 }}`</span> → `ZeroDivisionError`, `{% include %}` without loader, etc.) are caught and reported as "template error in spec.\<field\>".
+- Sandbox-blocked operation: the renderer uses `jinja2.sandbox.SandboxedEnvironment`, so attribute-walking escapes (e.g. <span v-pre>`{{ ''.__class__.__mro__ }}`</span>) are refused — recipes from shared/untrusted sources cannot reach Python internals before `permission_mode` and tool permissions apply.
 
 **Reserved parameter names.** Names that look like ASCII identifiers but are reserved by Jinja are rejected at spec-validation time: constants (`true`/`True`/`false`/`False`/`none`/`None`), keywords (`for`/`if`/`in`/`set`/`is`/`not`/`or`/…), and the runtime-injected names `self` / `parent`. The full list lives in `agentao/cli/run_models.py::_JINJA_RESERVED_NAMES`.
 
