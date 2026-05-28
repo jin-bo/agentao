@@ -90,20 +90,54 @@ _SLASH_COMMAND_HINTS = {
 
 
 class _SlashCompleter(Completer):
+    """Slash-command completer that preserves draft tail.
+
+    Two behaviors that matter for the "typed prose first, then prepended
+    a slash command" workflow:
+
+    - Exact match of an arg-taking command (e.g. ``/agent bg``) yields a
+      display-only hint that inserts nothing. The previous version
+      inserted the literal hint string (`` <agent-name> <task>``) into
+      the buffer, which collided with any draft after the cursor.
+    - Prefix completion of an arg-taking command appends a trailing
+      space unless the cursor is already followed by whitespace. This
+      keeps ``/ageplease refactor`` → ``/agent please refactor`` instead
+      of the broken ``/agentplease refactor``.
+    """
+
     def get_completions(self, document, complete_event):
-        text = document.text_before_cursor
-        if not text.startswith('/'):
+        text_before = document.text_before_cursor
+        if not text_before.startswith('/'):
             return
-        # If the typed text exactly matches a command, show its argument hint
-        stripped = text.rstrip()
+
+        text_after = document.text_after_cursor
+        stripped = text_before.rstrip()
+
+        # Exact match → display-only hint. Inserting ``''`` keeps the
+        # popup informational without rewriting the buffer.
         if stripped in _SLASH_COMMAND_HINTS:
             hint = _SLASH_COMMAND_HINTS[stripped]
-            yield Completion(f' {hint}', start_position=0, display_meta='arg')
+            yield Completion(
+                text='',
+                start_position=0,
+                display=hint,
+                display_meta='arg',
+            )
             return
-        # Prefix completion for command names
+
+        # Prefix completion for command names.
         for cmd in _SLASH_COMMANDS:
-            if cmd.startswith(text):
-                yield Completion(cmd, start_position=-len(text))
+            if not cmd.startswith(text_before):
+                continue
+            takes_args = cmd in _SLASH_COMMAND_HINTS
+            needs_space = takes_args and not (
+                text_after and text_after[0].isspace()
+            )
+            suffix = ' ' if needs_space else ''
+            yield Completion(
+                text=cmd + suffix,
+                start_position=-len(text_before),
+            )
 
 
 def _display_layered_entries(entries, header: str, console) -> None:
