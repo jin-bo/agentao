@@ -7,193 +7,166 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Always use `uv` for package management**, not pip:
 
 ```bash
-# Install dependencies
-uv sync
-
-# Add a new dependency
-uv add package-name
-
-# Run Python scripts
-uv run python script.py
-
-# Run the CLI
-uv run agentao
-# or
-uv run python main.py
+uv sync                    # Install dependencies
+uv add package-name        # Add a new dependency
+uv run python script.py    # Run Python scripts
+uv run agentao             # Run the CLI
 ```
 
-## Running and Testing
+Core deps live in `[project.dependencies]`; the heavyweight UI / format-conversion deps are opt-in extras (`[cli]`, `[web]`, `[i18n]`, `[pdf]`, `[excel]`, `[image]`, `[crypto]`, `[google]`, `[crawl4ai]`, `[tokenizer]`, `[full]`). A bare `pip install agentao` gets a library-only install; `pip install 'agentao[cli]'` is the smallest interactive CLI.
 
-### Start the Agent
+## Running
 
 ```bash
-# Quick start
-./run.sh
-
-# Or directly
-uv run agentao
-
-# Or via Python
-uv run python main.py
+./run.sh                              # Quick start (interactive)
+uv run agentao                        # Interactive CLI
+uv run python -m agentao              # Same, via module entrypoint
+uv run agentao run --prompt "..."     # Non-interactive automation (M0)
+uv run agentao --acp --stdio          # ACP server (Issue 12)
 ```
 
-### Run Tests
+`agentao run` is the canonical non-interactive surface. Exit codes: `0` ok, `1` runtime, `2` invalid usage, `3` permission/interaction, `4` max iterations, `130` interrupted. See `agentao/cli/run.py` and `docs/CONFIGURATION.md`. The legacy `agentao -p "..."` is now a thin shim over `agentao run`.
+
+## Testing
 
 ```bash
-# Run all tests with pytest
-uv run python -m pytest tests/
-
-# Run a specific test file
-uv run python tests/test_imports.py
-uv run python tests/test_tool_confirmation.py
-uv run python tests/test_readchar_confirmation.py
-uv run python tests/test_date_in_prompt.py
-
-# All test files are in tests/ directory
+uv run python -m pytest tests/                       # Default suite
+uv run python -m pytest -m slow                      # Clean-install smoke tests
+uv run python -m pytest tests/cli/                   # CLI subsuite
+uv run python -m pytest tests/test_active_permissions.py   # Single file
 ```
 
-### Configuration
+There are 160+ test files including subdirs (`tests/cli/`, `tests/data/`, `tests/support/`). The `slow` marker is excluded by default (`pyproject.toml :: tool.pytest.ini_options.addopts = "-m 'not slow'"`).
 
-Copy and edit `.env` from `.env.example`:
+## Configuration
+
 ```bash
-cp .env.example .env
-# Edit .env with your API key and settings
+cp .env.example .env       # Edit with OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
 ```
 
-> **Reference for all config files** (`.env`, `.agentao/settings.json`, `permissions.json`, `mcp.json`, `acp.json`, `skills_config.json`, `AGENTAO.md`, memory DBs): see [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for paths, schema, defaults, and precedence rules.
-
-Required: `OPENAI_API_KEY`
-Optional: `OPENAI_BASE_URL`, `OPENAI_MODEL`
+**Reference for all config files** (`.env`, `.agentao/settings.json`, `permissions.json`, `mcp.json`, `acp.json`, `skills_config.json`, `AGENTAO.md`, memory DBs): see [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for paths, schema, defaults, and precedence rules.
 
 ## Architecture
 
-### Three-Layer Design
+Agentao is an **embedded agent harness**: the same runtime drives the interactive CLI, the `agentao run` automation surface, and the ACP server, with hosts free to embed `Agentao(...)` directly. The package boundary between "host-facing contract" and "internal runtime" is load-bearing — see `docs/design/embedded-host-contract.md` and `docs/api/host.md`.
 
-Agentao uses a **Tool-Agent-CLI** architecture:
+### Subpackage map
 
-1. **CLI Layer** (`cli.py`): User interface with Rich, handles commands, manages session state (like `allow_all_tools`)
-2. **Agent Layer** (`agent.py`): Orchestrates LLM, tools, skills, and conversation history
-3. **Tool Layer** (`tools/`): Individual tool implementations following the Tool base class
+| Path | Purpose |
+|---|---|
+| `agentao/agent.py` | `Agentao` class — sync `chat()` and async `arun()`. Construction wires LLM, tools, skills, plugins, permissions, replay. |
+| `agentao/runtime/` | Per-turn machinery extracted from `Agentao` — `ChatLoopRunner` (loop body), `ToolRunner` (4-phase tool pipeline: plan / execute / format / sanitize), `run_llm_call`, model/provider switching. |
+| `agentao/host/` | **Public host contract.** `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `EventStream`, `ActivePermissions`. Stability boundary for embedded hosts. |
+| `agentao/harness/` | **Deprecated alias for `agentao.host`** (renamed in 0.4.2). Re-exports with old names + `DeprecationWarning`; scheduled for removal in 0.5.0. |
+| `agentao/embedding/` | Host-side construction: `build_from_environment()` (env / dotenv / `.agentao/*.json` reads routed through explicit kwargs), `permission_loader`, `sessions`, `plugins/` (manifest loader, validators, MCP merge, resolvers). |
+| `agentao/plugins/` | Plugin **runtime path** only — models, hooks, skill/agent validators. Loader lives in `embedding/plugins/`. |
+| `agentao/replay/` | `ReplayManager` + recorder/reader/adapter for persistent turn replay (`.agentao/replays/*.jsonl`). Transport `TURN_BEGIN`/`TURN_END` events. |
+| `agentao/acp/` | ACP server (Agent Connection Protocol). `agentao --acp --stdio` mode. Pydantic schemas exported via `agentao.host.export_host_acp_json_schema`. |
+| `agentao/acp_client/` | ACP **client** — talk to other ACP servers from inside Agentao. |
+| `agentao/tools/` | Tool implementations + `Tool` / `AsyncToolBase` base classes (`base.py`). |
+| `agentao/mcp/` | MCP (Model Context Protocol) client — connect to external MCP servers and surface their tools as `mcp_{server}_{tool}`. |
+| `agentao/memory/` | SQLite-backed memory store (`MemoryManager`, `MemoryRetriever`, `MemoryPromptRenderer`). |
+| `agentao/permissions.py` + `permissions_hardline/` | `PermissionEngine` + shell-pattern hardline scanner (heredoc, contexts, decoder). |
+| `agentao/sandbox/` | macOS `sandbox-exec` profile management for shell tool. |
+| `agentao/transport/` | Event transport between Agentao core and CLI/ACP frontends. |
+| `agentao/cli/` | Interactive CLI **package** (was `cli.py` before 0.4.x). `app.py` (`AgentaoCLI`), `entrypoints.py` (argparse + `main`), `run.py` (`agentao run`), `commands/` (per-slash-command handlers), `subcommands.py`, `diagnostics_cli.py`. |
+| `agentao/skills/` | Skill discovery + activation. SKILL.md frontmatter parser. |
+| `agentao/prompts/`, `agentao/agents/`, `agentao/plan/`, `agentao/capabilities/`, `agentao/tooling/`, `agentao/security/`, `agentao/session.py`, `agentao/context_manager.py` | Supporting modules — prompt assembly, sub-agent runners, plan-mode state, capability declarations, tool-arg sanitizers, security utilities, session save/load, context-window compaction. |
 
-```
-User → CLI → Agent → LLM + Tools
-                  ↓
-            SkillManager (loads from skills/)
-```
+### Tool system
 
-### Tool System
-
-All tools inherit from `Tool` base class (`tools/base.py`):
+All tools inherit from `Tool` (sync) or `AsyncToolBase` (async) in `agentao/tools/base.py`. Both are registered through the same `ToolRegistry` which converts them to OpenAI function-calling format.
 
 ```python
 class MyTool(Tool):
-    @property
-    def name(self) -> str:
-        return "my_tool"
-
-    @property
-    def description(self) -> str:
-        return "Description for LLM"
-
-    @property
-    def parameters(self) -> Dict[str, Any]:
-        return {...}  # JSON Schema
-
-    @property
-    def requires_confirmation(self) -> bool:
-        return False  # True for dangerous operations
-
-    def execute(self, **kwargs) -> str:
-        return "Result"
+    name: str
+    description: str
+    parameters: Dict[str, Any]              # JSON Schema
+    requires_confirmation: bool             # True → permission engine gate
+    def execute(self, **kwargs) -> str: ...
 ```
 
-**Tool Registration**: Tools are registered in `agent.py::_register_tools()`. The `ToolRegistry` converts them to OpenAI function calling format.
+`AsyncToolBase` dispatches through `runtime_loop` with a `CancellationToken`; cleanup-ack uses `_bridged()` `finally` + `threading.Event` so the runtime can cancel mid-tool. `RegistrableTool = Tool | AsyncToolBase`.
 
-**Tool Confirmation**: Tools with `requires_confirmation=True` (Shell, Web, File Writing) pause execution and prompt user via `confirmation_callback` passed from CLI.
+**Registration**: in `agent.py::_register_tools()` (line ~522). Built-in tools currently in `agentao/tools/`: `agents.py`, `ask_user.py`, `file_ops.py`, `memory.py`, `plan.py`, `search.py`, `shell.py`, `skill.py`, `todo.py`, `web.py`.
 
-**Tools requiring confirmation:**
-- `run_shell_command` - Shell command execution (allowlist for safe read-only commands)
-- `web_fetch` - Fetch web content (domain-tiered: allowlist/blocklist/ask)
-- `web_search` - Web search
-- `write_file` - File writing/overwriting (prevents data loss)
+**Confirmation / permissions**: tools with `requires_confirmation=True` are gated by `PermissionEngine`, which evaluates rules from `.agentao/permissions.json` (project) + `<home>/.agentao/permissions.json` (user). The engine itself does **no file I/O** — `agentao/embedding/permission_loader.py::load_permission_rules()` reads and passes `(rules, sources)` in. Default presets auto-allow common docs domains (`.github.com`, `.docs.python.org`, …) and auto-deny SSRF targets (`localhost`, `127.0.0.1`, `169.254.169.254`, …).
 
-**Domain-Based Permissions** (`web_fetch`): The `PermissionEngine` supports `"domain"` rules with allowlist/blocklist matching. Default presets auto-allow trusted docs sites (`.github.com`, `.docs.python.org`, etc.) and auto-deny SSRF targets (`localhost`, `127.0.0.1`, `169.254.169.254`, etc.). Customizable via `.agentao/permissions.json`. See `docs/features/TOOL_CONFIRMATION_FEATURE.md` for details.
+### Permission modes (replaces the old `allow_all_tools` flag)
 
-### Skills System
+`/mode read-only | workspace-write | full-access | plan` switches the runtime's permission posture:
 
-**Dynamic Loading**: Skills are auto-discovered from `skills/` directory. Each subdirectory contains:
-- `SKILL.md` - Main file with YAML frontmatter (`name:`, `description:`)
-- `reference/*.md` (optional) - Additional documentation loaded on-demand
+- `read-only` — blocks all write and shell tools.
+- `workspace-write` — allows file writes and safe shell; asks for web (default).
+- `full-access` — allows all tools without prompting.
+- `plan` — LLM plans, does not execute; entered via `/plan`.
 
-**Skill Manager** (`skills/manager.py`):
-- Parses YAML frontmatter from SKILL.md files
-- Maintains `available_skills` dict (all skills)
-- Maintains `active_skills` dict (currently activated)
-- Injects active skill context into system prompt
+State is on `AgentaoCLI` (`agentao/cli/app.py`) and projected into prompts.
 
-**Activation**: Use `activate_skill` tool or `/skills` command. Active skills add their documentation to the system prompt.
+### System prompt composition
 
-### System Prompt Composition
+Built fresh on every `chat()` in `agent.py::_build_system_prompt()` (line ~605):
 
-The system prompt is dynamically built in `agent.py::_build_system_prompt()`:
+1. `AGENTAO.md` (if present in cwd) — project-specific instructions
+2. Agent instructions — base Agentao capabilities
+3. Current date/time — `YYYY-MM-DD HH:MM:SS (Day)`
+4. Memory blocks — `<memory-stable>` + `<memory-context>` (top-k recall scored against current user message)
+5. Available skills — names + descriptions
+6. Active skills context — full SKILL.md + on-demand `reference/*.md`
 
-1. **AGENTAO.md** (if exists in cwd) - Project-specific instructions
-2. **Agent Instructions** - Base Agentao capabilities
-3. **Current Date/Time** - Auto-injected: `YYYY-MM-DD HH:MM:SS (Day)`
-4. **Available Skills** - List with descriptions
-5. **Active Skills Context** - Full documentation of activated skills
+### Conversation flow
 
-This composition happens on every `chat()` call to keep skills context fresh.
-
-### Conversation Flow
-
-```python
-# agent.py::chat()
-1. User message added to self.messages
-2. System prompt built (includes AGENTAO.md, date, skills)
-3. LLM called with messages + tools
-4. Loop (max 100 iterations):
-   a. If tool_calls: execute each tool
-      - Check requires_confirmation
-      - Call confirmation_callback if needed
-      - Execute tool or cancel based on response
-   b. Add tool results to messages
-   c. Call LLM again with updated messages
-   d. If no tool_calls: return final response
+```
+Agentao.chat() / Agentao.arun()
+  └─ ChatLoopRunner.run()                  # runtime/chat_loop/_runner.py
+       loop (max_iterations):
+         ├─ run_llm_call(messages, tools)  # runtime/llm_call.py
+         ├─ if tool_calls:
+         │    └─ ToolRunner.run()          # runtime/tool_runner.py
+         │         plan → execute → format → sanitize
+         │           (gates: PermissionEngine + confirmation_callback)
+         └─ else: return assistant text
 ```
 
-### Logging System
+`arun()` is the async path; the sync `chat()` wraps it. AsyncTools dispatch on `runtime_loop` so cancellation works inside the LLM-driven turn.
 
-**Complete LLM interaction logging** to `agentao.log`:
-- Every request/response (full content, no truncation)
-- All tool calls with formatted JSON arguments
-- Tool results
-- Token usage
-- Timestamps
+### Skills
 
-Logger is in `llm/client.py`. To debug tool execution or LLM behavior, check this log file.
+Auto-discovered from `skills/`. Each subdir has `SKILL.md` (YAML frontmatter `name:` / `description:`) and optional `reference/*.md` (loaded on activation). The skill manager (`agentao/skills/`) maintains `available_skills` (all) and `active_skills` (this session). Cross-process locking via `filelock` — installs and updates are safe across concurrent CLI processes.
 
-### CLI Commands
+Activate via the `activate_skill` tool or `/skills activate <name>`.
 
-User commands (start with `/`):
-- `/clear` - Clears history AND resets `allow_all_tools` to False
-- `/reset-confirm` - Resets `allow_all_tools` only (keeps history)
-- `/status` - Shows message count, model, active skills, confirmation mode
-- `/model [name]` - List models or switch to specified model
-- `/skills` - List available/active skills
-- `/memory` - Show saved memories
-- `/mcp` - List MCP servers and tools
-- `/context` - Show context-window token usage; `/context limit <n>` overrides max tokens
-- `/compact` - Manually run full history compaction (`compress_messages(is_auto=False)`); handler in `cli/commands/compact.py`
-- `/help` - Show help
+### Memory system
 
-Session state `allow_all_tools` persists across tool confirmations within one session.
+**Architecture:** SQLite-backed storage managed by `MemoryManager` (`agentao/memory/manager.py`).
 
-### MCP (Model Context Protocol) System
+| Database | Path | Content |
+|---|---|---|
+| Project store | `.agentao/memory.db` | Project-scoped persistent memories + session summaries |
+| User store | `<home>/.agentao/memory.db` | Cross-project user-scoped persistent memories |
 
-Agentao supports connecting to external MCP servers that provide additional tools.
+**Three data types:**
 
-**Configuration**: `.agentao/mcp.json` (project) and `<home>/.agentao/mcp.json` (global):
+1. **Persistent memories** (`MemoryRecord`) — rows in `memories`. Soft-deleted. Scoped `user` / `project`. Types: `preference`, `profile`, `project_fact`, `workflow`, `decision`, `constraint`, `note`. Source: `explicit` / `auto` / `crystallized`.
+2. **Session summaries** (`SessionSummaryRecord`) — rows in `session_summaries`. Written by microcompaction / full LLM summarization. Scoped to `session_id`.
+3. **Recall candidates** (`RecallCandidate`) — transient, in-memory. Scored at query time by `MemoryRetriever` (keyword/Jaccard/tag/recency). Never stored.
+
+**Prompt injection (per turn, two blocks):**
+- `<memory-stable>` — stable persistent memories (budget-limited). Session summaries are intentionally excluded — they live in message history as `[Conversation Summary]` blocks.
+- `<memory-context>` — top-k recall candidates against current user message.
+
+**Separation of concerns:** the LLM can only write (`save_memory(key, value, tags?)`). Search, delete, clear are CLI-only (`/memory search|tag|delete|clear|user|project|session|status`) and call `MemoryManager` directly — never exposed as LLM tools.
+
+See `docs/features/memory-management.md`.
+
+### Replay
+
+`ReplayManager` (`agentao/replay/manager.py`) records every turn to `.agentao/replays/*.jsonl` when enabled. Replay state lives **outside** `Agentao` core — Transport emits `TURN_BEGIN` / `TURN_END` events that the manager subscribes to. Configure via `.agentao/settings.json :: replay.{enabled, max_instances}` or `/replay on|off`.
+
+### MCP
+
+External MCP servers via `.agentao/mcp.json` (project) + `<home>/.agentao/mcp.json` (global):
+
 ```json
 {
   "mcpServers": {
@@ -212,181 +185,67 @@ Agentao supports connecting to external MCP servers that provide additional tool
 }
 ```
 
-**Transport types**: `command` (stdio subprocess) or `url` (SSE).
+Transports: `command` (stdio subprocess) or `url` (SSE). Tools are registered as `mcp_{server}_{tool}`. The MCP SDK is async-only; `McpClientManager` runs a dedicated event loop and bridges into sync Agentao via `run_until_complete()`.
 
-**Tool naming**: MCP tools are registered as `mcp_{server}_{tool}` (e.g. `mcp_github_create_issue`).
+Key files: `agentao/mcp/config.py`, `client.py`, `tool.py`.
 
-**Architecture**:
-```
-.agentao/mcp.json → McpConfig → McpClientManager → McpClient (per server)
-                                                          ↓
-                                                   list_tools() / call_tool()
-                                                          ↓
-                                                   McpTool(Tool) → ToolRegistry
-```
+CLI: `/mcp list`, `/mcp add <name> <command|url>`, `/mcp remove <name>`.
 
-**Key files**:
-- `agentao/mcp/config.py` - Config loading, env var expansion
-- `agentao/mcp/client.py` - McpClient (single server), McpClientManager (multi-server)
-- `agentao/mcp/tool.py` - McpTool wrapper adapting MCP tools to Tool base class
+### Logging
 
-**Async bridge**: MCP SDK is async-only; McpClientManager uses a dedicated event loop with `run_until_complete()` to bridge into sync Agentao code.
+`agentao.log` captures every LLM request/response (full content, no truncation), all tool calls with formatted JSON arguments, tool results, token usage, timestamps. Logger lives in `agentao/llm/client.py` — read this file first when debugging tool execution or LLM behavior.
 
-**CLI**: `/mcp list`, `/mcp add <name> <command|url>`, `/mcp remove <name>`
+### CLI slash commands
 
-## Adding New Components
+The authoritative list with full subcommand syntax lives in `agentao/cli/help_text.py`; `/help` renders it. The high-impact commands to know about when reasoning about agent behavior:
 
-### Adding a Tool
+- `/mode read-only|workspace-write|full-access` — permission posture (replaces 0.3.x `allow_all_tools`).
+- `/plan` / `/plan implement` / `/plan show` — plan mode (LLM plans, does not execute).
+- `/clear` — saves current session, clears conversation + **all memories**, starts a new one.
+- `/new` — saves session, starts fresh conversation (keeps memories).
+- `/sessions`, `/sessions resume <id>`, `/sessions delete <id>` — manage saved sessions.
+- `/skills`, `/skills activate <name>`, `/skills disable <name>` — skill state.
+- `/crystallize` — draft a reusable skill from the current session.
+- `/memory list|search|tag|delete|clear|user|project|session|status` — memory management.
+- `/mcp`, `/sandbox`, `/acp`, `/replay` — subsystem control.
+- `/agent <name> <task>`, `/agent bg <name> <task>`, `/agent dashboard` — sub-agent runners.
+- `/tools [name]` — list registered tools or show one tool's schema.
+- `/model`, `/provider`, `/temperature` — LLM config.
+- `/context`, `/compact` — context-window inspection + manual compaction.
 
-1. Create tool class in `agentao/tools/<module>.py`
-2. Implement `Tool` interface (name, description, parameters, execute)
-3. Set `requires_confirmation=True` if dangerous:
-   - Shell commands (arbitrary execution)
-   - Web access (network requests, privacy)
-   - File writing/overwriting (data loss risk)
-   - File deletion (irreversible)
-4. Register in `agent.py::_register_tools()`:
-   ```python
-   from .tools.mymodule import MyTool
-   # In _register_tools():
-   tools_to_register.append(MyTool())
-   ```
+## Adding new components
 
-### Adding a Skill
+### A tool
 
-1. Create directory: `skills/my-skill/`
-2. Create `SKILL.md` with YAML frontmatter:
-   ```yaml
-   ---
-   name: my-skill
-   description: Use when... (trigger conditions)
-   ---
+1. Create `agentao/tools/<module>.py` and implement `Tool` (or `AsyncToolBase` for async).
+2. Set `requires_confirmation=True` for anything dangerous: arbitrary shell, network requests, file writes, deletions.
+3. Register in `agent.py::_register_tools()`.
 
-   # Skill Documentation
-   ...
-   ```
-3. (Optional) Add `reference/*.md` files for on-demand loading
-4. Restart agent - skill auto-discovered
+### A skill
 
-Reference files are loaded only when skill is activated (saves memory).
+1. Create `skills/<my-skill>/SKILL.md` with YAML frontmatter (`name:`, `description:` — the trigger text the model sees).
+2. Optionally add `reference/*.md` files (loaded only on activation, saves memory).
+3. Restart the agent or run `/skills reload`.
 
-## Important Patterns
+## Common gotchas
 
-### Confirmation Callback Pattern
+- **`cli.py` was split into the `cli/` package** in 0.4.x. Older docs and design notes may still say `cli.py` — grep `agentao/cli/` for the actual handler.
+- **`agentao.harness` → `agentao.host`** rename in 0.4.2. The old name is a deprecated alias scheduled for removal in 0.5.0. Use `agentao.host.HostEvent`, `export_host_acp_json_schema`, etc.
+- **`allow_all_tools` is gone.** Use `/mode full-access` (or the equivalent host-API call) instead.
+- **`agentao -p` is a shim** over `agentao run`. New automation should target `agentao run` directly — that's where the spec schema, Jinja2 templating, and exit codes are documented.
+- **`Agentao` constructor takes 8 legacy callbacks** (`confirmation_callback`, `step_callback`, …) that emit `DeprecationWarning`. They will be removed in 0.5.0 — `agentao.embedding.compat` is the documented migration surface.
+- **Don't intuition-audit architecture.** Before recommending borrowed patterns or claiming a gap exists, grep agentao to verify; subpackage `__init__.py` docstrings document intentional shims and rename trails.
 
-CLI creates callback and passes to Agent:
-```python
-# cli.py
-def confirm_tool_execution(self, name, desc, args) -> bool:
-    # Show menu, get user choice
-    # Return True/False
+## Key dependencies
 
-self.agent = Agentao(
-    confirmation_callback=self.confirm_tool_execution
-)
-```
+Core (`pyproject.toml :: project.dependencies`):
+- `openai>=1.0.0` — LLM client (OpenAI-compatible)
+- `httpx>=0.25.0` — HTTP client
+- `pydantic>=2` — schemas (host contract, ACP, run-spec)
+- `pyyaml>=6.0.3` — SKILL.md frontmatter, plugin manifests
+- `mcp>=1.26.0` — MCP client SDK
+- `python-dotenv>=1.0.0` — `.env` loading
+- `filelock>=1.4.0` — cross-process locking for skill registry
+- `jinja2>=3.0.0` — `agentao run` spec templating (StrictUndefined)
 
-Agent checks before tool execution:
-```python
-# agent.py
-if tool.requires_confirmation and self.confirmation_callback:
-    confirmed = self.confirmation_callback(name, desc, args)
-    if not confirmed:
-        result = "Tool execution cancelled by user"
-```
-
-### Single-Key Input
-
-Uses `readchar` library for instant response:
-```python
-import readchar
-key = readchar.readkey()  # No Enter needed
-```
-
-Supports: `1`, `2`, `3`, `Esc`, `Ctrl+C`. Invalid keys are silently ignored.
-
-### Memory System
-
-**Architecture:** SQLite-backed storage managed by `MemoryManager` (`agentao/memory/manager.py`).
-
-**SQLite databases:**
-
-| Database | Path | Content |
-|----------|------|---------|
-| Project store | `.agentao/memory.db` | Project-scoped persistent memories + session summaries |
-| User store | `<home>/.agentao/memory.db` | Cross-project user-scoped persistent memories |
-
-**Three data types:**
-
-1. **Persistent memories** (`MemoryRecord`) — rows in the `memories` table. Soft-deleted (never physically removed). Scoped to `user` or `project`. Types: `preference`, `profile`, `project_fact`, `workflow`, `decision`, `constraint`, `note`. Source: `explicit` (LLM-written) or `auto`/`crystallized`. Fields: `id`, `scope`, `type`, `key_normalized`, `title`, `content`, `tags`, `keywords`, `source`, `confidence`, `sensitivity`, `created_at`, `updated_at`, `deleted_at`.
-
-2. **Session summaries** (`SessionSummaryRecord`) — rows in the `session_summaries` table. Written by the context-compression pipeline (microcompaction / full LLM summarization) to preserve conversation continuity across compaction events. Scoped to a `session_id`.
-
-3. **Recall candidates** (`RecallCandidate`) — transient, in-memory only. Scored at query time by `MemoryRetriever` using a keyword/Jaccard/tag/recency formula. Never stored.
-
-**Prompt injection (per turn, two blocks):**
-- `<memory-stable>` — rendered by `MemoryPromptRenderer.render_stable_block()`: stable persistent memories only (budget-limited, selection policy applied). Session summaries are intentionally excluded — they already live in the conversation message history as `[Conversation Summary]` blocks.
-- `<memory-context>` — rendered by `render_dynamic_block()`: top-k recall candidates scored against the current user message.
-
-**LLM tool (write-only):**
-- `save_memory(key, value, tags?)` — the only memory tool exposed to the LLM
-
-**CLI commands (full management):**
-- `/memory` / `/memory list` — list all entries
-- `/memory search <query>` — keyword search across title, value, tags
-- `/memory tag <tag>` — filter by tag
-- `/memory user` / `/memory project` — show a single scope
-- `/memory delete <key>` — soft-delete by title
-- `/memory clear` — soft-delete all entries + clear session summaries (with confirmation)
-- `/memory session` — show current session summary
-- `/memory status` — entry counts, session size, archive count
-
-**Separation of concerns:** The LLM can only write (`save_memory`). Search, delete, and clear are CLI-only operations that call `MemoryManager` methods directly — they are never exposed to the LLM as callable tools.
-
-See `docs/features/memory-management.md` for detailed documentation.
-
-## File Organization
-
-```
-agentao/
-├── agentao/           # Main package
-│   ├── agent.py        # Core orchestration
-│   ├── cli.py          # CLI interface with Rich
-│   ├── llm/
-│   │   └── client.py   # OpenAI client wrapper
-│   ├── tools/          # Tool implementations
-│   │   ├── base.py     # Tool base class + registry
-│   │   ├── file_ops.py # Read, write, edit, list
-│   │   ├── search.py   # Glob, grep
-│   │   ├── shell.py    # Shell execution
-│   │   ├── web.py      # Fetch, search
-│   │   ├── memory.py   # Persistent memory
-│   │   ├── agents.py   # Helper agents
-│   │   └── skill.py    # Skill activation
-│   ├── mcp/            # MCP (Model Context Protocol) support
-│   │   ├── config.py   # Config loading + env var expansion
-│   │   ├── client.py   # McpClient + McpClientManager
-│   │   └── tool.py     # McpTool wrapper for Tool interface
-│   └── skills/
-│       └── manager.py  # Skill loading + management
-├── skills/             # Skill definitions (SKILL.md files)
-├── tests/              # Test files (test_*.py)
-├── docs/               # Documentation
-│   ├── features/       # Feature documentation
-│   ├── updates/        # Update logs
-│   ├── implementation/ # Technical implementation details
-│   └── dev-notes/      # Development notes (archived)
-├── CLAUDE.md           # Claude Code guidance
-├── AGENTAO.md        # Project-specific instructions
-└── main.py            # Entry point
-```
-
-## Key Dependencies
-
-- `openai` - LLM client (OpenAI-compatible APIs)
-- `rich` - CLI interface (markdown, panels, prompts)
-- `readchar` - Single-key input (no Enter needed)
-- `httpx` - HTTP client for web tools
-- `beautifulsoup4` - HTML parsing
-- `python-dotenv` - Environment configuration
-- `mcp` - Model Context Protocol client SDK
+Extras: see Package Management section above; full list in `pyproject.toml :: project.optional-dependencies`.
