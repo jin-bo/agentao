@@ -59,6 +59,9 @@ def set_model(agent: "Agentao", model: str) -> str:
     """
     old_model = agent.llm.model
     agent.llm.model = model
+    # Built-in LLMClient only; injected host clients need not implement it.
+    if hasattr(agent.llm, "reset_capability_latches"):
+        agent.llm.reset_capability_latches()
     agent.context_manager._encoding = _get_tiktoken_encoding(model)
     agent.context_manager._last_api_prompt_tokens = None
     agent.llm.logger.info(f"Model changed from {old_model} to {model}")

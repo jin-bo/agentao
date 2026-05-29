@@ -334,6 +334,13 @@ class AgentToolWrapper(Tool):
             defn_temperature if defn_temperature is not None
             else live_cfg.get("temperature")
         )
+        # Inherit the parent's temperature-omission state, but only when the
+        # sub-agent isn't pinning its own temperature (an explicit definition
+        # temperature means "send this value").
+        omit_temperature = (
+            False if defn_temperature is not None
+            else bool(live_cfg.get("omit_temperature", False))
+        )
         max_tokens = live_cfg.get("max_tokens")
 
         max_turns = self._definition.get("max_turns", 15)
@@ -373,6 +380,7 @@ class AgentToolWrapper(Tool):
             # thinking_callback intentionally omitted for sub-agents
         )
 
+        sub_agent.llm.omit_temperature = omit_temperature
         sub_agent.tools = scoped_registry
         sub_agent.project_instructions = self._definition.get("system_instructions")
         sub_agent.skill_manager = SkillManager(skills_dir="/nonexistent")

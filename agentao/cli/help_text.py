@@ -24,7 +24,7 @@ All commands start with `/`:
   - `/sessions resume <id>` - Resume a saved session by id prefix
   - `/sessions delete <id>` - Delete a saved session
   - `/sessions delete all` - Delete all saved sessions (requires confirmation)
-- `/temperature [value]` - Show or set LLM temperature (0.0-2.0)
+- `/temperature [value|off|on]` - Show/set LLM temperature (0.0-2.0); `off` omits it for models that reject it
 - `/mode [read-only|workspace-write|full-access]` - Set permission mode
   - `/mode` - Show current mode
   - `/mode read-only` - Block all write & shell tools

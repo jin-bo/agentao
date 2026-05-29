@@ -35,6 +35,7 @@ from ._retry import (
     _compute_backoff_delay,
     _interruptible_sleep,
     _is_streaming_unsupported,
+    _is_temperature_unsupported,
     _mark_streamed,
     _parse_retry_after,
 )
@@ -125,6 +126,12 @@ class LLMClient:
 
         # Set to True after detecting the model requires max_completion_tokens
         self._use_max_completion_tokens: bool = False
+
+        # When True, 'temperature' is dropped from requests. Set either by the
+        # user (/temperature off) or auto-latched once the model rejects the
+        # parameter — see the one-shot fix-up in chat()/chat_stream(). Reasoning
+        # models (o1/o3/gpt-5, …) reject any non-default temperature.
+        self.omit_temperature: bool = False
 
         # max_retries=0: defer retry policy to _classify_retry / _compute_backoff_delay
         # so 408/409/425/429/5xx/529 + Retry-After + cancellation are handled
@@ -249,6 +256,7 @@ class LLMClient:
         if model is not None:
             self.model = model
 
+        self.reset_capability_latches()
         self.client = _openai_client_cls()(
             api_key=self.api_key,
             base_url=self.base_url,
@@ -257,6 +265,20 @@ class LLMClient:
         self.logger.info(
             f"LLMClient reconfigured: model={self.model}, base_url={self.base_url}"
         )
+
+    def reset_capability_latches(self) -> None:
+        """Clear auto-detected, model-specific request quirks.
+
+        ``_use_max_completion_tokens`` and ``omit_temperature`` are latched
+        per model on first rejection. They must be cleared whenever the model
+        or provider changes — otherwise a quirk detected for one model (e.g. a
+        reasoning model that rejects ``temperature``) silently sticks to the
+        next model that supports it. A user-set ``/temperature off`` is also
+        cleared here; the model is being swapped, so its premise no longer
+        holds and re-detection re-latches if the new model also rejects it.
+        """
+        self._use_max_completion_tokens = False
+        self.omit_temperature = False
 
     def chat(
         self,
@@ -281,8 +303,9 @@ class LLMClient:
         kwargs = {
             "model": self.model,
             "messages": messages,
-            "temperature": self.temperature,
         }
+        if not self.omit_temperature:
+            kwargs["temperature"] = self.temperature
 
         if tools:
             kwargs["tools"] = tools
@@ -322,6 +345,14 @@ class LLMClient:
                     self.logger.info("Switching to max_completion_tokens for this model")
                     if "max_tokens" in kwargs:
                         kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+                    continue
+
+                # temperature unsupported (reasoning models: o1/o3/gpt-5, …) —
+                # one-shot fix-up, same shape as the max_completion_tokens branch.
+                if not self.omit_temperature and _is_temperature_unsupported(str(e)):
+                    self.omit_temperature = True
+                    self.logger.info("Model rejects 'temperature'; omitting it for this client")
+                    kwargs.pop("temperature", None)
                     continue
 
                 retryable, status, retry_after = _classify_retry(e)
@@ -521,10 +552,11 @@ class LLMClient:
         kwargs = {
             "model": self.model,
             "messages": messages,
-            "temperature": self.temperature,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if not self.omit_temperature:
+            kwargs["temperature"] = self.temperature
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
@@ -638,6 +670,20 @@ class LLMClient:
                     )
                     if "max_tokens" in kwargs:
                         kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+                    continue
+
+                # temperature unsupported — one-shot fix-up. Only safe at zero
+                # progress (otherwise the retry would re-emit content).
+                if (
+                    not progress_made
+                    and not self.omit_temperature
+                    and _is_temperature_unsupported(err_str)
+                ):
+                    self.omit_temperature = True
+                    self.logger.info(
+                        "Model rejects 'temperature'; omitting it for this client (stream retry)"
+                    )
+                    kwargs.pop("temperature", None)
                     continue
 
                 # Status-based retry classification — done up front so a

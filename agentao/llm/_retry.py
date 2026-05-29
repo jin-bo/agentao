@@ -116,6 +116,27 @@ def _is_streaming_unsupported(err_str: str) -> bool:
     return any(phrase in err_str for phrase in _STREAMING_UNSUPPORTED_PHRASES)
 
 
+def _is_temperature_unsupported(err_str: str) -> bool:
+    """True when an error says the model rejects the ``temperature`` param.
+
+    Reasoning models (o1/o3/gpt-5, …) return messages like
+    ``Unsupported value: 'temperature' does not support 0.2 with this model``,
+    ``'temperature' is not supported with this model``, or
+    ``temperature is deprecated for this model``. Require the param name *and*
+    a rejection indicator so a generic 400 that merely mentions temperature
+    does not trip the fix-up.
+    """
+    s = err_str.lower()
+    if "temperature" not in s:
+        return False
+    return (
+        "does not support" in s
+        or "not supported" in s
+        or "unsupported" in s
+        or "deprecated" in s
+    )
+
+
 def _compute_backoff_delay(attempt: int, retry_after_header: Optional[str] = None) -> float:
     """Compute the next sleep duration. Honors ``Retry-After`` when present."""
     parsed = _parse_retry_after(retry_after_header)
