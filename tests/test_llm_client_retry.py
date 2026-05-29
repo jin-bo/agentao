@@ -18,6 +18,7 @@ import openai
 import pytest
 
 from agentao.llm import client as client_mod
+from agentao.llm._retry import _is_temperature_unsupported
 from agentao.llm.client import (
     LLMClient,
     MAX_RETRY_ATTEMPTS,
@@ -91,6 +92,26 @@ def _make_chunk(*, content: str | None = None, finish_reason: str | None = None)
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
+
+
+class TestIsTemperatureUnsupported:
+    @pytest.mark.parametrize("msg", [
+        "Unsupported value: 'temperature' does not support 0.2 with this model.",
+        "'temperature' is not supported with this model",
+        "temperature is deprecated for this model.",
+        "Error code: 400 - temperature is unsupported here",
+    ])
+    def test_rejection_messages_match(self, msg):
+        assert _is_temperature_unsupported(msg) is True
+
+    @pytest.mark.parametrize("msg", [
+        "rate limit exceeded",
+        "invalid temperature: must be between 0 and 2",
+        "this feature is deprecated",  # no 'temperature' token
+        "max_tokens is not supported, use max_completion_tokens",
+    ])
+    def test_non_rejection_messages_do_not_match(self, msg):
+        assert _is_temperature_unsupported(msg) is False
 
 
 class TestClassifyRetry:
@@ -304,6 +325,54 @@ class TestChatRetry:
         # Only two calls total (the fix-up is the retry, no additional retry loop)
         assert client.client.chat.completions.with_raw_response.create.call_count == 2
 
+    def test_temperature_param_fixup_does_not_consume_retry_budget(self, monkeypatch):
+        # Reasoning models reject 'temperature'. The client should latch
+        # omit_temperature, drop the param, and retry — without burning budget.
+        monkeypatch.setattr(client_mod.time, "sleep", lambda *_a, **_k: None)
+
+        client = _make_client()
+        ok_raw = MagicMock()
+        ok_raw.parse.return_value = _make_completion("after-omit")
+
+        temp_err = ValueError(
+            "Unsupported value: 'temperature' does not support 0.2 with this "
+            "model. Only the default (1) value is supported."
+        )
+        create = MagicMock(side_effect=[temp_err, ok_raw])
+        client.client.chat.completions.with_raw_response.create = create
+
+        response = client.chat(messages=[{"role": "user", "content": "hi"}])
+
+        assert response.choices[0].message.content == "after-omit"
+        assert client.omit_temperature is True
+        assert create.call_count == 2
+        # The retry request must not carry temperature.
+        assert "temperature" not in create.call_args_list[1].kwargs
+
+    def test_omit_temperature_drops_param_from_request(self):
+        # Explicit /temperature off → first request never includes temperature.
+        client = _make_client()
+        client.omit_temperature = True
+        ok_raw = MagicMock()
+        ok_raw.parse.return_value = _make_completion("ok")
+        create = MagicMock(return_value=ok_raw)
+        client.client.chat.completions.with_raw_response.create = create
+
+        client.chat(messages=[{"role": "user", "content": "hi"}])
+
+        assert "temperature" not in create.call_args.kwargs
+
+    def test_model_capability_latches_reset_on_reconfigure(self):
+        # A quirk auto-detected for one model must not stick to the next.
+        client = _make_client()
+        client.omit_temperature = True
+        client._use_max_completion_tokens = True
+
+        client.reconfigure(api_key="k2", base_url="https://other/v1", model="gpt-4o")
+
+        assert client.omit_temperature is False
+        assert client._use_max_completion_tokens is False
+
     def test_session_token_totals_only_count_successful_response(self, monkeypatch):
         # Failed retries shouldn't accidentally accumulate token counts.
         monkeypatch.setattr(client_mod.time, "sleep", lambda *_a, **_k: None)
@@ -355,6 +424,28 @@ class TestChatStreamRetry:
         assert seen == ["hel", "lo"]
         assert response.choices[0].message.content == "hello"
         assert client.client.chat.completions.create.call_count == 2
+
+    def test_temperature_fixup_before_any_chunk(self, monkeypatch):
+        # Temperature rejection at zero progress → drop param, latch, retry.
+        monkeypatch.setattr(client_mod.time, "sleep", lambda *_a, **_k: None)
+
+        client = _make_client()
+        temp_err = ValueError("'temperature' is not supported with this model")
+        ok_chunks = iter([_make_chunk(content="hi", finish_reason="stop")])
+        create = MagicMock(side_effect=[temp_err, ok_chunks])
+        client.client.chat.completions.create = create
+
+        seen: List[str] = []
+        response = client.chat_stream(
+            messages=[{"role": "user", "content": "hi"}],
+            on_text_chunk=seen.append,
+        )
+
+        assert seen == ["hi"]
+        assert response.choices[0].message.content == "hi"
+        assert client.omit_temperature is True
+        assert create.call_count == 2
+        assert "temperature" not in create.call_args_list[1].kwargs
 
     def test_does_not_retry_after_first_chunk(self, monkeypatch):
         # Mid-stream failure must propagate — retrying would re-fire on_text_chunk

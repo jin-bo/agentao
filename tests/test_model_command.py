@@ -78,3 +78,21 @@ def test_model_switching_flow(monkeypatch: pytest.MonkeyPatch) -> None:
 
     agent.set_model(original_model)
     assert agent.get_current_model() == original_model
+
+
+def test_llm_config_exposes_omit_temperature() -> None:
+    # Sub-agents inherit temperature omission via _llm_config; /temperature off
+    # on the parent must be visible to sub-agents launched afterwards.
+    agent = _build_agent()
+    assert agent._llm_config["omit_temperature"] is False
+
+    agent.llm.omit_temperature = True
+    assert agent._llm_config["omit_temperature"] is True
+
+
+def test_set_model_resets_omit_temperature() -> None:
+    # A temperature quirk latched for one model must not stick to the next.
+    agent = _build_agent()
+    agent.llm.omit_temperature = True
+    agent.set_model(agent.get_current_model())
+    assert agent.llm.omit_temperature is False

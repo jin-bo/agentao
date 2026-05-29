@@ -421,6 +421,7 @@ class Agentao:
             "base_url": self.llm.base_url,
             "model": self.llm.model,
             "temperature": self.llm.temperature,
+            "omit_temperature": getattr(self.llm, "omit_temperature", False),
             "max_tokens": self.llm.max_tokens,
         }
 
@@ -786,7 +787,10 @@ class Agentao:
             summary = f"Messages: {len(self.messages)}\n"
 
         summary += f"Model: {self.llm.model}\n"
-        summary += f"Temperature: {self.llm.temperature}\n"
+        summary += (
+            "Temperature: off (omitted)\n" if getattr(self.llm, "omit_temperature", False)
+            else f"Temperature: {self.llm.temperature}\n"
+        )
         summary += f"Active skills: {len(self.skill_manager.get_active_skills())}\n"
         summary += f"Saved memories: {memory_count}\n"
         todos = self.todo_tool.get_todos()

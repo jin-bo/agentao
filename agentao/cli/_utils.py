@@ -78,7 +78,7 @@ _SLASH_COMMAND_HINTS = {
     '/skills enable': '<skill-name>',
     '/skills disable': '<skill-name>',
     '/context limit': '<tokens>',
-    '/temperature': '<value>',
+    '/temperature': '<value|off|on>',
     '/sessions resume': '<session-id>',
     '/sessions delete': '<session-id>',
     '/mcp add': '<name> <command|url>',

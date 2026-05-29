@@ -125,9 +125,23 @@ def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /temperature command — show or set LLM temperature."""
     args = args.strip()
     if not args:
-        console.print(f"\n[info]Temperature:[/info] [cyan]{cli.agent.llm.temperature}[/cyan]")
-        console.print("[dim]Usage: /temperature <value>  (0.0 - 2.0)[/dim]\n")
+        if getattr(cli.agent.llm, "omit_temperature", False):
+            console.print("\n[info]Temperature:[/info] [cyan]off[/cyan] [dim](omitted from requests)[/dim]")
+        else:
+            console.print(f"\n[info]Temperature:[/info] [cyan]{cli.agent.llm.temperature}[/cyan]")
+        console.print("[dim]Usage: /temperature <value>  (0.0 - 2.0) | off | on[/dim]\n")
         return
+
+    lowered = args.lower()
+    if lowered == "off":
+        cli.agent.llm.omit_temperature = True
+        console.print("\n[success]Temperature off — 'temperature' will be omitted from requests[/success]\n")
+        return
+    if lowered == "on":
+        cli.agent.llm.omit_temperature = False
+        console.print(f"\n[success]Temperature on — sending {cli.agent.llm.temperature}[/success]\n")
+        return
+
     try:
         value = float(args)
     except ValueError:
@@ -138,4 +152,5 @@ def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
         return
     old = cli.agent.llm.temperature
     cli.agent.llm.temperature = value
+    cli.agent.llm.omit_temperature = False
     console.print(f"\n[success]Temperature changed from {old} to {value}[/success]\n")
