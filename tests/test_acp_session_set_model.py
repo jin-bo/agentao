@@ -258,12 +258,13 @@ class TestSetMode:
         server = make_initialized_server()
         engine = make_engine()
         agent = _FakeAgent(permission_engine=engine)
-        _register_session(server, "s", agent)
+        state = _register_session(server, "s", agent)
 
         result = acp_set_mode.handle_session_set_mode(
             server, {"sessionId": "s", "modeId": "code"}
         )
         assert result == {"modeId": "code"}
+        assert state.mode_id == "code"  # persisted on the session
         assert engine.active_mode == PermissionMode.WORKSPACE_WRITE  # unchanged
 
     def test_unknown_mode_id_accepted_without_engine(self):
@@ -287,12 +288,13 @@ class TestSetMode:
         server = make_initialized_server()
         engine = make_engine()
         agent = _FakeAgent(permission_engine=engine)
-        _register_session(server, "s", agent)
+        state = _register_session(server, "s", agent)
 
         result = acp_set_mode.handle_session_set_mode(
             server, {"sessionId": "s", "modeId": "read-only"}
         )
         assert result == {"modeId": "read-only"}
+        assert state.mode_id == "read-only"  # persisted on the session
         assert engine.active_mode == PermissionMode.READ_ONLY
 
     def test_preset_mode_requires_engine(self):
