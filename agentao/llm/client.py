@@ -601,7 +601,7 @@ class LLMClient:
                 # temperature unsupported — one-shot fix-up. Only safe at zero
                 # progress (otherwise the retry would re-emit content).
                 if (
-                    not progress_made
+                    not acc.progress_made
                     and not self.omit_temperature
                     and _is_temperature_unsupported(err_str)
                 ):
