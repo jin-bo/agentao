@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
 
 from .llm import LLMClient
+from .llm.client import KEEP_BASE_URL as _KEEP_BASE_URL
 from .permissions import PermissionEngine
 from .runtime import ChatLoopRunner, ToolRunner, run_llm_call, run_turn
 from .runtime import model as _runtime_model
@@ -905,8 +906,10 @@ class Agentao:
         """
         return self.llm.model
 
-    def set_provider(self, api_key: str, base_url: Optional[str] = None, model: Optional[str] = None) -> None:
-        # Implementation lives in ``agentao.runtime.model``.
+    def set_provider(self, api_key: str, base_url: Any = _KEEP_BASE_URL, model: Optional[str] = None) -> None:
+        # Implementation lives in ``agentao.runtime.model``. ``base_url``
+        # defaults to the keep-current sentinel; an explicit value (incl.
+        # ``None``, which clears to the SDK default) replaces the endpoint.
         _runtime_model.set_provider(self, api_key, base_url=base_url, model=model)
 
     def set_model(self, model: str) -> str:

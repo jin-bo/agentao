@@ -32,6 +32,7 @@ from agentao.acp.session_set_config_option import (
     config_options_for_session,
     default_provider_resolver,
 )
+from agentao.llm.client import KEEP_BASE_URL
 
 from .support.acp_server import make_initialized_server, make_server
 
@@ -63,14 +64,15 @@ class _FakeAgent:
     def set_provider(
         self,
         api_key: str,
-        base_url: Optional[str] = None,
+        base_url: Any = KEEP_BASE_URL,
         model: Optional[str] = None,
     ) -> None:
         self.set_provider_calls.append(
             {"api_key": api_key, "base_url": base_url, "model": model}
         )
-        # Mirror LLMClient.reconfigure: base_url=None means "keep current".
-        if base_url is not None:
+        # Mirror set_provider/reconfigure: the KEEP_BASE_URL sentinel keeps
+        # the current endpoint; an explicit value (incl. None) replaces it.
+        if base_url is not KEEP_BASE_URL:
             self.llm.base_url = base_url
         if model is not None:
             self.llm.model = model

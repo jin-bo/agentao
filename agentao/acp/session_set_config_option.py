@@ -239,21 +239,16 @@ def handle_session_set_config_option(
                         f"{provider_id!r}"
                     ),
                 )
-            # A provider switch replaces the endpoint wholesale. ``reconfigure``
-            # treats ``base_url=None`` as "keep current", which would wrongly
-            # retain the *previous* provider's endpoint when the new provider
-            # uses the SDK default (e.g. switching an Azure-style custom
-            # endpoint back to api.openai.com). Assign it directly first — the
-            # same handler-internal poke session/set_model uses for
-            # ``llm.max_tokens`` — so a resolved ``None`` actually clears it.
-            new_base = creds.get("base_url")
-            session.agent.llm.base_url = new_base
-            # ``set_provider`` reconfigures the LLM client and emits
-            # MODEL_CHANGED with the api_key intentionally excluded from the
-            # event payload (so replay files never capture credentials).
+            # A provider switch replaces the endpoint wholesale: pass the
+            # resolved base_url explicitly (``None`` clears it to the SDK
+            # default, rather than inheriting the previous provider's custom
+            # endpoint — e.g. switching an Azure-style endpoint back to
+            # api.openai.com). ``set_provider`` reconfigures the LLM client and
+            # emits MODEL_CHANGED with the api_key intentionally excluded from
+            # the event payload (so replay files never capture credentials).
             session.agent.set_provider(
                 api_key=creds["api_key"],
-                base_url=new_base,
+                base_url=creds.get("base_url"),
                 model=model_id,
             )
             session.provider_id = provider_id

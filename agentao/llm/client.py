@@ -69,6 +69,13 @@ def __getattr__(name: str):
     raise AttributeError(f"module 'agentao.llm.client' has no attribute {name!r}")
 
 
+#: Sentinel for ``reconfigure(base_url=...)`` / ``set_provider`` meaning "keep
+#: the current base_url". Distinct from ``None``, which **clears** base_url to
+#: the SDK default — needed so a provider switch can drop a previous provider's
+#: custom endpoint instead of silently inheriting it.
+KEEP_BASE_URL: Any = object()
+
+
 class LLMClient:
     """OpenAI-compatible LLM client with comprehensive logging.
 
@@ -241,18 +248,22 @@ class LLMClient:
     def reconfigure(
         self,
         api_key: str,
-        base_url: Optional[str] = None,
+        base_url: Any = KEEP_BASE_URL,
         model: Optional[str] = None,
     ) -> None:
         """Reinitialize the OpenAI client with new provider credentials.
 
         Args:
             api_key: New API key
-            base_url: New base URL (None keeps existing)
+            base_url: New base URL. The default sentinel ``KEEP_BASE_URL``
+                keeps the current endpoint; an explicit value (including
+                ``None``, which clears it to the SDK default) replaces it.
+                The None-clears path lets a cross-provider switch drop a
+                previous provider's custom endpoint.
             model: New model name (None keeps existing)
         """
         self.api_key = api_key
-        if base_url is not None:
+        if base_url is not KEEP_BASE_URL:
             self.base_url = base_url
         if model is not None:
             self.model = model
