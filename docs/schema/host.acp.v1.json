@@ -469,6 +469,21 @@
       "title": "AcpInitializeExtension",
       "type": "object"
     },
+    "AcpInitializeMeta": {
+      "additionalProperties": true,
+      "description": "The ``_meta`` object on the ``initialize`` response.\n\nACP advertises extensions through ``_meta`` rather than a top-level\n``extensions`` array, so ``handle_initialize`` namespaces its extension\nlist under the vendor key ``_agentao.cn/extensions``. The object is open\n(extra=\"allow\") so other extensions can attach their own namespaced\npayloads to the same ``_meta`` without breaking schema-following clients.",
+      "properties": {
+        "_agentao.cn/extensions": {
+          "items": {
+            "$ref": "#/$defs/AcpInitializeExtension"
+          },
+          "title": "Agentao.Cn/Extensions",
+          "type": "array"
+        }
+      },
+      "title": "AcpInitializeMeta",
+      "type": "object"
+    },
     "AcpInitializeRequest": {
       "additionalProperties": false,
       "description": "``initialize`` request params (one handshake per stdio connection).",
@@ -503,6 +518,17 @@
       "additionalProperties": false,
       "description": "``initialize`` response result.",
       "properties": {
+        "_meta": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AcpInitializeMeta"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "agentCapabilities": {
           "$ref": "#/$defs/AcpAgentCapabilities"
         },
@@ -515,13 +541,6 @@
             "type": "object"
           },
           "title": "Authmethods",
-          "type": "array"
-        },
-        "extensions": {
-          "items": {
-            "$ref": "#/$defs/AcpInitializeExtension"
-          },
-          "title": "Extensions",
           "type": "array"
         },
         "protocolVersion": {

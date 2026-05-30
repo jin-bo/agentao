@@ -137,6 +137,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   — the structured kwargs are forwarded only to callbacks whose signature
   accepts them, dropped otherwise.
 
+### Changed
+
+- **ACP `initialize` advertises extensions through `_meta`, not a top-level
+  `extensions` array.** The ACP-standard `initialize` response carries only
+  `protocolVersion` / `agentCapabilities` / `agentInfo` / `authMethods`;
+  extension data belongs under `_meta`. Agentao now returns its
+  `_agentao.cn/ask_user` advertisement under
+  `_meta["_agentao.cn/extensions"]` (vendor-namespaced so it never collides
+  with another extension's `_meta` payload) instead of the non-standard
+  top-level `extensions: [...]`. `AcpInitializeResponse` drops the
+  `extensions` field for an open `_meta` object (`AcpInitializeMeta`); the
+  schema snapshot (`docs/schema/host.acp.v1.json`) is bumped. Agentao's own
+  `acp_client` never read `extensions`, so no client code changes; a
+  schema-following host that still sends a top-level `extensions` is now
+  rejected (`extra="forbid"`).
+
 ## [0.4.7] — 2026-05-17
 
 ### Added

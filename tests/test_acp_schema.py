@@ -99,10 +99,11 @@ def test_initialize_request_round_trip():
 
 
 def test_initialize_response_round_trip():
-    """The runtime returns ``extensions`` (advertising
-    ``_agentao.cn/ask_user``) on the initialize response. The schema
-    must accept it — pre-fix, ``extra="forbid"`` rejected the field
-    and any host validating the response saw every successful
+    """The runtime advertises ``_agentao.cn/ask_user`` through
+    ``_meta._agentao.cn/extensions`` — ACP's standard channel for
+    extension data — not a non-standard top-level ``extensions`` array.
+    The schema must accept the ``_meta`` object; pre-fix ``extra="forbid"``
+    rejected it and any host validating the response saw every successful
     handshake as malformed."""
     resp = AcpInitializeResponse.model_validate({
         "protocolVersion": 1,
@@ -113,16 +114,42 @@ def test_initialize_response_round_trip():
         },
         "authMethods": [],
         "agentInfo": {"name": "agentao", "version": "0.3.1.dev0"},
-        "extensions": [
-            {
-                "method": "_agentao.cn/ask_user",
-                "description": "Request free-form text input from the user.",
-            },
-        ],
+        "_meta": {
+            "_agentao.cn/extensions": [
+                {
+                    "method": "_agentao.cn/ask_user",
+                    "description": "Request free-form text input from the user.",
+                },
+            ],
+        },
     })
     assert resp.agentInfo.name == "agentao"
-    assert len(resp.extensions) == 1
-    assert resp.extensions[0].method == "_agentao.cn/ask_user"
+    assert resp.meta is not None
+    assert len(resp.meta.agentao_extensions) == 1
+    assert resp.meta.agentao_extensions[0].method == "_agentao.cn/ask_user"
+
+
+def test_initialize_response_rejects_top_level_extensions():
+    """The non-standard top-level ``extensions`` array is gone: with
+    ``extra="forbid"`` a payload that still carries it is rejected, so a
+    client cannot keep relying on the old shape."""
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        AcpInitializeResponse.model_validate({
+            "protocolVersion": 1,
+            "agentCapabilities": {
+                "loadSession": True,
+                "promptCapabilities": {"image": True, "audio": False, "embeddedContext": False},
+                "mcpCapabilities": {"http": False, "sse": True},
+            },
+            "authMethods": [],
+            "agentInfo": {"name": "agentao", "version": "0.3.1.dev0"},
+            "extensions": [
+                {"method": "_agentao.cn/ask_user"},
+            ],
+        })
 
 
 def test_session_new_validates_mcp_server_discriminator():
