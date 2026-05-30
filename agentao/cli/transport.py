@@ -184,15 +184,76 @@ def on_llm_text(cli: AgentaoCLI, chunk: str) -> None:
     sys.stdout.flush()
 
 
-def ask_user(cli: AgentaoCLI, question: str) -> str:
-    """Pause spinner, display question, read free-form user response."""
+def _resolve_option_selection(
+    response: str, options: list[str], multiple: bool
+) -> str | None:
+    """Map a numeric (or comma-separated numeric) response to option text.
+
+    Returns the resolved answer (option labels joined by ``", "``), or
+    ``None`` when the response is not a clean selection so the caller can
+    fall back to treating it as a custom free-form answer.
+    """
+    tokens = [t.strip() for t in response.split(",") if t.strip()]
+    if not tokens:
+        return None
+    if not multiple and len(tokens) > 1:
+        return None
+    selected: list[str] = []
+    for tok in tokens:
+        if not tok.isdigit():
+            return None
+        idx = int(tok)
+        if not 1 <= idx <= len(options):
+            return None
+        selected.append(options[idx - 1])
+    return ", ".join(selected)
+
+
+def ask_user(
+    cli: AgentaoCLI,
+    question: str,
+    *,
+    header: str | None = None,
+    options: list[str] | None = None,
+    multiple: bool = False,
+    allow_custom: bool = True,
+) -> str:
+    """Pause spinner, display question (with optional choices), read response."""
     if cli.current_status:
         cli.current_status.stop()
     try:
-        console.print(f"\n[bold yellow]🤔 Agent Question[/bold yellow]")
+        title = header.strip() if header and header.strip() else "Agent Question"
+        console.print(f"\n[bold yellow]🤔 {title}[/bold yellow]")
         console.print(f"[yellow]{question}[/yellow]")
-        response = console.input("[bold yellow]▶ [/bold yellow]").strip()
-        return response if response else "(no response)"
+        if options:
+            for i, opt in enumerate(options, 1):
+                console.print(f"  [green]{i}[/green]. {opt}")
+            if multiple:
+                hint = "comma-separated numbers to select multiple"
+            else:
+                hint = "a number to select"
+            if allow_custom:
+                hint += ", or type a custom answer"
+            console.print(f"[dim]Enter {hint}.[/dim]")
+        # When options are listed and custom answers are disallowed, the
+        # response must resolve to one of them — re-prompt otherwise.
+        # EOF / Ctrl-C still break out via the surrounding except.
+        restricted = bool(options) and not allow_custom
+        while True:
+            response = console.input("[bold yellow]▶ [/bold yellow]").strip()
+            if not response:
+                if restricted:
+                    console.print("[dim]Please choose from the listed options.[/dim]")
+                    continue
+                return "(no response)"
+            if options:
+                resolved = _resolve_option_selection(response, options, multiple)
+                if resolved is not None:
+                    return resolved
+                if restricted:
+                    console.print("[dim]Please choose from the listed options by number.[/dim]")
+                    continue
+            return response
     except (EOFError, KeyboardInterrupt):
         return "(user interrupted)"
     finally:

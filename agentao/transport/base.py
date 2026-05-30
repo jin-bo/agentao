@@ -1,6 +1,6 @@
 """Transport protocol — the single interface between Agentao runtime and UI/transport."""
 
-from typing import Callable, Protocol, runtime_checkable
+from typing import Callable, List, Optional, Protocol, runtime_checkable
 
 from .events import AgentEvent
 
@@ -68,8 +68,30 @@ class Transport(Protocol):
         """
         ...
 
-    def ask_user(self, question: str) -> str:
-        """Ask the user a free-form question and return their answer."""
+    def ask_user(
+        self,
+        question: str,
+        *,
+        header: Optional[str] = None,
+        options: Optional[List[str]] = None,
+        multiple: bool = False,
+        allow_custom: bool = True,
+    ) -> str:
+        """Ask the user a question and return their answer.
+
+        ``question`` is always free-form text. The keyword-only fields are
+        optional structured hints a transport may render as a choice
+        prompt:
+
+        - ``header`` — short label categorizing the question.
+        - ``options`` — suggested answers to present as choices.
+        - ``multiple`` — whether more than one option may be selected.
+        - ``allow_custom`` — whether a free-form answer is allowed in
+          addition to any options.
+
+        The structured fields are advisory; a transport may ignore them
+        and prompt with plain text. The answer is always a single string.
+        """
         ...
 
     def on_max_iterations(self, count: int, messages: list) -> dict:

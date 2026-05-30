@@ -90,7 +90,15 @@ class NonInteractiveTransport(SdkTransport):
         self._cancel(f"permission_required: {tool_name}")
         return False
 
-    def ask_user(self, question: str) -> str:
+    def ask_user(
+        self,
+        question: str,
+        *,
+        header: Optional[str] = None,
+        options: Optional[List[str]] = None,
+        multiple: bool = False,
+        allow_custom: bool = True,
+    ) -> str:
         if self.rejection is None:
             self.rejection = {
                 "type": "interaction_required",

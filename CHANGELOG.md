@@ -53,6 +53,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   host path or smuggling a secret.
   Saving a session whose first user message is image+text now derives its
   title from the text part instead of persisting an empty title.
+- **Structured `ask_user`.** The `ask_user` tool now accepts optional
+  `header` / `options` / `multiple` / `allow_custom` hints alongside the
+  free-form `question`, so the model can offer a choice list while still
+  letting the user type a custom answer. The hints flow through the
+  `Transport.ask_user` contract to every transport: the CLI renders a
+  numbered menu and accepts a number, comma-separated numbers (when
+  `multiple`), or custom text — re-prompting when `allow_custom` is false
+  and the entry isn't one of the options; the ACP transport forwards them on
+  `_agentao.cn/ask_user` (host-agnostic plain-string options, not
+  option-cards) and the host ACP schema's `AcpAskUserParams` gains the
+  matching fields (snapshot `docs/schema/host.acp.v1.json` bumped); the
+  replay recorder captures them. The reply stays a single string (a client
+  joins `multiple` selections itself). Backward-compatible: a plain
+  `ask_user(question)` keeps its original wire/recording shape, and legacy
+  1-arg `Callable[[str], str]` callbacks (the deprecated `ask_user_callback`
+  constructor arg, or an `SdkTransport(ask_user=...)` callback) keep working
+  — the structured kwargs are forwarded only to callbacks whose signature
+  accepts them, dropped otherwise.
 
 ## [0.4.7] — 2026-05-17
 

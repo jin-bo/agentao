@@ -141,28 +141,65 @@ class ReplayAdapter:
             pass
         return bool(result)
 
-    def ask_user(self, question: str) -> str:
+    def ask_user(
+        self,
+        question: str,
+        *,
+        header=None,
+        options=None,
+        multiple: bool = False,
+        allow_custom: bool = True,
+    ) -> str:
         # v1.1: record both the question and the answer. The answer goes
         # through the scanner + a 500-char truncation policy inside
         # ``sanitize_event`` so an accidental password-in-prompt is
         # redacted on disk.
+        #
+        # ``fwd`` holds only the structured kwargs that carry information,
+        # keeping a plain ask_user's recorded payload at its original
+        # ``{"question": ...}`` shape (plus the question itself).
+        from ..transport.sdk import invoke_ask_user_callback
+
+        fwd: Dict[str, Any] = {}
+        if header is not None:
+            fwd["header"] = header
+        if options is not None:
+            fwd["options"] = options
+        if multiple:
+            fwd["multiple"] = True
+        if not allow_custom:
+            fwd["allow_custom"] = False
+        req_payload = {"question": question or "", **fwd}
         try:
             self._recorder.record(
                 EventKind.ASK_USER_REQUESTED,
                 turn_id=self._current_turn_id(),
                 parent_turn_id=self._current_parent_turn(),
-                payload={"question": question or ""},
+                payload=req_payload,
             )
         except Exception:
             pass
-        answer = self._inner.ask_user(question)
+        # Forward via signature-aware dispatch so a legacy 1-arg
+        # ``ask_user(self, question)`` inner transport still works even for a
+        # structured prompt (it receives the question alone) instead of
+        # raising ``TypeError`` on the unexpected keywords.
+        answer = invoke_ask_user_callback(
+            self._inner.ask_user,
+            question,
+            {
+                "header": header,
+                "options": options,
+                "multiple": multiple,
+                "allow_custom": allow_custom,
+            },
+        )
         try:
             self._recorder.record(
                 EventKind.ASK_USER_ANSWERED,
                 turn_id=self._current_turn_id(),
                 parent_turn_id=self._current_parent_turn(),
                 payload={
-                    "question": question or "",
+                    **req_payload,
                     "answer": answer if isinstance(answer, str) else str(answer),
                 },
             )

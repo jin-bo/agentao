@@ -214,9 +214,24 @@ class AgentaoCLI:
         from .transport import on_llm_text
         on_llm_text(self, chunk)
 
-    def ask_user(self, question: str) -> str:
+    def ask_user(
+        self,
+        question: str,
+        *,
+        header=None,
+        options=None,
+        multiple: bool = False,
+        allow_custom: bool = True,
+    ) -> str:
         from .transport import ask_user
-        return ask_user(self, question)
+        return ask_user(
+            self,
+            question,
+            header=header,
+            options=options,
+            multiple=multiple,
+            allow_custom=allow_custom,
+        )
 
     # ── Session lifecycle delegation ────────────────────────────────────
 
