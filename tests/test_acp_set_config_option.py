@@ -42,15 +42,16 @@ from .support.acp_server import make_initialized_server, make_server
 
 
 class _FakeLLM:
-    def __init__(self, model: str = "gpt-init") -> None:
+    def __init__(self, model: str = "gpt-init", base_url: Optional[str] = None) -> None:
         self.model = model
+        self.base_url = base_url
 
 
 class _FakeAgent:
     """Duck-typed agent exposing the model-switch surface the handlers use."""
 
-    def __init__(self, model: str = "gpt-init") -> None:
-        self.llm = _FakeLLM(model=model)
+    def __init__(self, model: str = "gpt-init", base_url: Optional[str] = None) -> None:
+        self.llm = _FakeLLM(model=model, base_url=base_url)
         self.set_model_calls: List[str] = []
         self.set_provider_calls: List[Dict[str, Any]] = []
 
@@ -68,6 +69,9 @@ class _FakeAgent:
         self.set_provider_calls.append(
             {"api_key": api_key, "base_url": base_url, "model": model}
         )
+        # Mirror LLMClient.reconfigure: base_url=None means "keep current".
+        if base_url is not None:
+            self.llm.base_url = base_url
         if model is not None:
             self.llm.model = model
 
@@ -246,6 +250,33 @@ class TestSetConfigOptionSwitch:
         )
         assert agent.set_provider_calls[0]["model"] == "gpt-4o"
         assert result["configOptions"][0]["currentValue"] == "openai/gpt-4o"
+
+    def test_provider_switch_clears_stale_base_url(self):
+        # Switching to a provider whose resolver returns no base_url must
+        # CLEAR the previous endpoint (not keep it), or requests would keep
+        # hitting the old provider's URL with the new key/model.
+        server = make_initialized_server()
+        agent = _FakeAgent(base_url="https://azure.example/openai")
+        _register(server, agent)
+        server.provider_resolver = lambda pid: {"api_key": "k", "base_url": None}
+
+        acp_set_config.handle_session_set_config_option(
+            server, {"sessionId": "s", "configId": "model", "value": "openai/gpt-4o"}
+        )
+        assert agent.llm.base_url is None
+
+    def test_provider_switch_applies_new_base_url(self):
+        server = make_initialized_server()
+        agent = _FakeAgent(base_url="https://old.example")
+        _register(server, agent)
+        server.provider_resolver = lambda pid: {
+            "api_key": "k",
+            "base_url": "https://new.example",
+        }
+        acp_set_config.handle_session_set_config_option(
+            server, {"sessionId": "s", "configId": "model", "value": "custom/m"}
+        )
+        assert agent.llm.base_url == "https://new.example"
 
     def test_unknown_provider_maps_to_invalid_request(self):
         server = make_initialized_server()
