@@ -52,6 +52,10 @@ METHOD_SESSION_LOAD = "session/load"
 METHOD_SESSION_SET_MODEL = "session/set_model"
 METHOD_SESSION_SET_MODE = "session/set_mode"
 METHOD_SESSION_LIST_MODELS = "session/list_models"
+#: ACP-standard config-option setter. Agentao supports ``configId="model"``
+#: only (value ``"provider/model"``); credentials never travel on the wire —
+#: they resolve server-side via the host-injectable ``provider_resolver``.
+METHOD_SESSION_SET_CONFIG_OPTION = "session/set_config_option"
 
 # Server → client notifications
 METHOD_SESSION_UPDATE = "session/update"
@@ -59,6 +63,11 @@ METHOD_REQUEST_PERMISSION = "session/request_permission"
 
 # Agentao extension methods (private, prefixed with underscore per ACP spec)
 METHOD_ASK_USER = "_agentao.cn/ask_user"
+#: Vendor free-form model setter — ``{sessionId, model}``, secret-free,
+#: model-only (keeps the current provider). Coexists with the standard
+#: ``session/set_config_option`` select path; serves DeepChat's "type any
+#: model" UX. Shares the core ``agent.set_model()`` code path.
+METHOD_AGENTAO_SET_MODEL = "_agentao.cn/set_model"
 
 # Sentinel returned when the user is unavailable for ask_user.
 ASK_USER_UNAVAILABLE_SENTINEL = "(user unavailable)"

@@ -40,6 +40,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **ACP model/provider switching that keeps secrets off the wire.** Added the
+  ACP-standard `session/set_config_option` handler for `configId="model"`: a
+  client switches model/provider by sending a `provider/model` *identifier*
+  (e.g. `"openai/gpt-4o"`), and credentials are resolved **server-side**
+  through a host-injectable `provider_resolver` — they never travel on the
+  ACP wire (nor into `agentao.log`). The value is split on the *first* `/`
+  (so `huggingface/meta-llama/Llama-3` → provider `huggingface`, model
+  `meta-llama/Llama-3`); a bare value with no `/` is a model-only switch that
+  keeps the current provider. Two mechanisms reject any credential-bearing
+  field (`apiKey` / `baseUrl` / `_meta`): a handler whitelist (only
+  `sessionId`/`configId`/`value` are read) **and** the
+  `AcpSessionSetConfigOptionRequest` schema (`extra="forbid"`). The default
+  resolver accepts **only** the configured `LLM_PROVIDER` (`{PROVIDER}_API_KEY`
+  / `_BASE_URL`); any other provider id → `INVALID_REQUEST`. It never scans
+  the environment for a provider list — multi-provider switching requires a
+  host-injected resolver paired with a host-injected catalog
+  (`AcpServer(provider_resolver=..., model_catalog=...)`). `session/new` and
+  `session/load` now advertise the `model` `configOptions` (default catalog is
+  the single current `provider/model`); a successful switch returns the
+  refreshed `configOptions` in its **response only** — no
+  `config_option_update` notification. Also added the vendor
+  `_agentao.cn/set_model` (`{sessionId, model}`, free-form, secret-free,
+  model-only) for "type any model" UX a `select` can't express; it shares the
+  core `agent.set_model()` path. The existing `session/set_model` and
+  `session/list_models` are kept unchanged as one-release compatibility
+  endpoints. Host ACP schema gains `AcpSessionSetConfigOptionRequest/Response`,
+  `AcpConfigOption`, `AcpConfigOptionChoice`, `AcpAgentaoSetModelRequest/Response`,
+  and `configOptions` on the `session/new` / `session/load` responses
+  (snapshot `docs/schema/host.acp.v1.json` bumped).
 - **Multimodal image input through the turn.** `chat()` / `arun()` accept
   an optional `images=[{"data": <base64>, "mimeType": <type>}, ...]`. When
   present, the user turn is emitted as an OpenAI-style multimodal content

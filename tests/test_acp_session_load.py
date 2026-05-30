@@ -683,8 +683,9 @@ class TestSessionLoadHappyPath:
             agent_factory=make_factory(fake),
         )
 
-        # Response is empty per spec.
-        assert result == {}
+        # Response advertises the model config option (empty for a fake
+        # agent with no real ``llm``); it carries no message payload.
+        assert result == {"configOptions": []}
 
         # Agent.messages was hydrated with the loaded history.
         assert fake.messages == history
@@ -816,7 +817,7 @@ class TestRegistration:
         parsed = [json.loads(ln) for ln in lines]
         load_resp = next((p for p in parsed if p.get("id") == 99), None)
         assert load_resp is not None
-        assert load_resp["result"] == {}
+        assert load_resp["result"] == {"configOptions": []}
 
         # Replay notifications were emitted.
         replay_msgs = [
@@ -928,7 +929,7 @@ class TestRegistration:
         load_resp = next((p for p in parsed if p.get("id") == 1), None)
         prompt_resp = next((p for p in parsed if p.get("id") == 2), None)
 
-        assert load_resp is not None and load_resp["result"] == {}
+        assert load_resp is not None and load_resp["result"] == {"configOptions": []}
         assert prompt_resp is not None
         assert prompt_resp["result"]["stopReason"] == "end_turn"
 

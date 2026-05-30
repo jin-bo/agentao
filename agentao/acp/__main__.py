@@ -11,12 +11,14 @@ As subsequent issues land, each adds its own ``register(server)`` call below.
 import sys
 
 from . import (
+    agentao_set_model,
     initialize,
     session_cancel,
     session_list_models,
     session_load,
     session_new,
     session_prompt,
+    session_set_config_option,
     session_set_mode,
     session_set_model,
 )
@@ -79,6 +81,8 @@ def main() -> None:
     session_cancel.register(server)
     session_load.register(server)
     session_set_model.register(server)
+    session_set_config_option.register(server)
+    agentao_set_model.register(server)
     session_set_mode.register(server)
     session_list_models.register(server)
     server.run()

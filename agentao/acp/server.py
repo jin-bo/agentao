@@ -179,12 +179,26 @@ class AcpServer:
         stdout: Optional[IO[str]] = None,
         *,
         max_workers: int = 8,
+        provider_resolver: Optional[Callable[[str], Dict[str, Optional[str]]]] = None,
+        model_catalog: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         # Capture the *real* stdout BEFORE any swap so responses keep flowing.
         self._in: IO[str] = stdin if stdin is not None else sys.stdin
         self._out: IO[str] = stdout if stdout is not None else sys.stdout
         self._write_lock = threading.Lock()
         self._handlers: Dict[str, Handler] = {}
+
+        # Provider/model switching seams (host-injectable, constructor-only —
+        # no new host protocol). ``provider_resolver(provider_id) ->
+        # {"api_key", "base_url"}`` resolves credentials *server-side* so they
+        # never travel on the ACP wire; ``None`` uses the default single-env
+        # resolver. ``model_catalog`` is the list of ``{value, name}`` choices
+        # advertised in the ``model`` config option; ``None`` advertises the
+        # single current ``provider/model``. See ``session_set_config_option``.
+        self.provider_resolver: Optional[
+            Callable[[str], Dict[str, Optional[str]]]
+        ] = provider_resolver
+        self.model_catalog: Optional[List[Dict[str, Any]]] = model_catalog
 
         # Connection-scoped state populated by the `initialize` handshake
         # (Issue 02). Handlers read/write this via ``server.state``.

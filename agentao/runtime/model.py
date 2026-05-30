@@ -13,9 +13,10 @@ its own lifecycle.
 
 from __future__ import annotations
 
-from typing import List, Optional, TYPE_CHECKING
+from typing import Any, List, Optional, TYPE_CHECKING
 
 from ..context_manager import _get_tiktoken_encoding
+from ..llm.client import KEEP_BASE_URL
 from ..transport import AgentEvent, EventType
 
 if TYPE_CHECKING:
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 def set_provider(
     agent: "Agentao",
     api_key: str,
-    base_url: Optional[str] = None,
+    base_url: Any = KEEP_BASE_URL,
     model: Optional[str] = None,
 ) -> None:
     """Reconfigure the LLM client with a new provider's credentials.
@@ -33,15 +34,30 @@ def set_provider(
     Emits ``MODEL_CHANGED`` with ``cause="set_provider"``. The API key
     is intentionally NOT included in the event payload — replay files
     would otherwise capture raw credentials.
+
+    ``base_url`` defaults to the ``KEEP_BASE_URL`` sentinel ("keep the
+    current endpoint"); an explicit value (including ``None``, which clears
+    it to the SDK default) replaces it — so a cross-provider switch can drop
+    a previous provider's custom endpoint.
+
+    When ``model`` changes, the tiktoken encoding and cached prompt-token
+    count on ``context_manager`` are reset — the same model-specific state
+    ``set_model`` clears. A stale encoding would otherwise miscount tokens
+    for the rest of the session after a cross-provider model switch.
     """
     _old_model = agent.llm.model
     _old_base = agent.llm.base_url
     agent.llm.reconfigure(api_key=api_key, base_url=base_url, model=model)
+    if model is not None and model != _old_model:
+        agent.context_manager._encoding = _get_tiktoken_encoding(agent.llm.model)
+        agent.context_manager._last_api_prompt_tokens = None
     try:
         agent.transport.emit(AgentEvent(EventType.MODEL_CHANGED, {
             "old_model": _old_model,
             "new_model": agent.llm.model,
-            "base_url_changed": base_url is not None and base_url != _old_base,
+            # Compare the resolved endpoints so a clear (-> None) or a switch
+            # is reported accurately, regardless of how base_url was passed.
+            "base_url_changed": agent.llm.base_url != _old_base,
             "cause": "set_provider",
         }))
     except Exception:

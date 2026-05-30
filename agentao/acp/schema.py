@@ -173,6 +173,10 @@ class AcpSessionNewResponse(BaseModel):
     sessionId: str
     modes: Optional[Dict[str, Any]] = None
     models: Optional[Dict[str, Any]] = None
+    # Advertised so clients can switch model/provider via
+    # ``session/set_config_option`` without a follow-up list call. Default
+    # catalog is the single current ``provider/model``.
+    configOptions: Optional[List["AcpConfigOption"]] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -268,12 +272,16 @@ class AcpSessionLoadRequest(BaseModel):
 
 
 class AcpSessionLoadResponse(BaseModel):
-    """``session/load`` returns an empty result object.
+    """``session/load`` result.
 
     The handler emits the persisted history as ``session/update``
-    notifications before responding, so the response itself carries
-    no payload — callers consume the replay stream instead.
+    notifications before responding, so the response carries no message
+    payload — callers consume the replay stream instead. It does advertise
+    the model ``configOptions`` (same as ``session/new``) so a reloaded
+    session exposes model/provider switching without a follow-up round trip.
     """
+
+    configOptions: Optional[List["AcpConfigOption"]] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -318,6 +326,99 @@ class AcpSessionSetModelResponse(BaseModel):
     model: str
     contextLength: int
     maxTokens: int
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AcpConfigOptionChoice(BaseModel):
+    """One selectable choice in a ``configOptions`` entry.
+
+    For the ``model`` option the ``value`` is the Agentao convention
+    ``provider/model`` (an **Agentao value convention, not an ACP standard**).
+    Open shape (extra="allow") so a host-injected catalog can attach extra
+    descriptive fields without breaking schema validation.
+    """
+
+    value: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class AcpConfigOption(BaseModel):
+    """A single ACP config option advertised in ``session/new`` / ``load``.
+
+    Agentao advertises exactly one option today (``id="model"``,
+    ``category="model"``, ``type="select"``). ``currentValue`` and the
+    ``options`` values both use the ``provider/model`` convention. Open shape
+    so future categories / fields don't require a snapshot churn for every
+    host extension.
+    """
+
+    id: str
+    name: str
+    category: Literal["mode", "model", "thought_level"]
+    type: Literal["select"] = "select"
+    currentValue: Optional[str] = None
+    options: List[AcpConfigOptionChoice] = Field(default_factory=list)
+    description: Optional[str] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class AcpSessionSetConfigOptionRequest(BaseModel):
+    """``session/set_config_option`` request params.
+
+    ``extra="forbid"`` is load-bearing security: it is one of the two
+    mechanisms (the other is the handler whitelist) that reject any
+    credential-bearing field (``apiKey`` / ``baseUrl`` / ``_meta``). The wire
+    carries only the ``provider/model`` *identifier*; credentials resolve
+    server-side via the host-injectable ``provider_resolver``.
+
+    Agentao supports ``configId="model"`` only. ``value`` is
+    ``"provider/model"`` (split on the first ``/``; a bare value with no
+    ``/`` is a model-only switch that keeps the current provider).
+    """
+
+    sessionId: str
+    configId: str
+    value: str = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AcpSessionSetConfigOptionResponse(BaseModel):
+    """Post-switch ``configOptions`` state (the updated ``currentValue``).
+
+    No ``config_option_update`` notification is emitted — a successful switch
+    returns the refreshed state in the response only.
+    """
+
+    configOptions: List[AcpConfigOption] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AcpAgentaoSetModelRequest(BaseModel):
+    """``_agentao.cn/set_model`` request params — free-form, secret-free.
+
+    The vendor free-form path: ``{sessionId, model}`` only. ``extra="forbid"``
+    keeps it secret-free (no ``apiKey`` / ``baseUrl`` / ``_meta``). Model-only
+    switch — the provider is unchanged. Reuses the ``model`` field name so a
+    DeepChat-style adapter maps its UI ``modelId`` → ``model``.
+    """
+
+    sessionId: str
+    model: str = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AcpAgentaoSetModelResponse(BaseModel):
+    """The active model after the vendor free-form switch."""
+
+    model: str
 
     model_config = ConfigDict(extra="forbid")
 
@@ -636,12 +737,16 @@ class AcpError(BaseModel):
 __all__ = [
     "AcpAgentCapabilities",
     "AcpAgentInfo",
+    "AcpAgentaoSetModelRequest",
+    "AcpAgentaoSetModelResponse",
     "AcpAskUserAnswered",
     "AcpAskUserCancelled",
     "AcpAskUserParams",
     "AcpAskUserResponse",
     "AcpClientCapabilities",
     "AcpClientInfo",
+    "AcpConfigOption",
+    "AcpConfigOptionChoice",
     "AcpError",
     "AcpInitializeExtension",
     "AcpInitializeRequest",
@@ -668,6 +773,8 @@ __all__ = [
     "AcpSessionNewResponse",
     "AcpSessionPromptRequest",
     "AcpSessionPromptResponse",
+    "AcpSessionSetConfigOptionRequest",
+    "AcpSessionSetConfigOptionResponse",
     "AcpSessionSetModelRequest",
     "AcpSessionSetModelResponse",
     "AcpSessionSetModeRequest",
