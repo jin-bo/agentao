@@ -38,7 +38,7 @@ from ._retry import (
     _mark_streamed,
     _parse_retry_after,
 )
-from ._stream_response import _StreamResponse
+from ._stream_response import _StreamAccumulator, _StreamResponse
 
 # `openai` is deferred (P0.5): merely importing ``LLMClient`` should not pull
 # in the OpenAI SDK. Hosts that inject their own ``llm_client=`` never load
@@ -508,12 +508,7 @@ class LLMClient:
         """
         # Gemini: bypass streaming to preserve thought_signature on tool calls
         if self._is_gemini():
-            response = self.chat(messages, tools=tools, max_tokens=max_tokens)
-            if on_text_chunk:
-                content = response.choices[0].message.content
-                if content:
-                    on_text_chunk(content)
-            return response
+            return self._emit_nonstreaming(messages, tools, max_tokens, on_text_chunk)
 
         self.request_count += 1
         request_id = f"req_{self.request_count}"
@@ -538,96 +533,27 @@ class LLMClient:
         deadline = time.monotonic() + MAX_TOTAL_RETRY_SECONDS
         attempt = 0  # number of retries performed; first try is attempt 0
         while True:
-            content_parts: List[str] = []
-            reasoning_parts: List[str] = []
-            tool_calls_data: Dict[int, Dict[str, str]] = {}
-            finish_reason = "stop"
-            response_model = self.model
-            usage_data = None
-            # True only after on_text_chunk has fired with non-empty text — i.e.,
-            # an LLM_TEXT event has reached the host. Role-only first chunks,
-            # usage-only chunks, and tool-call/reasoning-only chunks all consume
-            # iterations without exposing anything to the host, so they must
-            # NOT block the pre-output retry path.
-            progress_made = False
-
+            acc = _StreamAccumulator(self.model)
             try:
-                stream = self.client.chat.completions.create(**kwargs)
-
-                for chunk in stream:
-                    if cancellation_token and cancellation_token.is_cancelled:
-                        break
-                    # Capture usage from final usage-only chunk (stream_options include_usage)
-                    if hasattr(chunk, "usage") and chunk.usage:
-                        usage_data = chunk.usage
-                    if not chunk.choices:
-                        continue
-                    choice = chunk.choices[0]
-                    delta = choice.delta
-
-                    # Accumulate text content and fire callback
-                    if delta and delta.content:
-                        content_parts.append(delta.content)
-                        if on_text_chunk:
-                            on_text_chunk(delta.content)
-                            progress_made = True
-
-                    # Accumulate reasoning_content (DeepSeek/MiniMax/Kimi-style thinking
-                    # field). Non-streaming exposes it on message.reasoning_content;
-                    # without this branch the streaming path would silently drop it.
-                    if delta and getattr(delta, "reasoning_content", None):
-                        reasoning_parts.append(delta.reasoning_content)
-
-                    # Accumulate tool call deltas
-                    if delta and delta.tool_calls:
-                        for tc_delta in delta.tool_calls:
-                            idx = tc_delta.index
-                            if idx not in tool_calls_data:
-                                tool_calls_data[idx] = {"id": "", "name": "", "arguments": ""}
-                            if tc_delta.id:
-                                tool_calls_data[idx]["id"] = tc_delta.id
-                            if tc_delta.function:
-                                if tc_delta.function.name:
-                                    tool_calls_data[idx]["name"] += tc_delta.function.name
-                                if tc_delta.function.arguments:
-                                    tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
-                                # Gemini thinking models: preserve thought_signature
-                                thought_sig = getattr(tc_delta.function, "thought_signature", None)
-                                if thought_sig is not None:
-                                    tool_calls_data[idx]["thought_signature"] = thought_sig
-
-                    if choice.finish_reason:
-                        finish_reason = choice.finish_reason
-
-                    if hasattr(chunk, "model") and chunk.model:
-                        response_model = chunk.model
-
-                # Accumulate session token totals
-                if usage_data is not None:
-                    self.total_prompt_tokens += getattr(usage_data, "prompt_tokens", 0) or 0
-                    self.total_completion_tokens += getattr(usage_data, "completion_tokens", 0) or 0
-
-                # Build a duck-type response that agent.py can consume like a ChatCompletion
-                response = _StreamResponse(
-                    model=response_model,
-                    content="".join(content_parts) if content_parts else None,
-                    tool_calls_data=tool_calls_data,
-                    finish_reason=finish_reason,
-                    usage=usage_data,
-                    reasoning_content="".join(reasoning_parts) if reasoning_parts else None,
+                response = self._consume_stream(
+                    kwargs, acc, on_text_chunk, cancellation_token,
                 )
-
                 self._log_response(request_id, response)
                 return response
 
             except Exception as e:
+                # The error handling stays lexically inside the ``except``
+                # block on purpose: its bare ``raise`` statements rely on the
+                # active exception bound here, and ``acc.progress_made`` (set
+                # by ``_consume_stream`` before it propagated) decides whether
+                # a retry would duplicate already-emitted content.
                 err_str = str(e).lower()
 
                 # max_tokens vs max_completion_tokens param mismatch — one-shot
                 # fix-up. Only safe at zero progress (otherwise we'd re-emit
                 # content via on_text_chunk). Latched flag prevents loops.
                 if (
-                    not progress_made
+                    not acc.progress_made
                     and not self._use_max_completion_tokens
                     and "max_tokens" in err_str
                     and "max_completion_tokens" in err_str
@@ -652,7 +578,7 @@ class LLMClient:
                 # streaming is unsupported (never bare "stream"/"streaming",
                 # which also matches "upstream" in 502/503 proxy errors).
                 if (
-                    not progress_made
+                    not acc.progress_made
                     and not retryable
                     and _is_streaming_unsupported(err_str)
                 ):
@@ -661,12 +587,9 @@ class LLMClient:
                         "falling back to non-streaming"
                     )
                     try:
-                        response = self.chat(messages, tools=tools, max_tokens=max_tokens)
-                        if on_text_chunk:
-                            content = response.choices[0].message.content
-                            if content:
-                                on_text_chunk(content)
-                        return response
+                        return self._emit_nonstreaming(
+                            messages, tools, max_tokens, on_text_chunk,
+                        )
                     except Exception as fallback_e:
                         import traceback
                         self.logger.error(
@@ -682,14 +605,14 @@ class LLMClient:
                 # Attach .streamed so callers (and the runtime's
                 # LLM_CALL_COMPLETED error payload) can distinguish "host
                 # already saw partial chunks" from "nothing reached the host".
-                _mark_streamed(e, progress_made)
+                _mark_streamed(e, acc.progress_made)
                 if (
                     not retryable
-                    or progress_made
+                    or acc.progress_made
                     or attempt >= MAX_RETRY_ATTEMPTS - 1
                 ):
                     import traceback
-                    if progress_made and retryable:
+                    if acc.progress_made and retryable:
                         self.logger.error(
                             f"[{request_id}] mid-stream failure (cannot retry safely): "
                             f"{str(e)}\n{traceback.format_exc()}"
@@ -722,6 +645,98 @@ class LLMClient:
                     )
                     raise
                 attempt += 1
+
+    def _consume_stream(
+        self,
+        kwargs: Dict[str, Any],
+        acc: "_StreamAccumulator",
+        on_text_chunk: Optional[Any],
+        cancellation_token: Optional[Any],
+    ) -> "_StreamResponse":
+        """Run one streaming attempt, accumulating chunks into ``acc``.
+
+        Returns the built duck-type response on success. On error it
+        propagates the exception after ``acc`` already reflects any partial
+        progress (notably ``acc.progress_made``), so ``chat_stream``'s
+        retry handler can tell whether a retry would duplicate
+        already-emitted content.
+        """
+        stream = self.client.chat.completions.create(**kwargs)
+
+        for chunk in stream:
+            if cancellation_token and cancellation_token.is_cancelled:
+                break
+            # Capture usage from final usage-only chunk (stream_options include_usage)
+            if hasattr(chunk, "usage") and chunk.usage:
+                acc.usage_data = chunk.usage
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            # Accumulate text content and fire callback
+            if delta and delta.content:
+                acc.content_parts.append(delta.content)
+                if on_text_chunk:
+                    on_text_chunk(delta.content)
+                    acc.progress_made = True
+
+            # Accumulate reasoning_content (DeepSeek/MiniMax/Kimi-style thinking
+            # field). Non-streaming exposes it on message.reasoning_content;
+            # without this branch the streaming path would silently drop it.
+            if delta and getattr(delta, "reasoning_content", None):
+                acc.reasoning_parts.append(delta.reasoning_content)
+
+            # Accumulate tool call deltas
+            if delta and delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in acc.tool_calls_data:
+                        acc.tool_calls_data[idx] = {"id": "", "name": "", "arguments": ""}
+                    if tc_delta.id:
+                        acc.tool_calls_data[idx]["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            acc.tool_calls_data[idx]["name"] += tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            acc.tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
+                        # Gemini thinking models: preserve thought_signature
+                        thought_sig = getattr(tc_delta.function, "thought_signature", None)
+                        if thought_sig is not None:
+                            acc.tool_calls_data[idx]["thought_signature"] = thought_sig
+
+            if choice.finish_reason:
+                acc.finish_reason = choice.finish_reason
+
+            if hasattr(chunk, "model") and chunk.model:
+                acc.response_model = chunk.model
+
+        # Accumulate session token totals
+        if acc.usage_data is not None:
+            self.total_prompt_tokens += getattr(acc.usage_data, "prompt_tokens", 0) or 0
+            self.total_completion_tokens += getattr(acc.usage_data, "completion_tokens", 0) or 0
+
+        # Build a duck-type response that agent.py can consume like a ChatCompletion
+        return acc.build()
+
+    def _emit_nonstreaming(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        max_tokens: Optional[int],
+        on_text_chunk: Optional[Any],
+    ) -> Any:
+        """Run the non-streaming ``chat()`` and replay its full content
+        through ``on_text_chunk`` so streaming callers behave identically.
+
+        Shared by the Gemini bypass and the streaming-unsupported fallback.
+        """
+        response = self.chat(messages, tools=tools, max_tokens=max_tokens)
+        if on_text_chunk:
+            content = response.choices[0].message.content
+            if content:
+                on_text_chunk(content)
+        return response
 
     def _log_response(self, request_id: str, response: Any) -> None:
         """Log LLM response details.
