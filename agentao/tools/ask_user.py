@@ -86,11 +86,19 @@ class AskUserTool(Tool):
         allow_custom: bool = True,
     ) -> str:
         if self._callback:
-            return self._callback(
+            # Forward the structured hints only to callbacks that accept
+            # them, so a legacy 1-arg ``AskUserTool(lambda q: ...)`` keeps
+            # working instead of raising ``TypeError`` on the new kwargs.
+            from ..transport.sdk import invoke_ask_user_callback
+
+            return invoke_ask_user_callback(
+                self._callback,
                 question,
-                header=header,
-                options=options,
-                multiple=multiple,
-                allow_custom=allow_custom,
+                {
+                    "header": header,
+                    "options": options,
+                    "multiple": multiple,
+                    "allow_custom": allow_custom,
+                },
             )
         return "[ask_user: not available in non-interactive mode]"

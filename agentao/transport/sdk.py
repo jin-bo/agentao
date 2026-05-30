@@ -13,14 +13,16 @@ from .events import AgentEvent, EventType
 from .null import NullTransport
 
 
-def _invoke_ask_user_callback(callback: Callable[..., str], question: str, structured: Dict[str, Any]) -> str:
+def invoke_ask_user_callback(callback: Callable[..., str], question: str, structured: Dict[str, Any]) -> str:
     """Call a user-supplied ``ask_user`` callback, forwarding structured
     kwargs only when the callback can accept them.
 
-    This keeps legacy 1-arg ``Callable[[str], str]`` callbacks working: a
-    callback whose signature names none of the structured fields (and has
-    no ``**kwargs``) is called with the question alone, so the structured
-    hints are silently dropped rather than raising ``TypeError``.
+    Shared by :class:`SdkTransport` and :class:`agentao.tools.ask_user.AskUserTool`
+    so both honour the same backward-compatibility rule: a legacy 1-arg
+    ``Callable[[str], str]`` callback (whose signature names none of the
+    structured fields and has no ``**kwargs``) is called with the question
+    alone, so the structured hints are silently dropped rather than raising
+    ``TypeError``.
     """
     try:
         params = inspect.signature(callback).parameters
@@ -111,7 +113,7 @@ class SdkTransport:
         allow_custom: bool = True,
     ) -> str:
         if self._ask_user:
-            return _invoke_ask_user_callback(
+            return invoke_ask_user_callback(
                 self._ask_user,
                 question,
                 {

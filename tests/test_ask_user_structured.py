@@ -19,7 +19,7 @@ from agentao.acp.schema import AcpAskUserParams
 from agentao.acp.transport import ACPTransport
 from agentao.cli.transport import _resolve_option_selection
 from agentao.tools.ask_user import AskUserTool
-from agentao.transport.sdk import SdkTransport, _invoke_ask_user_callback
+from agentao.transport.sdk import SdkTransport, invoke_ask_user_callback
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +67,13 @@ class TestAskUserTool:
     def test_execute_no_callback_returns_sentinel(self) -> None:
         assert "not available" in AskUserTool().execute("hi")
 
+    def test_execute_legacy_one_arg_callback_does_not_break(self) -> None:
+        # A directly-constructed tool with the legacy 1-arg callback shape
+        # must not TypeError when execute() forwards the structured kwargs.
+        tool = AskUserTool(lambda q: f"ok:{q}")
+        assert tool.execute("hi") == "ok:hi"
+        assert tool.execute("hi", options=["a", "b"], multiple=True) == "ok:hi"
+
 
 # ---------------------------------------------------------------------------
 # Backward-compatible callback invocation
@@ -79,11 +86,11 @@ STRUCTURED = {"header": "H", "options": ["x"], "multiple": True, "allow_custom":
 class TestInvokeAskUserCallback:
     def test_legacy_one_arg_callback_drops_structured(self) -> None:
         # A legacy Callable[[str], str] must not TypeError on structured kwargs.
-        assert _invoke_ask_user_callback(lambda q: f"got:{q}", "Q", STRUCTURED) == "got:Q"
+        assert invoke_ask_user_callback(lambda q: f"got:{q}", "Q", STRUCTURED) == "got:Q"
 
     def test_var_keyword_callback_receives_all(self) -> None:
         captured: Dict[str, Any] = {}
-        _invoke_ask_user_callback(
+        invoke_ask_user_callback(
             lambda q, **kw: captured.update(kw) or "", "Q", STRUCTURED
         )
         assert captured == STRUCTURED
@@ -95,13 +102,13 @@ class TestInvokeAskUserCallback:
             captured["options"] = options
             return ""
 
-        _invoke_ask_user_callback(cb, "Q", STRUCTURED)
+        invoke_ask_user_callback(cb, "Q", STRUCTURED)
         assert captured == {"options": ["x"]}
 
     def test_uninspectable_callable_falls_back_to_one_arg(self) -> None:
         # ``str`` is a builtin whose signature can't be introspected here;
         # it must be called with the question alone.
-        assert _invoke_ask_user_callback(str, "Q", STRUCTURED) == "Q"
+        assert invoke_ask_user_callback(str, "Q", STRUCTURED) == "Q"
 
     def test_positional_only_named_field_is_not_passed_by_keyword(self) -> None:
         # A positional-only parameter sharing a structured field name must
@@ -116,7 +123,7 @@ class TestInvokeAskUserCallback:
         # question alone, which raises its own TypeError (missing header) —
         # but crucially NOT the 'positional-only passed as keyword' error.
         with pytest.raises(TypeError) as exc:
-            _invoke_ask_user_callback(ns["cb"], "Q", STRUCTURED)
+            invoke_ask_user_callback(ns["cb"], "Q", STRUCTURED)
         assert "positional-only" not in str(exc.value)
 
 
