@@ -446,6 +446,36 @@ class LLMClient:
             if isinstance(content, str):
                 self.logger.info(f"    Content ({len(content)} chars):\n" +
                                  "\n".join(f"      {line}" for line in content.split('\n')))
+            elif isinstance(content, list):
+                # Multimodal content: summarize each part without dumping raw
+                # data (an inline image is megabytes of base64).
+                parts_summary = []
+                for part in content:
+                    if isinstance(part, dict):
+                        ptype = part.get('type', 'unknown')
+                        if ptype == 'text':
+                            text = part.get('text', '')
+                            parts_summary.append(f"text ({len(text)} chars)")
+                        elif ptype == 'image_url':
+                            image_url = part.get('image_url', {})
+                            # ``image_url`` is normally {"url": ...} but external
+                            # / MCP-sourced parts may use the relaxed bare-string
+                            # shape; coerce to str so logging never crashes the
+                            # (unguarded) request-logging path.
+                            url = image_url.get('url', '') if isinstance(image_url, dict) else image_url
+                            url = url if isinstance(url, str) else str(url)
+                            if url.startswith('data:'):
+                                parts_summary.append(f"image_url ({len(url)} chars, inline base64)")
+                            else:
+                                parts_summary.append(f"image_url: {url[:100]}")
+                        else:
+                            parts_summary.append(f"{ptype}")
+                    else:
+                        parts_summary.append(str(type(part)))
+                self.logger.info(
+                    f"    Content (multimodal, {len(content)} parts): "
+                    f"[{', '.join(parts_summary)}]"
+                )
             else:
                 self.logger.info(f"    Content: {content}")
 

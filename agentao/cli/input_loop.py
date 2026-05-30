@@ -151,6 +151,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
         handle_model_command, handle_temperature_command, handle_context_command,
         handle_mcp_command, handle_permission_command, handle_sessions_command,
         handle_tools_command, handle_sandbox_command, handle_compact_command,
+        handle_image_command,
     )
     from .replay_commands import handle_replay_command
     from .commands_ext import (
@@ -165,7 +166,9 @@ def run_loop(cli: "AgentaoCLI") -> None:
             cli._flush_acp_inbox()
             user_input = cli._get_user_input()
 
-            if not user_input.strip():
+            # Allow an empty message when images are staged ("here's an
+            # image" with no text); otherwise skip blank lines.
+            if not user_input.strip() and not cli._staged_images:
                 continue
 
             input_text = user_input.strip()
@@ -192,6 +195,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
                     cli.agent.clear_history()
                     cli.agent.memory_manager.clear()
                     cli.agent.memory_manager.clear_all_session_summaries()
+                    cli._staged_images = []
                     cli.last_response = None
                     cli._cached_ctx_pct = 0.0
                     from ..permissions import PermissionMode
@@ -207,6 +211,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
                     if cli._plan_session.is_active:
                         cli._plan_controller.exit_plan_mode()
                     cli.agent.clear_history()
+                    cli._staged_images = []
                     cli.last_response = None
                     cli._cached_ctx_pct = 0.0
                     from ..permissions import PermissionMode
@@ -294,6 +299,10 @@ def run_loop(cli: "AgentaoCLI") -> None:
 
                 elif command == "context":
                     handle_context_command(cli, args)
+                    continue
+
+                elif command == "image":
+                    handle_image_command(cli, args)
                     continue
 
                 elif command == "compact":
@@ -394,12 +403,26 @@ def run_loop(cli: "AgentaoCLI") -> None:
                 cli._flush_acp_inbox()
                 continue
 
+            # Attach any images staged via /image to this turn only. Strip
+            # the display-only ``_label`` so chat() sees the documented
+            # {data, mimeType} shape. They are cleared only after a
+            # successful turn (below), so a failed chat() leaves them
+            # staged for retry rather than silently dropping them.
+            images = None
+            if cli._staged_images:
+                images = [
+                    {"data": img["data"], "mimeType": img["mimeType"]}
+                    for img in cli._staged_images
+                ]
+
             # Process with agent
             console.rule("[bold green]Assistant[/bold green]", style="green")
             cli.current_status = console.status("[bold yellow]Thinking…", spinner="dots")
             cli.current_status.start()
             try:
-                response = cli.agent.chat(user_input)
+                response = cli.agent.chat(user_input, images=images)
+                # Turn succeeded — consume the staged images.
+                cli._staged_images = []
                 cli.last_response = response
                 try:
                     stats = cli.agent.context_manager.get_usage_stats(cli.agent.messages)

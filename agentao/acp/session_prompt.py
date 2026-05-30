@@ -28,15 +28,28 @@ ContentBlock support (v1):
   preserves the URI in the LLM's view so it can ask follow-up questions
   about the referenced resource; dereferencing is future work because it
   will often require an ACP ``fs/read_text_file`` round-trip.
-- Any other block type (``image``, ``audio``, embedded ``resource``,
-  unknown types) raises :class:`TypeError`, which the dispatcher maps
-  to ``-32602`` ``INVALID_PARAMS``. No silent degradation.
+- ``{"type": "image", "data": "<base64>", "mimeType": "..."}``
+  → collected as an image attachment and forwarded to
+  ``agent.chat(images=[...])``, which surfaces it as an OpenAI
+  ``image_url`` part. Inline ``data``/``mimeType`` is required and is the
+  *only* shape accepted: any other key (``uri``, ``path``, ``apiKey``,
+  ``_meta``, …) is rejected (``-32602``), so the wire can never carry a
+  host path or secret — the runtime mirror of the schema's
+  ``additionalProperties: false``. The untrusted
+  payload is validated: ``mimeType`` must be ``image/*``, ``data`` must be
+  valid base64 within the per-image size cap, and a prompt may carry at
+  most ``_MAX_IMAGES_PER_PROMPT`` images — each violation is a ``-32602``.
+- Any other block type (``audio``, embedded ``resource``, unknown types)
+  raises :class:`TypeError`, which the dispatcher maps to ``-32602``
+  ``INVALID_PARAMS``. No silent degradation.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 
 from agentao.cancellation import CancellationToken
 
@@ -48,6 +61,26 @@ from .protocol import (
 )
 from .server import JsonRpcHandlerError
 from .session_manager import SessionNotFoundError
+
+# Bounds on untrusted inline image input from the ACP wire. The wire carries
+# only ``{data, mimeType}`` content — never a path or secret — so these guard
+# against a malformed or oversized payload reaching the LLM client as an
+# opaque API error instead of a clean ``-32602`` ``INVALID_PARAMS``. The byte
+# cap and count are shared with the CLI /image command via media_limits.
+from agentao.media_limits import (
+    MAX_IMAGE_BYTES as _MAX_IMAGE_BYTES,
+    MAX_IMAGES_PER_TURN as _MAX_IMAGES_PER_PROMPT,
+)
+
+# base64 expands ~4/3; cap the encoded length so we reject oversized payloads
+# *before* decoding them (a decode-to-check would itself be the DoS).
+_MAX_IMAGE_B64_LEN = ((_MAX_IMAGE_BYTES + 2) // 3) * 4
+
+# The only keys an inline image block may carry. Anything else (``uri``,
+# ``path``, ``apiKey``, ``baseUrl``, ``_meta``, …) is rejected so the wire can
+# never smuggle a host path or secret — the runtime mirror of the schema's
+# ``additionalProperties: false``.
+_IMAGE_BLOCK_KEYS = frozenset({"type", "data", "mimeType"})
 
 if TYPE_CHECKING:
     from .server import AcpServer
@@ -69,13 +102,15 @@ def _parse_session_id(raw: Any) -> str:
     return raw
 
 
-def _parse_prompt(raw: Any) -> str:
-    """Validate an ACP ``ContentBlock[]`` and render it to plain text.
+def _parse_prompt(raw: Any) -> Tuple[str, List[Dict[str, str]]]:
+    """Validate an ACP ``ContentBlock[]`` and render it.
 
-    Multiple blocks are joined with blank lines so the LLM reads them as
-    paragraph-separated input. Unsupported block types raise
-    :class:`TypeError`, which the dispatcher maps to ``-32602``
-    ``INVALID_PARAMS``.
+    Returns ``(user_text, images)`` where ``user_text`` is the text and
+    resource-link blocks joined with blank lines (paragraph-separated for
+    the LLM), and ``images`` is the list of image attachments in
+    ``{"data", "mimeType"}`` form ready for ``agent.chat(images=...)``.
+    Unsupported block types raise :class:`TypeError`, which the dispatcher
+    maps to ``-32602`` ``INVALID_PARAMS``.
     """
     if not isinstance(raw, list):
         raise TypeError(
@@ -85,6 +120,7 @@ def _parse_prompt(raw: Any) -> str:
         raise TypeError("session/prompt.prompt must not be empty")
 
     rendered: List[str] = []
+    images: List[Dict[str, str]] = []
     for i, block in enumerate(raw):
         if not isinstance(block, dict):
             raise TypeError(f"session/prompt.prompt[{i}] must be a JSON object")
@@ -109,17 +145,68 @@ def _parse_prompt(raw: Any) -> str:
                     f"session/prompt.prompt[{i}].title/name must be a string"
                 )
             rendered.append(f"[Resource: {label}]({uri})")
-        elif btype in ("image", "audio", "resource"):
+        elif btype == "image":
+            # The image wire carries only inline content — {type, data,
+            # mimeType}. Reject ANY other key at runtime (by-reference
+            # ``uri``, ``path``, ``apiKey``, ``baseUrl``, ``_meta``, …),
+            # mirroring the schema's extra="forbid"/additionalProperties:
+            # false; the hand-rolled raw-dict parser would otherwise
+            # silently forward a host path or secret instead of rejecting it.
+            extra_keys = set(block) - _IMAGE_BLOCK_KEYS
+            if extra_keys:
+                raise TypeError(
+                    f"session/prompt.prompt[{i}]: image block has unexpected "
+                    f"field(s) {sorted(extra_keys)}; send inline "
+                    f"'data'/'mimeType' only"
+                )
+            data = block.get("data")
+            mime_type = block.get("mimeType")
+            if not isinstance(data, str) or not data:
+                raise TypeError(
+                    f"session/prompt.prompt[{i}].data must be a non-empty "
+                    f"base64 string"
+                )
+            if not isinstance(mime_type, str) or not mime_type.startswith("image/"):
+                raise TypeError(
+                    f"session/prompt.prompt[{i}].mimeType must be an "
+                    f"'image/*' type"
+                )
+            # Reject by encoded length first so a gigabyte payload never
+            # reaches the decoder (the decode-to-check would itself be the
+            # DoS); then enforce the exact cap on the decoded bytes.
+            if len(data) > _MAX_IMAGE_B64_LEN:
+                raise TypeError(
+                    f"session/prompt.prompt[{i}]: image exceeds the "
+                    f"{_MAX_IMAGE_BYTES // (1024 * 1024)} MB limit"
+                )
+            try:
+                decoded = base64.b64decode(data, validate=True)
+            except (binascii.Error, ValueError):
+                raise TypeError(
+                    f"session/prompt.prompt[{i}].data is not valid base64"
+                )
+            if len(decoded) > _MAX_IMAGE_BYTES:
+                raise TypeError(
+                    f"session/prompt.prompt[{i}]: image exceeds the "
+                    f"{_MAX_IMAGE_BYTES // (1024 * 1024)} MB limit"
+                )
+            if len(images) >= _MAX_IMAGES_PER_PROMPT:
+                raise TypeError(
+                    f"session/prompt.prompt: too many image blocks "
+                    f"(max {_MAX_IMAGES_PER_PROMPT})"
+                )
+            images.append({"data": data, "mimeType": mime_type})
+        elif btype in ("audio", "resource"):
             raise TypeError(
                 f"session/prompt.prompt[{i}]: block type {btype!r} is not yet "
-                f"supported (Issue 06 supports only 'text' and 'resource_link')"
+                f"supported (v1 supports 'text', 'resource_link', and 'image')"
             )
         else:
             raise TypeError(
                 f"session/prompt.prompt[{i}]: unknown block type {btype!r}"
             )
 
-    return "\n\n".join(rendered)
+    return "\n\n".join(rendered), images
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +225,8 @@ def handle_session_prompt(server: "AcpServer", params: Any) -> Dict[str, Any]:
          ``INVALID_REQUEST`` (the session is busy with another turn).
       6. Create a fresh :class:`CancellationToken`, bind it to
          ``session.cancel_token`` so Issue 09 can find it.
-      7. Invoke ``agent.chat(user_text, cancellation_token=token)``.
+      7. Invoke ``agent.chat(user_text, cancellation_token=token,
+         images=...)`` (images present only for ``image`` content blocks).
       8. Map the outcome to ``stopReason`` and return
          ``{"stopReason": ...}``. ``cancel_token`` is cleared and
          ``turn_lock`` is released in the ``finally`` block regardless of
@@ -154,7 +242,7 @@ def handle_session_prompt(server: "AcpServer", params: Any) -> Dict[str, Any]:
         raise TypeError("session/prompt params must be a JSON object")
 
     session_id = _parse_session_id(params.get("sessionId"))
-    user_text = _parse_prompt(params.get("prompt"))
+    user_text, images = _parse_prompt(params.get("prompt"))
 
     try:
         session = server.sessions.require(session_id)
@@ -188,7 +276,9 @@ def handle_session_prompt(server: "AcpServer", params: Any) -> Dict[str, Any]:
     token = CancellationToken()
     session.cancel_token = token
     try:
-        reply = session.agent.chat(user_text, cancellation_token=token)
+        reply = session.agent.chat(
+            user_text, cancellation_token=token, images=images or None
+        )
         logger.debug(
             "acp: session %s turn finished, reply length=%d",
             session_id,

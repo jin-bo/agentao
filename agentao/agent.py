@@ -4,7 +4,7 @@ import asyncio
 import logging
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
 
 from .llm import LLMClient
 from .permissions import PermissionEngine
@@ -721,12 +721,13 @@ class Agentao:
         # ``agent._llm_call(...)`` and external tests patch it by name.
         return run_llm_call(self, messages, tools, cancellation_token)
 
-    def add_message(self, role: str, content: str):
+    def add_message(self, role: str, content: Union[str, List[Dict[str, Any]]]):
         """Add a message to conversation history.
 
         Args:
             role: Message role (user/assistant/system)
-            content: Message content
+            content: Message content — a plain string, or an OpenAI-style
+                multimodal content list (e.g. ``text`` + ``image_url`` parts).
         """
         self.messages.append({"role": role, "content": content})
 
@@ -746,7 +747,8 @@ class Agentao:
         return self._plan_session.is_active
 
     def chat(self, user_message: str, max_iterations: int = 100,
-             cancellation_token: Optional[CancellationToken] = None) -> str:
+             cancellation_token: Optional[CancellationToken] = None,
+             images: Optional[List[Dict[str, str]]] = None) -> str:
         """Process user message and generate response.
 
         Args:
@@ -755,6 +757,9 @@ class Agentao:
             cancellation_token: Optional token to cancel this chat() call. If not provided,
                                  a fresh token is created. Pass a shared token to propagate
                                  cancellation from a parent agent (Gemini CLI pattern).
+            images: Optional list of image attachments, each a dict with
+                    ``data`` (base64-encoded string) and ``mimeType`` (e.g.
+                    ``image/png``). Surfaced as OpenAI ``image_url`` parts.
 
         Returns:
             Assistant's response
@@ -763,13 +768,15 @@ class Agentao:
         # KeyboardInterrupt/AgentCancelledError mapping) lives in
         # :mod:`agentao.runtime.turn`; this method stays as a thin facade
         # so external callers and tests keep using ``Agentao.chat``.
-        return run_turn(self, user_message, max_iterations, cancellation_token)
+        return run_turn(self, user_message, max_iterations, cancellation_token,
+                        images=images)
 
     async def arun(
         self,
         user_message: str,
         max_iterations: int = 100,
         cancellation_token: Optional[CancellationToken] = None,
+        images: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         """Async wrapper around :meth:`chat` for embedded async hosts.
 
@@ -796,9 +803,18 @@ class Agentao:
         # ``None`` and the dispatcher falls back to ``asyncio.run``,
         # which only supports loop-independent async tools.
         token.runtime_loop = loop
-        future = loop.run_in_executor(
-            None, self.chat, user_message, max_iterations, token
-        )
+        # Forward ``images`` only when present so the executor keeps calling
+        # ``chat`` with the historical three positional args for text turns —
+        # test/host stubs that patch ``chat`` with a 3-arg signature stay
+        # working, while async hosts can still send multimodal input.
+        if images:
+            future = loop.run_in_executor(
+                None, self.chat, user_message, max_iterations, token, images
+            )
+        else:
+            future = loop.run_in_executor(
+                None, self.chat, user_message, max_iterations, token
+            )
         try:
             return await future
         except asyncio.CancelledError:
@@ -806,14 +822,16 @@ class Agentao:
             raise
 
     def _chat_inner(self, user_message: str, max_iterations: int,
-                    token: CancellationToken) -> str:
+                    token: CancellationToken,
+                    images: Optional[List[Dict[str, str]]] = None) -> str:
         """Inner chat loop — called by chat(). Raises AgentCancelledError on cancellation.
 
         Body lives in :class:`agentao.runtime.chat_loop.ChatLoopRunner`; this
         method stays as the entry point so subclasses or test patches
         targeting ``_chat_inner`` keep working.
         """
-        return ChatLoopRunner(self).run(user_message, max_iterations, token)
+        return ChatLoopRunner(self).run(user_message, max_iterations, token,
+                                        images=images)
 
     def get_conversation_summary(self) -> str:
         """Get a summary of the conversation.

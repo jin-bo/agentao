@@ -44,7 +44,7 @@ class AcpAgentCapabilities(BaseModel):
 
     loadSession: bool = True
     promptCapabilities: Dict[str, bool] = Field(
-        default_factory=lambda: {"image": False, "audio": False, "embeddedContext": False}
+        default_factory=lambda: {"image": True, "audio": False, "embeddedContext": False}
     )
     mcpCapabilities: Dict[str, bool] = Field(
         default_factory=lambda: {"http": False, "sse": True}
@@ -198,8 +198,27 @@ class AcpResourceLinkBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AcpImageContentBlock(BaseModel):
+    """An ACP image content block (inline base64).
+
+    The agent surfaces ``data``/``mimeType`` to the LLM as an OpenAI
+    ``image_url`` data-URL part. The image wire deliberately carries only
+    inline content — ``{data, mimeType}`` — and never a by-reference
+    ``uri``: with ``extra="forbid"`` an image block that includes ``uri``
+    (e.g. ``file:///etc/passwd``) is rejected outright, so the handler can
+    never be coaxed into dereferencing a host path or secret. The spec's
+    optional by-reference field is intentionally unsupported in v1.
+    """
+
+    type: Literal["image"] = "image"
+    data: str
+    mimeType: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
 AcpPromptContentBlock = Annotated[
-    Union[AcpTextContentBlock, AcpResourceLinkBlock],
+    Union[AcpTextContentBlock, AcpResourceLinkBlock, AcpImageContentBlock],
     Field(discriminator="type"),
 ]
 

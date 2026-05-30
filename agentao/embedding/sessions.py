@@ -24,6 +24,28 @@ def strip_system_reminders(text: str) -> str:
     return _SYSTEM_REMINDER_RE.sub("", text).strip()
 
 
+def _content_to_text(content: Any) -> str:
+    """Normalize a message ``content`` field to a single string.
+
+    Handles both shapes the chat path can produce: a plain string, or a
+    list of typed blocks (multimodal/tool-use) whose canonical text block
+    is ``{"type": "text", "text": "..."}`` — mirroring
+    :meth:`MemoryCrystallizer._user_message_text`. Returns ``""`` for
+    empty / None / unsupported shapes so callers never run string ops on
+    a list (which would raise ``TypeError`` in ``re.sub``).
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        ]
+        return " ".join(p for p in parts if p)
+    return ""
+
+
 def _session_dir(project_root: Optional[Path] = None) -> Path:
     """Return the ``.agentao/sessions`` directory for a project."""
     root = project_root if project_root is not None else Path.cwd()
@@ -34,11 +56,11 @@ def _derive_title(messages: List[Dict[str, Any]]) -> str:
     """Return a short title derived from the first user message."""
     for m in messages:
         if m.get("role") == "user":
-            content = m.get("content", "")
-            if isinstance(content, str):
-                content = strip_system_reminders(content)
-                if content:
-                    return content[:_TITLE_MAX_CHARS] + ("…" if len(content) > _TITLE_MAX_CHARS else "")
+            # Normalize multimodal (list) content too — an image+text first
+            # message would otherwise fall through and persist an empty title.
+            content = strip_system_reminders(_content_to_text(m.get("content", "")))
+            if content:
+                return content[:_TITLE_MAX_CHARS] + ("…" if len(content) > _TITLE_MAX_CHARS else "")
     return ""
 
 
@@ -209,7 +231,9 @@ def list_sessions(project_root: Optional[Path] = None) -> List[Dict[str, Any]]:
                 None,
             )
             if first_user_msg:
-                first_user_msg = strip_system_reminders(first_user_msg)
+                # ``content`` may be a multimodal list (image turn); normalize
+                # to text before running the system-reminder regex.
+                first_user_msg = strip_system_reminders(_content_to_text(first_user_msg))
             if first_user_msg and len(first_user_msg) > 80:
                 first_user_msg = first_user_msg[:77] + "..."
 

@@ -34,7 +34,6 @@ from typing import Callable, Optional
 from rich.console import Console
 from rich.padding import Padding
 from rich.syntax import Syntax
-from rich.text import Text
 
 from .transport import AgentEvent, EventType
 

@@ -3,6 +3,7 @@
 import logging
 import re
 import traceback
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,12 +19,42 @@ from typing import Dict, List, Optional, Set, TYPE_CHECKING
 if TYPE_CHECKING:
     import jieba as _jieba_t
 
+_JIEBA_MODULE = None
+
+
+def _import_jieba():
+    """Import ``jieba`` with its compile-time ``SyntaxWarning``s suppressed.
+
+    jieba 0.42.1 — the latest *and* last PyPI release (Jan 2020) — uses
+    non-raw regex string literals (e.g. ``"\\."``, ``"\\s"``), which Python
+    3.12 flags as ``SyntaxWarning: invalid escape sequence`` when it first
+    compiles jieba's modules. The warnings are cosmetic (the regexes work)
+    and there is no fixed upstream release to upgrade to, so we mute them at
+    the single import chokepoint. ``jieba/__init__.py`` does
+    ``from . import finalseg`` at the top, so all three offending modules
+    compile during this one import — wrapping it covers every warning.
+
+    The result is cached so the ``warnings.catch_warnings()`` block — which
+    mutates the *process-global* warning filters and is not thread-safe —
+    runs only on the genuine first import, not on every recall. Subsequent
+    calls return the cached module without touching the global filter state.
+
+    Raises ``ImportError`` (unchanged) if jieba is not installed, so the
+    ``[i18n]``-extra-missing degradation path still works.
+    """
+    global _JIEBA_MODULE
+    if _JIEBA_MODULE is not None:
+        return _JIEBA_MODULE
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=SyntaxWarning)
+        import jieba
+    _JIEBA_MODULE = jieba
+    return jieba
+
 
 def __getattr__(name: str):
     if name == "jieba":
-        import jieba as _jieba_module
-
-        return _jieba_module
+        return _import_jieba()
     raise AttributeError(f"module 'agentao.memory.retriever' has no attribute {name!r}")
 
 
@@ -46,7 +77,7 @@ _USERDICT_PATH = Path.home() / ".agentao" / "userdict.txt"
 
 def _initialize_jieba_with_logging() -> None:
     """Run jieba initialization without leaking its progress messages to the terminal."""
-    import jieba
+    jieba = _import_jieba()
 
     capture_third_party_output(
         runner=jieba.initialize,
@@ -65,7 +96,7 @@ def _ensure_jieba_ready() -> None:
     add project names, technical terms, and proper nouns that the default
     dictionary doesn't know.
     """
-    import jieba
+    jieba = _import_jieba()
 
     global _JIEBA_INITIALIZED
     if _JIEBA_INITIALIZED:
@@ -154,7 +185,7 @@ def _cjk_segment(text: str) -> set:
     installed (the ``[i18n]`` extra is opt-in post-0.4.0).
     """
     try:
-        import jieba
+        jieba = _import_jieba()
     except ImportError:
         global _jieba_missing_warned
         if not _jieba_missing_warned:

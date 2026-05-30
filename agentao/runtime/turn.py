@@ -17,7 +17,7 @@ tests that target ``Agentao.chat`` continue to work.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from ..cancellation import AgentCancelledError, CancellationToken
 from ..replay.observability import latest_session_summary_id
@@ -33,6 +33,7 @@ def run_turn(
     user_message: str,
     max_iterations: int = 100,
     cancellation_token: Optional[CancellationToken] = None,
+    images: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """Run one full ``chat()`` turn and return the assistant's reply.
 
@@ -97,7 +98,14 @@ def run_turn(
     status = "ok"
     error_detail: Optional[str] = None
     try:
-        final_text = agent._chat_inner(user_message, max_iterations, token)
+        # Forward ``images`` only when present so the historical
+        # three-argument ``_chat_inner`` signature (which subclasses and
+        # test stubs still patch by name) keeps working for text turns.
+        if images:
+            final_text = agent._chat_inner(user_message, max_iterations, token,
+                                           images=images)
+        else:
+            final_text = agent._chat_inner(user_message, max_iterations, token)
         return final_text
     except KeyboardInterrupt:
         token.cancel("user-cancel")
