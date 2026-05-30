@@ -58,6 +58,42 @@
       "title": "AcpAgentInfo",
       "type": "object"
     },
+    "AcpAgentaoSetModelRequest": {
+      "additionalProperties": false,
+      "description": "``_agentao.cn/set_model`` request params \u2014 free-form, secret-free.\n\nThe vendor free-form path: ``{sessionId, model}`` only. ``extra=\"forbid\"``\nkeeps it secret-free (no ``apiKey`` / ``baseUrl`` / ``_meta``). Model-only\nswitch \u2014 the provider is unchanged. Reuses the ``model`` field name so a\nDeepChat-style adapter maps its UI ``modelId`` \u2192 ``model``.",
+      "properties": {
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "model"
+      ],
+      "title": "AcpAgentaoSetModelRequest",
+      "type": "object"
+    },
+    "AcpAgentaoSetModelResponse": {
+      "additionalProperties": false,
+      "description": "The active model after the vendor free-form switch.",
+      "properties": {
+        "model": {
+          "title": "Model",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "title": "AcpAgentaoSetModelResponse",
+      "type": "object"
+    },
     "AcpAskUserAnswered": {
       "additionalProperties": false,
       "description": "``ask_user`` reply when the user typed an answer.",
@@ -242,6 +278,112 @@
         }
       },
       "title": "AcpClientInfo",
+      "type": "object"
+    },
+    "AcpConfigOption": {
+      "additionalProperties": true,
+      "description": "A single ACP config option advertised in ``session/new`` / ``load``.\n\nAgentao advertises exactly one option today (``id=\"model\"``,\n``category=\"model\"``, ``type=\"select\"``). ``currentValue`` and the\n``options`` values both use the ``provider/model`` convention. Open shape\nso future categories / fields don't require a snapshot churn for every\nhost extension.",
+      "properties": {
+        "category": {
+          "enum": [
+            "mode",
+            "model",
+            "thought_level"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "currentValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currentvalue"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/AcpConfigOptionChoice"
+          },
+          "title": "Options",
+          "type": "array"
+        },
+        "type": {
+          "const": "select",
+          "default": "select",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "category"
+      ],
+      "title": "AcpConfigOption",
+      "type": "object"
+    },
+    "AcpConfigOptionChoice": {
+      "additionalProperties": true,
+      "description": "One selectable choice in a ``configOptions`` entry.\n\nFor the ``model`` option the ``value`` is the Agentao convention\n``provider/model`` (an **Agentao value convention, not an ACP standard**).\nOpen shape (extra=\"allow\") so a host-injected catalog can attach extra\ndescriptive fields without breaking schema validation.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "AcpConfigOptionChoice",
       "type": "object"
     },
     "AcpError": {
@@ -795,8 +937,24 @@
     },
     "AcpSessionLoadResponse": {
       "additionalProperties": false,
-      "description": "``session/load`` returns an empty result object.\n\nThe handler emits the persisted history as ``session/update``\nnotifications before responding, so the response itself carries\nno payload \u2014 callers consume the replay stream instead.",
-      "properties": {},
+      "description": "``session/load`` result.\n\nThe handler emits the persisted history as ``session/update``\nnotifications before responding, so the response carries no message\npayload \u2014 callers consume the replay stream instead. It does advertise\nthe model ``configOptions`` (same as ``session/new``) so a reloaded\nsession exposes model/provider switching without a follow-up round trip.",
+      "properties": {
+        "configOptions": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/AcpConfigOption"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Configoptions"
+        }
+      },
       "title": "AcpSessionLoadResponse",
       "type": "object"
     },
@@ -825,6 +983,21 @@
     "AcpSessionNewResponse": {
       "additionalProperties": false,
       "properties": {
+        "configOptions": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/AcpConfigOption"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Configoptions"
+        },
         "models": {
           "anyOf": [
             {
@@ -921,6 +1094,47 @@
         "stopReason"
       ],
       "title": "AcpSessionPromptResponse",
+      "type": "object"
+    },
+    "AcpSessionSetConfigOptionRequest": {
+      "additionalProperties": false,
+      "description": "``session/set_config_option`` request params.\n\n``extra=\"forbid\"`` is load-bearing security: it is one of the two\nmechanisms (the other is the handler whitelist) that reject any\ncredential-bearing field (``apiKey`` / ``baseUrl`` / ``_meta``). The wire\ncarries only the ``provider/model`` *identifier*; credentials resolve\nserver-side via the host-injectable ``provider_resolver``.\n\nAgentao supports ``configId=\"model\"`` only. ``value`` is\n``\"provider/model\"`` (split on the first ``/``; a bare value with no\n``/`` is a model-only switch that keeps the current provider).",
+      "properties": {
+        "configId": {
+          "title": "Configid",
+          "type": "string"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "value": {
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "configId",
+        "value"
+      ],
+      "title": "AcpSessionSetConfigOptionRequest",
+      "type": "object"
+    },
+    "AcpSessionSetConfigOptionResponse": {
+      "additionalProperties": false,
+      "description": "Post-switch ``configOptions`` state (the updated ``currentValue``).\n\nNo ``config_option_update`` notification is emitted \u2014 a successful switch\nreturns the refreshed state in the response only.",
+      "properties": {
+        "configOptions": {
+          "items": {
+            "$ref": "#/$defs/AcpConfigOption"
+          },
+          "title": "Configoptions",
+          "type": "array"
+        }
+      },
+      "title": "AcpSessionSetConfigOptionResponse",
       "type": "object"
     },
     "AcpSessionSetModeRequest": {

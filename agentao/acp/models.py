@@ -201,6 +201,12 @@ class AcpSessionState:
     permission_overrides: Dict[str, bool] = field(default_factory=dict)
     permission_lock: threading.Lock = field(default_factory=threading.Lock)
     last_known_models: Optional[List[str]] = None
+    #: The provider id the session currently resolves credentials against,
+    #: tracked so ``session/set_config_option`` can report an accurate
+    #: ``currentValue`` (``provider/model``). ``None`` means "the default
+    #: provider" (``LLM_PROVIDER`` env). A ``provider/model`` switch sets it;
+    #: model-only switches leave it untouched (the provider is preserved).
+    provider_id: Optional[str] = None
     closed: bool = False
 
     def close(self) -> None:

@@ -37,6 +37,7 @@ from .models import AcpSessionState
 from .protocol import METHOD_SESSION_NEW, SERVER_NOT_INITIALIZED
 from .server import JsonRpcHandlerError
 from .session_manager import DuplicateSessionError
+from .session_set_config_option import config_options_for_session
 from .transport import ACPTransport
 
 if TYPE_CHECKING:
@@ -390,7 +391,13 @@ def handle_session_new(
             len(mcp_servers_internal),
         )
 
-    return {"sessionId": session_id}
+    # Advertise the model config option so clients can switch model/provider
+    # via the standard ``session/set_config_option`` path. Default catalog is
+    # the single current ``provider/model``; richer catalogs are host-injected.
+    return {
+        "sessionId": session_id,
+        "configOptions": config_options_for_session(server, state),
+    }
 
 
 # ---------------------------------------------------------------------------

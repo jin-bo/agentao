@@ -85,6 +85,7 @@ from .session_new import (
     _parse_mcp_servers,
     default_agent_factory,
 )
+from .session_set_config_option import config_options_for_session
 from .transport import ACPTransport
 
 if TYPE_CHECKING:
@@ -318,10 +319,11 @@ def handle_session_load(
             len(mcp_servers_internal),
         )
 
-    # 9) ACP spec returns an empty result for session/load. Return a
-    #    literal empty dict so future versions can add fields without
-    #    breaking the contract.
-    return {}
+    # 9) ACP spec returns an (otherwise) empty result for session/load. We
+    #    advertise the model config option here too — same as session/new —
+    #    so a reloaded session exposes model/provider switching without a
+    #    follow-up round trip.
+    return {"configOptions": config_options_for_session(server, state)}
 
 
 # ---------------------------------------------------------------------------
