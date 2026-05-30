@@ -15,7 +15,7 @@ used by the newer ``set_model`` / ``set_mode`` / ``list_models`` modules.
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterable, Iterator
 
 from .models import AcpSessionState
 from .protocol import INVALID_REQUEST, SERVER_NOT_INITIALIZED
@@ -24,6 +24,29 @@ from .session_manager import SessionNotFoundError
 
 if TYPE_CHECKING:
     from .server import AcpServer
+
+
+def reject_unexpected_params(
+    params: dict, allowed: Iterable[str], method: str, *, reason: str = ""
+) -> None:
+    """Raise ``TypeError`` if ``params`` carries any key outside ``allowed``.
+
+    A whitelist (rather than ignoring unknown keys) is the security boundary
+    for the model-switching handlers: a client that puts ``apiKey`` /
+    ``baseUrl`` / ``_meta`` on the request is rejected — not silently obliged.
+    Callers must have already validated ``params`` is a dict (see
+    :func:`require_active_session`). ``TypeError`` maps to ``INVALID_PARAMS``.
+    """
+    allowed_set = set(allowed)
+    extra = set(params) - allowed_set
+    if extra:
+        msg = (
+            f"{method}: unexpected field(s) {sorted(extra)}; only "
+            f"{sorted(allowed_set)} are accepted"
+        )
+        if reason:
+            msg += f" ({reason})"
+        raise TypeError(msg)
 
 
 def require_active_session(

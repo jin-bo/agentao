@@ -36,7 +36,11 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from ._handler_utils import hold_idle_turn_lock, require_active_session
+from ._handler_utils import (
+    hold_idle_turn_lock,
+    reject_unexpected_params,
+    require_active_session,
+)
 from .protocol import INVALID_REQUEST, METHOD_SESSION_SET_CONFIG_OPTION
 from .server import JsonRpcHandlerError
 
@@ -170,13 +174,12 @@ def handle_session_set_config_option(
 
     # Whitelist — the wire never carries credentials. Reject (don't ignore)
     # apiKey / baseUrl / _meta so a misbehaving client fails loudly.
-    extra = set(params) - _ALLOWED_KEYS
-    if extra:
-        raise TypeError(
-            f"{METHOD_SESSION_SET_CONFIG_OPTION}: unexpected field(s) "
-            f"{sorted(extra)}; only sessionId/configId/value are accepted "
-            "(credentials resolve server-side and never travel on the wire)"
-        )
+    reject_unexpected_params(
+        params,
+        _ALLOWED_KEYS,
+        METHOD_SESSION_SET_CONFIG_OPTION,
+        reason="credentials resolve server-side and never travel on the wire",
+    )
 
     config_id = params.get("configId")
     if config_id != _CONFIG_ID_MODEL:
@@ -186,10 +189,11 @@ def handle_session_set_config_option(
         )
 
     value = params.get("value")
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value.strip():
         raise TypeError(
             f"{METHOD_SESSION_SET_CONFIG_OPTION}.value must be a non-empty string"
         )
+    value = value.strip()
 
     provider_id, sep, model_id = value.partition("/")
 
@@ -197,6 +201,12 @@ def handle_session_set_config_option(
     # model/provider change mid-stream.
     with hold_idle_turn_lock(session, METHOD_SESSION_SET_CONFIG_OPTION):
         if sep:  # "provider/model" form
+            # Normalize the provider id to the canonical wire casing
+            # (lower-case, trimmed) so ``currentValue`` always matches a
+            # canonical catalog entry. Model ids are case-sensitive — only
+            # trimmed, never lower-cased.
+            provider_id = provider_id.strip().lower()
+            model_id = model_id.strip()
             if not provider_id or not model_id:
                 raise TypeError(
                     f"{METHOD_SESSION_SET_CONFIG_OPTION}.value 'provider/model' "
@@ -207,11 +217,16 @@ def handle_session_set_config_option(
                 creds = resolver(provider_id)
             except Exception as e:
                 # Unknown / unavailable provider — the resolver signals via
-                # any exception. Map to INVALID_REQUEST (a client-fixable
-                # condition), not INTERNAL_ERROR.
+                # any exception. Log the detail server-side (it may reference
+                # env var names) but return a generic message: a buggy host
+                # resolver must not be able to leak its exception text — which
+                # could embed a key — back over the wire.
+                logger.warning(
+                    "acp: provider resolution failed for %r: %s", provider_id, e
+                )
                 raise JsonRpcHandlerError(
                     code=INVALID_REQUEST,
-                    message=f"cannot resolve provider {provider_id!r}: {e}",
+                    message=f"cannot resolve provider {provider_id!r}",
                 )
             if not isinstance(creds, dict) or not creds.get("api_key"):
                 raise JsonRpcHandlerError(

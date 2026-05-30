@@ -233,6 +233,20 @@ class TestSetConfigOptionSwitch:
         # Provider unchanged → currentValue keeps the default provider prefix.
         assert result["configOptions"][0]["currentValue"] == "openai/gpt-4o-mini"
 
+    def test_provider_id_normalized_case_and_whitespace(self):
+        # "  OpenAI  / gpt-4o " → provider normalized to "openai" (trimmed,
+        # lower-cased), model trimmed to "gpt-4o" (case preserved). The
+        # advertised currentValue is the canonical "openai/gpt-4o".
+        server = make_initialized_server()
+        agent = _FakeAgent()
+        _register(server, agent)
+
+        result = acp_set_config.handle_session_set_config_option(
+            server, {"sessionId": "s", "configId": "model", "value": "  OpenAI  / gpt-4o "}
+        )
+        assert agent.set_provider_calls[0]["model"] == "gpt-4o"
+        assert result["configOptions"][0]["currentValue"] == "openai/gpt-4o"
+
     def test_unknown_provider_maps_to_invalid_request(self):
         server = make_initialized_server()
         _register(server, _FakeAgent())

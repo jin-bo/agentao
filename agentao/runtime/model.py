@@ -33,10 +33,18 @@ def set_provider(
     Emits ``MODEL_CHANGED`` with ``cause="set_provider"``. The API key
     is intentionally NOT included in the event payload — replay files
     would otherwise capture raw credentials.
+
+    When ``model`` changes, the tiktoken encoding and cached prompt-token
+    count on ``context_manager`` are reset — the same model-specific state
+    ``set_model`` clears. A stale encoding would otherwise miscount tokens
+    for the rest of the session after a cross-provider model switch.
     """
     _old_model = agent.llm.model
     _old_base = agent.llm.base_url
     agent.llm.reconfigure(api_key=api_key, base_url=base_url, model=model)
+    if model is not None and model != _old_model:
+        agent.context_manager._encoding = _get_tiktoken_encoding(agent.llm.model)
+        agent.context_manager._last_api_prompt_tokens = None
     try:
         agent.transport.emit(AgentEvent(EventType.MODEL_CHANGED, {
             "old_model": _old_model,

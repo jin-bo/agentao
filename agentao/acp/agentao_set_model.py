@@ -19,7 +19,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Dict
 
-from ._handler_utils import hold_idle_turn_lock, require_active_session
+from ._handler_utils import (
+    hold_idle_turn_lock,
+    reject_unexpected_params,
+    require_active_session,
+)
 from .protocol import METHOD_AGENTAO_SET_MODEL
 
 if TYPE_CHECKING:
@@ -34,16 +38,17 @@ _ALLOWED_KEYS = frozenset({"sessionId", "model"})
 def handle_agentao_set_model(server: "AcpServer", params: Any) -> Dict[str, Any]:
     session = require_active_session(server, params, METHOD_AGENTAO_SET_MODEL)
 
-    extra = set(params) - _ALLOWED_KEYS
-    if extra:
-        raise TypeError(
-            f"{METHOD_AGENTAO_SET_MODEL}: unexpected field(s) {sorted(extra)}; "
-            "only sessionId/model are accepted (model-only, secret-free)"
-        )
+    reject_unexpected_params(
+        params,
+        _ALLOWED_KEYS,
+        METHOD_AGENTAO_SET_MODEL,
+        reason="model-only, secret-free",
+    )
 
     model = params.get("model")
-    if not isinstance(model, str) or not model:
+    if not isinstance(model, str) or not model.strip():
         raise TypeError(f"{METHOD_AGENTAO_SET_MODEL}.model must be a non-empty string")
+    model = model.strip()
 
     # Holding turn_lock prevents an in-flight session/prompt from observing a
     # model change mid-stream.
