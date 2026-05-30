@@ -23,7 +23,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `$HOME` / `USERPROFILE` and finally the system temp dir, so an
   environment that can't resolve a home directory (stripped service
   accounts, some container/CI sandboxes, headless ACP launches) no longer
-  raises `RuntimeError`. `user_root()` now routes through it, and the
+  raises `RuntimeError`. The fallback is a *private, per-user* temp
+  subdirectory created `0700` and validated for ownership/permissions
+  (a pre-existing world/group-accessible path is abandoned for a fresh
+  `mkdtemp`), so a co-tenant on a shared host can't plant config/plugins
+  at a predictable path for us to load. `user_root()` now routes through
+  it, and the
   scattered direct `Path.home()` call sites (memory dictionary/skills
   paths, the skills registry, plugin discovery, the sandbox config, the
   log-handler fallback, the CLI history file) go through `user_home()` /

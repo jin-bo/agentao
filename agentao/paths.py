@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -26,10 +27,17 @@ def user_home() -> Path:
     environment). Rather than let that crash an import or a turn, fall
     back to a writable location so user-scope state still has a home.
 
-    The fallback is a *per-user* subdirectory of the system temp dir: the
-    temp root itself is shared between users, so namespacing it avoids one
-    account's ``~/.agentao`` state (history, registries) colliding with
-    another's on a multi-tenant host.
+    The fallback is a *private, per-user* subdirectory of the system temp
+    dir. The temp root is world-writable and shared between users, so the
+    directory is created ``0700`` and validated to be owned by the current
+    user with no group/other access before it is trusted — otherwise a
+    local attacker could pre-create the predictable path and have us load
+    their ``plugins`` / ``skills`` / ``sandbox.json`` as user-scope state.
+    A pre-existing path that fails that check is abandoned for a fresh
+    private ``mkdtemp`` rather than trusted.
+
+    The normal path (a resolvable home) does no filesystem I/O; only the
+    degraded fallback creates/validates the directory.
 
     Resolved lazily on each call so tests that monkeypatch ``Path.home``
     see the patched value.
@@ -39,8 +47,9 @@ def user_home() -> Path:
     except RuntimeError:
         # When Path.home() raises, the home env vars are necessarily unset
         # (it consults exactly those before failing), so the only useful
-        # last resort is the temp dir — namespaced per user.
-        return Path(tempfile.gettempdir()) / f"agentao-{_fallback_user_id()}"
+        # last resort is the temp dir — namespaced per user and locked down.
+        candidate = Path(tempfile.gettempdir()) / f"agentao-{_fallback_user_id()}"
+        return _private_dir_or_mkdtemp(candidate)
 
 
 def _fallback_user_id() -> str:
@@ -60,6 +69,41 @@ def _fallback_user_id() -> str:
         if getuid is not None:
             return str(getuid())
         return "unknown"
+
+
+def _private_dir_or_mkdtemp(path: Path) -> Path:
+    """Return ``path`` after ensuring it is a directory private to this user.
+
+    Creates ``path`` with ``0700`` perms. If it already exists, it is
+    trusted only when it is a real directory (not a symlink), owned by the
+    current user, with no group/other access — the lockdown that keeps a
+    co-tenant on a shared host from planting config we would load. If the
+    path can't be created or fails that check, fall back to a freshly
+    created private ``mkdtemp`` directory (guaranteed ``0700`` and unique).
+    """
+    try:
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if _is_private_to_current_user(path):
+            return path
+    except OSError:
+        pass
+    return Path(tempfile.mkdtemp(prefix="agentao-"))
+
+
+def _is_private_to_current_user(path: Path) -> bool:
+    """True if ``path`` is a non-symlink dir owned by us with no g/o access."""
+    try:
+        info = path.lstat()
+    except OSError:
+        return False
+    if not stat.S_ISDIR(info.st_mode):
+        return False  # symlink or non-directory — do not trust
+    if info.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        return False  # group/other access — not private
+    getuid = getattr(os, "getuid", None)
+    if getuid is not None and info.st_uid != getuid():
+        return False  # owned by another user
+    return True
 
 
 def user_root() -> Path:
