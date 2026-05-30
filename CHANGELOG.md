@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **ACP `session/set_mode` uses the standard `modeId` field and accepts
+  unknown values.** The ACP-standard field is `modeId` (not the pre-existing
+  non-standard `mode`), and a `modeId` is a UI/behavioural selector that need
+  not be an Agentao permission preset. The handler now reads `modeId`, applies
+  a `PermissionEngine` preset **only** on an exact match (`read-only` /
+  `workspace-write` / `full-access` / `plan`), and **persists + echoes** any
+  other value without changing permission posture — so a client mode like
+  DeepChat's `code` / `ask` round-trips instead of being rejected with
+  `-32602`. A non-preset `modeId` needs no permission engine; a recognized
+  preset still does. `AcpSessionSetModeRequest.modeId` /
+  `AcpSessionSetModeResponse.modeId` are now open strings (snapshot
+  `docs/schema/host.acp.v1.json` bumped). The permission-axis split and
+  `availableModes` / `currentModeId` + `current_mode_update` remain deferred
+  to their own design.
+
 ### Fixed
 
 - **Silence jieba's `SyntaxWarning` noise on first Chinese-text recall.**

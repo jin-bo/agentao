@@ -1139,16 +1139,11 @@
     },
     "AcpSessionSetModeRequest": {
       "additionalProperties": false,
-      "description": "``session/set_mode`` request params.\n\n``mode`` is constrained to the PermissionMode values the runtime\nactually accepts; ``handle_session_set_mode`` parses any other\nstring into a ``-32602`` error, so the schema must reflect the\nclosed set or schema-following clients would generate requests\nthat fail at runtime. New presets require both a runtime change\nand a snapshot bump (a load-bearing pairing).",
+      "description": "``session/set_mode`` request params.\n\nThe field is the ACP-standard ``modeId`` (not ``mode``), and it is an\n**open string**, not a closed enum: a ``modeId`` is a UI/behavioural\nselector that need not map to an Agentao permission preset. The handler\napplies a permission preset only on an exact match\n(``read-only`` / ``workspace-write`` / ``full-access`` / ``plan``) and\notherwise persists the value unchanged \u2014 so a client mode like ``code`` /\n``ask`` round-trips instead of being rejected.",
       "properties": {
-        "mode": {
-          "enum": [
-            "read-only",
-            "workspace-write",
-            "full-access",
-            "plan"
-          ],
-          "title": "Mode",
+        "modeId": {
+          "minLength": 1,
+          "title": "Modeid",
           "type": "string"
         },
         "sessionId": {
@@ -1158,28 +1153,22 @@
       },
       "required": [
         "sessionId",
-        "mode"
+        "modeId"
       ],
       "title": "AcpSessionSetModeRequest",
       "type": "object"
     },
     "AcpSessionSetModeResponse": {
       "additionalProperties": false,
-      "description": "The active mode after the update \u2014 confirms which preset is live.",
+      "description": "The active ``modeId`` after the update (echoes the persisted value).",
       "properties": {
-        "mode": {
-          "enum": [
-            "read-only",
-            "workspace-write",
-            "full-access",
-            "plan"
-          ],
-          "title": "Mode",
+        "modeId": {
+          "title": "Modeid",
           "type": "string"
         }
       },
       "required": [
-        "mode"
+        "modeId"
       ],
       "title": "AcpSessionSetModeResponse",
       "type": "object"

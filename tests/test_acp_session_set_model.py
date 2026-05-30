@@ -238,24 +238,48 @@ class TestSetMode:
         server = make_server()
         with pytest.raises(JsonRpcHandlerError) as exc:
             acp_set_mode.handle_session_set_mode(
-                server, {"sessionId": "s", "mode": "read-only"}
+                server, {"sessionId": "s", "modeId": "read-only"}
             )
         assert exc.value.code == SERVER_NOT_INITIALIZED
 
-    def test_unknown_mode_rejected(self, make_engine):
+    def test_empty_mode_id_rejected(self, make_engine):
         server = make_initialized_server()
         agent = _FakeAgent(permission_engine=make_engine())
         _register_session(server, "s", agent)
         with pytest.raises(TypeError):
             acp_set_mode.handle_session_set_mode(
-                server, {"sessionId": "s", "mode": "yolo"}
+                server, {"sessionId": "s", "modeId": ""}
             )
+
+    def test_unknown_mode_id_accepted_without_changing_posture(self, make_engine):
+        # DeepChat-style UI modes (code/ask) are NOT permission presets — they
+        # must be accepted and echoed, not rejected, and must leave the
+        # permission posture untouched.
+        server = make_initialized_server()
+        engine = make_engine()
+        agent = _FakeAgent(permission_engine=engine)
+        _register_session(server, "s", agent)
+
+        result = acp_set_mode.handle_session_set_mode(
+            server, {"sessionId": "s", "modeId": "code"}
+        )
+        assert result == {"modeId": "code"}
+        assert engine.active_mode == PermissionMode.WORKSPACE_WRITE  # unchanged
+
+    def test_unknown_mode_id_accepted_without_engine(self):
+        # A non-preset modeId needs no permission engine — it is pure UI state.
+        server = make_initialized_server()
+        _register_session(server, "s", _FakeAgent(permission_engine=None))
+        result = acp_set_mode.handle_session_set_mode(
+            server, {"sessionId": "s", "modeId": "ask"}
+        )
+        assert result == {"modeId": "ask"}
 
     def test_unknown_session(self):
         server = make_initialized_server()
         with pytest.raises(JsonRpcHandlerError) as exc:
             acp_set_mode.handle_session_set_mode(
-                server, {"sessionId": "nope", "mode": "read-only"}
+                server, {"sessionId": "nope", "modeId": "read-only"}
             )
         assert exc.value.code == INVALID_REQUEST
 
@@ -266,10 +290,20 @@ class TestSetMode:
         _register_session(server, "s", agent)
 
         result = acp_set_mode.handle_session_set_mode(
-            server, {"sessionId": "s", "mode": "read-only"}
+            server, {"sessionId": "s", "modeId": "read-only"}
         )
-        assert result == {"mode": "read-only"}
+        assert result == {"modeId": "read-only"}
         assert engine.active_mode == PermissionMode.READ_ONLY
+
+    def test_preset_mode_requires_engine(self):
+        # A recognized preset DOES change posture, so it needs an engine.
+        server = make_initialized_server()
+        _register_session(server, "s", _FakeAgent(permission_engine=None))
+        with pytest.raises(JsonRpcHandlerError) as exc:
+            acp_set_mode.handle_session_set_mode(
+                server, {"sessionId": "s", "modeId": "read-only"}
+            )
+        assert exc.value.code == INVALID_REQUEST
 
     def test_does_not_affect_other_session(self, make_engine):
         """Critical isolation guarantee: each session owns its own
@@ -281,7 +315,7 @@ class TestSetMode:
         _register_session(server, "b", _FakeAgent(permission_engine=engine_b))
 
         acp_set_mode.handle_session_set_mode(
-            server, {"sessionId": "a", "mode": "read-only"}
+            server, {"sessionId": "a", "modeId": "read-only"}
         )
         assert engine_a.active_mode == PermissionMode.READ_ONLY
         assert engine_b.active_mode == PermissionMode.WORKSPACE_WRITE
@@ -455,7 +489,7 @@ class TestActiveTurnGuard:
         try:
             with pytest.raises(JsonRpcHandlerError) as exc:
                 acp_set_mode.handle_session_set_mode(
-                    server, {"sessionId": "s", "mode": "read-only"}
+                    server, {"sessionId": "s", "modeId": "read-only"}
                 )
             assert exc.value.code == INVALID_REQUEST
             assert "active turn" in exc.value.message

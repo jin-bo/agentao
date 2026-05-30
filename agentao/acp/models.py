@@ -207,6 +207,11 @@ class AcpSessionState:
     #: provider" (``LLM_PROVIDER`` env). A ``provider/model`` switch sets it;
     #: model-only switches leave it untouched (the provider is preserved).
     provider_id: Optional[str] = None
+    #: The ACP ``modeId`` the client last set (``session/set_mode``). Persisted
+    #: even when it does not map to an Agentao permission preset, so a client
+    #: UI mode that has no permission meaning (e.g. DeepChat's ``code`` /
+    #: ``ask``) round-trips instead of being rejected. ``None`` until first set.
+    mode_id: Optional[str] = None
     closed: bool = False
 
     def close(self) -> None:
