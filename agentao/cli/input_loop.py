@@ -411,7 +411,11 @@ def run_loop(cli: "AgentaoCLI") -> None:
             images = None
             if cli._staged_images:
                 images = [
-                    {"data": img["data"], "mimeType": img["mimeType"]}
+                    {
+                        "data": img["data"],
+                        "mimeType": img["mimeType"],
+                        "_source": img.get("_source") or img.get("_label", "image"),
+                    }
                     for img in cli._staged_images
                 ]
 

@@ -147,6 +147,7 @@ def handle_image_command(cli: "AgentaoCLI", args: str) -> None:
         "data": data,
         "mimeType": mime_type,
         "_label": path.name,
+        "_source": str(path),
     })
     console.print(
         f"\n[green]✓ Staged image: {path.name}[/green] "
