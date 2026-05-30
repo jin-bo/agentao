@@ -17,7 +17,43 @@ structure plumbing kept separate so the network/retry path in
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+
+class _StreamAccumulator:
+    """Mutable per-attempt state for one streaming chat completion.
+
+    Holds the partial content / reasoning / tool-call data accumulated as
+    stream chunks arrive, plus ``progress_made`` (set once ``on_text_chunk``
+    has fired with non-empty text). ``chat_stream`` creates a fresh
+    accumulator per retry attempt; ``_consume_stream`` fills it and
+    ``build()`` materialises the duck-type response.
+    """
+
+    def __init__(self, model: str) -> None:
+        self.content_parts: List[str] = []
+        self.reasoning_parts: List[str] = []
+        self.tool_calls_data: Dict[int, Dict[str, str]] = {}
+        self.finish_reason: str = "stop"
+        self.response_model: str = model
+        self.usage_data: Any = None
+        # True only after on_text_chunk has fired with non-empty text — i.e.,
+        # an LLM_TEXT event has reached the host. Role-only first chunks,
+        # usage-only chunks, and tool-call/reasoning-only chunks all consume
+        # iterations without exposing anything to the host, so they must NOT
+        # block the pre-output retry path.
+        self.progress_made: bool = False
+
+    def build(self) -> "_StreamResponse":
+        """Materialise the accumulated deltas into a duck-type response."""
+        return _StreamResponse(
+            model=self.response_model,
+            content="".join(self.content_parts) if self.content_parts else None,
+            tool_calls_data=self.tool_calls_data,
+            finish_reason=self.finish_reason,
+            usage=self.usage_data,
+            reasoning_content="".join(self.reasoning_parts) if self.reasoning_parts else None,
+        )
 
 
 class _StreamFunction:
