@@ -9,6 +9,7 @@ letting that crash an import or a turn.
 from __future__ import annotations
 
 import getpass
+import os
 import tempfile
 from pathlib import Path
 
@@ -43,9 +44,20 @@ class TestUserHome:
         b = user_home()
         assert a != b
 
-    def test_fallback_survives_getuser_failure(self, monkeypatch) -> None:
+    def test_fallback_uses_uid_when_getuser_fails(self, monkeypatch) -> None:
+        # In a fully stripped account getpass.getuser() raises too; fall
+        # through to the numeric uid (stable + unique per POSIX user)
+        # rather than a shared placeholder.
         monkeypatch.setattr(Path, "home", staticmethod(_raise))
         monkeypatch.setattr(getpass, "getuser", _raise)
+        monkeypatch.setattr(os, "getuid", lambda: 4242, raising=False)
+        assert user_home() == Path(tempfile.gettempdir()) / "agentao-4242"
+
+    def test_fallback_placeholder_only_without_getuid(self, monkeypatch) -> None:
+        # Windows has no os.getuid; the shared placeholder is the last resort.
+        monkeypatch.setattr(Path, "home", staticmethod(_raise))
+        monkeypatch.setattr(getpass, "getuser", _raise)
+        monkeypatch.delattr(os, "getuid", raising=False)
         assert user_home() == Path(tempfile.gettempdir()) / "agentao-unknown"
 
     def test_resolved_lazily_each_call(self, monkeypatch) -> None:

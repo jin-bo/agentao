@@ -7,6 +7,7 @@ multiple call sites. Importing this module is cheap (no side effects).
 from __future__ import annotations
 
 import getpass
+import os
 import tempfile
 from pathlib import Path
 
@@ -26,9 +27,9 @@ def user_home() -> Path:
     back to a writable location so user-scope state still has a home.
 
     The fallback is a *per-user* subdirectory of the system temp dir: the
-    temp root itself is shared between users, so namespacing it by login
-    name avoids one account's ``~/.agentao`` state (history, registries)
-    colliding with another's on a multi-tenant host.
+    temp root itself is shared between users, so namespacing it avoids one
+    account's ``~/.agentao`` state (history, registries) colliding with
+    another's on a multi-tenant host.
 
     Resolved lazily on each call so tests that monkeypatch ``Path.home``
     see the patched value.
@@ -39,11 +40,26 @@ def user_home() -> Path:
         # When Path.home() raises, the home env vars are necessarily unset
         # (it consults exactly those before failing), so the only useful
         # last resort is the temp dir — namespaced per user.
-        try:
-            who = getpass.getuser()
-        except Exception:
-            who = "unknown"
-        return Path(tempfile.gettempdir()) / f"agentao-{who}"
+        return Path(tempfile.gettempdir()) / f"agentao-{_fallback_user_id()}"
+
+
+def _fallback_user_id() -> str:
+    """A stable per-user discriminator for the no-home temp fallback.
+
+    ``getpass.getuser()`` can fail in exactly the stripped environments
+    that trigger the fallback (no ``LOGNAME``/``USER`` env vars and no
+    password-database entry), so fall through to the numeric uid — which
+    is always available on POSIX and unique per account — before a shared
+    placeholder. (Windows has no ``getuid`` but effectively never reaches
+    this path, since ``USERPROFILE`` is set there.)
+    """
+    try:
+        return getpass.getuser()
+    except Exception:
+        getuid = getattr(os, "getuid", None)
+        if getuid is not None:
+            return str(getuid())
+        return "unknown"
 
 
 def user_root() -> Path:
