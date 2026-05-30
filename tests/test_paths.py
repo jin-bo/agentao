@@ -8,6 +8,7 @@ letting that crash an import or a turn.
 
 from __future__ import annotations
 
+import getpass
 import tempfile
 from pathlib import Path
 
@@ -26,23 +27,26 @@ class TestUserHome:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: Path("/wherever/me")))
         assert user_home() == Path("/wherever/me")
 
-    def test_falls_back_to_home_env_when_path_home_raises(self, monkeypatch) -> None:
+    def test_falls_back_to_per_user_tempdir_when_home_unresolvable(self, monkeypatch) -> None:
+        # When Path.home() raises, the home env vars are necessarily unset,
+        # so the fallback is a per-user subdirectory of the temp dir.
         monkeypatch.setattr(Path, "home", staticmethod(_raise))
-        monkeypatch.setenv("HOME", "/from/env")
-        monkeypatch.delenv("USERPROFILE", raising=False)
-        assert user_home() == Path("/from/env")
+        monkeypatch.setattr(getpass, "getuser", lambda: "alice")
+        assert user_home() == Path(tempfile.gettempdir()) / "agentao-alice"
 
-    def test_falls_back_to_userprofile_when_only_that_is_set(self, monkeypatch) -> None:
+    def test_fallback_namespaced_per_user(self, monkeypatch) -> None:
+        # Two different users must not collide on the same fallback home.
         monkeypatch.setattr(Path, "home", staticmethod(_raise))
-        monkeypatch.delenv("HOME", raising=False)
-        monkeypatch.setenv("USERPROFILE", "/win/profile")
-        assert user_home() == Path("/win/profile")
+        monkeypatch.setattr(getpass, "getuser", lambda: "alice")
+        a = user_home()
+        monkeypatch.setattr(getpass, "getuser", lambda: "bob")
+        b = user_home()
+        assert a != b
 
-    def test_falls_back_to_tempdir_when_no_env(self, monkeypatch) -> None:
+    def test_fallback_survives_getuser_failure(self, monkeypatch) -> None:
         monkeypatch.setattr(Path, "home", staticmethod(_raise))
-        monkeypatch.delenv("HOME", raising=False)
-        monkeypatch.delenv("USERPROFILE", raising=False)
-        assert user_home() == Path(tempfile.gettempdir())
+        monkeypatch.setattr(getpass, "getuser", _raise)
+        assert user_home() == Path(tempfile.gettempdir()) / "agentao-unknown"
 
     def test_resolved_lazily_each_call(self, monkeypatch) -> None:
         # A later monkeypatch of Path.home must be observed (no caching).
@@ -59,10 +63,9 @@ class TestUserRoot:
 
     def test_does_not_crash_when_home_unresolvable(self, monkeypatch) -> None:
         monkeypatch.setattr(Path, "home", staticmethod(_raise))
-        monkeypatch.delenv("HOME", raising=False)
-        monkeypatch.delenv("USERPROFILE", raising=False)
-        # Must not raise; lands under the temp dir.
-        assert user_root() == Path(tempfile.gettempdir()) / USER_DIR_NAME
+        monkeypatch.setattr(getpass, "getuser", lambda: "alice")
+        # Must not raise; lands under the per-user temp fallback home.
+        assert user_root() == Path(tempfile.gettempdir()) / "agentao-alice" / USER_DIR_NAME
 
     def test_uses_user_home(self, monkeypatch) -> None:
         # user_root must route through user_home (not Path.home directly), so

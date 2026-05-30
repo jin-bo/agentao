@@ -6,7 +6,7 @@ multiple call sites. Importing this module is cheap (no side effects).
 
 from __future__ import annotations
 
-import os
+import getpass
 import tempfile
 from pathlib import Path
 
@@ -14,16 +14,21 @@ USER_DIR_NAME = ".agentao"
 
 
 def user_home() -> Path:
-    """Return the user's home directory, robust to an unset ``$HOME``.
+    """Return the user's home directory, robust to an unresolvable home.
 
-    ``Path.home()`` raises ``RuntimeError`` when it cannot resolve a home
-    directory — ``$HOME`` (and on Windows ``USERPROFILE``) is unset *and*
-    there is no password-database entry for the current uid. This happens
-    in stripped service accounts, some container and CI sandboxes, and
+    ``Path.home()`` (i.e. ``Path("~").expanduser()``) raises
+    ``RuntimeError`` when it cannot resolve a home directory — ``$HOME``
+    (or ``USERPROFILE`` on Windows) is unset *and* there is no
+    password-database entry for the current user. This happens in
+    stripped service accounts, some container and CI sandboxes, and
     headless launches (e.g. an ACP client spawning us with a minimal
     environment). Rather than let that crash an import or a turn, fall
-    back to the system temp directory so user-scope state still has a
-    writable home to land in.
+    back to a writable location so user-scope state still has a home.
+
+    The fallback is a *per-user* subdirectory of the system temp dir: the
+    temp root itself is shared between users, so namespacing it by login
+    name avoids one account's ``~/.agentao`` state (history, registries)
+    colliding with another's on a multi-tenant host.
 
     Resolved lazily on each call so tests that monkeypatch ``Path.home``
     see the patched value.
@@ -31,14 +36,14 @@ def user_home() -> Path:
     try:
         return Path.home()
     except RuntimeError:
-        # Last resort: a guaranteed-writable location. Prefer an explicit
-        # env var if one is set but unparsed by Path.home() on this
-        # platform, else the system temp dir.
-        for var in ("HOME", "USERPROFILE"):
-            value = os.environ.get(var)
-            if value:
-                return Path(value)
-        return Path(tempfile.gettempdir())
+        # When Path.home() raises, the home env vars are necessarily unset
+        # (it consults exactly those before failing), so the only useful
+        # last resort is the temp dir — namespaced per user.
+        try:
+            who = getpass.getuser()
+        except Exception:
+            who = "unknown"
+        return Path(tempfile.gettempdir()) / f"agentao-{who}"
 
 
 def user_root() -> Path:
