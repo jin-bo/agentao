@@ -182,117 +182,35 @@ class Agentao:
         # falls back to Path.cwd()); ACP sessions land it under the frozen,
         # client-supplied project cwd instead of the subprocess's cwd — which
         # for ACP launches is often "/" and read-only.
-        if llm_client is not None:
-            self.llm = llm_client
-        else:
-            if not api_key or not base_url or not model:
-                raise ValueError(
-                    "Agentao(): api_key, base_url, and model are required "
-                    "when llm_client is not supplied. Pass them explicitly, "
-                    "inject a pre-built llm_client=, or use "
-                    "agentao.embedding.build_from_environment() for "
-                    "CLI-style env auto-discovery."
-                )
-            llm_kwargs: Dict[str, Any] = dict(
-                api_key=api_key,
-                base_url=base_url,
-                model=model,
-                log_file=str(self.working_directory / "agentao.log"),
-                logger=logger,
-            )
-            if temperature is not None:
-                llm_kwargs["temperature"] = temperature
-            if max_tokens is not None:
-                llm_kwargs["max_tokens"] = max_tokens
-            self.llm = LLMClient(**llm_kwargs)
-        # When the host has constructed and pre-loaded its own
-        # ``SkillManager``, skip the auto-discovery scan entirely.
-        if skill_manager is not None:
-            self.skill_manager = skill_manager
-        else:
-            self.skill_manager = SkillManager(
-                working_directory=self._working_directory,
-            )
-        from .memory import MemoryManager, MemoryRetriever, SQLiteMemoryStore
-        from .memory.render import MemoryPromptRenderer
-        if memory_manager is not None:
-            self._memory_manager = memory_manager
-        else:
-            # Pure-injection / bare-construction path: project scope only.
-            # The CLI / ACP factory passes an explicitly-built MemoryManager
-            # with both project and user stores resolved from the
-            # surrounding environment, so cross-project user memory only
-            # surfaces through that path.
-            self._memory_manager = MemoryManager(
-                project_store=SQLiteMemoryStore.open_or_memory(
-                    self.working_directory / ".agentao" / "memory.db"
-                ),
-            )
-        self.memory_tool = SaveMemoryTool(memory_manager=self._memory_manager)
-        self.memory_retriever = MemoryRetriever(self._memory_manager)
-        self.memory_renderer = MemoryPromptRenderer()
+        self.llm = self._resolve_llm_client(
+            llm_client,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            logger=logger,
+        )
+        self._init_skill_and_memory(skill_manager, memory_manager)
         self._last_user_message: str = ""
         self._stable_block_chars: int = 0  # size of last rendered <memory-stable> block
         self.todo_tool = TodoWriteTool()
         self.permission_engine = permission_engine
 
         # Resolve transport: explicit > compat shim from old callbacks > NullTransport.
-        _has_legacy = any([
-            confirmation_callback, step_callback, thinking_callback, ask_user_callback,
-            output_callback, tool_complete_callback, llm_text_callback,
-            on_max_iterations_callback,
-        ])
-        if transport is not None:
-            if _has_legacy:
-                # Mid-migration footgun: a host that wires a Transport
-                # *and* passes legacy callbacks would silently drop the
-                # callbacks — the explicit transport always wins. Warn
-                # so the host can delete the dead kwargs.
-                warnings.warn(
-                    "Agentao(): legacy callback kwargs were passed alongside "
-                    "transport=, so the callbacks are ignored. Drop them — "
-                    "the transport= path supersedes them.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            self.transport = transport
-        elif _has_legacy:
-            warnings.warn(
-                "Agentao(): the legacy callback kwargs "
-                "(confirmation_callback, step_callback, thinking_callback, "
-                "ask_user_callback, output_callback, tool_complete_callback, "
-                "llm_text_callback, on_max_iterations_callback) are deprecated "
-                "and will be removed in 0.5.0. Build an SdkTransport directly "
-                "or call agentao.embedding.compat.build_compat_transport(...) "
-                "and pass transport= instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.transport = build_compat_transport(
-                confirmation_callback=confirmation_callback,
-                step_callback=step_callback,
-                thinking_callback=thinking_callback,
-                ask_user_callback=ask_user_callback,
-                output_callback=output_callback,
-                tool_complete_callback=tool_complete_callback,
-                llm_text_callback=llm_text_callback,
-                on_max_iterations_callback=on_max_iterations_callback,
-            )
-        else:
-            self.transport = NullTransport()
-
-        # Store legacy callback attrs for backward compat (read-only; transport is the live wire)
-        self.confirmation_callback = confirmation_callback
-        self.step_callback = step_callback
-        self.thinking_callback = thinking_callback
-        self.ask_user_callback = ask_user_callback
-        self.output_callback = output_callback
-        self.tool_complete_callback = tool_complete_callback
-        self.llm_text_callback = llm_text_callback
-        self.on_max_iterations_callback = on_max_iterations_callback
-
-        # Reasoning prompt is shown only when a dedicated thinking callback is registered
-        self._has_thinking_handler = thinking_callback is not None
+        self._resolve_transport(
+            transport,
+            {
+                "confirmation_callback": confirmation_callback,
+                "step_callback": step_callback,
+                "thinking_callback": thinking_callback,
+                "ask_user_callback": ask_user_callback,
+                "output_callback": output_callback,
+                "tool_complete_callback": tool_complete_callback,
+                "llm_text_callback": llm_text_callback,
+                "on_max_iterations_callback": on_max_iterations_callback,
+            },
+        )
 
         # Initialize context manager
         self.context_manager = ContextManager(
@@ -364,26 +282,7 @@ class Agentao:
         # so the sub-agent wrapper captures a live ``HostSubagentEmitter``
         # instead of ``None`` — otherwise no subagent lifecycle events
         # ever reach the public stream for normal Agentao instances.
-        from .host.projection import (
-            HostPermissionEmitter,
-            HostSubagentEmitter,
-            HostToolEmitter,
-        )
-        self._host_tool_emitter = HostToolEmitter(
-            self._host_events,
-            session_id_provider=lambda: self._session_id,
-            turn_id_provider=lambda: self._current_turn_id,
-        )
-        self._host_permission_emitter = HostPermissionEmitter(
-            self._host_events,
-            session_id_provider=lambda: self._session_id,
-            turn_id_provider=lambda: self._current_turn_id,
-            active_permissions_provider=self.active_permissions,
-        )
-        self._host_subagent_emitter = HostSubagentEmitter(
-            self._host_events,
-            parent_session_id_provider=lambda: self._session_id,
-        )
+        self._init_host_emitters()
 
         # Initialize agent manager and register agent tools. Built-in
         # sub-agents are opt-in so the default tool schema stays compact;
@@ -407,6 +306,165 @@ class Agentao:
             host_tool_emitter=self._host_tool_emitter,
             host_permission_emitter=self._host_permission_emitter,
         )
+
+    def _init_host_emitters(self) -> None:
+        """Build the tool / permission / subagent host-event emitters.
+
+        Must run before ``_register_agent_tools`` so the sub-agent wrapper
+        captures a live ``HostSubagentEmitter`` rather than ``None``.
+        """
+        from .host.projection import (
+            HostPermissionEmitter,
+            HostSubagentEmitter,
+            HostToolEmitter,
+        )
+        self._host_tool_emitter = HostToolEmitter(
+            self._host_events,
+            session_id_provider=lambda: self._session_id,
+            turn_id_provider=lambda: self._current_turn_id,
+        )
+        self._host_permission_emitter = HostPermissionEmitter(
+            self._host_events,
+            session_id_provider=lambda: self._session_id,
+            turn_id_provider=lambda: self._current_turn_id,
+            active_permissions_provider=self.active_permissions,
+        )
+        self._host_subagent_emitter = HostSubagentEmitter(
+            self._host_events,
+            parent_session_id_provider=lambda: self._session_id,
+        )
+
+    def _init_skill_and_memory(
+        self,
+        skill_manager: Optional[SkillManager],
+        memory_manager: Optional["MemoryManager"],
+    ) -> None:
+        """Wire the skill manager, memory store, and memory tooling.
+
+        Both subsystems honour host injection: a pre-loaded
+        ``SkillManager`` skips the disk auto-discovery scan, and an
+        injected ``MemoryManager`` (CLI/ACP factory) carries both project
+        and user stores — bare construction falls back to project scope.
+        """
+        # When the host has constructed and pre-loaded its own
+        # ``SkillManager``, skip the auto-discovery scan entirely.
+        if skill_manager is not None:
+            self.skill_manager = skill_manager
+        else:
+            self.skill_manager = SkillManager(
+                working_directory=self._working_directory,
+            )
+        from .memory import MemoryManager, MemoryRetriever, SQLiteMemoryStore
+        from .memory.render import MemoryPromptRenderer
+        if memory_manager is not None:
+            self._memory_manager = memory_manager
+        else:
+            # Pure-injection / bare-construction path: project scope only.
+            # The CLI / ACP factory passes an explicitly-built MemoryManager
+            # with both project and user stores resolved from the
+            # surrounding environment, so cross-project user memory only
+            # surfaces through that path.
+            self._memory_manager = MemoryManager(
+                project_store=SQLiteMemoryStore.open_or_memory(
+                    self.working_directory / ".agentao" / "memory.db"
+                ),
+            )
+        self.memory_tool = SaveMemoryTool(memory_manager=self._memory_manager)
+        self.memory_retriever = MemoryRetriever(self._memory_manager)
+        self.memory_renderer = MemoryPromptRenderer()
+
+    def _resolve_llm_client(
+        self,
+        llm_client: Optional[LLMClient],
+        *,
+        api_key: Optional[str],
+        base_url: Optional[str],
+        model: Optional[str],
+        temperature: Optional[float],
+        max_tokens: Optional[int],
+        logger: Optional[logging.Logger],
+    ) -> LLMClient:
+        """Return the injected client, or build one from raw provider config.
+
+        The log file is anchored to ``working_directory`` so it always
+        resolves to an absolute, writable path (ACP launches run from a
+        read-only ``/``).
+        """
+        if llm_client is not None:
+            return llm_client
+        if not api_key or not base_url or not model:
+            raise ValueError(
+                "Agentao(): api_key, base_url, and model are required "
+                "when llm_client is not supplied. Pass them explicitly, "
+                "inject a pre-built llm_client=, or use "
+                "agentao.embedding.build_from_environment() for "
+                "CLI-style env auto-discovery."
+            )
+        llm_kwargs: Dict[str, Any] = dict(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            log_file=str(self.working_directory / "agentao.log"),
+            logger=logger,
+        )
+        if temperature is not None:
+            llm_kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            llm_kwargs["max_tokens"] = max_tokens
+        return LLMClient(**llm_kwargs)
+
+    def _resolve_transport(self, transport, callbacks: Dict[str, Any]) -> None:
+        """Resolve the live transport and stash the legacy callback attrs.
+
+        Precedence: an explicit ``transport=`` wins; otherwise a compat
+        shim is built from any of the eight deprecated callbacks; failing
+        both, a silent ``NullTransport`` (headless mode). ``callbacks`` is
+        keyed by the deprecated kwarg names so it can splat straight into
+        :func:`build_compat_transport`.
+        """
+        _has_legacy = any(callbacks.values())
+        if transport is not None:
+            if _has_legacy:
+                # Mid-migration footgun: a host that wires a Transport
+                # *and* passes legacy callbacks would silently drop the
+                # callbacks — the explicit transport always wins. Warn
+                # so the host can delete the dead kwargs.
+                warnings.warn(
+                    "Agentao(): legacy callback kwargs were passed alongside "
+                    "transport=, so the callbacks are ignored. Drop them — "
+                    "the transport= path supersedes them.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+            self.transport = transport
+        elif _has_legacy:
+            warnings.warn(
+                "Agentao(): the legacy callback kwargs "
+                "(confirmation_callback, step_callback, thinking_callback, "
+                "ask_user_callback, output_callback, tool_complete_callback, "
+                "llm_text_callback, on_max_iterations_callback) are deprecated "
+                "and will be removed in 0.5.0. Build an SdkTransport directly "
+                "or call agentao.embedding.compat.build_compat_transport(...) "
+                "and pass transport= instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            self.transport = build_compat_transport(**callbacks)
+        else:
+            self.transport = NullTransport()
+
+        # Store legacy callback attrs for backward compat (read-only; transport is the live wire)
+        self.confirmation_callback = callbacks["confirmation_callback"]
+        self.step_callback = callbacks["step_callback"]
+        self.thinking_callback = callbacks["thinking_callback"]
+        self.ask_user_callback = callbacks["ask_user_callback"]
+        self.output_callback = callbacks["output_callback"]
+        self.tool_complete_callback = callbacks["tool_complete_callback"]
+        self.llm_text_callback = callbacks["llm_text_callback"]
+        self.on_max_iterations_callback = callbacks["on_max_iterations_callback"]
+
+        # Reasoning prompt is shown only when a dedicated thinking callback is registered
+        self._has_thinking_handler = callbacks["thinking_callback"] is not None
 
     @property
     def _llm_config(self) -> Dict[str, Any]:
