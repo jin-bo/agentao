@@ -143,6 +143,41 @@ def test_list_first_user_msg_truncation():
     assert len(sessions[0]["first_user_msg"]) == 80
 
 
+def test_list_sessions_handles_multimodal_first_message():
+    """A first user message with multimodal (image) content must not crash
+    list_sessions; its text part is surfaced and the image part ignored."""
+    multimodal = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what is in this picture?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+            ],
+        },
+        {"role": "assistant", "content": "a cat"},
+    ]
+    save_session(multimodal, _MODEL, [])
+    sessions = list_sessions()  # must not raise TypeError
+    assert sessions[0]["first_user_msg"] == "what is in this picture?"
+
+
+def test_persisted_title_from_multimodal_first_message():
+    """The persisted ``title`` must be derived from the text part of a
+    multimodal first message, not left empty."""
+    multimodal = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "describe this diagram"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+            ],
+        },
+    ]
+    path, _ = save_session(multimodal, _MODEL, [])
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["title"] == "describe this diagram"
+
+
 def test_rotation_keeps_max_10(tmp_path):
     # save_session uses second-precision timestamps that collide in rapid loops;
     # create session files directly and invoke _rotate_sessions explicitly.

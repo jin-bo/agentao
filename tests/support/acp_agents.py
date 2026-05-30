@@ -59,6 +59,7 @@ class FakeAgent:
         self.track_messages = track_messages
         self.messages: List[Dict[str, Any]] = []
         self.chat_calls: List[Tuple[str, CancellationToken]] = []
+        self.received_images: List[Any] = []
         self.close_calls = 0
 
     def chat(
@@ -66,9 +67,11 @@ class FakeAgent:
         user_message: str,
         max_iterations: int = 100,
         cancellation_token: Optional[CancellationToken] = None,
+        images: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         assert cancellation_token is not None, "handler must always pass a token"
         self.chat_calls.append((user_message, cancellation_token))
+        self.received_images.append(images)
         if self.track_messages:
             self.messages.append({"role": "user", "content": user_message})
         if self.side_effect is not None:
@@ -122,6 +125,7 @@ class StallingFakeAgent:
         user_message: str,
         max_iterations: int = 100,
         cancellation_token: Optional[CancellationToken] = None,
+        images: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         self.chat_calls += 1
         assert cancellation_token is not None

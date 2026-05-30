@@ -236,6 +236,32 @@
       "title": "AcpError",
       "type": "object"
     },
+    "AcpImageContentBlock": {
+      "additionalProperties": false,
+      "description": "An ACP image content block (inline base64).\n\nThe agent surfaces ``data``/``mimeType`` to the LLM as an OpenAI\n``image_url`` data-URL part. The image wire deliberately carries only\ninline content \u2014 ``{data, mimeType}`` \u2014 and never a by-reference\n``uri``: with ``extra=\"forbid\"`` an image block that includes ``uri``\n(e.g. ``file:///etc/passwd``) is rejected outright, so the handler can\nnever be coaxed into dereferencing a host path or secret. The spec's\noptional by-reference field is intentionally unsupported in v1.",
+      "properties": {
+        "data": {
+          "title": "Data",
+          "type": "string"
+        },
+        "mimeType": {
+          "title": "Mimetype",
+          "type": "string"
+        },
+        "type": {
+          "const": "image",
+          "default": "image",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "mimeType"
+      ],
+      "title": "AcpImageContentBlock",
+      "type": "object"
+    },
     "AcpInitializeExtension": {
       "additionalProperties": true,
       "description": "One advertised extension method on the ``initialize`` response.\n\nAgentao advertises ``_agentao.cn/ask_user`` so hosts know they may be\nasked free-form questions over the same JSON-RPC channel. The shape\nis intentionally open (extra=\"allow\") so future extensions can add\nfields without breaking existing schema-following clients.",
@@ -805,6 +831,7 @@
           "items": {
             "discriminator": {
               "mapping": {
+                "image": "#/$defs/AcpImageContentBlock",
                 "resource_link": "#/$defs/AcpResourceLinkBlock",
                 "text": "#/$defs/AcpTextContentBlock"
               },
@@ -816,6 +843,9 @@
               },
               {
                 "$ref": "#/$defs/AcpResourceLinkBlock"
+              },
+              {
+                "$ref": "#/$defs/AcpImageContentBlock"
               }
             ]
           },

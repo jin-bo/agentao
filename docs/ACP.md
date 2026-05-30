@@ -32,7 +32,7 @@ EOF
 Expected — two NDJSON response envelopes on stdout:
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false},"mcpCapabilities":{"http":false,"sse":true}},"authMethods":[],"agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.14"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true,"audio":false,"embeddedContext":false},"mcpCapabilities":{"http":false,"sse":true}},"authMethods":[],"agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.14"}}}
 {"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_<32hex>"}}
 ```
 
@@ -89,7 +89,7 @@ Source: `agentao/acp/initialize.py`.
 {
   "loadSession": true,
   "promptCapabilities": {
-    "image": false,
+    "image": true,
     "audio": false,
     "embeddedContext": false
   },
@@ -123,7 +123,7 @@ Source: `agentao/acp/session_prompt.py::_parse_prompt`.
 |---|---|---|
 | `text` | ✅ | Multiple text blocks are joined with `\n\n`. |
 | `resource_link` | ✅ | Rendered as `[Resource: {title or name or uri}]({uri})` so the LLM sees the reference; Agentao does **not** dereference the URI in v1. |
-| `image` | ❌ | `INVALID_PARAMS`. `promptCapabilities.image` is `false`. |
+| `image` | ✅ | Inline `{data, mimeType}` only — surfaced to the LLM as an OpenAI `image_url` data-URL part. `mimeType` must be `image/*`, `data` valid base64 within the per-image size cap, ≤ `MAX_IMAGES_PER_TURN` per prompt. A by-reference `uri` is **rejected** (`INVALID_PARAMS`) so the wire never carries a host path or secret. `promptCapabilities.image` is `true`. |
 | `audio` | ❌ | `INVALID_PARAMS`. `promptCapabilities.audio` is `false`. |
 | `resource` (embedded) | ❌ | `INVALID_PARAMS`. `promptCapabilities.embeddedContext` is `false`. |
 
@@ -275,7 +275,7 @@ Below is a complete client→server→client conversation. Each line on the wire
     "protocolVersion":1,
     "agentCapabilities":{
       "loadSession":true,
-      "promptCapabilities":{"image":false,"audio":false,"embeddedContext":false},
+      "promptCapabilities":{"image":true,"audio":false,"embeddedContext":false},
       "mcpCapabilities":{"http":false,"sse":true}
     },
     "authMethods":[],
@@ -439,7 +439,8 @@ After cancellation, the still-running `session/prompt` returns `{"stopReason": "
 | `session/new` returns `SERVER_NOT_INITIALIZED` (-32002) | `initialize` was not called, or returned an error | Send `initialize` first and check the response for an `error` field. |
 | `session/new` returns `INVALID_PARAMS` (-32602) for `cwd` | `cwd` is not absolute, doesn't exist, or is a file | Pass an absolute path to an existing directory. The check is in `session_new.py::_parse_cwd`. |
 | `session/prompt` returns `INVALID_REQUEST` "session already has an active turn" | A second `session/prompt` arrived while the first is still running | Wait for the first turn's response before sending the next, or use a different session id. |
-| `session/prompt` with image/audio block returns `INVALID_PARAMS` | Those block types are intentionally not supported in v1 | Use only `text` and `resource_link` blocks. The capability flags in `initialize` advertise this. |
+| `session/prompt` with an `image` block returns `INVALID_PARAMS` | The block carries a by-reference `uri`, a non-`image/*` `mimeType`, invalid/oversized base64 `data`, or exceeds the per-prompt image count | Send inline `{data, mimeType}` only (no `uri`), with `image/*` and base64 within the size/count caps. |
+| `session/prompt` with `audio`/embedded `resource` block returns `INVALID_PARAMS` | Those block types are intentionally not supported in v1 | Use only `text`, `resource_link`, and inline `image` blocks. The capability flags in `initialize` advertise this. |
 | Server hangs forever waiting for `session/request_permission` | Client is not handling server→client requests | Check that the client routes incoming requests with `srv_*` ids back as JSON-RPC responses. |
 | Process exits with garbage on stdout | Some library is calling `print()` and you constructed `AcpServer` with explicit streams | The stdout guard only installs when `AcpServer()` is constructed with no `stdin`/`stdout` arguments. Use `agentao --acp --stdio` for production launches; the test path passes streams explicitly to avoid mutating global state. |
 | `python -m agentao --acp --stdio`: `No module named agentao.__main__` | Pre-v0.2.6 install | Upgrade — `agentao/__main__.py` ships from v0.2.6. |

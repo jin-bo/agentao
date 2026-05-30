@@ -108,7 +108,7 @@ def test_initialize_response_round_trip():
         "protocolVersion": 1,
         "agentCapabilities": {
             "loadSession": True,
-            "promptCapabilities": {"image": False, "audio": False, "embeddedContext": False},
+            "promptCapabilities": {"image": True, "audio": False, "embeddedContext": False},
             "mcpCapabilities": {"http": False, "sse": True},
         },
         "authMethods": [],
@@ -184,6 +184,33 @@ def test_session_prompt_round_trip():
 
     resp = AcpSessionPromptResponse.model_validate({"stopReason": "end_turn"})
     assert resp.stopReason == "end_turn"
+
+
+def test_session_prompt_accepts_inline_image_block():
+    req = AcpSessionPromptRequest.model_validate({
+        "sessionId": "s-1",
+        "prompt": [
+            {"type": "text", "text": "what is this?"},
+            {"type": "image", "data": "QUJD", "mimeType": "image/png"},
+        ],
+    })
+    assert len(req.prompt) == 2
+
+
+def test_image_block_rejects_uri_field():
+    """The image wire carries only {data, mimeType} — a by-reference ``uri``
+    (a host path / secret vector) must be rejected by extra='forbid', not
+    silently accepted and ignored."""
+    with pytest.raises(ValidationError):
+        AcpSessionPromptRequest.model_validate({
+            "sessionId": "s-1",
+            "prompt": [{
+                "type": "image",
+                "data": "QUJD",
+                "mimeType": "image/png",
+                "uri": "file:///etc/passwd",
+            }],
+        })
 
 
 def test_session_prompt_response_rejects_unknown_stop_reason():

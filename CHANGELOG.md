@@ -7,6 +7,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Silence jieba's `SyntaxWarning` noise on first Chinese-text recall.**
+  jieba 0.42.1 (its latest and last PyPI release) uses non-raw regex
+  literals that Python 3.12 flags as `SyntaxWarning: invalid escape
+  sequence` when its modules first compile — surfacing in the terminal the
+  first time CJK memory retrieval imports it. Routed every jieba import in
+  `memory/retriever.py` through a single `_import_jieba()` helper that mutes
+  `SyntaxWarning` at the import chokepoint (jieba pulls in `finalseg` at
+  module top, so one wrap covers all three warnings). No behavior change;
+  other warnings are untouched.
+
+### Added
+
+- **Multimodal image input through the turn.** `chat()` / `arun()` accept
+  an optional `images=[{"data": <base64>, "mimeType": <type>}, ...]`. When
+  present, the user turn is emitted as an OpenAI-style multimodal content
+  list (a `text` part plus one `image_url` part per image with an inline
+  `data:` URL) instead of a plain string; text-only turns are unchanged.
+  The LLM request logger summarizes multimodal parts (`text (N chars)`,
+  `image_url (N chars, inline base64)`) rather than dumping the raw base64
+  blob into `agentao.log`. Image data arrives as standard content blocks,
+  so this is decoupled from any specific ACP client.
+- **ACP image input.** `session/prompt` now accepts ACP `image` content
+  blocks (`{"type":"image","data":<base64>,"mimeType":...}`), rendering
+  them into the multimodal turn via `agent.chat(images=...)`; text and
+  `resource_link` blocks are unchanged and `audio`/embedded `resource`
+  still raise `INVALID_PARAMS`. The `initialize` handshake now advertises
+  `promptCapabilities.image: true`, and the host ACP schema gains
+  `AcpImageContentBlock` (snapshot `docs/schema/host.acp.v1.json` bumped).
+  The untrusted payload is validated at the boundary: `mimeType` must be
+  `image/*`, `data` must be valid base64 within a 20 MB per-image cap, and
+  a prompt may carry at most 16 images — each violation is a clean
+  `-32602 INVALID_PARAMS`. The CLI `/image` command enforces the same
+  size/count caps, and `/clear` · `/new` now drop any staged images so
+  they cannot leak into the next session. `/image` re-validates the bytes
+  it actually read (not just the earlier `stat()`), closing a TOCTOU gap
+  where a file truncated or grown between the size check and the read could
+  stage an empty or oversized block. The image wire carries only inline
+  `{data, mimeType}`: any other key (`uri`, `path`, `apiKey`, `baseUrl`,
+  `_meta`, …) is rejected both at the schema layer (`extra="forbid"`) and in
+  the runtime `_parse_prompt` parser (which works on raw dicts and so needs
+  its own allowlist), so the handler can never be coaxed into dereferencing a
+  host path or smuggling a secret.
+  Saving a session whose first user message is image+text now derives its
+  title from the text part instead of persisting an empty title.
+
 ## [0.4.7] — 2026-05-17
 
 ### Added

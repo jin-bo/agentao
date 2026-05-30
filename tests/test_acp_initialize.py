@@ -78,9 +78,9 @@ def test_agent_capabilities_shape():
     # loadSession promised for v1 (handler lands in Issue 10).
     assert caps["loadSession"] is True
 
-    # v1 baseline is text only.
+    # Image prompts are supported; audio/embedded-context are not yet.
     assert caps["promptCapabilities"] == {
-        "image": False,
+        "image": True,
         "audio": False,
         "embeddedContext": False,
     }

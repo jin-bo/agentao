@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .compact import handle_compact_command
 from .context import handle_context_command
+from .image import handle_image_command
 from .mcp import handle_mcp_command
 from .permission import handle_permission_command, handle_sandbox_command
 from .planning import handle_plan_command, handle_todos_command
@@ -24,6 +25,7 @@ from .tools_intro import handle_tools_command
 __all__ = [
     "handle_compact_command",
     "handle_context_command",
+    "handle_image_command",
     "handle_mcp_command",
     "handle_model_command",
     "handle_permission_command",

@@ -66,6 +66,9 @@ All commands start with `/`:
 - `/context` - Show context window token usage and limit
   - `/context limit <n>` - Set max context tokens (default: 200,000)
 - `/compact` - Summarize older history now into a compact block (manual compaction)
+- `/image <path>` - Attach an image to your next message (vision models)
+  - `/image` - List images staged for the next message
+  - `/image clear` - Discard all staged images
 - `/plugins` - List loaded plugins with diagnostics
 - `/permission` - Show active permission rules
 - `/mcp [subcommand]` - Manage MCP servers

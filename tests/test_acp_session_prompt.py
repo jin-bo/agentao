@@ -272,14 +272,146 @@ def test_resource_link_missing_uri_raises(initialized_server):
         )
 
 
-def test_image_block_rejected_explicitly(initialized_server):
-    with pytest.raises(TypeError, match="not yet supported"):
+def test_image_block_forwarded_to_agent(session_with_agent):
+    """An ACP image block is parsed and threaded into agent.chat(images=...)."""
+    server, session_id, fake = session_with_agent
+    result = acp_session_prompt.handle_session_prompt(
+        server,
+        {
+            "sessionId": session_id,
+            "prompt": [
+                {"type": "text", "text": "what is this?"},
+                {"type": "image", "data": "QUJD", "mimeType": "image/png"},
+            ],
+        },
+    )
+    assert result["stopReason"] == "end_turn"
+    # Text is forwarded as the user message; the image rides on images=.
+    assert fake.chat_calls[0][0] == "what is this?"
+    assert fake.received_images[0] == [{"data": "QUJD", "mimeType": "image/png"}]
+
+
+def test_text_only_prompt_passes_no_images(session_with_agent):
+    """A text-only turn forwards images=None, not an empty list."""
+    server, session_id, fake = session_with_agent
+    acp_session_prompt.handle_session_prompt(
+        server, _prompt_params(session_id, "hi")
+    )
+    assert fake.received_images[0] is None
+
+
+def test_image_block_missing_data_rejected(initialized_server):
+    with pytest.raises(TypeError, match="data must be a non-empty"):
         acp_session_prompt.handle_session_prompt(
             initialized_server,
             {
                 "sessionId": "sess_x",
-                "prompt": [{"type": "image", "data": "base64..."}],
+                "prompt": [{"type": "image", "mimeType": "image/png"}],
             },
+        )
+
+
+def test_image_block_missing_mimetype_rejected(initialized_server):
+    with pytest.raises(TypeError, match="mimeType must be an 'image/"):
+        acp_session_prompt.handle_session_prompt(
+            initialized_server,
+            {
+                "sessionId": "sess_x",
+                "prompt": [{"type": "image", "data": "QUJD"}],
+            },
+        )
+
+
+@pytest.mark.parametrize("extra_field, value", [
+    ("uri", "file:///etc/passwd"),
+    ("path", "/tmp/secret"),
+    ("apiKey", "sk-leak"),
+    ("baseUrl", "https://evil.example"),
+    ("_meta", {"x": 1}),
+])
+def test_image_block_rejects_extra_fields(initialized_server, extra_field, value):
+    """The image wire carries only {data, mimeType}. The raw-dict parser must
+    reject ANY other key (host-path/secret vectors), not just 'uri' — mirroring
+    the schema's additionalProperties:false, which the parser does not invoke."""
+    with pytest.raises(TypeError, match="unexpected field"):
+        acp_session_prompt.handle_session_prompt(
+            initialized_server,
+            {
+                "sessionId": "sess_x",
+                "prompt": [{
+                    "type": "image",
+                    "data": "QUJD",
+                    "mimeType": "image/png",
+                    extra_field: value,
+                }],
+            },
+        )
+
+
+def test_image_block_non_image_mimetype_rejected(initialized_server):
+    with pytest.raises(TypeError, match="mimeType must be an 'image/"):
+        acp_session_prompt.handle_session_prompt(
+            initialized_server,
+            {
+                "sessionId": "sess_x",
+                "prompt": [{"type": "image", "data": "QUJD", "mimeType": "text/html"}],
+            },
+        )
+
+
+def test_image_block_invalid_base64_rejected(initialized_server):
+    with pytest.raises(TypeError, match="not valid base64"):
+        acp_session_prompt.handle_session_prompt(
+            initialized_server,
+            {
+                "sessionId": "sess_x",
+                # '!!!!' is not valid base64.
+                "prompt": [{"type": "image", "data": "!!!!", "mimeType": "image/png"}],
+            },
+        )
+
+
+def test_image_block_oversized_rejected(initialized_server):
+    # An encoded payload longer than the cap is rejected before any decode.
+    huge = "A" * (acp_session_prompt._MAX_IMAGE_B64_LEN + 4)
+    with pytest.raises(TypeError, match="exceeds the"):
+        acp_session_prompt.handle_session_prompt(
+            initialized_server,
+            {
+                "sessionId": "sess_x",
+                "prompt": [{"type": "image", "data": huge, "mimeType": "image/png"}],
+            },
+        )
+
+
+def test_image_decoded_size_cap_is_exact(initialized_server, monkeypatch):
+    """The cap is enforced on DECODED bytes, not just encoded length — a
+    payload that slips under the encoded pre-check but decodes over the
+    byte cap is still rejected."""
+    # Shrink the limits so the encoded pre-check (len(data) <= 8) passes
+    # while the decoded payload (6 bytes) exceeds the 4-byte cap.
+    monkeypatch.setattr(acp_session_prompt, "_MAX_IMAGE_BYTES", 4)
+    monkeypatch.setattr(acp_session_prompt, "_MAX_IMAGE_B64_LEN", 8)
+    # b"ABCDEF" -> "QUJDREVG" (8 chars, decodes to 6 bytes > 4).
+    with pytest.raises(TypeError, match="exceeds the"):
+        acp_session_prompt.handle_session_prompt(
+            initialized_server,
+            {
+                "sessionId": "sess_x",
+                "prompt": [{"type": "image", "data": "QUJDREVG", "mimeType": "image/png"}],
+            },
+        )
+
+
+def test_too_many_image_blocks_rejected(initialized_server):
+    blocks = [
+        {"type": "image", "data": "QUJD", "mimeType": "image/png"}
+        for _ in range(acp_session_prompt._MAX_IMAGES_PER_PROMPT + 1)
+    ]
+    with pytest.raises(TypeError, match="too many image blocks"):
+        acp_session_prompt.handle_session_prompt(
+            initialized_server,
+            {"sessionId": "sess_x", "prompt": blocks},
         )
 
 

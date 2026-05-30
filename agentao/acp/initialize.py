@@ -18,7 +18,9 @@ Capability advertisement policy:
 - ``loadSession``: advertised as True. Actual handler lands in Issue 10;
   until then a ``session/load`` call will correctly return
   ``METHOD_NOT_FOUND`` from the dispatcher.
-- ``promptCapabilities``: baseline v1 is text-only — all sub-flags False.
+- ``promptCapabilities``: ``image`` is True (the session/prompt handler
+  renders ACP image blocks into the multimodal turn); ``audio`` and
+  ``embeddedContext`` remain False.
 - ``mcpCapabilities``: reflects actual Agentao MCP support. Agentao's MCP
   client imports ``stdio_client`` and ``sse_client`` from the mcp SDK but
   not ``streamable_http_client``, so ``sse: True`` and ``http: False``.
@@ -55,10 +57,11 @@ AGENT_CAPABILITIES: Dict[str, Any] = {
     # commits us to landing that issue in the same v1 milestone.
     "loadSession": True,
 
-    # v1 baseline: text only. Image/audio/embedded-context prompts are a
-    # later enhancement and will be gated behind explicit issues.
+    # Image prompts are supported: the session/prompt handler renders ACP
+    # ``image`` content blocks into the multimodal turn. Audio and embedded
+    # context remain later enhancements gated behind their own issues.
     "promptCapabilities": {
-        "image": False,
+        "image": True,
         "audio": False,
         "embeddedContext": False,
     },

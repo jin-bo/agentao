@@ -47,6 +47,9 @@ class AgentaoCLI:
         self._streaming_output = False
         self.markdown_mode = True
         self.last_response: str | None = None
+        # Images staged via /image, attached to (and consumed by) the next
+        # chat turn. Each entry is {"data": <base64>, "mimeType": ...}.
+        self._staged_images: list = []
         from ..plan import PlanSession, PlanController
         self._plan_session = PlanSession()
         self._plan_controller: Optional[object] = None

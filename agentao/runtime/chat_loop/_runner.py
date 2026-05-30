@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...context_manager import is_context_too_long_error
@@ -124,6 +124,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         user_message: str,
         max_iterations: int,
         token: CancellationToken,
+        images: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         """Execute the inner chat loop for one turn.
 
@@ -145,7 +146,41 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             return hook_outcome.early_return
         user_message = hook_outcome.user_message
 
-        agent.add_message("user", system_reminder + user_message)
+        if images:
+            # Multimodal turn: emit OpenAI-style content parts (text +
+            # image_url). The base64 data rides on the wire here; the LLM
+            # request logger summarizes it instead of dumping it.
+            content: list = []
+            text_with_reminder = system_reminder + user_message
+            if text_with_reminder.strip():
+                content.append({"type": "text", "text": text_with_reminder})
+            for i, img in enumerate(images):
+                try:
+                    mime_type = img["mimeType"]
+                    data = img["data"]
+                except (KeyError, TypeError) as exc:
+                    # Fail at the turn boundary with an actionable message
+                    # rather than an opaque KeyError deep in the loop.
+                    raise ValueError(
+                        f"images[{i}] must be a dict with 'mimeType' and 'data' "
+                        f"keys; got {img!r}"
+                    ) from exc
+                if not isinstance(data, str) or not data or \
+                        not isinstance(mime_type, str) or not mime_type:
+                    # Empty data/mimeType would build a malformed
+                    # `data:...;base64,` URL the LLM API rejects opaquely.
+                    raise ValueError(
+                        f"images[{i}] must have non-empty string 'data' and "
+                        f"'mimeType'; got {img!r}"
+                    )
+                data_url = f"data:{mime_type};base64,{data}"
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": data_url},
+                })
+            agent.add_message("user", content)
+        else:
+            agent.add_message("user", system_reminder + user_message)
 
         # Build system prompt (injects all memories)
         system_prompt = agent._build_system_prompt()

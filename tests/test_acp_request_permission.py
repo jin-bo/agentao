@@ -616,6 +616,7 @@ class ConfirmingFakeAgent:
         user_message: str,
         max_iterations: int = 100,
         cancellation_token: Optional[CancellationToken] = None,
+        images: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         self.chat_calls += 1
         # Resolve the transport at call time — the factory wires it.
