@@ -6,7 +6,6 @@ import traceback
 import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 # `jieba` is deferred (P0.5): importing this module is on the path of
@@ -59,6 +58,7 @@ def __getattr__(name: str):
 
 
 from agentao.logging_utils import capture_third_party_output
+from agentao.paths import user_root
 
 from .models import MemoryRecord, RecallCandidate
 
@@ -72,7 +72,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _JIEBA_INITIALIZED = False
-_USERDICT_PATH = Path.home() / ".agentao" / "userdict.txt"
+_USERDICT_PATH = user_root() / "userdict.txt"
 
 
 def _initialize_jieba_with_logging() -> None:

@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from agentao.paths import user_home, user_root
 from agentao.plugins.models import (
     LoadedPlugin,
     PluginCandidate,
@@ -46,7 +47,7 @@ def _find_project_root(start: Path) -> Path:
     Falls back to *start* itself if no project-level ``.agentao`` is
     found.
     """
-    home = Path.home().resolve()
+    home = user_home().resolve()
     current = start.resolve()
     while True:
         if current != home and (current / ".agentao").is_dir():
@@ -92,7 +93,7 @@ class PluginManager:
         candidates: list[PluginCandidate] = []
 
         # 1. global
-        global_dir = Path.home() / ".agentao" / "plugins"
+        global_dir = user_root() / "plugins"
         candidates.extend(self._scan_dir(global_dir, "global"))
 
         # 2. project
@@ -393,7 +394,7 @@ class PluginManager:
         Project config has higher priority — if it explicitly enables a
         plugin that global config disables, the plugin stays enabled.
         """
-        global_cfg = self._read_config(Path.home() / ".agentao" / "plugins_config.json")
+        global_cfg = self._read_config(user_root() / "plugins_config.json")
         project_cfg = self._read_config(self._cwd / ".agentao" / "plugins_config.json")
 
         disabled: set[str] = set()

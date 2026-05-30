@@ -8,8 +8,10 @@ from typing import Dict, List, Optional, Set
 
 import yaml
 
+from ..paths import user_root
+
 # Global skills directory (shared across all projects). Cwd-independent.
-_GLOBAL_SKILLS_DIR = Path.home() / ".agentao" / "skills"
+_GLOBAL_SKILLS_DIR = user_root() / "skills"
 
 # Bundled skills shipped with the package (skill-creator lives here after install)
 _BUNDLED_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"

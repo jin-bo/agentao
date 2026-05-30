@@ -18,6 +18,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `SyntaxWarning` at the import chokepoint (jieba pulls in `finalseg` at
   module top, so one wrap covers all three warnings). No behavior change;
   other warnings are untouched.
+- **Robust home-directory resolution when `$HOME` is unset.** Added
+  `agentao.paths.user_home()` — `Path.home()` with a fallback to
+  `$HOME` / `USERPROFILE` and finally the system temp dir, so an
+  environment that can't resolve a home directory (stripped service
+  accounts, some container/CI sandboxes, headless ACP launches) no longer
+  raises `RuntimeError`. `user_root()` now routes through it, and the
+  scattered direct `Path.home()` call sites (memory dictionary/skills
+  paths, the skills registry, plugin discovery, the sandbox config, the
+  log-handler fallback, the CLI history file) go through `user_home()` /
+  `user_root()` — fixing the import-time crash risk where module-level
+  `~/.agentao` constants resolved `Path.home()` at import. Subsystem
+  constructors still take explicit roots (unchanged from the Issue 5
+  no-implicit-fallback contract); this only hardens the path helpers
+  themselves.
 
 ### Added
 

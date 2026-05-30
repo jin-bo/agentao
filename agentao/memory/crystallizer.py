@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from ..paths import user_root
 from .models import (
     CrystallizationProposal,
     MemoryRecord,
@@ -254,7 +255,7 @@ class MemoryCrystallizer:
 
 
 # Mirror SkillManager path conventions
-_GLOBAL_SKILLS_DIR = Path.home() / ".agentao" / "skills"
+_GLOBAL_SKILLS_DIR = user_root() / "skills"
 
 SUGGEST_SYSTEM_PROMPT = """\
 You are a skill extraction assistant for Agentao, an AI coding agent.
@@ -501,7 +502,7 @@ def load_skill_creator_guidance() -> str:
     candidate = _BUNDLED_SKILLS_DIR / "skill-creator" / "SKILL.md"
     if not candidate.exists():
         # Also try ~/.agentao/skills as a fallback (installed location).
-        alt = Path.home() / ".agentao" / "skills" / "skill-creator" / "SKILL.md"
+        alt = user_root() / "skills" / "skill-creator" / "SKILL.md"
         if not alt.exists():
             return ""
         candidate = alt
