@@ -1,6 +1,7 @@
 # DeepChat ACP 集成 Patch —— 修订方案
 
-**状态:** 设计记录。起草于 2026-05-29。实现:未开始。
+**状态:** 设计记录。起草于 2026-05-29。实现进行中 —— PR-1/PR-2/PR-3
+已落地(见 PR 排序);PR-4 起尚未开始。
 **读者:** Agentao 维护者;DeepChat/TensorChat 集成 fork 的负责人。
 **相关文档:** `docs/design/embedded-host-contract.md`,
 `docs/architecture/embedding-vs-acp.md`(若存在),
@@ -298,17 +299,24 @@ core)落在 **PR-4**,不延后;别名只是原方法原样保留。
 笔记、DeepChat client 适配)**不**是这里的编号 PR —— 它们收录在下方
 「给 DeepChat fork 的建议」一节。
 
-**前置(非编号 PR)—— 还原 / 拒绝删除 `acp_client` 测试**(D1)。patch
-*删除* 了 `tests/test_acp_client_*`,而它们在 `main` 上是活的。要在**任何
-extraction PR 触及 ACP 面之前**先还原(或干脆拒绝该删除),让回归护栏在 B
-系列重做落地时就已就位 —— 而非事后补挂。
+**前置(非编号 PR)—— 还原 / 拒绝删除 `acp_client` 测试**(D1)。✅ **已完成**
+—— 已核实 `tests/test_acp_client_*` 套件在 `main` 上是活的;patch 的删除从未被
+应用,所以回归护栏在 extraction PR 落地前就已就位。
 
-1. **PR-1 —— 多模态图片输入**(A1)。自包含、最清晰可上游;先走。
-2. **PR-2 —— 结构化 `ask_user`**(A2)。**先做向后兼容回调** —— `ask_user_callback`
-   是 deprecated 的 1 参构造回调(`Callable[[str], str]`),直接加 `options` 等
-   会让传 `lambda q: ...` 的 embedded host `TypeError`。保留 1 参形式可用(变长 /
-   新增可选 structured 回调),形状与 host 无关。补测试。
-3. **PR-3 —— `$HOME` 路径健壮性**(A3)。一个小补丁。
+1. **PR-1 —— 多模态图片输入**(A1)。✅ **已完成** —— 在 `#53` 合并
+   (`feat(multimodal): image input across engine, ACP, and CLI`)。自包含、最清晰
+   可上游;先走。
+2. **PR-2 —— 结构化 `ask_user`**(A2)。✅ **已完成** —— 在 `#54` 合并
+   (squash `4292e4a`)。向后兼容回调已确认:structured 提示
+   (`header`/`options`/`multiple`/`allow_custom`)只转发给签名能接受它们的回调
+   (经共享的 `invoke_ask_user_callback` 内省辅助),因此 1 参 `Callable[[str], str]`
+   回调 —— deprecated 的 `ask_user_callback` 构造参数、`SdkTransport(ask_user=...)`、
+   直接构造的 `AskUserTool`、以及 1 参 replay 内层 transport —— 都照常工作。已测试
+   (`tests/test_ask_user_structured.py`)。
+3. **PR-3 —— `$HOME` 路径健壮性**(A3)。✅ **已完成** —— 在 `#55` 合并
+   (squash `0b8b4f4`)。新增 `agentao.paths.user_home()` 并把散落的 `Path.home()`
+   调用点都路由过去;无 home 时的兜底是私有、按用户隔离、校验属主/权限的临时目录
+   (按进程缓存)。已测试(`tests/test_paths.py`)。
 4. **PR-4 —— 最小核心 ACP 选模型修复**(B1)。只做核心 provider/model 面、不越界:
    - 拒收 patch 给请求加的 `apiKey`/`baseUrl`/`modelId`/`_meta`。
    - 新增 `session/set_config_option` 仅 `configId="model"`(`provider/model`

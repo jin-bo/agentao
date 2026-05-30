@@ -1,6 +1,7 @@
 # DeepChat ACP Integration Patch — Revision Plan
 
-**Status:** Design record. Drafted 2026-05-29. Implementation: not started.
+**Status:** Design record. Drafted 2026-05-29. Implementation in progress —
+PR-1/PR-2/PR-3 landed (see PR sequencing); PR-4 onward not started.
 **Audience:** Agentao maintainers; the DeepChat/TensorChat integration fork owner.
 **Related docs:** `docs/design/embedded-host-contract.md`,
 `docs/architecture/embedding-vs-acp.md` (if present),
@@ -347,20 +348,27 @@ adaptation) are **not** numbered PRs here — they are collected under
 *Suggestions for the DeepChat fork*, below.
 
 **Prerequisite (not a numbered PR) — restore / refuse deletion of the
-`acp_client` tests** (D1). The patch *deletes* `tests/test_acp_client_*`,
-which are live on `main`. Restore them (or simply refuse the deletion)
-**before any extraction PR touches the ACP surface**, so the regression
-guard is in place while the B-series reworks land — not bolted on
-afterwards.
+`acp_client` tests** (D1). ✅ **Done** — verified the `tests/test_acp_client_*`
+suite is live on `main`; the patch's deletion was never applied, so the
+regression guard was already in place before the extraction PRs landed.
 
-1. **PR-1 — Multimodal image input** (A1). Self-contained, clearly
-   upstreamable; lands first.
-2. **PR-2 — Structured `ask_user`** (A2). **Backward-compatible callback
-   first** — `ask_user_callback` is one of the deprecated 1-arg
-   constructor callbacks (`Callable[[str], str]`); adding `options`/etc.
-   naively `TypeError`s any embedded host passing `lambda q: ...`. Keep the
-   1-arg form working (variadic / new optional structured callback). Test.
-3. **PR-3 — `$HOME` path robustness** (A3). One small patch.
+1. **PR-1 — Multimodal image input** (A1). ✅ **Done** — merged in `#53`
+   (`feat(multimodal): image input across engine, ACP, and CLI`).
+   Self-contained, clearly upstreamable; landed first.
+2. **PR-2 — Structured `ask_user`** (A2). ✅ **Done** — merged in `#54`
+   (squash `4292e4a`). Backward-compatible callbacks confirmed: the
+   structured hints (`header`/`options`/`multiple`/`allow_custom`) are
+   forwarded only to callbacks whose signature accepts them (via the
+   shared `invoke_ask_user_callback` introspection helper), so legacy
+   1-arg `Callable[[str], str]` callbacks — the deprecated
+   `ask_user_callback` ctor arg, `SdkTransport(ask_user=...)`, a directly
+   constructed `AskUserTool`, and 1-arg replay inner transports — keep
+   working. Tested (`tests/test_ask_user_structured.py`).
+3. **PR-3 — `$HOME` path robustness** (A3). ✅ **Done** — merged in `#55`
+   (squash `0b8b4f4`). Added `agentao.paths.user_home()` and routed the
+   scattered `Path.home()` sites through it; the no-home fallback is a
+   private, per-user, ownership-validated temp dir (cached per process).
+   Tested (`tests/test_paths.py`).
 4. **PR-4 — Minimal core ACP model-switching fix** (B1). The core
    provider/model surface and nothing beyond it:
    - Reject the patch's `apiKey`/`baseUrl`/`modelId`/`_meta` additions.
