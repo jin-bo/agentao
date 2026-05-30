@@ -113,7 +113,10 @@ class AcpInitializeMeta(BaseModel):
         default_factory=list, alias="_agentao.cn/extensions"
     )
 
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
+    # Alias-only: the wire key is ``_agentao.cn/extensions``; the Python field
+    # name is never an accepted input key (no ``populate_by_name``), so the
+    # validation surface stays identical to the published JSON Schema.
+    model_config = ConfigDict(extra="allow")
 
 
 class AcpInitializeResponse(BaseModel):
@@ -130,7 +133,10 @@ class AcpInitializeResponse(BaseModel):
     # hosts would reject every successful initialize response.
     meta: Optional[AcpInitializeMeta] = Field(default=None, alias="_meta")
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    # Alias-only (no ``populate_by_name``): only the wire key ``_meta`` is an
+    # accepted input key, so ``extra="forbid"`` is not weakened by also
+    # accepting the bare field name ``meta`` — the handler never emits it.
+    model_config = ConfigDict(extra="forbid")
 
 
 # ---------------------------------------------------------------------------

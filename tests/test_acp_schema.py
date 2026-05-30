@@ -152,6 +152,34 @@ def test_initialize_response_rejects_top_level_extensions():
         })
 
 
+def test_initialize_response_meta_is_alias_only():
+    """``_meta`` is the only accepted input key — the bare Python field name
+    ``meta`` is rejected (no ``populate_by_name``), so the validation surface
+    matches the published JSON Schema exactly and ``extra="forbid"`` is not
+    weakened by silently accepting an off-spec ``meta`` key."""
+    import pytest
+    from pydantic import ValidationError
+
+    base = {
+        "protocolVersion": 1,
+        "agentCapabilities": {
+            "loadSession": True,
+            "promptCapabilities": {"image": True, "audio": False, "embeddedContext": False},
+            "mcpCapabilities": {"http": False, "sse": True},
+        },
+        "authMethods": [],
+        "agentInfo": {"name": "agentao", "version": "0.3.1.dev0"},
+    }
+    # The wire alias is accepted.
+    ok = AcpInitializeResponse.model_validate(
+        {**base, "_meta": {"_agentao.cn/extensions": []}}
+    )
+    assert ok.meta is not None
+    # The bare field name is not — it is off-spec and the handler never emits it.
+    with pytest.raises(ValidationError):
+        AcpInitializeResponse.model_validate({**base, "meta": {}})
+
+
 def test_session_new_validates_mcp_server_discriminator():
     req = AcpSessionNewRequest.model_validate({
         "cwd": "/tmp/proj",
