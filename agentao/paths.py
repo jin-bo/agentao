@@ -14,6 +14,10 @@ from pathlib import Path
 
 USER_DIR_NAME = ".agentao"
 
+# Process-stable cache for the no-home fallback (see ``user_home``). Only
+# the degraded fallback populates it; a resolvable home never touches it.
+_FALLBACK_HOME: Path | None = None
+
 
 def user_home() -> Path:
     """Return the user's home directory, robust to an unresolvable home.
@@ -48,8 +52,15 @@ def user_home() -> Path:
         # When Path.home() raises, the home env vars are necessarily unset
         # (it consults exactly those before failing), so the only useful
         # last resort is the temp dir — namespaced per user and locked down.
-        candidate = Path(tempfile.gettempdir()) / f"agentao-{_fallback_user_id()}"
-        return _private_dir_or_mkdtemp(candidate)
+        # Cache it for the process: the unsafe-candidate branch resolves to a
+        # fresh ``mkdtemp`` each call, so without caching, two ``user_root()``
+        # callers (e.g. global skill registry vs. install dir) could end up
+        # on different roots within one run.
+        global _FALLBACK_HOME
+        if _FALLBACK_HOME is None:
+            candidate = Path(tempfile.gettempdir()) / f"agentao-{_fallback_user_id()}"
+            _FALLBACK_HOME = _private_dir_or_mkdtemp(candidate)
+        return _FALLBACK_HOME
 
 
 def _fallback_user_id() -> str:

@@ -35,6 +35,12 @@ def _raise(*_a, **_k):
     raise RuntimeError("no home directory")
 
 
+@pytest.fixture(autouse=True)
+def _reset_fallback_cache(monkeypatch):
+    # The no-home fallback is cached process-wide; start each test clean.
+    monkeypatch.setattr(paths, "_FALLBACK_HOME", None)
+
+
 class TestUserHome:
     def test_returns_path_home_when_available(self, monkeypatch) -> None:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: Path("/wherever/me")))
@@ -79,6 +85,14 @@ class TestUserHome:
         assert result != candidate
         assert result.is_dir()
         assert stat.S_IMODE(result.stat().st_mode) == 0o700
+        # And it must be stable across calls (cached), so global-scope
+        # helpers don't diverge onto different mkdtemp roots in one process.
+        assert user_home() == result
+
+    def test_fallback_is_process_stable(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr(Path, "home", staticmethod(_raise))
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        assert user_home() == user_home()
 
 
 class TestFallbackUserId:
