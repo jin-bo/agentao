@@ -141,28 +141,60 @@ class ReplayAdapter:
             pass
         return bool(result)
 
-    def ask_user(self, question: str) -> str:
+    def ask_user(
+        self,
+        question: str,
+        *,
+        header=None,
+        options=None,
+        multiple: bool = False,
+        allow_custom: bool = True,
+    ) -> str:
         # v1.1: record both the question and the answer. The answer goes
         # through the scanner + a 500-char truncation policy inside
         # ``sanitize_event`` so an accidental password-in-prompt is
         # redacted on disk.
+        req_payload = {"question": question or ""}
+        # Record structured hints only when present, mirroring the lean
+        # wire shape so a plain ask_user keeps its original payload.
+        if header is not None:
+            req_payload["header"] = header
+        if options is not None:
+            req_payload["options"] = options
+        if multiple:
+            req_payload["multiple"] = True
+        if not allow_custom:
+            req_payload["allow_custom"] = False
         try:
             self._recorder.record(
                 EventKind.ASK_USER_REQUESTED,
                 turn_id=self._current_turn_id(),
                 parent_turn_id=self._current_parent_turn(),
-                payload={"question": question or ""},
+                payload=req_payload,
             )
         except Exception:
             pass
-        answer = self._inner.ask_user(question)
+        # Forward only the structured kwargs that carry information, so a
+        # plain ask_user stays a 1-arg call into the wrapped transport
+        # (preserving compatibility with transports that accept only the
+        # question).
+        fwd: Dict[str, Any] = {}
+        if header is not None:
+            fwd["header"] = header
+        if options is not None:
+            fwd["options"] = options
+        if multiple:
+            fwd["multiple"] = True
+        if not allow_custom:
+            fwd["allow_custom"] = False
+        answer = self._inner.ask_user(question, **fwd)
         try:
             self._recorder.record(
                 EventKind.ASK_USER_ANSWERED,
                 turn_id=self._current_turn_id(),
                 parent_turn_id=self._current_parent_turn(),
                 payload={
-                    "question": question or "",
+                    **req_payload,
                     "answer": answer if isinstance(answer, str) else str(answer),
                 },
             )

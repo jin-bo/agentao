@@ -571,8 +571,21 @@ class AcpRequestPermissionResponse(BaseModel):
 
 
 class AcpAskUserParams(BaseModel):
+    """Params the agent sends to the client for ``_agentao.cn/ask_user``.
+
+    ``question`` is always present. The remaining fields are optional
+    structured hints a client may render as a choice prompt; a client may
+    ignore them and prompt with plain text. The reply is always a single
+    ``text`` string (see :class:`AcpAskUserAnswered`) — for ``multiple``
+    selections the client joins them itself.
+    """
+
     sessionId: str
     question: str
+    header: Optional[str] = None
+    options: Optional[List[str]] = None
+    multiple: bool = False
+    allowCustom: bool = True
 
     model_config = ConfigDict(extra="forbid")
 

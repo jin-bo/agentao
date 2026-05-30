@@ -95,7 +95,45 @@
     },
     "AcpAskUserParams": {
       "additionalProperties": false,
+      "description": "Params the agent sends to the client for ``_agentao.cn/ask_user``.\n\n``question`` is always present. The remaining fields are optional\nstructured hints a client may render as a choice prompt; a client may\nignore them and prompt with plain text. The reply is always a single\n``text`` string (see :class:`AcpAskUserAnswered`) \u2014 for ``multiple``\nselections the client joins them itself.",
       "properties": {
+        "allowCustom": {
+          "default": true,
+          "title": "Allowcustom",
+          "type": "boolean"
+        },
+        "header": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Header"
+        },
+        "multiple": {
+          "default": false,
+          "title": "Multiple",
+          "type": "boolean"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Options"
+        },
         "question": {
           "title": "Question",
           "type": "string"

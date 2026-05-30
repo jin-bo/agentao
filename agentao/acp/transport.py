@@ -825,13 +825,27 @@ class ACPTransport:
         )
         return False
 
-    def ask_user(self, question: str) -> str:
-        """Ask the ACP client for free-form user input via ``_agentao.cn/ask_user``.
+    def ask_user(
+        self,
+        question: str,
+        *,
+        header: Optional[str] = None,
+        options: Optional[List[str]] = None,
+        multiple: bool = False,
+        allow_custom: bool = True,
+    ) -> str:
+        """Ask the ACP client for user input via ``_agentao.cn/ask_user``.
 
         Sends the extension method as a JSON-RPC request and blocks until
         the client responds.  All failure modes resolve to the sentinel
         string ``"(user unavailable)"`` rather than raising, so a broken
         ask_user path cannot crash a turn in progress.
+
+        The optional structured hints (``header`` / ``options`` /
+        ``multiple`` / ``allow_custom``) are forwarded on the wire; a
+        client may ignore them and prompt with plain text. The reply is
+        always a single ``text`` string (the client joins ``multiple``
+        selections itself).
 
         Returns:
             The user's text answer, or the sentinel on any failure.
@@ -843,10 +857,20 @@ class ACPTransport:
             )
             return ASK_USER_UNAVAILABLE_SENTINEL
 
-        params = {
+        params: Dict[str, Any] = {
             "sessionId": self._session_id,
             "question": question,
         }
+        # Only include structured fields when they carry information, so a
+        # plain ask_user call keeps the same minimal wire shape as before.
+        if header is not None:
+            params["header"] = header
+        if options is not None:
+            params["options"] = options
+        if multiple:
+            params["multiple"] = True
+        if not allow_custom:
+            params["allowCustom"] = False
 
         try:
             pending = self._server.call(METHOD_ASK_USER, params)

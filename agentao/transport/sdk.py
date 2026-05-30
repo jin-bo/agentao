@@ -4,12 +4,33 @@ Also provides ``build_compat_transport`` to wrap the legacy 8-callback
 API that existed before the Transport abstraction was introduced.
 """
 
+import inspect
 import warnings
 from typing import Any, Callable, Dict, List, Optional
 
 from .broadcast import EventBroadcaster
 from .events import AgentEvent, EventType
 from .null import NullTransport
+
+
+def _invoke_ask_user_callback(callback: Callable[..., str], question: str, structured: Dict[str, Any]) -> str:
+    """Call a user-supplied ``ask_user`` callback, forwarding structured
+    kwargs only when the callback can accept them.
+
+    This keeps legacy 1-arg ``Callable[[str], str]`` callbacks working: a
+    callback whose signature names none of the structured fields (and has
+    no ``**kwargs``) is called with the question alone, so the structured
+    hints are silently dropped rather than raising ``TypeError``.
+    """
+    try:
+        params = inspect.signature(callback).parameters
+    except (TypeError, ValueError):
+        # Un-introspectable callable (some builtins / C funcs) — assume legacy.
+        return callback(question)
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return callback(question, **structured)
+    accepted = {k: v for k, v in structured.items() if k in params}
+    return callback(question, **accepted)
 
 
 class SdkTransport:
@@ -42,7 +63,7 @@ class SdkTransport:
         self,
         on_event: Optional[Callable[[AgentEvent], None]] = None,
         confirm_tool: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
-        ask_user: Optional[Callable[[str], str]] = None,
+        ask_user: Optional[Callable[..., str]] = None,
         on_max_iterations: Optional[Callable[[int, List], dict]] = None,
     ) -> None:
         self._on_event = on_event
@@ -69,9 +90,26 @@ class SdkTransport:
             return self._confirm_tool(tool_name, description, args)
         return True  # auto-approve when no callback
 
-    def ask_user(self, question: str) -> str:
+    def ask_user(
+        self,
+        question: str,
+        *,
+        header: Optional[str] = None,
+        options: Optional[List[str]] = None,
+        multiple: bool = False,
+        allow_custom: bool = True,
+    ) -> str:
         if self._ask_user:
-            return self._ask_user(question)
+            return _invoke_ask_user_callback(
+                self._ask_user,
+                question,
+                {
+                    "header": header,
+                    "options": options,
+                    "multiple": multiple,
+                    "allow_custom": allow_custom,
+                },
+            )
         return "[ask_user: not available in non-interactive mode]"
 
     def on_max_iterations(self, count: int, messages: list) -> dict:

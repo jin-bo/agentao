@@ -1,6 +1,6 @@
 """NullTransport — silent default used when no transport is configured."""
 
-from typing import Callable
+from typing import Callable, List, Optional
 
 from .broadcast import EventBroadcaster
 from .events import AgentEvent
@@ -28,7 +28,15 @@ class NullTransport:
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
         return True
 
-    def ask_user(self, question: str) -> str:
+    def ask_user(
+        self,
+        question: str,
+        *,
+        header: Optional[str] = None,
+        options: Optional[List[str]] = None,
+        multiple: bool = False,
+        allow_custom: bool = True,
+    ) -> str:
         return "[ask_user: not available in non-interactive mode]"
 
     def on_max_iterations(self, count: int, messages: list) -> dict:
