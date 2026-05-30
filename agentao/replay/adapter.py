@@ -156,10 +156,10 @@ class ReplayAdapter:
         # redacted on disk.
         #
         # ``fwd`` holds only the structured kwargs that carry information,
-        # so a plain ask_user stays a 1-arg call into the wrapped transport
-        # (some inner transports accept only the question). The recorded
-        # payload reuses the same set — keeping a plain ask_user's original
-        # ``{"question": ...}`` shape — plus the question itself.
+        # keeping a plain ask_user's recorded payload at its original
+        # ``{"question": ...}`` shape (plus the question itself).
+        from ..transport.sdk import invoke_ask_user_callback
+
         fwd: Dict[str, Any] = {}
         if header is not None:
             fwd["header"] = header
@@ -179,7 +179,20 @@ class ReplayAdapter:
             )
         except Exception:
             pass
-        answer = self._inner.ask_user(question, **fwd)
+        # Forward via signature-aware dispatch so a legacy 1-arg
+        # ``ask_user(self, question)`` inner transport still works even for a
+        # structured prompt (it receives the question alone) instead of
+        # raising ``TypeError`` on the unexpected keywords.
+        answer = invoke_ask_user_callback(
+            self._inner.ask_user,
+            question,
+            {
+                "header": header,
+                "options": options,
+                "multiple": multiple,
+                "allow_custom": allow_custom,
+            },
+        )
         try:
             self._recorder.record(
                 EventKind.ASK_USER_ANSWERED,

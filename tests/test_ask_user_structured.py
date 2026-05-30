@@ -271,3 +271,54 @@ class TestAcpTransportWireShape:
             "question": "Q",
             "options": ["a"],
         }
+
+
+# ---------------------------------------------------------------------------
+# Replay adapter forwarding (signature-aware)
+# ---------------------------------------------------------------------------
+
+
+class TestReplayAdapterForwarding:
+    def _adapter(self, inner, tmp_path):
+        from agentao.replay.adapter import ReplayAdapter
+        from agentao.replay.recorder import ReplayRecorder
+
+        rec = ReplayRecorder.create("sess", tmp_path)
+        return ReplayAdapter(inner, rec), rec
+
+    def test_structured_prompt_into_one_arg_inner_does_not_break(self, tmp_path) -> None:
+        # A legacy 1-arg inner transport must receive only the question even
+        # when the prompt is structured (Codex round-2 P2).
+        seen: List[Any] = []
+
+        class LegacyInner:
+            def emit(self, e): pass
+            def ask_user(self, q):  # noqa: ANN001 - legacy 1-arg shape
+                seen.append(q)
+                return "legacy-ok"
+
+        adapter, rec = self._adapter(LegacyInner(), tmp_path)
+        adapter.begin_turn("t")
+        answer = adapter.ask_user("Pick", options=["a", "b"], multiple=True, allow_custom=False)
+        adapter.end_turn("")
+        rec.close()
+        assert answer == "legacy-ok"
+        assert seen == ["Pick"]
+
+    def test_structured_prompt_into_conforming_inner_forwards_all(self, tmp_path) -> None:
+        captured: Dict[str, Any] = {}
+
+        class ConformingInner:
+            def emit(self, e): pass
+            def ask_user(self, q, *, header=None, options=None, multiple=False, allow_custom=True):
+                captured.update(
+                    header=header, options=options, multiple=multiple, allow_custom=allow_custom
+                )
+                return "ok"
+
+        adapter, rec = self._adapter(ConformingInner(), tmp_path)
+        adapter.begin_turn("t")
+        adapter.ask_user("Pick", header="H", options=["a"], multiple=True, allow_custom=False)
+        adapter.end_turn("")
+        rec.close()
+        assert captured == {"header": "H", "options": ["a"], "multiple": True, "allow_custom": False}
