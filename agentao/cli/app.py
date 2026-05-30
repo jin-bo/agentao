@@ -28,6 +28,7 @@ from prompt_toolkit.styles import Style
 from .._env import safe_load_dotenv
 
 from ..agent import Agentao
+from ..paths import user_root
 from .display import DisplayController
 from ..embedding import build_from_environment
 from ..transport import AgentEvent
@@ -106,7 +107,7 @@ class AgentaoCLI:
         def _pt_newline(event):
             event.current_buffer.insert_text('\n')
 
-        _history_file = os.path.expanduser("~/.agentao/history")
+        _history_file = str(user_root() / "history")
         os.makedirs(os.path.dirname(_history_file), exist_ok=True)
         self._prompt_session = PromptSession(
             history=FileHistory(_history_file),

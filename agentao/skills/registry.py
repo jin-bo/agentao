@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
 
+from ..paths import user_home, user_root
+
 # `filelock` is deferred (P0.5): the registry is only touched when an
 # embedded host (or the CLI) installs / updates skills. Plain ``Agentao()``
 # construction never reaches the lock path, so the wheel cost stays out of
@@ -119,7 +121,7 @@ def _find_project_root(start: Optional[Path] = None) -> Optional[Path]:
 
     Returns ``None`` if no marker is found before reaching the filesystem root.
     """
-    home = Path.home().resolve()
+    home = user_home().resolve()
     current = (start or Path.cwd()).resolve()
     # Markers that are ambiguous at $HOME (config dirs / bare repos).
     _HOME_SKIP = {".agentao", ".git"}
@@ -151,7 +153,7 @@ def registry_path_for_scope(scope: str, cwd: Optional[Path] = None) -> Path:
     is run from.
     """
     if scope == "global":
-        return Path.home() / ".agentao" / "skills_registry.json"
+        return user_root() / "skills_registry.json"
     root = _find_project_root(cwd)
     if root is None:
         root = cwd or Path.cwd()
@@ -166,7 +168,7 @@ def install_dir_for_scope(
     For project scope, resolves upward to the project root.
     """
     if scope == "global":
-        return Path.home() / ".agentao" / "skills" / skill_name
+        return user_root() / "skills" / skill_name
     root = _find_project_root(cwd)
     if root is None:
         root = cwd or Path.cwd()

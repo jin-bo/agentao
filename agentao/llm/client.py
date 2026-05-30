@@ -40,6 +40,7 @@ from ._retry import (
     _parse_retry_after,
 )
 from ._stream_response import _StreamAccumulator, _StreamResponse
+from ..paths import user_root
 
 # `openai` is deferred (P0.5): merely importing ``LLMClient`` should not pull
 # in the OpenAI SDK. Hosts that inject their own ``llm_client=`` never load
@@ -208,7 +209,7 @@ class LLMClient:
                 primary, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
             )
         except OSError as primary_err:
-            fallback = Path.home() / ".agentao" / "agentao.log"
+            fallback = user_root() / "agentao.log"
             if fallback == primary:
                 # Already tried; nothing else to fall back to.
                 print(

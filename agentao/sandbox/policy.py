@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from ..paths import user_root
+
 
 _BUILTIN_PROFILES_DIR = Path(__file__).parent / "profiles"
 
@@ -246,7 +248,7 @@ def load_sandbox_config(*, project_root: Optional[Path] = None) -> Dict[str, Any
     fail-closed instead of quietly falling back to the default-disabled
     config.
     """
-    global_path = Path.home() / ".agentao" / "sandbox.json"
+    global_path = user_root() / "sandbox.json"
     project_cwd = project_root if project_root is not None else Path.cwd()
     project_path = project_cwd / ".agentao" / "sandbox.json"
 
