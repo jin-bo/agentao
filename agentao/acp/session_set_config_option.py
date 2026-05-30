@@ -217,12 +217,15 @@ def handle_session_set_config_option(
                 creds = resolver(provider_id)
             except Exception as e:
                 # Unknown / unavailable provider — the resolver signals via
-                # any exception. Log the detail server-side (it may reference
-                # env var names) but return a generic message: a buggy host
-                # resolver must not be able to leak its exception text — which
-                # could embed a key — back over the wire.
+                # any exception. Log only the provider id and exception *type*,
+                # never the exception text: a buggy host resolver could embed a
+                # key in its message, and this feature promises credentials
+                # stay out of logs as well as off the wire. The wire response
+                # is likewise generic.
                 logger.warning(
-                    "acp: provider resolution failed for %r: %s", provider_id, e
+                    "acp: provider resolution failed for %r (%s)",
+                    provider_id,
+                    type(e).__name__,
                 )
                 raise JsonRpcHandlerError(
                     code=INVALID_REQUEST,
