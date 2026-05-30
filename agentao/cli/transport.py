@@ -235,14 +235,25 @@ def ask_user(
             if allow_custom:
                 hint += ", or type a custom answer"
             console.print(f"[dim]Enter {hint}.[/dim]")
-        response = console.input("[bold yellow]▶ [/bold yellow]").strip()
-        if not response:
-            return "(no response)"
-        if options:
-            resolved = _resolve_option_selection(response, options, multiple)
-            if resolved is not None:
-                return resolved
-        return response
+        # When options are listed and custom answers are disallowed, the
+        # response must resolve to one of them — re-prompt otherwise.
+        # EOF / Ctrl-C still break out via the surrounding except.
+        restricted = bool(options) and not allow_custom
+        while True:
+            response = console.input("[bold yellow]▶ [/bold yellow]").strip()
+            if not response:
+                if restricted:
+                    console.print("[dim]Please choose from the listed options.[/dim]")
+                    continue
+                return "(no response)"
+            if options:
+                resolved = _resolve_option_selection(response, options, multiple)
+                if resolved is not None:
+                    return resolved
+                if restricted:
+                    console.print("[dim]Please choose from the listed options by number.[/dim]")
+                    continue
+            return response
     except (EOFError, KeyboardInterrupt):
         return "(user interrupted)"
     finally:

@@ -154,30 +154,12 @@ class ReplayAdapter:
         # through the scanner + a 500-char truncation policy inside
         # ``sanitize_event`` so an accidental password-in-prompt is
         # redacted on disk.
-        req_payload = {"question": question or ""}
-        # Record structured hints only when present, mirroring the lean
-        # wire shape so a plain ask_user keeps its original payload.
-        if header is not None:
-            req_payload["header"] = header
-        if options is not None:
-            req_payload["options"] = options
-        if multiple:
-            req_payload["multiple"] = True
-        if not allow_custom:
-            req_payload["allow_custom"] = False
-        try:
-            self._recorder.record(
-                EventKind.ASK_USER_REQUESTED,
-                turn_id=self._current_turn_id(),
-                parent_turn_id=self._current_parent_turn(),
-                payload=req_payload,
-            )
-        except Exception:
-            pass
-        # Forward only the structured kwargs that carry information, so a
-        # plain ask_user stays a 1-arg call into the wrapped transport
-        # (preserving compatibility with transports that accept only the
-        # question).
+        #
+        # ``fwd`` holds only the structured kwargs that carry information,
+        # so a plain ask_user stays a 1-arg call into the wrapped transport
+        # (some inner transports accept only the question). The recorded
+        # payload reuses the same set — keeping a plain ask_user's original
+        # ``{"question": ...}`` shape — plus the question itself.
         fwd: Dict[str, Any] = {}
         if header is not None:
             fwd["header"] = header
@@ -187,6 +169,16 @@ class ReplayAdapter:
             fwd["multiple"] = True
         if not allow_custom:
             fwd["allow_custom"] = False
+        req_payload = {"question": question or "", **fwd}
+        try:
+            self._recorder.record(
+                EventKind.ASK_USER_REQUESTED,
+                turn_id=self._current_turn_id(),
+                parent_turn_id=self._current_parent_turn(),
+                payload=req_payload,
+            )
+        except Exception:
+            pass
         answer = self._inner.ask_user(question, **fwd)
         try:
             self._recorder.record(

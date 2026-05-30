@@ -103,6 +103,22 @@ class TestInvokeAskUserCallback:
         # it must be called with the question alone.
         assert _invoke_ask_user_callback(str, "Q", STRUCTURED) == "Q"
 
+    def test_positional_only_named_field_is_not_passed_by_keyword(self) -> None:
+        # A positional-only parameter sharing a structured field name must
+        # not be forwarded by keyword (would raise TypeError).
+        ns: Dict[str, Any] = {}
+        exec(
+            "def cb(question, header, /):\n"
+            "    return f'{question}:{header}'",
+            ns,
+        )
+        # `header` is positional-only → dropped, so cb is called with the
+        # question alone, which raises its own TypeError (missing header) —
+        # but crucially NOT the 'positional-only passed as keyword' error.
+        with pytest.raises(TypeError) as exc:
+            _invoke_ask_user_callback(ns["cb"], "Q", STRUCTURED)
+        assert "positional-only" not in str(exc.value)
+
 
 class TestSdkTransport:
     def test_one_arg_callback_via_transport(self) -> None:
@@ -142,6 +158,38 @@ class TestResolveOptionSelection:
 
     def test_empty_is_none(self) -> None:
         assert _resolve_option_selection("   ", ["a"], False) is None
+
+
+class TestCliAskUserPrompt:
+    def _stub_cli(self):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(current_status=None)
+
+    def test_allow_custom_false_reprompts_until_valid(self, monkeypatch) -> None:
+        from agentao.cli import transport as cli_transport
+
+        responses = iter(["banana", "9", "2"])  # invalid custom, out-of-range, then valid
+        monkeypatch.setattr(cli_transport.console, "input", lambda *a, **k: next(responses))
+        result = cli_transport.ask_user(
+            self._stub_cli(), "Pick", options=["a", "b"], allow_custom=False
+        )
+        assert result == "b"
+
+    def test_allow_custom_true_accepts_free_form(self, monkeypatch) -> None:
+        from agentao.cli import transport as cli_transport
+
+        monkeypatch.setattr(cli_transport.console, "input", lambda *a, **k: "my custom")
+        result = cli_transport.ask_user(
+            self._stub_cli(), "Pick", options=["a", "b"], allow_custom=True
+        )
+        assert result == "my custom"
+
+    def test_plain_question_returns_text(self, monkeypatch) -> None:
+        from agentao.cli import transport as cli_transport
+
+        monkeypatch.setattr(cli_transport.console, "input", lambda *a, **k: "  hello  ")
+        assert cli_transport.ask_user(self._stub_cli(), "Q?") == "hello"
 
 
 # ---------------------------------------------------------------------------

@@ -59,7 +59,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   letting the user type a custom answer. The hints flow through the
   `Transport.ask_user` contract to every transport: the CLI renders a
   numbered menu and accepts a number, comma-separated numbers (when
-  `multiple`), or custom text; the ACP transport forwards them on
+  `multiple`), or custom text — re-prompting when `allow_custom` is false
+  and the entry isn't one of the options; the ACP transport forwards them on
   `_agentao.cn/ask_user` (host-agnostic plain-string options, not
   option-cards) and the host ACP schema's `AcpAskUserParams` gains the
   matching fields (snapshot `docs/schema/host.acp.v1.json` bumped); the

@@ -29,7 +29,18 @@ def _invoke_ask_user_callback(callback: Callable[..., str], question: str, struc
         return callback(question)
     if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
         return callback(question, **structured)
-    accepted = {k: v for k, v in structured.items() if k in params}
+    # Only forward a field the callback can actually accept *by keyword* —
+    # a positional-only parameter that happens to share a name would raise
+    # TypeError if passed as a keyword.
+    keyword_ok = {
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    }
+    accepted = {
+        k: v
+        for k, v in structured.items()
+        if k in params and params[k].kind in keyword_ok
+    }
     return callback(question, **accepted)
 
 
