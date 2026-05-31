@@ -1,7 +1,9 @@
 # DeepChat ACP Integration Patch — Revision Plan
 
 **Status:** Design record. Drafted 2026-05-29. Implementation in progress —
-PR-1/PR-2/PR-3 landed (see PR sequencing); PR-4 onward not started.
+PR-1/PR-2/PR-3 and the core ACP rework PR-4/PR-5/PR-6 (B1/B2/B3) all landed
+(see PR sequencing); PR-7 (retire legacy model methods) deferred to a later
+release.
 **Audience:** Agentao maintainers; the DeepChat/TensorChat integration fork owner.
 **Related docs:** `docs/design/embedded-host-contract.md`,
 `docs/architecture/embedding-vs-acp.md` (if present),
@@ -122,9 +124,9 @@ Legend: ✅ upstream · 🔧 rework then upstream · 🟠 keep in fork · ❌ dr
 | **A1 — Multimodal image input** (`agent.py`, `runtime/turn.py`, `runtime/chat_loop/_runner.py`, `llm/client.py` logging, `cli/display.py`, `tests/test_logging.py`) | ✅ | Extract as a standalone PR. Image data arrives as standard ACP content blocks, so it is already decoupled from DeepChat. The logging change (summarize multimodal parts instead of dumping base64) ships with it. |
 | **A2 — Structured `ask_user`** (`tools/ask_user.py`, `tools/base.py`, `cli/app.py`) | ✅ | Upstream (Decision #1), but the callback contract must stay **backward-compatible**: `ask_user_callback` is a deprecated 1-arg `Callable[[str], str]` (`agent.py:52`), so adding `options`/`header`/`multiple` naively `TypeError`s embedded hosts passing `lambda q: ...`. Keep the 1-arg form working (variadic / new optional structured callback), host-agnostic shape (not DeepChat option-cards). Add a unit test. |
 | **A3 — `$HOME` path robustness** (`paths.py` + `memory/storage.py`, `skills/manager.py`, `llm/client.py` fallback, `tests/test_memory_store.py`) | ✅ | Small PR. Confirm the fallback when `$HOME` is unset. |
-| **B1 — Secret-wire fix (PR-4, core)** (`acp/session_set_model.py`, `models.py`, `server.py`, `transport.py`, `initialize.py`, `schema.py`, `session_new.py`, `test_acp_set_model.py`) | 🔧 | **Drop** `apiKey`/`baseUrl`/`modelId`/`_meta`. Add `session/set_config_option` (`configId="model"` only; single `category:"model"` option, `provider/model` value) + injectable `provider_resolver` (server-side secret; **handler whitelist + `extra="forbid"` rejects `apiKey`/`baseUrl`/`_meta`**). **Add `_agentao.cn/set_model`** (`{sessionId, model}`, free-form, secret-free; shares the core code path — Decision #4) and **keep the existing `session/set_model` unchanged** as a one-release compatibility alias — its current shape `{sessionId, model?, contextLength?, maxTokens?}` is already `extra="forbid"` and secret-free; PR-4 simply **does not adopt the patch's `modelId`/`apiKey`/`baseUrl`/`_meta` additions** to it (CHANGELOG-deprecate; retires with `list_models` in PR-7). Default catalog = the **single current env** `provider/model` (model from live `agent.llm.model`); richer catalog host-injected. **Keep `session/list_models` as a compatibility endpoint** in this PR. See "Core redesign". |
-| **B2 — `session/set_mode` field (PR-5, separate)** (`acp/session_set_mode.py`, `schema.py`, `test_acp_set_mode.py`) | 🔧 | Minimal: rename `mode` → **`modeId`** and **accept unknown values** (always persist; map to a preset only on match) — so DeepChat's `code`/`ask` aren't rejected. **Deferred** (Decision #6 — decoupling is a large refactor): the permission-axis split *and* `availableModes`/`currentModeId` + `current_mode_update`. Not in the model/provider PR. |
-| **B3 — `initialize` `extensions` array → `_meta` (PR-6, low priority)** (`acp/initialize.py`, `acp/schema.py`) | 🔧 | **Decision #5: move under `_meta`** (spec-clean). agentao's own client doesn't read `extensions`; only the schema snapshot + `test_acp_schema.py` change. Its own small PR; **not** bundled into the secret-wire fix; schedule last. Snapshot bump (`docs/schema/host.acp.v1.json`). |
+| **B1 — Secret-wire fix (PR-4, core)** (`acp/session_set_model.py`, `models.py`, `server.py`, `transport.py`, `initialize.py`, `schema.py`, `session_new.py`, `test_acp_set_model.py`) | ✅ done (`#56`) | **Drop** `apiKey`/`baseUrl`/`modelId`/`_meta`. Add `session/set_config_option` (`configId="model"` only; single `category:"model"` option, `provider/model` value) + injectable `provider_resolver` (server-side secret; **handler whitelist + `extra="forbid"` rejects `apiKey`/`baseUrl`/`_meta`**). **Add `_agentao.cn/set_model`** (`{sessionId, model}`, free-form, secret-free; shares the core code path — Decision #4) and **keep the existing `session/set_model` unchanged** as a one-release compatibility alias — its current shape `{sessionId, model?, contextLength?, maxTokens?}` is already `extra="forbid"` and secret-free; PR-4 simply **does not adopt the patch's `modelId`/`apiKey`/`baseUrl`/`_meta` additions** to it (CHANGELOG-deprecate; retires with `list_models` in PR-7). Default catalog = the **single current env** `provider/model` (model from live `agent.llm.model`); richer catalog host-injected. **Keep `session/list_models` as a compatibility endpoint** in this PR. See "Core redesign". |
+| **B2 — `session/set_mode` field (PR-5, separate)** (`acp/session_set_mode.py`, `schema.py`, `test_acp_set_mode.py`) | ✅ done (`#57`) | Minimal: rename `mode` → **`modeId`** and **accept unknown values** (always persist; map to a preset only on match) — so DeepChat's `code`/`ask` aren't rejected. **Deferred** (Decision #6 — decoupling is a large refactor): the permission-axis split *and* `availableModes`/`currentModeId` + `current_mode_update`. Not in the model/provider PR. |
+| **B3 — `initialize` `extensions` array → `_meta` (PR-6, low priority)** (`acp/initialize.py`, `acp/schema.py`) | ✅ done (`#58`) | **Decision #5: move under `_meta`** (spec-clean). agentao's own client doesn't read `extensions`; only the schema snapshot + `test_acp_schema.py` change. Its own small PR; **not** bundled into the secret-wire fix; schedule last. Snapshot bump (`docs/schema/host.acp.v1.json`). |
 | **B4 — Retire the legacy model methods (PR-7, later)** | 🔧 | After a host consumes the standard `configOptions` path: remove **both** compatibility endpoints together — `session/list_models` **and** the `session/set_model` name alias (the canonical `_agentao.cn/set_model` stays). Direction is standard-alignment; staged across releases. |
 | **C1 — Duplicate ACP transport** (`transport/acp.py`, `transport/acp_server.py`, `transport/__init__.py`, `transport/sdk.py`) | ❌ | Drop the whole group. `agentao/acp/` is already a complete server package. |
 | **C2 — PyInstaller packaging** (`run.py`, `pyinstaller.spec`, `scripts/build_binaries.sh`, `.github/workflows/build-matrix.yml`, `pyproject.toml`) | 🟠 | Keep in the DeepChat fork. It conflicts with Agentao's embedded-library positioning (`pip install agentao`). Upstream only if the project decides to ship binaries — a separate product decision. |
@@ -369,8 +371,9 @@ regression guard was already in place before the extraction PRs landed.
    scattered `Path.home()` sites through it; the no-home fallback is a
    private, per-user, ownership-validated temp dir (cached per process).
    Tested (`tests/test_paths.py`).
-4. **PR-4 — Minimal core ACP model-switching fix** (B1). The core
-   provider/model surface and nothing beyond it:
+4. **PR-4 — Minimal core ACP model-switching fix** (B1). ✅ **Done** —
+   merged in `#56` (squash `c4fee7e`). The core provider/model surface and
+   nothing beyond it:
    - Reject the patch's `apiKey`/`baseUrl`/`modelId`/`_meta` additions.
    - Add `session/set_config_option` for `configId="model"` only
      (`provider/model` value; bare value keeps current provider).
@@ -391,11 +394,15 @@ regression guard was already in place before the extraction PRs landed.
      PR.
    - **Keep `session/list_models` as a compatibility endpoint** — no
      rewrite, no removal in this PR.
-5. **PR-5 — `set_mode` field fix** (B2, minimal). `mode` → `modeId`,
-   accept unknown values (so `code`/`ask` aren't rejected). Permission-axis
-   split + `current_mode_update` deferred to their own design.
-6. **PR-6 — `initialize.extensions` → `_meta`** (B3). Separate small PR;
-   move the array under `_meta`, regen the schema snapshot. Low priority.
+5. **PR-5 — `set_mode` field fix** (B2, minimal). ✅ **Done** — merged in
+   `#57` (squash `e1f0283`). `mode` → `modeId`, accept unknown values (so
+   `code`/`ask` aren't rejected; persisted on the session and echoed back).
+   Permission-axis split + `current_mode_update` deferred to their own
+   design.
+6. **PR-6 — `initialize.extensions` → `_meta`** (B3). ✅ **Done** — merged
+   in `#58` (squash `005a77e`). Moved the array under
+   `_meta["_agentao.cn/extensions"]` (vendor-namespaced); dropped the
+   top-level `extensions` field; regen'd the schema snapshot. Low priority.
 7. **PR-7 (later release) — retire the legacy model methods** once a host
    consumes the standard `configOptions` path: remove `session/list_models`
    **and** the `session/set_model` name alias together. The canonical
