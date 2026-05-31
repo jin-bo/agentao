@@ -13,6 +13,25 @@ _Targeting 0.4.9. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **Split six oversized modules into focused, cohesive units (internal,
+  behavior-preserving).** No public API, runtime behavior, or import path
+  changed — method/class bodies moved verbatim and every historically
+  imported name is re-exported from its original module. (#63)
+  - `agent.py`: the ~246-line `Agentao.__init__` is now a short sequence of
+    ordered phase helpers (`_validate_construction_args`, `_init_mcp_sources`,
+    `_init_session_state`, `_init_replay`, `_wire_tooling`).
+  - `cli/diagnostics_cli.py` (862 lines) → a `cli/diagnostics/` package
+    (`models` / `loaders` / `collectors` / `render` / `commands`); the old
+    module is now a thin re-export shim.
+  - `acp/transport.py` (950 lines) → `ACPTransport(_ReplayMixin,
+    _InteractionMixin)` plus a shared `_transport_helpers` module.
+  - `llm/client.py` (890 → 688 lines): request/response logging moved to a
+    `_LoggingMixin` (`agentao/llm/_logging.py`).
+  - `acp_client/client.py` (937 → 779 lines): the exception hierarchy moved to
+    `acp_client/errors.py`.
+  - `plugins/hooks/_dispatcher.py` (756 → 542 lines): the structured-stdout
+    parsers moved to a `_OutputParsingMixin` (`_output_parsing.py`).
+
 ### Fixed
 
 - **De-flake the ACP-client nonblocking-serialization subprocess test.**
