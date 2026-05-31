@@ -73,6 +73,10 @@ The same shape works for any client that launches an ACP agent over stdio: pass 
 | `session/prompt` | ✅ | Runs one Agentao turn against the named session; returns `{"stopReason": "end_turn" \| "cancelled"}`. |
 | `session/cancel` | ✅ | Fires the session's active `CancellationToken`. Idempotent; no-op on closed sessions or sessions with no active turn. Accepted both as a notification (no `id`) and as a request. |
 | `session/load` | ✅ | Reuses `agentao/session.py`'s persistence layer, hydrates the runtime's message history, and replays each persisted message as a `session/update` notification before responding. Response includes `configOptions` (same as `session/new`). |
+| `session/set_config_option` | ✅ | ACP-standard model/provider switch (`configId="model"`, `value="provider/model"` or bare `model`). Credentials resolve **server-side** via an injectable `provider_resolver` — `apiKey`/`baseUrl`/`_meta` are rejected. Returns refreshed `configOptions`. |
+| `_agentao.cn/set_model` | ✅ | Vendor free-form model switch (`{sessionId, model}`); secret-free, shares the `set_config_option` core path. Returns `{"model": …}`. |
+| `session/set_mode` | ✅ | Sets the session's ACP `modeId` (open string). Exact match to a preset (`read-only`/`workspace-write`/`full-access`/`plan`) changes permission posture; any other value persists + echoes without changing it. Returns `{"modeId": …}`. |
+| `session/set_model`, `session/list_models` | ✅ (compat) | Pre-standard model methods, kept as one-release compatibility aliases. Prefer `session/set_config_option`. |
 
 ### Server → client (sent by Agentao)
 
