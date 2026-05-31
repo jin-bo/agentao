@@ -27,7 +27,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 | `agentCapabilities` | `object` | 见下 |
 | `authMethods` | `[]` | v1 为空——Agentao 不做 ACP 级认证 |
 | `agentInfo` | `object` | `{name: "agentao", title: "Agentao", version}` |
-| `extensions` | `[{method, description}]` | 扩展方法；含 `_agentao.cn/ask_user` |
+| `_meta["_agentao.cn/extensions"]` | `[{method, description}]` | 扩展方法，放在 `_meta` 下（ACP 标准的扩展通道）；含 `_agentao.cn/ask_user` |
 
 ### `agentCapabilities` 字段（v0.2.x）
 
@@ -68,6 +68,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `sessionId` | `string` | UUID。收好——后续每个调用都要用 |
+| `configOptions` | `[object]` | 模型/提供方选择项（`configId: "model"`）；通过 `session/set_config_option` 触发切换。无法枚举目录时为空数组 |
 
 ### 常见失败
 
@@ -182,7 +183,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 
 ### ← 响应
 
-空对象。Agent 会通过 `session/update` 通知回放历史轮次（从持久化历史重建），之后才进入可接受下一轮 `session/prompt` 的状态。
+`{configOptions: [...]}`——与 `session/new` 相同的模型/提供方选择项（无目录时为空数组）。Agent 还会通过 `session/update` 通知回放历史轮次（从持久化历史重建），之后才进入可接受下一轮 `session/prompt` 的状态。
 
 ### 指纹规则
 

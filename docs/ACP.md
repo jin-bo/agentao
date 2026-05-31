@@ -69,10 +69,10 @@ The same shape works for any client that launches an ACP agent over stdio: pass 
 | Method | Status | Notes |
 |---|---|---|
 | `initialize` | ✅ | Echoes the client's `protocolVersion` if supported (currently `1`); falls back to ours otherwise. Records `clientCapabilities` per connection. |
-| `session/new` | ✅ | Creates a fresh session bound to a per-session `cwd` and (optionally) per-session MCP servers. Returns `{"sessionId": "sess_…"}`. |
+| `session/new` | ✅ | Creates a fresh session bound to a per-session `cwd` and (optionally) per-session MCP servers. Returns `{"sessionId": "sess_…", "configOptions": [...]}` (model/provider selection options — see `session/set_config_option`). |
 | `session/prompt` | ✅ | Runs one Agentao turn against the named session; returns `{"stopReason": "end_turn" \| "cancelled"}`. |
 | `session/cancel` | ✅ | Fires the session's active `CancellationToken`. Idempotent; no-op on closed sessions or sessions with no active turn. Accepted both as a notification (no `id`) and as a request. |
-| `session/load` | ✅ | Reuses `agentao/session.py`'s persistence layer, hydrates the runtime's message history, and replays each persisted message as a `session/update` notification before responding. |
+| `session/load` | ✅ | Reuses `agentao/session.py`'s persistence layer, hydrates the runtime's message history, and replays each persisted message as a `session/update` notification before responding. Response includes `configOptions` (same as `session/new`). |
 
 ### Server → client (sent by Agentao)
 
@@ -289,7 +289,7 @@ Below is a complete client→server→client conversation. Each line on the wire
     "mcpServers":[]
   }}
 
-← {"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_3a8f1b2c..."}}
+← {"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_3a8f1b2c...","configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"openai/gpt-4o","options":[...]}]}}
 
 // 3. Send a prompt. Agentao runs one chat() turn, streaming events as
 //    session/update notifications, then returns a final stopReason.

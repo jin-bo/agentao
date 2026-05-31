@@ -165,7 +165,7 @@ sequenceDiagram
 
 ## 扩展：`_agentao.cn/ask_user`
 
-协议标准里 Server 只能**请求权限**而不能**向用户追问文本**。Agentao 通过 `extensions` 机制宣告了一个私有扩展方法 `_agentao.cn/ask_user`，用来从 Server 向 Client 反问任意问题。Client 可以：
+协议标准里 Server 只能**请求权限**而不能**向用户追问文本**。Agentao 通过 `_meta["_agentao.cn/extensions"]`（ACP 标准的扩展通道）宣告了一个私有扩展方法 `_agentao.cn/ask_user`，用来从 Server 向 Client 反问任意问题。Client 可以：
 
 - 实现它：把问题弹给用户、拿到答复后返回字符串
 - 不实现：Agent 会 fallback 到 `"[ask_user: not available in non-interactive mode]"`

@@ -82,12 +82,14 @@ agentao --acp --stdio
       "title": "Agentao",
       "version": "0.2.14"
     },
-    "extensions": [
-      {
-        "method": "_agentao.cn/ask_user",
-        "description": "Request free-form text input from the user."
-      }
-    ]
+    "_meta": {
+      "_agentao.cn/extensions": [
+        {
+          "method": "_agentao.cn/ask_user",
+          "description": "Request free-form text input from the user."
+        }
+      ]
+    }
   }
 }
 ```
