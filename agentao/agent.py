@@ -127,25 +127,17 @@ class Agentao:
         the legacy callbacks into a single transport and pass
         ``transport=`` here. Both paths bypass the warning.
         """
-        # A fully-constructed object always wins over its raw-config
-        # sibling; supplying both is a programmer error.
-        if llm_client is not None and any(
-            v is not None for v in (api_key, base_url, model, temperature, max_tokens)
-        ):
-            raise ValueError(
-                "Agentao(): pass either llm_client= or "
-                "api_key/base_url/model/temperature/max_tokens, not both."
-            )
-        if mcp_manager is not None and extra_mcp_servers is not None:
-            raise ValueError(
-                "Agentao(): pass either mcp_manager= or extra_mcp_servers=, "
-                "not both."
-            )
-        if mcp_manager is not None and mcp_registry is not None:
-            raise ValueError(
-                "Agentao(): pass either mcp_manager= (pre-built) or "
-                "mcp_registry= (config source), not both."
-            )
+        self._validate_construction_args(
+            llm_client=llm_client,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            mcp_manager=mcp_manager,
+            extra_mcp_servers=extra_mcp_servers,
+            mcp_registry=mcp_registry,
+        )
 
         # Freeze working directory to an absolute path. Resolved once so
         # subsequent accesses are cheap and consistent. Required since
@@ -160,22 +152,7 @@ class Agentao:
         self.filesystem = filesystem
         self.shell = shell
 
-        # Snapshot of session-scoped MCP server configs (Issue 11). Stored
-        # privately so a caller can't mutate it after construction. ``None``
-        # means "no extras", preserving the legacy CLI behavior of
-        # file-only MCP loading. We deep-copy at the dict level so a
-        # subsequent mutation by the caller cannot leak into _init_mcp.
-        self._extra_mcp_servers: Dict[str, Dict[str, Any]] = (
-            {name: dict(cfg) for name, cfg in extra_mcp_servers.items()}
-            if extra_mcp_servers
-            else {}
-        )
-
-        # Issue #17: optional MCPRegistry replaces the implicit file-load
-        # path inside ``init_mcp``. ``None`` means "use the legacy file
-        # source via ``load_mcp_config``" — the factory injects a
-        # ``FileBackedMCPRegistry`` so the CLI/ACP path always sets this.
-        self._mcp_registry: Optional["MCPRegistry"] = mcp_registry
+        self._init_mcp_sources(extra_mcp_servers, mcp_registry)
 
         # Anchor the LLM debug log to the agent's effective working directory
         # so it always resolves to an absolute, writable path. CLI runs land it
@@ -221,30 +198,97 @@ class Agentao:
             memory_manager=self._memory_manager,
         )
 
-        self.bg_store: Optional["BackgroundTaskStore"] = bg_store
-        # Must be set before _register_agent_tools(): the sub-agent wrapper
-        # captures this via getattr(agent, "sandbox_policy", ...) at
-        # registration time, so a late assignment leaves sub-agents
-        # unsandboxed.
-        self.sandbox_policy: Optional[SandboxPolicy] = sandbox_policy
+        # Session-scoped state (session id, host event stream, conversation
+        # history, plan session, project instructions) must land before
+        # ``_wire_tooling`` — the host emitters built there capture
+        # ``self._host_events`` / ``self._session_id``.
+        self._init_session_state(plan_session, project_instructions)
+        self._init_replay(replay_config)
+        self._wire_tooling(
+            mcp_manager=mcp_manager,
+            bg_store=bg_store,
+            sandbox_policy=sandbox_policy,
+            enable_builtin_agents=enable_builtin_agents,
+        )
 
-        # Initialize tool registry
-        self.tools = ToolRegistry()
-        self._register_tools()
+    def _validate_construction_args(
+        self,
+        *,
+        llm_client: Optional[LLMClient],
+        api_key: Optional[str],
+        base_url: Optional[str],
+        model: Optional[str],
+        temperature: Optional[float],
+        max_tokens: Optional[int],
+        mcp_manager: Optional["McpClientManager"],
+        extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]],
+        mcp_registry: Optional["MCPRegistry"],
+    ) -> None:
+        """Reject mutually-exclusive construction kwargs.
 
-        # When an already-built manager is injected, skip the file
-        # discovery pass entirely; the host owns the lifecycle. We still
-        # have to wrap and register every tool the manager exposes, or
-        # the model can't see any of them.
-        if mcp_manager is not None:
-            self.mcp_manager = mcp_manager
-            register_mcp_tools(self, mcp_manager)
-        else:
-            self.mcp_manager = self._init_mcp()
+        A fully-constructed object always wins over its raw-config
+        sibling; supplying both is a programmer error.
+        """
+        if llm_client is not None and any(
+            v is not None for v in (api_key, base_url, model, temperature, max_tokens)
+        ):
+            raise ValueError(
+                "Agentao(): pass either llm_client= or "
+                "api_key/base_url/model/temperature/max_tokens, not both."
+            )
+        if mcp_manager is not None and extra_mcp_servers is not None:
+            raise ValueError(
+                "Agentao(): pass either mcp_manager= or extra_mcp_servers=, "
+                "not both."
+            )
+        if mcp_manager is not None and mcp_registry is not None:
+            raise ValueError(
+                "Agentao(): pass either mcp_manager= (pre-built) or "
+                "mcp_registry= (config source), not both."
+            )
 
+    def _init_mcp_sources(
+        self,
+        extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]],
+        mcp_registry: Optional["MCPRegistry"],
+    ) -> None:
+        """Stash the two non-manager MCP config inputs.
+
+        ``extra_mcp_servers`` (Issue 11) is a session-scoped snapshot, stored
+        privately so a caller can't mutate it after construction. We
+        deep-copy at the dict level so a subsequent caller mutation cannot
+        leak into ``_init_mcp``; ``None`` means "no extras", preserving the
+        legacy CLI behavior of file-only MCP loading.
+
+        ``mcp_registry`` (Issue #17) replaces the implicit file-load path
+        inside ``init_mcp``. ``None`` means "use the legacy file source via
+        ``load_mcp_config``" — the factory injects a ``FileBackedMCPRegistry``
+        so the CLI/ACP path always sets this.
+        """
+        self._extra_mcp_servers: Dict[str, Dict[str, Any]] = (
+            {name: dict(cfg) for name, cfg in extra_mcp_servers.items()}
+            if extra_mcp_servers
+            else {}
+        )
+        self._mcp_registry: Optional["MCPRegistry"] = mcp_registry
+
+    def _init_session_state(
+        self,
+        plan_session: Optional[PlanSession],
+        project_instructions: Optional[str],
+    ) -> None:
+        """Initialize construction-time session / conversation state.
+
+        Covers plugin-hook slots (populated later by the CLI), the fallback
+        session id + host event stream, the per-turn cancellation token,
+        conversation history, the plan session, and project instructions.
+        Must run before ``_wire_tooling`` because the host emitters built
+        there capture ``self._host_events`` / ``self._session_id``.
+        """
         # Plugin hook rules — populated by _load_and_register_plugins() in cli.py.
         self._plugin_hook_rules: list = []
         self._loaded_plugins: list = []
+
         # Construction-time UUID fallback so the public host contract
         # reports a non-empty ``session_id`` before the CLI/ACP layer
         # assigns a persisted id. Hosts overwrite this directly.
@@ -270,14 +314,56 @@ class Agentao:
         else:
             self.project_instructions = self._load_project_instructions()
 
-        # Replay state lives on a separate ``ReplayManager``; the host
-        # factory (``embedding/factory.py``) attaches it. Hosts that
-        # construct ``Agentao`` directly leave ``replay_manager`` as
-        # ``None`` (no recording).
+    def _init_replay(self, replay_config: Optional["ReplayConfig"]) -> None:
+        """Attach a ReplayManager when a replay config was supplied.
+
+        Replay state lives on a separate ``ReplayManager``; the host
+        factory (``embedding/factory.py``) attaches it. Hosts that
+        construct ``Agentao`` directly leave ``replay_manager`` as ``None``
+        (no recording).
+        """
         self.replay_manager: Optional["ReplayManager"] = None
         if replay_config is not None:
             from .replay import ReplayManager as _ReplayManager
             self.replay_manager = _ReplayManager(self, config=replay_config)
+
+    def _wire_tooling(
+        self,
+        *,
+        mcp_manager: Optional["McpClientManager"],
+        bg_store: Optional["BackgroundTaskStore"],
+        sandbox_policy: Optional[SandboxPolicy],
+        enable_builtin_agents: bool,
+    ) -> None:
+        """Build the tool registry, MCP tools, sub-agents, and tool runner.
+
+        Ordering is load-bearing: ``bg_store`` / ``sandbox_policy`` must be
+        set before ``_register_tools`` / ``_register_agent_tools`` (the
+        sub-agent wrapper captures ``sandbox_policy`` at registration time),
+        and ``_init_host_emitters`` must run before ``_register_agent_tools``
+        so the wrapper captures a live ``HostSubagentEmitter`` rather than
+        ``None``.
+        """
+        self.bg_store: Optional["BackgroundTaskStore"] = bg_store
+        # Must be set before _register_agent_tools(): the sub-agent wrapper
+        # captures this via getattr(agent, "sandbox_policy", ...) at
+        # registration time, so a late assignment leaves sub-agents
+        # unsandboxed.
+        self.sandbox_policy: Optional[SandboxPolicy] = sandbox_policy
+
+        # Initialize tool registry
+        self.tools = ToolRegistry()
+        self._register_tools()
+
+        # When an already-built manager is injected, skip the file
+        # discovery pass entirely; the host owns the lifecycle. We still
+        # have to wrap and register every tool the manager exposes, or
+        # the model can't see any of them.
+        if mcp_manager is not None:
+            self.mcp_manager = mcp_manager
+            register_mcp_tools(self, mcp_manager)
+        else:
+            self.mcp_manager = self._init_mcp()
 
         # Host emitter setup MUST run before ``_register_agent_tools``
         # so the sub-agent wrapper captures a live ``HostSubagentEmitter``
