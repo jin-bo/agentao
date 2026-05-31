@@ -136,7 +136,9 @@ def make_runner_with_stub_llm(
     )
     monkeypatch.setattr(
         runner, "_call_llm_with_overflow_recovery",
-        lambda m, s, t, k: fake_outcome,
+        # Accept **kw so the stub tolerates optional kwargs the real method
+        # takes (e.g. image_fallback_text / image_fallback_index).
+        lambda m, s, t, k, **kw: fake_outcome,
     )
     monkeypatch.setattr(agent, "_build_system_prompt", lambda: "")
     agent.skill_manager = MagicMock()

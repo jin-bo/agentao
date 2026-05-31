@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...context_manager import is_context_too_long_error
+from ...llm._retry import _is_image_unsupported
 from ...transport import AgentEvent, EventType
 from ..sanitize import canonicalize_tool_arguments, sanitize_assistant_message
 from ._compaction import _CompactionMixin
@@ -146,6 +147,8 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             return hook_outcome.early_return
         user_message = hook_outcome.user_message
 
+        image_fallback_text: Optional[str] = None
+        image_fallback_index: Optional[int] = None
         if images:
             # Multimodal turn: emit OpenAI-style content parts (text +
             # image_url). The base64 data rides on the wire here; the LLM
@@ -178,6 +181,12 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     "type": "image_url",
                     "image_url": {"url": data_url},
                 })
+            image_fallback_text = (
+                system_reminder
+                + user_message
+                + self._render_image_reference_fallback(images)
+            )
+            image_fallback_index = len(agent.messages)
             agent.add_message("user", content)
         else:
             agent.add_message("user", system_reminder + user_message)
@@ -240,7 +249,12 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             agent.transport.emit(AgentEvent(EventType.TURN_START, {}))
 
             llm_outcome = self._call_llm_with_overflow_recovery(
-                messages_with_system, system_prompt, tools, token,
+                messages_with_system,
+                system_prompt,
+                tools,
+                token,
+                image_fallback_text=image_fallback_text if iteration == 1 else None,
+                image_fallback_index=image_fallback_index if iteration == 1 else None,
             )
             if llm_outcome.error_return is not None:
                 return llm_outcome.error_return
@@ -683,6 +697,8 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         system_prompt: str,
         tools: list,
         token: CancellationToken,
+        image_fallback_text: Optional[str] = None,
+        image_fallback_index: Optional[int] = None,
     ) -> "ChatLoopRunner._LlmOutcome":
         agent = self._agent
         try:
@@ -693,6 +709,26 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 system_prompt=system_prompt,
             )
         except Exception as e:
+            if image_fallback_text and _is_image_unsupported(str(e)):
+                agent.llm.logger.info(
+                    "Model rejected image input; retrying with image references as text"
+                )
+                self._replace_image_message_for_fallback(
+                    image_fallback_text,
+                    image_fallback_index,
+                )
+                messages_with_system = [
+                    {"role": "system", "content": system_prompt}
+                ] + agent.messages
+                try:
+                    response = agent._llm_call(messages_with_system, tools, token)
+                    return ChatLoopRunner._LlmOutcome(
+                        response=response,
+                        messages_with_system=messages_with_system,
+                        system_prompt=system_prompt,
+                    )
+                except Exception as fallback_e:
+                    e = fallback_e
             if not is_context_too_long_error(e):
                 err_msg = f"[LLM API error: {e}]"
                 agent.llm.logger.error(f"LLM call failed: {e}")
@@ -765,6 +801,63 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     agent.llm.logger.error(f"LLM call failed after compression: {e2}")
                     agent.messages.append({"role": "assistant", "content": err_msg})
                     return ChatLoopRunner._LlmOutcome(error_return=err_msg)
+
+    # ------------------------------------------------------------------
+    # Image fallback helpers
+    # ------------------------------------------------------------------
+
+    def _render_image_reference_fallback(self, images: List[Dict[str, str]]) -> str:
+        refs = []
+        for i, img in enumerate(images, 1):
+            source = (
+                img.get("_source")
+                or img.get("url")
+                or img.get("path")
+                or img.get("_label")
+                or f"inline image {i}"
+            )
+            mime_type = img.get("mimeType")
+            refs.append(f"- {source}" + (f" ({mime_type})" if mime_type else ""))
+        return (
+            "\n\n[Image attachments could not be sent because the selected "
+            "model does not support image input. The available image "
+            "references are:]\n"
+            + "\n".join(refs)
+        )
+
+    def _replace_image_message_for_fallback(
+        self,
+        fallback_text: str,
+        preferred_index: Optional[int],
+    ) -> None:
+        agent = self._agent
+        if (
+            preferred_index is not None
+            and 0 <= preferred_index < len(agent.messages)
+            and self._message_has_image_content(agent.messages[preferred_index])
+        ):
+            agent.messages[preferred_index] = {
+                "role": "user",
+                "content": fallback_text,
+            }
+            return
+
+        for i in range(len(agent.messages) - 1, -1, -1):
+            if self._message_has_image_content(agent.messages[i]):
+                agent.messages[i] = {"role": "user", "content": fallback_text}
+                return
+
+    @staticmethod
+    def _message_has_image_content(message: Dict[str, Any]) -> bool:
+        if message.get("role") != "user":
+            return False
+        content = message.get("content")
+        if not isinstance(content, list):
+            return False
+        return any(
+            isinstance(part, dict) and part.get("type") == "image_url"
+            for part in content
+        )
 
     # ------------------------------------------------------------------
     # Skill / memory diff replay events

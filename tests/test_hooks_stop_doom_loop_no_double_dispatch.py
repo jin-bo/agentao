@@ -72,7 +72,9 @@ def test_doom_loop_dispatches_stop_exactly_once(tmp_path, monkeypatch):
     monkeypatch.setattr(
         runner,
         "_call_llm_with_overflow_recovery",
-        lambda m, s, t, k: fake_outcome,
+        # Accept **kw so the stub tolerates optional kwargs the real method
+        # takes (e.g. image_fallback_text / image_fallback_index).
+        lambda m, s, t, k, **kw: fake_outcome,
     )
 
     agent.tool_runner = MagicMock()

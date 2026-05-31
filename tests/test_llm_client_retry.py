@@ -18,7 +18,7 @@ import openai
 import pytest
 
 from agentao.llm import client as client_mod
-from agentao.llm._retry import _is_temperature_unsupported
+from agentao.llm._retry import _is_image_unsupported, _is_temperature_unsupported
 from agentao.llm.client import (
     LLMClient,
     MAX_RETRY_ATTEMPTS,
@@ -112,6 +112,26 @@ class TestIsTemperatureUnsupported:
     ])
     def test_non_rejection_messages_do_not_match(self, msg):
         assert _is_temperature_unsupported(msg) is False
+
+
+class TestIsImageUnsupported:
+    @pytest.mark.parametrize("msg", [
+        "Invalid content type. image_url is only supported by vision models",
+        "InternalError.Algo.InvalidParameter: The provided messages input is invalid. "
+        "The error info is [Unexpected item type in content.].",
+        "Failed to deserialize the JSON body into the target type: messages[1]: "
+        "unknown variant image_url, expected text at line 1 column 34878",
+    ])
+    def test_rejection_messages_match(self, msg):
+        assert _is_image_unsupported(msg) is True
+
+    @pytest.mark.parametrize("msg", [
+        "rate limit exceeded",
+        "invalid text content",
+        "unknown variant tool_call, expected text",
+    ])
+    def test_non_rejection_messages_do_not_match(self, msg):
+        assert _is_image_unsupported(msg) is False
 
 
 class TestClassifyRetry:

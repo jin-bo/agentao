@@ -137,6 +137,35 @@ def _is_temperature_unsupported(err_str: str) -> bool:
     )
 
 
+def _is_image_unsupported(err_str: str) -> bool:
+    """True when an error says the model rejects image / vision input."""
+    s = err_str.lower()
+    provider_multimodal_rejections = (
+        "unexpected item type in content" in s
+        or ("unknown variant image_url" in s and "expected text" in s)
+    )
+    if provider_multimodal_rejections:
+        return True
+    image_mentioned = (
+        "image_url" in s
+        or "image input" in s
+        or "image inputs" in s
+        or "images" in s
+        or "vision" in s
+        or "multimodal" in s
+    )
+    if not image_mentioned:
+        return False
+    return (
+        "does not support" in s
+        or "do not support" in s
+        or "not supported" in s
+        or "unsupported" in s
+        or "only supported" in s
+        or "invalid content type" in s
+    )
+
+
 def _compute_backoff_delay(attempt: int, retry_after_header: Optional[str] = None) -> float:
     """Compute the next sleep duration. Honors ``Retry-After`` when present."""
     parsed = _parse_retry_after(retry_after_header)
