@@ -682,7 +682,10 @@ class TestNonblockingSerialization:
             # After cancel: lock released, turn cleared, prompt_once ok.
             with mgr._active_turns_lock:
                 assert mgr._active_turns == {}
-            r = mgr.prompt_once("srv", "hello", timeout=5)
+            # timeout=10 (the file's "slow round-trip" budget, cf. lines 325/453)
+            # not 5: this is a real subprocess round-trip and flaked under CI
+            # contention on the Py3.12 runner (run 26704087541).
+            r = mgr.prompt_once("srv", "hello", timeout=10)
             assert r.stop_reason in ("end_turn", "cancelled")
         finally:
             mgr.stop_all()

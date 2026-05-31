@@ -15,6 +15,14 @@ _Targeting 0.4.9. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **De-flake the ACP-client nonblocking-serialization subprocess test.**
+  `test_prompt_once_server_busy_during_nonblocking_turn`'s final post-cancel
+  `prompt_once` used a 5 s budget; under CI contention on the Python 3.12
+  runner the real subprocess round-trip occasionally exceeded it
+  (`AcpClientError: timeout waiting for session/prompt response`). Bumped to
+  the file's existing 10 s "slow round-trip" budget. Test-only; no runtime
+  change.
+
 ---
 
 ## [0.4.8] — 2026-05-30
