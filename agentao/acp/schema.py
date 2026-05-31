@@ -426,24 +426,25 @@ class AcpAgentaoSetModelResponse(BaseModel):
 class AcpSessionSetModeRequest(BaseModel):
     """``session/set_mode`` request params.
 
-    ``mode`` is constrained to the PermissionMode values the runtime
-    actually accepts; ``handle_session_set_mode`` parses any other
-    string into a ``-32602`` error, so the schema must reflect the
-    closed set or schema-following clients would generate requests
-    that fail at runtime. New presets require both a runtime change
-    and a snapshot bump (a load-bearing pairing).
+    The field is the ACP-standard ``modeId`` (not ``mode``), and it is an
+    **open string**, not a closed enum: a ``modeId`` is a UI/behavioural
+    selector that need not map to an Agentao permission preset. The handler
+    applies a permission preset only on an exact match
+    (``read-only`` / ``workspace-write`` / ``full-access`` / ``plan``) and
+    otherwise persists the value unchanged — so a client mode like ``code`` /
+    ``ask`` round-trips instead of being rejected.
     """
 
     sessionId: str
-    mode: Literal["read-only", "workspace-write", "full-access", "plan"]
+    modeId: str = Field(min_length=1)
 
     model_config = ConfigDict(extra="forbid")
 
 
 class AcpSessionSetModeResponse(BaseModel):
-    """The active mode after the update — confirms which preset is live."""
+    """The active ``modeId`` after the update (echoes the persisted value)."""
 
-    mode: Literal["read-only", "workspace-write", "full-access", "plan"]
+    modeId: str
 
     model_config = ConfigDict(extra="forbid")
 

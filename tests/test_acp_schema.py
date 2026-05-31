@@ -345,27 +345,33 @@ def test_session_set_model_rejects_payloads_runtime_rejects():
 
 def test_session_set_mode_round_trip():
     req = AcpSessionSetModeRequest.model_validate({
-        "sessionId": "s-1", "mode": "read-only",
+        "sessionId": "s-1", "modeId": "read-only",
     })
-    assert req.mode == "read-only"
-    resp = AcpSessionSetModeResponse.model_validate({"mode": "read-only"})
-    assert resp.mode == "read-only"
+    assert req.modeId == "read-only"
+    resp = AcpSessionSetModeResponse.model_validate({"modeId": "read-only"})
+    assert resp.modeId == "read-only"
 
 
-def test_session_set_mode_rejects_unsupported_values():
-    """Mode is constrained to the runtime's ``PermissionMode`` set;
-    arbitrary strings (including legacy/aspirational names like
-    ``acceptEdits``) must fail validation rather than silently
-    advertise a setting the runtime would reject with ``-32602``."""
-    for valid in ("read-only", "workspace-write", "full-access", "plan"):
-        AcpSessionSetModeRequest.model_validate({
-            "sessionId": "s-1", "mode": valid,
+def test_session_set_mode_accepts_open_mode_ids():
+    """``modeId`` is the ACP-standard field and an OPEN string — a UI mode
+    that has no Agentao permission meaning (DeepChat's ``code`` / ``ask``)
+    must validate, not be rejected. Permission presets are still valid
+    values; the handler applies a preset only on an exact match."""
+    for value in (
+        "read-only", "workspace-write", "full-access", "plan",  # presets
+        "code", "ask", "acceptEdits",                            # UI-only modes
+    ):
+        req = AcpSessionSetModeRequest.model_validate({
+            "sessionId": "s-1", "modeId": value,
         })
-    for invalid in ("acceptEdits", "bypassPermissions", "", "WORKSPACE_WRITE"):
-        with pytest.raises(ValidationError):
-            AcpSessionSetModeRequest.model_validate({
-                "sessionId": "s-1", "mode": invalid,
-            })
+        assert req.modeId == value
+    # Still rejects an empty modeId and the legacy ``mode`` field name.
+    with pytest.raises(ValidationError):
+        AcpSessionSetModeRequest.model_validate({"sessionId": "s-1", "modeId": ""})
+    with pytest.raises(ValidationError):
+        AcpSessionSetModeRequest.model_validate({
+            "sessionId": "s-1", "mode": "read-only",
+        })
 
 
 def test_session_list_models_round_trip_with_warning():
