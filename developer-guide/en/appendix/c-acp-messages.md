@@ -27,7 +27,7 @@ Handshake. MUST be first call.
 | `agentCapabilities` | `object` | See below |
 | `authMethods` | `[]` | Empty in v1 — Agentao does no ACP-level auth |
 | `agentInfo` | `object` | `{name: "agentao", title: "Agentao", version}` |
-| `extensions` | `[{method, description}]` | Vendor methods; includes `_agentao.cn/ask_user` |
+| `_meta["_agentao.cn/extensions"]` | `[{method, description}]` | Vendor methods advertised under `_meta` (ACP's standard extension channel); includes `_agentao.cn/ask_user` |
 
 ### `agentCapabilities` block (v0.2.x)
 
@@ -68,6 +68,7 @@ Create a fresh session.
 | Field | Type | Notes |
 |-------|------|-------|
 | `sessionId` | `string` | UUID. Keep it — needed for every subsequent call |
+| `configOptions` | `[object]` | Model/provider selection options (`configId: "model"`); drive a switch via `session/set_config_option`. Empty list if the agent can't enumerate a catalog |
 
 ### Common failures
 
@@ -182,7 +183,7 @@ Resume a session by id. Only usable when the agent advertises `loadSession: true
 
 ### ← Response
 
-Empty object. The agent replays prior turns as `session/update` notifications (reconstructed from persisted history) before it's ready for the next `session/prompt`.
+`{configOptions: [...]}` — the same model/provider selection options as `session/new` (empty list if no catalog). The agent also replays prior turns as `session/update` notifications (reconstructed from persisted history) before it's ready for the next `session/prompt`.
 
 ### Fingerprint rule
 
