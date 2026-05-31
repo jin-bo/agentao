@@ -189,7 +189,85 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 
 `session/new` 时 `mcpServers` 会被哈希。如果 `session/load` 传了不同的集合（增/删/重排），Agentao 可能拒绝或静默重建——取决于实现阶段。拿不准就**传原样列表**。
 
-## C.8 `_agentao.cn/ask_user` ⇠ 通知（扩展）
+## C.8 `session/set_config_option`
+
+用 ACP 标准的 config-option 机制切换模型（以及可选地切换提供方）。**凭证绝不上线**——Agentao 在服务端用宿主注入的 `provider_resolver` 解析凭证（默认走环境变量）。
+
+### → 请求
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `sessionId` | `string` | 是 | 活跃会话 |
+| `configId` | `string` | 是 | 必须是 `"model"`；其它值 → `-32600` Invalid Request |
+| `value` | `string` | 是 | `provider/model`（如 `openai/gpt-4o`）或裸 `model`（保持当前提供方）。按**第一个** `/` 切分；provider 转小写，model 原样保留 |
+
+`apiKey`、`baseUrl`、`_meta` 以及任何其它字段都会被**拒绝**（`-32602`；`extra="forbid"` + handler 白名单）——*"凭证在服务端解析，绝不上线"*。
+
+### ← 响应
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `configOptions` | `[object]` | 刷新后的选择项（与 `session/new` 同形），反映新的 `currentValue` |
+
+### 解析与错误
+
+- **`provider/model`**：Agentao 调 `provider_resolver(provider_id)` → `{api_key, base_url?}`，然后整套切换 provider + model。**默认** resolver 只接受配置的 `LLM_PROVIDER`（大小写不敏感），读 `{PREFIX}_API_KEY` / `{PREFIX}_BASE_URL`；其它 provider → `-32600` `cannot resolve provider '<id>'`。要支持更多提供方，注入更丰富的 resolver。
+- **裸 `model`**：只换模型（provider 不变），与 `_agentao.cn/set_model` 走同一条核心路径。
+- resolver 失败时，服务端只记录 provider id + 异常**类型**，绝不记录消息（可能夹带密钥）。
+
+### `ConfigOption` 结构（`configOptions` 里的条目）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `string` | `"model"` |
+| `name` | `string` | `"Model"` |
+| `category` | `"mode" \| "model" \| "thought_level"` | `"model"` |
+| `type` | `"select"` | v1 只有 `select` |
+| `currentValue` | `string?` | 当前模型的 `provider/model` |
+| `options` | `[{value, name?, description?}]` | 候选项；`value` 是 `provider/model`。默认目录 = 当前环境的单一模型；更丰富的目录由宿主注入 |
+
+## C.9 `_agentao.cn/set_model`（扩展）
+
+Agentao 独有的自由文本换模型——`session/set_config_option` 裸值路径的厂商版兄弟。无密钥；与其共享同一条核心路径。
+
+### → 请求
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `sessionId` | `string` | 是 | 活跃会话 |
+| `model` | `string` | 是 | 当前提供方接受的任意模型 id（会 strip）。自由文本——不按目录校验 |
+
+`apiKey`、`baseUrl`、`_meta` 会被**拒绝**（`-32602`）。
+
+### ← 响应
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `model` | `string` | 切换后的活跃模型 id（`agent.llm.model`） |
+
+## C.10 `session/set_mode`
+
+设置会话的 ACP `modeId`。字段是 ACP 标准的 **`modeId`**（不是 `mode`），且是**开放字符串**——一个 UI/行为选择器，不一定映射到 Agentao 权限预设。
+
+### → 请求
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `sessionId` | `string` | 是 | 活跃会话 |
+| `modeId` | `string` | 是 | 非空。精确命中权限预设（`read-only` / `workspace-write` / `full-access` / `plan`）时 Agentao 应用之；其它值（如 `code`、`ask`）会被持久化并回显，但**不改变**权限姿态 |
+
+### ← 响应
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `modeId` | `string` | 回显持久化的值 |
+
+### 说明
+
+- 命中预设**要求**会话有 `PermissionEngine`，否则 `-32600` Invalid Request。未知 modeId 不需要引擎——纯 UI 状态。
+- 按会话隔离：每个会话拥有自己的引擎，会话 A 的预设变更绝不影响会话 B。
+
+## C.11 `_agentao.cn/ask_user` ⇠ 通知（扩展）
 
 Agentao 独有，服务器向用户问一个自由文本问题。
 
@@ -208,7 +286,7 @@ Agentao 独有，服务器向用户问一个自由文本问题。
 
 用户不可达时，客户端可回返哨兵 `"(user unavailable)"`（常量 `ASK_USER_UNAVAILABLE_SENTINEL`）。
 
-## C.9 JSON-RPC 错误码速查
+## C.12 JSON-RPC 错误码速查
 
 | 代码 | 名 | 含义 |
 |------|-----|------|

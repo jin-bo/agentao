@@ -189,7 +189,85 @@ Resume a session by id. Only usable when the agent advertises `loadSession: true
 
 `mcpServers` is hashed during `session/new`. If `session/load` passes a different set (added / removed / reordered), Agentao may either reject the call or silently re-init — depends on implementation phase. When in doubt, use the **same** list you originally passed.
 
-## C.8 `_agentao.cn/ask_user` ⇠ notification (extension)
+## C.8 `session/set_config_option`
+
+Switch the model (and optionally the provider) via the ACP-standard config-option mechanism. **Credentials never travel on the wire** — the agent resolves them server-side from a host-injected `provider_resolver` (default: environment).
+
+### → Request
+
+| Field | Type | Req | Notes |
+|-------|------|-----|-------|
+| `sessionId` | `string` | yes | Active session |
+| `configId` | `string` | yes | Must be `"model"`; any other value → `-32600` Invalid Request |
+| `value` | `string` | yes | `provider/model` (e.g. `openai/gpt-4o`) or a bare `model` (keeps the current provider). Split on the **first** `/`; provider is lower-cased, model kept as-is |
+
+`apiKey`, `baseUrl`, `_meta`, and any other field are **rejected** (`-32602`; `extra="forbid"` + handler whitelist) — *"credentials resolve server-side and never travel on the wire"*.
+
+### ← Response
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `configOptions` | `[object]` | Refreshed selection options (same shape as `session/new`), reflecting the new `currentValue` |
+
+### Resolution & errors
+
+- **`provider/model`**: the agent calls `provider_resolver(provider_id)` → `{api_key, base_url?}`, then swaps provider + model. The **default** resolver accepts only the configured `LLM_PROVIDER` (case-insensitive) and reads `{PREFIX}_API_KEY` / `{PREFIX}_BASE_URL`; any other provider → `-32600` `cannot resolve provider '<id>'`. Inject a richer resolver to support more providers.
+- **bare `model`**: model-only switch (provider unchanged) via the same path as `_agentao.cn/set_model`.
+- On resolver failure the server logs only the provider id + exception **type**, never the message (it could embed a key).
+
+### `ConfigOption` shape (entries in `configOptions`)
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | `string` | `"model"` |
+| `name` | `string` | `"Model"` |
+| `category` | `"mode" \| "model" \| "thought_level"` | `"model"` |
+| `type` | `"select"` | only `select` in v1 |
+| `currentValue` | `string?` | `provider/model` of the live model |
+| `options` | `[{value, name?, description?}]` | Catalog choices; `value` is `provider/model`. Default catalog = the single current env model; richer catalog host-injected |
+
+## C.9 `_agentao.cn/set_model` (extension)
+
+Agentao-specific free-form model switch — the vendor sibling of `session/set_config_option`'s bare-value path. Secret-free; shares the same core code path.
+
+### → Request
+
+| Field | Type | Req | Notes |
+|-------|------|-----|-------|
+| `sessionId` | `string` | yes | Active session |
+| `model` | `string` | yes | Any model id the current provider accepts (stripped). Free-form — not validated against a catalog |
+
+`apiKey`, `baseUrl`, `_meta` are **rejected** (`-32602`).
+
+### ← Response
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `model` | `string` | The active model id after the switch (`agent.llm.model`) |
+
+## C.10 `session/set_mode`
+
+Set the session's ACP `modeId`. The field is the ACP-standard **`modeId`** (not `mode`) and is an **open string** — a UI/behavioural selector that need not map to an Agentao permission preset.
+
+### → Request
+
+| Field | Type | Req | Notes |
+|-------|------|-----|-------|
+| `sessionId` | `string` | yes | Active session |
+| `modeId` | `string` | yes | Non-empty. On an exact match to a permission preset (`read-only` / `workspace-write` / `full-access` / `plan`) the agent applies it; any other value (e.g. `code`, `ask`) is persisted and echoed **without** changing permission posture |
+
+### ← Response
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `modeId` | `string` | Echoes the persisted value |
+
+### Notes
+
+- A recognized preset **requires** the session to have a `PermissionEngine`, else `-32600` Invalid Request. Unknown modeIds need no engine — they are pure UI state.
+- Per-session: each session owns its own engine, so a preset change on session A never affects session B.
+
+## C.11 `_agentao.cn/ask_user` ⇠ notification (extension)
 
 Agentao-specific. Server asks the user a free-form question.
 
@@ -208,7 +286,7 @@ Agentao-specific. Server asks the user a free-form question.
 
 If the user is unavailable, clients may return the sentinel `"(user unavailable)"` (constant `ASK_USER_UNAVAILABLE_SENTINEL`).
 
-## C.9 JSON-RPC error codes (quick reference)
+## C.12 JSON-RPC error codes (quick reference)
 
 | Code | Name | Meaning |
 |------|------|---------|
