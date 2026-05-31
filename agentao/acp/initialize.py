@@ -140,12 +140,19 @@ def handle_initialize(server: "AcpServer", params: Any) -> Dict[str, Any]:
         "agentCapabilities": AGENT_CAPABILITIES,
         "authMethods": AUTH_METHODS,
         "agentInfo": AGENT_INFO,
-        "extensions": [
-            {
-                "method": METHOD_ASK_USER,
-                "description": "Request free-form text input from the user.",
-            },
-        ],
+        # ACP advertises extensions through ``_meta`` rather than a top-level
+        # ``extensions`` array (the standard fields are protocolVersion /
+        # agentCapabilities / agentInfo / authMethods). We namespace the
+        # extension list under the vendor key ``_agentao.cn/extensions`` so it
+        # never collides with another extension's ``_meta`` payload.
+        "_meta": {
+            "_agentao.cn/extensions": [
+                {
+                    "method": METHOD_ASK_USER,
+                    "description": "Request free-form text input from the user.",
+                },
+            ],
+        },
     }
 
 

@@ -151,6 +151,8 @@ class TestCapabilityAdvertisement:
             "clientCapabilities": {},
         })
 
-        assert "extensions" in result
-        ext = result["extensions"]
+        # Extensions are advertised through ``_meta`` (ACP's standard channel),
+        # namespaced under the vendor key — not a top-level ``extensions`` array.
+        assert "extensions" not in result
+        ext = result["_meta"]["_agentao.cn/extensions"]
         assert any(e["method"] == METHOD_ASK_USER for e in ext)

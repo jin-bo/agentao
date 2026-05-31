@@ -99,6 +99,26 @@ class AcpInitializeExtension(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class AcpInitializeMeta(BaseModel):
+    """The ``_meta`` object on the ``initialize`` response.
+
+    ACP advertises extensions through ``_meta`` rather than a top-level
+    ``extensions`` array, so ``handle_initialize`` namespaces its extension
+    list under the vendor key ``_agentao.cn/extensions``. The object is open
+    (extra="allow") so other extensions can attach their own namespaced
+    payloads to the same ``_meta`` without breaking schema-following clients.
+    """
+
+    agentao_extensions: List[AcpInitializeExtension] = Field(
+        default_factory=list, alias="_agentao.cn/extensions"
+    )
+
+    # Alias-only: the wire key is ``_agentao.cn/extensions``; the Python field
+    # name is never an accepted input key (no ``populate_by_name``), so the
+    # validation surface stays identical to the published JSON Schema.
+    model_config = ConfigDict(extra="allow")
+
+
 class AcpInitializeResponse(BaseModel):
     """``initialize`` response result."""
 
@@ -106,12 +126,16 @@ class AcpInitializeResponse(BaseModel):
     agentCapabilities: AcpAgentCapabilities
     authMethods: List[Dict[str, Any]] = Field(default_factory=list)
     agentInfo: AcpAgentInfo
-    # ``handle_initialize`` returns an ``extensions`` array advertising
-    # ``_agentao.cn/ask_user`` (and any future runtime extensions).
-    # Without this field, schema-following hosts would reject every
-    # successful initialize response that includes the extension list.
-    extensions: List[AcpInitializeExtension] = Field(default_factory=list)
+    # ``handle_initialize`` advertises ``_agentao.cn/ask_user`` (and any future
+    # runtime extensions) through ``_meta._agentao.cn/extensions`` — ACP's
+    # standard channel for extension data — rather than a non-standard
+    # top-level ``extensions`` array. Without this field, schema-following
+    # hosts would reject every successful initialize response.
+    meta: Optional[AcpInitializeMeta] = Field(default=None, alias="_meta")
 
+    # Alias-only (no ``populate_by_name``): only the wire key ``_meta`` is an
+    # accepted input key, so ``extra="forbid"`` is not weakened by also
+    # accepting the bare field name ``meta`` — the handler never emits it.
     model_config = ConfigDict(extra="forbid")
 
 
@@ -750,6 +774,7 @@ __all__ = [
     "AcpConfigOptionChoice",
     "AcpError",
     "AcpInitializeExtension",
+    "AcpInitializeMeta",
     "AcpInitializeRequest",
     "AcpInitializeResponse",
     "AcpMcpEnvVar",

@@ -173,7 +173,7 @@ ACP interactions: 1 pending
 
 ## ACP Extension: `_agentao.cn/ask_user`
 
-Agentao supports a private ACP extension method `_agentao.cn/ask_user` for requesting free-form text input from the user. This is advertised in the `initialize` response's `extensions` array.
+Agentao supports a private ACP extension method `_agentao.cn/ask_user` for requesting free-form text input from the user. This is advertised in the `initialize` response under `_meta["_agentao.cn/extensions"]` (ACP's standard channel for extension data).
 
 ### Request
 
