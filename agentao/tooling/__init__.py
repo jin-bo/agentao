@@ -16,12 +16,14 @@ from .agent_tools import register_agent_tools
 from .mcp_tools import init_mcp, register_mcp_tools
 from .registry import (
     BUILTIN_TOOL_NAMES,
+    apply_enabled_tools,
     register_builtin_tools,
     register_extra_tools,
 )
 
 __all__ = [
     "BUILTIN_TOOL_NAMES",
+    "apply_enabled_tools",
     "register_builtin_tools",
     "register_extra_tools",
     "register_agent_tools",

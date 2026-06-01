@@ -55,6 +55,25 @@ _Targeting 0.4.9. Add entries under the relevant heading as work lands._
     call, so changes take effect on the **next** call, never mid-turn.
   - Design: `docs/design/runtime-tool-injection.md` / `.zh.md`.
 
+- **Host tool allowlist: `Agentao(enabled_tools=...)`.** The additive dual of
+  `disable_tools=` — declare the minimal tool set to keep instead of
+  enumerating everything to drop. Closes two gaps a blocklist can't: it's
+  concise for a minimal core, and a built-in added later can't silently leak
+  in (not listed → excluded). It also reaches agent-path tools at construction
+  time, which `disable_tools` cannot.
+  - `enabled_tools=None` (default) keeps today's behavior. Any iterable —
+    including the empty set — *enables* the allowlist (`is not None`
+    semantics): after registration, every built-in / agent-path tool whose
+    name is absent is pruned.
+  - Scope is agentao-owned tools only: `extra_tools` (host injected them
+    explicitly), MCP (`mcp_*`), and plan-only tools are always kept. Minimize
+    MCP at the MCP layer instead.
+  - Mutually exclusive with `disable_tools` (passing both raises). Reserved
+    names (`mcp_` prefix, plan-only) raise at construction; unknown names raise
+    after registration (typo guard against the live registry — sharper than
+    `disable_tools` since a bad allowlist name silently excludes a tool).
+  - Design: `docs/design/host-tool-allowlist.md` / `.zh.md`.
+
 ### Changed
 
 - **Split six oversized modules into focused, cohesive units (internal,
