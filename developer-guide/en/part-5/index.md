@@ -1,6 +1,6 @@
 # Part 5 · Extend Agent Behavior
 
-This part has two axes: the **capability plane** gives the agent business capabilities, knowledge, and rules; the **control plane** lets you intervene at lifecycle points the agent already passes through. The first six sections are capability-plane extensions. The seventh is the control plane.
+This part has two axes: the **capability plane** gives the agent business capabilities, knowledge, and rules; the **control plane** lets you intervene at lifecycle points the agent already passes through. Sections 5.1–5.6 and 5.8 are capability-plane extensions; 5.7 is the control plane.
 
 ::: info Key terms in this Part
 - **Tool subclass** — the canonical way to expose a business capability: `name` / `description` / `parameters` / `execute()` · [§5.1](/en/part-5/1-custom-tools), [G.2](/en/appendix/g-glossary#g-2-extension-points)
@@ -21,6 +21,7 @@ This part has two axes: the **capability plane** gives the agent business capabi
 - [**5.4 Permission Engine**](./4-permissions) — the first rule-based defense, layered with `confirm_tool`
 - [**5.5 Memory System**](./5-memory) — cross-session persistence and compliance
 - [**5.6 System Prompt Customization**](./6-system-prompt) — the 3 of 11 prompt blocks you actually own
+- [**5.8 Host Tool Injection**](./8-tool-injection) — select the tool surface from the host: `extra_tools` / `disable_tools` / `enabled_tools` + runtime `add_tool` / `remove_tool`
 
 **Control plane**
 
@@ -31,6 +32,7 @@ This part has two axes: the **capability plane** gives the agent business capabi
 | What you are building | Recommended path | You should be able to |
 |-----------------------|------------------|------------------------|
 | Let the agent call your business API | [5.1](./1-custom-tools) → [5.4](./4-permissions) | Write a Tool and add confirmation or permission boundaries for side effects |
+| Select / shrink the tool surface from the host | [5.1](./1-custom-tools) → [5.8](./8-tool-injection) | Inject, replace, or prune tools at construction or runtime — and know it's not a security boundary |
 | Make the agent follow team conventions | [5.2](./2-skills) → [5.6](./6-system-prompt) | Separate on-demand Skills from project-wide prompt instructions |
 | Integrate an existing service ecosystem | [5.3](./3-mcp) → [5.4](./4-permissions) | Connect MCP while constraining tool visibility and execution scope |
 | Remember long-term facts or user preferences | [5.5](./5-memory) → [6.4](/en/part-6/4-multi-tenant-fs) | Design memory scope, cleanup, and tenant boundaries |

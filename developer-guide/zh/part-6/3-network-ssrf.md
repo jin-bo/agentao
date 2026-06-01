@@ -123,12 +123,13 @@ class StrictWebFetchTool(Tool):
     # ...省略其他方法
 ```
 
-注册它会**覆盖**内置 `web_fetch`：
+用 `extra_tools=` 注入——同名条目会静默**替换**内置 `web_fetch`，并和内置一样获得能力绑定（`working_directory` / `filesystem` / `shell`）：
 
 ```python
-agent = Agentao(...)
-agent.tools.register(StrictWebFetchTool())   # warning: overwriting
+agent = Agentao(..., extra_tools=[StrictWebFetchTool()])   # 替换内置 web_fetch
 ```
+
+优先用这个，而不是构造后去戳 `agent.tools.register(StrictWebFetchTool())`：底层路径会绕过能力绑定（工具变「裸」），且冲突只是 warn。见 [5.8](/zh/part-5/8-tool-injection)。schema 替换是**纵深防御，不是边界**——真正拦住外联的是下面的层 3。
 
 ## 层 3 · 基础设施级隔离
 

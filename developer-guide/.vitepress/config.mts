@@ -98,6 +98,7 @@ const zhSidebar = [
       { text: '5.5 记忆系统', link: '/zh/part-5/5-memory' },
       { text: '5.6 系统提示定制', link: '/zh/part-5/6-system-prompt' },
       { text: '5.7 插件 Hooks', link: '/zh/part-5/7-plugin-hooks' },
+      { text: '5.8 宿主工具注入', link: '/zh/part-5/8-tool-injection' },
     ],
   },
   {
@@ -236,6 +237,7 @@ const enSidebar = [
       { text: '5.5 Memory System', link: '/en/part-5/5-memory' },
       { text: '5.6 System Prompt', link: '/en/part-5/6-system-prompt' },
       { text: '5.7 Plugin Hooks', link: '/en/part-5/7-plugin-hooks' },
+      { text: '5.8 Host Tool Injection', link: '/en/part-5/8-tool-injection' },
     ],
   },
   {

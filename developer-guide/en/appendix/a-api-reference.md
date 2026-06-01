@@ -33,6 +33,9 @@ Agentao(
     *,
     working_directory: Path,                    # required since 0.3.0
     extra_mcp_servers: dict[str, dict] | None = None,
+    extra_tools: Sequence[RegistrableTool] | None = None,   # inject / replace tools
+    disable_tools: Iterable[str] | None = None,             # skip built-ins by name
+    enabled_tools: Iterable[str] | None = None,             # allowlist (mutually excl. w/ disable_tools)
     permission_engine: PermissionEngine | None = None,
     max_context_tokens: int = 200_000,
     plan_session: PlanSession | None = None,
@@ -64,6 +67,7 @@ Mutual-exclusion rules (raise `ValueError` if violated):
 - `llm_client=` together with any of `api_key=` / `base_url=` / `model=` / `temperature=`
 - `mcp_manager=` together with `extra_mcp_servers=`
 - `mcp_manager=` together with `mcp_registry=` — the registry is a config source, the manager is the construction outcome
+- `enabled_tools=` together with `disable_tools=` — an allowlist and a denylist at once is ambiguous (holds even for `enabled_tools=set()`). See [5.8](/en/part-5/8-tool-injection)
 
 Opt-in subsystem semantics (defaults are `None` since 0.2.16):
 
@@ -97,13 +101,15 @@ CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars
 | `set_model` | `set_model(model: str) -> str` | Swap model only; returns the previous id. |
 | `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncIterator[HostEvent]` | Subscribe to public harness events (tool / sub-agent / permission lifecycle). No replay; bounded backpressure. See [A.10](#a-10-embedded-host-contract). |
 | `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | Snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). JSON-safe. See [A.10](#a-10-embedded-host-contract). |
+| `add_tool` | `add_tool(tool: RegistrableTool, *, replace: bool = False) -> None` | Register a tool post-construction; same validation + capability binding as `extra_tools=`. Name clash without `replace=True` raises (stricter than `tools.register`). Reserved names (`mcp_`, plan tools) rejected. Visible next `chat()`/`arun()`. See [5.8](/en/part-5/8-tool-injection). |
+| `remove_tool` | `remove_tool(name: str) -> bool` | Unregister a tool post-construction; returns whether it existed (absent → `False`, no raise). `mcp_` / plan tools raise. Gone next `chat()`/`arun()`. |
 
 ### Attributes
 
 | Attribute | Type | Notes |
 |-----------|------|-------|
 | `messages` | `list[dict]` | Conversation history in OpenAI chat format. Safe to read, mutate at your own risk. |
-| `tools` | `ToolRegistry` | Call `agent.tools.register(MyTool())` after construction. |
+| `tools` | `ToolRegistry` | The live registry. Prefer the contract APIs — `Agentao(extra_tools=[...])` or `agent.add_tool(...)` — which bind capabilities and validate; `agent.tools.register(...)` is the low-level path that skips both. See [5.8](/en/part-5/8-tool-injection). |
 | `skill_manager` | `SkillManager` | `agent.skill_manager.activate_skill(name, task_description)` to turn a skill on. |
 | `transport` | `Transport` | The active transport; rebindable. |
 | `_current_token` | `CancellationToken | None` | Public by convention; read to call `.cancel()` from another thread. |
@@ -190,7 +196,8 @@ Custom tool subclasses that need to read/write files should call `self._get_fs()
 
 | Method | Purpose |
 |--------|---------|
-| `register(tool: Tool)` | Add a tool; warns if name collides |
+| `register(tool: Tool, *, replace: bool = False)` | Add a tool. `replace=False` collision warns and overwrites; `replace=True` overwrites silently (INFO audit). Low-level — no capability binding; prefer `Agentao(extra_tools=)` / `add_tool` (see [5.8](/en/part-5/8-tool-injection)) |
+| `unregister(name: str) -> bool` | Remove `name`; returns whether it existed. Pure dict op |
 | `get(name: str) -> Tool` | Raises `KeyError` with available-tools list |
 | `list_tools() -> list[Tool]` | |
 | `to_openai_format() -> list[dict]` | OpenAI function-calling schemas |

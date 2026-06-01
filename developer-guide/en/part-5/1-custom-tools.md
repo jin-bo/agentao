@@ -139,7 +139,9 @@ class MyFileTool(Tool):
 
 ## Registering tools
 
-Agentao does not take custom tools at construction time. **Registration pattern**:
+The contract way to inject tools is `Agentao(extra_tools=[...])` at construction or `agent.add_tool(...)` at runtime — both bind capabilities and validate names for you. See **[5.8 Host Tool Injection](./8-tool-injection)** for the full surface (`extra_tools` / `disable_tools` / `enabled_tools` + `add_tool` / `remove_tool`).
+
+The low-level pattern below pokes the registry directly — use it only when the contract APIs don't fit; it **skips** the capability binding (`working_directory` / `filesystem` / `shell`) and the validation, so bind `working_directory` yourself as shown:
 
 ```python
 from pathlib import Path
@@ -164,7 +166,7 @@ agent.chat("Look up customer 123's orders")
 ⚠️ Notes:
 
 - `agent.tools` is a public `ToolRegistry` instance — you can call `register()` any time
-- Do it **before** the first `chat()` so the LLM sees the tool list
+- Do it **before** the first `chat()` so the LLM sees the tool list; to add/remove between turns use the contract methods `agent.add_tool(...)` / `agent.remove_tool(...)` (visible next call — see [5.8](./8-tool-injection))
 - On name collision the later registration wins; a warning is logged
 
 ## Full example: calling a business API
