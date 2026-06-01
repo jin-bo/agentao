@@ -81,6 +81,9 @@ agent = Agentao(
 | `permission_engine` | `PermissionEngine` | factory builds one rooted at `working_directory` | Rule-based gating. See [5.4](/en/part-5/4-permissions) |
 | `max_context_tokens` | `int` | `200_000` | Triggers conversation compression beyond this |
 | `extra_mcp_servers` | `Dict[str,Dict]` | `None` | Per-session MCP servers without touching `.agentao/mcp.json`. Same-name keys override. Useful for per-tenant tokens |
+| `extra_tools` | `Sequence[Tool]` | `None` | Inject / replace tools (instances; register last, same name overrides a built-in). See [5.8](/en/part-5/8-tool-injection) |
+| `disable_tools` | `Iterable[str]` | `None` | Skip these built-ins by name (unknown name → `ValueError`). **Mutually exclusive with `enabled_tools`** |
+| `enabled_tools` | `Iterable[str]` | `None` | Allowlist of agentao-owned tools to keep; `None`=off, any iterable incl. `set()`=on. **Mutually exclusive with `disable_tools`** |
 | `llm_client` | `LLMClient` | (constructed from credentials) | Inject a pre-built client to fully control logger / log file. **Mutually exclusive** with `api_key` / `base_url` / `model` / `temperature` |
 | `project_instructions` | `str` | (read from `<wd>/AGENTAO.md`) | Pass AGENTAO.md content directly — skips the disk read |
 

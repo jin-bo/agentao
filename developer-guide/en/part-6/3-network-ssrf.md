@@ -123,12 +123,13 @@ class StrictWebFetchTool(Tool):
     # ...other methods
 ```
 
-Registering this **overwrites** the built-in:
+Inject it via `extra_tools=` — a same-named entry **replaces** the built-in silently, and the tool gets the same capability binding (`working_directory` / `filesystem` / `shell`) as built-ins:
 
 ```python
-agent = Agentao(...)
-agent.tools.register(StrictWebFetchTool())   # warning: overwriting
+agent = Agentao(..., extra_tools=[StrictWebFetchTool()])   # replaces built-in web_fetch
 ```
+
+Prefer this over poking `agent.tools.register(StrictWebFetchTool())` after construction: the low-level path skips capability binding (the tool goes "bare") and only warns on the collision. See [5.8](/en/part-5/8-tool-injection). Schema replacement is **defense in depth, not the boundary** — Layer 3 below is what actually stops egress.
 
 ## Layer 3 · Infrastructure isolation
 

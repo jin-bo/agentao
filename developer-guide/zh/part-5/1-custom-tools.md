@@ -139,7 +139,9 @@ class MyFileTool(Tool):
 
 ## 注册工具
 
-Agentao 目前不接受构造时传入自定义工具。**注册时机：**
+契约化的注入方式是构造期 `Agentao(extra_tools=[...])` 或运行期 `agent.add_tool(...)`——两者都会替你做能力绑定与名字校验。完整工具面（`extra_tools` / `disable_tools` / `enabled_tools` + `add_tool` / `remove_tool`）见 **[5.8 宿主工具注入](./8-tool-injection)**。
+
+下面这种底层写法直接戳注册表——仅在契约 API 不适用时才用；它**会绕过**能力绑定（`working_directory` / `filesystem` / `shell`）与校验，所以要像下面这样自己绑定 `working_directory`：
 
 ```python
 from pathlib import Path
@@ -163,7 +165,7 @@ agent.chat("帮我查客户 123 的订单")
 
 ⚠️ **注意**：
 - `agent.tools` 是公开字段（`ToolRegistry` 实例）——随时可 `register`
-- 但**必须在第一次 `chat()` 之前**注册，否则 LLM 看不到（openai 工具列表是每轮重建的，理论上热加也可以，但未稳定）
+- 在第一次 `chat()` 之前注册，LLM 即可看到；需要在两轮之间动态增删时，用契约方法 `agent.add_tool(...)` / `agent.remove_tool(...)`（下一轮可见，见 [5.8](./8-tool-injection)）
 - 冲突时后注册的覆盖先注册的，日志里会打 warning
 
 ## 完整示例：调用业务 API 的工具
