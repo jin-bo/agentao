@@ -1,6 +1,6 @@
 # 运行时工具注入：`add_tool` / `remove_tool`（推迟设计）
 
-**状态：** 设计草案,**实现推迟**,直到 demand-gate(见 §8)触发。跟踪于 [issue #65](https://github.com/jin-bo/agentao/issues/65)。
+**状态：** **v1 已落地** —— 按 §6 实现了 `Agentao.add_tool` / `remove_tool` + `ToolRegistry.unregister`。跟踪于 [issue #65](https://github.com/jin-bo/agentao/issues/65)。本文档保留为设计记录;§8 的 demand-gate 说明它在此前为何推迟。
 **读者：** 在构造期工具注入(PR #64)之上,考虑给 host 一个运行时(构造后)增/删工具入口的 agentao 维护者。
 **配套:**
 - `docs/design/runtime-tool-injection.md` — 英文版
@@ -92,7 +92,7 @@ def unregister(self, name: str) -> bool:
 
 ## 5. 语义与优先级
 
-1. **可见性 = "下一次 `chat()` / `arun()` 调用"**。`to_openai_format()` 只在每次 `chat()` 进入内部 LLM 迭代循环**之前**取一次快照(`_runner.py:201`),所以构造后的增/删在**下一次 prompt/chat 调用**才生效:**同一次 `chat()` 之内**(后续 LLM iteration、stop-hook re-entry)工具面不变。这是契约,不是缺陷——它让"单次调用内工具面一致"成为不变量(与 plan-mode 的 `plan_*` 过滤同源)。
+1. **可见性 = "下一次 `chat()` / `arun()` 调用"**。`to_openai_format()` 只在每次 `chat()` 进入内部 LLM 迭代循环**之前**取一次快照(`_runner.py:201`),所以构造后的增/删在**下一次 prompt/chat 调用**才生效:**同一次 `chat()` 之内**(后续 LLM iteration、stop-hook re-entry)**模型可见的 schema** 不变。这是契约,不是缺陷——它让"单次调用内 schema 一致"成为不变量(与 plan-mode 的 `plan_*` 过滤同源)。精确界定范围:冻结的是**模型看到的 schema**;工具**执行**按名字在 live 注册表里解析(`tool_planning.py:270` 每次调用 `self._tools.get(name)`),故 turn 中途 `remove_tool` *会*把已发出的调用变成查找失败。该窗口仅在 host 于 turn 中途改动(并发 task 或工具自身 `execute()` 内)时才打开——§7 已把它划出 v1 范围,"调用之间"的用法永不触发。
 2. **`add_tool` 与 `extra_tools` 同校验同绑定**。把 PR #64 里 `_validate_tool_injection`(`agent.py`)的**单工具**校验抽成可复用函数(如 `_validate_one_extra_tool(tool)`),`add_tool` 与构造期循环共用——运行时注入不可能产出裸工具,也不可能用保留名(`mcp_` 前缀 ∪ `_PLAN_ONLY_TOOLS`)替换 MCP / plan 工具。注:把保留名集扩到含 `_PLAN_ONLY_TOOLS` 后,构造期 `extra_tools` 也一并受益——顺手堵上「extra 命名为 `plan_save` 被 CLI 后注册覆盖」的旧灰区,是一致的收紧。
 3. **覆盖范围:内置 + agent + extra,不含 MCP**。`mcp_` 前缀在 `add_tool`/`remove_tool` 都被拒——MCP 工具名恒以 `mcp_` 开头(`mcp/tool.py:19-21` `make_mcp_tool_name`),故运行时注入构造上就碰不到 MCP。MCP 的运行时增删走 `mcp_manager=` / `extra_mcp_servers=`,边界清楚。
 4. **plan 工具不可增/删/替换(保留名)**。`plan_save`/`plan_finalize` 由 CLI 在构造后注册(`cli/app.py:91-92`),只在 plan 模式进 schema(`_PLAN_ONLY_TOOLS`),且与 plan 状态机绑定。`add_tool`(含 `replace=True`)**和** `remove_tool` 对 `_PLAN_ONLY_TOOLS` 名**都直接 `ValueError`**——只禁 remove 会留下 `add_tool(name="plan_save", replace=True)` 这个绕口子,故两端一起禁,不留公共 API 灰区。

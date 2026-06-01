@@ -34,6 +34,27 @@ _Targeting 0.4.9. Add entries under the relevant heading as work lands._
     `agentao.host` as a stable import path for host tool authors.
   - Design: `docs/design/host-tool-injection.md` / `.zh.md`.
 
+- **Runtime tool injection: `Agentao.add_tool` / `remove_tool`.** The
+  post-construction dual of `extra_tools=` / `disable_tools=`, for hosts that
+  add or drop a tool between `chat()` / `arun()` calls without rebuilding the
+  agent (e.g. long ACP sessions). (#65)
+  - `add_tool(tool, *, replace=False)` routes through the same validation +
+    capability binding as `extra_tools=` (never a "bare" tool). `replace=False`
+    + a name clash raises (stricter than the runtime `register`'s
+    warn-and-overwrite); `replace=True` overrides a built-in / agent / extra
+    tool with an INFO audit line.
+  - `remove_tool(name) -> bool` unregisters via the new
+    `ToolRegistry.unregister(name)`; an unknown name returns `False` instead of
+    raising. It shrinks the model-visible schema — not a security boundary.
+  - Reserved namespaces (`mcp_` prefix, plus the plan-mode `plan_save` /
+    `plan_finalize`) are rejected by both `add_tool` (incl. `replace=True`) and
+    `remove_tool` — closing the `add_tool(name="plan_save", replace=True)`
+    loophole. The plan-name reservation also tightens construction-time
+    `extra_tools=`.
+  - Visibility: the tool schema is snapshotted once per `chat()` / `arun()`
+    call, so changes take effect on the **next** call, never mid-turn.
+  - Design: `docs/design/runtime-tool-injection.md` / `.zh.md`.
+
 ### Changed
 
 - **Split six oversized modules into focused, cohesive units (internal,
