@@ -49,6 +49,8 @@ intentionally not part of this surface.
 | `RFC3339UTCString` | Constrained timestamp type used by all public events. |
 | `export_host_event_json_schema()` | Canonical JSON schema for the events + permissions surface. |
 | `export_host_acp_json_schema()` | Canonical JSON schema for the host-facing ACP payload surface. |
+| `Tool`, `AsyncToolBase` | Base classes for host-supplied tools passed via `Agentao(extra_tools=[...])`. Re-export of the canonical types in `agentao.tools.base` — a stable import path, not a new abstraction layer. |
+| `RegistrableTool` | `Union[Tool, AsyncToolBase]` — the type the registry / `extra_tools=` accepts. |
 | `agentao.host.replay_projection` | Submodule bridging `EventStream` ⇄ replay JSONL — see [Replay projection](#replay-projection-agentaohostreplay_projection) below. |
 
 ## Capability protocols (`agentao.host.protocols`)

@@ -192,12 +192,15 @@ def test_host_all_matches_documented_set() -> None:
 
     documented = {
         "ActivePermissions",
+        "AsyncToolBase",
         "EventStream",
         "HostEvent",
         "PermissionDecisionEvent",
         "RFC3339UTCString",
+        "RegistrableTool",
         "StreamSubscribeError",
         "SubagentLifecycleEvent",
+        "Tool",
         "ToolLifecycleEvent",
         "export_host_acp_json_schema",
         "export_host_event_json_schema",
