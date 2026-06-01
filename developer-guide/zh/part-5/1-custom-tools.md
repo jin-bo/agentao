@@ -1,8 +1,9 @@
-# 5.1 自定义工具（Custom Tools）
+# 5.1 自定义工具与宿主注入
 
 > **本节你会学到**
 > - `Tool` 子类的 6 大要素：name / description / parameters / execute / requires_confirmation / is_read_only
 > - 怎样写一个 LLM 真用得上的 description（这件事比代码本身更重要）
+> - 宿主如何注入、替换、移除或白名单化工具
 > - Tool / Skill / MCP 三选一的判断标准
 
 **自定义工具是让 Agent 调用你的业务 API 的首选方式**——比起让 LLM 读你的 OpenAPI 规范再生成 HTTP 请求，直接写一个 `Tool` 子类既更可靠又更安全。
@@ -139,34 +140,54 @@ class MyFileTool(Tool):
 
 ## 注册工具
 
-契约化的注入方式是构造期 `Agentao(extra_tools=[...])` 或运行期 `agent.add_tool(...)`——两者都会替你做能力绑定与名字校验。完整工具面（`extra_tools` / `disable_tools` / `enabled_tools` + `add_tool` / `remove_tool`）见 **[5.8 宿主工具注入](./8-tool-injection)**。
-
-下面这种底层写法直接戳注册表——仅在契约 API 不适用时才用；它**会绕过**能力绑定（`working_directory` / `filesystem` / `shell`）与校验，所以要像下面这样自己绑定 `working_directory`：
+契约化的注入方式是构造期 `Agentao(extra_tools=[...])` 或运行期 `agent.add_tool(...)`。两者都会替你绑定 `working_directory` / `filesystem` / `shell`，并校验保留名。
 
 ```python
 from pathlib import Path
 from agentao import Agentao
 from agentao.transport import SdkTransport
 
-# 1. 先构造 Agent（此时已注册完所有内置工具）
 agent = Agentao(
     working_directory=Path("/tmp/session-x"),
     transport=SdkTransport(),
+    extra_tools=[MyTool()],          # 第一次 chat() 起可见
 )
 
-# 2. 追加你的自定义工具
+agent.add_tool(AnotherTool())        # 下一次 chat() / arun() 可见
+agent.remove_tool("web_fetch")       # 存在则返回 True
+```
+
+仅在契约 API 不适用时才直接使用底层注册表。`agent.tools.register(...)` 会绕过能力绑定与校验，而且冲突处理更弱（`replace=False` 时只打 warning 然后覆盖）：
+
+```python
 my_tool = MyTool()
 my_tool.working_directory = agent.working_directory   # 显式绑定（否则用进程 cwd）
 agent.tools.register(my_tool)
-
-# 3. 正常使用
-agent.chat("帮我查客户 123 的订单")
 ```
 
 ⚠️ **注意**：
-- `agent.tools` 是公开字段（`ToolRegistry` 实例）——随时可 `register`
-- 在第一次 `chat()` 之前注册，LLM 即可看到；需要在两轮之间动态增删时，用契约方法 `agent.add_tool(...)` / `agent.remove_tool(...)`（下一轮可见，见 [5.8](./8-tool-injection)）
-- 冲突时后注册的覆盖先注册的，日志里会打 warning
+- `extra_tools` 只能从代码传入：传已经构造好的 `Tool` / `AsyncToolBase` 实例。它不会从 JSON 加载。
+- 同名 `extra_tools` 会刻意替换内置或 agent 工具；名字必须唯一，且不能使用保留的 `mcp_` 前缀。
+- `add_tool(tool)` 遇到重名会抛异常，除非显式传 `replace=True`；`remove_tool(name)` 对不存在的名字返回 `False`。
+- `add_tool` / `remove_tool` 用于**两轮之间**。模型可见的 schema 在每次 `chat()` / `arun()` 前快照一次，本轮中途不会改变。
+
+## 选择工具面
+
+宿主也可以收缩模型可见的工具面：
+
+| 你想要… | 用 |
+|---|---|
+| 增加自定义工具，或替换内置工具实现 | `extra_tools=` / `add_tool(..., replace=True)` |
+| 隐藏少数不适用的内置工具 | `disable_tools={...}` |
+| 只保留一小组 agentao 自有工具 | `enabled_tools={...}` |
+| 收缩到仅剩自有工具 + MCP | `enabled_tools=set()` 加 `extra_tools=[...]` |
+| 会话中途改动工具面 | 两轮之间用 `add_tool()` / `remove_tool()` |
+
+`disable_tools` 与 `enabled_tools` 互斥。`disable_tools` 只跳过内置工具。`enabled_tools` 裁剪内置 / agent 路径工具，并保留 `extra_tools`、MCP 工具（`mcp_*`）与仅 plan 工具。
+
+::: warning 不是安全边界
+这些 API 缩减的是**模型所见 schema**，不是授权。如果某个工具对某租户永远不该运行，应交给[权限引擎](./4-permissions)执行，而不是只靠工具白名单。
+:::
 
 ## 完整示例：调用业务 API 的工具
 
@@ -239,15 +260,15 @@ class GetCustomerOrdersTool(Tool):
 
 # --- 在 Web 处理里的使用 ---
 def make_agent_for_tenant(tenant, backend):
-    agent = Agentao(
+    return Agentao(
         working_directory=Path(f"/tmp/{tenant.id}"),
         transport=SdkTransport(...),
+        extra_tools=[
+            GetCustomerOrdersTool(backend, tenant.id),
+            CreateRefundTool(backend, tenant.id),
+            SendEmailTool(backend, tenant.id),
+        ],
     )
-    # 注入业务工具（每会话一个独立实例）
-    agent.tools.register(GetCustomerOrdersTool(backend, tenant.id))
-    agent.tools.register(CreateRefundTool(backend, tenant.id))
-    agent.tools.register(SendEmailTool(backend, tenant.id))
-    return agent
 ```
 
 ## ⚠️ 写 Tool 的常见陷阱
@@ -330,6 +351,7 @@ return json.dumps({
 - Tool 必须返回**字符串**（`role:tool` 消息）；不能直接返回 dict 或 bytes。业务数据要 JSON-stringify 并控制大小。
 - **description 是 LLM 决策的唯一输入**：明确 *什么时候用*、参数含义、返回结构、硬规则。
 - 有副作用（写、删、网络、执行）的工具一律 `requires_confirmation=True`；纯读的设 `is_read_only=True`，让 PermissionEngine 和 Plan 模式能优化。
+- 通过 `extra_tools=` 或 `add_tool()` 注入工具，确保能力绑定和名字校验；`disable_tools` / `enabled_tools` 只用于缩减模型可见 schema。
 - `execute()` 里捕获异常并返回错误字符串——未捕获的异常会让整个 `chat()` 调用挂掉。
 - 一个工具一个聚焦的职责。description 含糊会被到处误调。
 

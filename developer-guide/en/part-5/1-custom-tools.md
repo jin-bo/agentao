@@ -1,8 +1,9 @@
-# 5.1 Custom Tools
+# 5.1 Custom Tools & Host Injection
 
 > **What you'll learn**
 > - The 6 essentials of a `Tool` subclass: name / description / parameters / execute / requires_confirmation / is_read_only
 > - How to write a description the LLM actually uses (this matters more than the code)
+> - How the host injects, replaces, removes, or allowlists tools
 > - When to pick Tool vs. Skill vs. MCP for a given need
 
 **Custom tools are the best way to let the agent call your business APIs.** Handing the LLM your OpenAPI spec and asking it to craft HTTP requests is fragile; a typed `Tool` subclass is reliable, auditable, and safe.
@@ -139,35 +140,55 @@ class MyFileTool(Tool):
 
 ## Registering tools
 
-The contract way to inject tools is `Agentao(extra_tools=[...])` at construction or `agent.add_tool(...)` at runtime — both bind capabilities and validate names for you. See **[5.8 Host Tool Injection](./8-tool-injection)** for the full surface (`extra_tools` / `disable_tools` / `enabled_tools` + `add_tool` / `remove_tool`).
-
-The low-level pattern below pokes the registry directly — use it only when the contract APIs don't fit; it **skips** the capability binding (`working_directory` / `filesystem` / `shell`) and the validation, so bind `working_directory` yourself as shown:
+The contract way to inject tools is `Agentao(extra_tools=[...])` at construction or `agent.add_tool(...)` at runtime. Both paths bind `working_directory` / `filesystem` / `shell` and validate reserved names for you.
 
 ```python
 from pathlib import Path
 from agentao import Agentao
 from agentao.transport import SdkTransport
 
-# 1. Construct the agent (built-ins get registered during __init__)
 agent = Agentao(
     working_directory=Path("/tmp/session-x"),
     transport=SdkTransport(),
+    extra_tools=[MyTool()],          # visible from the first chat()
 )
 
-# 2. Register your tool
+agent.add_tool(AnotherTool())        # visible on the next chat() / arun()
+agent.remove_tool("web_fetch")       # returns True if it existed
+```
+
+Use the low-level registry only when the contract APIs don't fit. `agent.tools.register(...)` skips capability binding and validation, and collision handling is weaker (`replace=False` logs a warning and overwrites):
+
+```python
 my_tool = MyTool()
 my_tool.working_directory = agent.working_directory   # bind explicitly
 agent.tools.register(my_tool)
-
-# 3. Use as usual
-agent.chat("Look up customer 123's orders")
 ```
 
 ⚠️ Notes:
 
-- `agent.tools` is a public `ToolRegistry` instance — you can call `register()` any time
-- Do it **before** the first `chat()` so the LLM sees the tool list; to add/remove between turns use the contract methods `agent.add_tool(...)` / `agent.remove_tool(...)` (visible next call — see [5.8](./8-tool-injection))
-- On name collision the later registration wins; a warning is logged
+- `extra_tools` is code-only: pass already-constructed `Tool` / `AsyncToolBase` instances. It is never loaded from JSON.
+- A same-named `extra_tools` entry replaces a built-in or agent tool intentionally; names must be unique and must not use the reserved `mcp_` prefix.
+- `add_tool(tool)` raises on a name clash unless you pass `replace=True`; `remove_tool(name)` returns `False` for an absent name.
+- `add_tool` / `remove_tool` are for **between turns**. The model's schema is snapshotted once before each `chat()` / `arun()` call and does not change mid-turn.
+
+## Selecting the tool surface
+
+Hosts can also shrink the tools the model sees:
+
+| You want to… | Use |
+|---|---|
+| Add a custom tool, or replace a built-in's implementation | `extra_tools=` / `add_tool(..., replace=True)` |
+| Hide a few inapplicable built-ins | `disable_tools={...}` |
+| Keep only a small set of agentao-owned tools | `enabled_tools={...}` |
+| Strip to only your own tools + MCP | `enabled_tools=set()` plus `extra_tools=[...]` |
+| Mutate the surface mid-session | `add_tool()` / `remove_tool()` between turns |
+
+`disable_tools` and `enabled_tools` are mutually exclusive. `disable_tools` only skips built-ins. `enabled_tools` prunes built-in / agent-path tools while keeping `extra_tools`, MCP tools (`mcp_*`), and plan-only tools.
+
+::: warning Not a security boundary
+These APIs reduce the **schema the model sees**; they are not authorization. If a tool must never run for a tenant, enforce that with the [PermissionEngine](./4-permissions), not only with a tool allowlist.
+:::
 
 ## Full example: calling a business API
 
@@ -240,14 +261,15 @@ class GetCustomerOrdersTool(Tool):
 
 # --- In your web handler ---
 def make_agent_for_tenant(tenant, backend):
-    agent = Agentao(
+    return Agentao(
         working_directory=Path(f"/tmp/{tenant.id}"),
         transport=SdkTransport(...),
+        extra_tools=[
+            GetCustomerOrdersTool(backend, tenant.id),
+            CreateRefundTool(backend, tenant.id),
+            SendEmailTool(backend, tenant.id),
+        ],
     )
-    agent.tools.register(GetCustomerOrdersTool(backend, tenant.id))
-    agent.tools.register(CreateRefundTool(backend, tenant.id))
-    agent.tools.register(SendEmailTool(backend, tenant.id))
-    return agent
 ```
 
 ## ⚠️ Common pitfalls
@@ -330,6 +352,7 @@ Production products usually use all three: tools for business logic, MCP for int
 - A Tool returns **a string** (`role:tool` message); never raw dicts/bytes. Bound business data → JSON-stringify and clamp size.
 - The **description** is what the LLM reads to decide *if* and *how* to call. Be specific: when to use, args, return shape, hard rules.
 - Set `requires_confirmation=True` for anything with side effects; set `is_read_only=True` for pure reads (helps PermissionEngine and Plan mode).
+- Inject tools through `extra_tools=` or `add_tool()` so capabilities are bound and names are validated; use `disable_tools` / `enabled_tools` only to reduce the visible schema.
 - Catch exceptions inside `execute()` and return an error string — uncaught exceptions kill the whole `chat()` call.
 - One tool, one focused job. Vague descriptions get called everywhere.
 

@@ -91,14 +91,13 @@ const zhSidebar = [
     collapsed: true,
     items: [
       { text: '概述', link: '/zh/part-5/' },
-      { text: '5.1 自定义工具', link: '/zh/part-5/1-custom-tools' },
+      { text: '5.1 自定义工具与注入', link: '/zh/part-5/1-custom-tools' },
       { text: '5.2 技能（Skills）', link: '/zh/part-5/2-skills' },
       { text: '5.3 MCP 服务器接入', link: '/zh/part-5/3-mcp' },
       { text: '5.4 权限引擎', link: '/zh/part-5/4-permissions' },
       { text: '5.5 记忆系统', link: '/zh/part-5/5-memory' },
       { text: '5.6 系统提示定制', link: '/zh/part-5/6-system-prompt' },
       { text: '5.7 插件 Hooks', link: '/zh/part-5/7-plugin-hooks' },
-      { text: '5.8 宿主工具注入', link: '/zh/part-5/8-tool-injection' },
     ],
   },
   {
@@ -230,14 +229,13 @@ const enSidebar = [
     collapsed: true,
     items: [
       { text: 'Overview', link: '/en/part-5/' },
-      { text: '5.1 Custom Tools', link: '/en/part-5/1-custom-tools' },
+      { text: '5.1 Custom Tools & Injection', link: '/en/part-5/1-custom-tools' },
       { text: '5.2 Skills', link: '/en/part-5/2-skills' },
       { text: '5.3 MCP Integration', link: '/en/part-5/3-mcp' },
       { text: '5.4 Permission Engine', link: '/en/part-5/4-permissions' },
       { text: '5.5 Memory System', link: '/en/part-5/5-memory' },
       { text: '5.6 System Prompt', link: '/en/part-5/6-system-prompt' },
       { text: '5.7 Plugin Hooks', link: '/en/part-5/7-plugin-hooks' },
-      { text: '5.8 Host Tool Injection', link: '/en/part-5/8-tool-injection' },
     ],
   },
   {

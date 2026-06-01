@@ -129,7 +129,7 @@ Inject it via `extra_tools=` — a same-named entry **replaces** the built-in si
 agent = Agentao(..., extra_tools=[StrictWebFetchTool()])   # replaces built-in web_fetch
 ```
 
-Prefer this over poking `agent.tools.register(StrictWebFetchTool())` after construction: the low-level path skips capability binding (the tool goes "bare") and only warns on the collision. See [5.8](/en/part-5/8-tool-injection). Schema replacement is **defense in depth, not the boundary** — Layer 3 below is what actually stops egress.
+Prefer this over poking `agent.tools.register(StrictWebFetchTool())` after construction: the low-level path skips capability binding (the tool goes "bare") and only warns on the collision. See [5.1](/en/part-5/1-custom-tools). Schema replacement is **defense in depth, not the boundary** — Layer 3 below is what actually stops egress.
 
 ## Layer 3 · Infrastructure isolation
 
