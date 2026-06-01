@@ -4,6 +4,7 @@
 **读者：** 要给 host 一个声明式工具注入口的 agentao 维护者；以及后续 PR 的评审者。
 **配套：**
 - `docs/design/host-tool-injection.md` — 英文版
+- `docs/design/runtime-tool-injection.zh.md` — 运行时(构造后)对偶 `add_tool` / `remove_tool`(推迟,issue #65)
 - `docs/design/pi-mono-tools-review.md` / `.zh.md` — pi-mono 工具设计对比的来源
 - `docs/design/embedded-host-contract.md` — host 契约稳定边界（本设计的归属处）
 - `agentao/tooling/registry.py` — `register_builtin_tools`，改造主战场
