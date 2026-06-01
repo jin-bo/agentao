@@ -16,6 +16,7 @@
 | [`slack-bot/`](./slack-bot/) | slack-bolt `app_mention` → 单轮对话；按频道作权限隔离 | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 | [`wechat-bot/`](./wechat-bot/) | 微信轮询守护进程 → 单轮对话；按联系人作权限隔离 | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 | [`protocol-injection/`](./protocol-injection/) | `agentao.host.protocols` 全部四个槽位都被替换（内存 FS、审计型 shell、可编程 MCP 注册表、字典 MemoryStore） | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
+| [`tool-injection/`](./tool-injection/) | 用 Jina 作后端：构造期注入 `web_fetch`（`extra_tools=`，`r.jina.ai`）+ 运行期注入 `web_search`（`add_tool`，`s.jina.ai`） | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 
 ## 完整蓝图（接真 LLM、端到端栈）
 

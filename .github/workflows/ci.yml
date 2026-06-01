@@ -230,6 +230,7 @@ jobs:
           - jupyter-session
           - slack-bot
           - wechat-bot
+          - tool-injection
 
     steps:
       - uses: actions/checkout@v5

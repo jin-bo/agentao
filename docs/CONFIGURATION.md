@@ -94,6 +94,13 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 
 See [TOOL_CONFIRMATION_FEATURE.md](features/TOOL_CONFIRMATION_FEATURE.md) for what each `mode` actually permits.
 
+> **Tool-set selection is construction-only — not a `settings.json` field (v1).** Which tools the model sees is chosen at `Agentao(...)` construction, not via any config file:
+> - `enabled_tools={...}` — additive allowlist: keep only the named built-in / agent-path tools (`extra_tools`, MCP, plan-only always kept). `None` = disabled; the empty set still *enables* it. Mutually exclusive with `disable_tools`.
+> - `disable_tools={...}` — subtractive: skip named built-ins.
+> - `extra_tools=[...]` — inject pre-built `Tool` / `AsyncToolBase` instances.
+>
+> These are pure data (names) or instances, not JSON surfaces — wiring them through `settings.json` is deliberately deferred (demand-gated; see `host-tool-allowlist.md` §8). Schema + semantics: [`docs/api/host.md`](api/host.md), [`host-tool-allowlist.md`](design/host-tool-allowlist.md), [`host-tool-injection.md`](design/host-tool-injection.md).
+
 ---
 
 ## 4. `permissions.json` — per-tool permission rules
