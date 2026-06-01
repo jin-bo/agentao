@@ -224,6 +224,16 @@ class ToolRegistry:
             )
         self.tools[tool.name] = tool
 
+    def unregister(self, name: str) -> bool:
+        """Remove ``name`` from the registry.
+
+        Returns whether a tool was actually present (``False`` for an
+        unknown name — non-raising, mirroring ``dict.pop`` semantics). A
+        pure dict operation with no side effects; capability unbinding is
+        not needed because the removed instance is simply dropped.
+        """
+        return self.tools.pop(name, None) is not None
+
     def get(self, name: str) -> RegistrableTool:
         """Get a tool by name.
 

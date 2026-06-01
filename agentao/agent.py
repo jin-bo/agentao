@@ -42,6 +42,9 @@ if TYPE_CHECKING:
     from .tools.base import RegistrableTool  # noqa: F401
 
 
+_logger = logging.getLogger(__name__)
+
+
 class Agentao:
     """Agentao agent with tool, skill, and MCP support."""
 
@@ -279,15 +282,68 @@ class Agentao:
                 "mcp_registry= (config source), not both."
             )
 
+    @staticmethod
+    def _reject_reserved_tool_name(name: str, *, context: str) -> None:
+        """Reject names in a reserved namespace, for inject *and* remove paths.
+
+        Two namespaces are off-limits to host tool injection:
+
+        * the ``mcp_`` prefix — owned by MCP discovery (``make_mcp_tool_name``);
+          MCP tools are added/removed via ``mcp_manager=`` /
+          ``extra_mcp_servers=``, never here.
+        * ``_PLAN_ONLY_TOOLS`` (``plan_save`` / ``plan_finalize``) — bound to
+          the plan-mode state machine and registered by the CLI after
+          construction; a host must not add, replace, or remove them.
+
+        Shared so ``add_tool`` (incl. ``replace=True``) and ``remove_tool``
+        enforce the identical guard — rejecting only on remove would leave an
+        ``add_tool(name="plan_save", replace=True)`` loophole.
+        """
+        from .tools.base import ToolRegistry
+
+        if not isinstance(name, str):
+            raise ValueError(
+                f"{context}: tool name must be a string, got "
+                f"{type(name).__name__}."
+            )
+        if name.startswith("mcp_"):
+            raise ValueError(
+                f"{context}: tool name '{name}' uses the reserved 'mcp_' "
+                "prefix. Manage MCP tools via mcp_manager= / "
+                "extra_mcp_servers= instead."
+            )
+        if name in ToolRegistry._PLAN_ONLY_TOOLS:
+            raise ValueError(
+                f"{context}: tool name '{name}' is reserved for plan mode "
+                f"({sorted(ToolRegistry._PLAN_ONLY_TOOLS)}); these are bound to "
+                "the plan-mode state machine and cannot be injected or removed."
+            )
+
+    def _validate_one_extra_tool(self, tool: "RegistrableTool", *, context: str) -> None:
+        """Validate a single injected tool (construction *and* ``add_tool``).
+
+        Enforces a non-empty string name and the reserved-namespace guard.
+        Batch concerns (duplicate names within one ``extra_tools=``) stay in
+        :meth:`_validate_tool_injection`; this checks one tool in isolation so
+        the runtime ``add_tool`` path reuses the exact same rules.
+        """
+        name = tool.name
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                f"{context}: {type(tool).__name__}.name must "
+                f"be a non-empty string, got {name!r}."
+            )
+        self._reject_reserved_tool_name(name, context=context)
+
     def _validate_tool_injection(self) -> None:
         """Validate ``extra_tools`` / ``disable_tools`` at construction.
 
         Fails loudly rather than silently mis-registering:
 
-        * ``extra_tools`` names must be unique and must not use the ``mcp_``
-          prefix — that namespace is reserved for MCP-discovered tools, so
-          extras can never collide with (or shadow) them. MCP replacement
-          goes through ``mcp_manager=`` / ``extra_mcp_servers=`` instead.
+        * ``extra_tools`` names must be unique, non-empty strings, and must
+          not fall in a reserved namespace (``mcp_`` prefix or the plan-mode
+          ``_PLAN_ONLY_TOOLS``) — see :meth:`_validate_one_extra_tool`. MCP
+          replacement goes through ``mcp_manager=`` / ``extra_mcp_servers=``.
         * ``disable_tools`` names must each be a known built-in
           (:data:`BUILTIN_TOOL_NAMES`) — a typo (``{"web_serach"}``) raises
           instead of becoming a no-op. The check is against *static
@@ -299,18 +355,8 @@ class Agentao:
 
         seen: set = set()
         for tool in self._extra_tools:
+            self._validate_one_extra_tool(tool, context="Agentao(extra_tools=)")
             name = tool.name
-            if not isinstance(name, str) or not name:
-                raise ValueError(
-                    f"Agentao(extra_tools=): {type(tool).__name__}.name must "
-                    f"be a non-empty string, got {name!r}."
-                )
-            if name.startswith("mcp_"):
-                raise ValueError(
-                    f"Agentao(extra_tools=): tool name '{name}' uses the "
-                    "reserved 'mcp_' prefix. Replace MCP tools via "
-                    "mcp_manager= / extra_mcp_servers= instead."
-                )
             if name in seen:
                 raise ValueError(
                     f"Agentao(extra_tools=): duplicate tool name '{name}'."
@@ -719,6 +765,62 @@ class Agentao:
             rules=[],
             loaded_sources=["default:no-engine"],
         )
+
+    def add_tool(self, tool: "RegistrableTool", *, replace: bool = False) -> None:
+        """Register a tool after construction (runtime dual of ``extra_tools=``).
+
+        Visible to the model on the **next** ``chat()`` / ``arun()`` call — the
+        *schema* is snapshotted once per call before the LLM loop, so a mid-turn
+        add never changes what the model sees in-flight. Tool *execution*
+        resolves names against the live registry, so v1 supports calling this
+        between turns only — not from a concurrent task or a tool's ``execute()``
+        (see ``docs/design/runtime-tool-injection.md`` §7).
+
+        Routes through the same validation + capability binding as
+        ``extra_tools=``:
+
+        * rejects reserved names — ``mcp_`` prefix and ``_PLAN_ONLY_TOOLS``
+          (see :meth:`_reject_reserved_tool_name`) — and empty / non-string names;
+        * binds ``working_directory`` / ``filesystem`` / ``shell`` so the tool
+          is never "bare" (ACP cwd isolation, host FS/shell redirection);
+        * ``replace=False`` + a name clash raises (stricter than ``register``'s
+          warn-and-overwrite — an explicit host call should be explicit); pass
+          ``replace=True`` to override a built-in / agent / extra tool, which is
+          silent save for an INFO audit line.
+        """
+        from .tooling.registry import _bind_and_register
+
+        self._validate_one_extra_tool(tool, context="add_tool()")
+        already = tool.name in self.tools.tools
+        if already and not replace:
+            raise ValueError(
+                f"add_tool(): a tool named '{tool.name}' is already "
+                "registered. Pass replace=True to override it intentionally."
+            )
+        if already:
+            _logger.info(
+                "add_tool: '%s' (%s) overrides an already-registered tool",
+                tool.name,
+                type(tool).__name__,
+            )
+        _bind_and_register(self, tool, replace=already)
+
+    def remove_tool(self, name: str) -> bool:
+        """Unregister a tool after construction. Returns whether it existed.
+
+        Invisible to the model on the **next** ``chat()`` / ``arun()`` call
+        (same schema-snapshot semantics as :meth:`add_tool`; execution is live,
+        so call between turns only). An unknown name returns ``False`` rather
+        than raising.
+
+        Reserved names raise: ``mcp_`` tools belong to the MCP lifecycle and
+        ``_PLAN_ONLY_TOOLS`` to the plan-mode state machine — neither is removed
+        here. Built-in / extra / agent tools can be removed. This shrinks the
+        schema the model sees; it is **not** a security boundary (that stays
+        with the permission engine).
+        """
+        self._reject_reserved_tool_name(name, context="remove_tool()")
+        return self.tools.unregister(name)
 
     @property
     def working_directory(self) -> Path:

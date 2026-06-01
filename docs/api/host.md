@@ -53,6 +53,31 @@ intentionally not part of this surface.
 | `RegistrableTool` | `Union[Tool, AsyncToolBase]` — the type the registry / `extra_tools=` accepts. |
 | `agentao.host.replay_projection` | Submodule bridging `EventStream` ⇄ replay JSONL — see [Replay projection](#replay-projection-agentaohostreplay_projection) below. |
 
+### Tool injection methods
+
+Tools are injected at construction and, since the runtime dual landed, mutated
+afterwards. All four share one validation + capability-binding path, so an
+injected tool is never "bare" (it always inherits the session
+`working_directory` / `filesystem` / `shell`).
+
+| Method | Purpose |
+|---|---|
+| `Agentao(extra_tools=[...], disable_tools={...})` | Construction-time injection — add host tools, skip built-ins. See [`host-tool-injection.md`](../design/host-tool-injection.md). |
+| `Agentao.add_tool(tool, *, replace=False)` | Register a tool after construction. `replace=False` + a name clash raises (stricter than `register`); `replace=True` overrides a built-in / agent / extra tool with an INFO audit line. |
+| `Agentao.remove_tool(name) -> bool` | Unregister a tool. Returns whether it existed (unknown name → `False`, non-raising). |
+
+Reserved namespaces — the `mcp_` prefix (MCP lifecycle) and `_PLAN_ONLY_TOOLS`
+(`plan_save` / `plan_finalize`, bound to the plan-mode state machine) — are
+rejected by `add_tool` (incl. `replace=True`) **and** `remove_tool`.
+
+**Visibility:** the LLM-facing tool *schema* is snapshotted once per
+`chat()` / `arun()` call before the inner loop, so what the model **sees**
+never changes mid-turn — `add_tool` / `remove_tool` are reflected on the
+**next** call. Tool *execution* resolves names against the live registry, so
+v1 supports calling these methods **between** turns only (not from a concurrent
+task, nor from inside a tool's `execute()` mid-turn — see
+[`runtime-tool-injection.md`](../design/runtime-tool-injection.md) §7).
+
 ## Capability protocols (`agentao.host.protocols`)
 
 Embedded hosts override IO by injecting these `Protocol` types into
