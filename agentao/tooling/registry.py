@@ -161,3 +161,56 @@ def register_extra_tools(agent: "Agentao") -> None:
                 type(tool).__name__,
             )
         _bind_and_register(agent, tool, replace=replace)
+
+
+def apply_enabled_tools(agent: "Agentao") -> None:
+    """Prune the registry to the host's ``enabled_tools`` allowlist.
+
+    A no-op when ``agent._enabled_tools is None`` (allowlist disabled). When
+    set — including the empty set — removes every built-in / agent-path tool
+    whose name is absent from the allowlist, leaving ``extra_tools``, MCP
+    (``mcp_*``), and plan-only tools untouched. See
+    ``docs/design/host-tool-allowlist.md``.
+
+    Runs as the true final pass — after built-in, MCP, agent, and extra
+    registration — so the unknown-name (typo) guard can validate against the
+    live registry. Agent-path tool names aren't known at construction time
+    (``_validate_tool_injection`` runs before ``AgentManager`` is built),
+    which is why this check lives here rather than in that method.
+
+    The mutual-exclusion and reserved-name checks already ran at construction
+    (see :meth:`Agentao._validate_tool_injection`), so ``allow`` here can only
+    hold non-reserved names.
+    """
+    allow = agent._enabled_tools
+    if allow is None:
+        return
+
+    from ..tools.base import ToolRegistry
+
+    # Typo guard: every allowlisted name must resolve to a registerable tool.
+    # Union with BUILTIN_TOOL_NAMES so a legal-but-absent built-in (e.g.
+    # ``web_search`` without the ``[web]`` extra) isn't flagged as a typo —
+    # same "registration eligibility != live availability" rule as disable_tools.
+    known = set(agent.tools.tools) | BUILTIN_TOOL_NAMES
+    unknown = sorted(allow - known)
+    if unknown:
+        raise ValueError(
+            f"Agentao(enabled_tools=): unknown tool name(s) {unknown}. "
+            f"Names must be built-ins or registered agent / extra tools."
+        )
+
+    # ``extra_tools`` are always kept — the host injected those instances
+    # explicitly, so naming them in the allowlist too would be redundant.
+    extra_names = {tool.name for tool in agent._extra_tools}
+
+    for name in list(agent.tools.tools):
+        if name.startswith("mcp_"):                 # out of allowlist scope
+            continue
+        if name in ToolRegistry._PLAN_ONLY_TOOLS:   # plan-mode state machine
+            continue
+        if name in extra_names:                     # host-injected, always kept
+            continue
+        if name not in allow:
+            agent.tools.unregister(name)
+            _logger.info("enabled_tools: pruned '%s' (not in allowlist)", name)

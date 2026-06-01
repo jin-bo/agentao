@@ -63,6 +63,7 @@ injected tool is never "bare" (it always inherits the session
 | Method | Purpose |
 |---|---|
 | `Agentao(extra_tools=[...], disable_tools={...})` | Construction-time injection — add host tools, skip built-ins. See [`host-tool-injection.md`](../design/host-tool-injection.md). |
+| `Agentao(enabled_tools={...})` | Construction-time allowlist — keep only the named built-in / agent-path tools (`extra_tools` / MCP / plan-only always kept). `None` = disabled; empty set = enabled. Mutually exclusive with `disable_tools`. See [`host-tool-allowlist.md`](../design/host-tool-allowlist.md). |
 | `Agentao.add_tool(tool, *, replace=False)` | Register a tool after construction. `replace=False` + a name clash raises (stricter than `register`); `replace=True` overrides a built-in / agent / extra tool with an INFO audit line. |
 | `Agentao.remove_tool(name) -> bool` | Unregister a tool. Returns whether it existed (unknown name → `False`, non-raising). |
 

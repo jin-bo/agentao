@@ -14,6 +14,7 @@ from .runtime import model as _runtime_model
 from .runtime.tool_executor import ASYNC_CANCEL_REASON
 from .tools import ToolRegistry, SaveMemoryTool, TodoWriteTool
 from .tooling import (
+    apply_enabled_tools,
     init_mcp,
     register_agent_tools,
     register_builtin_tools,
@@ -74,6 +75,7 @@ class Agentao:
         # ── Host tool injection ───────────────────────────────────────────
         extra_tools: Optional[Sequence["RegistrableTool"]] = None,
         disable_tools: Optional[Iterable[str]] = None,
+        enabled_tools: Optional[Iterable[str]] = None,
         # Embedded-harness explicit-injection kwargs.
         llm_client: Optional[LLMClient] = None,
         logger: Optional[logging.Logger] = None,
@@ -138,6 +140,16 @@ class Agentao:
                 guard). Only skips built-in registration — not a global
                 denylist and not a security boundary (that stays with the
                 permission engine).
+            enabled_tools: Additive allowlist of tool names. ``None`` (default)
+                disables the allowlist (status quo: all built-in + agent +
+                extra register). Any iterable — including the empty set —
+                *enables* it: after registration, every built-in / agent-path
+                tool whose name is absent is pruned. ``extra_tools``, MCP
+                (``mcp_*``), and plan-only tools are left untouched. Mutually
+                exclusive with ``disable_tools`` (passing both raises).
+                Reserved names (``mcp_`` prefix, plan-only) raise at
+                construction; unknown names raise after registration (typo
+                guard). See ``docs/design/host-tool-allowlist.md``.
 
         Deprecated args (still accepted for backward compatibility,
         scheduled for removal in 0.5.0):
@@ -180,6 +192,11 @@ class Agentao:
         # reserved-namespace collision fails at construction, not silently.
         self._extra_tools: List["RegistrableTool"] = list(extra_tools or ())
         self._disable_tools: frozenset = frozenset(disable_tools or ())
+        # ``None`` = allowlist disabled; any iterable (incl. the empty set)
+        # enables it. Applied as a final prune pass in ``apply_enabled_tools``.
+        self._enabled_tools: Optional[frozenset] = (
+            frozenset(enabled_tools) if enabled_tools is not None else None
+        )
         self._validate_tool_injection()
 
         # When ``None``, file/search/shell tools fall back to
@@ -336,7 +353,7 @@ class Agentao:
         self._reject_reserved_tool_name(name, context=context)
 
     def _validate_tool_injection(self) -> None:
-        """Validate ``extra_tools`` / ``disable_tools`` at construction.
+        """Validate ``extra_tools`` / ``disable_tools`` / ``enabled_tools``.
 
         Fails loudly rather than silently mis-registering:
 
@@ -350,6 +367,10 @@ class Agentao:
           registration eligibility*, not live availability, so disabling
           ``web_search`` is legal even when ``[web]`` isn't installed
           (it's just a no-op then).
+        * ``enabled_tools`` (when not ``None``) must be mutually exclusive
+          with ``disable_tools`` and must not name a reserved tool
+          (``mcp_`` prefix or plan-only). The unknown-name typo guard is
+          deferred to :func:`apply_enabled_tools` (needs the live registry).
         """
         from .tooling.registry import BUILTIN_TOOL_NAMES
 
@@ -371,6 +392,24 @@ class Agentao:
                 f"like codebase_investigator and plan tools are not disableable). "
                 f"Valid names: {sorted(BUILTIN_TOOL_NAMES)}."
             )
+
+        # ``enabled_tools`` allowlist — only the order-independent checks run
+        # here. The unknown-name (typo) guard needs the live registry and so
+        # runs in ``apply_enabled_tools`` after all registration: agent-path
+        # tool names aren't known at construction (``_validate_tool_injection``
+        # is called before ``AgentManager`` is built). See
+        # ``docs/design/host-tool-allowlist.md``.
+        if self._enabled_tools is not None:
+            if self._disable_tools:
+                raise ValueError(
+                    "Agentao(enabled_tools=): mutually exclusive with "
+                    "disable_tools=. Use one or the other — the allowlist "
+                    "already expresses 'only these'."
+                )
+            for name in sorted(self._enabled_tools):
+                self._reject_reserved_tool_name(
+                    name, context="Agentao(enabled_tools=)"
+                )
 
     def _init_mcp_sources(
         self,
@@ -510,6 +549,11 @@ class Agentao:
         # tools (the ``mcp_`` prefix is banned, so never MCP). See
         # ``register_extra_tools``.
         register_extra_tools(self)
+
+        # Host ``enabled_tools`` allowlist — final prune pass, after all
+        # registration so the typo guard validates against the live registry.
+        # No-op when ``enabled_tools`` is None. See host-tool-allowlist.md.
+        apply_enabled_tools(self)
 
         if self.bg_store is not None:
             self.bg_store.recover()
