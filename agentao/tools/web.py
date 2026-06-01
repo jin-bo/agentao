@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import quote_plus
 
 # `httpx`, `bs4`, and `crawl4ai` are deferred (P0.5): the web tools may
@@ -275,9 +275,45 @@ class WebFetchTool(Tool):
 
 
 class WebSearchTool(Tool):
-    def __init__(self) -> None:
-        self._bocha_api_key = os.getenv("BOCHA_API_KEY")
-        self._provider = "bocha" if self._bocha_api_key else "duckduckgo"
+    def __init__(
+        self, *, backend: Optional[str] = None, api_key: Optional[str] = None
+    ) -> None:
+        """Web-search tool.
+
+        Args:
+            backend: Search provider override (``"bocha"`` / ``"duckduckgo"``).
+                When ``None``, derived from key availability.
+            api_key: Bocha API key. When ``None``, falls back to the
+                ``BOCHA_API_KEY`` process env var.
+
+        Explicit args take precedence over the env var so two Agentao
+        instances in the same process can use different search backends —
+        the env read is only a fallback, not a process-global override.
+        Pass a configured instance via ``Agentao(extra_tools=[...])``.
+
+        Raises:
+            ValueError: if ``backend`` is not a known provider, or if
+                ``backend="bocha"`` is requested without a resolvable key.
+                Fails loudly at construction rather than emitting a
+                ``Bearer None`` request (401) on the first query.
+        """
+        # ``is not None`` (not ``or``) so an explicit api_key="" — a host
+        # deliberately forcing "no key" — is honored and does NOT silently
+        # fall back to the process-global env var.
+        self._bocha_api_key = (
+            api_key if api_key is not None else os.getenv("BOCHA_API_KEY")
+        )
+        if backend is not None and backend not in ("bocha", "duckduckgo"):
+            raise ValueError(
+                f"WebSearchTool(backend=): unknown backend {backend!r}; "
+                "expected 'bocha' or 'duckduckgo'."
+            )
+        self._provider = backend or ("bocha" if self._bocha_api_key else "duckduckgo")
+        if self._provider == "bocha" and not self._bocha_api_key:
+            raise ValueError(
+                "WebSearchTool: backend 'bocha' requires an API key — pass "
+                "api_key= or set BOCHA_API_KEY."
+            )
 
     @property
     def is_read_only(self) -> bool:

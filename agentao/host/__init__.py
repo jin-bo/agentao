@@ -43,19 +43,45 @@ from .models import (
     SubagentLifecycleEvent,
     ToolLifecycleEvent,
 )
+from typing import Any, TYPE_CHECKING
+
 from .schema import (
     export_host_acp_json_schema,
     export_host_event_json_schema,
 )
 
+# Tool base types for host ``extra_tools`` injection are re-exported
+# *lazily* (PEP 562 ``__getattr__``). Importing them eagerly would pull the
+# entire ``agentao.tools`` package — ~35 modules (mcp, sandbox, capabilities
+# …) — onto every ``import agentao.host``, defeating the lightweight
+# stability-boundary intent (a host importing only ``HostEvent`` /
+# ``ActivePermissions`` typing should not drag in the tool runtime). The
+# canonical definitions stay in ``agentao.tools.base``; this is a stable
+# import path, NOT a new host-tool abstraction layer.
+_LAZY_TOOL_EXPORTS = frozenset({"AsyncToolBase", "RegistrableTool", "Tool"})
+
+if TYPE_CHECKING:  # static type-checkers resolve the names directly
+    from ..tools.base import AsyncToolBase, RegistrableTool, Tool
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_TOOL_EXPORTS:
+        from ..tools import base as _base  # pulls the tools package once, on demand
+        return getattr(_base, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "ActivePermissions",
+    "AsyncToolBase",
     "EventStream",
     "HostEvent",
     "PermissionDecisionEvent",
     "RFC3339UTCString",
+    "RegistrableTool",
     "StreamSubscribeError",
     "SubagentLifecycleEvent",
+    "Tool",
     "ToolLifecycleEvent",
     "export_host_acp_json_schema",
     "export_host_event_json_schema",

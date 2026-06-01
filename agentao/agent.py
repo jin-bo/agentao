@@ -4,7 +4,7 @@ import asyncio
 import logging
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union, TYPE_CHECKING
 
 from .llm import LLMClient
 from .llm.client import KEEP_BASE_URL as _KEEP_BASE_URL
@@ -13,7 +13,13 @@ from .runtime import ChatLoopRunner, ToolRunner, run_llm_call, run_turn
 from .runtime import model as _runtime_model
 from .runtime.tool_executor import ASYNC_CANCEL_REASON
 from .tools import ToolRegistry, SaveMemoryTool, TodoWriteTool
-from .tooling import init_mcp, register_agent_tools, register_builtin_tools, register_mcp_tools
+from .tooling import (
+    init_mcp,
+    register_agent_tools,
+    register_builtin_tools,
+    register_extra_tools,
+    register_mcp_tools,
+)
 from .agents import AgentManager
 from .cancellation import CancellationToken
 from .plan import PlanSession
@@ -33,6 +39,7 @@ if TYPE_CHECKING:
     from .mcp import McpClientManager  # type-only; MCP SDK is heavy
     from .memory import MemoryManager  # noqa: F401
     from .replay import ReplayConfig, ReplayManager  # type-only — replay no longer in core surface
+    from .tools.base import RegistrableTool  # noqa: F401
 
 
 class Agentao:
@@ -61,6 +68,9 @@ class Agentao:
         *,
         working_directory: Path,
         extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None,
+        # ── Host tool injection ───────────────────────────────────────────
+        extra_tools: Optional[Sequence["RegistrableTool"]] = None,
+        disable_tools: Optional[Iterable[str]] = None,
         # Embedded-harness explicit-injection kwargs.
         llm_client: Optional[LLMClient] = None,
         logger: Optional[logging.Logger] = None,
@@ -111,6 +121,20 @@ class Agentao:
                 file-loaded entry with the same name. ``None`` means "no
                 extras", which is the CLI default and produces the legacy
                 file-only behavior.
+            extra_tools: Pre-built ``Tool`` / ``AsyncToolBase`` instances to
+                register on top of the built-ins. Registered as the final
+                pass (after built-in, MCP, and agent tools), so a same-named
+                entry overrides a built-in or agent tool. Names using the
+                reserved ``mcp_`` prefix, or duplicate names, raise at
+                construction. Injected tools inherit the same
+                working-directory / filesystem / shell binding as built-ins.
+                See ``docs/design/host-tool-injection.md``.
+            disable_tools: Built-in tool names to skip registering (e.g.
+                ``{"run_shell_command"}`` for a read-only deployment). Each
+                name must be a known built-in or construction raises (typo
+                guard). Only skips built-in registration — not a global
+                denylist and not a security boundary (that stays with the
+                permission engine).
 
         Deprecated args (still accepted for backward compatibility,
         scheduled for removal in 0.5.0):
@@ -146,6 +170,14 @@ class Agentao:
         self._working_directory: Path = (
             Path(working_directory).expanduser().resolve()
         )
+
+        # Host tool injection (registered during ``_wire_tooling``).
+        # ``extra_tools`` are pre-built instances; ``disable_tools`` skips
+        # built-ins by name. Both are validated up-front so a typo or a
+        # reserved-namespace collision fails at construction, not silently.
+        self._extra_tools: List["RegistrableTool"] = list(extra_tools or ())
+        self._disable_tools: frozenset = frozenset(disable_tools or ())
+        self._validate_tool_injection()
 
         # When ``None``, file/search/shell tools fall back to
         # ``LocalFileSystem`` / ``LocalShellExecutor`` at first use.
@@ -245,6 +277,53 @@ class Agentao:
             raise ValueError(
                 "Agentao(): pass either mcp_manager= (pre-built) or "
                 "mcp_registry= (config source), not both."
+            )
+
+    def _validate_tool_injection(self) -> None:
+        """Validate ``extra_tools`` / ``disable_tools`` at construction.
+
+        Fails loudly rather than silently mis-registering:
+
+        * ``extra_tools`` names must be unique and must not use the ``mcp_``
+          prefix — that namespace is reserved for MCP-discovered tools, so
+          extras can never collide with (or shadow) them. MCP replacement
+          goes through ``mcp_manager=`` / ``extra_mcp_servers=`` instead.
+        * ``disable_tools`` names must each be a known built-in
+          (:data:`BUILTIN_TOOL_NAMES`) — a typo (``{"web_serach"}``) raises
+          instead of becoming a no-op. The check is against *static
+          registration eligibility*, not live availability, so disabling
+          ``web_search`` is legal even when ``[web]`` isn't installed
+          (it's just a no-op then).
+        """
+        from .tooling.registry import BUILTIN_TOOL_NAMES
+
+        seen: set = set()
+        for tool in self._extra_tools:
+            name = tool.name
+            if not isinstance(name, str) or not name:
+                raise ValueError(
+                    f"Agentao(extra_tools=): {type(tool).__name__}.name must "
+                    f"be a non-empty string, got {name!r}."
+                )
+            if name.startswith("mcp_"):
+                raise ValueError(
+                    f"Agentao(extra_tools=): tool name '{name}' uses the "
+                    "reserved 'mcp_' prefix. Replace MCP tools via "
+                    "mcp_manager= / extra_mcp_servers= instead."
+                )
+            if name in seen:
+                raise ValueError(
+                    f"Agentao(extra_tools=): duplicate tool name '{name}'."
+                )
+            seen.add(name)
+
+        unknown = sorted(self._disable_tools - BUILTIN_TOOL_NAMES)
+        if unknown:
+            raise ValueError(
+                f"Agentao(disable_tools=): unknown built-in tool name(s) "
+                f"{unknown}. Only built-ins can be disabled (agent-path tools "
+                f"like codebase_investigator and plan tools are not disableable). "
+                f"Valid names: {sorted(BUILTIN_TOOL_NAMES)}."
             )
 
     def _init_mcp_sources(
@@ -379,6 +458,12 @@ class Agentao:
             include_builtin_agents=enable_builtin_agents,
         )
         self._register_agent_tools()
+
+        # Host ``extra_tools`` register last — after built-in, MCP, and
+        # agent tools — so a same-named entry overrides built-in / agent
+        # tools (the ``mcp_`` prefix is banned, so never MCP). See
+        # ``register_extra_tools``.
+        register_extra_tools(self)
 
         if self.bg_store is not None:
             self.bg_store.recover()

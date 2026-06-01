@@ -11,6 +11,29 @@ _Targeting 0.4.9. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **Host tool injection: `Agentao(extra_tools=..., disable_tools=...)`.** Two
+  first-class, construction-time kwargs on the embedded-host contract for
+  adding, replacing, and hiding tools — replacing post-construction pokes at
+  the runtime `agent.tools.register(...)`.
+  - `extra_tools` — pre-built `Tool` / `AsyncToolBase` instances, registered as
+    the true final pass (after built-in, MCP, and agent tools) so a same-named
+    entry overrides a built-in or agent tool. Injected tools inherit the same
+    working-directory / filesystem / shell capability binding as built-ins.
+    Names using the reserved `mcp_` prefix raise (MCP replacement stays on
+    `mcp_manager=` / `extra_mcp_servers=`); duplicates raise.
+  - `disable_tools` — a set of built-in tool names to skip registering. A typo
+    or unknown name raises at construction (validated against the static
+    `BUILTIN_TOOL_NAMES` set) rather than silently no-op'ing. It only skips
+    built-in registration — not a global denylist, not a security boundary
+    (that stays with the permission engine).
+  - `WebSearchTool(backend=..., api_key=...)` — explicit constructor args now
+    take precedence over the `BOCHA_API_KEY` env var, so two in-process
+    Agentao instances can use different search backends. Pass a configured
+    instance via `extra_tools=[...]`.
+  - `Tool`, `AsyncToolBase`, `RegistrableTool` are now re-exported from
+    `agentao.host` as a stable import path for host tool authors.
+  - Design: `docs/design/host-tool-injection.md` / `.zh.md`.
+
 ### Changed
 
 - **Split six oversized modules into focused, cohesive units (internal,

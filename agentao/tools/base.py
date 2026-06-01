@@ -206,13 +206,17 @@ class ToolRegistry:
     def __init__(self):
         self.tools = {}
 
-    def register(self, tool: RegistrableTool) -> None:
+    def register(self, tool: RegistrableTool, *, replace: bool = False) -> None:
         """Register a tool.
 
-        Logs a warning if a tool with the same name is already registered, so
-        accidental MCP / built-in name collisions are visible in agentao.log.
+        When ``replace`` is ``False`` (default) and a tool with the same
+        name is already registered, logs a warning so accidental MCP /
+        built-in name collisions stay visible in agentao.log. When
+        ``replace`` is ``True`` the overwrite is intentional (a host
+        ``extra_tools`` entry deliberately replacing a built-in / agent
+        tool) and is performed silently. Either way the last write wins.
         """
-        if tool.name in self.tools:
+        if tool.name in self.tools and not replace:
             _logger.warning(
                 "Tool '%s' is already registered; overwriting with %s",
                 tool.name,
