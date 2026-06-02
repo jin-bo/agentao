@@ -21,6 +21,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from ...capabilities.process import run_captured
 from ..models import (
     CLAUDE_FLAT_EVENTS,
     HookAttachmentRecord,
@@ -256,11 +257,14 @@ class PluginHookDispatcher(_OutputParsingMixin):
         if not rule.command:
             return None, False
         try:
-            proc = subprocess.run(
+            # Shared hardened runner: feeds the JSON payload on a stdin pipe
+            # (so the user command can't read the host's real stdin) and, on
+            # timeout, kills the whole process tree rather than just the
+            # shell — a hook that backgrounds a child would otherwise keep
+            # the captured pipe open and hang dispatch past ``rule.timeout``.
+            proc = run_captured(
                 rule.command,
                 input=json.dumps(payload),
-                capture_output=True,
-                text=True,
                 timeout=rule.timeout,
                 shell=True,
                 cwd=str(self._cwd),
