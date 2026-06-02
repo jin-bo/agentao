@@ -14,7 +14,6 @@ byte-equivalent.
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import sys
 import threading
@@ -22,6 +21,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
+
+from .process import kill_process_tree
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -138,17 +139,11 @@ class LocalShellExecutor:
         while proc.poll() is None:
             if time.monotonic() - last_activity[0] > timeout:
                 timed_out[0] = True
-                try:
-                    if IS_WINDOWS:
-                        subprocess.run(
-                            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-                            stdin=subprocess.DEVNULL,
-                            capture_output=True,
-                        )
-                    else:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except ProcessLookupError:
-                    proc.kill()
+                # Shared teardown: kills the whole tree (taskkill /T or
+                # killpg) via the child's pid, so a grandchild holding the
+                # captured pipe can't survive the kill — and sidesteps the
+                # getpgid-on-a-zombie ProcessLookupError this used to hit.
+                kill_process_tree(proc)
                 break
             time.sleep(0.05)
 
