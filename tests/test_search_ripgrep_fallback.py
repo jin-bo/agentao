@@ -226,7 +226,7 @@ def test_ripgrep_internal_error_returns_none(monkeypatch, tmp_path, search_tool)
     def fake_run(cmd, **kwargs):
         return SimpleNamespace(returncode=2, stdout="", stderr="rg: error")
 
-    monkeypatch.setattr(search_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(search_mod, "_run_capture", fake_run)
 
     result = search_tool._ripgrep(
         directory=tmp_path,
@@ -245,7 +245,7 @@ def test_ripgrep_filenotfound_returns_none(monkeypatch, tmp_path, search_tool):
     def fake_run(cmd, **kwargs):
         raise FileNotFoundError("rg")
 
-    monkeypatch.setattr(search_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(search_mod, "_run_capture", fake_run)
 
     result = search_tool._ripgrep(
         directory=tmp_path,
@@ -269,7 +269,7 @@ def test_ripgrep_skip_filter_applied_to_lines(monkeypatch, tmp_path, search_tool
     def fake_run(cmd, **kwargs):
         return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr(search_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(search_mod, "_run_capture", fake_run)
 
     out = search_tool._ripgrep(
         directory=tmp_path,
