@@ -1,10 +1,7 @@
 """Search tools."""
 
-import os
 import shutil
-import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional
@@ -13,103 +10,17 @@ import re
 
 from .base import Tool
 from ..capabilities import FileSystem, LocalFileSystem
+# Shared hardened runner (own process group + kill-tree-on-timeout +
+# stdin-detach). Aliased to the historical name so the engine call sites
+# and the test seam (``monkeypatch.setattr(search, "_run_capture", ...)``)
+# stay unchanged.
+from ..capabilities.process import run_captured as _run_capture
 
 
 def _find_executable(name: str) -> Optional[str]:
     """Locate an external binary on PATH (absolute path) or return None."""
     return shutil.which(name)
 
-
-def _kill_tree(proc: "subprocess.Popen") -> None:
-    """Best-effort kill of ``proc`` *and every descendant it spawned*.
-
-    ``Popen.kill()`` only signals the direct child, so a timed-out ``git``
-    (which on Windows routinely forks helper / credential processes) leaves
-    grandchildren alive — and because they inherit the captured pipe's
-    write end, ``communicate()`` never sees EOF and the search worker hangs.
-    We address the whole tree instead: ``taskkill /T`` on Windows, the
-    process group via ``killpg`` elsewhere.
-    """
-    if sys.platform == "win32":
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                timeout=5,
-            )
-            return
-        except Exception:
-            pass  # fall through to the single-process kill below
-    else:
-        # ``start_new_session=True`` made the child a session/group leader,
-        # so its pgid == its pid. Use the pid directly rather than
-        # ``os.getpgid(pid)``: if the direct child already exited (leaving a
-        # grandchild holding the pipe), getpgid on the zombie can fail and
-        # we'd lose the whole group. The group id stays valid while any
-        # member lives, so ``killpg(pid)`` still reaps the grandchild.
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-            return
-        except Exception:
-            pass  # fall through to the single-process kill below
-    try:
-        proc.kill()
-    except Exception:
-        pass
-
-
-def _run_capture(
-    cmd: List[str],
-    cwd: str,
-    timeout: float,
-) -> subprocess.CompletedProcess:
-    """Run ``cmd`` capturing text stdout/stderr, hardened for timeouts.
-
-    Differs from a plain ``subprocess.run(..., timeout=)`` in three ways
-    that matter for an embedded / ACP-over-stdio host:
-
-    - ``stdin=DEVNULL`` so a child (e.g. ``git`` asking for credentials)
-      can never read — and thereby steal — the host's stdin stream.
-    - The child leads its own process group / session, so a timeout can
-      reap the *entire* tree rather than just the direct child.
-    - On timeout we kill that tree, then drain, and re-raise
-      :class:`subprocess.TimeoutExpired` so callers fall back exactly as
-      they did under ``subprocess.run``.
-
-    ``errors="replace"`` keeps a match line that isn't valid UTF-8 (a
-    Latin-1 source file, a mixed-encoding tree) from raising
-    ``UnicodeDecodeError`` mid-decode — that error is neither
-    ``SubprocessError`` nor ``FileNotFoundError``, so it would escape the
-    callers' ``except`` and abort the whole search instead of degrading
-    gracefully.
-    """
-    popen_kwargs: Dict[str, Any] = {
-        "cwd": cwd,
-        "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.PIPE,
-        "text": True,
-        "errors": "replace",
-    }
-    if sys.platform == "win32":
-        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        popen_kwargs["start_new_session"] = True
-
-    proc = subprocess.Popen(cmd, **popen_kwargs)
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill_tree(proc)
-        # The group is dead now, so the inherited pipe write ends are
-        # released and this second drain returns promptly.
-        try:
-            proc.communicate(timeout=5)
-        except Exception:
-            pass
-        raise
-    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 # Files modified within this window are sorted by recency
 RECENCY_THRESHOLD = 86400  # 24 hours
