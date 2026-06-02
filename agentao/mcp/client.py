@@ -247,15 +247,20 @@ class McpClient:
             "follow_redirects": True,
             "timeout": httpx.Timeout(_PREFLIGHT_TIMEOUT_SECONDS),
         }
+        # Send an MCP-shaped Accept so a content-negotiating server returns its
+        # real MCP body (and is allowed through) rather than a default HTML page
+        # we would wrongly reject. A caller-supplied Accept wins.
+        probe_headers = {"Accept": ", ".join(_MCP_CONTENT_TYPES)}
+        probe_headers.update(headers or {})
         try:
             async with httpx.AsyncClient(**client_kwargs) as client:
                 # HEAD is cheapest; fall back to GET when the server doesn't
                 # implement it (405 Method Not Allowed / 501 Not Implemented).
-                resp = await client.head(url, headers=headers or {})
+                resp = await client.head(url, headers=probe_headers)
                 if resp.status_code in (405, 501):
-                    resp = await client.get(url, headers=headers or {})
-        except httpx.HTTPError:
-            return  # DNS / connect / timeout / transport error — let the SDK try.
+                    resp = await client.get(url, headers=probe_headers)
+        except (httpx.HTTPError, httpx.InvalidURL):
+            return  # DNS / connect / timeout / bad-URL — let the SDK be authoritative.
 
         # Only judge successful responses; a 4xx/5xx may be an auth challenge
         # or a transient error the real handshake handles.

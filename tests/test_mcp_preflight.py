@@ -54,13 +54,13 @@ class _FakeClient:
         return False
 
     async def head(self, url, headers=None):
-        self.calls.append(("head", url))
+        self.calls.append(("head", url, headers))
         if self._head_exc is not None:
             raise self._head_exc
         return self._head
 
     async def get(self, url, headers=None):
-        self.calls.append(("get", url))
+        self.calls.append(("get", url, headers))
         return self._get
 
 
@@ -138,6 +138,40 @@ def test_transport_error_passes():
         _run(_client()._preflight_content_type("https://example.com/", {}))
 
 
+def test_invalid_url_passes():
+    """httpx.InvalidURL is not an HTTPError subclass; it must still pass
+    through so the SDK handshake stays authoritative for a bad url."""
+    fake = _FakeClient(head_exc=httpx.InvalidURL("no host"))
+    with _patch_httpx(fake):
+        _run(_client()._preflight_content_type("not-a-url", {}))
+
+
+# ---------------------------------------------------------------------------
+# Accept header: probe as an MCP client to avoid false-positive rejection
+# ---------------------------------------------------------------------------
+
+def test_probe_sends_mcp_accept_header():
+    """A content-negotiating server must see an MCP-shaped Accept so it
+    returns its real body rather than a default HTML page we'd reject."""
+    fake = _FakeClient(head=_FakeResp(200, "application/json"))
+    with _patch_httpx(fake):
+        _run(_client()._preflight_content_type("https://example.com/", {}))
+    sent = fake.calls[0][2]
+    assert sent["Accept"] == "application/json, text/event-stream"
+
+
+def test_caller_accept_header_wins():
+    """A caller-supplied Accept overrides the probe default."""
+    fake = _FakeClient(head=_FakeResp(200, "application/json"))
+    with _patch_httpx(fake):
+        _run(
+            _client()._preflight_content_type(
+                "https://example.com/", {"Accept": "application/json"}
+            )
+        )
+    assert fake.calls[0][2]["Accept"] == "application/json"
+
+
 # ---------------------------------------------------------------------------
 # HEAD → GET fallback
 # ---------------------------------------------------------------------------
@@ -188,4 +222,4 @@ def test_connect_does_not_retry_preflight_failure():
     client = _client()
     with _patch_httpx(fake):
         _run(client.connect())
-    assert fake.calls == [("head", "https://example.com/")]
+    assert [(c[0], c[1]) for c in fake.calls] == [("head", "https://example.com/")]
