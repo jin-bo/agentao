@@ -58,11 +58,15 @@ def search_tool(tmp_path: Path):
 
 @pytest.fixture
 def capture_subprocess_run(monkeypatch) -> List[List[str]]:
-    """Replace ``search.subprocess.run`` with an argv-capturing stub.
+    """Replace ``search._run_capture`` with an argv-capturing stub.
 
     Returns the list that captured argv lists are appended to.  The stub
     returns ``returncode=1`` so the caller hits the "no matches" branch
     and exits without real I/O — keeping tests focused on argv shape.
+
+    ``_run_capture`` (not ``subprocess.run``) is the seam: the search
+    tool runs every external engine through it for stdin-detach /
+    process-group / kill-the-tree-on-timeout hardening.
     """
     from agentao.tools import search as search_mod
 
@@ -72,5 +76,5 @@ def capture_subprocess_run(monkeypatch) -> List[List[str]]:
         captured.append(cmd)
         return SimpleNamespace(returncode=1, stdout="", stderr="")
 
-    monkeypatch.setattr(search_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(search_mod, "_run_capture", fake_run)
     return captured
