@@ -97,6 +97,30 @@ def classify_mcp_error(exc: Exception) -> McpErrorKind:
     return McpErrorKind.OTHER
 
 
+class NonMcpEndpointError(ConnectionError):
+    """A configured ``url`` resolves to something that is not an MCP endpoint.
+
+    Raised by the connect-time content-type preflight when a 2xx response
+    advertises a body type an MCP server never serves (typically ``text/html``
+    — the URL points at a web page or login portal rather than a Streamable
+    HTTP / SSE endpoint). Surfacing this fast turns an opaque ~60 s connect
+    hang into an immediate, actionable error.
+    """
+
+
+# Allow-list of content types a real MCP Streamable-HTTP / SSE endpoint
+# serves. The preflight rejects a 2xx response only when it advertises a
+# *definite* type outside this set (text/html, text/plain, application/xml,
+# …). A missing/empty content type, a non-2xx status, or any transport error
+# passes through — the real handshake stays the source of truth for every
+# case except the unambiguous "this is a web page, not MCP" one.
+_MCP_CONTENT_TYPES = ("application/json", "text/event-stream")
+
+# Preflight runs on its own short budget, independent of the (default 60 s)
+# connect timeout it exists to short-circuit.
+_PREFLIGHT_TIMEOUT_SECONDS = 5.0
+
+
 class ServerStatus(str, Enum):
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
@@ -195,11 +219,76 @@ class McpClient:
             ClientSession(read_stream, write_stream)
         )
 
+    async def _preflight_content_type(self, url: str, headers: Dict[str, str]) -> None:
+        """Probe *url* for an MCP-shaped response before the SDK connects.
+
+        A misconfigured ``url`` pointed at a plain web app returns HTML; the
+        MCP SDK then sits on the connection for the full ``timeout`` (default
+        60 s) before surfacing an opaque error. A cheap, short-timeout probe
+        catches that in ≤ :data:`_PREFLIGHT_TIMEOUT_SECONDS` and raises
+        :class:`NonMcpEndpointError` with an actionable message.
+
+        Detection is allow-list based (see :data:`_MCP_CONTENT_TYPES`); only a
+        2xx response carrying a *definite* non-MCP content type is rejected.
+        Everything else — missing/empty content type, non-2xx (auth challenges,
+        transient errors), or any transport/DNS error — passes through, leaving
+        the real handshake authoritative.
+
+        Like the SSE handshake itself, this probe makes a direct outbound
+        request and is not routed through ``PermissionEngine``; it adds no new
+        egress beyond what connecting to ``url`` already entails.
+        """
+        try:
+            import httpx
+        except ImportError:  # pragma: no cover - httpx is a core dependency
+            return
+
+        client_kwargs = {
+            "follow_redirects": True,
+            "timeout": httpx.Timeout(_PREFLIGHT_TIMEOUT_SECONDS),
+        }
+        # Send an MCP-shaped Accept so a content-negotiating server returns its
+        # real MCP body (and is allowed through) rather than a default HTML page
+        # we would wrongly reject. A caller-supplied Accept wins.
+        probe_headers = {"Accept": ", ".join(_MCP_CONTENT_TYPES)}
+        probe_headers.update(headers or {})
+        try:
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                # HEAD is cheapest; fall back to GET when the server doesn't
+                # implement it (405 Method Not Allowed / 501 Not Implemented).
+                resp = await client.head(url, headers=probe_headers)
+                if resp.status_code in (405, 501):
+                    resp = await client.get(url, headers=probe_headers)
+        except (httpx.HTTPError, httpx.InvalidURL):
+            return  # DNS / connect / timeout / bad-URL — let the SDK be authoritative.
+
+        # Only judge successful responses; a 4xx/5xx may be an auth challenge
+        # or a transient error the real handshake handles.
+        if not (200 <= resp.status_code < 300):
+            return
+
+        ct_base = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+        if not ct_base or ct_base in _MCP_CONTENT_TYPES:
+            return
+
+        raise NonMcpEndpointError(
+            f"MCP server '{self.name}' at {url} returned Content-Type "
+            f"'{ct_base}', not an MCP response (expected one of: "
+            f"{', '.join(_MCP_CONTENT_TYPES)}). The URL most likely points at "
+            "a web page rather than an MCP endpoint — check it resolves to an "
+            "SSE / Streamable HTTP endpoint (e.g. https://host/mcp, not "
+            "https://host/)."
+        )
+
     async def _connect_sse(self) -> None:
         """Establish SSE transport."""
         url = self.config["url"]
         headers = self.config.get("headers", {})
         timeout = self.config.get("timeout", 60)
+
+        # Fail fast on a URL that points at a web page rather than an MCP
+        # endpoint, instead of waiting out the full ``timeout``.
+        await self._preflight_content_type(url, headers)
 
         sse_transport = await self._exit_stack.enter_async_context(
             sse_client(url, headers=headers, timeout=timeout)
