@@ -1,10 +1,12 @@
 # Path A Roadmap — Embed-First Plan (2026-Q2)
 
 **Status:** Strategic decision record. Locked 2026-04-30, converged across 5 rounds of internal review.
+**Implementation status (2026-06-01):** **P0 fully shipped** (P0.1–P0.10) across releases 0.3.3 → 0.3.4 → 0.4.0; project now at **0.4.9.dev0**. The strategy, metrics, P1/P2 gating, and checkpoint calendar below **remain in force** — only the execution-status snapshots (§11, §12) were stale and are refreshed in §11.1. P1/P2 correctly remain unstarted (demand-gated; first strategic checkpoint M+3 = 2026-07-31).
 **Audience:** Agentao maintainers and strategic reviewers.
 **Related docs:**
 - `docs/design/embedded-host-contract.md` — embedded-contract design rationale
 - `docs/design/metacognitive-boundary.md` — injectable metacognitive boundary
+- `docs/design/system-prompt-profile.md` — host-injectable collaboration posture (**review record; deferred** — use `project_instructions`; demand-gated child of the metacognitive-boundary decision)
 - `docs/EMBEDDING.md` — embedding patterns walkthrough
 - `docs/api/host.md` — `agentao.host` public API reference
 
@@ -471,14 +473,25 @@ This audit tells the executor what *not* to redo. Verified against the working t
 | P0.6 examples | **done (PR 5, working tree)** | Five new dirs added: `fastapi-background/`, `pytest-fixture/`, `jupyter-session/`, `slack-bot/`, `wechat-bot/` (the last inspired by `Wechat-ggGitHub/wechat-claude-code`, transport-agnostic via a `WeChatClient` Protocol) — each with own `pyproject.toml` + `tests/test_smoke.py` running offline against a fake LLM; CI `examples` matrix runs each smoke suite; `examples/README.md` gains the canonical-shapes table |
 | P0.7 regression tests | **done (PR 3, working tree)** | 17 prior + 4 new: `test_no_host_logger_pollution.py`, `test_multi_agentao_isolation.py`, `test_arun_events_cancel.py`, `test_clean_install_smoke.py` (slow-marked); `slow` marker registered in `pyproject.toml` |
 | P0.8 audit sink | **done (PR 4, working tree)** | `agentao/replay/events.py` declares `V1_2_NEW`; `schemas/replay-event-1.2.json` ships with Pydantic-derived per-kind payload schemas; `agentao.host.replay_projection` provides `HostReplaySink` + reverse projection; `tests/test_host_to_replay_projection.py` covers round-trip + schema validation |
-| P0.9 dependency split | **not done** | `pyproject.toml` `dependencies` still bundles 13 packages including CLI/web/i18n |
-| P0.10 friendly error | **not done** | `agentao/cli/__init__.py` has no shim; entrypoint imports rich/prompt_toolkit directly |
+| P0.9 dependency split | **done (0.4.0)** | `pyproject.toml` core = 8 deps (openai/httpx/pydantic/pyyaml/mcp/python-dotenv/filelock/jinja2); extras shipped: `[cli] [web] [i18n] [pdf] [excel] [image] [crypto] [google] [crawl4ai] [tokenizer] [full]` |
+| P0.10 friendly error | **done (0.4.0)** | `agentao/cli/__init__.py:74-85` prints `pip install 'agentao[cli]'` / `[full]` guidance on missing CLI deps; entrypoint guarded |
 
 The net-new work, summed across items, is roughly **2 weeks of focused engineering**, matching the §3.2 release plan (2 months end-to-end including review, release rituals, and lighthouse outreach).
+
+### 11.1 P0 completion retrospective (2026-06-01)
+
+The table above was an as-of-2026-04-30 snapshot that still showed P0.9/P0.10 pending. Verified against `main`@`e49b0c2`, **all of P0 (P0.1–P0.10) is now shipped** and the project has moved well past the §3.2 plan:
+
+- **Release trajectory matched then exceeded the plan.** 0.3.3 (P0.1–P0.3) → 0.3.4 (P0.4–P0.8) → 0.4.0 (P0.9 dep split + P0.10 friendly error, the single planned break) all landed, and the line continued 0.4.2 → … → 0.4.8, now `0.4.9.dev0` (see `CHANGELOG.md`).
+- **The dependency split is broader than designed.** §3.3 planned `[cli] [web] [i18n] [full]`; shipped set adds `[pdf] [excel] [image] [crypto] [google] [crawl4ai] [tokenizer]`. Core stayed lean at 8 deps.
+- **Net-new beyond the roadmap's enumeration** (all additive to the embed-first thesis, none in the original P0 list): the `agentao.harness → agentao.host` rename (0.4.2, deprecation-aliased), `enabled_tools` allowlist + runtime `add_tool`/`remove_tool` injection, the `agentao run` non-interactive surface (M0), replay externalized to `ReplayManager`, and the `PermissionEngine` file-I/O extraction. These strengthened the host contract that P0 set out to harden.
+- **P1/P2 correctly unstarted.** No `on_usage_event` (P1.1), OpenTelemetry (P1.2), or skill-pack (P1.3) code exists — consistent with the §4 demand-gating discipline, not a slip. The first success-side decision event is the **M+3 checkpoint on 2026-07-31** (§16.1); §12's PR plan below is **fully shipped** and retained only as the historical execution record.
 
 ---
 
 ## 12. 0.3.4 PR plan (next 2 weeks)
+
+> **Shipped (2026-06-01):** all five PRs below landed; 0.3.4 and the subsequent 0.4.x line are released (§11.1). This section is retained as the historical execution record, not an open plan.
 
 §11 says what's left; this section says the order to ship it. Five branches, five PRs, sized so each one stays under ~400 lines of diff and reviewable in one sitting. The order minimizes rebase pain: typing changes land before the lazy-import refactor (so the refactor inherits typed signatures), examples land last (so they pin against the final 0.3.4 wheel).
 

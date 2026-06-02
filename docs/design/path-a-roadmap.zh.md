@@ -1,10 +1,12 @@
 # Path A Roadmap — 嵌入优先的路线图（2026-Q2）
 
 **Status:** 战略决策记录。锁定 2026-04-30，经过 5 轮内部评审收敛。
+**实现状态（2026-06-01）：** **P0 全数落地**（P0.1–P0.10），跨 0.3.3 → 0.3.4 → 0.4.0 发版；项目当前在 **0.4.9.dev0**。下方的战略、指标、P1/P2 gating、checkpoint 日历**仍然有效** —— 过时的只是执行状态快照（§11、§12），已在 §11.1 刷新。P1/P2 仍未启动是**符合纪律**（demand-gated；首个战略 checkpoint M+3 = 2026-07-31）。
 **Audience:** Agentao 维护者与战略评审者。
 **Related docs:**
 - `docs/design/embedded-host-contract.md` — 嵌入契约设计依据
 - `docs/design/metacognitive-boundary.md` — 可注入元认知边界
+- `docs/design/system-prompt-profile.md` — 可由 host 注入的协作姿态（**评审记录；已 defer** — 先用 `project_instructions`；metacognitive-boundary 决策的 demand-gated 子项）
 - `docs/EMBEDDING.md` — 嵌入模式实操
 - `docs/api/host.md` — `agentao.host` 公共 API 参考
 
@@ -471,14 +473,25 @@ P0.1, P0.2, P0.7     ─►  （无硬依赖）
 | P0.6 示例 | **已落地（PR 5，工作树）** | 新增五个目录：`fastapi-background/`、`pytest-fixture/`、`jupyter-session/`、`slack-bot/`、`wechat-bot/`（最后一个借鉴 `Wechat-ggGitHub/wechat-claude-code`，通过 `WeChatClient` Protocol 与具体传输解耦）——每个都有自己的 `pyproject.toml` + `tests/test_smoke.py`，使用 fake LLM 离线运行；CI `examples` matrix 跑每个 smoke 套件；`examples/README.md` 增加经典形态对照表 |
 | P0.7 回归测试 | **已落地（PR 3，工作树）** | 旧 17 个 + 新 4 个：`test_no_host_logger_pollution.py`、`test_multi_agentao_isolation.py`、`test_arun_events_cancel.py`、`test_clean_install_smoke.py`（标 slow，CI 专用）；`slow` marker 在 `pyproject.toml` 注册 |
 | P0.8 audit sink | **已落地（PR 4，工作树）** | `agentao/replay/events.py` 声明 `V1_2_NEW`；`schemas/replay-event-1.2.json` 落地，per-kind payload 由 Pydantic 模型生成；`agentao.host.replay_projection` 提供 `HostReplaySink` + 反向投影；`tests/test_host_to_replay_projection.py` 覆盖往返 + schema 验证 |
-| P0.9 依赖切分 | **未做** | `pyproject.toml` `dependencies` 仍捆 13 个包，含 CLI/web/i18n |
-| P0.10 友好错误 | **未做** | `agentao/cli/__init__.py` 无 shim；entrypoint 直接 import rich/prompt_toolkit |
+| P0.9 依赖切分 | **已落地（0.4.0）** | `pyproject.toml` core = 8 个依赖（openai/httpx/pydantic/pyyaml/mcp/python-dotenv/filelock/jinja2）；extras 已发：`[cli] [web] [i18n] [pdf] [excel] [image] [crypto] [google] [crawl4ai] [tokenizer] [full]` |
+| P0.10 友好错误 | **已落地（0.4.0）** | `agentao/cli/__init__.py:74-85` 缺 CLI 依赖时打印 `pip install 'agentao[cli]'` / `[full]` 指引；entrypoint 已加守卫 |
 
 净新增工作量加总约 **2 周专注工程**，与 §3.2 的 release 节奏（端到端约 2 个月，含评审、发版仪式、lighthouse 拓展）对得上。
+
+### 11.1 P0 完成回顾（2026-06-01）
+
+上方表格是 2026-04-30 的快照，当时还把 P0.9/P0.10 标为未做。已对 `main`@`e49b0c2` 核实,**P0 全数（P0.1–P0.10）已落地**,且项目已远超 §3.2 计划:
+
+- **发版轨迹先对齐、后超出计划。** 0.3.3（P0.1–P0.3）→ 0.3.4（P0.4–P0.8）→ 0.4.0（P0.9 依赖切分 + P0.10 友好错误,即计划中唯一的 break）全部落地,之后一路 0.4.2 → … → 0.4.8,当前 `0.4.9.dev0`（见 `CHANGELOG.md`）。
+- **依赖切分比设计更宽。** §3.3 计划 `[cli] [web] [i18n] [full]`;实际多发了 `[pdf] [excel] [image] [crypto] [google] [crawl4ai] [tokenizer]`。core 保持精简,8 个依赖。
+- **超出路线图枚举的净增项**（都对「嵌入优先」论点是加分,均不在原 P0 清单内）:`agentao.harness → agentao.host` 改名（0.4.2,带 deprecation 别名）、`enabled_tools` allowlist + 运行时 `add_tool`/`remove_tool` 注入、`agentao run` 非交互入口（M0）、replay 外置为 `ReplayManager`、`PermissionEngine` 文件 I/O 抽离。这些都强化了 P0 要夯实的 host 契约。
+- **P1/P2 正确地未启动。** 没有 `on_usage_event`（P1.1）、OpenTelemetry（P1.2）、skill-pack（P1.3）代码 —— 符合 §4 demand-gating 纪律,不是落后。首个成功侧决策事件是 **2026-07-31 的 M+3 checkpoint**（§16.1）;下方 §12 的 PR 计划**已全部 shipped**,仅作历史执行记录保留。
 
 ---
 
 ## 12. 0.3.4 PR 计划（接下来 2 周）
+
+> **已 shipped（2026-06-01）：** 下方五个 PR 全部落地;0.3.4 及后续 0.4.x 线均已发版（§11.1）。本节作为历史执行记录保留,非待办计划。
 
 §11 说"剩什么"，本节说"按什么顺序发"。五个分支、五个 PR，每个 diff 控制在 ~400 行内、可一次评审完。顺序设计为最小化 rebase 痛苦：typing 改动先于 lazy-import 重构（让重构继承到带类型的签名），examples 放最后（让它们 pin 到最终 0.3.4 wheel）。
 
