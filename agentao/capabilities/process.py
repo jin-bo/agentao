@@ -19,8 +19,9 @@ before re-raising :class:`subprocess.TimeoutExpired` so callers fall back
 exactly as they did under ``subprocess.run``.
 
 ``LocalShellExecutor`` (``capabilities/shell.py``) keeps its own
-reader-thread variant for streaming/background semantics; batch callers
-(``search_file_content``, plugin hook commands) share this one.
+reader-thread run loop for streaming + inactivity-timeout semantics, but
+shares :func:`kill_process_tree` for teardown; batch callers
+(``search_file_content``, plugin hook commands) use :func:`run_captured`.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from typing import Any, Dict, Optional, Sequence, Union
 __all__ = ["run_captured", "kill_process_tree"]
 
 
-def kill_process_tree(proc: "subprocess.Popen[str]") -> None:
+def kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
     """Best-effort kill of ``proc`` *and every descendant it spawned*.
 
     ``Popen.kill()`` only signals the direct child, so a timed-out process
