@@ -53,7 +53,13 @@ import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Dict, IO, List, Optional
 
-from .models import AcpConnectionState, JsonRpcError, JsonRpcRequest, JsonRpcResponse
+from .models import (
+    AcpConnectionState,
+    JsonRpcError,
+    JsonRpcRequest,
+    JsonRpcResponse,
+    ResumeDirective,
+)
 from .protocol import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -181,6 +187,7 @@ class AcpServer:
         max_workers: int = 8,
         provider_resolver: Optional[Callable[[str], Dict[str, Optional[str]]]] = None,
         model_catalog: Optional[List[Dict[str, Any]]] = None,
+        resume_directive: Optional[ResumeDirective] = None,
     ) -> None:
         # Capture the *real* stdout BEFORE any swap so responses keep flowing.
         self._in: IO[str] = stdin if stdin is not None else sys.stdin
@@ -199,6 +206,13 @@ class AcpServer:
             Callable[[str], Dict[str, Optional[str]]]
         ] = provider_resolver
         self.model_catalog: Optional[List[Dict[str, Any]]] = model_catalog
+
+        # Startup-resume seam (host-injectable, constructor-only). When set
+        # (``agentao --acp --resume [SESSION_ID]``), the first ``session/new``
+        # consumes it and hydrates+replays the persisted session instead of
+        # starting blank. ``None`` means "always start fresh". See
+        # ``session_new.handle_session_new`` and :class:`ResumeDirective`.
+        self.resume_directive: Optional[ResumeDirective] = resume_directive
 
         # Connection-scoped state populated by the `initialize` handshake
         # (Issue 02). Handlers read/write this via ``server.state``.

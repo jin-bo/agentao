@@ -44,7 +44,7 @@ class TestEntrypointArgparse:
 
         called: Dict[str, bool] = {}
 
-        def fake_acp_mode():
+        def fake_acp_mode(**kw):
             called["acp"] = True
 
         def fake_main(*a, **kw):
@@ -70,7 +70,7 @@ class TestEntrypointArgparse:
 
         called: Dict[str, bool] = {}
 
-        monkeypatch.setattr(cli, "run_acp_mode", lambda: called.setdefault("acp", True))
+        monkeypatch.setattr(cli, "run_acp_mode", lambda **kw: called.setdefault("acp", True))
         monkeypatch.setattr(cli, "main", lambda **kw: called.setdefault("main", True))
         monkeypatch.setattr(sys, "argv", ["agentao", "--acp", "--stdio"])
 
@@ -93,7 +93,7 @@ class TestEntrypointArgparse:
             cli, "run_print_mode", lambda *a, **kw: pytest.fail("print mode called"),
         )
         monkeypatch.setattr(
-            cli, "run_acp_mode", lambda: pytest.fail("acp mode called"),
+            cli, "run_acp_mode", lambda **kw: pytest.fail("acp mode called"),
         )
         monkeypatch.setattr(sys, "argv", ["agentao", "--help"])
 
@@ -146,7 +146,7 @@ class TestEntrypointArgparse:
 
         called: Dict[str, Any] = {}
 
-        monkeypatch.setattr(cli, "run_acp_mode", lambda: called.setdefault("acp", True))
+        monkeypatch.setattr(cli, "run_acp_mode", lambda **kw: called.setdefault("acp", True))
         monkeypatch.setattr(
             cli, "main", lambda **kw: called.setdefault("main", kw)
         )
@@ -163,7 +163,7 @@ class TestEntrypointArgparse:
 
         called: Dict[str, bool] = {}
 
-        monkeypatch.setattr(cli, "run_acp_mode", lambda: called.setdefault("acp", True))
+        monkeypatch.setattr(cli, "run_acp_mode", lambda **kw: called.setdefault("acp", True))
         monkeypatch.setattr(
             cli, "run_print_mode", lambda *a, **kw: called.setdefault("print", True)
         )
@@ -178,12 +178,15 @@ class TestEntrypointArgparse:
         assert "print" not in called
 
     def test_acp_overrides_resume(self, monkeypatch):
-        """``--acp --resume X`` should still take the ACP branch."""
+        """``--acp --resume X`` should take the ACP branch AND forward the
+        resume selector into ACP mode."""
         from agentao import cli
 
-        called: Dict[str, bool] = {}
+        called: Dict[str, Any] = {}
 
-        monkeypatch.setattr(cli, "run_acp_mode", lambda: called.setdefault("acp", True))
+        monkeypatch.setattr(
+            cli, "run_acp_mode", lambda **kw: called.setdefault("acp", kw)
+        )
         monkeypatch.setattr(
             cli, "main", lambda **kw: called.setdefault("main", True)
         )
@@ -191,8 +194,38 @@ class TestEntrypointArgparse:
 
         cli.entrypoint()
 
-        assert called.get("acp") is True
+        assert called.get("acp") == {"resume": "abc"}
         assert "main" not in called
+
+    def test_acp_resume_latest_forwards_empty_string(self, monkeypatch):
+        """``--acp --resume`` (no id) forwards ``""`` → resume latest."""
+        from agentao import cli
+
+        called: Dict[str, Any] = {}
+
+        monkeypatch.setattr(
+            cli, "run_acp_mode", lambda **kw: called.setdefault("acp", kw)
+        )
+        monkeypatch.setattr(sys, "argv", ["agentao", "--acp", "--resume"])
+
+        cli.entrypoint()
+
+        assert called.get("acp") == {"resume": ""}
+
+    def test_acp_without_resume_forwards_none(self, monkeypatch):
+        """``--acp`` alone forwards ``resume=None`` → always start fresh."""
+        from agentao import cli
+
+        called: Dict[str, Any] = {}
+
+        monkeypatch.setattr(
+            cli, "run_acp_mode", lambda **kw: called.setdefault("acp", kw)
+        )
+        monkeypatch.setattr(sys, "argv", ["agentao", "--acp"])
+
+        cli.entrypoint()
+
+        assert called.get("acp") == {"resume": None}
 
 
 # ===========================================================================
@@ -206,8 +239,9 @@ class TestRunAcpMode:
 
         called: Dict[str, bool] = {}
 
-        def fake_acp_main():
+        def fake_acp_main(resume=None):
             called["main"] = True
+            called["resume"] = resume
 
         # The import is local inside run_acp_mode, so monkeypatch the
         # target module directly.
@@ -216,6 +250,10 @@ class TestRunAcpMode:
 
         cli.run_acp_mode()
         assert called["main"] is True
+        assert called["resume"] is None
+
+        cli.run_acp_mode(resume="abc")
+        assert called["resume"] == "abc"
 
     def test_acp_main_registers_all_shipped_handlers(self, monkeypatch):
         """``acp.__main__.main()`` must register every handler that has shipped."""

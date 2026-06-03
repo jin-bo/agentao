@@ -158,20 +158,16 @@ def save_session(
     return session_file, sid
 
 
-def load_session(
+def _resolve_session_file(
     session_id: Optional[str] = None,
     project_root: Optional[Path] = None,
-) -> Tuple[List[Dict[str, Any]], str, List[str]]:
-    """Load a saved session.
+) -> Path:
+    """Resolve a session selector to the on-disk session file.
 
-    Args:
-        session_id: UUID string (or prefix), timestamp prefix, or None for latest.
-        project_root: Project directory containing the persisted
-            ``.agentao/sessions`` subdir. Optional during the 0.4.x
-            migration window; will become required in 0.5.0.
-
-    Returns:
-        ``(messages, model, active_skills)``
+    ``session_id`` may be a persisted UUID (or prefix), a timestamp prefix,
+    or ``None`` for the latest session. Latest-wins ordering and the
+    UUID-then-timestamp fallback live here so both :func:`load_session` and
+    :func:`load_session_record` share one resolution policy.
 
     Raises:
         FileNotFoundError: If no sessions exist or the given ID is not found.
@@ -195,23 +191,78 @@ def load_session(
             except (IOError, json.JSONDecodeError):
                 continue
         if uuid_matches:
-            session_file = sorted(uuid_matches)[-1]
-        else:
-            ts_matches = [s for s in sessions if s.stem.startswith(session_id)]
-            if not ts_matches:
-                raise FileNotFoundError(f"Session '{session_id}' not found")
-            session_file = ts_matches[-1]
-    else:
-        session_file = sessions[-1]
+            return sorted(uuid_matches)[-1]
+        ts_matches = [s for s in sessions if s.stem.startswith(session_id)]
+        if not ts_matches:
+            raise FileNotFoundError(f"Session '{session_id}' not found")
+        return ts_matches[-1]
+
+    return sessions[-1]
+
+
+def load_session_record(
+    session_id: Optional[str] = None,
+    project_root: Optional[Path] = None,
+) -> Tuple[str, List[Dict[str, Any]], str, List[str]]:
+    """Load a saved session including its persisted ``session_id``.
+
+    Single source of truth for reading a session file: resolves the
+    selector once, opens the file once, and returns everything a caller
+    might need. :func:`load_session` is a thin wrapper that drops the id.
+    ACP startup-resume uses this directly so it recovers the stable
+    identity (needed to register + replay under the original id) without
+    a second read.
+
+    Args:
+        session_id: UUID string (or prefix), timestamp prefix, or None for latest.
+        project_root: Project directory containing the persisted
+            ``.agentao/sessions`` subdir.
+
+    Returns:
+        ``(session_id, messages, model, active_skills)``. The id falls back
+        to the file stem for legacy files with no ``session_id`` field, so
+        it is always non-empty.
+
+    Raises:
+        FileNotFoundError: If no sessions exist or the given ID is not found.
+        ValueError: If the resolved file is not valid JSON
+            (``json.JSONDecodeError`` subclasses ``ValueError``).
+    """
+    session_file = _resolve_session_file(session_id, project_root)
 
     with open(session_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     return (
+        data.get("session_id") or session_file.stem,
         data.get("messages", []),
         data.get("model", ""),
         data.get("active_skills", []),
     )
+
+
+def load_session(
+    session_id: Optional[str] = None,
+    project_root: Optional[Path] = None,
+) -> Tuple[List[Dict[str, Any]], str, List[str]]:
+    """Load a saved session.
+
+    Args:
+        session_id: UUID string (or prefix), timestamp prefix, or None for latest.
+        project_root: Project directory containing the persisted
+            ``.agentao/sessions`` subdir. Optional during the 0.4.x
+            migration window; will become required in 0.5.0.
+
+    Returns:
+        ``(messages, model, active_skills)``
+
+    Raises:
+        FileNotFoundError: If no sessions exist or the given ID is not found.
+    """
+    _session_id, messages, model, active_skills = load_session_record(
+        session_id, project_root
+    )
+    return (messages, model, active_skills)
 
 
 def list_sessions(project_root: Optional[Path] = None) -> List[Dict[str, Any]]:

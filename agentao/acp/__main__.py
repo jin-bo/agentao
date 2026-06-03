@@ -9,6 +9,7 @@ As subsequent issues land, each adds its own ``register(server)`` call below.
 """
 
 import sys
+from typing import Optional
 
 from . import (
     agentao_set_model,
@@ -22,6 +23,7 @@ from . import (
     session_set_mode,
     session_set_model,
 )
+from .models import ResumeDirective
 from .server import AcpServer
 
 
@@ -72,9 +74,28 @@ def _ensure_acp_utf8_stdio() -> None:
         raise SystemExit(1)
 
 
-def main() -> None:
+def main(resume: Optional[str] = None) -> None:
+    """Start the ACP stdio server.
+
+    ``resume`` mirrors the interactive ``--resume`` flag for ACP mode
+    (``agentao --acp --resume [SESSION_ID]``):
+
+      - ``None``  — flag absent; always start fresh sessions.
+      - ``""``    — flag given with no id; resume the *latest* saved session
+                    on the first ``session/new``.
+      - a string — resume that specific session (UUID / prefix / timestamp).
+
+    The directive is one-shot: it is consumed by the first ``session/new``
+    and every later session on the connection behaves normally. The session
+    store is keyed by the client-provided ``cwd``, so resolution is deferred
+    to request time rather than performed here.
+    """
     _ensure_acp_utf8_stdio()
-    server = AcpServer()  # attaches to real sys.stdin / sys.stdout with guards
+    resume_directive = (
+        ResumeDirective(session_id=resume or None) if resume is not None else None
+    )
+    # attaches to real sys.stdin / sys.stdout with guards
+    server = AcpServer(resume_directive=resume_directive)
     initialize.register(server)
     session_new.register(server)
     session_prompt.register(server)
