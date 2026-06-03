@@ -288,6 +288,27 @@ def handle_session_new(
     cwd = _parse_cwd(params.get("cwd"))
     mcp_servers = _parse_mcp_servers(params.get("mcpServers"))
 
+    # Startup-resume seam: if the server was launched with ``--resume`` and
+    # the one-shot directive is still pending, the *first* session/new
+    # resumes the persisted session (hydrate + replay) instead of starting
+    # blank. ``consume()`` is atomic so concurrent session/new calls don't
+    # both claim it. A missing/empty store yields ``None`` from
+    # ``resume_session_on_new`` and we fall through to a fresh session.
+    directive = server.resume_directive
+    if directive is not None and directive.consume():
+        from .session_load import resume_session_on_new
+
+        resumed = resume_session_on_new(
+            server,
+            cwd=cwd,
+            mcp_servers=mcp_servers,
+            directive=directive,
+            agent_factory=agent_factory,
+        )
+        if resumed is not None:
+            return resumed
+        # Nothing to resume — continue building a fresh session below.
+
     session_id = _generate_session_id()
 
     # Snapshot the connection-level client capabilities onto the session so

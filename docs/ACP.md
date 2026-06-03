@@ -20,6 +20,21 @@ python -m agentao --acp --stdio
 
 Both commands block reading newline-delimited JSON-RPC 2.0 messages from `stdin`, write responses and notifications to `stdout`, and route logs + any stray `print` to `stderr`. Press Ctrl-D (or close stdin) to shut the server down cleanly.
 
+### Resume a session on startup
+
+Pass `--resume` to have the server reattach to a previously saved session the first time the client opens one:
+
+```bash
+agentao --acp --resume                 # resume the latest saved session
+agentao --acp --resume <SESSION_ID>    # resume a specific session (UUID / prefix / timestamp)
+```
+
+ACP is client-driven — the server cannot create a session on its own — so the directive is **one-shot and consumed by the first `session/new`**: that request hydrates the persisted message history and replays it as `session/update` notifications (exactly like `session/load`), then returns the persisted `sessionId` instead of a freshly generated one. Every later `session/new` on the connection starts a normal blank session. The session store is keyed by the client-provided `cwd`, so the lookup happens at request time against `<cwd>/.agentao/sessions`.
+
+The fallback is permissive — any recoverable problem degrades to a normal fresh session (logged at WARNING) rather than failing the client's first `session/new`: an empty store, an unknown id, an unreadable/corrupt session file, or a resolved id that is already live in the registry (e.g. the client `session/load`-ed it earlier on the same connection).
+
+> **Note:** because the resumed `sessionId` is only returned in the `session/new` *response*, the replayed `session/update` notifications are written *before* the client learns that id. Clients that strictly validate `session/update.sessionId` against sessions they explicitly opened may drop those early updates. This is inherent to resume-on-`session/new` (the server has no way to announce the id earlier) — the conversation still continues correctly from the next prompt regardless.
+
 ### Smoke test by hand
 
 ```bash
@@ -163,6 +178,7 @@ ACP-provided MCP servers **override** any same-named entries in the project's `.
 | Concurrent prompts on different sessions | ✅ | Issue 08's `ThreadPoolExecutor(max_workers=8)` lets handlers run in parallel; verified end-to-end in `tests/test_acp_multi_session.py::TestTurnLockIsolation`. |
 | Concurrent prompts on the **same** session | ❌ | Per-session `turn_lock` is acquired non-blocking; a second concurrent prompt for the same session returns `INVALID_REQUEST`. Queueing was rejected as a DoS footgun. |
 | Reload an already-active session id | ❌ | `session/load` for a sessionId already in the registry is rejected with `INVALID_REQUEST`. Cancel and tear down before reloading. |
+| Resume a saved session at startup | ✅ | `--resume [SESSION_ID]` arms a one-shot `ResumeDirective` consumed by the first `session/new`, which hydrates + replays the persisted session (see [Resume a session on startup](#resume-a-session-on-startup)). |
 
 ### `session/prompt` stop reasons
 
@@ -259,7 +275,7 @@ agentao/acp/
 └── session_load.py        # session/load handler + history hydration + replay
 ```
 
-The CLI wiring (`agentao --acp --stdio`) lives in `agentao/cli/entrypoints.py::run_acp_mode` and `agentao/__main__.py`; both delegate to `agentao.acp.__main__.main`.
+The CLI wiring (`agentao --acp --stdio`) lives in `agentao/cli/entrypoints.py::run_acp_mode` and `agentao/__main__.py`; both delegate to `agentao.acp.__main__.main`. The `--resume` selector is threaded through `run_acp_mode(resume=...)` → `main(resume=...)`, which builds a `ResumeDirective` (`agentao/acp/models.py`) and injects it into `AcpServer`; the first `session/new` consumes it via `session_load.resume_session_on_new`.
 
 ---
 

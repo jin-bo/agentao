@@ -65,12 +65,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from agentao.embedding.sessions import load_session
+from agentao.embedding.sessions import load_session, load_session_record
 
 from .mcp_translate import translate_acp_mcp_servers
-from .models import AcpSessionState
+from .models import AcpSessionState, ResumeDirective
 from .protocol import (
     INTERNAL_ERROR,
     INVALID_REQUEST,
@@ -191,9 +191,55 @@ def handle_session_load(
         cwd,
     )
 
-    # 5) Build runtime + transport via the same factory ``session/new``
-    #    uses, so loaded sessions and freshly-created sessions look
-    #    identical to the rest of the codebase.
+    # 5–8) Build runtime + transport, hydrate, replay, and register via the
+    #      shared loader so ``session/load`` and startup-resume stay in
+    #      lockstep. ``origin="session/load"`` only tunes log messages.
+    state = _instantiate_loaded_session(
+        server,
+        session_id=session_id,
+        cwd=cwd,
+        mcp_servers=mcp_servers,
+        messages=messages,
+        model=model,
+        agent_factory=agent_factory,
+        origin="session/load",
+    )
+
+    # 9) ACP spec returns an (otherwise) empty result for session/load. We
+    #    advertise the model config option here too — same as session/new —
+    #    so a reloaded session exposes model/provider switching without a
+    #    follow-up round trip.
+    return {"configOptions": config_options_for_session(server, state)}
+
+
+# ---------------------------------------------------------------------------
+# Shared loader core (used by session/load and startup-resume)
+# ---------------------------------------------------------------------------
+
+def _instantiate_loaded_session(
+    server: "AcpServer",
+    *,
+    session_id: str,
+    cwd: Path,
+    mcp_servers: List[Dict[str, Any]],
+    messages: List[Dict[str, Any]],
+    model: str,
+    agent_factory: AgentFactory,
+    origin: str,
+) -> AcpSessionState:
+    """Build, replay, and register a session from persisted history.
+
+    Shared by :func:`handle_session_load` and :func:`resume_session_on_new`
+    so both paths construct the runtime, hydrate ``agent.messages``, replay
+    the conversation as ``session/update`` notifications, and register the
+    session through one code path. Registration happens **after** replay so
+    a pipelined ``session/prompt`` cannot interleave a live turn with the
+    historical updates.
+
+    ``origin`` is a label used only in log lines (e.g. ``"session/load"`` vs
+    ``"resume"``). On any failure the partially-built runtime is closed so
+    MCP subprocesses do not leak, then the error re-raises.
+    """
     client_capabilities_snapshot = dict(server.state.client_capabilities)
     transport = ACPTransport(server=server, session_id=session_id)
 
@@ -234,56 +280,59 @@ def handle_session_load(
             agent._session_id = session_id
         except Exception:
             logger.exception(
-                "acp: session/load could not bind session id %s to agent",
+                "acp: %s could not bind session id %s to agent",
+                origin,
                 session_id,
             )
 
-        # 6) Hydrate runtime BEFORE replay so subsequent prompts see the
-        #    full historical context. We assign through the public
-        #    ``messages`` attribute (set by ``Agentao.__init__``) — that
-        #    is the same field ``chat()`` reads from.
+        # Hydrate runtime BEFORE replay so subsequent prompts see the
+        # full historical context. We assign through the public
+        # ``messages`` attribute (set by ``Agentao.__init__``) — that
+        # is the same field ``chat()`` reads from.
         try:
             agent.messages = list(messages)
         except Exception:
             logger.exception(
-                "acp: session/load could not hydrate agent.messages for %s",
+                "acp: %s could not hydrate agent.messages for %s",
+                origin,
                 session_id,
             )
             # Continue — the client still gets the replay, and a new
             # prompt would just start a fresh conversation.
 
-        # 7) Replay history BEFORE registering the session so a pipelined
-        #    ``session/prompt`` cannot start a live turn that interleaves
-        #    with the historical update notifications. ``replay_history``
-        #    is best-effort and never raises, so a single corrupt message
-        #    can't destroy the load.
+        # Replay history BEFORE registering the session so a pipelined
+        # ``session/prompt`` cannot start a live turn that interleaves
+        # with the historical update notifications. ``replay_history``
+        # is best-effort and never raises, so a single corrupt message
+        # can't destroy the load.
         try:
             emitted = transport.replay_history(messages)
         except Exception:
             # Defensive — replay_history should already trap everything.
             logger.exception(
-                "acp: session/load replay raised unexpectedly for %s", session_id
+                "acp: %s replay raised unexpectedly for %s", origin, session_id
             )
             emitted = 0
         logger.info(
-            "acp: session/load replayed %d update notification(s) for %s",
+            "acp: %s replayed %d update notification(s) for %s",
+            origin,
             emitted,
             session_id,
         )
 
-        # Begin a fresh replay instance for this session/load. The spec
-        # requires a new instance file rather than appending to the old
-        # one, even when the logical ``session_id`` is reused.
+        # Begin a fresh replay instance. The spec requires a new instance
+        # file rather than appending to the old one, even when the logical
+        # ``session_id`` is reused.
         try:
             start_replay = getattr(agent, "start_replay", None)
             if callable(start_replay):
                 start_replay(session_id)
         except Exception:
-            logger.exception("acp: session/load replay start failed")
+            logger.exception("acp: %s replay start failed", origin)
 
-        # 8) Now register: replay is done, no live turn can race against
-        #    the historical updates. Any race with a concurrent
-        #    ``session/load`` for the same id is caught here.
+        # Now register: replay is done, no live turn can race against the
+        # historical updates. Any race with a concurrent load/resume for
+        # the same id is caught here.
         state = AcpSessionState(
             session_id=session_id,
             agent=agent,
@@ -296,7 +345,7 @@ def handle_session_load(
         except DuplicateSessionError:
             raise JsonRpcHandlerError(
                 code=INVALID_REQUEST,
-                message=f"session/load: sessionId {session_id!r} already active",
+                message=f"{origin}: sessionId {session_id!r} already active",
             )
     except Exception:
         # Single cleanup path for both JsonRpcHandlerError and unexpected
@@ -308,22 +357,102 @@ def handle_session_load(
                 agent.close()
             except Exception:
                 logger.exception(
-                    "acp: error closing agent during session/load failure"
+                    "acp: error closing agent during %s failure", origin
                 )
         raise
 
     if mcp_servers_internal:
         logger.info(
-            "acp: session/load %s registered with %d ACP-provided MCP server(s)",
+            "acp: %s %s registered with %d ACP-provided MCP server(s)",
+            origin,
             session_id,
             len(mcp_servers_internal),
         )
 
-    # 9) ACP spec returns an (otherwise) empty result for session/load. We
-    #    advertise the model config option here too — same as session/new —
-    #    so a reloaded session exposes model/provider switching without a
-    #    follow-up round trip.
-    return {"configOptions": config_options_for_session(server, state)}
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Startup resume (consumed by the first session/new)
+# ---------------------------------------------------------------------------
+
+def resume_session_on_new(
+    server: "AcpServer",
+    *,
+    cwd: Path,
+    mcp_servers: List[Dict[str, Any]],
+    directive: ResumeDirective,
+    agent_factory: AgentFactory,
+) -> Optional[Dict[str, Any]]:
+    """Resume a persisted session in place of a fresh ``session/new``.
+
+    Called by :func:`handle_session_new` when the server was launched with
+    ``--resume`` and the directive has been atomically claimed. Resolves the
+    directive's selector (``None`` → latest) against ``cwd``'s session store,
+    loads the history, and reuses the shared loader so the reloaded session
+    is indistinguishable from one created by ``session/load``.
+
+    Returns ``{"sessionId", "configOptions"}`` on success — the same shape
+    ``session/new`` returns, so the client transparently continues the
+    restored conversation. Returns ``None`` when there is nothing to resume,
+    so the caller falls back to a normal fresh session rather than failing
+    the request. ``None`` is returned for any recoverable problem: no
+    sessions on disk, the requested id is missing, the persisted file is
+    unreadable/corrupt, or the resolved session is already live in the
+    registry (a prior ``session/load`` of the same id on this connection).
+    """
+    selector = directive.session_id
+    try:
+        session_id, messages, model, _active_skills = load_session_record(
+            session_id=selector, project_root=cwd
+        )
+    except (OSError, ValueError) as e:
+        # FileNotFoundError (no store / unknown id) is an OSError; a corrupt
+        # session file surfaces as json.JSONDecodeError ⊂ ValueError. Either
+        # way, degrade to a fresh session instead of failing session/new.
+        logger.warning(
+            "acp: --resume requested (%s) but no session could be loaded "
+            "from %s (%s); starting a fresh session instead",
+            selector or "latest",
+            cwd,
+            e,
+        )
+        return None
+
+    # If the persisted session is already registered (e.g. the client
+    # explicitly session/load-ed it earlier on this connection), resuming it
+    # would collide in the registry. Fall back to a fresh session rather than
+    # raising INVALID_REQUEST out of the client's first session/new.
+    if server.sessions.get(session_id) is not None:
+        logger.warning(
+            "acp: --resume target %s is already active; starting a fresh "
+            "session instead",
+            session_id,
+        )
+        return None
+
+    logger.info(
+        "acp: resuming session %s (%d messages) from %s on first session/new",
+        session_id,
+        len(messages),
+        cwd,
+    )
+
+    state = _instantiate_loaded_session(
+        server,
+        session_id=session_id,
+        cwd=cwd,
+        mcp_servers=mcp_servers,
+        messages=messages,
+        model=model,
+        agent_factory=agent_factory,
+        origin="resume",
+    )
+
+    return {
+        "sessionId": session_id,
+        "configOptions": config_options_for_session(server, state),
+    }
 
 
 # ---------------------------------------------------------------------------

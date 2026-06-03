@@ -197,10 +197,15 @@ def run_init_wizard() -> None:
     console.print("  Run [bold cyan]agentao[/bold cyan] to start.\n")
 
 
-def run_acp_mode() -> None:
-    """Launch Agentao as an ACP stdio JSON-RPC server."""
+def run_acp_mode(resume: Optional[str] = None) -> None:
+    """Launch Agentao as an ACP stdio JSON-RPC server.
+
+    ``resume`` forwards the ``--resume`` selector into ACP mode: ``None``
+    starts fresh, ``""`` resumes the latest saved session on the first
+    ``session/new``, and a string resumes that specific session.
+    """
     from agentao.acp.__main__ import main as acp_main
-    acp_main()
+    acp_main(resume=resume)
 
 
 def _build_parser():
@@ -223,7 +228,10 @@ def _build_parser():
         const="",
         default=None,
         metavar="SESSION_ID",
-        help="Resume a saved session. Omit SESSION_ID to resume the latest.",
+        help=(
+            "Resume a saved session. Omit SESSION_ID to resume the latest. "
+            "With --acp, the first session/new resumes instead of starting blank."
+        ),
     )
     parser.add_argument(
         "--acp",
@@ -365,7 +373,7 @@ def entrypoint():
     _g._plugin_inline_dirs[:] = [Path(d) for d in _top_dirs + _sub_dirs]
 
     if args.acp:
-        _cli.run_acp_mode()
+        _cli.run_acp_mode(resume=args.resume)
         return
     if args.stdio:
         sys.stderr.write(

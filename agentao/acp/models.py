@@ -142,6 +142,47 @@ class AcpConnectionState:
 
 
 # ---------------------------------------------------------------------------
+# Startup resume directive
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ResumeDirective:
+    """A one-shot instruction to resume a persisted session on startup.
+
+    Set when the ACP server is launched with ``--resume`` (see
+    ``agentao --acp --resume [SESSION_ID]``). ACP is client-driven — the
+    server cannot proactively create a session — so the directive is
+    *consumed by the first* ``session/new`` request, which then hydrates
+    and replays the persisted history instead of starting blank. Every
+    later ``session/new`` on the same connection behaves normally.
+
+    Fields:
+      - ``session_id``: the persisted session selector (UUID / prefix /
+        timestamp). ``None`` means "resume the latest saved session".
+
+    ``consume`` is thread-safe: the dispatcher runs handlers on a worker
+    pool, so two racing ``session/new`` calls could both observe a pending
+    directive. The lock guarantees exactly one of them claims it; the
+    other proceeds as a normal fresh session.
+    """
+
+    session_id: Optional[str] = None
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _consumed: bool = field(default=False, repr=False)
+
+    def consume(self) -> bool:
+        """Atomically claim the directive. Returns ``True`` for exactly one
+        caller; every subsequent call (and any concurrent loser) gets
+        ``False``.
+        """
+        with self._lock:
+            if self._consumed:
+                return False
+            self._consumed = True
+            return True
+
+
+# ---------------------------------------------------------------------------
 # Session state
 # ---------------------------------------------------------------------------
 
