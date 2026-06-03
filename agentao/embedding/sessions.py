@@ -158,6 +158,28 @@ def save_session(
     return session_file, sid
 
 
+def persist_agent_session(
+    agent: Any,
+    session_id: Optional[str] = None,
+    project_root: Optional[Path] = None,
+) -> Tuple[Path, str]:
+    """Persist ``agent``'s conversation, deriving model + active skills from it.
+
+    Shared by the CLI session-end hook and the ACP session teardown so the
+    agent→disk extraction (``messages`` / ``get_current_model()`` /
+    ``skill_manager.get_active_skills()``) lives in exactly one place — adding
+    a field to the persisted contract only has to touch this function.
+    """
+    active_skills = list(agent.skill_manager.get_active_skills().keys())
+    return save_session(
+        messages=agent.messages,
+        model=agent.get_current_model(),
+        active_skills=active_skills,
+        session_id=session_id,
+        project_root=project_root,
+    )
+
+
 def _resolve_session_file(
     session_id: Optional[str] = None,
     project_root: Optional[Path] = None,

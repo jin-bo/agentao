@@ -22,9 +22,21 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agentao.cancellation import CancellationToken
+
+
+class _FakeSkillManager:
+    """Duck-types the ``skill_manager.get_active_skills()`` call that
+    ``AcpSessionState._save_session`` makes during teardown."""
+
+    def __init__(self, active: Optional[Dict[str, Any]] = None) -> None:
+        self._active = active or {}
+
+    def get_active_skills(self) -> Dict[str, Any]:
+        return dict(self._active)
 
 
 class FakeAgent:
@@ -53,6 +65,8 @@ class FakeAgent:
         *,
         side_effect: Optional[Callable[[CancellationToken], None]] = None,
         track_messages: bool = False,
+        model: str = "test-model",
+        working_directory: Optional[Path] = None,
     ) -> None:
         self.reply = reply
         self.side_effect = side_effect
@@ -61,6 +75,13 @@ class FakeAgent:
         self.chat_calls: List[Tuple[str, CancellationToken]] = []
         self.received_images: List[Any] = []
         self.close_calls = 0
+        # Surface that ``AcpSessionState._save_session`` reads on teardown.
+        self.model = model
+        self.working_directory = working_directory
+        self.skill_manager = _FakeSkillManager()
+
+    def get_current_model(self) -> str:
+        return self.model
 
     def chat(
         self,

@@ -23,6 +23,12 @@ from .models import AcpProcessInfo, AcpServerConfig, ServerState
 # Default capacity for the stderr ring buffer (number of lines).
 _STDERR_RING_CAPACITY = 200
 
+# Grace period (seconds) to wait for the subprocess to exit on its own after
+# we close its stdin. The ACP server's read loop returns on stdin EOF and runs
+# its shutdown ``finally`` (persist each session, disconnect MCP) on that path,
+# so we give it this long before escalating to SIGTERM/SIGKILL.
+_GRACEFUL_STOP_TIMEOUT = 5.0
+
 logger = logging.getLogger("agentao.acp_client")
 
 
@@ -175,7 +181,9 @@ class ACPProcessHandle:
     def stop(self) -> None:
         """Gracefully stop the subprocess.
 
-        Sends SIGTERM, waits up to 5 s, then kills.  Idempotent.
+        Closes stdin first so an ACP server can persist its sessions and exit
+        on EOF, waits up to ``_GRACEFUL_STOP_TIMEOUT`` s, then escalates to
+        SIGTERM (5 s) and finally SIGKILL.  Idempotent.
         """
         with self._lock:
             self._stop_unlocked()
@@ -194,15 +202,43 @@ class ACPProcessHandle:
 
         self._set_state(ServerState.STOPPING)
 
+        # 1. Close stdin to send EOF. The ACP server's read loop returns on
+        #    EOF and runs its shutdown ``finally`` — cancel active turns,
+        #    drain handlers, then ``close_all`` which persists each session
+        #    and disconnects MCP. This graceful path is the ONLY one on which
+        #    a server-side session is saved, so give it a chance before we
+        #    resort to signals (a SIGTERM the server doesn't catch would kill
+        #    it before any of that runs). It also lets the server reap its own
+        #    grandchildren (MCP/shell), which ``terminate()`` here cannot.
         try:
-            self._proc.terminate()
-            self._proc.wait(timeout=5)
+            stdin = self._proc.stdin
+            if stdin is not None and not stdin.closed:
+                stdin.close()
+        except Exception:
+            pass  # already closed / broken pipe — fall through to wait
+
+        try:
+            self._proc.wait(timeout=_GRACEFUL_STOP_TIMEOUT)
         except subprocess.TimeoutExpired:
+            # 2. Graceful EOF exit didn't take — escalate.
             logger.warning(
-                "acp server '%s' did not stop within 5 s — killing", self.name
+                "acp server '%s' did not exit %.0f s after stdin close — terminating",
+                self.name,
+                _GRACEFUL_STOP_TIMEOUT,
             )
-            self._proc.kill()
-            self._proc.wait(timeout=2)
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "acp server '%s' did not stop within 5 s — killing", self.name
+                )
+                self._proc.kill()
+                self._proc.wait(timeout=2)
+            except Exception as exc:
+                logger.error(
+                    "acp server '%s': error during stop: %s", self.name, exc
+                )
         except Exception as exc:
             logger.error(
                 "acp server '%s': error during stop: %s", self.name, exc

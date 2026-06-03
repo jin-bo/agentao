@@ -262,17 +262,31 @@ class AcpSessionState:
 
         1. Mark ``closed`` first so a concurrent second call (or a close
            during an error unwind) short-circuits immediately.
-        2. Cancel the active turn's token if any — this unblocks the LLM
+        2. Persist the conversation via :meth:`_save_session` *before*
+           cancelling the active turn. Cancelling can leave a half-emitted
+           tool call dangling in ``agent.messages``; saving first captures
+           the cleaner committed state. Mirrors the CLI, which persists in
+           its session-end hook rather than inside ``agent.close()`` — this
+           is the ACP-layer analog of that hook. Best-effort.
+        3. Cancel the active turn's token if any — this unblocks the LLM
            call and tool execution before we start disconnecting MCP
            servers, so the runtime doesn't try to use a torn-down
            connection mid-turn.
-        3. Call ``agent.close()`` to disconnect MCP servers. Wrapped in
+        4. Call ``agent.close()`` to disconnect MCP servers. Wrapped in
            try/except because shutdown must be robust — a single hung
            MCP server cannot prevent other sessions from tearing down.
+
+        NOTE: this only runs on a *clean* shutdown — the server's read loop
+        reaches ``close_all`` via its ``finally`` block when stdin hits EOF.
+        A client that kills the subprocess (SIGTERM/SIGKILL) without first
+        closing stdin bypasses this path entirely, so the ACP client's stop
+        sequence must close stdin and wait for graceful exit first.
         """
         if self.closed:
             return
         self.closed = True
+
+        self._save_session()
 
         if self.cancel_token is not None:
             try:
@@ -285,3 +299,22 @@ class AcpSessionState:
                 self.agent.close()
             except Exception:
                 logger.exception("acp: error closing agent for session %s", self.session_id)
+
+    def _save_session(self) -> None:
+        """Persist this session's conversation to disk. Best-effort.
+
+        Keyed by the ACP ``sessionId`` so ``session/load`` (which reads via
+        :func:`agentao.embedding.sessions.load_session` under the same id and
+        cwd) can later resume it. Skips empty conversations so short-lived
+        sessions that never ran a turn don't litter the sessions directory.
+        """
+        agent = self.agent
+        if agent is None or not getattr(agent, "messages", None):
+            return
+        try:
+            from agentao.embedding.sessions import persist_agent_session
+
+            project_root = self.cwd or getattr(agent, "working_directory", None)
+            persist_agent_session(agent, self.session_id, project_root)
+        except Exception:
+            logger.exception("acp: error saving session %s on close", self.session_id)
