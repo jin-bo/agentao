@@ -183,13 +183,17 @@ agentao --resume a1b2c3
 
 不带 id 恢复最近会话；带 id 时按前缀匹配。REPL 内同等命令是 `/sessions resume <id>`。
 
+与 `--acp` 同时使用时，`--resume` 改为在**第一个 `session/new`** 上恢复——见下方 [`--acp --stdio`](#acp-stdio-—-作为-acp-server)。
+
 ## `--acp --stdio` — 作为 ACP Server
 
 ```bash
 agentao --acp --stdio
+agentao --acp --resume               # 第一个 session/new 恢复最近会话
+agentao --acp --resume <SESSION_ID>  # 第一个 session/new 恢复指定会话
 ```
 
-这会把 Agentao 作为 ACP stdio JSON-RPC server 启动，供 IDE、宿主进程或其他 agent 调用。`--stdio` 当前只在 `--acp` 下有效。
+这会把 Agentao 作为 ACP stdio JSON-RPC server 启动，供 IDE、宿主进程或其他 agent 调用。`--stdio` 当前只在 `--acp` 下有效。加上 `--resume` 会装载一个一次性指令，由第一个 `session/new` 消费来注入并重放持久化会话（任何未命中都降级为全新会话）。见 [3.2 Agentao 作为 ACP Server → 启动时恢复会话](/zh/part-3/2-agentao-as-server#启动时恢复会话)。
 
 ## `--plugin-dir` — 临时加载插件
 

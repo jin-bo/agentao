@@ -16,6 +16,19 @@ agentao --acp --stdio
 
 **日志**：Agentao 会把日志写入 `<session-cwd>/agentao.log`（ACP 握手里客户端传入的 `cwd`）。宿主可以轮询/监听这个文件做调试。
 
+## 启动时恢复会话
+
+```bash
+agentao --acp --resume                 # 恢复最近保存的会话
+agentao --acp --resume <SESSION_ID>    # 恢复指定会话（UUID / 前缀 / 时间戳）
+```
+
+ACP 是客户端驱动的——server 不能自己开会话——所以 `--resume` 装载一个**由第一个 `session/new` 消费的一次性指令**。该请求会注入持久化历史、把它作为 `session/update` 通知重放（和 `session/load` 完全一致），并返回**持久化的 `sessionId`** 而非新生成的。此后该连接上的每个 `session/new` 都是全新空会话。
+
+会话存储以客户端传入的 `cwd` 为键，因此查找在请求时针对 `<cwd>/.agentao/sessions` 进行。任何可恢复的未命中——空存储、未知 id、文件损坏、或 id 已在注册表中存活——都会**降级为全新会话**（以 WARNING 记录），而不是让客户端的第一个 `session/new` 失败。
+
+> 恢复出的 `sessionId` 只在 `session/new` 响应里返回，因此重放的 `session/update` 通知会**先于**客户端得知该 id 到达。对 `session/update.sessionId` 做严格校验的客户端可能会丢弃这些早到的更新；但从下一次 prompt 起对话仍能正确续上。参见 [docs/ACP.md](https://github.com/jin-bo/agentao/blob/main/docs/ACP.md#resume-a-session-on-startup)。
+
 ## 完整方法清单
 
 ### 宿主 → Agent（5 个请求方法）

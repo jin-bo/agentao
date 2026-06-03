@@ -77,6 +77,8 @@ Create a fresh session.
 | `-32002` | Called before `initialize` (SERVER_NOT_INITIALIZED) |
 | `-32602` | `cwd` not absolute / doesn't exist / `mcpServers` malformed |
 
+> **Startup resume.** When the server was launched with `agentao --acp --resume [SESSION_ID]`, the **first** `session/new` resumes a persisted session instead of starting blank: it replays history as `session/update` notifications and returns the persisted `sessionId`. A miss (empty store / unknown id / corrupt file / id already active) silently degrades to a normal fresh session. See [3.2 → Resume a session on startup](/en/part-3/2-agentao-as-server#resume-a-session-on-startup).
+
 ## C.3 `session/prompt`
 
 Run one user turn. Returns when the agent stops.
