@@ -50,6 +50,8 @@ cp .env.example .env       # Edit with OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_M
 
 Agentao is an **embedded agent harness**: the same runtime drives the interactive CLI, the `agentao run` automation surface, and the ACP server, with hosts free to embed `Agentao(...)` directly. The package boundary between "host-facing contract" and "internal runtime" is load-bearing — see `docs/design/embedded-host-contract.md` and `docs/api/host.md`.
 
+> **Embedding Agentao into a *different* project?** (e.g. a coding agent asked to "add Agentao" to another codebase.) Read the distilled playbook at `docs/EMBED_FOR_AGENTS.md` — construction skeletons, import rules, and an integration checklist. Note that *this* `CLAUDE.md` and `AGENTAO.md` are for working inside the Agentao repo, not for the embedding target.
+
 ### Subpackage map
 
 | Path | Purpose |
@@ -71,7 +73,7 @@ Agentao is an **embedded agent harness**: the same runtime drives the interactiv
 | `agentao/transport/` | Event transport between Agentao core and CLI/ACP frontends. |
 | `agentao/cli/` | Interactive CLI **package** (was `cli.py` before 0.4.x). `app.py` (`AgentaoCLI`), `entrypoints.py` (argparse + `main`), `run.py` (`agentao run`), `commands/` (per-slash-command handlers), `subcommands.py`, `diagnostics_cli.py`. |
 | `agentao/skills/` | Skill discovery + activation. SKILL.md frontmatter parser. |
-| `agentao/prompts/`, `agentao/agents/`, `agentao/plan/`, `agentao/capabilities/`, `agentao/tooling/`, `agentao/security/`, `agentao/session.py`, `agentao/context_manager.py` | Supporting modules — prompt assembly, sub-agent runners, plan-mode state, capability declarations, tool-arg sanitizers, security utilities, session save/load, context-window compaction. |
+| `agentao/prompts/`, `agentao/agents/`, `agentao/plan/`, `agentao/capabilities/`, `agentao/tooling/`, `agentao/security/`, `agentao/session.py`, `agentao/context_manager.py` | Supporting modules — prompt assembly, sub-agent runners, plan-mode state, capability declarations (incl. `capabilities/process.py::run_captured` — the shared hardened subprocess runner; see Common gotchas), tool-arg sanitizers, security utilities, session save/load, context-window compaction. |
 
 ### Tool system
 
@@ -112,7 +114,7 @@ Built fresh on every `chat()` in `agent.py::_build_system_prompt()` (line ~605):
 3. Current date/time — `YYYY-MM-DD HH:MM:SS (Day)`
 4. Memory blocks — `<memory-stable>` + `<memory-context>` (top-k recall scored against current user message)
 5. Available skills — names + descriptions
-6. Active skills context — full SKILL.md + on-demand `reference/*.md`
+6. Active skills context — full SKILL.md + on-demand `references/*.md`
 
 ### Conversation flow
 
@@ -132,7 +134,7 @@ Agentao.chat() / Agentao.arun()
 
 ### Skills
 
-Auto-discovered from `skills/`. Each subdir has `SKILL.md` (YAML frontmatter `name:` / `description:`) and optional `reference/*.md` (loaded on activation). The skill manager (`agentao/skills/`) maintains `available_skills` (all) and `active_skills` (this session). Cross-process locking via `filelock` — installs and updates are safe across concurrent CLI processes.
+Auto-discovered from `skills/`. Each subdir has `SKILL.md` (YAML frontmatter `name:` / `description:`) and optional `references/*.md` (loaded on activation). The skill manager (`agentao/skills/`) maintains `available_skills` (all) and `active_skills` (this session). Cross-process locking via `filelock` — installs and updates are safe across concurrent CLI processes.
 
 Activate via the `activate_skill` tool or `/skills activate <name>`.
 
@@ -224,7 +226,7 @@ The authoritative list with full subcommand syntax lives in `agentao/cli/help_te
 ### A skill
 
 1. Create `skills/<my-skill>/SKILL.md` with YAML frontmatter (`name:`, `description:` — the trigger text the model sees).
-2. Optionally add `reference/*.md` files (loaded only on activation, saves memory).
+2. Optionally add `references/*.md` files (loaded only on activation, saves memory).
 3. Restart the agent or run `/skills reload`.
 
 ## Common gotchas
@@ -235,6 +237,7 @@ The authoritative list with full subcommand syntax lives in `agentao/cli/help_te
 - **`agentao -p` is a shim** over `agentao run`. New automation should target `agentao run` directly — that's where the spec schema, Jinja2 templating, and exit codes are documented.
 - **`Agentao` constructor takes 8 legacy callbacks** (`confirmation_callback`, `step_callback`, …) that emit `DeprecationWarning`. They will be removed in 0.5.0 — `agentao.embedding.compat` is the documented migration surface.
 - **Don't intuition-audit architecture.** Before recommending borrowed patterns or claiming a gap exists, grep agentao to verify; subpackage `__init__.py` docstrings document intentional shims and rename trails.
+- **Don't call `subprocess.run` for batch commands — use `agentao/capabilities/process.py::run_captured()`.** A bare `subprocess.run(timeout=)` only kills the direct child on timeout, so a grandchild holding the captured pipe (Windows `git` credential helpers, a user hook backgrounding a process) hangs `communicate()` past the timeout — and over ACP-stdio a hung tool wedges the turn until the client times out and drops the connection. `run_captured` runs the child in its own process group/session, feeds/detaches stdin explicitly (`input=` over a pipe, else `DEVNULL` so a child can't read the JSON-RPC channel), kills the whole tree via `kill_process_tree()` on timeout (`taskkill /T` / `killpg(pid)` — never `getpgid`, which races a zombie child), and decodes with `errors="replace"`. `search_file_content` and the plugin hook dispatcher route through `run_captured`; `LocalShellExecutor.run` keeps its own streaming + inactivity-timeout loop but shares `kill_process_tree`. (PRs #73/#74/#75.)
 
 ## Key dependencies
 

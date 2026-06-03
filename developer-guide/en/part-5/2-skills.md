@@ -1,7 +1,7 @@
 # 5.2 Skills & Plugin Directories
 
 > **What you'll learn**
-> - The skill directory layout (`SKILL.md` + optional `reference/*.md`)
+> - The skill directory layout (`SKILL.md` + optional `references/*.md`)
 > - The three-layer search (user / project-config / project-repo) and override semantics
 > - How to write a skill the LLM activates at the right time — and only then
 
@@ -14,7 +14,7 @@ Every skill is a directory:
 ```
 my-skill/
 ├── SKILL.md              # required: entry file
-└── reference/            # optional: load-on-demand docs
+└── references/            # optional: load-on-demand docs
     ├── conventions.md
     └── templates.md
 ```
@@ -46,7 +46,7 @@ When the user's ticket asks about refunds / complaints / delivery:
 
 ## Edge cases
 
-For exceptions, consult `reference/conventions.md`.
+For exceptions, consult `references/conventions.md`.
 ```
 
 ### YAML frontmatter
@@ -129,7 +129,7 @@ This design lets you **stack many skills** without bloating context: only the on
 
 ## On-demand references
 
-`reference/*.md` is not auto-loaded. Inside the skill body you can say: "If you hit a special case, `read_file skills/my-skill/reference/edge-cases.md`." Benefits:
+`references/*.md` is not auto-loaded. Inside the skill body you can say: "If you hit a special case, `read_file skills/my-skill/references/edge-cases.md`." Benefits:
 
 - The main SKILL.md stays < 2 KB, easy for the LLM to absorb
 - Extra docs load **only when needed**, saving tokens
@@ -168,7 +168,7 @@ LLMs are more reliable at obeying prohibitions than inferring best practices.
 ```
 skills/code-review/
 ├── SKILL.md
-└── reference/
+└── references/
     ├── security-checklist.md
     └── performance-patterns.md
 ```
@@ -189,7 +189,7 @@ You are a principal engineer doing a pre-merge review. Be direct, be specific, c
 
 ## Review order
 
-1. **Security first**: check `reference/security-checklist.md`
+1. **Security first**: check `references/security-checklist.md`
 2. **Correctness**: edge cases, error paths, async correctness
 3. **Performance**: N+1 queries, unbounded loops, memory leaks
 4. **Style**: conforms to existing patterns in the same file — do not impose
@@ -242,7 +242,7 @@ print(agent.skill_manager.get_skills_context())
 
 ## TL;DR
 
-- A skill is a **directory** with `SKILL.md` (YAML frontmatter + body) and optional `reference/*.md` loaded on activation.
+- A skill is a **directory** with `SKILL.md` (YAML frontmatter + body) and optional `references/*.md` loaded on activation.
 - The `description` decides *when* the LLM activates the skill — write it from the LLM's POV ("activate this when the user asks about X").
 - 3 search layers: `~/.agentao/skills/` (global) → `<wd>/.agentao/skills/` → `<wd>/skills/`. Project-local wins.
 - Many small specific skills > one monster skill. Activating a skill costs context tokens; small ones stay cheap.

@@ -13,6 +13,11 @@ Agentao internals.
 > Audience: developers integrating Agentao into a webapp, batch job,
 > IDE plugin, evaluation harness, sandbox runner, or research notebook.
 
+> **Are you a coding agent** (Claude Code, Codex, …) tasked with
+> embedding Agentao into another project? Start with the distilled
+> playbook in [`EMBED_FOR_AGENTS.md`](EMBED_FOR_AGENTS.md), then return
+> here for the details it links to.
+
 > **Is in-process embedding what you want?** If your host is **not** a
 > Python process (an editor, IDE extension, non-Python sandbox runner),
 > see [`ACP.md`](ACP.md) for the stdio ACP server instead. If you want
@@ -305,10 +310,20 @@ async def handle_request(req):
 ```
 
 `arun()` is a thin wrapper over `chat()` that runs the synchronous
-loop in a worker thread — no loop is monopolised. Cancellation is
-forwarded via `agent.cancel_current_turn()`; the worker thread checks
-the cancellation token cooperatively at every tool boundary and at
-each LLM streaming chunk.
+loop in a worker thread — no loop is monopolised. To cancel, pass a
+`CancellationToken` into `arun()` (or `chat()`) and trip it from
+elsewhere; the worker thread checks the token cooperatively at every
+tool boundary and at each LLM streaming chunk. Cancelling the awaiting
+`asyncio` task (e.g. `asyncio.wait_for` timeout, client disconnect)
+also forwards into the same token.
+
+```python
+from agentao.cancellation import CancellationToken
+
+token = CancellationToken()
+task = asyncio.create_task(agent.arun(req.prompt, cancellation_token=token))
+# elsewhere: token.cancel("client-disconnect")
+```
 
 ---
 

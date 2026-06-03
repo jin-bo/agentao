@@ -2,6 +2,7 @@
 
 **Package:** `agentao.host`
 **Status:** Stable, since 0.3.1.
+**Coding agents:** for a distilled, copy-paste embedding playbook, start with [`docs/EMBED_FOR_AGENTS.md`](../EMBED_FOR_AGENTS.md).
 **Source design:** [`docs/design/embedded-host-contract.md`](../design/embedded-host-contract.md)
 **Implementation plan (historical):** [`docs/implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md`](../implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md)
 

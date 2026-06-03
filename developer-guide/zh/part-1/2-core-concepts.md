@@ -63,7 +63,7 @@ Agentao 自带几十个工具（`read_file`, `write_file`, `run_shell_command`, 
 ```
 skills/my-skill/
 ├── SKILL.md            # 主文件，YAML frontmatter + 说明
-└── reference/*.md       # 可选：激活后按需加载
+└── references/*.md       # 可选：激活后按需加载
 ```
 
 技能不是代码，是**指导 LLM 行为的 markdown 文档**。对比：

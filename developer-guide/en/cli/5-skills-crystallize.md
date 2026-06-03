@@ -19,7 +19,7 @@ When the user asks for a PDF → markdown conversion:
 2. ...
 ```
 
-The YAML frontmatter is what the agent reads when deciding whether to activate. Once active, the full SKILL.md body is injected into the system prompt, plus any `reference/*.md` files that the skill references.
+The YAML frontmatter is what the agent reads when deciding whether to activate. Once active, the full SKILL.md body is injected into the system prompt, plus any `references/*.md` files that the skill references.
 
 You don't have to know the skill exists — `/help` lists them, the agent picks them up. You only step in when you want to force, suppress, or build a new one.
 
@@ -215,7 +215,7 @@ The full gallery README — including the embedded-harness perspective on host-c
 | Path | Purpose |
 |------|---------|
 | `skills/<name>/SKILL.md` | The skill itself (frontmatter + body) |
-| `skills/<name>/reference/*.md` | On-demand references the skill body links to |
+| `skills/<name>/references/*.md` | On-demand references the skill body links to |
 | `~/.agentao/skills/<name>/` | Same layout, global scope (managed installs) |
 | `~/.agentao/skills/registry.json` · `<cwd>/skills/registry.json` | Tracks managed installs (source ref, version, install scope) |
 | `.agentao/skills_config.json` (project) | Persistent enable/disable state — see [10. Configuration Reference](./10-config-reference) |

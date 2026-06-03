@@ -19,7 +19,7 @@ description: 用 marker_single 把 PDF 转成 markdown。命中"convert PDF to m
 2. ...
 ```
 
-YAML frontmatter 是 agent 决定要不要激活时读的。激活后，整份 SKILL.md body 注入系统提示，body 里引用的 `reference/*.md` 也按需加载。
+YAML frontmatter 是 agent 决定要不要激活时读的。激活后，整份 SKILL.md body 注入系统提示，body 里引用的 `references/*.md` 也按需加载。
 
 你不需要知道有哪些 skill — `/help` 列得出，agent 自己识别。只在你想强制 / 抑制 / 新建一个 skill 时才介入。
 
@@ -215,7 +215,7 @@ pip install -r examples/skills/ocr/requirements.txt
 | 路径 | 用途 |
 |---|---|
 | `skills/<name>/SKILL.md` | skill 本体（frontmatter + body） |
-| `skills/<name>/reference/*.md` | body 引用的按需加载文档 |
+| `skills/<name>/references/*.md` | body 引用的按需加载文档 |
 | `~/.agentao/skills/<name>/` | 同样的目录结构，global 作用域（受管安装） |
 | `~/.agentao/skills/registry.json` · `<cwd>/skills/registry.json` | 跟踪受管安装（source ref、版本、scope） |
 | `.agentao/skills_config.json`（项目） | 持久化的 enable/disable 状态 — 见 [10. 配置文件参考](./10-config-reference) |

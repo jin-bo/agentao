@@ -8,8 +8,11 @@ Use the root [README.md](../README.md) for the product overview and first-run pa
 
 > **Not sure which surface to use?** Read [architecture/embedding-vs-acp.md](architecture/embedding-vs-acp.md) first — it disambiguates in-process embedding, ACP server, ACP client, and the ACP schema surface (all of which can combine).
 
+> **Are you a coding agent** (Claude Code, Codex, …) tasked with embedding Agentao into another project? Start with the distilled playbook [EMBED_FOR_AGENTS.md](EMBED_FOR_AGENTS.md), then follow its links into [EMBEDDING.md](EMBEDDING.md) and [api/host.md](api/host.md).
+
 Pick the path that matches your goal:
 
+- **Coding agent embedding Agentao into another project:** [EMBED_FOR_AGENTS.md](EMBED_FOR_AGENTS.md) (distilled, copy-paste playbook)
 - Embed in your Python project (primary use case): [EMBEDDING.md](EMBEDDING.md) → [api/host.md](api/host.md)
 - First-time CLI setup: [QUICKSTART.md](QUICKSTART.md)
 - Daily command lookup: [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
@@ -26,6 +29,7 @@ Pick the path that matches your goal:
 
 ### User Guides
 
+- [EMBED_FOR_AGENTS.md](EMBED_FOR_AGENTS.md) — distilled embedding playbook for coding agents (Claude Code, Codex, …)
 - [EMBEDDING.md](EMBEDDING.md)
 - [QUICKSTART.md](QUICKSTART.md)
 - [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
@@ -99,6 +103,8 @@ These are the primary user-facing documents in `docs/`.
 
 | Document | When to use it |
 |----------|----------------|
+| [EMBED_FOR_AGENTS.md](EMBED_FOR_AGENTS.md) | You are a coding agent (Claude Code, Codex, …) embedding Agentao into another project — distilled, copy-paste playbook |
+| [EMBEDDING.md](EMBEDDING.md) | You are a developer embedding Agentao in a Python host — full reference |
 | [QUICKSTART.md](QUICKSTART.md) | You want the fastest setup path |
 | [QUICK_REFERENCE.md](QUICK_REFERENCE.md) | You need a compact operator cheat sheet |
 | [ACP.md](ACP.md) | You are running Agentao as an ACP server |
