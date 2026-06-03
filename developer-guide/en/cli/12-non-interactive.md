@@ -183,13 +183,17 @@ agentao --resume a1b2c3
 
 Without an id, this resumes the latest session. With an id, it matches by prefix. Inside the REPL, the equivalent is `/sessions resume <id>`.
 
+Combined with `--acp`, `--resume` resumes on the **first `session/new`** instead — see [`--acp --stdio`](#acp-stdio-—-run-as-an-acp-server) below.
+
 ## `--acp --stdio` — run as an ACP server
 
 ```bash
 agentao --acp --stdio
+agentao --acp --resume               # resume the latest session on first session/new
+agentao --acp --resume <SESSION_ID>  # resume a specific session on first session/new
 ```
 
-This starts Agentao as an ACP stdio JSON-RPC server for IDEs, host processes, or other agents. `--stdio` is currently meaningful only with `--acp`.
+This starts Agentao as an ACP stdio JSON-RPC server for IDEs, host processes, or other agents. `--stdio` is currently meaningful only with `--acp`. Adding `--resume` arms a one-shot directive that the first `session/new` consumes to hydrate + replay a persisted session (any miss degrades to a fresh session). See [3.2 Agentao as an ACP Server → Resume a session on startup](/en/part-3/2-agentao-as-server#resume-a-session-on-startup).
 
 ## `--plugin-dir` — load plugins temporarily
 

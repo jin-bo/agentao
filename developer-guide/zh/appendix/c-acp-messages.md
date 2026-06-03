@@ -77,6 +77,8 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 | `-32002` | 在 `initialize` 之前调（SERVER_NOT_INITIALIZED） |
 | `-32602` | `cwd` 不是绝对/不存在，或 `mcpServers` 格式错 |
 
+> **启动时恢复。** 当 server 以 `agentao --acp --resume [SESSION_ID]` 启动时，**第一个** `session/new` 会恢复持久化会话而非新建空会话：把历史作为 `session/update` 通知重放，并返回持久化的 `sessionId`。未命中（空存储 / 未知 id / 文件损坏 / id 已存活）会静默降级为普通的全新会话。见 [3.2 → 启动时恢复会话](/zh/part-3/2-agentao-as-server#启动时恢复会话)。
+
 ## C.3 `session/prompt`
 
 跑一轮用户交互，返回时 agent 已停。

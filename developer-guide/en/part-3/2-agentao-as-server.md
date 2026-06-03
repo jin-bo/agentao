@@ -16,6 +16,19 @@ agentao --acp --stdio
 
 **Logs**: Agentao writes to `<session-cwd>/agentao.log` (the `cwd` from the handshake). Hosts can tail / inspect it for debugging.
 
+## Resume a session on startup
+
+```bash
+agentao --acp --resume                 # resume the latest saved session
+agentao --acp --resume <SESSION_ID>    # resume a specific session (UUID / prefix / timestamp)
+```
+
+ACP is client-driven — the server can't open a session on its own — so `--resume` arms a **one-shot directive consumed by the first `session/new`**. That request hydrates the persisted history, replays it as `session/update` notifications (exactly like `session/load`), and returns the **persisted `sessionId`** instead of a fresh one. Every later `session/new` on the connection starts blank.
+
+The store is keyed by the client-supplied `cwd`, so the lookup runs at request time against `<cwd>/.agentao/sessions`. Any recoverable miss — empty store, unknown id, corrupt file, or an id already live in the registry — **degrades to a fresh session** (logged at WARNING) rather than failing the client's first `session/new`.
+
+> The resumed `sessionId` is only returned in the `session/new` response, so the replayed `session/update` notifications arrive *before* the client learns that id. Clients that strictly validate `session/update.sessionId` against sessions they opened may drop those early updates; the conversation still continues correctly from the next prompt. See [docs/ACP.md](https://github.com/jin-bo/agentao/blob/main/docs/ACP.md#resume-a-session-on-startup).
+
 ## Full method catalog
 
 ### Host → Agent (5 request methods)

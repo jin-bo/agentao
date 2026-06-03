@@ -168,6 +168,8 @@ const sessionId = saved
 ctx.globalState.update("agentao.sessionId", sessionId);
 ```
 
+> 如果插件不想自己记 id，只想把**最近**那次对话拿回来，可以改用 `agentao --acp --resume` 启动 server——这样第一个 `session/new` 会自动恢复最近会话（省去一次 `session/load` 往返）。见 [3.2 → 启动时恢复会话](/zh/part-3/2-agentao-as-server#启动时恢复会话)。
+
 ## 插件自带的配置文件
 
 在 workspace 根目录放 `.agentao/acp.json`，用户无需改扩展代码就能定制：

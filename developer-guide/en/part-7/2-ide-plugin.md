@@ -168,6 +168,8 @@ const sessionId = saved
 ctx.globalState.update("agentao.sessionId", sessionId);
 ```
 
+> If your plugin doesn't track ids and just wants the **last** conversation back, spawn the server with `agentao --acp --resume` instead — the first `session/new` then resumes the latest session automatically (no `session/load` round trip). See [3.2 → Resume a session on startup](/en/part-3/2-agentao-as-server#resume-a-session-on-startup).
+
 ## Configuration file the plugin ships with
 
 Drop `.agentao/acp.json` at workspace root so users can customize without touching extension code:
