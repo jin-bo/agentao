@@ -22,6 +22,7 @@ The full handbook lives in `developer-guide/` (VitePress, bilingual). Production
 
 | Audience | Read | Site |
 |---|---|---|
+| **Coding agents** — Claude Code / Codex / … embedding Agentao into another project | [`docs/EMBED_FOR_AGENTS.md`](docs/EMBED_FOR_AGENTS.md) (distilled, copy-paste playbook) | — |
 | **CLI users** — driving `agentao` in the terminal | [`developer-guide/en/cli/`](developer-guide/en/cli/) (12 chapters: slash commands · plan mode · memory · replay · …) | [agentao.cn/en/cli/](https://agentao.cn/en/cli/) |
 | **Embedding developers** — building Agentao into your app | [`developer-guide/en/`](developer-guide/en/) (Parts 1–7 + Appendix) | [agentao.cn](https://agentao.cn) |
 | **中文** | [`developer-guide/zh/cli/`](developer-guide/zh/cli/) · [`developer-guide/zh/`](developer-guide/zh/) | [agentao.cn/zh/cli/](https://agentao.cn/zh/cli/) · [agentao.cn/zh/](https://agentao.cn/zh/) |
@@ -65,6 +66,8 @@ agent.close()
 This constructs an agent with **no env-discovery, no implicit network, no global state** — the host owns every input. For env-driven discovery (the path the CLI uses), call `agentao.embedding.build_from_environment(working_directory=...)` instead.
 
 Embedding details: [Developer Guide · Part 2 (Lifecycle)](https://agentao.cn/en/part-2/) and [Part 4 (Host Contract)](https://agentao.cn/en/part-4/7-host-contract).
+
+> **Coding agent** (Claude Code, Codex, …) tasked with embedding Agentao into another project? Read [`docs/EMBED_FOR_AGENTS.md`](docs/EMBED_FOR_AGENTS.md) — a distilled, copy-paste integration playbook with construction skeletons, import rules, and a checklist.
 
 ---
 
