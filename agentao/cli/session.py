@@ -49,13 +49,10 @@ def on_session_end(cli: AgentaoCLI) -> None:
 
     if not cli.agent.messages:
         return
-    from ..embedding.sessions import save_session
+    from ..embedding.sessions import persist_agent_session
     try:
-        active_skills = list(cli.agent.skill_manager.get_active_skills().keys())
-        session_file, sid = save_session(
-            messages=cli.agent.messages,
-            model=cli.agent.get_current_model(),
-            active_skills=active_skills,
+        session_file, sid = persist_agent_session(
+            cli.agent,
             session_id=cli.current_session_id,
             project_root=cli.agent.working_directory,
         )

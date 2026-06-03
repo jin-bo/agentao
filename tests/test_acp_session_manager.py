@@ -94,6 +94,57 @@ def test_close_swallows_agent_close_exceptions():
     assert agent.close_calls == 1
 
 
+def test_close_saves_session_for_resume(tmp_path):
+    """close() persists the conversation under the ACP sessionId so a later
+    ``session/load`` can resume it — and still tears the runtime down.
+
+    Regression: stopping the ACP subprocess used to drop the chat history.
+    """
+    from agentao.embedding.sessions import load_session
+
+    agent = FakeAgent()
+    agent.messages = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+    state = _state(session_id="sess-save", agent=agent, cwd=tmp_path)
+
+    state.close()
+
+    messages, _model, _skills = load_session(
+        session_id="sess-save", project_root=tmp_path
+    )
+    assert [m["content"] for m in messages] == ["hello", "hi there"]
+    assert agent.close_calls == 1  # save did not replace teardown
+
+
+def test_close_skips_save_for_empty_conversation(tmp_path):
+    """A session that never ran a turn must not litter the sessions dir."""
+    from agentao.embedding.sessions import list_sessions
+
+    state = _state(session_id="sess-empty", agent=FakeAgent(), cwd=tmp_path)
+
+    state.close()
+
+    assert list_sessions(project_root=tmp_path) == []
+
+
+def test_close_save_failure_does_not_block_teardown(tmp_path):
+    """A failing save must not prevent the agent from being closed —
+    persistence is best-effort, teardown is not."""
+    agent = FakeAgent()
+    agent.messages = [{"role": "user", "content": "hi"}]
+    # A model object that explodes when the saver serializes it forces the
+    # save path into its except branch without touching teardown.
+    agent.get_current_model = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    state = _state(session_id="sess-boom", agent=agent, cwd=tmp_path)
+
+    state.close()  # must not raise
+
+    assert state.closed is True
+    assert agent.close_calls == 1
+
+
 # ---------------------------------------------------------------------------
 # AcpSessionManager — happy path
 # ---------------------------------------------------------------------------

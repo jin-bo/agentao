@@ -181,6 +181,29 @@ class TestACPProcessHandle:
 
         handle.stop()
 
+    def test_stop_closes_stdin_for_graceful_exit(self, tmp_path) -> None:
+        """stop() closes stdin first so the child can exit cleanly on EOF.
+
+        The child blocks reading stdin and, on EOF, writes a sentinel file
+        before exiting. If stop() jumped straight to SIGTERM the sentinel
+        would never be written; its presence proves the graceful EOF path
+        ran before any signal escalation. This is what lets an ACP *server*
+        subprocess persist its sessions on shutdown.
+        """
+        sentinel = tmp_path / "graceful.txt"
+        prog = (
+            "import sys; sys.stdin.read(); "
+            f"open({str(sentinel)!r}, 'w').write('ok')"
+        )
+        handle = ACPProcessHandle("graceful", _make_config(args=["-c", prog]))
+        handle.start()
+        assert handle.pid is not None
+
+        handle.stop()
+
+        assert handle.state == ServerState.STOPPED
+        assert sentinel.exists(), "child should exit gracefully on stdin EOF"
+
     def test_stdin_stdout_available(self) -> None:
         handle = ACPProcessHandle("test", _sleeper_config())
         handle.start()
