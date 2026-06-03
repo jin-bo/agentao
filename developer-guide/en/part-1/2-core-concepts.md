@@ -63,7 +63,7 @@ Agentao ships dozens of built-ins (`read_file`, `write_file`, `run_shell_command
 ```
 skills/my-skill/
 ├── SKILL.md            # Entry file; YAML frontmatter + body
-└── reference/*.md      # Optional; loaded only after activation
+└── references/*.md      # Optional; loaded only after activation
 ```
 
 A skill is not code — it is **markdown that guides LLM behavior**. Contrast:
