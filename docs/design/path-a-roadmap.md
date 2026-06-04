@@ -7,8 +7,8 @@
 - `docs/design/embedded-host-contract.md` — embedded-contract design rationale
 - `docs/design/metacognitive-boundary.md` — injectable metacognitive boundary
 - `docs/design/system-prompt-profile.md` — host-injectable collaboration posture (**review record; deferred** — use `project_instructions`; demand-gated child of the metacognitive-boundary decision)
-- `docs/EMBEDDING.md` — embedding patterns walkthrough
-- `docs/api/host.md` — `agentao.host` public API reference
+- `docs/guides/embedding.md` — embedding patterns walkthrough
+- `docs/reference/host-api.md` — `agentao.host` public API reference
 
 ---
 
@@ -235,8 +235,8 @@ Format per item: **Goal → Files → Changes → Accept → Tests → Risk**.
 - **Changes:**
   - Above the current `## Quick Start` (`README.md:21`), insert a new `## Embed in 30 lines` section with:
     1. one-line install: `pip install agentao` (intentionally *not* `[full]` — embedded users want the smallest core after 0.4.0)
-    2. minimal pure-injection snippet (mirror `docs/EMBEDDING.md` "Pure-injection" block, not the env-discovery one — pure injection is the Path A north star)
-    3. one-line teaser to `docs/EMBEDDING.md` and `docs/api/host.md`.
+    2. minimal pure-injection snippet (mirror `docs/guides/embedding.md` "Pure-injection" block, not the env-discovery one — pure injection is the Path A north star)
+    3. one-line teaser to `docs/guides/embedding.md` and `docs/reference/host-api.md`.
   - Move the current `## Quick Start` content under a new `## CLI Quickstart` heading immediately after the embed section.
   - Mirror identically in `README.zh.md`.
 - **Accept:**
@@ -285,12 +285,12 @@ Format per item: **Goal → Files → Changes → Accept → Tests → Risk**.
   1. Run `mypy --strict --package agentao.host` and fix every reported error inside the package (not by `# type: ignore`).
   2. Replace any `Any` in public signatures with concrete `Protocol`/Pydantic types. The capability protocols already exist under `agentao/capabilities/`; re-export the public ones from `agentao.host` so hosts have one import path.
   3. Add `agentao/host/protocols.py` re-exporting `FileSystem`, `MCPRegistry`, `ShellExecutor` (currently under `agentao.capabilities`) so embed users do not need to reach into `agentao.capabilities.*`.
-  4. Update `docs/api/host.md` import examples accordingly.
+  4. Update `docs/reference/host-api.md` import examples accordingly.
 - **Accept:**
   - `uv run mypy --strict --package agentao.host` exits 0.
   - A downstream example repo (created in P0.6) with `strict = true` mypy config passes against the wheel.
 - **Tests:**
-  - extend `tests/test_host_schema.py` with a runtime check that `agentao.host.__all__` matches the documented set in `docs/api/host.md` (drift detection).
+  - extend `tests/test_host_schema.py` with a runtime check that `agentao.host.__all__` matches the documented set in `docs/reference/host-api.md` (drift detection).
   - new `tests/test_host_typing.py`: subprocess `mypy --strict` against a tiny script importing the entire public surface; skipped if `mypy` is not installed in the dev group.
 - **Risk:** typing the capability protocols may require touching `agentao/capabilities/*.py`. Keep changes additive — do not narrow existing runtime types in ways that break in-tree consumers.
 
@@ -362,7 +362,7 @@ Format per item: **Goal → Files → Changes → Accept → Tests → Risk**.
   - `agentao/host/projection.py` — add a sink that translates each `HostEvent` into the matching `ReplayEvent` and hands it to the replay recorder when one is wired
   - `agentao/replay/recorder.py` — accept the new kinds in its allow-set
 - **Changes:**
-  - Schema version becomes `1.2`. v1.0 and v1.1 schemas remain frozen and continue to validate older replays — backward-compatibility promise from `docs/replay/schema-policy.md` holds.
+  - Schema version becomes `1.2`. v1.0 and v1.1 schemas remain frozen and continue to validate older replays — backward-compatibility promise from `docs/reference/replay-schema-policy.md` holds.
   - Payload shapes for the three new kinds borrow from `agentao/host/models.py` (already Pydantic) — generate JSON-Schema fragments via `model_json_schema()` and embed them as the per-kind variant in `_kind_variant`.
 - **Accept:**
   - `uv run python scripts/write_replay_schema.py` produces `schemas/replay-event-1.2.json`; `--check` mode passes in CI (drift detection already wired in `.github/workflows/ci.yml:30`).
@@ -632,7 +632,7 @@ Use this template for the PR description (English; mirror in Chinese if the host
 >
 > **Why:** [restate the maintainer's existing problem statement from their issue/discussion]. With `agentao` as an opt-in dependency, [feature] gains [concrete capability — pre-classification / test triage / doc draft / X].
 >
-> **Cost:** zero impact on existing users — `agentao` is in the `[ai]` extra, gated by an env var, fully removable. [Link to the relevant Path A guarantees: `docs/EMBEDDING.md` for capability injection, `docs/api/host.md` for the public surface.]
+> **Cost:** zero impact on existing users — `agentao` is in the `[ai]` extra, gated by an env var, fully removable. [Link to the relevant Path A guarantees: `docs/guides/embedding.md` for capability injection, `docs/reference/host-api.md` for the public surface.]
 >
 > **Test plan:** [two or three concrete checks the maintainer can run locally]
 

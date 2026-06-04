@@ -112,7 +112,7 @@ def unregister(self, name: str) -> bool:
 | Extract per-tool validation `_validate_one_extra_tool(tool)` | `agent.py`, from the existing `_validate_tool_injection`; shared by the construction-time loop and `add_tool`. **Reserved-name set = `mcp_` prefix ∪ `_PLAN_ONLY_TOOLS`**, plus the empty/non-string name guard |
 | `Agentao.add_tool` / `remove_tool` | `agent.py`, in the `events()`/`active_permissions()` cluster (near :681/:699). Both validate against the reserved-name set first (`add_tool` via `_validate_one_extra_tool`; `remove_tool` likewise rejects `mcp_` + `_PLAN_ONLY_TOOLS`), then bind / `unregister` |
 | `add_tool` reuses `_bind_and_register` | already at `tooling/registry.py:67`, no change |
-| Docs + contract surface | add two rows to the public-method table in `docs/api/host.md`; `host/__init__.py` needs no change (these are `Agentao` methods, not package-level symbols) |
+| Docs + contract surface | add two rows to the public-method table in `docs/reference/host-api.md`; `host/__init__.py` needs no change (these are `Agentao` methods, not package-level symbols) |
 
 A simple route, same shape as PR #64: **grep-verify → design (this doc) → patch + tests**.
 

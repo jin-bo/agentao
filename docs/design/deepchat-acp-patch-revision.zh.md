@@ -4,7 +4,7 @@
 已落地(见 PR 排序);PR-4 起尚未开始。
 **读者:** Agentao 维护者;DeepChat/TensorChat 集成 fork 的负责人。
 **相关文档:** `docs/design/embedded-host-contract.md`,
-`docs/architecture/embedding-vs-acp.md`(若存在),
+`docs/design/embedding-vs-acp.md`(若存在),
 `agentao/embedding/factory.py`,`agentao/acp/`。
 
 ## 范围(先读这段)

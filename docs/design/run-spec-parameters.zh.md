@@ -384,7 +384,7 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 - Pydantic 模型 + 4 个 validator + Jinja renderer + `--param` 解析 +
   接入行：~110 行
 - 测试（上述 15 个用例）：~220 行
-- Docstring + 更新 `docs/CONFIGURATION.md` 一节：~30 行
+- Docstring + 更新 `docs/reference/configuration.md` 一节：~30 行
 - 合计：~360 行，**不动 core agent**。
 
 一个 PR，门控就是上面的测试计划。无 host-API 接口变更 → 安全在 patch

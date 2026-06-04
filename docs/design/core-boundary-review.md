@@ -280,7 +280,7 @@ All nine are CLI/ACP/tests — none of them are `agent.py` or `runtime/*.py`. Ve
 
 ### Does it overlap with `host/`'s session concept?
 
-No. `host/`'s 30+ `session_id` references are correlation IDs for event-stream filtering and projection lineage (`host/events.py:73,84,89`, `host/projection.py:115-296`, `host/models.py:83,98,111`). They are identity tokens, not persistence. The two layers happen to use the word "session" for different concepts and don't conflict; this should be noted in `docs/api/host.md` to avoid future confusion.
+No. `host/`'s 30+ `session_id` references are correlation IDs for event-stream filtering and projection lineage (`host/events.py:73,84,89`, `host/projection.py:115-296`, `host/models.py:83,98,111`). They are identity tokens, not persistence. The two layers happen to use the word "session" for different concepts and don't conflict; this should be noted in `docs/reference/host-api.md` to avoid future confusion.
 
 ### Comparison with codex
 

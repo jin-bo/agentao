@@ -229,7 +229,7 @@ def classify_process_death(
     server stays in its terminal state until an explicit
     :meth:`ACPManager.restart_server` clears it.
 
-    Decision matrix (aligned with ``docs/HEADLESS_RUNTIME_ISSUES.md``
+    Decision matrix (aligned with ``docs/history/headless-runtime-issues.md``
     Issue 16):
 
     - Signal-terminated process (``signaled=True``, typically

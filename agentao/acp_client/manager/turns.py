@@ -122,7 +122,7 @@ class TurnsMixin:
         Raises:
             AcpClientError(code=SERVER_BUSY): Another turn is already
                 active for this server (single-active-turn contract —
-                "no queueing"; see ``docs/features/headless-runtime.md``
+                "no queueing"; see ``docs/guides/headless-runtime.md``
                 §2). Callers should back off and retry, not block a
                 worker thread behind a slow / stuck turn.
             AcpInteractionRequiredError: Non-interactive turn that the

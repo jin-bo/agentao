@@ -114,7 +114,7 @@ In practice, keep four rules in mind:
 - One server allows only one active turn at a time; collisions become `SERVER_BUSY`
 - Read `get_status()` / `readiness()` first for gating, then `last_error` for diagnosis
 
-The contract (public entry points, typed `get_status()`, single-active-turn concurrency, error classification) is pinned in [`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md); the runnable sample is [`examples/headless_worker.py`](../../../examples/headless_worker.py).
+The contract (public entry points, typed `get_status()`, single-active-turn concurrency, error classification) is pinned in [`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md); the runnable sample is [`examples/headless_worker.py`](../../../examples/headless_worker.py).
 
 ## How the rest of the guide is organized
 

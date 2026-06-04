@@ -280,7 +280,7 @@ codex 把 plugin **加载**（manifest 解析、市场同步、安装）和 plug
 
 ### 和 `host/` 的 session 概念有重叠吗？
 
-没有。`host/` 里 30+ 处 `session_id` 都是事件流过滤和 projection 链路用的相关性 ID（`host/events.py:73,84,89`、`host/projection.py:115-296`、`host/models.py:83,98,111`）。它们是**身份标识**，不是持久化。两层用同一个词指代不同概念，没有冲突；应该在 `docs/api/host.md` 加一句澄清，避免后人混淆。
+没有。`host/` 里 30+ 处 `session_id` 都是事件流过滤和 projection 链路用的相关性 ID（`host/events.py:73,84,89`、`host/projection.py:115-296`、`host/models.py:83,98,111`）。它们是**身份标识**，不是持久化。两层用同一个词指代不同概念，没有冲突；应该在 `docs/reference/host-api.md` 加一句澄清，避免后人混淆。
 
 ### 和 codex 的对照
 

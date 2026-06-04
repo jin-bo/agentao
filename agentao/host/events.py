@@ -5,7 +5,7 @@ Producers (PR 5/6/7 emit sites) call :meth:`EventStream.publish` with a
 fully-validated public event model; consumers iterate via
 ``async for`` on :meth:`EventStream.subscribe`.
 
-Delivery semantics (matches ``docs/api/host.md``):
+Delivery semantics (matches ``docs/reference/host-api.md``):
 
 - No subscriber: events are dropped immediately, the agent loop never
   blocks.

@@ -1,20 +1,20 @@
 # 10. 配置文件参考
 
-这是一个 CLI 视角的**索引**页 — CLI 会读的所有配置文件都在这。每个文件的 schema 详情都在 [`docs/CONFIGURATION.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md) 里，下表每行直接链到那边对应章节。
+这是一个 CLI 视角的**索引**页 — CLI 会读的所有配置文件都在这。每个文件的 schema 详情都在 [`docs/reference/configuration.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md) 里，下表每行直接链到那边对应章节。
 
 ## 配置面总览
 
 | 文件 | 项目路径 | 用户全局路径 | 谁在读 | Schema 参考 |
 |---|---|---|---|---|
-| **LLM 凭证** | `.env`（cwd） | shell env | `/model` `/provider` `/temperature` | [§2](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md#2-env--llm-provider-配置) |
-| **运行时设置** | `.agentao/settings.json` | — | `/mode` 持久化、`/replay on/off` | [§3](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md#3-agentaosettingsjson--运行时模式--内置子代理) |
-| **权限规则** | — *（项目文件被忽略）* | `~/.agentao/permissions.json` | `/mode` `/permission`、工具确认 UI | [§4](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md#4-permissionsjson--工具权限规则) |
+| **LLM 凭证** | `.env`（cwd） | shell env | `/model` `/provider` `/temperature` | [§2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#2-env--llm-provider-配置) |
+| **运行时设置** | `.agentao/settings.json` | — | `/mode` 持久化、`/replay on/off` | [§3](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#3-agentaosettingsjson--运行时模式--内置子代理) |
+| **权限规则** | — *（项目文件被忽略）* | `~/.agentao/permissions.json` | `/mode` `/permission`、工具确认 UI | [§4](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#4-permissionsjson--工具权限规则) |
 | **Shell 沙箱** | `.agentao/sandbox.json` | `~/.agentao/sandbox.json` | `/sandbox` | [Part 6.2](/zh/part-6/2-shell-sandbox) |
-| **MCP 服务器** | `.agentao/mcp.json` | `~/.agentao/mcp.json` | `/mcp` | [§5](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md#5-mcpjson--mcp-服务器注册表) |
-| **ACP 服务器** | `.agentao/acp.json` | — | `/acp` | [§6](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md#6-acpjson--acp-子代理注册表) |
-| **Skill 启停** | `.agentao/skills_config.json` | — | `/skills enable` `/skills disable` | [§7](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md#7-skills_configjson--每个项目的-skill-启停) |
-| **项目说明** | `AGENTAO.md`（cwd） | — | 每轮的系统提示 | [§8](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md#8-agentaomd--项目说明) |
-| **记忆库** | `.agentao/memory.db` | `~/.agentao/memory.db` | `/memory`、`save_memory` 工具 | [§9](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md#9-memorydb--持久化记忆库) |
+| **MCP 服务器** | `.agentao/mcp.json` | `~/.agentao/mcp.json` | `/mcp` | [§5](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#5-mcpjson--mcp-服务器注册表) |
+| **ACP 服务器** | `.agentao/acp.json` | — | `/acp` | [§6](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#6-acpjson--acp-子代理注册表) |
+| **Skill 启停** | `.agentao/skills_config.json` | — | `/skills enable` `/skills disable` | [§7](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#7-skills_configjson--每个项目的-skill-启停) |
+| **项目说明** | `AGENTAO.md`（cwd） | — | 每轮的系统提示 | [§8](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#8-agentaomd--项目说明) |
+| **记忆库** | `.agentao/memory.db` | `~/.agentao/memory.db` | `/memory`、`save_memory` 工具 | [§9](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#9-memorydb--持久化记忆库) |
 
 ## "改 X 改哪" 速查表
 
@@ -23,7 +23,7 @@
 | 默认模型 / API key | `.env`（`OPENAI_API_KEY`、`OPENAI_MODEL`、`OPENAI_BASE_URL`） |
 | 加第二个 provider | `.env`（`GEMINI_API_KEY` 等 — 见[第 2 章](./2-models-providers)） |
 | 默认温度 | `.env`（`LLM_TEMPERATURE`） |
-| 新会话默认权限模式 | `.agentao/settings.json` → `mode`*（"上次记住的模式"，[§3](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md#3-agentaosettingsjson--运行时模式--内置子代理)）* |
+| 新会话默认权限模式 | `.agentao/settings.json` → `mode`*（"上次记住的模式"，[§3](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#3-agentaosettingsjson--运行时模式--内置子代理)）* |
 | 加放行 / 拒绝的 shell 命令 | `~/.agentao/permissions.json` |
 | 加放行 / 拒绝的 web 域名 | `~/.agentao/permissions.json` |
 | 默认沙箱 profile（macOS） | `.agentao/sandbox.json` 或 `~/.agentao/sandbox.json` → `default_profile` |
@@ -63,7 +63,7 @@
 2. **MCP 合并，但项目级仅可新增**。项目级条目能声明*新的* server name，不能把用户级定义的 `github` 重定向到不同 transport。同名冲突会跳过项目项 + warning。
 3. **Memory 按作用域独立**。Project DB 和 user DB 都注入 prompt，project 不覆盖 user。用 `/memory user` 和 `/memory project` 分别看。
 
-完整优先级规则见 [`docs/CONFIGURATION.zh.md` §1](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md#1-配置面总览)。
+完整优先级规则见 [`docs/reference/configuration.zh.md` §1](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#1-配置面总览)。
 
 ## `AGENTAO.md` Persona Gallery
 
@@ -113,7 +113,7 @@ agentao doctor --json
 
 | 想做的事 | 读 |
 |---|---|
-| 上面任意文件的完整 schema | [`docs/CONFIGURATION.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md) |
+| 上面任意文件的完整 schema | [`docs/reference/configuration.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md) |
 | 在 CI 中校验配置文件 | [12. 非交互入口 → `agentao config validate`](./12-non-interactive#agentao-config-validate-显式配置校验) |
 | 有意识地改默认权限规则 | [Part 5.4 · 权限引擎](/zh/part-5/4-permissions) |
 | 给项目写一份 `AGENTAO.md` | [Part 5.6 · 系统提示定制](/zh/part-5/6-system-prompt) |
@@ -125,5 +125,5 @@ agentao doctor --json
 :::
 
 ::: tip 真相源头
-Schema：[`docs/CONFIGURATION.md`](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md)（英文）· [`docs/CONFIGURATION.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md)（中文）。Loader：见上表中的链接。Schema 文件是字段名和默认值的唯一权威，本索引只告诉你该看哪一行。
+Schema：[`docs/reference/configuration.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md)（英文）· [`docs/reference/configuration.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md)（中文）。Loader：见上表中的链接。Schema 文件是字段名和默认值的唯一权威，本索引只告诉你该看哪一行。
 :::

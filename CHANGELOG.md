@@ -455,11 +455,11 @@ validation failed". Everything else upgrades in place via
   reject hand-written `action:` fields in YAML.
 
 - **Logger / `agentao.log` silencing knobs documented across the
-  embedding entrypoints.** New canonical anchor at `docs/EMBEDDING.md
+  embedding entrypoints.** New canonical anchor at `docs/guides/embedding.md
   §2 → "Optional: silencing or redirecting agentao.log"` with a knob
   matrix and `Agentao(...)` / `LLMClient(...)` recipes; the rest of
   the doc set
-  (`docs/LOGGING.md`, `developer-guide/{en,zh}/part-2/2-constructor-reference.md`,
+  (`docs/guides/logging.md`, `developer-guide/{en,zh}/part-2/2-constructor-reference.md`,
   `developer-guide/{en,zh}/part-6/6-observability.md`) crosslinks
   to it. Pure documentation; the
   `LLMClient.__init__` short-circuit on `logger=` and the
@@ -508,7 +508,7 @@ Carried over from 0.4.5 unless noted:
 - **Hosts that don't want `agentao` to mutate their root logger**
   should pass `logger=` to `Agentao(...)` (or to `LLMClient` if
   building it directly). That single switch also silences the
-  default `<wd>/agentao.log` file. See `docs/EMBEDDING.md §2`.
+  default `<wd>/agentao.log` file. See `docs/guides/embedding.md §2`.
 ## [0.4.5] — 2026-05-07
 
 A core-boundary review release. Architectural cleanup of the embedded-host
@@ -1311,12 +1311,12 @@ No required code change to upgrade from 0.3.0.
   alongside `agent.arun(...)` via `asyncio.gather`. Exits cleanly
   with instructions when `OPENAI_API_KEY` is missing.
 
-- **`docs/api/host.md`** + `docs/api/host.zh.md` — public
+- **`docs/reference/host-api.md`** + `docs/reference/host-api.zh.md` — public
   API reference, schema-snapshot policy, runtime identity contract,
   and event delivery semantics. **`docs/design/embedded-host-contract.md`**
   documents the design decision and non-goals.
 
-- **`docs/EMBEDDING.md` §7 "Host-facing harness contract"** — full
+- **`docs/guides/embedding.md` §7 "Host-facing harness contract"** — full
   embedding-shaped walkthrough with the `asyncio.gather` pattern;
   §8 migration guide extended with a "From 0.3.0" subsection.
 
@@ -1750,7 +1750,7 @@ drift gating, and the GitHub-Actions Node 24 prep.
   default cutover (2026-06-02). (`upload-artifact` has no v8 line yet;
   v7 is the current major.) `setup-uv` had already moved v6 → v7 in
   `0.2.14.dev0`.
-- Version pins refreshed from `0.2.13` to `0.2.14` across `docs/ACP.md`
+- Version pins refreshed from `0.2.13` to `0.2.14` across `docs/guides/acp.md`
   and the developer-guide install / version-check examples.
 
 ---
@@ -1769,7 +1769,7 @@ split (`runtime/`, `acp_client/manager/`, `cli/commands_ext/`, new
 `[0.2.13rc1]` soak entry.
 
 The GA cut also carries a packaging + documentation pass: version string
-aligned from `0.2.13rc1` → `0.2.13`, `docs/ACP.md` examples bumped,
+aligned from `0.2.13rc1` → `0.2.13`, `docs/guides/acp.md` examples bumped,
 Quick Start env var guidance synced with the strict provider-gating
 behaviour shipped in `0.2.11`, the GitHub Pages workflow switched from
 the legacy Jekyll template to the actual VitePress developer-guide
@@ -1779,7 +1779,7 @@ developer guide refreshed to the current line.
 ### Added
 
 - **Monorepo skill install** (`agentao skill install owner/repo:path[@ref]`): extends the GitHub installer to pull a single skill out of a multi-skill repository — e.g. `agentao skill install anthropics/skills:pptx@main` installs only the `pptx/` subdirectory instead of rejecting the archive for missing a top-level `SKILL.md`. `SourceSpec.package_path` (`agentao/skills/sources.py`) carries the subpath; `GitHubSkillSource.resolve()` parses the `:path` segment and rejects empty / absolute / `.` / `..` components. `SkillInstaller._find_package_root()` (`agentao/skills/installer.py`) validates the subdirectory exists, is a directory, and contains `SKILL.md`; the recorded `source_ref` preserves the full `owner/repo:path@ref` string so `skill update` round-trips. CLI help on `skill install` now advertises the new form. Coverage: `tests/test_skill_installer.py` (+119 lines across success / empty-path / parent-dir-traversal / update paths), `tests/test_skill_cli.py`.
-- **Session replay subsystem** (`agentao/replay/`): JSONL timeline of runtime events written to `.agentao/replays/`, with recorder, reader, redaction, retention, and sanitization. Wired through `transport/events.py` and surfaced via the new `cli/replay_commands.py` / `replay_render.py`. Feature docs: `docs/features/session-replay.md`. Tests: `tests/test_replay*`, `tests/test_replay_redact.py`.
+- **Session replay subsystem** (`agentao/replay/`): JSONL timeline of runtime events written to `.agentao/replays/`, with recorder, reader, redaction, retention, and sanitization. Wired through `transport/events.py` and surfaced via the new `cli/replay_commands.py` / `replay_render.py`. Feature docs: `docs/guides/session-replay.md`. Tests: `tests/test_replay*`, `tests/test_replay_redact.py`.
 - **`agentao --help` / `agentao -h`**: explicit `-h` / `--help` handler on the top-level CLI parser. Prints usage and exits `0` instead of silently falling through to interactive mode (the previous `add_help=False` + `parse_known_args()` combination swallowed the flag). Regression coverage: `tests/test_acp_cli_entrypoint.py::TestEntrypointArgparse::test_help_flag_prints_help_and_exits` and `test_short_help_flag_prints_help_and_exits`.
 
 ### Changed
@@ -1791,19 +1791,19 @@ developer guide refreshed to the current line.
   - `agentao/cli/app.py` shrunk by ~800 lines; new CLI modules `input_loop`, `ui`, `acp_inbox`.
   - `agentao/prompts/` (new): `builder` + `sections` + `helpers` for system-prompt composition. `agent._build_system_prompt()` and `agent._load_project_instructions()` retained as thin facades so existing tests and external patches keep working.
   - `agentao/tooling/` (new): `registry`, `agent_tools`, `mcp_tools`.
-- **Docs**: `docs/ACP.md` version examples bumped from `0.2.10` to `0.2.13`. Developer-guide `part-2/2-constructor-reference.md`, `part-5/5-memory.md`, `part-5/6-system-prompt.md` (en + zh mirrors) updated to reference the new `prompts/builder.py` location for system-prompt composition.
+- **Docs**: `docs/guides/acp.md` version examples bumped from `0.2.10` to `0.2.13`. Developer-guide `part-2/2-constructor-reference.md`, `part-5/5-memory.md`, `part-5/6-system-prompt.md` (en + zh mirrors) updated to reference the new `prompts/builder.py` location for system-prompt composition.
 
 ### Packaging / Release (GA)
 
 - Align package version, changelog, release notes, and publish workflow usage to the final `0.2.13` release line.
-- README / `docs/QUICKSTART.md` Quick Start: document all three required provider variables (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`) up front. Previously only `OPENAI_API_KEY` was shown, contradicting the strict-provider-gating behaviour introduced in `0.2.11` — the single-key snippet would raise `ValueError` at startup.
+- README / `docs/start/quickstart.md` Quick Start: document all three required provider variables (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`) up front. Previously only `OPENAI_API_KEY` was shown, contradicting the strict-provider-gating behaviour introduced in `0.2.11` — the single-key snippet would raise `ValueError` at startup.
 - `.github/workflows/jekyll-gh-pages.yml` replaced by a VitePress build + deploy pipeline pointed at `developer-guide/`. The Jekyll template was a repo-init leftover; the actual docs site is VitePress, so the previous workflow was deploying nothing useful.
 - Developer-guide install-pin / version-check examples refreshed from `0.2.10` / `0.2.11` to `0.2.13` in `part-1/5-requirements.md`, `part-2/1-install-import.md`, `part-3/2-agentao-as-server.md` (JSON response example), and `part-3/5-zed-ide-integration.md` (en + zh mirrors). Historical statements ("Since v0.2.10…", "Pre-0.2.10 Agentao used…") are kept — they describe when a surface was introduced, not the current pin.
 
 ### Documentation
 
 - Add `docs/releases/v0.2.13.md`.
-- `docs/SKILLS_GUIDE.md` and `developer-guide/en|zh/part-5/2-skills.md` document the new monorepo `skill install` form with worked examples against `anthropics/skills` (pptx, docx, xlsx, pdf, doc-coauthoring).
+- `docs/guides/skills.md` and `developer-guide/en|zh/part-5/2-skills.md` document the new monorepo `skill install` form with worked examples against `anthropics/skills` (pptx, docx, xlsx, pdf, doc-coauthoring).
 
 ---
 
@@ -1811,17 +1811,17 @@ developer guide refreshed to the current line.
 
 ### Added
 
-- **Headless runtime v1** (`docs/features/headless-runtime.md`): operator-facing contract for `ACPManager` as a non-interactive embedding target — public entry points (`prompt_once`, `send_prompt`), single-active-turn concurrency pinned to `AcpErrorCode.SERVER_BUSY`, typed status snapshot. `send_prompt_nonblocking` family is classified **internal / unstable** and removed from the embedding contract.
+- **Headless runtime v1** (`docs/guides/headless-runtime.md`): operator-facing contract for `ACPManager` as a non-interactive embedding target — public entry points (`prompt_once`, `send_prompt`), single-active-turn concurrency pinned to `AcpErrorCode.SERVER_BUSY`, typed status snapshot. `send_prompt_nonblocking` family is classified **internal / unstable** and removed from the embedding contract.
 - **`ServerStatus` dataclass** (`agentao/acp_client/models.py`, re-exported from `agentao.acp_client`): frozen v1 shape with `server`, `state`, `pid`, `has_active_turn`.
 - **`examples/headless_worker.py`**: runnable headless smoke consumer. Spins up an inline mock ACP server, exercises success / non-interactive error / cancel paths, and prints the typed snapshot after each.
 - **`tests/test_headless_runtime.py`**: baseline smoke tests pinning the Week 1 contract — typed snapshot shape, `has_active_turn` derivation, `SERVER_BUSY` on concurrent submit, cancel-then-continue, non-interactive reject non-pollution, timeout recovery, session reuse.
-- **Headless runtime Week 2 diagnostics** (`docs/features/headless-runtime.md` §3-§4, additive on `ServerStatus`): `active_session_id`, `last_error`, `last_error_at` (tz-aware UTC `datetime` assigned at *store time* inside the manager, not raise time), `inbox_pending`, `interaction_pending` (singular, replaces the pre-v1 `interactions_pending` alias), `config_warnings` (per-server list; Week 3 will populate on legacy config).
+- **Headless runtime Week 2 diagnostics** (`docs/guides/headless-runtime.md` §3-§4, additive on `ServerStatus`): `active_session_id`, `last_error`, `last_error_at` (tz-aware UTC `datetime` assigned at *store time* inside the manager, not raise time), `inbox_pending`, `interaction_pending` (singular, replaces the pre-v1 `interactions_pending` alias), `config_warnings` (per-server list; Week 3 will populate on legacy config).
 - **`ACPManager.readiness(name)` / `.is_ready(name)`**: typed 4-valued classifier (`"ready" | "busy" | "failed" | "not_ready"`) over the combination of handle state and the active-turn slot. Consumers that only need a gating signal should prefer this over string-matching on `state`.
 - **`ACPManager.reset_last_error(name)`**: explicit clear for the sticky `last_error` / `last_error_at` surface. A new error overwrites automatically; this method is only needed when the host wants to drop the stored error without waiting for a new one.
 - **State-vs-error contract**: the recorded-error surface is diagnostic, not gating — `state` is the authoritative readiness signal, `last_error` is history. `SERVER_BUSY` and `SERVER_NOT_FOUND` are intentionally excluded from the store so fail-fast retries do not overwrite real failures. Pinned by tests (`tests/test_headless_runtime.py::TestLastErrorStore`) including a `datetime`-patch proof that the timestamp is taken inside `_record_last_error`, not pre-computed.
 - **`InteractionPolicy` dataclass** (Week 3, Issue 11) re-exported from `agentao.acp_client`. Minimal single-dimension policy model over the non-interactive interaction decision: `InteractionPolicy(mode="reject_all" | "accept_all")`. No other knobs — additional dimensions belong on a new options object.
 - **`interaction_policy=` per-call override** on `ACPManager.send_prompt` and `ACPManager.prompt_once`. Accepts `InteractionPolicy` or the bare strings `"reject_all"` / `"accept_all"`. Precedence: per-call override > server default (`nonInteractivePolicy`). `None` falls back to the server default. `send_prompt_nonblocking` is **internal / unstable** per the Week 1 decision and deliberately does **not** accept this kwarg — the Week 3 policy surface is `send_prompt` + `prompt_once` only.
-- **Headless runtime Week 4 lifecycle & recovery** (`docs/features/headless-runtime.md` §7). Pins the deterministic release order on every failure path (pending-slot drop → turn-slot clear → lock release → `last_error` record) and introduces the client/process-death classifier.
+- **Headless runtime Week 4 lifecycle & recovery** (`docs/guides/headless-runtime.md` §7). Pins the deterministic release order on every failure path (pending-slot drop → turn-slot clear → lock release → `last_error` record) and introduces the client/process-death classifier.
 - **`classify_process_death` pure classifier** exported from `agentao.acp_client`. Maps `(exit_code, signaled, during_active_turn, restart_count, max_recoverable_restarts, handshake_fail_streak)` to `"recoverable"` / `"fatal"` per the Issue 16 decision matrix. Testable in isolation; the manager calls it inside `ensure_connected` to decide whether to lazy-rebuild or flip the server into the sticky fatal state.
 - **`ACPManager.is_fatal(name)` / `.restart_count(name)`** surfaces for the recovery state. `is_fatal(name)` is sticky — cleared only by an explicit `restart_server` or `start_server` call (operator action required).
 - **`AcpServerConfig.max_recoverable_restarts`** (JSON: `maxRecoverableRestarts`, default 3). Caps consecutive auto-recoveries on recoverable idle non-zero exits before the manager flips the server to fatal. Active-turn deaths bypass the cap; each is always allowed at least one rebuild attempt.
@@ -1831,11 +1831,11 @@ developer guide refreshed to the current line.
 - **`feedback_prompt` + `FEEDBACK_SYSTEM_PROMPT`** (`agentao/memory/crystallizer.py`): drive user-feedback-driven draft rewrites; `suggest_prompt()` and `refine_prompt()` gained an optional `evidence_text=` parameter so all three prompts share the same evidence grounding. Drafts grounded in tool activity, not just raw transcript.
 - **`append_skill_feedback` + `summarize_draft_status`** (`agentao/skills/drafts.py`): durable feedback log and lightweight status view for `/crystallize status`.
 - **`tests/test_skill_crystallize_enhancement.py`**: 15 tests covering the new dataclass schema, persistence round-trip, backward-compatible load of legacy drafts, prompt-builder evidence injection, and feedback append/history rendering.
-- **Plan doc** `docs/implementation/SKILL_CRYSTALLIZE_ENHANCEMENT_PLAN.md`: design rationale and API surface for the three-problem scope (structured evidence in drafts, user feedback loop, `/help` discoverability).
+- **Plan doc** `docs/history/implementation/skill-crystallize-enhancement-plan.md`: design rationale and API surface for the three-problem scope (structured evidence in drafts, user feedback loop, `/help` discoverability).
 
 ### Changed
 
-- **Breaking: `ACPManager.get_status()` now returns `list[ServerStatus]`** instead of `list[dict]`. This is a deliberate, once-for-all API convergence — there is no `get_status_typed()` side channel and no permanent dict alias. Migration table and field semantics are in `docs/features/headless-runtime.md#3-status-snapshot-v1--v2`.
+- **Breaking: `ACPManager.get_status()` now returns `list[ServerStatus]`** instead of `list[dict]`. This is a deliberate, once-for-all API convergence — there is no `get_status_typed()` side channel and no permanent dict alias. Migration table and field semantics are in `docs/guides/headless-runtime.md#3-status-snapshot-v1--v2`.
   - The legacy `"name"` dict key is renamed to `ServerStatus.server`.
   - Week-1 core fields are `server` / `state` / `pid` / `has_active_turn`. Week 2 adds `active_session_id`, `last_error`, `last_error_at`, `inbox_pending`, `interaction_pending`, `config_warnings` **additively** — the Week 1 shape is unchanged.
   - `has_active_turn` is derived from the manager's active turn slot (not handle state), so it stays `True` across the in-flight interaction phase of non-interactive turns.
@@ -1897,7 +1897,7 @@ directly from `0.2.9` to `0.2.10`.
 ### Documentation
 
 - Add `docs/releases/v0.2.10.md`
-- Update `docs/ACP.md` version examples from `0.2.9` to `0.2.10`
+- Update `docs/guides/acp.md` version examples from `0.2.9` to `0.2.10`
 
 ## [0.2.10-rc2] — 2026-04-15
 
@@ -1970,10 +1970,10 @@ explicit **`/crystallize refine` stage** to the skill-crystallization flow.
 
 ### Documentation
 
-- Add `docs/features/acp-embedding.md` (embedding facade overview)
-- Add `docs/implementation/ACP_EMBEDDING_IMPLEMENTATION_PLAN.md`
-- Add `docs/implementation/SKILL_CRYSTALLIZE_REFINEMENT_PLAN.md`
-- Add `docs/kanban-acp-embedded-client-issue.md` (design parent doc)
+- Add `docs/guides/acp-embedding.md` (embedding facade overview)
+- Add `docs/history/implementation/acp-embedding-implementation-plan.md`
+- Add `docs/history/implementation/skill-crystallize-refinement-plan.md`
+- Add `docs/history/kanban-acp-embedded-client-issue.md` (design parent doc)
 - Add `docs/releases/v0.2.10-rc2.md`
 
 ## [0.2.9] — 2026-04-11
@@ -2012,7 +2012,7 @@ of the ACP client subsystem and the default-model rollout.
 ### Documentation
 
 - Add `docs/releases/v0.2.9.md`
-- Update `docs/ACP.md` version examples from `0.2.8` to `0.2.9`
+- Update `docs/guides/acp.md` version examples from `0.2.8` to `0.2.9`
 
 ## [0.2.8] — 2026-04-11
 
@@ -2039,7 +2039,7 @@ Git tag, release notes, and maintainer workflow all agree on the GA path.
   current default model line (`gpt-5.4` / `gpt-5.4` examples) instead of stale
   `gpt-4-turbo-preview` examples
 - Add final release notes at `docs/releases/v0.2.8.md`
-- Update `docs/ACP.md` version examples from `0.2.8-rc1` to `0.2.8`
+- Update `docs/guides/acp.md` version examples from `0.2.8-rc1` to `0.2.8`
 
 ## [0.2.8-rc1] — 2026-04-11
 
@@ -2089,7 +2089,7 @@ of the full PyPI publish workflow.
   - Preset blocklist: `localhost`, `127.0.0.1`, `0.0.0.0`,
     `169.254.169.254`, `.internal`, `.local`, `::1` → auto-deny
   - Domain rules displayed in `/permissions` output
-- **`docs/features/acp-client.md`** — full configuration reference,
+- **`docs/guides/acp-client.md`** — full configuration reference,
   lifecycle, interaction bridge protocol, diagnostics, and troubleshooting
 
 ### Changed

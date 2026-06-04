@@ -67,7 +67,7 @@ Public surface:
 **internal / unstable** — used by Agentao's own interactive CLI
 inline-confirmation pipeline. Headless embedders should call
 `send_prompt` or `prompt_once` instead. See
-[`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)
+[`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)
 for the authoritative support-level table.
 
 Full API details in [Appendix A · ACP Client](/en/appendix/a-api-reference#a-7-acp-client).
@@ -282,7 +282,7 @@ except AcpClientError as e:
         # Later: mgr.restart_server("searcher")
 ```
 
-The classifier is a pure function — `classify_process_death` — exported from `agentao.acp_client` and testable in isolation. See [`docs/features/headless-runtime.md` §7.2](../../../docs/features/headless-runtime.md) for the full decision matrix.
+The classifier is a pure function — `classify_process_death` — exported from `agentao.acp_client` and testable in isolation. See [`docs/guides/headless-runtime.md` §7.2](../../../docs/guides/headless-runtime.md) for the full decision matrix.
 
 ## 3.4.8 Cancellation & errors
 
@@ -341,7 +341,7 @@ Diagnostic fields (additive on the same dataclass):
 Read them directly off `ServerStatus`; `mgr.get_handle(name).info` and
 `mgr.inbox` / `mgr.interactions` remain available for the raw handle
 view. See
-[`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)
+[`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)
 for the full field list and migration table from the pre-typed dict
 shape.
 

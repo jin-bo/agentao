@@ -6,7 +6,7 @@
 - `docs/design/embedded-host-contract.md` — `PermissionDecisionEvent` lives here
 - `docs/design/path-a-roadmap.md` — locks the "embedded harness" positioning this plan must respect
 - `docs/design/metacognitive-boundary.md` — the "schema + default + host-override" principle this plan re-aligned to in round 4
-- `docs/features/TOOL_CONFIRMATION_FEATURE.md` — current confirmation pipeline
+- `docs/guides/tool-confirmation.md` — current confirmation pipeline
 - `docs/design/permission-hardening-plan.zh.md` — Chinese version
 
 ---

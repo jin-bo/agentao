@@ -38,7 +38,7 @@ class EventKind:
       :mod:`agentao.host.models`; the v1.2 schema embeds those
       payload schemas as the per-kind variant. v1.0 / v1.1 schemas
       remain frozen and continue to validate older replays — see
-      ``docs/replay/schema-policy.md``.
+      ``docs/reference/replay-schema-policy.md``.
     """
 
     REPLAY_HEADER = "replay_header"

@@ -101,6 +101,7 @@ class TestBgStoreNoneRemovesTools:
             },
             all_tools={},
             llm_config_getter=discover_llm_kwargs,
+            working_directory=tmp_path,
             bg_store=None,
         )
         params = wrapper.parameters
@@ -120,6 +121,7 @@ class TestBgStoreNoneRemovesTools:
             },
             all_tools={},
             llm_config_getter=discover_llm_kwargs,
+            working_directory=tmp_path,
             bg_store=BackgroundTaskStore(persistence_dir=tmp_path),
         )
         params = wrapper.parameters
@@ -160,6 +162,59 @@ def test_chat_loop_inject_background_notifications_handles_none(tmp_path):
     # would require a live LLM, so probe the helper directly.
     out = runner._inject_background_notifications(msgs, system_prompt="")
     assert out is msgs  # untouched — no notifications drained
+
+
+# ---------------------------------------------------------------------------
+# Sub-agent construction propagates the parent's working_directory
+# ---------------------------------------------------------------------------
+
+
+def test_sub_agent_construction_inherits_working_directory(tmp_path, monkeypatch):
+    """Spawning a sub-agent must construct ``Agentao`` with the parent's
+    ``working_directory`` — regression for the missing required kwarg that
+    made every sub-agent invocation raise ``TypeError``.
+
+    We assert on the *construction kwargs*, not on a returned handle: the
+    sub-agent is a local inside ``_run_sync`` and never returned, and a real
+    ``.execute()`` would run a full (networked) LLM turn.
+    """
+
+    class _Sentinel(Exception):
+        pass
+
+    # 1) Build the REAL parent first. enable_builtin_agents wires up the
+    #    sub-agent tools during construction (agent.py:545); patching before
+    #    this would turn the parent into the recorder too.
+    parent = Agentao(
+        working_directory=tmp_path,
+        api_key="k",
+        base_url="https://test.local/v1",
+        model="m",
+        enable_builtin_agents=True,
+    )
+
+    # 2) Fetch a sub-agent tool off the parent (builtin definitions ship as
+    #    ``generalist`` → tool name ``agent_generalist``).
+    sub_tool = parent.tools.tools["agent_generalist"]
+
+    # 3) Patch the symbol _run_sync imports locally (`from ...agent import
+    #    Agentao`). Record kwargs, then abort the turn before it runs.
+    captured: dict = {}
+
+    def _recorder(*args, **kwargs):
+        captured.update(kwargs)
+        raise _Sentinel
+
+    monkeypatch.setattr("agentao.agent.Agentao", _recorder)
+
+    # 4) Drive the construction path and assert the kwarg is threaded through.
+    with pytest.raises(_Sentinel):
+        sub_tool.execute(task="x")
+
+    # The construction path resolves the dir (agent.py:185 + manager.py:25), so
+    # compare against the resolved form rather than the raw tmp_path — pytest's
+    # basetemp is not guaranteed unresolved (symlinked TMPDIR on macOS, etc.).
+    assert captured.get("working_directory") == tmp_path.resolve()
 
 
 # ---------------------------------------------------------------------------

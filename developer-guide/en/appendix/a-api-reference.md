@@ -21,7 +21,7 @@ The core class — see [Part 2.2](/en/part-2/2-constructor-reference) for the fu
 
 ### Constructor
 
-See [Part 2.2](/en/part-2/2-constructor-reference) for the full parameter table. **Since 0.3.0**, `Agentao()` without `working_directory=` raises `TypeError` from Python signature dispatch — the soft-deprecation cycle ended. End-to-end embedding patterns live in [`docs/EMBEDDING.md`](../../../docs/EMBEDDING.md).
+See [Part 2.2](/en/part-2/2-constructor-reference) for the full parameter table. **Since 0.3.0**, `Agentao()` without `working_directory=` raises `TypeError` from Python signature dispatch — the soft-deprecation cycle ended. End-to-end embedding patterns live in [`docs/guides/embedding.md`](../../../docs/guides/embedding.md).
 
 ```python
 Agentao(
@@ -461,7 +461,7 @@ Week 2 field notes:
 - `SERVER_BUSY` and `SERVER_NOT_FOUND` are **not** recorded — they are
   caller-side signals.
 
-See [`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)
+See [`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)
 for the full state-vs-error contract and the readiness classifier.
 
 ### Exception classes
@@ -507,7 +507,7 @@ The `agentao.host` package is the **stable host-facing API surface** for embeddi
 
 > **Naming.** "Harness" still refers to *Agentao itself running embedded in a host application* (the conceptual framing in `docs/design/embedded-host-contract.md`); the contract package was renamed to `agentao.host` to make `from agentao.host import HostEvent` read consistently. The old `agentao.harness` import path and old symbol names (`HarnessEvent`, `HarnessReplaySink`, `export_harness_*`) remain as a deprecated alias through 0.5.0 and emit one `DeprecationWarning` on first import.
 
-Full reference: [`docs/api/host.md`](../../../docs/api/host.md). Design rationale: [`docs/design/embedded-host-contract.md`](../../../docs/design/embedded-host-contract.md).
+Full reference: [`docs/reference/host-api.md`](../../../docs/reference/host-api.md). Design rationale: [`docs/design/embedded-host-contract.md`](../../../docs/design/embedded-host-contract.md).
 
 ### Public exports
 

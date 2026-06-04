@@ -89,7 +89,7 @@ agent = Agentao(..., logger=quiet)
 :::
 
 完整说明（开关矩阵、代码锚点、直接走 `LLMClient` 的写法）见
-[`docs/EMBEDDING.md` §2 → "Optional: silencing or redirecting agentao.log"](https://github.com/jin-bo/agentao/blob/main/docs/EMBEDDING.md#optional-silencing-or-redirecting-agentaolog)。
+[`docs/guides/embedding.md` §2 → "Optional: silencing or redirecting agentao.log"](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md#optional-silencing-or-redirecting-agentaolog)。
 
 ### 关键字段
 

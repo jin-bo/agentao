@@ -400,7 +400,7 @@ No deprecations. No callback signature changes. No host-API impact —
 - Pydantic models + 4 validators + Jinja renderer + `--param` parser +
   wiring line: ~110 LoC
 - Tests (15 cases above): ~220 LoC
-- Docstrings + a section in `docs/CONFIGURATION.md`: ~30 lines
+- Docstrings + a section in `docs/reference/configuration.md`: ~30 lines
 - Total: ~360 lines, no core agent changes.
 
 One PR, gated behind the test plan. No host-API surface change → safe to

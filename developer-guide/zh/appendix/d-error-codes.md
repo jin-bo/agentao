@@ -30,7 +30,7 @@ except AcpClientError as e:
 | `transport_disconnect` | 服务器子进程中途退出、管道关闭、stdio 帧损坏 | 看 `e.details['exit_code']` 与 stderr 尾部；OOM 被杀、服务器 bug 最常见 |
 | `interaction_required` | 非交互调用（`interactive=False`，`prompt_once` 默认如此），但服务器发起了权限/输入请求 | 改用交互会话，或用 `PermissionEngine` 规则预批 |
 | `protocol_error` | 服务器发了非法 JSON-RPC 报文、意外方法、ID 不匹配 | 升级服务器或报 bug，几乎一定是服务器缺陷 |
-| `server_busy` | 同一服务器已有 turn 在跑，而调用是 fail-fast（`prompt_once` 一律是）。headless 场景中，这是 Week 1 **单服务器单活跃 turn、不排队** 合约（见 [`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)）下固定的失败形态 | 等待后重试；没有隐式队列——调用方自己轮询 `get_status()` 并门禁提交 |
+| `server_busy` | 同一服务器已有 turn 在跑，而调用是 fail-fast（`prompt_once` 一律是）。headless 场景中，这是 Week 1 **单服务器单活跃 turn、不排队** 合约（见 [`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)）下固定的失败形态 | 等待后重试；没有隐式队列——调用方自己轮询 `get_status()` 并门禁提交 |
 
 ## D.2 JSON-RPC 数值码 vs `AcpErrorCode`
 

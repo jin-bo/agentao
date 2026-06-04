@@ -58,7 +58,7 @@ def project_matched_rule(rule: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
 
     Drops compiled-regex / callable values defensively. Per-rule source
     labels are intentionally not added — that is a deferred design
-    decision (see ``docs/api/host.md``).
+    decision (see ``docs/reference/host-api.md``).
     """
     if rule is None:
         return None

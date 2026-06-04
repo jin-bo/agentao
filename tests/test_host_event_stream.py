@@ -1,7 +1,7 @@
 """Delivery-contract tests for the harness EventStream (PR 4).
 
 Asserts the lifecycle matrix from
-``docs/implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md``:
+``docs/history/implementation/embedded-harness-contract-implementation-plan.md``:
 
 - no subscriber → events are dropped immediately
 - mid-turn subscriber → only future events

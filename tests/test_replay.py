@@ -1,7 +1,7 @@
 """Tests for the Session Replay module.
 
 Covers the test-plan requirements from
-``docs/implementation/SESSION_REPLAY_PLAN.md``:
+``docs/history/implementation/session-replay-plan.md``:
 
 - disabled by default → no file, no recorder
 - enabled → replay file created

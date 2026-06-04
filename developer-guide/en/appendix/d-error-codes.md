@@ -30,7 +30,7 @@ except AcpClientError as e:
 | `transport_disconnect` | Server subprocess exited mid-turn, pipe closed, or stdio framing corrupted | Read `e.details['exit_code']` / stderr tail; common for OOM kills and crash bugs in the server |
 | `interaction_required` | Non-interactive call (`interactive=False`, the default for `prompt_once`) but server asked for permission / user input | Switch to an interactive session, or pre-approve via `PermissionEngine` rules |
 | `protocol_error` | Server sent an invalid JSON-RPC message, unexpected method, or mismatched ID | Upgrade server or file a bug; almost always a server defect |
-| `server_busy` | Another turn is already active for this server and the call is fail-fast (`prompt_once` always is). In headless deployments this is the pinned failure mode for the Week 1 **single-active-turn, no-queueing** contract (see [`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)) | Wait and retry; there is no implicit queue — the host must poll `get_status()` and gate its own submissions |
+| `server_busy` | Another turn is already active for this server and the call is fail-fast (`prompt_once` always is). In headless deployments this is the pinned failure mode for the Week 1 **single-active-turn, no-queueing** contract (see [`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)) | Wait and retry; there is no implicit queue — the host must poll `get_status()` and gate its own submissions |
 
 ## D.2 JSON-RPC numeric codes vs `AcpErrorCode`
 

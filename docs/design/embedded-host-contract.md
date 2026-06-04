@@ -2,9 +2,9 @@
 
 **Status:** Design record. Decision captured 2026-04-30. Implementation: 0.3.1 (`agentao.host`).
 **Audience:** Agentao maintainers and host application integrators.
-**Related docs:** `docs/implementation/EMBEDDED_HARNESS_IMPLEMENTATION_PLAN.md`,
-`docs/implementation/EMBEDDED_HARNESS_PROTOCOL_PLAN.md`,
-`docs/implementation/EMBEDDED_HARNESS_CONTRACT_IMPLEMENTATION_PLAN.md`,
+**Related docs:** `docs/history/implementation/embedded-harness-implementation-plan.md`,
+`docs/history/implementation/embedded-harness-protocol-plan.md`,
+`docs/history/implementation/embedded-harness-contract-implementation-plan.md`,
 `docs/design/metacognitive-boundary.md`.
 
 ## Scope (read this first)
@@ -29,7 +29,7 @@ intentionally omits.
 The ACP server (`agentao --acp --stdio`) and the ACP client
 (`ACPManager`) are **separate deployment models**, not transports
 inside this contract. See
-[`docs/architecture/embedding-vs-acp.md`](../architecture/embedding-vs-acp.md)
+[`docs/design/embedding-vs-acp.md`](embedding-vs-acp.md)
 for the disambiguation between in-process embedding, ACP server, ACP
 client, and the ACP schema surface.
 
@@ -298,7 +298,7 @@ The following are valid harness candidates, but not MVP:
 2. **`disabled_hook_keys` constructor/session parameter.**
    Only expose this after hook keys are stable.
 3. **MCP lifecycle events.** **In flight** — see
-   [`docs/implementation/PUBLIC_EVENT_PROMOTION_PLAN.md`](../implementation/PUBLIC_EVENT_PROMOTION_PLAN.md)
+   [`docs/history/implementation/public-event-promotion-plan.md`](../history/implementation/public-event-promotion-plan.md)
    (Pillar 1). Candidate phases: `connecting`, `connected`,
    `auth_failed`, `tool_discovery_failed`, `disconnected`. Promotion
    driven by the absence of any internal channel for MCP outage —
@@ -308,7 +308,7 @@ The following are valid harness candidates, but not MVP:
    Blocked on item #1 (hook key contract). Internal
    `PLUGIN_HOOK_FIRED` covers non-stable consumers in the meantime.
 4a. **`LLMCallEvent` promotion.** **In flight** — see
-   [`docs/implementation/PUBLIC_EVENT_PROMOTION_PLAN.md`](../implementation/PUBLIC_EVENT_PROMOTION_PLAN.md)
+   [`docs/history/implementation/public-event-promotion-plan.md`](../history/implementation/public-event-promotion-plan.md)
    (Pillar 2). Phases: `started`, `completed`, `failed` (with
    structured `error_type` covering rate-limit, timeout, auth, etc).
    Internal `LLM_CALL_*` events already exist; promotion adds the

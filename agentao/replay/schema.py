@@ -22,7 +22,7 @@ Design notes:
   adds the harness-projection kinds. A 1.0 replay file must keep
   validating against ``schemas/replay-event-1.0.json`` forever — that
   is the backward-compatibility promise documented in
-  ``docs/replay/schema-policy.md``.
+  ``docs/reference/replay-schema-policy.md``.
 """
 
 from __future__ import annotations

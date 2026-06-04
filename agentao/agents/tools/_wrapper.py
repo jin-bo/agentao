@@ -20,6 +20,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...cancellation import AgentCancelledError, CancellationToken
@@ -46,6 +47,7 @@ class AgentToolWrapper(Tool):
         definition: Dict[str, Any],
         all_tools: Dict[str, RegistrableTool],
         llm_config_getter: Callable[[], Dict[str, Any]],
+        working_directory: Path,
         bg_store: Optional[BackgroundTaskStore] = None,
         confirmation_callback: Optional[Callable] = None,
         step_callback: Optional[Callable] = None,
@@ -66,6 +68,9 @@ class AgentToolWrapper(Tool):
         # Live getter so a runtime ``session/set_model`` (model /
         # maxTokens) is reflected in sub-agents launched afterwards.
         self._llm_config_getter = llm_config_getter
+        # Sub-agent runs in the same working directory as its parent. Frozen at
+        # construction; matches the static-value idiom used for sandbox_policy.
+        self._working_directory = working_directory
         self._bg_store = bg_store
         self._confirmation_callback = confirmation_callback
         self._step_callback = step_callback
@@ -364,6 +369,7 @@ class AgentToolWrapper(Tool):
             model=model_name,
             temperature=temperature,
             max_tokens=max_tokens,
+            working_directory=self._working_directory,
             sandbox_policy=self._sandbox_policy,
             # Inherit the parent's background-task store so the
             # sub-agent's ``ToolRunner`` registry actually contains

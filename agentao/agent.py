@@ -771,7 +771,7 @@ class Agentao:
     def events(self, session_id: Optional[str] = None):
         """Return an async iterator over public host events.
 
-        Delivery semantics (see ``docs/api/host.md`` for the full
+        Delivery semantics (see ``docs/reference/host-api.md`` for the full
         contract):
 
         - No replay: events emitted before the first subscription are

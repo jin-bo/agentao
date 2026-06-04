@@ -6,7 +6,7 @@ PR-1/PR-2/PR-3 and the core ACP rework PR-4/PR-5/PR-6 (B1/B2/B3) all landed
 release.
 **Audience:** Agentao maintainers; the DeepChat/TensorChat integration fork owner.
 **Related docs:** `docs/design/embedded-host-contract.md`,
-`docs/architecture/embedding-vs-acp.md` (if present),
+`docs/design/embedding-vs-acp.md` (if present),
 `agentao/embedding/factory.py`, `agentao/acp/`.
 
 ## Scope (read this first)

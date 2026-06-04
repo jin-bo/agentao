@@ -32,7 +32,7 @@
 cd developer-guide && npx vitepress dev
 ```
 
-要 schema 级参考（每个配置文件、每个环境变量、每个公开 API），权威文档是 [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)。其余内容都在 Developer Guide。
+要 schema 级参考（每个配置文件、每个环境变量、每个公开 API），权威文档是 [`docs/reference/configuration.md`](docs/reference/configuration.md)。其余内容都在 Developer Guide。
 
 ---
 
@@ -144,7 +144,7 @@ pip install 'agentao[full]'
 
 **要求 Python：** 3.10+。**必填环境变量：** `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL` —— 三个都必须有，否则启动直接 `ValueError`。
 
-要用 Anthropic / Gemini / DeepSeek / 任意 OpenAI 兼容 provider，配 `<NAME>_API_KEY` + `<NAME>_BASE_URL` + `<NAME>_MODEL`，再用 `LLM_PROVIDER` 或运行时 `/provider` 切。完整清单：[`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)。
+要用 Anthropic / Gemini / DeepSeek / 任意 OpenAI 兼容 provider，配 `<NAME>_API_KEY` + `<NAME>_BASE_URL` + `<NAME>_MODEL`，再用 `LLM_PROVIDER` 或运行时 `/provider` 切。完整清单：[`docs/reference/configuration.md`](docs/reference/configuration.md)。
 
 ---
 
