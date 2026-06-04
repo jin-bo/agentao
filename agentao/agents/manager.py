@@ -173,6 +173,7 @@ class AgentManager:
                 definition=defn,
                 all_tools=all_tools,
                 llm_config_getter=llm_config_getter,
+                working_directory=self.project_root,
                 bg_store=bg_store,
                 confirmation_callback=confirmation_callback,
                 step_callback=step_callback,
