@@ -1,7 +1,7 @@
 """Tests for the non-interactive ``agentao run`` subcommand pipeline.
 
 Covers the M0 test matrix from
-``docs/implementation/NON_INTERACTIVE_RUN_PLAN.md``: spec loading,
+``docs/history/implementation/non-interactive-run-plan.md``: spec loading,
 merge rules, output formats, exit codes, permission injection
 ordering, observer-only emit gate, replay override, ASK
 ``tool_call_id`` correlation, and read-only enforcement.

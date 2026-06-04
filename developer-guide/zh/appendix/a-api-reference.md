@@ -21,7 +21,7 @@
 
 ### 构造器
 
-完整参数表见 [Part 2.2](/zh/part-2/2-constructor-reference)。**0.3.0 起**，不传 `working_directory=` 调用 `Agentao()` 会从 Python 签名分派直接抛 `TypeError`——软废弃周期已结束。完整嵌入式接入实践见 [`docs/EMBEDDING.md`](../../../docs/EMBEDDING.md)。
+完整参数表见 [Part 2.2](/zh/part-2/2-constructor-reference)。**0.3.0 起**，不传 `working_directory=` 调用 `Agentao()` 会从 Python 签名分派直接抛 `TypeError`——软废弃周期已结束。完整嵌入式接入实践见 [`docs/guides/embedding.md`](../../../docs/guides/embedding.md)。
 
 ```python
 Agentao(
@@ -463,7 +463,7 @@ Week 2 字段语义要点：
   调用方侧信号，不是服务端状态。
 
 完整 state-vs-error 合约和 readiness 分级见
-[`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)。
+[`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)。
 
 ### 异常类
 
@@ -508,7 +508,7 @@ load_acp_client_config(project_root: Path | None = None) -> AcpClientConfig
 
 > **命名说明。** "Harness" 仍然指 *Agentao 自身嵌入在宿主应用中运行* 这一概念（见 `docs/design/embedded-host-contract.md` 设计语境）；合约包重命名为 `agentao.host` 是为了让 `from agentao.host import HostEvent` 读起来自洽。旧的 `agentao.harness` 导入路径以及旧符号名（`HarnessEvent`、`HarnessReplaySink`、`export_harness_*`）作为弃用别名保留至 0.5.0，首次导入时发一次 `DeprecationWarning`。
 
-完整参考：[`docs/api/host.md`](../../../docs/api/host.md) · [`docs/api/host.zh.md`](../../../docs/api/host.zh.md)。设计动机：[`docs/design/embedded-host-contract.md`](../../../docs/design/embedded-host-contract.md)。
+完整参考：[`docs/reference/host-api.md`](../../../docs/reference/host-api.md) · [`docs/reference/host-api.zh.md`](../../../docs/reference/host-api.zh.md)。设计动机：[`docs/design/embedded-host-contract.md`](../../../docs/design/embedded-host-contract.md)。
 
 ### 公共导出
 

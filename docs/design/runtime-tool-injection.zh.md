@@ -105,7 +105,7 @@ def unregister(self, name: str) -> bool:
 | 抽出单工具校验 `_validate_one_extra_tool(tool)` | `agent.py`,从现有 `_validate_tool_injection` 提取;构造期循环与 `add_tool` 共用。**保留名集 = `mcp_` 前缀 ∪ `_PLAN_ONLY_TOOLS`**,加空/非字符串名 guard |
 | `Agentao.add_tool` / `remove_tool` | `agent.py`,与 `events()`/`active_permissions()` 同簇(:681/:699 附近)。两者都先按保留名集校验(`add_tool` 走 `_validate_one_extra_tool`;`remove_tool` 同样拒 `mcp_` + `_PLAN_ONLY_TOOLS`),再绑定/`unregister` |
 | `add_tool` 复用 `_bind_and_register` | 已在 `tooling/registry.py:67`,无需改 |
-| 文档 + 契约面 | `docs/api/host.md` 公共方法表加两行;`host/__init__.py` 无需动(是 `Agentao` 方法,非包级符号) |
+| 文档 + 契约面 | `docs/reference/host-api.md` 公共方法表加两行;`host/__init__.py` 无需动(是 `Agentao` 方法,非包级符号) |
 
 路线简明,与 PR #64 同形:**grep 验证 → 设计(本文档)→ patch + 测试**。
 

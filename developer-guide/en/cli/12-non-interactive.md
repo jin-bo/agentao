@@ -172,7 +172,7 @@ On failure, `final_text` is `null` and `error` carries `{ type, message, tool_na
 | `4`   | Max tool iterations reached; answer may be incomplete |
 | `130` | Interrupted (SIGINT / SIGTERM) |
 
-For the full M0 design — merge rules, non-goals, post-MVP scope (`jsonl` event stream, `attachments`, `provider`, per-run `plugins`, session resume) — see [docs/implementation/NON_INTERACTIVE_RUN_PLAN.md](https://github.com/jin-bo/agentao/blob/main/docs/implementation/NON_INTERACTIVE_RUN_PLAN.md).
+For the full M0 design — merge rules, non-goals, post-MVP scope (`jsonl` event stream, `attachments`, `provider`, per-run `plugins`, session resume) — see [docs/history/implementation/non-interactive-run-plan.md](https://github.com/jin-bo/agentao/blob/main/docs/history/implementation/non-interactive-run-plan.md).
 
 ## `--resume` — resume at launch
 

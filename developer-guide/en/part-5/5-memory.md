@@ -91,7 +91,7 @@ Works for the session, forgotten on process exit.
 
 ### Custom memory backend (Redis / Postgres / remote API)
 
-The `MemoryStore` capability protocol (`agentao.capabilities.MemoryStore`) is the supported injection point — implement the 15-method contract once and pass an instance as `project_store=` / `user_store=`. See `docs/EMBEDDING.md` and `agentao/capabilities/memory.py` for the surface.
+The `MemoryStore` capability protocol (`agentao.capabilities.MemoryStore`) is the supported injection point — implement the 15-method contract once and pass an instance as `project_store=` / `user_store=`. See `docs/guides/embedding.md` and `agentao/capabilities/memory.py` for the surface.
 
 ## The two prompt blocks
 

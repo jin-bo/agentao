@@ -22,7 +22,7 @@ The full handbook lives in `developer-guide/` (VitePress, bilingual). Production
 
 | Audience | Read | Site |
 |---|---|---|
-| **Coding agents** — Claude Code / Codex / … embedding Agentao into another project | [`docs/EMBED_FOR_AGENTS.md`](docs/EMBED_FOR_AGENTS.md) (distilled, copy-paste playbook) | — |
+| **Coding agents** — Claude Code / Codex / … embedding Agentao into another project | [`docs/guides/embed-for-agents.md`](docs/guides/embed-for-agents.md) (distilled, copy-paste playbook) | — |
 | **CLI users** — driving `agentao` in the terminal | [`developer-guide/en/cli/`](developer-guide/en/cli/) (12 chapters: slash commands · plan mode · memory · replay · …) | [agentao.cn/en/cli/](https://agentao.cn/en/cli/) |
 | **Embedding developers** — building Agentao into your app | [`developer-guide/en/`](developer-guide/en/) (Parts 1–7 + Appendix) | [agentao.cn](https://agentao.cn) |
 | **中文** | [`developer-guide/zh/cli/`](developer-guide/zh/cli/) · [`developer-guide/zh/`](developer-guide/zh/) | [agentao.cn/zh/cli/](https://agentao.cn/zh/cli/) · [agentao.cn/zh/](https://agentao.cn/zh/) |
@@ -33,7 +33,7 @@ Browse locally:
 cd developer-guide && npx vitepress dev
 ```
 
-For schema-level reference (every config file, every env var, every public API), the canonical doc is [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md). Everything else is in the Developer Guide.
+For schema-level reference (every config file, every env var, every public API), the canonical doc is [`docs/reference/configuration.md`](docs/reference/configuration.md). Everything else is in the Developer Guide.
 
 ---
 
@@ -67,7 +67,7 @@ This constructs an agent with **no env-discovery, no implicit network, no global
 
 Embedding details: [Developer Guide · Part 2 (Lifecycle)](https://agentao.cn/en/part-2/) and [Part 4 (Host Contract)](https://agentao.cn/en/part-4/7-host-contract).
 
-> **Coding agent** (Claude Code, Codex, …) tasked with embedding Agentao into another project? Read [`docs/EMBED_FOR_AGENTS.md`](docs/EMBED_FOR_AGENTS.md) — a distilled, copy-paste integration playbook with construction skeletons, import rules, and a checklist.
+> **Coding agent** (Claude Code, Codex, …) tasked with embedding Agentao into another project? Read [`docs/guides/embed-for-agents.md`](docs/guides/embed-for-agents.md) — a distilled, copy-paste integration playbook with construction skeletons, import rules, and a checklist.
 
 ---
 
@@ -147,7 +147,7 @@ pip install 'agentao[full]'
 
 **Required Python:** 3.10+. **Required env:** `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` — all three, or startup raises `ValueError`.
 
-For Anthropic / Gemini / DeepSeek / any OpenAI-compatible provider, set `<NAME>_API_KEY` + `<NAME>_BASE_URL` + `<NAME>_MODEL` and pick it via `LLM_PROVIDER` or `/provider` at runtime. Full list: [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
+For Anthropic / Gemini / DeepSeek / any OpenAI-compatible provider, set `<NAME>_API_KEY` + `<NAME>_BASE_URL` + `<NAME>_MODEL` and pick it via `LLM_PROVIDER` or `/provider` at runtime. Full list: [`docs/reference/configuration.md`](docs/reference/configuration.md).
 
 ---
 

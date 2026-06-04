@@ -5,7 +5,7 @@ establishes the module skeleton and a working JSON-RPC dispatcher with
 correct error handling; later issues layer on ACP method handlers, session
 lifecycle, event transport mapping, permissions, and cancellation.
 
-See ``docs/implementation/ACP_GITHUB_EPIC.md`` for the full plan.
+See ``docs/history/implementation/acp-github-epic.md`` for the full plan.
 """
 
 from .server import AcpServer

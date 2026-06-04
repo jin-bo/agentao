@@ -1,20 +1,20 @@
 # 10. Configuration Reference
 
-This is a CLI-centric **index** to every config file the CLI reads. The schema reference for each file lives in [`docs/CONFIGURATION.md`](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md) — every row below links to the right section there.
+This is a CLI-centric **index** to every config file the CLI reads. The schema reference for each file lives in [`docs/reference/configuration.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md) — every row below links to the right section there.
 
 ## All config surfaces at a glance
 
 | File | Project path | User-global path | Used by | Schema reference |
 |------|--------------|------------------|---------|------------------|
-| **LLM credentials** | `.env` (cwd) | shell env | `/model`, `/provider`, `/temperature` | [§2](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md#2-env--llm-provider-configuration) |
-| **Runtime settings** | `.agentao/settings.json` | — | `/mode` (persist), `/replay on/off` | [§3](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md#3-agentaosettingsjson--runtime-mode--builtin-agents) |
-| **Permission rules** | — *(project file ignored)* | `~/.agentao/permissions.json` | `/mode`, `/permission`, tool confirmation UI | [§4](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md#4-permissionsjson--tool-permission-rules) |
+| **LLM credentials** | `.env` (cwd) | shell env | `/model`, `/provider`, `/temperature` | [§2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#2-env--llm-provider-configuration) |
+| **Runtime settings** | `.agentao/settings.json` | — | `/mode` (persist), `/replay on/off` | [§3](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#3-agentaosettingsjson--runtime-mode--builtin-agents) |
+| **Permission rules** | — *(project file ignored)* | `~/.agentao/permissions.json` | `/mode`, `/permission`, tool confirmation UI | [§4](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#4-permissionsjson--tool-permission-rules) |
 | **Shell sandbox** | `.agentao/sandbox.json` | `~/.agentao/sandbox.json` | `/sandbox` | [Part 6.2](/en/part-6/2-shell-sandbox) |
-| **MCP servers** | `.agentao/mcp.json` | `~/.agentao/mcp.json` | `/mcp` | [§5](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md#5-mcpjson--mcp-server-registry) |
-| **ACP servers** | `.agentao/acp.json` | — | `/acp` | [§6](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md#6-acpjson--acp-subagent-registry) |
-| **Skill enable/disable** | `.agentao/skills_config.json` | — | `/skills enable`, `/skills disable` | [§7](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md#7-skills_configjson--per-project-skill-enabledisable) |
-| **Project instructions** | `AGENTAO.md` (cwd) | — | system prompt every turn | [§8](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md#8-agentaomd--project-instructions) |
-| **Memory store** | `.agentao/memory.db` | `~/.agentao/memory.db` | `/memory`, `save_memory` tool | [§9](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md#9-memorydb--persistent-memory-store) |
+| **MCP servers** | `.agentao/mcp.json` | `~/.agentao/mcp.json` | `/mcp` | [§5](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#5-mcpjson--mcp-server-registry) |
+| **ACP servers** | `.agentao/acp.json` | — | `/acp` | [§6](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#6-acpjson--acp-subagent-registry) |
+| **Skill enable/disable** | `.agentao/skills_config.json` | — | `/skills enable`, `/skills disable` | [§7](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#7-skills_configjson--per-project-skill-enabledisable) |
+| **Project instructions** | `AGENTAO.md` (cwd) | — | system prompt every turn | [§8](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#8-agentaomd--project-instructions) |
+| **Memory store** | `.agentao/memory.db` | `~/.agentao/memory.db` | `/memory`, `save_memory` tool | [§9](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#9-memorydb--persistent-memory-store) |
 
 ## "Where do I change X?" cheat-sheet
 
@@ -23,7 +23,7 @@ This is a CLI-centric **index** to every config file the CLI reads. The schema r
 | Default model / API key | `.env` (`OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL`) |
 | Add a second provider | `.env` (`GEMINI_API_KEY` etc. — see [chapter 2](./2-models-providers)) |
 | Default temperature | `.env` (`LLM_TEMPERATURE`) |
-| Default permission mode for fresh sessions | `.agentao/settings.json` → `mode` *(persisted-last-known, see [§3](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md#3-agentaosettingsjson--runtime-mode--builtin-agents))* |
+| Default permission mode for fresh sessions | `.agentao/settings.json` → `mode` *(persisted-last-known, see [§3](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#3-agentaosettingsjson--runtime-mode--builtin-agents))* |
 | Allow / deny extra shell commands | `~/.agentao/permissions.json` |
 | Allow / deny extra web domains | `~/.agentao/permissions.json` |
 | Default sandbox profile (macOS) | `.agentao/sandbox.json` or `~/.agentao/sandbox.json` → `default_profile` |
@@ -63,7 +63,7 @@ Three things to know:
 2. **MCP merges, but project is add-only.** A project entry can declare a *new* server name, but cannot redefine a user-defined `github` to point at a different transport. Same-name collisions are skipped with a warning.
 3. **Memory is independent per scope.** Project DB and user DB are both injected into the prompt; project doesn't override user. Use `/memory user` and `/memory project` to inspect each.
 
-For the full precedence rules see [`docs/CONFIGURATION.md` §1](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md#1-configuration-surfaces-at-a-glance).
+For the full precedence rules see [`docs/reference/configuration.md` §1](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#1-configuration-surfaces-at-a-glance).
 
 ## `AGENTAO.md` persona gallery
 
@@ -113,7 +113,7 @@ Use them in CI, in a `make check` target, or right after editing one of the file
 
 | Want to… | Read |
 |----------|------|
-| Full schema reference for any of the files above | [`docs/CONFIGURATION.md`](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md) |
+| Full schema reference for any of the files above | [`docs/reference/configuration.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md) |
 | Validate your config files from CI | [12. Non-Interactive Entry Points → `agentao config validate`](./12-non-interactive#agentao-config-validate-explicit-config-check) |
 | Change default permission rules with intent | [Part 5.4 · Permissions](/en/part-5/4-permissions) |
 | Author an `AGENTAO.md` for your project | [Part 5.6 · System Prompt Customization](/en/part-5/6-system-prompt) |
@@ -125,5 +125,5 @@ The same files are loaded identically when embedding. `.env` becomes constructor
 :::
 
 ::: tip Authoritative reference
-Schemas: [`docs/CONFIGURATION.md`](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.md) (English) · [`docs/CONFIGURATION.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/CONFIGURATION.zh.md) (Chinese). Loaders: see the linked sections above. The schema file is the single source of truth for field names and defaults — this index just tells you which row to look at.
+Schemas: [`docs/reference/configuration.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md) (English) · [`docs/reference/configuration.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md) (Chinese). Loaders: see the linked sections above. The schema file is the single source of truth for field names and defaults — this index just tells you which row to look at.
 :::

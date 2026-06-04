@@ -198,7 +198,7 @@ To tune the retry cap, set `maxRecoverableRestarts` on the server config (defaul
 
 ### "Is `ensure_connected` safe to call after `cancel_turn`?"
 
-Yes. Week 4's cleanup guarantees (see [§7.1 of the headless runtime doc](../../../docs/features/headless-runtime.md)):
+Yes. Week 4's cleanup guarantees (see [§7.1 of the headless runtime doc](../../../docs/guides/headless-runtime.md)):
 
 1. The pending slot is dropped before `session/cancel` is sent.
 2. The turn slot and the per-server lock are released in `finally` blocks.

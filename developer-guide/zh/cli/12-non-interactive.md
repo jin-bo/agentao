@@ -172,7 +172,7 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 | `4`    | 达到最大工具迭代数，回答可能不完整 |
 | `130`  | 被中断（SIGINT / SIGTERM） |
 
-完整 M0 设计 —— 合并规则、Non-goals、Post-MVP 范围（`jsonl` 事件流、`attachments`、`provider`、每次 run 的 `plugins`、session resume）—— 见 [docs/implementation/NON_INTERACTIVE_RUN_PLAN.md](https://github.com/jin-bo/agentao/blob/main/docs/implementation/NON_INTERACTIVE_RUN_PLAN.md)。
+完整 M0 设计 —— 合并规则、Non-goals、Post-MVP 范围（`jsonl` 事件流、`attachments`、`provider`、每次 run 的 `plugins`、session resume）—— 见 [docs/history/implementation/non-interactive-run-plan.md](https://github.com/jin-bo/agentao/blob/main/docs/history/implementation/non-interactive-run-plan.md)。
 
 ## `--resume` — 启动即恢复会话
 

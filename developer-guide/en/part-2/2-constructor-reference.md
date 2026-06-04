@@ -283,7 +283,7 @@ agent = build_from_environment(
 - **0.2.16** — Explicit-injection surface added (`memory_manager`, `skill_manager`, `mcp_manager`, `filesystem`, `shell`, …); `replay_config`, `sandbox_policy`, `bg_store` defaulted to `None`.
 - **0.2.10** — Decoupled core runtime; the 8 legacy callbacks remain accepted via `build_compat_transport()`.
 
-End-to-end embedding patterns: [`docs/EMBEDDING.md`](https://github.com/jin-bo/agentao/blob/main/docs/EMBEDDING.md).
+End-to-end embedding patterns: [`docs/guides/embedding.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md).
 :::
 
 ## TL;DR

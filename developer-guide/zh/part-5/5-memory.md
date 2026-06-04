@@ -91,7 +91,7 @@ agent = Agentao(
 
 ### 自定义记忆后端（Redis / Postgres / 远端 API）
 
-`MemoryStore` 能力协议（`agentao.capabilities.MemoryStore`）就是这种场景的官方注入点——实现一次它的 15 个方法，把实例作为 `project_store=` / `user_store=` 传入即可。详见 `docs/EMBEDDING.md` 与 `agentao/capabilities/memory.py`。
+`MemoryStore` 能力协议（`agentao.capabilities.MemoryStore`）就是这种场景的官方注入点——实现一次它的 15 个方法，把实例作为 `project_store=` / `user_store=` 传入即可。详见 `docs/guides/embedding.md` 与 `agentao/capabilities/memory.py`。
 
 ## 提示词里的两个记忆块
 

@@ -25,7 +25,7 @@ uv run agentao run --prompt "..."     # Non-interactive automation (M0)
 uv run agentao --acp --stdio          # ACP server (Issue 12)
 ```
 
-`agentao run` is the canonical non-interactive surface. Exit codes: `0` ok, `1` runtime, `2` invalid usage, `3` permission/interaction, `4` max iterations, `130` interrupted. See `agentao/cli/run.py` and `docs/CONFIGURATION.md`. The legacy `agentao -p "..."` is now a thin shim over `agentao run`.
+`agentao run` is the canonical non-interactive surface. Exit codes: `0` ok, `1` runtime, `2` invalid usage, `3` permission/interaction, `4` max iterations, `130` interrupted. See `agentao/cli/run.py` and `docs/reference/configuration.md`. The legacy `agentao -p "..."` is now a thin shim over `agentao run`.
 
 ## Testing
 
@@ -44,13 +44,13 @@ There are 160+ test files including subdirs (`tests/cli/`, `tests/data/`, `tests
 cp .env.example .env       # Edit with OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
 ```
 
-**Reference for all config files** (`.env`, `.agentao/settings.json`, `permissions.json`, `mcp.json`, `acp.json`, `skills_config.json`, `AGENTAO.md`, memory DBs): see [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for paths, schema, defaults, and precedence rules.
+**Reference for all config files** (`.env`, `.agentao/settings.json`, `permissions.json`, `mcp.json`, `acp.json`, `skills_config.json`, `AGENTAO.md`, memory DBs): see [docs/reference/configuration.md](docs/reference/configuration.md) for paths, schema, defaults, and precedence rules.
 
 ## Architecture
 
-Agentao is an **embedded agent harness**: the same runtime drives the interactive CLI, the `agentao run` automation surface, and the ACP server, with hosts free to embed `Agentao(...)` directly. The package boundary between "host-facing contract" and "internal runtime" is load-bearing — see `docs/design/embedded-host-contract.md` and `docs/api/host.md`.
+Agentao is an **embedded agent harness**: the same runtime drives the interactive CLI, the `agentao run` automation surface, and the ACP server, with hosts free to embed `Agentao(...)` directly. The package boundary between "host-facing contract" and "internal runtime" is load-bearing — see `docs/design/embedded-host-contract.md` and `docs/reference/host-api.md`.
 
-> **Embedding Agentao into a *different* project?** (e.g. a coding agent asked to "add Agentao" to another codebase.) Read the distilled playbook at `docs/EMBED_FOR_AGENTS.md` — construction skeletons, import rules, and an integration checklist. Note that *this* `CLAUDE.md` and `AGENTAO.md` are for working inside the Agentao repo, not for the embedding target.
+> **Embedding Agentao into a *different* project?** (e.g. a coding agent asked to "add Agentao" to another codebase.) Read the distilled playbook at `docs/guides/embed-for-agents.md` — construction skeletons, import rules, and an integration checklist. Note that *this* `CLAUDE.md` and `AGENTAO.md` are for working inside the Agentao repo, not for the embedding target.
 
 ### Subpackage map
 
@@ -90,7 +90,7 @@ class MyTool(Tool):
 
 `AsyncToolBase` dispatches through `runtime_loop` with a `CancellationToken`; cleanup-ack uses `_bridged()` `finally` + `threading.Event` so the runtime can cancel mid-tool. `RegistrableTool = Tool | AsyncToolBase`.
 
-**Registration**: in `agent.py::_register_tools()` (line ~522). Built-in tools currently in `agentao/tools/`: `agents.py`, `ask_user.py`, `file_ops.py`, `memory.py`, `plan.py`, `search.py`, `shell.py`, `skill.py`, `todo.py`, `web.py`.
+**Registration**: in `agent.py::_register_tools()`. Built-in tools currently in `agentao/tools/`: `agents.py`, `ask_user.py`, `file_ops.py`, `memory.py`, `plan.py`, `search.py`, `shell.py`, `skill.py`, `todo.py`, `web.py`.
 
 **Confirmation / permissions**: tools with `requires_confirmation=True` are gated by `PermissionEngine`, which evaluates rules from `.agentao/permissions.json` (project) + `<home>/.agentao/permissions.json` (user). The engine itself does **no file I/O** — `agentao/embedding/permission_loader.py::load_permission_rules()` reads and passes `(rules, sources)` in. Default presets auto-allow common docs domains (`.github.com`, `.docs.python.org`, …) and auto-deny SSRF targets (`localhost`, `127.0.0.1`, `169.254.169.254`, …).
 
@@ -107,7 +107,7 @@ State is on `AgentaoCLI` (`agentao/cli/app.py`) and projected into prompts.
 
 ### System prompt composition
 
-Built fresh on every `chat()` in `agent.py::_build_system_prompt()` (line ~605):
+Built fresh on every `chat()` in `agent.py::_build_system_prompt()`:
 
 1. `AGENTAO.md` (if present in cwd) — project-specific instructions
 2. Agent instructions — base Agentao capabilities
@@ -159,7 +159,7 @@ Activate via the `activate_skill` tool or `/skills activate <name>`.
 
 **Separation of concerns:** the LLM can only write (`save_memory(key, value, tags?)`). Search, delete, clear are CLI-only (`/memory search|tag|delete|clear|user|project|session|status`) and call `MemoryManager` directly — never exposed as LLM tools.
 
-See `docs/features/memory-management.md`.
+See `docs/guides/memory-management.md`.
 
 ### Replay
 

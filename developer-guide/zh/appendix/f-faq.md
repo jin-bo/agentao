@@ -198,7 +198,7 @@ Week 3 把历史裸字符串形式下掉了。新形态是结构化对象：
 
 ### "`cancel_turn` 之后再调 `ensure_connected` 安全吗？"
 
-安全。Week 4 的清理保证（见 [headless runtime 文档 §7.1](../../../docs/features/headless-runtime.md)）：
+安全。Week 4 的清理保证（见 [headless runtime 文档 §7.1](../../../docs/guides/headless-runtime.md)）：
 
 1. `session/cancel` 发出去之前，pending slot 已经先 drop 掉了
 2. turn slot 与 per-server lock 都在 `finally` 里释放

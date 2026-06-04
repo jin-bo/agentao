@@ -67,7 +67,7 @@ mgr = ACPManager(config)
 **internal / unstable**：仅供 Agentao 自己的交互式 CLI inline-confirm
 管线使用，签名可能随时变更，headless embedder **不应**依赖。Headless
 场景请使用 `send_prompt` 或 `prompt_once`。支持级别以
-[`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)
+[`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)
 为准。
 
 完整 API 见[附录 A · ACP 客户端](/zh/appendix/a-api-reference#a-7-acp-客户端)。
@@ -282,7 +282,7 @@ except AcpClientError as e:
         # 之后: mgr.restart_server("searcher")
 ```
 
-classifier 是纯函数——`classify_process_death`——从 `agentao.acp_client` 导出，可以独立测试。完整决策矩阵见 [`docs/features/headless-runtime.md` §7.2](../../../docs/features/headless-runtime.md)。
+classifier 是纯函数——`classify_process_death`——从 `agentao.acp_client` 导出，可以独立测试。完整决策矩阵见 [`docs/guides/headless-runtime.md` §7.2](../../../docs/guides/headless-runtime.md)。
 
 ## 3.4.8 取消与错误
 
@@ -339,7 +339,7 @@ for s in mgr.get_status():             # 每个 s 都是 ServerStatus
 上读即可；`mgr.get_handle(name).info` 和 `mgr.inbox` /
 `mgr.interactions` 仍然保留，作为原始 handle 视图。完整字段说明与
 从旧 dict 形态迁移的映射表见
-[`docs/features/headless-runtime.md`](../../../docs/features/headless-runtime.md)。
+[`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)。
 
 子 agent（如果也是 Agentao 类型）的日志在 `<server cwd>/agentao.log`，其它 agent 可能输出到其它位置。`.agentao/acp.json` 里的 `cwd` 一定要指向可写目录，不然日志会丢。
 

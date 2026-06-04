@@ -283,7 +283,7 @@ agent = build_from_environment(
 - **0.2.16** — 显式注入面（`memory_manager` / `skill_manager` / `mcp_manager` / `filesystem` / `shell` …）落地；`replay_config` / `sandbox_policy` / `bg_store` 默认改为 `None`。
 - **0.2.10** — 核心运行时与 CLI 解耦；8 个 legacy 回调通过 `build_compat_transport()` 仍可用。
 
-完整的嵌入接入实践见 [`docs/EMBEDDING.md`](https://github.com/jin-bo/agentao/blob/main/docs/EMBEDDING.md)。
+完整的嵌入接入实践见 [`docs/guides/embedding.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md)。
 :::
 
 ## TL;DR

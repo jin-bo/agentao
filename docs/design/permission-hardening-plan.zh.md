@@ -6,7 +6,7 @@
 - `docs/design/embedded-host-contract.md` — `PermissionDecisionEvent` 在此定义
 - `docs/design/path-a-roadmap.md` — 锁定本计划必须遵守的 "embedded harness" 定位
 - `docs/design/metacognitive-boundary.md` — round 4 重新对齐的 "schema + default + host-override" 原则
-- `docs/features/TOOL_CONFIRMATION_FEATURE.md` — 当前确认管线
+- `docs/guides/tool-confirmation.md` — 当前确认管线
 - `docs/design/permission-hardening-plan.md` — 英文版
 
 ---

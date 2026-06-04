@@ -27,7 +27,7 @@ ACP is client-driven — the server can't open a session on its own — so `--re
 
 The store is keyed by the client-supplied `cwd`, so the lookup runs at request time against `<cwd>/.agentao/sessions`. Any recoverable miss — empty store, unknown id, corrupt file, or an id already live in the registry — **degrades to a fresh session** (logged at WARNING) rather than failing the client's first `session/new`.
 
-> The resumed `sessionId` is only returned in the `session/new` response, so the replayed `session/update` notifications arrive *before* the client learns that id. Clients that strictly validate `session/update.sessionId` against sessions they opened may drop those early updates; the conversation still continues correctly from the next prompt. See [docs/ACP.md](https://github.com/jin-bo/agentao/blob/main/docs/ACP.md#resume-a-session-on-startup).
+> The resumed `sessionId` is only returned in the `session/new` response, so the replayed `session/update` notifications arrive *before* the client learns that id. Clients that strictly validate `session/update.sessionId` against sessions they opened may drop those early updates; the conversation still continues correctly from the next prompt. See [docs/guides/acp.md](https://github.com/jin-bo/agentao/blob/main/docs/guides/acp.md#resume-a-session-on-startup).
 
 ## Full method catalog
 

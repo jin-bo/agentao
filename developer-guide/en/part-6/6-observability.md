@@ -91,7 +91,7 @@ handler. To fully suppress the file, either inject your own logger
 :::
 
 Full reference (knob matrix, code anchors, `LLMClient` direct path) in
-[`docs/EMBEDDING.md` §2 → "Optional: silencing or redirecting agentao.log"](https://github.com/jin-bo/agentao/blob/main/docs/EMBEDDING.md#optional-silencing-or-redirecting-agentaolog).
+[`docs/guides/embedding.md` §2 → "Optional: silencing or redirecting agentao.log"](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md#optional-silencing-or-redirecting-agentaolog).
 
 ### Essential fields
 

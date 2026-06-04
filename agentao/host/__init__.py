@@ -22,7 +22,7 @@ contract intentionally omits.
 
 Internal runtime types (``AgentEvent``, ``ToolExecutionResult``,
 ``PermissionEngine``) are intentionally not re-exported. See
-``docs/api/host.md`` and ``docs/design/embedded-host-contract.md``
+``docs/reference/host-api.md`` and ``docs/design/embedded-host-contract.md``
 (the "Embedded Harness Contract" design doc — the conceptual word
 "harness" still refers to Agentao-as-embedded-runtime; only the package
 and the symbols around it were renamed for consistency).

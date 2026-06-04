@@ -14,7 +14,7 @@ The value types (``FileEntry``, ``FileStat``, ``ShellRequest``,
 ``ShellResult``, ``BackgroundHandle``) are part of the public contract too:
 hosts implementing a ``Protocol`` must produce these shapes.
 
-See ``docs/api/host.md`` for the host-injection walkthrough.
+See ``docs/reference/host-api.md`` for the host-injection walkthrough.
 """
 
 from __future__ import annotations
