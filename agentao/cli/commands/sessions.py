@@ -119,11 +119,13 @@ def resume_session(cli: AgentaoCLI, session_id: Optional[str] = None) -> None:
         return
 
     cli.agent.messages = messages
-    if model:
-        try:
-            cli.agent.set_model(model)
-        except Exception:
-            pass
+    # Intentionally do NOT restore the persisted model. A session stores only
+    # the model *name*, not its provider (api_key / base_url never touch disk).
+    # Re-binding the name onto whatever provider the current process happens to
+    # use yields an inconsistent (provider, model) pair — e.g. a model saved
+    # under provider A that does not exist on the now-current provider B, which
+    # only fails on the next LLM call. Keep the current process's already-
+    # consistent (provider, model) and surface the saved name for reference.
     for skill_name in active_skills:
         try:
             cli.agent.skill_manager.activate_skill(skill_name, "Restored from session")
@@ -147,8 +149,12 @@ def resume_session(cli: AgentaoCLI, session_id: Optional[str] = None) -> None:
     msg_count = len(messages)
     console.print(f"\n[success]↩ Resuming session {sid_display}{title_display}[/success]")
     console.print(f"[dim]{msg_count} messages loaded.[/dim]")
-    if model:
-        console.print(f"[dim]Model: {model}[/dim]")
+    current_model = cli.agent.get_current_model()
+    console.print(f"[dim]Model: {current_model}[/dim]")
+    if model and model != current_model:
+        console.print(
+            f"[dim](session was saved on {model}; keeping current model)[/dim]"
+        )
     if active_skills:
         console.print(f"[dim]Active skills: {', '.join(active_skills)}[/dim]")
     console.print()
