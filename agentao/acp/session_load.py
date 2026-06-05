@@ -49,11 +49,14 @@ Out of scope for v1
   silently replacing the running session — the client should issue
   ``session/cancel`` first if they want to overwrite a live session.
 
-- **Restoring tool execution state, sub-agents, plan mode, or active
-  skills.** Only the message history and (best effort) the model name
-  carry over. Skill activation and plan-mode flags are deliberately
-  reset because they depend on runtime SKILL.md / project state that
-  may have changed since the session was persisted.
+- **Restoring tool execution state, sub-agents, plan mode, active
+  skills, or the model.** Only the message history carries over. The
+  persisted model name is NOT re-bound (provider is never on disk, so
+  re-binding the name onto the current provider can be inconsistent);
+  the runtime keeps its process-default model. Skill activation and
+  plan-mode flags are likewise reset because they depend on runtime
+  SKILL.md / project state that may have changed since the session was
+  persisted.
 
 - **Streaming chunked replay.** Messages are emitted one notification
   per persisted entry; large historical messages are NOT split into
@@ -127,9 +130,10 @@ def handle_session_load(
       3. Refuse if the session id is already live in the registry —
          this is a protocol bug worth surfacing rather than racing.
       4. Look up the session on disk via :func:`load_session`. Missing
-         id → ``INVALID_REQUEST``. The persisted ``model`` is forwarded
-         to the factory so the loaded session continues on the same
-         model it was originally saved under.
+         id → ``INVALID_REQUEST``. The persisted ``model`` is loaded for
+         metadata only — it is NOT re-bound onto the runtime (see
+         :func:`_instantiate_loaded_session`); the loaded session keeps
+         the process-default model.
       5. Build the :class:`ACPTransport` + :class:`Agentao` runtime via
          the injected factory (same path as ``session/new``).
       6. Hydrate the runtime's ``messages`` list from the loaded
@@ -176,7 +180,7 @@ def handle_session_load(
 
     # 4) Pull the persisted history off disk.
     try:
-        messages, model, active_skills = load_session(
+        messages, _model, active_skills = load_session(
             session_id=session_id, project_root=cwd
         )
     except FileNotFoundError as e:
@@ -200,7 +204,6 @@ def handle_session_load(
         cwd=cwd,
         mcp_servers=mcp_servers,
         messages=messages,
-        model=model,
         agent_factory=agent_factory,
         origin="session/load",
     )
@@ -223,7 +226,6 @@ def _instantiate_loaded_session(
     cwd: Path,
     mcp_servers: List[Dict[str, Any]],
     messages: List[Dict[str, Any]],
-    model: str,
     agent_factory: AgentFactory,
     origin: str,
 ) -> AcpSessionState:
@@ -235,6 +237,15 @@ def _instantiate_loaded_session(
     session through one code path. Registration happens **after** replay so
     a pipelined ``session/prompt`` cannot interleave a live turn with the
     historical updates.
+
+    The persisted ``model`` is intentionally **not** restored: a session
+    stores only the model *name*, never its provider (api_key / base_url
+    never touch disk). Re-binding the name onto whatever provider this
+    process now uses can yield an inconsistent (provider, model) pair that
+    only fails on the next LLM call. The runtime is built with the
+    process-default model (``model=None``) so (provider, model) stays
+    consistent; the saved name remains available in ``session/list`` for
+    reference.
 
     ``origin`` is a label used only in log lines (e.g. ``"session/load"`` vs
     ``"resume"``). On any failure the partially-built runtime is closed so
@@ -269,7 +280,7 @@ def _instantiate_loaded_session(
             transport=transport,
             permission_engine=permission_engine,
             mcp_servers=mcp_servers_internal,
-            model=model or None,  # forward persisted model; "" → default
+            model=None,  # use process-default model — persisted model not restored
         )
 
         # Bind the persisted ACP session id onto the agent so subsequent
@@ -403,7 +414,7 @@ def resume_session_on_new(
     """
     selector = directive.session_id
     try:
-        session_id, messages, model, _active_skills = load_session_record(
+        session_id, messages, _model, _active_skills = load_session_record(
             session_id=selector, project_root=cwd
         )
     except (OSError, ValueError) as e:
@@ -444,7 +455,6 @@ def resume_session_on_new(
         cwd=cwd,
         mcp_servers=mcp_servers,
         messages=messages,
-        model=model,
         agent_factory=agent_factory,
         origin="resume",
     )

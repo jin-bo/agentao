@@ -57,10 +57,12 @@ mcp_servers, model) -> Agentao``.
 
 All parameters are keyword-only at call sites to reduce the risk that a
 future signature change silently rebinds positional arguments. The
-``mcp_servers`` argument was added by Issue 11 and ``model`` by the
-``session/load`` model-restoration fix — factories that ignore extra
-kwargs (the test ``FakeAgent`` factory pattern) keep working unchanged
-because they accept ``**kwargs``.
+``mcp_servers`` argument was added by Issue 11; ``model`` lets a caller
+pin a specific model (session/new and session/load both leave it ``None``
+— the loader deliberately does not restore a session's persisted model;
+see ``default_agent_factory``). Factories that ignore extra kwargs (the
+test ``FakeAgent`` factory pattern) keep working unchanged because they
+accept ``**kwargs``.
 """
 
 
@@ -98,10 +100,11 @@ def default_agent_factory(
     overrides any file-loaded servers of the same name. ``None`` means
     "no extras" — the runtime falls back to file-only behavior.
 
-    ``model`` (session/load model-restoration fix) lets the loader
-    re-bind a session to the model it was originally saved under. ``None``
-    or empty string means "use the runtime default" — that's the
-    ``session/new`` path which has no persisted model to restore.
+    ``model`` lets a caller pin the runtime to a specific model. ``None``
+    or empty string means "use the runtime default". Both ``session/new``
+    and ``session/load`` pass ``None`` — the loader deliberately does not
+    restore a session's persisted model (only its name is on disk, never
+    its provider), so a reloaded session keeps the process-default model.
     """
     # Local import avoids pulling openai/tools/llm into the ACP package
     # at import time — handler modules stay lightweight for testing.
