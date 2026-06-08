@@ -194,6 +194,82 @@ The four protocols: `FileSystem`, `ShellExecutor`, `MemoryStore`,
 `MCPRegistry`. Full method signatures: `agentao/host/protocols.py` and
 [`EMBEDDING.md` §3](embedding.md#3-capability-injection).
 
+### 4.1 Path-domain write boundary (declare some subpaths read-only)
+
+A common host need: the agent's `working_directory` is writable, but
+some subpaths must be **deterministically read-only** (e.g. `raw/`,
+config files). A `FileSystem` wrapper enforces that on the same
+`filesystem=` injection point — no tool code changes. This is the
+`PolicyFileSystem` interim recipe; the full version + rationale is in
+[`docs/design/host-fs-policy.md`](../design/host-fs-policy.md).
+
+```python
+from pathlib import Path
+# wrap any FileSystem impl (LocalFileSystem, your AuditedFileSystem, …)
+
+def _effective_target(raw: str) -> Path:
+    p = Path(raw).expanduser()
+    if not p.is_absolute():                 # FileSystem is absolute-only (see below)
+        raise PermissionError(f"non-absolute path reached FS: {raw}")
+    t = p.parent.resolve(strict=False) / p.name      # parent chain (..-safe)
+    if t.is_symlink():                               # open() follows a leaf symlink
+        t = t.resolve(strict=False)
+    return t
+
+def _under(root: Path, target: Path) -> bool:
+    root = root.resolve()
+    return target == root or root in target.parents
+
+class PolicyFileSystem:                     # duck-types FileSystem
+    def __init__(self, inner, working_directory: Path, immutable=()):
+        self._fs = inner
+        self._wd = working_directory.resolve()        # cwd is implicitly writable
+        self._immutable = tuple(Path(m).resolve() for m in immutable)
+    def write_text(self, path, data, *, append=False):
+        t = _effective_target(str(path))
+        if not _under(self._wd, t):
+            raise PermissionError(f"outside working_directory: {t}")
+        if any(_under(m, t) for m in self._immutable):   # immutable wins, leaf-safe
+            raise PermissionError(f"immutable: {t}")
+        return self._fs.write_text(path, data, append=append)
+    def __getattr__(self, name): return getattr(self._fs, name)   # reads pass through
+
+from agentao.capabilities import LocalFileSystem
+agent = build_from_environment(
+    working_directory=kb,
+    filesystem=PolicyFileSystem(LocalFileSystem(), kb,
+                                immutable=[kb / "raw", kb / "AGENTAO.md"]),
+)
+```
+
+**Constraints you must respect (each one is a real footgun):**
+
+- **Restrict only, never expand.** Built-in `write_file` / `replace` run
+  a single-root `PathPolicy` check *before* the capability
+  (`file_ops.py:197,368`), so the wrapper sits downstream. It can carve
+  **read-only subpaths out of cwd** (works, zero change), but it
+  **cannot** authorize writes to roots *outside* cwd — those are rejected
+  upstream. Multi-root-outside-cwd needs a host `extra_tool` or an
+  agentao change (see the design doc).
+- **Absolute paths only.** The `FileSystem` protocol accepts absolute
+  paths; relative resolution is the *tool's* job (`Tool._resolve_path`).
+  Built-ins already hand `write_text` an absolute path. A custom
+  `extra_tool` must call `self._resolve_path(file_path)` *before*
+  `self.filesystem.write_text(...)` — the `is_absolute()` guard turns a
+  miss into a loud refusal instead of a silent process-cwd write.
+- **Test the leaf-dereferenced target, not the literal path.** A symlink
+  `scratch/link → raw/secret` must be denied; resolving the leaf
+  (`_effective_target`) is what makes "immutable wins" hold. Do **not**
+  reuse `PathPolicy.contain_file` per root as a membership test — it
+  short-circuits on the parent and is fail-open for this case.
+- **Hot-swap by mutating the instance, not replacing it.** Tools capture
+  `agent.filesystem` at registration, so reassigning it is invisible;
+  mutate a field on the live wrapper instead.
+
+Status: proposal-stage / demand-gated. Covers the within-cwd read-only
+facet today; shell writes are out of scope (shell uses the `ShellExecutor`
+capability, not `FileSystem`).
+
 ---
 
 ## 5. Permissions (do not bypass — gate instead)

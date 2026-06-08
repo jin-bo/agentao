@@ -143,6 +143,8 @@ Constructor injection replaces private attribute mutation (`agent._memory_manage
 
 The `FileSystem` Protocol (`agentao.capabilities.FileSystem`) covers all file and search tool IO. Any compliant implementation works as a drop-in: a Docker-exec remote that delegates reads/writes into a container, an in-memory virtual filesystem for test isolation, or an audit proxy that logs every access before delegating to the real disk — without changing any tool code.
 
+> To enforce a **path-domain write boundary** (declare some subpaths read-only, or additional roots writable) rather than just isolate/redirect/audit IO, see the `PolicyFileSystem` interim recipe in [`docs/design/host-fs-policy.md`](../../../docs/design/host-fs-policy.md) — a leaf-symlink-safe wrapper over this same `filesystem=` injection point. (Proposal-stage / demand-gated; the recipe covers the within-cwd read-only facet today.)
+
 **Solution B · One process per tenant** (strongest isolation, highest cost):
 
 Use ACP — each tenant gets its own Agentao subprocess. Cleanest isolation; most resource-intensive.
