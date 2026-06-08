@@ -144,6 +144,8 @@ agent = Agentao(
 
 `FileSystem` 协议（`agentao.capabilities.FileSystem`）涵盖所有文件和搜索工具的 IO。任何符合协议的实现都可以直接替换：把读写委托给容器的 Docker-exec 后端、用于测试隔离的内存虚拟文件系统、或在委托给真实磁盘前记录每次访问的审计代理——无需修改任何工具代码。
 
+> 若要 enforce 一条**按路径域的写边界**（声明某些子路径只读、或某些额外根可写），而非仅隔离/重定向/审计 IO，见 [`docs/design/host-fs-policy.md`](../../../docs/design/host-fs-policy.md) 里的 `PolicyFileSystem` interim recipe——它是基于同一个 `filesystem=` 注入点、对 leaf-symlink 安全的 wrapper。（提案阶段 / demand-gated；该 recipe 今天覆盖 cwd 内的只读 facet。）
+
 **解决方案 B · 每租户独立进程**（隔离最强，成本最高）：
 
 用 ACP 模式，每租户起一个 Agentao 子进程。进程级隔离最干净，资源开销最大。

@@ -7,6 +7,7 @@
 - `docs/design/embedded-host-contract.md` — embedded-contract design rationale
 - `docs/design/metacognitive-boundary.md` — injectable metacognitive boundary
 - `docs/design/system-prompt-profile.md` — host-injectable collaboration posture (**review record; deferred** — use `project_instructions`; demand-gated child of the metacognitive-boundary decision)
+- `docs/design/host-fs-policy.md` — path-domain write boundary (`writable` ∪ `immutable`) over the single chokepoint incl. shell (**proposal; demand-gated P1 *candidate*, not a tracked P1.x item** — two internal embedding hosts validate demand; part (c) is the §2.3 non-goal / P2 sandbox-backend slice)
 - `docs/guides/embedding.md` — embedding patterns walkthrough
 - `docs/reference/host-api.md` — `agentao.host` public API reference
 
