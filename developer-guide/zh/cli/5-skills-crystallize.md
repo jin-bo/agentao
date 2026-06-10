@@ -197,9 +197,9 @@ cp -R examples/skills/ocr ~/.agentao/skills/
 cp -R examples/skills/zootopia-ppt /path/to/your/project/.agentao/skills/
 cp -R examples/skills/pro-ppt      /path/to/your/project/.agentao/skills/
 
-# 每个 skill 带 requirements.txt — Python 依赖装一次
+# 两个 PPT skill 带 requirements.txt — Python 依赖装一次
+# （ocr 不需要：脚本内置 PEP 723 行内元数据，`uv run` 自动解析）
 pip install -r examples/skills/zootopia-ppt/requirements.txt
-pip install -r examples/skills/ocr/requirements.txt
 ```
 
 然后 `/skills reload`（或重启），新 skill 会出现在 `/skills` 列表里。

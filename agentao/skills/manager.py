@@ -25,6 +25,23 @@ _PROJECT_SKILLS_DIR = Path.cwd() / ".agentao" / "skills"
 _CONFIG_DIR = Path.cwd() / ".agentao"
 _CONFIG_FILE = _CONFIG_DIR / "skills_config.json"
 
+# Single source of truth for the relative-path resolution rule injected next
+# to every "Skill directory:" line (activation message + per-turn context).
+_SKILL_DIR_NOTE = (
+    "Relative paths in the skill's instructions (e.g. scripts/foo.py) "
+    "resolve against this skill directory, NOT your current working "
+    "directory. Build absolute paths from the skill directory before "
+    "reading or running them.\n"
+)
+
+# Resource subdirectories enumerated per skill. references/ and assets/ are
+# documentation (*.md only); scripts/ is executable surface, so every file
+# counts. Hidden files and __pycache__ are skipped everywhere, and listings
+# are capped so a large tree cannot flood the system prompt (the listing is
+# re-rendered every turn for active skills).
+_RESOURCE_SPECS = (("references", "*.md"), ("assets", "*.md"), ("scripts", "*"))
+_RESOURCE_FILE_CAP = 50
+
 
 class SkillManager:
     """Manager for Agentao skills.
@@ -237,7 +254,10 @@ class SkillManager:
                     "title": title,
                     "description": description,
                     "when_to_use": when_to_use,
-                    "path": str(skill_md_path),
+                    # Resolved so the paths surfaced to the model (Skill
+                    # directory, resource listings) work from any cwd even
+                    # when a host passes a relative skills_dir.
+                    "path": str(skill_md_path.resolve()),
                     "content": body_content[:500],
                     "frontmatter": frontmatter,
                 }
@@ -265,23 +285,45 @@ class SkillManager:
     def get_skill_info(self, skill_name: str) -> Optional[dict]:
         return self.available_skills.get(skill_name)
 
+    @staticmethod
+    def _skill_dir(skill_info: Optional[dict]) -> Optional[Path]:
+        """Directory owning the skill's files, or None when there isn't one.
+
+        None for path-less entries (inline plugin content) and for plugin
+        commands — command ``.md`` files sit in a shared ``commands/``
+        folder that is not a skill directory, so reporting it (or scanning
+        it for resources) would misattribute sibling files to every
+        command.
+        """
+        if not skill_info or not skill_info.get('path'):
+            return None
+        if skill_info.get('source_kind') == "plugin-command":
+            return None
+        return Path(skill_info['path']).parent
+
     def _list_skill_resources(self, skill_name: str) -> Dict[str, List[str]]:
-        skill_info = self.get_skill_info(skill_name)
-        if not skill_info or 'path' not in skill_info:
-            return {"references": [], "assets": []}
+        resources: Dict[str, List[str]] = {key: [] for key, _ in _RESOURCE_SPECS}
+        skill_dir = self._skill_dir(self.get_skill_info(skill_name))
+        if skill_dir is None:
+            return resources
 
-        skill_dir = Path(skill_info['path']).parent
-        resources = {"references": [], "assets": []}
-
-        references_dir = skill_dir / "references"
-        if references_dir.exists() and references_dir.is_dir():
-            for file_path in references_dir.rglob("*.md"):
-                resources["references"].append(str(file_path))
-
-        assets_dir = skill_dir / "assets"
-        if assets_dir.exists() and assets_dir.is_dir():
-            for file_path in assets_dir.rglob("*.md"):
-                resources["assets"].append(str(file_path))
+        for key, pattern in _RESOURCE_SPECS:
+            base = skill_dir / key
+            if not base.is_dir():
+                continue
+            files = [
+                f for f in sorted(base.rglob(pattern))
+                if f.is_file() and not any(
+                    part.startswith(".") or part == "__pycache__"
+                    for part in f.relative_to(base).parts
+                )
+            ]
+            resources[key] = [str(f) for f in files[:_RESOURCE_FILE_CAP]]
+            if len(files) > _RESOURCE_FILE_CAP:
+                resources[key].append(
+                    f"... ({len(files) - _RESOURCE_FILE_CAP} more files "
+                    f"under {base} not shown)"
+                )
 
         return resources
 
@@ -305,20 +347,29 @@ class SkillManager:
         if skill_info.get('description'):
             message += f"Description: {skill_info['description'][:200]}...\n"
         message += f"Task: {task_description}\n"
-        message += f"Documentation: {skill_info.get('path', 'N/A')}\n"
+        skill_path = skill_info.get('path')
+        message += f"Documentation: {skill_path or 'N/A'}\n"
+        skill_dir = self._skill_dir(skill_info)
+        if skill_dir is not None:
+            message += f"Skill directory: {skill_dir}\n"
+            message += _SKILL_DIR_NOTE
 
         resources = self._list_skill_resources(skill_name)
-        if resources["references"] or resources["assets"]:
+        if any(resources.values()):
             message += "\n=== Available Resource Files ===\n"
             message += "You can use the read_file tool to load these files as needed:\n\n"
             if resources["references"]:
                 message += "References:\n"
-                for ref_path in sorted(resources["references"]):
+                for ref_path in resources["references"]:
                     message += f"  - {ref_path}\n"
             if resources["assets"]:
                 message += "\nAssets:\n"
-                for asset_path in sorted(resources["assets"]):
+                for asset_path in resources["assets"]:
                     message += f"  - {asset_path}\n"
+            if resources["scripts"]:
+                message += "\nScripts (prefer running or patching these instead of retyping their code):\n"
+                for script_path in resources["scripts"]:
+                    message += f"  - {script_path}\n"
 
         message += "\nThe skill is now active. You can reference its documentation for detailed usage."
         return message
@@ -345,18 +396,21 @@ class SkillManager:
             skill_info = info['skill_info']
             context += f"\n## {name} - {skill_info.get('title', name)}\n"
             context += f"Task: {info['task']}\n"
+            skill_dir = self._skill_dir(skill_info)
+            if skill_dir is not None:
+                context += f"Skill directory: {skill_dir}\n"
+                context += _SKILL_DIR_NOTE
 
             skill_content = self.get_skill_content(name)
             if skill_content:
                 context += f"\n{skill_content}\n"
 
             resources = self._list_skill_resources(name)
-            if resources["references"] or resources["assets"]:
-                context += "\nAvailable resource files (use read_file to load):\n"
-                for ref in sorted(resources.get("references", [])):
-                    context += f"  - {ref}\n"
-                for asset in sorted(resources.get("assets", [])):
-                    context += f"  - {asset}\n"
+            if any(resources.values()):
+                context += "\nAvailable resource files (use read_file to load; prefer running scripts directly):\n"
+                for key, _ in _RESOURCE_SPECS:
+                    for path in resources.get(key, []):
+                        context += f"  - {path}\n"
 
         return context
 

@@ -249,6 +249,12 @@ class SystemPromptBuilder:
             if when_to_use:
                 out += f"  Activate when: {when_to_use}\n"
         out += "\nWhen the user's request matches a skill's description, use the activate_skill tool before proceeding with the task."
+        out += (
+            "\nSkill files (SKILL.md, scripts/, references/) live in each "
+            "skill's own directory, which is usually NOT your current working "
+            "directory; activation reports that directory when the skill has "
+            "one, and relative paths in skill instructions resolve against it."
+        )
         return out
 
     def _todos_block(self) -> str:

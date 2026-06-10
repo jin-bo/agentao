@@ -40,14 +40,16 @@ cp -R examples/skills/pro-ppt      /path/to/your/project/.agentao/skills/
 
 ## 安装（含依赖）
 
-每个 skill 都自带 `requirements.txt`：
+两个 PPT skill 自带 `requirements.txt`：
 
 ```bash
 # 在你的项目 venv 里
 pip install -r examples/skills/zootopia-ppt/requirements.txt
-pip install -r examples/skills/ocr/requirements.txt
 # pro-ppt 的 requirements.txt 通过 `-r ../zootopia-ppt/requirements.txt` 复用
 ```
+
+`ocr` 无需安装步骤：脚本内置 PEP 723 行内元数据，`uv run` 会自动解析依赖
+（没有 uv 的环境：`pip install openai python-dotenv`）。
 
 `zootopia-ppt` 里的图像生成后端（`google-genai`、`dashscope` 等）是**互为替代**的——只装你要用的那一个，其他用 `#` 注释掉。
 

@@ -217,6 +217,16 @@ skills/
     └── scripts/          # Helper scripts (optional)
 ```
 
+On activation, the agent is told the skill's directory and that relative
+paths inside SKILL.md (e.g. `scripts/foo.py`) resolve against that
+directory rather than the agent's current working directory — the skill is
+usually installed under `~/.agentao/skills/` or `.agentao/skills/`, not in
+the cwd. The activation message also enumerates resource files by absolute
+path: `references/` and `assets/` (`*.md`), and helper files under
+`scripts/` (hidden files and caches such as `__pycache__` are skipped, and
+very long listings are truncated). Skill authors therefore don't need to
+hardcode absolute paths; plain relative references work from any cwd.
+
 ### SKILL.md Content
 
 1. **Clear Trigger Description**: Explain when to use this skill

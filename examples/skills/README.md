@@ -40,14 +40,17 @@ Restart Agentao (or run `/skills` to list) — the skill should appear under "Av
 
 ## Install (with deps)
 
-Each gallery skill ships a `requirements.txt` listing its Python deps:
+The PPT skills ship a `requirements.txt` listing their Python deps:
 
 ```bash
 # Inside your project venv
 pip install -r examples/skills/zootopia-ppt/requirements.txt
-pip install -r examples/skills/ocr/requirements.txt
 # pro-ppt's requirements.txt re-exports zootopia-ppt's via `-r ../zootopia-ppt/requirements.txt`
 ```
+
+`ocr` needs no install step: its script carries PEP 723 inline metadata, so
+`uv run` resolves its deps automatically (without uv: `pip install openai
+python-dotenv`).
 
 The image-gen backends in `zootopia-ppt` (`google-genai`, `dashscope`, etc.) are alternatives — comment out the lines you don't use.
 

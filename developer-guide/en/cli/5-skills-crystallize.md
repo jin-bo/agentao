@@ -197,9 +197,9 @@ cp -R examples/skills/ocr ~/.agentao/skills/
 cp -R examples/skills/zootopia-ppt /path/to/your/project/.agentao/skills/
 cp -R examples/skills/pro-ppt      /path/to/your/project/.agentao/skills/
 
-# Each skill ships a requirements.txt — install Python deps once
+# The PPT skills ship a requirements.txt — install Python deps once
+# (ocr needs none: its script carries PEP 723 inline metadata for `uv run`)
 pip install -r examples/skills/zootopia-ppt/requirements.txt
-pip install -r examples/skills/ocr/requirements.txt
 ```
 
 Then `/skills reload` (or restart) and the new skills show up in `/skills`.
