@@ -5,9 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.4.9. Add entries under the relevant heading as work lands._
+## [0.4.9] — 2026-06-10
 
 ### Added
 
@@ -74,6 +72,28 @@ _Targeting 0.4.9. Add entries under the relevant heading as work lands._
     `disable_tools` since a bad allowlist name silently excludes a tool).
   - Design: `docs/design/host-tool-allowlist.md` / `.zh.md`.
 
+- **MCP connect-time preflight: fast-fail when a remote `url` is not an MCP
+  endpoint.** A misconfigured `url` in `mcp.json` pointing at a plain web page
+  (website, login portal, wrong path) used to stall `connect_all()` for the
+  full SSE `timeout` (default 60 s) before failing opaquely. `_connect_sse`
+  now runs a cheap 5 s HEAD probe (GET fallback on 405/501) and rejects a 2xx
+  response advertising a definite non-MCP content type with an actionable
+  `NonMcpEndpointError`. Detection is allow-list based (`application/json` /
+  `text/event-stream`) and strictly best-effort: missing/empty content type,
+  non-2xx status, or any transport error passes through — the real handshake
+  stays authoritative. (#71)
+
+- **ACP server startup resume: `agentao --acp --resume [SESSION_ID]`.** The
+  ACP server can reattach to a persisted session: a one-shot
+  `ResumeDirective` is consumed by the first `session/new`, which hydrates
+  and replays the saved history (reusing the `session/load` loader) and
+  returns the persisted `sessionId`; later `session/new` calls behave
+  normally. The fallback is permissive — empty store, unknown id,
+  corrupt/unreadable file, or an already-active id all degrade to a fresh
+  session (logged at WARNING) rather than failing the client's first
+  `session/new`. Hosts get the same seam via
+  `AcpServer(resume_directive=...)`. (#76)
+
 ### Changed
 
 - **Split six oversized modules into focused, cohesive units (internal,
@@ -95,6 +115,21 @@ _Targeting 0.4.9. Add entries under the relevant heading as work lands._
   - `plugins/hooks/_dispatcher.py` (756 → 542 lines): the structured-stdout
     parsers moved to a `_OutputParsingMixin` (`_output_parsing.py`).
 
+- **Vision degradation rewrites rejected image turns as `<attachment>` tags.**
+  When a model rejects image input, the retry now rewrites the user turn with
+  one self-closing `<attachment uri="..." mimetype="..."/>` tag per image
+  appended at the end of the message (uri from the image's `_source`, else
+  `inline-image-N`; attribute-escaped) instead of the previous bracketed
+  prose + bullet list. Canonical format documented as dev-guide appendix A.1
+  "Image input and vision degradation" (EN+ZH); the engine enforces no
+  size/count caps — hosts must. (#84)
+
+- **docs/ reorganized into an audience-oriented layout.** 11 subdirs + 14
+  loose top-level files restructured into seven purpose dirs — `start/`,
+  `guides/`, `reference/`, `design/`, `releases/`, `migration/`, `history/` —
+  with filenames normalized to kebab-case. The code-coupled `schema/` dir is
+  intentionally unchanged (tests read it by hardcoded path). (#80)
+
 ### Fixed
 
 - **De-flake the ACP-client nonblocking-serialization subprocess test.**
@@ -104,6 +139,59 @@ _Targeting 0.4.9. Add entries under the relevant heading as work lands._
   (`AcpClientError: timeout waiting for session/prompt response`). Bumped to
   the file's existing 10 s "slow round-trip" budget. Test-only; no runtime
   change.
+
+- **Subprocess timeouts now kill the whole process tree (search, plugin
+  hooks, shell).** A bare `subprocess.run(timeout=)` signals only the direct
+  child, so a grandchild holding the captured pipe (Windows `git`
+  credential helpers, a user hook backgrounding a process) hung
+  `communicate()` past the timeout — five parallel hangs saturated the tool
+  pool and wedged ACP-stdio turns until the client dropped the connection.
+  New shared `capabilities/process.run_captured()`: own process
+  group/session, explicit stdin handling (`input=` over a pipe, else
+  `DEVNULL` so a child can never read the JSON-RPC channel),
+  `kill_process_tree()` on timeout (`taskkill /T` on Windows, `killpg(pid)`
+  elsewhere — never `getpgid`, which races a zombie child), and
+  `errors="replace"` decoding. `search_file_content` and the plugin hook
+  dispatcher route through it; `LocalShellExecutor.run` keeps its streaming
+  loop but shares `kill_process_tree`. (#73, #74, #75)
+
+- **ACP sessions persist on server shutdown.** When an ACP client stopped an
+  agentao server subprocess, chat history was dropped (unlike the CLI, which
+  saves on session end). `AcpSessionState.close()` now persists the
+  conversation keyed by the ACP `sessionId` (so `session/load` can resume
+  it) before cancelling the turn token, and the bundled `acp_client` closes
+  the server's stdin first so its read loop reaches the save path before
+  SIGTERM/SIGKILL escalation. Shared `persist_agent_session()` helper keeps
+  the CLI and ACP teardown paths in one place. (#78)
+
+- **Sub-agent construction no longer crashes on `working_directory`.**
+  `AgentToolWrapper._run_sync` built the sub-`Agentao(...)` without
+  `working_directory` — required since 0.3.0 — so every sub-agent invocation
+  raised `TypeError`. The parent's project root is now threaded through
+  (`create_agent_tools` passes `working_directory=self.project_root`), with a
+  regression test on the construction kwarg. (#80)
+
+- **Session resume no longer rebinds the persisted model.** A session stores
+  only the model *name*, never its provider, so re-applying it onto the
+  current process's provider could yield an inconsistent `(provider, model)`
+  pair that fails on the next LLM call. Both resume paths (CLI
+  `/sessions resume`, ACP `session/load` / startup resume) now keep the
+  process-default model; the saved name is still persisted and shown for
+  reference. (#81)
+
+- **SKILL.md relative paths resolve against the skill directory.** Skill
+  instructions referencing `scripts/foo.py` failed whenever cwd ≠ skill
+  directory — the common case, since skills install under
+  `~/.agentao/skills/` or `<project>/.agentao/skills/`. Fixed at the
+  activation layer so every skill (including third-party) self-heals:
+  `activate_skill` and the per-turn skills context now report
+  `Skill directory: <abs path>` plus the resolution rule, `scripts/` is
+  enumerated alongside `references/`/`assets/` (hidden files and
+  `__pycache__` skipped, listings capped with an explicit truncation
+  marker), plugin-command entries are exempted (a shared `commands/` folder
+  is not a skill directory), and skill paths are resolved to absolute at
+  load. The bundled `ocr` example carries PEP 723 inline metadata so
+  `uv run` works from any cwd. (#83, #85)
 
 ---
 

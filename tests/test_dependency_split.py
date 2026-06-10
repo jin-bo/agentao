@@ -3,8 +3,8 @@
 Three slow-marked tests against a built wheel:
 
 - ``[full]`` reproduces the 0.3.x bundled closure exactly (122 packages,
-  baseline refreshed 2026-05-30 in ``tests/data/full_extras_baseline.txt``
-  — same package set, transitive version bumps tracked for the 0.4.8 release).
+  baseline refreshed 2026-06-10 in ``tests/data/full_extras_baseline.txt``
+  — same package set, transitive version bumps tracked for the 0.4.9 release).
 - bare ``pip install agentao`` constructs an ``Agentao()`` offline.
 - bare install does NOT pull rich/bs4/jieba/prompt-toolkit/readchar/pygments
   — they live in ``[cli]`` / ``[web]`` / ``[i18n]``.
