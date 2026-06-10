@@ -77,7 +77,7 @@ Agentao advertises the following in `initialize`:
 {
   "agentCapabilities": {
     "loadSession": true,
-    "promptCapabilities": { "image": false, "audio": false, "embeddedContext": false },
+    "promptCapabilities": { "image": true, "audio": false, "embeddedContext": false },
     "mcpCapabilities":   { "http": false, "sse": true }
   }
 }
@@ -86,7 +86,8 @@ Agentao advertises the following in `initialize`:
 Meaning for Zed:
 
 - ✅ `loadSession`: can restore prior conversations from disk
-- ❌ `image` / `audio`: text-only prompts in v1
+- ✅ `image` (0.4.8+): inline `{data, mimeType}` image blocks in prompts; non-vision models degrade to text tags — see [A.1](/en/appendix/a-api-reference#image-input-and-vision-degradation)
+- ❌ `audio`: not supported
 - ❌ `embeddedContext`: Zed can't push embedded resource fetches
 - ✅ `sse`: Zed can forward SSE MCP servers
 - ❌ `http`: Agentao doesn't support HTTP MCP transport

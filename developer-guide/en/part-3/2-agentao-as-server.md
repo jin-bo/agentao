@@ -80,7 +80,7 @@ The store is keyed by the client-supplied `cwd`, so the lookup runs at request t
     "agentCapabilities": {
       "loadSession": true,
       "promptCapabilities": {
-        "image": false,
+        "image": true,
         "audio": false,
         "embeddedContext": false
       },

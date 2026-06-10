@@ -127,6 +127,21 @@ task = asyncio.create_task(agent.arun(req.prompt, cancellation_token=token))
 # elsewhere: token.cancel("client-disconnect")
 ```
 
+### Images (`images=`)
+
+Both `chat()` and `arun()` take
+`images=[{"data": <base64>, "mimeType": "image/*", "_source": <path-or-url>}]`
+(0.4.8+). `data`/`mimeType` are required non-empty strings (`ValueError`
+otherwise); `_source` is optional. The engine enforces **no** size/count
+caps — cap untrusted input in the host (the CLI/ACP boundaries use
+`agentao.media_limits`: 20 MB/image, 16/turn).
+
+Degradation convention: if the model rejects image input, the turn retries
+once with the user message rewritten to plain text, each image becoming a
+tag appended at the end — `<attachment uri="..." mimetype="..."/>` (`uri` =
+`_source`, else `inline-image-N`). Expect this rewrite if you inspect or
+persist `agent.messages`. Full contract: `docs/guides/embedding.md` §4.
+
 ---
 
 ## 3. The import rules (get these wrong and you couple to internals)
@@ -366,6 +381,7 @@ must pass `logger=`. ([`EMBEDDING.md` §2](embedding.md#2-pure-injection-constru
 - [ ] LLM creds supplied (`llm_client` or `api_key`+`base_url`+`model`).
 - [ ] Every code path calls `agent.close()` (use `try/finally`).
 - [ ] Async host uses `arun()`, not `chat()` on the loop thread.
+- [ ] If the host forwards images: `data`/`mimeType` validated, size/count capped host-side, and consumers of `agent.messages` tolerate the `<attachment …/>` degradation rewrite (§2).
 - [ ] Imports come from `agentao`, `agentao.embedding`, `agentao.host`, `agentao.host.protocols` only — no `agentao.runtime.*` / `AgentEvent` / `agentao.harness`.
 - [ ] Permission posture set explicitly; untrusted input → `sandbox_policy`.
 - [ ] Secrets come from the host (env/secret manager), not hard-coded.

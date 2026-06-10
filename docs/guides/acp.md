@@ -142,7 +142,7 @@ Source: `agentao/acp/session_prompt.py::_parse_prompt`.
 |---|---|---|
 | `text` | ✅ | Multiple text blocks are joined with `\n\n`. |
 | `resource_link` | ✅ | Rendered as `[Resource: {title or name or uri}](../{uri})` so the LLM sees the reference; Agentao does **not** dereference the URI in v1. |
-| `image` | ✅ | Inline `{data, mimeType}` only — surfaced to the LLM as an OpenAI `image_url` data-URL part. `mimeType` must be `image/*`, `data` valid base64 within the per-image size cap, ≤ `MAX_IMAGES_PER_TURN` per prompt. A by-reference `uri` is **rejected** (`INVALID_PARAMS`) so the wire never carries a host path or secret. `promptCapabilities.image` is `true`. |
+| `image` | ✅ | Inline `{data, mimeType}` only — surfaced to the LLM as an OpenAI `image_url` data-URL part. `mimeType` must be `image/*`, `data` valid base64 within the per-image size cap, ≤ `MAX_IMAGES_PER_TURN` per prompt. A by-reference `uri` is **rejected** (`INVALID_PARAMS`) so the wire never carries a host path or secret. `promptCapabilities.image` is `true`. If the selected model rejects image input, the turn degrades the images to `<attachment uri=... mimetype=.../>` text tags (canonical format description: `agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`; developer guide appendix A.1). |
 | `audio` | ❌ | `INVALID_PARAMS`. `promptCapabilities.audio` is `false`. |
 | `resource` (embedded) | ❌ | `INVALID_PARAMS`. `promptCapabilities.embeddedContext` is `false`. |
 

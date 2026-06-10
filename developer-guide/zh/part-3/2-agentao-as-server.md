@@ -80,7 +80,7 @@ ACP 是客户端驱动的——server 不能自己开会话——所以 `--resum
     "agentCapabilities": {
       "loadSession": true,
       "promptCapabilities": {
-        "image": false,
+        "image": true,
         "audio": false,
         "embeddedContext": false
       },

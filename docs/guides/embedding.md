@@ -325,6 +325,49 @@ task = asyncio.create_task(agent.arun(req.prompt, cancellation_token=token))
 # elsewhere: token.cancel("client-disconnect")
 ```
 
+### Multimodal input (`images=`)
+
+`chat()` / `arun()` accept inline image attachments alongside the text
+(0.4.8+):
+
+```python
+reply = agent.chat(
+    "What does this screenshot show?",
+    images=[{
+        "data": b64_png,                     # base64, required
+        "mimeType": "image/png",             # image/*, required
+        "_source": "share/screenshot.png",   # optional — see below
+    }],
+)
+```
+
+The host-facing contract:
+
+- Each item must carry non-empty string `data` (base64) and `mimeType`
+  (`image/*`); anything else raises `ValueError` at the turn boundary.
+  The engine does **not** enforce size or count caps — those live at the
+  CLI/ACP boundaries (`agentao.media_limits`: 20 MB/image, 16
+  images/turn). An embedded host accepting untrusted images should
+  enforce its own caps before calling `chat()`.
+- The optional `_source` key (origin path or URL) is never sent to the
+  model as image content; it exists for the degradation tag below and
+  for log labels.
+- **Vision degradation convention.** If the selected model rejects image
+  input, the turn retries once with the multimodal user message rewritten
+  to plain text — one self-closing tag per image, appended at the end of
+  the user message:
+
+  ```text
+  <attachment uri="share/screenshot.png" mimetype="image/png"/>
+  ```
+
+  `uri` is the item's `_source` when present, else `inline-image-N`
+  (1-based). Hosts that inspect or persist `agent.messages` should expect
+  a multimodal user turn to have been rewritten into this plain-text form
+  after a degraded turn. Implementation:
+  `agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`;
+  canonical format description: developer guide appendix A.1.
+
 ---
 
 ## 5. Replay, Sandbox, BgStore (opt-in subsystems)

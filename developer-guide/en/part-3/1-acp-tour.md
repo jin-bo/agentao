@@ -175,7 +175,7 @@ The base spec only lets the server **request permission** — it does not let th
 
 Explicit v1 limits (Agentao's capability block reflects them faithfully):
 
-- `promptCapabilities.image = false`, `audio = false`, `embeddedContext = false` — prompts are text-only
+- `promptCapabilities.image = true` (0.4.8+, inline `{data, mimeType}` blocks only), `audio = false`, `embeddedContext = false`
 - `mcpCapabilities.http = false`, `sse = true` — MCP transport is stdio + SSE only
 - `authMethods = []` — no protocol-level auth; credentials flow via env vars
 

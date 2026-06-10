@@ -34,7 +34,7 @@ Handshake. MUST be first call.
 | Field | Value | Meaning |
 |-------|-------|---------|
 | `loadSession` | `true` | `session/load` supported — see [7.2](/en/part-7/2-ide-plugin#3-persist-resume-across-ide-restart) |
-| `promptCapabilities.image` | `false` | v1 baseline text-only |
+| `promptCapabilities.image` | `true` | 0.4.8+: inline `{data, mimeType}` image blocks; non-vision degradation — see [A.1](/en/appendix/a-api-reference#image-input-and-vision-degradation) |
 | `promptCapabilities.audio` | `false` | |
 | `promptCapabilities.embeddedContext` | `false` | |
 | `mcpCapabilities.sse` | `true` | SSE MCP transport usable |

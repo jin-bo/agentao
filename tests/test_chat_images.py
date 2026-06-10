@@ -114,7 +114,9 @@ def test_image_unsupported_falls_back_to_text_reference():
     content = user_msgs[0]["content"]
     assert isinstance(content, str)
     assert "describe this" in content
-    assert "/tmp/shot.png (image/png)" in content
+    assert content.rstrip().endswith(
+        '<attachment uri="/tmp/shot.png" mimetype="image/png"/>'
+    )
     assert "data:image/png;base64" not in content
 
 
@@ -146,7 +148,10 @@ def test_image_fallback_replaces_image_message_before_background_note():
         msg["content"] for msg in retry_messages if msg.get("role") == "user"
     ]
     assert not any(isinstance(content, list) for content in retry_user_contents)
-    assert any("/tmp/shot.png (image/png)" in content for content in retry_user_contents)
+    assert any(
+        '<attachment uri="/tmp/shot.png" mimetype="image/png"/>' in content
+        for content in retry_user_contents
+    )
     assert any("background finished" in content for content in retry_user_contents)
 
 
