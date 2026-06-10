@@ -427,6 +427,122 @@ def test_resource_enumeration_references(tmp_path):
     assert any("guide.md" in r for r in resources["references"])
 
 
+def test_resource_enumeration_scripts_any_extension(tmp_path):
+    g = tmp_path / "global"
+    skill_dir = _write_skill(g, "alpha")
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+    (scripts_dir / "helper.sh").write_text("echo hi", encoding="utf-8")
+    with patch.multiple(_mod,
+                        _GLOBAL_SKILLS_DIR=g,
+                        _PROJECT_SKILLS_DIR=tmp_path / "p",
+                        _BUNDLED_SKILLS_DIR=tmp_path / "b",
+                        _CONFIG_FILE=tmp_path / "cfg.json",
+                        _CONFIG_DIR=tmp_path):
+        m = SkillManager()
+        resources = m._list_skill_resources("alpha")
+    assert any("run.py" in s for s in resources["scripts"])
+    assert any("helper.sh" in s for s in resources["scripts"])
+
+
+def test_resource_enumeration_skips_junk_and_caps(tmp_path):
+    g = tmp_path / "global"
+    skill_dir = _write_skill(g, "alpha")
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+    (scripts_dir / ".DS_Store").write_text("junk", encoding="utf-8")
+    (scripts_dir / ".env").write_text("SECRET=1", encoding="utf-8")
+    pycache = scripts_dir / "__pycache__"
+    pycache.mkdir()
+    (pycache / "run.cpython-312.pyc").write_text("", encoding="utf-8")
+    with patch.multiple(_mod,
+                        _GLOBAL_SKILLS_DIR=g,
+                        _PROJECT_SKILLS_DIR=tmp_path / "p",
+                        _BUNDLED_SKILLS_DIR=tmp_path / "b",
+                        _CONFIG_FILE=tmp_path / "cfg.json",
+                        _CONFIG_DIR=tmp_path):
+        m = SkillManager()
+        resources = m._list_skill_resources("alpha")
+    assert [Path(s).name for s in resources["scripts"]] == ["run.py"]
+
+    # Cap: with the limit patched down, the list is truncated and says so.
+    for i in range(4):
+        (scripts_dir / f"s{i}.py").write_text("", encoding="utf-8")
+    with patch.multiple(_mod,
+                        _GLOBAL_SKILLS_DIR=g,
+                        _PROJECT_SKILLS_DIR=tmp_path / "p",
+                        _BUNDLED_SKILLS_DIR=tmp_path / "b",
+                        _CONFIG_FILE=tmp_path / "cfg.json",
+                        _CONFIG_DIR=tmp_path,
+                        _RESOURCE_FILE_CAP=2):
+        m = SkillManager()
+        resources = m._list_skill_resources("alpha")
+    assert len(resources["scripts"]) == 3  # 2 paths + truncation marker
+    assert "3 more files" in resources["scripts"][-1]
+
+
+def test_plugin_command_entry_gets_no_skill_directory(tmp_path):
+    """Command .md files live in a shared commands/ folder — reporting it
+    as a skill directory (or scanning it for resources) would misattribute
+    sibling files to every command."""
+    commands_dir = tmp_path / "plug" / "commands"
+    scripts_dir = commands_dir / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (commands_dir / "foo.md").write_text("# Foo", encoding="utf-8")
+    (scripts_dir / "shared.py").write_text("", encoding="utf-8")
+    with patch.multiple(_mod,
+                        _GLOBAL_SKILLS_DIR=tmp_path / "g",
+                        _PROJECT_SKILLS_DIR=tmp_path / "p",
+                        _BUNDLED_SKILLS_DIR=tmp_path / "b",
+                        _CONFIG_FILE=tmp_path / "cfg.json",
+                        _CONFIG_DIR=tmp_path):
+        m = SkillManager()
+        m.available_skills["plug:foo"] = {
+            "name": "plug:foo",
+            "path": str(commands_dir / "foo.md"),
+            "source_kind": "plugin-command",
+        }
+        resources = m._list_skill_resources("plug:foo")
+        result = m.activate_skill("plug:foo", "task")
+    assert resources["scripts"] == []
+    assert "Skill directory:" not in result
+
+
+def test_list_skill_resources_tolerates_pathless_entry(tmp_path):
+    """Plugin-style entries carry path=None — must not raise."""
+    with patch.multiple(_mod,
+                        _GLOBAL_SKILLS_DIR=tmp_path / "g",
+                        _PROJECT_SKILLS_DIR=tmp_path / "p",
+                        _BUNDLED_SKILLS_DIR=tmp_path / "b",
+                        _CONFIG_FILE=tmp_path / "cfg.json",
+                        _CONFIG_DIR=tmp_path):
+        m = SkillManager()
+        m.available_skills["inline"] = {"name": "inline", "path": None}
+        resources = m._list_skill_resources("inline")
+    assert resources == {"references": [], "assets": [], "scripts": []}
+
+
+def test_activate_skill_reports_skill_directory_and_scripts(tmp_path):
+    g = tmp_path / "global"
+    skill_dir = _write_skill(g, "alpha", description="Alpha skill")
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "ocr.py").write_text("print('ocr')", encoding="utf-8")
+    with patch.multiple(_mod,
+                        _GLOBAL_SKILLS_DIR=g,
+                        _PROJECT_SKILLS_DIR=tmp_path / "p",
+                        _BUNDLED_SKILLS_DIR=tmp_path / "b",
+                        _CONFIG_FILE=tmp_path / "cfg.json",
+                        _CONFIG_DIR=tmp_path):
+        m = SkillManager()
+        result = m.activate_skill("alpha", "test task")
+    assert f"Skill directory: {skill_dir}" in result
+    assert "NOT your current working directory" in result
+    assert str(scripts_dir / "ocr.py") in result
+
+
 def test_skills_context_includes_active_skill(tmp_path):
     g = tmp_path / "global"
     _write_skill(g, "alpha", body="## Alpha Content\nSpecific instructions.")
@@ -441,3 +557,5 @@ def test_skills_context_includes_active_skill(tmp_path):
         ctx = m.get_skills_context()
     assert "alpha" in ctx
     assert "Alpha Content" in ctx
+    assert f"Skill directory: {g / 'alpha'}" in ctx
+    assert "NOT your current working directory" in ctx

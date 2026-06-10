@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["openai", "python-dotenv"]
+# ///
 import sys
 import base64
 import os
@@ -5,7 +9,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
+SKILL_DIR = Path(__file__).resolve().parent.parent
+
+# Searched in order; load_dotenv never overwrites variables that are already
+# set, so earlier sources win (process env beats all files).
+ENV_FILES = [Path.cwd() / ".env", SKILL_DIR / ".env", Path.home() / ".env"]
+for _env_file in ENV_FILES:
+    load_dotenv(_env_file)
 
 API_KEY = os.getenv("QWEN_API_KEY")
 BASE_URL = os.getenv("QWEN_BASE_URL")
@@ -48,6 +58,17 @@ def main():
     image_path = sys.argv[1]
     if not Path(image_path).exists():
         print(f"Error: file not found: {image_path}", file=sys.stderr)
+        sys.exit(1)
+
+    if not API_KEY or not BASE_URL:
+        candidates = "\n  ".join(str(p) for p in ENV_FILES)
+        print(
+            "Error: QWEN_API_KEY / QWEN_BASE_URL not set.\n"
+            "Set them as environment variables, or put them in one of:\n"
+            f"  {candidates}\n"
+            f"(recommended: {SKILL_DIR / '.env'})",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     result = ocr(image_path)
