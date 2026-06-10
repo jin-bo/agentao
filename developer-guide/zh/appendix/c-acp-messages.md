@@ -34,7 +34,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 | 字段 | 值 | 含义 |
 |------|-----|------|
 | `loadSession` | `true` | 支持 `session/load`——见 [7.2](/zh/part-7/2-ide-plugin#3-ide-重启后的会话恢复) |
-| `promptCapabilities.image` | `false` | v1 基线仅文本 |
+| `promptCapabilities.image` | `true` | 0.4.8+：内联 `{data, mimeType}` 图片块；非视觉模型的退化行为见 [A.1](/zh/appendix/a-api-reference#图片输入与视觉退化) |
 | `promptCapabilities.audio` | `false` | |
 | `promptCapabilities.embeddedContext` | `false` | |
 | `mcpCapabilities.sse` | `true` | 可用 SSE 传输 |

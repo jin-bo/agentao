@@ -18,6 +18,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from xml.sax.saxutils import quoteattr
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...context_manager import is_context_too_long_error
@@ -807,23 +808,28 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
     # ------------------------------------------------------------------
 
     def _render_image_reference_fallback(self, images: List[Dict[str, str]]) -> str:
-        refs = []
+        """Render images as ``<attachment uri=... mimetype=.../>`` tags.
+
+        Vision degradation format for non-vision models: one self-closing
+        tag per image, appended at the end of the user message.
+        """
+        tags = []
         for i, img in enumerate(images, 1):
-            source = (
+            uri = (
                 img.get("_source")
                 or img.get("url")
                 or img.get("path")
                 or img.get("_label")
-                or f"inline image {i}"
+                or f"inline-image-{i}"
             )
-            mime_type = img.get("mimeType")
-            refs.append(f"- {source}" + (f" ({mime_type})" if mime_type else ""))
-        return (
-            "\n\n[Image attachments could not be sent because the selected "
-            "model does not support image input. The available image "
-            "references are:]\n"
-            + "\n".join(refs)
-        )
+            # mimeType is validated as a non-empty string by run() before
+            # the fallback text is built; uri may be host-supplied (e.g. a
+            # pathlib.Path in _source), hence the str() cast.
+            tags.append(
+                f"<attachment uri={quoteattr(str(uri))} "
+                f"mimetype={quoteattr(img['mimeType'])}/>"
+            )
+        return "\n\n" + "\n".join(tags)
 
     def _replace_image_message_for_fallback(
         self,

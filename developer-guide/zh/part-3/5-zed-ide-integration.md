@@ -77,7 +77,7 @@ Agentao 在 `initialize` 里声明：
 {
   "agentCapabilities": {
     "loadSession": true,
-    "promptCapabilities": { "image": false, "audio": false, "embeddedContext": false },
+    "promptCapabilities": { "image": true, "audio": false, "embeddedContext": false },
     "mcpCapabilities":   { "http": false, "sse": true }
   }
 }
@@ -86,7 +86,8 @@ Agentao 在 `initialize` 里声明：
 含义：
 
 - ✅ `loadSession`：能从磁盘恢复历史会话
-- ❌ `image` / `audio`：v1 只支持纯文本 prompt
+- ✅ `image`（0.4.8+）：prompt 可携带内联 `{data, mimeType}` 图片块；非视觉模型的退化行为见 [A.1](/zh/appendix/a-api-reference#图片输入与视觉退化)
+- ❌ `audio`：不支持
 - ❌ `embeddedContext`：Zed 无法把内嵌资源拉取推过来
 - ✅ `sse`：Zed 可以转发 SSE MCP server
 - ❌ `http`：Agentao 不支持 HTTP MCP 传输

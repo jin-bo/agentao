@@ -93,8 +93,8 @@ CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
-| `chat` | `chat(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None) -> str` | Run one turn. Returns final assistant text. |
-| `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None) -> str` | Async surface — bridges `chat()` through `loop.run_in_executor`. Same semantics for cancellation, replay, max_iterations. |
+| `chat` | `chat(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | Run one turn. Returns final assistant text. `images` (0.4.8+): inline image attachments — see [Image input and vision degradation](#image-input-and-vision-degradation). |
+| `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | Async surface — bridges `chat()` through `loop.run_in_executor`. Same semantics for cancellation, replay, max_iterations, images. |
 | `clear_history` | `clear_history() -> None` | Reset `self.messages`; does not touch memory DB. |
 | `close` | `close() -> None` | Release MCP subprocesses, close DB handles. Call in `finally:`. |
 | `set_provider` | `set_provider(api_key: str, base_url: str | None = None, model: str | None = None) -> None` | Runtime LLM swap. |
@@ -103,6 +103,24 @@ CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars
 | `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | Snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). JSON-safe. See [A.10](#a-10-embedded-host-contract). |
 | `add_tool` | `add_tool(tool: RegistrableTool, *, replace: bool = False) -> None` | Register a tool post-construction; same validation + capability binding as `extra_tools=`. Name clash without `replace=True` raises (stricter than `tools.register`). Reserved names (`mcp_`, plan tools) rejected. Visible next `chat()`/`arun()`. See [5.1](/en/part-5/1-custom-tools). |
 | `remove_tool` | `remove_tool(name: str) -> bool` | Unregister a tool post-construction; returns whether it existed (absent → `False`, no raise). `mcp_` / plan tools raise. Gone next `chat()`/`arun()`. |
+
+### Image input and vision degradation
+
+`chat()` / `arun()` accept `images=[{"data": <base64>, "mimeType": "image/*"}, …]`
+(0.4.8+). Each image is sent as an OpenAI `image_url` data-URL part alongside
+the text. If the selected model rejects image input, the turn retries once with
+the images degraded to text — one self-closing tag per image, appended at the
+end of the user message:
+
+```text
+<attachment uri="share/screenshot.png" mimetype="image/png"/>
+```
+
+`uri` is the attachment's source path or URL when known (e.g. staged via the
+CLI `/image` command); wire images that carry no source degrade to
+`inline-image-N`. This section is the canonical description of the format —
+implementation in
+`agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`.
 
 ### Attributes
 
