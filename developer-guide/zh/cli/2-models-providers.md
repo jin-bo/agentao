@@ -111,6 +111,14 @@ Temperature changed from 1.0 to 0.2
 LLM_TEMPERATURE=0.3
 ```
 
+需要 CLI 没有对应命令的请求参数 —— `reasoning_effort`、`top_p`、`seed`、`response_format`，或某个 provider 专有字段？把 `LLM_EXTRA_BODY` 设成 JSON 对象；它会被原样转发给 LLM `.create()`（并被子 agent 继承）：
+
+```bash
+LLM_EXTRA_BODY='{"reasoning_effort":"high"}'
+```
+
+解析 / 脱敏细节见 [附录 B](/zh/appendix/b-config-keys)。
+
 ## 什么时候该切什么
 
 | 情况 | 怎么做 |

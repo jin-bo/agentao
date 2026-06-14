@@ -158,6 +158,12 @@ Switching models does NOT clear conversation history:
 - The new model sees the full conversation
 - Continue seamlessly with different models
 
+### Request passthrough (`extra_body`) on switch
+
+If the host configured `extra_body` (see [the embedding guide](embedding.md#optional-provider-specific-request-params-extra_body)), switching models **preserves it** — it is instance-level host config, not a model-detected quirk.
+
+⚠️ **No auto-recovery.** Unlike `temperature` (which the client auto-drops when a model rejects it), a stale `extra_body` key has **no latch**. If you set `extra_body={"reasoning_effort": "high"}` and then `set_model(...)` to a model that does not support it, **every** subsequent call fails with a provider `400` until the key is cleared. Dropping model-specific `extra_body` keys when you switch is the host's responsibility — Agentao will not silently strip them. (Capability latches that *are* reset on switch: `omit_temperature`, `max_completion_tokens`.)
+
 ## Configuration
 
 ### Default Model

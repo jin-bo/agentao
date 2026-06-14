@@ -21,8 +21,9 @@ Every knob Agentao reads — environment variables first, then on-disk JSON. All
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `LLM_TEMPERATURE` | `0.2` | Sampling temperature (0.0–2.0) |
-| `LLM_MAX_TOKENS` | unset | Hard cap on LLM completion tokens per call |
+| `LLM_TEMPERATURE` | `0.2` | Sampling temperature (0.0–2.0). Malformed value **raises** at startup |
+| `LLM_MAX_TOKENS` | unset | Hard cap on LLM completion tokens per call. Malformed value **raises** at startup |
+| `LLM_EXTRA_BODY` | unset | JSON **object** forwarded verbatim to the LLM `.create()` as the SDK's `extra_body` — the escape hatch for `reasoning_effort` / `top_p` / `seed` / `response_format` / provider-specific fields. Equivalent to the constructor `extra_body=`. Example: `LLM_EXTRA_BODY='{"reasoning_effort":"high"}'`. Unlike the two above, a malformed *or* valid-but-non-object value is **warned and skipped** (not fatal); empty/whitespace is treated as unset (silent). Logged with credential keys redacted |
 | `AGENTAO_CONTEXT_TOKENS` | `200000` | Context budget; triggers compression when exceeded |
 | `AGENTAO_WORKING_DIRECTORY` | — | Override working directory at startup (alternative to constructor `working_directory=`) |
 

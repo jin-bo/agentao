@@ -57,8 +57,9 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 | `{PROVIDER}_API_KEY` | **yes** | — | Startup fails if missing. |
 | `{PROVIDER}_BASE_URL` | **yes** | — | Startup fails with `ValueError` if missing. |
 | `{PROVIDER}_MODEL` | **yes** | — | Startup fails with `ValueError` if missing. |
-| `LLM_TEMPERATURE` | no | `0.2` | Range `0.0`–`2.0`. |
-| `LLM_MAX_TOKENS` | no | — | Provider-default if unset. |
+| `LLM_TEMPERATURE` | no | `0.2` | Range `0.0`–`2.0`. Malformed value **raises** at startup (`float()`). |
+| `LLM_MAX_TOKENS` | no | — | Provider-default if unset. Malformed value **raises** at startup (`int()`). |
+| `LLM_EXTRA_BODY` | no | — | JSON **object** forwarded verbatim to the LLM `.create()` call as the SDK's `extra_body` request option — the escape hatch for params the closed request build does not expose (`reasoning_effort`, `top_p`, `seed`, `response_format`, and provider-specific fields). Example: `LLM_EXTRA_BODY='{"reasoning_effort":"high"}'`. Unlike the two above, a malformed *or* valid-but-non-object value is **warned and skipped** (not a startup error). The host configures its own endpoint; the SDK/provider validates the values. Logged with credential-like keys redacted. See `docs/design/host-llm-extra-params.md`. |
 | `BOCHA_API_KEY` | no | — | If set, `web_search` uses Bocha; otherwise falls back to DuckDuckGo. |
 | `AGENTAO_WEB_FETCH_FALLBACK` | no | `none` | JS-rendering fallback for `web_fetch`. Allowed: `none` / `jina` / `crawl4ai`. Default `none` — the tool never silently proxies user-supplied URLs through a third party. `jina` sends the URL to `https://r.jina.ai` (disclosed in tool description + result `Fallback:` line). `crawl4ai` requires `pip install 'agentao[crawl4ai]'` + `playwright install chromium`. Read once at `WebFetchTool` construction; invalid values warn and degrade to `none`. |
 | `JINA_API_KEY` | no | — | Optional. When `AGENTAO_WEB_FETCH_FALLBACK=jina`, sent as `Authorization: Bearer <key>` for higher rate limits. |

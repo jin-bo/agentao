@@ -77,6 +77,7 @@ agent = Agentao(
 |------|------|------|------|
 | `base_url` | `str` | OpenAI 默认 | 切换到任意 OpenAI 兼容端点 |
 | `temperature` | `float` | `0.2` | 采样温度 |
+| `extra_body` | `Dict[str,Any]` | `None` | 原样转发给 LLM `.create()` 的 SDK `extra_body` —— 封闭请求构建够不到的参数的逃生舱（`reasoning_effort` / `top_p` / `seed` / `response_format` / provider 专有字段）。**仅关键字。** 子 agent 继承;日志中凭据键脱敏。**与 `llm_client` 互斥**。详见下文 |
 | `transport` | `Transport` | `NullTransport()` | UI 桥：事件流 + 工具确认 + ask_user + 最大迭代回调，详见 [第 4 部分](/zh/part-4/) |
 | `permission_engine` | `PermissionEngine` | 工厂自动建一个根在 `working_directory` | 规则级权限引擎，详见 [5.4](/zh/part-5/4-permissions) |
 | `max_context_tokens` | `int` | `200_000` | 超过即触发对话压缩 |
@@ -84,7 +85,7 @@ agent = Agentao(
 | `extra_tools` | `Sequence[Tool]` | `None` | 注入 / 替换工具（实例；最后注册，同名覆盖内置）。见 [5.1](/zh/part-5/1-custom-tools) |
 | `disable_tools` | `Iterable[str]` | `None` | 按名跳过这些内置工具（未知名 → `ValueError`）。**与 `enabled_tools` 互斥** |
 | `enabled_tools` | `Iterable[str]` | `None` | 保留的 agentao 自有工具白名单；`None`=关，任意可迭代含 `set()`=开。**与 `disable_tools` 互斥** |
-| `llm_client` | `LLMClient` | （由凭据自动构造） | 注入预构造客户端，完全控制 logger / 日志文件。**与 `api_key` / `base_url` / `model` / `temperature` 互斥** |
+| `llm_client` | `LLMClient` | （由凭据自动构造） | 注入预构造客户端，完全控制 logger / 日志文件。**与 `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` 互斥**（自带 client 的 host 把 `extra_body=` 直接传给该 client） |
 | `project_instructions` | `str` | （从 `<wd>/AGENTAO.md` 读） | 直接传 AGENTAO.md 内容，跳过磁盘读 |
 
 ::: tip 异步宿主走 `arun()`
@@ -159,6 +160,30 @@ agent = Agentao(
 要单独控制 file handler 这一根开关，自己构造 `LLMClient`，传 `log_file=None`（不写文件）或 `log_file="custom.log"`（重定向）。注意：只传 `log_file=None` 而**不**传 `logger=` 时，`getLogger("agentao")` 仍会被强制设成 `DEBUG`。完整开关矩阵和"完全静默"配方见 [6.6 可观测性 → 接管 Agentao 的 logger](/zh/part-6/6-observability#接管-agentao-的-logger)。
 :::
 
+::: details LLM 请求直通 — `extra_body`
+Agentao 用一个**封闭字段集**（`model` / `messages` / `temperature` / `tools` / `max_tokens`）构建 OpenAI 兼容请求。当你需要该集没暴露的参数 —— `reasoning_effort`、`top_p`、`seed`、`response_format`，或任何 **provider 专有** body 字段（`top_k`、`repetition_penalty`、厂商扩展）—— 就传 `extra_body`。它原样转发给 SDK 的 `.create(extra_body=...)`，由 SDK 合进 JSON 请求体，绕过有类型的签名。
+
+```python
+agent = Agentao(
+    api_key="sk-...",
+    base_url="https://api.openai.com/v1",
+    model="gpt-5.4",
+    working_directory=workdir,
+    extra_body={"reasoning_effort": "high", "seed": 7},
+)
+```
+
+- **仅关键字。** 与 `api_key` / `temperature` 不同，`extra_body` 声明在 `*` 之后，绝不移位旧的位置参数。
+- **值由 host 负责。** Agentao 不校验值 —— 由 SDK / provider 校验。你配置的是*自己的*端点，故这不是第三方代理。
+- **子 agent 继承它**，方式与继承 `temperature` / `max_tokens` 相同。
+- **切模型无自动恢复。** 与 `temperature`（被模型拒绝时自动丢弃）不同，切到非推理模型后残留的 `extra_body` 键（如 `reasoning_effort`）会让之后每次调用 400,直到你清掉。切模型时丢弃模型专有键是 host 的责任。
+- **日志凭据脱敏。** 若 `extra_body` 嵌套凭据式键（`api_key`、`authorization`、`x-api-key` …），其值在 `agentao.log` 中被掩成 `***`。
+- **CLI / 工厂路径：** 把 `LLM_EXTRA_BODY` 环境变量设成 JSON **对象**（如 `LLM_EXTRA_BODY='{"reasoning_effort":"high"}'`）。畸形或非对象值告警并跳过；空值当未设。见 [附录 B](/zh/appendix/b-config-keys)。
+- **与 `llm_client=` 互斥。** 自带 `LLMClient` 的 host 改为把 `extra_body=` 传给*那个* client 的构造函数。
+
+`extra_headers` 与 `settings.json` 文件层有意延后；见 `docs/design/host-llm-extra-params.md`。
+:::
+
 ::: details 已废弃的 8 个回调（仍接收 —— 0.5.0 将移除）
 0.2.10 之前的接口。内部由 `build_compat_transport()` 翻译成 `SdkTransport`。**任意一个被传入现在都会发出一次 `DeprecationWarning`**；构造函数签名本身将在 **0.5.0** 移除。新代码请直接走 Transport。
 
@@ -184,7 +209,7 @@ agent = Agentao(
 
 | 不能同时传 | 原因 |
 |------------|------|
-| `llm_client=` + 任意 `api_key` / `base_url` / `model` / `temperature` | 注入的 client 已经是凭据源 |
+| `llm_client=` + 任意 `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` | 注入的 client 已经是凭据源 —— 改为把 `extra_body=` 直接传给该 client |
 | `mcp_manager=` + `extra_mcp_servers=` | 会话级合并需要 Agentao 自己构造的 manager |
 | `mcp_manager=` + `mcp_registry=` | Registry 是配置源，manager 是构造结果 |
 

@@ -15,6 +15,7 @@ namespace — that's load-bearing for ``monkeypatch.setattr(client_mod,
 variables against the function's owning module).
 """
 
+import copy
 import logging
 import logging.handlers
 import random
@@ -75,6 +76,16 @@ def __getattr__(name: str):
 #: custom endpoint instead of silently inheriting it.
 KEEP_BASE_URL: Any = object()
 
+#: Request-body fields the client owns from the normal request build. ``extra_body``
+#: is merged *into the body* by the SDK (last-wins), so a key here that also appears
+#: in ``extra_body`` would shadow the client's value. Used only for the one-time
+#: construction warning (§3.3 of host-llm-extra-params.md) — not a hot-path check.
+_STRUCTURAL_BODY_KEYS = frozenset({
+    "model", "messages", "stream", "stream_options",
+    "tools", "tool_choice", "temperature",
+    "max_tokens", "max_completion_tokens",
+})
+
 
 class LLMClient(_LoggingMixin):
     """OpenAI-compatible LLM client with comprehensive logging.
@@ -95,6 +106,7 @@ class LLMClient(_LoggingMixin):
         model: str,
         temperature: float = 0.2,
         max_tokens: int = 65536,
+        extra_body: Optional[Dict[str, Any]] = None,
         log_file: Optional[str] = "agentao.log",
         logger: Optional[logging.Logger] = None,
     ):
@@ -115,6 +127,15 @@ class LLMClient(_LoggingMixin):
             model: Model name to use.
             temperature: Sampling temperature (default 0.2).
             max_tokens: Default per-call output token cap (default 65536).
+            extra_body: Optional host-supplied request-body passthrough,
+                forwarded verbatim to ``.create()`` as the SDK's
+                ``extra_body`` option (merged into the JSON request body).
+                The escape hatch for params the closed request build does
+                not expose — ``reasoning_effort`` / ``top_p`` / ``seed`` /
+                ``response_format`` and any provider-specific field. The
+                SDK / provider validates the values; the host configures
+                its own endpoint. ``None``/empty → not forwarded → request
+                is byte-identical to today. Must be a dict or ``None``.
             log_file: Path to log file for LLM interactions. ``None`` skips
                 the file handler entirely.
             logger: Optional injected logger. When provided, the client
@@ -134,6 +155,21 @@ class LLMClient(_LoggingMixin):
         self.model = model
         self.temperature = temperature
         self.max_tokens: int = max_tokens
+
+        # Host-supplied request-body passthrough, forwarded verbatim to
+        # .create() (§3.1). Explicit isinstance guard: a bare
+        # ``dict(extra_body or {})`` would silently accept a list-of-pairs
+        # (``[("x", 1)]``) and raise ValueError (not TypeError) on other
+        # malformed shapes — fail fast with a clear contract instead. The
+        # type-check needs no logger, so it can sit here; the structural-
+        # overlap *warning* is deferred until after logger init below.
+        if extra_body is not None and not isinstance(extra_body, dict):
+            raise TypeError("LLMClient.extra_body must be a dict or None.")
+        # deepcopy (not a shallow ``dict(...)``) so construction truly freezes
+        # the config: a host that retains and later mutates a NESTED value
+        # (e.g. ``extra_body["extra_headers"]["Authorization"]``) cannot alter
+        # in-flight requests through the shared reference.
+        self.extra_body: Dict[str, Any] = copy.deepcopy(extra_body) if extra_body else {}
 
         # Set to True after detecting the model requires max_completion_tokens
         self._use_max_completion_tokens: bool = False
@@ -195,6 +231,25 @@ class LLMClient(_LoggingMixin):
         self._last_tools_hash: Optional[int] = None
 
         self.logger.info(f"LLMClient initialized with model: {self.model}")
+
+        # Structural-overlap guard (§3.3): a key inside ``extra_body`` that the
+        # SDK merges into the body could shadow a structural field the client
+        # sets (``messages``/``model``/…). This is the host's explicit choice,
+        # so it is not rejected — but shadowing ``messages`` is nasty to debug,
+        # so warn ONCE here (not per request — that would spam the hot path).
+        # Must run after logger init: ``self.logger`` does not exist until the
+        # block above, so emitting it next to the §3.1 type-check would
+        # AttributeError.
+        if self.extra_body:
+            overlap = _STRUCTURAL_BODY_KEYS & self.extra_body.keys()
+            if overlap:
+                self.logger.warning(
+                    "LLMClient.extra_body contains key(s) %s that the client "
+                    "sets as structural request fields; the SDK merges "
+                    "extra_body into the body last-wins, so these shadow the "
+                    "client's values.",
+                    ", ".join(sorted(overlap)),
+                )
 
     @staticmethod
     def _build_file_handler(log_file: str) -> Optional[logging.FileHandler]:
@@ -271,6 +326,11 @@ class LLMClient(_LoggingMixin):
         if model is not None:
             self.model = model
 
+        # ``self.extra_body`` is intentionally NOT reset (§5): it is instance-
+        # level host config, not a model-detected quirk. Unlike ``temperature``
+        # (auto-recovered via the ``omit_temperature`` latch), a stale
+        # ``extra_body`` key after a model switch has no latch — the host owns
+        # dropping model-specific keys (e.g. ``reasoning_effort``) on switch.
         self.reset_capability_latches()
         self.client = _openai_client_cls()(
             api_key=self.api_key,
@@ -295,6 +355,43 @@ class LLMClient(_LoggingMixin):
         self._use_max_completion_tokens = False
         self.omit_temperature = False
 
+    def _build_request_kwargs(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        max_tokens: Optional[int],
+        *,
+        stream: bool,
+    ) -> Dict[str, Any]:
+        """Assemble the ``.create(**kwargs)`` request dict for one call.
+
+        Single source for both the non-streaming (``chat``) and streaming
+        (``chat_stream``) paths — they used to duplicate this closed dict,
+        which is how the ``extra_body`` passthrough gap went unnoticed.
+        ``extra_body`` is itself a valid ``.create()`` argument, so adding it
+        here forwards it through both call sites with no signature change;
+        omitted when empty so the request stays byte-identical to the
+        pre-passthrough build (back-compat).
+        """
+        kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+        }
+        if stream:
+            kwargs["stream"] = True
+            kwargs["stream_options"] = {"include_usage": True}
+        if not self.omit_temperature:
+            kwargs["temperature"] = self.temperature
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        if max_tokens:
+            key = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
+            kwargs[key] = max_tokens
+        if self.extra_body:
+            kwargs["extra_body"] = self.extra_body
+        return kwargs
+
     def chat(
         self,
         messages: List[Dict[str, Any]],
@@ -314,20 +411,8 @@ class LLMClient(_LoggingMixin):
         self.request_count += 1
         request_id = f"req_{self.request_count}"
 
-        # Build request parameters
-        kwargs = {
-            "model": self.model,
-            "messages": messages,
-        }
-        if not self.omit_temperature:
-            kwargs["temperature"] = self.temperature
-
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-
-        if max_tokens:
-            kwargs["max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"] = max_tokens
+        # Build request parameters (single source — see _build_request_kwargs)
+        kwargs = self._build_request_kwargs(messages, tools, max_tokens, stream=False)
 
         # Log request
         self._log_request(request_id, kwargs)
@@ -447,19 +532,7 @@ class LLMClient(_LoggingMixin):
         self.request_count += 1
         request_id = f"req_{self.request_count}"
 
-        kwargs = {
-            "model": self.model,
-            "messages": messages,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-        if not self.omit_temperature:
-            kwargs["temperature"] = self.temperature
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-        if max_tokens:
-            kwargs["max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"] = max_tokens
+        kwargs = self._build_request_kwargs(messages, tools, max_tokens, stream=True)
 
         # Log without the stream flag (matches non-streaming log format)
         log_kwargs = {k: v for k, v in kwargs.items() if k != "stream"}

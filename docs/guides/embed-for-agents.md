@@ -98,6 +98,20 @@ Everything else (`permission_engine`, `memory_manager`, `mcp_registry`,
 `transport`) has a safe default. See the table in
 [`EMBEDDING.md` §2](embedding.md#2-pure-injection-construction).
 
+Need a request param the closed build does not expose — `reasoning_effort`,
+`top_p`, `seed`, `response_format`, a provider-specific field? Pass the
+**keyword-only** `extra_body=` (forwarded verbatim to the SDK's
+`.create(extra_body=...)`; mutually exclusive with `llm_client=`, so a host
+with its own client passes it to that `LLMClient(...)` instead):
+
+```python
+agent = Agentao(
+    working_directory=Path("/srv/myapp/run-1"),
+    api_key="sk-...", base_url="https://api.openai.com/v1", model="gpt-5.4",
+    extra_body={"reasoning_effort": "high"},   # keyword-only; sub-agents inherit it
+)
+```
+
 ---
 
 ## 2. Async hosts

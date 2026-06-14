@@ -32,6 +32,7 @@ Agentao(
     transport: Transport | None = None,
     *,
     working_directory: Path,                     # 0.3.0 起必传
+    extra_body: dict | None = None,              # 仅关键字；LLM .create() 请求体直通
     extra_mcp_servers: dict[str, dict] | None = None,
     extra_tools: Sequence[RegistrableTool] | None = None,   # 注入 / 替换工具
     disable_tools: Iterable[str] | None = None,             # 按名跳过内置
@@ -64,7 +65,7 @@ Agentao(
 
 互斥规则（违反时抛 `ValueError`）：
 
-- `llm_client=` 与任何 `api_key=` / `base_url=` / `model=` / `temperature=` 同时传
+- `llm_client=` 与任何 `api_key=` / `base_url=` / `model=` / `temperature=` / `max_tokens=` / `extra_body=` 同时传（改为把 `extra_body=` 传给注入的 client）
 - `mcp_manager=` 与 `extra_mcp_servers=` 同时传
 - `mcp_manager=` 与 `mcp_registry=` 同时传——registry 是配置源，manager 是构造结果
 - `enabled_tools=` 与 `disable_tools=` 同时传——白名单和黑名单并存有歧义（`enabled_tools=set()` 也照样报错）。见 [5.1](/zh/part-5/1-custom-tools)
