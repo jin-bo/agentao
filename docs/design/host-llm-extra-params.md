@@ -7,7 +7,7 @@
 - `docs/design/host-llm-extra-params.zh.md` — Chinese version
 - `docs/design/embedded-host-contract.md` — the host-contract stability boundary (where this design belongs)
 - `docs/design/host-tool-injection.md` / `.zh.md` — sibling host-injection primitive (same "thread an explicit kwarg through the construction paths, defer the settings.json layer" shape)
-- `docs/reference/configuration.md` — §2 (`.env`), where the `LLM_EXTRA_BODY` env var is documented (settings.json file layer is deferred — see §8)
+- `docs/reference/configuration.md` — §2 (`.env`); a **change site** — the `LLM_EXTRA_BODY` env var is **not yet** documented there and must be added by the implementing PR (settings.json file layer is deferred — see §8)
 - `agentao/llm/client.py` — `__init__` (`def` at `90`), `chat()` kwargs (`318-330`) + non-streaming `with_raw_response.create` (`339`), `chat_stream()` kwargs (`450-462`) + streaming `create` (`613`), `reconfigure()` (`def` at `251`) — the main change sites
 - `agentao/llm/_logging.py` — `_log_request` (`def` at `23`)
 - `agentao/agent.py` — `_build_llm_client` `llm_kwargs` (`665-676`), mutual-exclusion guard (`284`)
@@ -73,6 +73,8 @@ self.extra_body: Dict[str, Any] = dict(extra_body or {})
 
 `None`/empty → not forwarded → behaviour byte-identical to today (back-compat).
 
+**Ordering caveat:** the type-check + copy above need no logger and can sit right after `self.max_tokens` (`client.py:136`). The §3.3 overlap **warning** must not — `self.logger` does not exist until `client.py:160`/`162` (after `self.client` is built). Emitting it next to the §3.1 type-check would `AttributeError`. Place the warning after logger init, or have it use a module-level logger.
+
 ### 3.2 Forwarding (rides inside the existing kwargs dict)
 
 `extra_body` is itself a valid `.create()` argument, so it is added to the request `kwargs` dict and flows through **both** existing call sites — `with_raw_response.create(**kwargs)` (non-streaming) and `_consume_stream` → `create(**kwargs)` (streaming) — with **no** call-site or `_consume_stream` signature changes. The closed dict is currently **duplicated** in `chat()` and `chat_stream()` (the reason the gap was easy to miss); extract one builder and add the single line there:
@@ -103,7 +105,7 @@ def _build_request_kwargs(self, messages, tools, max_tokens, *, stream):
 
 ### 3.3 Structural-overlap guard (construction-time, warn-once)
 
-`extra_body` is merged **into the request body** by the SDK, so a key inside it could shadow a structural body field (`model`, `messages`, `stream`, `stream_options`, `tools`, `tool_choice`, `temperature`, `max_tokens`, `max_completion_tokens`). This is the host's explicit, namespaced choice — not silently mixed with normal kwargs — so v1 does **not** reject it. But because shadowing `messages` would be nasty to debug, the constructor emits a **one-time** warning (not a per-request check — that would spam the hot path) if `extra_body` shares any key with that structural/managed set.
+`extra_body` is merged **into the request body** by the SDK, so a key inside it could shadow a structural body field (`model`, `messages`, `stream`, `stream_options`, `tools`, `tool_choice`, `temperature`, `max_tokens`, `max_completion_tokens`). This is the host's explicit, namespaced choice — not silently mixed with normal kwargs — so v1 does **not** reject it. But because shadowing `messages` would be nasty to debug, the constructor emits a **one-time** warning (not a per-request check — that would spam the hot path) if `extra_body` shares any key with that structural/managed set. Per §3.1's ordering caveat, emit this **after** logger init (`client.py:160`), not beside the top-of-`__init__` type-check.
 
 ### 3.4 Interaction with the existing one-shot latches
 

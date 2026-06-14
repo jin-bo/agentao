@@ -7,7 +7,7 @@
 - `docs/design/host-llm-extra-params.zh.md` —— 英文版为 `host-llm-extra-params.md`
 - `docs/design/embedded-host-contract.md` —— host 契约的稳定性边界（本设计归属之处）
 - `docs/design/host-tool-injection.md` / `.zh.md` —— 同类 host 注入原语（同样是"把一个显式 kwarg 穿过构造路径、延后 settings.json 层"的形状）
-- `docs/reference/configuration.md` —— §2（`.env`），`LLM_EXTRA_BODY` 环境变量文档所在（settings.json 文件层延后——见 §8）
+- `docs/reference/configuration.md` —— §2（`.env`）；一个**改动点**——`LLM_EXTRA_BODY` 环境变量**尚未**在此文档化，须由实现 PR 补上（settings.json 文件层延后——见 §8）
 - `agentao/llm/client.py` —— `__init__`（`def` 在 `90`）、`chat()` kwargs（`318-330`）+ 非流式 `with_raw_response.create`（`339`）、`chat_stream()` kwargs（`450-462`）+ 流式 `create`（`613`）、`reconfigure()`（`def` 在 `251`）——主改动点
 - `agentao/llm/_logging.py` —— `_log_request`（`def` 在 `23`）
 - `agentao/agent.py` —— `_build_llm_client` 的 `llm_kwargs`（`665-676`）、互斥守卫（`284`）
@@ -73,6 +73,8 @@ self.extra_body: Dict[str, Any] = dict(extra_body or {})
 
 `None`/空 → 不转发 → 行为与今天逐字节一致（向后兼容）。
 
+**顺序注意：** 上面的类型校验 + 拷贝不需要 logger，可紧跟在 `self.max_tokens`（`client.py:136`）之后。但 §3.3 的重叠**告警**不行——`self.logger` 要到 `client.py:160`/`162`（在 `self.client` 构建之后）才存在。把它放在 §3.1 类型校验旁会 `AttributeError`。请把告警放到 logger 初始化之后，或让它用模块级 logger。
+
 ### 3.2 转发（装在现有 kwargs 字典里）
 
 `extra_body` 本身就是 `.create()` 的合法参数，故把它加进请求 `kwargs` 字典，它便穿过**两个**现有调用点——`with_raw_response.create(**kwargs)`（非流式）与 `_consume_stream` → `create(**kwargs)`（流式）——**无需**改动调用点或 `_consume_stream` 签名。封闭字典目前在 `chat()` 与 `chat_stream()` 中**重复**（正是该缺口易被忽视的原因）；抽出一个构建器，并在其中加这一行：
@@ -103,7 +105,7 @@ def _build_request_kwargs(self, messages, tools, max_tokens, *, stream):
 
 ### 3.3 结构性重叠守卫（构造时、warn-once）
 
-`extra_body` 会被 SDK 合并**进请求体**，故其中的键可能遮蔽某个结构性 body 字段（`model`、`messages`、`stream`、`stream_options`、`tools`、`tool_choice`、`temperature`、`max_tokens`、`max_completion_tokens`）。这是 host 显式、被命名空间隔离的选择——并非与普通 kwargs 静默混合——故 v1 **不**拒绝它。但因遮蔽 `messages` 会很难调试，构造函数在 `extra_body` 与该结构性/受管集有任何键重叠时发出**一次性**告警（而非每请求检查——那会刷屏热路径）。
+`extra_body` 会被 SDK 合并**进请求体**，故其中的键可能遮蔽某个结构性 body 字段（`model`、`messages`、`stream`、`stream_options`、`tools`、`tool_choice`、`temperature`、`max_tokens`、`max_completion_tokens`）。这是 host 显式、被命名空间隔离的选择——并非与普通 kwargs 静默混合——故 v1 **不**拒绝它。但因遮蔽 `messages` 会很难调试，构造函数在 `extra_body` 与该结构性/受管集有任何键重叠时发出**一次性**告警（而非每请求检查——那会刷屏热路径）。按 §3.1 的顺序注意，此告警须在 logger 初始化**之后**（`client.py:160`）发出，而非紧挨 `__init__` 顶部的类型校验。
 
 ### 3.4 与现有一次性 latch 的交互
 
