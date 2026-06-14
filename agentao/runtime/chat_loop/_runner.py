@@ -745,7 +745,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             t0 = time.monotonic()
             pre_msgs = len(agent.messages)
             agent.messages = agent.context_manager.compress_messages(agent.messages)
-            agent.context_manager._last_api_prompt_tokens = None  # stale after compression
+            agent.context_manager.invalidate_token_anchor()  # prefix rewritten; anchor is stale
             system_prompt = agent._build_system_prompt()
             messages_with_system = [
                 {"role": "system", "content": system_prompt}

@@ -110,7 +110,7 @@ def handle_compact_command(cli: AgentaoCLI, args: str) -> None:
         return
 
     agent.messages = compacted
-    cm._last_api_prompt_tokens = None  # stale after compression
+    cm.invalidate_token_anchor()  # prefix rewritten; anchor is stale
     system_prompt = agent._build_system_prompt()
     post_msgs = len(agent.messages)
     post_tokens = cm.estimate_tokens(

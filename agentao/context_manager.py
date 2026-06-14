@@ -129,15 +129,23 @@ class ContextManager:
         appended since, avoiding a full re-encode of the history every turn.
         Falls back to a full local estimate when no fresh anchor is available
         (no API count yet, or right after compaction).
+
+        Note: ``messages[0]`` (the system prompt) lives inside the anchored
+        prefix, but it is rebuilt every turn with volatile content (memory
+        recall, todos, active skills, timestamp). The anchor therefore charges
+        the *previous* turn's system-prompt size for one turn until the next
+        API response re-anchors — a bounded, self-healing accuracy trade-off,
+        not a correctness bug. Do not "fix" it by trusting the anchor harder.
         """
         anchor = self._last_api_prompt_tokens
         n = self._api_anchor_msg_count
-        # Guard the anchor's types: a provider can return a malformed ``usage``
-        # field (null / non-numeric prompt_tokens). bool is excluded explicitly
-        # since it is an int subclass.
+        # Guard the anchor token count: a provider can return a malformed
+        # ``usage`` field (null / non-numeric prompt_tokens). bool is excluded
+        # explicitly since it is an int subclass. (``n`` comes from ``len()``,
+        # so it is always a plain int when set.)
         if (
             not isinstance(anchor, int) or isinstance(anchor, bool)
-            or not isinstance(n, int) or isinstance(n, bool)
+            or not isinstance(n, int)
             or n > len(messages)
         ):
             return self.estimate_tokens(messages)
