@@ -265,7 +265,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
 
             # Tier 1 token count: record real prompt_tokens from API response
             if getattr(response, "usage", None) and getattr(response.usage, "prompt_tokens", None):
-                agent.context_manager.record_api_usage(response.usage.prompt_tokens)
+                agent.context_manager.record_api_usage(
+                    response.usage.prompt_tokens, len(messages_with_system)
+                )
 
             assistant_message = response.choices[0].message
 
