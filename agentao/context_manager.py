@@ -580,15 +580,61 @@ class ContextManager:
         return stats
 
 
+# Patterns whose presence means "context/prompt overflow" — the conversation is
+# too long for the model and we should compress and retry. Covers the major
+# OpenAI-compatible / Anthropic / Google / xAI / Bedrock / OpenRouter / local
+# backends. Example error strings are kept inline so the table is auditable.
+# Borrowed structure from pi-mono ai/utils/overflow.ts (two-tier positive + guard).
+_OVERFLOW_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"prompt is too long",  # Anthropic: "prompt is too long: 213462 tokens > 200000 maximum"
+        r"request_too_large",  # Anthropic 413 byte-size overflow
+        r"exceeds the context window",  # OpenAI (Completions & Responses)
+        r"maximum context length",  # OpenAI/LiteLLM/OpenRouter: "...of N tokens", "...is N tokens", "(N)" — broad; guard below filters throttling
+        r"context[_ ]length[_ ]exceeded",  # generic OpenAI-compatible code
+        r"input is too long for requested model",  # Amazon Bedrock
+        r"input token count.*exceeds the maximum",  # Google (Gemini)
+        r"maximum prompt length is \d+",  # xAI (Grok)
+        r"reduce the length",  # Groq: "reduce the length of the messages or completion" (broad; guard filters rate limits)
+        r"exceeds (?:the )?maximum allowed input length of [\d,]+ tokens?",  # OpenRouter/Poolside
+        r"is longer than the model'?s context length",  # Together AI
+        r"too large for model with \d+ maximum context length",  # Mistral
+        r"exceeds the available context size",  # llama.cpp server
+        r"greater than the context length",  # LM Studio
+        r"exceeded model token limit",  # Kimi For Coding
+        r"prompt too long; exceeded (?:max )?context length",  # Ollama
+        r"too many tokens",  # generic fallback (guarded below)
+        r"token limit exceeded",  # generic fallback
+        r"tokens > ",  # Anthropic-style "X tokens > Y maximum"
+        r"range of input length",  # Alibaba/DashScope-style
+        r"internalerror\.algo\.invalidparameter",  # Alibaba/DashScope overflow code
+    )
+]
+
+# Guard patterns — if any of these match, the error is NOT an overflow even when
+# a positive pattern also matches (e.g. Bedrock formats throttling as
+# "ThrottlingException: Too many tokens, please wait..." which would otherwise
+# hit the "too many tokens" fallback). Checked first, short-circuits to False.
+_NON_OVERFLOW_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"throttling",  # AWS Bedrock / generic throttling
+        r"rate limit",  # generic rate limiting
+        r"too many requests",  # HTTP 429
+        r"service unavailable",  # 503
+    )
+]
+
+
 def is_context_too_long_error(exc: Exception) -> bool:
-    """Return True if the exception is a 'prompt too long' / context overflow API error."""
-    msg = str(exc).lower()
-    return any(phrase in msg for phrase in [
-        "prompt is too long",
-        "context_length_exceeded",
-        "maximum context length",
-        "tokens > ",
-        "reduce the length",
-        "range of input length",
-        "internalerror.algo.invalidparameter",
-    ])
+    """Return True if the exception is a 'prompt too long' / context overflow API error.
+
+    Two-tier match: a negative guard (rate-limit / throttling / 429 / 503) is
+    checked first so a fallback overflow phrase can't misclassify a transient
+    error as overflow and trigger a destructive history compaction.
+    """
+    msg = str(exc)
+    if any(pat.search(msg) for pat in _NON_OVERFLOW_PATTERNS):
+        return False
+    return any(pat.search(msg) for pat in _OVERFLOW_PATTERNS)
