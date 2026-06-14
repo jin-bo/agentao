@@ -26,6 +26,19 @@ _Targeting 0.4.11. Add entries under the relevant heading as work lands._
   path only; a host-injected `project_instructions=` string stays the host's
   responsibility. The ignored-frontmatter case is logged at INFO.
 
+- **Consolidated five copies of the YAML frontmatter parser (internal,
+  behavior-preserving).** The private `_parse_yaml_frontmatter` was duplicated
+  across `skills/installer.py`, `skills/manager.py`, `agents/manager.py`, and
+  `embedding/plugins/resolvers/{agents,skills}.py`, having drifted on value
+  coercion, body stripping, and malformed-YAML fallback. All now delegate to a
+  single `agentao.frontmatter.parse_frontmatter(content, *, coerce_str=False)`:
+  `coerce_str=True` for the skill / plugin loaders (string values), the native
+  default for the agent loaders (so `tools: [read_file]` stays a list). The
+  shared parser adopts the safest behavior of the five — a malformed or
+  non-mapping block degrades to `{}` instead of raising `AttributeError`. (The
+  AGENTAO.md `strip_frontmatter` helper stays separate by design: it uses a
+  stricter, line-anchored fence match for free-form prose.)
+
 ### Fixed
 
 ---

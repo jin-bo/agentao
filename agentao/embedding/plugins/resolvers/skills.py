@@ -11,8 +11,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import yaml
-
+from agentao.frontmatter import parse_frontmatter
 from agentao.plugins.models import (
     LoadedPlugin,
     PluginCommandMetadata,
@@ -105,7 +104,7 @@ def _parse_skill_md(
     except (OSError, UnicodeDecodeError):
         return None
 
-    frontmatter, body = _parse_yaml_frontmatter(content)
+    frontmatter, body = parse_frontmatter(content, coerce_str=True)
     skill_name = frontmatter.get("name", skill_dir.name)
     description = frontmatter.get("description", "")
     runtime_name = f"{plugin_name}:{skill_name}"
@@ -227,7 +226,7 @@ def _md_file_to_entry(
         return None
 
     cmd_name = md_file.stem  # e.g. "review-summary.md" -> "review-summary"
-    frontmatter, body = _parse_yaml_frontmatter(content)
+    frontmatter, body = parse_frontmatter(content, coerce_str=True)
     description = frontmatter.get("description", "")
     runtime_name = f"{plugin_name}:{cmd_name}"
 
@@ -276,7 +275,7 @@ def _metadata_to_entry(
 
         # Strip YAML frontmatter so metadata headers are not injected into
         # the prompt body — matching the behavior of _md_file_to_entry().
-        _fm, body = _parse_yaml_frontmatter(raw_content)
+        _fm, body = parse_frontmatter(raw_content, coerce_str=True)
         description = meta.description or _fm.get("description", "")
 
         return PluginSkillEntry(
@@ -321,24 +320,3 @@ def _check_internal_collisions(
             seen[entry.runtime_name] = entry
 
     return errors
-
-
-# ---------------------------------------------------------------------------
-# YAML frontmatter helper (shared with SkillManager)
-# ---------------------------------------------------------------------------
-
-def _parse_yaml_frontmatter(content: str) -> tuple[dict[str, str], str]:
-    if not content.startswith("---"):
-        return {}, content
-
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return {}, content
-
-    try:
-        fm = yaml.safe_load(parts[1]) or {}
-        fm = {k: str(v).strip() if v is not None else "" for k, v in fm.items()}
-    except yaml.YAMLError:
-        fm = {}
-
-    return fm, parts[2].strip()

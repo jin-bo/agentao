@@ -10,10 +10,8 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
-import yaml
-
+from agentao.frontmatter import parse_frontmatter
 from agentao.plugins.models import (
     LoadedPlugin,
     PluginAgentDefinition,
@@ -116,7 +114,7 @@ def _parse_agent_md(
     except (OSError, UnicodeDecodeError):
         return None
 
-    frontmatter, body = _parse_yaml_frontmatter(content)
+    frontmatter, body = parse_frontmatter(content)
     agent_name = str(frontmatter.get("name", md_file.stem))
     description = str(frontmatter.get("description", ""))
     runtime_name = f"{plugin_name}:{agent_name}"
@@ -149,27 +147,3 @@ def _check_internal_collisions(
             seen.add(defn.runtime_name)
 
     return errors
-
-
-def _parse_yaml_frontmatter(content: str) -> tuple[dict[str, Any], str]:
-    """Parse YAML frontmatter, preserving native types (lists, ints, etc.).
-
-    Unlike the skill frontmatter parser which coerces everything to str,
-    the agent parser must keep list values (e.g. ``tools: [read_file]``)
-    as lists so that ``AgentManager`` can interpret them correctly.
-    """
-    if not content.startswith("---"):
-        return {}, content
-
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return {}, content
-
-    try:
-        fm = yaml.safe_load(parts[1]) or {}
-        if not isinstance(fm, dict):
-            fm = {}
-    except yaml.YAMLError:
-        fm = {}
-
-    return fm, parts[2].strip()
