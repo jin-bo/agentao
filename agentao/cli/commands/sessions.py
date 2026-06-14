@@ -119,6 +119,9 @@ def resume_session(cli: AgentaoCLI, session_id: Optional[str] = None) -> None:
         return
 
     cli.agent.messages = messages
+    # History was replaced wholesale; the Tier-1 token anchor describes the
+    # prior conversation's prefix and must not survive into the resumed one.
+    cli.agent.context_manager.invalidate_token_anchor()
     # Intentionally do NOT restore the persisted model. A session stores only
     # the model *name*, not its provider (api_key / base_url never touch disk).
     # Re-binding the name onto whatever provider the current process happens to

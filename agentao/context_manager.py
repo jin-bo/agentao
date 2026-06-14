@@ -87,6 +87,10 @@ class ContextManager:
 
         # Tier 1: last real prompt_tokens from API response (updated after each LLM call)
         self._last_api_prompt_tokens: Optional[int] = None
+        # Length of the message list that produced _last_api_prompt_tokens, so the
+        # hot-path threshold check can reuse the real count for the already-sent
+        # prefix and only locally estimate messages appended since.
+        self._api_anchor_msg_count: Optional[int] = None
         # Tier 3: cached tiktoken encoding; None = CJK-aware heuristic fallback
         self._encoding = _get_tiktoken_encoding(self.llm_client.model)
 
@@ -94,9 +98,58 @@ class ContextManager:
     # Token estimation
     # -----------------------------------------------------------------------
 
-    def record_api_usage(self, prompt_tokens: int) -> None:
-        """Store real prompt_tokens from the latest API response (Tier 1)."""
+    def record_api_usage(self, prompt_tokens: int, message_count: Optional[int] = None) -> None:
+        """Store real prompt_tokens from the latest API response (Tier 1).
+
+        ``message_count`` is the length of the message list that produced this
+        count (system + history, as sent). When provided it anchors the
+        hot-path threshold estimate so subsequent turns reuse the real count
+        for the already-sent prefix instead of re-encoding the whole history.
+        Omitting it (legacy callers) clears the anchor and forces the full
+        local estimate.
+        """
         self._last_api_prompt_tokens = prompt_tokens
+        self._api_anchor_msg_count = message_count
+
+    def invalidate_token_anchor(self) -> None:
+        """Drop the Tier-1 anchor after history is mutated in place.
+
+        Both microcompaction and full compression rewrite the already-sent
+        prefix, so the real prompt_tokens no longer describes it; the next API
+        response re-establishes the anchor.
+        """
+        self._last_api_prompt_tokens = None
+        self._api_anchor_msg_count = None
+
+    def _threshold_token_estimate(self, messages: List[Dict[str, Any]]) -> int:
+        """Token count for hot-path threshold checks.
+
+        Reuses the real prompt_tokens from the last API response (Tier 1) for
+        the already-sent prefix and locally estimates only the messages
+        appended since, avoiding a full re-encode of the history every turn.
+        Falls back to a full local estimate when no fresh anchor is available
+        (no API count yet, or right after compaction).
+
+        Note: ``messages[0]`` (the system prompt) lives inside the anchored
+        prefix, but it is rebuilt every turn with volatile content (memory
+        recall, todos, active skills, timestamp). The anchor therefore charges
+        the *previous* turn's system-prompt size for one turn until the next
+        API response re-anchors — a bounded, self-healing accuracy trade-off,
+        not a correctness bug. Do not "fix" it by trusting the anchor harder.
+        """
+        anchor = self._last_api_prompt_tokens
+        n = self._api_anchor_msg_count
+        # Guard the anchor token count: a provider can return a malformed
+        # ``usage`` field (null / non-numeric prompt_tokens). bool is excluded
+        # explicitly since it is an int subclass. (``n`` comes from ``len()``,
+        # so it is always a plain int when set.)
+        if (
+            not isinstance(anchor, int) or isinstance(anchor, bool)
+            or not isinstance(n, int)
+            or n > len(messages)
+        ):
+            return self.estimate_tokens(messages)
+        return anchor + sum(self._count_message_tokens(m) for m in messages[n:])
 
     def count_tokens_in_text(self, text: str) -> int:
         """Count tokens via tiktoken; fall back to CJK-aware heuristic."""
@@ -173,11 +226,11 @@ class ContextManager:
 
     def needs_compression(self, messages: List[Dict[str, Any]]) -> bool:
         """Return True when full LLM compression is needed (>= 65%)."""
-        return self.estimate_tokens(messages) > self.max_tokens * self.COMPRESSION_THRESHOLD
+        return self._threshold_token_estimate(messages) > self.max_tokens * self.COMPRESSION_THRESHOLD
 
     def needs_microcompaction(self, messages: List[Dict[str, Any]]) -> bool:
         """Return True when cheap tool-result clearing is warranted (55-65%)."""
-        tokens = self.estimate_tokens(messages)
+        tokens = self._threshold_token_estimate(messages)
         return (
             tokens > self.max_tokens * self.MICROCOMPACT_THRESHOLD
             and tokens <= self.max_tokens * self.COMPRESSION_THRESHOLD

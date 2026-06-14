@@ -265,7 +265,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
 
             # Tier 1 token count: record real prompt_tokens from API response
             if getattr(response, "usage", None) and getattr(response.usage, "prompt_tokens", None):
-                agent.context_manager.record_api_usage(response.usage.prompt_tokens)
+                agent.context_manager.record_api_usage(
+                    response.usage.prompt_tokens, len(messages_with_system)
+                )
 
             assistant_message = response.choices[0].message
 
@@ -743,7 +745,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             t0 = time.monotonic()
             pre_msgs = len(agent.messages)
             agent.messages = agent.context_manager.compress_messages(agent.messages)
-            agent.context_manager._last_api_prompt_tokens = None  # stale after compression
+            agent.context_manager.invalidate_token_anchor()  # prefix rewritten; anchor is stale
             system_prompt = agent._build_system_prompt()
             messages_with_system = [
                 {"role": "system", "content": system_prompt}

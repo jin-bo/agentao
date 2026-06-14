@@ -50,7 +50,7 @@ def set_provider(
     agent.llm.reconfigure(api_key=api_key, base_url=base_url, model=model)
     if model is not None and model != _old_model:
         agent.context_manager._encoding = _get_tiktoken_encoding(agent.llm.model)
-        agent.context_manager._last_api_prompt_tokens = None
+        agent.context_manager.invalidate_token_anchor()
     try:
         agent.transport.emit(AgentEvent(EventType.MODEL_CHANGED, {
             "old_model": _old_model,
@@ -79,7 +79,7 @@ def set_model(agent: "Agentao", model: str) -> str:
     if hasattr(agent.llm, "reset_capability_latches"):
         agent.llm.reset_capability_latches()
     agent.context_manager._encoding = _get_tiktoken_encoding(model)
-    agent.context_manager._last_api_prompt_tokens = None
+    agent.context_manager.invalidate_token_anchor()
     agent.llm.logger.info(f"Model changed from {old_model} to {model}")
     try:
         agent.transport.emit(AgentEvent(EventType.MODEL_CHANGED, {

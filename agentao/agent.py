@@ -1055,7 +1055,7 @@ class Agentao:
         self.skill_manager.clear_active_skills()
         self.todo_tool.clear()
         # Reset context and session token counters for the fresh session
-        self.context_manager._last_api_prompt_tokens = None
+        self.context_manager.invalidate_token_anchor()
         self.llm.total_prompt_tokens = 0
         self.llm.total_completion_tokens = 0
 

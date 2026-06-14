@@ -302,6 +302,10 @@ def _instantiate_loaded_session(
         # is the same field ``chat()`` reads from.
         try:
             agent.messages = list(messages)
+            # History replaced wholesale; drop the Tier-1 token anchor so the
+            # first post-load threshold check does not reuse a stale prefix
+            # count from a prior conversation served by this instance.
+            agent.context_manager.invalidate_token_anchor()
         except Exception:
             logger.exception(
                 "acp: %s could not hydrate agent.messages for %s",

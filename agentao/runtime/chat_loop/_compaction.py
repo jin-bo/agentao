@@ -36,6 +36,7 @@ class _CompactionMixin:
         pre_tokens = agent.context_manager.estimate_tokens(messages_with_system)
         pre_msgs = len(agent.messages)
         agent.messages = agent.context_manager.microcompact_messages(agent.messages)
+        agent.context_manager.invalidate_token_anchor()  # tool results truncated in place
         messages_with_system = [
             {"role": "system", "content": system_prompt}
         ] + agent.messages
@@ -67,7 +68,7 @@ class _CompactionMixin:
         pre_tokens = agent.context_manager.estimate_tokens(messages_with_system)
         pre_msgs = len(agent.messages)
         agent.messages = agent.context_manager.compress_messages(agent.messages, is_auto=True)
-        agent.context_manager._last_api_prompt_tokens = None  # stale after compression
+        agent.context_manager.invalidate_token_anchor()  # prefix rewritten; real count is stale
         system_prompt = agent._build_system_prompt()
         messages_with_system = [
             {"role": "system", "content": system_prompt}

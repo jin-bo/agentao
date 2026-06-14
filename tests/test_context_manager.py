@@ -110,6 +110,103 @@ def test_needs_compression_true_above_threshold():
 
 
 # ---------------------------------------------------------------------------
+# Tier-1 anchored threshold estimate
+# ---------------------------------------------------------------------------
+
+def test_threshold_uses_tier1_anchor_not_full_reencode():
+    """When a fresh anchor exists, the threshold check must reuse the real
+    prefix count and only estimate the tail — never re-encode the whole list."""
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
+    # Prefix is locally tiny (3 tokens) but the API reported it as 600 tokens.
+    msgs = [{"role": "user", "content": "x" * 4} for _ in range(3)]
+    cm.record_api_usage(600, message_count=3)
+    # Append one tail message: 240 chars / 4 = 60 tokens. anchor+tail = 660.
+    msgs.append({"role": "assistant", "content": "x" * 240})
+
+    # estimate_tokens (full re-encode) must NOT be consulted on the hot path.
+    cm.estimate_tokens = Mock(side_effect=AssertionError("full re-encode on hot path"))
+    # 660 > 1000 * 0.65 (650) -> compress. A full local estimate would be
+    # ~3 + 60 = 63 and would (wrongly) return False, so True proves the anchor.
+    assert cm.needs_compression(msgs) is True
+
+
+def test_threshold_falls_back_to_full_estimate_without_anchor():
+    """No anchor recorded -> full local estimate is used."""
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
+    msgs = [{"role": "user", "content": "x" * 4} for _ in range(3)]
+    msgs.append({"role": "assistant", "content": "x" * 240})
+    # No record_api_usage call -> anchor is None -> full estimate (~63 tokens).
+    assert cm.needs_compression(msgs) is False
+    assert cm._threshold_token_estimate(msgs) == cm.estimate_tokens(msgs)
+
+
+def test_invalidate_token_anchor_forces_full_estimate():
+    """After history is mutated in place, the anchor is dropped and the
+    threshold falls back to a full local estimate."""
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
+    msgs = [{"role": "user", "content": "x" * 4} for _ in range(3)]
+    cm.record_api_usage(600, message_count=3)
+    msgs.append({"role": "assistant", "content": "x" * 240})
+    assert cm.needs_compression(msgs) is True  # anchor active
+
+    cm.invalidate_token_anchor()
+    assert cm._last_api_prompt_tokens is None
+    assert cm._api_anchor_msg_count is None
+    # Now the stale 600 is gone; full estimate (~63) is below threshold.
+    assert cm.needs_compression(msgs) is False
+
+
+def test_record_api_usage_legacy_no_count_clears_anchor():
+    """Legacy callers passing only prompt_tokens must not engage the anchor
+    (no message_count -> full estimate path stays in effect)."""
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
+    msgs = [{"role": "user", "content": "x" * 4} for _ in range(3)]
+    msgs.append({"role": "assistant", "content": "x" * 240})
+    cm.record_api_usage(600)  # no message_count
+    assert cm._api_anchor_msg_count is None
+    # Anchor not engaged -> full estimate (~63) -> below threshold.
+    assert cm.needs_compression(msgs) is False
+
+
+def test_threshold_anchor_count_exceeds_messages_falls_back():
+    """If the anchored count is larger than the current list (e.g. history was
+    trimmed), fall back to the full estimate rather than slice incorrectly."""
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
+    msgs = [{"role": "user", "content": "x" * 4} for _ in range(3)]
+    cm.record_api_usage(600, message_count=10)  # count > len(msgs)
+    # Falls back to full estimate (~3 tokens), not anchor.
+    assert cm._threshold_token_estimate(msgs) == cm.estimate_tokens(msgs)
+
+
+def test_threshold_guards_non_numeric_anchor():
+    """A malformed provider usage field (non-int prompt_tokens) must not poison
+    the threshold path; fall back to the full local estimate."""
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
+    msgs = [{"role": "user", "content": "x" * 4} for _ in range(3)]
+    cm.record_api_usage(Mock(), message_count=3)  # garbage prompt_tokens
+    # Must not raise; uses full estimate (~3 tokens).
+    assert cm._threshold_token_estimate(msgs) == cm.estimate_tokens(msgs)
+    assert cm.needs_compression(msgs) is False
+
+
+def test_microcompaction_uses_anchored_threshold():
+    """needs_microcompaction shares the anchored estimate (55-65% band)."""
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
+    msgs = [{"role": "user", "content": "x" * 4} for _ in range(3)]
+    cm.record_api_usage(580, message_count=3)  # 58% via anchor
+    cm.estimate_tokens = Mock(side_effect=AssertionError("full re-encode on hot path"))
+    # 580 is in (550, 650] -> microcompaction warranted.
+    assert cm.needs_microcompaction(msgs) is True
+
+
+# ---------------------------------------------------------------------------
 # Compression algorithm
 # ---------------------------------------------------------------------------
 
