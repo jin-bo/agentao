@@ -64,6 +64,7 @@ class ContextManager:
     CIRCUIT_BREAKER_LIMIT = 3       # Stop auto-compact after N consecutive failures
     MICROCOMPACT_TOOL_LIMIT = 3_000 # Max chars kept from any old tool result in microcompact
     MICROCOMPACT_PRESERVE_RECENT = 5  # Keep the most recent N tool results at full fidelity
+    SUMMARY_END_MARKER = "--- END OF CONTEXT SUMMARY ---"  # Closes the summary block
 
     def __init__(self, llm_client, memory_tool, max_tokens: int = DEFAULT_MAX_TOKENS, memory_manager=None):  # Optional[MemoryManager]
         """Initialize ContextManager.
@@ -352,7 +353,12 @@ class ContextManager:
 
         summary_msg = {
             "role": "system",
-            "content": f"[Conversation Summary]\n{summary}",
+            "content": (
+                f"[Conversation Summary]\n{summary}\n"
+                f"{self.SUMMARY_END_MARKER}\n"
+                "(The above is historical context. Resume from the live messages "
+                "below; do not re-execute already-completed work.)"
+            ),
         }
 
         file_hint_msgs: List[Dict[str, Any]] = []
@@ -524,6 +530,16 @@ class ContextManager:
                     for b in content
                     if isinstance(b, dict) and b.get("type") == "text"
                 )
+            if (
+                isinstance(content, str)
+                and content.startswith("[Conversation Summary]")
+                and self.SUMMARY_END_MARKER in content
+            ):
+                # Strip a prior summary's end-marker + framing note on rehydration
+                # so it doesn't accumulate when an old summary is re-summarized.
+                # Anchored on the summary prefix so an unrelated message that merely
+                # contains the marker substring is never truncated.
+                content = content.split(self.SUMMARY_END_MARKER)[0].rstrip()
             if role == "tool":
                 tool_name = msg.get("name", "")
                 limit = (
