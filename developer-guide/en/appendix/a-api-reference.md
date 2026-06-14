@@ -32,6 +32,7 @@ Agentao(
     transport: Transport | None = None,
     *,
     working_directory: Path,                    # required since 0.3.0
+    extra_body: dict | None = None,             # keyword-only; LLM .create() request-body passthrough
     extra_mcp_servers: dict[str, dict] | None = None,
     extra_tools: Sequence[RegistrableTool] | None = None,   # inject / replace tools
     disable_tools: Iterable[str] | None = None,             # skip built-ins by name
@@ -64,7 +65,7 @@ Agentao(
 
 Mutual-exclusion rules (raise `ValueError` if violated):
 
-- `llm_client=` together with any of `api_key=` / `base_url=` / `model=` / `temperature=`
+- `llm_client=` together with any of `api_key=` / `base_url=` / `model=` / `temperature=` / `max_tokens=` / `extra_body=` (pass `extra_body=` to the injected client instead)
 - `mcp_manager=` together with `extra_mcp_servers=`
 - `mcp_manager=` together with `mcp_registry=` — the registry is a config source, the manager is the construction outcome
 - `enabled_tools=` together with `disable_tools=` — an allowlist and a denylist at once is ambiguous (holds even for `enabled_tools=set()`). See [5.1](/en/part-5/1-custom-tools)

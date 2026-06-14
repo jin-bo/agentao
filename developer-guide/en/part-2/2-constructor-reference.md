@@ -77,6 +77,7 @@ agent = Agentao(
 |-------|------|---------|--------------|
 | `base_url` | `str` | OpenAI's | Switch to any OpenAI-compatible endpoint |
 | `temperature` | `float` | `0.2` | Sampling temperature |
+| `extra_body` | `Dict[str,Any]` | `None` | Forwarded verbatim to the LLM `.create()` as the SDK's `extra_body` — the escape hatch for params the closed request build does not expose (`reasoning_effort` / `top_p` / `seed` / `response_format` / provider-specific fields). **Keyword-only.** Sub-agents inherit it; logged with credential keys redacted. **Mutually exclusive** with `llm_client`. See below |
 | `transport` | `Transport` | `NullTransport()` | UI bridge: events + confirm + ask_user + max-iter fallback. See [Part 4](/en/part-4/) |
 | `permission_engine` | `PermissionEngine` | factory builds one rooted at `working_directory` | Rule-based gating. See [5.4](/en/part-5/4-permissions) |
 | `max_context_tokens` | `int` | `200_000` | Triggers conversation compression beyond this |
@@ -84,7 +85,7 @@ agent = Agentao(
 | `extra_tools` | `Sequence[Tool]` | `None` | Inject / replace tools (instances; register last, same name overrides a built-in). See [5.1](/en/part-5/1-custom-tools) |
 | `disable_tools` | `Iterable[str]` | `None` | Skip these built-ins by name (unknown name → `ValueError`). **Mutually exclusive with `enabled_tools`** |
 | `enabled_tools` | `Iterable[str]` | `None` | Allowlist of agentao-owned tools to keep; `None`=off, any iterable incl. `set()`=on. **Mutually exclusive with `disable_tools`** |
-| `llm_client` | `LLMClient` | (constructed from credentials) | Inject a pre-built client to fully control logger / log file. **Mutually exclusive** with `api_key` / `base_url` / `model` / `temperature` |
+| `llm_client` | `LLMClient` | (constructed from credentials) | Inject a pre-built client to fully control logger / log file. **Mutually exclusive** with `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` (a host with its own client passes `extra_body=` to that client) |
 | `project_instructions` | `str` | (read from `<wd>/AGENTAO.md`) | Pass AGENTAO.md content directly — skips the disk read |
 
 ::: tip Async hosts use `arun()`
@@ -159,6 +160,30 @@ Pass `logger=app.logger` to skip Agentao's package-root level / handler mutation
 To control the file-handler axis independently, build `LLMClient` yourself and pass `log_file=None` (skip file) or `log_file="custom.log"` (redirect). Note: passing only `log_file=None` *without* `logger=` still elevates `getLogger("agentao")` to `DEBUG`. See [6.6 Observability → Take over Agentao's logger](/en/part-6/6-observability#take-over-agentaos-logger) for the full matrix and a fully-silent recipe.
 :::
 
+::: details LLM request passthrough — `extra_body`
+Agentao builds the OpenAI-compatible request from a **closed set** of fields (`model` / `messages` / `temperature` / `tools` / `max_tokens`). When you need a param that set does not expose — `reasoning_effort`, `top_p`, `seed`, `response_format`, or any **provider-specific** body field (`top_k`, `repetition_penalty`, vendor extensions) — pass `extra_body`. It is forwarded verbatim to the SDK's `.create(extra_body=...)`, which merges it into the JSON request body, bypassing the typed signature.
+
+```python
+agent = Agentao(
+    api_key="sk-...",
+    base_url="https://api.openai.com/v1",
+    model="gpt-5.4",
+    working_directory=workdir,
+    extra_body={"reasoning_effort": "high", "seed": 7},
+)
+```
+
+- **Keyword-only.** Unlike `api_key` / `temperature`, `extra_body` is declared after `*`, so it never shifts the legacy positional arguments.
+- **The host owns the values.** Agentao does not validate them — the SDK / provider does. You are configuring *your own* endpoint, so this is not third-party proxying.
+- **Sub-agents inherit it**, the same way they inherit `temperature` / `max_tokens`.
+- **No auto-recovery on model switch.** Unlike `temperature` (which auto-drops when a model rejects it), a stale `extra_body` key — e.g. `reasoning_effort` after switching to a non-reasoning model — makes every later call 400 until you clear it. Dropping model-specific keys on switch is the host's responsibility.
+- **Logged with credentials redacted.** If `extra_body` nests credential-like keys (`api_key`, `authorization`, `x-api-key`, …), their values are masked (`***`) in `agentao.log`.
+- **CLI / factory path:** set the `LLM_EXTRA_BODY` env var to a JSON **object** (e.g. `LLM_EXTRA_BODY='{"reasoning_effort":"high"}'`). Malformed or non-object values warn and are skipped; empty is treated as unset. See [Appendix B](/en/appendix/b-config-keys).
+- **Mutually exclusive with `llm_client=`.** A host injecting its own `LLMClient` passes `extra_body=` to *that* client's constructor instead.
+
+`extra_headers` and a `settings.json` file layer are intentionally deferred; see `docs/design/host-llm-extra-params.md`.
+:::
+
 ::: details Legacy 8 callbacks (still accepted, deprecated — removed in 0.5.0)
 Pre-0.2.10 API. Internally wrapped via `build_compat_transport()` into an `SdkTransport`. **Passing any of these now emits a single `DeprecationWarning`**; the constructor signature itself will be removed in **0.5.0**. New code should go straight through `Transport`.
 
@@ -184,7 +209,7 @@ Violating any of these raises `ValueError` at construction:
 
 | Cannot combine | Reason |
 |----------------|--------|
-| `llm_client=` + any of `api_key` / `base_url` / `model` / `temperature` | The injected client is already the credential source |
+| `llm_client=` + any of `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` | The injected client is already the credential source — pass `extra_body=` to that client directly instead |
 | `mcp_manager=` + `extra_mcp_servers=` | Per-session merge needs a manager Agentao constructs |
 | `mcp_manager=` + `mcp_registry=` | Registry is the config source; manager is the construction outcome |
 

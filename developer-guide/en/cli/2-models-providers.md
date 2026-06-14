@@ -111,6 +111,14 @@ The change is **per session**. Restarting the CLI resets to the provider default
 LLM_TEMPERATURE=0.3
 ```
 
+Need a request param the CLI has no command for — `reasoning_effort`, `top_p`, `seed`, `response_format`, or a provider-specific field? Set `LLM_EXTRA_BODY` to a JSON object; it is forwarded verbatim to the LLM `.create()` (and inherited by sub-agents):
+
+```bash
+LLM_EXTRA_BODY='{"reasoning_effort":"high"}'
+```
+
+See [Appendix B](/en/appendix/b-config-keys) for parsing/redaction details.
+
 ## When to switch what
 
 | Situation | What to do |
