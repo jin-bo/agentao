@@ -20,7 +20,7 @@ The OpenAI-compatible request is assembled into a **closed `kwargs` dict** in tw
 - `chat()` — `client.py:318-330`
 - `chat_stream()` — `client.py:450-462`
 
-Both build exactly `{model, messages, temperature?, tools?, tool_choice?, max_tokens|max_completion_tokens?}` and pass it to `client.chat.completions.create(**kwargs)`. The constructor (`client.py:90-100`) exposes only `api_key / base_url / model / temperature / max_tokens / log_file / logger` — there is **no field** for additional request parameters.
+Both build exactly `{model, messages, temperature?, tools?, tool_choice?, max_tokens|max_completion_tokens?}` and pass it to the SDK — non-streaming via `client.chat.completions.with_raw_response.create(**kwargs)` (`client.py:339`), streaming via `client.chat.completions.create(**kwargs)` (`client.py:613`). (The two methods differ; implementers must spy the *right* one per path — see §9.) The constructor (`client.py:90-100`) exposes only `api_key / base_url / model / temperature / max_tokens / log_file / logger` — there is **no field** for additional request parameters.
 
 Consequently a host cannot set any of:
 
@@ -123,7 +123,7 @@ Same shape as `temperature` / `max_tokens`:
 | Path | Change |
 |---|---|
 | **Embedded host** | `Agentao(..., extra_params={"reasoning_effort": "high"})` → thread into `_build_llm_client` `llm_kwargs` (`agent.py:665-676`), mirroring the existing `temperature` / `max_tokens` conditionals. **Plus the guard in §4.1.** |
-| **CLI / env** | `discover_llm_kwargs()` (`factory.py:57`) reads `LLM_EXTRA_PARAMS` as a JSON object, parsed inside a `try/except`: malformed JSON → `warn + skip`. **Note:** this is *intentionally more tolerant* than the existing `LLM_TEMPERATURE` / `LLM_MAX_TOKENS`, which call `float()` / `int()` directly and **raise** on malformed values (`factory.py:79-82`); `build_from_environment` only dodges that today by skipping discovery entirely when `llm_client` is supplied (`factory.py:134`). The `try/except` must be added explicitly — it is **not** inherited from a pre-existing tolerance. |
+| **CLI / env** | `discover_llm_kwargs()` (`factory.py:57`) reads `LLM_EXTRA_PARAMS` as a JSON **object**, parsed inside a `try/except`: malformed JSON → `warn + skip`. **It must also reject valid-but-non-object JSON** — `LLM_EXTRA_PARAMS=[]` / `"x"` / `3` parse fine but are invalid config; require `isinstance(parsed, dict)` and treat a non-object the same as malformed (warn + skip), so the **env-warning policy** governs the env path rather than a confusing downstream `TypeError` at construction (§3.1). **Note:** this is *intentionally more tolerant* than the existing `LLM_TEMPERATURE` / `LLM_MAX_TOKENS`, which call `float()` / `int()` directly and **raise** on malformed values (`factory.py:79-82`); `build_from_environment` only dodges that today by skipping discovery entirely when `llm_client` is supplied (`factory.py:134`). The `try/except` + `isinstance` check must be added explicitly — neither is inherited from a pre-existing tolerance. |
 
 ### 4.1 Constructor mutual-exclusion guard (required)
 
@@ -154,7 +154,7 @@ if llm_client is not None and any(
 
 ## 7. Edge cases
 
-- **Logging (explicit v1 change — not free)**: `_log_request` (`agentao/llm/_logging.py:23`) logs a **fixed field set** — `model`, `temperature`, `max_tokens`, `messages`, `tools` — *not* arbitrary request kwargs, so passthrough params do **not** appear automatically. v1 adds one line logging the merged non-reserved extra keys (e.g. `Extra params: {'reasoning_effort': 'high'}`) so a host can confirm what was actually sent. This is in scope and tested (§9), not an incidental benefit.
+- **Logging (explicit v1 change — not free, must redact)**: `_log_request` (`agentao/llm/_logging.py:23`) logs a **fixed field set** — `model`, `temperature`, `max_tokens`, `messages`, `tools` — *not* arbitrary request kwargs, so passthrough params do **not** appear automatically. v1 adds one line logging the merged non-reserved extra params, but values must be **recursively redacted**: replace the value of any key whose name matches `authorization` / `api[-_]?key` / `token` / `secret` / `password` / `cookie` (case-insensitive, at any nesting depth) with `***` before logging — e.g. `Extra params: {'reasoning_effort': 'high', 'extra_headers': {'Authorization': '***'}}`. This is **mandatory, not cosmetic**: `extra_params` explicitly supports the SDK `extra_headers` / `extra_body` escape hatches (§1), so `extra_params={"extra_headers": {"Authorization": "Bearer …"}}` would otherwise leak a live credential into `agentao.log` — a class of secret the current logger deliberately keeps off the kwargs path entirely (`api_key` lives on the client, never in logged kwargs). The redactor is a small recursive helper in `_logging.py`; tested for nested `extra_headers.Authorization` (§9).
 - **Back-compat**: omitting `extra_params` yields byte-identical request kwargs; existing tests untouched.
 - **Type safety**: a non-dict `extra_params` raises `TypeError` at construction via the **explicit** `isinstance` guard in §3.1 — *not* via `dict(extra_params or {})` alone, which would accept a list-of-pairs and raise `ValueError` on other shapes.
 
@@ -167,13 +167,14 @@ Two surfaces are intentionally out of v1 scope:
 
 ## 9. Test plan
 
-- `extra_params` merges into both `chat()` and `chat_stream()` `create(**kwargs)` (spy the SDK call; assert key present).
+- `extra_params` merges into both `chat()` and `chat_stream()` — spy the **correct** SDK method per path: `with_raw_response.create` (non-streaming, `client.py:339`) and `create` (streaming, `client.py:613`); assert the key is present.
 - A reserved key (`messages` / `temperature` / `model`) in `extra_params` is dropped + warned; structural kwargs intact.
 - `reconfigure()` preserves `extra_params`; `reset_capability_latches()` still clears the latches.
 - **Constructor guard (F1):** `Agentao(llm_client=<client>, extra_params={...})` raises `ValueError` — not a silent no-op.
 - **Type guard (F4):** `LLMClient(extra_params=[("x", 1)])` raises `TypeError`; `extra_params=None` is accepted.
-- **Env tolerance (F3):** `discover_llm_kwargs()` parses valid `LLM_EXTRA_PARAMS` JSON; malformed JSON → key omitted + warned, no raise.
-- **Logging (F5):** with `extra_params` set, `_log_request` emits the merged non-reserved keys; without it, the log line is absent.
+- **Env tolerance (F3):** `discover_llm_kwargs()` parses valid `LLM_EXTRA_PARAMS` JSON object; malformed JSON → key omitted + warned, no raise.
+- **Env non-object (P2):** `LLM_EXTRA_PARAMS=[]` / `"x"` / `3` (valid JSON, non-object) → key omitted + warned via the env policy, **not** a construction-time `TypeError`.
+- **Logging redaction (F5/P1):** with `extra_params={"reasoning_effort":"high","extra_headers":{"Authorization":"Bearer x"}}`, `_log_request` shows `reasoning_effort` but the nested `Authorization` value is `***`; with no `extra_params` the line is absent.
 - Back-compat: no `extra_params` → request kwargs identical to current (golden-dict assertion).
 
 ## 10. Change sites / blast radius
@@ -181,9 +182,9 @@ Two surfaces are intentionally out of v1 scope:
 | File | Change |
 |---|---|
 | `agentao/llm/client.py` | add field + explicit `isinstance` guard (§3.1) + `_build_request_kwargs`; route `chat()` / `chat_stream()` through it; preserve in `reconfigure()` |
-| `agentao/llm/_logging.py` | log the merged non-reserved extra keys in `_log_request` (§7) |
+| `agentao/llm/_logging.py` | log the merged extra params in `_log_request`, **values recursively redacted** for sensitive keys (§7) |
 | `agentao/agent.py` | add `extra_params` kwarg; thread into `_build_llm_client`; **add to the mutual-exclusion guard** (§4.1) |
-| `agentao/embedding/factory.py` | parse `LLM_EXTRA_PARAMS` JSON in a `try/except` (warn + skip on malformed) |
+| `agentao/embedding/factory.py` | parse `LLM_EXTRA_PARAMS` JSON in a `try/except` + `isinstance(parsed, dict)` (warn + skip on malformed **or** non-object) |
 | `docs/reference/configuration.md` | document the `LLM_EXTRA_PARAMS` env var (§2) — **not** a settings field (deferred, §8) |
 | `tests/test_llm_client_*.py` | new coverage per §9 |
 
