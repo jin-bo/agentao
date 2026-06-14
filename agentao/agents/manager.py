@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
-import yaml
+from agentao.frontmatter import parse_frontmatter
 
 from ..tools.base import RegistrableTool, Tool
 from .tools import AgentToolWrapper, CheckBackgroundAgentTool
@@ -43,7 +43,7 @@ class AgentManager:
         for md_file in sorted(directory.glob("*.md")):
             try:
                 content = md_file.read_text(encoding="utf-8")
-                frontmatter, body = self._parse_yaml_frontmatter(content)
+                frontmatter, body = parse_frontmatter(content)
 
                 name = frontmatter.get("name", md_file.stem)
                 description = frontmatter.get("description", "")
@@ -70,22 +70,6 @@ class AgentManager:
                 }
             except Exception:
                 continue
-
-    @staticmethod
-    def _parse_yaml_frontmatter(content: str) -> tuple:
-        if not content.startswith("---"):
-            return {}, content
-
-        parts = content.split("---", 2)
-        if len(parts) < 3:
-            return {}, content
-
-        try:
-            frontmatter = yaml.safe_load(parts[1]) or {}
-        except yaml.YAMLError:
-            frontmatter = {}
-
-        return frontmatter, parts[2]
 
     # ------------------------------------------------------------------
     # Plugin agent registration
@@ -114,7 +98,7 @@ class AgentManager:
             return errors
 
         for defn in agent_defs:
-            frontmatter, body = self._parse_yaml_frontmatter(defn.raw_markdown)
+            frontmatter, body = parse_frontmatter(defn.raw_markdown)
 
             tools_list = frontmatter.get("tools")
             if isinstance(tools_list, str):

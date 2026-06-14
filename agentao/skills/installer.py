@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-import yaml
+from agentao.frontmatter import parse_frontmatter
 
 from .registry import (
     InstalledSkillRecord,
@@ -36,31 +36,6 @@ class SkillConflictError(SkillInstallError):
 
 class SkillFetchError(SkillInstallError):
     """Failed to download or extract the skill package."""
-
-
-# ------------------------------------------------------------------
-# YAML frontmatter parser (shared with SkillManager)
-# ------------------------------------------------------------------
-
-def _parse_yaml_frontmatter(content: str) -> tuple:
-    """Parse YAML frontmatter from markdown. Returns (frontmatter_dict, body)."""
-    if not content.startswith("---"):
-        return {}, content
-
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return {}, content
-
-    try:
-        frontmatter = yaml.safe_load(parts[1]) or {}
-        frontmatter = {
-            k: str(v).strip() if v is not None else ""
-            for k, v in frontmatter.items()
-        }
-    except yaml.YAMLError:
-        return {}, content
-
-    return frontmatter, parts[2].strip()
 
 
 # ------------------------------------------------------------------
@@ -299,7 +274,7 @@ class SkillInstaller:
         if not content.startswith("---"):
             raise SkillValidationError("SKILL.md missing YAML frontmatter.")
 
-        frontmatter, _body = _parse_yaml_frontmatter(content)
+        frontmatter, _body = parse_frontmatter(content, coerce_str=True)
         if not frontmatter:
             raise SkillValidationError(
                 "SKILL.md frontmatter is empty or malformed."

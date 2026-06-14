@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-import yaml
+from agentao.frontmatter import parse_frontmatter
 
 from ..paths import user_root
 
@@ -183,26 +183,6 @@ class SkillManager:
     # Loading
     # ------------------------------------------------------------------
 
-    def _parse_yaml_frontmatter(self, content: str) -> tuple[Dict[str, str], str]:
-        """Parse YAML frontmatter from markdown file."""
-        if not content.startswith('---'):
-            return {}, content
-
-        parts = content.split('---', 2)
-        if len(parts) < 3:
-            return {}, content
-
-        frontmatter_text = parts[1]
-        remaining_content = parts[2].strip()
-
-        try:
-            frontmatter = yaml.safe_load(frontmatter_text) or {}
-            frontmatter = {k: str(v).strip() if v is not None else "" for k, v in frontmatter.items()}
-        except yaml.YAMLError:
-            frontmatter = {}
-
-        return frontmatter, remaining_content
-
     def _load_skills(self):
         """Load skills from all configured directories.
 
@@ -240,7 +220,7 @@ class SkillManager:
                 with open(skill_md_path, "r", encoding="utf-8") as f:
                     content = f.read()
 
-                frontmatter, body_content = self._parse_yaml_frontmatter(content)
+                frontmatter, body_content = parse_frontmatter(content, coerce_str=True)
 
                 skill_name = frontmatter.get("name", skill_dir.name)
                 description = frontmatter.get("description", "")
