@@ -5,8 +5,8 @@
 **Companions:**
 - `docs/design/host-llm-extra-params.zh.md` — Chinese version
 - `docs/design/embedded-host-contract.md` — the host-contract stability boundary (where this design belongs)
-- `docs/design/host-tool-injection.md` / `.zh.md` — sibling host-injection primitive (same "thread an explicit kwarg through the three construction paths" shape)
-- `docs/reference/configuration.md` — §2 (`.env`) / §3 (`settings.json`), where the config surface is documented
+- `docs/design/host-tool-injection.md` / `.zh.md` — sibling host-injection primitive (same "thread an explicit kwarg through the construction paths, defer the settings.json layer" shape)
+- `docs/reference/configuration.md` — §2 (`.env`), where the `LLM_EXTRA_PARAMS` env var is documented (settings.json file layer is deferred — see §2 / §8)
 - `agentao/llm/client.py` — `__init__` (`90-100`), `chat()` kwargs (`318-330`), `chat_stream()` kwargs (`450-462`), `reconfigure()` (`270-282`) — the main change sites
 - `agentao/agent.py` — `_build_llm_client` `llm_kwargs` (`665-676`)
 - `agentao/embedding/factory.py` — `discover_llm_kwargs()` (`57-82`)
@@ -45,6 +45,7 @@ The only workaround today is to **subclass `LLMClient` and override `chat()`/`ch
 **v1 explicitly does not:**
 - Add named `reasoning_effort=` / `seed=` constructor args (the dict subsumes them; promote to named args only if a param needs agentao-side validation or latch behaviour later).
 - Validate param *values* — the host is configuring its **own** LLM endpoint; the SDK / provider validates. (This is not the "no silent third-party proxy" case — passthrough is the host's explicit intent, not a redirected destination.)
+- Add a `.agentao/settings.json :: llm.extra_params` file layer — **deferred** (see §8). `settings.json` today is runtime-mode + builtin-agents only (`configuration.md:70`); `_load_settings` (`factory.py:37`) feeds no LLM config, and there is **no** "env > settings" LLM precedence rule to slot into. `host-tool-injection.md` set the precedent of deferring a settings file layer until a concrete need appears (gap≠need). v1's two surfaces are the constructor kwarg and the `LLM_EXTRA_PARAMS` env var.
 - Introduce a runtime mutation surface — see §8 (deferred `/param`).
 
 ## 3. Core mechanism
@@ -57,6 +58,11 @@ In `LLMClient.__init__` (`client.py:90-100`), after `max_tokens`:
 extra_params: Optional[Dict[str, Any]] = None,
 ...
 # Host-supplied passthrough merged into every request (minus reserved keys).
+# Explicit isinstance guard: bare ``dict(extra_params or {})`` would silently
+# accept a list-of-pairs (``[("x", 1)]``) and raise ValueError (not TypeError)
+# on other malformed shapes — fail fast with a clear contract instead.
+if extra_params is not None and not isinstance(extra_params, dict):
+    raise TypeError("LLMClient.extra_params must be a dict or None.")
 self.extra_params: Dict[str, Any] = dict(extra_params or {})
 ```
 
@@ -110,15 +116,28 @@ def _build_request_kwargs(self, messages, tools, max_tokens, *, stream):
 
 Because both managed keys are **reserved**, `extra_params` can never collide with these latches. Reserved-key protection is what makes the merge safe.
 
-## 4. Constructor signature & wiring (three construction paths)
+## 4. Constructor signature & wiring (two construction paths)
 
-Same three-path shape as `temperature` / `max_tokens`:
+Same shape as `temperature` / `max_tokens`:
 
 | Path | Change |
 |---|---|
-| **Embedded host** | `Agentao(..., extra_params={"reasoning_effort": "high"})` → thread into `_build_llm_client` `llm_kwargs` (`agent.py:665-676`), mirroring the existing `temperature` / `max_tokens` conditionals. |
-| **CLI / env** | `discover_llm_kwargs()` (`factory.py:79`) reads `LLM_EXTRA_PARAMS` as a JSON object → `out["extra_params"] = json.loads(v)`. Malformed JSON → warn + skip, matching the existing `LLM_TEMPERATURE` / `LLM_MAX_TOKENS` tolerance (`factory.py:134`). |
-| **Config file** | `.agentao/settings.json :: llm.extra_params` (object), merged by the factory. Precedence: env var > settings.json (existing rule). |
+| **Embedded host** | `Agentao(..., extra_params={"reasoning_effort": "high"})` → thread into `_build_llm_client` `llm_kwargs` (`agent.py:665-676`), mirroring the existing `temperature` / `max_tokens` conditionals. **Plus the guard in §4.1.** |
+| **CLI / env** | `discover_llm_kwargs()` (`factory.py:57`) reads `LLM_EXTRA_PARAMS` as a JSON object, parsed inside a `try/except`: malformed JSON → `warn + skip`. **Note:** this is *intentionally more tolerant* than the existing `LLM_TEMPERATURE` / `LLM_MAX_TOKENS`, which call `float()` / `int()` directly and **raise** on malformed values (`factory.py:79-82`); `build_from_environment` only dodges that today by skipping discovery entirely when `llm_client` is supplied (`factory.py:134`). The `try/except` must be added explicitly — it is **not** inherited from a pre-existing tolerance. |
+
+### 4.1 Constructor mutual-exclusion guard (required)
+
+`extra_params` must be added to the raw-LLM-config set in the constructor's mutual-exclusion guard (`agent.py:284`), which today only lists `(api_key, base_url, model, temperature, max_tokens)`:
+
+```python
+if llm_client is not None and any(
+    v is not None for v in (api_key, base_url, model, temperature, max_tokens, extra_params)
+):
+    raise ValueError("Agentao(): pass either llm_client= or "
+                     "api_key/.../extra_params, not both.")
+```
+
+**Why this is mandatory, not cosmetic:** `_resolve_llm_client()` returns an injected `llm_client` immediately and untouched (`agent.py:655`). If the implementer only follows the "thread into `_build_llm_client`" note, then `Agentao(llm_client=client, extra_params={...})` is a **silent no-op** — the build path never runs. A host that injects its own `LLMClient` must pass `extra_params=` to *that* client directly; the guard makes the mistake loud instead of silent, consistent with "a fully-constructed object always wins over its raw-config sibling" (`agent.py:280`).
 
 ## 5. `reconfigure()` / model-switch semantics
 
@@ -135,30 +154,37 @@ Same three-path shape as `temperature` / `max_tokens`:
 
 ## 7. Edge cases
 
-- **Logging**: `_log_request` already logs the assembled `kwargs`, so passthrough params (incl. nested `extra_body`) appear in `agentao.log` for free; the stream path still strips `stream`.
+- **Logging (explicit v1 change — not free)**: `_log_request` (`agentao/llm/_logging.py:23`) logs a **fixed field set** — `model`, `temperature`, `max_tokens`, `messages`, `tools` — *not* arbitrary request kwargs, so passthrough params do **not** appear automatically. v1 adds one line logging the merged non-reserved extra keys (e.g. `Extra params: {'reasoning_effort': 'high'}`) so a host can confirm what was actually sent. This is in scope and tested (§9), not an incidental benefit.
 - **Back-compat**: omitting `extra_params` yields byte-identical request kwargs; existing tests untouched.
-- **Type safety**: coerce `None` → `{}`; a non-dict `extra_params` raises `TypeError` at construction (fail-fast, like the empty-`api_key` guards).
+- **Type safety**: a non-dict `extra_params` raises `TypeError` at construction via the **explicit** `isinstance` guard in §3.1 — *not* via `dict(extra_params or {})` alone, which would accept a list-of-pairs and raise `ValueError` on other shapes.
 
-## 8. Deferred: runtime mutation (`/param`)
+## 8. Deferred
 
-A runtime setter — `LLMClient.update_extra_params(**kw)` plus a CLI `/param set seed 42` / `/param show` — is **out of v1 scope**. The listed use cases (`reasoning_effort`, `top_p`, `seed`, `response_format`) are static per session and fully served by the construction-time paths. Build the runtime surface when a concrete "change a param mid-session" need appears.
+Two surfaces are intentionally out of v1 scope:
+
+- **`settings.json :: llm.extra_params` file layer.** There is no LLM-config block in `settings.json` today (`_load_settings` at `factory.py:37` feeds runtime mode + builtin agents only) and no "env > settings" LLM precedence to extend. Adding one is a *broader* decision than this feature — it would establish `settings.json` as a general LLM-config layer (model / temperature / max_tokens could reasonably follow). Defer until a concrete "CLI user wants persistent `extra_params` in a file" need appears, and design the whole LLM-settings block then, not a one-off `extra_params` key. (Same posture as `host-tool-injection.md` deferring `tool_options`/settings.)
+- **Runtime mutation (`/param`).** A setter — `LLMClient.update_extra_params(**kw)` plus a CLI `/param set seed 42` / `/param show` — is out of v1. The listed use cases (`reasoning_effort`, `top_p`, `seed`, `response_format`) are static per session and fully served by the construction-time paths. Build the runtime surface when a concrete "change a param mid-session" need appears.
 
 ## 9. Test plan
 
 - `extra_params` merges into both `chat()` and `chat_stream()` `create(**kwargs)` (spy the SDK call; assert key present).
 - A reserved key (`messages` / `temperature` / `model`) in `extra_params` is dropped + warned; structural kwargs intact.
 - `reconfigure()` preserves `extra_params`; `reset_capability_latches()` still clears the latches.
-- `discover_llm_kwargs()` parses `LLM_EXTRA_PARAMS` JSON; malformed JSON → skipped, no crash.
+- **Constructor guard (F1):** `Agentao(llm_client=<client>, extra_params={...})` raises `ValueError` — not a silent no-op.
+- **Type guard (F4):** `LLMClient(extra_params=[("x", 1)])` raises `TypeError`; `extra_params=None` is accepted.
+- **Env tolerance (F3):** `discover_llm_kwargs()` parses valid `LLM_EXTRA_PARAMS` JSON; malformed JSON → key omitted + warned, no raise.
+- **Logging (F5):** with `extra_params` set, `_log_request` emits the merged non-reserved keys; without it, the log line is absent.
 - Back-compat: no `extra_params` → request kwargs identical to current (golden-dict assertion).
 
 ## 10. Change sites / blast radius
 
 | File | Change |
 |---|---|
-| `agentao/llm/client.py` | add field + `_build_request_kwargs`; route `chat()` / `chat_stream()` through it; preserve in `reconfigure()` |
-| `agentao/agent.py` | add `extra_params` kwarg; thread into `_build_llm_client` |
-| `agentao/embedding/factory.py` | parse `LLM_EXTRA_PARAMS` + `settings.json :: llm.extra_params` |
-| `docs/reference/configuration.md` | document the env var + settings field |
+| `agentao/llm/client.py` | add field + explicit `isinstance` guard (§3.1) + `_build_request_kwargs`; route `chat()` / `chat_stream()` through it; preserve in `reconfigure()` |
+| `agentao/llm/_logging.py` | log the merged non-reserved extra keys in `_log_request` (§7) |
+| `agentao/agent.py` | add `extra_params` kwarg; thread into `_build_llm_client`; **add to the mutual-exclusion guard** (§4.1) |
+| `agentao/embedding/factory.py` | parse `LLM_EXTRA_PARAMS` JSON in a `try/except` (warn + skip on malformed) |
+| `docs/reference/configuration.md` | document the `LLM_EXTRA_PARAMS` env var (§2) — **not** a settings field (deferred, §8) |
 | `tests/test_llm_client_*.py` | new coverage per §9 |
 
 Net: the `_build_request_kwargs` extraction **removes** the duplicated closed dict — a simplification, not just an addition.
