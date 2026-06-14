@@ -107,6 +107,7 @@ Tool Calls (N):
    - 模型名称
    - 温度设置
    - 最大 token 数
+   - `extra_body`（host 配置的请求体直通，**凭据脱敏**——见下）
    - 所有消息（system, user, assistant, tool）
    - 可用工具列表
 
@@ -129,6 +130,16 @@ Tool Calls (N):
 - 每个请求有唯一 ID (`req_1`, `req_2`, ...)
 - 请求和响应通过 ID 关联
 - 请求计数器自动递增
+
+### 🔒 凭据脱敏（`extra_body`）
+
+当 host 配置了 `extra_body`（请求体直通，见 [embedding 指南](embedding.md#optional-provider-specific-request-params-extra_body)）时，它会作为单独一行 `Extra Body:` 记录。由于 `extra_body` 可能嵌套 provider 凭据（有些网关在 body 或 `extra_headers` 里收 key），其值在写日志前会**递归脱敏**：
+
+- 凡键名（小写后）**精确等于**敏感键集之一的值，被替换为 `***`——覆盖 body 式与头部式名（`authorization`、`proxy-authorization`、`api_key`/`apikey`/`api-key`/`x-api-key`、`token`/`access_token`/`x-auth-token`、`secret`/`client_secret`、`password`、`cookie` 等）。
+- **精确键名匹配，而非子串**——故 `max_tokens` 之类的良性 `*_tokens` 键不会被误脱敏。
+- 递归覆盖 dict、list、tuple 任意嵌套深度。
+
+例：`extra_body={"reasoning_effort":"high","api_key":"sk-x"}` 在日志里显示为 `reasoning_effort` 原值、`api_key` 为 `***`。其余请求字段（`api_key` 凭据本身）一如既往不进日志。
 
 ## 使用方法
 

@@ -188,6 +188,37 @@ when the host is done with the session.
 | `mcp_registry` | No | Defaults to no MCP servers (the file-backed registry is only wired by the factory). |
 | `transport` | No | Defaults to `NullTransport()`. |
 
+### Optional: provider-specific request params (`extra_body`)
+
+The OpenAI-compatible request is built from a closed field set
+(`model` / `messages` / `temperature` / `tools` / `max_tokens`). To reach a
+param that set does not expose — `reasoning_effort`, `top_p`, `seed`,
+`response_format`, or any provider-specific body field — pass `extra_body`.
+It is forwarded verbatim to the SDK's `.create(extra_body=...)`, which merges
+it into the JSON request body:
+
+```python
+agent = Agentao(
+    working_directory=workdir,
+    api_key="sk-...", base_url="https://api.openai.com/v1", model="gpt-5.4",
+    extra_body={"reasoning_effort": "high", "seed": 7},   # keyword-only
+)
+```
+
+- **Keyword-only**, and **mutually exclusive with `llm_client=`** — a host
+  injecting its own client passes `extra_body=` to that `LLMClient(...)`
+  constructor instead (the guard makes the mistake a loud `ValueError`, not a
+  silent no-op).
+- **Sub-agents inherit it** (like `temperature` / `max_tokens`); values are
+  redacted in `agentao.log` if their keys look like credentials
+  (`api_key`, `authorization`, `x-api-key`, …).
+- **No auto-recovery on model switch** — a stale `reasoning_effort` after
+  switching to a non-reasoning model 400s every call until cleared; dropping
+  model-specific keys on switch is the host's responsibility.
+- **CLI / factory path:** set `LLM_EXTRA_BODY` to a JSON object.
+
+Full contract: [`docs/design/host-llm-extra-params.md`](../design/host-llm-extra-params.md).
+
 ### Optional: silencing or redirecting `agentao.log`
 
 By default, `Agentao(...)` writes a rolling debug log to
