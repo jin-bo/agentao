@@ -14,8 +14,40 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import yaml
+
 
 _PATH_RE = re.compile(r'[\w./\\-]+\.\w{2,6}')
+
+# A YAML frontmatter block: an opening ``---`` fence on its own line, a body,
+# and a closing ``---`` fence on its own line. Both fences must be line-anchored
+# so a lone ``---`` thematic break in the middle of the document never matches.
+_FRONTMATTER_RE = re.compile(
+    r"^---[ \t]*\r?\n(?P<meta>.*?)\r?\n---[ \t]*(?:\r?\n|$)(?P<body>.*)$",
+    re.DOTALL,
+)
+
+
+def strip_frontmatter(content: str) -> str:
+    """Drop a leading YAML frontmatter block, returning just the body.
+
+    Stripping happens only when the document genuinely opens with a
+    frontmatter block — an opening ``---`` fence, a YAML *mapping*, and a
+    closing ``---`` fence. If the block is absent, malformed YAML, or parses
+    to a non-mapping (e.g. a stray ``---`` horizontal rule wrapping prose),
+    the content is returned untouched so real instructions are never silently
+    dropped.
+    """
+    match = _FRONTMATTER_RE.match(content)
+    if match is None:
+        return content
+    try:
+        meta = yaml.safe_load(match.group("meta"))
+    except yaml.YAMLError:
+        return content
+    if not isinstance(meta, dict):
+        return content
+    return match.group("body").lstrip("\n")
 
 
 def extract_context_hints(messages: List[Dict[str, Any]]) -> List[str]:
@@ -47,17 +79,27 @@ def load_project_instructions(
 ) -> Optional[str]:
     """Load project-specific instructions from ``AGENTAO.md`` if present.
 
-    Returns the file contents or ``None`` when the file is absent or
-    cannot be read. Errors are logged at WARNING and swallowed — the
-    agent should still start when the project has no AGENTAO.md.
+    A leading YAML frontmatter block (e.g. carried over from a Cursor rule or
+    another tool's instruction file) is stripped via :func:`strip_frontmatter`
+    so it does not leak into the system prompt. Returns the (frontmatter-free)
+    file contents or ``None`` when the file is absent or cannot be read. Errors
+    are logged at WARNING and swallowed — the agent should still start when the
+    project has no AGENTAO.md.
     """
     try:
         agentao_md = working_directory / "AGENTAO.md"
         if agentao_md.exists():
             content = agentao_md.read_text(encoding="utf-8")
+            body = strip_frontmatter(content)
             if logger is not None:
-                logger.info(f"Loaded project instructions from {agentao_md}")
-            return content
+                if body != content:
+                    logger.info(
+                        f"Loaded project instructions from {agentao_md} "
+                        f"(ignored leading YAML frontmatter)"
+                    )
+                else:
+                    logger.info(f"Loaded project instructions from {agentao_md}")
+            return body
     except Exception as exc:
         if logger is not None:
             logger.warning(f"Could not load AGENTAO.md: {exc}")

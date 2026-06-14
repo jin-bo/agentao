@@ -13,6 +13,19 @@ _Targeting 0.4.11. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **`AGENTAO.md` now drops a leading YAML frontmatter block before injecting
+  it into the system prompt.** Previously the file was read verbatim, so a
+  frontmatter block carried over from a Cursor rule or another tool's
+  instruction file (`---\nname: ...\n---`) leaked into the prompt as literal
+  text. `load_project_instructions` now routes the contents through a new
+  `agentao.prompts.strip_frontmatter()` helper. Stripping is conservative — it
+  only fires when the document genuinely opens with a frontmatter *mapping*
+  (opening `---` fence + YAML mapping + closing `---` fence); an absent block,
+  malformed YAML, or a stray `---` thematic break wrapping prose is left
+  untouched so real instructions are never silently dropped. The disk-read
+  path only; a host-injected `project_instructions=` string stays the host's
+  responsibility. The ignored-frontmatter case is logged at INFO.
+
 ### Fixed
 
 ---
