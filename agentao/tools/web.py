@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from bs4 import BeautifulSoup as _BeautifulSoup_t
 
 from .base import Tool
+from ..security.url_policy import UrlPolicyError, guarded_get
 
 logger = logging.getLogger("agentao.tools.web")
 
@@ -196,8 +197,14 @@ class WebFetchTool(Tool):
         }
 
         try:
-            with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-                response = client.get(url, headers=headers)
+            # SSRF guard: follow_redirects=False so guarded_get owns the
+            # redirect chase and re-validates the target on every hop. The
+            # static PermissionEngine blocklist already ran at the plan-phase
+            # gate on the original URL; this catches what a string check
+            # can't — names that *resolve* to private/loopback addresses and
+            # redirects into the internal network.
+            with httpx.Client(follow_redirects=False, timeout=30.0) as client:
+                response = guarded_get(client, url, headers=headers)
                 response.raise_for_status()
 
             html = response.text
@@ -225,6 +232,11 @@ class WebFetchTool(Tool):
                 f"{_truncate(body, 10000)}"
             )
 
+        except UrlPolicyError as e:
+            # Blocked target — do NOT fall through to the jina/crawl4ai
+            # fallbacks: those would exfiltrate the internal URL through a
+            # third party or fetch it via a local headless browser.
+            return f"Error: blocked outbound request — {e}"
         except httpx.TimeoutException:
             fallback_result = self._run_fallback(url, reason="httpx timeout")
             if fallback_result is not None:
@@ -240,7 +252,18 @@ class WebFetchTool(Tool):
 
     def _run_fallback(self, url: str, *, reason: str) -> str | None:
         """Returns None when fallback is ``none``, signalling the caller to
-        keep the primary result."""
+        keep the primary result.
+
+        SSRF note: ``url`` reaching here has already passed
+        ``validate_outbound_url`` on the primary path (a blocked target raises
+        ``UrlPolicyError``, which the caller returns without falling back). But
+        the fallbacks themselves are NOT per-hop guarded — Jina fetches the
+        target server-side and the crawl4ai headless browser follows
+        redirects / JS navigation on its own. Both are opt-in
+        (``AGENTAO_WEB_FETCH_FALLBACK``, default ``none``) and surfaced in the
+        tool description; closing the in-browser redirect path would require
+        intercepting Chromium's network, which is out of scope here.
+        """
         if self._fallback == _FALLBACK_NONE:
             return None
         if self._fallback == _FALLBACK_JINA:
