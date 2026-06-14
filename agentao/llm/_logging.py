@@ -17,6 +17,46 @@ import json
 from typing import Any, Dict
 
 
+#: Keys whose values are redacted before logging ``extra_body``. ``extra_body``
+#: can nest provider credentials (some gateways accept an API key in the body,
+#: or carry gateway-routing headers under ``extra_headers``), and the logger
+#: deliberately keeps secrets out of the log. Match is on the EXACT lower-cased
+#: key name — NOT a substring — so a benign ``max_tokens`` / ``*_tokens`` key
+#: is never over-redacted (``token`` != ``max_tokens``). Includes the common
+#: header-style credential names (``x-api-key``, ``proxy-authorization``, …)
+#: hosts use when passing gateway headers through.
+_SENSITIVE_KEYS = frozenset({
+    "authorization", "proxy-authorization",
+    "api_key", "apikey", "api-key", "x-api-key",
+    "api_token", "api-token", "x-api-token",
+    "token", "access_token", "auth_token", "auth-token", "x-auth-token",
+    "secret", "client_secret", "client-secret",
+    "password", "cookie", "set-cookie",
+})
+
+
+def _redact_sensitive(value: Any) -> Any:
+    """Return a deep copy of ``value`` with credential-like values masked.
+
+    Recurses through dicts, lists, and tuples; at any depth, a dict entry
+    whose key (lower-cased) is exactly one of :data:`_SENSITIVE_KEYS` has its
+    value replaced with ``"***"``. Scalars pass through unchanged. Tuples are
+    recursed (a credential nested inside a tuple value would otherwise be
+    logged in the clear) and preserved as tuples.
+    """
+    if isinstance(value, dict):
+        return {
+            k: ("***" if isinstance(k, str) and k.lower() in _SENSITIVE_KEYS
+                else _redact_sensitive(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_sensitive(v) for v in value)
+    return value
+
+
 class _LoggingMixin:
     """LLM request/response logging for :class:`LLMClient`."""
 
@@ -36,6 +76,14 @@ class _LoggingMixin:
         self.logger.info(f"Temperature: {kwargs.get('temperature')}")
         if kwargs.get('max_tokens'):
             self.logger.info(f"Max Tokens: {kwargs.get('max_tokens')}")
+
+        # Host-supplied request-body passthrough (one known key, not arbitrary
+        # kwargs). Values are recursively redacted — extra_body can nest
+        # provider credentials, and logging it raw would reintroduce the leak
+        # the logger otherwise avoids by keeping api_key out.
+        extra_body = kwargs.get('extra_body')
+        if extra_body:
+            self.logger.info(f"Extra Body: {_redact_sensitive(extra_body)}")
 
         # Log only new messages since last request (incremental)
         messages = kwargs.get('messages', [])

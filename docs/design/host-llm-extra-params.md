@@ -1,13 +1,13 @@
 # Host LLM request passthrough: `extra_body` (v1)
 
-**Status:** **Design — not yet implemented.** Surfaced by the goose 2026-06-13 pull reverse-review (finding "B"): the LLM request kwargs are a closed set, so a host cannot reach `reasoning_effort` / `top_p` / `seed` / `response_format` or any provider-specific field.
+**Status:** **Implemented (v1).** Surfaced by the goose 2026-06-13 pull reverse-review (finding "B"): the LLM request kwargs are a closed set, so a host cannot reach `reasoning_effort` / `top_p` / `seed` / `response_format` or any provider-specific field. Landed in `agentao/llm/client.py` (field + `_build_request_kwargs` + overlap warn), `agentao/llm/_logging.py` (redacted logging), `agentao/agent.py` (constructor wiring + guard + `_llm_config` snapshot), `agentao/agents/tools/_wrapper.py` (sub-agent inheritance, §4.2), `agentao/embedding/factory.py` (`LLM_EXTRA_BODY` env), `docs/reference/configuration.md`, and `tests/test_llm_client_extra_body.py`.
 **Mechanism note:** an earlier draft proposed a top-level-merge `extra_params` dict. A reverse review (verified against `openai 2.24.0`) found `.create()` has **no `**kwargs`** — unknown top-level keys raise `TypeError`, and the SDK's blessed escape hatch for arbitrary body fields is **`extra_body`**. v1 therefore forwards `extra_body` verbatim instead of merging keys top-level. See §2 for the full rationale.
 **Audience:** agentao maintainers building the host LLM-config surface; reviewers of the implementing PR.
 **Companions:**
 - `docs/design/host-llm-extra-params.zh.md` — Chinese version
 - `docs/design/embedded-host-contract.md` — the host-contract stability boundary (where this design belongs)
 - `docs/design/host-tool-injection.md` / `.zh.md` — sibling host-injection primitive (same "thread an explicit kwarg through the construction paths, defer the settings.json layer" shape)
-- `docs/reference/configuration.md` — §2 (`.env`); a **change site** — the `LLM_EXTRA_BODY` env var is **not yet** documented there and must be added by the implementing PR (settings.json file layer is deferred — see §8)
+- `docs/reference/configuration.md` — §2 (`.env`) documents the `LLM_EXTRA_BODY` env var (settings.json file layer is deferred — see §8)
 - `agentao/llm/client.py` — `__init__` (`def` at `90`), `chat()` kwargs (`318-330`) + non-streaming `with_raw_response.create` (`339`), `chat_stream()` kwargs (`450-462`) + streaming `create` (`613`), `reconfigure()` (`def` at `251`) — the main change sites
 - `agentao/llm/_logging.py` — `_log_request` (`def` at `23`)
 - `agentao/agent.py` — `_build_llm_client` `llm_kwargs` (`665-676`), mutual-exclusion guard (`284`)
@@ -119,9 +119,11 @@ These mutate the top-level `kwargs`; `extra_body` is a separate nested object th
 
 Same shape as `temperature` / `max_tokens`:
 
+**Placement caveat (Codex review P1):** on `Agentao.__init__`, `extra_body` must be **keyword-only** (declared after the `*`), **not** inserted into the top raw-config group next to `max_tokens`. Unlike `LLMClient.__init__` (which is fully keyword-only via a `*` right after `self`), `Agentao.__init__` keeps `api_key … plan_session` as **positional-or-keyword** for backward compatibility. Inserting `extra_body` among them shifts every legacy positional argument after `max_tokens` — a caller using `Agentao(key, url, model, temp, max_tok, confirmation_cb)` would bind the callback to `extra_body` (and trip the dict type guard). Declaring it keyword-only leaves all existing positional bindings intact; every in-tree caller already passes it by keyword.
+
 | Path | Change |
 |---|---|
-| **Embedded host** | `Agentao(..., extra_body={"reasoning_effort": "high"})` → thread into `_build_llm_client` `llm_kwargs` (`agent.py:665-676`), mirroring the existing `temperature` / `max_tokens` conditionals. **Plus the guard in §4.1.** |
+| **Embedded host** | `Agentao(..., extra_body={"reasoning_effort": "high"})` (keyword-only) → thread into `_build_llm_client` `llm_kwargs` (`agent.py:665-676`), mirroring the existing `temperature` / `max_tokens` conditionals. **Plus the guard in §4.1.** |
 | **CLI / env** | `discover_llm_kwargs()` (`factory.py:57`) reads `LLM_EXTRA_BODY` as a JSON **object**, parsed inside a `try/except`: malformed JSON → `warn + skip`. **It must also reject valid-but-non-object JSON** — `LLM_EXTRA_BODY=[]` / `"x"` / `3` parse fine but are invalid config; require `isinstance(parsed, dict)` and treat a non-object the same as malformed (warn + skip), so the **env-warning policy** governs the env path rather than a confusing downstream `TypeError` at construction (§3.1). **Note:** this is *intentionally more tolerant* than the existing `LLM_TEMPERATURE` / `LLM_MAX_TOKENS`, which call `float()` / `int()` directly and **raise** on malformed values (`factory.py:79-82`); `build_from_environment` only dodges that today by skipping discovery entirely when `llm_client` is supplied (`factory.py:134`). The `try/except` + `isinstance` check must be added explicitly — neither is inherited from a pre-existing tolerance. |
 
 ### 4.1 Constructor mutual-exclusion guard (required)
@@ -138,6 +140,10 @@ if llm_client is not None and any(
 
 **Why this is mandatory, not cosmetic:** `_resolve_llm_client()` returns an injected `llm_client` immediately and untouched (`agent.py:655`). If the implementer only follows the "thread into `_build_llm_client`" note, then `Agentao(llm_client=client, extra_body={...})` is a **silent no-op** — the build path never runs. A host that injects its own `LLMClient` must pass `extra_body=` to *that* client directly; the guard makes the mistake loud instead of silent, consistent with "a fully-constructed object always wins over its raw-config sibling" (`agent.py:280`).
 
+### 4.2 Sub-agent inheritance (required for completeness)
+
+Sub-agents are **rebuilt from the parent's live config snapshot** — `Agentao._llm_config` (`agent.py`) feeds `AgentToolWrapper` (`agentao/agents/tools/_wrapper.py`), which reconstructs a fresh `Agentao` via the **raw-config path**. That snapshot must include `extra_body` (mapped to `None` when the parent's is empty) or the parent's passthrough is **silently dropped for every sub-agent LLM call** — `reasoning_effort` is lost, a provider-mandatory body field 400s, only inside sub-agents. It is inherited exactly like `temperature` / `max_tokens` (the same §5 "host owns dropping model-specific keys" caveat applies when a sub-agent definition pins a different model). Caught by the code review of the implementing PR; the snapshot + the `extra_body=` arg on the wrapper's `Agentao(...)` call are part of the feature, not a follow-up.
+
 ## 5. `reconfigure()` / model-switch semantics
 
 `reconfigure()` (`client.py:251`) **preserves `self.extra_body`** — it is instance-level host config, not a model-detected quirk (those are the latches reset in `reset_capability_latches()`).
@@ -151,7 +157,7 @@ if llm_client is not None and any(
 
 ## 7. Edge cases
 
-- **Logging (explicit v1 change — not free, must redact)**: `_log_request` (`agentao/llm/_logging.py:23`) logs a **fixed field set** — `model`, `temperature`, `max_tokens`, `messages`, `tools` — *not* arbitrary request kwargs, so `extra_body` does **not** appear automatically. v1 logs `kwargs.get("extra_body")` as a single dedicated field (no "subtract a reserved set" guessing — it is one known key), with values **recursively redacted**: replace the value of any key whose name (lower-cased) is exactly one of `authorization`, `api_key`, `apikey`, `api-key`, `token`, `access_token`, `secret`, `password`, `cookie` — at any nesting depth — with `***` before logging. **Exact key-name match, not substring**, so a benign `max_tokens`-style or `*_tokens` key is not over-redacted. Rationale: `extra_body` can nest provider credentials (some gateways accept an API key in the body), and the current logger deliberately keeps `api_key` out of the log; logging `extra_body` raw would reintroduce that leak. The redactor is a small recursive helper in `_logging.py`; tested for a nested credential key (§9).
+- **Logging (explicit v1 change — not free, must redact)**: `_log_request` (`agentao/llm/_logging.py:23`) logs a **fixed field set** — `model`, `temperature`, `max_tokens`, `messages`, `tools` — *not* arbitrary request kwargs, so `extra_body` does **not** appear automatically. v1 logs `kwargs.get("extra_body")` as a single dedicated field (no "subtract a reserved set" guessing — it is one known key), with values **recursively redacted** over dicts, lists, **and tuples**: replace the value of any key whose name (lower-cased) is exactly one of a sensitive-key set with `***` before logging. The set covers both body-style and **header-style** credential names — `authorization`, `proxy-authorization`, `api_key`/`apikey`/`api-key`/`x-api-key`, `api_token`/`api-token`/`x-api-token`, `token`/`access_token`/`auth_token`/`auth-token`/`x-auth-token`, `secret`/`client_secret`/`client-secret`, `password`, `cookie`/`set-cookie` — because a host passing gateway headers through `extra_body` (e.g. `{"extra_headers": {"X-Api-Key": "…"}}`) must not leak them (Codex review P2). **Exact key-name match, not substring**, so a benign `max_tokens`-style or `*_tokens` key is not over-redacted. Rationale: `extra_body` can nest provider credentials (some gateways accept an API key in the body), and the current logger deliberately keeps `api_key` out of the log; logging `extra_body` raw would reintroduce that leak. The redactor is a small recursive helper in `_logging.py`; tested for nested + tuple-nested + header-style credential keys (§9).
 - **Back-compat**: empty/omitted `extra_body` is not added to `kwargs`, so request kwargs and logs are byte-identical to today; existing tests untouched.
 - **Type safety**: a non-dict `extra_body` raises `TypeError` at construction via the **explicit** `isinstance` guard in §3.1 — *not* via `dict(extra_body or {})` alone, which would accept a list-of-pairs and raise `ValueError` on other shapes.
 
@@ -181,7 +187,8 @@ Three surfaces are intentionally out of v1 scope:
 |---|---|
 | `agentao/llm/client.py` | add `extra_body` field + explicit `isinstance` guard (§3.1) + construction-time structural-overlap warn (§3.3); add the one `kwargs["extra_body"]` line via `_build_request_kwargs` (§3.2); preserve in `reconfigure()` |
 | `agentao/llm/_logging.py` | log `kwargs.get("extra_body")` in `_log_request`, **values recursively redacted** (exact key-name match) for sensitive keys (§7) |
-| `agentao/agent.py` | add `extra_body` kwarg; thread into `_build_llm_client`; **add to the mutual-exclusion guard** (§4.1) |
+| `agentao/agent.py` | add `extra_body` kwarg; thread into `_build_llm_client`; **add to the mutual-exclusion guard** (§4.1); add `extra_body` to the `_llm_config` snapshot so sub-agents inherit it (§4.2) |
+| `agentao/agents/tools/_wrapper.py` | read `extra_body` from the live config snapshot and pass it to the sub-agent `Agentao(...)` (§4.2) |
 | `agentao/embedding/factory.py` | parse `LLM_EXTRA_BODY` JSON in a `try/except` + `isinstance(parsed, dict)` (warn + skip on malformed **or** non-object) |
 | `docs/reference/configuration.md` | document the `LLM_EXTRA_BODY` env var (§2) — **not** a settings field (deferred, §8) |
 | `tests/test_llm_client_*.py` | new coverage per §9 |

@@ -1,13 +1,13 @@
 # Host LLM 请求直通：`extra_body`（v1）
 
-**状态：** **设计阶段——尚未实现。** 由 goose 2026-06-13 pull 的反向评审发现（发现项 "B"）：LLM 请求 kwargs 是一个封闭集，host 够不到 `reasoning_effort` / `top_p` / `seed` / `response_format` 或任何 provider 专有字段。
+**状态：** **已实现（v1）。** 由 goose 2026-06-13 pull 的反向评审发现（发现项 "B"）：LLM 请求 kwargs 是一个封闭集，host 够不到 `reasoning_effort` / `top_p` / `seed` / `response_format` 或任何 provider 专有字段。落地于 `agentao/llm/client.py`（字段 + `_build_request_kwargs` + overlap 告警）、`agentao/llm/_logging.py`（脱敏日志）、`agentao/agent.py`（构造接线 + 守卫 + `_llm_config` 快照）、`agentao/agents/tools/_wrapper.py`（子 agent 继承，§4.2）、`agentao/embedding/factory.py`（`LLM_EXTRA_BODY` 环境变量）、`docs/reference/configuration.md` 及 `tests/test_llm_client_extra_body.py`。
 **机制说明：** 早期草案曾提议一个"顶层合并"的 `extra_params` 字典。一次反向评审（对 `openai 2.24.0` 实测）发现 `.create()` **没有 `**kwargs`**——未知顶层键会抛 `TypeError`，而 SDK 传任意 body 字段的官方逃生舱是 **`extra_body`**。故 v1 改为原样转发 `extra_body`，而非把键合进顶层。完整理由见 §2。
 **读者：** 构建 host LLM 配置面的 agentao 维护者；实现 PR 的评审者。
 **配套文档：**
 - `docs/design/host-llm-extra-params.zh.md` —— 英文版为 `host-llm-extra-params.md`
 - `docs/design/embedded-host-contract.md` —— host 契约的稳定性边界（本设计归属之处）
 - `docs/design/host-tool-injection.md` / `.zh.md` —— 同类 host 注入原语（同样是"把一个显式 kwarg 穿过构造路径、延后 settings.json 层"的形状）
-- `docs/reference/configuration.md` —— §2（`.env`）；一个**改动点**——`LLM_EXTRA_BODY` 环境变量**尚未**在此文档化，须由实现 PR 补上（settings.json 文件层延后——见 §8）
+- `docs/reference/configuration.md` —— §2（`.env`）已文档化 `LLM_EXTRA_BODY` 环境变量（settings.json 文件层延后——见 §8）
 - `agentao/llm/client.py` —— `__init__`（`def` 在 `90`）、`chat()` kwargs（`318-330`）+ 非流式 `with_raw_response.create`（`339`）、`chat_stream()` kwargs（`450-462`）+ 流式 `create`（`613`）、`reconfigure()`（`def` 在 `251`）——主改动点
 - `agentao/llm/_logging.py` —— `_log_request`（`def` 在 `23`）
 - `agentao/agent.py` —— `_build_llm_client` 的 `llm_kwargs`（`665-676`）、互斥守卫（`284`）
@@ -119,9 +119,11 @@ def _build_request_kwargs(self, messages, tools, max_tokens, *, stream):
 
 与 `temperature` / `max_tokens` 同样的形状：
 
+**位置告诫（Codex 评审 P1）：** 在 `Agentao.__init__` 上,`extra_body` 必须是**仅关键字**(声明在 `*` 之后),**不能**插进顶部 raw-config 组紧挨 `max_tokens`。与 `LLMClient.__init__`(`self` 后紧跟 `*`,全员仅关键字)不同,`Agentao.__init__` 为向后兼容把 `api_key … plan_session` 保留为**位置-或-关键字**。把 `extra_body` 插进它们中间会让 `max_tokens` 之后的每个旧位置参数错位——调用方写 `Agentao(key, url, model, temp, max_tok, confirmation_cb)` 会把回调绑到 `extra_body`(并触发 dict 类型守卫)。声明为仅关键字则所有既有位置绑定不变;树内每个调用方本就按关键字传它。
+
 | 路径 | 改动 |
 |---|---|
-| **嵌入式 host** | `Agentao(..., extra_body={"reasoning_effort": "high"})` → 穿入 `_build_llm_client` 的 `llm_kwargs`（`agent.py:665-676`），复刻既有的 `temperature` / `max_tokens` 条件分支。**外加 §4.1 的守卫。** |
+| **嵌入式 host** | `Agentao(..., extra_body={"reasoning_effort": "high"})`(仅关键字)→ 穿入 `_build_llm_client` 的 `llm_kwargs`（`agent.py:665-676`），复刻既有的 `temperature` / `max_tokens` 条件分支。**外加 §4.1 的守卫。** |
 | **CLI / 环境变量** | `discover_llm_kwargs()`（`factory.py:57`）将 `LLM_EXTRA_BODY` 读为 JSON **对象**，置于 `try/except` 内解析：JSON 非法 → `告警 + 跳过`。**还须拒绝合法但非对象的 JSON**——`LLM_EXTRA_BODY=[]` / `"x"` / `3` 解析得通却是无效配置；要求 `isinstance(parsed, dict)`，把非对象按畸形同等对待（告警 + 跳过），从而由**环境告警策略**治理 env 路径，而非在构造时抛令人困惑的 `TypeError`（§3.1）。**注意：** 这是*有意比*既有 `LLM_TEMPERATURE` / `LLM_MAX_TOKENS` *更宽容*——后者直接调 `float()` / `int()`，遇畸形值会**抛错**（`factory.py:79-82`）；`build_from_environment` 今天只是在提供 `llm_client` 时整体跳过 discovery 才绕开（`factory.py:134`）。`try/except` 与 `isinstance` 检查都必须显式加上——两者都不是从某个既有容错继承来的。 |
 
 ### 4.1 构造互斥守卫（必需）
@@ -138,6 +140,10 @@ if llm_client is not None and any(
 
 **为何必需而非装饰：** `_resolve_llm_client()` 会立即原样返回注入的 `llm_client`（`agent.py:655`）。若实现者只遵循"穿入 `_build_llm_client`"那条注记，则 `Agentao(llm_client=client, extra_body={...})` 是个**静默空操作**——build 路径根本不执行。注入自有 `LLMClient` 的 host 必须把 `extra_body=` 直接传给*那个*客户端；守卫让这个错误响亮而非静默，与"已完整构造的对象永远胜过其原始-配置同胞"（`agent.py:280`）一致。
 
+### 4.2 子 agent 继承（完整性所需）
+
+子 agent 是**从父 agent 的实时配置快照重建**的——`Agentao._llm_config`（`agent.py`）喂给 `AgentToolWrapper`（`agentao/agents/tools/_wrapper.py`），后者经**原始-配置路径**重建一个全新 `Agentao`。该快照必须包含 `extra_body`（父为空时映射为 `None`），否则父的直通会对**每个子 agent 的 LLM 调用静默丢失**——`reasoning_effort` 丢失、provider 强制 body 字段 400，且只在子 agent 内发生。它与 `temperature` / `max_tokens` 同样被继承（当子 agent 定义钉了不同模型时，适用 §5 同款"host 负责丢弃模型专有键"的告诫）。由实现 PR 的代码评审发现；快照 + wrapper 的 `Agentao(...)` 调用上的 `extra_body=` 参数都是本特性的一部分，而非后续项。
+
 ## 5. `reconfigure()` / 切模型语义
 
 `reconfigure()`（`client.py:251`）**保留 `self.extra_body`**——它是实例级 host 配置，而非模型探测出的怪癖（后者是 `reset_capability_latches()` 重置的 latch）。
@@ -151,7 +157,7 @@ if llm_client is not None and any(
 
 ## 7. 边界情况
 
-- **日志（v1 显式改动——并非"免费"，必须脱敏）**：`_log_request`（`agentao/llm/_logging.py:23`）记录的是**固定字段集**——`model`、`temperature`、`max_tokens`、`messages`、`tools`——*而非*任意请求 kwargs，故 `extra_body` **不会**自动出现。v1 把 `kwargs.get("extra_body")` 作为单个专门字段记录（无需"扣除保留集"的猜测——它就是一个已知键），且值**递归脱敏**：把键名（小写后）精确等于 `authorization`、`api_key`、`apikey`、`api-key`、`token`、`access_token`、`secret`、`password`、`cookie` 之一的值——任意嵌套深度——在记录前替换为 `***`。**精确键名匹配，而非子串**，故 `max_tokens` 式或 `*_tokens` 的良性键不会被过度脱敏。理由：`extra_body` 可能嵌套 provider 凭据（有些网关在 body 里收 API key），而当前 logger 有意把 `api_key` 挡在日志外；裸记录 `extra_body` 会重新引入该泄漏。脱敏器是 `_logging.py` 里的一个小递归 helper；针对嵌套凭据键有测试（§9）。
+- **日志（v1 显式改动——并非"免费"，必须脱敏）**：`_log_request`（`agentao/llm/_logging.py:23`）记录的是**固定字段集**——`model`、`temperature`、`max_tokens`、`messages`、`tools`——*而非*任意请求 kwargs，故 `extra_body` **不会**自动出现。v1 把 `kwargs.get("extra_body")` 作为单个专门字段记录（无需"扣除保留集"的猜测——它就是一个已知键），且值在 dict、list **和 tuple** 上**递归脱敏**：把键名（小写后）精确等于敏感键集之一的值——任意嵌套深度——在记录前替换为 `***`。该集涵盖 body 式与**头部式**凭据名——`authorization`、`proxy-authorization`、`api_key`/`apikey`/`api-key`/`x-api-key`、`api_token`/`api-token`/`x-api-token`、`token`/`access_token`/`auth_token`/`auth-token`/`x-auth-token`、`secret`/`client_secret`/`client-secret`、`password`、`cookie`/`set-cookie`——因为 host 经 `extra_body` 透传网关头部（如 `{"extra_headers": {"X-Api-Key": "…"}}`）时不能泄漏它们（Codex 评审 P2）。**精确键名匹配，而非子串**，故 `max_tokens` 式或 `*_tokens` 的良性键不会被过度脱敏。理由：`extra_body` 可能嵌套 provider 凭据（有些网关在 body 里收 API key），而当前 logger 有意把 `api_key` 挡在日志外；裸记录 `extra_body` 会重新引入该泄漏。脱敏器是 `_logging.py` 里的一个小递归 helper；针对嵌套、tuple 嵌套、头部式凭据键有测试（§9）。
 - **向后兼容**：空/省略的 `extra_body` 不会加进 `kwargs`，故请求 kwargs 与日志都与今天逐字节一致；既有测试不受影响。
 - **类型安全**：非字典的 `extra_body` 经 §3.1 的**显式** `isinstance` 守卫在构造时抛 `TypeError`——*而非*仅靠 `dict(extra_body or {})`（后者会接受 pairs 列表，并对其他形状抛 `ValueError`）。
 
@@ -181,7 +187,8 @@ if llm_client is not None and any(
 |---|---|
 | `agentao/llm/client.py` | 加 `extra_body` 字段 + 显式 `isinstance` 守卫（§3.1）+ 构造时结构性重叠告警（§3.3）；经 `_build_request_kwargs`（§3.2）加 `kwargs["extra_body"]` 那一行；`reconfigure()` 中保留 |
 | `agentao/llm/_logging.py` | 在 `_log_request` 中记录 `kwargs.get("extra_body")`，敏感键的值**递归脱敏**（精确键名匹配）（§7） |
-| `agentao/agent.py` | 加 `extra_body` kwarg；穿入 `_build_llm_client`；**加入互斥守卫**（§4.1） |
+| `agentao/agent.py` | 加 `extra_body` kwarg；穿入 `_build_llm_client`；**加入互斥守卫**（§4.1）；把 `extra_body` 加进 `_llm_config` 快照让子 agent 继承（§4.2） |
+| `agentao/agents/tools/_wrapper.py` | 从实时配置快照读 `extra_body` 并传给子 agent 的 `Agentao(...)`（§4.2） |
 | `agentao/embedding/factory.py` | 在 `try/except` + `isinstance(parsed, dict)` 中解析 `LLM_EXTRA_BODY` JSON（畸形**或**非对象 → 告警 + 跳过） |
 | `docs/reference/configuration.md` | 文档化 `LLM_EXTRA_BODY` 环境变量（§2）——**非** settings 字段（延后，§8） |
 | `tests/test_llm_client_*.py` | 按 §9 新增覆盖 |

@@ -347,6 +347,10 @@ class AgentToolWrapper(Tool):
             else bool(live_cfg.get("omit_temperature", False))
         )
         max_tokens = live_cfg.get("max_tokens")
+        # Inherit the parent's request-body passthrough (extra_body) so a
+        # host-set reasoning_effort / provider-mandatory field reaches
+        # sub-agent LLM calls too — None when unset.
+        extra_body = live_cfg.get("extra_body")
 
         max_turns = self._definition.get("max_turns", 15)
         agent_name = self._definition["name"]
@@ -369,6 +373,7 @@ class AgentToolWrapper(Tool):
             model=model_name,
             temperature=temperature,
             max_tokens=max_tokens,
+            extra_body=extra_body,
             working_directory=self._working_directory,
             sandbox_policy=self._sandbox_policy,
             # Inherit the parent's background-task store so the

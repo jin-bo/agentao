@@ -71,6 +71,14 @@ class Agentao:
         plan_session: Optional[PlanSession] = None,
         *,
         working_directory: Path,
+        # Host LLM request-body passthrough. KEYWORD-ONLY (placed after ``*``)
+        # on purpose: inserting it up in the raw-config group would shift the
+        # legacy *positional* callback arguments (a caller passing
+        # ``Agentao(key, url, model, temp, max_tok, confirmation_cb)`` would
+        # bind the callback to extra_body). Same raw-config family as
+        # api_key/.../max_tokens above; mutually exclusive with llm_client=
+        # (see _validate_construction_args).
+        extra_body: Optional[Dict[str, Any]] = None,
         extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None,
         # ── Host tool injection ───────────────────────────────────────────
         extra_tools: Optional[Sequence["RegistrableTool"]] = None,
@@ -99,6 +107,14 @@ class Agentao:
             api_key: API key for LLM service.
             base_url: Base URL for API endpoint.
             model: Model name to use.
+            extra_body: Optional dict forwarded verbatim to the LLM
+                ``.create()`` call as the SDK's ``extra_body`` request
+                option (``reasoning_effort`` / ``top_p`` / ``seed`` /
+                ``response_format`` / any provider-specific field). Only
+                valid on the raw-config path; mutually exclusive with
+                ``llm_client=`` (a host injecting its own client passes
+                ``extra_body=`` to that client directly). See
+                ``docs/design/host-llm-extra-params.md``.
             transport: A Transport instance that receives all runtime events and
                        handles interactive requests (confirm_tool, ask_user, etc.).
                        If omitted and no legacy callbacks are provided, a NullTransport
@@ -173,6 +189,7 @@ class Agentao:
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            extra_body=extra_body,
             mcp_manager=mcp_manager,
             extra_mcp_servers=extra_mcp_servers,
             mcp_registry=mcp_registry,
@@ -219,6 +236,7 @@ class Agentao:
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            extra_body=extra_body,
             logger=logger,
         )
         self._init_skill_and_memory(skill_manager, memory_manager)
@@ -272,6 +290,7 @@ class Agentao:
         model: Optional[str],
         temperature: Optional[float],
         max_tokens: Optional[int],
+        extra_body: Optional[Dict[str, Any]],
         mcp_manager: Optional["McpClientManager"],
         extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]],
         mcp_registry: Optional["MCPRegistry"],
@@ -281,12 +300,18 @@ class Agentao:
         A fully-constructed object always wins over its raw-config
         sibling; supplying both is a programmer error.
         """
+        # ``extra_body`` belongs to the raw-config set: ``_resolve_llm_client``
+        # returns an injected ``llm_client`` untouched, so ``extra_body`` would
+        # be a SILENT no-op alongside it. The guard makes the mistake loud — a
+        # host with its own client passes ``extra_body=`` to that client.
         if llm_client is not None and any(
-            v is not None for v in (api_key, base_url, model, temperature, max_tokens)
+            v is not None
+            for v in (api_key, base_url, model, temperature, max_tokens, extra_body)
         ):
             raise ValueError(
                 "Agentao(): pass either llm_client= or "
-                "api_key/base_url/model/temperature/max_tokens, not both."
+                "api_key/base_url/model/temperature/max_tokens/extra_body, "
+                "not both."
             )
         if mcp_manager is not None and extra_mcp_servers is not None:
             raise ValueError(
@@ -644,6 +669,7 @@ class Agentao:
         model: Optional[str],
         temperature: Optional[float],
         max_tokens: Optional[int],
+        extra_body: Optional[Dict[str, Any]],
         logger: Optional[logging.Logger],
     ) -> LLMClient:
         """Return the injected client, or build one from raw provider config.
@@ -673,6 +699,8 @@ class Agentao:
             llm_kwargs["temperature"] = temperature
         if max_tokens is not None:
             llm_kwargs["max_tokens"] = max_tokens
+        if extra_body is not None:
+            llm_kwargs["extra_body"] = extra_body
         return LLMClient(**llm_kwargs)
 
     def _resolve_transport(self, transport, callbacks: Dict[str, Any]) -> None:
@@ -743,6 +771,12 @@ class Agentao:
             "temperature": self.llm.temperature,
             "omit_temperature": getattr(self.llm, "omit_temperature", False),
             "max_tokens": self.llm.max_tokens,
+            # Sub-agents inherit the parent's request-body passthrough
+            # (reasoning_effort / provider-mandatory fields) the same way they
+            # inherit temperature/max_tokens; ``None`` when unset so the
+            # sub-agent's raw-config build simply omits it. ``or None`` maps an
+            # empty dict to "unset".
+            "extra_body": getattr(self.llm, "extra_body", None) or None,
         }
 
     def add_host_event_observer(self, callback):

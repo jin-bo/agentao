@@ -59,10 +59,20 @@ def discover_llm_kwargs() -> Dict[str, Any]:
 
     Reads ``LLM_PROVIDER`` (default ``OPENAI``) and the provider-prefixed
     ``{PROVIDER}_API_KEY`` / ``{PROVIDER}_BASE_URL`` /
-    ``{PROVIDER}_MODEL``, plus the provider-agnostic ``LLM_TEMPERATURE``
-    and ``LLM_MAX_TOKENS``. Missing values are omitted from the returned
-    dict so the caller can ``setdefault`` / merge without colliding with
-    explicit ``None`` overrides.
+    ``{PROVIDER}_MODEL``, plus the provider-agnostic ``LLM_TEMPERATURE``,
+    ``LLM_MAX_TOKENS`` and ``LLM_EXTRA_BODY``. Missing values are omitted
+    from the returned dict so the caller can ``setdefault`` / merge without
+    colliding with explicit ``None`` overrides.
+
+    ``LLM_EXTRA_BODY`` is a JSON **object** (forwarded as the SDK's
+    ``extra_body`` request option). Unlike ``LLM_TEMPERATURE`` /
+    ``LLM_MAX_TOKENS`` — which call ``float()`` / ``int()`` and **raise** on
+    malformed values — a malformed *or* valid-but-non-object
+    ``LLM_EXTRA_BODY`` is intentionally tolerated: it is warned and skipped
+    so the env-warning policy governs the env path rather than a confusing
+    downstream ``TypeError`` at construction. An empty / whitespace-only
+    value is treated as unset (skipped **silently**, no warning) — a common
+    "disable this var" idiom should not log on every startup.
 
     Test code that wants to mirror the factory's contract (e.g. the
     suite's autouse credential-stub fixture) should call this rather
@@ -80,6 +90,21 @@ def discover_llm_kwargs() -> Dict[str, Any]:
         out["temperature"] = float(v)
     if (v := os.getenv("LLM_MAX_TOKENS")) is not None:
         out["max_tokens"] = int(v)
+    if (v := os.getenv("LLM_EXTRA_BODY")) is not None and v.strip():
+        try:
+            parsed = json.loads(v)
+        except (ValueError, TypeError):
+            logger.warning(
+                "LLM_EXTRA_BODY is not valid JSON; ignoring it."
+            )
+        else:
+            if isinstance(parsed, dict):
+                out["extra_body"] = parsed
+            else:
+                logger.warning(
+                    "LLM_EXTRA_BODY must be a JSON object (got %s); ignoring it.",
+                    type(parsed).__name__,
+                )
     return out
 
 
