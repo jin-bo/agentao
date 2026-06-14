@@ -5,6 +5,98 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.10] — 2026-06-14
+
+### Added
+
+- **Host LLM request passthrough: `Agentao(extra_body=...)`.** The LLM request
+  kwargs were a closed set, so a host could not reach `reasoning_effort` /
+  `top_p` / `seed` / `response_format` or any provider-specific body field
+  without subclassing `LLMClient` or monkeypatching — both off the
+  `agentao.host` contract. `extra_body` is the SDK-blessed escape hatch, now a
+  first-class harness primitive. (#91)
+  - Forwarded verbatim to the OpenAI SDK `.create()` body on both the
+    non-streaming and streaming paths via a single `_build_request_kwargs()`
+    (de-dups the previously closed kwargs dict); omitted when empty so requests
+    stay byte-identical.
+  - **Keyword-only** on the constructor so it never shifts the legacy
+    positional callback args; mutually exclusive with `llm_client=` (a loud
+    `ValueError`, not a silent no-op); deep-copied at construction so a host
+    mutating a nested value it still holds cannot alter in-flight requests.
+  - Sub-agents inherit it via the `_llm_config` snapshot. `reconfigure()`
+    preserves it across a model switch with **no auto-recovery latch** — the
+    host owns dropping model-specific keys (a stale `reasoning_effort` will 400
+    until cleared), unlike the `omit_temperature` / `max_completion_tokens`
+    latches that are reset.
+  - Logged with recursive credential redaction (exact lower-cased key-name
+    match over dict/list/tuple; covers body and header-style names like
+    `x-api-key`, `authorization`, `client_secret`) so a benign `*_tokens` key
+    is not over-redacted.
+  - Env var `LLM_EXTRA_BODY` (JSON object; malformed or valid-but-non-object →
+    warn + skip; empty → unset). `extra_headers`, `settings.json`, and a
+    `/param` command are deferred (§8).
+  - Design: `docs/design/host-llm-extra-params.md` / `.zh.md`.
+
+### Changed
+
+- **Context-window threshold checks anchor to the real Tier-1 prompt-token
+  count.** `needs_compression` / `needs_microcompaction` re-encoded the entire
+  history through tiktoken twice per turn even though the real `prompt_tokens`
+  from the prior API response was already recorded and went unused. The
+  threshold estimate now reuses that count for the already-sent prefix and
+  locally estimates only the messages appended since. (#90)
+  - Behavior note: the Tier-1 count includes system + tool-schema tokens the
+    old local estimate omitted, so thresholds now fire on the true prompt
+    size — marginally earlier and more accurate.
+  - The anchor is invalidated on every history-replace path — full
+    compression, microcompaction (previously a latent staleness bug),
+    `/sessions resume`, ACP session load, in-loop overflow recovery, manual
+    `/compact`, `clear_history`, and model/provider switch — via a single
+    `invalidate_token_anchor()` helper that keeps the paired `(count, tokens)`
+    invariant. A malformed provider `prompt_tokens` field falls back to the
+    full local estimate rather than crashing the threshold path.
+
+### Fixed
+
+- **Context-overflow detection hardened with a provider table + negative
+  guard.** `is_context_too_long_error` was a 7-phrase substring matcher with no
+  negative guard: it missed overflow errors from xAI / Google / Bedrock /
+  OpenRouter / Together / Mistral / llama.cpp / LM Studio / Kimi / Ollama, and
+  its fallback phrase "too many tokens" misclassified Bedrock throttling
+  (`ThrottlingException: Too many tokens...`) as overflow — triggering a
+  destructive history compaction on a transient error. Rewritten as a two-tier
+  compiled-regex table: a broadened positive pattern set, plus a negative set
+  (throttling / rate limit / 429 / 503) checked first that short-circuits to
+  `False`. Adds 22 positive provider cases + 5 guard cases. (#88)
+- **Compaction summary now closes with an end-of-summary marker.** The summary
+  was opened by the `[Compact Boundary]` system message but had no terminator,
+  so the summarizer's "## 9. Next Step" section could read as a live
+  instruction and the kept messages after it blurred into the summary. A
+  `SUMMARY_END_MARKER` plus a one-line "historical context, resume below, do
+  not re-execute completed work" frame gives the block a symmetric open/close
+  bracket; on re-summarization the marker and frame are stripped (anchored on
+  the `[Conversation Summary]` prefix) so they never accumulate or truncate an
+  unrelated message that merely contains the marker substring. (#89)
+
+### Security
+
+- **Resolve-based SSRF guard for `web_fetch`.** The only SSRF defense was the
+  `PermissionEngine` string blocklist, matched on the original URL at the
+  plan-phase gate — it missed hostnames that *resolve* to private / loopback /
+  link-local addresses (DNS rebinding, public names pointed at `127.0.0.1` /
+  `169.254.169.254`), alternate IP encodings, and redirect hops into the
+  internal network (the client used `follow_redirects=True` with no per-hop
+  check); 8 of 13 bypass vectors slipped through. New
+  `agentao/security/url_policy.py`: `validate_outbound_url()` resolves the host
+  and rejects any non-global address, normalizes the hostname (trailing dot /
+  case), rejects local/internal names, single-label hosts and embedded creds,
+  and unwraps v4-mapped / 6to4 / NAT64 IPv6 forms; `guarded_get()` drives the
+  redirect chase with `follow_redirects=False` and re-validates every hop. Both
+  are wired into `WebFetchTool.execute()`; the static blocklist stays as the
+  I/O-free first layer (defense in depth). (#92)
+
+---
+
 ## [0.4.9] — 2026-06-10
 
 ### Added
