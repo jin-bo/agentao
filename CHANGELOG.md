@@ -5,11 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.4.11. Add entries under the relevant heading as work lands._
-
-### Added
+## [0.4.11] — 2026-06-14
 
 ### Changed
 
@@ -38,8 +34,6 @@ _Targeting 0.4.11. Add entries under the relevant heading as work lands._
   non-mapping block degrades to `{}` instead of raising `AttributeError`. (The
   AGENTAO.md `strip_frontmatter` helper stays separate by design: it uses a
   stricter, line-anchored fence match for free-form prose.)
-
-### Fixed
 
 ---
 
