@@ -30,7 +30,8 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from agentao.permissions import PermissionMode
 
 from ._handler_utils import hold_idle_turn_lock, require_active_session
-from .protocol import INVALID_REQUEST, METHOD_SESSION_SET_MODE, METHOD_SESSION_UPDATE
+from ._transport_helpers import write_session_update
+from .protocol import INVALID_REQUEST, METHOD_SESSION_SET_MODE
 from .server import JsonRpcHandlerError
 
 if TYPE_CHECKING:
@@ -68,15 +69,10 @@ def _emit_current_mode_update(
     Best-effort: a notification failure must not fail the set_mode request.
     """
     try:
-        server.write_notification(
-            METHOD_SESSION_UPDATE,
-            {
-                "sessionId": session_id,
-                "update": {
-                    "sessionUpdate": "current_mode_update",
-                    "currentModeId": mode_id,
-                },
-            },
+        write_session_update(
+            server,
+            session_id,
+            {"sessionUpdate": "current_mode_update", "currentModeId": mode_id},
         )
     except Exception:
         logger.exception(

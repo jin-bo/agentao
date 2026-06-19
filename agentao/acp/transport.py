@@ -109,13 +109,13 @@ from typing import TYPE_CHECKING, Any, Dict
 
 from agentao.transport.events import AgentEvent, EventType
 
-from .protocol import METHOD_SESSION_UPDATE
 from ._transport_helpers import (
     _json_safe,
     _text_block,
     _todo_write_plan,
     _tool_content_text,
     _tool_kind,
+    write_session_update,
 )
 from ._transport_interaction import _InteractionMixin, _build_permission_options
 from ._transport_interaction import (  # re-exported for back-compat
@@ -201,10 +201,7 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
             if update is not None:
                 # Stamp the runtime payload version (independent of ACP_PROTOCOL_VERSION).
                 update["schema_version"] = event.schema_version
-                self._server.write_notification(
-                    METHOD_SESSION_UPDATE,
-                    {"sessionId": self._session_id, "update": update},
-                )
+                write_session_update(self._server, self._session_id, update)
         except Exception:
             logger.exception(
                 "acp: failed to emit session/update for event %s on session %s",

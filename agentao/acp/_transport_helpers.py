@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
+from .protocol import METHOD_SESSION_UPDATE
+
 
 # ---------------------------------------------------------------------------
 # Tool name → ACP tool-call kind
@@ -127,3 +129,28 @@ def _tool_content_text(text: str) -> Dict[str, Any]:
     terminal variants we do not use in v1).
     """
     return {"type": "content", "content": _text_block(text)}
+
+
+# ---------------------------------------------------------------------------
+# session/update envelope
+# ---------------------------------------------------------------------------
+
+def write_session_update(server: Any, session_id: str, update: Dict[str, Any]) -> None:
+    """Write one ``session/update`` notification with the standard envelope.
+
+    Centralizes the ``{"sessionId", "update"}`` envelope and the
+    ``METHOD_SESSION_UPDATE`` method constant shared by the live event path
+    (:meth:`ACPTransport.emit`), the history-replay path
+    (:meth:`_ReplayMixin._emit_update`), and the set_mode handler
+    (:func:`agentao.acp.session_set_mode._emit_current_mode_update`) — so a
+    future envelope-shape change is a one-line edit instead of three.
+
+    Deliberately does **not** catch exceptions: each caller owns its own
+    error policy (the live and replay paths log-and-swallow with
+    site-specific messages; set_mode wraps best-effort). A bare write that
+    raises propagates to that caller's handler.
+    """
+    server.write_notification(
+        METHOD_SESSION_UPDATE,
+        {"sessionId": session_id, "update": update},
+    )
