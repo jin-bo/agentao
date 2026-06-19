@@ -14,13 +14,13 @@ import re
 import uuid
 from typing import Any, Dict, Iterable, List
 
-from .protocol import METHOD_SESSION_UPDATE
 from ._transport_helpers import (
     _json_safe,
     _text_block,
     _todo_write_plan,
     _tool_content_text,
     _tool_kind,
+    write_session_update,
 )
 
 logger = logging.getLogger(__name__)
@@ -303,10 +303,7 @@ class _ReplayMixin:
         Errors are logged and swallowed — replay must be best-effort.
         """
         try:
-            self._server.write_notification(
-                METHOD_SESSION_UPDATE,
-                {"sessionId": self._session_id, "update": update},
-            )
+            write_session_update(self._server, self._session_id, update)
         except Exception:
             logger.exception(
                 "acp: failed to write replay session/update for session %s",
