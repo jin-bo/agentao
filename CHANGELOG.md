@@ -5,15 +5,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.4.12] — 2026-06-19
 
-_Targeting 0.4.12. Add entries under the relevant heading as work lands._
+An **ACP-surface + internal-cleanup** release on top of 0.4.11. The ACP server
+gains G4 session/update emissions (permission modes, task plan) and replays
+`todo_write` as a plan on `session/load`; the rest is an evidence-backed
+optimization pass (packaging slim-down, hot-path token counting, two latent cwd
+bugs fixed) plus duplication cleanup. No public Python-API, schema, or config
+break; upgrade in place.
 
 ### Added
 
+- **ACP G4 — permission modes and the task plan are surfaced as
+  `session/update`.** The server now emits the active permission mode and the
+  current task plan over `session/update`, and replays a recorded `todo_write`
+  as a `plan` update on `session/load`, so a reconnecting client reconstructs
+  plan state. (#101, #102)
+
 ### Changed
 
+- **Packaging: removed five dead optional extras.** `[pdf]` / `[excel]` /
+  `[image]` / `[crypto]` / `[google]` had zero in-tree consumers and dragged
+  grpc/protobuf, pandas/numpy, etc. into `[full]` for nothing. They are dropped
+  from `[project.optional-dependencies]` and from `[full]`, which now closes
+  over `cli + web + i18n + crawl4ai + tokenizer` only (122 → 106 packages in the
+  CI freeze baseline). `pip install 'agentao[pdf]'` (etc.) no longer resolves;
+  the Gemini path was always OpenAI-compatible and never imported `google-genai`.
+  See `docs/design/optimization-opportunities-review.md` (T1.1).
+- **Internal consolidations and hot-path tidy-ups (behavior-preserving).**
+  `_heuristic_token_count` drops its per-character Python loop for an
+  integer-exact vectorized count (T1.2); both compaction predicates share one
+  per-iteration token estimate instead of computing it twice (T1.3);
+  `factory.resolve_provider_name()` unifies the `LLM_PROVIDER` read across the
+  factory / diagnostics / CLI (T2.2); a new `split_subcommand()` /
+  `unknown_subcommand()` collapse the duplicated CLI dispatch preamble/footer
+  (T2.4); the pure-Python search fallback shares the match-formatting helper
+  (T2.6); a new ACP `resolve_session()` backs both `require_active_session` and
+  `session/cancel` (T2.1); the `session/update` envelope is centralized in one
+  helper (#104); and the replay back-compat comment is regrouped so the live
+  `*_replay()` API is no longer mislabeled "remove in 0.5.0" (T1.5).
+
 ### Fixed
+
+- **ACP: `session/update` `schema_version` is typed as `int`, not `str`.** (#103)
+- **CLI: `.agentao/settings.json` is read *and* written against the resolved
+  project root.** Previously both `_load_settings` and `_save_settings` used a
+  cwd-relative `Path(".agentao")`, so a CLI launched from a subdirectory
+  persisted `mode` to a file the factory never reads. Both now go through
+  `replay.config.settings_path()` bound to the agent's frozen
+  `working_directory`. (T2.3)
+- **Tools: `CodebaseInvestigatorTool` resolves its directory against the session
+  `working_directory`.** It used a raw `Path(directory).expanduser()`, bypassing
+  the per-session cwd binding the base resolver enforces; it now uses
+  `_resolve_directory`, closing a latent ACP per-session-cwd leak. (T2.5)
 
 ---
 
