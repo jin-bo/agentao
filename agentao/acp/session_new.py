@@ -32,6 +32,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
+from agentao.permissions import PermissionMode
+
 from .mcp_translate import translate_acp_mcp_servers
 from .models import AcpSessionState
 from .protocol import METHOD_SESSION_NEW, SERVER_NOT_INITIALIZED
@@ -45,6 +47,41 @@ if TYPE_CHECKING:
     from .server import AcpServer
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# ACP session modes (SessionModeState) from the permission presets
+# ---------------------------------------------------------------------------
+
+# Human labels for the permission presets surfaced as ACP session modes.
+# Keyed by the enum so the advertised list can't drift from PermissionMode.
+_MODE_LABELS: Dict[PermissionMode, tuple] = {
+    PermissionMode.READ_ONLY: ("Read-only", "No writes or shell."),
+    PermissionMode.WORKSPACE_WRITE: ("Workspace write", "Writes + safe shell; asks for web."),
+    PermissionMode.FULL_ACCESS: ("Full access", "All tools, no prompts."),
+    PermissionMode.PLAN: ("Plan", "Plans only; does not execute."),
+}
+
+# The advertised mode catalog is static (only ``currentModeId`` is dynamic),
+# so build it once at import rather than on every session/new.
+_AVAILABLE_MODES: List[Dict[str, str]] = [
+    {"id": mode.value, "name": label, "description": desc}
+    for mode, (label, desc) in _MODE_LABELS.items()
+]
+
+
+def _session_modes(state: AcpSessionState) -> Optional[Dict[str, Any]]:
+    """Build the ACP ``modes`` (``SessionModeState``) for the session/new
+    response from the session's live permission engine.
+
+    Returns ``None`` (field omitted) when the session has no engine — a
+    standard client then simply sees no mode selector.
+    """
+    agent = state.agent
+    engine = getattr(agent, "permission_engine", None) if agent is not None else None
+    if engine is None:
+        return None
+    return {"currentModeId": engine.active_mode.value, "availableModes": _AVAILABLE_MODES}
 
 
 # ---------------------------------------------------------------------------
@@ -418,10 +455,16 @@ def handle_session_new(
     # Advertise the model config option so clients can switch model/provider
     # via the standard ``session/set_config_option`` path. Default catalog is
     # the single current ``provider/model``; richer catalogs are host-injected.
-    return {
+    response: Dict[str, Any] = {
         "sessionId": session_id,
         "configOptions": config_options_for_session(server, state),
     }
+    # Advertise the permission presets as ACP session modes so a client can
+    # render a mode selector and drive ``session/set_mode``.
+    modes = _session_modes(state)
+    if modes is not None:
+        response["modes"] = modes
+    return response
 
 
 # ---------------------------------------------------------------------------

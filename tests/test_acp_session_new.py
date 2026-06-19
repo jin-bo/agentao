@@ -32,6 +32,7 @@ from agentao.acp.protocol import (
 from agentao.acp.server import AcpServer
 from agentao.acp.session_manager import DuplicateSessionError
 from agentao.acp.transport import ACPTransport
+from agentao.permissions import PermissionMode
 
 from .support.acp_agents import (
     ExplodingAgent,
@@ -615,3 +616,76 @@ def test_session_new_assigns_session_id_to_agent(initialized_server, abs_tmp_dir
     assert state.agent is calls[0]["transport"]._server.sessions.require(
         session_id
     ).agent
+
+
+# ---------------------------------------------------------------------------
+# Session modes (G4) — typed SessionModeState on the session/new response
+# ---------------------------------------------------------------------------
+
+class _StubEngine:
+    """Minimal permission-engine stand-in exposing ``active_mode``."""
+
+    def __init__(self, mode: PermissionMode = PermissionMode.WORKSPACE_WRITE) -> None:
+        self.active_mode = mode
+
+
+def _moded_factory(mode: PermissionMode = PermissionMode.WORKSPACE_WRITE):
+    """Agent factory whose agent carries a permission engine in ``mode``."""
+
+    def factory(**kwargs):
+        agent = FakeAgent()
+        agent.permission_engine = _StubEngine(mode)  # type: ignore[attr-defined]
+        return agent
+
+    return factory
+
+
+_EXPECTED_MODE_IDS = ["read-only", "workspace-write", "full-access", "plan"]
+
+
+def test_session_new_advertises_typed_modes(initialized_server, abs_tmp_dir):
+    result = acp_session_new.handle_session_new(
+        initialized_server,
+        _minimal_params(abs_tmp_dir),
+        agent_factory=_moded_factory(PermissionMode.WORKSPACE_WRITE),
+    )
+    modes = result["modes"]
+    assert modes["currentModeId"] == "workspace-write"
+    assert [m["id"] for m in modes["availableModes"]] == _EXPECTED_MODE_IDS
+    # Every advertised mode carries id + name (+ description here).
+    for m in modes["availableModes"]:
+        assert set(m) >= {"id", "name", "description"}
+
+
+def test_session_new_current_mode_reflects_engine(initialized_server, abs_tmp_dir):
+    result = acp_session_new.handle_session_new(
+        initialized_server,
+        _minimal_params(abs_tmp_dir),
+        agent_factory=_moded_factory(PermissionMode.READ_ONLY),
+    )
+    assert result["modes"]["currentModeId"] == "read-only"
+
+
+def test_session_new_omits_modes_without_engine(initialized_server, abs_tmp_dir):
+    # The recording factory yields a FakeAgent with no permission_engine.
+    factory, _ = make_recording_factory()
+    result = acp_session_new.handle_session_new(
+        initialized_server, _minimal_params(abs_tmp_dir), agent_factory=factory
+    )
+    assert "modes" not in result
+
+
+def test_session_modes_helper_none_without_engine():
+    state = AcpSessionState(session_id="x")
+    state.agent = FakeAgent()  # type: ignore[assignment]
+    assert acp_session_new._session_modes(state) is None
+
+
+def test_session_modes_helper_shape():
+    state = AcpSessionState(session_id="x")
+    agent = FakeAgent()
+    agent.permission_engine = _StubEngine(PermissionMode.FULL_ACCESS)  # type: ignore[attr-defined]
+    state.agent = agent  # type: ignore[assignment]
+    modes = acp_session_new._session_modes(state)
+    assert modes["currentModeId"] == "full-access"
+    assert [m["id"] for m in modes["availableModes"]] == _EXPECTED_MODE_IDS

@@ -18,7 +18,7 @@ import pytest
 
 from agentao.acp.protocol import METHOD_SESSION_UPDATE
 from agentao.acp.server import AcpServer
-from agentao.acp.transport import ACPTransport, _json_safe, _tool_kind
+from agentao.acp.transport import ACPTransport, _json_safe, _todo_write_plan, _tool_kind
 from agentao.transport.events import AgentEvent, EventType
 
 
@@ -247,6 +247,161 @@ def test_tool_complete_cancelled_maps_to_failed(transport):
         )
     )
     assert _last_update(server)["status"] == "failed"
+
+
+# ---------------------------------------------------------------------------
+# todo_write → plan (G4)
+#
+# The plan is DEFERRED: TOOL_START stashes it and emits nothing; the `plan`
+# update is emitted from TOOL_COMPLETE only when status == "ok". This keeps a
+# denied (read-only) or failed checklist update from rendering as applied, and
+# lets the empty/malformed fallback `tool_call` complete normally (no orphan).
+# ---------------------------------------------------------------------------
+
+_VALID_TODOS = {
+    "tool": "todo_write",
+    "call_id": "uuid-9",
+    "args": {
+        "todos": [
+            {"content": "Investigate", "status": "in_progress"},
+            {"content": "Fix", "status": "pending"},
+        ]
+    },
+}
+_EXPECTED_PLAN = {
+    "sessionUpdate": "plan",
+    "entries": [
+        {"content": "Investigate", "priority": "medium", "status": "in_progress"},
+        {"content": "Fix", "priority": "medium", "status": "pending"},
+    ],
+    "schema_version": 1,
+}
+
+
+def test_todo_write_start_defers_then_complete_emits_plan(transport):
+    t, server = transport
+    # TOOL_START emits nothing — the plan is deferred until the call applies.
+    t.emit(AgentEvent(EventType.TOOL_START, _VALID_TODOS))
+    assert server.notifications == []
+    # TOOL_COMPLETE (ok) emits the deferred plan; no toolCallId leaks through.
+    t.emit(
+        AgentEvent(
+            EventType.TOOL_COMPLETE,
+            {"tool": "todo_write", "call_id": "uuid-9", "status": "ok"},
+        )
+    )
+    upd = _last_update(server)
+    assert upd == _EXPECTED_PLAN
+    assert "toolCallId" not in upd
+
+
+def test_todo_write_denied_or_failed_emits_no_plan(transport):
+    """A todo_write denied (read-only mode → cancelled) or failed must NOT
+    render a plan as if it applied, and must not orphan anything."""
+    for status in ("cancelled", "error"):
+        t, server = transport
+        t.emit(AgentEvent(EventType.TOOL_START, {**_VALID_TODOS, "call_id": status}))
+        t.emit(
+            AgentEvent(
+                EventType.TOOL_COMPLETE,
+                {"tool": "todo_write", "call_id": status, "status": status},
+            )
+        )
+        assert server.notifications == [], f"status={status} should emit nothing"
+
+
+def test_todo_write_malformed_falls_back_to_tool_call_that_completes(transport):
+    """All-or-nothing: any malformed entry → fall back to a normal tool_call
+    (carrying the raw args), and that tool_call MUST complete (no orphan)."""
+    t, server = transport
+    t.emit(
+        AgentEvent(
+            EventType.TOOL_START,
+            {
+                "tool": "todo_write",
+                "call_id": "u",
+                "args": {"todos": [{"content": "ok", "status": "pending"},
+                                    {"content": 123, "status": "pending"}]},
+            },
+        )
+    )
+    start = _last_update(server)
+    assert start["sessionUpdate"] == "tool_call"
+    assert start["title"] == "todo_write"
+    # The fallback tool_call is closed by its TOOL_COMPLETE (the orphan bug).
+    t.emit(
+        AgentEvent(
+            EventType.TOOL_COMPLETE,
+            {"tool": "todo_write", "call_id": "u", "status": "ok"},
+        )
+    )
+    end = _last_update(server)
+    assert end["sessionUpdate"] == "tool_call_update"
+    assert end["status"] == "completed"
+    assert end["toolCallId"] == "u"
+
+
+def test_todo_write_empty_falls_back_to_tool_call(transport):
+    t, server = transport
+    t.emit(
+        AgentEvent(
+            EventType.TOOL_START,
+            {"tool": "todo_write", "call_id": "u", "args": {"todos": []}},
+        )
+    )
+    assert _last_update(server)["sessionUpdate"] == "tool_call"
+
+
+def test_non_todo_write_complete_still_emits(transport):
+    """Guard: the deferral/drop is scoped to todo_write only."""
+    t, server = transport
+    t.emit(
+        AgentEvent(
+            EventType.TOOL_COMPLETE,
+            {"tool": "read_file", "call_id": "u", "status": "ok"},
+        )
+    )
+    assert _last_update(server)["status"] == "completed"
+
+
+# -- _todo_write_plan unit ---------------------------------------------------
+
+def test_todo_write_plan_valid_synthesizes_medium_priority():
+    plan = _todo_write_plan(
+        {"todos": [{"content": "a", "status": "pending"},
+                   {"content": "b", "status": "completed"}]}
+    )
+    assert plan == {
+        "sessionUpdate": "plan",
+        "entries": [
+            {"content": "a", "priority": "medium", "status": "pending"},
+            {"content": "b", "priority": "medium", "status": "completed"},
+        ],
+    }
+
+
+def test_todo_write_plan_all_or_nothing_on_any_invalid_entry():
+    """A single malformed entry voids the whole plan (full-replace semantics
+    mean a truncated plan would silently drop a real task) → None → fallback."""
+    assert _todo_write_plan(
+        {"todos": [{"content": "ok", "status": "pending"},
+                   {"content": 5, "status": "pending"}]}      # non-str content
+    ) is None
+    assert _todo_write_plan(
+        {"todos": [{"content": "ok", "status": "pending"},
+                   {"content": "x", "status": "weird"}]}      # bad status
+    ) is None
+    assert _todo_write_plan(
+        {"todos": [{"content": "ok", "status": "pending"}, "not-a-dict"]}
+    ) is None
+
+
+def test_todo_write_plan_none_on_empty_or_bad_shape():
+    assert _todo_write_plan({"todos": []}) is None
+    assert _todo_write_plan({"todos": [{"content": 1, "status": "x"}]}) is None
+    assert _todo_write_plan({"todos": "nope"}) is None
+    assert _todo_write_plan("nope") is None
+    assert _todo_write_plan({}) is None
 
 
 # ---------------------------------------------------------------------------

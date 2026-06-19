@@ -49,6 +49,46 @@ def _tool_kind(tool_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# todo_write → ACP ``plan`` update
+# ---------------------------------------------------------------------------
+
+_PLAN_ENTRY_STATUS = frozenset({"pending", "in_progress", "completed"})
+
+
+def _todo_write_plan(raw_args: Any) -> Dict[str, Any] | None:
+    """Map ``todo_write`` tool args to an ACP ``plan`` update, or ``None``.
+
+    The ``todos`` list comes from the LLM and may be malformed, so it is
+    validated rather than trusted: every entry must be a dict with a string
+    ``content`` and a ``status`` in the ACP ``PlanEntryStatus`` set. agentao
+    todos have no priority while ACP requires one, so every entry is emitted
+    as ``"medium"``.
+
+    Validation is **all-or-nothing**: an ACP ``plan`` replaces the *entire*
+    checklist on each update, so silently dropping a malformed entry would
+    make a real task vanish from the client's view. If the list is empty or
+    *any* entry is malformed, return ``None`` so the caller falls back to the
+    normal ``tool_call`` mapping (which carries the full raw args) instead of
+    emitting a truncated or empty plan.
+    """
+    todos = raw_args.get("todos") if isinstance(raw_args, dict) else None
+    if not isinstance(todos, list) or not todos:
+        return None
+    entries = []
+    for t in todos:
+        if not (
+            isinstance(t, dict)
+            and isinstance(t.get("content"), str)
+            and t.get("status") in _PLAN_ENTRY_STATUS
+        ):
+            return None  # any malformed entry → fall back, never truncate
+        entries.append(
+            {"content": t["content"], "priority": "medium", "status": t["status"]}
+        )
+    return {"sessionUpdate": "plan", "entries": entries}
+
+
+# ---------------------------------------------------------------------------
 # JSON safety coercion
 # ---------------------------------------------------------------------------
 

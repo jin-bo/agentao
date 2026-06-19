@@ -732,6 +732,41 @@
       "title": "AcpPermissionOption",
       "type": "object"
     },
+    "AcpPlanEntry": {
+      "additionalProperties": false,
+      "description": "One entry in a ``plan`` update (``PlanEntry``).\n\nagentao's ``todo_write`` carries only ``content`` + ``status``; ACP\nrequires ``priority`` too, so the transport synthesizes ``\"medium\"``.",
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "priority": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "priority",
+        "status"
+      ],
+      "title": "AcpPlanEntry",
+      "type": "object"
+    },
     "AcpRequestPermissionCancelled": {
       "additionalProperties": false,
       "properties": {
@@ -977,6 +1012,61 @@
       "title": "AcpSessionLoadResponse",
       "type": "object"
     },
+    "AcpSessionMode": {
+      "additionalProperties": false,
+      "description": "One selectable ACP session mode (``SessionMode``).\n\nagentao surfaces each :class:`~agentao.permissions.PermissionMode`\npreset as one of these: ``id`` is the preset's string value (the ACP\n``modeId`` a client passes to ``session/set_mode``), ``name`` is a\nhuman label, ``description`` an optional one-liner.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "AcpSessionMode",
+      "type": "object"
+    },
+    "AcpSessionModeState": {
+      "additionalProperties": false,
+      "description": "``SessionModeState`` \u2014 advertised on the ``session/new`` response.\n\n``currentModeId`` is the active preset; ``availableModes`` is the full\nset a client can switch between via ``session/set_mode``.",
+      "properties": {
+        "availableModes": {
+          "items": {
+            "$ref": "#/$defs/AcpSessionMode"
+          },
+          "title": "Availablemodes",
+          "type": "array"
+        },
+        "currentModeId": {
+          "title": "Currentmodeid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currentModeId",
+        "availableModes"
+      ],
+      "title": "AcpSessionModeState",
+      "type": "object"
+    },
     "AcpSessionNewRequest": {
       "additionalProperties": false,
       "properties": {
@@ -1033,15 +1123,13 @@
         "modes": {
           "anyOf": [
             {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/AcpSessionModeState"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Modes"
+          "default": null
         },
         "sessionId": {
           "title": "Sessionid",
@@ -1292,6 +1380,39 @@
       "title": "AcpSessionUpdateContentBlock",
       "type": "object"
     },
+    "AcpSessionUpdateCurrentMode": {
+      "additionalProperties": false,
+      "description": "``current_mode_update`` \u2014 the active session mode changed.\n\nEmitted by the ``session/set_mode`` handler (the ACP standard set_mode\nresponse is empty; the change is communicated via this notification).",
+      "properties": {
+        "currentModeId": {
+          "title": "Currentmodeid",
+          "type": "string"
+        },
+        "schema_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema Version"
+        },
+        "sessionUpdate": {
+          "const": "current_mode_update",
+          "default": "current_mode_update",
+          "title": "Sessionupdate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "currentModeId"
+      ],
+      "title": "AcpSessionUpdateCurrentMode",
+      "type": "object"
+    },
     "AcpSessionUpdateMessageChunk": {
       "additionalProperties": false,
       "description": "``agent_message_chunk`` / ``agent_thought_chunk`` /\n``user_message_chunk`` carry a single content block.",
@@ -1341,6 +1462,8 @@
             "mapping": {
               "agent_message_chunk": "#/$defs/AcpSessionUpdateMessageChunk",
               "agent_thought_chunk": "#/$defs/AcpSessionUpdateMessageChunk",
+              "current_mode_update": "#/$defs/AcpSessionUpdateCurrentMode",
+              "plan": "#/$defs/AcpSessionUpdatePlan",
               "tool_call": "#/$defs/AcpSessionUpdateToolCall",
               "tool_call_update": "#/$defs/AcpSessionUpdateToolCallUpdate",
               "user_message_chunk": "#/$defs/AcpSessionUpdateMessageChunk"
@@ -1356,6 +1479,12 @@
             },
             {
               "$ref": "#/$defs/AcpSessionUpdateToolCallUpdate"
+            },
+            {
+              "$ref": "#/$defs/AcpSessionUpdatePlan"
+            },
+            {
+              "$ref": "#/$defs/AcpSessionUpdateCurrentMode"
             }
           ],
           "title": "Update"
@@ -1366,6 +1495,42 @@
         "update"
       ],
       "title": "AcpSessionUpdateParams",
+      "type": "object"
+    },
+    "AcpSessionUpdatePlan": {
+      "additionalProperties": false,
+      "description": "``plan`` \u2014 the agent's task checklist; the client replaces the whole\nplan on each update.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/AcpPlanEntry"
+          },
+          "title": "Entries",
+          "type": "array"
+        },
+        "schema_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema Version"
+        },
+        "sessionUpdate": {
+          "const": "plan",
+          "default": "plan",
+          "title": "Sessionupdate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "title": "AcpSessionUpdatePlan",
       "type": "object"
     },
     "AcpSessionUpdateToolCall": {

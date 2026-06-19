@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from agentao.permissions import PermissionMode
 
 from ._handler_utils import hold_idle_turn_lock, require_active_session
-from .protocol import INVALID_REQUEST, METHOD_SESSION_SET_MODE
+from .protocol import INVALID_REQUEST, METHOD_SESSION_SET_MODE, METHOD_SESSION_UPDATE
 from .server import JsonRpcHandlerError
 
 if TYPE_CHECKING:
@@ -51,6 +51,37 @@ def _as_permission_mode(mode_id: str) -> Optional[PermissionMode]:
         return PermissionMode(mode_id)
     except ValueError:
         return None
+
+
+def _emit_current_mode_update(
+    server: "AcpServer", session_id: str, mode_id: str
+) -> None:
+    """Emit a ``current_mode_update`` session/update for the mode change.
+
+    ACP communicates a mode change via this notification — the standard
+    ``session/set_mode`` response is empty. Nothing else on the ACP path
+    emits it: ``PermissionEngine.set_mode`` is silent and the
+    ``PERMISSION_MODE_CHANGED`` event is CLI-only, so the handler must emit
+    here. ``mode_id`` is echoed verbatim, including non-preset UI modeIds
+    (e.g. DeepChat's ``code``/``ask``) that are not in ``availableModes``.
+
+    Best-effort: a notification failure must not fail the set_mode request.
+    """
+    try:
+        server.write_notification(
+            METHOD_SESSION_UPDATE,
+            {
+                "sessionId": session_id,
+                "update": {
+                    "sessionUpdate": "current_mode_update",
+                    "currentModeId": mode_id,
+                },
+            },
+        )
+    except Exception:
+        logger.exception(
+            "acp: failed to emit current_mode_update for session %s", session_id
+        )
 
 
 def handle_session_set_mode(server: "AcpServer", params: Any) -> Dict[str, Any]:
@@ -83,7 +114,13 @@ def handle_session_set_mode(server: "AcpServer", params: Any) -> Dict[str, Any]:
                 mode_id,
             )
         session.mode_id = mode_id
-        return {"modeId": session.mode_id}
+
+    # Emit ``current_mode_update`` outside the turn lock — write_notification
+    # serializes its own writes, so there's no need to hold turn_lock across
+    # the I/O. Keep returning ``{modeId}`` for DeepChat back-compat; a
+    # standard client reads the notification and ignores the extra field.
+    _emit_current_mode_update(server, session.session_id, mode_id)
+    return {"modeId": mode_id}
 
 
 def register(server: "AcpServer") -> None:

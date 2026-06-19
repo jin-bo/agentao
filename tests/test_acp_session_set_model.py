@@ -7,8 +7,9 @@ Covers ``session/set_model``, ``session/set_mode``, and
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -22,6 +23,7 @@ from agentao.acp.protocol import (
     METHOD_SESSION_LIST_MODELS,
     METHOD_SESSION_SET_MODE,
     METHOD_SESSION_SET_MODEL,
+    METHOD_SESSION_UPDATE,
     SERVER_NOT_INITIALIZED,
 )
 from agentao.acp.server import JsonRpcHandlerError
@@ -98,6 +100,22 @@ def _register_session(server, session_id: str, agent: _FakeAgent) -> AcpSessionS
     state.agent = agent  # type: ignore[assignment]
     server.sessions.create(state)
     return state
+
+
+def _current_mode_updates(server) -> List[Dict[str, Any]]:
+    """Return every ``current_mode_update`` payload written to stdout."""
+    out = []
+    for line in server._out.getvalue().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        msg = json.loads(line)
+        if msg.get("method") != METHOD_SESSION_UPDATE:
+            continue
+        update = msg.get("params", {}).get("update", {})
+        if update.get("sessionUpdate") == "current_mode_update":
+            out.append({"sessionId": msg["params"]["sessionId"], **update})
+    return out
 
 
 # ===========================================================================
@@ -321,6 +339,37 @@ class TestSetMode:
         )
         assert engine_a.active_mode == PermissionMode.READ_ONLY
         assert engine_b.active_mode == PermissionMode.WORKSPACE_WRITE
+
+    def test_preset_change_emits_current_mode_update(self, make_engine):
+        """ACP communicates the mode change via a current_mode_update
+        notification (the set_mode response is non-standard back-compat)."""
+        server = make_initialized_server()
+        _register_session(server, "s", _FakeAgent(permission_engine=make_engine()))
+
+        acp_set_mode.handle_session_set_mode(
+            server, {"sessionId": "s", "modeId": "read-only"}
+        )
+        updates = _current_mode_updates(server)
+        assert updates == [
+            {
+                "sessionId": "s",
+                "sessionUpdate": "current_mode_update",
+                "currentModeId": "read-only",
+            }
+        ]
+
+    def test_unknown_mode_id_also_emits_current_mode_update(self, make_engine):
+        """A non-preset UI modeId is echoed in current_mode_update too, even
+        though it is not one of the availableModes."""
+        server = make_initialized_server()
+        _register_session(server, "s", _FakeAgent(permission_engine=make_engine()))
+
+        acp_set_mode.handle_session_set_mode(
+            server, {"sessionId": "s", "modeId": "code"}
+        )
+        updates = _current_mode_updates(server)
+        assert len(updates) == 1
+        assert updates[0]["currentModeId"] == "code"
 
 
 # ===========================================================================

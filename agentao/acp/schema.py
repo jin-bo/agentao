@@ -193,9 +193,38 @@ class AcpSessionNewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AcpSessionMode(BaseModel):
+    """One selectable ACP session mode (``SessionMode``).
+
+    agentao surfaces each :class:`~agentao.permissions.PermissionMode`
+    preset as one of these: ``id`` is the preset's string value (the ACP
+    ``modeId`` a client passes to ``session/set_mode``), ``name`` is a
+    human label, ``description`` an optional one-liner.
+    """
+
+    id: str
+    name: str
+    description: Optional[str] = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AcpSessionModeState(BaseModel):
+    """``SessionModeState`` — advertised on the ``session/new`` response.
+
+    ``currentModeId`` is the active preset; ``availableModes`` is the full
+    set a client can switch between via ``session/set_mode``.
+    """
+
+    currentModeId: str
+    availableModes: List[AcpSessionMode]
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class AcpSessionNewResponse(BaseModel):
     sessionId: str
-    modes: Optional[Dict[str, Any]] = None
+    modes: Optional[AcpSessionModeState] = None
     models: Optional[Dict[str, Any]] = None
     # Advertised so clients can switch model/provider via
     # ``session/set_config_option`` without a follow-up list call. Default
@@ -564,11 +593,51 @@ class AcpSessionUpdateToolCallUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AcpPlanEntry(BaseModel):
+    """One entry in a ``plan`` update (``PlanEntry``).
+
+    agentao's ``todo_write`` carries only ``content`` + ``status``; ACP
+    requires ``priority`` too, so the transport synthesizes ``"medium"``.
+    """
+
+    content: str
+    priority: Literal["high", "medium", "low"]
+    status: Literal["pending", "in_progress", "completed"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AcpSessionUpdatePlan(BaseModel):
+    """``plan`` — the agent's task checklist; the client replaces the whole
+    plan on each update."""
+
+    sessionUpdate: Literal["plan"] = "plan"
+    entries: List[AcpPlanEntry]
+    schema_version: Optional[str] = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AcpSessionUpdateCurrentMode(BaseModel):
+    """``current_mode_update`` — the active session mode changed.
+
+    Emitted by the ``session/set_mode`` handler (the ACP standard set_mode
+    response is empty; the change is communicated via this notification)."""
+
+    sessionUpdate: Literal["current_mode_update"] = "current_mode_update"
+    currentModeId: str
+    schema_version: Optional[str] = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 AcpSessionUpdate = Annotated[
     Union[
         AcpSessionUpdateMessageChunk,
         AcpSessionUpdateToolCall,
         AcpSessionUpdateToolCallUpdate,
+        AcpSessionUpdatePlan,
+        AcpSessionUpdateCurrentMode,
     ],
     Field(discriminator="sessionUpdate"),
 ]
