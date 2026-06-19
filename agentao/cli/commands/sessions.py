@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Optional
 
 import readchar
 
-from .._globals import console
+from .._globals import console, split_subcommand, unknown_subcommand
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -28,10 +28,7 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
 
     project_root = cli.agent.working_directory
 
-    args = args.strip()
-    parts = args.split(None, 1) if args else []
-    sub = parts[0] if parts else "list"
-    sub_arg = parts[1].strip() if len(parts) > 1 else ""
+    sub, sub_arg = split_subcommand(args, default="list")
 
     if sub in ("", "list"):
         sessions = list_sessions(project_root=project_root)
@@ -83,7 +80,7 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
             console.print(f"\n[warning]Session '{sub_arg}' not found.[/warning]\n")
 
     else:
-        console.print(f"\n[error]Unknown subcommand: {sub}[/error]")
+        console.print(unknown_subcommand(sub))
         console.print("[info]Available: /sessions list | /sessions resume <id> | /sessions delete <id> | /sessions delete all[/info]\n")
 
 

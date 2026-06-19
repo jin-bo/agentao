@@ -13,7 +13,7 @@ uv run python script.py    # Run Python scripts
 uv run agentao             # Run the CLI
 ```
 
-Core deps live in `[project.dependencies]`; the heavyweight UI / format-conversion deps are opt-in extras (`[cli]`, `[web]`, `[i18n]`, `[pdf]`, `[excel]`, `[image]`, `[crypto]`, `[google]`, `[crawl4ai]`, `[tokenizer]`, `[full]`). A bare `pip install agentao` gets a library-only install; `pip install 'agentao[cli]'` is the smallest interactive CLI.
+Core deps live in `[project.dependencies]`; the heavyweight UI / fetch / tokenization deps are opt-in extras (`[cli]`, `[web]`, `[i18n]`, `[crawl4ai]`, `[tokenizer]`, `[full]`). A bare `pip install agentao` gets a library-only install; `pip install 'agentao[cli]'` is the smallest interactive CLI. (The `[pdf]` / `[excel]` / `[image]` / `[crypto]` / `[google]` extras were removed as dead weight — zero in-tree consumers; see `docs/design/optimization-opportunities-review.md` T1.1.)
 
 ## Running
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from rich.markdown import Markdown
 from rich.panel import Panel
 
-from .._globals import console
+from .._globals import console, split_subcommand
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -118,9 +118,7 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
     import time as _time
     bg_store = cli.agent.bg_store
 
-    parts = args.strip().split(None, 1)
-    sub = parts[0] if parts else ""
-    rest = parts[1].strip() if len(parts) > 1 else ""
+    sub, rest = split_subcommand(args)
 
     if bg_store is None and sub in _BG_REQUIRED_SUBS:
         console.print(

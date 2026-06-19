@@ -7,9 +7,11 @@ Centralizes the boilerplate that gates every ``session/*`` request:
   3. ``sessionId`` is a non-empty string
   4. the session exists and is still active
 
-Existing handlers (``session_cancel``, ``session_load``, ``session_prompt``)
-predate this module and continue to inline the same checks; the helper is
-used by the newer ``set_model`` / ``set_mode`` / ``list_models`` modules.
+``session_cancel`` uses :func:`resolve_session` (it applies its own
+closed-session policy — a cancel succeeds quietly on a closed session).
+``session_load`` and ``session_prompt`` still inline the checks for
+get-vs-require / parse-ordering reasons. The newer ``set_model`` /
+``set_mode`` / ``list_models`` modules use :func:`require_active_session`.
 """
 
 from __future__ import annotations
@@ -49,15 +51,18 @@ def reject_unexpected_params(
         raise TypeError(msg)
 
 
-def require_active_session(
+def resolve_session(
     server: "AcpServer", params: Any, method: str
 ) -> AcpSessionState:
-    """Validate the request envelope and return the live session state.
+    """Validate the request envelope + ``sessionId`` and return the session.
 
-    Raises ``JsonRpcHandlerError(SERVER_NOT_INITIALIZED)`` if the connection
-    is pre-handshake, ``TypeError`` for bad param shape (the dispatcher maps
-    that to ``INVALID_PARAMS``), or ``JsonRpcHandlerError(INVALID_REQUEST)``
-    for unknown / closed sessions.
+    Runs the first three gates every ``session/*`` request shares — the
+    ``initialize`` handshake, ``params`` is a JSON object, ``sessionId`` is a
+    non-empty string — then looks the session up (``SessionNotFoundError`` →
+    ``INVALID_REQUEST``). Unlike :func:`require_active_session` it does **not**
+    reject a closed / agent-less session: callers such as ``session/cancel``
+    apply their own liveness policy (a cancel succeeds quietly on an
+    already-closed session).
     """
     if not server.state.initialized:
         raise JsonRpcHandlerError(
@@ -73,19 +78,30 @@ def require_active_session(
         raise TypeError(f"{method}.sessionId must be a non-empty string")
 
     try:
-        session = server.sessions.require(session_id)
+        return server.sessions.require(session_id)
     except SessionNotFoundError:
         raise JsonRpcHandlerError(
             code=INVALID_REQUEST,
             message=f"unknown sessionId: {session_id}",
         )
 
+
+def require_active_session(
+    server: "AcpServer", params: Any, method: str
+) -> AcpSessionState:
+    """Validate the request envelope and return the live session state.
+
+    Raises ``JsonRpcHandlerError(SERVER_NOT_INITIALIZED)`` if the connection
+    is pre-handshake, ``TypeError`` for bad param shape (the dispatcher maps
+    that to ``INVALID_PARAMS``), or ``JsonRpcHandlerError(INVALID_REQUEST)``
+    for unknown / closed sessions.
+    """
+    session = resolve_session(server, params, method)
     if session.closed or session.agent is None:
         raise JsonRpcHandlerError(
             code=INVALID_REQUEST,
-            message=f"session {session_id} is not active",
+            message=f"session {session.session_id} is not active",
         )
-
     return session
 
 

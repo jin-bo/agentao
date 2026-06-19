@@ -52,36 +52,15 @@ correct spec behavior.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
-from .protocol import (
-    INVALID_REQUEST,
-    METHOD_SESSION_CANCEL,
-    SERVER_NOT_INITIALIZED,
-)
-from .server import JsonRpcHandlerError
-from .session_manager import SessionNotFoundError
+from .protocol import METHOD_SESSION_CANCEL
+from ._handler_utils import resolve_session
 
 if TYPE_CHECKING:
     from .server import AcpServer
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Parameter parsing
-# ---------------------------------------------------------------------------
-
-def _parse_session_id(raw: Any) -> str:
-    """Validate the ``sessionId`` field.
-
-    Raises :class:`TypeError` so the dispatcher maps it to ``-32602``
-    ``INVALID_PARAMS`` for clients that sent ``session/cancel`` as a
-    request. Notification dispatch swallows the error per JSON-RPC.
-    """
-    if not isinstance(raw, str) or not raw:
-        raise TypeError("session/cancel.sessionId must be a non-empty string")
-    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -109,24 +88,8 @@ def handle_session_cancel(server: "AcpServer", params: Any) -> None:
     race between cancel and turn completion that should never produce
     a noisy error.
     """
-    if not server.state.initialized:
-        raise JsonRpcHandlerError(
-            code=SERVER_NOT_INITIALIZED,
-            message="session/cancel called before initialize handshake",
-        )
-
-    if not isinstance(params, dict):
-        raise TypeError("session/cancel params must be a JSON object")
-
-    session_id = _parse_session_id(params.get("sessionId"))
-
-    try:
-        session = server.sessions.require(session_id)
-    except SessionNotFoundError:
-        raise JsonRpcHandlerError(
-            code=INVALID_REQUEST,
-            message=f"unknown sessionId: {session_id}",
-        )
+    session = resolve_session(server, params, METHOD_SESSION_CANCEL)
+    session_id = session.session_id
 
     if session.closed:
         # Already torn down — close() fired the token if there was one.

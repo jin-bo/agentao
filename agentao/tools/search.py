@@ -84,6 +84,26 @@ def _path_in_skip_dirs(file_path: Path, base: Path, skip: FrozenSet[str]) -> boo
     return any(part in skip for part in rel.parts)
 
 
+def _format_match_lines(lines: List[str], pattern: str) -> str:
+    """Render an already-prepared list of ``path:lineno:content`` match lines.
+
+    Owns only the ``No matches`` / ``Found N match(es)`` / cap-100 contract,
+    operating on the list as-is — no line re-splitting, no skip filtering. The
+    git-grep / rg fast paths reach this via :func:`_format_grep_output` (which
+    splits + skip-filters subprocess stdout first); the pure-Python fallback —
+    whose ``results`` are already skip-filtered during iteration and whose match
+    content may contain embedded Unicode line separators — calls this directly,
+    so those matches are neither re-split (``splitlines``) nor re-filtered
+    against a ``':'``-truncated path.
+    """
+    if not lines:
+        return f"No matches found for pattern: {pattern}"
+    header = f"Found {len(lines)} match(es):\n\n"
+    if len(lines) > 100:
+        return header + "\n".join(lines[:100]) + f"\n\n... and {len(lines) - 100} more matches"
+    return header + "\n".join(lines)
+
+
 def _format_grep_output(stdout: str, pattern: str, skip: FrozenSet[str]) -> str:
     """Shared formatter for ``git grep -n`` / ``rg --line-number`` output.
 
@@ -93,12 +113,7 @@ def _format_grep_output(stdout: str, pattern: str, skip: FrozenSet[str]) -> str:
     lines = stdout.strip().splitlines()
     if skip:
         lines = [ln for ln in lines if not _any_part_in_skip(ln.split(":", 1)[0], skip)]
-    if not lines:
-        return f"No matches found for pattern: {pattern}"
-    header = f"Found {len(lines)} match(es):\n\n"
-    if len(lines) > 100:
-        return header + "\n".join(lines[:100]) + f"\n\n... and {len(lines) - 100} more matches"
-    return header + "\n".join(lines)
+    return _format_match_lines(lines, pattern)
 
 
 class FindFilesTool(Tool):
@@ -422,16 +437,12 @@ class SearchTextTool(Tool):
                 except (UnicodeDecodeError, PermissionError, OSError):
                     continue
 
-            if not results:
-                return f"No matches found for pattern: {pattern}"
-
-            result_text = f"Found {len(results)} match(es):\n\n"
-            if len(results) > 100:
-                result_text += "\n".join(results[:100])
-                result_text += f"\n\n... and {len(results) - 100} more matches"
-            else:
-                result_text += "\n".join(results)
-
-            return result_text
+            # ``results`` are already skip-filtered during iteration and each
+            # entry is one match line whose content may itself contain embedded
+            # Unicode line separators. Format the list directly — routing through
+            # _format_grep_output would re-split on those separators and re-run
+            # the skip filter against a ':'-truncated path, both of which
+            # corrupt/drop legitimate fallback matches.
+            return _format_match_lines(results, pattern)
         except Exception as e:
             return f"Error searching files: {str(e)}"

@@ -961,10 +961,16 @@ class Agentao:
             self.mcp_manager = None
 
     # ------------------------------------------------------------------
-    # Session Replay lifecycle — back-compat shims (remove in 0.5.0)
-    # Real lifecycle lives on :class:`agentao.replay.ReplayManager`.
-    # Hosts that need replay should call ``agent.replay_manager.start()``
-    # / ``end()`` / ``reload_config()`` directly.
+    # Session Replay lifecycle — supported delegation surface.
+    # ``start_replay`` / ``end_replay`` / ``reload_replay_config`` (below)
+    # are LIVE, actively-called API: the CLI (``cli/session.py``,
+    # ``cli/commands/sessions.py``, ``cli/replay_commands.py``) and the ACP
+    # server (``acp/session_new.py`` / ``acp/session_load.py``) all call them.
+    # They are thin delegations onto :class:`agentao.replay.ReplayManager`;
+    # embedded hosts may instead call ``agent.replay_manager.start()`` /
+    # ``end()`` / ``reload_config()`` directly. These methods are NOT slated
+    # for removal — only the private ``_replay_*`` property views further
+    # down are the back-compat shims scheduled for removal in 0.5.0.
     # ------------------------------------------------------------------
 
     def _ensure_replay_manager(self) -> "ReplayManager":

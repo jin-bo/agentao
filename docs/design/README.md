@@ -47,6 +47,7 @@ Shipped behavior — read as reference for what exists today.
 
 Retrospective analyses — competitive/borrow reviews, conformance gap reviews, decision records. Evidence-before-recommendation; **gap ≠ need**. Not active build specs.
 
+- **optimization-opportunities-review** — multi-dimension audit (complexity / per-turn perf / duplication / packaging); Tier 1–3 findings, evidence-backed (2026-06-19).
 - **vendor-sdk-convergence-review** — Claude/OpenAI Agent SDKs converged on Path A's pitch; §16.4 trigger determination (2026-06-18).
 - **acp-server-conformance-review** — agentao ACP server vs official ACP v1; gaps G1–G6 + chat/automation target decision (2026-06-18).
 - **core-boundary-review** — core vs host package-boundary audit (codex parallel, 2026-05).

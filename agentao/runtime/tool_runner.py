@@ -57,7 +57,11 @@ class ToolRunner:
         *,
         host_tool_emitter: Optional["HostToolEmitter"] = None,
         host_permission_emitter: Optional["HostPermissionEmitter"] = None,
-        # ── Deprecated: kept for backward compatibility ──────────────────────
+        # ── Deprecated: accepted-but-ignored for backward compatibility ──────
+        # No-ops (never stored or used); kept so an existing host/test caller
+        # that still passes them does not hit a ``TypeError``. Slated for
+        # removal in 0.5.0 with the matching ``Agentao.__init__`` legacy
+        # callbacks, not before.
         confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
         step_callback: Optional[Callable[[Optional[str], Dict[str, Any]], None]] = None,
         output_callback: Optional[Callable[[str, str], None]] = None,

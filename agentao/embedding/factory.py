@@ -54,6 +54,19 @@ def _builtin_agents_enabled(settings: Dict[str, Any]) -> bool:
     return False
 
 
+def resolve_provider_name() -> str:
+    """The configured LLM provider id, normalized.
+
+    Reads ``LLM_PROVIDER`` (default ``OPENAI``) and applies the canonical
+    ``.strip().upper()`` casing used to build the ``{PROVIDER}_API_KEY`` /
+    ``{PROVIDER}_BASE_URL`` / ``{PROVIDER}_MODEL`` lookups. Peers and tests
+    that need the provider id should call this rather than re-implementing
+    the default literal + casing; :func:`discover_llm_kwargs` builds the
+    value extraction on top of it.
+    """
+    return os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
+
+
 def discover_llm_kwargs() -> Dict[str, Any]:
     """Resolve the LLM kwargs from environment variables.
 
@@ -78,7 +91,7 @@ def discover_llm_kwargs() -> Dict[str, Any]:
     suite's autouse credential-stub fixture) should call this rather
     than re-implementing the prefix scheme.
     """
-    provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
+    provider = resolve_provider_name()
     out: Dict[str, Any] = {}
     if (v := os.getenv(f"{provider}_API_KEY")) is not None:
         out["api_key"] = v

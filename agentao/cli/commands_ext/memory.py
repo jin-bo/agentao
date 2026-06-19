@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from rich.prompt import Confirm
 
-from .._globals import console
+from .._globals import console, unknown_subcommand
 from .._utils import _display_layered_entries
 
 if TYPE_CHECKING:
@@ -193,5 +193,5 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
         console.print(f"  Latest session summary: {session_chars} chars\n")
 
     else:
-        console.print(f"\n[error]Unknown subcommand: {subcommand}[/error]")
+        console.print(unknown_subcommand(subcommand))
         console.print("[info]Available subcommands: list, search, tag, delete, clear, user, project, session, status, crystallize, review[/info]\n")

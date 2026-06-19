@@ -37,7 +37,7 @@ def test_pre_compact_fires_before_mutation_and_message_still_compacts(
     # context_manager so the side-effect-only contract is observable.
     monkeypatch.setattr(
         agent.context_manager, "needs_microcompaction",
-        lambda messages: True,
+        lambda messages, tokens=None: True,
     )
     compacted_marker = [{"role": "user", "content": "[compacted]"}]
     monkeypatch.setattr(

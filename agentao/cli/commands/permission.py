@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .._globals import console
+from .._globals import console, split_subcommand
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -35,9 +35,7 @@ def handle_sandbox_command(cli: AgentaoCLI, args: str) -> None:
         console.print("\n[warning]Sandbox policy not initialized on this agent.[/warning]\n")
         return
 
-    parts = args.strip().split(None, 1)
-    sub = parts[0].lower() if parts else "status"
-    sub_arg = parts[1].strip() if len(parts) > 1 else ""
+    sub, sub_arg = split_subcommand(args, default="status", lower=True)
 
     if sub in ("", "status"):
         supported = policy.platform_supported

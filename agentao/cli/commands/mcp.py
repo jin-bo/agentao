@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .._globals import console
+from .._globals import console, split_subcommand, unknown_subcommand
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -14,10 +14,7 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /mcp command for MCP server management."""
     from ...mcp.config import _load_json_file, save_mcp_config
 
-    args = args.strip()
-    parts = args.split(None, 1) if args else []
-    sub = parts[0] if parts else "list"
-    sub_args = parts[1] if len(parts) > 1 else ""
+    sub, sub_args = split_subcommand(args, default="list", strip_rest=False)
 
     if sub == "list":
         manager = cli.agent.mcp_manager
@@ -91,5 +88,5 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
         console.print("[info]Restart agentao to apply changes.[/info]\n")
 
     else:
-        console.print(f"\n[error]Unknown subcommand: {sub}[/error]")
+        console.print(unknown_subcommand(sub))
         console.print("[info]Available: /mcp list, /mcp add, /mcp remove[/info]\n")

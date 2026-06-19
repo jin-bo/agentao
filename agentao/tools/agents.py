@@ -82,10 +82,8 @@ class CodebaseInvestigatorTool(Tool):
         self, task: str, directory: str = ".", file_patterns: list = None
     ) -> str:
         """Investigate codebase."""
-        from pathlib import Path
-
         try:
-            path = Path(directory).expanduser()
+            path = self._resolve_directory(directory)
             if not path.exists():
                 return f"Error: Directory {directory} does not exist"
 

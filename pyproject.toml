@@ -45,14 +45,9 @@ cli       = ["rich>=13.0.0", "prompt-toolkit>=3.0.52", "readchar>=4.2.1", "pygme
 web       = ["beautifulsoup4>=4.12.0"]
 # Chinese-text tokenization for memory keyword retrieval
 i18n      = ["jieba>=0.42.1"]
-pdf       = ["pymupdf>=1.27.1", "pdfplumber>=0.11.9"]
-excel     = ["pandas>=2.0", "openpyxl>=3.1.5"]
-image     = ["Pillow>=10.0.0"]
-crypto    = ["pycryptodome>=3.23.0"]
-google    = ["google-genai>=1.0.0"]
 crawl4ai  = ["crawl4ai>=0.8.0"]
 tokenizer = ["tiktoken>=0.7.0"]
-full      = ["agentao[cli,web,i18n,pdf,excel,image,crypto,google,crawl4ai,tokenizer]"]
+full      = ["agentao[cli,web,i18n,crawl4ai,tokenizer]"]
 
 [project.urls]
 Homepage = "https://github.com/jin-bo/agentao"
