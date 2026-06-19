@@ -6,8 +6,11 @@ top chat-relevant ACP gap after the maintainer set the target-client class to
 **chat/automation** (so G1 fs/terminal is a non-goal and G4/G3/G2-diff are the
 now-work). Review pinned the `current_mode_update` emit path (handler, not the
 non-firing engine event), added defensive `todo_write`→`plan` validation, noted
-`modes` is already a loose schema field, and cut Commands to a clean defer. **Not
-yet implemented.**
+`modes` is already a loose schema field, and cut Commands to a clean defer. A 2nd
+review pass fixed the failed-`todo_write` path (**always drop** `TOOL_COMPLETE` — a
+`tool_call_update` would be orphaned now that `TOOL_START` is a `plan`) and the
+notification send-path wording (direct `server.write_notification`, not "the session
+transport"). **Approved for implementation; not yet implemented.**
 **Audience:** Agentao maintainers; the DeepChat/TensorChat integration owner.
 **Companion:** `acp-g4-plan-modes-commands.zh.md`.
 **Related:**
@@ -142,10 +145,17 @@ typed `AcpSessionModeState`**, don't add a second field.
 `PERMISSION_MODE_CHANGED` event is emitted only by the CLI (`cli/app.py:172`), and
 the ACP `session_set_mode` handler emits nothing. So mapping the event in transport
 would **miss the ACP path entirely.** The minimal correct route: in
-`session_set_mode`, after `session.mode_id = mode_id`, send
-`{sessionUpdate:"current_mode_update", currentModeId: mode_id}` via the session
-transport. (Transport *may* also map `PERMISSION_MODE_CHANGED` so a future
-runtime-internal switch surfaces too, but the handler must not rely on it.)
+`session_set_mode`, after `session.mode_id = mode_id`, call (the handler already
+has `server` in scope; `AcpSessionState` has **no** transport field):
+```python
+server.write_notification(METHOD_SESSION_UPDATE, {
+    "sessionId": session.session_id,
+    "update": {"sessionUpdate": "current_mode_update", "currentModeId": mode_id},
+})
+```
+or wrap that one notification in a tiny helper. (Transport *may* also map
+`PERMISSION_MODE_CHANGED` so a future runtime-internal switch surfaces too, but the
+handler must not rely on it.)
 
 **session/set_mode response** (`session_set_mode.py:86`): the ACP standard response
 is empty + change-via-notification. **Keep returning `{modeId}` for DeepChat
@@ -180,11 +190,16 @@ if tool == "todo_write":
     if entries:
         return {"sessionUpdate": "plan", "entries": entries}
 ```
-**Don't drop `TOOL_COMPLETE` unconditionally.** Drop the `todo_write`
-`TOOL_COMPLETE` **only when `status == "ok"`** (the plan landed). If the call
-failed, **keep** the `tool_call_update` with `status:"failed"` so the client learns
-the plan did *not* settle — otherwise it would be left showing a "settled" plan
-from `TOOL_START` that never actually applied.
+**Always drop the `todo_write` `TOOL_COMPLETE`.** Because `TOOL_START` was mapped
+to a `plan` (not a `tool_call`), emitting *any* `tool_call_update` on completion —
+including `status:"failed"` — would be an **orphan terminal update**: a
+`tool_call_update` with no opening `tool_call`, which breaks the ACP message
+sequence. So drop the `todo_write` `TOOL_COMPLETE` **unconditionally**. A failure
+is anyway near-impossible (`todo_write` is a synchronous in-memory list-replace);
+if one ever needs surfacing, emit a short `agent_message_chunk` /
+`agent_thought_chunk` text note instead of a `tool_call_update`. A test must lock
+this in: a `todo_write` turn emits exactly one `plan` and **no** `tool_call` /
+terminal `tool_call_update`.
 
 **Priority**: agentao todos have no priority; ACP requires it → emit `"medium"`
 for all. **Out of scope for this PR:** adding a `priority` field to the
@@ -230,15 +245,17 @@ the defensive `todo_write`→`plan` transport mapping.
   `AcpSessionModeState`; add the two new updates to the `AcpSessionUpdate` union.
   Regenerate `docs/schema/host.acp.v1.json`; update schema snapshot tests.
 - `agentao/acp/transport.py`: defensive `todo_write`→`plan` (validate entries; drop
-  `TOOL_COMPLETE` only on `status=="ok"`). Optionally also map
+  the `todo_write` `TOOL_COMPLETE` **unconditionally** — no orphan terminal update).
+  Optionally also map
   `PERMISSION_MODE_CHANGED`→`current_mode_update` for completeness — but it is not
   load-bearing for the ACP path (see §4.1).
 - `agentao/acp/session_new.py`: emit the typed `modes` in the response.
 - `agentao/acp/session_set_mode.py`: **emit `current_mode_update` from the handler**
   after `session.mode_id = mode_id`; keep returning `{modeId}` for DeepChat.
-- Tests: `tests/test_acp_transport.py` (plan happy-path + malformed-todos fallback +
-  failed-call keeps `tool_call_update`; mode-change emits `current_mode_update`),
-  session/new typed-modes assertion, schema snapshot.
+- Tests: `tests/test_acp_transport.py` (plan happy-path emits one `plan` and **no**
+  `tool_call`/terminal `tool_call_update`; malformed-todos falls back to the normal
+  `tool_call` mapping; mode-change emits `current_mode_update`), session/new
+  typed-modes assertion, schema snapshot.
 
 **Commands:** deferred, **no PR planned** (see §4.3).
 
@@ -254,10 +271,14 @@ the defensive `todo_write`→`plan` transport mapping.
    `session_set_mode.py`), so the event-mapping route would miss the ACP path.
    **Emit from the handler** (§4.1); transport event-mapping is optional, not
    load-bearing.
-2. **`TOOL_COMPLETE` for `todo_write`** — *resolved.* Drop it **only on
-   `status=="ok"`**; on failure keep the `tool_call_update:failed` so the client
-   doesn't see a settled-but-unapplied plan (§4.2). Plan emits on `TOOL_START`
-   (list is final at call time; `todo_write` is synchronous).
+2. **`TOOL_COMPLETE` for `todo_write`** — *resolved (revised in 2nd pass).* An
+   earlier draft kept a `tool_call_update:failed` on the failure path; review caught
+   that this is an **orphan terminal update** (no opening `tool_call`, because
+   `TOOL_START` became a `plan`) and breaks the ACP sequence. **Always drop** the
+   `todo_write` `TOOL_COMPLETE`; surface the near-impossible failure via a short
+   `agent_message_chunk`, never a `tool_call_update` (§4.2). Plan emits on
+   `TOOL_START` (list is final at call time; `todo_write` is synchronous). Locked by
+   a test.
 3. **Priority** — *resolved.* Ship all-`medium`. Adding a `todo_write.priority`
    field is **out of scope** — it expands an ACP-adapter change into a runtime/tool
    contract change (§4.2).
