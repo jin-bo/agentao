@@ -486,6 +486,104 @@ class TestReplayHistoryMapping:
         assert "content" not in upd
         assert upd["status"] == "completed"
 
+    # --- todo_write → plan (G4 replay parity) ----------------------------
+
+    def test_todo_write_replays_as_plan_and_skips_result(self):
+        """A persisted todo_write renders as a native `plan` (mirroring the
+        live path), and its matching tool result is skipped so no orphan
+        tool_call_update is emitted."""
+        t, server = self._transport()
+        emitted = t.replay_history(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "p1",
+                            "function": {
+                                "name": "todo_write",
+                                "arguments": '{"todos": [{"content": "A", "status": "in_progress"}, {"content": "B", "status": "pending"}]}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "p1", "content": "Todo list updated: 2 task(s)"},
+            ]
+        )
+        assert emitted == 1  # one plan; the tool result is skipped
+        updates = [n[1]["update"] for n in server.notifications]
+        assert updates == [
+            {
+                "sessionUpdate": "plan",
+                "entries": [
+                    {"content": "A", "priority": "medium", "status": "in_progress"},
+                    {"content": "B", "priority": "medium", "status": "pending"},
+                ],
+            }
+        ]
+
+    def test_todo_write_malformed_replays_as_tool_call_with_result(self):
+        """All-or-nothing: a malformed persisted todo_write falls back to the
+        normal tool_call rendering, and its result is NOT skipped."""
+        t, server = self._transport()
+        emitted = t.replay_history(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "p2",
+                            "function": {
+                                "name": "todo_write",
+                                "arguments": '{"todos": [{"content": 123, "status": "pending"}]}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "p2", "content": "ok"},
+            ]
+        )
+        assert emitted == 2
+        updates = [n[1]["update"] for n in server.notifications]
+        assert [u["sessionUpdate"] for u in updates] == ["tool_call", "tool_call_update"]
+        assert updates[0]["title"] == "todo_write"
+        assert updates[1]["toolCallId"] == "p2"
+
+    def test_multiple_todo_writes_each_replay_as_plan(self):
+        """plan is full-replace; replaying each todo_write in order leaves the
+        client on the final checklist state, with every result skipped."""
+        t, server = self._transport()
+        t.replay_history(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "p1", "function": {"name": "todo_write",
+                            "arguments": '{"todos": [{"content": "A", "status": "pending"}]}'}}
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "p1", "content": "1 task"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "p2", "function": {"name": "todo_write",
+                            "arguments": '{"todos": [{"content": "A", "status": "completed"}, {"content": "B", "status": "in_progress"}]}'}}
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "p2", "content": "2 tasks"},
+            ]
+        )
+        updates = [n[1]["update"] for n in server.notifications]
+        assert [u["sessionUpdate"] for u in updates] == ["plan", "plan"]
+        assert updates[-1]["entries"] == [
+            {"content": "A", "priority": "medium", "status": "completed"},
+            {"content": "B", "priority": "medium", "status": "in_progress"},
+        ]
+
     # --- Full conversation flow ------------------------------------------
 
     def test_full_conversation_replay_order_and_count(self):
