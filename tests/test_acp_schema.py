@@ -451,7 +451,7 @@ def test_session_update_notification_discriminator():
         "update": {
             "sessionUpdate": "agent_message_chunk",
             "content": {"type": "text", "text": "hello"},
-            "schema_version": "v1",
+            "schema_version": 1,
         },
     })
     assert chunk.update.sessionUpdate == "agent_message_chunk"

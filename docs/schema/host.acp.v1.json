@@ -1391,7 +1391,7 @@
         "schema_version": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "integer"
             },
             {
               "type": "null"
@@ -1423,7 +1423,7 @@
         "schema_version": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "integer"
             },
             {
               "type": "null"
@@ -1511,7 +1511,7 @@
         "schema_version": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "integer"
             },
             {
               "type": "null"
@@ -1565,7 +1565,7 @@
         "schema_version": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "integer"
             },
             {
               "type": "null"
@@ -1630,7 +1630,7 @@
         "schema_version": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "integer"
             },
             {
               "type": "null"
