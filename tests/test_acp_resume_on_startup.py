@@ -117,6 +117,33 @@ def test_first_session_new_resumes_latest(initialized_server, tmp_path):
     assert initialized_server.resume_directive.consume() is False
 
 
+def test_resume_advertises_modes_like_fresh_session_new(initialized_server, tmp_path):
+    """A --resume client must get the same SessionModeState a fresh
+    session/new advertises — the resumed session owns an identical engine."""
+    from agentao.permissions import PermissionMode
+
+    class _StubEngine:
+        active_mode = PermissionMode.WORKSPACE_WRITE
+
+    _persist(tmp_path, "sess_resume_modes", [{"role": "user", "content": "hi"}])
+    initialized_server.resume_directive = ResumeDirective(session_id=None)
+    agent = FakeAgent()
+    agent.permission_engine = _StubEngine()  # type: ignore[attr-defined]
+
+    result = acp_session_new.handle_session_new(
+        initialized_server,
+        _minimal_params(tmp_path),
+        agent_factory=make_factory(agent),
+    )
+
+    assert result["sessionId"] == "sess_resume_modes"
+    modes = result["modes"]
+    assert modes["currentModeId"] == "workspace-write"
+    assert [m["id"] for m in modes["availableModes"]] == [
+        "read-only", "workspace-write", "full-access", "plan",
+    ]
+
+
 def test_resume_specific_session_by_id(initialized_server, tmp_path):
     _persist(tmp_path, "sess_alpha", [{"role": "user", "content": "alpha"}])
     _persist(tmp_path, "sess_beta", [{"role": "user", "content": "beta"}])

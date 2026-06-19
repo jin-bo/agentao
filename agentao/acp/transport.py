@@ -110,7 +110,13 @@ from typing import TYPE_CHECKING, Any, Dict
 from agentao.transport.events import AgentEvent, EventType
 
 from .protocol import METHOD_SESSION_UPDATE
-from ._transport_helpers import _json_safe, _text_block, _tool_content_text, _tool_kind
+from ._transport_helpers import (
+    _json_safe,
+    _text_block,
+    _todo_write_plan,
+    _tool_content_text,
+    _tool_kind,
+)
 from ._transport_interaction import _InteractionMixin, _build_permission_options
 from ._transport_interaction import (  # re-exported for back-compat
     PERMISSION_ALLOW_ALWAYS,
@@ -140,6 +146,7 @@ __all__ = [
     "PERMISSION_REJECT_ALWAYS",
     "_json_safe",
     "_tool_kind",
+    "_todo_write_plan",
     "_text_block",
     "_tool_content_text",
     "_build_permission_options",
@@ -169,6 +176,12 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
         self._session_id = session_id
         from ..transport.broadcast import EventBroadcaster
         self._broadcast = EventBroadcaster()
+        # call_id → deferred ACP ``plan`` update for an in-flight ``todo_write``.
+        # The plan is built at TOOL_START but only emitted at TOOL_COMPLETE if
+        # the call applied (status "ok"), so a denied/failed checklist update
+        # never renders as if it took effect. Entries are popped on completion;
+        # TOOL_START/TOOL_COMPLETE always pair, so this stays bounded.
+        self._todo_plan_calls: Dict[str, Dict[str, Any]] = {}
 
     # -- One-way events ----------------------------------------------------
 
@@ -237,6 +250,18 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
             tool = str(data.get("tool", "unknown"))
             call_id = str(data.get("call_id", ""))
             raw_args = data.get("args", {})
+            if tool == "todo_write":
+                # Surface the task checklist as a native ACP ``plan`` rather
+                # than a ``tool_call`` — but DEFER it to TOOL_COMPLETE so a
+                # denied (read-only mode) or failed call never renders a plan
+                # as if it applied. Stash the validated plan keyed by call_id;
+                # it is emitted from the TOOL_COMPLETE branch on status "ok".
+                # If the todos are empty/malformed, fall through to the normal
+                # tool_call mapping (which then completes normally below).
+                plan = _todo_write_plan(raw_args)
+                if plan is not None:
+                    self._todo_plan_calls[call_id] = plan
+                    return None
             return {
                 "sessionUpdate": "tool_call",
                 "toolCallId": call_id,
@@ -260,6 +285,18 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
 
         if etype == EventType.TOOL_COMPLETE:
             call_id = str(data.get("call_id", ""))
+            if str(data.get("tool", "")) == "todo_write":
+                plan = self._todo_plan_calls.pop(call_id, None)
+                if plan is not None:
+                    # A deferred plan: emit it only if the call actually
+                    # applied. On a denied/failed/cancelled call, emit nothing
+                    # — the checklist never changed and TOOL_START emitted no
+                    # opening ``tool_call`` to close, so the sequence stays
+                    # consistent.
+                    return plan if data.get("status", "ok") == "ok" else None
+                # No deferred plan for this call_id → TOOL_START emitted a real
+                # ``tool_call`` (the empty/malformed fallback), so let it
+                # complete normally below rather than orphan a pending call.
             status = data.get("status", "ok")
             # Agentao uses "ok" | "error" | "cancelled"; ACP uses
             # "completed" | "failed". Map conservatively — "cancelled"

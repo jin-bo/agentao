@@ -407,8 +407,9 @@ def resume_session_on_new(
     loads the history, and reuses the shared loader so the reloaded session
     is indistinguishable from one created by ``session/load``.
 
-    Returns ``{"sessionId", "configOptions"}`` on success — the same shape
-    ``session/new`` returns, so the client transparently continues the
+    Returns ``{"sessionId", "configOptions", "modes"?}`` on success — the
+    same shape ``session/new`` returns (``modes`` advertised when the session
+    has a permission engine), so the client transparently continues the
     restored conversation. Returns ``None`` when there is nothing to resume,
     so the caller falls back to a normal fresh session rather than failing
     the request. ``None`` is returned for any recoverable problem: no
@@ -463,10 +464,20 @@ def resume_session_on_new(
         origin="resume",
     )
 
-    return {
+    # Advertise the permission presets as ACP session modes, exactly as a
+    # fresh session/new does — the resumed session owns an identical engine,
+    # so a --resume client must get the same mode selector. Lazy import to
+    # avoid a module-load cycle (session_new imports this module for resume).
+    from .session_new import _session_modes
+
+    response: Dict[str, Any] = {
         "sessionId": session_id,
         "configOptions": config_options_for_session(server, state),
     }
+    modes = _session_modes(state)
+    if modes is not None:
+        response["modes"] = modes
+    return response
 
 
 # ---------------------------------------------------------------------------
