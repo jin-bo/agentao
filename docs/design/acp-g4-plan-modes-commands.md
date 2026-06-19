@@ -1,16 +1,16 @@
 # ACP G4 — Plan, Modes & Commands session/update Design
 
-**Status:** Design proposal — **revised 2026-06-18 per review; converged, pending
-approval.** Build design for **G4** from `acp-server-conformance-review.md` — the
+**Status:** Design — **IMPLEMENTED in PR-1** (branch `feat/acp-g4-modes-plan`,
+2026-06-18). Build design for **G4** from `acp-server-conformance-review.md` — the
 top chat-relevant ACP gap after the maintainer set the target-client class to
 **chat/automation** (so G1 fs/terminal is a non-goal and G4/G3/G2-diff are the
-now-work). Review pinned the `current_mode_update` emit path (handler, not the
-non-firing engine event), added defensive `todo_write`→`plan` validation, noted
-`modes` is already a loose schema field, and cut Commands to a clean defer. A 2nd
-review pass fixed the failed-`todo_write` path (**always drop** `TOOL_COMPLETE` — a
-`tool_call_update` would be orphaned now that `TOOL_START` is a `plan`) and the
-notification send-path wording (direct `server.write_notification`, not "the session
-transport"). **Approved for implementation; not yet implemented.**
+now-work). The `modes` half landed as designed (and is also advertised on the
+`--resume` path). The `plan` half was **corrected during the implementation
+`/code-review`**: the plan is now **deferred to `TOOL_COMPLETE` (emitted only on
+`status=="ok"`)** rather than at `TOOL_START` — the `TOOL_START` plan fired
+*pre-permission-decision* (a denied call showed a phantom applied plan) and
+orphaned the empty/malformed fallback `tool_call`; validation is **all-or-nothing**.
+§4.2 and §7 describe the final, implemented design.
 **Audience:** Agentao maintainers; the DeepChat/TensorChat integration owner.
 **Companion:** `acp-g4-plan-modes-commands.zh.md`.
 **Related:**
@@ -34,7 +34,7 @@ commands** (→ `available_commands_update`). Each maps to an existing primitive
 
 | ACP surface (schema-verified) | Agentao primitive | Fit | Recommendation |
 |---|---|---|---|
-| `plan` update — `Plan{entries:[PlanEntry{content, priority, status}]}` | `todo_write` tool (`tools/todo.py`); `todos:[{content,status}]`, status enum identical | High — only `priority` missing | **Do 2nd** — transport special-case, synthesize `priority:"medium"` |
+| `plan` update — `Plan{entries:[PlanEntry{content, priority, status}]}` | `todo_write` tool (`tools/todo.py`); `todos:[{content,status}]`, status enum identical | High — only `priority` missing | **Do 2nd** — transport maps it, **deferred to `TOOL_COMPLETE`-on-`ok`**, synthesize `priority:"medium"` |
 | `modes` (session/new) + `current_mode_update` | `PermissionMode{read-only, workspace-write, full-access, plan}` (`permissions.py:75`); typed-up the existing loose `modes` schema field; emit `current_mode_update` **from the set_mode handler** | High — 4 presets → availableModes | **Do 1st** — smallest, highest conformance value |
 | `available_commands_update` — `[{name, description, input?}]` | slash commands (`cli/help_text.py`) — but **host/CLI-control, no agent-runtime semantics** | Low | **Not this round** — design only if DeepChat asks for a command palette |
 
@@ -170,36 +170,44 @@ though they are not in `availableModes`.
 `AcpSessionUpdatePlan{sessionUpdate:"plan", entries:[AcpPlanEntry]}`; add to the
 `AcpSessionUpdate` union.
 
-**Transport special-case, defensive** (`transport.py::_build_update`): when the
-tool is `todo_write`, map its `TOOL_START` (whose `rawInput.todos` carries the
-list) to a **`plan`** update instead of a `tool_call`. The `todos` come from the
-LLM and may be malformed, so **validate** rather than trust:
-```python
-_STATUS = {"pending", "in_progress", "completed"}
-if tool == "todo_write":
-    raw = data.get("args", {}).get("todos", [])
-    entries = [
-        {"content": t["content"], "priority": "medium", "status": t["status"]}
-        for t in raw
-        if isinstance(t, dict)
-        and isinstance(t.get("content"), str)
-        and t.get("status") in _STATUS
-    ]
-    # If nothing survives validation, fall through to the normal tool_call
-    # mapping rather than emit an empty/garbage plan.
-    if entries:
-        return {"sessionUpdate": "plan", "entries": entries}
-```
-**Always drop the `todo_write` `TOOL_COMPLETE`.** Because `TOOL_START` was mapped
-to a `plan` (not a `tool_call`), emitting *any* `tool_call_update` on completion —
-including `status:"failed"` — would be an **orphan terminal update**: a
-`tool_call_update` with no opening `tool_call`, which breaks the ACP message
-sequence. So drop the `todo_write` `TOOL_COMPLETE` **unconditionally**. A failure
-is anyway near-impossible (`todo_write` is a synchronous in-memory list-replace);
-if one ever needs surfacing, emit a short `agent_message_chunk` /
-`agent_thought_chunk` text note instead of a `tool_call_update`. A test must lock
-this in: a `todo_write` turn emits exactly one `plan` and **no** `tool_call` /
-terminal `tool_call_update`.
+**Transport mapping** (`transport.py::_build_update`): surface a `todo_write` call
+as a native ACP `plan` — but **emit it at `TOOL_COMPLETE`, not `TOOL_START`** (see
+the correction note below). The flow is keyed by `call_id`, with a small per-call
+stash on the transport (`self._todo_plan_calls`):
+
+- **`TOOL_START`**: build the plan from `rawInput.todos`, **stash** it
+  (`self._todo_plan_calls[call_id] = plan`) and emit **nothing**. If the todos
+  don't validate (empty or *any* malformed entry), don't stash — fall through to
+  the normal `tool_call` mapping.
+- **`TOOL_COMPLETE`**: pop the stash. If a plan is present, emit it **only when
+  `status == "ok"`** (the call actually applied); on a denied/failed/cancelled call
+  emit **nothing** — `TOOL_START` opened nothing, so there is nothing to close. If
+  there is no stashed plan, this `call_id` took the fallback `tool_call`, so let it
+  complete normally (a terminal `tool_call_update`).
+
+**Validation is all-or-nothing** (`_transport_helpers.py::_todo_write_plan`): a
+`plan` replaces the *entire* checklist on each update, so silently dropping a
+malformed entry would make a real task vanish from the client. `content` must be a
+string and `status` one of `pending|in_progress|completed`; if the list is empty or
+*any* entry fails, return `None` → fall back to the `tool_call` mapping (which
+carries the full raw args) rather than emit a truncated or empty plan.
+
+> **Why defer to `TOOL_COMPLETE` (correction from the implementation review).** The
+> first design emitted the plan at `TOOL_START` and dropped `TOOL_COMPLETE`
+> unconditionally. The `/code-review` found two bugs in that:
+> 1. **Denied/failed plans rendered as applied.** `TOOL_START` fires *before* the
+>    permission decision (`runtime/tool_executor.py`), so a `todo_write` denied in
+>    read-only mode (or that fails) still emitted a `plan` the client showed as in
+>    effect — even though `execute()` never ran.
+> 2. **Orphaned fallback `tool_call`.** On empty/malformed todos, `TOOL_START` fell
+>    back to a real `tool_call`, but the unconditional `TOOL_COMPLETE` drop then left
+>    it **forever-pending** (no terminal update).
+>
+> Deferring the plan to `TOOL_COMPLETE`-on-`ok` fixes both: denied/failed calls emit
+> no plan, and the fallback `tool_call` completes normally. Cost: the per-`call_id`
+> stash — bounded, since `TOOL_START`/`TOOL_COMPLETE` always pair and entries are
+> popped on completion. (`todo_write` is a plain sync tool with no `output_callback`,
+> so it never emits `TOOL_OUTPUT` between the two — no intermediate orphan risk.)
 
 **Priority**: agentao todos have no priority; ACP requires it → emit `"medium"`
 for all. **Out of scope for this PR:** adding a `priority` field to the
@@ -244,18 +252,24 @@ the defensive `todo_write`→`plan` transport mapping.
   the loose `modes: Optional[Dict[str,Any]]`** (`schema.py:198`) with
   `AcpSessionModeState`; add the two new updates to the `AcpSessionUpdate` union.
   Regenerate `docs/schema/host.acp.v1.json`; update schema snapshot tests.
-- `agentao/acp/transport.py`: defensive `todo_write`→`plan` (validate entries; drop
-  the `todo_write` `TOOL_COMPLETE` **unconditionally** — no orphan terminal update).
-  Optionally also map
+- `agentao/acp/transport.py`: map `todo_write`→`plan`, **deferred to
+  `TOOL_COMPLETE`-on-`ok`** (stash at `TOOL_START` keyed by `call_id`;
+  all-or-nothing validation; denied/failed → no plan; empty/malformed → fallback
+  `tool_call` that completes normally). Optionally also map
   `PERMISSION_MODE_CHANGED`→`current_mode_update` for completeness — but it is not
   load-bearing for the ACP path (see §4.1).
+- `agentao/acp/_transport_helpers.py`: `_todo_write_plan` (all-or-nothing validate,
+  synthesize `priority:"medium"`).
 - `agentao/acp/session_new.py`: emit the typed `modes` in the response.
+- `agentao/acp/session_load.py`: `resume_session_on_new` advertises the same typed
+  `modes`, so a `--resume` client gets the same mode selector as a fresh session.
 - `agentao/acp/session_set_mode.py`: **emit `current_mode_update` from the handler**
   after `session.mode_id = mode_id`; keep returning `{modeId}` for DeepChat.
-- Tests: `tests/test_acp_transport.py` (plan happy-path emits one `plan` and **no**
-  `tool_call`/terminal `tool_call_update`; malformed-todos falls back to the normal
-  `tool_call` mapping; mode-change emits `current_mode_update`), session/new
-  typed-modes assertion, schema snapshot.
+- Tests: `tests/test_acp_transport.py` (plan deferred at `TOOL_START` then emitted on
+  `TOOL_COMPLETE`-`ok`; denied/failed → no plan; empty/malformed → fallback
+  `tool_call` that completes; mode-change emits `current_mode_update`),
+  `tests/test_acp_session_new.py` + `tests/test_acp_resume_on_startup.py` typed-modes
+  assertions, schema snapshot.
 
 **Commands:** deferred, **no PR planned** (see §4.3).
 
@@ -271,14 +285,24 @@ the defensive `todo_write`→`plan` transport mapping.
    `session_set_mode.py`), so the event-mapping route would miss the ACP path.
    **Emit from the handler** (§4.1); transport event-mapping is optional, not
    load-bearing.
-2. **`TOOL_COMPLETE` for `todo_write`** — *resolved (revised in 2nd pass).* An
-   earlier draft kept a `tool_call_update:failed` on the failure path; review caught
-   that this is an **orphan terminal update** (no opening `tool_call`, because
-   `TOOL_START` became a `plan`) and breaks the ACP sequence. **Always drop** the
-   `todo_write` `TOOL_COMPLETE`; surface the near-impossible failure via a short
-   `agent_message_chunk`, never a `tool_call_update` (§4.2). Plan emits on
-   `TOOL_START` (list is final at call time; `todo_write` is synchronous). Locked by
-   a test.
+2. **Plan emit timing & `TOOL_COMPLETE`** — *resolved (revised twice; final =
+   implementation).* The design moved through three positions:
+   **(a)** emit `plan` at `TOOL_START`, keep `tool_call_update:failed` on failure;
+   **(b)** emit `plan` at `TOOL_START`, **always drop** `TOOL_COMPLETE` (2nd review
+   pass — the failed update was an orphan);
+   **(c) final, implemented:** **defer the `plan` to `TOOL_COMPLETE`, emit only on
+   `status=="ok"`** (§4.2). The implementation `/code-review` showed (b) still
+   emitted at `TOOL_START`, which is *pre-permission-decision* — a denied (read-only)
+   `todo_write` rendered a phantom applied plan — and the empty/malformed fallback
+   `tool_call` was orphaned by the unconditional drop. (c) fixes both: denied/failed
+   emit no plan; the fallback `tool_call` completes normally.
 3. **Priority** — *resolved.* Ship all-`medium`. Adding a `todo_write.priority`
    field is **out of scope** — it expands an ACP-adapter change into a runtime/tool
    contract change (§4.2).
+4. **Plan validation** — *resolved (implementation).* `_todo_write_plan` is
+   **all-or-nothing**, not per-entry filtering: a `plan` is full-replace, so dropping
+   a single malformed entry would silently truncate the checklist. Any malformed
+   entry (or an empty list) → fall back to a `tool_call` carrying the full raw args.
+5. **Resume parity** — *resolved (implementation).* `resume_session_on_new` (the
+   `--resume`-on-first-`session/new` path) advertises the same typed `modes` as a
+   fresh `session/new`; without it a resumed client got no mode selector.
