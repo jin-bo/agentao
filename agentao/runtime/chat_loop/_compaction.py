@@ -24,9 +24,10 @@ class _CompactionMixin:
         self,
         messages_with_system: list,
         system_prompt: str,
+        tokens: int | None = None,
     ) -> Tuple[list, str]:
         agent = self._agent
-        if not agent.context_manager.needs_microcompaction(messages_with_system):
+        if not agent.context_manager.needs_microcompaction(messages_with_system, tokens=tokens):
             return messages_with_system, system_prompt
         self._dispatch_pre_compact(
             compaction_type="microcompact",
@@ -55,9 +56,10 @@ class _CompactionMixin:
         self,
         messages_with_system: list,
         system_prompt: str,
+        tokens: int | None = None,
     ) -> Tuple[list, str]:
         agent = self._agent
-        if not agent.context_manager.needs_compression(messages_with_system):
+        if not agent.context_manager.needs_compression(messages_with_system, tokens=tokens):
             return messages_with_system, system_prompt
         self._dispatch_pre_compact(
             compaction_type="full",

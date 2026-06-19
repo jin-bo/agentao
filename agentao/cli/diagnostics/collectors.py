@@ -44,7 +44,8 @@ def _collect_settings(wd: Path, report: DiagnosticReport) -> Optional[Dict[str, 
 
 def _collect_provider(report: DiagnosticReport) -> None:
     """Report which LLM provider env vars are present (no secret values)."""
-    provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
+    from ...embedding.factory import resolve_provider_name
+    provider = resolve_provider_name()
     api_key = os.getenv(f"{provider}_API_KEY")
     base_url = os.getenv(f"{provider}_BASE_URL")
     model = os.getenv(f"{provider}_MODEL")

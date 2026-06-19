@@ -31,6 +31,7 @@ from ..agent import Agentao
 from ..paths import user_root
 from .display import DisplayController
 from ..embedding import build_from_environment
+from ..embedding.factory import resolve_provider_name
 from ..transport import AgentEvent
 from ._globals import console
 from ._utils import _SlashCompleter
@@ -43,6 +44,15 @@ class AgentaoCLI:
         """Initialize CLI."""
         safe_load_dotenv()
 
+        # Resolved project root for ``.agentao/`` lookups. Mirrors the
+        # factory's ``(working_directory or Path.cwd()).expanduser().resolve()``
+        # (the CLI passes no ``working_directory``) so settings reads/writes
+        # target the *same* ``settings.json`` the agent's frozen
+        # ``working_directory`` points at — not a process-cwd-relative one that
+        # the factory never reads. Re-bound to ``self.agent.working_directory``
+        # once the agent is built (the authoritative frozen root).
+        self._project_root: Path = Path.cwd().expanduser().resolve()
+
         self.current_session_id: Optional[str] = str(_uuid_mod.uuid4())
         self.current_status = None
         self._streaming_output = False
@@ -54,7 +64,7 @@ class AgentaoCLI:
         from ..plan import PlanSession, PlanController
         self._plan_session = PlanSession()
         self._plan_controller: Optional[object] = None
-        provider = os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
+        provider = resolve_provider_name()
         self.current_provider = provider
 
         context_limit = int(os.getenv("AGENTAO_CONTEXT_TOKENS", "200000"))
@@ -76,6 +86,10 @@ class AgentaoCLI:
             max_context_tokens=context_limit,
             plan_session=self._plan_session,
         )
+        # Re-bind to the agent's frozen working_directory — the authoritative
+        # resolved root for ``.agentao/`` reads/writes (factory resolved it the
+        # same way, but bind to the source of truth in case that ever changes).
+        self._project_root = self.agent.working_directory
         # Hold a reference so the CLI can switch modes / inspect rules
         # without going through the agent.
         self.permission_engine = self.agent.permission_engine
@@ -137,7 +151,8 @@ class AgentaoCLI:
         self.agent.tool_runner.set_readonly_mode(self.readonly_mode)
 
     def _load_settings(self) -> dict:
-        path = Path(".agentao") / "settings.json"
+        from ..replay.config import settings_path
+        path = settings_path(self._project_root)
         if path.exists():
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
@@ -146,7 +161,8 @@ class AgentaoCLI:
         return {}
 
     def _save_settings(self) -> None:
-        path = Path(".agentao") / "settings.json"
+        from ..replay.config import settings_path
+        path = settings_path(self._project_root)
         path.parent.mkdir(exist_ok=True)
         data = self._load_settings()
         data["mode"] = self.current_mode.value

@@ -43,8 +43,8 @@ def test_doom_loop_dispatches_stop_exactly_once(tmp_path, monkeypatch):
         return StopHookResult(matched_rule_count=1)
 
     monkeypatch.setattr(runner, "_dispatch_stop", fake_dispatch_stop)
-    monkeypatch.setattr(runner, "_maybe_microcompact", lambda m, s: (m, s))
-    monkeypatch.setattr(runner, "_maybe_full_compress", lambda m, s: (m, s))
+    monkeypatch.setattr(runner, "_maybe_microcompact", lambda m, s, tokens=None: (m, s))
+    monkeypatch.setattr(runner, "_maybe_full_compress", lambda m, s, tokens=None: (m, s))
     monkeypatch.setattr(
         runner, "_inject_background_notifications", lambda m, s: m,
     )

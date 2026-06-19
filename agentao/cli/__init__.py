@@ -72,7 +72,7 @@ __all__ = ["entrypoint", *sorted(_LAZY_NAMES.keys())]
 _MISSING_DEP_MESSAGE = (
     "agentao CLI requires extra packages (missing: {missing}).\n"
     "  pip install 'agentao[cli]'   # CLI surface only\n"
-    "  pip install 'agentao[full]'  # 0.3.x-equivalent closure\n"
+    "  pip install 'agentao[full]'  # all optional extras\n"
     "See docs/migration/0.3.x-to-0.4.0.md for details.\n"
 )
 

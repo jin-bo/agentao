@@ -119,8 +119,8 @@ def make_runner_with_stub_llm(
     agent._plugin_hook_rules = rules
     runner = ChatLoopRunner(agent, stop_reentry_cap=stop_reentry_cap)
 
-    monkeypatch.setattr(runner, "_maybe_microcompact", lambda m, s: (m, s))
-    monkeypatch.setattr(runner, "_maybe_full_compress", lambda m, s: (m, s))
+    monkeypatch.setattr(runner, "_maybe_microcompact", lambda m, s, tokens=None: (m, s))
+    monkeypatch.setattr(runner, "_maybe_full_compress", lambda m, s, tokens=None: (m, s))
     monkeypatch.setattr(runner, "_inject_background_notifications", lambda m, s: m)
 
     fake_message = SimpleNamespace(

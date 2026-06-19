@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import readchar
 
-from .._globals import console
+from .._globals import console, split_subcommand, unknown_subcommand
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -32,10 +32,7 @@ def _ensure_acp_manager(cli: AgentaoCLI):
 
 def handle_acp_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /acp command and subcommands."""
-    args = args.strip()
-    parts = args.split(None, 1) if args else []
-    sub = parts[0] if parts else ""
-    rest = parts[1].strip() if len(parts) > 1 else ""
+    sub, rest = split_subcommand(args)
 
     if not sub or sub == "list":
         _acp_list(cli)
@@ -70,7 +67,7 @@ def handle_acp_command(cli: AgentaoCLI, args: str) -> None:
         return
 
 
-    console.print(f"\n[error]Unknown subcommand: {sub}[/error]")
+    console.print(unknown_subcommand(sub))
     console.print(
         "[info]Available: list, start, stop, restart, send, cancel, "
         "status, logs[/info]\n"

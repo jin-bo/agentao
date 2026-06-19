@@ -41,17 +41,25 @@ def _heuristic_token_count(text: str) -> int:
     """CJK-aware token estimation (adapted from gemini-cli tokenCalculation.ts).
 
     Fast path for strings > 100K chars: len/4.
-    Otherwise char-by-char:
+    Otherwise weighted by character class:
       ASCII (0-127):    0.25 tokens/char
       non-ASCII / CJK:  1.3  tokens/char
+
+    The ASCII/CJK split is computed at C speed via ``encode("ascii", "ignore")``
+    — which drops every non-ASCII char, so the encoded byte length is exactly
+    the ASCII-char count — instead of a Python per-character loop. The weights
+    are applied with integer arithmetic (``×100 // 100``) so the result is the
+    exact floor of ``ascii×0.25 + cjk×1.3``: deterministic, and free of the
+    upward drift a running float sum of the inexact ``1.3`` would accumulate.
+    This removes the O(chars) interpreter loop from the no-tiktoken estimation
+    fallback (T1.2).
     """
     n = len(text)
     if n > _FAST_PATH_CHARS:
         return n // 4
-    tokens = 0.0
-    for ch in text:
-        tokens += 0.25 if ord(ch) < 128 else 1.3
-    return int(tokens)
+    ascii_count = len(text.encode("ascii", "ignore"))
+    non_ascii = n - ascii_count
+    return (ascii_count * 25 + non_ascii * 130) // 100
 
 
 class ContextManager:
@@ -224,16 +232,30 @@ class ContextManager:
     # Threshold checks
     # -----------------------------------------------------------------------
 
-    def needs_compression(self, messages: List[Dict[str, Any]]) -> bool:
-        """Return True when full LLM compression is needed (>= 65%)."""
-        return self._threshold_token_estimate(messages) > self.max_tokens * self.COMPRESSION_THRESHOLD
+    def needs_compression(
+        self, messages: List[Dict[str, Any]], tokens: Optional[int] = None
+    ) -> bool:
+        """Return True when full LLM compression is needed (>= 65%).
 
-    def needs_microcompaction(self, messages: List[Dict[str, Any]]) -> bool:
-        """Return True when cheap tool-result clearing is warranted (55-65%)."""
-        tokens = self._threshold_token_estimate(messages)
+        ``tokens`` lets the caller pass a pre-computed
+        :meth:`_threshold_token_estimate` so the same per-iteration estimate
+        feeds both this and :meth:`needs_microcompaction` instead of being
+        computed twice (T1.3). Omit it to estimate locally.
+        """
+        est = tokens if tokens is not None else self._threshold_token_estimate(messages)
+        return est > self.max_tokens * self.COMPRESSION_THRESHOLD
+
+    def needs_microcompaction(
+        self, messages: List[Dict[str, Any]], tokens: Optional[int] = None
+    ) -> bool:
+        """Return True when cheap tool-result clearing is warranted (55-65%).
+
+        See :meth:`needs_compression` for the ``tokens`` pre-computation hook.
+        """
+        est = tokens if tokens is not None else self._threshold_token_estimate(messages)
         return (
-            tokens > self.max_tokens * self.MICROCOMPACT_THRESHOLD
-            and tokens <= self.max_tokens * self.COMPRESSION_THRESHOLD
+            est > self.max_tokens * self.MICROCOMPACT_THRESHOLD
+            and est <= self.max_tokens * self.COMPRESSION_THRESHOLD
         )
 
     # -----------------------------------------------------------------------

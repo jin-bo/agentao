@@ -232,11 +232,17 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             iteration += 1
             agent.llm.logger.info(f"LLM iteration {iteration}/{max_iterations}")
 
+            # One threshold estimate per iteration, shared by both compaction
+            # predicates (T1.3). The ranges are mutually exclusive (micro
+            # 55-65%, full >65%) and microcompaction only lowers the count, so
+            # reusing the pre-mutation estimate yields the same fire/no-op
+            # decision as recomputing — without the redundant second estimate.
+            est_tokens = agent.context_manager._threshold_token_estimate(messages_with_system)
             messages_with_system, system_prompt = self._maybe_microcompact(
-                messages_with_system, system_prompt,
+                messages_with_system, system_prompt, tokens=est_tokens,
             )
             messages_with_system, system_prompt = self._maybe_full_compress(
-                messages_with_system, system_prompt,
+                messages_with_system, system_prompt, tokens=est_tokens,
             )
             messages_with_system = self._inject_background_notifications(
                 messages_with_system, system_prompt,

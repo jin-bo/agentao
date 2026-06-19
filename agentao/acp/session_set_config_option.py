@@ -67,7 +67,12 @@ def _default_provider_id() -> str:
     """The provider id of the single env-configured provider, lower-cased.
 
     Mirrors ``factory.discover_llm_kwargs``' ``LLM_PROVIDER`` read but in the
-    ``provider/model`` value casing (lower-case) used on the wire.
+    ``provider/model`` value casing (lower-case) used on the wire. Reads
+    ``LLM_PROVIDER`` directly — deliberately NOT via
+    ``factory.resolve_provider_name`` (which upper-cases): for non-ASCII names
+    whose ``.upper().lower()`` is not idempotent (``ß`` / ``ı`` / ligatures),
+    round-tripping would change the wire value and the accept/reject decision
+    in :func:`default_provider_resolver`.
     """
     return os.getenv("LLM_PROVIDER", "OPENAI").strip().lower()
 
@@ -83,6 +88,10 @@ def default_provider_resolver(provider_id: str) -> Dict[str, Optional[str]]:
 
     Returns ``{"api_key", "base_url"}`` (``base_url`` may be ``None``).
     """
+    # Read LLM_PROVIDER directly (not via factory.resolve_provider_name, which
+    # upper-cases): the accept/reject comparison below must use the raw value's
+    # casefold so a non-ASCII provider name with non-idempotent ``.upper().lower()``
+    # (``ß`` / ``ı`` / ligatures) is not silently rejected.
     env_provider = os.getenv("LLM_PROVIDER", "OPENAI").strip()
     if provider_id.strip().lower() != env_provider.lower():
         raise LookupError(
