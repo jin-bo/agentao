@@ -1,10 +1,13 @@
 # ACP G4 — Plan, Modes & Commands session/update Design
 
-**Status:** Design proposal. Drafted 2026-06-18 as the build design for **G4** from
-`acp-server-conformance-review.md` — the top chat-relevant ACP gap after the
-maintainer set the target-client class to **chat/automation** (so G1 fs/terminal
-is a non-goal and G4/G3/G2-diff are the now-work). **Not yet approved or
-implemented.**
+**Status:** Design proposal — **revised 2026-06-18 per review; converged, pending
+approval.** Build design for **G4** from `acp-server-conformance-review.md` — the
+top chat-relevant ACP gap after the maintainer set the target-client class to
+**chat/automation** (so G1 fs/terminal is a non-goal and G4/G3/G2-diff are the
+now-work). Review pinned the `current_mode_update` emit path (handler, not the
+non-firing engine event), added defensive `todo_write`→`plan` validation, noted
+`modes` is already a loose schema field, and cut Commands to a clean defer. **Not
+yet implemented.**
 **Audience:** Agentao maintainers; the DeepChat/TensorChat integration owner.
 **Companion:** `acp-g4-plan-modes-commands.zh.md`.
 **Related:**
@@ -29,11 +32,11 @@ commands** (→ `available_commands_update`). Each maps to an existing primitive
 | ACP surface (schema-verified) | Agentao primitive | Fit | Recommendation |
 |---|---|---|---|
 | `plan` update — `Plan{entries:[PlanEntry{content, priority, status}]}` | `todo_write` tool (`tools/todo.py`); `todos:[{content,status}]`, status enum identical | High — only `priority` missing | **Do 2nd** — transport special-case, synthesize `priority:"medium"` |
-| `modes` (session/new) + `current_mode_update` | `PermissionMode{read-only, workspace-write, full-access, plan}` (`permissions.py:75`) + `EventType.PERMISSION_MODE_CHANGED` | High — 4 presets → availableModes | **Do 1st** — smallest, highest conformance value |
-| `available_commands_update` — `[{name, description, input?}]` | slash commands (`cli/help_text.py`) — but **host/CLI-control, no agent-runtime semantics** | Low | **Scope down or defer** (demand-gate on DeepChat) |
+| `modes` (session/new) + `current_mode_update` | `PermissionMode{read-only, workspace-write, full-access, plan}` (`permissions.py:75`); typed-up the existing loose `modes` schema field; emit `current_mode_update` **from the set_mode handler** | High — 4 presets → availableModes | **Do 1st** — smallest, highest conformance value |
+| `available_commands_update` — `[{name, description, input?}]` | slash commands (`cli/help_text.py`) — but **host/CLI-control, no agent-runtime semantics** | Low | **Not this round** — design only if DeepChat asks for a command palette |
 
-**Sequencing: Modes → Plan → Commands.** Modes + Plan are one compact PR (pure
-ACP-layer + schema, no runtime change). Commands is evaluated separately.
+**Sequencing: PR-1 = Modes + Plan only.** Both are pure ACP-layer + schema (no
+runtime change). Commands is **deferred, no implementation planned** this round.
 
 Two conformance asides surfaced while verifying (fold back into the review doc):
 **(1)** ACP `ToolKind` has **10** values (`read, edit, delete, move, search,
@@ -96,9 +99,12 @@ AvailableCommandInput   = { hint: string }                 // "all text after th
 - **`PermissionMode`** (`permissions.py:75-79`): `read-only`, `workspace-write`,
   `full-access`, `plan`. Default `WORKSPACE_WRITE`. These string values are the
   natural `SessionModeId`s. `session.mode_id` already persisted (`acp/models.py:255`).
-- **`EventType.PERMISSION_MODE_CHANGED`** (`transport/events.py:45`): fires on mode
-  change — the single hook for `current_mode_update` (covers both client-driven
-  `session/set_mode` and runtime-internal switches like `/plan implement`).
+- **`EventType.PERMISSION_MODE_CHANGED`** (`transport/events.py:45`): **emitted by
+  the CLI** (`cli/app.py:172`), **not** by `PermissionEngine.set_mode()`
+  (`permissions.py:382` — no emit) and **not** by the ACP `session/set_mode`
+  handler. So on the ACP path this event never fires — `current_mode_update` must
+  be emitted by the handler itself (see §4.1). Transport *may* additionally map
+  this event for completeness, but the ACP path must not depend on it.
 - **Slash commands** (`cli/help_text.py`): `/memory /compact /mcp /sessions /model
   /mode /skills /replay /sandbox …` — verified to be **host/CLI subsystem control**,
   not agent-task commands. This is the crux of the G4c recommendation.
@@ -112,8 +118,10 @@ AvailableCommandInput   = { hint: string }                 // "all text after th
 **Schema** (`agentao/acp/schema.py`): add `AcpSessionMode{id, name, description?}`,
 `AcpSessionModeState{currentModeId, availableModes}`, and an
 `AcpSessionUpdateCurrentMode{sessionUpdate:"current_mode_update", currentModeId}`;
-add the latter to the `AcpSessionUpdate` union (`schema.py:567`); add `modes` to
-the session/new response model.
+add the latter to the `AcpSessionUpdate` union (`schema.py:567`). Note `modes`
+already exists on the session/new response as a **loose placeholder**
+(`schema.py:198`: `modes: Optional[Dict[str, Any]] = None`) — **replace it with the
+typed `AcpSessionModeState`**, don't add a second field.
 
 **session/new** (`session_new.py:421`): build `modes` from the live engine —
 ```python
@@ -129,11 +137,15 @@ the session/new response model.
 ```
 (Build the list from the `PermissionMode` enum + a names map so it can't drift.)
 
-**current_mode_update**: map `EventType.PERMISSION_MODE_CHANGED` → `{sessionUpdate:
-"current_mode_update", currentModeId: <new mode>}` in `transport.py::_build_update`.
-One mapping covers every trigger. *Verify* `permission_engine.set_mode()` actually
-emits `PERMISSION_MODE_CHANGED` onto the session transport; if it does not, emit
-`current_mode_update` directly from the `session_set_mode` handler as a fallback.
+**current_mode_update** — emit from the **handler**, not via the event. Verified:
+`PermissionEngine.set_mode()` does **not** emit (`permissions.py:382`); the
+`PERMISSION_MODE_CHANGED` event is emitted only by the CLI (`cli/app.py:172`), and
+the ACP `session_set_mode` handler emits nothing. So mapping the event in transport
+would **miss the ACP path entirely.** The minimal correct route: in
+`session_set_mode`, after `session.mode_id = mode_id`, send
+`{sessionUpdate:"current_mode_update", currentModeId: mode_id}` via the session
+transport. (Transport *may* also map `PERMISSION_MODE_CHANGED` so a future
+runtime-internal switch surfaces too, but the handler must not rely on it.)
 
 **session/set_mode response** (`session_set_mode.py:86`): the ACP standard response
 is empty + change-via-notification. **Keep returning `{modeId}` for DeepChat
@@ -148,45 +160,51 @@ though they are not in `availableModes`.
 `AcpSessionUpdatePlan{sessionUpdate:"plan", entries:[AcpPlanEntry]}`; add to the
 `AcpSessionUpdate` union.
 
-**Transport special-case** (`transport.py::_build_update`): when the tool is
-`todo_write`, map its `TOOL_START` (whose `rawInput.todos` carries the list) to a
-**`plan`** update instead of a `tool_call`, and drop the `todo_write`
-`TOOL_COMPLETE`:
+**Transport special-case, defensive** (`transport.py::_build_update`): when the
+tool is `todo_write`, map its `TOOL_START` (whose `rawInput.todos` carries the
+list) to a **`plan`** update instead of a `tool_call`. The `todos` come from the
+LLM and may be malformed, so **validate** rather than trust:
 ```python
+_STATUS = {"pending", "in_progress", "completed"}
 if tool == "todo_write":
-    todos = data.get("args", {}).get("todos", [])
-    return {"sessionUpdate": "plan",
-            "entries": [{"content": t["content"],
-                         "priority": "medium",          # agentao todos carry no priority
-                         "status": t["status"]} for t in todos]}
+    raw = data.get("args", {}).get("todos", [])
+    entries = [
+        {"content": t["content"], "priority": "medium", "status": t["status"]}
+        for t in raw
+        if isinstance(t, dict)
+        and isinstance(t.get("content"), str)
+        and t.get("status") in _STATUS
+    ]
+    # If nothing survives validation, fall through to the normal tool_call
+    # mapping rather than emit an empty/garbage plan.
+    if entries:
+        return {"sessionUpdate": "plan", "entries": entries}
 ```
-**Priority synthesis**: agentao todos have no priority; ACP requires it. v1 emits
-`"medium"` for all. *Optional follow-up*: add an optional `priority` field to the
-`todo_write` schema so the LLM can set it (then pass through). Zero runtime change
-— the mapping lives entirely in the ACP transport, consistent with
-`embedding-vs-acp.md`. (Alternative considered: a new `EventType.PLAN_UPDATED`
-emitted by the tool — cleaner decoupling but touches the runtime; deferred unless a
-non-ACP frontend also needs plan events.)
+**Don't drop `TOOL_COMPLETE` unconditionally.** Drop the `todo_write`
+`TOOL_COMPLETE` **only when `status == "ok"`** (the plan landed). If the call
+failed, **keep** the `tool_call_update` with `status:"failed"` so the client learns
+the plan did *not* settle — otherwise it would be left showing a "settled" plan
+from `TOOL_START` that never actually applied.
 
-### 4.3 Commands (scope down or defer)
+**Priority**: agentao todos have no priority; ACP requires it → emit `"medium"`
+for all. **Out of scope for this PR:** adding a `priority` field to the
+`todo_write` tool schema — that turns an ACP-adapter change into a runtime/tool
+contract change and isn't worth it. Zero runtime change: the mapping lives entirely
+in the ACP transport, consistent with `embedding-vs-acp.md`.
 
-**Finding:** agentao's slash commands are host/CLI subsystem control with **no
-agent-runtime meaning** over ACP, and ACP command *invocation* routes the command
-back as `session/prompt` text (`UnstructuredCommandInput` = "all text after the
-name"), which the agent would have to parse and dispatch — a separate mechanism
-from advertising.
+### 4.3 Commands — deferred, no implementation planned this round
 
-**Recommendation (two tiers):**
-- **Advertise-only (cheap, safe):** if any agent-meaningful commands exist, emit
-  `available_commands_update` listing them right after `session/new`; with no
-  special routing, a selected command simply arrives as prompt text the LLM
-  interprets. Low risk, modest value.
-- **Defer:** host-action commands (`/memory`, `/compact`, `/sessions`, …) need
-  prompt-routing + host round-trips and have little value for a chat client that
-  has its own UI. Per the demand-gated rule, build only when DeepChat asks for
-  slash-command autocomplete.
+agentao's slash commands are host/CLI subsystem control with **no agent-runtime
+meaning** over ACP, and ACP command *invocation* routes the command back as
+`session/prompt` text (`UnstructuredCommandInput` = "all text after the name"),
+which the agent would have to parse and dispatch — a separate mechanism from
+advertising. **Do not port the CLI command list.**
 
-Net: **do not port the CLI command list**; commands is the weakest third of G4.
+**Decision:** Commands is **not built this round.** Open a fresh design only if
+DeepChat (or another target client) explicitly asks for a command palette — at
+which point the question is *which* agent-meaningful commands exist and how
+invocation routes, not how to mirror the CLI. Per the demand-gated rule, no
+speculative advertise-only tier.
 
 ---
 
@@ -204,30 +222,42 @@ Net: **do not port the CLI command list**; commands is the weakest third of G4.
 
 ## 6. Implementation plan
 
-**PR-1 (Modes + Plan — one compact change):**
-- `agentao/acp/schema.py`: 5 new models + union additions + session/new `modes`
-  field. Regenerate `docs/schema/host.acp.v1.json`; update schema snapshot tests.
-- `agentao/acp/transport.py`: `todo_write`→`plan`; `PERMISSION_MODE_CHANGED`→
-  `current_mode_update`.
-- `agentao/acp/session_new.py`: emit `modes` in the response.
-- `agentao/acp/session_set_mode.py`: emit `current_mode_update`; keep `{modeId}`.
-- Tests: extend `tests/test_acp_transport.py` (plan + mode mappings), session/new
-  modes assertion, schema snapshot.
+**PR-1 — and only this PR. Two things:** typed modes + `current_mode_update`, and
+the defensive `todo_write`→`plan` transport mapping.
+- `agentao/acp/schema.py`: add `AcpSessionMode` / `AcpSessionModeState` /
+  `AcpSessionUpdateCurrentMode` / `AcpPlanEntry` / `AcpSessionUpdatePlan`; **replace
+  the loose `modes: Optional[Dict[str,Any]]`** (`schema.py:198`) with
+  `AcpSessionModeState`; add the two new updates to the `AcpSessionUpdate` union.
+  Regenerate `docs/schema/host.acp.v1.json`; update schema snapshot tests.
+- `agentao/acp/transport.py`: defensive `todo_write`→`plan` (validate entries; drop
+  `TOOL_COMPLETE` only on `status=="ok"`). Optionally also map
+  `PERMISSION_MODE_CHANGED`→`current_mode_update` for completeness — but it is not
+  load-bearing for the ACP path (see §4.1).
+- `agentao/acp/session_new.py`: emit the typed `modes` in the response.
+- `agentao/acp/session_set_mode.py`: **emit `current_mode_update` from the handler**
+  after `session.mode_id = mode_id`; keep returning `{modeId}` for DeepChat.
+- Tests: `tests/test_acp_transport.py` (plan happy-path + malformed-todos fallback +
+  failed-call keeps `tool_call_update`; mode-change emits `current_mode_update`),
+  session/new typed-modes assertion, schema snapshot.
 
-**PR-2 (Commands — only if greenlit):** advertise-only minimal set; no CLI port.
+**Commands:** deferred, **no PR planned** (see §4.3).
 
 **Verification:** validate emitted notifications against the regenerated
 `host.acp.v1.json`; ideally also against the upstream ACP schema (ties to G6).
 
 ---
 
-## 7. Open questions
+## 7. Resolved in review (2026-06-18)
 
-1. Does `permission_engine.set_mode()` emit `PERMISSION_MODE_CHANGED` onto the
-   session's ACP transport? (Determines whether `current_mode_update` is one
-   mapping or needs a handler-side emit.) — **verify in impl.**
-2. Should the `plan` mapping also fire on `TOOL_COMPLETE` (in case the client wants
-   a terminal "plan settled" signal), or is `TOOL_START`-only sufficient? — lean
-   start-only (the list is final at call time; `todo_write` is synchronous).
-3. Priority: ship all-`medium`, or add the optional `todo_write` `priority` field in
-   the same PR? — lean all-`medium` first, field as a fast-follow.
+1. **`current_mode_update` trigger** — *resolved.* `PermissionEngine.set_mode()`
+   does not emit and the ACP handler emits nothing (`permissions.py:382`,
+   `session_set_mode.py`), so the event-mapping route would miss the ACP path.
+   **Emit from the handler** (§4.1); transport event-mapping is optional, not
+   load-bearing.
+2. **`TOOL_COMPLETE` for `todo_write`** — *resolved.* Drop it **only on
+   `status=="ok"`**; on failure keep the `tool_call_update:failed` so the client
+   doesn't see a settled-but-unapplied plan (§4.2). Plan emits on `TOOL_START`
+   (list is final at call time; `todo_write` is synchronous).
+3. **Priority** — *resolved.* Ship all-`medium`. Adding a `todo_write.priority`
+   field is **out of scope** — it expands an ACP-adapter change into a runtime/tool
+   contract change (§4.2).
