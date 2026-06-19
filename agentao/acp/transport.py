@@ -182,6 +182,10 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
         # never renders as if it took effect. Entries are popped on completion;
         # TOOL_START/TOOL_COMPLETE always pair, so this stays bounded.
         self._todo_plan_calls: Dict[str, Dict[str, Any]] = {}
+        # tool_call_ids whose persisted ``todo_write`` replayed as a ``plan``
+        # during ``session/load`` (see _ReplayMixin), so the matching tool
+        # result is skipped — a ``plan`` has no opening ``tool_call`` to close.
+        self._replay_plan_call_ids: set = set()
 
     # -- One-way events ----------------------------------------------------
 

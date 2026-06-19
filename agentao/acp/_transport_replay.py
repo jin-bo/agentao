@@ -15,7 +15,13 @@ import uuid
 from typing import Any, Dict, Iterable, List
 
 from .protocol import METHOD_SESSION_UPDATE
-from ._transport_helpers import _json_safe, _text_block, _tool_content_text, _tool_kind
+from ._transport_helpers import (
+    _json_safe,
+    _text_block,
+    _todo_write_plan,
+    _tool_content_text,
+    _tool_kind,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +104,16 @@ class _ReplayMixin:
                                content=text result)
         ===================  ============================================
 
+        **``todo_write`` is special-cased to ``plan``** (mirroring the live
+        event path): a persisted ``todo_write`` tool call replays as a
+        native ACP ``plan`` update instead of a ``tool_call``, and its
+        matching ``tool`` result is skipped (a ``plan`` has no opening
+        ``tool_call`` to update). So reloading a session shows the task
+        checklist as a plan panel, exactly as it rendered live. ``plan`` is
+        full-replace, so replaying each ``todo_write`` in order leaves the
+        client on the final checklist state. A malformed/empty persisted
+        ``todo_write`` falls back to the normal ``tool_call`` rendering.
+
         Tool calls in the persisted assistant message are emitted as
         ``tool_call`` rather than ``tool_call`` + ``tool_call_update``
         because the historical state is fully resolved — there is no
@@ -122,6 +138,10 @@ class _ReplayMixin:
                 self._session_id,
             )
             return 0
+
+        # Reset the per-load set of tool_call_ids that replay as a ``plan``
+        # (a session loads once, but clearing keeps a re-load self-consistent).
+        self._replay_plan_call_ids.clear()
 
         emitted = 0
         for index, raw in enumerate(messages):
@@ -222,6 +242,20 @@ class _ReplayMixin:
         tool_call_id = str(
             tc.get("id") or f"replay_{uuid.uuid4().hex[:12]}"
         )
+
+        # ``todo_write`` replays as a native ACP ``plan`` (mirroring the live
+        # path), not a generic tool_call — so a reloaded session shows the
+        # task checklist as a plan panel. Record the id so the matching tool
+        # result is skipped below (a ``plan`` opens no ``tool_call`` to close).
+        # A malformed/empty persisted call yields ``None`` → fall through to
+        # the normal tool_call rendering.
+        if tool_name == "todo_write":
+            plan = _todo_write_plan(args)
+            if plan is not None:
+                self._emit_update(plan)
+                self._replay_plan_call_ids.add(tool_call_id)
+                return 1
+
         self._emit_update(
             {
                 "sessionUpdate": "tool_call",
@@ -244,6 +278,11 @@ class _ReplayMixin:
             logger.debug(
                 "acp: replay_history skipping tool message with no tool_call_id"
             )
+            return 0
+        if tool_call_id in self._replay_plan_call_ids:
+            # The assistant call for this id replayed as a ``plan`` — which has
+            # no opening ``tool_call`` — so emitting a ``tool_call_update`` here
+            # would be an orphan. Skip it.
             return 0
         text = _coerce_message_text(msg.get("content", ""))
         update: Dict[str, Any] = {
