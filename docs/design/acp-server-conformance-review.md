@@ -66,6 +66,18 @@ ACP rather than one deeply integrated into the editor.
 > chat-relevant gaps (**G4**, **G3**, and G2's `diff`). The table's "Matters for"
 > column tags each gap by client class.
 
+> **Decision (2026-06-18): target-client class = chat/automation.** The maintainer
+> has set the positioning to **chat/automation hosts** (DeepChat the live
+> integration), not editor-class IDEs. Per §4 P0 option (b), **G1 (fs/terminal
+> proxy) is a documented non-goal**: *agentao is a self-contained ACP agent that
+> owns its own filesystem and shell (sandbox, permission engine, provider-neutral);
+> routing file/terminal operations through the client is intentionally out of
+> scope.* Its current local-fs/local-shell behavior is the intended, conformant
+> behavior — not an omission. The conditional analysis below is retained as a
+> **reactivation clause**: if an editor-class client (Zed/Cursor) is ever pursued,
+> G1 returns as the headline. **Now-work: G4, G3, G2's `diff`** (none need an
+> editor).
+
 G1 is the highest-leverage gap **for an editor-class target** and is already
 acknowledged-but-unbuilt in the code; for a chat/automation host it is
 demand-gated (see premise). **G3** and the `diff` half of **G2** are local-only
@@ -74,7 +86,7 @@ enrichments (schema + emit, no client round-trip) that pay off for *any* client;
 
 | # | Gap | Matters for | Severity | Effort |
 |---|-----|-------------|----------|--------|
-| G1 | Agent never calls client `fs/*` / `terminal/*` | **Editor clients only** — chat host: current behavior already conformant | High *(IDE)* / n-a *(chat)* | High |
+| G1 | Agent never calls client `fs/*` / `terminal/*` | **Non-goal** (chat/automation decided) — reactivates only for editor clients | n/a *(non-goal)* / High *(if IDE)* | High |
 | G2 | `tool_call` updates lack `locations` + `diff` | `diff`: any client that renders edits · `locations`: editor only | High *(IDE)* / Med *(chat)* | Low-Med |
 | G3 | `stopReason` only `end_turn`/`cancelled` | Any client + automation surface | Medium | Low |
 | G4 | mode / plan / commands not surfaced as ACP updates | Chat **and** editor (chat renders these) | Medium-High | Med |
@@ -152,13 +164,13 @@ Outbound (agent → client): `session/update` notifications (rich event mapping,
 
 ### G1 — Agent does not consume the client's `fs/*` and `terminal/*` capabilities *(highest leverage — for editor-class clients only)*
 
-> **Priority is positioning-conditional (see the Positioning premise in TL;DR).**
-> Because ACP gates `fs/*`/`terminal/*` on client-advertised capabilities, a
-> chat-class host that doesn't advertise them gets the *correct, conformant*
-> behavior from agentao today — for those hosts **this is not a gap**, and the
-> rest of this section is moot. The analysis below assumes an **editor-class
-> client (Zed/Cursor)** that *does* advertise fs/terminal; that is the only
-> situation in which G1 is a real shortfall.
+> **Resolved as a non-goal (Decision 2026-06-18: chat/automation).** Because ACP
+> gates `fs/*`/`terminal/*` on client-advertised capabilities, a chat-class host
+> that doesn't advertise them gets the *correct, conformant* behavior from agentao
+> today — so with the target class set to chat/automation, **this is a documented
+> non-goal, not a gap.** The analysis below is retained as the **reactivation
+> clause**: it describes what would need building *if* an editor-class client
+> (Zed/Cursor) that advertises fs/terminal ever becomes a target.
 
 **Evidence.** The entire server makes exactly **two** outbound `server.call`
 invocations (`_transport_interaction.py:161,328`): `session/request_permission`
@@ -289,20 +301,19 @@ caught.
 Each is framed against the embedded-harness boundary: prefer changes that are
 host-injectable and don't bake editor assumptions into the core.
 
-**P0 — Decide the target-client class (this gates everything below).** The single
-decision that orders the rest: are **editor-class clients (Zed/Cursor)** a real
-target, or is the live reality **chat/automation hosts (DeepChat today)**?
-- If **editor-class** → **G1 is the headline**: implement ACP fs/terminal proxy
-  tools gated on `client_capabilities` via the `session_new.py:93-95` seam (fs
-  proxy first — unsaved-buffer correctness + diff review; terminal second),
-  reconciled with `host-fs-policy.md`.
-- If **chat/automation** → **G1 is demand-gated**; agentao's current
-  local-fs/local-shell behavior is already correct and conformant. Optionally
-  write the one-line non-goal so it reads as a choice, not an omission. Skip the
-  proxy until an editor client appears.
+**P0 — Target-client class: DECIDED = chat/automation (2026-06-18).** This gates
+everything below. The decision is **chat/automation hosts** (DeepChat the live
+integration), so:
+- **G1 is a documented non-goal** — agentao stays a self-contained ACP agent that
+  owns its own fs/shell; its current local-fs/local-shell behavior is the intended,
+  conformant behavior. No fs/terminal proxy is built.
+- **Reactivation clause**: if editor-class clients (Zed/Cursor) ever become a
+  target, G1 returns as the headline — implement ACP fs/terminal proxy tools gated
+  on `client_capabilities` via the `session_new.py:93-95` seam (fs proxy first;
+  terminal second), reconciled with `host-fs-policy.md`.
 
-Everything below is worth doing **regardless** of that decision — it is
-client-agnostic or chat-relevant, not editor-specific.
+The items below are the actual now-work — all client-agnostic or chat-relevant,
+none editor-specific.
 
 **P1 — Surface plan + modes + commands (G4).** *(top chat-relevant item)* Map
 plan mode / the todo tool to ACP `plan` updates; advertise `availableModes` and
