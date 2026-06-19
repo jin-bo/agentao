@@ -557,7 +557,7 @@ class AcpSessionUpdateMessageChunk(BaseModel):
         "user_message_chunk",
     ]
     content: AcpSessionUpdateContentBlock
-    schema_version: Optional[str] = None
+    schema_version: Optional[int] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -576,7 +576,7 @@ class AcpSessionUpdateToolCall(BaseModel):
     kind: Literal["read", "edit", "search", "execute", "fetch", "other"]
     status: Literal["pending", "in_progress", "completed", "failed"]
     rawInput: Optional[Dict[str, Any]] = None
-    schema_version: Optional[str] = None
+    schema_version: Optional[int] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -588,7 +588,7 @@ class AcpSessionUpdateToolCallUpdate(BaseModel):
     toolCallId: str
     status: Literal["pending", "in_progress", "completed", "failed"]
     content: Optional[List[AcpToolCallContentEntry]] = None
-    schema_version: Optional[str] = None
+    schema_version: Optional[int] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -613,7 +613,7 @@ class AcpSessionUpdatePlan(BaseModel):
 
     sessionUpdate: Literal["plan"] = "plan"
     entries: List[AcpPlanEntry]
-    schema_version: Optional[str] = None
+    schema_version: Optional[int] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -626,7 +626,7 @@ class AcpSessionUpdateCurrentMode(BaseModel):
 
     sessionUpdate: Literal["current_mode_update"] = "current_mode_update"
     currentModeId: str
-    schema_version: Optional[str] = None
+    schema_version: Optional[int] = None
 
     model_config = ConfigDict(extra="forbid")
 
