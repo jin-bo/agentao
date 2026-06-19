@@ -105,7 +105,7 @@ Deterministic failure modes:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Set
 
 from agentao.transport.events import AgentEvent, EventType
 
@@ -185,7 +185,7 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
         # tool_call_ids whose persisted ``todo_write`` replayed as a ``plan``
         # during ``session/load`` (see _ReplayMixin), so the matching tool
         # result is skipped — a ``plan`` has no opening ``tool_call`` to close.
-        self._replay_plan_call_ids: set = set()
+        self._replay_plan_call_ids: Set[str] = set()
 
     # -- One-way events ----------------------------------------------------
 

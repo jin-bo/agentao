@@ -100,19 +100,33 @@ class _ReplayMixin:
         ``assistant`` text   ``agent_message_chunk`` with text content
         ``assistant``        ``tool_call`` (status="completed", title=
         ``tool_calls``         tool_name, kind=mapped, rawInput=parsed)
+        ``todo_write``       ``plan`` (assistant call); its ``tool`` result
+        ``tool_call``          is skipped — see the special-case note below
         ``tool``             ``tool_call_update`` (status="completed",
                                content=text result)
         ===================  ============================================
 
         **``todo_write`` is special-cased to ``plan``** (mirroring the live
-        event path): a persisted ``todo_write`` tool call replays as a
-        native ACP ``plan`` update instead of a ``tool_call``, and its
-        matching ``tool`` result is skipped (a ``plan`` has no opening
-        ``tool_call`` to update). So reloading a session shows the task
-        checklist as a plan panel, exactly as it rendered live. ``plan`` is
-        full-replace, so replaying each ``todo_write`` in order leaves the
-        client on the final checklist state. A malformed/empty persisted
-        ``todo_write`` falls back to the normal ``tool_call`` rendering.
+        event path's plan rendering): a persisted ``todo_write`` tool call
+        replays as a native ACP ``plan`` update instead of a ``tool_call``,
+        and its matching ``tool`` result is skipped (a ``plan`` has no
+        opening ``tool_call`` to update). So reloading a session shows the
+        task checklist as a plan panel. ``plan`` is full-replace, so
+        replaying each ``todo_write`` in order leaves the client on the
+        final checklist state. A malformed/empty persisted ``todo_write``
+        falls back to the normal ``tool_call`` rendering.
+
+        Fidelity note: replay reconstructs from the persisted *conversation*
+        messages (``{role, tool_call_id, name, content}``), which carry no
+        success/failure status — that lives only on the live
+        ``TOOL_COMPLETE`` event, not in the saved message. So unlike the
+        live path (which suppresses the plan on a denied/failed/cancelled
+        call — e.g. ``todo_write`` denied in plan mode), replay emits the
+        ``plan`` for any well-formed persisted ``todo_write`` regardless of
+        whether it actually applied. This is the same lower fidelity replay
+        already has for every tool — a denied regular tool likewise replays
+        with ``status="completed"`` — not a regression specific to the plan
+        mapping.
 
         Tool calls in the persisted assistant message are emitted as
         ``tool_call`` rather than ``tool_call`` + ``tool_call_update``
