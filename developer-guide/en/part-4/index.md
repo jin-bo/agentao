@@ -19,6 +19,7 @@ The only interface between the agent runtime and your UI is the **Transport**. T
 - [**4.5 Tool Confirmation UI**](./5-tool-confirmation-ui) — CLI, web modal, mobile, unattended patterns
 - [**4.6 Max-Iterations Fallback**](./6-max-iterations) — Five strategies + "stuck agent" detection heuristics
 - [**4.7 Embedded Harness Contract**](./7-host-contract) — `agent.events()` + `active_permissions()` — the **stable host API** for production audit / observability pipelines
+- [**4.8 Orchestration Continuation**](./8-orchestration-continuation) — build a long-task "goal" loop (objective + time/turn budget) from the harness's drive-turn / inject-context / inject-tool primitives; `/goal` is the worked example
 
 ## Before you start
 

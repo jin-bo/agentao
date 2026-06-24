@@ -203,6 +203,7 @@ The authoritative list with full subcommand syntax lives in `agentao/cli/help_te
 
 - `/mode read-only|workspace-write|full-access` — permission posture (replaces 0.3.x `allow_all_tools`).
 - `/plan` / `/plan implement` / `/plan show` — plan mode (LLM plans, does not execute).
+- `/goal <objective> [--for 30m] [--turns 10] [--unbounded]` — long-task auto-continuation with a time/turn budget; subcommands `show|budget|pause|resume|edit|clear`. Host-owned loop in `cli/input_loop.py::run_goal_continuation` (NOT plugin `force_continue`); state in `.agentao/goal.json` (`cli/goal_state.py`); agent's `update_goal` tool injected via `add_tool` (`tools/goal.py`).
 - `/clear` — saves current session, clears conversation + **all memories**, starts a new one.
 - `/new` — saves session, starts fresh conversation (keeps memories).
 - `/sessions`, `/sessions resume <id>`, `/sessions delete <id>` — manage saved sessions.
@@ -237,6 +238,7 @@ The authoritative list with full subcommand syntax lives in `agentao/cli/help_te
 - **`agentao -p` is a shim** over `agentao run`. New automation should target `agentao run` directly — that's where the spec schema, Jinja2 templating, and exit codes are documented.
 - **`Agentao` constructor takes 8 legacy callbacks** (`confirmation_callback`, `step_callback`, …) that emit `DeprecationWarning`. They will be removed in 0.5.0 — `agentao.embedding.compat` is the documented migration surface.
 - **Don't intuition-audit architecture.** Before recommending borrowed patterns or claiming a gap exists, grep agentao to verify; subpackage `__init__.py` docstrings document intentional shims and rename trails.
+- **`/goal --turns` is NOT `max_iterations`.** `--turns` caps the *outer* continuation count (how many `chat()` calls the goal loop drives); `max_iterations` caps the *inner* tool-call loop within a single `chat()`. They are orthogonal — both stay in force. The goal loop is host-owned (`cli/input_loop.py`), deliberately not the plugin `Stop`/`force_continue` path. Design: `docs/design/codex-goal-mechanism-review.md` §11.
 - **Don't call `subprocess.run` for batch commands — use `agentao/capabilities/process.py::run_captured()`.** A bare `subprocess.run(timeout=)` only kills the direct child on timeout, so a grandchild holding the captured pipe (Windows `git` credential helpers, a user hook backgrounding a process) hangs `communicate()` past the timeout — and over ACP-stdio a hung tool wedges the turn until the client times out and drops the connection. `run_captured` runs the child in its own process group/session, feeds/detaches stdin explicitly (`input=` over a pipe, else `DEVNULL` so a child can't read the JSON-RPC channel), kills the whole tree via `kill_process_tree()` on timeout (`taskkill /T` / `killpg(pid)` — never `getpgid`, which races a zombie child), and decodes with `errors="replace"`. `search_file_content` and the plugin hook dispatcher route through `run_captured`; `LocalShellExecutor.run` keeps its own streaming + inactivity-timeout loop but shares `kill_process_tree`. (PRs #73/#74/#75.)
 
 ## Key dependencies

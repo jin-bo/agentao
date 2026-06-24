@@ -151,7 +151,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
         handle_model_command, handle_temperature_command, handle_context_command,
         handle_mcp_command, handle_permission_command, handle_sessions_command,
         handle_tools_command, handle_sandbox_command, handle_compact_command,
-        handle_image_command,
+        handle_image_command, handle_goal_command,
     )
     from .replay_commands import handle_replay_command
     from .commands_ext import (
@@ -392,6 +392,10 @@ def run_loop(cli: "AgentaoCLI") -> None:
                     handle_replay_command(cli, args)
                     continue
 
+                elif command == "goal":
+                    handle_goal_command(cli, args)
+                    continue
+
                 else:
                     console.print(f"\n[error]Unknown command: /{command}[/error]")
                     console.print("Type [cyan]/help[/cyan] for available commands.\n")
@@ -564,3 +568,251 @@ def _handle_plan_approval(cli: "AgentaoCLI") -> None:
     except (KeyboardInterrupt, EOFError):
         cli._plan_controller.reject_approval()
         console.print()
+
+
+# ── /goal continuation loop ─────────────────────────────────────────────
+
+
+def _continuation_prompt(goal) -> str:
+    """Per-turn nudge driving the agent toward the objective."""
+    return (
+        "Continue working toward this goal:\n\n"
+        f"<goal>\n{goal.objective}\n</goal>\n\n"
+        "Keep making concrete progress. When the objective is fully achieved, call "
+        "the update_goal tool with status='complete'. If you are genuinely blocked "
+        "and cannot proceed without the user (missing credentials, an ambiguous "
+        "decision that is the user's to make), call update_goal with "
+        "status='blocked' and explain what you need. Otherwise keep going — do not "
+        "stop merely to ask whether to continue."
+    )
+
+
+def _wrap_up_prompt(goal) -> str:
+    """Final turn when a budget cap trips (codex budget_limit.md, token text removed)."""
+    return (
+        "You have reached this goal's time/turn budget. Do not start new "
+        "substantive work. Summarize the progress made toward this goal, list the "
+        "remaining work or blockers, and give the user a clear next step.\n\n"
+        f"<goal>\n{goal.objective}\n</goal>"
+    )
+
+
+# Sentinel returned by ``Agentao.chat()`` when a turn is interrupted with Ctrl-C.
+# ``agentao/runtime/turn.py`` absorbs ``KeyboardInterrupt`` and **returns** this
+# string instead of propagating it, so the goal loop must detect a pause by the
+# return value, not by catching an exception around ``chat()``.
+_INTERRUPT_SENTINEL = "[Interrupted by user]"
+
+
+def _was_interrupted(response) -> bool:
+    return isinstance(response, str) and response.strip() == _INTERRUPT_SENTINEL
+
+
+def _staged_images_payload(cli: "AgentaoCLI"):
+    """Build the ``/image``-staged payload for the first goal turn — WITHOUT
+    clearing it.
+
+    Mirrors ``run_loop``'s consume-on-success contract: staged images are
+    cleared only *after* a turn returns, so an interrupted/failed first goal
+    turn leaves them staged for ``/goal resume`` to resend (rather than losing
+    a multimodal goal's image context). The caller clears ``cli._staged_images``
+    once the first turn has returned successfully. Returning the payload here
+    also stops the images from silently leaking onto the next *normal* turn
+    after the goal ends.
+    """
+    staged = getattr(cli, "_staged_images", None)
+    if not staged:
+        return None
+    return [
+        {
+            "data": img["data"],
+            "mimeType": img["mimeType"],
+            "_source": img.get("_source") or img.get("_label", "image"),
+        }
+        for img in staged
+    ]
+
+
+def _run_agent_turn(cli: "AgentaoCLI", message: str, images=None) -> str:
+    """Drive one agent turn with the same rendering as the main loop.
+
+    Mirrors ``run_loop``'s spinner / streaming / markdown handling — including
+    the ``_streaming_started`` reset on error and the post-turn ACP-inbox flush,
+    both of which the first extraction had dropped.
+    """
+    console.rule("[bold green]Assistant[/bold green]", style="green")
+    cli.current_status = console.status("[bold yellow]Thinking…", spinner="dots")
+    cli.current_status.start()
+    try:
+        response = cli.agent.chat(message, images=images)
+        cli.last_response = response
+        try:
+            stats = cli.agent.context_manager.get_usage_stats(cli.agent.messages)
+            cli._cached_ctx_pct = stats.get("usage_percent", 0.0)
+        except Exception:
+            pass
+    except Exception:
+        cli._streaming_started = False
+        raise
+    finally:
+        if cli.current_status:
+            cli.current_status.stop()
+        cli.current_status = None
+
+    if cli._streaming_started:
+        import sys
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        cli._streaming_started = False
+    else:
+        console.print()
+        console.print(Markdown(response) if cli.markdown_mode else response)
+
+    cli._flush_acp_inbox()
+    return response
+
+
+def run_goal_continuation(cli: "AgentaoCLI", goal, *, _run_turn=None) -> None:
+    """Host-owned outer continuation loop for an active ``/goal``.
+
+    Generalizes the one-shot post-plan-mode ``chat()`` (see
+    ``_handle_plan_approval``) into a sustained ``while goal.is_active`` loop:
+    drive the agent toward ``goal.objective``, injecting the ``update_goal``
+    tool so the agent can mark the goal complete/blocked, and stop on a
+    complete/blocked status or a tripped time/turn budget (one final wrap-up
+    turn). Deliberately NOT built on the plugin ``Stop`` / ``force_continue``
+    path (hard-capped at 3, injects a visible user message) — the host owns the
+    stop condition. See ``docs/design/codex-goal-mechanism-review.md`` §F.
+
+    ``_run_turn`` is an injection seam for tests; production passes ``None`` and
+    the real agent turn (with rendering) is used.
+    """
+    import time as _time
+
+    from ..tools.goal import UpdateGoalTool
+    from .goal_state import GoalStatus, budget_summary, save_goal
+
+    project_root = Path(cli.agent.working_directory or Path.cwd())
+    _warned = {"persist": False}
+
+    def persist() -> None:
+        if not save_goal(goal, project_root) and not _warned["persist"]:
+            _warned["persist"] = True
+            console.print(
+                "\n[warning]Could not persist goal state to .agentao/goal.json "
+                "(read-only dir or full disk); progress will not survive a "
+                "restart.[/warning]\n"
+            )
+
+    if _run_turn is not None:
+        run_turn = _run_turn
+    else:
+        # The first turn carries any /image-staged images; they are cleared only
+        # AFTER it returns successfully (mirroring run_loop) so an interrupted /
+        # failed first turn leaves them staged for /goal resume. Later turns
+        # carry no images.
+        _pending_images = _staged_images_payload(cli)
+        _first_done = {"v": False}
+
+        def run_turn(msg):
+            if _first_done["v"]:
+                return _run_agent_turn(cli, msg, images=None)
+            response = _run_agent_turn(cli, msg, images=_pending_images)
+            # Consume the staged images only on a *genuinely* successful first
+            # turn — not if it raised (handled above by propagation) and not if
+            # it was interrupted (chat() returns the sentinel rather than
+            # raising). An interrupted/failed first turn keeps them staged so
+            # /goal resume can resend the image context.
+            if not _was_interrupted(response):
+                if getattr(cli, "_staged_images", None):
+                    cli._staged_images = []
+                _first_done["v"] = True
+            return response
+
+    # Snapshot a pre-existing tool of the same name so a host that ships its own
+    # ``update_goal`` is restored — not permanently clobbered by replace+remove.
+    registry = getattr(cli.agent, "tools", None)
+    prior_tool = registry.tools.get("update_goal") if registry is not None else None
+
+    cli.agent.add_tool(UpdateGoalTool(goal, persist), replace=True)
+    interrupted = False
+    try:
+        while goal.is_active:
+            # Budget pre-check: a tripped cap ends with exactly one wrap-up turn.
+            if goal.budget_tripped():
+                goal.mark_limit_reached()
+                persist()
+                console.print(
+                    f"\n[warning]Goal budget reached ({budget_summary(goal)}); "
+                    "wrapping up.[/warning]\n"
+                )
+                started = _time.monotonic()
+                run_turn(_wrap_up_prompt(goal))
+                goal.time_used_seconds += _time.monotonic() - started
+                persist()
+                break
+
+            message = goal.objective if goal.turns_used == 0 else _continuation_prompt(goal)
+            started = _time.monotonic()
+            response = run_turn(message)
+            goal.turns_used += 1
+            goal.time_used_seconds += _time.monotonic() - started
+            persist()
+
+            # chat() absorbs Ctrl-C and returns the interrupt sentinel rather
+            # than raising, so a pause is detected by the return value.
+            if _was_interrupted(response):
+                if goal.is_active:
+                    goal.pause()
+                persist()
+                interrupted = True
+                break
+
+            # The agent may have called update_goal this turn (sets goal.status).
+            if goal.status in (GoalStatus.COMPLETE, GoalStatus.BLOCKED):
+                break
+    except KeyboardInterrupt:
+        # Belt-and-suspenders: a Ctrl-C that escapes chat() (between turns, in
+        # rendering, or a test stub) pauses rather than stranding the goal.
+        if goal.is_active:
+            goal.pause()
+        persist()
+        interrupted = True
+    except Exception:
+        # Don't strand an ACTIVE goal on a turn error — pause so /goal resume
+        # can pick it back up after the user addresses the failure.
+        if goal.is_active:
+            goal.pause()
+            persist()
+        raise
+    finally:
+        if prior_tool is not None:
+            cli.agent.add_tool(prior_tool, replace=True)
+        else:
+            cli.agent.remove_tool("update_goal")
+
+    if interrupted:
+        console.print(
+            "\n[warning]Goal paused. Resume with /goal resume.[/warning]\n"
+        )
+    else:
+        _report_goal_outcome(goal)
+
+
+def _report_goal_outcome(goal) -> None:
+    from .goal_state import GoalStatus, budget_summary
+
+    if goal.status == GoalStatus.COMPLETE:
+        console.print(
+            f"\n[success]✓ Goal complete.[/success] [dim]({budget_summary(goal)})[/dim]\n"
+        )
+    elif goal.status == GoalStatus.BLOCKED:
+        console.print(
+            "\n[warning]⊘ Goal blocked — it needs your input. Address it, then "
+            "/goal resume.[/warning]\n"
+        )
+    elif goal.status == GoalStatus.LIMIT_REACHED:
+        console.print(
+            f"\n[warning]■ Goal budget reached ({budget_summary(goal)}). Re-budget "
+            "with /goal budget --turns <n> / --for <d>, or /goal clear.[/warning]\n"
+        )

@@ -367,6 +367,43 @@ unless overridden. Enable deliberately:
 
 ---
 
+## 7b. Long-running goals / continuation — your job, not the harness's
+
+If your host needs "keep working until the task is done" (a long-task **goal**
+with a budget), build it as a **host-owned loop** — the harness ships no goal
+feature, and shouldn't. You already have every primitive:
+
+- **drive a turn** — `agent.chat(msg)` / `await agent.arun(...)`;
+- **inject per-turn context** — the message you pass each turn (objective first,
+  a "keep going / wrap up" continuation after);
+- **inject a tool** — `agent.add_tool(tool)` before the loop, `remove_tool(name)`
+  in `finally`, so the agent can signal *complete* / *blocked*.
+
+Time/turn budgets are pure host bookkeeping (wall-clock between `chat()` calls; a
+counter). Token budgets are **out of scope** — no usage primitive is owed.
+
+```python
+agent.add_tool(update_goal_tool, replace=True)
+try:
+    while goal["status"] == "active":
+        if over_budget(goal):                 # one wrap-up turn, then stop
+            goal["status"] = "limit_reached"; agent.chat(wrap_up); break
+        agent.chat(objective if goal["turns"] == 0 else continuation)
+        goal["turns"] += 1
+        if goal["status"] in ("complete", "blocked"): break
+finally:
+    agent.remove_tool("update_goal")
+```
+
+Do **not** build this on the plugin `Stop` / `force_continue` path (hard-capped
+at 3, injects a visible message) — that's for one extra nudge inside a single
+turn, not sustained pursuit. Full pattern + invariants:
+[developer-guide 4.8 Orchestration Continuation](../../developer-guide/en/part-4/8-orchestration-continuation.md).
+Agentao's own CLI `/goal` is the worked reference
+([guide](goal.md), `agentao/cli/input_loop.py::run_goal_continuation`).
+
+---
+
 ## 8. Logging — silence it from the host
 
 By default `Agentao(...)` writes `<wd>/agentao.log` and raises the

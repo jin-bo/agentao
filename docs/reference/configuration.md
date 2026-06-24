@@ -33,6 +33,7 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 | Background sub-agent task state | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | Anchored to `working_directory`; in-memory only when no `persistence_dir`. Hand-edits will desync running threads. |
 | Replay events | `.agentao/replay/*.jsonl` | `replay/` | See [session-replay.md](../guides/session-replay.md). |
 | Sessions / plans / tool outputs | `.agentao/sessions/`, `.agentao/plan-history/`, `.agentao/tool-outputs/` | various | Per-session artifacts. |
+| `/goal` continuation state | `.agentao/goal.json` | `cli/goal_state.py::GoalState` | One long-task goal (objective, status, time/turn caps, usage). Survives restarts; corrupt/missing → treated as no goal. See [goal.md](../guides/goal.md). |
 
 **Precedence rules** (applies only to surfaces with both project and user variants):
 
@@ -84,6 +85,11 @@ Internal state files (auto-managed; documented for awareness, not for editing):
   "mode": "workspace-write",
   "agents": {
     "enable_builtin": false
+  },
+  "goal": {
+    "enabled": true,
+    "default_max_turns": 25,
+    "default_time_budget": "120m"
   }
 }
 ```
@@ -92,6 +98,11 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 |---|---|---|---|---|
 | `mode` | string | `"workspace-write"` (when key absent) | `"read-only"`, `"workspace-write"`, `"full-access"` | `"plan"` is internal — set by `/plan` flow, never written by users. `"full-access"` disables all per-tool prompting; use deliberately. |
 | `agents.enable_builtin` | bool | `false` | — | Enables the built-in sub-agent set. Legacy top-level alias `enable_builtin_agents` (bool) is still honored. |
+| `goal.enabled` | bool | `true` (when key absent) | — | Master switch for the `/goal` long-task continuation. Set `false` to disable the command. |
+| `goal.default_max_turns` | int | `25` | positive int, or `0` for no turn cap | Turn cap applied when `/goal` is set without `--turns` (and not `--unbounded`). One *turn* = one outer continuation `chat()` — **not** `max_iterations` (which bounds the inner tool loop). Primary runaway guard. |
+| `goal.default_time_budget` | string | `"120m"` | duration `90s` / `30m` / `2h` / `1h30m`; empty/absent → no time cap default | Active wall-clock cap applied when `/goal` is set without `--for`. Sized **above** the turn cap so it guards only wall-clock pathology and does not shadow the turn cap (see `docs/design/codex-goal-mechanism-review.md` §11.1 C). |
+
+> `/goal` state itself is **not** stored in `settings.json` — it lives in `.agentao/goal.json` (see §1 file table). Per-goal caps set with `/goal <obj> --for/--turns` or `/goal budget` override these defaults; `--unbounded` opts out of them entirely.
 
 See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each `mode` actually permits.
 
