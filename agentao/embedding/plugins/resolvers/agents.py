@@ -114,7 +114,7 @@ def _parse_agent_md(
     except (OSError, UnicodeDecodeError):
         return None
 
-    frontmatter, body = parse_frontmatter(content)
+    frontmatter, body = parse_frontmatter(content, source=str(md_file))
     agent_name = str(frontmatter.get("name", md_file.stem))
     description = str(frontmatter.get("description", ""))
     runtime_name = f"{plugin_name}:{agent_name}"

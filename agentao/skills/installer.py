@@ -274,7 +274,9 @@ class SkillInstaller:
         if not content.startswith("---"):
             raise SkillValidationError("SKILL.md missing YAML frontmatter.")
 
-        frontmatter, _body = parse_frontmatter(content, coerce_str=True)
+        frontmatter, _body = parse_frontmatter(
+            content, coerce_str=True, source=str(skill_md)
+        )
         if not frontmatter:
             raise SkillValidationError(
                 "SKILL.md frontmatter is empty or malformed."

@@ -220,7 +220,9 @@ class SkillManager:
                 with open(skill_md_path, "r", encoding="utf-8") as f:
                     content = f.read()
 
-                frontmatter, body_content = parse_frontmatter(content, coerce_str=True)
+                frontmatter, body_content = parse_frontmatter(
+                    content, coerce_str=True, source=str(skill_md_path)
+                )
 
                 skill_name = frontmatter.get("name", skill_dir.name)
                 description = frontmatter.get("description", "")

@@ -15,13 +15,16 @@ stricter, line-anchored fence match instead of this lenient ``split``.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import yaml
 
+logger = logging.getLogger(__name__)
+
 
 def parse_frontmatter(
-    content: str, *, coerce_str: bool = False
+    content: str, *, coerce_str: bool = False, source: str | None = None
 ) -> tuple[dict[str, Any], str]:
     """Split a leading YAML frontmatter block from a markdown document.
 
@@ -41,6 +44,16 @@ def parse_frontmatter(
     (``None`` -> ``""``) — what the skill / plugin loaders rely on. With
     ``coerce_str=False`` (default) native YAML types are preserved, which the
     agent loaders need so e.g. ``tools: [read_file]`` stays a list.
+
+    A ``---``-fenced block that is *present but unusable* (malformed YAML, or a
+    scalar/list where a mapping was expected) still degrades to ``{}`` — but
+    emits a ``WARNING`` first, because a caller that only sees ``{}`` cannot
+    tell a parse error from genuinely-absent frontmatter, and that ambiguity
+    silently drops the definition (e.g. an unquoted ``description: Deploy to
+    AWS: ECS`` makes a skill load with an empty description and vanish from the
+    model-visible catalog). Pass ``source`` (a path or identifier) to name the
+    offending file in that warning. A genuinely empty fence (``---\\n---``)
+    stays silent.
     """
     if not content.startswith("---"):
         return {}, content
@@ -50,11 +63,24 @@ def parse_frontmatter(
         return {}, content
 
     body = parts[2].strip()
+    where = source or "<unknown source>"
     try:
         meta = yaml.safe_load(parts[1])
-    except yaml.YAMLError:
+    except yaml.YAMLError as exc:
+        logger.warning(
+            "Ignoring malformed YAML frontmatter in %s (treated as absent): %s",
+            where,
+            exc,
+        )
         return {}, body
     if not isinstance(meta, dict):
+        if meta is not None:
+            logger.warning(
+                "Ignoring non-mapping YAML frontmatter in %s "
+                "(parsed as %s, expected `key: value` pairs).",
+                where,
+                type(meta).__name__,
+            )
         return {}, body
     if coerce_str:
         meta = {k: str(v).strip() if v is not None else "" for k, v in meta.items()}

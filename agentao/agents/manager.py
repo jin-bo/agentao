@@ -43,7 +43,7 @@ class AgentManager:
         for md_file in sorted(directory.glob("*.md")):
             try:
                 content = md_file.read_text(encoding="utf-8")
-                frontmatter, body = parse_frontmatter(content)
+                frontmatter, body = parse_frontmatter(content, source=str(md_file))
 
                 name = frontmatter.get("name", md_file.stem)
                 description = frontmatter.get("description", "")
@@ -98,7 +98,9 @@ class AgentManager:
             return errors
 
         for defn in agent_defs:
-            frontmatter, body = parse_frontmatter(defn.raw_markdown)
+            frontmatter, body = parse_frontmatter(
+                defn.raw_markdown, source=str(defn.source_path)
+            )
 
             tools_list = frontmatter.get("tools")
             if isinstance(tools_list, str):
