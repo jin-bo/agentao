@@ -104,7 +104,9 @@ def _parse_skill_md(
     except (OSError, UnicodeDecodeError):
         return None
 
-    frontmatter, body = parse_frontmatter(content, coerce_str=True)
+    frontmatter, body = parse_frontmatter(
+        content, coerce_str=True, source=str(skill_md)
+    )
     skill_name = frontmatter.get("name", skill_dir.name)
     description = frontmatter.get("description", "")
     runtime_name = f"{plugin_name}:{skill_name}"
@@ -226,7 +228,9 @@ def _md_file_to_entry(
         return None
 
     cmd_name = md_file.stem  # e.g. "review-summary.md" -> "review-summary"
-    frontmatter, body = parse_frontmatter(content, coerce_str=True)
+    frontmatter, body = parse_frontmatter(
+        content, coerce_str=True, source=str(md_file)
+    )
     description = frontmatter.get("description", "")
     runtime_name = f"{plugin_name}:{cmd_name}"
 
@@ -275,7 +279,9 @@ def _metadata_to_entry(
 
         # Strip YAML frontmatter so metadata headers are not injected into
         # the prompt body — matching the behavior of _md_file_to_entry().
-        _fm, body = parse_frontmatter(raw_content, coerce_str=True)
+        _fm, body = parse_frontmatter(
+            raw_content, coerce_str=True, source=str(source_path)
+        )
         description = meta.description or _fm.get("description", "")
 
         return PluginSkillEntry(
