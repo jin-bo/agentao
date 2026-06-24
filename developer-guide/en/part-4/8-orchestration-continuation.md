@@ -12,7 +12,7 @@ blocked, or a budget trips. This chapter is the **pattern behind it**, so you
 can build the same thing in your own host. The CLI implementation
 (`agentao/cli/commands/goal.py` + `agentao/cli/input_loop.py`) is the worked
 reference; the design record is
-[`docs/design/codex-goal-mechanism-review.md`](https://github.com/) §11.
+[`docs/design/codex-goal-mechanism-review.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/codex-goal-mechanism-review.md) §11.
 
 ## 4.8.1 The harness has no "goal" — and shouldn't
 
@@ -160,4 +160,4 @@ above becomes a small JSON file; on launch you reload it and, if it's still
 - [ ] **Not** built on `force_continue`.
 
 → Worked reference: `agentao/cli/input_loop.py::run_goal_continuation`. User
-guide: [Long-Task Goals](../../../docs/guides/goal.md).
+guide: [Long-Task Goals](https://github.com/jin-bo/agentao/blob/main/docs/guides/goal.md).

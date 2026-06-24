@@ -7,13 +7,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Targeting 0.4.13. Add entries under the relevant heading as work lands._
+_Add entries under the relevant heading as work lands._
 
 ### Added
 
 ### Changed
 
 ### Fixed
+
+---
+
+## [0.4.13] — 2026-06-24
+
+A **feature release** on top of 0.4.12 adding `/goal` long-task continuation,
+plus a frontmatter-robustness fix. No public Python-API, schema, or config
+break; upgrade in place.
+
+### Added
+
+- **`/goal` — long-task continuation with a time/turn budget.** State an
+  objective once and the CLI drives a host-owned continuation loop toward it
+  across turns until the agent marks it complete/blocked (via an injected,
+  read-only `update_goal` tool) or a time/turn budget trips (one wrap-up turn).
+  Subcommands `show`/`budget`/`pause`/`resume`/`edit`/`clear`; flags
+  `--for <duration>` / `--turns <n>` / `--unbounded`. State persists to
+  `.agentao/goal.json`. Built from existing harness primitives — the harness
+  stays goal-agnostic; budgets are pure host-side time/turn accounting (no
+  token budgets), and it deliberately does **not** use the plugin
+  `Stop`/`force_continue` path. New developer-guide chapter 4.8 documents the
+  host-orchestration pattern for other hosts. (#109)
+
+### Fixed
+
+- **Malformed SKILL.md / plugin frontmatter now warns instead of being silently
+  dropped.** A frontmatter block that fails to parse surfaces a warning rather
+  than being discarded without trace. (#108)
 
 ---
 
