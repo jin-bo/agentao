@@ -19,6 +19,7 @@ Agent 运行时与你的用户界面之间的唯一接口就是 **Transport**。
 - [**4.5 工具确认 UI**](./5-tool-confirmation-ui) — CLI / Web 模态 / 手机 / 批处理四种形态
 - [**4.6 最大迭代数兜底策略**](./6-max-iterations) — 五种策略 + 卡死检测启发式
 - [**4.7 嵌入式 Harness 合约**](./7-host-contract) — `agent.events()` + `active_permissions()` —— 给生产审计 / 可观测流水线用的**稳定宿主 API**
+- [**4.8 编排续航**](./8-orchestration-continuation) — 用 harness 的驱动一轮 / 注入上下文 / 注入工具原语,搭建长任务"goal"循环(目标 + 时间/轮次预算);`/goal` 即范例
 
 ## 开始之前
 

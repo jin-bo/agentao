@@ -30,6 +30,14 @@ All commands start with `/`:
   - `/mode read-only` - Block all write & shell tools
   - `/mode workspace-write` - Allow file writes & safe shell; ask for web (default)
   - `/mode full-access` - Allow all tools without prompting
+- `/goal [subcommand|<objective>]` - Long-task goal with a time/turn budget (auto-continuation)
+  - `/goal <objective>` - Set a goal and drive it to completion (confirms if one is in progress)
+  - `/goal <objective> --for 30m --turns 10` - Cap by active wall-clock and/or continuation turns (first to trip wins; `--turns` is NOT `max_iterations`); `--unbounded` opts out of default caps
+  - `/goal` or `/goal show` - Show the current goal (status, objective, used/cap)
+  - `/goal budget [--for <d>] [--turns <n>]` - Set/replace caps on the live goal (`--clear` removes caps)
+  - `/goal pause` / `/goal resume` - Pause / resume (paused time is not counted; resume also revives a blocked goal)
+  - `/goal edit <objective>` - Re-edit the objective (keeps status + caps)
+  - `/goal clear` - Remove the goal
 - `/plan` - Plan mode workflow (read-only; LLM plans, not executes)
   - `/plan` - Enter plan mode; if already on, shows current saved plan
   - `/plan show` - Display the saved plan file
