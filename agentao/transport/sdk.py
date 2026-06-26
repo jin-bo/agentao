@@ -136,6 +136,48 @@ class SdkTransport:
 _NULL = NullTransport()
 
 
+def _accepted_meta_keywords(
+    callback: Optional[Callable[..., Any]], candidates: tuple
+) -> tuple:
+    """Return the subset of ``candidates`` that ``callback`` accepts *by name*.
+
+    The legacy ``tool_complete_callback`` / ``output_callback`` signatures
+    were ``(name)`` and ``(name, chunk)`` — they had no channel for the
+    per-call id (or status / duration / error), so a bridge consuming them
+    had to reconstruct the id from the tool *name*, which collapses for a
+    parallel batch of same-named tool calls (e.g. four concurrent
+    ``read_file``). A callback opts into the richer metadata simply by naming
+    the parameter (``call_id``, ``status``, …); we forward only the keywords
+    it explicitly declares as ``POSITIONAL_OR_KEYWORD`` / ``KEYWORD_ONLY``,
+    so a genuinely legacy fixed-arity callback keeps its exact old behaviour
+    and never sees an unexpected keyword.
+
+    ``**kwargs`` is deliberately *not* treated as opt-in: the bridge passes
+    ``name`` / ``chunk`` positionally (the legacy contract), which a
+    ``**kwargs``-only callable cannot accept, so green-lighting it would only
+    raise a ``TypeError`` that ``SdkTransport.emit`` swallows — i.e. forward
+    nothing rather than silently drop the call.
+
+    Computed once per ``build_compat_transport`` (callbacks are stable for a
+    transport's lifetime), so per-event dispatch does no signature work.
+    """
+    if callback is None:
+        return ()
+    try:
+        params = inspect.signature(callback).parameters
+    except (TypeError, ValueError):
+        # Un-introspectable callable (some builtins / C funcs) — assume legacy.
+        return ()
+    keyword_ok = {
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    }
+    return tuple(
+        c for c in candidates
+        if c in params and params[c].kind in keyword_ok
+    )
+
+
 def build_compat_transport(
     confirmation_callback=None,
     step_callback=None,
@@ -151,6 +193,14 @@ def build_compat_transport(
     Called automatically by ``Agentao.__init__`` when old-style callbacks
     are passed without a ``transport`` argument.  All parameters are optional.
     """
+    # Decide once (not per-event) which metadata keywords each callback can
+    # receive, so a same-named parallel tool batch stays correlatable
+    # end-to-end (call_id) and a sub-agent tool failure is reported as a
+    # failure rather than collapsing onto the tool name / a hardcoded "ok".
+    _out_kw = _accepted_meta_keywords(output_callback, ("call_id",))
+    _tc_kw = _accepted_meta_keywords(
+        tool_complete_callback, ("call_id", "status", "duration_ms", "error"),
+    )
 
     def _on_event(event: AgentEvent) -> None:
         t = event.type
@@ -170,10 +220,16 @@ def build_compat_transport(
                 step_callback(d.get("tool"), _args)
         elif t == EventType.TOOL_OUTPUT:
             if output_callback:
-                output_callback(d.get("tool", ""), d.get("chunk", ""))
+                output_callback(
+                    d.get("tool", ""), d.get("chunk", ""),
+                    **{k: d.get(k) for k in _out_kw},
+                )
         elif t == EventType.TOOL_COMPLETE:
             if tool_complete_callback:
-                tool_complete_callback(d.get("tool", ""))
+                tool_complete_callback(
+                    d.get("tool", ""),
+                    **{k: d.get(k) for k in _tc_kw},
+                )
         elif t == EventType.THINKING:
             if thinking_callback:
                 thinking_callback(d.get("text", ""))

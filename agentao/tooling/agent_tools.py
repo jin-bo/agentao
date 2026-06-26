@@ -27,11 +27,6 @@ def register_agent_tools(agent: "Agentao") -> None:
     if agent.agent_manager is None:
         return
 
-    # Maps sub-agent tool_name → call_id so TOOL_OUTPUT and TOOL_COMPLETE
-    # events carry the same stable key as their matching TOOL_START.
-    # Keyed by name — works for serial and different-named parallel calls.
-    _subagent_call_ids: dict = {}
-
     def _agent_step_cb(name, args):
         if name is None:
             agent.transport.emit(AgentEvent(EventType.TURN_START, {}))
@@ -55,10 +50,34 @@ def register_agent_tools(agent: "Agentao") -> None:
             # call_id is injected by build_compat_transport; fall back to name.
             _args = dict(args) if isinstance(args, dict) else {}
             call_id = _args.pop("__call_id__", None) or name
-            _subagent_call_ids[name] = call_id
             agent.transport.emit(AgentEvent(EventType.TOOL_START, {
                 "tool": name, "args": _args, "call_id": call_id,
             }))
+
+    # TOOL_OUTPUT / TOOL_COMPLETE receive the stable ``call_id`` (and, for
+    # completion, the real status / duration / error) forwarded by
+    # build_compat_transport, so a same-named parallel batch (e.g. four
+    # concurrent ``read_file``) stays correlatable with its matching
+    # TOOL_START *and* a failed or permission-denied sub-agent tool is
+    # reported as a failure rather than a hardcoded success. The tool-name
+    # fallback fires only when the id is genuinely absent (``None``) — an
+    # empty-string id is preserved so it is not silently collapsed.
+    def _agent_output_cb(name, chunk, call_id=None):
+        agent.transport.emit(AgentEvent(EventType.TOOL_OUTPUT, {
+            "tool": name, "chunk": chunk,
+            "call_id": call_id if call_id is not None else name,
+        }))
+
+    def _agent_tool_complete_cb(
+        name, call_id=None, status=None, duration_ms=None, error=None,
+    ):
+        agent.transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {
+            "tool": name,
+            "call_id": call_id if call_id is not None else name,
+            "status": status if status is not None else "ok",
+            "duration_ms": duration_ms if duration_ms is not None else 0,
+            "error": error,
+        }))
 
     agent_tools = agent.agent_manager.create_agent_tools(
         all_tools=agent.tools.tools,
@@ -69,19 +88,8 @@ def register_agent_tools(agent: "Agentao") -> None:
         bg_store=agent.bg_store,
         confirmation_callback=lambda *a, **kw: agent.transport.confirm_tool(*a, **kw),
         step_callback=_agent_step_cb,
-        output_callback=lambda name, chunk: agent.transport.emit(
-            AgentEvent(EventType.TOOL_OUTPUT, {
-                "tool": name, "chunk": chunk,
-                "call_id": _subagent_call_ids.get(name, name),
-            })
-        ),
-        tool_complete_callback=lambda name: agent.transport.emit(
-            AgentEvent(EventType.TOOL_COMPLETE, {
-                "tool": name,
-                "call_id": _subagent_call_ids.pop(name, name),
-                "status": "ok", "duration_ms": 0, "error": None,
-            })
-        ),
+        output_callback=_agent_output_cb,
+        tool_complete_callback=_agent_tool_complete_cb,
         ask_user_callback=lambda *a, **kw: agent.transport.ask_user(*a, **kw),
         max_context_tokens=agent.context_manager.max_tokens,
         parent_messages_getter=lambda: agent.messages,
