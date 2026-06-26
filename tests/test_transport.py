@@ -108,6 +108,68 @@ class TestBuildCompatTransport:
         t.emit(AgentEvent(EventType.TOOL_COMPLETE, {"tool": "shell"}))
         assert calls == ["shell"]
 
+    def test_tool_complete_forwards_call_id_when_accepted(self):
+        # A callback declaring a ``call_id`` param receives the stable id so
+        # a same-named parallel batch stays correlatable with its TOOL_START.
+        calls = []
+
+        def cb(name, call_id=None):
+            calls.append((name, call_id))
+
+        t = build_compat_transport(tool_complete_callback=cb)
+        t.emit(AgentEvent(EventType.TOOL_COMPLETE, {"tool": "read_file", "call_id": "call_abc"}))
+        assert calls == [("read_file", "call_abc")]
+
+    def test_tool_complete_kwargs_only_callback_stays_legacy(self):
+        # A callback that declares only ``**kwargs`` does NOT opt into
+        # metadata forwarding: the bridge passes ``name`` positionally (the
+        # legacy contract), which **kwargs cannot absorb, so green-lighting it
+        # would only raise a swallowed TypeError. Opt-in is by naming the
+        # parameter, not by declaring **kwargs.
+        calls = []
+        t = build_compat_transport(
+            tool_complete_callback=lambda name, **kw: calls.append((name, kw))
+        )
+        t.emit(AgentEvent(EventType.TOOL_COMPLETE, {"tool": "read_file", "call_id": "call_xyz"}))
+        assert calls == [("read_file", {})]
+
+    def test_tool_complete_forwards_status_and_error_when_accepted(self):
+        # A failed sub-agent tool must reach a metadata-aware callback as a
+        # failure, not a hardcoded success.
+        calls = []
+
+        def cb(name, call_id=None, status=None, duration_ms=None, error=None):
+            calls.append((name, call_id, status, duration_ms, error))
+
+        t = build_compat_transport(tool_complete_callback=cb)
+        t.emit(AgentEvent(EventType.TOOL_COMPLETE, {
+            "tool": "shell", "call_id": "call_1", "status": "error",
+            "duration_ms": 42, "error": "boom",
+        }))
+        assert calls == [("shell", "call_1", "error", 42, "boom")]
+
+    def test_tool_output_forwards_call_id_when_accepted(self):
+        calls = []
+
+        def cb(name, chunk, call_id=None):
+            calls.append((name, chunk, call_id))
+
+        t = build_compat_transport(output_callback=cb)
+        t.emit(AgentEvent(EventType.TOOL_OUTPUT, {"tool": "shell", "chunk": "hi\n", "call_id": "call_1"}))
+        assert calls == [("shell", "hi\n", "call_1")]
+
+    def test_same_name_parallel_calls_stay_correlated(self):
+        # Regression: four concurrent ``read_file`` calls must each carry their
+        # own id on TOOL_COMPLETE rather than collapsing onto the tool name.
+        ids = ["call_a", "call_b", "call_c", "call_d"]
+        completed = []
+        t = build_compat_transport(
+            tool_complete_callback=lambda name, call_id=None: completed.append(call_id)
+        )
+        for cid in ids:
+            t.emit(AgentEvent(EventType.TOOL_COMPLETE, {"tool": "read_file", "call_id": cid}))
+        assert completed == ids
+
     def test_thinking_calls_thinking_callback(self):
         calls = []
         t = build_compat_transport(thinking_callback=lambda text: calls.append(text))
