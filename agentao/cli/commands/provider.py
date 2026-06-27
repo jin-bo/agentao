@@ -1,14 +1,18 @@
-"""``/provider``, ``/model``, ``/temperature`` — LLM provider config.
+"""``/provider``, ``/model``, ``/temperature``, ``/thinking`` — LLM config.
 
-All three target the same component (the live ``LLMClient`` underneath
-``cli.agent``) and reuse ``_list_providers_from_env`` to enumerate
-available ``XXXX_API_KEY`` triples from the environment.
+All four target the same component (the live ``LLMClient`` underneath
+``cli.agent``). ``/provider`` / ``/model`` reuse ``_list_providers_from_env``
+to enumerate available ``XXXX_API_KEY`` triples from the environment;
+``/temperature`` and ``/thinking`` mutate request fields on the live client
+(``temperature`` / ``omit_temperature`` and the ``extra_body`` passthrough).
 """
 
 from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING
+
+from rich.markup import escape
 
 from .._globals import console
 
@@ -154,3 +158,101 @@ def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
     cli.agent.llm.temperature = value
     cli.agent.llm.omit_temperature = False
     console.print(f"\n[success]Temperature changed from {old} to {value}[/success]\n")
+
+
+#: Canonical reasoning-effort levels, low → high. Provider-neutral: this is the
+#: OpenAI o-series / gpt-5 scale that most OpenAI-compatible providers mirror.
+#: The harness deliberately does NOT validate the value — the host configures
+#: its own endpoint and the provider validates (see
+#: ``docs/design/host-llm-extra-params.md`` §"Validate body values"). These are
+#: only the suggested set shown in usage + tab-completion; any other token is
+#: passed through with a "non-standard" note.
+_REASONING_LEVELS = ("minimal", "low", "medium", "high")
+
+
+def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
+    """Handle /thinking command — show/set the model's thinking depth.
+
+    "Thinking depth" maps to the ``reasoning_effort`` request field, which the
+    harness carries in the live LLM client's ``extra_body`` passthrough (the one
+    place provider-specific request fields live — there is no typed kwarg for
+    it). Mutating ``extra_body`` here updates the live client *and* every
+    sub-agent launched afterward, because ``Agentao._llm_config`` reads
+    ``extra_body`` live on each access.
+
+    Unlike ``/temperature`` there is **no auto-recovery latch** (``extra_body``
+    has no ``omit_*`` mirror): if the active model rejects ``reasoning_effort``,
+    every subsequent call 400s until ``/thinking off`` clears it. That asymmetry
+    is documented in ``docs/design/host-llm-extra-params.md`` §"no auto-recovery".
+    """
+    llm = cli.agent.llm
+    if not hasattr(llm, "extra_body"):
+        # Defensive: a host that injected a non-``LLMClient`` may lack the attr
+        # entirely — there is nowhere to carry reasoning_effort.
+        console.print("\n[error]Active LLM client has no extra_body passthrough; "
+                      "cannot set reasoning effort.[/error]\n")
+        return
+    if llm.extra_body is None:
+        # An injected client may default ``extra_body`` to ``None``; initialize
+        # it so the setter is functional rather than silently inert.
+        llm.extra_body = {}
+    extra_body = llm.extra_body
+
+    args = args.strip()
+    # Membership, not ``.get() is None``: a host may set ``reasoning_effort=None``
+    # explicitly (which is still sent to the provider), and ``off`` must be able
+    # to clear *that* too — conflating the two would make ``off`` a no-op.
+    is_set = "reasoning_effort" in extra_body
+    current = extra_body.get("reasoning_effort")
+
+    if not args:
+        if not is_set:
+            console.print("\n[info]Thinking depth:[/info] [cyan]default[/cyan] "
+                          "[dim](reasoning_effort unset — provider default)[/dim]")
+        else:
+            console.print(f"\n[info]Thinking depth:[/info] [cyan]{escape(str(current))}[/cyan] "
+                          "[dim](reasoning_effort)[/dim]")
+        console.print(f"[dim]Usage: /thinking <{' | '.join(_REASONING_LEVELS)} | off>[/dim]\n")
+        return
+
+    lowered = args.lower()
+
+    # ``off`` clears the key (use the provider default). It is NOT a passthrough
+    # value: a provider whose scale includes a literal "none" effort is set with
+    # ``/thinking none`` instead — keeping the disable keyword unambiguous.
+    if lowered == "off":
+        if not is_set:
+            console.print("\n[info]Thinking depth already at provider default "
+                          "(reasoning_effort unset).[/info]\n")
+            return
+        prev = extra_body.pop("reasoning_effort", None)
+        console.print(f"\n[success]Thinking depth off — reasoning_effort "
+                      f"('{escape(str(prev))}') cleared; provider default in effect.[/success]\n")
+        return
+
+    # Reject a multi-word argument: ``/thinking high please`` would otherwise
+    # store "high please" verbatim and 400 every later request with no clear
+    # cause. A reasoning_effort token is always a single word.
+    if len(args.split()) > 1:
+        console.print(f"\n[error]Invalid thinking depth: '{escape(args)}' — expected a "
+                      f"single level ({' | '.join(_REASONING_LEVELS)}) or 'off', "
+                      "not multiple words.[/error]\n")
+        return
+
+    # Normalize a *known* level to its canonical lowercase form (so ``HIGH`` →
+    # ``high``), but pass a non-standard token through verbatim — forcing
+    # lowercase would silently mangle a provider whose scale is case-sensitive.
+    value = lowered if lowered in _REASONING_LEVELS else args
+    extra_body["reasoning_effort"] = value
+    note = ""
+    if value not in _REASONING_LEVELS:
+        note = (f"  [dim](non-standard — your provider validates it; "
+                f"standard: {', '.join(_REASONING_LEVELS)})[/dim]")
+    safe_value = escape(value)
+    if not is_set:
+        console.print(f"\n[success]Thinking depth set to [cyan]{safe_value}[/cyan][/success]{note}")
+    else:
+        console.print(f"\n[success]Thinking depth changed from {escape(str(current))} to "
+                      f"[cyan]{safe_value}[/cyan][/success]{note}")
+    console.print("[dim]No auto-recovery: if this model rejects reasoning_effort, "
+                  "requests fail until /thinking off.[/dim]\n")

@@ -52,7 +52,7 @@ _SLASH_COMMANDS = [
     '/replay delete', '/replay delete all',
     '/skills', '/skills activate', '/skills deactivate',
     '/skills disable', '/skills enable', '/skills reload', '/status', '/temperature',
-    '/todos', '/tools',
+    '/thinking', '/todos', '/tools',
 ]
 
 
@@ -86,6 +86,7 @@ _SLASH_COMMAND_HINTS = {
     '/context limit': '<tokens>',
     '/image': '<path>',
     '/temperature': '<value|off|on>',
+    '/thinking': '<minimal|low|medium|high|off>',
     '/sessions resume': '<session-id>',
     '/sessions delete': '<session-id>',
     '/mcp add': '<name> <command|url>',
