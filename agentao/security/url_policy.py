@@ -36,6 +36,9 @@ Scope is deliberately narrow:
 from __future__ import annotations
 
 import ipaddress
+import logging
+import os
+import re
 import socket
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import urljoin, urlparse
@@ -43,7 +46,10 @@ from urllib.parse import urljoin, urlparse
 if TYPE_CHECKING:
     import httpx
 
+logger = logging.getLogger("agentao.security.url_policy")
+
 _IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+_IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
@@ -81,6 +87,53 @@ class UrlPolicyError(ValueError):
     """Raised when an outbound URL is rejected by the SSRF policy."""
 
 
+#: Env var: comma/space-separated CIDRs (or bare IPs) the SSRF policy treats as
+#: allowed even though they are not globally routable. The opt-in escape hatch
+#: for hosts behind a fake-IP proxy (Clash/V2Ray map every domain to a reserved
+#: range like ``198.18.0.0/15``) or with a trusted internal service. Default
+#: empty → the policy is fully strict. Read once at ``WebFetchTool`` construction.
+_ALLOW_CIDRS_ENV = "AGENTAO_WEB_FETCH_ALLOW_CIDRS"
+
+
+def read_allow_cidrs_setting() -> tuple[_IPNetwork, ...]:
+    """Parse ``AGENTAO_WEB_FETCH_ALLOW_CIDRS`` into a tuple of networks.
+
+    Tokens are split on commas/whitespace; a bare IP becomes a host network
+    (``/32`` or ``/128``). Invalid tokens are warned and skipped (not fatal),
+    matching the lenient handling of ``AGENTAO_WEB_FETCH_FALLBACK``. When any
+    range is configured a single WARNING is logged — relaxing an SSRF control
+    is part of the audit surface and must never be silent.
+    """
+    raw = (os.getenv(_ALLOW_CIDRS_ENV) or "").strip()
+    if not raw:
+        return ()
+    networks: list[_IPNetwork] = []
+    for token in re.split(r"[,\s]+", raw):
+        if not token:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(token, strict=False))
+        except ValueError:
+            logger.warning(
+                "Ignoring invalid CIDR/IP %r in %s", token, _ALLOW_CIDRS_ENV
+            )
+    result = tuple(networks)
+    if result:
+        logger.warning(
+            "SSRF policy relaxed via %s: web_fetch will also permit otherwise-"
+            "blocked non-public target(s) in %s",
+            _ALLOW_CIDRS_ENV,
+            ", ".join(str(n) for n in result),
+        )
+    return result
+
+
+def _in_any_network(address: _IPAddress, networks: tuple[_IPNetwork, ...]) -> bool:
+    # Version-guard: ``address in network`` raises across v4/v6, so only compare
+    # same-family pairs.
+    return any(address in net for net in networks if address.version == net.version)
+
+
 def _parse_ip_literal(value: str) -> Optional[_IPAddress]:
     try:
         return ipaddress.ip_address(value)
@@ -109,17 +162,28 @@ def _embedded_ipv4(address: _IPAddress) -> Optional[ipaddress.IPv4Address]:
     return None
 
 
-def _is_disallowed(address: _IPAddress) -> bool:
+def _is_disallowed(
+    address: _IPAddress, allow_networks: tuple[_IPNetwork, ...] = ()
+) -> bool:
     """True if ``address`` is not a globally routable public address.
 
     An IPv6 address carrying an embedded IPv4 (v4-mapped / 6to4 / NAT64) is
     judged by that embedded IPv4 — where a translator actually routes it — so a
     loopback or metadata target can't be smuggled through the v6 form.
+
+    ``allow_networks`` is the opt-in operator allowlist (see
+    :func:`read_allow_cidrs_setting`): a non-global address that falls inside an
+    allowed range is permitted. The match is on the *effective* (embedded-IPv4)
+    address — the same one the ``is_global`` check judges — so the allowlist
+    covers exactly what would otherwise be blocked, and a host allowlisting
+    ``198.18.0.0/15`` (a fake-IP proxy range) cannot accidentally also permit a
+    differently-encoded loopback.
     """
     embedded = _embedded_ipv4(address)
-    if embedded is not None:
-        return not embedded.is_global
-    return not address.is_global
+    effective = embedded if embedded is not None else address
+    if allow_networks and _in_any_network(effective, allow_networks):
+        return False
+    return not effective.is_global
 
 
 def _normalized_hostname(hostname: str) -> str:
@@ -128,7 +192,9 @@ def _normalized_hostname(hostname: str) -> str:
     return hostname.rstrip(".").lower()
 
 
-def validate_outbound_url(url: str) -> None:
+def validate_outbound_url(
+    url: str, *, allow_networks: tuple[_IPNetwork, ...] = ()
+) -> None:
     """Reject loopback / private / link-local / internal HTTP(S) targets.
 
     Raises :class:`UrlPolicyError` for a non-http(s) scheme, embedded
@@ -136,6 +202,12 @@ def validate_outbound_url(url: str) -> None:
     a single-label hostname (resolves via the host's search domain — never a
     real public target), an IP literal that is not globally routable, or a
     hostname that resolves to any non-global address.
+
+    ``allow_networks`` (from :func:`read_allow_cidrs_setting`) is the opt-in
+    escape hatch: a non-global address inside an allowed range is permitted.
+    Hostname-shape rejections (local/internal names, single-label, embedded
+    credentials, bad scheme) are *not* affected — the allowlist only relaxes the
+    "address is not globally routable" verdict.
     """
     parsed = urlparse(url)
     scheme = (parsed.scheme or "").lower()
@@ -151,7 +223,7 @@ def validate_outbound_url(url: str) -> None:
 
     literal = _parse_ip_literal(hostname)
     if literal is not None:
-        if _is_disallowed(literal):
+        if _is_disallowed(literal, allow_networks):
             raise UrlPolicyError(
                 f"target is a non-public address: {hostname}"
             )
@@ -174,7 +246,7 @@ def validate_outbound_url(url: str) -> None:
     addresses = _resolve_host_addresses(hostname, port)
     if not addresses:
         raise UrlPolicyError(f"host did not resolve: {hostname}")
-    blocked = sorted({str(a) for a in addresses if _is_disallowed(a)})
+    blocked = sorted({str(a) for a in addresses if _is_disallowed(a, allow_networks)})
     if blocked:
         rendered = ", ".join(blocked[:3]) + (", ..." if len(blocked) > 3 else "")
         raise UrlPolicyError(
@@ -209,6 +281,7 @@ def guarded_get(
     *,
     headers: Optional[dict[str, str]] = None,
     max_redirects: int = _MAX_REDIRECTS,
+    allow_networks: tuple[_IPNetwork, ...] = (),
 ) -> "httpx.Response":
     """GET ``url`` with SSRF validation on the initial URL and every hop.
 
@@ -217,12 +290,17 @@ def guarded_get(
     current URL and re-validated before the next request. The final
     non-redirect response is returned (caller handles status / body).
 
+    ``allow_networks`` (the opt-in operator allowlist) is applied to the initial
+    URL *and every redirect hop*, exactly like the rest of the policy — a
+    redirect into the metadata service is still blocked unless its range was
+    explicitly allowlisted.
+
     Raises :class:`UrlPolicyError` on a disallowed target (initial or any
     hop) or when the redirect budget is exhausted.
     """
     current = url
     for _ in range(max_redirects + 1):
-        validate_outbound_url(current)
+        validate_outbound_url(current, allow_networks=allow_networks)
         response = client.get(current, headers=headers)
         if response.status_code in (301, 302, 303, 307, 308):
             location = response.headers.get("location")

@@ -177,6 +177,7 @@ def test_web_search_explicit_args_beat_env(monkeypatch):
 
 
 def test_web_search_env_is_fallback(monkeypatch):
+    monkeypatch.delenv("JINA_API_KEY", raising=False)  # else jina precedes bocha
     monkeypatch.setenv("BOCHA_API_KEY", "from-env")
     tool = WebSearchTool()
     assert tool._bocha_api_key == "from-env"
@@ -185,12 +186,14 @@ def test_web_search_env_is_fallback(monkeypatch):
 
 def test_web_search_no_key_defaults_duckduckgo(monkeypatch):
     monkeypatch.delenv("BOCHA_API_KEY", raising=False)
+    monkeypatch.delenv("JINA_API_KEY", raising=False)
     tool = WebSearchTool()
     assert tool._provider == "duckduckgo"
 
 
 def test_web_search_empty_api_key_overrides_env(monkeypatch):
     """Explicit api_key='' (force-unset) must beat the env var, not fall back."""
+    monkeypatch.delenv("JINA_API_KEY", raising=False)
     monkeypatch.setenv("BOCHA_API_KEY", "from-env")
     tool = WebSearchTool(api_key="")
     assert tool._bocha_api_key == ""
