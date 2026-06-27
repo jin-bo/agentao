@@ -19,6 +19,7 @@ from .provider import (
     handle_model_command,
     handle_provider_command,
     handle_temperature_command,
+    handle_thinking_command,
 )
 from .sessions import handle_sessions_command, resume_session
 from .tools_intro import handle_tools_command
@@ -36,6 +37,7 @@ __all__ = [
     "handle_sandbox_command",
     "handle_sessions_command",
     "handle_temperature_command",
+    "handle_thinking_command",
     "handle_todos_command",
     "handle_tools_command",
     "resume_session",

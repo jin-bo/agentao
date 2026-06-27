@@ -69,6 +69,15 @@ def get_status_toolbar(cli: "AgentaoCLI") -> ANSI:
     except Exception:
         model = "—"
 
+    # Thinking depth (``reasoning_effort``, set via /thinking) trails the model
+    # as a dim " (<level>)" suffix — only when set, so the bar stays clean at the
+    # provider default, matching how agents_part/acp_part omit when empty.
+    try:
+        effort = (getattr(cli.agent.llm, "extra_body", None) or {}).get("reasoning_effort")
+    except Exception:
+        effort = None
+    think_part = f"{DIM} ({effort}){RST}" if effort else ""
+
     if cli._plan_session.is_active:
         mode_col, mode_text = "\x1b[95m", "plan"
     elif cli.current_mode == PermissionMode.READ_ONLY:
@@ -131,7 +140,7 @@ def get_status_toolbar(cli: "AgentaoCLI") -> ANSI:
     sep = f"  {DIM}│{RST}  "
     cwd = Path.cwd().name or str(Path.cwd())
     status = (
-        f" {DIM}{model}{RST}"
+        f" {DIM}{model}{RST}{think_part}"
         f"{sep}{mode_col}{mode_text}{RST}"
         f"{sep}{ctx_col}ctx {pct:.0f}%{RST}"
         f"{sep}{DIM}{cwd}{RST}"
@@ -148,7 +157,8 @@ def run_loop(cli: "AgentaoCLI") -> None:
     """Main input loop — slash-command dispatch + agent turn handling."""
     from .commands import (
         handle_todos_command, handle_plan_command, handle_provider_command,
-        handle_model_command, handle_temperature_command, handle_context_command,
+        handle_model_command, handle_temperature_command, handle_thinking_command,
+        handle_context_command,
         handle_mcp_command, handle_permission_command, handle_sessions_command,
         handle_tools_command, handle_sandbox_command, handle_compact_command,
         handle_image_command, handle_goal_command,
@@ -378,6 +388,10 @@ def run_loop(cli: "AgentaoCLI") -> None:
 
                 elif command == "temperature":
                     handle_temperature_command(cli, args)
+                    continue
+
+                elif command == "thinking":
+                    handle_thinking_command(cli, args)
                     continue
 
                 elif command == "todos":

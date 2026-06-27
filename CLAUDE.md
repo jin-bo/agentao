@@ -213,7 +213,7 @@ The authoritative list with full subcommand syntax lives in `agentao/cli/help_te
 - `/mcp`, `/sandbox`, `/acp`, `/replay` — subsystem control.
 - `/agent <name> <task>`, `/agent bg <name> <task>`, `/agent dashboard` — sub-agent runners.
 - `/tools [name]` — list registered tools or show one tool's schema.
-- `/model`, `/provider`, `/temperature` — LLM config.
+- `/model`, `/provider`, `/temperature`, `/thinking` — LLM config. `/thinking [minimal|low|medium|high|off]` sets thinking depth (`reasoning_effort`) on the live client's `extra_body` passthrough (`cli/commands/provider.py::handle_thinking_command`); `off` clears it. No auto-recovery — a model that rejects `reasoning_effort` fails until `off` (see `docs/design/host-llm-extra-params.md`).
 - `/context`, `/compact` — context-window inspection + manual compaction.
 
 ## Adding new components
