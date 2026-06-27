@@ -59,9 +59,10 @@
 | `{PROVIDER}_MODEL` | **是** | — | 缺失则启动抛 `ValueError`。 |
 | `LLM_TEMPERATURE` | 否 | `0.2` | 范围 `0.0`–`2.0`。 |
 | `LLM_MAX_TOKENS` | 否 | — | 不设则使用 provider 缺省。 |
-| `BOCHA_API_KEY` | 否 | — | 设了之后 `web_search` 走 Bocha；否则回退到 DuckDuckGo。 |
+| `BOCHA_API_KEY` | 否 | — | `web_search` 走一条有序回退链，某个后端**出错**（而非返回空结果）时退到下一个：`jina`（设了 `JINA_API_KEY`）→ `bocha`（设了 `BOCHA_API_KEY`）→ `duckduckgo`（无需 key，永远是兜底）。每次回退都会在结果里标注并记日志。用 `WebSearchTool(backend="bocha"\|"jina"\|"duckduckgo")` 显式钉死某个后端时，**只**用那一个，不做自动回退。 |
 | `AGENTAO_WEB_FETCH_FALLBACK` | 否 | `none` | `web_fetch` 的 JS 渲染回退。可选值：`none` / `jina` / `crawl4ai`。默认 `none` —— 工具不会把用户给定的 URL 静默代理到第三方。`jina` 把 URL 发到 `https://r.jina.ai`（工具描述和结果首部的 `Fallback:` 行会显式说明）。`crawl4ai` 需要 `pip install 'agentao[crawl4ai]'` + `playwright install chromium`。仅在 `WebFetchTool` 构造时读一次；无效值会 warn 并降级到 `none`。 |
-| `JINA_API_KEY` | 否 | — | 可选。`AGENTAO_WEB_FETCH_FALLBACK=jina` 时，作为 `Authorization: Bearer <key>` 发出，获取更高的速率上限。 |
+| `AGENTAO_WEB_FETCH_ALLOW_CIDRS` | 否 | — | `web_fetch` 的 opt-in SSRF 白名单：逗号/空格分隔的 CIDR（或裸 IP），即便它们**不是公网可路由地址**也放行。给跑在 fake-IP 代理后面的 host 用的逃生口（Clash/V2Ray 把所有域名映射到保留段，通常是 `198.18.0.0/15`，否则会被 SSRF 防护拦掉），或放行可信的内网服务。对初始 URL **以及每一个重定向跳转**都生效；白名单是**有作用域的**——列了 `198.18.0.0/15` **不会**顺带放行 `169.254.169.254`。**这是放松一项安全控制** —— 启动时记一条日志、并在工具描述里透出；范围要尽量窄，绝不要写 `0.0.0.0/0`。默认空 = 完全严格。（更干净的做法：把代理 DNS 从 `fake-ip` 改成 `redir-host`/真实 IP。）见 `agentao/security/url_policy.py`。 |
+| `JINA_API_KEY` | 否 | — | 可选的 Jina key，作为 `Authorization: Bearer <key>` 发出以获取更高速率上限。被 **`web_search`**（`jina` 后端，走 `s.jina.ai` —— 无 key 也能用，key 只是抬高速率上限；设了 key 还会把 `jina` 加进自动回退链）**和** `web_fetch`（`AGENTAO_WEB_FETCH_FALLBACK=jina` 时走 `r.jina.ai`）共用。 |
 
 > 标准范例：仓库根目录的 `.env.example`。
 
