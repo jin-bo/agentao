@@ -34,6 +34,18 @@ class _StreamAccumulator:
         self.content_parts: List[str] = []
         self.reasoning_parts: List[str] = []
         self.tool_calls_data: Dict[int, Dict[str, str]] = {}
+        # Streaming tool-call keying state. The OpenAI streaming spec tags
+        # every tool_call delta with an ``index`` so fragments reassemble
+        # across chunks; some OpenAI-compatible providers (local / self-hosted
+        # inference servers, gateways) omit it. We assign each call a synthetic,
+        # monotonically-increasing key — never the provider's raw index nor a
+        # chunk-local position — so indexed and indexless calls can coexist
+        # without colliding and ``sorted()`` at build time preserves arrival
+        # order. ``tool_calls_data`` persists across chunks, so a per-chunk
+        # ``enumerate`` position cannot identify a call. See goose #10023.
+        self._tc_key_by_index: Dict[int, int] = {}
+        self._tc_last_key: Optional[int] = None
+        self._tc_next_key: int = 0
         self.finish_reason: str = "stop"
         self.response_model: str = model
         self.usage_data: Any = None
@@ -43,6 +55,34 @@ class _StreamAccumulator:
         # iterations without exposing anything to the host, so they must NOT
         # block the pre-output retry path.
         self.progress_made: bool = False
+
+    def tool_call_key(self, tc_delta: Any) -> int:
+        """Stream-stable accumulation key for one streaming tool_call delta.
+
+        Honours the provider's ``index`` when present: continuation deltas of
+        the same call carry the same index and merge onto one key. When index
+        is absent, a delta that carries an ``id`` starts a new call (fresh
+        key); an arguments-only delta continues the call most recently opened.
+        Keys are synthetic and assigned in arrival order, so indexed and
+        indexless calls never share a key and ``sorted()`` preserves call
+        order. ``index`` is read via ``getattr`` because a provider that truly
+        omits the field may yield a delta without the attribute at all.
+        """
+        index = getattr(tc_delta, "index", None)
+        if index is not None:
+            key = self._tc_key_by_index.get(index)
+            if key is None:
+                key = self._tc_next_key
+                self._tc_next_key += 1
+                self._tc_key_by_index[index] = key
+            self._tc_last_key = key
+            return key
+        # Indexless: an id announces a new call; an arguments-only continuation
+        # appends to the call we last opened (or starts one if none is open).
+        if getattr(tc_delta, "id", None) or self._tc_last_key is None:
+            self._tc_last_key = self._tc_next_key
+            self._tc_next_key += 1
+        return self._tc_last_key
 
     def build(self) -> "_StreamResponse":
         """Materialise the accumulated deltas into a duck-type response."""
