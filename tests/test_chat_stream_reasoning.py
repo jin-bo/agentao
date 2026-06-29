@@ -11,11 +11,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 
-def _chunk(content=None, reasoning=None, finish=None):
+def _chunk(content=None, reasoning=None, finish=None, tool_calls=None):
     """Build a single SSE chunk with the fields chat_stream actually reads."""
     delta = SimpleNamespace(
         content=content,
-        tool_calls=None,
+        tool_calls=tool_calls,
         reasoning_content=reasoning,
     )
     choice = SimpleNamespace(delta=delta, finish_reason=finish)
@@ -23,6 +23,19 @@ def _chunk(content=None, reasoning=None, finish=None):
         choices=[choice],
         usage=None,
         model="test-thinking-model",
+    )
+
+
+def _tc_delta(*, index=None, id=None, name=None, arguments=None):
+    """One streaming tool_call delta, shaped as the OpenAI SDK yields it.
+
+    The first delta of a call carries ``id``/``name``; continuation deltas
+    carry only ``arguments``. ``index`` is None for providers that omit it.
+    """
+    return SimpleNamespace(
+        index=index,
+        id=id,
+        function=SimpleNamespace(name=name, arguments=arguments),
     )
 
 
@@ -102,43 +115,13 @@ def test_chat_stream_reasoning_with_tool_calls():
     """reasoning_content must coexist with tool_calls in the same response."""
     client = _make_client()
 
-    tc_delta_open = SimpleNamespace(
-        index=0,
-        id="call_1",
-        function=SimpleNamespace(name="get_weather", arguments=""),
-    )
-    tc_delta_args = SimpleNamespace(
-        index=0,
-        id=None,
-        function=SimpleNamespace(name=None, arguments='{"city":"SF"}'),
-    )
+    tc_delta_open = _tc_delta(index=0, id="call_1", name="get_weather", arguments="")
+    tc_delta_args = _tc_delta(index=0, arguments='{"city":"SF"}')
 
     chunks = [
         _chunk(reasoning="I should check the weather."),
-        SimpleNamespace(
-            choices=[SimpleNamespace(
-                delta=SimpleNamespace(
-                    content=None,
-                    tool_calls=[tc_delta_open],
-                    reasoning_content=None,
-                ),
-                finish_reason=None,
-            )],
-            usage=None,
-            model="test-thinking-model",
-        ),
-        SimpleNamespace(
-            choices=[SimpleNamespace(
-                delta=SimpleNamespace(
-                    content=None,
-                    tool_calls=[tc_delta_args],
-                    reasoning_content=None,
-                ),
-                finish_reason="tool_calls",
-            )],
-            usage=None,
-            model="test-thinking-model",
-        ),
+        _chunk(tool_calls=[tc_delta_open]),
+        _chunk(tool_calls=[tc_delta_args], finish="tool_calls"),
         _usage_only_chunk(),
     ]
     client.client.chat.completions.create = MagicMock(return_value=iter(chunks))
@@ -157,6 +140,103 @@ def test_chat_stream_reasoning_with_tool_calls():
     assert msg.tool_calls[0].function.arguments == '{"city":"SF"}'
 
 
+def _run_tool_stream(client, chunks, tools=None):
+    """Drive chat_stream over ``chunks`` and return the rebuilt message."""
+    client.client.chat.completions.create = MagicMock(
+        return_value=iter([*chunks, _usage_only_chunk()])
+    )
+    response = client.chat_stream(
+        messages=[{"role": "user", "content": "go"}],
+        tools=tools or [{"type": "function", "function": {"name": "noop"}}],
+        max_tokens=64,
+    )
+    return response.choices[0].message
+
+
+def test_chat_stream_single_tool_call_without_index():
+    """A whole tool call delivered in one indexless delta (the goose #10023
+    shape: local/self-hosted servers and gateways that omit ``index``) must be
+    rebuilt intact."""
+    msg = _run_tool_stream(_make_client(), [
+        _chunk(tool_calls=[_tc_delta(
+            id="functions.get_weather:0",
+            name="get_weather",
+            arguments='{"city":"Paris"}',
+        )], finish="tool_calls"),
+    ])
+
+    assert msg.tool_calls is not None
+    assert len(msg.tool_calls) == 1
+    assert msg.tool_calls[0].function.name == "get_weather"
+    assert msg.tool_calls[0].function.arguments == '{"city":"Paris"}'
+
+
+def test_chat_stream_parallel_tool_calls_one_chunk_without_index():
+    """Two distinct indexless calls in one chunk must stay separate. Distinct
+    names make the assertion discriminating: a collision concatenates them into
+    "get_weatherget_time" instead of yielding two calls."""
+    msg = _run_tool_stream(_make_client(), [
+        _chunk(tool_calls=[
+            _tc_delta(id="c0", name="get_weather", arguments='{"city":"Paris"}'),
+            _tc_delta(id="c1", name="get_time", arguments='{"tz":"JST"}'),
+        ], finish="tool_calls"),
+    ])
+
+    assert [tc.function.name for tc in msg.tool_calls] == ["get_weather", "get_time"]
+    assert [tc.function.arguments for tc in msg.tool_calls] == [
+        '{"city":"Paris"}', '{"tz":"JST"}',
+    ]
+
+
+def test_chat_stream_parallel_tool_calls_across_chunks_without_index():
+    """Indexless parallel calls arriving one-per-chunk must stay distinct.
+    A chunk-local position would reset to 0 each chunk and collapse both onto
+    one key; the id-keyed accumulator gives each its own. Guards goose #10023's
+    cross-chunk case."""
+    msg = _run_tool_stream(_make_client(), [
+        _chunk(tool_calls=[_tc_delta(id="c0", name="get_weather", arguments='{"city":"Paris"}')]),
+        _chunk(tool_calls=[_tc_delta(id="c1", name="get_time", arguments='{"tz":"JST"}')],
+               finish="tool_calls"),
+    ])
+
+    assert [tc.function.name for tc in msg.tool_calls] == ["get_weather", "get_time"]
+    assert [tc.function.arguments for tc in msg.tool_calls] == [
+        '{"city":"Paris"}', '{"tz":"JST"}',
+    ]
+
+
+def test_chat_stream_fragmented_arguments_without_index():
+    """An indexless call whose arguments are fragmented across chunks (first
+    delta carries id+name, continuations carry arguments only) must reassemble
+    onto the same call, not spawn phantom entries."""
+    msg = _run_tool_stream(_make_client(), [
+        _chunk(tool_calls=[_tc_delta(id="c0", name="get_weather", arguments='{"city":')]),
+        _chunk(tool_calls=[_tc_delta(arguments='"Paris"')]),
+        _chunk(tool_calls=[_tc_delta(arguments='}')], finish="tool_calls"),
+    ])
+
+    assert len(msg.tool_calls) == 1
+    assert msg.tool_calls[0].function.name == "get_weather"
+    assert msg.tool_calls[0].function.arguments == '{"city":"Paris"}'
+
+
+def test_chat_stream_mixed_indexed_and_indexless_tool_calls():
+    """A stream mixing an indexed call with an indexless one across chunks must
+    keep them distinct. The pre-fix code crashed here (``sorted({0, None})``
+    TypeError); a chunk-local position would silently collide the indexless
+    call onto key 0. The synthetic-key accumulator keeps both."""
+    msg = _run_tool_stream(_make_client(), [
+        _chunk(tool_calls=[_tc_delta(index=0, id="a", name="get_weather", arguments='{"city":"Paris"}')]),
+        _chunk(tool_calls=[_tc_delta(id="b", name="get_time", arguments='{"tz":"JST"}')],
+               finish="tool_calls"),
+    ])
+
+    assert [tc.function.name for tc in msg.tool_calls] == ["get_weather", "get_time"]
+    assert [tc.function.arguments for tc in msg.tool_calls] == [
+        '{"city":"Paris"}', '{"tz":"JST"}',
+    ]
+
+
 if __name__ == "__main__":
     test_chat_stream_accumulates_reasoning_content()
     print("✓ accumulates reasoning_content")
@@ -164,3 +244,13 @@ if __name__ == "__main__":
     print("✓ reasoning is None when absent")
     test_chat_stream_reasoning_with_tool_calls()
     print("✓ reasoning coexists with tool_calls")
+    test_chat_stream_single_tool_call_without_index()
+    print("✓ single tool call without index")
+    test_chat_stream_parallel_tool_calls_one_chunk_without_index()
+    print("✓ parallel indexless calls in one chunk stay distinct")
+    test_chat_stream_parallel_tool_calls_across_chunks_without_index()
+    print("✓ parallel indexless calls across chunks stay distinct")
+    test_chat_stream_fragmented_arguments_without_index()
+    print("✓ fragmented indexless arguments reassemble")
+    test_chat_stream_mixed_indexed_and_indexless_tool_calls()
+    print("✓ mixed indexed/indexless calls stay distinct")

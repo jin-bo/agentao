@@ -709,10 +709,13 @@ class LLMClient(_LoggingMixin):
             if delta and getattr(delta, "reasoning_content", None):
                 acc.reasoning_parts.append(delta.reasoning_content)
 
-            # Accumulate tool call deltas
+            # Accumulate tool call deltas. ``acc.tool_call_key`` resolves the
+            # stream-stable key for this delta, tolerating providers that omit
+            # the OpenAI ``index`` field (see _StreamAccumulator.tool_call_key
+            # and goose #10023).
             if delta and delta.tool_calls:
                 for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
+                    idx = acc.tool_call_key(tc_delta)
                     if idx not in acc.tool_calls_data:
                         acc.tool_calls_data[idx] = {"id": "", "name": "", "arguments": ""}
                     if tc_delta.id:
