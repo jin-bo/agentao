@@ -86,7 +86,7 @@ def _make_client_with_session(call_results):
     iter_results = iter(call_results)
 
     class _FakeSession:
-        async def call_tool(self, tool_name, arguments):
+        async def call_tool(self, tool_name, arguments, read_timeout_seconds=None):
             outcome = next(iter_results)
             if isinstance(outcome, Exception):
                 raise outcome
@@ -109,7 +109,7 @@ def _patch_connect_with_ok_session(text: str):
 
     async def _fake_connect(self_):
         class _SessionOk:
-            async def call_tool(self, tool_name, arguments):
+            async def call_tool(self, tool_name, arguments, read_timeout_seconds=None):
                 return success_result
 
         self_._session = _SessionOk()
