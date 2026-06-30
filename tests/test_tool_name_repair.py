@@ -7,7 +7,13 @@ import pytest
 
 from agentao.permissions import PermissionEngine
 from agentao.runtime.name_repair import repair_tool_name
-from agentao.runtime.tool_planning import ToolCallDecision, ToolCallPlanner
+from agentao.runtime.tool_planning import (
+    DOOM_LOOP_THRESHOLD,
+    EMPTY_TOOL_NAME_MESSAGE,
+    _EMPTY_NAME_PLACEHOLDER,
+    ToolCallDecision,
+    ToolCallPlanner,
+)
 from agentao.tools.base import Tool, ToolRegistry
 
 from tests.support.tool_calls import make_tool_call
@@ -167,7 +173,176 @@ def test_planner_unrepairable_name_still_emits_error(planner_with_browser_click)
 
     assert result.plans == []
     assert len(result.early_messages) == 1
-    assert "not found" in result.early_messages[0]["content"]
+    content = result.early_messages[0]["content"]
+    assert "not found" in content
+    # A genuinely-wrong but NON-empty name is a typo the model can correct,
+    # so the full catalog (here: the registered tool name) is still dumped.
+    assert "browser_click" in content
+    assert content != EMPTY_TOOL_NAME_MESSAGE
+
+
+# ---------------------------------------------------------------------------
+# Empty/whitespace name anti-priming (hermes-agent 020e59d3c, #47967):
+#   a blank name is never a fuzzy-repairable typo — it is a weak model
+#   echoing tool-call syntax it saw as data. The guard is HOISTED above the
+#   doom-loop and parse-failure checks so identical-args and malformed-args
+#   echoes (the common forms) reach it instead of being pre-empted. Reply
+#   with a terse note and WITHHOLD the tool catalog so we don't feed the
+#   priming loop more names to mimic; a dedicated cumulative counter hard-
+#   stops the turn if the echoes keep coming. Genuine (non-empty) typos still
+#   get the catalog (see test_planner_unrepairable_name_still_emits_error).
+# ---------------------------------------------------------------------------
+
+
+def test_empty_tool_name_message_pins_intent():
+    # Pin the constant's anti-priming contract independently of the runtime
+    # branch, so re-introducing a catalog or dropping the 'data, do not
+    # re-emit' guidance fails loudly here (the per-call tests assert equality
+    # against this same symbol and so cannot catch its own degradation).
+    assert "do not re-emit" in EMPTY_TOOL_NAME_MESSAGE
+    assert "plain text" in EMPTY_TOOL_NAME_MESSAGE
+    assert "Available tools" not in EMPTY_TOOL_NAME_MESSAGE
+    assert "browser_click" not in EMPTY_TOOL_NAME_MESSAGE
+
+
+class TestEmptyNameAntiPriming:
+    @pytest.mark.parametrize("empty_name", ["", "   ", "\t", "\n ", " \t\n"])
+    def test_single_empty_or_whitespace_name_withholds_catalog(
+        self, planner_with_browser_click, empty_name, caplog,
+    ):
+        tc = make_tool_call("call-empty", empty_name, arguments="{}")
+
+        with caplog.at_level(logging.WARNING, logger="test.name_planner"):
+            result = planner_with_browser_click.plan([tc])
+
+        assert result.plans == []
+        assert result.doom_loop_triggered is False
+        assert len(result.early_messages) == 1
+        msg = result.early_messages[0]
+        # The terse anti-priming reply, verbatim — no catalog, no "not found".
+        assert msg["content"] == EMPTY_TOOL_NAME_MESSAGE
+        assert "browser_click" not in msg["content"]
+        assert "Available tools" not in msg["content"]
+        assert "not found" not in msg["content"]
+        # tool_call_id is answered (one reply per call). ``name`` is the
+        # synthetic placeholder, never the empty/whitespace name itself, so a
+        # strict provider that validates non-empty tool-message names accepts.
+        assert msg["tool_call_id"]
+        assert msg["role"] == "tool"
+        assert msg["name"] == _EMPTY_NAME_PLACEHOLDER
+        assert msg["name"].strip()
+        # Logged as withheld-catalog, not as a raw KeyError dump.
+        assert any("anti-priming" in r.getMessage() for r in caplog.records)
+
+    def test_empty_name_with_unparseable_args_anti_primes(
+        self, planner_with_browser_click,
+    ):
+        # Hoist regression: a blank-name echo whose args are ALSO malformed
+        # must still get the anti-priming reply — not the parse-failure
+        # handler's "retry with valid JSON", which would invite re-emission.
+        tc = make_tool_call("call-bad", "", arguments="{not valid json")
+
+        result = planner_with_browser_click.plan([tc])
+
+        assert result.plans == []
+        assert len(result.early_messages) == 1
+        content = result.early_messages[0]["content"]
+        assert content == EMPTY_TOOL_NAME_MESSAGE
+        assert "valid JSON" not in content
+        assert "could not parse" not in content
+
+    def test_empty_name_identical_args_anti_primes_not_doom_abort(
+        self, planner_with_browser_click,
+    ):
+        # Hoist regression: identical-args empty echoes used to trip the
+        # (name, args_raw) doom-loop and abort the batch with a generic
+        # doom message. Below threshold they now get the anti-priming reply.
+        tcs = [
+            make_tool_call("c-1", "", arguments="{}"),
+            make_tool_call("c-2", "", arguments="{}"),
+        ]
+
+        result = planner_with_browser_click.plan(tcs)
+
+        assert result.plans == []
+        assert result.doom_loop_triggered is False
+        assert len(result.early_messages) == 2
+        assert all(
+            m["content"] == EMPTY_TOOL_NAME_MESSAGE for m in result.early_messages
+        )
+        assert not any(
+            "Doom-loop detected" in m["content"] for m in result.early_messages
+        )
+
+    @pytest.mark.parametrize(
+        "args_seq",
+        [
+            ['{"i": 1}', '{"i": 2}', '{"i": 3}', '{"i": 4}'],  # varying args
+            ["{}", "{}", "{}", "{}"],                          # identical args
+        ],
+    )
+    def test_empty_name_flood_hard_stops_the_turn(
+        self, planner_with_browser_click, args_seq,
+    ):
+        # The dedicated cumulative counter halts the turn at the threshold
+        # regardless of whether the echoed args vary — the backstop the old
+        # (name, args_raw) doom-loop could not provide for varying args.
+        tcs = [make_tool_call(f"c-{i}", "", arguments=a)
+               for i, a in enumerate(args_seq)]
+
+        result = planner_with_browser_click.plan(tcs)
+
+        assert result.plans == []
+        assert result.doom_loop_triggered is True
+        # Calls before the threshold get the terse reply; the threshold call
+        # gets the stop message; calls after it are never processed.
+        assert len(result.early_messages) == DOOM_LOOP_THRESHOLD
+        assert result.early_messages[-1]["content"].startswith(
+            EMPTY_TOOL_NAME_MESSAGE
+        )
+        assert "stopping to prevent a loop" in result.early_messages[-1]["content"]
+        assert result.early_messages[-1]["name"] == _EMPTY_NAME_PLACEHOLDER
+
+    def test_empty_name_counter_accumulates_across_batches_and_resets(
+        self, planner_with_browser_click,
+    ):
+        # The counter is per-turn (cumulative across plan() calls), mirroring
+        # the doom-loop counter, and clears on reset() between chat() turns.
+        for _ in range(DOOM_LOOP_THRESHOLD - 1):
+            r = planner_with_browser_click.plan(
+                [make_tool_call("c", "", arguments="{}")]
+            )
+            assert r.doom_loop_triggered is False
+        # The next empty call crosses the threshold and stops the turn.
+        r = planner_with_browser_click.plan(
+            [make_tool_call("c", "", arguments="{}")]
+        )
+        assert r.doom_loop_triggered is True
+
+        planner_with_browser_click.reset()
+        r = planner_with_browser_click.plan(
+            [make_tool_call("c", "", arguments="{}")]
+        )
+        assert r.doom_loop_triggered is False
+        assert r.early_messages[0]["content"] == EMPTY_TOOL_NAME_MESSAGE
+
+    def test_empty_name_does_not_abort_legit_call_in_same_batch(
+        self, planner_with_browser_click,
+    ):
+        # A single phantom empty call alongside a real tool must not halt the
+        # batch — the real call is still planned.
+        tcs = [
+            make_tool_call("c-empty", "", arguments="{}"),
+            make_tool_call("c-real", "browser_click"),
+        ]
+
+        result = planner_with_browser_click.plan(tcs)
+
+        assert result.doom_loop_triggered is False
+        assert len(result.plans) == 1
+        assert result.plans[0].function_name == "browser_click"
+        assert len(result.early_messages) == 1
+        assert result.early_messages[0]["content"] == EMPTY_TOOL_NAME_MESSAGE
 
 
 def test_planner_strict_match_skips_repair(planner_with_browser_click, caplog):
