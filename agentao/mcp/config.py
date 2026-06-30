@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import os
 import re
 from pathlib import Path
@@ -24,11 +25,103 @@ Expected keys per server:
   headers: dict[str,str] — HTTP headers
 
   # Common
-  timeout: int           — seconds (default 60)
+  timeout: int | dict    — see resolve_timeouts(); int = connect/startup
+                           seconds (default 60), or {startup, request}
+                           to also bound each tool call after init.
   trust: bool            — skip confirmation if True
 """
 
 _ENV_VAR_RE = re.compile(r"\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
+
+_DEFAULT_STARTUP_TIMEOUT = 60.0
+
+_TIMEOUT_KEYS = ("startup", "request")
+
+
+def _positive_or(value: Any, default: Optional[float]) -> Optional[float]:
+    """Return ``value`` as a finite positive float, else ``default``.
+
+    Rejects (returns ``default`` for):
+    - ``bool`` — it is an ``int`` subclass, so ``True`` would otherwise sail
+      through as ``1.0``;
+    - non-numeric types and non-positive numbers;
+    - non-finite floats (``inf`` / ``nan`` — ``json.loads`` parses the
+      ``Infinity`` / ``NaN`` literals) and integers so large that
+      ``float()`` overflows. Either would later blow up ``timedelta()``;
+      catching them here keeps :func:`resolve_timeouts` total (never raises).
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)) and value > 0:
+        try:
+            result = float(value)
+        except (OverflowError, ValueError):
+            return default
+        return result if math.isfinite(result) else default
+    return default
+
+
+def _coerce_timeout(value: Any, default: Optional[float], label: str) -> Optional[float]:
+    """Resolve one timeout slot, warning when a *present* value is unusable.
+
+    A missing key (``value is None``) silently takes ``default`` — an unset
+    timeout is normal, not a misconfiguration. But a present-but-invalid value
+    (wrong type, non-positive, non-finite) is almost always a config mistake
+    that would otherwise vanish without trace, so it is logged.
+    """
+    if value is None:
+        return default
+    resolved = _positive_or(value, None)
+    if resolved is None:
+        _logger.warning(
+            "MCP 'timeout.%s': ignoring invalid value %r (need a positive finite "
+            "number); falling back to %s.",
+            label,
+            value,
+            f"{default:g}s" if default is not None else "no per-request limit",
+        )
+        return default
+    return resolved
+
+
+def resolve_timeouts(config: McpServerConfig) -> tuple[float, Optional[float]]:
+    """Resolve a server's ``timeout`` into ``(startup, request)`` seconds.
+
+    ``timeout`` accepts two forms:
+
+    * an ``int`` / ``float`` — the legacy form. Bounds the *connection /
+      startup* phase (it is handed to the SSE transport and bounds the
+      ``initialize()`` / ``list_tools()`` handshake); per-request tool calls
+      stay unbounded (the MCP SDK default). Fully backward compatible.
+    * an object ``{"startup": int, "request": int}`` — both keys optional.
+      ``startup`` bounds connection/initialization (default 60 s);
+      ``request`` bounds each tool call *after* init (``None`` = unbounded).
+
+    Note: agentao's legacy ``timeout`` governs the *connect* phase (it is
+    passed to ``sse_client``), so a legacy int maps to ``startup`` — the
+    opposite of opencode #33977, whose legacy timeout meant *request*. The
+    architectural difference is deliberate; don't "fix" it to match.
+
+    Never raises: malformed / non-positive / non-finite values fall back to
+    the defaults (``startup`` → 60 s, ``request`` → unbounded) and are logged
+    via :func:`_coerce_timeout`. ``startup`` is therefore always a finite
+    positive float; ``request`` is that or ``None``.
+    """
+    raw = config.get("timeout")
+    if isinstance(raw, dict):
+        unknown = sorted(set(raw) - set(_TIMEOUT_KEYS))
+        if unknown:
+            _logger.warning(
+                "MCP 'timeout': ignoring unknown key(s) %s (expected 'startup' "
+                "and/or 'request').",
+                unknown,
+            )
+        startup = _coerce_timeout(raw.get("startup"), _DEFAULT_STARTUP_TIMEOUT, "startup")
+        return startup, _coerce_timeout(raw.get("request"), None, "request")
+    if raw is None:
+        # Absent (or explicit null) → default startup, unbounded request.
+        return _DEFAULT_STARTUP_TIMEOUT, None
+    return _coerce_timeout(raw, _DEFAULT_STARTUP_TIMEOUT, "timeout"), None
 
 
 def expand_env_vars(value: str) -> str:

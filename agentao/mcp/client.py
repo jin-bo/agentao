@@ -1,9 +1,11 @@
 """MCP client and client manager for connecting to MCP servers."""
 
 import asyncio
+import json
 import logging
 import os
 from contextlib import AsyncExitStack
+from datetime import timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -12,7 +14,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
 from mcp.types import Tool as McpToolDef
 
-from .config import McpServerConfig
+from .config import McpServerConfig, resolve_timeouts
 
 logger = logging.getLogger("agentao.mcp")
 
@@ -120,6 +122,13 @@ _MCP_CONTENT_TYPES = ("application/json", "text/event-stream")
 # connect timeout it exists to short-circuit.
 _PREFLIGHT_TIMEOUT_SECONDS = 5.0
 
+# The MCP SDK's ``sse_client`` default for ``sse_read_timeout`` (the maximum
+# silence between SSE events before the stream is dropped). We only ever raise
+# it — never lower it — so a configured per-request budget above this default
+# can actually run to completion over SSE, while small per-request budgets
+# don't shorten the idle tolerance of the long-lived stream between calls.
+_DEFAULT_SSE_READ_TIMEOUT = 300.0
+
 
 class ServerStatus(str, Enum):
     DISCONNECTED = "disconnected"
@@ -161,6 +170,12 @@ class McpClient:
         self.status = ServerStatus.CONNECTING
         self.error_message = None
 
+        # Resolve once and thread down (avoids a second parse — and a second
+        # malformed-config warning — inside ``_connect_sse``). ``startup``
+        # bounds the whole connect: the SSE HTTP open (via ``sse_client(
+        # timeout=)``) AND the post-transport handshake below.
+        startup_timeout, request_timeout = resolve_timeouts(self.config)
+
         try:
             self._exit_stack = AsyncExitStack()
             await self._exit_stack.__aenter__()
@@ -168,16 +183,27 @@ class McpClient:
             if self.config.get("command"):
                 await self._connect_stdio()
             elif self.config.get("url"):
-                await self._connect_sse()
+                await self._connect_sse(startup_timeout, request_timeout)
             else:
                 raise ValueError(f"No transport configured for server '{self.name}' (need 'command' or 'url')")
 
-            # Initialize the session
-            await self._session.initialize()
-
-            # Discover tools
-            result = await self._session.list_tools()
-            self._tools = result.tools
+            # Bound the initialize()/list_tools() handshake so a server that
+            # opens the stream (or spawns) but never answers can't hang connect
+            # forever — the SSE HTTP-open timeout doesn't cover these request
+            # round-trips, and stdio has no transport-level connect bound at
+            # all. ``wait_for`` is safe here: these are plain awaits on the
+            # already-established session and enter no exit-stack context, so a
+            # timeout cancellation never crosses an anyio cancel scope into the
+            # transport cleanup that ``connect``'s ``except`` performs.
+            try:
+                self._tools = (
+                    await asyncio.wait_for(self._handshake(), timeout=startup_timeout)
+                ).tools
+            except asyncio.TimeoutError:
+                raise TimeoutError(
+                    f"MCP server '{self.name}' did not complete the "
+                    f"initialize/list_tools handshake within {startup_timeout:g}s"
+                ) from None
 
             self.status = ServerStatus.CONNECTED
             logger.info(f"MCP server '{self.name}' connected via {self.transport_type}, {len(self._tools)} tools")
@@ -193,6 +219,15 @@ class McpClient:
                 except Exception:
                     pass
                 self._exit_stack = None
+
+    async def _handshake(self):
+        """Run the MCP ``initialize()`` + ``list_tools()`` round-trips.
+
+        Factored out so :meth:`connect` can wrap the whole handshake in a
+        single ``startup`` budget via ``asyncio.wait_for``.
+        """
+        await self._session.initialize()
+        return await self._session.list_tools()
 
     async def _connect_stdio(self) -> None:
         """Establish stdio transport."""
@@ -280,18 +315,37 @@ class McpClient:
             "https://host/)."
         )
 
-    async def _connect_sse(self) -> None:
-        """Establish SSE transport."""
+    async def _connect_sse(self, startup_timeout: float, request_timeout: Optional[float]) -> None:
+        """Establish SSE transport.
+
+        ``startup_timeout`` / ``request_timeout`` are pre-resolved by
+        :meth:`connect` (see :func:`resolve_timeouts`).
+        """
         url = self.config["url"]
         headers = self.config.get("headers", {})
-        timeout = self.config.get("timeout", 60)
+        # ``startup`` bounds the HTTP connection open. ``sse_read_timeout`` is
+        # the max silence between SSE events before the stream drops; the SDK
+        # default (300 s) would otherwise cap any per-request budget at ~300 s,
+        # so raise it to cover a larger ``request`` (never lower it — see
+        # _DEFAULT_SSE_READ_TIMEOUT). The per-request deadline itself is applied
+        # in ``call_tool`` via ``read_timeout_seconds``.
+        sse_read_timeout = (
+            request_timeout
+            if request_timeout is not None and request_timeout > _DEFAULT_SSE_READ_TIMEOUT
+            else _DEFAULT_SSE_READ_TIMEOUT
+        )
 
         # Fail fast on a URL that points at a web page rather than an MCP
-        # endpoint, instead of waiting out the full ``timeout``.
+        # endpoint, instead of waiting out the full startup timeout.
         await self._preflight_content_type(url, headers)
 
         sse_transport = await self._exit_stack.enter_async_context(
-            sse_client(url, headers=headers, timeout=timeout)
+            sse_client(
+                url,
+                headers=headers,
+                timeout=startup_timeout,
+                sse_read_timeout=sse_read_timeout,
+            )
         )
         read_stream, write_stream = sse_transport
         self._session = await self._exit_stack.enter_async_context(
@@ -306,7 +360,15 @@ class McpClient:
         only produces another 401/403); ``SESSION_EXPIRED`` and
         ``TRANSPORT_DROPPED`` reconnect-and-retry once; ``OTHER``
         surfaces without reconnecting.
+
+        A configured per-request ``timeout.request`` (see
+        :func:`resolve_timeouts`) bounds each individual tool call; when
+        unset the call is unbounded (the MCP SDK default).
         """
+        _startup_timeout, request_timeout = resolve_timeouts(self.config)
+        read_timeout = (
+            timedelta(seconds=request_timeout) if request_timeout is not None else None
+        )
         for attempt in range(2):
             if not self._session or self.status != ServerStatus.CONNECTED:
                 try:
@@ -316,7 +378,9 @@ class McpClient:
                     return f"MCP connection error for '{self.name}': {e}"
 
             try:
-                result = await self._session.call_tool(tool_name, arguments)
+                result = await self._session.call_tool(
+                    tool_name, arguments, read_timeout_seconds=read_timeout
+                )
             except Exception as e:
                 kind = classify_mcp_error(e)
                 if kind is McpErrorKind.AUTH:
@@ -352,6 +416,21 @@ class McpClient:
                         parts.append(f"[resource: {getattr(block.resource, 'uri', 'unknown')}]")
                 else:
                     parts.append(f"[{block.type}]")
+
+            # Fall back to structured output only when there are no content
+            # blocks at all. A spec-compliant server returns both ``content``
+            # (text/image, for the model) and ``structuredContent`` (JSON);
+            # we keep the content in that case and never clobber it. But a
+            # server that returns *only* ``structuredContent`` (content == [])
+            # would otherwise hand the model an empty string — so serialize
+            # the structured payload instead of dropping it.
+            if not result.content and result.structuredContent is not None:
+                # ensure_ascii=False keeps CJK/emoji readable (codebase-wide
+                # convention); default=str makes a non-JSON-native value
+                # degrade to its repr instead of raising out of call_tool.
+                parts.append(
+                    json.dumps(result.structuredContent, ensure_ascii=False, default=str)
+                )
 
             text = "\n".join(parts)
 

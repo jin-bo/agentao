@@ -175,8 +175,17 @@
 
 | Transport | 必填键 | 可选键 |
 |---|---|---|
-| stdio 子进程 | `command`、`args` | `env`、`trust`、`cwd` |
+| stdio 子进程 | `command`、`args` | `env`、`trust`、`cwd`、`timeout` |
 | SSE | `url` | `headers`、`timeout` |
+
+**`timeout`** 接受两种形式（`mcp/config.py :: resolve_timeouts`）：
+
+- **int / float**（旧形式）—— *连接 / 启动*阶段的秒数（默认 `60`）：约束 SSE 的 HTTP 连接建立**以及** `initialize()` / `list_tools()` 握手（两种传输都生效）。单次工具调用**不设上限**（沿用 MCP SDK 默认值）。现有配置行为不变。
+- **对象 `{ "startup": int, "request": int }`** —— 两个键都可选。`startup` 即上述连接/握手上限（默认 `60`）；`request` 约束初始化后的*每次工具调用*（省略则不设上限）。不配 `request` 时，挂起的工具调用在 stdio 下永不自终止，在 SSE 下也要等约 300 秒的事件间静默才断开——配上 `request` 才能确定性封顶（`request` 超过 300 秒时还会同步抬高 SSE 流的读超时）。
+
+```json
+"slow-server": { "url": "https://...", "timeout": { "startup": 15, "request": 90 } }
+```
 
 工具会以 `mcp_{server}_{tool}` 名称注册。完整生命周期请见 `CLAUDE.md` 的 "MCP" 段。
 

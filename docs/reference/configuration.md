@@ -194,8 +194,17 @@ Full rule taxonomy, examples, and runtime semantics → [TOOL_CONFIRMATION_FEATU
 
 | Transport | Required keys | Optional |
 |---|---|---|
-| stdio subprocess | `command`, `args` | `env`, `trust`, `cwd` |
+| stdio subprocess | `command`, `args` | `env`, `trust`, `cwd`, `timeout` |
 | SSE | `url` | `headers`, `timeout` |
+
+**`timeout`** accepts two forms (`mcp/config.py :: resolve_timeouts`):
+
+- **int / float** (legacy) — seconds for the *connect / startup* phase (default `60`): bounds the SSE HTTP-connection open **and** the `initialize()` / `list_tools()` handshake (both transports). Per-request tool calls stay **unbounded** (the MCP SDK default). Existing configs keep their behavior.
+- **object `{ "startup": int, "request": int }`** — both keys optional. `startup` is the connect/handshake bound above (default `60`); `request` bounds *each tool call* after init (omit → unbounded). Without `request`, a hung tool call never self-terminates over stdio, and over SSE only drops after ~300 s of inter-event silence — set `request` to cap it deterministically (a `request` above 300 s also raises the SSE stream's read timeout to match).
+
+```json
+"slow-server": { "url": "https://...", "timeout": { "startup": 15, "request": 90 } }
+```
 
 Tools are registered as `mcp_{server}_{tool}`. See `CLAUDE.md` → "MCP" section for the full lifecycle.
 

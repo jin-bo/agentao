@@ -1,6 +1,7 @@
 """Tests for MCP configuration loading and environment variable expansion."""
 
 import json
+import logging
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -12,8 +13,91 @@ from agentao.mcp.config import (
     _expand_config_env,
     _load_json_file,
     load_mcp_config,
+    resolve_timeouts,
     save_mcp_config,
 )
+
+
+# ---------------------------------------------------------------------------
+# resolve_timeouts
+# ---------------------------------------------------------------------------
+
+def test_resolve_timeouts_absent_defaults_to_startup_60_request_none():
+    # No timeout configured → 60s connect budget, unbounded per-request (the
+    # MCP SDK default), i.e. exact pre-split behavior.
+    assert resolve_timeouts({}) == (60.0, None)
+
+
+def test_resolve_timeouts_legacy_int_maps_to_startup_only():
+    # Legacy int form: agentao's timeout governed the *connect* phase, so it
+    # must map to startup (NOT request — that is the opencode mapping).
+    assert resolve_timeouts({"timeout": 30}) == (30.0, None)
+
+
+def test_resolve_timeouts_legacy_float_preserved():
+    assert resolve_timeouts({"timeout": 12.5}) == (12.5, None)
+
+
+def test_resolve_timeouts_split_object():
+    assert resolve_timeouts({"timeout": {"startup": 15, "request": 90}}) == (15.0, 90.0)
+
+
+def test_resolve_timeouts_split_request_only_keeps_default_startup():
+    assert resolve_timeouts({"timeout": {"request": 90}}) == (60.0, 90.0)
+
+
+def test_resolve_timeouts_split_startup_only_leaves_request_unbounded():
+    assert resolve_timeouts({"timeout": {"startup": 15}}) == (15.0, None)
+
+
+@pytest.mark.parametrize("bad", [0, -5, "60", None, True, False, {"startup": "x"}])
+def test_resolve_timeouts_malformed_falls_back_not_raises(bad):
+    # A non-positive / wrong-typed value must degrade to current behavior
+    # (60s startup, unbounded request) rather than raise — a bad config
+    # should never wedge the connection. ``True``/``False`` are rejected
+    # explicitly even though bool is an int subclass.
+    assert resolve_timeouts({"timeout": bad}) == (60.0, None)
+
+
+def test_resolve_timeouts_split_rejects_nonpositive_request():
+    assert resolve_timeouts({"timeout": {"startup": 15, "request": 0}}) == (15.0, None)
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("nan"), float("-inf"), 10 ** 400])
+def test_resolve_timeouts_non_finite_or_overflow_never_raises(bad):
+    # json.loads accepts the Infinity/NaN literals, and a giant integer
+    # overflows float(); none of these may crash resolve_timeouts (which would
+    # later blow up timedelta() outside call_tool's try/except).
+    assert resolve_timeouts({"timeout": bad}) == (60.0, None)
+    assert resolve_timeouts({"timeout": {"request": bad}}) == (60.0, None)
+
+
+def test_resolve_timeouts_warns_on_invalid_scalar(caplog):
+    with caplog.at_level(logging.WARNING, logger="agentao.mcp.config"):
+        out = resolve_timeouts({"timeout": "90"})
+    assert out == (60.0, None)
+    assert "timeout" in caplog.text.lower()
+
+
+def test_resolve_timeouts_warns_on_zero_request(caplog):
+    with caplog.at_level(logging.WARNING, logger="agentao.mcp.config"):
+        out = resolve_timeouts({"timeout": {"request": 0}})
+    assert out == (60.0, None)
+    assert "request" in caplog.text.lower()
+
+
+def test_resolve_timeouts_warns_on_unknown_key(caplog):
+    with caplog.at_level(logging.WARNING, logger="agentao.mcp.config"):
+        out = resolve_timeouts({"timeout": {"requets": 90}})  # typo'd 'request'
+    assert out == (60.0, None)
+    assert "unknown" in caplog.text.lower()
+
+
+def test_resolve_timeouts_absent_request_does_not_warn(caplog):
+    # An unset request is normal, not a misconfiguration — no noise.
+    with caplog.at_level(logging.WARNING, logger="agentao.mcp.config"):
+        resolve_timeouts({"timeout": {"startup": 15}})
+    assert caplog.text == ""
 
 
 # ---------------------------------------------------------------------------
