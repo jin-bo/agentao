@@ -78,7 +78,7 @@ Agentao 在 `initialize` 里声明：
   "agentCapabilities": {
     "loadSession": true,
     "promptCapabilities": { "image": true, "audio": false, "embeddedContext": false },
-    "mcpCapabilities":   { "http": false, "sse": true }
+    "mcpCapabilities":   { "http": true, "sse": true }
   }
 }
 ```
@@ -89,8 +89,8 @@ Agentao 在 `initialize` 里声明：
 - ✅ `image`（0.4.8+）：prompt 可携带内联 `{data, mimeType}` 图片块；非视觉模型的退化行为见 [A.1](/zh/appendix/a-api-reference#图片输入与视觉退化)
 - ❌ `audio`：不支持
 - ❌ `embeddedContext`：Zed 无法把内嵌资源拉取推过来
-- ✅ `sse`：Zed 可以转发 SSE MCP server
-- ❌ `http`：Agentao 不支持 HTTP MCP 传输
+- ✅ `http`：Zed 可转发 Streamable HTTP MCP server
+- ✅ `sse`：Zed 可以转发 SSE MCP server（旧版）
 
 Zed 对不支持的能力会优雅降级。
 
@@ -151,7 +151,7 @@ exec agentao "$@"
 | 首条消息就崩 | `<workspace>/agentao.log` |
 | 工具调用一直挂起 | IDE 大概没回 `session/request_permission`——查它的权限 UI 代码 |
 | 所有文本一次性砸出来 | IDE 没按流式渲染 `session/update`——查它的 UI 渲染 |
-| MCP server 没出现 | `mcpCapabilities.http=false`——只能用 stdio 或 SSE |
+| MCP server 没出现 | `mcpCapabilities.http=true`——stdio / Streamable HTTP / SSE 都支持；检查条目的 `type`/`url`/`command` |
 | 重启后历史消失 | IDE 没调 `session/load`——这个特性可能还没实现 |
 
 手动打线协议轨迹：

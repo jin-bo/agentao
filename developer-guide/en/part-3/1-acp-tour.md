@@ -176,7 +176,7 @@ The base spec only lets the server **request permission** — it does not let th
 Explicit v1 limits (Agentao's capability block reflects them faithfully):
 
 - `promptCapabilities.image = true` (0.4.8+, inline `{data, mimeType}` blocks only), `audio = false`, `embeddedContext = false`
-- `mcpCapabilities.http = false`, `sse = true` — MCP transport is stdio + SSE only
+- `mcpCapabilities.http = true`, `sse = true` — MCP transports are stdio, Streamable HTTP, and SSE
 - `authMethods = []` — no protocol-level auth; credentials flow via env vars
 
 Future versions will expand these. **Clients should inspect the handshake response** before deciding what prompt format to send.

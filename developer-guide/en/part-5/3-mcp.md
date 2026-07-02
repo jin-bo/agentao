@@ -2,7 +2,7 @@
 
 > **What you'll learn**
 > - When MCP is the right answer vs. a custom Tool
-> - The two transport types Agentao supports (stdio + SSE; **not** HTTP)
+> - The three transport types Agentao supports (stdio, Streamable HTTP, SSE)
 > - Multi-tenant patterns: per-session `extra_mcp_servers`, env-var expansion, `trust:` caveats
 
 **MCP (Model Context Protocol)** is the de-facto standard for tool interoperability. Agentao is an MCP client — it can connect to any MCP-compliant server (GitHub, filesystem, Postgres, Slack, Jira, your own…), and every tool the server exposes shows up in the agent's registry as `mcp_{server}_{tool}` automatically.
@@ -55,6 +55,7 @@ A project `mcp.json` checked into git could otherwise silently redirect a known 
     },
     "analytics-sse": {
       "url": "https://mcp.your-company.com/sse",
+      "type": "sse",
       "headers": {
         "Authorization": "Bearer ${ANALYTICS_TOKEN}"
       },
@@ -98,16 +99,29 @@ Merge rule: **same-name entries override** those from `.agentao/mcp.json`.
 | `timeout` | ❌ | Init timeout in seconds, default 60 |
 | `trust` | ❌ | Skip confirmation when true |
 
-### SSE transport (remote service)
+### Streamable HTTP transport (remote service, default for a bare `url`)
 
 | Field | Required | Purpose |
 |-------|----------|---------|
-| `url` | ✅ | SSE endpoint URL |
+| `url` | ✅ | Streamable HTTP endpoint URL |
+| `type` | ❌ | `"http"` (aliases: `"streamable-http"` / `"streamable_http"`); this is the default when a bare `url` is given |
 | `headers` | ❌ | HTTP headers; supports `${VAR}` expansion |
 | `timeout` | ❌ | Seconds, default 60 |
 | `trust` | ❌ | Same as above |
 
-⚠️ **HTTP is not supported**: Agentao's MCP client only imports `stdio_client` and `sse_client`; `http`-type MCP servers can't connect (ACP handshake also advertises `mcpCapabilities.http: false`).
+### SSE transport (remote service, legacy)
+
+| Field | Required | Purpose |
+|-------|----------|---------|
+| `url` | ✅ | SSE endpoint URL |
+| `type` | ✅ | Must be `"sse"` — SSE is the legacy transport (deprecated in MCP spec 2025-03-26). A bare `url` now defaults to Streamable HTTP, so SSE **must** be selected explicitly. |
+| `headers` | ❌ | HTTP headers; supports `${VAR}` expansion |
+| `timeout` | ❌ | Seconds, default 60 |
+| `trust` | ❌ | Same as above |
+
+::: info Streamable HTTP is supported
+Agentao's MCP client imports `stdio_client`, `sse_client`, **and** `streamable_http_client` (plus `create_mcp_http_client`), so all three transports connect. `type` selects the transport (`"stdio"` / `"http"` / `"sse"`); if omitted it's inferred — `command` → stdio, a bare `url` → **Streamable HTTP**. Legacy SSE requires an explicit `"type": "sse"`. An unknown `type` or a missing required key fails closed (`McpTransportConfigError`). The ACP handshake advertises `mcpCapabilities.http: true`.
+:::
 
 ## Env var expansion
 
@@ -287,7 +301,7 @@ Don't lightly set `trust: true` on servers that can write/delete — you bypass 
 ## TL;DR
 
 - Use **MCP** to consume an existing third-party tool ecosystem (GitHub, filesystem, Postgres, Slack…); use **custom Tool** for your own business logic.
-- Two transports: **stdio** subprocess or **SSE** URL. **HTTP is not supported.**
+- Three transports: **stdio** subprocess, **Streamable HTTP** URL (default for a bare `url`), or legacy **SSE** URL (`"type":"sse"`).
 - Per-tenant tokens: pass `extra_mcp_servers` at construction (`{name: {command, args, env}}`); merges over `.agentao/mcp.json`. Project `.agentao/mcp.json` is **add-only** — it cannot override a user-scope name.
 - Tool naming: `mcp_{server}_{tool}` — auto-prefixed to avoid name collisions across servers.
 - Never set `trust: true` on write-capable servers — it bypasses confirmation entirely.

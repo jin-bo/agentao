@@ -12,7 +12,7 @@ If you've already built agents with another framework, the mental model of Agent
 | Memory | `ConversationBufferMemory` / vector stores | `memory` on agent | `memory` on agent | `MemoryManager` (SQLite, project+user) |
 | Streaming | callbacks / LCEL `astream` | `register_hook` | event hooks | `Transport` + `AgentEvent` |
 | Tool approval | HITL via `interrupt` | `a_human_input_mode` | `human_input=True` | `Transport.confirm_tool` |
-| External model context | MCP adapter | function calling | n/a | first-class MCP (stdio + SSE) |
+| External model context | MCP adapter | function calling | n/a | first-class MCP (stdio + Streamable HTTP + SSE) |
 | Host-proc isolation | n/a (in-proc) | n/a (in-proc) | n/a (in-proc) | **ACP** (subprocess) |
 
 ## E.2 From LangChain

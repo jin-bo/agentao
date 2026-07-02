@@ -31,7 +31,7 @@ Canonical EN ↔ ZH terms used in this guide. If you find a translation that doe
 | Permission mode | 权限模式 | `READ_ONLY` / `WORKSPACE_WRITE` / `FULL_ACCESS` / `PLAN` presets |
 | Memory | 记忆 | Persistent notes stored in SQLite (project + user scopes) |
 | Memory scope | 记忆作用域 | `project` (inside `working_directory`) vs `user` (`~/.agentao/`) |
-| MCP | MCP / Model Context Protocol | Third-party tool server protocol (stdio / SSE) |
+| MCP | MCP / Model Context Protocol | Third-party tool server protocol (stdio / Streamable HTTP / SSE) |
 | Sandbox | 沙箱 | macOS `sandbox-exec` profile wrapping the shell tool |
 | Skill activation | 激活技能 | Turning a skill on for the current agent so its prompt text is injected |
 | Plugin Hook | 插件 Hook | Control-plane extension: intercept, inject, or continue at agent lifecycle points (`UserPromptSubmit` / `PreToolUse` / `Stop`, …) — see [§5.7](/en/part-5/7-plugin-hooks) |

@@ -31,7 +31,7 @@
 | Permission mode | 权限模式 | `READ_ONLY` / `WORKSPACE_WRITE` / `FULL_ACCESS` / `PLAN` 预设 |
 | Memory | 记忆 | 存在 SQLite 里的持久笔记（project + user 两个作用域） |
 | Memory scope | 记忆作用域 | `project`（`working_directory` 内）vs `user`（`~/.agentao/`） |
-| MCP | MCP / Model Context Protocol | 第三方工具服务器协议（stdio / SSE） |
+| MCP | MCP / Model Context Protocol | 第三方工具服务器协议（stdio / Streamable HTTP / SSE） |
 | Sandbox | 沙箱 | macOS `sandbox-exec` 对 shell 工具的封装 |
 | Skill activation | 激活技能 | 把技能对当前 agent 打开，让它的提示文本被注入 |
 | Plugin Hook | 插件 Hook | 控制平面扩展：在 agent 生命周期点（`UserPromptSubmit` / `PreToolUse` / `Stop` 等）拦截、注入或续轮——见 [§5.7](/zh/part-5/7-plugin-hooks) |

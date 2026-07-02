@@ -175,7 +175,7 @@ sequenceDiagram
 v1 协议的**明确限制**（Agentao 能力字段如实反映）：
 
 - `promptCapabilities.image = true`（0.4.8+，仅接受内联 `{data, mimeType}` 块）、`audio = false`、`embeddedContext = false`
-- `mcpCapabilities.http = false`、`sse = true`——MCP 仅支持 stdio + SSE
+- `mcpCapabilities.http = true`、`sse = true`——MCP 支持 stdio、Streamable HTTP 与 SSE
 - `authMethods = []`——协议层不做认证；凭据走环境变量
 
 未来版本会扩展这些能力。Client 代码应**检查握手响应**再决定传什么格式的提示。

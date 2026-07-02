@@ -2,7 +2,7 @@
 
 > **本节你会学到**
 > - 什么场景适合用 MCP，什么场景应当写自定义 Tool
-> - Agentao 支持的两种 transport（stdio + SSE；**不支持** HTTP）
+> - Agentao 支持的三种 transport（stdio、Streamable HTTP、SSE）
 > - 多租户模式：会话级 `extra_mcp_servers`、环境变量展开、`trust:` 的边界
 
 **MCP（Model Context Protocol）** 是"工具互操作的事实标准"。Agentao 作为 MCP Client，可以接入任何 MCP 兼容服务器——GitHub、Filesystem、Postgres、Slack、Jira、你自己写的……所有这些工具都会**自动**以 `mcp_{server}_{tool}` 的形式出现在 Agent 可用工具列表里。
@@ -55,6 +55,7 @@
     },
     "analytics-sse": {
       "url": "https://mcp.your-company.com/sse",
+      "type": "sse",
       "headers": {
         "Authorization": "Bearer ${ANALYTICS_TOKEN}"
       },
@@ -98,16 +99,29 @@ agent = Agentao(
 | `timeout` | ❌ | 初始化超时（秒），默认 60 |
 | `trust` | ❌ | 为 true 时跳过工具确认 |
 
-### SSE 传输（远程服务）
+### Streamable HTTP 传输（远程服务，裸 `url` 的默认）
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `url` | ✅ | SSE endpoint URL |
+| `url` | ✅ | Streamable HTTP endpoint URL |
+| `type` | ❌ | `"http"`（别名：`"streamable-http"` / `"streamable_http"`）；给裸 `url` 时这是默认值 |
 | `headers` | ❌ | HTTP 头；支持 `${VAR}` 展开 |
 | `timeout` | ❌ | 秒，默认 60 |
 | `trust` | ❌ | 同上 |
 
-⚠️ **HTTP 不支持**：Agentao 的 MCP 客户端只导入了 `stdio_client` 和 `sse_client`，`http` 类型的 MCP Server 无法接入（ACP 握手也会通告 `mcpCapabilities.http: false`）。
+### SSE 传输（远程服务，旧版）
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `url` | ✅ | SSE endpoint URL |
+| `type` | ✅ | 必须为 `"sse"`——SSE 是旧版传输（在 MCP 规范 2025-03-26 中已弃用）。裸 `url` 现在默认走 Streamable HTTP，所以 SSE **必须**显式选择。 |
+| `headers` | ❌ | HTTP 头；支持 `${VAR}` 展开 |
+| `timeout` | ❌ | 秒，默认 60 |
+| `trust` | ❌ | 同上 |
+
+::: info Streamable HTTP 已支持
+Agentao 的 MCP 客户端导入了 `stdio_client`、`sse_client`，**以及** `streamable_http_client`（外加 `create_mcp_http_client`），三种 transport 都能接入。`type` 选择 transport（`"stdio"` / `"http"` / `"sse"`）；省略时自动推断——`command` → stdio，裸 `url` → **Streamable HTTP**。旧版 SSE 需要显式写 `"type": "sse"`。未知的 `type` 或缺少必填键会 fail closed（`McpTransportConfigError`）。ACP 握手会通告 `mcpCapabilities.http: true`。
+:::
 
 ## 环境变量展开
 
@@ -286,7 +300,7 @@ MCP: 12 tools from 2 server(s)       ← 有些 Server 没起来
 ## TL;DR
 
 - **MCP** 用来消费第三方工具生态（GitHub / 文件系统 / Postgres / Slack …）；**自定义 Tool** 用来封装你自己的业务逻辑。
-- 两种 transport：**stdio** 子进程或 **SSE** URL。**HTTP 不支持。**
+- 三种 transport：**stdio** 子进程、**Streamable HTTP** URL（裸 `url` 的默认）、或旧版 **SSE** URL（`"type":"sse"`）。
 - 多租户 token：构造时传 `extra_mcp_servers`（`{name: {command, args, env}}`），同名会覆盖 `.agentao/mcp.json`。项目级 `.agentao/mcp.json` 是**仅可新增**的 —— 不能覆盖用户级同名条目。
 - 工具命名：`mcp_{server}_{tool}` ——自动加前缀避免不同服务器的同名冲突。
 - 写操作能力的 Server **绝对不要**设 `trust: true`，会绕过所有确认。

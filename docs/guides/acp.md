@@ -47,7 +47,7 @@ EOF
 Expected — two NDJSON response envelopes on stdout:
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true,"audio":false,"embeddedContext":false},"mcpCapabilities":{"http":false,"sse":true}},"authMethods":[],"agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.14"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true,"audio":false,"embeddedContext":false},"mcpCapabilities":{"http":true,"sse":true}},"authMethods":[],"agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.14"}}}
 {"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_<32hex>"}}
 ```
 
@@ -113,7 +113,7 @@ Source: `agentao/acp/initialize.py`.
     "embeddedContext": false
   },
   "mcpCapabilities": {
-    "http": false,
+    "http": true,
     "sse": true
   }
 }
@@ -163,8 +163,8 @@ Source: `agentao/acp/mcp_translate.py`.
 | Transport in entry | Status | Notes |
 |---|---|---|
 | stdio (`{name, command, args, env}`) | ✅ | Translated to Agentao's internal `{command, args, env: {…}}` config. Always created with `trust: false`. |
-| sse (`{type:"sse", name, url, headers}`) | ✅ | `mcpCapabilities.sse` is `true`. Headers translated from `[{name,value}]` to `{name: value}`. |
-| http (`{type:"http", …}`) | ❌ | Dropped silently with a warning log. `mcpCapabilities.http` is `false` because `agentao/mcp/client.py` only ships `sse_client`, not `streamable_http_client`. |
+| sse (`{type:"sse", name, url, headers}`) | ✅ | `mcpCapabilities.sse` is `true`. Legacy transport. Headers translated from `[{name,value}]` to `{name: value}`. The explicit `type:"sse"` is stamped into the produced config so it survives the native bare-`url`-defaults-to-HTTP resolution. |
+| http (`{type:"http", name, url, headers}`) | ✅ | `mcpCapabilities.http` is `true`. Streamable HTTP transport (`agentao/mcp/client.py` ships `streamable_http_client`). Headers translated the same way; `type:"http"` stamped into the config. |
 
 ACP-provided MCP servers **override** any same-named entries in the project's `.agentao/mcp.json`. They are **session-scoped** — they are torn down when the session closes and never leak to sibling sessions.
 
@@ -296,7 +296,7 @@ Below is a complete client→server→client conversation. Each line on the wire
     "agentCapabilities":{
       "loadSession":true,
       "promptCapabilities":{"image":true,"audio":false,"embeddedContext":false},
-      "mcpCapabilities":{"http":false,"sse":true}
+      "mcpCapabilities":{"http":true,"sse":true}
     },
     "authMethods":[],
     // agentInfo.version is sourced from agentao.__version__ — tracks the installed release line.

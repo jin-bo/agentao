@@ -32,7 +32,7 @@ Live config: `.agentao/mcp.json` (project) and `~/.agentao/mcp.json` (user-globa
       "trust": false
     },
     "remote": {
-      "url": "https://api.example.com/sse",
+      "url": "https://api.example.com/mcp",
       "headers": { "Authorization": "Bearer $API_KEY" },
       "timeout": 30
     }
@@ -40,12 +40,15 @@ Live config: `.agentao/mcp.json` (project) and `~/.agentao/mcp.json` (user-globa
 }
 ```
 
-Two transports:
+Three transports:
 
 | Transport | Trigger | What runs |
 |-----------|---------|-----------|
-| `command` | `"command": "..."` present | Local subprocess, stdio JSON-RPC |
-| `url` | `"url": "..."` present | Remote SSE endpoint |
+| stdio | `"command": "..."` present | Local subprocess, stdio JSON-RPC |
+| Streamable HTTP | `"url": "..."` present (default), or `"type": "http"` | Remote Streamable HTTP endpoint |
+| SSE (legacy) | `"type": "sse"` with `"url"` | Remote SSE endpoint |
+
+A bare `url` now defaults to **Streamable HTTP** — add `"type": "sse"` for a legacy SSE endpoint. (Breaking change; see [MCP deep dive](/en/part-5/3-mcp).)
 
 Env vars in the config use `$VAR_NAME` and are expanded at load time from your shell environment / `.env`.
 
@@ -57,7 +60,7 @@ Env vars in the config use `$VAR_NAME` and are expanded at load time from your s
 > /mcp                                  # alias for /mcp list
 > /mcp list                             # list all configured servers
 > /mcp add github npx -y @modelcontextprotocol/server-github
-> /mcp add remote https://api.example.com/sse
+> /mcp add remote https://api.example.com/mcp
 > /mcp remove github
 ```
 

@@ -165,7 +165,7 @@
       "trust": false
     },
     "<remote-name>": {
-      "url": "https://...",
+      "url": "https://.../mcp",
       "headers": { "Authorization": "Bearer $API_KEY" },
       "timeout": 30
     }
@@ -173,14 +173,19 @@
 }
 ```
 
-| Transport | 必填键 | 可选键 |
-|---|---|---|
-| stdio 子进程 | `command`、`args` | `env`、`trust`、`cwd`、`timeout` |
-| SSE | `url` | `headers`、`timeout` |
+| Transport | `type` | 必填键 | 可选键 |
+|---|---|---|---|
+| stdio 子进程 | `"stdio"`（或从 `command` 推断） | `command`、`args` | `env`、`trust`、`cwd`、`timeout` |
+| Streamable HTTP | `"http"`（或从 `url` 推断） | `url` | `headers`、`timeout`、`trust` |
+| SSE（legacy） | `"sse"` | `url` | `headers`、`timeout`、`trust` |
+
+**传输选择（`mcp/config.py :: resolve_transport`）。** 可选的 `type` 字段选择传输：`"stdio"` / `"sse"` / `"http"`（别名 `"streamable-http"` / `"streamable_http"` 归一到 `"http"`）。省略 `type` 时按以下规则推断：`command` → stdio，`url` → **Streamable HTTP**。因此裸 `{"url": ...}` 表示 Streamable HTTP——旧版 SSE 传输需显式写 `"type": "sse"`。未知的 `type`、或缺少所需键的传输，会**快速失败**（`McpTransportConfigError`），而不是静默连到错误的协议。
+
+> **迁移（破坏性变更）。** 裸 `url` 的 server 以前表示 SSE，现在默认走 Streamable HTTP 传输（即 MCP 规范中替代已弃用 HTTP+SSE 传输的方案）。如果你的 server 是旧版 SSE 端点，请在其条目中加上 `"type": "sse"`。
 
 **`timeout`** 接受两种形式（`mcp/config.py :: resolve_timeouts`）：
 
-- **int / float**（旧形式）—— *连接 / 启动*阶段的秒数（默认 `60`）：约束 SSE 的 HTTP 连接建立**以及** `initialize()` / `list_tools()` 握手（两种传输都生效）。单次工具调用**不设上限**（沿用 MCP SDK 默认值）。现有配置行为不变。
+- **int / float**（旧形式）—— *连接 / 启动*阶段的秒数（默认 `60`）：约束 URL 传输的 HTTP 连接建立**以及** `initialize()` / `list_tools()` 握手（所有传输都生效）。单次工具调用**不设上限**（沿用 MCP SDK 默认值）。现有配置行为不变。
 - **对象 `{ "startup": int, "request": int }`** —— 两个键都可选。`startup` 即上述连接/握手上限（默认 `60`）；`request` 约束初始化后的*每次工具调用*（省略则不设上限）。不配 `request` 时，挂起的工具调用在 stdio 下永不自终止，在 SSE 下也要等约 300 秒的事件间静默才断开——配上 `request` 才能确定性封顶（`request` 超过 300 秒时还会同步抬高 SSE 流的读超时）。
 
 ```json

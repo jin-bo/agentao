@@ -37,8 +37,8 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 | `promptCapabilities.image` | `true` | 0.4.8+：内联 `{data, mimeType}` 图片块；非视觉模型的退化行为见 [A.1](/zh/appendix/a-api-reference#图片输入与视觉退化) |
 | `promptCapabilities.audio` | `false` | |
 | `promptCapabilities.embeddedContext` | `false` | |
-| `mcpCapabilities.sse` | `true` | 可用 SSE 传输 |
-| `mcpCapabilities.http` | `false` | **不**支持 HTTP 传输 |
+| `mcpCapabilities.sse` | `true` | 可用 SSE 传输（legacy） |
+| `mcpCapabilities.http` | `true` | 可用 HTTP（Streamable HTTP）传输 |
 
 ## C.2 `session/new`
 
@@ -56,7 +56,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `name` | `string` | 非空 |
-| `type` | `"stdio"` / `"http"` / `"sse"` | 有的客户端会声明 `http`，但 agent 按 `mcpCapabilities` 拒 |
+| `type` | `"stdio"` / `"http"` / `"sse"` | 三者都接受；裸 `url`（无 `type`）默认走 Streamable HTTP（`http`） |
 | `command` | `string` | 仅 stdio |
 | `args` | `[string]` | 仅 stdio |
 | `env` | `[{name, value}]` | 仅 stdio——注意**是键值对对象数组**，不是 map |

@@ -112,7 +112,7 @@ The name encodes the design: *Agent* (capability) + *Tao* (governance). Three pi
 | Pillar | What it means | How Agentao implements it |
 |---|---|---|
 | **Constraint** (约束) | Agents must not act without consent | Tool confirmation · permission modes (`read-only` / `workspace-write` / `full-access` / `plan`) · macOS `sandbox-exec` |
-| **Connectivity** (连接) | Agents must reach the world beyond training | MCP (stdio / SSE) · ACP (full-agent JSON-RPC) · plugins · hooks |
+| **Connectivity** (连接) | Agents must reach the world beyond training | MCP (stdio / Streamable HTTP / SSE) · ACP (full-agent JSON-RPC) · plugins · hooks |
 | **Observability** (可观测性) | Agents must show their work | Live thinking display · streaming tool output · full LLM logging · JSONL replay |
 
 ---
@@ -125,7 +125,7 @@ The name encodes the design: *Agent* (capability) + *Tao* (governance). Three pi
 | **Context** | Token tracking, LLM-summarized compaction, overflow recovery, file re-injection | [CLI ch. 7](developer-guide/en/cli/7-context-status.md) |
 | **Memory** | SQLite-backed persistent memory with two scopes (user / project), automatic recall, jieba 中文 segmentation | [CLI ch. 6](developer-guide/en/cli/6-memory.md) |
 | **Skills** | Auto-discovered from `skills/`, GitHub-installable (`agentao skill install owner/repo[:path][@ref]`), plus `/crystallize` workflow | [CLI ch. 5](developer-guide/en/cli/5-skills-crystallize.md) |
-| **Protocols** | MCP (stdio / SSE) for tools · ACP (stdio JSON-RPC) for full agents · plugin lifecycle | [CLI ch. 8](developer-guide/en/cli/8-mcp-acp-plugins.md) |
+| **Protocols** | MCP (stdio / Streamable HTTP / SSE) for tools · ACP (stdio JSON-RPC) for full agents · plugin lifecycle | [CLI ch. 8](developer-guide/en/cli/8-mcp-acp-plugins.md) |
 | **Sub-agents** | Built-in `codebase-investigator` / `generalist` · custom `.agentao/agents/<name>.md` · foreground/background dashboard | [CLI ch. 11](developer-guide/en/cli/11-sessions-agents.md) |
 | **Replay & Output** | JSONL session recordings under `.agentao/replays/` · markdown-toggle · `/copy` last reply | [CLI ch. 9](developer-guide/en/cli/9-replay-output.md) |
 | **Embedding** | `Agentao(...)` constructor · `events()` stream · `active_permissions()` · capability injection · ACP Pydantic schemas | [DG Part 2](https://agentao.cn/en/part-2/) · [Part 4](https://agentao.cn/en/part-4/) |
