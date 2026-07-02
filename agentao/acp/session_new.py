@@ -200,14 +200,13 @@ def _parse_mcp_servers(raw: Any) -> List[Dict[str, Any]]:
       a list of ``{name, value}`` dicts.
     - **SSE**: ``{type: "sse", name, url, headers}`` where ``headers`` is
       a list of ``{name, value}`` dicts.
+    - **Streamable HTTP**: ``{type: "http", name, url, headers}`` — same URL
+      shape as SSE. The agent advertises ``mcpCapabilities.http: true`` in
+      ``initialize`` because :class:`agentao.mcp.client.McpClient` now
+      dispatches ``http`` through ``streamable_http_client``.
 
-    ``type: "http"`` is **not** accepted: the agent advertises
-    ``mcpCapabilities.http: false`` in ``initialize`` because
-    :class:`agentao.mcp.client.McpClient` only supports ``sse_client`` for
-    URL-based transports. Accepting http here would silently dispatch
-    through ``sse_client`` and fail to connect at session-prompt time;
-    rejecting at parse time surfaces the misconfiguration immediately as
-    ``INVALID_PARAMS``.
+    Any other ``type`` is rejected at parse time as ``INVALID_PARAMS`` so a
+    misconfiguration surfaces immediately rather than at session-prompt time.
 
     Raises :class:`TypeError` for shape violations.
     """
@@ -224,11 +223,10 @@ def _parse_mcp_servers(raw: Any) -> List[Dict[str, Any]]:
             raise TypeError(f"session/new.mcpServers[{i}].name must be a non-empty string")
 
         transport_type = entry.get("type", "stdio")
-        if transport_type not in ("stdio", "sse"):
+        if transport_type not in ("stdio", "sse", "http"):
             raise TypeError(
                 f"session/new.mcpServers[{i}].type must be one of "
-                f"'stdio', 'sse', got {transport_type!r} "
-                f"(http is not supported — see mcpCapabilities.http=false)"
+                f"'stdio', 'sse', 'http', got {transport_type!r}"
             )
 
         if transport_type == "stdio":

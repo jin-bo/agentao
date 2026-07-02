@@ -110,7 +110,7 @@ def test_initialize_response_round_trip():
         "agentCapabilities": {
             "loadSession": True,
             "promptCapabilities": {"image": True, "audio": False, "embeddedContext": False},
-            "mcpCapabilities": {"http": False, "sse": True},
+            "mcpCapabilities": {"http": True, "sse": True},
         },
         "authMethods": [],
         "agentInfo": {"name": "agentao", "version": "0.3.1.dev0"},
@@ -142,7 +142,7 @@ def test_initialize_response_rejects_top_level_extensions():
             "agentCapabilities": {
                 "loadSession": True,
                 "promptCapabilities": {"image": True, "audio": False, "embeddedContext": False},
-                "mcpCapabilities": {"http": False, "sse": True},
+                "mcpCapabilities": {"http": True, "sse": True},
             },
             "authMethods": [],
             "agentInfo": {"name": "agentao", "version": "0.3.1.dev0"},
@@ -165,7 +165,7 @@ def test_initialize_response_meta_is_alias_only():
         "agentCapabilities": {
             "loadSession": True,
             "promptCapabilities": {"image": True, "audio": False, "embeddedContext": False},
-            "mcpCapabilities": {"http": False, "sse": True},
+            "mcpCapabilities": {"http": True, "sse": True},
         },
         "authMethods": [],
         "agentInfo": {"name": "agentao", "version": "0.3.1.dev0"},

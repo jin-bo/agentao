@@ -329,32 +329,30 @@ def test_mcp_servers_stdio_entry_accepted(initialized_server, abs_tmp_dir):
     assert "sessionId" in result
 
 
-def test_mcp_servers_http_entry_rejected(initialized_server, abs_tmp_dir):
-    """``type: "http"`` is rejected at parse time.
+def test_mcp_servers_http_entry_accepted(initialized_server, abs_tmp_dir):
+    """``type: "http"`` (Streamable HTTP) is accepted at parse time.
 
-    The agent advertises ``mcpCapabilities.http: false`` because
-    :class:`agentao.mcp.client.McpClient` cannot dispatch http (only stdio
-    + sse). Accepting the entry and silently routing it through
-    ``sse_client`` would fail at first tool invocation; rejecting at parse
-    time surfaces the misconfiguration immediately as ``INVALID_PARAMS``.
+    The agent advertises ``mcpCapabilities.http: true`` because
+    :class:`agentao.mcp.client.McpClient` now dispatches http through
+    ``streamable_http_client``. It shares the sse url/headers shape.
     """
     factory, _ = make_recording_factory()
-    with pytest.raises(TypeError, match="http"):
-        acp_session_new.handle_session_new(
-            initialized_server,
-            {
-                "cwd": abs_tmp_dir,
-                "mcpServers": [
-                    {
-                        "type": "http",
-                        "name": "remote",
-                        "url": "https://mcp.example.com",
-                        "headers": [{"name": "Authorization", "value": "Bearer abc"}],
-                    }
-                ],
-            },
-            agent_factory=factory,
-        )
+    result = acp_session_new.handle_session_new(
+        initialized_server,
+        {
+            "cwd": abs_tmp_dir,
+            "mcpServers": [
+                {
+                    "type": "http",
+                    "name": "remote",
+                    "url": "https://mcp.example.com/mcp",
+                    "headers": [{"name": "Authorization", "value": "Bearer abc"}],
+                }
+            ],
+        },
+        agent_factory=factory,
+    )
+    assert "sessionId" in result
 
 
 def test_mcp_servers_sse_entry_accepted(initialized_server, abs_tmp_dir):
@@ -412,10 +410,9 @@ def test_mcp_servers_unknown_transport_type_raises(initialized_server, abs_tmp_d
 def test_mcp_servers_sse_missing_url_raises(initialized_server, abs_tmp_dir):
     """SSE entries still need a non-empty url field.
 
-    Note: ``type: "http"`` would no longer reach the url check — it is
-    rejected at the type-validation step (see
-    ``test_mcp_servers_http_entry_rejected``). This test now exercises the
-    same shape failure for the supported sse transport.
+    ``type: "http"`` shares this same url check (both URL transports go
+    through the ``else`` branch in ``_parse_mcp_servers``); this test
+    exercises the shape failure for the sse transport.
     """
     factory, _ = make_recording_factory()
     with pytest.raises(TypeError, match="url"):

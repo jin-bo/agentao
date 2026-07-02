@@ -85,8 +85,9 @@ def test_agent_capabilities_shape():
         "embeddedContext": False,
     }
 
-    # Reflects actual MCP support in agentao/mcp/client.py.
-    assert caps["mcpCapabilities"] == {"http": False, "sse": True}
+    # Reflects actual MCP support in agentao/mcp/client.py — both URL
+    # transports (SSE + Streamable HTTP) are dispatchable.
+    assert caps["mcpCapabilities"] == {"http": True, "sse": True}
 
 
 def test_agent_info_uses_package_version():

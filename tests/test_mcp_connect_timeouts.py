@@ -120,7 +120,9 @@ def test_connect_times_out_on_slow_handshake():
     async def fake_connect_sse(self, startup_timeout, request_timeout):
         self._session = _SlowSession()
 
-    client = McpClient("svr", {"url": "https://h/mcp", "timeout": {"startup": 0.05}})
+    client = McpClient(
+        "svr", {"type": "sse", "url": "https://h/mcp", "timeout": {"startup": 0.05}}
+    )
     with patch.object(McpClient, "_connect_sse", fake_connect_sse):
         run_async(client.connect())
 
@@ -143,7 +145,9 @@ def test_connect_succeeds_within_startup_budget():
         sess.list_tools = _list
         self._session = sess
 
-    client = McpClient("svr", {"url": "https://h/mcp", "timeout": {"startup": 5}})
+    client = McpClient(
+        "svr", {"type": "sse", "url": "https://h/mcp", "timeout": {"startup": 5}}
+    )
     with patch.object(McpClient, "_connect_sse", fake_connect_sse):
         run_async(client.connect())
 

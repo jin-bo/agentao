@@ -596,7 +596,7 @@
     },
     "AcpMcpServer": {
       "additionalProperties": false,
-      "description": "A session-scoped MCP server config passed in ``session/new``.\n\n``type`` discriminates ``stdio`` (command/args/env) vs ``sse``\n(url/headers). The agent ignores ``http`` because Agentao's MCP\nclient only supports ``stdio`` and ``sse`` in v1. ``type`` defaults\nto ``\"stdio\"`` because the runtime parser treats a missing ``type``\nfield as stdio for compatibility with the established wire form\nthat historical clients send (just ``{name, command}``); making\nthe schema strict here would reject runtime-valid payloads.",
+      "description": "A session-scoped MCP server config passed in ``session/new``.\n\n``type`` discriminates ``stdio`` (command/args/env) vs the URL transports\n``sse`` and ``http`` (url/headers). Agentao's MCP client dispatches all\nthree (``http`` via ``streamable_http_client``). ``type`` defaults to\n``\"stdio\"`` because the runtime parser treats a missing ``type`` field as\nstdio for compatibility with the established wire form that historical\nclients send (just ``{name, command}``); making the schema strict here\nwould reject runtime-valid payloads.",
       "properties": {
         "args": {
           "anyOf": [
@@ -663,7 +663,8 @@
           "default": "stdio",
           "enum": [
             "stdio",
-            "sse"
+            "sse",
+            "http"
           ],
           "title": "Type",
           "type": "string"

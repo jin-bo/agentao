@@ -39,24 +39,44 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
         console.print()
 
     elif sub == "add":
-        add_parts = sub_args.split(None, 1) if sub_args else []
-        if len(add_parts) < 2:
-            console.print("\n[error]Usage: /mcp add <name> <command|url> [args...][/error]")
+        tokens = sub_args.split() if sub_args else []
+
+        # Optional leading transport flag for URL servers. Default for a URL is
+        # Streamable HTTP; pass --sse for the legacy SSE transport.
+        transport_override = None
+        if tokens and tokens[0] in ("--sse", "--http"):
+            transport_override = tokens[0][2:]  # "sse" | "http"
+            tokens = tokens[1:]
+
+        def _add_usage() -> None:
+            console.print("\n[error]Usage: /mcp add [--http|--sse] <name> <command|url> [args...][/error]")
             console.print("[info]Examples:[/info]")
             console.print("  /mcp add github npx -y @modelcontextprotocol/server-github")
-            console.print("  /mcp add remote https://api.example.com/sse\n")
+            console.print("  /mcp add remote https://api.example.com/mcp        [dim]# Streamable HTTP (default)[/dim]")
+            console.print("  /mcp add --sse legacy https://api.example.com/sse  [dim]# legacy SSE[/dim]\n")
+
+        if len(tokens) < 2:
+            _add_usage()
             return
 
-        name = add_parts[0]
-        endpoint = add_parts[1]
+        name = tokens[0]
+        endpoint = tokens[1]
+        extra_args = tokens[2:]
 
         if endpoint.startswith("http://") or endpoint.startswith("https://"):
-            server_cfg = {"url": endpoint}
+            # Write the explicit type so the saved config survives any future
+            # default change; a bare URL defaults to Streamable HTTP (D2).
+            server_cfg = {"type": transport_override or "http", "url": endpoint}
+        elif transport_override:
+            console.print(
+                f"\n[error]--{transport_override} applies to URL servers only; "
+                f"'{endpoint}' is not an http(s) URL.[/error]\n"
+            )
+            return
         else:
-            cmd_parts = endpoint.split()
-            server_cfg = {"command": cmd_parts[0]}
-            if len(cmd_parts) > 1:
-                server_cfg["args"] = cmd_parts[1:]
+            server_cfg = {"command": endpoint}
+            if extra_args:
+                server_cfg["args"] = extra_args
 
         project_dir = cli.agent.working_directory / ".agentao"
         project_path = project_dir / "mcp.json"
