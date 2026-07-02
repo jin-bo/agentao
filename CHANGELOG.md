@@ -5,15 +5,78 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.4.14] — 2026-07-02
 
-_Targeting 0.4.14. Add entries under the relevant heading as work lands._
+A **feature release** on top of 0.4.13. The headline is MCP transport work —
+Streamable HTTP support and finer per-call MCP timeouts — plus a `/thinking`
+command, a Jina `web_search` backend, and three provider/sub-agent robustness
+fixes.
+
+**Breaking (config behavior):** a bare `url` in `.agentao/mcp.json` now defaults
+to the **Streamable HTTP** transport instead of SSE. Legacy SSE endpoints must
+add `"type": "sse"`. That is the only break; everything else upgrades in place.
 
 ### Added
 
+- **MCP Streamable HTTP transport.** The MCP client now connects over Streamable
+  HTTP — the current MCP-spec transport that replaces the deprecated HTTP+SSE
+  transport — via the canonical `streamable_http_client`. Transport is selected
+  by an optional `type` field (`"stdio"` / `"http"` / `"sse"`, with
+  `"streamable-http"` / `"streamable_http"` aliases). An unknown `type`, or a
+  transport missing its required key, **fails closed** (`McpTransportConfigError`)
+  rather than silently connecting to the wrong protocol. The ACP handshake now
+  advertises `mcpCapabilities.http: true` and `session/new` accepts `http` MCP
+  entries. CLI: `/mcp add [--http|--sse] <name> <url>`. (#120)
+- **Split MCP timeouts.** `timeout` in `mcp.json` now accepts either an int
+  (legacy — the connect/startup budget) or `{ "startup": int, "request": int }`.
+  `request` bounds each tool call after init (previously unbounded); `startup`
+  bounds the whole connect **and** the `initialize()` / `list_tools()` handshake
+  for both transports. Backward compatible. (#119)
+- **MCP `structuredContent` fallback.** A tool that returns `content: []` plus
+  `structuredContent` no longer hands the model an empty string — the structured
+  payload is serialized to JSON when there are no content blocks (content blocks
+  still win when present). (#119)
+- **`/thinking [minimal|low|medium|high|off]`** sets the model's reasoning
+  effort (the `reasoning_effort` request field) on the live client's
+  `extra_body`; sub-agents launched afterward inherit it, and `off` restores the
+  provider default. The active level shows in the status bar. (#113)
+- **Jina `web_search` backend + auto fallback chain.** `web_search` adds a
+  `jina` backend (keyless; a `JINA_API_KEY` only lifts rate limits) and, in auto
+  mode, retreats on *error* through jina → bocha → duckduckgo. An explicit
+  `backend=` still pins exactly one backend with no fallback. Each fallback is
+  surfaced in the result and logged. (#114)
+- **`AGENTAO_WEB_FETCH_ALLOW_CIDRS`** — an opt-in `web_fetch` SSRF allowlist of
+  non-globally-routable CIDRs (the escape hatch for hosts behind a fake-IP proxy
+  such as Clash/V2Ray). Applied to the initial URL and every redirect hop,
+  scoped (allowlisting `198.18.0.0/15` does not also permit `169.254.169.254`),
+  and logged at startup. Default empty = fully strict. (#114)
+
 ### Changed
 
+- **BREAKING — MCP bare-`url` default flipped to Streamable HTTP.** A server
+  entry with a `url` and no `type` connected over SSE before 0.4.14; it now
+  connects over Streamable HTTP. Add `"type": "sse"` to keep a legacy SSE
+  endpoint. An inferred-HTTP handshake failure prints an actionable "try
+  `type: sse`" hint (suppressed for explicit `http`, for auth failures, and for
+  non-MCP endpoints). (#120)
+
 ### Fixed
+
+- **Sub-agent tool lifecycle events now carry the real `call_id`** (plus
+  status / duration / error) end-to-end, so a same-named parallel tool batch
+  (e.g. four concurrent `read_file`) can be traced start→finish, and a failed or
+  denied sub-agent tool is no longer reported as a hardcoded success. (#112)
+- **Streamed tool calls without an `index` field** (emitted by some
+  OpenAI-compatible / self-hosted providers) are keyed by synthetic
+  stream-stable ids instead of collapsing onto a single `None` key — fixing
+  garbled arguments across parallel calls and a finalization crash on streams
+  that mix indexed and index-less deltas. (#117)
+- **Empty / whitespace tool-call names no longer trigger a catalog-dump priming
+  loop.** Weak local models primed by tool-call syntax sitting in file or tool
+  content emitted blank-named calls that were answered with the full tool
+  catalog, inflating context on every retry; they now get a terse anti-priming
+  reply (no catalog) with a hard stop, while a genuine non-empty typo still gets
+  the catalog to self-correct. (#118)
 
 ---
 
