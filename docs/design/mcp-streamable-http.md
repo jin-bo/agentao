@@ -296,13 +296,25 @@ async def _connect_streamable_http(self, startup_timeout, request_timeout):
     )
     await self._exit_stack.enter_async_context(http_client)   # caller-managed lifecycle
     transport = await self._exit_stack.enter_async_context(
-        streamable_http_client(url, http_client=http_client, terminate_on_close=True)
+        streamable_http_client(url, http_client=http_client, terminate_on_close=False)
     )
     read_stream, write_stream, _get_session_id = transport   # 3-tuple, not 2
     self._session = await self._exit_stack.enter_async_context(
         ClientSession(read_stream, write_stream)
     )
 ```
+
+**`terminate_on_close=False` (review Finding 1).** The obvious `True` sends a
+session-terminate `DELETE` on close — but that `DELETE` reuses the same httpx
+client, whose `read` timeout is raised to cover long tool-call budgets (up to
+`request`; ≥300 s default). A server that accepts the connection but stalls the
+`DELETE` would then block `disconnect()` — and the transient-error *reconnect*
+path in `call_tool` — for that whole window. Bounding the exit-stack unwind with
+`wait_for` is explicitly unsafe here (the connect() comment warns a timeout
+cancellation must not cross an anyio cancel scope into transport cleanup). So we
+skip the teardown request: SSE and stdio issue none either, the server expires
+the idle session on its own, and the terminate `DELETE` is a spec SHOULD not a
+MUST.
 
 ### 5.4 Factor the shared URL-connect preamble
 
@@ -361,26 +373,32 @@ enriches the failure on the inferred path. Two guards keep the hint accurate:
    or a sibling `transport_is_inferred(config)` predicate) into the `except`, so
    the hint fires for `{"url": ...}` but **not** for an explicit
    `{"type": "http", ...}` (where SSE is not the likely intent).
-2. **Not the non-MCP verdict (Finding 4)** — skip the hint when the error is a
+2. **Not the non-MCP verdict** — skip the hint when the error is a
    `NonMcpEndpointError`. That exception is the preflight's "this is a web page,
    not MCP at all" verdict (`client.py:102-110`) and already carries its own
    actionable message; appending "set `type:\"sse\"`" on top would wrongly imply
    the endpoint is a legacy SSE server when it isn't MCP at all. The hint is for
    *handshake/transport* failures — where SSE-vs-HTTP is a plausible cause — not
    for a content-type rejection.
+3. **Not an auth failure (review Finding 5)** — skip when
+   `classify_mcp_error(e) is McpErrorKind.AUTH`. A real Streamable HTTP server
+   that returns 401/403 is not fixed by switching to SSE; suggesting it would
+   send the user down a wrong debugging path instead of at their credentials.
 
 ```python
 except Exception as e:
-    self.error_message = str(e)
+    message = str(e)
     if (
         transport == "http"
-        and _url_transport_was_inferred(self.config)
-        and not isinstance(e, NonMcpEndpointError)   # Finding 4: don't override the non-MCP verdict
+        and source == "inferred"                      # from resolve_transport(..., return_source=True)
+        and not isinstance(e, NonMcpEndpointError)    # don't override the non-MCP verdict
+        and classify_mcp_error(e) is not McpErrorKind.AUTH   # 401/403 isn't fixed by SSE
     ):
-        self.error_message += (
+        message += (
             "  (tried as Streamable HTTP — the default for a bare 'url'; "
             "if this is a legacy SSE endpoint, set \"type\": \"sse\".)"
         )
+    self.error_message = message
     ...
 ```
 
@@ -428,18 +446,25 @@ cf. the "comment lies" watch-items in `project_hermes_pull_review_20260629`).
 match D2) and add a `--sse` opt-out:
 
 ```
-/mcp add <name> <url>                            # → { "type": "http", "url": ... }  (D2 default)
-/mcp add --sse  <name> <url>                     # → { "type": "sse",  "url": ... }  (opt into legacy SSE)
-/mcp add --http <name> <url>                     # explicit http (same as flag-less)
+/mcp add <name> <url>                            # → { "url": ... }  (bare → inferred http, D2)
+/mcp add --sse  <name> <url>                     # → { "type": "sse",  "url": ... }  (legacy SSE)
+/mcp add --http <name> <url>                     # → { "type": "http", "url": ... }  (explicit)
 /mcp add <name> <command> [args...]              # stdio (unchanged)
 ```
 
-Parse a leading `--sse`/`--http` flag off `sub_args`. Write the **explicit**
-`type` in every URL case — flag-less and `--http` both write
-`{"type": "http", "url": endpoint}`; `--sse` writes `{"type": "sse", ...}`.
-Writing the type explicitly (rather than a bare `url`) makes the saved config
-survive any future default change. Update the usage/example block (44-48) to
-lead with the Streamable HTTP form.
+Parse a `--sse`/`--http` flag that may appear **before or after the name**
+(review Finding 2 — `gh --http <url>` is a common ordering and must not fall
+through to a `{"command": "--http"}` stdio config). Config written:
+
+- flag-less URL → **bare `{"url": endpoint}`** (no `type`). It resolves to http
+  (D2) but stays *inferred*, so if the endpoint is really legacy SSE the
+  connect-failure hint (§5.7, gated to inferred) fires and guides the user to
+  `--sse` (review Finding 4 — an explicit `type:"http"` would suppress that
+  hint, the exact recovery guidance CLI-added servers need).
+- `--http` → `{"type": "http", "url": endpoint}` (explicit choice, no hint).
+- `--sse` → `{"type": "sse", "url": endpoint}`.
+
+Update the usage/example block (44-48) to lead with the Streamable HTTP form.
 
 ## 8. Docs
 
@@ -454,6 +479,9 @@ lead with the Streamable HTTP form.
 - `CLAUDE.md` § MCP — the transport list ("`command` (stdio subprocess) or `url`
   (SSE)") becomes "`command` (stdio) or `url` (Streamable HTTP by default; add
   `type: "sse"` for the legacy SSE transport)".
+- `cli/help_text.py` (85) — the **authoritative** `/help` source; update the
+  `/mcp add` line to `[--http|--sse]` (review Finding 7 — CLAUDE.md designates
+  this file authoritative, so it must not lag the in-command usage string).
 
 ## 9. Test plan
 
@@ -469,28 +497,38 @@ New `tests/test_mcp_streamable_http.py`:
   - `transport_type` *property* returns `"unknown"` (never raises) for all of the
     above, while `connect()` records the actionable message in `error_message`.
 - Dispatch: `connect()` routes both `type:"http"` **and bare `url` (no type)**
-  to `_connect_streamable_http` (monkeypatch `streamablehttp_client` to a fake
-  3-tuple CM), while `type:"sse"` routes to `_connect_sse` — **the D2 default
-  assertion (bare `url` = http).**
+  to `_connect_streamable_http` (monkeypatch `streamable_http_client` +
+  `create_mcp_http_client` to fakes; the http one yields a 3-tuple), while
+  `type:"sse"` routes to `_connect_sse` — **the D2 default assertion (bare `url`
+  = http).**
 - §5.7 hint gating: a bare-`url` handshake failure appends the SSE hint; an
-  explicit `type:"http"` failure does **not**; an SSE failure does not; **and a
-  bare-`url` `NonMcpEndpointError` (HTML page) does not** (Finding 4 — the
-  non-MCP verdict is not overridden with an SSE suggestion).
+  explicit `type:"http"` failure does **not**; an SSE failure does not; a
+  bare-`url` `NonMcpEndpointError` (HTML page) does not; **and a bare-`url` auth
+  failure does not** (review Finding 5).
 - 3-tuple unpack: the fake yields `(read, write, get_session_id)`; assert the
   session is built and the callback is not required.
-- Timeouts: `streamablehttp_client` receives `timeout=startup` and the
-  raised `sse_read_timeout` (reuse `test_mcp_connect_timeouts.py` fixtures).
+- Timeouts: `create_mcp_http_client` receives `httpx.Timeout(startup,
+  read=sse_read_timeout)` (assert `.connect` / `.read`); `terminate_on_close` is
+  **False** (review Finding 1).
+- CLI `/mcp add` (review Findings 2 & 4): a bare URL writes `{"url": ...}` (no
+  `type`); `--http`/`--sse` write explicit types and are honored **before or
+  after** the name; a stdio add is unaffected.
 - Preflight reuse: a Streamable HTTP endpoint returning `application/json`
   passes; `text/html` raises `NonMcpEndpointError` (extend
   `test_mcp_preflight.py`).
 
 Update existing:
 
-- `test_acp_initialize.py:89`, `test_acp_schema.py:113/145/168` — expected
-  `mcpCapabilities` flips to `{"http": True, "sse": True}`.
-- `test_acp_session_new.py:335` (+ its `http`-rejection case) — `http` now parses.
-- `test_acp_mcp_injection.py` — add an `http` entry asserting the translated cfg
-  carries `"type": "http"` (the §6.3 stamp).
+- `test_acp_initialize.py:89`, `test_acp_schema.py` inline fixtures — expected
+  `mcpCapabilities` flips to `{"http": True, "sse": True}`; regenerate the
+  checked-in `docs/schema/host.acp.v1.json` snapshot (the `type` enum gains
+  `http`).
+- `test_acp_session_new.py` — the `http`-rejection case becomes a `http`-accept.
+- `test_acp_mcp_injection.py` — the SSE-translation assertion now also carries
+  `"type": "sse"`; add an `http` entry asserting the `"type": "http"` stamp; the
+  translate-rejects-http class becomes translate-http (unknown type still drops).
+- `test_mcp_connect_timeouts.py` — the two `connect()` tests pin `type:"sse"`
+  (a bare `url` now dispatches to http, bypassing the `_connect_sse` patch).
 
 ## 10. Rollout, non-goals, future
 
@@ -524,14 +562,17 @@ the note.
 | File | Change |
 |---|---|
 | `agentao/mcp/config.py` | `resolve_transport()` (fail-closed) + `McpTransportConfigError`; `type` in `McpServerConfig` docstring; timeout-doc wording |
-| `agentao/mcp/client.py` | import; `transport_type` (swallow-to-`unknown`)/`connect` → `resolve_transport`; `_connect_streamable_http` (3-tuple); `_prepare_url_connect` helper; §5.7 gated hint |
+| `agentao/mcp/client.py` | import (canonical `streamable_http_client` + `create_mcp_http_client`); `transport_type` (swallow-to-`unknown`)/`connect` → `resolve_transport`; `_connect_streamable_http` (3-tuple, `terminate_on_close=False`); `_prepare_url_connect` helper; §5.7 gated hint |
 | `agentao/acp/initialize.py` | `mcpCapabilities.http = True` + docstrings |
 | `agentao/acp/session_new.py` | parser accepts `http` + docstring |
-| `agentao/acp/mcp_translate.py` | translate `http`, **stamp `type:"http"`** + docstrings |
-| `agentao/cli/commands/mcp.py` | `/mcp add --http/--sse` |
+| `agentao/acp/mcp_translate.py` | translate `http`, **stamp `type` both ways** + docstrings |
+| `agentao/acp/schema.py` | `mcpCapabilities` default + `AcpMcpServer.type` `Literal` gains `http` + docstring |
+| `docs/schema/host.acp.v1.json` | regenerated snapshot (`type` enum + capability default) |
+| `agentao/cli/commands/mcp.py` | `/mcp add [--http|--sse]` (flag before/after name; bare URL → no `type`) |
+| `agentao/cli/help_text.py` | authoritative `/help` `/mcp add` line |
 | `docs/reference/configuration.md` | Streamable HTTP transport row + timeout note |
 | `CLAUDE.md` | MCP transport line |
-| `tests/test_mcp_streamable_http.py` (new) + 4 ACP tests | see §9 |
+| `tests/test_mcp_streamable_http.py` (new) + `test_mcp_connect_timeouts.py` + 4 ACP tests | see §9 |
 
 ## 12. Commit checklist
 
@@ -546,9 +587,10 @@ be separate commits within it.
 - [ ] Record green baseline: `uv run python -m pytest tests/ -q` (note the count;
       the merged tree must be ≥ baseline + new tests, all green — never merge red
       CI).
-- [ ] (Already verified, re-confirm on the target machine) the pinned SDK:
-      `streamablehttp_client` yields a **3-tuple** and accepts
-      `terminate_on_close` — `uv run python -c "import inspect,mcp.client.streamable_http as m; print(inspect.signature(m.streamablehttp_client))"`.
+- [ ] (Already verified, re-confirm on the target machine) the pinned SDK: the
+      canonical `streamable_http_client` yields a **3-tuple** and accepts
+      `terminate_on_close`; the deprecated `streamablehttp_client` alias emits a
+      `DeprecationWarning` (use the canonical) — `uv run python -c "import inspect,mcp.client.streamable_http as m; print(inspect.signature(m.streamable_http_client))"`.
 
 ### Stage 1 — `agentao/mcp/config.py` (foundation, no in-tree deps)
 
@@ -568,8 +610,9 @@ be separate commits within it.
 
 ### Stage 2 — `agentao/mcp/client.py`
 
-- [ ] `from mcp.client.streamable_http import streamablehttp_client` (top, by
-      the `sse_client` import at 14).
+- [ ] `from mcp.client.streamable_http import create_mcp_http_client,
+      streamable_http_client` (top, by the `sse_client` import at 14) — the
+      **canonical** functions, not the deprecated `streamablehttp_client` alias.
 - [ ] `transport_type` property → `try: return resolve_transport(self.config)
       except McpTransportConfigError: return "unknown"` (never raises — status
       path stays total).
@@ -579,13 +622,15 @@ be separate commits within it.
       sse_read_timeout)` (url/headers read + `sse_read_timeout` raise-only calc
       at 332-336 + `_preflight_content_type`); refactor `_connect_sse` (318-353,
       **2-tuple**) to use it.
-- [ ] Add `_connect_streamable_http` using the helper +
-      `streamablehttp_client(..., timeout=startup, sse_read_timeout=...,
-      terminate_on_close=True)` + **3-tuple unpack**
-      `read, write, _get_session_id = transport`.
+- [ ] Add `_connect_streamable_http` using the helper: build the httpx client
+      with `create_mcp_http_client(headers, httpx.Timeout(startup,
+      read=sse_read_timeout))`, enter it into the exit stack, then
+      `streamable_http_client(url, http_client=..., terminate_on_close=False)` +
+      **3-tuple unpack** `read, write, _get_session_id = transport`.
 - [ ] §5.7 hint in `connect()`'s `except` (211-221): append the
-      set-`type:"sse"` hint **only when** `transport == "http"` **and** the
-      transport was inferred **and** `not isinstance(e, NonMcpEndpointError)`.
+      set-`type:"sse"` hint **only when** `transport == "http"` **and**
+      `source == "inferred"` **and** `not isinstance(e, NonMcpEndpointError)`
+      **and** `classify_mcp_error(e) is not McpErrorKind.AUTH`.
 - [ ] Leave `classify_mcp_error` / `_ERROR_RULES` unchanged (§5.6 watch-item).
 
 ### Stage 3 — ACP (flip the three gates; fix the docstrings so they don't lie)
@@ -600,10 +645,12 @@ be separate commits within it.
 
 ### Stage 4 — CLI `agentao/cli/commands/mcp.py`
 
-- [ ] `/mcp add` (41-69): parse a leading `--sse`/`--http` off `sub_args`;
-      flag-less + `--http` URL → `{"type": "http", "url": endpoint}`, `--sse` →
-      `{"type": "sse", "url": endpoint}` (write the explicit `type`, not a bare
-      `url`). Update the usage/example block (44-48) to lead with the http form.
+- [ ] `/mcp add` (41-69): parse a `--sse`/`--http` flag accepted **before or
+      after the name**; flag-less URL → **bare `{"url": endpoint}`** (inferred,
+      hint-eligible), `--http` → `{"type":"http",...}`, `--sse` →
+      `{"type":"sse",...}`. Update the usage/example block (44-48).
+- [ ] `cli/help_text.py` (85): update the authoritative `/help` `/mcp add` line
+      to `[--http|--sse]` (review Finding 7).
 
 ### Stage 5 — docs & release note
 
@@ -620,18 +667,21 @@ be separate commits within it.
       happy rows + **fail-closed** (unknown `type`, required-key mismatch, property
       returns `"unknown"`); dispatch (`type:"http"` **and bare `url`** →
       `_connect_streamable_http`, `type:"sse"` → `_connect_sse`); 3-tuple unpack;
-      timeouts; **§5.7 hint gating incl. the `NonMcpEndpointError` skip**;
-      preflight reuse.
+      timeouts + `terminate_on_close=False`; **§5.7 hint gating incl. the
+      `NonMcpEndpointError` and AUTH skips**; CLI `/mcp add` flag/bare-url cases.
 - [ ] `tests/test_acp_initialize.py:89` → `{"http": True, "sse": True}` (the real
       advertised-value assertion).
-- [ ] `tests/test_acp_schema.py:113` (and 145/168 for consistency) → flip the
-      inline `mcpCapabilities` fixture to `{"http": True, "sse": True}`.
-- [ ] `tests/test_acp_session_new.py` — flip the `http`-**rejection** case
-      (docstring ref at 335) to a `http`-**accept** case.
-- [ ] **`tests/test_acp_mcp_injection.py:437`** — the SSE-translation assertion
-      `{"remote": {"url": "https://x/sse", "trust": False}}` now also carries
-      `"type": "sse"` (fallout of §6.3 stamping *both* transports); add an `http`
-      entry asserting the `"type": "http"` stamp.
+- [ ] `tests/test_acp_schema.py` inline `mcpCapabilities` fixtures → `{"http":
+      True, "sse": True}`; **regenerate `docs/schema/host.acp.v1.json`** via
+      `normalized_schema_json(export_host_acp_json_schema())` (the `type` enum
+      gains `http`).
+- [ ] `tests/test_acp_session_new.py` — flip the `http`-**rejection** case to a
+      `http`-**accept** case.
+- [ ] `tests/test_acp_mcp_injection.py` — the SSE-translation assertion now also
+      carries `"type": "sse"`; add an `http` entry asserting the `"type": "http"`
+      stamp; the translate-rejects-http class becomes translate-http.
+- [ ] `tests/test_mcp_connect_timeouts.py` — the two `connect()` tests pin
+      `type:"sse"` (a bare `url` now dispatches to http, bypassing the patch).
 
 ### Stage 7 — verify (fail-closed self-review, per the grep-first ethos)
 
@@ -642,10 +692,10 @@ be separate commits within it.
       returns only intended matches (comments now describing history, none
       asserting current behavior).
 - [ ] No lying docstrings: the three ACP files no longer say `http` is rejected.
-- [ ] Smoke: monkeypatch `streamablehttp_client` to a fake 3-tuple CM and drive
-      `McpClient.connect()` → CONNECTED + tools listed; if a real Streamable HTTP
-      server is reachable, `/mcp add <url>` then `/mcp list` shows connected and a
-      tool call round-trips. (`verify` skill.)
+- [ ] Smoke: monkeypatch `streamable_http_client` + `create_mcp_http_client` to
+      fakes (3-tuple) and drive `McpClient.connect()` → CONNECTED + tools listed;
+      if a real Streamable HTTP server is reachable, `/mcp add <url>` then
+      `/mcp list` shows connected and a tool call round-trips. (`verify` skill.)
 
 ### Stage 8 — commit / PR
 

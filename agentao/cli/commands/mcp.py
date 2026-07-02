@@ -41,12 +41,15 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
     elif sub == "add":
         tokens = sub_args.split() if sub_args else []
 
-        # Optional leading transport flag for URL servers. Default for a URL is
-        # Streamable HTTP; pass --sse for the legacy SSE transport.
+        # Optional transport flag for URL servers, accepted either before or
+        # after the name (``--http remote <url>`` or ``remote --http <url>``);
+        # both orderings are common. Default for a bare URL is Streamable HTTP.
         transport_override = None
-        if tokens and tokens[0] in ("--sse", "--http"):
-            transport_override = tokens[0][2:]  # "sse" | "http"
-            tokens = tokens[1:]
+        for idx in (0, 1):
+            if idx < len(tokens) and tokens[idx] in ("--sse", "--http"):
+                transport_override = tokens[idx][2:]  # "sse" | "http"
+                tokens = tokens[:idx] + tokens[idx + 1:]
+                break
 
         def _add_usage() -> None:
             console.print("\n[error]Usage: /mcp add [--http|--sse] <name> <command|url> [args...][/error]")
@@ -64,9 +67,15 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
         extra_args = tokens[2:]
 
         if endpoint.startswith("http://") or endpoint.startswith("https://"):
-            # Write the explicit type so the saved config survives any future
-            # default change; a bare URL defaults to Streamable HTTP (D2).
-            server_cfg = {"type": transport_override or "http", "url": endpoint}
+            if transport_override:
+                # Explicit choice — record it verbatim.
+                server_cfg = {"type": transport_override, "url": endpoint}
+            else:
+                # Default (Streamable HTTP) — write a *bare* url (no type) so the
+                # transport stays "inferred". If the endpoint turns out to be a
+                # legacy SSE server, the connect-failure hint can then guide the
+                # user to add ``--sse`` (an explicit type suppresses that hint).
+                server_cfg = {"url": endpoint}
         elif transport_override:
             console.print(
                 f"\n[error]--{transport_override} applies to URL servers only; "

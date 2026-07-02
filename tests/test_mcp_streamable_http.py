@@ -248,7 +248,9 @@ def test_streamable_http_timeout_and_terminate_on_close():
     timeout = captured["client"]["timeout"]
     assert timeout.connect == 15.0
     assert timeout.read == 600.0
-    assert captured["http"]["terminate_on_close"] is True
+    # terminate_on_close is False: the teardown DELETE would otherwise reuse the
+    # long read timeout and could block disconnect/reconnect for that window.
+    assert captured["http"]["terminate_on_close"] is False
 
 
 def test_streamable_http_default_timeouts():
@@ -297,9 +299,60 @@ def test_hint_not_appended_on_non_mcp_endpoint_error():
     assert "looks like html" in (client.error_message or "")
 
 
+def test_hint_not_appended_on_auth_failure():
+    # A real Streamable HTTP server that 401s is not fixed by switching to SSE —
+    # the hint would send the user down a wrong path (Finding 5).
+    client, _ = _drive_connect(
+        {"url": "https://h/mcp"}, http_aenter_exc=RuntimeError("401 Unauthorized")
+    )
+    assert client.status == ServerStatus.ERROR
+    assert _HINT_MARKER not in (client.error_message or "")
+
+
 def test_bad_type_fails_closed_at_connect_no_hint_no_dispatch():
     client, captured = _drive_connect({"type": "bogus", "url": "https://h/mcp"})
     assert client.status == ServerStatus.ERROR
     assert "Unknown MCP transport" in (client.error_message or "")
     assert _HINT_MARKER not in (client.error_message or "")
     assert captured == {}  # resolve_transport raised before any factory ran
+
+
+# ---------------------------------------------------------------------------
+# CLI /mcp add flag parsing
+# ---------------------------------------------------------------------------
+
+def _cli_add(tmp_path, args):
+    from types import SimpleNamespace
+
+    from agentao.cli.commands.mcp import handle_mcp_command
+    from agentao.mcp.config import _load_json_file
+
+    cli = SimpleNamespace(agent=SimpleNamespace(working_directory=tmp_path))
+    handle_mcp_command(cli, args)
+    cfg = _load_json_file(tmp_path / ".agentao" / "mcp.json")
+    return cfg.get("mcpServers", {})
+
+
+def test_cli_add_bare_url_writes_no_type(tmp_path):
+    # Bare url stays "inferred" (no type) so the connect-failure SSE hint can
+    # fire if it turns out to be a legacy SSE endpoint (Finding 4).
+    servers = _cli_add(tmp_path, "add remote https://h/mcp")
+    assert servers["remote"] == {"url": "https://h/mcp"}
+
+
+def test_cli_add_flag_after_name(tmp_path):
+    # The transport flag is honored after the name, not only as the first token
+    # (Finding 2) — this must NOT become a stdio {command: "--http"} config.
+    servers = _cli_add(tmp_path, "add gh --http https://h/mcp")
+    assert servers["gh"] == {"type": "http", "url": "https://h/mcp"}
+
+
+def test_cli_add_flag_before_name(tmp_path):
+    servers = _cli_add(tmp_path, "add --sse legacy https://h/sse")
+    assert servers["legacy"] == {"type": "sse", "url": "https://h/sse"}
+
+
+def test_cli_add_stdio_unaffected(tmp_path):
+    servers = _cli_add(tmp_path, "add fs npx -y server")
+    assert servers["fs"]["command"] == "npx"
+    assert servers["fs"]["args"] == ["-y", "server"]

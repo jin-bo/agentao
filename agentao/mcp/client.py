@@ -232,7 +232,7 @@ class McpClient:
                 ) from None
 
             self.status = ServerStatus.CONNECTED
-            logger.info(f"MCP server '{self.name}' connected via {self.transport_type}, {len(self._tools)} tools")
+            logger.info(f"MCP server '{self.name}' connected via {transport}, {len(self._tools)} tools")
 
         except Exception as e:
             self.status = ServerStatus.ERROR
@@ -240,13 +240,15 @@ class McpClient:
             # A bare ``url`` now defaults to Streamable HTTP. If such an
             # *inferred* http connect fails the handshake, the server may
             # actually be a legacy SSE endpoint — surface the one-token fix.
-            # Skip it for an explicit ``type: "http"`` (SSE isn't the likely
-            # intent) and for a NonMcpEndpointError (its own verdict already
-            # says the URL isn't MCP at all — don't suggest SSE on top).
+            # Skip it for: an explicit ``type: "http"`` (SSE isn't the likely
+            # intent); a NonMcpEndpointError (its own verdict already says the
+            # URL isn't MCP at all); and an auth failure (switching to SSE
+            # won't fix a 401/403 — it would send the user down a wrong path).
             if (
                 transport == "http"
                 and source == "inferred"
                 and not isinstance(e, NonMcpEndpointError)
+                and classify_mcp_error(e) is not McpErrorKind.AUTH
             ):
                 message += (
                     "  (tried as Streamable HTTP — the default for a bare "
@@ -425,10 +427,19 @@ class McpClient:
         + the recommended defaults) so the semantics match the SSE path exactly.
 
         Two structural differences from SSE: the httpx client is caller-managed
-        (entered into the exit stack *before* the transport so teardown unwinds
-        transport-then-client, keeping the client open for the session-terminate
-        ``DELETE``), and ``streamable_http_client`` yields a **3-tuple** — the
-        third element is a ``get_session_id`` callback we don't surface in v1.
+        (entered into the exit stack *before* the transport so the LIFO unwind
+        tears the transport down before closing the client), and
+        ``streamable_http_client`` yields a **3-tuple** — the third element is a
+        ``get_session_id`` callback we don't surface in v1.
+
+        ``terminate_on_close=False``: the SDK's session-terminate ``DELETE``
+        would reuse this client, whose ``read`` timeout is raised to cover long
+        tool-call budgets (up to ``request``; ≥300 s by default). A server that
+        accepts the connection but stalls the ``DELETE`` would then block
+        ``disconnect()`` — and the transient-error *reconnect* path — for that
+        whole window. SSE and stdio issue no teardown request either, so
+        skipping it keeps the transports consistent; the server expires the idle
+        session on its own (the terminate ``DELETE`` is a spec SHOULD, not MUST).
         """
         import httpx
 
@@ -439,14 +450,14 @@ class McpClient:
             headers=headers or None,
             timeout=httpx.Timeout(startup_timeout, read=sse_read_timeout),
         )
-        # Caller-managed lifecycle: enter the client first so it outlives the
-        # transport's teardown DELETE, and closes after it (LIFO unwind).
+        # Caller-managed lifecycle: enter the client first so the LIFO unwind
+        # tears down the transport before closing the client.
         await self._exit_stack.enter_async_context(http_client)
         http_transport = await self._exit_stack.enter_async_context(
             streamable_http_client(
                 url,
                 http_client=http_client,
-                terminate_on_close=True,
+                terminate_on_close=False,  # see docstring — avoid teardown hang
             )
         )
         # ``streamable_http_client`` yields a 3-tuple; discard get_session_id.

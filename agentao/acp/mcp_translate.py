@@ -50,15 +50,15 @@ Validation policy
 
 The ACP entries that hit this function have already been *shape-checked*
 by :func:`agentao.acp.session_new._parse_mcp_servers`: each entry is a
-dict, ``name`` is a non-empty string, ``type`` is one of ``stdio | sse``,
-and the transport-specific fields (``command`` for stdio, ``url`` for
-sse) are present and have the right types. So this translator can assume
-well-formed input and focus on shape conversion. Anything truly weird
-that slips through (e.g. a duplicate server name, a missing ``env``
-value, or a stray ``type: "http"`` from a non-conformant client) is
-logged and the offending entry is dropped — we never raise from here,
-because Issue 11's "non-fatal MCP failures" criterion applies to
-translation as well as connection.
+dict, ``name`` is a non-empty string, ``type`` is one of
+``stdio | sse | http``, and the transport-specific fields (``command`` for
+stdio, ``url`` for sse/http) are present and have the right types. So this
+translator can assume well-formed input and focus on shape conversion.
+Anything truly weird that slips through (e.g. a duplicate server name, a
+missing ``env`` value, or a genuinely unknown ``type`` from a
+non-conformant client) is logged and the offending entry is dropped — we
+never raise from here, because Issue 11's "non-fatal MCP failures"
+criterion applies to translation as well as connection.
 
 Both URL transports (``sse`` and ``http``) are translated and stamp their
 explicit ``type`` into the produced config. The stamp is **mandatory**:

@@ -82,7 +82,7 @@ All commands start with `/`:
 - `/permission` - Show active permission rules
 - `/mcp [subcommand]` - Manage MCP servers
   - `/mcp` or `/mcp list` - List MCP servers with status and tools
-  - `/mcp add <name> <command|url>` - Add an MCP server
+  - `/mcp add [--http|--sse] <name> <command|url>` - Add an MCP server (a URL defaults to Streamable HTTP; `--sse` for legacy SSE)
   - `/mcp remove <name>` - Remove an MCP server
 - `/sandbox [subcommand]` - Control macOS sandbox-exec for shell commands (macOS only)
   - `/sandbox` or `/sandbox status` - Show current sandbox state
