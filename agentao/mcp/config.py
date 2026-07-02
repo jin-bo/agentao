@@ -14,14 +14,23 @@ _logger = logging.getLogger(__name__)
 McpServerConfig = Dict[str, Any]
 """
 Expected keys per server:
+  # Transport selector (optional) — see resolve_transport()
+  type: str              — "stdio" | "sse" | "http" (aliases:
+                           "streamable-http" / "streamable_http" →
+                           "http"). When omitted, the transport is
+                           inferred: 'command' → stdio, 'url' → http
+                           (Streamable HTTP is the default for a bare
+                           'url'; set type "sse" for the legacy SSE
+                           transport).
+
   # Stdio transport
   command: str           — executable to spawn
   args: list[str]        — command-line arguments
   env: dict[str,str]     — extra env vars (supports $VAR / ${VAR})
   cwd: str               — working directory
 
-  # SSE transport
-  url: str               — SSE endpoint URL
+  # Streamable HTTP transport (default for a URL server) / SSE transport
+  url: str               — endpoint URL
   headers: dict[str,str] — HTTP headers
 
   # Common
@@ -30,6 +39,35 @@ Expected keys per server:
                            to also bound each tool call after init.
   trust: bool            — skip confirmation if True
 """
+
+
+class McpTransportConfigError(ValueError):
+    """A server config selects an unusable transport.
+
+    Raised by :func:`resolve_transport` when an explicit ``type`` is not one
+    of the known transports, or when the transport a config resolves to is
+    missing its required key (``command`` for stdio; ``url`` for sse/http).
+
+    It is a :class:`ValueError` subclass so it flows through the same
+    ``connect()`` failure path as the legacy "No transport configured" error,
+    and — unlike a timeout-coercion fallback — it **fails closed**: a typo in
+    ``type`` must never silently resolve to the wrong protocol.
+    """
+
+
+#: Transports the client can dispatch. ``unknown`` is a sentinel for
+#: "no ``type`` and no ``command``/``url``", turned into the legacy
+#: "No transport configured" error by ``connect()``.
+_KNOWN_TRANSPORTS = ("stdio", "sse", "http")
+
+#: Case-insensitive aliases folded onto a canonical transport. Only the
+#: unambiguous Streamable-HTTP spellings are accepted; a bare "streamable"
+#: (or any other value) fails closed via :class:`McpTransportConfigError`.
+_TRANSPORT_ALIASES = {
+    "streamable-http": "http",
+    "streamable_http": "http",
+    "streamablehttp": "http",
+}
 
 _ENV_VAR_RE = re.compile(r"\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
 
@@ -90,9 +128,10 @@ def resolve_timeouts(config: McpServerConfig) -> tuple[float, Optional[float]]:
     ``timeout`` accepts two forms:
 
     * an ``int`` / ``float`` — the legacy form. Bounds the *connection /
-      startup* phase (it is handed to the SSE transport and bounds the
-      ``initialize()`` / ``list_tools()`` handshake); per-request tool calls
-      stay unbounded (the MCP SDK default). Fully backward compatible.
+      startup* phase (it is handed to the URL transport — SSE or Streamable
+      HTTP — and bounds the ``initialize()`` / ``list_tools()`` handshake);
+      per-request tool calls stay unbounded (the MCP SDK default). Fully
+      backward compatible.
     * an object ``{"startup": int, "request": int}`` — both keys optional.
       ``startup`` bounds connection/initialization (default 60 s);
       ``request`` bounds each tool call *after* init (``None`` = unbounded).
@@ -122,6 +161,73 @@ def resolve_timeouts(config: McpServerConfig) -> tuple[float, Optional[float]]:
         # Absent (or explicit null) → default startup, unbounded request.
         return _DEFAULT_STARTUP_TIMEOUT, None
     return _coerce_timeout(raw, _DEFAULT_STARTUP_TIMEOUT, "timeout"), None
+
+
+def resolve_transport(config: McpServerConfig, *, return_source: bool = False):
+    """Resolve a server config to its transport, **failing closed**.
+
+    Returns one of ``"stdio"``, ``"sse"``, ``"http"``, or ``"unknown"`` (the
+    last only when there is neither an explicit ``type`` nor a
+    ``command``/``url`` to infer from — ``connect()`` turns that into the
+    legacy "No transport configured" error).
+
+    Resolution:
+
+    1. **Explicit ``type``** — lowercased and alias-folded
+       (``streamable-http`` / ``streamable_http`` / ``streamablehttp`` →
+       ``http``). Anything outside :data:`_KNOWN_TRANSPORTS` raises
+       :class:`McpTransportConfigError`.
+    2. **No ``type``** — inferred: ``command`` → ``stdio``; else ``url`` →
+       ``http`` (Streamable HTTP is the default for a bare ``url``; set
+       ``type: "sse"`` for legacy SSE); else ``"unknown"``.
+    3. **Required-key check** — a concrete transport must carry its key
+       (``stdio`` → ``command``; ``sse``/``http`` → ``url``). A mismatch
+       (e.g. ``{"type": "http", "command": ...}`` with no ``url``) raises
+       :class:`McpTransportConfigError` rather than deferring to a downstream
+       ``KeyError`` in the ``_connect_*`` methods.
+
+    Unlike :func:`resolve_timeouts` (which warns and falls back to a *safe*
+    default), transport selection fails closed: a bad ``type`` would otherwise
+    silently connect to the wrong protocol under the Streamable-HTTP default.
+
+    With ``return_source=True`` returns ``(transport, source)`` where
+    ``source`` is ``"explicit"`` (``type`` was set) or ``"inferred"``. Callers
+    use it to scope the bare-``url``-defaulted-to-http connect hint.
+    """
+    raw_type = config.get("type")
+    if raw_type is not None:
+        if not isinstance(raw_type, str):
+            raise McpTransportConfigError(
+                f"MCP 'type' must be a string, got {type(raw_type).__name__} "
+                f"({raw_type!r}); expected one of {', '.join(_KNOWN_TRANSPORTS)}."
+            )
+        normalized = raw_type.strip().lower()
+        transport = _TRANSPORT_ALIASES.get(normalized, normalized)
+        if transport not in _KNOWN_TRANSPORTS:
+            raise McpTransportConfigError(
+                f"Unknown MCP transport type {raw_type!r}; expected one of "
+                f"{', '.join(_KNOWN_TRANSPORTS)} "
+                f"(aliases: streamable-http / streamable_http → http)."
+            )
+        source = "explicit"
+    elif config.get("command"):
+        transport, source = "stdio", "inferred"
+    elif config.get("url"):
+        transport, source = "http", "inferred"
+    else:
+        transport, source = "unknown", "inferred"
+
+    # Required-key validation for concrete transports (fail closed, not KeyError).
+    if transport == "stdio" and not config.get("command"):
+        raise McpTransportConfigError(
+            "MCP transport 'stdio' requires a 'command' field."
+        )
+    if transport in ("sse", "http") and not config.get("url"):
+        raise McpTransportConfigError(
+            f"MCP transport {transport!r} requires a 'url' field."
+        )
+
+    return (transport, source) if return_source else transport
 
 
 def expand_env_vars(value: str) -> str:

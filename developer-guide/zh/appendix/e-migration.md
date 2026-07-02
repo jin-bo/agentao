@@ -12,7 +12,7 @@
 | 记忆 | `ConversationBufferMemory` / 向量库 | agent 上的 `memory` | agent 上的 `memory` | `MemoryManager`（SQLite，项目+用户） |
 | 流式 | callback / LCEL `astream` | `register_hook` | event hook | `Transport` + `AgentEvent` |
 | 工具审批 | 用 `interrupt` 的 HITL | `a_human_input_mode` | `human_input=True` | `Transport.confirm_tool` |
-| 外部模型上下文 | MCP 适配器 | function calling | 无 | 一等 MCP（stdio + SSE） |
+| 外部模型上下文 | MCP 适配器 | function calling | 无 | 一等 MCP（stdio + Streamable HTTP + SSE） |
 | 宿主进程隔离 | 无（进程内） | 无（进程内） | 无（进程内） | **ACP**（子进程） |
 
 ## E.2 从 LangChain 迁移

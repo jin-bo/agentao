@@ -37,8 +37,8 @@ Handshake. MUST be first call.
 | `promptCapabilities.image` | `true` | 0.4.8+: inline `{data, mimeType}` image blocks; non-vision degradation — see [A.1](/en/appendix/a-api-reference#image-input-and-vision-degradation) |
 | `promptCapabilities.audio` | `false` | |
 | `promptCapabilities.embeddedContext` | `false` | |
-| `mcpCapabilities.sse` | `true` | SSE MCP transport usable |
-| `mcpCapabilities.http` | `false` | HTTP MCP transport NOT supported |
+| `mcpCapabilities.sse` | `true` | SSE MCP transport usable (legacy) |
+| `mcpCapabilities.http` | `true` | HTTP (Streamable HTTP) MCP transport usable |
 
 ## C.2 `session/new`
 
@@ -56,7 +56,7 @@ Create a fresh session.
 | Field | Type | Notes |
 |-------|------|-------|
 | `name` | `string` | Non-empty |
-| `type` | `"stdio"` / `"http"` / `"sse"` | `http` advertised by some clients but rejected by agent per `mcpCapabilities` |
+| `type` | `"stdio"` / `"http"` / `"sse"` | All three accepted; a bare `url` (no `type`) defaults to Streamable HTTP (`http`) |
 | `command` | `string` | stdio only |
 | `args` | `[string]` | stdio only |
 | `env` | `[{name, value}]` | stdio only — note **list of name/value objects**, not a map |

@@ -32,7 +32,7 @@
       "trust": false
     },
     "remote": {
-      "url": "https://api.example.com/sse",
+      "url": "https://api.example.com/mcp",
       "headers": { "Authorization": "Bearer $API_KEY" },
       "timeout": 30
     }
@@ -40,12 +40,15 @@
 }
 ```
 
-两种 transport：
+三种 transport：
 
 | Transport | 触发条件 | 跑的是什么 |
 |---|---|---|
-| `command` | 配置里有 `"command": "..."` | 本地子进程，stdio JSON-RPC |
-| `url` | 配置里有 `"url": "..."` | 远端 SSE 端点 |
+| stdio | 配置里有 `"command": "..."` | 本地子进程，stdio JSON-RPC |
+| Streamable HTTP | 配置里有 `"url": "..."`（默认），或 `"type": "http"` | 远端 Streamable HTTP 端点 |
+| SSE（legacy） | `"type": "sse"` + `"url"` | 远端 SSE 端点 |
+
+裸 `url` 现在默认走 **Streamable HTTP**——旧版 SSE 端点需加 `"type": "sse"`。（破坏性变更；见 [MCP 深入章节](/zh/part-5/3-mcp)。）
 
 配置里的 env vars 用 `$VAR_NAME` 写法，加载时从你的 shell 环境 / `.env` 展开。
 
@@ -57,7 +60,7 @@
 > /mcp                                  # /mcp list 的别名
 > /mcp list                             # 列出所有配置的服务器
 > /mcp add github npx -y @modelcontextprotocol/server-github
-> /mcp add remote https://api.example.com/sse
+> /mcp add remote https://api.example.com/mcp
 > /mcp remove github
 ```
 

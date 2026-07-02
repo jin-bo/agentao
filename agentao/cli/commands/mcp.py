@@ -39,24 +39,53 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
         console.print()
 
     elif sub == "add":
-        add_parts = sub_args.split(None, 1) if sub_args else []
-        if len(add_parts) < 2:
-            console.print("\n[error]Usage: /mcp add <name> <command|url> [args...][/error]")
+        tokens = sub_args.split() if sub_args else []
+
+        # Optional transport flag for URL servers, accepted either before or
+        # after the name (``--http remote <url>`` or ``remote --http <url>``);
+        # both orderings are common. Default for a bare URL is Streamable HTTP.
+        transport_override = None
+        for idx in (0, 1):
+            if idx < len(tokens) and tokens[idx] in ("--sse", "--http"):
+                transport_override = tokens[idx][2:]  # "sse" | "http"
+                tokens = tokens[:idx] + tokens[idx + 1:]
+                break
+
+        def _add_usage() -> None:
+            console.print("\n[error]Usage: /mcp add [--http|--sse] <name> <command|url> [args...][/error]")
             console.print("[info]Examples:[/info]")
             console.print("  /mcp add github npx -y @modelcontextprotocol/server-github")
-            console.print("  /mcp add remote https://api.example.com/sse\n")
+            console.print("  /mcp add remote https://api.example.com/mcp        [dim]# Streamable HTTP (default)[/dim]")
+            console.print("  /mcp add --sse legacy https://api.example.com/sse  [dim]# legacy SSE[/dim]\n")
+
+        if len(tokens) < 2:
+            _add_usage()
             return
 
-        name = add_parts[0]
-        endpoint = add_parts[1]
+        name = tokens[0]
+        endpoint = tokens[1]
+        extra_args = tokens[2:]
 
         if endpoint.startswith("http://") or endpoint.startswith("https://"):
-            server_cfg = {"url": endpoint}
+            if transport_override:
+                # Explicit choice — record it verbatim.
+                server_cfg = {"type": transport_override, "url": endpoint}
+            else:
+                # Default (Streamable HTTP) — write a *bare* url (no type) so the
+                # transport stays "inferred". If the endpoint turns out to be a
+                # legacy SSE server, the connect-failure hint can then guide the
+                # user to add ``--sse`` (an explicit type suppresses that hint).
+                server_cfg = {"url": endpoint}
+        elif transport_override:
+            console.print(
+                f"\n[error]--{transport_override} applies to URL servers only; "
+                f"'{endpoint}' is not an http(s) URL.[/error]\n"
+            )
+            return
         else:
-            cmd_parts = endpoint.split()
-            server_cfg = {"command": cmd_parts[0]}
-            if len(cmd_parts) > 1:
-                server_cfg["args"] = cmd_parts[1:]
+            server_cfg = {"command": endpoint}
+            if extra_args:
+                server_cfg["args"] = extra_args
 
         project_dir = cli.agent.working_directory / ".agentao"
         project_path = project_dir / "mcp.json"

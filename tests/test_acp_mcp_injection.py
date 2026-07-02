@@ -160,47 +160,60 @@ class TestTranslateSseServers:
         assert result == {}
 
 
-class TestTranslateRejectsHttp:
-    """``type: "http"`` must be dropped because McpClient has no http transport.
+class TestTranslateHttp:
+    """``type: "http"`` (Streamable HTTP) is translated and stamps its type.
 
-    Direct callers (bypassing ``_parse_mcp_servers``) reach the translator
-    with ``type: "http"`` — the defensive branch logs a warning and skips
-    the entry rather than collapsing it into an SSE config that would
-    later fail when ``sse_client`` tries to open the URL.
+    McpClient now dispatches http via ``streamable_http_client``, so the
+    translator produces a URL config carrying ``type: "http"`` — the stamp is
+    mandatory because a bare ``{"url": ...}`` would be read by the native
+    resolver as the http default anyway, and an ``sse`` entry needs its own
+    ``type: "sse"`` stamp to not be misread. A *genuinely* unknown type still
+    drops via the defensive branch.
     """
 
-    def test_http_entry_is_dropped_with_warning(self, caplog):
-        import logging as _logging
-        with caplog.at_level(_logging.WARNING, logger="agentao.acp.mcp_translate"):
-            result = translate_acp_mcp_servers(
-                [
-                    {
-                        "type": "http",
-                        "name": "remote",
-                        "url": "https://api.example.com/mcp",
-                        "headers": [
-                            {"name": "Authorization", "value": "Bearer abc"}
-                        ],
-                    }
-                ]
-            )
-        assert result == {}  # http is unsupported → dropped
-        assert any(
-            "unsupported transport type" in r.message and "'http'" in r.message
-            for r in caplog.records
-        )
-
-    def test_http_does_not_pollute_other_entries(self):
+    def test_http_entry_is_translated_with_type_stamp(self):
         result = translate_acp_mcp_servers(
             [
-                {"type": "http", "name": "bad", "url": "https://x"},
-                {"type": "sse", "name": "good", "url": "https://x/sse"},
+                {
+                    "type": "http",
+                    "name": "remote",
+                    "url": "https://api.example.com/mcp",
+                    "headers": [{"name": "Authorization", "value": "Bearer abc"}],
+                }
+            ]
+        )
+        assert result == {
+            "remote": {
+                "url": "https://api.example.com/mcp",
+                "type": "http",
+                "headers": {"Authorization": "Bearer abc"},
+                "trust": False,
+            }
+        }
+
+    def test_http_sse_stdio_coexist_with_correct_types(self):
+        result = translate_acp_mcp_servers(
+            [
+                {"type": "http", "name": "h", "url": "https://x/mcp"},
+                {"type": "sse", "name": "s", "url": "https://x/sse"},
                 {"name": "stdio_one", "command": "echo", "args": []},
             ]
         )
-        assert "bad" not in result
-        assert "good" in result
-        assert "stdio_one" in result
+        assert result["h"] == {"url": "https://x/mcp", "type": "http", "trust": False}
+        assert result["s"] == {"url": "https://x/sse", "type": "sse", "trust": False}
+        assert result["stdio_one"]["command"] == "echo"
+
+    def test_genuinely_unknown_type_is_dropped_with_warning(self, caplog):
+        import logging as _logging
+        with caplog.at_level(_logging.WARNING, logger="agentao.acp.mcp_translate"):
+            result = translate_acp_mcp_servers(
+                [{"type": "websocket", "name": "ws", "url": "wss://x"}]
+            )
+        assert result == {}  # unknown transport → dropped
+        assert any(
+            "unsupported transport type" in r.message and "'websocket'" in r.message
+            for r in caplog.records
+        )
 
 
 class TestTranslateMixedAndEdgeCases:
@@ -434,7 +447,36 @@ class TestSessionNewMcpInjection:
             agent_factory=factory,
         )
         passed = factory.calls[0]["mcp_servers"]
-        assert passed == {"remote": {"url": "https://x/sse", "trust": False}}
+        # The translator stamps the explicit transport for URL servers so a
+        # bare url is not read back as the native http default.
+        assert passed == {
+            "remote": {"url": "https://x/sse", "type": "sse", "trust": False}
+        }
+
+
+def test_session_new_translates_http_mcp_server(initialized_server, tmp_path):
+    """A ``type: "http"`` ACP entry translates to a Streamable HTTP config,
+    stamping ``type: "http"`` so the native resolver dispatches it correctly.
+    """
+    factory = CapturingFactory()
+    acp_session_new.handle_session_new(
+        initialized_server,
+        {
+            "cwd": str(tmp_path),
+            "mcpServers": [
+                {
+                    "type": "http",
+                    "name": "remote",
+                    "url": "https://x/mcp",
+                }
+            ],
+        },
+        agent_factory=factory,
+    )
+    passed = factory.calls[0]["mcp_servers"]
+    assert passed == {
+        "remote": {"url": "https://x/mcp", "type": "http", "trust": False}
+    }
 
 
 # ===========================================================================

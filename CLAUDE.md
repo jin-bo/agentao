@@ -179,7 +179,7 @@ External MCP servers via `.agentao/mcp.json` (project) + `<home>/.agentao/mcp.js
       "trust": false
     },
     "remote-server": {
-      "url": "https://api.example.com/sse",
+      "url": "https://api.example.com/mcp",
       "headers": { "Authorization": "Bearer $API_KEY" },
       "timeout": 30
     }
@@ -187,11 +187,11 @@ External MCP servers via `.agentao/mcp.json` (project) + `<home>/.agentao/mcp.js
 }
 ```
 
-Transports: `command` (stdio subprocess) or `url` (SSE). Tools are registered as `mcp_{server}_{tool}`. The MCP SDK is async-only; `McpClientManager` runs a dedicated event loop and bridges into sync Agentao via `run_until_complete()`.
+Transports (`mcp/config.py :: resolve_transport`, fail-closed): `command` → stdio, or `url` → **Streamable HTTP by default** (add `"type": "sse"` for the legacy SSE transport; `"type": "http"` is the explicit form). A bare `url` used to mean SSE — this is a **breaking change**. Tools are registered as `mcp_{server}_{tool}`. The MCP SDK is async-only; `McpClientManager` runs a dedicated event loop and bridges into sync Agentao via `run_until_complete()`.
 
 Key files: `agentao/mcp/config.py`, `client.py`, `tool.py`.
 
-CLI: `/mcp list`, `/mcp add <name> <command|url>`, `/mcp remove <name>`.
+CLI: `/mcp list`, `/mcp add [--http|--sse] <name> <command|url>`, `/mcp remove <name>`.
 
 ### Logging
 

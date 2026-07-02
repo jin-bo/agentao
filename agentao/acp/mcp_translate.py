@@ -50,23 +50,24 @@ Validation policy
 
 The ACP entries that hit this function have already been *shape-checked*
 by :func:`agentao.acp.session_new._parse_mcp_servers`: each entry is a
-dict, ``name`` is a non-empty string, ``type`` is one of ``stdio | sse``,
-and the transport-specific fields (``command`` for stdio, ``url`` for
-sse) are present and have the right types. So this translator can assume
-well-formed input and focus on shape conversion. Anything truly weird
-that slips through (e.g. a duplicate server name, a missing ``env``
-value, or a stray ``type: "http"`` from a non-conformant client) is
-logged and the offending entry is dropped — we never raise from here,
-because Issue 11's "non-fatal MCP failures" criterion applies to
-translation as well as connection.
+dict, ``name`` is a non-empty string, ``type`` is one of
+``stdio | sse | http``, and the transport-specific fields (``command`` for
+stdio, ``url`` for sse/http) are present and have the right types. So this
+translator can assume well-formed input and focus on shape conversion.
+Anything truly weird that slips through (e.g. a duplicate server name, a
+missing ``env`` value, or a genuinely unknown ``type`` from a
+non-conformant client) is logged and the offending entry is dropped — we
+never raise from here, because Issue 11's "non-fatal MCP failures"
+criterion applies to translation as well as connection.
 
-``type: "http"`` is intentionally NOT translated. ``McpClient``
-distinguishes transports only by ``command`` vs ``url`` and always
-opens URL servers via ``sse_client``, so a translated http entry would
-silently fail to connect at first tool call. The agent advertises
-``mcpCapabilities.http: false`` and the parser rejects ``http`` with
-``INVALID_PARAMS``; this defensive branch only fires if a caller bypasses
-the parser.
+Both URL transports (``sse`` and ``http``) are translated and stamp their
+explicit ``type`` into the produced config. The stamp is **mandatory**:
+Agentao's native config now defaults a bare ``url`` to Streamable HTTP, so a
+translated ``sse`` entry that produced a bare ``{"url": ...}`` would be read
+back as ``http`` and connect to the wrong transport. Stamping ``type`` keeps
+the translation correct regardless of the native default. Only a genuinely
+unknown ``type`` (which the parser already rejects with ``INVALID_PARAMS``)
+falls through to the defensive drop branch.
 """
 
 from __future__ import annotations
@@ -214,15 +215,19 @@ def translate_acp_mcp_servers(
             if env:
                 cfg["env"] = env
 
-        elif transport_type == "sse":
+        elif transport_type in ("sse", "http"):
             url = entry.get("url")
             if not isinstance(url, str) or not url:
                 logger.warning(
-                    "acp: mcp sse server %r missing 'url'; skipping",
+                    "acp: mcp %s server %r missing 'url'; skipping",
+                    transport_type,
                     name,
                 )
                 continue
-            cfg = {"url": url}
+            # Stamp the explicit transport — both ways. A bare ``{"url": ...}``
+            # would be read by the native resolver as ``http`` (the default),
+            # so an ``sse`` entry must carry ``type: "sse"`` too.
+            cfg = {"url": url, "type": transport_type}
             headers = _name_value_list_to_dict(
                 entry.get("headers"), server_name=name, field="headers"
             )
@@ -230,14 +235,12 @@ def translate_acp_mcp_servers(
                 cfg["headers"] = headers
 
         else:
-            # ``http`` falls into this branch because it is NOT in the
-            # accepted set above. McpClient cannot dispatch http (only
-            # stdio + sse), and accepting it would silently route through
-            # ``sse_client`` and fail at runtime. The parser rejects http
-            # earlier with INVALID_PARAMS; this is the defensive backstop.
+            # Only a genuinely unknown ``type`` reaches here — the parser
+            # already rejects it with INVALID_PARAMS; this is the defensive
+            # backstop for a caller that bypasses the parser.
             logger.warning(
                 "acp: mcp server %r has unsupported transport type %r; "
-                "skipping (only 'stdio' and 'sse' are supported)",
+                "skipping (only 'stdio', 'sse' and 'http' are supported)",
                 name,
                 transport_type,
             )

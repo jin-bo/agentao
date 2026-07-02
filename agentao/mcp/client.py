@@ -12,9 +12,18 @@ from typing import Any, Dict, List, Optional, Tuple
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import (
+    create_mcp_http_client,
+    streamable_http_client,
+)
 from mcp.types import Tool as McpToolDef
 
-from .config import McpServerConfig, resolve_timeouts
+from .config import (
+    McpServerConfig,
+    McpTransportConfigError,
+    resolve_timeouts,
+    resolve_transport,
+)
 
 logger = logging.getLogger("agentao.mcp")
 
@@ -151,11 +160,13 @@ class McpClient:
 
     @property
     def transport_type(self) -> str:
-        if self.config.get("command"):
-            return "stdio"
-        if self.config.get("url"):
-            return "sse"
-        return "unknown"
+        # Display-only (status, /mcp list) — must never raise. A fail-closed
+        # config error (bad ``type`` / missing key) surfaces as "unknown"
+        # here; the actionable message rides ``error_message`` from connect().
+        try:
+            return resolve_transport(self.config)
+        except McpTransportConfigError:
+            return "unknown"
 
     @property
     def tools(self) -> List[McpToolDef]:
@@ -172,20 +183,35 @@ class McpClient:
 
         # Resolve once and thread down (avoids a second parse — and a second
         # malformed-config warning — inside ``_connect_sse``). ``startup``
-        # bounds the whole connect: the SSE HTTP open (via ``sse_client(
-        # timeout=)``) AND the post-transport handshake below.
+        # bounds the whole connect: the URL-transport HTTP open (via
+        # ``sse_client`` / ``streamable_http_client``) AND the post-transport
+        # handshake below.
         startup_timeout, request_timeout = resolve_timeouts(self.config)
 
+        # Pre-init so the ``except`` can reference them even if
+        # ``resolve_transport`` itself raises a config error (in which case the
+        # inferred-http hint below must NOT fire — it's a config error, not a
+        # handshake failure).
+        transport = "unknown"
+        source = "inferred"
+
         try:
+            transport, source = resolve_transport(self.config, return_source=True)
+
             self._exit_stack = AsyncExitStack()
             await self._exit_stack.__aenter__()
 
-            if self.config.get("command"):
+            if transport == "stdio":
                 await self._connect_stdio()
-            elif self.config.get("url"):
+            elif transport == "sse":
                 await self._connect_sse(startup_timeout, request_timeout)
-            else:
-                raise ValueError(f"No transport configured for server '{self.name}' (need 'command' or 'url')")
+            elif transport == "http":
+                await self._connect_streamable_http(startup_timeout, request_timeout)
+            else:  # "unknown" — no type and no command/url
+                raise ValueError(
+                    f"No transport configured for server '{self.name}' "
+                    f"(need 'command', or 'url' with type 'sse'/'http')"
+                )
 
             # Bound the initialize()/list_tools() handshake so a server that
             # opens the stream (or spawns) but never answers can't hang connect
@@ -206,12 +232,31 @@ class McpClient:
                 ) from None
 
             self.status = ServerStatus.CONNECTED
-            logger.info(f"MCP server '{self.name}' connected via {self.transport_type}, {len(self._tools)} tools")
+            logger.info(f"MCP server '{self.name}' connected via {transport}, {len(self._tools)} tools")
 
         except Exception as e:
             self.status = ServerStatus.ERROR
-            self.error_message = str(e)
-            logger.error(f"Failed to connect to MCP server '{self.name}': {e}")
+            message = str(e)
+            # A bare ``url`` now defaults to Streamable HTTP. If such an
+            # *inferred* http connect fails the handshake, the server may
+            # actually be a legacy SSE endpoint — surface the one-token fix.
+            # Skip it for: an explicit ``type: "http"`` (SSE isn't the likely
+            # intent); a NonMcpEndpointError (its own verdict already says the
+            # URL isn't MCP at all); and an auth failure (switching to SSE
+            # won't fix a 401/403 — it would send the user down a wrong path).
+            if (
+                transport == "http"
+                and source == "inferred"
+                and not isinstance(e, NonMcpEndpointError)
+                and classify_mcp_error(e) is not McpErrorKind.AUTH
+            ):
+                message += (
+                    "  (tried as Streamable HTTP — the default for a bare "
+                    "'url'; if this is a legacy SSE endpoint, set "
+                    '"type": "sse".)'
+                )
+            self.error_message = message
+            logger.error(f"Failed to connect to MCP server '{self.name}': {message}")
             # Cleanup on failure
             if self._exit_stack:
                 try:
@@ -315,30 +360,44 @@ class McpClient:
             "https://host/)."
         )
 
-    async def _connect_sse(self, startup_timeout: float, request_timeout: Optional[float]) -> None:
-        """Establish SSE transport.
+    async def _prepare_url_connect(
+        self, startup_timeout: float, request_timeout: Optional[float]
+    ) -> Tuple[str, Dict[str, str], float]:
+        """Shared preamble for the URL transports (SSE + Streamable HTTP).
 
-        ``startup_timeout`` / ``request_timeout`` are pre-resolved by
-        :meth:`connect` (see :func:`resolve_timeouts`).
+        Reads ``url`` / ``headers``, computes the ``sse_read_timeout``, and runs
+        the content-type preflight. Returns ``(url, headers, sse_read_timeout)``.
+        The required ``url`` key is guaranteed present by
+        :func:`resolve_transport` (called in :meth:`connect` before dispatch).
+
+        ``sse_read_timeout`` is the max silence between server events before the
+        stream drops; the SDK default (300 s) would otherwise cap any per-request
+        budget at ~300 s, so raise it to cover a larger ``request`` (never lower
+        it — see :data:`_DEFAULT_SSE_READ_TIMEOUT`). The per-request deadline
+        itself is applied in ``call_tool`` via ``read_timeout_seconds``.
         """
         url = self.config["url"]
         headers = self.config.get("headers", {})
-        # ``startup`` bounds the HTTP connection open. ``sse_read_timeout`` is
-        # the max silence between SSE events before the stream drops; the SDK
-        # default (300 s) would otherwise cap any per-request budget at ~300 s,
-        # so raise it to cover a larger ``request`` (never lower it — see
-        # _DEFAULT_SSE_READ_TIMEOUT). The per-request deadline itself is applied
-        # in ``call_tool`` via ``read_timeout_seconds``.
         sse_read_timeout = (
             request_timeout
             if request_timeout is not None and request_timeout > _DEFAULT_SSE_READ_TIMEOUT
             else _DEFAULT_SSE_READ_TIMEOUT
         )
-
         # Fail fast on a URL that points at a web page rather than an MCP
         # endpoint, instead of waiting out the full startup timeout.
         await self._preflight_content_type(url, headers)
+        return url, headers, sse_read_timeout
 
+    async def _connect_sse(self, startup_timeout: float, request_timeout: Optional[float]) -> None:
+        """Establish the legacy SSE transport (``type: "sse"``).
+
+        ``startup_timeout`` / ``request_timeout`` are pre-resolved by
+        :meth:`connect` (see :func:`resolve_timeouts`); ``startup`` bounds the
+        HTTP connection open.
+        """
+        url, headers, sse_read_timeout = await self._prepare_url_connect(
+            startup_timeout, request_timeout
+        )
         sse_transport = await self._exit_stack.enter_async_context(
             sse_client(
                 url,
@@ -347,7 +406,62 @@ class McpClient:
                 sse_read_timeout=sse_read_timeout,
             )
         )
+        # ``sse_client`` yields a 2-tuple.
         read_stream, write_stream = sse_transport
+        self._session = await self._exit_stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
+
+    async def _connect_streamable_http(
+        self, startup_timeout: float, request_timeout: Optional[float]
+    ) -> None:
+        """Establish the Streamable HTTP transport (``type: "http"``; the
+        default for a bare ``url``).
+
+        Mirrors :meth:`_connect_sse` — same preflight and timeout policy
+        (``startup`` bounds the HTTP open; ``sse_read_timeout`` bounds the max
+        silence on the long-poll stream) — but the SDK factory is the canonical
+        ``streamable_http_client``, which takes a pre-built httpx client rather
+        than ``headers`` / ``timeout`` kwargs. We build one with
+        ``create_mcp_http_client`` (the SDK's own factory: ``follow_redirects``
+        + the recommended defaults) so the semantics match the SSE path exactly.
+
+        Two structural differences from SSE: the httpx client is caller-managed
+        (entered into the exit stack *before* the transport so the LIFO unwind
+        tears the transport down before closing the client), and
+        ``streamable_http_client`` yields a **3-tuple** — the third element is a
+        ``get_session_id`` callback we don't surface in v1.
+
+        ``terminate_on_close=False``: the SDK's session-terminate ``DELETE``
+        would reuse this client, whose ``read`` timeout is raised to cover long
+        tool-call budgets (up to ``request``; ≥300 s by default). A server that
+        accepts the connection but stalls the ``DELETE`` would then block
+        ``disconnect()`` — and the transient-error *reconnect* path — for that
+        whole window. SSE and stdio issue no teardown request either, so
+        skipping it keeps the transports consistent; the server expires the idle
+        session on its own (the terminate ``DELETE`` is a spec SHOULD, not MUST).
+        """
+        import httpx
+
+        url, headers, sse_read_timeout = await self._prepare_url_connect(
+            startup_timeout, request_timeout
+        )
+        http_client = create_mcp_http_client(
+            headers=headers or None,
+            timeout=httpx.Timeout(startup_timeout, read=sse_read_timeout),
+        )
+        # Caller-managed lifecycle: enter the client first so the LIFO unwind
+        # tears down the transport before closing the client.
+        await self._exit_stack.enter_async_context(http_client)
+        http_transport = await self._exit_stack.enter_async_context(
+            streamable_http_client(
+                url,
+                http_client=http_client,
+                terminate_on_close=False,  # see docstring — avoid teardown hang
+            )
+        )
+        # ``streamable_http_client`` yields a 3-tuple; discard get_session_id.
+        read_stream, write_stream, _get_session_id = http_transport
         self._session = await self._exit_stack.enter_async_context(
             ClientSession(read_stream, write_stream)
         )

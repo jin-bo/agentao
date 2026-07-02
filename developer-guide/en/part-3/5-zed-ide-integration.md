@@ -78,7 +78,7 @@ Agentao advertises the following in `initialize`:
   "agentCapabilities": {
     "loadSession": true,
     "promptCapabilities": { "image": true, "audio": false, "embeddedContext": false },
-    "mcpCapabilities":   { "http": false, "sse": true }
+    "mcpCapabilities":   { "http": true, "sse": true }
   }
 }
 ```
@@ -89,8 +89,8 @@ Meaning for Zed:
 - ✅ `image` (0.4.8+): inline `{data, mimeType}` image blocks in prompts; non-vision models degrade to text tags — see [A.1](/en/appendix/a-api-reference#image-input-and-vision-degradation)
 - ❌ `audio`: not supported
 - ❌ `embeddedContext`: Zed can't push embedded resource fetches
-- ✅ `sse`: Zed can forward SSE MCP servers
-- ❌ `http`: Agentao doesn't support HTTP MCP transport
+- ✅ `http`: Zed can forward Streamable HTTP MCP servers
+- ✅ `sse`: Zed can forward SSE MCP servers (legacy)
 
 Zed falls back gracefully on unsupported capabilities.
 
@@ -151,7 +151,7 @@ When things go wrong in the IDE:
 | Agent crashes on first message | `<workspace>/agentao.log` |
 | Tool call hangs forever | IDE is probably not responding to `session/request_permission` — look at its permission UI code |
 | All text comes as one big blob at end | IDE isn't treating `session/update` as streamed; check its UI rendering |
-| MCP server doesn't show up | `mcpCapabilities.http` is false — use stdio or SSE only |
+| MCP server doesn't show up | `mcpCapabilities.http` is true — stdio, Streamable HTTP, or SSE all work; check the entry's `type`/`url`/`command` |
 | Conversation disappears after restart | IDE isn't calling `session/load` — feature may not be implemented yet |
 
 Capture the wire trace by launching Agentao manually and piping JSON in:

@@ -22,8 +22,9 @@ Capability advertisement policy:
   renders ACP image blocks into the multimodal turn); ``audio`` and
   ``embeddedContext`` remain False.
 - ``mcpCapabilities``: reflects actual Agentao MCP support. Agentao's MCP
-  client imports ``stdio_client`` and ``sse_client`` from the mcp SDK but
-  not ``streamable_http_client``, so ``sse: True`` and ``http: False``.
+  client imports ``stdio_client``, ``sse_client`` and
+  ``streamable_http_client`` from the mcp SDK, so both ``sse: True`` and
+  ``http: True``.
 - ``authMethods``: Agentao performs no ACP-level auth in v1, so an empty
   list. Agentao's own API credentials (OPENAI_API_KEY, etc.) are handled
   out of band via environment variables; they are not ACP auth methods.
@@ -70,10 +71,10 @@ AGENT_CAPABILITIES: Dict[str, Any] = {
     # passes ``mcpServers`` in ``session/new``. Reflects the actual imports
     # in ``agentao/mcp/client.py``:
     #   - ``sse_client`` → sse: True
-    #   - no ``streamable_http_client`` → http: False
+    #   - ``streamable_http_client`` → http: True
     #   - stdio is always supported but is not exposed as an ACP flag
     "mcpCapabilities": {
-        "http": False,
+        "http": True,
         "sse": True,
     },
 }

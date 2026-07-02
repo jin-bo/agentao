@@ -98,6 +98,13 @@ Everything else (`permission_engine`, `memory_manager`, `mcp_registry`,
 `transport`) has a safe default. See the table in
 [`EMBEDDING.md` §2](embedding.md#2-pure-injection-construction).
 
+> **MCP transports.** The default `mcp_registry` reads `.agentao/mcp.json` and
+> speaks all three MCP transports with no embedding-side work: **stdio**,
+> **Streamable HTTP** (the default for a bare `url`), and legacy **SSE**
+> (`"type": "sse"`). A bare `url` defaults to Streamable HTTP — this is a
+> breaking change from the old SSE default. Schema + migration note:
+> [Configuration → `mcp.json`](../reference/configuration.md#5-mcpjson--mcp-server-registry).
+
 Need a request param the closed build does not expose — `reasoning_effort`,
 `top_p`, `seed`, `response_format`, a provider-specific field? Pass the
 **keyword-only** `extra_body=` (forwarded verbatim to the SDK's

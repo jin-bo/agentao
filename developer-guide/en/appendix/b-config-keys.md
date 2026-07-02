@@ -54,7 +54,7 @@ JSON config files live in an `.agentao/` directory (project at `<working_directo
 
 | File | Scope | Section | Purpose |
 |------|-------|---------|---------|
-| `mcp.json` | project (add-only) + user | [5.3](/en/part-5/3-mcp) | MCP servers (stdio / SSE) |
+| `mcp.json` | project (add-only) + user | [5.3](/en/part-5/3-mcp) | MCP servers (stdio / Streamable HTTP / SSE) |
 | `permissions.json` | user only *(project file is ignored)* | [5.4](/en/part-5/4-permissions) | Per-tool permission rules |
 | `sandbox.json` | project + user | [6.2](/en/part-6/2-shell-sandbox) | Shell sandbox profile selection |
 | `acp.json` | project only | [3.2](/en/part-3/2-agentao-as-server) | ACP subagent registry (when Agentao runs as client) |
@@ -76,6 +76,7 @@ JSON config files live in an `.agentao/` directory (project at `<working_directo
       "timeout": 30
     },
     "remote": {
+      "type": "sse",
       "url": "https://api.example.com/sse",
       "headers": { "Authorization": "Bearer $API_TOKEN" },
       "timeout": 60
@@ -88,16 +89,17 @@ JSON config files live in an `.agentao/` directory (project at `<working_directo
 
 | Field | Type | Notes |
 |-------|------|-------|
+| `type` | string | Transport selector: `"stdio"` / `"http"` / `"sse"` (aliases `"streamable-http"` / `"streamable_http"` fold to `"http"`). Omitted → inferred: `command` = stdio, bare `url` = Streamable HTTP |
 | `command` | string | stdio server — mutually exclusive with `url` |
 | `args` | string[] | stdio args |
 | `env` | object | expanded (`$VAR` / `${VAR}`) |
 | `cwd` | string | stdio subprocess cwd |
-| `url` | string | SSE server URL |
-| `headers` | object | SSE request headers (`$VAR` expanded) |
+| `url` | string | URL-transport server URL (Streamable HTTP or SSE) |
+| `headers` | object | URL-transport request headers (`$VAR` expanded) |
 | `trust` | bool | Skip confirmation prompt for tools from this server. When `true`, the server's `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) are also consulted; `destructiveHint=true` re-introduces confirmation for that op. Hints are ignored entirely when `trust` is `false`. |
 | `timeout` | number (s) | Per-tool-call timeout |
 
-HTTP transport is **not** supported; stdio + SSE only.
+All three MCP transports are supported: stdio, Streamable HTTP, and SSE. A bare `url` defaults to **Streamable HTTP**; set `"type": "sse"` for a legacy SSE endpoint.
 
 ### B.3.2 `permissions.json`
 

@@ -54,7 +54,7 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
 
 | 文件 | 作用域 | 章节 | 作用 |
 |------|--------|------|------|
-| `mcp.json` | 项目（仅可新增） + 用户 | [5.3](/zh/part-5/3-mcp) | MCP 服务器（stdio / SSE） |
+| `mcp.json` | 项目（仅可新增） + 用户 | [5.3](/zh/part-5/3-mcp) | MCP 服务器（stdio / Streamable HTTP / SSE） |
 | `permissions.json` | 仅用户 *（项目级文件被忽略）* | [5.4](/zh/part-5/4-permissions) | 单工具权限规则 |
 | `sandbox.json` | 项目 + 用户 | [6.2](/zh/part-6/2-shell-sandbox) | Shell 沙箱 profile |
 | `acp.json` | 仅项目 | [3.2](/zh/part-3/2-agentao-as-server) | ACP 子智能体注册表（Agentao 作为客户端时） |
@@ -76,6 +76,7 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
       "timeout": 30
     },
     "remote": {
+      "type": "sse",
       "url": "https://api.example.com/sse",
       "headers": { "Authorization": "Bearer $API_TOKEN" },
       "timeout": 60
@@ -88,16 +89,17 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
+| `type` | string | 传输方式选择：`"stdio"` / `"http"` / `"sse"`（别名 `"streamable-http"` / `"streamable_http"` 归一为 `"http"`）。省略时按推断：`command` = stdio，裸 `url` = Streamable HTTP |
 | `command` | string | stdio 服务器——与 `url` 互斥 |
 | `args` | string[] | stdio 参数 |
 | `env` | object | 会做 `$VAR` / `${VAR}` 展开 |
 | `cwd` | string | stdio 子进程的 cwd |
-| `url` | string | SSE 服务器 URL |
-| `headers` | object | SSE 请求头（`$VAR` 展开） |
+| `url` | string | URL 传输的服务器 URL（Streamable HTTP 或 SSE） |
+| `headers` | object | URL 传输的请求头（`$VAR` 展开） |
 | `trust` | bool | 该服务器的工具跳过确认。当 `true` 时，server 的 `ToolAnnotations`（`readOnlyHint`、`destructiveHint`）也会被读取；`destructiveHint=true` 会重新引入对该 op 的确认。`trust` 为 `false` 时注解被完全忽略。 |
 | `timeout` | number (秒) | 单次工具调用超时 |
 
-**不**支持 HTTP 传输，只支持 stdio + SSE。
+支持三种 MCP 传输：stdio、Streamable HTTP、SSE。裸 `url` 默认使用 **Streamable HTTP**；旧版 SSE 端点需显式设置 `"type": "sse"`。
 
 ### B.3.2 `permissions.json`
 

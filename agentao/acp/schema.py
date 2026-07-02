@@ -47,7 +47,7 @@ class AcpAgentCapabilities(BaseModel):
         default_factory=lambda: {"image": True, "audio": False, "embeddedContext": False}
     )
     mcpCapabilities: Dict[str, bool] = Field(
-        default_factory=lambda: {"http": False, "sse": True}
+        default_factory=lambda: {"http": True, "sse": True}
     )
 
     model_config = ConfigDict(extra="allow")
@@ -161,17 +161,17 @@ class AcpMcpHeader(BaseModel):
 class AcpMcpServer(BaseModel):
     """A session-scoped MCP server config passed in ``session/new``.
 
-    ``type`` discriminates ``stdio`` (command/args/env) vs ``sse``
-    (url/headers). The agent ignores ``http`` because Agentao's MCP
-    client only supports ``stdio`` and ``sse`` in v1. ``type`` defaults
-    to ``"stdio"`` because the runtime parser treats a missing ``type``
-    field as stdio for compatibility with the established wire form
-    that historical clients send (just ``{name, command}``); making
-    the schema strict here would reject runtime-valid payloads.
+    ``type`` discriminates ``stdio`` (command/args/env) vs the URL transports
+    ``sse`` and ``http`` (url/headers). Agentao's MCP client dispatches all
+    three (``http`` via ``streamable_http_client``). ``type`` defaults to
+    ``"stdio"`` because the runtime parser treats a missing ``type`` field as
+    stdio for compatibility with the established wire form that historical
+    clients send (just ``{name, command}``); making the schema strict here
+    would reject runtime-valid payloads.
     """
 
     name: str
-    type: Literal["stdio", "sse"] = "stdio"
+    type: Literal["stdio", "sse", "http"] = "stdio"
     command: Optional[str] = None
     args: Optional[List[str]] = None
     env: Optional[List[AcpMcpEnvVar]] = None

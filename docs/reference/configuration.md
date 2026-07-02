@@ -184,7 +184,7 @@ Full rule taxonomy, examples, and runtime semantics → [TOOL_CONFIRMATION_FEATU
       "trust": false
     },
     "<remote-name>": {
-      "url": "https://...",
+      "url": "https://.../mcp",
       "headers": { "Authorization": "Bearer $API_KEY" },
       "timeout": 30
     }
@@ -192,14 +192,29 @@ Full rule taxonomy, examples, and runtime semantics → [TOOL_CONFIRMATION_FEATU
 }
 ```
 
-| Transport | Required keys | Optional |
-|---|---|---|
-| stdio subprocess | `command`, `args` | `env`, `trust`, `cwd`, `timeout` |
-| SSE | `url` | `headers`, `timeout` |
+| Transport | `type` | Required keys | Optional |
+|---|---|---|---|
+| stdio subprocess | `"stdio"` (or infer from `command`) | `command`, `args` | `env`, `trust`, `cwd`, `timeout` |
+| Streamable HTTP | `"http"` (or infer from `url`) | `url` | `headers`, `timeout`, `trust` |
+| SSE (legacy) | `"sse"` | `url` | `headers`, `timeout`, `trust` |
+
+**Transport selection (`mcp/config.py :: resolve_transport`).** The optional
+`type` field selects the transport: `"stdio"` / `"sse"` / `"http"` (aliases
+`"streamable-http"` / `"streamable_http"` fold to `"http"`). When `type` is
+omitted it is inferred: `command` → stdio, `url` → **Streamable HTTP**. So a
+bare `{"url": ...}` means Streamable HTTP — set `"type": "sse"` for the legacy
+SSE transport. An unknown `type`, or a transport missing its required key,
+**fails closed** (`McpTransportConfigError`) rather than silently connecting to
+the wrong protocol.
+
+> **Migration (breaking).** A bare `url` server previously meant SSE; it now
+> defaults to the Streamable HTTP transport (the spec's replacement for the
+> now-deprecated HTTP+SSE transport). If your server is a legacy SSE endpoint,
+> add `"type": "sse"` to its entry.
 
 **`timeout`** accepts two forms (`mcp/config.py :: resolve_timeouts`):
 
-- **int / float** (legacy) — seconds for the *connect / startup* phase (default `60`): bounds the SSE HTTP-connection open **and** the `initialize()` / `list_tools()` handshake (both transports). Per-request tool calls stay **unbounded** (the MCP SDK default). Existing configs keep their behavior.
+- **int / float** (legacy) — seconds for the *connect / startup* phase (default `60`): bounds the URL-transport HTTP-connection open **and** the `initialize()` / `list_tools()` handshake (all transports). Per-request tool calls stay **unbounded** (the MCP SDK default). Existing configs keep their behavior.
 - **object `{ "startup": int, "request": int }`** — both keys optional. `startup` is the connect/handshake bound above (default `60`); `request` bounds *each tool call* after init (omit → unbounded). Without `request`, a hung tool call never self-terminates over stdio, and over SSE only drops after ~300 s of inter-event silence — set `request` to cap it deterministically (a `request` above 300 s also raises the SSE stream's read timeout to match).
 
 ```json

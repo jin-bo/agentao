@@ -85,7 +85,7 @@ The store is keyed by the client-supplied `cwd`, so the lookup runs at request t
         "embeddedContext": false
       },
       "mcpCapabilities": {
-        "http": false,
+        "http": true,
         "sse": true
       }
     },
@@ -144,7 +144,7 @@ The store is keyed by the client-supplied `cwd`, so the lookup runs at request t
 ### Notes
 
 - `cwd` sets this session's **working directory** — file tools, `AGENTAO.md`, `.agentao/` all resolve against it. Keep it unique per concurrent session
-- `mcpServers` only accepts `"type":"stdio"` or `"type":"sse"` (because `mcpCapabilities.http=false`)
+- `mcpServers` accepts `"type":"stdio"`, `"type":"sse"`, or `"type":"http"` (`mcpCapabilities.http=true`); a bare `url` defaults to Streamable HTTP
 - Internally these map to the [`extra_mcp_servers` constructor param](/en/part-2/2-constructor-reference#session-scoped-mcp-servers)
 
 ## Sending a prompt `session/prompt`
