@@ -36,7 +36,7 @@ uv run python -m pytest tests/cli/                   # CLI subsuite
 uv run python -m pytest tests/test_active_permissions.py   # Single file
 ```
 
-There are 160+ test files including subdirs (`tests/cli/`, `tests/data/`, `tests/support/`). The `slow` marker is excluded by default (`pyproject.toml :: tool.pytest.ini_options.addopts = "-m 'not slow'"`).
+There are 190+ test files including subdirs (`tests/cli/`, `tests/data/`, `tests/support/`). The `slow` marker is excluded by default (`pyproject.toml :: tool.pytest.ini_options.addopts = "--tb=short -m 'not slow'"`).
 
 ## Configuration
 
@@ -73,7 +73,7 @@ Agentao is an **embedded agent harness**: the same runtime drives the interactiv
 | `agentao/transport/` | Event transport between Agentao core and CLI/ACP frontends. |
 | `agentao/cli/` | Interactive CLI **package** (was `cli.py` before 0.4.x). `app.py` (`AgentaoCLI`), `entrypoints.py` (argparse + `main`), `run.py` (`agentao run`), `commands/` (per-slash-command handlers), `subcommands.py`, `diagnostics_cli.py`. |
 | `agentao/skills/` | Skill discovery + activation. SKILL.md frontmatter parser. |
-| `agentao/prompts/`, `agentao/agents/`, `agentao/plan/`, `agentao/capabilities/`, `agentao/tooling/`, `agentao/security/`, `agentao/session.py`, `agentao/context_manager.py` | Supporting modules — prompt assembly, sub-agent runners, plan-mode state, capability declarations (incl. `capabilities/process.py::run_captured` — the shared hardened subprocess runner; see Common gotchas), tool-arg sanitizers, security utilities, session save/load, context-window compaction. |
+| `agentao/prompts/`, `agentao/agents/`, `agentao/plan/`, `agentao/capabilities/`, `agentao/tooling/`, `agentao/security/`, `agentao/session.py`, `agentao/context_manager.py` | Supporting modules — prompt assembly (`SystemPromptBuilder`), sub-agent runners, plan-mode state, capability declarations (incl. `capabilities/process.py::run_captured` — the shared hardened subprocess runner; see Common gotchas), tool registration (`tooling/registry.py::register_builtin_tools` + agent/MCP tool wiring), security utilities, session save/load, context-window compaction. |
 
 ### Tool system
 
@@ -90,13 +90,13 @@ class MyTool(Tool):
 
 `AsyncToolBase` dispatches through `runtime_loop` with a `CancellationToken`; cleanup-ack uses `_bridged()` `finally` + `threading.Event` so the runtime can cancel mid-tool. `RegistrableTool = Tool | AsyncToolBase`.
 
-**Registration**: in `agent.py::_register_tools()`. Built-in tools currently in `agentao/tools/`: `agents.py`, `ask_user.py`, `file_ops.py`, `memory.py`, `plan.py`, `search.py`, `shell.py`, `skill.py`, `todo.py`, `web.py`.
+**Registration**: `agent.py::_register_tools()` is a thin delegation — the real wiring lives in `agentao/tooling/registry.py::register_builtin_tools()` (`agent_tools.py` / `mcp_tools.py` cover sub-agent and MCP tools). Built-in tool modules in `agentao/tools/`: `agents.py`, `ask_user.py`, `file_ops.py`, `memory.py`, `plan.py`, `search.py`, `shell.py`, `skill.py`, `todo.py`, `web.py` — plus `goal.py`, which is *not* registered by default (the CLI injects it via `add_tool` when a `/goal` is active).
 
 **Confirmation / permissions**: tools with `requires_confirmation=True` are gated by `PermissionEngine`, which evaluates rules from `.agentao/permissions.json` (project) + `<home>/.agentao/permissions.json` (user). The engine itself does **no file I/O** — `agentao/embedding/permission_loader.py::load_permission_rules()` reads and passes `(rules, sources)` in. Default presets auto-allow common docs domains (`.github.com`, `.docs.python.org`, …) and auto-deny SSRF targets (`localhost`, `127.0.0.1`, `169.254.169.254`, …).
 
 ### Permission modes (replaces the old `allow_all_tools` flag)
 
-`/mode read-only | workspace-write | full-access | plan` switches the runtime's permission posture:
+`/mode read-only | workspace-write | full-access` switches the runtime's permission posture. `plan` is the fourth posture — entered via `/plan` interactively (not `/mode plan`), or `--permission-mode plan` on `agentao run`:
 
 - `read-only` — blocks all write and shell tools.
 - `workspace-write` — allows file writes and safe shell; asks for web (default).
@@ -107,7 +107,7 @@ State is on `AgentaoCLI` (`agentao/cli/app.py`) and projected into prompts.
 
 ### System prompt composition
 
-Built fresh on every `chat()` in `agent.py::_build_system_prompt()`:
+Built fresh on every `chat()` — `agent.py::_build_system_prompt()` delegates to `agentao/prompts/` (`SystemPromptBuilder`):
 
 1. `AGENTAO.md` (if present in cwd) — project-specific instructions
 2. Agent instructions — base Agentao capabilities
@@ -201,9 +201,9 @@ CLI: `/mcp list`, `/mcp add [--http|--sse] <name> <command|url>`, `/mcp remove <
 
 The authoritative list with full subcommand syntax lives in `agentao/cli/help_text.py`; `/help` renders it. The high-impact commands to know about when reasoning about agent behavior:
 
-- `/mode read-only|workspace-write|full-access` — permission posture (replaces 0.3.x `allow_all_tools`).
+- `/mode read-only|workspace-write|full-access` — permission posture (see Permission modes above).
 - `/plan` / `/plan implement` / `/plan show` — plan mode (LLM plans, does not execute).
-- `/goal <objective> [--for 30m] [--turns 10] [--unbounded]` — long-task auto-continuation with a time/turn budget; subcommands `show|budget|pause|resume|edit|clear`. Host-owned loop in `cli/input_loop.py::run_goal_continuation` (NOT plugin `force_continue`); state in `.agentao/goal.json` (`cli/goal_state.py`); agent's `update_goal` tool injected via `add_tool` (`tools/goal.py`).
+- `/goal <objective> [--for 30m] [--turns 10] [--unbounded]` — long-task auto-continuation with a time/turn budget; subcommands `show|budget|pause|resume|edit|clear`. Host-owned loop in `cli/input_loop.py::run_goal_continuation`; state in `.agentao/goal.json` (`cli/goal_state.py`); `update_goal` tool injected via `add_tool` (`tools/goal.py`). See Common gotchas for `--turns` vs `max_iterations`.
 - `/clear` — saves current session, clears conversation + **all memories**, starts a new one.
 - `/new` — saves session, starts fresh conversation (keeps memories).
 - `/sessions`, `/sessions resume <id>`, `/sessions delete <id>` — manage saved sessions.
@@ -222,7 +222,7 @@ The authoritative list with full subcommand syntax lives in `agentao/cli/help_te
 
 1. Create `agentao/tools/<module>.py` and implement `Tool` (or `AsyncToolBase` for async).
 2. Set `requires_confirmation=True` for anything dangerous: arbitrary shell, network requests, file writes, deletions.
-3. Register in `agent.py::_register_tools()`.
+3. Register in `agentao/tooling/registry.py::register_builtin_tools()` (the `agent.py::_register_tools()` entry point just delegates there).
 
 ### A skill
 
@@ -243,14 +243,4 @@ The authoritative list with full subcommand syntax lives in `agentao/cli/help_te
 
 ## Key dependencies
 
-Core (`pyproject.toml :: project.dependencies`):
-- `openai>=1.0.0` — LLM client (OpenAI-compatible)
-- `httpx>=0.25.0` — HTTP client
-- `pydantic>=2` — schemas (host contract, ACP, run-spec)
-- `pyyaml>=6.0.3` — SKILL.md frontmatter, plugin manifests
-- `mcp>=1.26.0` — MCP client SDK
-- `python-dotenv>=1.0.0` — `.env` loading
-- `filelock>=1.4.0` — cross-process locking for skill registry
-- `jinja2>=3.0.0` — `agentao run` spec templating (StrictUndefined)
-
-Extras: see Package Management section above; full list in `pyproject.toml :: project.optional-dependencies`.
+Core (`pyproject.toml :: project.dependencies`, annotated inline there): `openai` (LLM client, OpenAI-compatible), `httpx`, `pydantic>=2` (host contract / ACP / run-spec schemas), `pyyaml` (SKILL.md frontmatter, plugin manifests), `mcp` (MCP client SDK), `python-dotenv`, `filelock` (cross-process skill-registry locking), `jinja2` (`agentao run` spec templating, StrictUndefined). Extras: see Package Management above.
