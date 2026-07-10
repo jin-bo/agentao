@@ -25,6 +25,7 @@ from ...context_manager import is_context_too_long_error
 from ...llm._retry import _is_image_unsupported
 from ...transport import AgentEvent, EventType
 from ..sanitize import canonicalize_tool_arguments, sanitize_assistant_message
+from ..tool_planning import make_tool_result_message
 from ._compaction import _CompactionMixin
 from ._hook_dispatch import _HookDispatchMixin
 from ._outcomes import _HookOutcome
@@ -32,6 +33,43 @@ from ._serialize import _attach_reasoning, _serialize_tool_call
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
     from ...agent import Agentao
+
+
+# ``finish_reason`` spellings (matched case-insensitively) that mean "output was
+# truncated at the token limit". OpenAI says ``"length"``; other providers /
+# gateways surface the same condition differently (Gemini ``"MAX_TOKENS"``, some
+# proxies ``"max_tokens"`` / ``"model_length"``). agentao is provider-neutral, so
+# the truncation guard must not couple to a single vendor's exact string.
+_LENGTH_FINISH_REASONS = frozenset({"length", "max_tokens", "model_length"})
+
+# Refuse to keep re-issuing after this many *consecutive* length-truncated
+# tool-call turns. Because the truncation path never runs ``execute()`` (so the
+# planner's doom-loop detector never sees these calls), this is the fast-fail
+# backstop that keeps a model stuck re-truncating the same oversized call from
+# burning the whole ``max_iterations`` budget. Matches ``DOOM_LOOP_THRESHOLD``.
+LENGTH_TRUNCATION_ABORT_THRESHOLD = 3
+
+
+def _is_length_truncation(finish_reason) -> bool:
+    """True when ``finish_reason`` signals output-token-limit truncation."""
+    return (
+        isinstance(finish_reason, str)
+        and finish_reason.strip().lower() in _LENGTH_FINISH_REASONS
+    )
+
+
+# Model-facing tool-result stamped on every tool call in an assistant message
+# that was truncated at the output-token limit. Such a message was cut off, so
+# the streamed tool-call arguments may be truncated — the JSON can even balance
+# by luck and parse into *valid-but-wrong* args. We refuse to execute any of
+# them (a single destructive call with silently-truncated args is worse than a
+# retry) and ask the model to re-issue.
+LENGTH_TRUNCATED_TOOL_CALL_MESSAGE = (
+    "Tool call not executed: the assistant message was cut off at the output "
+    "token limit (finish_reason=length), so this call's arguments may be "
+    "truncated and untrustworthy. Nothing was run. Re-issue the tool call with "
+    "complete arguments (and a shorter response if you were near the limit)."
+)
 
 
 class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
@@ -44,10 +82,14 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         stop_reentry_cap: int = 3,
     ) -> None:
         self._agent = agent
-        # Counter resets per chat() because ChatLoopRunner is
+        # Counters reset per chat() because ChatLoopRunner is
         # instantiated fresh by Agentao._chat_inner.
         self._stop_reentries: int = 0
         self._stop_reentry_cap: int = stop_reentry_cap
+        # Consecutive length-truncated tool-call turns (see
+        # ``_handle_length_truncated_tool_calls``). Reset on any turn that is
+        # not a length-truncation so only back-to-back truncations accumulate.
+        self._consecutive_length_truncations: int = 0
 
     # ------------------------------------------------------------------
     # Loop-step decisions
@@ -106,6 +148,14 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         "doom_loop": {
             "reentry_cap_log": "Stop hook reentry cap (%d) hit at doom-loop; ending turn.",
             "force_continue_log": "Stop hook force_continue at doom-loop",
+            "force_continue_outcome": "continue",
+            "echo_additional_contexts": False,
+        },
+        "length_truncation": {
+            "reentry_cap_log": (
+                "Stop hook reentry cap (%d) hit at length-truncation; ending turn."
+            ),
+            "force_continue_log": "Stop hook force_continue at length-truncation",
             "force_continue_outcome": "continue",
             "echo_additional_contexts": False,
         },
@@ -276,17 +326,33 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 )
 
             assistant_message = response.choices[0].message
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
 
             if assistant_message.tool_calls:
-                step = self._handle_tool_calls(
-                    assistant_message=assistant_message,
-                    iteration=iteration,
-                    token=token,
-                    messages_with_system=messages_with_system,
-                    system_prompt=system_prompt,
-                    active_skills=current_active_skills,
-                    memory_version=current_memory_version,
-                )
+                if _is_length_truncation(finish_reason):
+                    # The message hit the output-token limit mid-stream, so the
+                    # tool-call arguments may be truncated. Refuse to execute
+                    # them, answer each with a re-issue prompt, and loop.
+                    step = self._handle_length_truncated_tool_calls(
+                        assistant_message=assistant_message,
+                        finish_reason=finish_reason,
+                        iteration=iteration,
+                        messages_with_system=messages_with_system,
+                        system_prompt=system_prompt,
+                        active_skills=current_active_skills,
+                        memory_version=current_memory_version,
+                    )
+                else:
+                    self._consecutive_length_truncations = 0
+                    step = self._handle_tool_calls(
+                        assistant_message=assistant_message,
+                        iteration=iteration,
+                        token=token,
+                        messages_with_system=messages_with_system,
+                        system_prompt=system_prompt,
+                        active_skills=current_active_skills,
+                        memory_version=current_memory_version,
+                    )
                 if step.action == "return":
                     return step.value
                 messages_with_system = step.messages_with_system
@@ -298,6 +364,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 current_active_skills = step.active_skills
                 current_memory_version = step.memory_version
             else:
+                self._consecutive_length_truncations = 0
                 step = self._handle_final_response(
                     assistant_message=assistant_message,
                     iteration=iteration,
@@ -384,29 +451,22 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             system_prompt=system_prompt,
         )
 
-    def _handle_tool_calls(
+    def _serialize_and_record_assistant_tool_message(
         self,
-        *,
         assistant_message,
         iteration: int,
-        token: CancellationToken,
-        messages_with_system: list,
-        system_prompt: str,
-        active_skills: frozenset,
-        memory_version: int,
-    ) -> "ChatLoopRunner._Step":
-        """Serialize, execute, and account for one batch of tool calls.
+    ):
+        """Normalize, serialize, sanitize and append a tool-call assistant message.
 
-        Returns a ``"return"`` / ``"continue"`` step when the doom-loop
-        Stop-hook fires, otherwise a ``"loop"`` step carrying the
-        refreshed skill/memory bookkeeping. Raises ``AgentCancelledError``
-        if cancellation landed during execution.
+        Shared by the execute path (:meth:`_handle_tool_calls`) and the
+        length-truncation path (:meth:`_handle_length_truncated_tool_calls`)
+        so both record byte-identical history — the assistant message and its
+        answering tool results must agree on ids/names regardless of whether
+        the calls ran. Emits the reasoning/content ``THINKING`` events,
+        appends the message to ``agent.messages``, and returns
+        ``(assistant_msg, clean_tool_calls, reasoning_content)``.
         """
         agent = self._agent
-        agent.llm.logger.info(
-            f"Processing {len(assistant_message.tool_calls)} tool call(s) "
-            f"in iteration {iteration}"
-        )
 
         # Pre-pass: clean surrogates and repair tool names so the history
         # serializer and the runner see identical ids/names/arguments
@@ -441,6 +501,153 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 iteration,
             )
         agent.messages.append(assistant_msg)
+        return assistant_msg, clean_tool_calls, reasoning_content
+
+    def _handle_length_truncated_tool_calls(
+        self,
+        *,
+        assistant_message,
+        finish_reason,
+        iteration: int,
+        messages_with_system: list,
+        system_prompt: str,
+        active_skills: frozenset,
+        memory_version: int,
+    ) -> "ChatLoopRunner._Step":
+        """Record a length-truncated tool-call message without executing it.
+
+        When the assistant message hit the output-token limit its streamed
+        tool-call arguments may be cut off mid-JSON — the repair pipeline can
+        even balance the brackets by luck and yield *valid-but-wrong* args — so
+        running any of them risks a destructive call the model never finished
+        composing.
+
+        We still append the assistant message (history must carry the
+        ``tool_calls``) and answer each call with a re-issue prompt so the
+        request stays well-formed, then ``"loop"`` — the model re-issues with
+        complete arguments. Nothing runs, so the planner's doom-loop detector
+        never sees these calls; a dedicated consecutive-truncation counter is
+        the fast-fail backstop (after :data:`LENGTH_TRUNCATION_ABORT_THRESHOLD`
+        it finalizes the turn through the Stop hook) so a model stuck
+        re-truncating an oversized call cannot burn the whole ``max_iterations``
+        budget.
+        """
+        agent = self._agent
+        self._consecutive_length_truncations += 1
+        agent.llm.logger.warning(
+            "Assistant message truncated at the output-token limit "
+            "(finish_reason=%s) with %d tool call(s) in iteration %d "
+            "(consecutive #%d); refusing to execute and asking the model to "
+            "re-issue",
+            finish_reason,
+            len(assistant_message.tool_calls),
+            iteration,
+            self._consecutive_length_truncations,
+        )
+
+        assistant_msg, _clean_tool_calls, reasoning_content = (
+            self._serialize_and_record_assistant_tool_message(
+                assistant_message, iteration
+            )
+        )
+        # The model *made* these calls even though none ran — count them so
+        # TURN_END telemetry matches the execute path (turn.py reports
+        # ``_turn_tool_count``).
+        agent._turn_tool_count = (
+            getattr(agent, "_turn_tool_count", 0) + len(assistant_msg["tool_calls"])
+        )
+
+        # Answer every truncated call so the assistant message is followed by
+        # matching tool results (strict Chat-Completions APIs reject an
+        # unanswered tool_call on the next request). ``normalize_tool_calls``
+        # (run inside the shared helper) already guaranteed a non-empty id; a
+        # call truncated before its name streamed keeps ``name == ""``, so we
+        # stamp the same placeholder on the assistant tool_call and its result
+        # in lock-step — strict proxies reject a name mismatch between the two.
+        for serialized_tc in assistant_msg["tool_calls"]:
+            call_id = serialized_tc["id"]
+            fn = serialized_tc.get("function")
+            if not isinstance(fn, dict):
+                fn = {}
+                serialized_tc["function"] = fn
+            name = fn.get("name") or "unknown"
+            fn["name"] = name
+            agent.messages.append(make_tool_result_message(
+                call_id,
+                name,
+                LENGTH_TRUNCATED_TOOL_CALL_MESSAGE,
+            ))
+
+        messages_with_system = [
+            {"role": "system", "content": system_prompt}
+        ] + agent.messages
+
+        if self._consecutive_length_truncations >= LENGTH_TRUNCATION_ABORT_THRESHOLD:
+            # The model keeps truncating the same oversized call; re-issuing
+            # again would only repeat it. Finalize the turn through the shared
+            # Stop-hook path (which may still force a re-entry).
+            agent.llm.logger.warning(
+                "Tool calls truncated at the output-token limit %d times in a "
+                "row; ending the turn instead of re-issuing further",
+                self._consecutive_length_truncations,
+            )
+            assistant_content = (assistant_msg.get("content") or "").strip() or (
+                "Tool calls were repeatedly cut off at the output-token limit "
+                "and could not be completed."
+            )
+            final_msg: Dict[str, Any] = {
+                "role": "assistant",
+                "content": assistant_content,
+            }
+            _attach_reasoning(final_msg, reasoning_content)
+            if sanitize_assistant_message(final_msg):
+                agent.llm.logger.warning(
+                    "Sanitised lone surrogates in length-truncation abort message"
+                )
+            return self._resolve_stop_hook(
+                turn_end_reason="length_truncation",
+                assistant_content=assistant_content,
+                final_msg=final_msg,
+                system_prompt=system_prompt,
+            )
+
+        return ChatLoopRunner._Step(
+            "loop",
+            messages_with_system=messages_with_system,
+            system_prompt=system_prompt,
+            active_skills=active_skills,
+            memory_version=memory_version,
+        )
+
+    def _handle_tool_calls(
+        self,
+        *,
+        assistant_message,
+        iteration: int,
+        token: CancellationToken,
+        messages_with_system: list,
+        system_prompt: str,
+        active_skills: frozenset,
+        memory_version: int,
+    ) -> "ChatLoopRunner._Step":
+        """Serialize, execute, and account for one batch of tool calls.
+
+        Returns a ``"return"`` / ``"continue"`` step when the doom-loop
+        Stop-hook fires, otherwise a ``"loop"`` step carrying the
+        refreshed skill/memory bookkeeping. Raises ``AgentCancelledError``
+        if cancellation landed during execution.
+        """
+        agent = self._agent
+        agent.llm.logger.info(
+            f"Processing {len(assistant_message.tool_calls)} tool call(s) "
+            f"in iteration {iteration}"
+        )
+
+        assistant_msg, clean_tool_calls, reasoning_content = (
+            self._serialize_and_record_assistant_tool_message(
+                assistant_message, iteration
+            )
+        )
 
         doom_triggered, tool_results = agent.tool_runner.execute(
             clean_tool_calls,
