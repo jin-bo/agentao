@@ -3,6 +3,7 @@
 import logging
 import sys
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,12 @@ def _make_retriever(tmp_path: Path):
     return MemoryRetriever(mgr), mgr
 
 
+# Fixtures must stay inside score()'s 90-day stale window forever, so the
+# default timestamp is computed relative to now — a hardcoded date walked
+# past the window once and the -2.0 stale penalty flipped scores negative.
+_FRESH_ISO = (datetime.now() - timedelta(days=1)).isoformat(timespec="seconds")
+
+
 def _make_record(
     scope="project",
     title="test entry",
@@ -37,7 +44,7 @@ def _make_record(
     tags=None,
     keywords=None,
     source="explicit",
-    created_at="2026-04-08T10:00:00",
+    created_at=_FRESH_ISO,
     updated_at=None,
 ) -> MemoryRecord:
     eid = uuid.uuid4().hex[:8]
@@ -172,13 +179,14 @@ def test_score_stale_penalty(tmp_path):
     )
     fresh_record = _make_record(
         title="old entry", tags=[], keywords=[],
-        updated_at="2026-04-08T00:00:00",
+        updated_at=_FRESH_ISO,
     )
     query_tokens = {"old"}
     s_stale, reasons_stale, _ = ret.score(stale_record, query_tokens, set())
-    s_fresh, _, _ = ret.score(fresh_record, query_tokens, set())
+    s_fresh, reasons_fresh, _ = ret.score(fresh_record, query_tokens, set())
     assert s_stale < s_fresh
     assert "stale_penalty" in reasons_stale
+    assert "stale_penalty" not in reasons_fresh
 
 
 def test_score_filepath_match(tmp_path):
