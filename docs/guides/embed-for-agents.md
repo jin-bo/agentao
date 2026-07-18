@@ -358,6 +358,46 @@ For streaming assistant *text/tokens* (not on the stable contract),
 you must consume the internal `Transport` — accept that it may change
 between releases.
 
+### 6.1 `chat()` returning a string is not proof the model answered
+
+`chat()` / `arun()` hand back a `str`. On a turn where the model
+produced nothing, that string is the placeholder `[No response]` (or
+`[No text response]` for reasoning-without-answer); when the harness
+halts a turn that will not converge — tool calls repeatedly cut off at
+the token limit, or the same call looping — it is a canned abort
+string; and when the LLM call itself fails, it is a `[LLM API error: …]`
+notice. **All of these arrive as an ordinary return value.** A host that
+logs, stores, or returns the reply to a user will serve them as if the
+model had answered.
+
+Read `agent.last_turn` — the structured companion to the string return —
+before treating the reply as the model's:
+
+```python
+from agentao import TurnOutcome  # for the type hint; optional
+
+reply = agent.chat(prompt)
+outcome: TurnOutcome = agent.last_turn
+if not outcome.is_answer:
+    ...  # do not present `reply` as the model's answer;
+         # outcome.incomplete_reason says why (or outcome.status
+         # for a cancelled / errored turn)
+```
+
+`agent.last_turn` mirrors the `TURN_END` payload — `text`, `status`,
+`incomplete_reason` (a single closed vocabulary: `no_output` /
+`reasoning_only` / `length_truncated` / `doom_loop` / `llm_error`, or
+`None` for a real answer), `tool_count`, `error` — as a synchronous
+read-after, no subscription required. `outcome.is_answer` is the one
+check that folds all of it together: `True` only when the turn ended
+`"ok"` with nothing classifying it incomplete.
+
+This is a pull surface: it answers "how did the turn I just awaited
+end?". If instead you need the outcome *pushed* to an async observer
+that does not drive the turn, that is not projected onto the stable
+event contract yet — see the known gap in
+[`host-api.md`](../reference/host-api.md#known-gaps-neither-channel-covers-these-today).
+
 ---
 
 ## 7. Opt-in subsystems
@@ -439,6 +479,7 @@ must pass `logger=`. ([`EMBEDDING.md` §2](embedding.md#2-pure-injection-constru
 - [ ] LLM creds supplied (`llm_client` or `api_key`+`base_url`+`model`).
 - [ ] Every code path calls `agent.close()` (use `try/finally`).
 - [ ] Async host uses `arun()`, not `chat()` on the loop thread.
+- [ ] A turn that produced no answer is not presented as one (§6.1) — the reply string alone does not tell you.
 - [ ] If the host forwards images: `data`/`mimeType` validated, size/count capped host-side, and consumers of `agent.messages` tolerate the `<attachment …/>` degradation rewrite (§2).
 - [ ] Imports come from `agentao`, `agentao.embedding`, `agentao.host`, `agentao.host.protocols` only — no `agentao.runtime.*` / `AgentEvent` / `agentao.harness`.
 - [ ] Permission posture set explicitly; untrusted input → `sandbox_policy`.
@@ -457,10 +498,15 @@ agent = Agentao(working_directory=Path("/tmp/agentao-smoke"),
                 api_key=..., base_url=..., model=..., transport=NullTransport())
 try:
     out = agent.chat("Reply with the single word: ok")
-    assert "ok" in out.lower()
+    assert "ok" in out.lower()     # also rejects the §6.1 placeholders
 finally:
     agent.close()
 ```
+
+Assert on *content*, not truthiness. `assert out` or `assert len(out)`
+would pass on the `[No response]` placeholder — the string is
+non-empty, it just isn't an answer (§6.1). Matching expected content is
+what makes this smoke test able to fail.
 
 For the host-facing API and event contract specifics, the canonical
 reference is [`docs/reference/host-api.md`](../reference/host-api.md); for everything not

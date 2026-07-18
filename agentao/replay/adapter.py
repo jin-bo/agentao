@@ -73,6 +73,7 @@ class ReplayAdapter:
         status: str = "ok",
         error: Optional[str] = None,
         tool_count: Optional[int] = None,
+        incomplete_reason: Optional[str] = None,
     ) -> None:
         turn_id = self._turn_id
         if turn_id is None:
@@ -84,6 +85,13 @@ class ReplayAdapter:
         }
         if tool_count is not None:
             payload["tool_count"] = tool_count
+        if incomplete_reason is not None:
+            # ``status`` stays "ok" for a turn that merely lacks an answer —
+            # the runtime completed it normally. Without this the replay would
+            # show a placeholder (or a halted turn's canned text) on an "ok"
+            # turn and give a triager no way to see why the run reported a
+            # failure.
+            payload["incomplete_reason"] = incomplete_reason
         self._recorder.record(
             EventKind.TURN_COMPLETED,
             turn_id=turn_id,
@@ -213,6 +221,22 @@ class ReplayAdapter:
             return handler(count, messages)
         return {"action": "stop"}
 
+    def subscribe(self, listener):
+        """Delegate side-channel subscription to the wrapped transport.
+
+        Splicing this adapter in front of ``agent.transport`` (when replay is
+        on) must not strip the inner transport's subscriber channel — otherwise
+        a host that observes turn outcomes via ``agent.transport.subscribe``
+        (the documented path for TURN_END / ``incomplete_reason``) silently
+        registers nothing the moment replay is enabled. Forward to the inner
+        ``subscribe`` when it exists; return a no-op unsubscribe otherwise, per
+        the optional-method contract in ``transport/base.py``.
+        """
+        inner_subscribe = getattr(self._inner, "subscribe", None)
+        if callable(inner_subscribe):
+            return inner_subscribe(listener)
+        return lambda: None
+
     # -- translation --------------------------------------------------------
 
     def _mirror(self, event: AgentEvent) -> None:
@@ -234,11 +258,15 @@ class ReplayAdapter:
         if kind == EventType.TURN_END:
             try:
                 tc = data.get("tool_count")
+                incomplete = data.get("incomplete_reason")
                 self.end_turn(
                     str(data.get("final_text", "") or ""),
                     status=str(data.get("status", "ok") or "ok"),
                     error=data.get("error"),
                     tool_count=tc if isinstance(tc, int) else None,
+                    incomplete_reason=(
+                        incomplete if isinstance(incomplete, str) else None
+                    ),
                 )
             except Exception:
                 pass

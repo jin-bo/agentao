@@ -44,6 +44,39 @@ EXIT_INTERRUPTED = 130
 
 DEFAULT_MAX_ITERATIONS = 100
 
+# Maps a TURN_END ``incomplete_reason`` to the error envelope it produces:
+# ``{reason: (error type, message stem)}``. All exit 1 — the run has no answer
+# to hand back either way — and the ``type`` separates the sub-families a
+# pipeline may want to treat differently: "the model said nothing"
+# (``empty_response``), "the harness halted a non-converging turn"
+# (``length_truncated`` / ``doom_loop`` — worth retrying with a smaller task),
+# and "the LLM call itself failed" (``runtime_error``). Exit 4 is deliberately
+# not reused for these: its documented meaning is the iteration cap, which is a
+# separate axis (``transport.max_iterations_hit``, checked first below). Keys
+# are the runtime's ``INCOMPLETE_*`` constants (agentao/runtime/chat_loop/
+# _runner.py) — the wire vocabulary, kept as literals here so the CLI does not
+# import runtime internals at module scope; a parity test binds the two sets.
+_INCOMPLETE_OUTCOMES: Dict[str, Tuple[str, str]] = {
+    "no_output": ("empty_response", "the model returned an empty response"),
+    "reasoning_only": (
+        "empty_response", "the model returned reasoning but no text answer",
+    ),
+    "length_truncated": (
+        "length_truncated",
+        "output was cut off at the token limit before the turn could finish",
+    ),
+    "doom_loop": (
+        "doom_loop",
+        "the model repeated the same tool call until the doom-loop detector "
+        "halted the turn",
+    ),
+    "llm_error": (
+        "runtime_error",
+        "the LLM API call failed (provider error / rate limit / auth) after "
+        "retries",
+    ),
+}
+
 PERMISSION_MODE_CHOICES = ("read-only", "workspace-write", "full-access", "plan")
 
 
@@ -604,9 +637,10 @@ def _run_pipeline(
 
     tool_calls_count = 0
     captured_turn_id: Optional[str] = None
+    incomplete_reason: Optional[str] = None
 
     def _on_tool_event(event: Any) -> None:
-        nonlocal tool_calls_count, captured_turn_id
+        nonlocal tool_calls_count, captured_turn_id, incomplete_reason
         ev_type = getattr(event, "type", None)
         # ``run_turn`` clears ``agent._current_turn_id`` in its finally
         # block, so by the time we serialize RunResult the field is
@@ -614,6 +648,14 @@ def _run_pipeline(
         # can correlate the run with replay / host events.
         if ev_type == EventType.TURN_BEGIN and captured_turn_id is None:
             captured_turn_id = getattr(agent, "_current_turn_id", None)
+            return
+        # The runtime reports a turn that produced no complete answer; the
+        # classifier below turns that into a non-zero exit so a pipeline
+        # can't read "the model said nothing" as success.
+        if ev_type == EventType.TURN_END:
+            incomplete_reason = (getattr(event, "data", None) or {}).get(
+                "incomplete_reason"
+            )
             return
         # ToolExecutor fires TOOL_START *before* the deny check, so
         # counting that event would over-report denied / user-cancelled
@@ -654,6 +696,8 @@ def _run_pipeline(
         token=token,
         runtime_error=runtime_error,
         max_iterations=max_iterations,
+        incomplete_reason=incomplete_reason,
+        final_text=final_text,
     )
 
     delta_prompt = max(0, agent.llm.total_prompt_tokens - pre_prompt)
@@ -696,8 +740,20 @@ def _classify_outcome(
     token,
     runtime_error: Optional[BaseException],
     max_iterations: int,
+    incomplete_reason: Optional[str] = None,
+    final_text: str = "",
 ) -> Tuple[Optional[RunErrorEnvelope], int, str]:
-    """Map post-chat state to ``(error_envelope, exit_code, status)``."""
+    """Map post-chat state to ``(error_envelope, exit_code, status)``.
+
+    ``incomplete_reason`` is the TURN_END classification of a turn that ended
+    without a complete model answer (see :data:`_INCOMPLETE_OUTCOMES`, else
+    ``None``). It is checked last, so every outcome that *explains* the
+    missing answer — rejection, max-iterations, cancellation, a raised
+    error — keeps its own more specific code. ``final_text`` is the turn's
+    return value, used to surface the provider's actual message on the
+    ``llm_error`` path (where it holds the ``[LLM API error: …]`` notice).
+    """
+
     if transport.rejection is not None:
         return (
             RunErrorEnvelope(**transport.rejection),
@@ -730,6 +786,36 @@ def _classify_outcome(
     if runtime_error is not None:
         return (
             RunErrorEnvelope(type="runtime_error", message=str(runtime_error)),
+            EXIT_RUNTIME_ERROR,
+            "error",
+        )
+    if incomplete_reason is not None:
+        # The turn completed, but there is no complete model answer to return.
+        # Exiting 0 here would hand a pipeline the bare "[No response]"
+        # placeholder — or the harness's own abort text — as if the model had
+        # said it. Any tool calls the turn made still ran (see ``tool_calls``
+        # on the same envelope), so the wording never claims nothing happened.
+        envelope_type, detail = _INCOMPLETE_OUTCOMES.get(
+            incomplete_reason,
+            ("empty_response", "the model produced no answer"),
+        )
+        # On the ``llm_error`` path the turn's return value is the harness's
+        # ``[LLM API error: …]`` notice — the provider's actual failure. Surface
+        # it so the envelope is as informative as a raised ``runtime_error``,
+        # rather than dropping it behind the generic stem when ``final_text`` is
+        # nulled for a non-"ok" status.
+        if incomplete_reason == "llm_error" and final_text.strip():
+            message = f"{detail}: {final_text.strip()}"
+        else:
+            message = f"{detail}; the run produced no answer."
+        return (
+            RunErrorEnvelope(
+                type=envelope_type,
+                # Machine-readable discriminator: a consumer branching on the
+                # variant must not have to parse ``message``.
+                reason=incomplete_reason,
+                message=message,
+            ),
             EXIT_RUNTIME_ERROR,
             "error",
         )

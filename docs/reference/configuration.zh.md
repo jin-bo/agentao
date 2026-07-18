@@ -353,11 +353,25 @@ prompt 组成规则与约定见 [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md
 | Code | 含义 |
 |---|---|
 | 0 | OK |
-| 1 | 运行时错误 |
+| 1 | 运行时错误，或 turn 没有产出答案（`runtime_error`、`empty_response`、`length_truncated`、`doom_loop`） |
 | 2 | 无效用法 / 无效 spec |
 | 3 | 权限拒绝或需要交互 |
 | 4 | 达到最大迭代次数 |
 | 130 | 被打断（SIGINT） |
+
+`error.type` 用于区分共用同一退出码的不同结果。每一个被运行时分类为无完整答案的 turn（下表五种 `reason`）退出码都为 1 而不是 0——这样流水线就不会把它们当成成功；这是一套单一封闭的词表，不存在未被分类的结束。`error.reason` 携带精确变体——请基于 `reason` 分支，而不是 `message`：
+
+| `type` | `reason` | 含义 |
+|---|---|---|
+| `empty_response` | `no_output` | 模型什么都没输出。 |
+| `empty_response` | `reasoning_only` | 只有推理，没有答案正文。 |
+| `length_truncated` | `length_truncated` | 输出在 token 上限处被截断——要么是工具调用的参数被截断（harness 随即中止该 turn），要么是最终答案在半句处被切断。 |
+| `doom_loop` | `doom_loop` | 模型重复同一个调用，直至检测器 halt 了该 turn。 |
+| `runtime_error` | `llm_error` | LLM API 调用失败（provider 错误 / 限流 / 认证）且重试后仍失败；message 里带 provider 的真实报错。 |
+
+`empty_response` 表示模型什么都没说；`length_truncated` / `doom_loop` 表示 harness 停掉了一个不收敛的 turn；`llm_error` 表示 provider 调用失败。三者都在最后判定，因此权限拒绝、max-iterations、取消或抛出的错误都会保留各自更具体的退出码。
+
+turn 可能在**执行过工具之后**以这种方式结束——模型可能已经完成工作，只是没有做总结。`tool_calls` 会报告实际执行了多少次，其副作用**已经落盘**，因此 `empty_response` 失败**不**意味着工作区未被改动。
 
 完整设计动机 → [run-spec-parameters.zh.md](../design/run-spec-parameters.zh.md)。
 

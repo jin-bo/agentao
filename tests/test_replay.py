@@ -311,6 +311,36 @@ def _make_adapter(tmp_path: Path):
     return ReplayAdapter(inner, rec), rec
 
 
+def test_adapter_forwards_subscribe_to_inner(tmp_path):
+    """Splicing the adapter over ``agent.transport`` (replay on) must not strip
+    the inner transport's subscriber channel.
+
+    ``incomplete_reason`` rides on TURN_END, which a host observes via
+    ``agent.transport.subscribe``. If the adapter omitted ``subscribe``, that
+    call would raise (or, after the documented ``getattr`` probe, silently
+    register nothing) the moment replay was enabled — losing the only signal
+    that distinguishes an answerless turn.
+    """
+    from agentao.transport.base import Transport
+
+    adapter, rec = _make_adapter(tmp_path)
+    # Restores Protocol conformance — subscribe is part of the interface.
+    assert isinstance(adapter, Transport)
+
+    seen = []
+    unsubscribe = adapter.subscribe(lambda e: seen.append(e))
+    adapter.emit(AgentEvent(
+        EventType.TURN_END,
+        {"final_text": "[No response]", "status": "ok", "incomplete_reason": "no_output"},
+    ))
+    assert [e.data.get("incomplete_reason") for e in seen] == ["no_output"]
+
+    unsubscribe()
+    adapter.emit(AgentEvent(EventType.TURN_END, {"final_text": "x", "status": "ok"}))
+    assert len(seen) == 1, "unsubscribe must stop delivery"
+    rec.close()
+
+
 def test_adapter_turn_lifecycle(tmp_path):
     adapter, rec = _make_adapter(tmp_path)
     tid = adapter.begin_turn("hello")
@@ -332,6 +362,42 @@ def test_adapter_turn_lifecycle(tmp_path):
     # All events share the same turn_id for this chat()-equivalent turn.
     turn_ids = {e["turn_id"] for e in events if e.get("turn_id")}
     assert turn_ids == {tid}
+
+
+def test_adapter_records_empty_response_from_turn_end(tmp_path):
+    """A turn the model never answered must be identifiable in the replay.
+
+    ``status`` stays "ok" — the runtime completed the turn normally — so
+    without the discriminator a triager opening the replay of a run that
+    exited non-zero would see a successful turn carrying a placeholder.
+    """
+    adapter, rec = _make_adapter(tmp_path)
+    adapter.begin_turn("hello")
+    adapter.emit(AgentEvent(EventType.TURN_END, {
+        "final_text": "[No response]", "status": "ok", "error": None,
+        "tool_count": 2, "incomplete_reason": "no_output",
+    }))
+    rec.close()
+
+    tc = [e for e in ReplayReader(rec.path).events()
+          if e["kind"] == "turn_completed"][0]
+    assert tc["payload"]["incomplete_reason"] == "no_output"
+    assert tc["payload"]["status"] == "ok"
+    assert tc["payload"]["tool_count"] == 2
+
+
+def test_adapter_omits_empty_response_on_a_normal_turn(tmp_path):
+    adapter, rec = _make_adapter(tmp_path)
+    adapter.begin_turn("hello")
+    adapter.emit(AgentEvent(EventType.TURN_END, {
+        "final_text": "the answer is 42", "status": "ok", "error": None,
+        "tool_count": 0, "incomplete_reason": None,
+    }))
+    rec.close()
+
+    tc = [e for e in ReplayReader(rec.path).events()
+          if e["kind"] == "turn_completed"][0]
+    assert "incomplete_reason" not in tc["payload"]
 
 
 def test_adapter_multiple_tools_share_turn_id(tmp_path):

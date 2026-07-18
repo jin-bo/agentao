@@ -58,6 +58,66 @@ def _is_length_truncation(finish_reason) -> bool:
     )
 
 
+# Substituted for an empty final assistant message (see
+# ``_handle_final_response``) so history stays valid for strict API proxies.
+EMPTY_REASONING_ONLY_PLACEHOLDER = "[No text response]"
+EMPTY_RESPONSE_PLACEHOLDER = "[No response]"
+
+# ``incomplete_reason`` is the single closed vocabulary for one question — why
+# this turn's ``final_text`` is not a complete, model-authored answer. Every
+# turn-ending path in ``run()`` commits exactly one of these (or ``None`` for a
+# real answer); there is no unclassified ending. Three sub-families:
+#
+#   the turn ended normally and the model simply produced no answer
+#       NO_OUTPUT       — nothing at all
+#       REASONING_ONLY  — reasoning, but no answer text
+#   the harness halted a turn that was not converging, so whatever text came
+#   back (a canned string, or the model's own partial text) is incomplete
+#       LENGTH_TRUNCATED — output cut off at the token limit (a tool call whose
+#                          arguments were truncated, or a final answer cut off
+#                          mid-sentence)
+#       DOOM_LOOP        — the same call repeated until the detector fired
+#   the LLM call itself failed and never yielded a turn
+#       LLM_ERROR       — the provider call raised (5xx / rate limit / auth)
+#                          after retries; the harness returned its own
+#                          ``[LLM API error: …]`` notice, not a model answer
+#
+# ``max_iterations`` is a *sixth* way a turn ends without a complete answer, but
+# it is a deliberately separate axis — not a value here. It rides a sticky
+# transport flag (``NonInteractiveTransport.max_iterations_hit``), reached
+# through the ``transport.on_max_iterations`` interaction callback, and carries
+# its own exit code (4). The flag is set when the cap is *hit* (even if a host
+# hook then continues past it), whereas this field is set only when a turn
+# *ends*; collapsing the two would lose that distinction. The host reconciles
+# them in ``cli/run.py::_classify_outcome`` (the flag is checked first).
+#
+# These are the wire values hosts branch on, so they are part of the event
+# contract — see developer-guide part-4/2-agent-events.md.
+INCOMPLETE_NO_OUTPUT = "no_output"
+INCOMPLETE_REASONING_ONLY = "reasoning_only"
+INCOMPLETE_LENGTH_TRUNCATED = "length_truncated"
+INCOMPLETE_DOOM_LOOP = "doom_loop"
+INCOMPLETE_LLM_ERROR = "llm_error"
+
+# The complete closed set — the ``incomplete_reason`` wire vocabulary. The CLI
+# maps each of these to an error envelope; a parity test binds the two so the
+# two lists cannot drift.
+INCOMPLETE_ANSWER_REASONS = frozenset({
+    INCOMPLETE_NO_OUTPUT,
+    INCOMPLETE_REASONING_ONLY,
+    INCOMPLETE_LENGTH_TRUNCATED,
+    INCOMPLETE_DOOM_LOOP,
+    INCOMPLETE_LLM_ERROR,
+})
+
+# The "harness halted a non-converging turn" family. Hook text or a re-entry
+# cap does not make such a turn converge, so its classification must survive
+# the ``_resolve_stop_hook`` paths that clear the answerless family. (LLM_ERROR
+# is not here: it never reaches ``_resolve_stop_hook`` — see the error-return
+# path in ``run()``.)
+_HALTED_REASONS = frozenset({INCOMPLETE_LENGTH_TRUNCATED, INCOMPLETE_DOOM_LOOP})
+
+
 # Model-facing tool-result stamped on every tool call in an assistant message
 # that was truncated at the output-token limit. Such a message was cut off, so
 # the streamed tool-call arguments may be truncated — the JSON can even balance
@@ -130,8 +190,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             self.active_skills = active_skills
             self.memory_version = memory_version
 
-    # Per-site differences in Stop-hook handling. The three sites
-    # (max-iterations / doom-loop / final-response) share one code path
+    # Per-site differences in Stop-hook handling. The four sites
+    # (max-iterations / doom-loop / length-truncation / final-response)
+    # share one code path
     # (``_resolve_stop_hook``); only the log text, the ``force_continue``
     # telemetry label, and whether ``additional_contexts`` ride on the
     # answer differ.
@@ -314,6 +375,13 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 image_fallback_index=image_fallback_index if iteration == 1 else None,
             )
             if llm_outcome.error_return is not None:
+                # The LLM call failed and was swallowed into a ``[LLM API
+                # error: …]`` notice (see ``_call_llm_with_overflow_recovery``).
+                # This return bypasses ``_resolve_stop_hook``, so classify the
+                # turn here — otherwise the harness's own error notice ships as
+                # a successful model answer at exit 0. Same commit discipline as
+                # every other ending site: no turn leaves ``run()`` unclassified.
+                agent._turn_incomplete_reason = INCOMPLETE_LLM_ERROR
                 return llm_outcome.error_return
             response = llm_outcome.response
             messages_with_system = llm_outcome.messages_with_system
@@ -369,6 +437,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     assistant_message=assistant_message,
                     iteration=iteration,
                     system_prompt=system_prompt,
+                    finish_reason=finish_reason,
                 )
                 if step.action == "continue":  # Stop-hook re-entry
                     messages_with_system = step.messages_with_system
@@ -604,11 +673,15 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 agent.llm.logger.warning(
                     "Sanitised lone surrogates in length-truncation abort message"
                 )
+            # The harness gave up on a turn the model could not get through, so
+            # ``assistant_content`` is either our canned string or whatever
+            # partial text preceded the truncated calls — incomplete either way.
             return self._resolve_stop_hook(
                 turn_end_reason="length_truncation",
                 assistant_content=assistant_content,
                 final_msg=final_msg,
                 system_prompt=system_prompt,
+                incomplete_reason=INCOMPLETE_LENGTH_TRUNCATED,
             )
 
         return ChatLoopRunner._Step(
@@ -682,6 +755,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 assistant_content=assistant_content_doom,
                 final_msg=final_msg_doom,
                 system_prompt=system_prompt,
+                incomplete_reason=INCOMPLETE_DOOM_LOOP,
             )
         if token.is_cancelled:
             raise AgentCancelledError(token.reason)
@@ -718,12 +792,15 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         assistant_message,
         iteration: int,
         system_prompt: str,
+        finish_reason: Optional[str] = None,
     ) -> "ChatLoopRunner._Step":
         """Finalize a turn that ended without tool calls."""
         agent = self._agent
         agent.llm.logger.info(f"Reached final response in iteration {iteration}")
         reasoning_content = getattr(assistant_message, "reasoning_content", None)
         assistant_content = assistant_message.content or ""
+        truncated = _is_length_truncation(finish_reason)
+        incomplete_reason: Optional[str] = None
         if not assistant_content.strip():
             # Some models (byte-level reasoning backends — Kimi, GLM,
             # Qwen-via-Ollama) end a turn with empty/whitespace content and
@@ -731,14 +808,39 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             # message that strict API proxies reject on the next turn.
             # Substitute a neutral marker.
             assistant_content = (
-                "[No text response]"
+                EMPTY_REASONING_ONLY_PLACEHOLDER
                 if reasoning_content
-                else "[No response]"
+                else EMPTY_RESPONSE_PLACEHOLDER
+            )
+            # The placeholder keeps history valid but is not an answer. Record
+            # which kind so hosts can tell "model emitted nothing" from "model
+            # reasoned but never answered"; ``_resolve_stop_hook`` commits it
+            # once the Stop hook has had its say. Truncation wins over both:
+            # when the empty content is the model hitting the output-token limit
+            # mid-reasoning (``finish_reason=length``), the actionable fact is
+            # "ran out of tokens" (retry smaller), not "chose not to answer".
+            incomplete_reason = (
+                INCOMPLETE_LENGTH_TRUNCATED
+                if truncated
+                else INCOMPLETE_REASONING_ONLY if reasoning_content
+                else INCOMPLETE_NO_OUTPUT
             )
             agent.llm.logger.warning(
                 "Empty final assistant content in iteration %d; "
                 "substituted placeholder to keep history valid",
                 iteration,
+            )
+        elif truncated:
+            # Non-empty answer, but the model was cut off at the output-token
+            # limit mid-sentence — a partial answer, not a complete one. Keep
+            # the partial text in history, but flag the turn incomplete so
+            # ``agentao run`` does not serve a half-sentence as a finished
+            # answer at exit 0.
+            incomplete_reason = INCOMPLETE_LENGTH_TRUNCATED
+            agent.llm.logger.warning(
+                "Final assistant content truncated at the output-token limit "
+                "in iteration %d (finish_reason=%s)",
+                iteration, finish_reason,
             )
         final_msg: Dict[str, Any] = {"role": "assistant", "content": assistant_content}
         _attach_reasoning(final_msg, reasoning_content)
@@ -752,6 +854,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             assistant_content=assistant_content,
             final_msg=final_msg,
             system_prompt=system_prompt,
+            incomplete_reason=incomplete_reason,
         )
 
     def _resolve_stop_hook(
@@ -761,14 +864,31 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         assistant_content: str,
         final_msg: Dict[str, Any],
         system_prompt: str,
+        incomplete_reason: Optional[str] = None,
     ) -> "ChatLoopRunner._Step":
         """Dispatch the Stop hook and translate its verdict into a step.
 
-        Shared by all three turn-ending sites (max-iterations, doom-loop,
-        final-response); per-site differences live in ``_STOP_SITES``.
+        Shared by all four turn-ending sites (max-iterations, doom-loop,
+        length-truncation, final-response); per-site differences live in
+        ``_STOP_SITES``.
         ``final_msg`` is appended to history here (after a possible
         ``blocking_error`` / ``additional_contexts`` rewrite) so the
         original answer never leaks into history on a block.
+
+        ``incomplete_reason`` is the caller's classification of *why* the turn
+        has no complete model-authored answer. Three of the four sites pass a
+        value — ``final_response`` (``no_output`` / ``reasoning_only`` /
+        ``length_truncated``), ``length_truncation``, and ``doom_loop``; only
+        ``max_iterations`` omits it, keeping its own exit-4 channel. It is
+        recorded on the agent at each return point rather than at substitution
+        time, because only here is the turn's outcome final: the Stop hook may
+        replace the answer (block), hand the turn back to the loop
+        (force-continue), the re-entry cap may fire, or the hook may merely
+        decorate the answer (additional_contexts). A hook supplying text cures
+        the *answerless* family (``no_output`` / ``reasoning_only``) — the
+        caller now receives that text — but does not cure a *halted* turn
+        (``length_truncated`` / ``doom_loop``): hook text does not make a
+        non-converging turn converge, so ``_HALTED_REASONS`` survives the block.
         """
         agent = self._agent
         site = self._STOP_SITES[turn_end_reason]
@@ -781,6 +901,15 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             blocked = f"[Blocked by Stop hook] {stop_result.blocking_error}"
             final_msg["content"] = blocked
             agent.messages.append(final_msg)
+            # The hook supplied the text the caller receives, so an *answerless*
+            # turn (no_output / reasoning_only) is no longer answerless. A
+            # *halted* turn (length_truncated / doom_loop) is not cured by hook
+            # text — it still never converged — so its classification survives,
+            # keeping ``agentao run`` at exit 1 instead of serving the hook's
+            # diagnostic string as a successful answer.
+            agent._turn_incomplete_reason = (
+                incomplete_reason if incomplete_reason in _HALTED_REASONS else None
+            )
             self._emit_stop_hook_fired(
                 outcome="block",
                 turn_end_reason=turn_end_reason,
@@ -794,6 +923,12 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             if self._stop_reentries >= self._stop_reentry_cap:
                 agent.llm.logger.warning(site["reentry_cap_log"], self._stop_reentry_cap)
                 agent.messages.append(final_msg)
+                # Capped: the caller receives ``assistant_content`` unchanged
+                # (no hook text substituted), so the turn is exactly as
+                # incomplete as when it entered — an answerless or halted turn
+                # stays classified. Without this, a capped length_truncation /
+                # doom_loop turn would emit ``None`` and exit 0.
+                agent._turn_incomplete_reason = incomplete_reason
                 self._emit_stop_hook_fired(
                     outcome="reentry_capped",
                     turn_end_reason=turn_end_reason,
@@ -819,6 +954,11 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             messages_with_system = [
                 {"role": "system", "content": system_prompt}
             ] + agent.messages
+            # The turn is not ending — the loop gets another iteration, which
+            # will re-classify when it reaches its own ending site. Clearing
+            # here keeps an earlier empty iteration from sticking to a turn
+            # that goes on to answer (or to end for some other reason).
+            agent._turn_incomplete_reason = None
             self._emit_stop_hook_fired(
                 outcome=site["force_continue_outcome"],
                 turn_end_reason=turn_end_reason,
@@ -847,6 +987,10 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             final_msg["content"] = f"{assistant_content}\n{extra}"
             assistant_content = final_msg["content"]
         agent.messages.append(final_msg)
+        # ``additional_contexts`` decorates the answer, it does not supply one:
+        # an empty turn wrapped in a ``<stop-hook>`` block is still a turn the
+        # model never answered, so the classification survives the rewrite.
+        agent._turn_incomplete_reason = incomplete_reason
         self._emit_stop_hook_fired(
             outcome="allow",
             turn_end_reason=turn_end_reason,

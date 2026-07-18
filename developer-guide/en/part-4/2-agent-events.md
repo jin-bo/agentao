@@ -52,7 +52,7 @@ TURN_BEGIN -> (user message arrives — turn begins; carries the user text)
 TURN_END   -> (turn ends; carries final assistant text + status/error)
 ```
 
-`TURN_BEGIN` / `TURN_END` fire **once per user-driven turn**; `TURN_START` fires **once per LLM iteration** inside that turn. Replay recorders subscribe to the outer pair via `Transport.subscribe()` (see [4.1](./1-transport-protocol)) instead of being reached through agent state.
+`TURN_BEGIN` / `TURN_END` fire **once per user-driven turn**; `TURN_START` fires **once per LLM iteration** inside that turn. The replay recorder is wired by splicing a `ReplayAdapter` over `agent.transport` that translates the outer pair into recorder turn writes (`ReplayAdapter._mirror`) — not through a subscription. `Transport.subscribe()` (see [4.1](./1-transport-protocol)) is the path for *other* side-channel observers, and the adapter forwards it to the inner transport so subscribing keeps working while replay is on.
 
 Most UIs only need `LLM_TEXT`, `THINKING`, `TOOL_START`, `TOOL_OUTPUT`, `TOOL_COMPLETE`, `TOOL_CONFIRMATION`, `AGENT_START`, `AGENT_END`, and `ERROR`.
 The rest are primarily for session replay, audit, metrics, and debugging.
@@ -65,7 +65,7 @@ The rest are primarily for session replay, audit, metrics, and debugging.
 |-------|-------------|
 | Trigger | Once at the start of each user-driven turn, **before** any LLM iteration |
 | `data` | `{"user_message": "..."}` |
-| Typical use | Open a new turn frame in the replay log / audit stream; subscribe via `Transport.subscribe()` |
+| Typical use | Open a new turn frame in an audit / observer stream via `Transport.subscribe()`. (The replay recorder is wired separately, through the `ReplayAdapter` splice — not this subscription.) |
 
 Distinct from `TURN_START` (which fires per LLM iteration). `TURN_BEGIN` carries the user input and pairs 1-to-1 with `TURN_END`.
 
@@ -74,8 +74,22 @@ Distinct from `TURN_START` (which fires per LLM iteration). `TURN_BEGIN` carries
 | Field | Description |
 |-------|-------------|
 | Trigger | Once at the end of each user-driven turn, after the final assistant reply (or on error / cancellation) |
-| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None, "tool_count": 3}` |
+| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None, "tool_count": 3, "incomplete_reason": None}` |
 | Typical use | Close the turn frame; flush per-turn metrics — `tool_count` is the number of tool calls the LLM made across all iterations of the turn, so a host can size a turn without replaying every `TOOL_START` |
+
+`incomplete_reason` is `None` on an ordinary turn. It is set when the turn ended without a complete, model-authored answer, and says why:
+
+| Value | Meaning |
+|---|---|
+| `no_output` | The model emitted nothing. |
+| `reasoning_only` | The model emitted reasoning but no answer text. |
+| `length_truncated` | Output was cut off at the token limit — either a tool call whose arguments were truncated (the harness then halts the turn) or a final answer cut off mid-sentence. |
+| `doom_loop` | The model repeated the same call until the detector halted the turn. |
+| `llm_error` | The LLM call itself failed (provider 5xx / rate limit / auth) after retries; `final_text` holds the harness's `[LLM API error: …]` notice, not a model answer. |
+
+This is a **single closed vocabulary**: every turn-ending path commits exactly one of these, or `None` for a real answer — there is no unclassified ending. The first two mean the turn ended normally with no answer; the middle two mean the harness stopped a turn that was not converging; the last means the provider call never yielded a turn. (`max_iterations` is a sixth way a turn ends without a complete answer, but it is a deliberately separate axis — a sticky transport flag with its own exit code 4 and its own `on_max_iterations` interaction, not a value here.)
+
+Prefer it over string-matching `final_text` — the harness substitutes a placeholder or a canned notice there (including the `[LLM API error: …]` notice, now classified `llm_error`), and a Stop hook may decorate it, so the text is not a reliable signal. A cancelled turn is never reported via `incomplete_reason` (it carries `status: "cancelled"`). `agentao run` maps a non-`None` value to a non-zero exit; other hosts are free to retry, prompt, or ignore.
 
 Replay recorders pair this with `TURN_BEGIN` to delimit a turn. Drives the runtime → replay handoff that used to be a direct call into the replay adapter.
 
