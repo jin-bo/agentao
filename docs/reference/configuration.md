@@ -382,11 +382,35 @@ Full schema, tables, and lifecycle → [memory-management.md](../guides/memory-m
 | Code | Meaning |
 |---|---|
 | 0 | OK |
-| 1 | Runtime error |
+| 1 | Runtime error, or a turn that produced no answer (`runtime_error`, `empty_response`, `length_truncated`, `doom_loop`) |
 | 2 | Invalid usage / invalid spec |
 | 3 | Permission denied or interaction required |
 | 4 | Max iterations |
 | 130 | Interrupted (SIGINT) |
+
+`error.type` discriminates outcomes that share an exit code. Every turn the
+runtime classifies as having no complete answer (the five `reason` values
+below) exits 1 rather than 0, so a pipeline cannot read those as success — this
+is a single closed vocabulary with no unclassified ending. `error.reason`
+carries the exact variant — branch on `reason`, not on `message`:
+
+| `type` | `reason` | Meaning |
+|---|---|---|
+| `empty_response` | `no_output` | The model emitted nothing. |
+| `empty_response` | `reasoning_only` | Reasoning, but no answer text. |
+| `length_truncated` | `length_truncated` | Output cut off at the token limit — a tool call whose arguments were truncated (the harness then halts the turn), or a final answer cut off mid-sentence. |
+| `doom_loop` | `doom_loop` | The model repeated one call until the detector halted the turn. |
+| `runtime_error` | `llm_error` | The LLM API call failed (provider error / rate limit / auth) after retries; the message carries the provider's actual error. |
+
+`empty_response` means the model said nothing; `length_truncated` / `doom_loop`
+mean the harness halted a non-converging turn; `llm_error` means the provider
+call failed. All are classified last, so a rejection, max-iterations,
+cancellation, or raised error keeps its own more specific code.
+
+A turn can end this way *after* running tools — the model may do the work and
+then fail to summarize it. `tool_calls` reports how many ran and their side
+effects have already landed, so an `empty_response` failure does **not** imply
+the workspace is untouched.
 
 Full design rationale → [run-spec-parameters.md](../design/run-spec-parameters.md).
 

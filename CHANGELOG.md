@@ -11,9 +11,63 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`TURN_END.incomplete_reason`** — a single closed vocabulary classifying
+  *why* a turn's `final_text` is not a complete, model-authored answer, in
+  three families: the turn ended normally but the model produced no answer
+  (`no_output`, `reasoning_only`); the harness halted a turn that was not
+  converging (`length_truncated` — now covering a final answer cut off
+  mid-sentence, not only truncated tool calls; `doom_loop`); or the LLM call
+  itself failed (`llm_error`). `None` on a healthy turn, and suppressed when the
+  turn was cancelled or already errored — those carry their own status. Every
+  turn-ending path commits exactly one value, so there is no unclassified
+  ending. The replay adapter mirrors it onto the `TURN_COMPLETED` record.
+  Additive, so no `schema_version` bump (same precedent as `tool_count`).
+  `max_iterations` is a sixth way a turn ends without a complete answer but is a
+  deliberately separate axis — a sticky transport flag with its own exit code 4
+  and `on_max_iterations` interaction, not a value here.
+
+- **`error.reason` on the `agentao run` envelope** — the machine-readable
+  discriminator behind `error.type`, carrying the `incomplete_reason` value
+  verbatim so a caller can branch on `no_output` vs `reasoning_only` without
+  parsing `message`.
+
+- **`agent.last_turn` → `TurnOutcome`** — a structured read-after companion to
+  `chat()` / `arun()`'s string return. `chat()` still returns the turn's text
+  as a `str`; `agent.last_turn` (a frozen `TurnOutcome` with `text`, `status`,
+  `incomplete_reason`, `tool_count`, `error`, and an `is_answer` convenience)
+  is how a host tells a real answer from a placeholder / harness notice without
+  subscribing to the internal `Transport`. `TurnOutcome` is importable from the
+  top-level package (`from agentao import TurnOutcome`) without pulling the LLM
+  stack. Mirrors the `TURN_END` payload field-for-field — both are fed from a
+  single gated value in `runtime/turn.py`, so they never disagree.
+
 ### Changed
 
 ### Fixed
+
+- **A turn cancelled mid-stream now reports `status: "cancelled"`.** When a
+  cancellation token fired while the LLM was streaming, the model could return a
+  normally-built empty message without raising, so the turn reached its ordinary
+  ending site and emitted `TURN_END` with `status: "ok"` though it was
+  interrupted. `runtime/turn.py` now reflects the cancellation in `status`, so
+  the wire event and `agent.last_turn` both report it honestly (and a
+  placeholder-vs-answer check does not read a cancelled turn as an answer).
+
+- **`agentao run` no longer exits `0` on a turn that produced no answer.**
+  A turn ending with an empty assistant message exited `0` and served the
+  `[No response]` / `[No text response]` placeholder as if it were the model's
+  answer; a turn the harness aborted after repeated length truncation or a
+  doom loop did the same with its canned abort string; a final answer cut off
+  mid-sentence at the token limit, and a turn whose LLM call failed outright
+  (returning the `[LLM API error: …]` notice), likewise exited `0`. Automation
+  reading `final_text` could not distinguish any of these from a real answer.
+  All now exit `1` with a precise `error.type` — `empty_response` when the
+  model said nothing, `length_truncated` / `doom_loop` when the harness halted
+  a non-converging turn, `runtime_error` (with `error.reason: "llm_error"` and
+  the provider's actual message) when the LLM call failed. Note that such a
+  turn may have run tools first: `tool_calls` reports how many, and their side
+  effects have already landed, so a non-zero exit does **not** imply an
+  untouched workspace.
 
 ---
 

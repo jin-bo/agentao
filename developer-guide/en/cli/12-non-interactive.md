@@ -159,14 +159,28 @@ For the full design rationale — including v1 scope, deferred typing (`number` 
 }
 ```
 
-On failure, `final_text` is `null` and `error` carries `{ type, message, tool_name?, tool_call_id?, question?, matched_rule? }`. Error `type` is one of `permission_required`, `permission_denied`, `interaction_required`, `max_iterations`, `runtime_error`, `invalid_spec`, `interrupted`. Consumers should treat the envelope as forward-compatible (extra fields ignored).
+On failure, `final_text` is `null` and `error` carries `{ type, message, reason?, tool_name?, tool_call_id?, question?, matched_rule? }`. Error `type` is one of `permission_required`, `permission_denied`, `interaction_required`, `max_iterations`, `runtime_error`, `invalid_spec`, `interrupted`, `empty_response`, `length_truncated`, `doom_loop`. Consumers should treat the envelope as forward-compatible (extra fields ignored).
+
+Three types mean the turn completed with no answer to hand back, and `reason` carries the runtime's exact classification for all of them — branch on `reason`, not on `message`:
+
+| `type` | `reason` | Meaning |
+|---|---|---|
+| `empty_response` | `no_output` | The model emitted nothing. |
+| `empty_response` | `reasoning_only` | The model emitted reasoning but no answer text. |
+| `length_truncated` | `length_truncated` | Output cut off at the token limit — a tool call whose arguments were truncated (the harness then halts the turn), or a final answer cut off mid-sentence. |
+| `doom_loop` | `doom_loop` | The model repeated the same call until the detector halted the turn. |
+| `runtime_error` | `llm_error` | The LLM API call failed (provider 5xx / rate limit / auth) after retries; the message carries the provider's actual error. |
+
+The split is deliberate: `empty_response` means the model said nothing, `length_truncated` / `doom_loop` mean the harness halted a non-converging turn (often worth retrying with a smaller task, which "the model said nothing" usually is not), and `llm_error` means the provider call failed. All exit `1`, and the set is closed — every turn that ends without a complete answer classifies, so a pipeline never reads one as success at exit `0`.
+
+Note that a turn can end this way *after* running tools: the model may do the work and then fail to summarize it. `tool_calls` on the same envelope reports how many ran, and their side effects have already landed — an `empty_response` failure does **not** mean the workspace is untouched.
 
 ### Exit codes (unified across `agentao run` and `agentao -p`)
 
 | Code  | Meaning |
 |-------|---------|
 | `0`   | Completed normally |
-| `1`   | Runtime error |
+| `1`   | Runtime error, or a turn that produced no answer (`runtime_error`, `empty_response`, `length_truncated`, `doom_loop`) |
 | `2`   | Invalid usage / spec validation failed / unknown spec field |
 | `3`   | Permission or interaction required (no interactive approval available) |
 | `4`   | Max tool iterations reached; answer may be incomplete |

@@ -107,14 +107,25 @@ State is on `AgentaoCLI` (`agentao/cli/app.py`) and projected into prompts.
 
 ### System prompt composition
 
-Built fresh on every `chat()` — `agent.py::_build_system_prompt()` delegates to `agentao/prompts/` (`SystemPromptBuilder`):
+Built fresh on every `chat()` — `agent.py::_build_system_prompt()` delegates to `agentao/prompts/` (`SystemPromptBuilder`). Sections are ordered to keep the **stable prefix byte-identical across turns** so provider prompt-caching can reuse it; everything that changes within a session sits below that line. `builder.py::_build_sections()` is the authoritative order:
+
+*Stable prefix (cached across turns):*
 
 1. `AGENTAO.md` (if present in cwd) — project-specific instructions
-2. Agent instructions — base Agentao capabilities
-3. Current date/time — `YYYY-MM-DD HH:MM:SS (Day)`
-4. Memory blocks — `<memory-stable>` + `<memory-context>` (top-k recall scored against current user message)
-5. Available skills — names + descriptions
-6. Active skills context — full SKILL.md + on-demand `references/*.md`
+2. Agent instructions — identity, reliability, task classification, execution protocol, completion standard, untrusted input, operational guidelines
+3. Reasoning requirement — only when a thinking handler is attached
+4. Available agents — suppressed in plan mode (delegation contradicts research-only intent)
+5. `<memory-stable>` — stable persistent memories; last item of the prefix
+
+*Volatile suffix (changes within a session):*
+
+6. Available skills — names + descriptions
+7. Active skills context — full SKILL.md + on-demand `references/*.md`
+8. Todos
+9. `<memory-context>` — top-k recall scored against the current user message, excluding anything already in `<memory-stable>`
+10. Plan prompt — plan mode only
+
+**The date/time is *not* in the system prompt.** It is injected per-turn as a `<system-reminder>` prepended to the *user message* (`runtime/chat_loop/_runner.py::run`, `Current Date/Time: YYYY-MM-DD HH:MM:SS (Day)`) — keeping it out of the cached prefix is the whole point. `tests/test_date_in_prompt.py` asserts both halves.
 
 ### Conversation flow
 

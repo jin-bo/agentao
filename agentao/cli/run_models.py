@@ -244,11 +244,20 @@ class RunErrorEnvelope(BaseModel):
         "runtime_error",
         "invalid_spec",
         "interrupted",
+        "empty_response",
+        "length_truncated",
+        "doom_loop",
     ]
     message: str
     tool_name: Optional[str] = None
     tool_call_id: Optional[str] = None
     matched_rule: Optional[Dict[str, Any]] = None
+    # Machine-readable sub-classification. For a turn that produced no
+    # complete answer this carries the runtime's ``incomplete_reason``
+    # verbatim ("no_output", "reasoning_only", "length_truncated",
+    # "doom_loop"), so a consumer can branch on one field without
+    # substring-matching ``message`` or widening its ``type`` match.
+    reason: Optional[str] = None
     # ``ask_user`` raises ``interaction_required`` and the transport
     # records the prompt text the agent wanted to ask. The envelope
     # carries that text through so automation can decide what to do.

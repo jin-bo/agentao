@@ -56,10 +56,21 @@ class AgentEvent:
 
     ``schema_version`` is the runtime-payload version contract for the
     wire form (independent of ACP's protocol version); bump it when a
-    payload field's shape or semantics change.
+    payload field's shape or semantics change. Adding a new key is not
+    such a change: consumers ignore keys they do not know, so additive
+    fields ship without a bump (``tool_count`` and ``incomplete_reason``
+    both joined TURN_END this way). Because the version is a single value
+    across every event type, bumping it for one payload would strand a
+    consumer pinned to the old version on *that* event rather than let it
+    skip one unread field.
 
     Common data payloads:
         TURN_START    {}
+        TURN_BEGIN    {"user_message": "..."}
+        TURN_END      {"final_text": "...", "status": "ok"|"error"|"cancelled",
+                       "error": None, "tool_count": 3,
+                       "incomplete_reason": None|"no_output"|"reasoning_only"
+                       |"length_truncated"|"doom_loop"}
         TOOL_START    {"tool": "run_shell_command", "args": {...}, "call_id": "uuid"}
         TOOL_OUTPUT   {"tool": "run_shell_command", "chunk": "hello\\n", "call_id": "uuid"}
         TOOL_COMPLETE {"tool": "run_shell_command", "call_id": "uuid",

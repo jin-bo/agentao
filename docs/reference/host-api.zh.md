@@ -245,7 +245,7 @@ for ev in events:
 
 | 家族 | 成员 |
 |---|---|
-| Turn / loop | `TURN_START` |
+| Turn / loop | `TURN_START`、`TURN_BEGIN`、`TURN_END` |
 | 工具执行（原始） | `TOOL_START`、`TOOL_OUTPUT`、`TOOL_COMPLETE`、`TOOL_RESULT` |
 | LLM 调用 | `LLM_CALL_STARTED`、`LLM_CALL_COMPLETED`、`LLM_CALL_DELTA`、`LLM_CALL_IO`、`LLM_TEXT`、`THINKING` |
 | 子 Agent（原始） | `AGENT_START`、`AGENT_END` |
@@ -256,14 +256,18 @@ for ev in events:
 | 错误 | `ERROR` |
 
 每个 `AgentEvent` 都带 `schema_version: int` 字段；这是载荷形状变化
-的**唯一**信号。
+的**唯一**信号。它是**所有事件类型共用的单个值**，不是按载荷分版本的
+——bump 一次就把全部事件一起推高，而 pin 在旧值上的消费方会因此开始
+拒收本来读得懂的事件。正是这种不对称决定了**新增**字段不 bump：未知的
+键忽略掉就是了，bump 却没这个退路。只有当消费方已经在读的某个名字下、
+形状或语义发生了变化，才动它。
 
 ### 稳定性——真正决定怎么用的部分
 
 |  | `HostEvent`（本合约） | `AgentEvent`（`Transport`） |
 |---|---|---|
 | `docs/schema/` 下有 schema 快照？ | ✅ `host.events.v1.json` | ❌ |
-| 字段重命名/删除会触发版本 bump？ | ✅ 由 `tests/test_host_schema.py` 强制 | ⚠️ 受影响载荷上 best-effort `schema_version` bump |
+| 字段重命名/删除会触发版本 bump？ | ✅ 由 `tests/test_host_schema.py` 强制 | ⚠️ best-effort `schema_version` bump —— 全局的，一动就动所有事件类型 |
 | 有脱敏/投影层？ | ✅ `agentao/host/projection.py` 剥掉原始 input/output | ❌ 原始载荷（LLM_CALL_IO 可含完整 prompt 与工具 I/O） |
 | 发布前跨版本兼容性审计？ | ✅ 是发布检查表项 | ❌ |
 | 适合走长期稳定的 wire 协议？ | ✅ | ⚠️ 仅当你 pin 住 `schema_version` 并自负升级路径 |
@@ -287,6 +291,19 @@ for ev in events:
 - **LLM 速率限制信号。** Provider 端 429 只能从 `ERROR` 的文本里
   嗅出来。promote 成结构化的 `LLMCallEvent(error_type="rate_limited")`
   也在同一份 plan 里。
+- **Turn 结果作为流式事件（push）。** 结果本身——模型到底答没答——已经
+  可以同步拿到：`agent.last_turn` 返回一个 `TurnOutcome`（`text`、`status`、
+  一套单一封闭词表的 `incomplete_reason`——`no_output`、`reasoning_only`、
+  `length_truncated`、`doom_loop`、`llm_error`，或 `None`；`tool_count`；
+  `error`），`.is_answer` 把它折成一个判断。这是一个 **pull** 面：它回答
+  "我刚 await 完的这个 turn 是怎么结束的"，覆盖 `chat()` / `arun()` 调用方、
+  `agentao run` 和任何嵌入方。**尚未**进稳定契约的是 **push** 形态——一个
+  不驱动 turn 的异步观察者可以订阅的 `HostEvent`。`HostEvent` 只覆盖工具、
+  子 agent、权限三类生命周期，所以这类观察者只能退回到内部 `Transport` 的
+  `TURN_END`（未投射，且有上文的 `schema_version` 警告）。这条 **尚未**记录在
+  [PUBLIC_EVENT_PROMOTION_PLAN](../history/implementation/public-event-promotion-plan.md)
+  里；那份 plan 的范围是 `MCPLifecycleEvent` 和 `LLMCallEvent`，turn 结果
+  事件属于新开一根支柱，不是范围微调。
 
 ## 非目标
 

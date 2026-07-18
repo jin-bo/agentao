@@ -58,11 +58,12 @@ _ensure_utf8()
 # and independently testable, while keeping `from agentao import Agentao` and
 # `agentao.Agentao(...)` working unchanged.
 
-__all__ = ["Agentao", "SkillManager"]
+__all__ = ["Agentao", "SkillManager", "TurnOutcome"]
 
 if TYPE_CHECKING:
     # Type checkers and IDEs see explicit imports; the runtime path uses __getattr__.
     from .agent import Agentao
+    from .runtime.outcome import TurnOutcome
     from .skills import SkillManager
 
 
@@ -73,6 +74,11 @@ def __getattr__(name: str):
     if name == "SkillManager":
         from .skills import SkillManager
         return SkillManager
+    if name == "TurnOutcome":
+        # Lightweight dataclass — importable without the LLM stack, so a host
+        # can type-annotate ``agent.last_turn`` cheaply.
+        from .runtime.outcome import TurnOutcome
+        return TurnOutcome
     raise AttributeError(f"module 'agentao' has no attribute {name!r}")
 
 

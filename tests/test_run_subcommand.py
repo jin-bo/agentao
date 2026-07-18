@@ -18,6 +18,7 @@ import io
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List
 from unittest.mock import patch
 
@@ -282,6 +283,304 @@ def test_format_json_emits_structured_envelope(
     assert payload["final_text"] == "stub final text"
     assert payload["cwd"]
     assert payload["model"] == "stub-model"
+
+
+# ---------------------------------------------------------------------------
+# Empty model turn — must not read as success
+# ---------------------------------------------------------------------------
+
+
+def _emit_incomplete_turn(kind: str, final_text: str):
+    """Build a ``chat`` stub that ends the turn the way the runtime does when
+    the model returns no usable answer."""
+    from agentao.transport import AgentEvent, EventType
+
+    def chat(self, prompt, max_iterations=100, cancellation_token=None):
+        self.transport.emit(AgentEvent(EventType.TURN_END, {
+            "final_text": final_text,
+            "status": "ok",
+            "error": None,
+            "tool_count": 0,
+            "incomplete_reason": kind,
+        }))
+        return final_text
+
+    return chat
+
+
+def _real_turn_end_payload(content, *, reasoning=None) -> Dict[str, Any]:
+    """Drive a real Agentao turn and return the TURN_END payload it emits.
+
+    The other tests here hand-write that payload, which leaves the producer
+    (``runtime/turn.py``) and this module's reader (``run.py``) agreeing only
+    by coincidence of a string literal. This reaches for the real thing so the
+    seam is covered.
+    """
+    from agentao import Agentao
+    from agentao.transport import EventType
+
+    agent = Agentao(
+        api_key="test-key", base_url="https://example.test/v1",
+        model="test-model", working_directory=Path.cwd(),
+    )
+    message = SimpleNamespace(
+        content=content, tool_calls=None, reasoning_content=reasoning,
+    )
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="stop")],
+        usage=None, model="test-model",
+    )
+    agent._llm_call = lambda messages, tools, token: response
+
+    seen: List[Dict[str, Any]] = []
+    agent.transport.subscribe(
+        lambda ev: seen.append(dict(getattr(ev, "data", None) or {}))
+        if getattr(ev, "type", None) == EventType.TURN_END else None
+    )
+    agent.chat("hi")
+    assert seen, "real turn emitted no TURN_END"
+    return seen[-1]
+
+
+def test_run_consumes_the_real_runtime_turn_end_payload(
+    monkeypatch, tmp_path, stub_pipeline, capsys,
+):
+    """Bind the producer to the consumer.
+
+    Feeding run.py the payload the *real* runtime emits means renaming the
+    field in turn.py breaks this test, instead of silently disabling the guard
+    while every hand-written-payload test stays green.
+    """
+    payload = _real_turn_end_payload("   \n  ")
+    assert payload["incomplete_reason"] == "no_output", (
+        "real runtime stopped classifying an empty turn"
+    )
+
+    captured, StubAgent = stub_pipeline
+    from agentao.transport import AgentEvent, EventType
+
+    def chat(self, prompt, max_iterations=100, cancellation_token=None):
+        self.transport.emit(AgentEvent(EventType.TURN_END, payload))
+        return payload["final_text"]
+
+    monkeypatch.setattr(StubAgent, "chat", chat)
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == run.EXIT_RUNTIME_ERROR
+    assert json.loads(capsys.readouterr().out)["error"]["type"] == "empty_response"
+
+
+def test_empty_turn_exits_non_zero_with_envelope(
+    monkeypatch, tmp_path, stub_pipeline, capsys,
+):
+    """The regression this guards: an empty model turn used to exit 0 with the
+    bare placeholder as ``final_text``, indistinguishable from a real answer."""
+    captured, StubAgent = stub_pipeline
+    monkeypatch.setattr(
+        StubAgent, "chat", _emit_incomplete_turn("no_output", "[No response]"),
+    )
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    args = _build_args(prompt="hi", output_format="json")
+    rc = run._execute_with_args(args)
+
+    assert rc == run.EXIT_RUNTIME_ERROR
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "error"
+    assert payload["error"]["type"] == "empty_response"
+    # The placeholder must never be served as the result.
+    assert payload.get("final_text") is None
+
+
+def test_reasoning_only_turn_reports_distinct_diagnostic(
+    monkeypatch, tmp_path, stub_pipeline, capsys,
+):
+    captured, StubAgent = stub_pipeline
+    monkeypatch.setattr(
+        StubAgent, "chat",
+        _emit_incomplete_turn("reasoning_only", "[No text response]"),
+    )
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    args = _build_args(prompt="hi", output_format="json")
+    rc = run._execute_with_args(args)
+
+    assert rc == run.EXIT_RUNTIME_ERROR
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["type"] == "empty_response"
+    # Structural discriminator, not a substring of a human-facing sentence.
+    assert payload["error"]["reason"] == "reasoning_only"
+
+
+def test_empty_turn_text_mode_writes_stderr_diagnostic(
+    monkeypatch, tmp_path, stub_pipeline, capsys,
+):
+    """Text mode suppresses ``final_text`` on error, so without the stderr
+    diagnostic a non-zero exit would carry no explanation at all."""
+    captured, StubAgent = stub_pipeline
+    monkeypatch.setattr(
+        StubAgent, "chat", _emit_incomplete_turn("no_output", "[No response]"),
+    )
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    args = _build_args(prompt="hi", output_format="text")
+    rc = run._execute_with_args(args)
+
+    assert rc == run.EXIT_RUNTIME_ERROR
+    streams = capsys.readouterr()
+    assert streams.out.strip() == ""
+    assert "empty response" in streams.err
+
+
+@pytest.mark.parametrize(
+    "reason, expected_type, expected_phrase",
+    [
+        ("length_truncated", "length_truncated", "cut off at the token limit"),
+        ("doom_loop", "doom_loop", "doom-loop detector"),
+    ],
+)
+def test_harness_halted_turn_exits_non_zero_with_own_type(
+    monkeypatch, tmp_path, stub_pipeline, capsys,
+    reason, expected_type, expected_phrase,
+):
+    """A turn the harness halted must not exit 0 serving its canned string.
+
+    These get their own ``type`` rather than ``empty_response``: the model did
+    answer-ish things, the harness cut the turn short, and a pipeline may want
+    to retry those differently from "the model said nothing".
+    """
+    captured, StubAgent = stub_pipeline
+    monkeypatch.setattr(
+        StubAgent, "chat", _emit_incomplete_turn(reason, "[halted]"),
+    )
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == run.EXIT_RUNTIME_ERROR
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["type"] == expected_type
+    assert payload["error"]["reason"] == reason
+    assert expected_phrase in payload["error"]["message"]
+    assert payload.get("final_text") is None
+
+
+def test_llm_error_turn_exits_non_zero_and_surfaces_provider_message(
+    monkeypatch, tmp_path, stub_pipeline, capsys,
+):
+    """An LLM call that failed outright must not exit 0 serving its own
+    ``[LLM API error: …]`` notice as the model's answer. It exits 1 as
+    ``runtime_error`` with ``reason: "llm_error"``, and the envelope surfaces
+    the provider's actual message rather than a generic stem.
+    """
+    captured, StubAgent = stub_pipeline
+    monkeypatch.setattr(
+        StubAgent, "chat",
+        _emit_incomplete_turn("llm_error", "[LLM API error: 502 Bad Gateway]"),
+    )
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == run.EXIT_RUNTIME_ERROR
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["type"] == "runtime_error"
+    assert payload["error"]["reason"] == "llm_error"
+    assert "502 Bad Gateway" in payload["error"]["message"]
+    assert payload.get("final_text") is None
+
+
+def test_incomplete_outcomes_covers_every_runtime_reason():
+    """The CLI outcome table must key on exactly the runtime's wire vocabulary.
+
+    ``_INCOMPLETE_OUTCOMES`` hand-copies the ``INCOMPLETE_*`` values as literals
+    to avoid importing runtime internals at module scope (see its comment). That
+    duplication is safe only while the two vocabularies stay in lockstep: a
+    runtime value with no table entry falls through to the generic
+    ``empty_response`` stem instead of its own ``type``. Bind them here so a
+    future rename/addition on either side fails loudly rather than silently
+    misclassifying.
+    """
+    from agentao.cli.run import _INCOMPLETE_OUTCOMES
+    from agentao.runtime.chat_loop import INCOMPLETE_ANSWER_REASONS
+
+    assert set(_INCOMPLETE_OUTCOMES) == INCOMPLETE_ANSWER_REASONS
+
+
+def test_normal_turn_still_exits_ok(monkeypatch, tmp_path, stub_pipeline, capsys):
+    """A turn that emits TURN_END without a classification stays a success."""
+    captured, StubAgent = stub_pipeline
+    monkeypatch.setattr(
+        StubAgent, "chat", _emit_incomplete_turn(None, "the answer is 42"),
+    )
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    args = _build_args(prompt="hi", output_format="json")
+    rc = run._execute_with_args(args)
+
+    assert rc == run.EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "ok"
+    assert payload["final_text"] == "the answer is 42"
+
+
+# ``empty_response`` is checked last, so any outcome that explains the missing
+# answer keeps its own more specific exit code.
+def test_cancelled_empty_turn_reports_interrupted_not_empty():
+    """A stream cancelled before its first token returns a normally-built empty
+    response (``llm/client.py`` breaks out without raising), so both signals are
+    live at once — cancellation must win."""
+    from agentao.cli import run
+
+    transport = SimpleNamespace(rejection=None, max_iterations_hit=False)
+    token = SimpleNamespace(is_cancelled=True, reason="sigint")
+
+    error, exit_code, status = run._classify_outcome(
+        transport=transport, token=token, runtime_error=None,
+        max_iterations=10, incomplete_reason="no_output",
+    )
+
+    assert exit_code == run.EXIT_INTERRUPTED
+    assert error.type == "interrupted"
+
+
+def test_max_iterations_empty_turn_reports_max_iterations():
+    from agentao.cli import run
+
+    transport = SimpleNamespace(rejection=None, max_iterations_hit=True)
+    token = SimpleNamespace(is_cancelled=False, reason=None)
+
+    error, exit_code, status = run._classify_outcome(
+        transport=transport, token=token, runtime_error=None,
+        max_iterations=10, incomplete_reason="no_output",
+    )
+
+    assert exit_code == run.EXIT_MAX_ITERATIONS
+    assert error.type == "max_iterations"
+
+
+def test_runtime_error_empty_turn_reports_runtime_error():
+    from agentao.cli import run
+
+    transport = SimpleNamespace(rejection=None, max_iterations_hit=False)
+    token = SimpleNamespace(is_cancelled=False, reason=None)
+
+    error, exit_code, status = run._classify_outcome(
+        transport=transport, token=token, runtime_error=RuntimeError("boom"),
+        max_iterations=10, incomplete_reason="no_output",
+    )
+
+    assert error.type == "runtime_error"
+    assert "boom" in error.message
 
 
 # ---------------------------------------------------------------------------

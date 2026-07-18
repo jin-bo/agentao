@@ -52,7 +52,7 @@ TURN_BEGIN -> (用户消息到达——turn 开始；携带 user 文本)
 TURN_END   -> (turn 结束；携带最终 assistant 文本 + status/error)
 ```
 
-`TURN_BEGIN` / `TURN_END` **每个用户驱动的 turn 各发一次**；`TURN_START` 是 turn 内**每次 LLM 迭代**都发（一个 turn 内可能很多次）。Replay 录制器通过 `Transport.subscribe()`（见 [4.1](./1-transport-protocol)）订阅外层这一对，替代了过去从 agent 内部状态直接调用 replay adapter 的路径。
+`TURN_BEGIN` / `TURN_END` **每个用户驱动的 turn 各发一次**；`TURN_START` 是 turn 内**每次 LLM 迭代**都发（一个 turn 内可能很多次）。Replay 录制器是通过把一个 `ReplayAdapter` 拼接到 `agent.transport` 前面来接线的——由它把外层这一对翻译成录制器的 turn 写入（`ReplayAdapter._mirror`），并不是靠订阅。`Transport.subscribe()`（见 [4.1](./1-transport-protocol)）是留给*其他*旁路观察者的路径，且该 adapter 会把 subscribe 转发给内层 transport，所以 replay 开启时订阅照样有效。
 
 大多数 UI 只需要处理 `LLM_TEXT`、`THINKING`、`TOOL_START`、`TOOL_OUTPUT`、`TOOL_COMPLETE`、`TOOL_CONFIRMATION`、`AGENT_START`、`AGENT_END` 和 `ERROR`。
 其他事件主要服务于 session replay、审计、指标和调试。
@@ -65,7 +65,7 @@ TURN_END   -> (turn 结束；携带最终 assistant 文本 + status/error)
 |------|------|
 | 触发时机 | 每个用户驱动 turn 开始时**一次**，在任何 LLM 迭代之前 |
 | `data` | `{"user_message": "..."}` |
-| 典型用法 | 在 replay 日志 / 审计流中开一个新的 turn 帧；通过 `Transport.subscribe()` 订阅 |
+| 典型用法 | 通过 `Transport.subscribe()` 在审计 / 观察者流中开一个新的 turn 帧。（replay 录制器是另行接线的——走 `ReplayAdapter` 拼接，不是这个订阅。） |
 
 与 `TURN_START`（每个 LLM 迭代各发一次）语义不同。`TURN_BEGIN` 携带用户输入，并与 `TURN_END` 1:1 配对。
 
@@ -74,8 +74,22 @@ TURN_END   -> (turn 结束；携带最终 assistant 文本 + status/error)
 | 字段 | 说明 |
 |------|------|
 | 触发时机 | 每个用户驱动 turn 结束时**一次**，在最终 assistant 回复之后（或出错 / 被取消时） |
-| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None, "tool_count": 3}` |
+| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None, "tool_count": 3, "incomplete_reason": None}` |
 | 典型用法 | 关闭 turn 帧；刷出 per-turn 指标 —— `tool_count` 是这个 turn 内所有迭代里 LLM 发起的工具调用总数，宿主无需重放每个 `TOOL_START` 就能掂量这一 turn 的规模 |
+
+`incomplete_reason` 在普通 turn 上为 `None`。当 turn 结束但没有拿到完整的、模型撰写的答案时它会被置位，并说明原因：
+
+| 取值 | 含义 |
+|---|---|
+| `no_output` | 模型什么都没输出。 |
+| `reasoning_only` | 只有推理内容，没有答案正文。 |
+| `length_truncated` | 输出在 token 上限处被截断——要么是工具调用的参数被截断（harness 随即中止该 turn），要么是最终答案在半句处被切断。 |
+| `doom_loop` | 模型重复同一个调用，直至检测器 halt 了该 turn。 |
+| `llm_error` | LLM 调用本身失败（provider 5xx / 限流 / 认证）且重试后仍失败；`final_text` 里是 harness 的 `[LLM API error: …]` 提示，不是模型答案。 |
+
+这是**一套单一封闭的词表**：每一条 turn 结束路径都恰好提交其中一个取值，或对真实答案提交 `None`——不存在未被分类的结束。前两者表示 turn 正常结束但没有答案；中间两者表示 harness 停掉了一个不收敛的 turn；最后一个表示 provider 调用根本没产出一个 turn。（`max_iterations` 是第六种"结束但无完整答案"的方式，但它是刻意独立的一根轴——一个带自己退出码 4 和 `on_max_iterations` 交互的粘性 transport 标志，不是这里的取值。）
+
+优先用它来判断，而不要去字符串匹配 `final_text` —— harness 会在那里替换占位符或固定话术（包括现已被分类为 `llm_error` 的 `[LLM API error: …]` 提示），而 Stop hook 还可能装饰它，所以文本并不是可靠信号。被取消的 turn 不会通过 `incomplete_reason` 上报（它携带 `status: "cancelled"`）。`agentao run` 会把非 `None` 的值映射为非零退出码；其他宿主可以自行选择重试、追问或忽略。
 
 Replay 录制器靠它和 `TURN_BEGIN` 配对来界定一个 turn。它替代了运行时直接调用 replay adapter 的旧路径。
 

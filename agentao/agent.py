@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from .mcp import McpClientManager  # type-only; MCP SDK is heavy
     from .memory import MemoryManager  # noqa: F401
     from .replay import ReplayConfig, ReplayManager  # type-only — replay no longer in core surface
+    from .runtime.outcome import TurnOutcome  # noqa: F401
     from .tools.base import RegistrableTool  # noqa: F401
 
 
@@ -489,6 +490,11 @@ class Agentao:
 
         # Per-turn cancellation token (set at the start of each chat() call)
         self._current_token: Optional[CancellationToken] = None
+
+        # Structured outcome of the most recent turn (see the ``last_turn``
+        # property). Populated in ``runtime/turn.py``'s finally; None until the
+        # first turn completes.
+        self._last_turn_outcome: Optional["TurnOutcome"] = None
 
         # Conversation history
         self.messages: List[Dict[str, Any]] = []
@@ -1013,6 +1019,21 @@ class Agentao:
 
     def reload_replay_config(self) -> "ReplayConfig":
         return self._ensure_replay_manager().reload_config()
+
+    @property
+    def last_turn(self) -> "Optional[TurnOutcome]":
+        """Structured outcome of the most recent ``chat()`` / ``arun()`` turn.
+
+        ``None`` before the first turn completes. Those methods return the
+        turn's text as a ``str``; this is the companion that says whether that
+        text is a real answer. Read ``agent.last_turn.is_answer`` (or branch on
+        ``agent.last_turn.incomplete_reason``) before treating the reply as the
+        model's — the harness substitutes a placeholder / canned notice for an
+        answerless, halted, or failed turn, and the bare string cannot be told
+        apart from a real one. Mirrors the ``TURN_END`` transport payload, so a
+        host gets the same facts without subscribing to the internal channel.
+        """
+        return self._last_turn_outcome
 
     def _register_agent_tools(self):
         # Implementation lives in ``agentao.tooling.agent_tools`` — see

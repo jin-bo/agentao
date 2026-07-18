@@ -23,6 +23,7 @@ from ..cancellation import AgentCancelledError, CancellationToken
 from ..replay.observability import latest_session_summary_id
 from ..transport import AgentEvent, EventType
 from .identity import new_turn_id
+from .outcome import TurnOutcome
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
     from ..agent import Agentao
@@ -79,6 +80,14 @@ def run_turn(
     # total so host telemetry can size a turn without replaying every
     # TOOL_START. Reset per turn (and read defensively in the finally).
     agent._turn_tool_count = 0
+    # Turn-level "this turn has no complete model answer" classification
+    # (None / "no_output" / "reasoning_only" / "length_truncated" /
+    # "doom_loop"), typed Optional[str]. The chat loop sets it at whichever
+    # site ends the turn; reset per turn (and read defensively in the finally).
+    # No PEP 526 annotation here: this is a non-self attribute, which mypy
+    # rejects outright, and under ``from __future__ import annotations`` the
+    # annotation is inert anyway — it matches the un-annotated sibling above.
+    agent._turn_incomplete_reason = None
     # Snapshot the latest session-summary id so the inner loop can
     # fire SESSION_SUMMARY_WRITTEN each time compress_messages writes
     # a new one. Held on the instance so compression paths inside the
@@ -125,12 +134,44 @@ def run_turn(
         error_detail = str(e)
         raise
     finally:
+        tool_count = getattr(agent, "_turn_tool_count", 0)
+        # A token cancelled mid-stream can let the turn return normally — the
+        # LLM yields a normally-built empty message without raising
+        # (llm/client.py::_consume_stream breaks out of the chunk loop), so the
+        # turn reaches the ordinary ending site with status "ok" though it was
+        # interrupted. Reflect the cancellation in ``status`` so both the wire
+        # event and ``agent.last_turn`` report it honestly (and a
+        # placeholder-vs-answer check does not read a cancelled turn as an
+        # answer).
+        if status == "ok" and token.is_cancelled:
+            status = "cancelled"
+            if error_detail is None:
+                error_detail = token.reason or "cancelled"
+        # ``incomplete_reason`` is None unless the turn ended without a complete
+        # model answer — the model produced none, the harness halted a
+        # non-converging turn, or the LLM call failed. A cancelled or errored
+        # turn is not "answerless"; it carries its own status. This single gated
+        # value feeds both the wire event and the read-after, so they never
+        # disagree.
+        incomplete_reason = (
+            getattr(agent, "_turn_incomplete_reason", None)
+            if status == "ok"
+            else None
+        )
+        agent._last_turn_outcome = TurnOutcome(
+            text=final_text,
+            status=status,
+            incomplete_reason=incomplete_reason,
+            tool_count=tool_count,
+            error=error_detail,
+        )
         try:
             agent.transport.emit(AgentEvent(EventType.TURN_END, {
                 "final_text": final_text,
                 "status": status,
                 "error": error_detail,
-                "tool_count": getattr(agent, "_turn_tool_count", 0),
+                "tool_count": tool_count,
+                "incomplete_reason": incomplete_reason,
             }))
         except Exception:
             pass

@@ -300,7 +300,7 @@ of this writing:
 
 | Family | Members |
 |---|---|
-| Turn / loop | `TURN_START` |
+| Turn / loop | `TURN_START`, `TURN_BEGIN`, `TURN_END` |
 | Tool execution (raw) | `TOOL_START`, `TOOL_OUTPUT`, `TOOL_COMPLETE`, `TOOL_RESULT` |
 | LLM call | `LLM_CALL_STARTED`, `LLM_CALL_COMPLETED`, `LLM_CALL_DELTA`, `LLM_CALL_IO`, `LLM_TEXT`, `THINKING` |
 | Sub-agent (raw) | `AGENT_START`, `AGENT_END` |
@@ -311,14 +311,20 @@ of this writing:
 | Errors | `ERROR` |
 
 Every `AgentEvent` carries a `schema_version: int` field; bumps are
-the *only* signal that a payload's shape changed.
+the *only* signal that a payload's shape changed. It is a **single
+value shared by every event type**, not a per-payload version — so a
+bump moves all of them at once, and a consumer pinned to the old value
+starts rejecting events it could otherwise have read. That asymmetry is
+why *additive* fields ship without a bump: an unknown key is free to
+ignore, whereas a bump is not. Reserve it for a field whose shape or
+meaning changed under a name consumers already read.
 
 ### Stability — the part that actually matters
 
 |  | `HostEvent` (this contract) | `AgentEvent` (`Transport`) |
 |---|---|---|
 | Schema snapshot in `docs/schema/`? | ✅ `host.events.v1.json` | ❌ |
-| Field rename / removal triggers version bump? | ✅ enforced by `tests/test_host_schema.py` | ⚠️ best-effort `schema_version` bump on the affected payload only |
+| Field rename / removal triggers version bump? | ✅ enforced by `tests/test_host_schema.py` | ⚠️ best-effort `schema_version` bump — global, so it moves every event type |
 | Redaction / projection layer? | ✅ `agentao/host/projection.py` strips raw input/output | ❌ raw payloads (LLM_CALL_IO can contain full prompts and tool I/O) |
 | Cross-version compatibility audit before release? | ✅ part of the release checklist | ❌ |
 | Safe to forward over a long-lived wire? | ✅ | ⚠️ only after you pin `schema_version` and own the upgrade path |
@@ -345,6 +351,23 @@ the *only* signal that a payload's shape changed.
 - **LLM rate-limit signal.** Provider-side 429 surfaces only as
   `ERROR` text. Promotion to a structured `LLMCallEvent` with
   `error_type="rate_limited"` is part of the same plan.
+- **Turn outcome as a streamed event (push).** The outcome itself —
+  whether the model actually answered — *is* available synchronously:
+  `agent.last_turn` returns a `TurnOutcome` (`text`, `status`,
+  `incomplete_reason` over a single closed vocabulary — `no_output`,
+  `reasoning_only`, `length_truncated`, `doom_loop`, `llm_error`, or
+  `None`; `tool_count`; `error`), and `.is_answer` folds it into one
+  check. That is a **pull** surface: it answers "how did the turn I just
+  awaited end?", which covers `chat()` / `arun()` callers, `agentao
+  run`, and any embedder. What is **not** on the stable contract is the
+  **push** shape — a `HostEvent` an async observer that does *not* drive
+  the turn could subscribe to. `HostEvent` covers tool, sub-agent, and
+  permission lifecycle only, so such an observer must fall back to the
+  internal `Transport`'s `TURN_END` (unprojected, `schema_version`
+  caveat above). This is **not** currently tracked in
+  [PUBLIC_EVENT_PROMOTION_PLAN](../history/implementation/public-event-promotion-plan.md);
+  that plan is scoped to `MCPLifecycleEvent` and `LLMCallEvent`, and a
+  turn-outcome event would be a new pillar rather than a scope tweak.
 
 ## Non-goals
 
