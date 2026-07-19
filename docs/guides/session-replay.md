@@ -87,10 +87,18 @@ Explicitly reserved but **not emitted in v1**:
 
 ## Privacy and truncation
 
-- v1 does not do full secrets scanning. Every payload passes through a
-  field-level sanitizer that coerces values to JSON-native types; a
-  field that cannot be serialized is dropped individually and the event
-  keeps a `redacted: "filter_error"` marker plus `redacted_fields`.
+- Every payload passes through a field-level sanitizer that coerces
+  values to JSON-native types; a field that cannot be serialized is
+  dropped individually and the event keeps a `redacted: "filter_error"`
+  marker plus `redacted_fields`.
+- Every string in a payload is also scanned for credential-shaped
+  patterns and rewritten to `[REDACTED:<kind>]`, with per-kind counts
+  rolled up into `replay_footer.redaction_hits`. This is best-effort
+  pattern matching, **not** full secrets scanning: a credential that
+  does not look like one passes through untouched. The scanner lives in
+  `agentao/security/secret_scan.py` — shared with `agentao.log` and
+  `.agentao/tool-outputs/`, which are written whether or not replay is
+  enabled, so it cannot sit inside this optional subsystem.
 - `tool_output_chunk` payloads over the per-event cap are kept as
   head+tail excerpts with `truncated`, `original_chars`, and
   `omitted_chars` metadata. `assistant_text_chunk` is not truncated by

@@ -26,6 +26,7 @@ Every knob Agentao reads — environment variables first, then on-disk JSON. All
 | `LLM_EXTRA_BODY` | unset | JSON **object** forwarded verbatim to the LLM `.create()` as the SDK's `extra_body` — the escape hatch for `reasoning_effort` / `top_p` / `seed` / `response_format` / provider-specific fields. Equivalent to the constructor `extra_body=`. Example: `LLM_EXTRA_BODY='{"reasoning_effort":"high"}'`. Unlike the two above, a malformed *or* valid-but-non-object value is **warned and skipped** (not fatal); empty/whitespace is treated as unset (silent). Logged with credential keys redacted |
 | `AGENTAO_CONTEXT_TOKENS` | `200000` | Context budget; triggers compression when exceeded |
 | `AGENTAO_WORKING_DIRECTORY` | — | Override working directory at startup (alternative to constructor `working_directory=`) |
+| `AGENTAO_SCRUB_CHILD_ENV` | on | Whether shell and MCP child processes inherit agentao's **own** provider credentials. Default drops `HARNESS_ENV_KEYS` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `LLM_EXTRA_BODY`, …) from the child env. Set to `0`/`false`/`no`/`off` to restore full inheritance — needed to run `agentao run`, or any provider-calling script, from inside the agent's own shell. Only agentao's keys are dropped; `AWS_*`, `GITHUB_TOKEN`, `DATABASE_URL` are untouched. See `capabilities/process.py::build_child_env` |
 
 ### Third-party keys consumed by built-in tools
 

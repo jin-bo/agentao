@@ -41,9 +41,105 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
   stack. Mirrors the `TURN_END` payload field-for-field — both are fed from a
   single gated value in `runtime/turn.py`, so they never disagree.
 
+- **`agentao/security/secret_scan.py`** — the credential-pattern scanner, moved
+  out of `agentao/replay/` and put on the live path. It previously ran only
+  inside replay, which is off by default, so `agentao.log` and
+  `.agentao/tool-outputs/` were unscanned in every default install. Now
+  `agentao.log`'s file handler redacts through a `logging.Formatter` (**not** a
+  `Filter` — a `Filter` mutates the shared `LogRecord` and would leak the
+  redaction into every other handler on the logger, including an embedded
+  host's own), and tool outputs are scanned before they hit disk, with a note
+  appended to the tool result when hits occurred. `memory/guards.py` now derives
+  its patterns from the same list instead of keeping a weaker third copy that
+  was missing `sk-ant-`, JWTs, Slack, and most GitHub token variants.
+  `agentao/replay/redact.py` re-exports for existing callers.
+
+  Scope is deliberate and narrow: **disk artifacts only**. The conversation
+  sent to the LLM provider stays verbatim, because pattern matching cannot tell
+  a live credential from a test fixture and redacting the model's view breaks
+  legitimate work. `.agentao/sessions/*.json` and `.agentao/background_tasks.json`
+  are likewise not scanned — both are read back into `agent.messages`, so
+  redacting them would corrupt a resumed conversation. Best-effort defense in
+  depth, not a seal.
+
 ### Changed
 
+- **Child processes no longer inherit agentao's own provider credentials.**
+  Shell children, MCP server children, ACP server children, and everything
+  routed through `run_captured` (plugin hooks, `search_file_content`) now start
+  from `build_child_env()`, which drops `HARNESS_ENV_KEYS` — `OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`, `LLM_EXTRA_BODY`, and friends — so a prompt-injected
+  `run_shell_command("env")` finds nothing worth stealing. The key for the
+  *configured* provider is derived the same way `embedding/factory.py` resolves
+  it (`LLM_PROVIDER=QWEN` → `QWEN_API_KEY`), so users on a provider outside the
+  static list are covered too rather than silently uncovered. The agent is a
+  distinct principal from the user, and nothing the LLM decides to run needs
+  the key that pays for the LLM. Only agentao's keys are dropped; the user's
+  other secrets (AWS, GitHub, `DATABASE_URL`) are untouched — scrubbing those
+  is the host's call. **Set `AGENTAO_SCRUB_CHILD_ENV=0` to restore full
+  inheritance**, which is required if you run `agentao run`, or any script that
+  calls the provider, from inside the agent's own shell. Note that
+  `ShellRequest(env=None)` consequently no longer means "inherit everything".
+  Also fixes a false comment at `mcp/client.py` that had claimed a sanitized
+  base environment while passing `dict(os.environ)`.
+
+- **`SubagentLifecycleEvent(phase="failed")` now also covers "returned but
+  never answered".** It previously meant only "the sub-agent raised". A
+  sub-agent that hit its iteration budget, produced no output, emitted only
+  reasoning, was cut off at the token limit, doom-looped, or whose LLM call
+  failed now reports `phase="failed"` with `error_type="incomplete:<reason>"`,
+  and the tool result carries a "did not finish" header instead of a stats
+  footer stapled onto `[No response]`. This makes the sub-agent path the first
+  compliant consumer of `TurnOutcome` — previously the public host contract
+  reported success for a sub-agent that had done nothing. **Hosts branching on
+  `phase == "failed"` should expect it to fire on ordinary non-answers**, not
+  just exceptions; check `error_type` to distinguish.
+
+- **`FileSystem.write_text` implementations must now replace existing files
+  atomically.** The protocol docstring states the requirement; delegating
+  wrappers inherit it from `LocalFileSystem`, but a from-scratch host
+  implementation owes the guarantee.
+
 ### Fixed
+
+- **An interrupted turn no longer bricks the session.** `Ctrl+C` (or host
+  cancellation, or an unexpected exception) between the assistant message
+  carrying `tool_calls` and the tool results landing in history left orphaned
+  `tool_calls` with no matching `role: "tool"` reply. The strict
+  Chat-Completions contract rejects that, so **every subsequent turn 400'd**
+  until `/new` — the conversation was unrecoverable, and `/sessions resume`
+  restored the broken state. Agentao already upheld this invariant on the
+  doom-loop and length-truncation paths; interrupt was the one hole.
+  `runtime/sanitize.py::backfill_orphaned_tool_calls` now stamps placeholder
+  results from all three abnormal-exit handlers. The placeholder deliberately
+  says the tool *may or may not* have run and warns against blind retry:
+  results are committed per batch, so an interrupt during the last call of a
+  batch discards its earlier siblings' results too, and re-running a
+  `write_file` that already succeeded is its own kind of damage.
+
+- **`write_file` can no longer destroy a file it was only meant to update.**
+  `LocalFileSystem.write_text` used a plain `open(path, "w")`, which truncates
+  *before* writing — an interruption in between (Ctrl+C, host OOM, `kill`) left
+  the user's source file empty or half-written. Existing files are now replaced
+  via a sibling temp file and `os.replace`, atomic at the VFS level. A
+  read-only target still raises `PermissionError`: rename permission lives on
+  the *directory*, so without an explicit check the change would have silently
+  defeated `chmod 444`. Not fsync'd — this closes the process-death window,
+  not the power-loss one.
+
+- **`edit_file` no longer hides that a match was ambiguous.** The tool counted
+  occurrences of `old_text` and then discarded the count. First-match-wins is
+  the deliberate contract; silently dropping the signal was not. The message
+  now reports how many remain and, when `old_text` occurs in `new_text`,
+  withholds the `replace_all=true` suggestion that would rewrite the
+  just-edited site. An empty `old_text` is now refused outright — it matched at
+  every position and would have inserted `new_text` between every character.
+
+- **A failed background sub-agent no longer discards its work.** With
+  incomplete runs now reported as `status="failed"`, `check_background_agent`'s
+  failure branch returned only `error` — so a long background task that ran out
+  of iterations lost everything it had produced. It now surfaces the partial
+  `result` alongside the reason.
 
 - **A turn cancelled mid-stream now reports `status: "cancelled"`.** When a
   cancellation token fired while the LLM was streaming, the model could return a

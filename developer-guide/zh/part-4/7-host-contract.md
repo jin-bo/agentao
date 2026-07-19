@@ -53,7 +53,18 @@
 |------|------|---------|
 | `ToolLifecycleEvent` | `started` · `completed` · `failed` | 任何工具调用（内置或自定义）。取消会以 `phase="failed", outcome="cancelled"` 形式出现。 |
 | `PermissionDecisionEvent` | （单次决策，无阶段） | 每次权限决策：`allow` / `deny` / `prompt`。**消费方必须把 allow 也消化掉**——审计行需要它。 |
-| `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | 子 agent 任务的生命周期。注意：这里 `cancelled` 是**独立阶段**（与工具事件不同）。 |
+| `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | 子 agent 任务的生命周期。注意：这里 `cancelled` 是**独立阶段**（与工具事件不同）。`failed` 覆盖**两种**形态——见下。 |
+
+:::warning `failed` 不只是"它崩了"
+`SubagentLifecycleEvent(phase="failed")` 既会在子 agent **抛异常**时触发，也会在它**跑完却始终没给出答案**时触发（空 turn、只有 reasoning、被长度截断、doom-loop 被拦停、LLM 调用失败、turn 预算耗尽）。把后者报成 `completed` 会让契约陈述一件不真实的事。
+
+如果你在 `phase == "failed"` 上呼叫 on-call 或开事故单，这个告警现在也会被普通的"没答出来"触发。请用 `error_type` 区分：
+
+- `"incomplete:<reason>"` → 返回了但没答出来。`<reason>` ∈ `no_output`、`reasoning_only`、`length_truncated`、`doom_loop`、`llm_error`（即 `TurnOutcome.incomplete_reason` 的词表），外加 `max_iterations`（turn 预算——它是另一根轴，所以没被并进那个封闭集合）。还可能出现兜底值 `cancelled` / `error` / `unknown`；任何不认识的后缀都按"停在半路、原因未分类"处理。
+- 其他任意值 → 异常类名，例如 `"ValueError"`。那才是真崩了。
+
+取消不受影响：它仍然以 `phase="cancelled"` 到达。
+:::
 
 `HostEvent` 是这三者的 discriminated union。用 `isinstance` 分支：
 
@@ -152,6 +163,9 @@ async def audit_loop(agent: Agentao, tenant_id: str, db):
                 "child_session_id":  ev.child_session_id,
                 "child_task_id":     ev.child_task_id,
                 "phase":             ev.phase,    # spawned|completed|failed|cancelled
+                # failed = 抛异常 或 跑完没答出来；后者带
+                # "incomplete:<reason>" 前缀
+                "error_type":        ev.error_type,
                 "task_summary":      ev.task_summary,
             })
 

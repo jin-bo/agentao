@@ -231,6 +231,8 @@ class FileSystem(Protocol):
     def read_partial(self, path: Path, n: int) -> bytes: ...
     def open_text(self, path: Path) -> Iterator[str]: ...      # streaming
     def write_text(self, path: Path, data: str, *, append: bool = False) -> None: ...
+                                                               # replacing existing
+                                                               # content MUST be atomic
     def list_dir(self, path: Path) -> list[FileEntry]: ...
     def glob(self, base: Path, pattern: str, *, recursive: bool) -> list[Path]: ...
     def stat(self, path: Path) -> FileStat: ...
@@ -246,6 +248,8 @@ class ShellExecutor(Protocol):
 Frozen dataclasses: `FileEntry(name, is_dir, is_file, size)`, `FileStat(size, mtime, is_dir, is_file)`, `ShellRequest(command, cwd, timeout, on_chunk, env)`, `ShellResult(returncode, stdout, stderr, timed_out)`, `BackgroundHandle(pid, pgid, command, cwd)`.
 
 Hosts that cannot support real backgrounding may raise `NotImplementedError` from `run_background` — `ShellTool` surfaces that as a normal tool error string.
+
+`write_text` carries a contract obligation beyond its signature: an implementation that **replaces the content of an existing file** must do so atomically, so an interrupted write (Ctrl+C, OOM kill) can never leave the user's file truncated. `append=True` and not-yet-existing targets keep the direct-write path — neither can destroy existing content. `LocalFileSystem` is the reference: it stages a sibling `.{name}.*.tmp` in the target's directory (visible to audit/watcher wrappers) and `os.replace`s it, and it raises `PermissionError` on a read-only target rather than letting directory-level rename permission silently defeat `chmod 444`.
 
 ## A.4 Permissions
 
@@ -549,7 +553,7 @@ from agentao.host import (
 |---|---|
 | `ActivePermissions` | Read-only snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). |
 | `ToolLifecycleEvent` | Public envelope for one tool call. `phase ∈ {started, completed, failed}`; cancellation surfaces as `phase="failed", outcome="cancelled"`. |
-| `SubagentLifecycleEvent` | Lineage fact for a sub-agent task/session. `phase ∈ {spawned, completed, failed, cancelled}` — `cancelled` is a distinct phase here. |
+| `SubagentLifecycleEvent` | Lineage fact for a sub-agent task/session. `phase ∈ {spawned, completed, failed, cancelled}` — `cancelled` is a distinct phase here. `failed` means either "the sub-agent raised" (`error_type` = exception class name) **or** "it returned without ever answering" (`error_type = "incomplete:<reason>"`, `<reason>` ∈ `no_output`, `reasoning_only`, `length_truncated`, `doom_loop`, `llm_error`, `max_iterations`). Branch on `error_type` before escalating — see [4.7](/en/part-4/7-host-contract). |
 | `PermissionDecisionEvent` | Per-decision projection. Fires on `allow` / `deny` / `prompt`; consumers must drain even allow events. |
 | `HostEvent` | Discriminated union of the three event models (Pydantic discriminator: `event_type`). |
 | `RFC3339UTCString` | Constrained timestamp type. Canonical `Z` suffix only — `+00:00` offsets are rejected. |

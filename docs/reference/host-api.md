@@ -44,7 +44,7 @@ intentionally not part of this surface.
 |---|---|
 | `ActivePermissions` | Read-only snapshot of the active permission policy. |
 | `ToolLifecycleEvent` | Public envelope for one tool call's lifecycle. |
-| `SubagentLifecycleEvent` | Lineage fact for a sub-agent task/session. |
+| `SubagentLifecycleEvent` | Lineage fact for a sub-agent task/session. `phase ∈ {spawned, completed, failed, cancelled}`; `failed` covers both a raised exception and a run that never answered — see [Sub-agent `failed` has two shapes](#sub-agent-failed-has-two-shapes). |
 | `PermissionDecisionEvent` | Per-decision permission projection. |
 | `HostEvent` | Discriminated union of the three event models. |
 | `RFC3339UTCString` | Constrained timestamp type used by all public events. |
@@ -53,6 +53,53 @@ intentionally not part of this surface.
 | `Tool`, `AsyncToolBase` | Base classes for host-supplied tools passed via `Agentao(extra_tools=[...])`. Re-export of the canonical types in `agentao.tools.base` — a stable import path, not a new abstraction layer. |
 | `RegistrableTool` | `Union[Tool, AsyncToolBase]` — the type the registry / `extra_tools=` accepts. |
 | `agentao.host.replay_projection` | Submodule bridging `EventStream` ⇄ replay JSONL — see [Replay projection](#replay-projection-agentaohostreplay_projection) below. |
+
+### Sub-agent `failed` has two shapes
+
+`SubagentLifecycleEvent(phase="failed")` used to mean exactly one thing:
+the sub-agent **raised**. It now also fires when the sub-agent returned
+normally but **never produced an answer** — an empty turn, reasoning
+with no answer, a length-truncated reply, a halted doom-loop, a failed
+LLM call, or an exhausted turn budget. Reporting those as `completed`
+would make this contract state something untrue, so they land on
+`failed` instead.
+
+**This is a breaking semantic change for hosts that branch on
+`phase == "failed"`.** A host that pages on-call, opens an incident, or
+retries the parent turn on that phase will now fire on ordinary
+non-answers, which are common and usually not incidents. Branch on
+`error_type` to separate the two:
+
+| `error_type` | Meaning |
+|---|---|
+| `"incomplete:<reason>"` | The sub-agent returned without answering. Not an exception. |
+| Any other value (e.g. `"ValueError"`, `"TimeoutError"`) | The sub-agent raised; the value is the exception's class name. |
+
+`<reason>` is the `TurnOutcome.incomplete_reason` closed vocabulary
+(`no_output`, `reasoning_only`, `length_truncated`, `doom_loop`,
+`llm_error`) plus `max_iterations` — the turn budget is a deliberately
+separate axis from `incomplete_reason`, so it gets its own key rather
+than being smuggled into that closed set. Three defensive values
+(`cancelled`, `error`, `unknown`) can appear when a turn outcome reports
+neither an answer nor a reason; treat any unrecognized suffix as
+"stopped short, cause unclassified" rather than matching the list
+exhaustively.
+
+```python
+if isinstance(ev, SubagentLifecycleEvent) and ev.phase == "failed":
+    if (ev.error_type or "").startswith("incomplete:"):
+        metrics.non_answer(ev.error_type.split(":", 1)[1])   # expected
+    else:
+        pager.fire(ev.error_type)                            # a real crash
+```
+
+Cancellation is unaffected — it stays on `phase="cancelled"`.
+
+Both emit sites carry this behavior: the foreground sub-agent call and
+the background (`run_in_background=True`) worker. The background
+`BackgroundTaskStore` record moves in lockstep, so
+`check_background_agent` reports `failed` for a non-answer too — with
+whatever partial result the run did produce still attached.
 
 ### Tool injection methods
 
@@ -98,7 +145,7 @@ from agentao.host.protocols import (
 
 | Symbol | Purpose |
 |---|---|
-| `FileSystem` | Protocol for filesystem IO (`read_text`, `write_text`, `iter_dir`, …). |
+| `FileSystem` | Protocol for filesystem IO (`read_bytes`, `read_partial`, `open_text`, `write_text`, `list_dir`, `glob`, `stat`, `exists`, `is_dir`, `is_file`). `write_text` carries an atomicity requirement — see below. |
 | `ShellExecutor` | Protocol for shell execution + background handles. |
 | `MCPRegistry` | Protocol for MCP server / tool discovery used by the runtime. |
 | `MemoryStore` | Protocol for persistent memory storage backends. |
@@ -108,6 +155,34 @@ from agentao.host.protocols import (
 The `Local*` defaults (e.g. `LocalFileSystem`, `LocalShellExecutor`)
 remain in `agentao.capabilities` because they are reference
 implementations, not part of the public host-injection surface.
+
+### `FileSystem.write_text` must replace atomically
+
+Implementations that **replace existing content** owe the caller an
+atomic swap: a reader must see either the old content or the new one,
+never a truncated or half-written file. Agentao runs inside a host
+process it does not control, so a plain truncate-then-write leaves a
+window in which a Ctrl+C, an OOM kill, or a `kill` destroys the user's
+file. This is a requirement on **your** implementation, not just on the
+default one.
+
+`LocalFileSystem.write_text` is the reference approach, and two of its
+observable behaviors matter to hosts wrapping or auditing the FS:
+
+- It stages a **sibling temp file** in the target's directory, named
+  `.{name}.*.tmp`, then `os.replace`s it into place. Audit wrappers,
+  file watchers, and virtual filesystems will see that create/rename
+  pair rather than a single write to the target path.
+- A **read-only target raises `PermissionError`**. `os.replace` only
+  needs write permission on the *directory*, so an atomic write would
+  otherwise silently overwrite a `chmod 444` file that the old direct
+  write refused. The refusal is explicit and deliberate.
+
+Two cases keep the direct-write path, because neither can destroy
+existing content: `append=True`, and a target that does not exist yet.
+
+Scope: this closes the *process-death* window. It is not fsync'd, so
+durability across power loss remains the host's concern.
 
 ## Replay projection (`agentao.host.replay_projection`)
 
@@ -361,10 +436,15 @@ meaning changed under a name consumers already read.
   awaited end?", which covers `chat()` / `arun()` callers, `agentao
   run`, and any embedder. What is **not** on the stable contract is the
   **push** shape — a `HostEvent` an async observer that does *not* drive
-  the turn could subscribe to. `HostEvent` covers tool, sub-agent, and
-  permission lifecycle only, so such an observer must fall back to the
-  internal `Transport`'s `TURN_END` (unprojected, `schema_version`
-  caveat above). This is **not** currently tracked in
+  the turn could subscribe to. That gap is now **main-loop-only**: for
+  **sub-agent** turns the outcome *is* on the public surface, because a
+  child that returned without answering emits
+  `SubagentLifecycleEvent(phase="failed", error_type="incomplete:<reason>")`
+  — see [Sub-agent `failed` has two shapes](#sub-agent-failed-has-two-shapes).
+  For the **main** loop's own turn there is still no public event, so
+  such an observer must fall back to the internal `Transport`'s
+  `TURN_END` (unprojected, `schema_version` caveat above). This is
+  **not** currently tracked in
   [PUBLIC_EVENT_PROMOTION_PLAN](../history/implementation/public-event-promotion-plan.md);
   that plan is scoped to `MCPLifecycleEvent` and `LLMCallEvent`, and a
   turn-outcome event would be a new pillar rather than a scope tweak.

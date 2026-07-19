@@ -91,7 +91,7 @@ Files that exist under `.agentao/` but you should **not** hand-edit:
 | `.agentao/replay/*.jsonl` | Replay recordings |
 | `.agentao/sessions/` | Per-session artifacts |
 | `.agentao/plan.md`, `.agentao/plan-history/` | Plan-mode state |
-| `.agentao/tool-outputs/` | Cached tool outputs |
+| `.agentao/tool-outputs/` | Cached tool outputs. Secret-scanned before write — credential-shaped strings are stored as `[REDACTED:<kind>]`. Sessions and `background_tasks.json` deliberately are **not** (they replay into the conversation on resume) |
 
 Editing them while the CLI is running can desync state. Stop the CLI first if you must.
 

@@ -31,7 +31,7 @@ Agents are classic "long-tail bug" workloads — fine 90% of the time, then 10% 
 
 Defaults to `<working_directory>/agentao.log`. It's **very thorough**:
 
-- Every LLM request/response (full content, tokens, model)
+- Every LLM request/response (full content — untruncated, but credential-shaped strings are redacted to `[REDACTED:<kind>]` on write — plus tokens, model)
 - Every tool call with args and result
 - MCP server start/stop
 - Plugin hook dispatch

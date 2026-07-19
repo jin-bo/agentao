@@ -187,7 +187,24 @@ Minimum fields:
 - `task_summary`
 - `started_at`
 - `completed_at`
-- `error_type`
+- `error_type`: `null` outside `failed`. On `failed`, either an exception
+  class name (the sub-agent raised) or `incomplete:<reason>` (the
+  sub-agent returned without answering), where `<reason>` is the
+  `TurnOutcome.incomplete_reason` vocabulary — `no_output`,
+  `reasoning_only`, `length_truncated`, `doom_loop`, `llm_error` — plus
+  `max_iterations` for budget exhaustion, which is a separate axis and
+  therefore not folded into that closed set. Hosts must treat an
+  unrecognized `incomplete:` suffix as "stopped short, cause
+  unclassified" rather than matching exhaustively.
+
+`failed` therefore spans two distinct shapes: a raised exception and a
+run that finished without producing an answer. The second is not an
+error condition in the usual sense, and hosts that escalate on `failed`
+must discriminate on `error_type` to avoid treating ordinary
+non-answers as incidents. Reporting a non-answer as `completed` was the
+alternative and was rejected — it makes the contract assert something
+untrue, which is worse than a phase that needs a second field to
+interpret.
 
 Agentao emits lineage facts. Hosts and the CLI may build graph displays or stores
 from those facts, but a graph store is not a public harness API.
