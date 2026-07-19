@@ -13,6 +13,45 @@ _Targeting 0.4.16. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **ACP `session/prompt` now reports why a turn actually ended.** It could only
+  answer `end_turn` or `cancelled`; its own TODO said the richer reasons were
+  unreachable because `agent.chat()` returned no structured termination
+  metadata. `TurnOutcome` shipped that metadata in 0.4.15, and two of the three
+  host surfaces (`agentao run`, the sub-agent path) were migrated onto it while
+  ACP was not — so a DeepChat-style client got `end_turn` for a turn that
+  doom-looped, exhausted its iteration budget, or was cut off at the token
+  limit. The mapping is now:
+
+  | Outcome | `stopReason` |
+  |---|---|
+  | client cancelled | `cancelled` (wins over everything) |
+  | iteration budget exhausted | `max_turn_requests` |
+  | `doom_loop` | `max_turn_requests` |
+  | `length_truncated` | `max_tokens` |
+  | `no_output` / `reasoning_only` / `llm_error` / healthy | `end_turn` |
+
+  `no_output` and `reasoning_only` stay `end_turn` deliberately — the turn did
+  end normally, the model simply produced no prose, and ACP's enum describes
+  why a turn *stopped*, not whether it said anything. `llm_error` also stays
+  `end_turn` as the least-bad option: the closed enum has no member for "the
+  model call failed", and `refusal` means the agent declined on content
+  grounds, so reporting an API outage that way would trade a vague answer for a
+  false one. The failure is still visible — the `[LLM API error: …]` notice is
+  the turn's streamed content. Surfacing it as a JSON-RPC error would be more
+  truthful but changes the response *shape*, so it needs its own decision.
+
+  Budget exhaustion cannot be recovered from `TurnOutcome` (it is deliberately
+  a separate axis), so `ACPTransport` records it as it happens and
+  `session/prompt` clears the flag before each turn — otherwise one exhausted
+  turn would make every later turn on that session report `max_turn_requests`.
+
+- **`AcpSessionPromptResponse.stopReason` gained `max_tokens`.** The local enum
+  had drifted from ACP v1, listing only four of the five members, so the schema
+  could not express a token-limit stop even once the runtime could detect one.
+  `docs/schema/host.acp.v1.json` regenerated. Additive to a response enum: a
+  spec-conformant client already handles all five, but a client that hardcoded
+  the previous four will see a value it did not expect.
+
 ### Fixed
 
 ---

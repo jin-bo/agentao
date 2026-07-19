@@ -189,6 +189,13 @@ schema 拒绝的值。因此实现 G2 意味着：更新 `agentao/acp/schema.py`
 
 ### G3 —— `stopReason` 贫乏 *(运行时 + schema 漂移)*
 
+> **已在 0.4.16 解决。** 两层都已闭合。`max_tokens` 已加入本地 enum 并重新生成快照；
+> 运行时现在把 `TurnOutcome.incomplete_reason`（0.4.15 交付，正是下方 TODO 等待的那份
+> 元数据）与 ACP transport 上的每轮 `max_iterations_hit` 标志，映射到 `end_turn` /
+> `cancelled` / `max_tokens` / `max_turn_requests`。`refusal` 按设计不发出。见
+> `session_prompt.py::_stop_reason_for` 与 `docs/guides/acp.md`。下方分析保留为"为什么"
+> 的记录。
+
 是两层，不是一层：
 - **运行时**：`session_prompt.py:287-291` 只返回 `end_turn` 或 `cancelled`。代码自己的 TODO
   承认更丰富的原因未上报，因为 `agent.chat()` 没返回结构化终止元数据。于是 ACP client 无法

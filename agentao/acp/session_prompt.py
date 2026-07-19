@@ -210,6 +210,69 @@ def _parse_prompt(raw: Any) -> Tuple[str, List[Dict[str, str]]]:
 
 
 # ---------------------------------------------------------------------------
+# Stop reason
+# ---------------------------------------------------------------------------
+
+#: ``TurnOutcome.incomplete_reason`` → ACP ``StopReason``.
+#:
+#: Only the two reasons that describe a *budget* the harness enforced map to a
+#: non-``end_turn`` value:
+#:
+#: * ``length_truncated`` → ``max_tokens``. The turn stopped because the model
+#:   hit the token limit, which is precisely what ACP's ``max_tokens`` names.
+#: * ``doom_loop`` → ``max_turn_requests``. The harness halted a turn that kept
+#:   re-issuing the same call. ACP has no "the agent was going in circles"
+#:   member, and ``max_turn_requests`` ("maximum number of model requests in a
+#:   single turn was exceeded") is the honest neighbour: both are the harness
+#:   capping requests within one turn.
+#:
+#: ``no_output`` and ``reasoning_only`` are deliberately absent, so they fall
+#: through to ``end_turn``. That is not a shortfall: the turn genuinely *did*
+#: end normally, the model simply produced no prose. ACP's enum describes why a
+#: turn *stopped*, not whether it said anything useful — a client that needs
+#: that distinction reads the streamed content, which is empty.
+#:
+#: ``llm_error`` is also absent. See :func:`_stop_reason_for`.
+_INCOMPLETE_TO_STOP_REASON = {
+    "length_truncated": "max_tokens",
+    "doom_loop": "max_turn_requests",
+}
+
+
+def _stop_reason_for(
+    *,
+    cancelled: bool,
+    outcome: Any,
+    max_iterations_hit: bool,
+) -> str:
+    """Map a finished turn onto the ACP ``StopReason`` enum.
+
+    Precedence matters. ``cancelled`` wins over everything: the client asked
+    for the turn to stop, and that fact outranks whatever state the turn was in
+    when it noticed. ``max_iterations_hit`` is checked next because budget
+    exhaustion is a separate axis from ``incomplete_reason`` — a turn can hit
+    the iteration cap *and* carry a reason, and the cap is the more specific
+    account of why it ended.
+
+    ``llm_error`` maps to ``end_turn``, which is the least-bad option rather
+    than a good one: ACP v1's closed enum has no member for "the model call
+    failed". ``refusal`` is the only remaining value and it means the agent
+    declined on content grounds — reporting an API outage as a refusal would
+    trade a vague answer for a false one. The failure is not hidden: the
+    ``[LLM API error: …]`` notice is the turn's text and has already been
+    streamed to the client. Surfacing it as a JSON-RPC error instead would be
+    more truthful, but it changes the response *shape* for a case that
+    currently returns a result, so it needs its own decision.
+    """
+    if cancelled:
+        return "cancelled"
+    if max_iterations_hit:
+        return "max_turn_requests"
+    reason = getattr(outcome, "incomplete_reason", None)
+    return _INCOMPLETE_TO_STOP_REASON.get(reason, "end_turn")
+
+
+# ---------------------------------------------------------------------------
 # Handler
 # ---------------------------------------------------------------------------
 
@@ -275,6 +338,15 @@ def handle_session_prompt(server: "AcpServer", params: Any) -> Dict[str, Any]:
 
     token = CancellationToken()
     session.cancel_token = token
+    # Clear before the turn, not after: the flag is set from inside the chat
+    # loop, and a session serves many turns. Leaving it set would make every
+    # later turn on a long-lived session report max_turn_requests.
+    _transport = getattr(session.agent, "transport", None)
+    if _transport is not None:
+        try:
+            _transport.max_iterations_hit = False
+        except AttributeError:  # transport that does not accept the attribute
+            pass
     try:
         reply = session.agent.chat(
             user_text, cancellation_token=token, images=images or None
@@ -284,11 +356,13 @@ def handle_session_prompt(server: "AcpServer", params: Any) -> Dict[str, Any]:
             session_id,
             len(reply) if isinstance(reply, str) else -1,
         )
-        # TODO(Issue 07): surface max_tokens / max_turn_requests / refusal
-        # once agent.chat() returns structured termination metadata. For
-        # now we can only distinguish "cancelled" (via the token state)
-        # from "normal completion".
-        stop_reason = "cancelled" if token.is_cancelled else "end_turn"
+        stop_reason = _stop_reason_for(
+            cancelled=token.is_cancelled,
+            outcome=getattr(session.agent, "last_turn", None),
+            max_iterations_hit=bool(
+                getattr(_transport, "max_iterations_hit", False)
+            ),
+        )
     finally:
         session.cancel_token = None
         session.turn_lock.release()

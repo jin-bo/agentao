@@ -235,6 +235,15 @@ acceptable but lossy.
 
 ### G3 — `stopReason` is impoverished *(runtime + schema drift)*
 
+> **RESOLVED in 0.4.16.** Both layers are closed. `max_tokens` was added to the
+> local enum and the snapshot regenerated; the runtime now maps
+> `TurnOutcome.incomplete_reason` (which shipped in 0.4.15 — the metadata the
+> TODO below was waiting on) plus a per-turn `max_iterations_hit` flag on the
+> ACP transport onto `end_turn` / `cancelled` / `max_tokens` /
+> `max_turn_requests`. `refusal` stays unemitted by design. See
+> `session_prompt.py::_stop_reason_for` and `docs/guides/acp.md`. The analysis
+> below is kept as the record of why.
+
 Two layers, not one:
 - **Runtime**: `session_prompt.py:287-291` returns only `end_turn` or `cancelled`.
   The code's own TODO admits the richer reasons are not surfaced because

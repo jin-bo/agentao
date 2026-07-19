@@ -290,13 +290,21 @@ class AcpSessionPromptRequest(BaseModel):
 class AcpSessionPromptResponse(BaseModel):
     """``session/prompt`` response result.
 
-    ``stopReason`` is the ACP enum: ``end_turn``, ``cancelled``,
-    ``max_turn_requests``, ``refusal``. The agent currently emits only
-    ``end_turn`` and ``cancelled``; the other values are listed in the
-    enum so hosts that consume the schema can rely on the closed set.
+    ``stopReason`` is the ACP v1 enum, all five members: ``end_turn``,
+    ``cancelled``, ``max_tokens``, ``max_turn_requests``, ``refusal``.
+
+    ``max_tokens`` was missing here until 0.4.16 — the local enum had
+    drifted from the spec, so the schema could not express a turn the
+    harness halted at the token limit even once the runtime could detect
+    one. The agent emits ``end_turn``, ``cancelled``, ``max_tokens``, and
+    ``max_turn_requests``; ``refusal`` is spec-listed but never emitted —
+    agentao has no content-refusal detection, and reporting an
+    infrastructure failure as a refusal would be a different lie.
     """
 
-    stopReason: Literal["end_turn", "cancelled", "max_turn_requests", "refusal"]
+    stopReason: Literal[
+        "end_turn", "cancelled", "max_tokens", "max_turn_requests", "refusal"
+    ]
 
     model_config = ConfigDict(extra="forbid")
 
