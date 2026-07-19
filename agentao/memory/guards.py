@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import List, Optional
 
+from ..security.secret_scan import SECRET_PATTERNS as _SHARED_SECRET_PATTERNS
+
 
 class SensitiveMemoryError(ValueError):
     """Raised when memory content contains secrets or credentials."""
@@ -20,13 +22,21 @@ _STOPWORDS = frozenset({
 class MemoryGuard:
     """Validates, classifies, and sanitizes memory writes."""
 
-    SECRET_PATTERNS = [
+    # Derived from the shared scanner so this cannot drift into a weaker
+    # third copy of the same regexes. The local list previously missed
+    # Anthropic ``sk-ant-`` keys, ``AIza`` Google keys, JWTs, Slack tokens,
+    # and every GitHub token variant other than ``ghp_`` — all of which
+    # would have been written unredacted into ``memory.db`` and then
+    # re-injected into ``<memory-stable>`` on every later turn.
+    #
+    # One addition: the shared pattern requires a complete
+    # ``BEGIN…END`` block because it *replaces* what it matches, whereas
+    # this is a pure detector — a truncated or partial key pasted into a
+    # memory should still be refused, so the header alone is enough.
+    # Over-matching here is cheap: the cost of a false positive is one
+    # rejected memory write, not corrupted data.
+    SECRET_PATTERNS = [pattern for _kind, pattern in _SHARED_SECRET_PATTERNS] + [
         re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-        re.compile(r"\bBearer\s+[A-Za-z0-9._\-]+"),
-        re.compile(r"(?:api[_-]?key|password|token|secret)\s*[:=]\s*\S+", re.I),
-        re.compile(r"ghp_[A-Za-z0-9]{36}"),           # GitHub personal access token
-        re.compile(r"sk-[A-Za-z0-9]{20,}"),            # OpenAI-style key
-        re.compile(r"AKIA[0-9A-Z]{16}"),               # AWS access key
     ]
 
     # ------------------------------------------------------------------

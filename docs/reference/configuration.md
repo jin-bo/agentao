@@ -30,10 +30,15 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 
 | Surface | Path | Owner | Notes |
 |---|---|---|---|
-| Background sub-agent task state | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | Anchored to `working_directory`; in-memory only when no `persistence_dir`. Hand-edits will desync running threads. |
+| Background sub-agent task state | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | Anchored to `working_directory`; in-memory only when no `persistence_dir`. Hand-edits will desync running threads. **Not secret-scanned** — see the note below. |
 | Replay events | `.agentao/replay/*.jsonl` | `replay/` | See [session-replay.md](../guides/session-replay.md). |
-| Sessions / plans / tool outputs | `.agentao/sessions/`, `.agentao/plan-history/`, `.agentao/tool-outputs/` | various | Per-session artifacts. |
+| Sessions / plans | `.agentao/sessions/`, `.agentao/plan-history/` | various | Per-session artifacts. **Not secret-scanned** — see the note below. |
+| Tool outputs | `.agentao/tool-outputs/` | `runtime/tool_result_formatter.py::_save_and_truncate` | Oversized tool output spilled to disk, referenced from the in-context excerpt. **Secret-scanned before write.** |
 | `/goal` continuation state | `.agentao/goal.json` | `cli/goal_state.py::GoalState` | One long-task goal (objective, status, time/turn caps, usage). Survives restarts; corrupt/missing → treated as no goal. See [goal.md](../guides/goal.md). |
+
+> **Secret scanning is asymmetric, deliberately.** `.agentao/tool-outputs/` is passed through `security/secret_scan.py::scan_and_redact` before it reaches disk — credential-shaped strings become `[REDACTED:<kind>]`. `.agentao/sessions/*.json` (`embedding/sessions.py::save_session`) and `.agentao/background_tasks.json` are **not** scanned, and that is a trade rather than an oversight: both round-trip back into `agent.messages` on resume, so redacting them would silently corrupt a resumed conversation the same way redacting the live tool result would corrupt a live one. Redaction is applied where the output is terminal, withheld where it is re-read.
+>
+> The tool result the model reads is likewise never redacted — patterns cannot tell a live credential from a test fixture. When a tool-output write *does* redact something, the excerpt handed to the model gains a note so it does not copy mangled text back into a real file: `(credential-shaped strings in the saved copy are replaced with [REDACTED:<kind>]; the excerpt below is verbatim)`.
 
 **Precedence rules** (applies only to surfaces with both project and user variants):
 
@@ -65,6 +70,7 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 | `AGENTAO_WEB_FETCH_FALLBACK` | no | `none` | JS-rendering fallback for `web_fetch`. Allowed: `none` / `jina` / `crawl4ai`. Default `none` — the tool never silently proxies user-supplied URLs through a third party. `jina` sends the URL to `https://r.jina.ai` (disclosed in tool description + result `Fallback:` line). `crawl4ai` requires `pip install 'agentao[crawl4ai]'` + `playwright install chromium`. Read once at `WebFetchTool` construction; invalid values warn and degrade to `none`. |
 | `AGENTAO_WEB_FETCH_ALLOW_CIDRS` | no | — | Opt-in SSRF allowlist for `web_fetch`: comma/space-separated CIDRs (or bare IPs) that the URL policy permits **even though they are not globally routable**. The escape hatch for hosts behind a fake-IP proxy (Clash/V2Ray map every domain to a reserved range, typically `198.18.0.0/15`, which the guard otherwise blocks) or a trusted internal service. Applied to the initial URL **and every redirect hop**; the allowlist is *scoped* — listing `198.18.0.0/15` does **not** also permit `169.254.169.254`. **Relaxes a security control** — logged once at startup, surfaced in the tool description; keep it narrow, never `0.0.0.0/0`. Default empty = fully strict. (Cleaner fix: switch the proxy DNS from `fake-ip` to `redir-host`/real-IP.) See `agentao/security/url_policy.py`. |
 | `JINA_API_KEY` | no | — | Optional Jina key, sent as `Authorization: Bearer <key>` for higher rate limits. Used by **`web_search`** (the `jina` backend via `s.jina.ai` — works keyless, the key only lifts the rate limit; presence of the key also adds `jina` to the auto fallback chain) **and** by `web_fetch` when `AGENTAO_WEB_FETCH_FALLBACK=jina` (`r.jina.ai`). |
+| `AGENTAO_SCRUB_CHILD_ENV` | no | on | Whether shell and MCP child processes inherit agentao's **own** provider credentials. Default (any value other than `0`/`false`/`no`/`off`) drops `HARNESS_ENV_KEYS` — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LLM_EXTRA_BODY`, … — from the child environment, so a prompt-injected `run_shell_command("env")` finds nothing worth stealing. The agent is a distinct principal from the user, and nothing the LLM decides to run needs the key that pays for the LLM. **Set to `0` to restore full inheritance** — required if you run `agentao run`, or any script that calls the provider, from inside the agent's own shell. Only agentao's keys are dropped; the user's other secrets (AWS, GitHub, `DATABASE_URL`) are untouched — scrubbing those is the host's call, and a host wanting a tighter environment can pass an explicit `env` via `ShellRequest`. Defense in depth, not a seal: `cat .env` still works. See `agentao/capabilities/process.py::build_child_env`. |
 
 > Canonical example: `.env.example` in the repo root.
 
@@ -198,6 +204,8 @@ Full rule taxonomy, examples, and runtime semantics → [TOOL_CONFIRMATION_FEATU
 | Streamable HTTP | `"http"` (or infer from `url`) | `url` | `headers`, `timeout`, `trust` |
 | SSE (legacy) | `"sse"` | `url` | `headers`, `timeout`, `trust` |
 
+> **`env` and the base environment.** A stdio server's `env` entries are applied on top of a **scrubbed** copy of agentao's environment: `mcp/client.py` builds the child env via `build_child_env()`, which drops agentao's own provider credentials (`HARNESS_ENV_KEYS`). An MCP server that previously relied on *inheriting* `GEMINI_API_KEY`, `OPENAI_API_KEY`, etc. now gets a 401 — pass the key explicitly in `env` (`{"GEMINI_API_KEY": "$GEMINI_API_KEY"}`, applied after the scrub) or set `AGENTAO_SCRUB_CHILD_ENV=0` (§2) to restore full inheritance. Everything else in the environment is inherited unchanged.
+
 **Transport selection (`mcp/config.py :: resolve_transport`).** The optional
 `type` field selects the transport: `"stdio"` / `"sse"` / `"http"` (aliases
 `"streamable-http"` / `"streamable_http"` fold to `"http"`). When `type` is
@@ -233,6 +241,7 @@ Tools are registered as `mcp_{server}_{tool}`. See `CLAUDE.md` → "MCP" section
 - **Loader.** `acp_client/config.py::load_acp_config` (parsed into `AcpServerConfig` via `acp_client/models.py::AcpServerConfig.from_dict`).
 - **Failure mode.** Missing `command` / `args` / `env` / `cwd` raises `AcpConfigError` at config load — startup errors out.
 - **Hot-reload.** The CLI watches the file's mtime; edits are picked up on the next inbox poll (`cli/acp_inbox.py`).
+- **Child environment.** An ACP server is a third-party binary spawned from config — the same trust position as an MCP server — so it starts from `capabilities/process.py::build_child_env()` and does **not** inherit agentao's own provider credentials. A server that used to work by inheriting `OPENAI_API_KEY` now gets a 401; declare the key in its `env` block instead, or set `AGENTAO_SCRUB_CHILD_ENV=0` to restore full inheritance process-wide.
 
 ### Schema
 
@@ -260,7 +269,7 @@ Tools are registered as `mcp_{server}_{tool}`. See `CLAUDE.md` → "MCP" section
 |---|---|---|---|---|
 | `command` | string | yes | — | Absolute path or PATH-resolvable executable. |
 | `args` | string[] | yes | — | Empty list `[]` is valid. |
-| `env` | object | yes | — | Values support `$VAR` env-var expansion. |
+| `env` | object | yes | — | Values support `$VAR` env-var expansion. Applied **after** the base-environment scrub — see the note below. |
 | `cwd` | string | yes | — | Resolved to absolute against `project_root` if relative. |
 | `description` | string | no | `""` | Free-form. |
 | `capabilities` | object | no | `{}` | Free-form key/value (e.g. `chat`, `web`, `role: "worker"`). Not enforced by the loader. |

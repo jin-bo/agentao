@@ -47,6 +47,47 @@ _EDIT_SUFFIX_FLEXIBLE = " (flexible whitespace match)"
 _EDIT_SUFFIX_UNICODE = " (unicode-normalized match)"
 
 
+def _ambiguous_edit_message(
+    *,
+    total: int,
+    remaining: int,
+    old_text: str,
+    new_text: str,
+    where: str,
+    suffix: str = "",
+) -> str:
+    """Report a first-match edit that had more than one candidate site.
+
+    ``remaining`` is counted against the *written* content rather than
+    derived as ``total - 1``: when ``new_text`` contains ``old_text``
+    (``foo`` → ``foobar``) the substitution does not consume an
+    occurrence, so the arithmetic guess would understate what is left.
+
+    The ``replace_all=true`` suggestion is withheld in exactly that case.
+    Re-running with ``replace_all`` there would rewrite the site already
+    edited — ``foobar`` becomes ``foobarbar`` — so recommending it would
+    hand the model a corruption it believes is a fix.
+    """
+    grows = old_text in new_text
+    advice = (
+        "include more surrounding context to make it unique"
+        if grows
+        else "include more surrounding context to make it unique, or pass "
+        "replace_all=true to change all"
+    )
+    caution = (
+        " Note: new_text contains old_text, so replace_all would re-edit the "
+        "site just changed — target the remaining sites individually."
+        if grows
+        else ""
+    )
+    return (
+        f"Replaced the first of {total} occurrences in {where}{suffix}. "
+        f"{remaining} occurrence(s) of old_text remain — if you meant a "
+        f"different one, {advice}.{caution}"
+    )
+
+
 class ReadFileTool(Tool):
     """Tool for reading file contents with line numbers."""
 
@@ -330,10 +371,23 @@ class EditTool(Tool):
                 elif content[end - 1 : end] == "\n":
                     end -= 1
             new_content = new_content[:start] + new_text + new_content[end:]
-        count = len(spans)
 
         self._get_fs().write_text(path, new_content)
-        return f"Replaced {count} occurrence(s) in {file_path}{suffix}"
+
+        if replace_all or len(matches) == 1:
+            return f"Replaced {len(spans)} occurrence(s) in {file_path}{suffix}"
+        # Same ambiguity signal as the exact-match tier: we spliced the
+        # first of several candidate sites and the model needs to know a
+        # choice was made on its behalf. Only one span was consumed, so
+        # the rest of the normalized matches are still there.
+        return _ambiguous_edit_message(
+            total=len(matches),
+            remaining=len(matches) - len(spans),
+            old_text=old_text,
+            new_text=new_text,
+            where=file_path,
+            suffix=suffix,
+        )
 
     def _not_found_hint(self, content: str, old_text: str, file_path: str) -> str:
         """Return an error message with the most similar snippet from content."""
@@ -364,6 +418,17 @@ class EditTool(Tool):
 
     def execute(self, file_path: str, old_text: str, new_text: str, replace_all: bool = False) -> str:
         """Replace text in file with flexible whitespace matching fallback."""
+        # ``"" in content`` is always True and ``content.count("")`` returns
+        # ``len(content) + 1``, so an empty ``old_text`` would otherwise be
+        # reported as hundreds of ambiguous occurrences — and with
+        # ``replace_all=true`` Python inserts ``new_text`` between every
+        # character, shredding the file. There is no sane interpretation of
+        # "replace nothing", so refuse it outright.
+        if not old_text:
+            return (
+                "Error: old_text is empty. Provide the exact text to replace; "
+                "to create or overwrite a file use write_file instead."
+            )
         try:
             path = PathPolicy.for_tool(self).contain_file(file_path)
         except PathPolicyError as e:
@@ -377,12 +442,27 @@ class EditTool(Tool):
                 count = content.count(old_text)
                 if replace_all:
                     new_content = content.replace(old_text, new_text)
-                else:
-                    new_content = content.replace(old_text, new_text, 1)
-                    count = 1
+                    fs.write_text(path, new_content)
+                    return f"Replaced {count} occurrence(s) in {file_path}"
 
+                new_content = content.replace(old_text, new_text, 1)
                 fs.write_text(path, new_content)
-                return f"Replaced {count} occurrence(s) in {file_path}"
+                # First-match-only is the documented contract (see the
+                # ``replace_all`` parameter description), but the model
+                # supplies ``old_text`` believing it identifies one site.
+                # When it does not, saying only "Replaced 1 occurrence(s)"
+                # hides the ambiguity we already measured — and the model
+                # has no other way to learn it may have patched the wrong
+                # one. Report the denominator so it can check.
+                if count > 1:
+                    return _ambiguous_edit_message(
+                        total=count,
+                        remaining=new_content.count(old_text),
+                        old_text=old_text,
+                        new_text=new_text,
+                        where=file_path,
+                    )
+                return f"Replaced 1 occurrence(s) in {file_path}"
 
             # 2. Flexible match: whitespace-normalized comparison
             matches = self._line_window_matches(content, old_text)

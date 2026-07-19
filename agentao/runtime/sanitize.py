@@ -18,6 +18,16 @@ Two concerns, both about *what we ship back to the API on the next turn*:
    conversation-history bytes match what the model emitted (preserves
    prompt-cache hits). Unparseable args become ``"{}"`` so the next API
    request still succeeds.
+
+3. **Orphaned tool_calls.** Strict Chat-Completions APIs reject a request
+   in which an assistant ``tool_calls`` entry has no answering
+   ``role: "tool"`` message. The chat loop already backfills placeholders
+   on the paths it controls (doom-loop halt, length truncation), but a
+   turn that dies *between* recording the assistant message and appending
+   the results — most commonly Ctrl+C during a synchronous tool — leaves
+   the call unanswered. Because the orphan stays in history it is re-sent
+   on every later turn, so the session is bricked until ``/new``.
+   :func:`backfill_orphaned_tool_calls` closes that at the turn boundary.
 """
 
 from __future__ import annotations
@@ -28,6 +38,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .arg_repair import parse_tool_arguments
+from .tool_planning import make_tool_result_message
 
 
 SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
@@ -262,3 +273,90 @@ def sanitize_assistant_message(msg: Dict[str, Any]) -> bool:
                 found |= _sanitize_str_field(fn, "arguments")
 
     return found
+
+
+# Wording matters here and is load-bearing. ``ToolRunner.execute`` collects a
+# batch's results in a local list and the runner only extends them into
+# history once the whole batch returns, so an interrupt during tool 3 of 3
+# discards the results of tools 1 and 2 as well — even though those tools
+# *ran*, and their side effects (a file written, a command executed) are
+# real. Asserting "produced no result" would invite the model to re-issue
+# them next turn and double-apply those effects. State the uncertainty
+# instead: the result is unknown, and the model should verify rather than
+# blindly retry.
+#
+# The durable fix is for ``ToolRunner.execute`` to record each completed
+# result into ``agent.messages`` incrementally (or return partials on
+# interrupt) so this placeholder only ever covers calls that truly never
+# ran. That is a deeper change to the batch contract; this wording keeps
+# the honest-history guarantee without over-claiming in the meantime.
+INTERRUPTED_TOOL_CALL_MESSAGE = (
+    "Tool call interrupted: the turn ended before this tool's result was "
+    "recorded. The tool may or may not have run — verify the current state "
+    "before retrying, as re-running may repeat a side effect."
+)
+
+
+def backfill_orphaned_tool_calls(
+    messages: List[Dict[str, Any]],
+    content: str = INTERRUPTED_TOOL_CALL_MESSAGE,
+) -> int:
+    """Answer every unanswered ``tool_calls`` entry in ``messages``.
+
+    Mutates ``messages`` in place, inserting one placeholder
+    ``role: "tool"`` message directly after each assistant message that
+    left a call unanswered — position matters, since strict APIs want
+    the results to follow their request rather than trail the history.
+
+    Idempotent and cheap: with no orphans the list is untouched and 0 is
+    returned, so this is safe to call unconditionally on any turn-ending
+    path. Returns the number of placeholders inserted (useful for
+    telemetry and for asserting the no-op case in tests).
+
+    Name discipline matches the length-truncation path in
+    ``chat_loop/_runner.py``: a call interrupted before its name finished
+    streaming can carry ``name == ""``, which strict proxies reject, and
+    they also reject a name mismatch between the assistant tool_call and
+    its result — so the placeholder name is stamped onto *both* in
+    lock-step.
+    """
+    answered = {
+        m.get("tool_call_id")
+        for m in messages
+        if isinstance(m, dict) and m.get("role") == "tool"
+    }
+
+    out: List[Dict[str, Any]] = []
+    filled = 0
+    for msg in messages:
+        out.append(msg)
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            continue
+        tool_calls = msg.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            continue
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            call_id = tc.get("id")
+            # A falsy id cannot be answered (``tool_call_id`` must be a
+            # non-empty string); ``normalize_tool_calls`` guarantees one
+            # on every path that reaches history, so this is a guard, not
+            # an expected case.
+            if not call_id or call_id in answered:
+                continue
+            fn = tc.get("function")
+            if not isinstance(fn, dict):
+                fn = {}
+                tc["function"] = fn
+            name = fn.get("name") or "unknown"
+            fn["name"] = name
+            out.append(make_tool_result_message(call_id, name, content))
+            # Guard against the same id appearing in two assistant
+            # messages — answer it once, not once per occurrence.
+            answered.add(call_id)
+            filled += 1
+
+    if filled:
+        messages[:] = out
+    return filled

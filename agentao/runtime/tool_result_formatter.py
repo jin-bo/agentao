@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..security.secret_scan import scan_and_redact
 from ..transport import AgentEvent, EventType
 from .tool_executor import ToolExecutionResult
 from .tool_planning import ToolCallPlan
@@ -59,8 +60,33 @@ def _save_and_truncate(
         uid = uuid.uuid4().hex[:6]
         safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in tool_name)
         out_file = _TOOL_OUTPUT_DIR / f"{safe_name}_{ts}_{uid}.txt"
-        out_file.write_text(content, encoding="utf-8")
-        file_ref = f"\nFull output saved to: {out_file}  (use read_file to access)"
+        # Redact before the bytes land on disk. The in-context excerpt below
+        # is built from the *unredacted* ``content`` on purpose: pattern
+        # matching cannot distinguish a live credential from a test fixture,
+        # and mangling the model's view breaks work it can neither see nor
+        # fix. What we persist is a different question from what we show.
+        redacted, hits = scan_and_redact(content)
+        out_file.write_text(redacted, encoding="utf-8")
+        if hits and logger:
+            logger.info(
+                "Redacted %s from tool output saved to %s",
+                ", ".join(f"{k}×{v}" for k, v in sorted(hits.items())),
+                out_file,
+            )
+        # The excerpt below tells the model to ``read_file`` this path, so the
+        # saved copy is a model-facing surface even though it is on disk. Say
+        # that it was scrubbed — otherwise the model reads back mangled text
+        # believing it is the verbatim output, and copying it into a real file
+        # silently plants ``[REDACTED:…]`` markers in the user's data.
+        redaction_note = (
+            "  (credential-shaped strings in the saved copy are replaced with "
+            "[REDACTED:<kind>]; the excerpt below is verbatim)"
+            if hits else ""
+        )
+        file_ref = (
+            f"\nFull output saved to: {out_file}  (use read_file to access)"
+            f"{redaction_note}"
+        )
         disk_path = str(out_file)
     except Exception as exc:
         if logger:

@@ -20,6 +20,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -28,6 +29,133 @@ from ...tools.base import RegistrableTool, Tool, ToolRegistry
 from ..bg_store import BackgroundTaskStore
 from ._complete import CompleteTaskTool, TaskComplete
 from ._progress import SubagentProgress
+
+
+# Human-readable renderings of the ``TurnOutcome.incomplete_reason`` closed
+# vocabulary. The parent LLM reads these, so they say what happened in plain
+# terms rather than echoing the wire token.
+_INCOMPLETE_DETAILS: Dict[str, str] = {
+    "no_output": "it produced no output",
+    "reasoning_only": "it produced only reasoning, with no answer",
+    "length_truncated": "its answer was cut off by the model's output-length limit",
+    "doom_loop": "it was halted after repeating the same tool call",
+    "llm_error": "the LLM API call failed",
+}
+
+# Sentinel reason for budget exhaustion. Not part of the ``incomplete_reason``
+# vocabulary — ``max_iterations`` is a separate axis by design — so it gets its
+# own key rather than being smuggled into that closed set.
+_MAX_ITERATIONS_REASON = "max_iterations"
+
+
+@dataclass(frozen=True)
+class _IncompleteOutcome:
+    """Why a sub-agent stopped short. ``reason`` is machine-readable."""
+
+    reason: str
+    detail: str
+
+
+# Harness-authored turn text. None of these is sub-agent output, so none may
+# be presented to the parent LLM as the child's "partial result" — doing so
+# would attribute the harness's own notice to the sub-agent. The empty-turn
+# placeholder is imported lazily (see ``_format_result``); these two are the
+# max-iterations and LLM-error notices from ``chat_loop/_runner.py``.
+_HARNESS_NOTICE_PREFIXES = ("[LLM API error:",)
+_HARNESS_NOTICE_EXACT = ("Maximum tool call iterations reached.",)
+
+
+def _is_harness_notice(text: Optional[str]) -> bool:
+    """True if ``text`` is agentao's own notice rather than model output.
+
+    Used to decide what may be shown to the parent LLM as a sub-agent's
+    "partial result". ``[No response]``, ``[LLM API error: …]`` and
+    "Maximum tool call iterations reached." are all strings the harness
+    authored on the child's behalf; labelling them as the child's partial
+    work would attribute the harness's words to the sub-agent — the exact
+    misreporting this whole path exists to stop.
+    """
+    # Deferred: ``agentao.runtime`` imports ``agentao.agents`` for
+    # ``TaskComplete``, so a module-level import here is a cycle.
+    from ...runtime.chat_loop._runner import EMPTY_RESPONSE_PLACEHOLDER
+
+    body = (text or "").strip()
+    if not body:
+        return True
+    if body == EMPTY_RESPONSE_PLACEHOLDER or body in _HARNESS_NOTICE_EXACT:
+        return True
+    return body.startswith(_HARNESS_NOTICE_PREFIXES)
+
+
+def _find_task_complete_result(sub_agent: Any) -> Optional[str]:
+    """Return the payload of the sub-agent's ``complete_task`` call, if any.
+
+    ``CompleteTaskTool.execute`` raises ``TaskComplete``, but
+    ``ToolExecutor._execute_one`` catches it and turns it into an ordinary
+    tool result (``runtime/tool_executor.py:339``) — so it never propagates
+    out of ``chat()`` and cannot be detected with ``except``. The durable
+    signal is the tool result it leaves in the child's history.
+
+    Returns the last such payload (``None`` if the tool was never called),
+    which is both the "the agent declared itself done" flag and the answer
+    it meant to hand back.
+    """
+    messages = getattr(sub_agent, "messages", None) or []
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") == "tool" and msg.get("name") == "complete_task":
+            content = msg.get("content")
+            return content if isinstance(content, str) else ""
+    return None
+
+
+def _classify_subagent_outcome(
+    *,
+    outcome: Any,
+    task_complete: bool,
+    max_iterations_hit: bool,
+    max_turns: int,
+) -> Optional[_IncompleteOutcome]:
+    """Decide whether a finished sub-agent run actually answered.
+
+    Returns ``None`` when the run produced a real answer — the common
+    case — and an :class:`_IncompleteOutcome` otherwise. Mirrors the
+    top-level ``TurnOutcome`` contract (PR #126) one level down: a
+    sub-agent that never answered must not be reported to the parent
+    LLM, or to a host watching ``SubagentLifecycleEvent``, as a success.
+
+    ``task_complete`` wins over everything: the sub-agent called
+    ``complete_task``, which is an explicit "I am done" signal, and the
+    turn-level classification of the call that carried it is irrelevant.
+    """
+    if task_complete:
+        return None
+    if max_iterations_hit:
+        return _IncompleteOutcome(
+            _MAX_ITERATIONS_REASON,
+            f"it used its entire {max_turns}-turn budget without finishing",
+        )
+    if outcome is None:
+        # No ``last_turn`` to read (a stubbed or older agent object).
+        # Absence of evidence is not evidence of failure.
+        return None
+    if getattr(outcome, "is_answer", False):
+        return None
+
+    reason = getattr(outcome, "incomplete_reason", None)
+    if reason:
+        detail = _INCOMPLETE_DETAILS.get(reason, f"it stopped early ({reason})")
+        return _IncompleteOutcome(reason, detail)
+
+    status = getattr(outcome, "status", None)
+    if status == "cancelled":
+        return _IncompleteOutcome("cancelled", "it was cancelled")
+    if status == "error":
+        return _IncompleteOutcome("error", "it ended with an error")
+    # ``is_answer`` false with no reason and no bad status shouldn't happen;
+    # report it honestly rather than papering over it as success.
+    return _IncompleteOutcome("unknown", "it did not produce a complete answer")
 
 
 class AgentToolWrapper(Tool):
@@ -191,23 +319,38 @@ class AgentToolWrapper(Tool):
             )
             raise
 
+        incomplete = stats.get("incomplete")
+
         # Signal sub-agent end to the CLI
         if self._step_callback:
             self._step_callback(
                 self._AGENT_END,
                 SubagentProgress(
                     agent_name=agent_name,
-                    state="completed",
+                    state="completed" if incomplete is None else "failed",
                     task=task[:80],
                     max_turns=max_turns,
                     turns=stats["turns"],
                     tool_calls=stats["tool_calls"],
                     tokens=stats["tokens"],
                     duration_ms=stats["duration_ms"],
+                    error=None if incomplete is None else incomplete.detail,
                 ),
             )
 
-        self._terminal_subagent_event(subagent_ctx, "completed", task_summary)
+        if incomplete is None:
+            self._terminal_subagent_event(subagent_ctx, "completed", task_summary)
+        else:
+            # The run did not raise, but it did not answer either. Reporting
+            # ``completed`` here would make the public host contract state
+            # something untrue; the phase vocabulary already has the value
+            # this deserves.
+            self._terminal_subagent_event(
+                subagent_ctx,
+                "failed",
+                task_summary,
+                error_type=f"incomplete:{incomplete.reason}",
+            )
         return self._format_result(result, stats)
 
     # ------------------------------------------------------------------
@@ -432,7 +575,30 @@ class AgentToolWrapper(Tool):
         else:
             full_task = task
 
+        # ``max_iterations`` exhaustion is a deliberately separate axis from
+        # ``incomplete_reason`` (see runtime/chat_loop/_runner.py:85) and rides
+        # a transport flag that only ``NonInteractiveTransport`` carries — the
+        # sub-agent has no such transport. Since sub-agents are handed a
+        # *smaller* budget than the parent, cap exhaustion is their most likely
+        # way to stop short, so record it here rather than let it read as
+        # success. The prior handler's decision is preserved verbatim.
+        max_iter_hit = {"hit": False}
+        _prior_on_max_iter = getattr(sub_agent.transport, "on_max_iterations", None)
+
+        def _note_max_iterations(max_iterations, pending):
+            max_iter_hit["hit"] = True
+            if callable(_prior_on_max_iter):
+                return _prior_on_max_iter(max_iterations, pending)
+            return {"action": "stop"}
+
+        try:
+            sub_agent.transport.on_max_iterations = _note_max_iterations
+        except Exception:
+            # Read-only / slotted transport: lose the signal rather than the run.
+            pass
+
         t0 = time.monotonic()
+        task_complete = False
         try:
             # Foreground sub-agents share the parent's cancellation token so
             # Ctrl+C propagates into nested chat() loops (Gemini CLI pattern).
@@ -443,9 +609,28 @@ class AgentToolWrapper(Tool):
                 cancellation_token=cancellation_token,
             )
         except TaskComplete as tc:
+            # Defensive only: ``ToolExecutor`` converts ``TaskComplete`` into
+            # a tool result, so it does not reach here from the normal path.
+            # The real detection is the history scan below.
             result = tc.result
+            task_complete = True
 
         elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+        # An explicit completion signal from the sub-agent: it called
+        # ``complete_task``. That is the agent declaring it is done, so the
+        # turn-level classification does not apply — do not second-guess it.
+        completed_payload = _find_task_complete_result(sub_agent)
+        if completed_payload is not None:
+            task_complete = True
+            # ``complete_task`` is documented as *the* way a sub-agent
+            # returns its answer, but the loop keeps running after the tool
+            # call and the child often has nothing left to say — leaving
+            # ``chat()`` to return the empty-turn placeholder. Prefer the
+            # payload the agent explicitly handed back over that placeholder,
+            # otherwise the real answer is dropped on the floor.
+            if _is_harness_notice(result) and completed_payload.strip():
+                result = completed_payload
 
         # Collect stats from executed sub-agent
         turns = sum(1 for m in sub_agent.messages if m.get("role") == "assistant")
@@ -458,18 +643,43 @@ class AgentToolWrapper(Tool):
             "tool_calls": tool_calls,
             "tokens": approx_tokens,
             "duration_ms": elapsed_ms,
+            "incomplete": _classify_subagent_outcome(
+                outcome=getattr(sub_agent, "last_turn", None),
+                task_complete=task_complete,
+                max_iterations_hit=max_iter_hit["hit"],
+                max_turns=max_turns,
+            ),
         }
         return result, stats
 
     @staticmethod
     def _format_result(result: str, stats: Dict[str, Any]) -> str:
-        """Append agent stats footer to result string."""
+        """Render the sub-agent's result for the parent LLM.
+
+        A stats footer on its own reads as an affirmative productivity
+        signal, so when the sub-agent stopped short it has to be said
+        plainly *before* the text — otherwise ``[No response]`` plus
+        "8 turns, 12 tool calls" invites the parent to treat a non-answer
+        as a finished piece of work.
+        """
         name = stats["agent_name"]
-        return (
-            f"{result}\n\n"
+        footer = (
             f"[{name}: {stats['turns']} turns, {stats['tool_calls']} tool calls, "
             f"~{stats['tokens']:,} tokens, {stats['duration_ms']}ms]"
         )
+
+        note = stats.get("incomplete")
+        if not note:
+            return f"{result}\n\n{footer}"
+
+        header = f"[{name} did not finish: {note.detail}]"
+        # Only genuine sub-agent output earns the "Partial result" label —
+        # ``[No response]``, ``[LLM API error: …]`` and the max-iterations
+        # notice are all harness-authored, and presenting them as the
+        # child's work is the misattribution this guard exists to prevent.
+        if not _is_harness_notice(result):
+            return f"{header}\nPartial result:\n{result}\n\n{footer}"
+        return f"{header}\n\n{footer}"
 
     # ------------------------------------------------------------------
     # Background (async) execution
@@ -506,12 +716,29 @@ class AgentToolWrapper(Tool):
                     cancellation_token=token,
                 )
                 formatted = self._format_result(result, stats)
+                # Not raising is not the same as finishing. The result text
+                # is still stored either way — a partial answer is useful —
+                # but the status and the public event must say what actually
+                # happened, or ``check_background_agent`` and any host
+                # subscriber both read a non-answer as a success.
+                incomplete = stats.get("incomplete")
                 self._bg_store.update(
-                    agent_id, status="completed", result=formatted,
+                    agent_id,
+                    status="completed" if incomplete is None else "failed",
+                    result=formatted,
+                    error=None if incomplete is None else incomplete.detail,
                     turns=stats["turns"], tool_calls=stats["tool_calls"],
                     tokens=stats["tokens"], duration_ms=stats["duration_ms"],
                 )
-                self._terminal_subagent_event(subagent_ctx, "completed", task_summary)
+                if incomplete is None:
+                    self._terminal_subagent_event(
+                        subagent_ctx, "completed", task_summary,
+                    )
+                else:
+                    self._terminal_subagent_event(
+                        subagent_ctx, "failed", task_summary,
+                        error_type=f"incomplete:{incomplete.reason}",
+                    )
             except AgentCancelledError:
                 self._bg_store.update(agent_id, status="cancelled")
                 self._terminal_subagent_event(subagent_ctx, "cancelled", task_summary)

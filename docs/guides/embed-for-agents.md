@@ -293,6 +293,15 @@ agent = build_from_environment(
   `extra_tool` must call `self._resolve_path(file_path)` *before*
   `self.filesystem.write_text(...)` — the `is_absolute()` guard turns a
   miss into a loud refusal instead of a silent process-cwd write.
+- **Replace existing files atomically.** `write_text` must not leave a
+  truncated file if the process dies mid-write — agentao runs inside a
+  host it does not control, so that window has to be closed. A
+  delegating wrapper inherits this from `LocalFileSystem`, which stages
+  a sibling temp file (`.{name}.*.tmp`, visible to audit/watcher
+  wrappers) and `os.replace`s it. A from-scratch implementation owes the
+  same guarantee: a reader must see either the old content or the new
+  one, never a torn file. `append=True` and not-yet-existing targets are
+  exempt — neither can destroy existing content.
 - **Test the leaf-dereferenced target, not the literal path.** A symlink
   `scratch/link → raw/secret` must be denied; resolving the leaf
   (`_effective_target`) is what makes "immutable wins" hold. Do **not**

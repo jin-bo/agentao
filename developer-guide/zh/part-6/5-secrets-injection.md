@@ -2,7 +2,7 @@
 
 > **本节你会学到**
 > - 密钥常泄漏的 4 个出口：env / 日志 / LLM 回复 / 工具输出
-> - 在日志写出**之前**生效的脱敏 filter
+> - agentao 内置的日志脱敏覆盖什么、不覆盖什么
 > - 怎样防御来自用户输入、网页内容、工具输出的 Prompt 注入
 
 密钥泄漏和 Prompt 注入是**最隐蔽**也**最常见**的 Agent 安全事故。前者泄得无声无息，后者让 LLM 主动帮攻击者做事。
@@ -61,6 +61,14 @@ class SafeSaveMemoryTool(SaveMemoryTool):
 ```
 
 把 token 通过进程环境传入，不进 git。
+
+**现在 `env` 是 provider key 抵达 MCP server 的唯一途径。** 子进程的基础环境由 `capabilities/process.py::build_child_env()` 构造，它会剥掉 agentao 自己的 provider 凭据（`HARNESS_ENV_KEYS`：`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`LLM_EXTRA_BODY`……）——MCP server 是第三方二进制，没有理由继承那把给 LLM 付费的 key。原本靠继承跑通的 server 现在会拿到 401。请显式声明（`env` 在清洗**之后**才应用）：
+
+```json
+{"mcpServers": {"gemini-thing": {"env": {"GEMINI_API_KEY": "${GEMINI_API_KEY}"}}}}
+```
+
+或者设 `AGENTAO_SCRUB_CHILD_ENV=0` 在整个进程范围内恢复完整继承——但这更粗暴，会把 key 一并重新暴露给每一条 shell 命令。同一套清洗规则也作用于 `run_shell_command` 的子进程。
 
 ### 5. 按会话注入，不按进程
 
@@ -163,30 +171,31 @@ if "run_shell_command" in agent.tools.tools:
 
 ## 四：日志脱敏
 
-`agentao.log` 默认记录完整的工具参数。如果参数里有密钥，日志泄漏就连带泄了。
+`agentao.log` 记录完整的工具参数，所以参数里带密钥曾经意味着"日志泄漏 = 密钥泄漏"。
+现在 agentao 默认会脱敏这个文件：文件 handler 上挂了 `_RedactingFormatter`，用
+`agentao/security/secret_scan.py` 里的共享模式集把凭据形状的字符串改写为
+`[REDACTED:<kind>]`。同一套模式也守着 `.agentao/tool-outputs/*.txt` 和 `MemoryGuard`。
 
-### Python logging 的 filter
+把它当作纵深防御，**不是**密封：
 
-```python
-import logging, re
+- 它是**基于模式**的。长得不像密钥的密钥——不透明的 32 字符 session token、
+  `psql` 连接串里的密码——会原样漏过去。
+- 它只覆盖**日志文件**。发给 LLM provider 的对话是刻意保持原文的：扫描器无法区分
+  真实凭据和测试用例，脱敏模型视野会破坏正常的 agent 工作。
+- `.agentao/sessions/*.json` 和 `.agentao/background_tasks.json` **刻意不扫描**——
+  两者都会被读回 `agent.messages`，脱敏它们会损坏恢复后的会话。
 
-SECRET_RE = re.compile(r'(sk-[a-zA-Z0-9]{32,}|ghp_[a-zA-Z0-9]{36,}|Bearer\s+[\w.-]+)')
+### 不要再加 `logging.Filter`
 
-class ScrubSecretsFilter(logging.Filter):
-    def filter(self, record):
-        if isinstance(record.msg, str):
-            record.msg = SECRET_RE.sub("[REDACTED]", record.msg)
-        if record.args:
-            record.args = tuple(
-                SECRET_RE.sub("[REDACTED]", str(a)) if isinstance(a, str) else a
-                for a in record.args
-            )
-        return True
+本指南早先版本推荐 `logging.getLogger("agentao").addFilter(ScrubSecretsFilter())`。
+**别这么做。** `Filter` 会就地修改共享的 `LogRecord`，脱敏结果会按注册顺序泄漏到该
+logger 上**其他所有** handler——你自己的 host handler、日志聚合器、ACP 的 stderr
+守卫——污染你根本没要求改动的记录，并对 agentao 已处理过的内容二次脱敏。这正是
+agentao 选择在绑定到单个 handler 的 `Formatter` 里脱敏的原因：`Formatter` 只塑造
+它自己那个 handler 写出的字节。
 
-logging.getLogger("agentao").addFilter(ScrubSecretsFilter())
-```
-
-放在 Agent 构造**之前**。
+如果内置模式漏掉了你部署环境特有的凭据形状，扩展共享列表，或给你自己的 handler
+挂你自己的 `Formatter`。
 
 ### 结构化字段分离
 
@@ -234,7 +243,7 @@ def test_refuses_prompt_injection():
 ::: warning 上线前先确认这几条
 - ❌ **依赖"LLM 足够聪明，不会上当"** —— 它不够，也不应该靠它
 - ❌ **只防用户输入，不防工具返回** —— 工具输出（网页、PDF、错误消息）一样不可信
-- ❌ **密钥进日志后才发现** —— 部署前就要写脱敏 filter，事后补救来不及
+- ❌ **把内置日志脱敏当成密封** —— 它是基于模式的；长得不像密钥的密钥照样漏过去
 
 下面每一条都附完整修法。
 :::
@@ -247,14 +256,17 @@ def test_refuses_prompt_injection():
 
 Web 内容、文件内容、数据库返回里的指令**同样危险**。用 `<user-data>` 标记工具返回是重要习惯。
 
-### ❌ 密钥进日志后才发现
+### ❌ 把内置日志脱敏当成密封
 
-生产流程：**部署前就写脱敏 filter**，不要等日志吐出来再补。
+`agentao.log` 默认已脱敏，能挡掉最常见的那些形状——但它匹配的是**模式**。不透明的
+session token、连接串里的密码、你自家基础设施特有的凭据格式，都会原样漏过去。根本
+办法是让密钥一开始就不要进入工具参数；agentao 不认识的形状，用你自己的 `Formatter`
+挂在你自己的 handler 上补。
 
 ## TL;DR
 
 - 密钥从 4 个口子泄漏：进程 env（`ps` 可见）、日志、LLM 回复、工具输出。**4 个全要堵**。
-- 安装一个 `logging.Filter`，在所有 handler 写出之前清掉 API key / token / password——**事后补救永远来不及**。
+- `agentao.log` 默认已按模式脱敏（挂在 agentao 自己 handler 上的 `Formatter`）。你自家的凭据形状可以扩展它——但**绝不要用 `addFilter`**，它会就地改写共享 `LogRecord`，污染该 logger 上其他所有 handler。
 - 工具输出是**不可信输入**——用 `<tool_output>...</tool_output>` 标签包住让 LLM 区分；拒绝 `IGNORE PREVIOUS INSTRUCTIONS` 这类劫持。
 - AGENTAO.md 写硬规则（"绝不向用户暴露凭据 / tenant_id / 内部 URL"）——这些比运行时检查更能撑过 Prompt 注入。
 

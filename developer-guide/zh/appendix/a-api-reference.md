@@ -228,6 +228,7 @@ class FileSystem(Protocol):
     def read_partial(self, path: Path, n: int) -> bytes: ...
     def open_text(self, path: Path) -> Iterator[str]: ...      # 流式读取
     def write_text(self, path: Path, data: str, *, append: bool = False) -> None: ...
+                                                               # 替换已有内容必须原子
     def list_dir(self, path: Path) -> list[FileEntry]: ...
     def glob(self, base: Path, pattern: str, *, recursive: bool) -> list[Path]: ...
     def stat(self, path: Path) -> FileStat: ...
@@ -243,6 +244,8 @@ class ShellExecutor(Protocol):
 冻结的 dataclass：`FileEntry(name, is_dir, is_file, size)`、`FileStat(size, mtime, is_dir, is_file)`、`ShellRequest(command, cwd, timeout, on_chunk, env)`、`ShellResult(returncode, stdout, stderr, timed_out)`、`BackgroundHandle(pid, pgid, command, cwd)`。
 
 宿主无法支持真正的后台执行时，可以在 `run_background` 抛 `NotImplementedError`——`ShellTool` 会把它呈现为普通的工具错误字符串。
+
+`write_text` 除签名之外还带一条契约义务：**替换已有文件内容**的实现必须原子地完成，这样写到一半被打断（Ctrl+C、OOM kill）也绝不会把用户的文件留成截断状态。`append=True` 和目标尚不存在这两种情况仍走直写路径——它们都不可能破坏已有内容。`LocalFileSystem` 是参考实现：它在目标所在目录里暂存一个同级的 `.{name}.*.tmp`（审计 / watcher 包装层能观察到），再 `os.replace` 换入；对只读目标它会抛 `PermissionError`，而不是让目录级的 rename 权限悄悄绕过 `chmod 444`。
 
 ## A.4 权限
 
@@ -547,7 +550,7 @@ from agentao.host import (
 |---|---|
 | `ActivePermissions` | 当前权限策略的只读快照（`mode`、`rules`、`loaded_sources`） |
 | `ToolLifecycleEvent` | 单次工具调用的公共生命周期信封。`phase ∈ {started, completed, failed}`；取消以 `phase="failed", outcome="cancelled"` 体现 |
-| `SubagentLifecycleEvent` | 子 Agent 任务/会话的血缘事实。`phase ∈ {spawned, completed, failed, cancelled}` —— `cancelled` 在这里是独立 phase |
+| `SubagentLifecycleEvent` | 子 Agent 任务/会话的血缘事实。`phase ∈ {spawned, completed, failed, cancelled}` —— `cancelled` 在这里是独立 phase。`failed` 有两义：子 Agent **抛了异常**（`error_type` 是异常类名），**或**它跑完却没给出答案（`error_type = "incomplete:<reason>"`，`<reason>` ∈ `no_output`、`reasoning_only`、`length_truncated`、`doom_loop`、`llm_error`、`max_iterations`）。升级告警前先按 `error_type` 分支——见 [4.7](/zh/part-4/7-host-contract) |
 | `PermissionDecisionEvent` | 单次权限决定的投影。在 `allow` / `deny` / `prompt` 都触发；不渲染 allow 的消费者也必须排空迭代器以避免背压 |
 | `HostEvent` | 三种事件模型的判别联合（Pydantic discriminator: `event_type`） |
 | `RFC3339UTCString` | 受约束的时间戳类型。仅允许标准 `Z` 后缀 —— `+00:00` 偏移会被拒绝 |

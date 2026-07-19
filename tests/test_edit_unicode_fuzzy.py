@@ -137,7 +137,13 @@ def test_unicode_replace_all_replaces_all_normalized_variants(project_root):
 
 def test_unicode_replace_all_count_one_when_replace_all_false(project_root):
     """With replace_all=False, only the first normalized match is replaced
-    even if multiple normalized-equivalent spans exist."""
+    even if multiple normalized-equivalent spans exist.
+
+    The result string must also *say* that a choice was made on the
+    model's behalf: ``old_text`` matched more than one span, and reporting
+    a bare "Replaced 1" would hide that the edit may have landed on the
+    wrong one.
+    """
     target = project_root / "first_only.txt"
     target.write_text("a — b\nmiddle\na – b\n")
 
@@ -150,7 +156,8 @@ def test_unicode_replace_all_count_one_when_replace_all_false(project_root):
     )
 
     assert _EDIT_SUFFIX_UNICODE in result
-    assert "Replaced 1" in result
+    assert "first of 2 occurrences" in result
+    assert "replace_all=true" in result
     # First (em-dash) occurrence replaced, second (en-dash) untouched
     assert target.read_text() == "a + b\nmiddle\na – b\n"
 
@@ -276,3 +283,61 @@ def test_no_match_returns_hint(project_root):
     assert "not found" in result.lower()
     # File untouched
     assert target.read_text() == 'alpha\nbeta\ngamma\n'
+
+
+# ---------------------------------------------------------------------------
+# Ambiguity reporting must not invite corruption (code-review findings)
+# ---------------------------------------------------------------------------
+
+
+class TestAmbiguityMessageSafety:
+    def test_empty_old_text_is_refused(self, project_root):
+        """``"" in content`` is always True and ``count("")`` is len+1.
+
+        Left unguarded this reports phantom occurrences and advises
+        replace_all, which inserts new_text between every character.
+        """
+        target = project_root / "e.txt"
+        target.write_text("a foo b foo c")
+
+        tool = _bind(EditTool(), project_root)
+        result = tool.execute(file_path="e.txt", old_text="", new_text="Z")
+
+        assert result.startswith("Error:")
+        assert target.read_text() == "a foo b foo c"
+
+    def test_growing_replacement_counts_remaining_correctly(self, project_root):
+        """``foo`` → ``foobar`` does not consume an occurrence.
+
+        ``total - 1`` would claim 1 remains when 2 literally do.
+        """
+        target = project_root / "g.txt"
+        target.write_text("a foo b foo c")
+
+        tool = _bind(EditTool(), project_root)
+        result = tool.execute(file_path="g.txt", old_text="foo", new_text="foobar")
+
+        assert target.read_text() == "a foobar b foo c"
+        assert "2 occurrence(s) of old_text remain" in result
+
+    def test_growing_replacement_does_not_advise_replace_all(self, project_root):
+        """replace_all here would re-edit the site just changed."""
+        target = project_root / "g2.txt"
+        target.write_text("a foo b foo c")
+
+        tool = _bind(EditTool(), project_root)
+        result = tool.execute(file_path="g2.txt", old_text="foo", new_text="foobar")
+
+        assert "replace_all=true to change all" not in result
+        assert "re-edit the site just changed" in result
+
+    def test_ordinary_ambiguity_still_advises_replace_all(self, project_root):
+        target = project_root / "n.txt"
+        target.write_text("a foo b foo c")
+
+        tool = _bind(EditTool(), project_root)
+        result = tool.execute(file_path="n.txt", old_text="foo", new_text="bar")
+
+        assert target.read_text() == "a bar b foo c"
+        assert "1 occurrence(s) of old_text remain" in result
+        assert "replace_all=true to change all" in result

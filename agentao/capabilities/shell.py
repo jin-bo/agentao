@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
 
-from .process import kill_process_tree
+from .process import build_child_env, kill_process_tree
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -99,8 +99,13 @@ class LocalShellExecutor:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        if request.env is not None:
-            popen_kwargs["env"] = request.env
+        # An explicit ``request.env`` is the host's decision and is passed
+        # through verbatim. Otherwise the child would inherit the parent's
+        # entire environment — including agentao's own provider key, which
+        # a prompt-injected ``env`` would hand straight to the model.
+        popen_kwargs["env"] = (
+            request.env if request.env is not None else build_child_env()
+        )
         if not IS_WINDOWS:
             popen_kwargs["start_new_session"] = True
 
@@ -165,8 +170,11 @@ class LocalShellExecutor:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        if request.env is not None:
-            popen_kwargs["env"] = request.env
+        # Same reasoning as ``run`` — a backgrounded child outlives the
+        # turn, so inheriting the harness credential matters more, not less.
+        popen_kwargs["env"] = (
+            request.env if request.env is not None else build_child_env()
+        )
 
         if IS_WINDOWS:
             popen_kwargs["creationflags"] = (

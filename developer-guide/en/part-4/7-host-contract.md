@@ -53,7 +53,18 @@ Three orthogonal lifecycle facts. Each is a Pydantic model carrying just enough 
 |-------|--------|---------|
 | `ToolLifecycleEvent` | `started` · `completed` · `failed` | Every tool call (built-in or custom). Cancellation surfaces as `phase="failed", outcome="cancelled"`. |
 | `PermissionDecisionEvent` | (no phases — single decision per call) | Every permission decision: `allow` / `deny` / `prompt`. **Consumers must drain even allow events** — the audit row needs them. |
-| `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | Sub-agent task lifecycle. Note: `cancelled` is a **distinct phase** here (unlike tools). |
+| `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | Sub-agent task lifecycle. Note: `cancelled` is a **distinct phase** here (unlike tools). `failed` spans **two** shapes — see below. |
+
+:::warning `failed` is not only "it crashed"
+`SubagentLifecycleEvent(phase="failed")` fires both when the sub-agent **raised** and when it **returned without ever answering** (empty turn, reasoning only, length-truncated, doom-loop halted, LLM call failed, turn budget exhausted). Reporting the second as `completed` would make the contract state something untrue.
+
+If you page on-call or open an incident on `phase == "failed"`, that alert now fires on ordinary non-answers too. Discriminate on `error_type`:
+
+- `"incomplete:<reason>"` → returned without answering. `<reason>` ∈ `no_output`, `reasoning_only`, `length_truncated`, `doom_loop`, `llm_error` (the `TurnOutcome.incomplete_reason` vocabulary) plus `max_iterations` (turn budget — a separate axis, so it isn't folded into that closed set). Defensive values `cancelled` / `error` / `unknown` are possible; treat any unrecognized suffix as "stopped short, cause unclassified".
+- anything else → an exception class name, e.g. `"ValueError"`. That's a real crash.
+
+Cancellation is unaffected: it still arrives as `phase="cancelled"`.
+:::
 
 `HostEvent` is the discriminated union of these three. Use `isinstance` to branch:
 
@@ -152,6 +163,9 @@ async def audit_loop(agent: Agentao, tenant_id: str, db):
                 "child_session_id":  ev.child_session_id,
                 "child_task_id":     ev.child_task_id,
                 "phase":             ev.phase,    # spawned|completed|failed|cancelled
+                # failed = raised OR returned without answering; the
+                # "incomplete:<reason>" prefix marks the latter.
+                "error_type":        ev.error_type,
                 "task_summary":      ev.task_summary,
             })
 

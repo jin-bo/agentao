@@ -2,7 +2,7 @@
 
 ## Overview
 
-Agentao 自动记录所有与 LLM 的交互到日志文件，包括完整的请求和响应内容。
+Agentao 自动记录所有与 LLM 的交互到日志文件，包括请求和响应的完整内容（不截断；写入前会对形似凭据的字符串做脱敏，见[凭据脱敏](#-凭据脱敏两层)）。
 
 ## 日志文件
 
@@ -51,7 +51,7 @@ Messages (N total):
     Tool Call ID: call_xxx
     Result (XXX chars):
       文件的完整内容...
-      (逐行记录，不截断)
+      (逐行记录，不截断；形似凭据的字符串写入前被替换为 [REDACTED:<kind>])
 
 Tools (N available):
   - read_file
@@ -95,7 +95,7 @@ Tool Calls (N):
 
 ### ✅ 完整记录
 
-- **不截断内容** - 记录完整的消息、工具参数和结果
+- **不截断内容** - 记录完整的消息、工具参数和结果（长度不设上限；但内容并非逐字原样——形似凭据的片段在落盘前被替换，见[凭据脱敏](#-凭据脱敏两层)）
 - **逐行记录** - 每行独立记录，便于阅读
 - **JSON 格式化** - 工具参数自动格式化为易读的 JSON
 
@@ -131,7 +131,11 @@ Tool Calls (N):
 - 请求和响应通过 ID 关联
 - 请求计数器自动递增
 
-### 🔒 凭据脱敏（`extra_body`）
+### 🔒 凭据脱敏（两层）
+
+日志的凭据脱敏由两层独立机制组成：一层针对 `extra_body` 的结构化按键脱敏，一层针对整个日志文件的全局按模式脱敏。
+
+#### 第 1 层：`extra_body` 递归按键脱敏
 
 当 host 配置了 `extra_body`（请求体直通，见 [embedding 指南](embedding.md#optional-provider-specific-request-params-extra_body)）时，它会作为单独一行 `Extra Body:` 记录。由于 `extra_body` 可能嵌套 provider 凭据（有些网关在 body 或 `extra_headers` 里收 key），其值在写日志前会**递归脱敏**：
 
@@ -140,6 +144,18 @@ Tool Calls (N):
 - 递归覆盖 dict、list、tuple 任意嵌套深度。
 
 例：`extra_body={"reasoning_effort":"high","api_key":"sk-x"}` 在日志里显示为 `reasoning_effort` 原值、`api_key` 为 `***`。其余请求字段（`api_key` 凭据本身）一如既往不进日志。
+
+#### 第 2 层：日志文件全局按模式脱敏（默认开启）
+
+第 1 层只看得见 `extra_body` 这一个字段，但凭据同样会**从别处流进日志**——`run_shell_command("env")` 的输出、`cat .env` 的文件内容、模型回复里粘贴的一段 token。为此，文件 handler 上装了一个 `_RedactingFormatter`（`agentao/llm/client.py`），对**每一条**写入 `agentao.log` 的记录做正则扫描，命中的片段替换为 `[REDACTED:<kind>]`。
+
+模式集合是共享模块 `agentao/security/secret_scan.py`，按“先具体后宽泛”排序，覆盖 11 条：私钥块（`-----BEGIN … KEY-----`）、Anthropic `sk-ant-`、OpenAI `sk-` / `sk-proj-`、Google `AIza`、AWS `AKIA`/`ASIA`、GitHub `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`、Slack `xox[baprs]-`、JWT（`eyJ….eyJ….…`）、`Bearer <token>`、`Authorization:` 头、以及 `api_key=` / `token=` / `secret=` / `password=` 这类内联键值对。
+
+几个实现上的要点：
+
+- **只装在文件 handler 上**。刻意实现为 `Formatter` 而非 `Filter`：`Filter` 得改写共享的 `LogRecord`，那份改动会按 handler 注册顺序泄漏到该 logger 的**其他** handler（embedded host 自己的 handler、ACP 的 stderr guard）；`Formatter` 只影响本 handler 写出的字节。
+- **绝不抛异常**。`format()` 把脱敏调用包在 `try/except` 里，扫描器一旦出 bug，代价是这一行日志少脱敏一次，而不是整个会话崩掉。
+- **不作用于交给模型的工具结果**。正则分不清线上凭据和测试夹具，把 agent 正在编辑的文件里的 `sk-test-…` 改坏，是 agent 既看不见也修不了的破坏。误报的代价在日志里只是一行不好读，在工作数据里则是数据损坏——所以只在前者上启用。
 
 ## 使用方法
 
@@ -244,7 +260,10 @@ client = LLMClient(
 ### ⚠️ 注意事项
 
 1. **敏感信息** - 日志包含完整的对话内容，可能包含敏感信息
-2. **API 密钥** - API 密钥不会记录到日志
+2. **API 密钥** - 默认脱敏，但**不是密封**。写入 `agentao.log` 的每条记录都会经过[第 2 层模式脱敏](#第-2-层日志文件全局按模式脱敏默认开启)，形似凭据的字符串变成 `[REDACTED:<kind>]`。请按它的实际边界理解这条保证：
+   - **基于正则、尽力而为**。不长得像凭据的密钥就不会被拦——自定义格式的内部 token、纯十六进制串、短口令，都照原样落盘。它降低泄漏面，不构成合规意义上的保证。
+   - **只覆盖日志文件**。发给 LLM provider 的那份对话是**刻意逐字原样**的：正则区分不了线上凭据和测试夹具，改写在途内容会悄悄破坏 agent 的工作数据。凭据一旦进了上下文就会离开本机——这属于 host 的管控范围，不是日志层能解决的。
+   - **会话状态同样不扫描**。`.agentao/sessions/*.json`、`.agentao/background_tasks.json` 原样序列化消息文本，因为它们在 resume 时会回灌进 `agent.messages`，脱敏会污染恢复出来的对话。脱敏施加于**终点产物**，回读的路径上则不施加。
 3. **文件权限** - 确保日志文件权限设置正确
 4. **定期清理** - 日志文件会持续增长，需要定期清理
 

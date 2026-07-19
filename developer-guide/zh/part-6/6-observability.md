@@ -31,7 +31,7 @@ Agent 是"长尾出 bug"的典型——90% 时间好好的，10% 出现让你无
 
 默认写到 `<working_directory>/agentao.log`，内容**非常详尽**：
 
-- 每次 LLM 请求/响应（完整 content、tokens、模型）
+- 每次 LLM 请求/响应（完整 content——不截断，但形似凭据的字符串写入时会脱敏为 `[REDACTED:<kind>]`——以及 tokens、模型）
 - 每次工具调用参数和结果
 - MCP server 启停
 - 插件 hook 分发

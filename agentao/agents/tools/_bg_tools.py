@@ -96,7 +96,15 @@ class CheckBackgroundAgentTool(Tool):
         elif status == "cancelled":
             return f"Agent '{name}' ({agent_id}) was cancelled."
         else:
-            return f"Agent '{name}' ({agent_id}) failed: {rec['error']}"
+            # ``failed`` covers two shapes: a raised exception (no result),
+            # and a run that finished without answering — budget exhausted,
+            # doom-loop halted — which still carries whatever work it did.
+            # Dropping ``result`` here would discard the entire output of a
+            # long background task purely because it stopped short.
+            report = f"Agent '{name}' ({agent_id}) failed: {rec['error']}"
+            if rec.get("result"):
+                report += f"\n\n{rec['result']}"
+            return report
 
 
 class CancelBackgroundAgentTool(Tool):

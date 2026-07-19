@@ -2,7 +2,7 @@
 
 > **What you'll learn**
 > - The four places secrets typically leak from: env / logs / LLM replies / tool output
-> - A scrubbing filter that runs **before** logs are written
+> - What agentao's built-in log redaction does and does not cover
 > - How to defend against prompt injection from user input, web pages, and tool output
 
 Credential leakage and prompt injection are the **most stealthy** and **most common** agent-security incidents. The first leaks invisibly; the second makes the LLM actively help the attacker.
@@ -61,6 +61,14 @@ Don't write tokens into `.agentao/mcp.json` — use `${VAR}`:
 ```
 
 Tokens come from the process environment, stay out of git.
+
+**`env` is now the only way a provider key reaches an MCP server.** The child's base environment is built by `capabilities/process.py::build_child_env()`, which strips agentao's own provider credentials (`HARNESS_ENV_KEYS`: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `LLM_EXTRA_BODY`, …) — an MCP server is a third-party binary and has no business inheriting the key that pays for the LLM. A server that used to work by inheritance now gets a 401. Declare it explicitly (`env` is applied *after* the scrub):
+
+```json
+{"mcpServers": {"gemini-thing": {"env": {"GEMINI_API_KEY": "${GEMINI_API_KEY}"}}}}
+```
+
+Or set `AGENTAO_SCRUB_CHILD_ENV=0` to restore full inheritance process-wide — blunter, and it re-exposes the key to every shell command too. The same scrub applies to `run_shell_command` children.
 
 ### 5. Inject per session, not per process
 
@@ -164,30 +172,38 @@ Even if the LLM is tricked into calling dangerous tools, the `PermissionEngine` 
 
 ## Four: Log scrubbing
 
-`agentao.log` records full tool args. If args contain secrets, log leakage = secret leakage.
+`agentao.log` records full tool args, so args holding a secret used to mean log
+leakage = secret leakage. Agentao now redacts that file by default: the file
+handler carries a `_RedactingFormatter` that rewrites credential-shaped strings
+to `[REDACTED:<kind>]` using the shared pattern set in
+`agentao/security/secret_scan.py`. The same patterns guard
+`.agentao/tool-outputs/*.txt` and `MemoryGuard`.
 
-### Python logging filter
+Treat it as defense in depth, **not** a seal:
 
-```python
-import logging, re
+- It is **pattern-based**. A secret that does not look like one — an opaque
+  32-char session token, a password in a `psql` connection string — passes
+  through untouched.
+- It covers the **log file only**. The conversation sent to your LLM provider is
+  deliberately verbatim: a scanner cannot distinguish a live credential from a
+  fixture, and redacting the model's view breaks legitimate work.
+- `.agentao/sessions/*.json` and `.agentao/background_tasks.json` are
+  **deliberately not** scanned — both are read back into `agent.messages`, so
+  redacting them would corrupt a resumed conversation.
 
-SECRET_RE = re.compile(r'(sk-[a-zA-Z0-9]{32,}|ghp_[a-zA-Z0-9]{36,}|Bearer\s+[\w.-]+)')
+### Do not add a `logging.Filter`
 
-class ScrubSecretsFilter(logging.Filter):
-    def filter(self, record):
-        if isinstance(record.msg, str):
-            record.msg = SECRET_RE.sub("[REDACTED]", record.msg)
-        if record.args:
-            record.args = tuple(
-                SECRET_RE.sub("[REDACTED]", str(a)) if isinstance(a, str) else a
-                for a in record.args
-            )
-        return True
+Earlier versions of this guide recommended
+`logging.getLogger("agentao").addFilter(ScrubSecretsFilter())`. **Don't.** A
+`Filter` mutates the shared `LogRecord` in place, so the redaction leaks into
+every *other* handler on that logger in registration order — your own host
+handlers, your aggregator, the ACP stderr guard — corrupting records you never
+asked to change, and double-redacting the ones agentao already handled. That is
+why agentao redacts in a `Formatter` bound to one handler: a `Formatter` only
+shapes the bytes its own handler writes.
 
-logging.getLogger("agentao").addFilter(ScrubSecretsFilter())
-```
-
-Install this **before** agent construction.
+If the built-in patterns miss a credential shape specific to your deployment,
+extend the shared list or attach your own `Formatter` to your own handler.
 
 ### Structured field separation
 
@@ -234,7 +250,7 @@ Run after every AGENTAO.md / rule / tool change.
 ::: warning Don't ship without these
 - ❌ **Relying on "LLM is smart enough to notice"** — it's not, and it shouldn't have to be
 - ❌ **Only defending against user input, not tool output** — tool output is just as untrusted (web pages, PDFs, error messages)
-- ❌ **Realizing secrets hit the log only after it happens** — write the scrubbing filter before deploying
+- ❌ **Assuming built-in log redaction is a seal** — it is pattern-based; a secret that doesn't look like one gets through
 
 Each pitfall below has the full fix.
 :::
@@ -247,14 +263,18 @@ Even the latest GPT-4 / Claude can be tricked by crafted injection. **Rules + sa
 
 Instructions in web / file / DB returns are **equally dangerous**. Tag tool output with `<user-data>`.
 
-### ❌ Realizing secrets hit the log only after it happens
+### ❌ Assuming built-in log redaction is a seal
 
-Write the scrubbing filter **before** deploying, not after the first leak.
+`agentao.log` is redacted by default, which removes the most common shapes —
+but it matches *patterns*. An opaque session token, a password inside a
+connection string, or a credential format specific to your infrastructure all
+pass through. Keep the secrets out of tool arguments in the first place, and add
+your own `Formatter` (on your own handler) for shapes agentao doesn't know.
 
 ## TL;DR
 
 - Secrets leak from 4 places: process env (visible in `ps`), logs, LLM replies, tool output. Address all four.
-- Install a `logging.Filter` that scrubs API keys / tokens / passwords **before** any handler writes — retro-fitting after a leak is too late.
+- `agentao.log` is pattern-redacted by default (a `Formatter` on agentao's own handler). Extend it for your own credential shapes — but never with `addFilter`, which mutates the shared `LogRecord` and corrupts every other handler on the logger.
 - Tool output is **untrusted input** — wrap it in `<tool_output>...</tool_output>` tags so the LLM can distinguish from user prompts; reject `IGNORE PREVIOUS INSTRUCTIONS`-style hijacks.
 - AGENTAO.md should encode hard rules ("never reveal credentials, tenant_ids, internal URLs in user-visible replies") — these survive prompt-injection attempts better than runtime checks.
 

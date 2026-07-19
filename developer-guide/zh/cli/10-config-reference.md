@@ -91,7 +91,7 @@ cp examples/personas/daily-driver/AGENTAO.md /path/to/your/project/AGENTAO.md
 | `.agentao/replay/*.jsonl` | Replay 录制 |
 | `.agentao/sessions/` | 单次会话产物 |
 | `.agentao/plan.md`、`.agentao/plan-history/` | Plan 模式状态 |
-| `.agentao/tool-outputs/` | 工具输出缓存 |
+| `.agentao/tool-outputs/` | 工具输出缓存。落盘前会做密钥扫描——形似凭据的字符串以 `[REDACTED:<kind>]` 存储。会话文件与 `background_tasks.json` 则**有意不扫描**（它们在恢复会话时会回灌进对话） |
 
 CLI 跑着的时候改它们会让状态对不上。非要改，先停 CLI。
 

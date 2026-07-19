@@ -18,6 +18,7 @@ from mcp.client.streamable_http import (
 )
 from mcp.types import Tool as McpToolDef
 
+from ..capabilities.process import build_child_env
 from .config import (
     McpServerConfig,
     McpTransportConfigError,
@@ -279,10 +280,13 @@ class McpClient:
         command = self.config["command"]
         args = self.config.get("args", [])
 
-        # Build environment: sanitized base + explicit env vars
-        env = dict(os.environ)
-        if self.config.get("env"):
-            env.update(self.config["env"])
+        # Build environment: sanitized base + explicit env vars.
+        # The base drops agentao's own provider credentials — an MCP server
+        # is a third-party binary and has no business inheriting the key
+        # that pays for the LLM. Server-specific vars from mcp.json are
+        # applied after the scrub, so a server that genuinely needs a
+        # provider key can still be given one explicitly.
+        env = build_child_env(self.config.get("env"))
 
         server_params = StdioServerParameters(
             command=command,

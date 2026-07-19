@@ -7,7 +7,9 @@ Owns the cross-cutting concerns of a single turn:
 - Session-summary id snapshot
 - TURN_BEGIN / TURN_END transport events with status tracking
 - ``KeyboardInterrupt`` / ``AgentCancelledError`` / generic exception
-  handling around the inner loop
+  handling around the inner loop, including backfilling tool_call
+  results that an abnormal exit left unanswered (see
+  ``sanitize.backfill_orphaned_tool_calls``)
 
 The loop body itself stays in :class:`agentao.runtime.chat_loop.ChatLoopRunner`
 — this file only handles lifecycle and error mapping. The agent's
@@ -24,6 +26,7 @@ from ..replay.observability import latest_session_summary_id
 from ..transport import AgentEvent, EventType
 from .identity import new_turn_id
 from .outcome import TurnOutcome
+from .sanitize import backfill_orphaned_tool_calls
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
     from ..agent import Agentao
@@ -118,12 +121,26 @@ def run_turn(
         return final_text
     except KeyboardInterrupt:
         token.cancel("user-cancel")
+        # Ctrl+C can land between recording the assistant message that
+        # carries tool_calls and appending their results (the tool
+        # executor catches ``Exception``, so ``KeyboardInterrupt`` passes
+        # straight through it). Answer any call left hanging before the
+        # turn closes — otherwise the orphan rides along in history and
+        # strict APIs reject every later request. Must run *before* the
+        # ``[Interrupted]`` marker so the results still follow their own
+        # assistant message.
+        backfill_orphaned_tool_calls(agent.messages)
         agent.messages.append({"role": "assistant", "content": "[Interrupted]"})
         final_text = "[Interrupted by user]"
         status = "cancelled"
         error_detail = "user-cancel"
         return final_text
     except AgentCancelledError as e:
+        # The chat loop already extends results into history before it
+        # re-raises this, so there is normally nothing to fix — but that
+        # is a property of the current call sites, not a guarantee. The
+        # call is a no-op when history is intact.
+        backfill_orphaned_tool_calls(agent.messages)
         agent.messages.append({"role": "assistant", "content": f"[Cancelled: {e.reason}]"})
         final_text = f"[Cancelled: {e.reason}]"
         status = "cancelled"
@@ -132,6 +149,12 @@ def run_turn(
     except Exception as e:
         status = "error"
         error_detail = str(e)
+        # Same hazard as the cancel paths: a tool-phase exception that
+        # escapes the executor leaves history orphaned, and a host that
+        # catches this and keeps chatting would hit a 400 on every later
+        # turn. Repair before propagating — the exception itself is
+        # unchanged.
+        backfill_orphaned_tool_calls(agent.messages)
         raise
     finally:
         tool_count = getattr(agent, "_turn_tool_count", 0)

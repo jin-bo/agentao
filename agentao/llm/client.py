@@ -42,6 +42,7 @@ from ._retry import (
 from ._stream_response import _StreamAccumulator, _StreamResponse
 from ._logging import _LoggingMixin
 from ..paths import user_root
+from ..security.secret_scan import redact
 
 # `openai` is deferred (P0.5): merely importing ``LLMClient`` should not pull
 # in the OpenAI SDK. Hosts that inject their own ``llm_client=`` never load
@@ -85,6 +86,36 @@ _STRUCTURAL_BODY_KEYS = frozenset({
     "tools", "tool_choice", "temperature",
     "max_tokens", "max_completion_tokens",
 })
+
+
+class _RedactingFormatter(logging.Formatter):
+    """Formatter that strips credential-shaped strings from log records.
+
+    ``agentao.log`` records full LLM requests/responses and full tool
+    results with no truncation, so ``run_shell_command("env")`` or a
+    ``cat .env`` writes live credentials to disk in plaintext. This is the
+    single choke point for everything that reaches the log file.
+
+    Implemented as a Formatter rather than a Filter deliberately: a Filter
+    would have to mutate the shared ``LogRecord``, and that mutation would
+    leak into every *other* handler on the logger (an embedded host's own
+    handlers, the ACP stderr guard) in handler-registration order. A
+    Formatter only shapes the bytes this handler writes.
+
+    Only the file handler installs this. Redaction is pattern-based, so it
+    is applied where the cost of a false positive is a slightly less
+    readable log line — never to the tool result handed to the model,
+    where a false positive corrupts the agent's working data.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = super().format(record)
+        try:
+            return redact(formatted)
+        except Exception:
+            # Logging must never take down the caller. A scanner bug should
+            # cost fidelity in the log, not the session.
+            return formatted
 
 
 class LLMClient(_LoggingMixin):
@@ -213,7 +244,7 @@ class LLMClient(_LoggingMixin):
             if file_handler is not None:
                 file_handler.setLevel(logging.DEBUG)
                 file_handler.setFormatter(
-                    logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S")
+                    _RedactingFormatter("%(asctime)s %(message)s", datefmt="%H:%M:%S")
                 )
                 file_handler._agentao_llm_file_handler = True  # type: ignore[attr-defined]
                 pkg_logger.addHandler(file_handler)

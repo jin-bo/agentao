@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import collections
 import logging
-import os
 import queue
 import subprocess
 import threading
 from typing import List, Optional
 
+from ..capabilities.process import build_child_env
 from .models import AcpProcessInfo, AcpServerConfig, ServerState
 
 # Default capacity for the stderr ring buffer (number of lines).
@@ -116,8 +116,12 @@ class ACPProcessHandle:
 
             self._set_state(ServerState.STARTING)
 
-            env = dict(os.environ)
-            env.update(self.config.env)
+            # An ACP server is a third-party binary spawned from config —
+            # the same trust position as an MCP server, so it gets the same
+            # scrubbed base environment. Its own ``env`` block is applied
+            # after the drop, so a server that genuinely needs a provider
+            # key can still be given one explicitly.
+            env = build_child_env(self.config.env)
 
             try:
                 self._proc = subprocess.Popen(

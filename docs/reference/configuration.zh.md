@@ -30,9 +30,14 @@
 
 | 配置面 | 路径 | 维护者 | 备注 |
 |---|---|---|---|
-| 后台子代理任务状态 | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | 锚定到 `working_directory`；未传 `persistence_dir` 时只在内存中。手改会与运行中的线程脱钩。 |
+| 后台子代理任务状态 | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | 锚定到 `working_directory`；未传 `persistence_dir` 时只在内存中。手改会与运行中的线程脱钩。**不做密钥扫描**——见下方注记。 |
 | 回放事件 | `.agentao/replay/*.jsonl` | `replay/` | 见 [session-replay.md](../guides/session-replay.md)。 |
-| 会话 / 计划 / 工具产物 | `.agentao/sessions/`、`.agentao/plan-history/`、`.agentao/tool-outputs/` | 多模块 | 单次会话产物。 |
+| 会话 / 计划 | `.agentao/sessions/`、`.agentao/plan-history/` | 多模块 | 单次会话产物。**不做密钥扫描**——见下方注记。 |
+| 工具产物 | `.agentao/tool-outputs/` | `runtime/tool_result_formatter.py::_save_and_truncate` | 超长工具输出溢写到磁盘，由上下文中的摘录引用其路径。**落盘前会做密钥扫描。** |
+
+> **密钥扫描是有意不对称的。** `.agentao/tool-outputs/` 在落盘前会过一遍 `security/secret_scan.py::scan_and_redact`——形似凭据的字符串被替换成 `[REDACTED:<kind>]`。而 `.agentao/sessions/*.json`（`embedding/sessions.py::save_session`）与 `.agentao/background_tasks.json` **不扫描**，这是权衡而非疏漏：两者在恢复会话时都会原样回灌进 `agent.messages`，对它们做脱敏会静默污染一次被恢复的对话，正如对实时工具结果做脱敏会污染当前对话一样。**产物是终点就脱敏，产物会被回读就不脱敏。**
+>
+> 交给模型的工具结果同样从不脱敏——正则无法区分真实凭据和测试用的假 key。当某次工具产物落盘**确实**发生了脱敏，交给模型的那段摘录会附上一句提示，避免模型把被改写过的文本抄回真实文件：`(credential-shaped strings in the saved copy are replaced with [REDACTED:<kind>]; the excerpt below is verbatim)`。
 
 **优先级规则**（仅适用于同时存在项目与用户两份的配置面）：
 
@@ -63,6 +68,7 @@
 | `AGENTAO_WEB_FETCH_FALLBACK` | 否 | `none` | `web_fetch` 的 JS 渲染回退。可选值：`none` / `jina` / `crawl4ai`。默认 `none` —— 工具不会把用户给定的 URL 静默代理到第三方。`jina` 把 URL 发到 `https://r.jina.ai`（工具描述和结果首部的 `Fallback:` 行会显式说明）。`crawl4ai` 需要 `pip install 'agentao[crawl4ai]'` + `playwright install chromium`。仅在 `WebFetchTool` 构造时读一次；无效值会 warn 并降级到 `none`。 |
 | `AGENTAO_WEB_FETCH_ALLOW_CIDRS` | 否 | — | `web_fetch` 的 opt-in SSRF 白名单：逗号/空格分隔的 CIDR（或裸 IP），即便它们**不是公网可路由地址**也放行。给跑在 fake-IP 代理后面的 host 用的逃生口（Clash/V2Ray 把所有域名映射到保留段，通常是 `198.18.0.0/15`，否则会被 SSRF 防护拦掉），或放行可信的内网服务。对初始 URL **以及每一个重定向跳转**都生效；白名单是**有作用域的**——列了 `198.18.0.0/15` **不会**顺带放行 `169.254.169.254`。**这是放松一项安全控制** —— 启动时记一条日志、并在工具描述里透出；范围要尽量窄，绝不要写 `0.0.0.0/0`。默认空 = 完全严格。（更干净的做法：把代理 DNS 从 `fake-ip` 改成 `redir-host`/真实 IP。）见 `agentao/security/url_policy.py`。 |
 | `JINA_API_KEY` | 否 | — | 可选的 Jina key，作为 `Authorization: Bearer <key>` 发出以获取更高速率上限。被 **`web_search`**（`jina` 后端，走 `s.jina.ai` —— 无 key 也能用，key 只是抬高速率上限；设了 key 还会把 `jina` 加进自动回退链）**和** `web_fetch`（`AGENTAO_WEB_FETCH_FALLBACK=jina` 时走 `r.jina.ai`）共用。 |
+| `AGENTAO_SCRUB_CHILD_ENV` | 否 | 开启 | shell 与 MCP 子进程是否继承 agentao **自己的** provider 凭据。默认（除 `0`/`false`/`no`/`off` 之外的任何值）会把 `HARNESS_ENV_KEYS` —— `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`LLM_EXTRA_BODY`…… —— 从子进程环境里剔除，这样被 prompt 注入的 `run_shell_command("env")` 捞不到任何值钱的东西。agent 与运行它的人是**两个不同的主体**，LLM 决定要跑的东西没有一个需要那把给 LLM 付费的 key。**设为 `0` 可恢复完整继承** —— 如果你要在 agent 自己的 shell 里跑 `agentao run`、或任何会调用 provider 的脚本，就需要这么做。只有 agentao 自己的 key 会被剔除；用户的其他密钥（AWS、GitHub、`DATABASE_URL`）原样保留 —— 要不要连它们一起扫是 host 的决定，想要更严格环境的 host 可以通过 `ShellRequest` 显式传 `env`。这是纵深防御，不是密封：`cat .env` 依然有效。见 `agentao/capabilities/process.py::build_child_env`。 |
 
 > 标准范例：仓库根目录的 `.env.example`。
 
@@ -179,6 +185,8 @@
 | Streamable HTTP | `"http"`（或从 `url` 推断） | `url` | `headers`、`timeout`、`trust` |
 | SSE（legacy） | `"sse"` | `url` | `headers`、`timeout`、`trust` |
 
+> **`env` 与基础环境。** stdio server 的 `env` 条目是叠加在一份**已被清洗**的 agentao 环境之上的：`mcp/client.py` 通过 `build_child_env()` 构造子进程环境，会剔除 agentao 自己的 provider 凭据（`HARNESS_ENV_KEYS`）。原本靠*继承* `GEMINI_API_KEY`、`OPENAI_API_KEY` 等变量工作的 MCP server 现在会拿到 401 —— 请在 `env` 里显式传（`{"GEMINI_API_KEY": "$GEMINI_API_KEY"}`，它在清洗之后才应用），或设 `AGENTAO_SCRUB_CHILD_ENV=0`（§2）恢复完整继承。环境里的其他变量照常继承，不受影响。
+
 **传输选择（`mcp/config.py :: resolve_transport`）。** 可选的 `type` 字段选择传输：`"stdio"` / `"sse"` / `"http"`（别名 `"streamable-http"` / `"streamable_http"` 归一到 `"http"`）。省略 `type` 时按以下规则推断：`command` → stdio，`url` → **Streamable HTTP**。因此裸 `{"url": ...}` 表示 Streamable HTTP——旧版 SSE 传输需显式写 `"type": "sse"`。未知的 `type`、或缺少所需键的传输，会**快速失败**（`McpTransportConfigError`），而不是静默连到错误的协议。
 
 > **迁移（破坏性变更）。** 裸 `url` 的 server 以前表示 SSE，现在默认走 Streamable HTTP 传输（即 MCP 规范中替代已弃用 HTTP+SSE 传输的方案）。如果你的 server 是旧版 SSE 端点，请在其条目中加上 `"type": "sse"`。
@@ -204,6 +212,7 @@
 - **Loader。** `acp_client/config.py::load_acp_config`（解析后通过 `acp_client/models.py::AcpServerConfig.from_dict` 转为 `AcpServerConfig`）。
 - **失败行为。** `command` / `args` / `env` / `cwd` 缺失会在配置加载时抛 `AcpConfigError`——直接启动失败。
 - **热加载。** CLI 监听文件 mtime；编辑会在下一次 inbox 轮询时被发现（`cli/acp_inbox.py`）。
+- **子进程环境。** ACP 服务器是从配置里拉起的第三方二进制——和 MCP 服务器处在同一信任位置——所以它的基础环境来自 `capabilities/process.py::build_child_env()`，**不会**继承 agentao 自己的 provider 凭据。原本靠继承 `OPENAI_API_KEY` 跑通的 server 现在会拿到 401；请在它的 `env` 块里显式声明，或设 `AGENTAO_SCRUB_CHILD_ENV=0` 在整个进程范围恢复完整继承。
 
 ### Schema
 
@@ -231,7 +240,7 @@
 |---|---|---|---|---|
 | `command` | string | 是 | — | 绝对路径或可在 PATH 中解析的可执行文件。 |
 | `args` | string[] | 是 | — | 空列表 `[]` 合法。 |
-| `env` | object | 是 | — | 值支持 `$VAR` 环境变量展开。 |
+| `env` | object | 是 | — | 值支持 `$VAR` 环境变量展开。在基础环境清洗**之后**应用——见上方说明。 |
 | `cwd` | string | 是 | — | 相对路径会按 `project_root` 解析为绝对路径。 |
 | `description` | string | 否 | `""` | 自由文本。 |
 | `capabilities` | object | 否 | `{}` | 自由 KV（如 `chat`、`web`、`role: "worker"`）。loader 不做强校验。 |

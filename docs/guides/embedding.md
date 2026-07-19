@@ -295,7 +295,7 @@ re-exported on the public harness surface — **always import from
 
 | Protocol | Default (in `agentao.capabilities`) | Purpose |
 |---|---|---|
-| `agentao.host.protocols.FileSystem` | `LocalFileSystem` | Backs `read_file`, `write_file`, `glob`, `search_file_content`, `list_directory`. Inject to redirect through Docker exec, virtual filesystems, audit proxies. |
+| `agentao.host.protocols.FileSystem` | `LocalFileSystem` | Backs `read_file`, `write_file`, `glob`, `search_file_content`, `list_directory`. Inject to redirect through Docker exec, virtual filesystems, audit proxies. **`write_text` must replace existing files atomically** — see the note below. |
 | `agentao.host.protocols.ShellExecutor` | `LocalShellExecutor` | Backs `run_shell_command`. Inject to route shell through a remote runner / sandbox. |
 | `agentao.host.protocols.MemoryStore` | `SQLiteMemoryStore` | Persistent-memory storage. Inject to back memory with Redis, Postgres, in-process dict, remote API. |
 | `agentao.host.protocols.MCPRegistry` | `FileBackedMCPRegistry` | Source of MCP server configs. Inject to register servers programmatically. |
@@ -321,6 +321,19 @@ just match the method signatures. The reference implementations
 (`LocalFileSystem`, `LocalShellExecutor`, `SQLiteMemoryStore`,
 `FileBackedMCPRegistry`) stay in `agentao.capabilities` because they
 are not part of the public host-injection surface.
+
+Matching the signatures is not quite the whole contract: `write_text`
+must replace an existing file **atomically**, so that a process killed
+mid-write cannot leave the user's file truncated. A wrapper that
+delegates — like `AuditedFileSystem` above — inherits this for free. A
+from-scratch implementation must provide it: stage the new content
+somewhere and swap it in with a single operation the reader cannot
+observe halfway through. `LocalFileSystem` writes a sibling
+`.{name}.*.tmp` and `os.replace`s it, which is atomic at the VFS level;
+it also refuses a read-only target explicitly, because `os.replace`
+needs write permission on the *directory* and would otherwise silently
+defeat `chmod 444`. `append=True` and creating a new file keep the
+direct path — neither can destroy existing content.
 
 ---
 
