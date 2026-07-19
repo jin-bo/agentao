@@ -7,7 +7,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Targeting 0.4.15. Add entries under the relevant heading as work lands._
+_Add entries under the relevant heading as work lands._
+
+---
+
+## [0.4.15] — 2026-07-19
+
+A **hardening release** on top of 0.4.14. The through-line is that the harness
+must not lie about what happened, and must not leave you worse off than if it
+had done nothing: an interrupted turn no longer bricks the session, `write_file`
+can no longer destroy the file it was updating, turns that produce no answer are
+classified rather than served as if they were answers, and the secret scanner
+that had been sitting behind a disabled-by-default subsystem now runs on the
+live path.
+
+**Two breaking changes**, both flagged `BREAKING` inline below:
+
+1. `SubagentLifecycleEvent(phase="failed")` now also means "returned without
+   answering", not only "raised". Hosts branching on it will see it fire on
+   ordinary non-answers.
+2. Child processes no longer inherit agentao's provider credentials. **If an
+   MCP or ACP server you configured relies on inheriting `OPENAI_API_KEY` (or
+   similar), it will now fail with 401** — declare the key in its `env` block,
+   or set `AGENTAO_SCRUB_CHILD_ENV=0`.
+
+Everything else upgrades in place.
 
 ### Added
 
@@ -24,12 +48,12 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
   Additive, so no `schema_version` bump (same precedent as `tool_count`).
   `max_iterations` is a sixth way a turn ends without a complete answer but is a
   deliberately separate axis — a sticky transport flag with its own exit code 4
-  and `on_max_iterations` interaction, not a value here.
+  and `on_max_iterations` interaction, not a value here. (#126)
 
 - **`error.reason` on the `agentao run` envelope** — the machine-readable
   discriminator behind `error.type`, carrying the `incomplete_reason` value
   verbatim so a caller can branch on `no_output` vs `reasoning_only` without
-  parsing `message`.
+  parsing `message`. (#126)
 
 - **`agent.last_turn` → `TurnOutcome`** — a structured read-after companion to
   `chat()` / `arun()`'s string return. `chat()` still returns the turn's text
@@ -39,7 +63,7 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
   subscribing to the internal `Transport`. `TurnOutcome` is importable from the
   top-level package (`from agentao import TurnOutcome`) without pulling the LLM
   stack. Mirrors the `TURN_END` payload field-for-field — both are fed from a
-  single gated value in `runtime/turn.py`, so they never disagree.
+  single gated value in `runtime/turn.py`, so they never disagree. (#126)
 
 - **`agentao/security/secret_scan.py`** — the credential-pattern scanner, moved
   out of `agentao/replay/` and put on the live path. It previously ran only
@@ -60,19 +84,57 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
   legitimate work. `.agentao/sessions/*.json` and `.agentao/background_tasks.json`
   are likewise not scanned — both are read back into `agent.messages`, so
   redacting them would corrupt a resumed conversation. Best-effort defense in
-  depth, not a seal.
+  depth, not a seal. (#128)
 
 ### Changed
 
-- **Child processes no longer inherit agentao's own provider credentials.**
-  Shell children, MCP server children, ACP server children, and everything
-  routed through `run_captured` (plugin hooks, `search_file_content`) now start
-  from `build_child_env()`, which drops `HARNESS_ENV_KEYS` — `OPENAI_API_KEY`,
-  `ANTHROPIC_API_KEY`, `LLM_EXTRA_BODY`, and friends — so a prompt-injected
-  `run_shell_command("env")` finds nothing worth stealing. The key for the
-  *configured* provider is derived the same way `embedding/factory.py` resolves
-  it (`LLM_PROVIDER=QWEN` → `QWEN_API_KEY`), so users on a provider outside the
-  static list are covered too rather than silently uncovered. The agent is a
+- **Tool calls from a length-truncated assistant message are no longer
+  executed.** When a response ends with `finish_reason == "length"` (or a
+  provider spelling of it, such as Gemini's `MAX_TOKENS`), any tool calls it
+  contains are cut off mid-serialization — the arguments may be *valid JSON and
+  still be wrong*, e.g. a `write_file` whose `content` stops halfway or a shell
+  command missing its final argument. Agentao used to run them. It now records
+  the assistant message, answers each call with a re-issue prompt instead of a
+  result, and lets the model send the call again with complete arguments. A
+  call truncated before its name arrived is stamped `"unknown"` so the
+  assistant/tool pairing stays valid. `LENGTH_TRUNCATION_ABORT_THRESHOLD = 3`
+  finalizes the turn through the Stop hook after three consecutive truncations,
+  so a model that keeps re-truncating an oversized call cannot burn the whole
+  `max_iterations` budget. `TURN_END.tool_count` counts the refused calls, so it
+  still matches the execute path. (#125)
+
+- **BREAKING — child processes no longer inherit agentao's own provider
+  credentials.** Shell children, MCP server children, ACP server children, and
+  everything routed through `run_captured` (plugin hooks, `search_file_content`)
+  now start from `build_child_env()`, which drops the 12 `HARNESS_ENV_KEYS`:
+  `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+  `AZURE_OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`,
+  `GROQ_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`, `XAI_API_KEY`,
+  `LLM_API_KEY`, `LLM_EXTRA_BODY`. A prompt-injected `run_shell_command("env")`
+  then finds nothing worth stealing. The key for the *configured* provider is
+  additionally derived the way `embedding/factory.py` resolves it
+  (`LLM_PROVIDER=QWEN` → `QWEN_API_KEY`), so users on a provider outside that
+  static list are covered rather than silently uncovered.
+
+  **What this breaks:** an **MCP or ACP server that relied on inheriting the
+  key now gets a 401** — declare it explicitly in that server's `env` block
+  (applied *after* the scrub), or set `AGENTAO_SCRUB_CHILD_ENV=0` to restore
+  full inheritance process-wide. Same for running `agentao run`, or any script
+  that calls the provider, from inside the agent's own shell.
+  `ShellRequest(env=None)` consequently no longer means "inherit everything" —
+  it means "inherit minus `HARNESS_ENV_KEYS`"; pass an explicit `env` for full
+  control.
+
+  **`GOOGLE_API_KEY` is deliberately NOT dropped.** It is the standard name for
+  Maps / Drive / YouTube credentials as well, and stripping it would break user
+  scripts the agent was asked to run, with a 401 pointing nowhere near agentao.
+  If you authenticate Gemini through `GOOGLE_API_KEY` rather than
+  `GEMINI_API_KEY`, that key still reaches child processes. Only agentao's own
+  keys are dropped; the user's other secrets (AWS, GitHub, `DATABASE_URL`) are
+  untouched — scrubbing those is the host's call. Defense in depth, not a seal:
+  `cat .env` still works. Also fixes a false comment at `mcp/client.py` that
+  had claimed a sanitized base environment while passing `dict(os.environ)`.
+  (#128) The agent is a
   distinct principal from the user, and nothing the LLM decides to run needs
   the key that pays for the LLM. Only agentao's keys are dropped; the user's
   other secrets (AWS, GitHub, `DATABASE_URL`) are untouched — scrubbing those
@@ -83,8 +145,8 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
   Also fixes a false comment at `mcp/client.py` that had claimed a sanitized
   base environment while passing `dict(os.environ)`.
 
-- **`SubagentLifecycleEvent(phase="failed")` now also covers "returned but
-  never answered".** It previously meant only "the sub-agent raised". A
+- **BREAKING — `SubagentLifecycleEvent(phase="failed")` now also covers
+  "returned but never answered".** It previously meant only "the sub-agent raised". A
   sub-agent that hit its iteration budget, produced no output, emitted only
   reasoning, was cut off at the token limit, doom-looped, or whose LLM call
   failed now reports `phase="failed"` with `error_type="incomplete:<reason>"`,
@@ -93,12 +155,25 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
   compliant consumer of `TurnOutcome` — previously the public host contract
   reported success for a sub-agent that had done nothing. **Hosts branching on
   `phase == "failed"` should expect it to fire on ordinary non-answers**, not
-  just exceptions; check `error_type` to distinguish.
+  just exceptions; check `error_type` to distinguish — a raised exception
+  reports `error_type=type(exc).__name__`, a non-answer reports
+  `incomplete:<reason>`.
+
+  Note the suffix vocabulary here is the five `incomplete_reason` values **plus
+  `max_iterations`**. `max_iterations` is deliberately *not* a
+  `TURN_END.incomplete_reason` value (see above — it is a separate axis with
+  its own exit code 4), but a sub-agent has no exit code and no
+  `on_max_iterations` channel of its own, so this surface folds it back in as a
+  sixth suffix. A host matching `error_type.split(":")[1]` against the
+  documented five will miss it. Defensively, `cancelled`, `error`, and
+  `unknown` can also appear when a `TurnOutcome` reports neither an answer nor
+  a reason; treat any unrecognized suffix as "stopped short, cause
+  unclassified" rather than matching exhaustively. (#128)
 
 - **`FileSystem.write_text` implementations must now replace existing files
   atomically.** The protocol docstring states the requirement; delegating
   wrappers inherit it from `LocalFileSystem`, but a from-scratch host
-  implementation owes the guarantee.
+  implementation owes the guarantee. (#128) (#128)
 
 ### Fixed
 
@@ -115,7 +190,7 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
   says the tool *may or may not* have run and warns against blind retry:
   results are committed per batch, so an interrupt during the last call of a
   batch discards its earlier siblings' results too, and re-running a
-  `write_file` that already succeeded is its own kind of damage.
+  `write_file` that already succeeded is its own kind of damage. (#128)
 
 - **`write_file` can no longer destroy a file it was only meant to update.**
   `LocalFileSystem.write_text` used a plain `open(path, "w")`, which truncates
@@ -125,7 +200,7 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
   read-only target still raises `PermissionError`: rename permission lives on
   the *directory*, so without an explicit check the change would have silently
   defeated `chmod 444`. Not fsync'd — this closes the process-death window,
-  not the power-loss one.
+  not the power-loss one. (#128)
 
 - **`edit_file` no longer hides that a match was ambiguous.** The tool counted
   occurrences of `old_text` and then discarded the count. First-match-wins is
@@ -133,13 +208,27 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
   now reports how many remain and, when `old_text` occurs in `new_text`,
   withholds the `replace_all=true` suggestion that would rewrite the
   just-edited site. An empty `old_text` is now refused outright — it matched at
-  every position and would have inserted `new_text` between every character.
+  every position and would have inserted `new_text` between every character. (#128)
 
 - **A failed background sub-agent no longer discards its work.** With
   incomplete runs now reported as `status="failed"`, `check_background_agent`'s
   failure branch returned only `error` — so a long background task that ran out
   of iterations lost everything it had produced. It now surfaces the partial
-  `result` alongside the reason.
+  `result` alongside the reason. Background records carry an explicit
+  `incomplete_reason` field so every reader — the tool, `/agent status`, the
+  dashboard, and any host reading `.agentao/background_tasks.json` — separates
+  "the sub-agent crashed" from "the sub-agent stopped short but produced work"
+  without guessing from the presence of `result`. `/agent status` prints the
+  partial output under a *Did not finish* header rather than only the error,
+  and the dashboard counts unfinished runs separately from genuine failures so
+  the red number keeps meaning something. (#128, #129)
+
+- **`agent.events()` silently registered nothing when replay was enabled.**
+  `ReplayAdapter` wraps the transport but had no `subscribe`, so a host that
+  turned on `replay.enabled` lost every `HostEvent` subscription it had made —
+  the adapter's own docstring admitted the gap. It now forwards to the inner
+  transport, returning a no-op unsubscribe when the inner transport has none.
+  Affects every embedder running with replay on. (#126)
 
 - **A turn cancelled mid-stream now reports `status: "cancelled"`.** When a
   cancellation token fired while the LLM was streaming, the model could return a
@@ -147,7 +236,7 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
   ending site and emitted `TURN_END` with `status: "ok"` though it was
   interrupted. `runtime/turn.py` now reflects the cancellation in `status`, so
   the wire event and `agent.last_turn` both report it honestly (and a
-  placeholder-vs-answer check does not read a cancelled turn as an answer).
+  placeholder-vs-answer check does not read a cancelled turn as an answer). (#126)
 
 - **`agentao run` no longer exits `0` on a turn that produced no answer.**
   A turn ending with an empty assistant message exited `0` and served the
@@ -163,7 +252,7 @@ _Targeting 0.4.15. Add entries under the relevant heading as work lands._
   the provider's actual message) when the LLM call failed. Note that such a
   turn may have run tools first: `tool_calls` reports how many, and their side
   effects have already landed, so a non-zero exit does **not** imply an
-  untouched workspace.
+  untouched workspace. (#126)
 
 ---
 
