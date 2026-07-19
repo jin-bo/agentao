@@ -263,6 +263,14 @@ class BackgroundTaskStore:
                 "status": "pending",
                 "result": None,
                 "error": None,
+                # Set only alongside status="failed", and only when the run
+                # *finished without raising* but never produced an answer
+                # (budget exhausted, no output, doom loop, ...). Same closed
+                # vocabulary as TurnOutcome.incomplete_reason. Its presence is
+                # what separates "the sub-agent crashed" from "the sub-agent
+                # stopped short but produced work worth reading" — the latter
+                # still carries a `result`, and consumers must not discard it.
+                "incomplete_reason": None,
                 "created_at": time.time(),
                 "started_at": None,
                 "finished_at": None,
@@ -297,6 +305,7 @@ class BackgroundTaskStore:
         status: BgTaskStatus,
         result: Optional[str] = None,
         error: Optional[str] = None,
+        incomplete_reason: Optional[str] = None,
         turns: int = 0,
         tool_calls: int = 0,
         tokens: int = 0,
@@ -311,6 +320,7 @@ class BackgroundTaskStore:
                 rec["status"] = status
                 rec["result"] = result
                 rec["error"] = error
+                rec["incomplete_reason"] = incomplete_reason
                 rec["finished_at"] = time.time()
                 rec["turns"] = turns
                 rec["tool_calls"] = tool_calls

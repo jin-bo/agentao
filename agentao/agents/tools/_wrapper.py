@@ -727,6 +727,11 @@ class AgentToolWrapper(Tool):
                     status="completed" if incomplete is None else "failed",
                     result=formatted,
                     error=None if incomplete is None else incomplete.detail,
+                    # The record must say *which* kind of "failed" this is.
+                    # Without it every reader has to guess from the presence
+                    # of `result`, and the CLI guessed wrong — it printed the
+                    # error and discarded the work.
+                    incomplete_reason=None if incomplete is None else incomplete.reason,
                     turns=stats["turns"], tool_calls=stats["tool_calls"],
                     tokens=stats["tokens"], duration_ms=stats["duration_ms"],
                 )

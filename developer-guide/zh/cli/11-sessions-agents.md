@@ -44,7 +44,7 @@ agentao --resume a1b2c3   # 恢复指定前缀
 | `/agent <name> <task>` | 前台运行；当前 REPL 等结果 |
 | `/agent bg <name> <task>` | 后台运行；状态显示在底部 toolbar |
 | `/agent status` | 列出后台任务状态 |
-| `/agent status <id>` | 查看一个后台任务结果 / 错误 |
+| `/agent status <id>` | 查看一个后台任务的结果或失败原因。跑起来但没跑完的任务（预算耗尽、无输出）会显示 *Did not finish*，**并且照样打印它的部分结果** |
 | `/agent dashboard` 或 `/agents` | 打开实时刷新面板 |
 | `/agent cancel <id>` | 取消后台任务 |
 | `/agent delete <id>` | 从后台任务列表删除记录 |

@@ -50,6 +50,10 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
             return Text(f"✓  {turns}t {calls}c {tok_s}  {dur_s}", style="green")
         if status == "cancelled":
             return Text("⊘  cancelled", style="dim")
+        if t.get("incomplete_reason"):
+            # Ran to a stop without answering — not a crash. Yellow, not red:
+            # there is usually a partial result worth reading.
+            return Text(f"◑  {t['incomplete_reason']}", style="yellow")
         return Text("✗  failed", style="red")
 
     def _make_panel() -> Panel:
@@ -57,7 +61,13 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
 
         n_run    = sum(1 for t in tasks if t["status"] == "running")
         n_ok     = sum(1 for t in tasks if t["status"] == "completed")
-        n_err    = sum(1 for t in tasks if t["status"] == "failed")
+        # "failed" spans two very different outcomes since 0.4.15. Counting a
+        # sub-agent that merely ran out of turns as an error trains the reader
+        # to ignore the red number, which is the one that means something.
+        n_incomp = sum(1 for t in tasks
+                       if t["status"] == "failed" and t.get("incomplete_reason"))
+        n_err    = sum(1 for t in tasks
+                       if t["status"] == "failed" and not t.get("incomplete_reason"))
         n_cancel = sum(1 for t in tasks if t["status"] == "cancelled")
 
         tbl = Table(box=rich_box.SIMPLE, show_header=True, pad_edge=False,
@@ -70,7 +80,9 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
         for t in sorted(tasks, key=lambda x: x.get("created_at", 0), reverse=True):
             status_cell = _fmt_status(t)
             err_hint = ""
-            if t["status"] == "failed" and t.get("error"):
+            if t["status"] == "failed" and t.get("incomplete_reason"):
+                err_hint = "  [dim yellow]partial result available[/dim yellow]"
+            elif t["status"] == "failed" and t.get("error"):
                 err_hint = f"  [dim red]{str(t['error'])[:60]}[/dim red]"
             task_cell = (t.get("task", "")[:55] or "") + err_hint
             tbl.add_row(t["id"], t["agent_name"], status_cell, task_cell)
@@ -78,7 +90,8 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
         summary = (
             f"[yellow]○ {n_run} running[/yellow]  "
             f"[green]✓ {n_ok} completed[/green]  "
-            f"{'[red]' if n_err else '[dim]'}✗ {n_err} failed{'[/red]' if n_err else '[/dim]'}  "
+            + (f"[yellow]◑ {n_incomp} unfinished[/yellow]  " if n_incomp else "")
+            + f"{'[red]' if n_err else '[dim]'}✗ {n_err} failed{'[/red]' if n_err else '[/dim]'}  "
             f"[dim]⊘ {n_cancel} cancelled[/dim]"
         )
         footer = "[dim]Press Ctrl+C to exit[/dim]" if n_run else ""
@@ -205,6 +218,18 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
             if status == "completed" and rec.get("result"):
                 console.print("\n[info]Result:[/info]")
                 console.print(Markdown(rec["result"]))
+            elif status == "failed" and rec.get("incomplete_reason"):
+                # Stopped short, but it ran and produced work. Show the
+                # reason *and* the output: an agent that spent 40 minutes
+                # before exhausting its budget still did 40 minutes of work,
+                # and this is the only surface that can hand it back.
+                console.print(
+                    f"\n[warning]Did not finish:[/warning] "
+                    f"{rec.get('error') or rec['incomplete_reason']}"
+                )
+                if rec.get("result"):
+                    console.print("\n[info]Partial result:[/info]")
+                    console.print(Markdown(rec["result"]))
             elif status == "failed" and rec.get("error"):
                 console.print(f"\n[error]Error:[/error] {rec['error']}")
             elif status == "cancelled":
