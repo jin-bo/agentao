@@ -32,7 +32,92 @@ import subprocess
 import sys
 from typing import Any, Dict, Optional, Sequence, Union
 
-__all__ = ["run_captured", "kill_process_tree"]
+__all__ = ["run_captured", "kill_process_tree", "build_child_env", "HARNESS_ENV_KEYS"]
+
+
+# Environment variables that carry *agentao's own* provider credentials.
+# These are the harness's keys, not the user's: the agent is a separate
+# principal from the person running it, and nothing an LLM decides to run
+# needs the key that pays for the LLM. Stripping them means a prompt-
+# injected ``run_shell_command("env")`` yields nothing worth stealing.
+#
+# Deliberately narrow. Scrubbing the user's *other* secrets (AWS, GitHub,
+# database URLs) is the host's call, not the harness's — a host that wants
+# a tighter environment can already pass an explicit ``env`` through
+# ``ShellRequest``, and guessing here would break far more than it fixed.
+# ``GOOGLE_API_KEY`` is deliberately absent: it is the standard name for
+# Maps / Drive / YouTube credentials too, so stripping it would break user
+# scripts the agent was asked to run, with a 401 that points nowhere near
+# agentao. Gemini's own ``GEMINI_API_KEY`` is unambiguous and is stripped.
+HARNESS_ENV_KEYS: frozenset = frozenset({
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "MOONSHOT_API_KEY",
+    "GROQ_API_KEY",
+    "MISTRAL_API_KEY",
+    "OPENROUTER_API_KEY",
+    "XAI_API_KEY",
+    "LLM_API_KEY",
+    "LLM_EXTRA_BODY",
+})
+
+
+def _provider_key_names(source: Any) -> set:
+    """Provider-prefixed key names implied by ``LLM_PROVIDER``.
+
+    ``embedding/factory.py`` resolves the API key as
+    ``f"{provider}_API_KEY"``, so the credential a user on an unlisted
+    provider actually supplies (``LLM_PROVIDER=QWEN`` → ``QWEN_API_KEY``)
+    never appears in :data:`HARNESS_ENV_KEYS`. Hard-coding a list would
+    silently give exactly those users no scrubbing at all, which is worse
+    than not scrubbing — they would read the docs and believe they were
+    covered. Derive the name the same way the factory does.
+    """
+    provider = str(source.get("LLM_PROVIDER", "")).strip().upper()
+    if not provider or not provider.replace("_", "").isalnum():
+        return set()
+    return {f"{provider}_API_KEY"}
+
+
+# Escape hatch. Running ``agentao run`` — or any script that calls the
+# provider — from inside the agent's own shell is a legitimate workflow
+# that this scrubbing breaks. Set to "0"/"false"/"no" to restore full
+# inheritance.
+_SCRUB_OPT_OUT_VAR = "AGENTAO_SCRUB_CHILD_ENV"
+
+
+def build_child_env(
+    overrides: Optional[Dict[str, str]] = None,
+    *,
+    base: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Return the environment to hand a child process.
+
+    Copies ``base`` (default ``os.environ``), drops
+    :data:`HARNESS_ENV_KEYS`, then applies ``overrides`` — which are
+    applied *after* the drop, so a caller that deliberately wants a
+    provider key in the child can still pass one explicitly.
+
+    Opt out with ``AGENTAO_SCRUB_CHILD_ENV=0`` to restore the previous
+    full-inheritance behavior.
+
+    This is defense in depth, not a seal: an agent that can run arbitrary
+    shell commands can still ``cat .env``. It closes the cheapest path
+    (``env``), not every path.
+    """
+    source = os.environ if base is None else base
+    opt_out = str(source.get(_SCRUB_OPT_OUT_VAR, "")).strip().lower()
+    if opt_out in {"0", "false", "no", "off"}:
+        env = dict(source)
+    else:
+        drop = HARNESS_ENV_KEYS | _provider_key_names(source)
+        env = {k: v for k, v in source.items() if k not in drop}
+    if overrides:
+        env.update(overrides)
+    return env
 
 
 def kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
@@ -80,6 +165,7 @@ def run_captured(
     timeout: Optional[float] = None,
     input: Optional[str] = None,
     shell: bool = False,
+    env: Optional[Dict[str, str]] = None,
 ) -> "subprocess.CompletedProcess[str]":
     """Run ``cmd`` capturing text stdout/stderr, hardened for timeouts.
 
@@ -105,6 +191,13 @@ def run_captured(
     """
     popen_kwargs: Dict[str, Any] = {
         "cwd": cwd,
+        # An explicit ``env`` is the caller's decision; otherwise scrub the
+        # harness's own provider keys. Plugin hooks and ``search_file_content``
+        # both run through here, and a hook that dumps its environment on
+        # error (a ``set -x`` script, a wrapper echoing os.environ) would
+        # otherwise write the live provider key into output that is injected
+        # straight back into the model's context.
+        "env": env if env is not None else build_child_env(),
         # Feed ``input`` over a pipe when provided; otherwise detach stdin.
         "stdin": subprocess.PIPE if input is not None else subprocess.DEVNULL,
         "stdout": subprocess.PIPE,
