@@ -85,7 +85,7 @@ The same shape works for any client that launches an ACP agent over stdio: pass 
 |---|---|---|
 | `initialize` | ✅ | Echoes the client's `protocolVersion` if supported (currently `1`); falls back to ours otherwise. Records `clientCapabilities` per connection. |
 | `session/new` | ✅ | Creates a fresh session bound to a per-session `cwd` and (optionally) per-session MCP servers. Returns `{"sessionId": "sess_…", "configOptions": [...]}` (model/provider selection options — see `session/set_config_option`). |
-| `session/prompt` | ✅ | Runs one Agentao turn against the named session; returns `{"stopReason": "end_turn" \| "cancelled"}`. |
+| `session/prompt` | ✅ | Runs one Agentao turn against the named session; returns `{"stopReason": …}` — `end_turn`, `cancelled`, `max_tokens`, or `max_turn_requests` (see [stop reasons](#sessionprompt-stop-reasons) below). |
 | `session/cancel` | ✅ | Fires the session's active `CancellationToken`. Idempotent; no-op on closed sessions or sessions with no active turn. Accepted both as a notification (no `id`) and as a request. |
 | `session/load` | ✅ | Reuses `agentao/session.py`'s persistence layer, hydrates the runtime's message history, and replays each persisted message as a `session/update` notification before responding. Response includes `configOptions` (same as `session/new`). |
 | `session/set_config_option` | ✅ | ACP-standard model/provider switch (`configId="model"`, `value="provider/model"` or bare `model`). Credentials resolve **server-side** via an injectable `provider_resolver` — `apiKey`/`baseUrl`/`_meta` are rejected. Returns refreshed `configOptions`. |
@@ -186,8 +186,14 @@ Source: `agentao/acp/session_prompt.py`.
 
 | `stopReason` | Meaning |
 |---|---|
-| `end_turn` | The Agentao chat loop returned normally. |
-| `cancelled` | The session's `CancellationToken` was fired (via `session/cancel`, connection close, or session teardown) before the loop returned. |
+| `end_turn` | The Agentao chat loop returned normally. Also covers a turn where the model produced no prose (`no_output` / `reasoning_only`) — the turn genuinely ended, it just said nothing — and a turn whose LLM call failed, because the ACP enum has no error member (the `[LLM API error: …]` notice is the turn's streamed content). |
+| `cancelled` | The session's `CancellationToken` was fired (via `session/cancel`, connection close, or session teardown) before the loop returned. Takes precedence over every other reason. |
+| `max_tokens` | The turn was halted after the model's response was cut off at the token limit (`TurnOutcome.incomplete_reason == "length_truncated"`). |
+| `max_turn_requests` | The harness capped requests within the turn — either the tool-iteration budget was exhausted, or a doom loop (repeated identical calls) was halted. |
+| `refusal` | Listed in the ACP enum and accepted by the schema, but **never emitted**: Agentao has no content-refusal detection, and reporting an infrastructure failure as a refusal would be a different kind of lie. |
+
+Precedence is `cancelled` → iteration budget → `incomplete_reason`. An
+unrecognized future reason degrades to `end_turn` rather than failing the turn.
 
 ACP defines additional stop reasons (`max_tokens`, `max_turn_requests`, `refusal`) that v1 does not surface — `agent.chat()` currently returns a string without structured termination metadata. Adding them is a follow-up, not a v1 promise.
 

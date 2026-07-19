@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import json
 import threading
+from types import SimpleNamespace
 from typing import Any, Callable, List, Optional, Tuple
 
 import pytest
@@ -584,6 +585,52 @@ def test_stop_reason_cancelled_when_token_fired(session_with_agent):
     fake.side_effect = cancel_during_chat
     result = acp_session_prompt.handle_session_prompt(server, _prompt_params(sid))
     assert result == {"stopReason": "cancelled"}
+
+
+def test_stop_reason_reads_max_iterations_from_the_transport(session_with_agent):
+    """Budget exhaustion is not a TurnOutcome reason -- it rides a flag."""
+    server, sid, fake = session_with_agent
+    fake.transport = SimpleNamespace(max_iterations_hit=False)
+
+    def exhaust_budget(token: CancellationToken) -> None:
+        fake.transport.max_iterations_hit = True
+
+    fake.side_effect = exhaust_budget
+    result = acp_session_prompt.handle_session_prompt(server, _prompt_params(sid))
+    assert result == {"stopReason": "max_turn_requests"}
+
+
+def test_max_iterations_flag_does_not_leak_into_the_next_turn(session_with_agent):
+    """The regression this reset exists to prevent.
+
+    The flag is set from inside the chat loop and the transport outlives
+    the turn, so without an explicit clear every subsequent prompt on a
+    long-lived session would keep reporting max_turn_requests -- turning
+    one exhausted turn into a permanently broken session.
+    """
+    server, sid, fake = session_with_agent
+    fake.transport = SimpleNamespace(max_iterations_hit=False)
+
+    def exhaust_budget(token: CancellationToken) -> None:
+        fake.transport.max_iterations_hit = True
+
+    fake.side_effect = exhaust_budget
+    first = acp_session_prompt.handle_session_prompt(server, _prompt_params(sid))
+    assert first == {"stopReason": "max_turn_requests"}
+
+    fake.side_effect = None          # a healthy second turn
+    second = acp_session_prompt.handle_session_prompt(
+        server, _prompt_params(sid, "second turn")
+    )
+    assert second == {"stopReason": "end_turn"}
+
+
+def test_stop_reason_reads_last_turn_outcome(session_with_agent):
+    """The metadata TurnOutcome shipped for -- consumed here at last."""
+    server, sid, fake = session_with_agent
+    fake.last_turn = SimpleNamespace(incomplete_reason="length_truncated")
+    result = acp_session_prompt.handle_session_prompt(server, _prompt_params(sid))
+    assert result == {"stopReason": "max_tokens"}
 
 
 # ---------------------------------------------------------------------------

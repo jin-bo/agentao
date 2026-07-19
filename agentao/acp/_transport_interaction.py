@@ -59,6 +59,13 @@ class _InteractionMixin:
     the concrete transport.
     """
 
+    #: Set by :meth:`on_max_iterations`; read by ``session/prompt`` to answer
+    #: ``max_turn_requests``. A class-level default keeps it readable on a
+    #: transport whose ``__init__`` predates this attribute, and the session
+    #: is responsible for clearing it before each turn — a sticky flag would
+    #: make every later turn on a long-lived session inherit the verdict.
+    max_iterations_hit: bool = False
+
     # -- Request-response interactions -------------------------------------
 
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
@@ -373,7 +380,16 @@ class _InteractionMixin:
         """Conservative default: stop the turn when max iterations is reached.
 
         ACP mode has no interactive menu, so the safe default is to stop.
+
+        The flag is what lets ``session/prompt`` answer ``max_turn_requests``
+        instead of ``end_turn``. Budget exhaustion is deliberately *not* a
+        ``TurnOutcome.incomplete_reason`` value (it is a separate axis with its
+        own exit code on the automation surface), so it cannot be recovered
+        from the outcome after the fact — it has to be recorded here, as it
+        happens. ``NonInteractiveTransport`` keeps the same flag for the same
+        reason.
         """
+        self.max_iterations_hit = True
         logger.info(
             "acp: max iterations (%d) reached on session %s — stopping",
             count,
