@@ -30,7 +30,7 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 
 | Surface | Path | Owner | Notes |
 |---|---|---|---|
-| Background sub-agent task state | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | Anchored to `working_directory`; in-memory only when no `persistence_dir`. Hand-edits will desync running threads. **Not secret-scanned** — see the note below. |
+| Background sub-agent task state | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | Anchored to `working_directory`; in-memory only when no `persistence_dir`. Hand-edits will desync running threads. A record with `status: "failed"` carries `incomplete_reason` when the run finished without raising but never answered — its presence is what separates "crashed" (no `result`) from "stopped short" (`result` still present and worth reading). Absent on records written before 0.4.15. **Not secret-scanned** — see the note below. |
 | Replay events | `.agentao/replay/*.jsonl` | `replay/` | See [session-replay.md](../guides/session-replay.md). |
 | Sessions / plans | `.agentao/sessions/`, `.agentao/plan-history/` | various | Per-session artifacts. **Not secret-scanned** — see the note below. |
 | Tool outputs | `.agentao/tool-outputs/` | `runtime/tool_result_formatter.py::_save_and_truncate` | Oversized tool output spilled to disk, referenced from the in-context excerpt. **Secret-scanned before write.** |

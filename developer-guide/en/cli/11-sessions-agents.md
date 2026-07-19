@@ -44,7 +44,7 @@ Sub-agents are predefined capabilities that can run in the foreground or backgro
 | `/agent <name> <task>` | Run in the foreground; the REPL waits for the result |
 | `/agent bg <name> <task>` | Run in the background; status appears in the bottom toolbar |
 | `/agent status` | List background task status |
-| `/agent status <id>` | Show one background task's result or error |
+| `/agent status <id>` | Show one background task's result, or its failure. A task that ran but stopped short (budget exhausted, no output) reports *Did not finish* **and still prints its partial result** |
 | `/agent dashboard` or `/agents` | Open the live dashboard |
 | `/agent cancel <id>` | Cancel a background task |
 | `/agent delete <id>` | Remove a background-task record |

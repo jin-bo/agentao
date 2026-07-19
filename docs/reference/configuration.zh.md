@@ -30,7 +30,7 @@
 
 | 配置面 | 路径 | 维护者 | 备注 |
 |---|---|---|---|
-| 后台子代理任务状态 | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | 锚定到 `working_directory`；未传 `persistence_dir` 时只在内存中。手改会与运行中的线程脱钩。**不做密钥扫描**——见下方注记。 |
+| 后台子代理任务状态 | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | 锚定到 `working_directory`；未传 `persistence_dir` 时只在内存中。手改会与运行中的线程脱钩。`status: "failed"` 的记录在"跑完未抛异常但没答出来"时会带 `incomplete_reason`——它的有无用来区分"崩溃"（无 `result`）与"没跑完"（`result` 仍在且值得读）。0.4.15 之前写入的记录没有该字段。**不做密钥扫描**——见下方注记。 |
 | 回放事件 | `.agentao/replay/*.jsonl` | `replay/` | 见 [session-replay.md](../guides/session-replay.md)。 |
 | 会话 / 计划 | `.agentao/sessions/`、`.agentao/plan-history/` | 多模块 | 单次会话产物。**不做密钥扫描**——见下方注记。 |
 | 工具产物 | `.agentao/tool-outputs/` | `runtime/tool_result_formatter.py::_save_and_truncate` | 超长工具输出溢写到磁盘，由上下文中的摘录引用其路径。**落盘前会做密钥扫描。** |

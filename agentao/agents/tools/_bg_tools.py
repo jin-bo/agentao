@@ -101,7 +101,13 @@ class CheckBackgroundAgentTool(Tool):
             # doom-loop halted — which still carries whatever work it did.
             # Dropping ``result`` here would discard the entire output of a
             # long background task purely because it stopped short.
-            report = f"Agent '{name}' ({agent_id}) failed: {rec['error']}"
+            if rec.get("incomplete_reason"):
+                report = (
+                    f"Agent '{name}' ({agent_id}) did not finish "
+                    f"({rec['incomplete_reason']}): {rec['error']}"
+                )
+            else:
+                report = f"Agent '{name}' ({agent_id}) failed: {rec['error']}"
             if rec.get("result"):
                 report += f"\n\n{rec['result']}"
             return report
