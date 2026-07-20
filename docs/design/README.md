@@ -26,6 +26,7 @@ Start here — strategy and the host/ACP surface boundary.
 
 The live backlog of work — proposed, in progress, or impl-deferred. New build work usually starts from one of these.
 
+- **cli-host-agent-factory** — *shipped* — instance-scoped `agent_factory` on `AgentaoCLI` / `cli.main()` so thin Python hosts reach `extra_tools` and the existing runtime construction contract without monkey-patching; validates the returned runtime (#132, 2026-07-19).
 - **acp-g4-plan-modes-commands** — *proposal* — surface plan / modes / commands as ACP `session/update` (chat-target now-work).
 - **deepchat-acp-patch-revision** — *impl in progress* — DeepChat/TensorChat ACP integration; what upstreams vs stays in the fork.
 - **host-fs-policy** — *proposal* — path-domain write boundary over the single fs chokepoint (incl. shell).

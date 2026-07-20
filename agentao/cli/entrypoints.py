@@ -6,13 +6,18 @@ import atexit
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from dotenv import load_dotenv
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
 from ._globals import console, _plugin_inline_dirs
+
+if TYPE_CHECKING:
+    # Type-only: importing .app at module scope would pull prompt_toolkit and
+    # defeat this module's import-lightness.
+    from .app import AgentFactory
 
 
 def run_print_mode(prompt: str) -> int:
@@ -26,8 +31,25 @@ def run_print_mode(prompt: str) -> int:
     return _run_execute(["--format", "text", "--prompt", prompt])
 
 
-def main(resume_session: Optional[str] = None):
-    """Main entry point."""
+def main(
+    resume_session: Optional[str] = None,
+    *,
+    agent_factory: Optional["AgentFactory"] = None,
+):
+    """Main entry point.
+
+    Args:
+        resume_session: Session selector — ``None`` starts fresh, ``""``
+            resumes the latest, a string resumes that session.
+        agent_factory: Optional host-supplied runtime builder forwarded
+            verbatim to :class:`~agentao.cli.app.AgentaoCLI`. See that
+            class and ``docs/design/cli-host-agent-factory.md``.
+
+    Note for embedders: a factory exception is caught by the broad handler
+    below and rendered as a single ``Fatal error:`` line with no traceback,
+    then ``sys.exit(1)``. Construct :class:`AgentaoCLI` directly if you need
+    the exception to propagate to your own code.
+    """
     try:
         import termios
         _HAS_TERMIOS = True
@@ -71,7 +93,7 @@ def main(resume_session: Optional[str] = None):
 
     try:
         from .app import AgentaoCLI
-        cli = AgentaoCLI()
+        cli = AgentaoCLI(agent_factory=agent_factory)
         if resume_session is not None:
             from .commands import resume_session as _resume
             _resume(cli, resume_session if resume_session else None)
