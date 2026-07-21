@@ -1,159 +1,98 @@
-"""Test that /clear command resets tool confirmation mode."""
+"""Test that /clear command resets tool confirmation mode.
 
-from unittest.mock import Mock, patch
+These tests drive the production reset path rather than simulating it. `/clear`
+(``agentao/cli/input_loop.py``) resets blanket tool auto-approval indirectly, by
+calling ``cli._apply_mode(PermissionMode.WORKSPACE_WRITE)`` — which is where
+``allow_all_tools = False`` actually lives (``agentao/cli/app.py::_apply_mode``).
+Asserting a hand-assigned ``cli.allow_all_tools = False`` would pass even if
+that line were deleted, leaving a user who answered "yes to all" with blanket
+auto-approval across `/clear`.
 
+The runtime is injected via ``AgentaoCLI(agent_factory=...)`` and pinned to a
+``tmp_path``. Patching ``agentao.cli.app.build_from_environment`` was never a
+supported seam (``docs/design/cli-host-agent-factory.md`` §1), and a bare
+``Mock()`` runtime is now rejected by the §3.1 post-conditions.
+"""
 
-def test_clear_resets_confirmation():
-    """Test that clear command resets allow_all_tools to False."""
+from functools import partial
+from unittest.mock import patch
 
-    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
-        with patch('agentao.cli.app.build_from_environment') as mock_agent_class:
-            # Mock the agent instance
-            mock_agent = Mock()
-            mock_agent_class.return_value = mock_agent
+import pytest
 
-            from agentao.cli import AgentaoCLI
-
-            cli = AgentaoCLI()
-
-            # Enable allow_all mode
-            cli.allow_all_tools = True
-            assert cli.allow_all_tools is True, "Should start as True"
-
-            # Simulate /clear command handling
-            cli.agent.clear_history()
-            cli.allow_all_tools = False  # This is what the clear command does
-
-            # Verify it's reset
-            assert cli.allow_all_tools is False, "Should be reset to False after clear"
-            print("✅ /clear command resets allow_all_tools to False")
+from agentao.embedding import build_from_environment
+from agentao.permissions import PermissionMode
 
 
-def test_clear_command_flow():
-    """Test the full flow of clear command with confirmation reset."""
-
-    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
-        with patch('agentao.cli.app.build_from_environment') as mock_agent_class:
-            mock_agent = Mock()
-            mock_agent_class.return_value = mock_agent
-
-            from agentao.cli import AgentaoCLI
-
-            cli = AgentaoCLI()
-
-            # Simulate workflow:
-            # 1. User enables allow_all
-            cli.allow_all_tools = True
-
-            # 2. User uses /clear
-            cli.agent.clear_history()
-            cli.allow_all_tools = False
-
-            # 3. Verify both are reset
-            assert cli.allow_all_tools is False, "Confirmation should be reset"
-            mock_agent.clear_history.assert_called_once()
-            print("✅ Full clear command flow works correctly")
+@pytest.fixture
+def cli(tmp_path):
+    """An AgentaoCLI backed by a real runtime rooted in ``tmp_path``."""
+    with patch('agentao.cli.app.safe_load_dotenv'), \
+            patch('agentao.cli.subcommands._load_and_register_plugins'):
+        from agentao.cli import AgentaoCLI
+        return AgentaoCLI(agent_factory=partial(
+            build_from_environment, working_directory=tmp_path))
 
 
-def test_clear_vs_reset_confirm():
-    """Test that both /clear and /reset-confirm reset confirmation."""
-
-    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
-        with patch('agentao.cli.app.build_from_environment') as mock_agent_class:
-            mock_agent = Mock()
-            mock_agent_class.return_value = mock_agent
-
-            from agentao.cli import AgentaoCLI
-
-            # Test /clear
-            cli1 = AgentaoCLI()
-            cli1.allow_all_tools = True
-            cli1.agent.clear_history()
-            cli1.allow_all_tools = False  # clear does this
-            assert cli1.allow_all_tools is False
-            print("✅ /clear resets confirmation")
-
-            # Test /reset-confirm
-            cli2 = AgentaoCLI()
-            cli2.allow_all_tools = True
-            cli2.allow_all_tools = False  # reset-confirm does this
-            assert cli2.allow_all_tools is False
-            print("✅ /reset-confirm resets confirmation")
-
-            print("✅ Both commands reset confirmation mode")
+def _clear_reset(cli):
+    """The reset `/clear` performs — input_loop.py's `elif command == "clear"`."""
+    cli._apply_mode(PermissionMode.WORKSPACE_WRITE)
 
 
-def test_initial_state():
-    """Test that CLI starts with allow_all_tools = False."""
+def test_clear_resets_confirmation(cli):
+    """/clear turns blanket auto-approval back off."""
+    cli.allow_all_tools = True
 
-    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
-        with patch('agentao.cli.app.build_from_environment') as mock_agent_class:
-            mock_agent = Mock()
-            mock_agent_class.return_value = mock_agent
+    _clear_reset(cli)
 
-            from agentao.cli import AgentaoCLI
-
-            cli = AgentaoCLI()
-
-            assert cli.allow_all_tools is False, "Should start as False"
-            print("✅ Initial state is correct (allow_all_tools = False)")
+    assert cli.allow_all_tools is False, "Should be reset to False after clear"
 
 
-def test_clear_makes_sense():
-    """Test the logical flow: clear should reset everything to initial state."""
+def test_clear_command_flow(cli):
+    """History clearing and confirmation reset both happen."""
+    cli.allow_all_tools = True
 
-    with patch('agentao.cli.app.safe_load_dotenv'), patch('agentao.cli.subcommands._load_and_register_plugins'):
-        with patch('agentao.cli.app.build_from_environment') as mock_agent_class:
-            mock_agent = Mock()
-            mock_agent_class.return_value = mock_agent
+    with patch.object(cli.agent, 'clear_history') as mock_clear:
+        cli.agent.clear_history()
+        _clear_reset(cli)
 
-            from agentao.cli import AgentaoCLI
-
-            cli = AgentaoCLI()
-
-            # Initial state
-            initial_allow_all = cli.allow_all_tools
-            assert initial_allow_all is False
-
-            # User enables allow_all during conversation
-            cli.allow_all_tools = True
-
-            # User calls /clear to start fresh
-            cli.agent.clear_history()
-            cli.allow_all_tools = False  # Reset to initial state
-
-            # Should be back to initial state
-            assert cli.allow_all_tools == initial_allow_all
-            print("✅ /clear logically resets to initial state")
+    assert cli.allow_all_tools is False, "Confirmation should be reset"
+    mock_clear.assert_called_once()
 
 
-if __name__ == "__main__":
-    print("Testing /clear command resets confirmation mode...")
-    print()
+def test_clear_resets_from_every_mode(cli):
+    """The reset holds regardless of the mode the user was in."""
+    for mode in (PermissionMode.READ_ONLY, PermissionMode.FULL_ACCESS,
+                 PermissionMode.WORKSPACE_WRITE):
+        cli._apply_mode(mode)
+        cli.allow_all_tools = True
 
-    try:
-        test_clear_resets_confirmation()
-        print()
-        test_clear_command_flow()
-        print()
-        test_clear_vs_reset_confirm()
-        print()
-        test_initial_state()
-        print()
-        test_clear_makes_sense()
-        print()
-        print("=" * 50)
-        print("✅ All tests passed!")
-        print("\n[INFO] /clear command now resets:")
-        print("       - Conversation history")
-        print("       - Tool confirmation mode")
-    except AssertionError as e:
-        print(f"❌ Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        exit(1)
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-        exit(1)
+        _clear_reset(cli)
+
+        assert cli.allow_all_tools is False, f"not reset when coming from {mode}"
+
+
+def test_clear_restores_workspace_write(cli):
+    """/clear also drops an escalated posture back to workspace-write."""
+    cli._apply_mode(PermissionMode.FULL_ACCESS)
+    assert cli.current_mode == PermissionMode.FULL_ACCESS
+
+    _clear_reset(cli)
+
+    assert cli.current_mode == PermissionMode.WORKSPACE_WRITE
+    assert cli.permission_engine.active_mode == PermissionMode.WORKSPACE_WRITE
+
+
+def test_initial_state(cli):
+    """CLI starts with allow_all_tools = False."""
+    assert cli.allow_all_tools is False, "Should start as False"
+
+
+def test_clear_makes_sense(cli):
+    """The logical flow: clear returns everything to the initial state."""
+    initial_allow_all = cli.allow_all_tools
+    assert initial_allow_all is False
+
+    cli.allow_all_tools = True
+    _clear_reset(cli)
+
+    assert cli.allow_all_tools == initial_allow_all
