@@ -1,11 +1,18 @@
 # MCP Streamable HTTP client support — Design
 
-**Status:** Design — not yet implemented. Adds the MCP **Streamable HTTP**
-transport (`type: "http"`) to `McpClient`, and flips the three ACP gates that
-were deliberately left rejecting `http` until the client could dispatch it.
-Per the maintainer's **2026-07-01 decision (D2)**, a bare `url` now *defaults*
-to Streamable HTTP (SSE becomes opt-in via `type: "sse"`) — a deliberate
-**breaking change**; see §3 D2 and §10.
+**Status:** **Shipped in 0.4.14 (2026-07-02)** — this doc now reads as a landed
+contract, not a proposal. It added the MCP **Streamable HTTP** transport
+(`type: "http"`) to `McpClient` and flipped the three ACP gates that were
+deliberately left rejecting `http` until the client could dispatch it. Per the
+maintainer's **2026-07-01 decision (D2)**, a bare `url` *defaults* to Streamable
+HTTP (SSE is opt-in via `type: "sse"`) — a deliberate **breaking change**; see
+§3 D2 and §10.
+
+Verified against `main`@`8266de1` (2026-07-19): `agentao/mcp/config.py:61`
+(`_KNOWN_TRANSPORTS`), `:166` (`resolve_transport`), `:216` (bare-`url` → `http`
+inference); ACP gates at `agentao/acp/schema.py:50` (capability advertisement
+`{"http": True, "sse": True}`), `:174` (`Literal["stdio", "sse", "http"]`),
+`agentao/acp/session_new.py:226`, `agentao/acp/mcp_translate.py:218,243`.
 
 **Audience:** Agentao maintainers; the DeepChat/TensorChat ACP integration owner.
 

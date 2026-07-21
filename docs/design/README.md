@@ -43,11 +43,16 @@ Shipped behavior — read as reference for what exists today.
 - **runtime-tool-injection** — `add_tool` / `remove_tool` (v1 landed).
 - **host-llm-extra-params** — host LLM request passthrough `extra_body` (v1).
 - **run-spec-parameters** — `agentao run` spec parameters & instructions (shipped 2026-05-25).
+- **mcp-streamable-http** — MCP Streamable HTTP transport; bare `url` now defaults to it (**breaking**, SSE is opt-in via `type: "sse"`). Shipped 0.4.14, 2026-07-02.
 
 ## Review & decision records · 评审与决策记录 *(the "backlog" class)*
 
 Retrospective analyses — competitive/borrow reviews, conformance gap reviews, decision records. Evidence-before-recommendation; **gap ≠ need**. Not active build specs.
 
+- **dynamic-workflows-review** *(zh only)* — Claude Code Dynamic Workflows adoption assessment. **rev 5: don't adopt, don't design an alternative, change no code.** Records one verified fact (same tool instance serializes within a batch; whether that default may be bypassed is undefined) plus §3.5, a candidate implementation plan that activates only if a real use case demands it — explicitly not a commitment (2026-07-19).
+- **code-mode-ptc-review** *(zh only)* — Code Mode / Programmatic Tool Calling decision record; 4 peer impls compared, current decision **not to start** pending demand (2026-07-09, 4th impl added 07-11).
+- **codex-goal-mechanism-review** — two parts: Codex `/goal` mechanism teardown (§§1–9, descriptive) + agentao candidate design (§§10–11, **not approved**) (2026-06-23).
+- **subagent-discovery-entrypoint-review** — sub-agent discovery asymmetry across the three entry points; corrects the skill-vs-plugin conflation the original report assumed (2026-06-23).
 - **optimization-opportunities-review** — multi-dimension audit (complexity / per-turn perf / duplication / packaging); Tier 1–3 findings, evidence-backed (2026-06-19).
 - **vendor-sdk-convergence-review** — Claude/OpenAI Agent SDKs converged on Path A's pitch; §16.4 trigger determination (2026-06-18).
 - **acp-server-conformance-review** — agentao ACP server vs official ACP v1; gaps G1–G6 + chat/automation target decision (2026-06-18).

@@ -1,10 +1,16 @@
 # MCP Streamable HTTP 客户端支持 — 设计
 
-**状态：** 设计阶段 — 尚未实现。为 `McpClient` 增加 MCP **Streamable HTTP**
-传输（`type: "http"`），并放开三处此前故意保留、专门拒绝 `http` 的 ACP 闸门
-（它们一直等客户端能真正分发该传输）。按维护者 **2026-07-01 决策（D2）**，裸 `url`
-现在**默认**走 Streamable HTTP（SSE 改为经 `type: "sse"` 显式选入）—— 这是一个
-刻意的**破坏性变更**；见 §3 D2 与 §10。
+**状态：** **已随 0.4.14 落地（2026-07-02）** —— 本文现应作为已落地契约阅读，而非提案。
+它为 `McpClient` 增加了 MCP **Streamable HTTP** 传输（`type: "http"`），并放开了三处
+此前故意保留、专门拒绝 `http` 的 ACP 闸门（它们一直等客户端能真正分发该传输）。按维护者
+**2026-07-01 决策（D2）**，裸 `url` **默认**走 Streamable HTTP（SSE 改为经
+`type: "sse"` 显式选入）—— 这是一个刻意的**破坏性变更**；见 §3 D2 与 §10。
+
+对 `main`@`8266de1`（2026-07-19）验证：`agentao/mcp/config.py:61`
+（`_KNOWN_TRANSPORTS`）、`:166`（`resolve_transport`）、`:216`（裸 `url` → `http` 推断）；
+ACP 闸门见 `agentao/acp/schema.py:50`（能力宣告 `{"http": True, "sse": True}`）、
+`:174`（`Literal["stdio", "sse", "http"]`）、`agentao/acp/session_new.py:226`、
+`agentao/acp/mcp_translate.py:218,243`。
 
 **读者：** Agentao 维护者；DeepChat/TensorChat 的 ACP 集成负责人。
 
