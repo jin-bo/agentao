@@ -307,3 +307,94 @@ def test_format_results_coerces_non_string_snippet_and_caps():
     out = _format_search_results("q", items)
     assert "['a', 'b']" in out
     assert "…" in out and "x" * 301 not in out
+
+
+# ── DuckDuckGo bot-challenge guard ─────────────────────────────────────────
+#
+# html.duckduckgo.com answers a captcha page (HTTP 202, no results container)
+# instead of results. Parsing it yields zero ``div.result`` nodes, which used
+# to be formatted as a confident "No search results found" — a silent failure
+# of the whole search surface, since duckduckgo is last in every auto chain.
+
+
+#: Abridged from a live capture (2026-07-22). No ``#links`` container.
+_DDG_CHALLENGE = """<!DOCTYPE html><html lang="en"><head><title>DuckDuckGo</title></head>
+<body><a href="/"></a><center id="lite_wrapper">
+Unfortunately, bots use DuckDuckGo too. Please complete the following challenge
+to confirm this search was made by a human. Select all squares containing a duck:
+</center><img src="x"></body></html>"""
+
+#: A real zero-hit SERP still renders the ``#links`` container.
+_DDG_NO_RESULTS = """<!DOCTYPE html><html><body>
+<div class="results" id="links"><div class="no-results">No results.</div></div>
+</body></html>"""
+
+#: A real SERP with one hit.
+_DDG_ONE_HIT = """<!DOCTYPE html><html><body><div class="results" id="links">
+<div class="result"><a class="result__a" href="https://ex.com">Title</a>
+<a class="result__snippet">Snip.</a></div></div></body></html>"""
+
+
+class _HtmlResp:
+    def __init__(self, text, status_code=200):
+        self.text = text
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        return None  # 2xx (incl. 202) never raises here
+
+
+def _ddg_client(text, status_code=200):
+    class _C(_FakeClient):
+        def get(self, url, params=None, headers=None):
+            return _HtmlResp(text, status_code)
+
+    return _C
+
+
+def test_ddg_challenge_page_raises_not_empty(monkeypatch):
+    _clear_keys(monkeypatch)
+    monkeypatch.setattr(httpx, "Client", _ddg_client(_DDG_CHALLENGE, 202))
+    tool = WebSearchTool(backend="duckduckgo")
+    with pytest.raises(ValueError, match="bot-challenge"):
+        tool._search_duckduckgo("q", num_results=5)
+
+
+def test_ddg_challenge_body_raises_even_on_200(monkeypatch):
+    # Don't lean on the 202 alone — a challenge served as 200 is still not a
+    # result set, and the missing ``#links`` container is the semantic signal.
+    _clear_keys(monkeypatch)
+    monkeypatch.setattr(httpx, "Client", _ddg_client(_DDG_CHALLENGE, 200))
+    tool = WebSearchTool(backend="duckduckgo")
+    with pytest.raises(ValueError, match="bot-challenge"):
+        tool._search_duckduckgo("q", num_results=5)
+
+
+def test_ddg_genuine_no_results_does_not_raise(monkeypatch):
+    # The guard must not swallow a real zero-hit answer: that is terminal, not
+    # an error, and must still read as "No search results found".
+    _clear_keys(monkeypatch)
+    monkeypatch.setattr(httpx, "Client", _ddg_client(_DDG_NO_RESULTS, 200))
+    tool = WebSearchTool(backend="duckduckgo")
+    assert tool._search_duckduckgo("q", num_results=5) == "No search results found for: q"
+
+
+def test_ddg_normal_results_still_parse(monkeypatch):
+    _clear_keys(monkeypatch)
+    monkeypatch.setattr(httpx, "Client", _ddg_client(_DDG_ONE_HIT, 200))
+    tool = WebSearchTool(backend="duckduckgo")
+    out = tool._search_duckduckgo("q", num_results=5)
+    assert "1. Title" in out and "https://ex.com" in out and "Snip." in out
+
+
+def test_ddg_challenge_surfaces_as_error_when_sole_backend(monkeypatch):
+    # The end-to-end consequence: keyless auto mode is a one-element chain, so
+    # the challenge must reach the caller as an error rather than "no results".
+    _clear_keys(monkeypatch)
+    monkeypatch.setattr(httpx, "Client", _ddg_client(_DDG_CHALLENGE, 202))
+    tool = WebSearchTool()
+    assert tool._chain == ["duckduckgo"]
+    out = tool.execute("q")
+    assert out.startswith("Error performing duckduckgo search:")
+    assert "bot-challenge" in out
+    assert "No search results found" not in out

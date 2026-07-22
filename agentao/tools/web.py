@@ -348,9 +348,11 @@ def _format_search_results(query: str, items: list[dict]) -> str:
 
 
 class WebSearchTool(Tool):
-    #: Known search backends. ``duckduckgo`` is keyless and always available, so
-    #: it is the universal last-resort fallback. ``jina`` works keyless too (a
-    #: ``JINA_API_KEY`` only raises rate limits); ``bocha`` requires a key.
+    #: Known search backends. ``duckduckgo`` is the only keyless one, so it is
+    #: the universal last-resort fallback — but keyless is not the same as
+    #: reliable: see ``_search_duckduckgo`` for the bot-challenge guard.
+    #: ``jina`` and ``bocha`` both need a key. (``s.jina.ai`` *was* keyless when
+    #: this backend landed; measured 2026-07-22 it answers 401 without one.)
     _KNOWN_BACKENDS = ("jina", "bocha", "duckduckgo")
 
     def __init__(
@@ -368,9 +370,12 @@ class WebSearchTool(Tool):
                 and builds a fallback chain from key availability (see below).
             api_key: Bocha API key. When ``None``, falls back to the
                 ``BOCHA_API_KEY`` process env var.
-            jina_api_key: Jina API key (optional — Jina search works keyless,
-                a key only lifts rate limits). When ``None``, falls back to the
-                ``JINA_API_KEY`` process env var.
+            jina_api_key: Jina API key. When ``None``, falls back to the
+                ``JINA_API_KEY`` process env var. Required in practice —
+                ``s.jina.ai`` answers 401 without one (see ``_search_jina``) —
+                but deliberately *not* enforced at construction the way
+                ``bocha`` is: the endpoint used to be keyless, so a keyless pin
+                stays constructible and surfaces the 401 as a search error.
 
         Backend resolution:
 
@@ -562,8 +567,11 @@ class WebSearchTool(Tool):
         return _format_search_results(query, items)
 
     def _search_jina(self, query: str, num_results: int) -> str:
-        """Query Jina search (``s.jina.ai``). Keyless; a ``JINA_API_KEY`` only
-        raises rate limits. Raises on HTTP / parse failure so ``execute`` falls back."""
+        """Query Jina search (``s.jina.ai``). Needs a ``JINA_API_KEY``: measured
+        2026-07-22 the endpoint answers 401 ``AuthenticationRequiredError``
+        without one. It was keyless when this backend landed, which is why the
+        constructor still accepts a keyless pin. Raises on HTTP / parse failure
+        so ``execute`` falls back."""
         import httpx
 
         headers = {
@@ -602,7 +610,8 @@ class WebSearchTool(Tool):
         return _format_search_results(query, items)
 
     def _search_duckduckgo(self, query: str, num_results: int) -> str:
-        """Query DuckDuckGo HTML. Raises on HTTP / parse failure so ``execute`` can fall back."""
+        """Query DuckDuckGo HTML. Raises on HTTP / parse / bot-challenge failure
+        so ``execute`` can fall back (or report an error)."""
         import httpx
         from bs4 import BeautifulSoup
 
@@ -618,6 +627,27 @@ class WebSearchTool(Tool):
             response.raise_for_status()
 
             soup = BeautifulSoup(response.text, "html.parser")
+
+            # A real SERP — *including* a genuine zero-hit one — always renders
+            # the ``#links`` results container (a zero-hit page puts a
+            # ``.no-results`` notice inside it). The bot-challenge page renders
+            # none of that and answers 202 rather than 200, so ``raise_for_status``
+            # waves it through. Either signal means the body is not a result set.
+            #
+            # Raise rather than return an empty list: ``find_all("div", "result")``
+            # yields 0 on a challenge page, which would otherwise be formatted
+            # into a confident "No search results found" — indistinguishable
+            # from a real empty answer. ``duckduckgo`` is last in every auto
+            # chain (and the *only* entry when no key resolves), so a silent
+            # empty here is the entire search surface failing quietly.
+            # Measured 2026-07-22: keyless html.duckduckgo.com answers 202 with
+            # a captcha page for every query.
+            if response.status_code == 202 or soup.select_one("#links, .results") is None:
+                raise ValueError(
+                    "duckduckgo: bot-challenge page, not a result set "
+                    f"(HTTP {response.status_code}, no '#links' results container)"
+                )
+
             items = []
 
             for result_div in soup.find_all("div", class_="result", limit=num_results):
