@@ -177,6 +177,66 @@ class TestManagerInteractionBridge:
 
 
 # ---------------------------------------------------------------------------
+# AC5 — inline interaction display sanitizes server-controlled escapes
+# ---------------------------------------------------------------------------
+
+
+class TestInlineInteractionSanitized:
+    """_handle_inline_interaction must strip terminal escapes from server text.
+
+    The permission/input display path bypasses render.py's sanitizer (those
+    kinds are skipped in flush_to_console), so the inline handler is the second
+    display boundary and must sanitize on its own.
+    """
+
+    def _run_permission(self, details: dict) -> str:
+        import io
+        from rich.console import Console
+        from agentao.cli.commands_ext import acp as acp_mod
+
+        buf = io.StringIO()
+        fake_console = Console(file=buf, force_terminal=True, width=100)
+        i = PendingInteraction(
+            server="srv",
+            kind=InteractionKind.PERMISSION,
+            prompt=details.get("_prompt", "allow?"),
+            details=details,
+        )
+        mock_mgr = MagicMock()
+        with patch.object(acp_mod, "console", fake_console), patch.object(
+            acp_mod.readchar, "readkey", return_value="3"
+        ):
+            acp_mod._handle_inline_interaction(None, mock_mgr, "srv", i)
+        return buf.getvalue()
+
+    def test_permission_title_escapes_stripped(self) -> None:
+        out = self._run_permission(
+            {"toolCall": {"title": "run\x1b]0;PWNED\x07 tool", "kind": "exec"}}
+        )
+        assert "\x1b]" not in out
+        assert "\x07" not in out
+        assert "PWNED" in out  # inert residue survives; only the escapes are gone
+
+    def test_permission_rawinput_and_bidi_stripped(self) -> None:
+        out = self._run_permission(
+            {
+                "toolCall": {
+                    "title": "ok",
+                    "rawInput": {"path": "a\x1b[2Jb", "note": "x‮y"},
+                }
+            }
+        )
+        assert "\x1b[2J" not in out
+        assert "‮" not in out  # bidi override stripped
+
+    def test_permission_prompt_fallback_stripped(self) -> None:
+        # No toolCall dict -> falls back to interaction.prompt display.
+        out = self._run_permission({"_prompt": "do\x1b]0;x\x07 it"})
+        assert "\x1b]" not in out
+        assert "\x07" not in out
+
+
+# ---------------------------------------------------------------------------
 # Response sent back to server (P1 fix)
 # ---------------------------------------------------------------------------
 

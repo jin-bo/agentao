@@ -1,13 +1,17 @@
 """Tests for ACP client process handle and manager (Issue 02)."""
 
 import json
+import os
+import signal
 import sys
+import textwrap
 import time
 from pathlib import Path
 from typing import Dict
 
 import pytest
 
+import agentao.acp_client.process as acp_process
 from agentao.acp_client.manager import ACPManager
 from agentao.acp_client.models import (
     AcpClientConfig,
@@ -204,6 +208,142 @@ class TestACPProcessHandle:
         assert handle.state == ServerState.STOPPED
         assert sentinel.exists(), "child should exit gracefully on stdin EOF"
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+    def test_start_makes_child_process_group_leader(self) -> None:
+        """AC3 spawn-side: the child leads its own process group so a
+        force-stop can reap the whole tree via ``killpg(pid)`` without
+        signalling agentao's own group.
+        """
+        handle = ACPProcessHandle("pg", _sleeper_config())
+        handle.start()
+        try:
+            pid = handle.pid
+            assert pid is not None
+            assert os.getpgid(pid) == pid
+        finally:
+            handle.stop()
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+    def test_force_stop_reaps_grandchildren(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC3 kill-side: a server that ignores both stdin-EOF and SIGTERM is
+        force-killed at the *whole-tree* level, so the grandchildren it spawned
+        (its own MCP/shell children) are not orphaned.
+        """
+        # Speed up the escalation so the test doesn't wait the real 5 s windows.
+        monkeypatch.setattr(acp_process, "_GRACEFUL_STOP_TIMEOUT", 0.3)
+        monkeypatch.setattr(acp_process, "_TERMINATE_STOP_TIMEOUT", 0.3)
+
+        gpid_file = tmp_path / "grandchild.pid"
+        prog = textwrap.dedent(f"""\
+            import signal, subprocess, sys, time
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            child = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(60)"]
+            )
+            open({str(gpid_file)!r}, "w").write(str(child.pid))
+            while True:
+                time.sleep(1)
+            """)
+        handle = ACPProcessHandle("tree", _make_config(args=["-c", prog]))
+        gpid = None
+        handle.start()
+        try:
+            # Wait for the server to spawn its grandchild and record the pid.
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                if gpid_file.exists() and gpid_file.read_text().strip():
+                    gpid = int(gpid_file.read_text().strip())
+                    break
+                time.sleep(0.05)
+            assert gpid is not None, "server never spawned its grandchild"
+            os.kill(gpid, 0)  # grandchild alive before stop
+
+            handle.stop()
+            assert handle.state == ServerState.STOPPED
+
+            # The grandchild must be gone: the force-stop reaped the whole tree
+            # rather than orphaning it. Poll until reaped (it re-parents to init
+            # and is cleaned up shortly after the SIGKILL).
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                try:
+                    os.kill(gpid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                pytest.fail("grandchild survived force-stop (orphaned)")
+        finally:
+            handle.stop()
+            if gpid is not None:
+                try:
+                    os.kill(gpid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+    def test_force_stop_reaps_grandchildren_when_server_dies_on_sigterm(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC3 kill-side, code-review regression: a server that *dies* on the
+        child-scoped SIGTERM WITHOUT reaping its own grandchild must still have
+        that grandchild reaped by the unconditional whole-tree sweep. The
+        SIG_IGN test above only covers a server that *survives* SIGTERM, so it
+        would pass even if the reap only fired on the survive-SIGTERM branch.
+        """
+        monkeypatch.setattr(acp_process, "_GRACEFUL_STOP_TIMEOUT", 0.3)
+
+        gpid_file = tmp_path / "grandchild.pid"
+        # Default SIGTERM disposition (no SIG_IGN): the server dies on SIGTERM
+        # and never reaps its grandchild. It ignores stdin so the graceful
+        # window times out and the escalation runs.
+        prog = textwrap.dedent(f"""\
+            import subprocess, sys, time
+            child = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(60)"]
+            )
+            open({str(gpid_file)!r}, "w").write(str(child.pid))
+            while True:
+                time.sleep(1)
+            """)
+        handle = ACPProcessHandle("tree2", _make_config(args=["-c", prog]))
+        gpid = None
+        handle.start()
+        try:
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                if gpid_file.exists() and gpid_file.read_text().strip():
+                    gpid = int(gpid_file.read_text().strip())
+                    break
+                time.sleep(0.05)
+            assert gpid is not None, "server never spawned its grandchild"
+            os.kill(gpid, 0)  # grandchild alive before stop
+
+            handle.stop()
+            assert handle.state == ServerState.STOPPED
+
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                try:
+                    os.kill(gpid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                pytest.fail(
+                    "grandchild orphaned: server died on SIGTERM without a "
+                    "whole-tree reap"
+                )
+        finally:
+            handle.stop()
+            if gpid is not None:
+                try:
+                    os.kill(gpid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
     def test_stdin_stdout_available(self) -> None:
         handle = ACPProcessHandle("test", _sleeper_config())
         handle.start()
@@ -327,3 +467,39 @@ class TestACPManager:
             h = mgr.get_handle(name)
             assert h.state == ServerState.STOPPED
             assert h.pid is None
+
+    def test_stop_all_survives_client_removed_mid_iteration(self) -> None:
+        """Regression (AC1): ``stop_all`` must snapshot ``_clients`` first.
+
+        A concurrent lock-free liveness poll (``get_status``/``readiness``
+        → ``_check_cached_client_alive`` → ``_clients.pop``) can evict a
+        server mid-loop. Reproduced deterministically here with a client
+        whose ``close()`` pops a sibling. Without the ``list()`` snapshot
+        this raised ``RuntimeError: dictionary changed size during
+        iteration`` and aborted teardown, leaking the remaining handles.
+        """
+        mgr = ACPManager(AcpClientConfig())
+
+        class _PoppingClient:
+            def __init__(self, manager: ACPManager, sibling: str) -> None:
+                self._manager = manager
+                self._sibling = sibling
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+                # Stand in for the concurrent lock-free eviction.
+                self._manager._clients.pop(self._sibling, None)
+
+        client_a = _PoppingClient(mgr, "b")
+        client_b = _PoppingClient(mgr, "a")
+        mgr._clients["a"] = client_a
+        mgr._clients["b"] = client_b
+
+        mgr.stop_all()  # must not raise
+
+        # Every snapshotted client must actually be closed — not merely
+        # dropped by stop_all's unconditional ``_clients.clear()`` (which
+        # would make ``_clients == {}`` true even if a client were skipped).
+        assert client_a.closed and client_b.closed
+        assert mgr._clients == {}

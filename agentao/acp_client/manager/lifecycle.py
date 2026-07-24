@@ -72,7 +72,12 @@ class LifecycleMixin:
 
     def stop_all(self) -> None:
         """Stop all clients and server subprocesses."""
-        for name, client in self._clients.items():
+        # Snapshot before iterating: ``client.close()`` and any concurrent
+        # lock-free liveness poll (``get_status``/``readiness`` →
+        # ``_check_cached_client_alive`` → ``_clients.pop``) can mutate
+        # ``_clients`` mid-loop, which would raise "dictionary changed size
+        # during iteration". Mirrors the ``_ephemeral_clients`` block below.
+        for name, client in list(self._clients.items()):
             try:
                 client.close()
             except Exception as exc:

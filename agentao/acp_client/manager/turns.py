@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..client import (
     ACPClient,
@@ -531,61 +531,14 @@ class TurnsMixin:
             name, cwd=cwd, mcp_servers=mcp_servers,
         )
 
-        # Ephemeral setup is safe to do OUTSIDE the turn lock — an
-        # ephemeral client is specific to this call and not visible to
-        # any concurrent turn. Re-sessioning a CACHED client is *not*
-        # safe outside the lock (it would overwrite shared session
-        # state under another running turn), so we defer the
-        # cached-client branch to inside the lock.
-        #
-        # The check-and-create runs under the handshake lock so a
-        # concurrent ``send_prompt`` pre-warm or another ``prompt_once``
-        # on another thread cannot race our check and cause two
-        # ``ACPClient`` readers to attach to the same handle's stdout.
-        #
-        # If another thread's ``prompt_once`` already has an ephemeral
-        # in flight, we cannot safely spawn a second one (duplicate
-        # reader) and cannot borrow theirs (single-use per call). Fail
-        # fast with ``SERVER_BUSY`` — ``_record_last_error`` filters it
-        # so this doesn't clobber any real failure in the store.
-        #
-        # process_was_running is sampled inside the handshake lock so
-        # that a concurrent start_server() / start_all() cannot start the
-        # subprocess in the window between sampling and the lock, which
-        # would leave process_was_running=False for a process we did not
-        # start and cause the cleanup paths to stop a shared daemon.
-        client: Optional[ACPClient] = None
-        ephemeral_created = False
-        process_was_running = True  # safe default: don't stop anything
-        try:
-            with self._get_handshake_lock(name):
-                process_was_running = (
-                    handle._proc is not None and handle._proc.poll() is None
-                )
-                with self._ephemeral_lock:
-                    has_ephemeral = name in self._ephemeral_clients
-                if has_ephemeral:
-                    raise AcpClientError(
-                        f"server '{name}' has an active turn; "
-                        f"prompt_once is fail-fast",
-                        code=AcpErrorCode.SERVER_BUSY,
-                        details={"server": name},
-                    )
-                if self._clients.get(name) is None:
-                    client = self._open_ephemeral_client_locked(
-                        name,
-                        cwd=effective_cwd,
-                        mcp_servers=effective_mcp,
-                        timeout=timeout,
-                    )
-                    ephemeral_created = True
-                # Else: a long-lived client already exists (possibly
-                # installed by a concurrent pre-warm). Leave ``client``
-                # as None; the cached-client branch below (inside the
-                # turn lock) handles fast-path reuse / re-session.
-        except Exception as exc:
-            self._record_last_error(name, exc)
-            raise
+        # Ephemeral setup / defer runs under the handshake lock; the
+        # concurrency rationale lives on ``_setup_ephemeral_or_defer``.
+        client, ephemeral_created, process_was_running = (
+            self._setup_ephemeral_or_defer(
+                name, handle,
+                cwd=effective_cwd, mcp_servers=effective_mcp, timeout=timeout,
+            )
+        )
 
         lock = self._get_server_lock(name)
         if not lock.acquire(blocking=False):
@@ -611,59 +564,14 @@ class TurnsMixin:
         try:
             try:
                 if not ephemeral_created:
-                    # Cached-client path. We hold the turn lock now, so
-                    # a re-session on ``existing`` cannot corrupt any
-                    # concurrent turn.
-                    existing = self._clients.get(name)
-                    if existing is None:
-                        # Rare: cache was evicted (restart_server etc.)
-                        # between the pre-check and here. Fall through
-                        # to a full ``ensure_connected`` inside the
-                        # turn lock.
-                        client = self.ensure_connected(
-                            name,
-                            cwd=effective_cwd,
-                            mcp_servers=effective_mcp,
-                            timeout=timeout,
-                            _inside_turn=True,
-                        )
-                    else:
-                        # Re-check liveness now that we hold the turn lock:
-                        # the process may have died in the window between the
-                        # early pre-check and here.
-                        self._check_cached_client_alive(name)
-                        existing = self._clients.get(name)
-                        if existing is None:
-                            # Died since the pre-check; rebuild.
-                            client = self.ensure_connected(
-                                name,
-                                cwd=effective_cwd,
-                                mcp_servers=effective_mcp,
-                                timeout=timeout,
-                                _inside_turn=True,
-                            )
-                        elif existing.connection_info.session_id and self._session_matches(
-                            existing, cwd=effective_cwd, mcp_servers=effective_mcp,
-                        ):
-                            client = existing
-                        else:
-                            # Re-session the cached client — handshake lock
-                            # still serializes against concurrent
-                            # connect_server / ephemeral setup on other
-                            # threads.
-                            with self._get_handshake_lock(name):
-                                try:
-                                    existing.create_session(
-                                        cwd=effective_cwd,
-                                        mcp_servers=effective_mcp,
-                                        timeout=timeout,
-                                    )
-                                except BaseException as exc:
-                                    if self._reclassify_as_handshake_fail(exc, name):
-                                        self._note_handshake_failure_and_maybe_fatal(name)
-                                    raise
-                                self._note_handshake_success(name)
-                            client = existing
+                    # Cached-client path — we hold the turn lock, so a
+                    # re-session cannot corrupt a concurrent turn.
+                    client = self._reuse_cached_client_for_prompt_once(
+                        name,
+                        cwd=effective_cwd,
+                        mcp_servers=effective_mcp,
+                        timeout=timeout,
+                    )
                 raw = self._run_turn_on_client(
                     name, client, prompt,
                     timeout=timeout,
@@ -682,34 +590,161 @@ class TurnsMixin:
                 raise
         finally:
             if ephemeral_created and client is not None:
-                # prompt_once is always one-shot — never promote the
-                # ephemeral client to the long-lived cache, regardless of
-                # stop_process or process_was_running.  Close the client to
-                # stop its reader thread cleanly; a subsequent connect or
-                # prompt_once call on the same server will start a fresh
-                # reader.  Only stop the subprocess when stop_process=True
-                # AND this call was the one that started it.
-                keep_process_alive = not stop_process or process_was_running
-                with self._get_handshake_lock(name):
-                    with self._ephemeral_lock:
-                        if self._ephemeral_clients.get(name) is client:
-                            self._ephemeral_clients.pop(name, None)
-                    try:
-                        client.close()
-                    except Exception:
-                        logger.debug(
-                            "acp[%s]: error closing ephemeral client",
-                            name, exc_info=True,
-                        )
-                    if not keep_process_alive and name not in self._clients:
-                        try:
-                            handle.stop()
-                        except Exception:
-                            logger.debug(
-                                "acp[%s]: error stopping handle",
-                                name, exc_info=True,
-                                )
+                self._teardown_ephemeral_after_prompt(
+                    name, client, handle,
+                    stop_process=stop_process,
+                    process_was_running=process_was_running,
+                )
             lock.release()
+
+    def _setup_ephemeral_or_defer(
+        self,
+        name: str,
+        handle: ACPProcessHandle,
+        *,
+        cwd: Optional[str],
+        mcp_servers: Optional[List[dict]],
+        timeout: Optional[float],
+    ) -> Tuple[Optional[ACPClient], bool, bool]:
+        """Open a one-shot ephemeral client, or defer to the cached branch.
+
+        Runs under the handshake lock and returns
+        ``(client, ephemeral_created, process_was_running)``:
+
+        * Ephemeral setup is safe OUTSIDE the turn lock — the client is
+          specific to this call and invisible to any concurrent turn.
+          Re-sessioning a CACHED client is *not* safe outside the turn lock
+          (it would overwrite shared session state under another running
+          turn), so when a long-lived client already exists we return
+          ``client=None`` and let ``prompt_once``'s in-turn-lock branch
+          reuse / re-session it.
+        * The check-and-create is under the handshake lock so a concurrent
+          ``send_prompt`` pre-warm or another ``prompt_once`` cannot race the
+          check and attach two ``ACPClient`` readers to one handle's stdout.
+        * If another thread's ``prompt_once`` already has an ephemeral in
+          flight we can neither spawn a second (duplicate reader) nor borrow
+          theirs (single-use) — fail fast with ``SERVER_BUSY`` (which
+          ``_record_last_error`` filters, so it won't clobber a real failure).
+        * ``process_was_running`` is sampled inside the handshake lock so a
+          concurrent ``start_server`` / ``start_all`` can't start the proc in
+          the window between sampling and the lock and trick the cleanup paths
+          into stopping a shared daemon.
+        """
+        client: Optional[ACPClient] = None
+        ephemeral_created = False
+        process_was_running = True  # safe default: don't stop anything
+        try:
+            with self._get_handshake_lock(name):
+                process_was_running = (
+                    handle._proc is not None and handle._proc.poll() is None
+                )
+                with self._ephemeral_lock:
+                    has_ephemeral = name in self._ephemeral_clients
+                if has_ephemeral:
+                    raise AcpClientError(
+                        f"server '{name}' has an active turn; "
+                        f"prompt_once is fail-fast",
+                        code=AcpErrorCode.SERVER_BUSY,
+                        details={"server": name},
+                    )
+                if self._clients.get(name) is None:
+                    client = self._open_ephemeral_client_locked(
+                        name,
+                        cwd=cwd,
+                        mcp_servers=mcp_servers,
+                        timeout=timeout,
+                    )
+                    ephemeral_created = True
+        except Exception as exc:
+            self._record_last_error(name, exc)
+            raise
+        return client, ephemeral_created, process_was_running
+
+    def _reuse_cached_client_for_prompt_once(
+        self,
+        name: str,
+        *,
+        cwd: Optional[str],
+        mcp_servers: Optional[List[dict]],
+        timeout: Optional[float],
+    ) -> ACPClient:
+        """Resolve the client for the cached (non-ephemeral) ``prompt_once``
+        path. The caller holds the per-server turn lock, so re-sessioning the
+        cached client here cannot corrupt a concurrent turn.
+
+        Rebuilds via ``ensure_connected`` when the cache was evicted
+        (``restart_server`` etc.) or the subprocess died since the pre-check;
+        reuses the cached client directly when its session still matches;
+        otherwise re-sessions it under the handshake lock (which serializes
+        against concurrent ``connect_server`` / ephemeral setup), with
+        ``_handshake_guarded`` owning the sticky-fatal accounting.
+        """
+        existing = self._clients.get(name)
+        if existing is None:
+            # Cache evicted between the pre-check and here — rebuild.
+            return self.ensure_connected(
+                name, cwd=cwd, mcp_servers=mcp_servers, timeout=timeout,
+                _inside_turn=True,
+            )
+        # Re-check liveness now that we hold the turn lock: the proc may have
+        # died in the window between the early pre-check and here.
+        self._check_cached_client_alive(name)
+        existing = self._clients.get(name)
+        if existing is None:
+            # Died since the pre-check; rebuild.
+            return self.ensure_connected(
+                name, cwd=cwd, mcp_servers=mcp_servers, timeout=timeout,
+                _inside_turn=True,
+            )
+        if existing.connection_info.session_id and self._session_matches(
+            existing, cwd=cwd, mcp_servers=mcp_servers,
+        ):
+            return existing
+        with self._get_handshake_lock(name), self._handshake_guarded(name):
+            existing.create_session(
+                cwd=cwd, mcp_servers=mcp_servers, timeout=timeout,
+            )
+        return existing
+
+    def _teardown_ephemeral_after_prompt(
+        self,
+        name: str,
+        client: ACPClient,
+        handle: ACPProcessHandle,
+        *,
+        stop_process: bool,
+        process_was_running: bool,
+    ) -> None:
+        """Tear down a ``prompt_once`` ephemeral client in the ``finally``.
+
+        ``prompt_once`` is always one-shot — never promote the ephemeral
+        client to the long-lived cache, regardless of ``stop_process`` or
+        ``process_was_running``. Close the client to stop its reader thread
+        cleanly (a later connect / prompt_once starts a fresh reader); only
+        stop the subprocess when ``stop_process=True`` AND this call was the
+        one that started it. Runs under the handshake lock so no concurrent
+        caller observes the popped-but-still-running window.
+        """
+        keep_process_alive = not stop_process or process_was_running
+        with self._get_handshake_lock(name):
+            with self._ephemeral_lock:
+                if self._ephemeral_clients.get(name) is client:
+                    self._ephemeral_clients.pop(name, None)
+            try:
+                client.close()
+            except Exception:
+                logger.debug(
+                    "acp[%s]: error closing ephemeral client",
+                    name, exc_info=True,
+                )
+            if not keep_process_alive and name not in self._clients:
+                try:
+                    handle.stop()
+                except Exception:
+                    logger.debug(
+                        "acp[%s]: error stopping handle",
+                        name, exc_info=True,
+                    )
 
     def _rollback_ephemeral_on_busy(
         self,
@@ -825,20 +860,7 @@ class TurnsMixin:
         )
         with self._ephemeral_lock:
             self._ephemeral_clients[name] = client
-        try:
-            client.start_reader()
-            client.initialize(timeout=timeout)
-            client.create_session(
-                cwd=cwd, mcp_servers=mcp_servers, timeout=timeout,
-            )
-        except BaseException as exc:
-            # Shared classification + sticky-fatal accounting — same
-            # behaviour as the long-lived ``connect_server`` and
-            # cached-client ``ensure_connected`` paths so the
-            # "2 consecutive handshakes ⇒ fatal" contract holds
-            # whichever API the embedder chose.
-            if self._reclassify_as_handshake_fail(exc, name):
-                self._note_handshake_failure_and_maybe_fatal(name)
+        def _teardown_partial_ephemeral() -> None:
             with self._ephemeral_lock:
                 if self._ephemeral_clients.get(name) is client:
                     self._ephemeral_clients.pop(name, None)
@@ -859,14 +881,25 @@ class TurnsMixin:
                         "acp[%s]: stop handle after ephemeral setup failure raised",
                         name, exc_info=True,
                     )
-            raise
-        # Successful greenfield handshake in the ephemeral/``prompt_once``
-        # path — clear the streak for the same reason the long-lived
-        # ``connect_server`` and cached-client re-session paths do.
-        # Without this, a prior isolated handshake failure would linger
-        # at streak=1 and combine with a future unrelated handshake
-        # failure into an incorrect sticky-fatal flip.
-        self._note_handshake_success(name)
+
+        # Shared classification + sticky-fatal accounting via
+        # ``_handshake_guarded`` — same behaviour as the long-lived
+        # ``connect_server`` and cached-client ``ensure_connected`` paths so the
+        # "2 consecutive handshakes ⇒ fatal" contract (and the streak-clear on
+        # success) holds whichever API the embedder chose. This site historically
+        # ran the accounting BEFORE its teardown (so a 2nd-failure sticky-fatal
+        # left the handle FAILED, then ``handle.stop()`` set it STOPPED — the
+        # terminal state); ``cleanup_before_accounting=False`` preserves that.
+        with self._handshake_guarded(
+            name,
+            on_failure=_teardown_partial_ephemeral,
+            cleanup_before_accounting=False,
+        ):
+            client.start_reader()
+            client.initialize(timeout=timeout)
+            client.create_session(
+                cwd=cwd, mcp_servers=mcp_servers, timeout=timeout,
+            )
         return client
 
     # ------------------------------------------------------------------

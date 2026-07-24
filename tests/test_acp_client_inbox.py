@@ -295,6 +295,248 @@ class TestRender:
 
 
 # ---------------------------------------------------------------------------
+# AC5 — terminal-escape sanitization of server-controlled display text
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalSanitization:
+    """A third-party ACP server's text must not carry terminal escapes."""
+
+    def test_sanitize_strips_c0_c1_keeps_whitespace(self) -> None:
+        from agentao.acp_client.render import _sanitize_terminal_text as san
+
+        # ESC (begins every CSI/OSC), BEL, DEL, and a C1 CSI are removed.
+        assert san("a\x1bb") == "ab"
+        assert san("ring\x07bell") == "ringbell"
+        assert san("del\x7fx") == "delx"
+        assert san("c1\x9bx") == "c1x"
+        # \n and \t are preserved; printable + higher Unicode untouched.
+        assert san("l1\nl2\tok 中文") == "l1\nl2\tok 中文"
+        assert san("plain text") == "plain text"
+        assert san("") == ""
+
+    def test_sanitize_strips_bidi_overrides_keeps_zwj(self) -> None:
+        # Trojan-Source (CVE-2021-42574): bidi controls reorder text with no ESC.
+        from agentao.acp_client.render import _sanitize_terminal_text as san
+
+        for cp in (0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+                   0x2066, 0x2067, 0x2068, 0x2069, 0x200E, 0x200F, 0x061C):
+            assert san("a" + chr(cp) + "b") == "ab", hex(cp)
+        # ZWJ / ZWNJ / BOM are legitimate (emoji, Arabic/Indic) — NOT stripped.
+        for cp in (0x200D, 0x200C, 0xFEFF):  # ZWJ, ZWNJ, BOM/ZWNBSP
+            assert san("a" + chr(cp) + "b") == "a" + chr(cp) + "b", hex(cp)
+
+    def test_render_plain_strips_escape_sequences(self) -> None:
+        # The plain fallback writes verbatim to stdout — the unambiguous vector.
+        msg = InboxMessage(
+            server="srv",
+            session_id="s",
+            kind=MessageKind.RESPONSE,
+            text="hello\x1b[2J\x1b]0;PWNED\x07world",
+        )
+        rendered = render_plain(msg)
+        assert "\x1b" not in rendered
+        assert "\x07" not in rendered
+        assert "hello" in rendered and "world" in rendered
+
+    def test_render_all_plain_strips_escapes(self) -> None:
+        msgs = [
+            InboxMessage(
+                server="a",
+                session_id="s",
+                kind=MessageKind.RESPONSE,
+                text="x\x1b[31mred",
+            ),
+        ]
+        assert "\x1b" not in render_all_plain(msgs)
+
+    def test_flush_to_console_strips_osc_from_prefixed_path(self) -> None:
+        from rich.console import Console
+        import io
+
+        buf = io.StringIO()
+        c = Console(file=buf, force_terminal=True, width=80)
+        msgs = [
+            InboxMessage(
+                server="srv",
+                session_id="s",
+                kind=MessageKind.RESPONSE,
+                text="setting title\x1b]0;PWNED\x07 done",
+            ),
+        ]
+        flush_to_console(msgs, c)
+        out = buf.getvalue()
+        # Rich emits its own CSI (\x1b[) color codes, but the server's OSC
+        # set-title introducer (\x1b]) and BEL terminator must be gone.
+        assert "\x1b]" not in out
+        assert "\x07" not in out
+
+    def test_flush_to_console_strips_escapes_from_agent_markdown(self) -> None:
+        from rich.console import Console
+        import io
+
+        buf = io.StringIO()
+        c = Console(file=buf, force_terminal=True, width=80)
+        msgs = [
+            InboxMessage(
+                server="srv",
+                session_id="s",
+                kind=MessageKind.RESPONSE,
+                text="agent reply\x1b]0;PWNED\x07 body",
+                update_kind="agent_message_chunk",
+            ),
+        ]
+        flush_to_console(msgs, c)
+        out = buf.getvalue()
+        assert "\x1b]" not in out
+        assert "\x07" not in out
+
+
+class TestChunkCap:
+    """AC5 — agent chunks are size-bounded so a server can't force GB buffering."""
+
+    def test_cap_chunk_passthrough_at_or_under_limit(self) -> None:
+        from agentao.acp_client.manager.helpers import (
+            _cap_chunk,
+            _MAX_CHUNK_DISPLAY_CHARS,
+        )
+
+        assert _cap_chunk("small") == "small"
+        exact = "x" * _MAX_CHUNK_DISPLAY_CHARS
+        assert _cap_chunk(exact) == exact  # exactly at the cap is untouched
+
+    def test_cap_chunk_truncates_pathological(self) -> None:
+        from agentao.acp_client.manager.helpers import (
+            _cap_chunk,
+            _MAX_CHUNK_DISPLAY_CHARS,
+        )
+
+        big = "y" * (_MAX_CHUNK_DISPLAY_CHARS + 5000)
+        capped = _cap_chunk(big)
+        body = capped.split("...[truncated", 1)[0]
+        assert len(body) == _MAX_CHUNK_DISPLAY_CHARS  # body bounded to the cap
+        assert "truncated 5000 chars" in capped
+        assert capped.isascii()  # marker is ASCII (no U+2026) — safe under LANG=C
+
+    def test_cap_chunk_passthrough_non_str(self) -> None:
+        # A hostile server may send a JSON number/bool for content.text; the cap
+        # must return it unchanged (no TypeError on len()), matching pre-cap code.
+        from agentao.acp_client.manager.helpers import _cap_chunk
+
+        assert _cap_chunk(42) == 42
+        assert _cap_chunk(None) is None
+        assert _cap_chunk(True) is True
+
+    def test_format_session_update_caps_agent_message_chunk(self) -> None:
+        from agentao.acp_client.manager.helpers import (
+            _format_session_update,
+            _MAX_CHUNK_DISPLAY_CHARS,
+        )
+
+        big = "z" * (_MAX_CHUNK_DISPLAY_CHARS + 100)
+        params = {
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"text": big},
+            }
+        }
+        out = _format_session_update(params)
+        assert len(out) <= _MAX_CHUNK_DISPLAY_CHARS + 64
+        assert "truncated 100 chars" in out
+
+    def test_format_session_update_caps_agent_thought_chunk(self) -> None:
+        from agentao.acp_client.manager.helpers import (
+            _format_session_update,
+            _MAX_CHUNK_DISPLAY_CHARS,
+        )
+
+        big = "t" * (_MAX_CHUNK_DISPLAY_CHARS + 7)
+        params = {
+            "update": {
+                "sessionUpdate": "agent_thought_chunk",
+                "content": {"text": big},
+            }
+        }
+        assert "truncated 7 chars" in _format_session_update(params)
+
+    def test_extract_display_text_caps_permission_title(self) -> None:
+        from agentao.acp_client.manager.helpers import (
+            _extract_display_text,
+            _MAX_CHUNK_DISPLAY_CHARS,
+        )
+
+        big = "T" * (_MAX_CHUNK_DISPLAY_CHARS + 500)
+        out = _extract_display_text(
+            "session/request_permission", {"toolCall": {"title": big}}
+        )
+        assert "truncated 500 chars" in out
+        assert len(out) <= _MAX_CHUNK_DISPLAY_CHARS + 64
+
+    def test_extract_display_text_caps_ask_user_question(self) -> None:
+        from agentao.acp_client.manager.helpers import (
+            _extract_display_text,
+            _MAX_CHUNK_DISPLAY_CHARS,
+        )
+
+        big = "Q" * (_MAX_CHUNK_DISPLAY_CHARS + 42)
+        out = _extract_display_text("_agentao.cn/ask_user", {"question": big})
+        assert "truncated 42 chars" in out
+
+
+class TestAggregateRenderCap:
+    """AC5 — the cross-chunk Markdown accumulation is bounded, not just per-chunk."""
+
+    def test_flush_bounds_accumulated_agent_text(self, monkeypatch) -> None:
+        import io
+        from rich.console import Console
+        import agentao.acp_client.render as render_mod
+
+        # Shrink the aggregate bound so the test stays cheap.
+        monkeypatch.setattr(render_mod, "_MAX_AGENT_RENDER_CHARS", 1000)
+        buf = io.StringIO()
+        c = Console(file=buf, force_terminal=True, width=120)
+        # 5 same-server chunks of 400 chars each -> 2000 accumulated > 1000 bound.
+        msgs = [
+            InboxMessage(
+                server="srv",
+                session_id="s",
+                kind=MessageKind.RESPONSE,
+                text="a" * 400,
+                update_kind="agent_message_chunk",
+            )
+            for _ in range(5)
+        ]
+        render_mod.flush_to_console(msgs, c)
+        assert "truncated 1000 chars" in buf.getvalue()
+
+
+class TestLogOnlySanitized:
+    """AC5 — the debug log-only branch must not echo raw server escapes."""
+
+    def test_log_only_message_text_is_sanitized(self, caplog) -> None:
+        import logging
+        import io
+        from rich.console import Console
+
+        buf = io.StringIO()
+        c = Console(file=buf, force_terminal=True, width=80)
+        msgs = [
+            InboxMessage(
+                server="srv",
+                session_id="s",
+                kind=MessageKind.NOTIFICATION,
+                text="reset\x1bc term",
+                update_kind="tool_call",  # a log-only kind
+            ),
+        ]
+        with caplog.at_level(logging.DEBUG, logger="agentao.acp_client"):
+            flush_to_console(msgs, c)
+        joined = "".join(r.getMessage() for r in caplog.records)
+        assert "\x1b" not in joined
+        assert "reset" in joined and "term" in joined
+
+
+# ---------------------------------------------------------------------------
 # Multi-server ordering
 # ---------------------------------------------------------------------------
 
