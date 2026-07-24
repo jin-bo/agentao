@@ -8,8 +8,9 @@ entry point leans on before reusing a cached client.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Iterator, Optional
 
 from ..client import (
     AcpClientError,
@@ -201,6 +202,55 @@ class RecoveryMixin:
         if streak > 1:
             self._mark_fatal(name)
 
+    @contextmanager
+    def _handshake_guarded(
+        self,
+        name: str,
+        *,
+        on_failure: Optional[Callable[[], None]] = None,
+        cleanup_before_accounting: bool = True,
+    ) -> Iterator[None]:
+        """Run a handshake / session-setup body under the sticky-fatal contract.
+
+        Every entry point that runs ``initialize`` / ``create_session`` — the
+        greenfield ``connect_server``, the cached-client re-session in
+        ``ensure_connected``, and both ``prompt_once`` paths (cached re-session
+        and the ephemeral greenfield) — must, on failure, reclassify the error
+        as ``HANDSHAKE_FAIL`` and flip sticky-fatal on the *second* consecutive
+        one, and on success clear the streak. That dance used to be copy-pasted
+        at each site, so a new entry point could silently opt out of the
+        documented recovery contract. Route every site through here instead —
+        the pairing of failure-accounting and success-clear is then structural,
+        not a discipline each caller has to remember.
+
+        ``on_failure`` runs the caller's own teardown on the failure path (close
+        the half-built client, stop a proc this call started, drop an ephemeral
+        registration). ``cleanup_before_accounting`` controls its order relative
+        to the accounting — and it matters, because BOTH the accounting
+        (``_mark_fatal`` → handle state ``FAILED``) and a typical teardown
+        (``handle.stop()`` → handle state ``STOPPED``) write ``handle.info.state``,
+        so whichever runs last is the terminal state a host observes via
+        ``get_status()``. The two original greenfield sites disagreed:
+        ``connect_server`` cleaned up *then* accounted (terminal ``FAILED``),
+        while ``_open_ephemeral_client_locked`` accounted *then* cleaned up
+        (terminal ``STOPPED``). Each passes the flag that reproduces its own
+        prior order, so this consolidation stays behaviour-preserving.
+        ``on_failure`` must not raise (guard its own sub-steps), or it would
+        mask the original error and skip the accounting.
+        """
+        try:
+            yield
+        except BaseException as exc:
+            if on_failure is not None and cleanup_before_accounting:
+                on_failure()
+            if self._reclassify_as_handshake_fail(exc, name):
+                self._note_handshake_failure_and_maybe_fatal(name)
+            if on_failure is not None and not cleanup_before_accounting:
+                on_failure()
+            raise
+        else:
+            self._note_handshake_success(name)
+
     def _reclassify_as_handshake_fail(
         self, exc: BaseException, name: str,
     ) -> bool:
@@ -386,7 +436,12 @@ class RecoveryMixin:
             # combine with a future one across an unrelated subprocess death.
             # Without this, "handshake failure → recoverable death → handshake
             # failure" incorrectly trips sticky-fatal after only one new failure.
-            self._handshake_fail_streak[name] = 0
+            # Hold ``_recovery_lock`` like every other streak mutation
+            # (_clear_fatal / _note_handshake_success / _and_maybe_fatal): this
+            # method runs lock-free from the get_status/readiness poll path, so a
+            # bare write could interleave with a racing locked read-modify-write.
+            with self._recovery_lock:
+                self._handshake_fail_streak[name] = 0
         if classification == "fatal":
             self._mark_fatal(name)
             raise AcpClientError(

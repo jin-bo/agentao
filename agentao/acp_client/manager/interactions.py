@@ -31,6 +31,11 @@ from .helpers import (
 from .turns import _TurnContext
 
 
+def _selected_outcome(option_id: str) -> Dict[str, Any]:
+    """Build the ACP ``selected`` permission-response envelope for *option_id*."""
+    return {"outcome": {"outcome": "selected", "optionId": option_id}}
+
+
 class InteractionsMixin:
     """Inbox / interaction routing for :class:`ACPManager`."""
 
@@ -273,13 +278,7 @@ class InteractionsMixin:
                     approve_option = _select_approve_option(options)
                     if approve_option is not None:
                         client.send_response(
-                            request_id,
-                            {
-                                "outcome": {
-                                    "outcome": "selected",
-                                    "optionId": approve_option,
-                                }
-                            },
+                            request_id, _selected_outcome(approve_option)
                         )
                         approved = True
                     else:
@@ -293,13 +292,7 @@ class InteractionsMixin:
                         reject_option = _select_reject_option(options)
                         if reject_option is not None:
                             client.send_response(
-                                request_id,
-                                {
-                                    "outcome": {
-                                        "outcome": "selected",
-                                        "optionId": reject_option,
-                                    }
-                                },
+                                request_id, _selected_outcome(reject_option)
                             )
                         else:
                             client.send_response(
@@ -310,13 +303,7 @@ class InteractionsMixin:
                     reject_option = _select_reject_option(options)
                     if reject_option is not None:
                         client.send_response(
-                            request_id,
-                            {
-                                "outcome": {
-                                    "outcome": "selected",
-                                    "optionId": reject_option,
-                                }
-                            },
+                            request_id, _selected_outcome(reject_option)
                         )
                     else:
                         # No reject-flavored option in the server's list, and
@@ -409,6 +396,29 @@ class InteractionsMixin:
                 exc,
             )
 
+    def _resolve_and_respond(
+        self,
+        name: str,
+        request_id: str,
+        resolve_result: Dict[str, Any],
+        response_result: Dict[str, Any],
+    ) -> bool:
+        """Shared tail of approve / reject / reply.
+
+        Marks the interaction resolved in the registry with *resolve_result*,
+        forwards *response_result* to the server, and moves the handle off
+        ``WAITING_FOR_USER``. Returns ``True`` iff the interaction was found
+        and resolved.
+        """
+        resolved = self.interactions.resolve(request_id, resolve_result)
+        if resolved is None:
+            return False
+        self._send_interaction_response(resolved, response_result)
+        handle = self._handles.get(name)
+        if handle is not None and handle.state == ServerState.WAITING_FOR_USER:
+            handle._set_state(self._post_interaction_state(name))
+        return True
+
     def approve_interaction(
         self,
         name: str,
@@ -436,21 +446,12 @@ class InteractionsMixin:
             or _select_approve_option(options)
             or preferred_kind
         )
-        resolved = self.interactions.resolve(
-            request_id, {"outcome": "approved", "optionId": option_id}
+        return self._resolve_and_respond(
+            name,
+            request_id,
+            {"outcome": "approved", "optionId": option_id},
+            _selected_outcome(option_id),
         )
-        if resolved is not None:
-            self._send_interaction_response(resolved, {
-                "outcome": {
-                    "outcome": "selected",
-                    "optionId": option_id,
-                },
-            })
-            handle = self._handles.get(name)
-            if handle is not None and handle.state == ServerState.WAITING_FOR_USER:
-                handle._set_state(self._post_interaction_state(name))
-            return True
-        return False
 
     def reject_interaction(
         self,
@@ -481,21 +482,12 @@ class InteractionsMixin:
             or _select_reject_option(options)
             or preferred_kind
         )
-        resolved = self.interactions.resolve(
-            request_id, {"outcome": "rejected", "optionId": option_id}
+        return self._resolve_and_respond(
+            name,
+            request_id,
+            {"outcome": "rejected", "optionId": option_id},
+            _selected_outcome(option_id),
         )
-        if resolved is not None:
-            self._send_interaction_response(resolved, {
-                "outcome": {
-                    "outcome": "selected",
-                    "optionId": option_id,
-                },
-            })
-            handle = self._handles.get(name)
-            if handle is not None and handle.state == ServerState.WAITING_FOR_USER:
-                handle._set_state(self._post_interaction_state(name))
-            return True
-        return False
 
     def reply_interaction(
         self, name: str, request_id: str, text: str
@@ -509,16 +501,9 @@ class InteractionsMixin:
         interaction = self.interactions.get(request_id)
         if interaction is None or interaction.server != name:
             return False
-        resolved = self.interactions.resolve(
-            request_id, {"outcome": "answered", "text": text}
+        return self._resolve_and_respond(
+            name,
+            request_id,
+            {"outcome": "answered", "text": text},
+            {"outcome": "answered", "text": text},
         )
-        if resolved is not None:
-            self._send_interaction_response(resolved, {
-                "outcome": "answered",
-                "text": text,
-            })
-            handle = self._handles.get(name)
-            if handle is not None and handle.state == ServerState.WAITING_FOR_USER:
-                handle._set_state(self._post_interaction_state(name))
-            return True
-        return False

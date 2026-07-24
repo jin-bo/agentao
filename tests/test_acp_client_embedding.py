@@ -942,15 +942,19 @@ class TestPromptOnceReusesSessionlessCachedClient:
             cached.connection_info.session_cwd = None
             cached.connection_info.session_mcp_servers_fingerprint = None
 
-            # Spy on _open_ephemeral_client: it MUST NOT fire.
+            # Spy on the ephemeral-client constructor: it MUST NOT fire.
+            # ``prompt_once`` reaches for ``_open_ephemeral_client_locked``
+            # (it already holds the handshake lock), NOT the lock-acquiring
+            # ``_open_ephemeral_client`` wrapper — so spy on the method the
+            # production path actually calls, or the assertion is vacuous.
             called = {"ephemeral": 0}
-            original = mgr._open_ephemeral_client
+            original = mgr._open_ephemeral_client_locked
 
             def _spy(*args, **kwargs):
                 called["ephemeral"] += 1
                 return original(*args, **kwargs)
 
-            monkeypatch.setattr(mgr, "_open_ephemeral_client", _spy)
+            monkeypatch.setattr(mgr, "_open_ephemeral_client_locked", _spy)
 
             result = mgr.prompt_once("srv", "hello", timeout=5)
             assert result.stop_reason == "end_turn"

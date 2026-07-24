@@ -8,12 +8,40 @@ the manager class graph.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..interaction import PendingInteraction
 
 logger = logging.getLogger("agentao.acp_client")
+
+# Upper bound on a single server-supplied display string we will surface.
+# agent_message_chunk / agent_thought_chunk (and the permission title / ask_user
+# question) carry server text verbatim and are intentionally NOT summarized like
+# tool lines. This cap bounds the **display string** — what lands in
+# ``InboxMessage.text`` and, downstream, the Markdown accumulation in render.py —
+# so a compromised/buggy server can't stream one multi-GB chunk and force a
+# giant string through the render path. It is far larger than any real streaming
+# delta or whole reply, so it never touches legitimate content. Note it does NOT
+# bound the *raw* payload (`InboxMessage.raw = params` still retains the full
+# object) nor the process-level stdin read; those are the job of the deferred
+# readline-frame cap. See docs/design/acp-client-audit.md AC5.
+_MAX_CHUNK_DISPLAY_CHARS = 256 * 1024
+
+
+def _cap_chunk(text: Any) -> Any:
+    """Bound a server-supplied display string to ``_MAX_CHUNK_DISPLAY_CHARS``.
+
+    Non-``str`` values (a hostile server may send a JSON number/bool for a
+    ``text`` field) are returned unchanged — matching the pre-cap behavior and
+    avoiding a ``TypeError`` on ``len()`` that would silently drop the message.
+    The truncation marker is pure ASCII so it can never raise
+    ``UnicodeEncodeError`` on a non-UTF-8 stdout in the plain render fallback.
+    """
+    if not isinstance(text, str) or len(text) <= _MAX_CHUNK_DISPLAY_CHARS:
+        return text
+    dropped = len(text) - _MAX_CHUNK_DISPLAY_CHARS
+    return text[:_MAX_CHUNK_DISPLAY_CHARS] + f"...[truncated {dropped} chars]"
 
 
 def _extract_display_text(method: str, params: Any) -> str:
@@ -34,7 +62,9 @@ def _extract_display_text(method: str, params: Any) -> str:
 
     # -- _agentao.cn/ask_user ----------------------------------------------
     if method == "_agentao.cn/ask_user":
-        return params.get("question") or params.get("message") or "(input requested)"
+        return _cap_chunk(
+            params.get("question") or params.get("message") or "(input requested)"
+        )
 
     # -- session/update (most common) --------------------------------------
     if method == "session/update":
@@ -52,8 +82,8 @@ def _format_permission_text(params: dict) -> str:
     """Format a ``session/request_permission`` payload."""
     tool_call = params.get("toolCall")
     if not isinstance(tool_call, dict):
-        return params.get("message") or "(permission requested)"
-    title = tool_call.get("title") or "unknown tool"
+        return _cap_chunk(params.get("message") or "(permission requested)")
+    title = _cap_chunk(tool_call.get("title") or "unknown tool")
     kind = tool_call.get("kind", "")
     raw_input = tool_call.get("rawInput")
     parts = [f"Allow {title}"]
@@ -102,7 +132,7 @@ def _format_session_update(params: dict) -> str:
         content = update.get("content")
         if isinstance(content, dict):
             text = content.get("text", "")
-            return text if text else ""
+            return _cap_chunk(text) if text else ""
         return ""
 
     # agent_thought_chunk: show reasoning (dimmed in render)
@@ -110,7 +140,7 @@ def _format_session_update(params: dict) -> str:
         content = update.get("content")
         if isinstance(content, dict):
             text = content.get("text", "")
-            return text if text else ""
+            return _cap_chunk(text) if text else ""
         return ""
 
     # user_message_chunk
@@ -126,6 +156,73 @@ def _format_session_update(params: dict) -> str:
 
 def _truncate(s: str, n: int) -> str:
     return s if len(s) <= n else s[: n - 3] + "..."
+
+
+def _opt_id(opt: Dict[str, Any]) -> Optional[str]:
+    """Return the first non-empty ``optionId`` / ``id`` string on *opt*."""
+    for key in ("optionId", "id"):
+        val = opt.get(key)
+        if isinstance(val, str) and val:
+            return val
+    return None
+
+
+def _first_id_by_kind(
+    options: List[Dict[str, Any]], kind: str,
+) -> Optional[str]:
+    """First valid option id whose ``kind`` exactly equals *kind*.
+
+    The exact-canonical-kind lookup shared by :func:`_select_option`'s pass 1
+    and :func:`_select_option_by_kind`, so canonical-kind matching lives in one
+    place.
+    """
+    for opt in options:
+        if opt.get("kind") == kind:
+            oid = _opt_id(opt)
+            if oid:
+                return oid
+    return None
+
+
+def _select_option(
+    options: List[Dict[str, Any]],
+    *,
+    canonical_kind: str,
+    kind_prefix: str,
+    hints: Tuple[str, ...],
+) -> Optional[str]:
+    """Three-pass option-id picker shared by the approve / reject selectors.
+
+    1. First option whose ``kind`` equals *canonical_kind* (with a valid id).
+    2. First option whose ``kind`` starts with *kind_prefix*.
+    3. First option whose ``optionId`` / ``id`` / ``name`` / ``label`` contains
+       any of *hints* (case-insensitive).
+
+    Returns ``None`` when nothing matches.
+    """
+    if not options:
+        return None
+    # Pass 1: canonical kind.
+    oid = _first_id_by_kind(options, canonical_kind)
+    if oid:
+        return oid
+    # Pass 2: any kind with the family prefix.
+    for opt in options:
+        kind = opt.get("kind")
+        if isinstance(kind, str) and kind.startswith(kind_prefix):
+            oid = _opt_id(opt)
+            if oid:
+                return oid
+    # Pass 3: text hint in id / name / label.
+    for opt in options:
+        haystack = " ".join(
+            str(opt.get(k, "")) for k in ("optionId", "id", "name", "label")
+        ).lower()
+        if any(h in haystack for h in hints):
+            oid = _opt_id(opt)
+            if oid:
+                return oid
+    return None
 
 
 def _select_reject_option(options: List[Dict[str, Any]]) -> Optional[str]:
@@ -144,40 +241,12 @@ def _select_reject_option(options: List[Dict[str, Any]]) -> Optional[str]:
     fall back to an explicit ``cancelled`` outcome so the server does not
     hang waiting for a valid selection.
     """
-    if not options:
-        return None
-
-    def _opt_id(opt: Dict[str, Any]) -> Optional[str]:
-        for key in ("optionId", "id"):
-            val = opt.get(key)
-            if isinstance(val, str) and val:
-                return val
-        return None
-
-    # Pass 1: kind == "reject_once" (canonical).
-    for opt in options:
-        if opt.get("kind") == "reject_once":
-            oid = _opt_id(opt)
-            if oid:
-                return oid
-    # Pass 2: any reject_* kind.
-    for opt in options:
-        kind = opt.get("kind")
-        if isinstance(kind, str) and kind.startswith("reject"):
-            oid = _opt_id(opt)
-            if oid:
-                return oid
-    # Pass 3: reject/deny/cancel hint in id or name.
-    hints = ("reject", "deny", "cancel")
-    for opt in options:
-        haystack = " ".join(
-            str(opt.get(k, "")) for k in ("optionId", "id", "name", "label")
-        ).lower()
-        if any(h in haystack for h in hints):
-            oid = _opt_id(opt)
-            if oid:
-                return oid
-    return None
+    return _select_option(
+        options,
+        canonical_kind="reject_once",
+        kind_prefix="reject",
+        hints=("reject", "deny", "cancel"),
+    )
 
 
 def _extract_options(interaction: "PendingInteraction") -> List[Dict[str, Any]]:
@@ -206,13 +275,7 @@ def _select_option_by_kind(
     for reject) without duplicating the broader fallback logic in
     :func:`_select_approve_option` / :func:`_select_reject_option`.
     """
-    for opt in options:
-        if opt.get("kind") == preferred_kind:
-            for key in ("optionId", "id"):
-                val = opt.get(key)
-                if isinstance(val, str) and val:
-                    return val
-    return None
+    return _first_id_by_kind(options, preferred_kind)
 
 
 def _select_approve_option(options: List[Dict[str, Any]]) -> Optional[str]:
@@ -222,37 +285,9 @@ def _select_approve_option(options: List[Dict[str, Any]]) -> Optional[str]:
     flavored entries. Returns ``None`` when no such option exists; callers
     should fall back to the reject path rather than send an invalid id.
     """
-    if not options:
-        return None
-
-    def _opt_id(opt: Dict[str, Any]) -> Optional[str]:
-        for key in ("optionId", "id"):
-            val = opt.get(key)
-            if isinstance(val, str) and val:
-                return val
-        return None
-
-    # Pass 1: kind == "allow_once" (canonical).
-    for opt in options:
-        if opt.get("kind") == "allow_once":
-            oid = _opt_id(opt)
-            if oid:
-                return oid
-    # Pass 2: any allow_* kind.
-    for opt in options:
-        kind = opt.get("kind")
-        if isinstance(kind, str) and kind.startswith("allow"):
-            oid = _opt_id(opt)
-            if oid:
-                return oid
-    # Pass 3: allow/accept/approve hint in id or name.
-    hints = ("allow", "accept", "approve")
-    for opt in options:
-        haystack = " ".join(
-            str(opt.get(k, "")) for k in ("optionId", "id", "name", "label")
-        ).lower()
-        if any(h in haystack for h in hints):
-            oid = _opt_id(opt)
-            if oid:
-                return oid
-    return None
+    return _select_option(
+        options,
+        canonical_kind="allow_once",
+        kind_prefix="allow",
+        hints=("allow", "accept", "approve"),
+    )

@@ -14,10 +14,11 @@ import collections
 import logging
 import queue
 import subprocess
+import sys
 import threading
 from typing import List, Optional
 
-from ..capabilities.process import build_child_env
+from ..capabilities.process import build_child_env, kill_process_tree
 from .models import AcpProcessInfo, AcpServerConfig, ServerState
 
 # Default capacity for the stderr ring buffer (number of lines).
@@ -28,6 +29,11 @@ _STDERR_RING_CAPACITY = 200
 # its shutdown ``finally`` (persist each session, disconnect MCP) on that path,
 # so we give it this long before escalating to SIGTERM/SIGKILL.
 _GRACEFUL_STOP_TIMEOUT = 5.0
+# After the graceful window, SIGTERM the server (child-scoped) and wait this
+# long before escalating to a whole-tree SIGKILL.
+_TERMINATE_STOP_TIMEOUT = 5.0
+# Final reap window after force-killing the process tree.
+_KILL_STOP_TIMEOUT = 2.0
 
 logger = logging.getLogger("agentao.acp_client")
 
@@ -123,14 +129,29 @@ class ACPProcessHandle:
             # key can still be given one explicitly.
             env = build_child_env(self.config.env)
 
+            popen_kwargs = dict(
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=self.config.cwd,
+                env=env,
+            )
+            # Lead our own process group / session so a force-stop can reap the
+            # *whole* tree (see ``kill_process_tree``): an ACP server that spawns
+            # its own MCP/shell grandchildren must not orphan them when we
+            # SIGKILL an unresponsive parent. This is also REQUIRED for the
+            # whole-tree kill in ``_stop_unlocked`` (``kill_process_tree`` ->
+            # ``killpg``) to target the child's group rather than agentao's own.
+            # Mirrors ``run_captured``.
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                popen_kwargs["start_new_session"] = True
+
             try:
                 self._proc = subprocess.Popen(
                     [self.config.command, *self.config.args],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    cwd=self.config.cwd,
-                    env=env,
+                    **popen_kwargs,
                 )
             except Exception as exc:
                 self._set_state(ServerState.FAILED, str(exc))
@@ -186,8 +207,10 @@ class ACPProcessHandle:
         """Gracefully stop the subprocess.
 
         Closes stdin first so an ACP server can persist its sessions and exit
-        on EOF, waits up to ``_GRACEFUL_STOP_TIMEOUT`` s, then escalates to
-        SIGTERM (5 s) and finally SIGKILL.  Idempotent.
+        on EOF, waits up to ``_GRACEFUL_STOP_TIMEOUT`` s, then escalates to a
+        child-scoped SIGTERM and finally a whole-process-tree SIGKILL (so an
+        unresponsive server can't orphan its MCP/shell grandchildren).
+        Idempotent.
         """
         with self._lock:
             self._stop_unlocked()
@@ -224,25 +247,46 @@ class ACPProcessHandle:
         try:
             self._proc.wait(timeout=_GRACEFUL_STOP_TIMEOUT)
         except subprocess.TimeoutExpired:
-            # 2. Graceful EOF exit didn't take — escalate.
+            # 2. Graceful EOF exit didn't take — escalate. SIGTERM the server
+            #    itself first (child-scoped) so a server that traps SIGTERM can
+            #    still run its own shutdown and reap its grandchildren cleanly.
             logger.warning(
                 "acp server '%s' did not exit %.0f s after stdin close — terminating",
                 self.name,
                 _GRACEFUL_STOP_TIMEOUT,
             )
+            survived_sigterm = False
             try:
                 self._proc.terminate()
-                self._proc.wait(timeout=5)
+                self._proc.wait(timeout=_TERMINATE_STOP_TIMEOUT)
             except subprocess.TimeoutExpired:
-                logger.warning(
-                    "acp server '%s' did not stop within 5 s — killing", self.name
-                )
-                self._proc.kill()
-                self._proc.wait(timeout=2)
+                survived_sigterm = True
             except Exception as exc:
                 logger.error(
                     "acp server '%s': error during stop: %s", self.name, exc
                 )
+            if survived_sigterm:
+                logger.warning(
+                    "acp server '%s' did not stop within %.0f s — "
+                    "killing process tree",
+                    self.name, _TERMINATE_STOP_TIMEOUT,
+                )
+            # 3. Force-reap the WHOLE tree — not just the direct child — on
+            #    every escalation path. A server that SURVIVES SIGTERM is killed
+            #    outright; one that DIES on SIGTERM may have exited without
+            #    reaping its own MCP/shell grandchildren (the default SIGTERM
+            #    disposition just terminates), and ``terminate()`` is
+            #    child-scoped, so those grandchildren would otherwise orphan.
+            #    ``kill_process_tree`` signals the process group
+            #    (``start_new_session`` at spawn made the child its leader): a
+            #    surviving grandchild keeps the group id reserved so the kill
+            #    reaches it, and if the server already cleaned up the group is
+            #    empty and this is a harmless no-op.
+            kill_process_tree(self._proc)
+            try:
+                self._proc.wait(timeout=_KILL_STOP_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                pass
         except Exception as exc:
             logger.error(
                 "acp server '%s': error during stop: %s", self.name, exc

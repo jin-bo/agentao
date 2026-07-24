@@ -162,15 +162,10 @@ class ConnectionMixin:
                         details={"server": name},
                     )
                 _server_lock.release()
-                try:
+                with self._handshake_guarded(name):
                     existing.create_session(
                         cwd=eff_cwd, mcp_servers=eff_mcp, timeout=timeout,
                     )
-                except BaseException as exc:
-                    if self._reclassify_as_handshake_fail(exc, name):
-                        self._note_handshake_failure_and_maybe_fatal(name)
-                    raise
-                self._note_handshake_success(name)
                 return existing
 
         # Refuse to attach a new ACPClient while a concurrent prompt_once
@@ -225,21 +220,7 @@ class ConnectionMixin:
             notification_callback=_on_notification,
             server_request_callback=_on_server_request,
         )
-        # Re-label initialize()/create_session() failures as HANDSHAKE_FAIL
-        # so callers can separate protocol-level setup from ordinary RPC
-        # errors on an established session. AcpRpcError keeps its numeric
-        # ``code`` contract; we only tag the structured classification.
-        # The sticky-fatal accounting lives here (not just in the
-        # ``ensure_connected``/``prompt_once`` wrappers) so hosts that
-        # call ``connect_server`` directly get the same "2 consecutive
-        # handshakes ⇒ fatal" contract as every other entry point.
-        try:
-            client.start_reader()
-            client.initialize(timeout=timeout)
-            client.create_session(
-                cwd=cwd, mcp_servers=mcp_servers, timeout=timeout,
-            )
-        except BaseException as exc:
+        def _teardown_partial_handshake() -> None:
             # client.close() calls unsubscribe_stdout(), which detaches our
             # subscriber from the feeder thread — no stale reader remains.
             # Only stop the subprocess if we started it; a pre-warmed server
@@ -260,15 +241,18 @@ class ConnectionMixin:
                         "acp[%s]: error stopping handle after handshake failure",
                         name, exc_info=True,
                     )
-            if self._reclassify_as_handshake_fail(exc, name):
-                self._note_handshake_failure_and_maybe_fatal(name)
-            raise
 
-        # A successful connect/handshake clears the handshake-failure
-        # streak — otherwise an earlier single failure would linger and
-        # combine with a later unrelated failure to trip the sticky-fatal
-        # "consecutive handshake failures" rule across prewarmed hosts.
-        self._note_handshake_success(name)
+        # ``_handshake_guarded`` re-labels initialize()/create_session()
+        # failures as HANDSHAKE_FAIL and owns the sticky-fatal accounting, so
+        # hosts that call ``connect_server`` directly get the same "2
+        # consecutive handshakes ⇒ fatal" contract (and streak-clear on
+        # success) as every other entry point.
+        with self._handshake_guarded(name, on_failure=_teardown_partial_handshake):
+            client.start_reader()
+            client.initialize(timeout=timeout)
+            client.create_session(
+                cwd=cwd, mcp_servers=mcp_servers, timeout=timeout,
+            )
         self._clients[name] = client
         return client
 
@@ -390,20 +374,15 @@ class ConnectionMixin:
                         details={"server": name},
                     )
                 _server_lock.release()
-            try:
+            # Successful re-session clears the streak the same as a greenfield
+            # handshake (so a prior isolated failure cannot combine with a
+            # future one); a failure feeds the same sticky-fatal accounting.
+            with self._handshake_guarded(name):
                 client.create_session(
                     cwd=effective_cwd,
                     mcp_servers=effective_mcp,
                     timeout=timeout,
                 )
-            except BaseException as exc:
-                if self._reclassify_as_handshake_fail(exc, name):
-                    self._note_handshake_failure_and_maybe_fatal(name)
-                raise
-            # Successful re-session — treat the same as a successful
-            # greenfield handshake and clear the streak so a prior
-            # isolated failure cannot combine with a future one.
-            self._note_handshake_success(name)
             return client
         # No cached long-lived client.  Before spawning a brand-new ACPClient
         # (which starts a competing reader thread on the handle's stdout),

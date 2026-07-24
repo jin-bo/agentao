@@ -191,6 +191,7 @@ def _handle_inline_interaction(cli, mgr, server_name: str, interaction) -> None:
     free-form text input.  Runs on the main thread.
     """
     from ...acp_client.interaction import InteractionKind
+    from ...acp_client.render import _sanitize_terminal_text as _san
 
     if interaction.kind == InteractionKind.PERMISSION:
         console.print(
@@ -202,17 +203,21 @@ def _handle_inline_interaction(cli, mgr, server_name: str, interaction) -> None:
             tool_call = interaction.details.get("toolCall")
 
         if isinstance(tool_call, dict):
-            title = tool_call.get("title") or "unknown tool"
+            # All of title / rawInput / content / prompt below are
+            # server-controlled; sanitize terminal escapes before printing so a
+            # hostile server can't drive ANSI/OSC sequences into the terminal
+            # via the inline permission prompt (this path bypasses render.py).
+            title = _san(tool_call.get("title") or "unknown tool")
             kind = tool_call.get("kind", "")
             kind_str = f" [dim]({kind})[/dim]" if kind else ""
             console.print(f"  [cyan]{title}[/cyan]{kind_str}")
             raw_input = tool_call.get("rawInput")
             if isinstance(raw_input, dict) and raw_input:
                 for k, v in list(raw_input.items())[:6]:
-                    val = str(v)
+                    val = _san(str(v))
                     if len(val) > 80:
                         val = val[:77] + "..."
-                    console.print(f"    {k}: [dim]{val}[/dim]")
+                    console.print(f"    {_san(str(k))}: [dim]{val}[/dim]")
                 if len(raw_input) > 6:
                     console.print(f"    [dim]... +{len(raw_input) - 6} more[/dim]")
             content = tool_call.get("content")
@@ -221,9 +226,13 @@ def _handle_inline_interaction(cli, mgr, server_name: str, interaction) -> None:
                     if isinstance(entry, dict):
                         c = entry.get("content")
                         if isinstance(c, dict) and c.get("text"):
-                            console.print(f"    [dim]{c['text'][:100]}[/dim]")
+                            console.print(f"    [dim]{_san(str(c['text']))[:100]}[/dim]")
         else:
-            prompt_text = interaction.prompt[:120] if interaction.prompt else "(no description)"
+            prompt_text = (
+                _san(interaction.prompt)[:120]
+                if interaction.prompt
+                else "(no description)"
+            )
             console.print(f"  {prompt_text}")
         console.print(
             "\n [green]1[/green]. Approve once  "
@@ -263,7 +272,9 @@ def _handle_inline_interaction(cli, mgr, server_name: str, interaction) -> None:
                 return
 
     elif interaction.kind == InteractionKind.INPUT:
-        prompt_text = interaction.prompt if interaction.prompt else "(input requested)"
+        prompt_text = (
+            _san(interaction.prompt) if interaction.prompt else "(input requested)"
+        )
         console.print(
             f"\n[bold magenta]Input request from '{server_name}':[/bold magenta]"
         )
