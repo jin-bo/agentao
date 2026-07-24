@@ -18,6 +18,7 @@ from mcp.client.streamable_http import (
 )
 from mcp.types import Tool as McpToolDef
 
+from .. import __version__
 from ..capabilities.process import build_child_env
 from .config import (
     McpServerConfig,
@@ -138,6 +139,28 @@ _PREFLIGHT_TIMEOUT_SECONDS = 5.0
 # can actually run to completion over SSE, while small per-request budgets
 # don't shorten the idle tolerance of the long-lived stream between calls.
 _DEFAULT_SSE_READ_TIMEOUT = 300.0
+
+# Default ``User-Agent`` for URL-transport MCP requests. Without it every SSE /
+# Streamable HTTP request (and the content-type preflight) goes out as the bare
+# ``python-httpx`` UA, leaving agentao anonymous in server logs and tripping
+# servers that filter or rate-limit unknown clients. The UA is informational
+# only — not an auth/trust signal — and a user-configured ``User-Agent`` header
+# still wins (see :func:`_with_default_user_agent`).
+_MCP_USER_AGENT = f"agentao-mcp/{__version__}"
+
+
+def _with_default_user_agent(headers: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """Return *headers* with :data:`_MCP_USER_AGENT` added when none is set.
+
+    A user-supplied ``User-Agent`` — in *any* casing, since HTTP header names
+    are case-insensitive — is preserved, so an explicit override wins. The input
+    is copied, never mutated: it aliases ``self.config['headers']``, which is
+    re-read on every (re)connect.
+    """
+    result = dict(headers or {})
+    if not any(key.lower() == "user-agent" for key in result):
+        result["User-Agent"] = _MCP_USER_AGENT
+    return result
 
 
 class ServerStatus(str, Enum):
@@ -381,7 +404,10 @@ class McpClient:
         itself is applied in ``call_tool`` via ``read_timeout_seconds``.
         """
         url = self.config["url"]
-        headers = self.config.get("headers", {})
+        # Add a default User-Agent (preserving a user-configured one) before the
+        # preflight so every agentao MCP request on this URL — probe, handshake,
+        # and tool calls — identifies itself consistently.
+        headers = _with_default_user_agent(self.config.get("headers"))
         sse_read_timeout = (
             request_timeout
             if request_timeout is not None and request_timeout > _DEFAULT_SSE_READ_TIMEOUT
@@ -451,7 +477,9 @@ class McpClient:
             startup_timeout, request_timeout
         )
         http_client = create_mcp_http_client(
-            headers=headers or None,
+            # ``headers`` always carries at least the default User-Agent (see
+            # _prepare_url_connect), so it is never empty — pass it directly.
+            headers=headers,
             timeout=httpx.Timeout(startup_timeout, read=sse_read_timeout),
         )
         # Caller-managed lifecycle: enter the client first so the LIFO unwind
