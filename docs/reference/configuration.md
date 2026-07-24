@@ -206,6 +206,8 @@ Full rule taxonomy, examples, and runtime semantics → [TOOL_CONFIRMATION_FEATU
 
 > **`env` and the base environment.** A stdio server's `env` entries are applied on top of a **scrubbed** copy of agentao's environment: `mcp/client.py` builds the child env via `build_child_env()`, which drops agentao's own provider credentials (`HARNESS_ENV_KEYS`). An MCP server that previously relied on *inheriting* `GEMINI_API_KEY`, `OPENAI_API_KEY`, etc. now gets a 401 — pass the key explicitly in `env` (`{"GEMINI_API_KEY": "$GEMINI_API_KEY"}`, applied after the scrub) or set `AGENTAO_SCRUB_CHILD_ENV=0` (§2) to restore full inheritance. Everything else in the environment is inherited unchanged.
 
+> **Default `User-Agent` (URL transports).** Streamable HTTP and SSE requests — including the content-type preflight — send `User-Agent: agentao-mcp/<version>` so agentao is identifiable in server logs and isn't filtered as an unknown client. Override it by setting a `User-Agent` entry in `headers` (any casing wins); stdio servers are unaffected.
+
 **Transport selection (`mcp/config.py :: resolve_transport`).** The optional
 `type` field selects the transport: `"stdio"` / `"sse"` / `"http"` (aliases
 `"streamable-http"` / `"streamable_http"` fold to `"http"`). When `type` is

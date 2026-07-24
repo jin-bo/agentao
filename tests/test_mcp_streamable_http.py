@@ -20,6 +20,8 @@ import pytest
 
 from agentao.mcp.client import (
     _DEFAULT_SSE_READ_TIMEOUT,
+    _MCP_USER_AGENT,
+    _with_default_user_agent,
     McpClient,
     NonMcpEndpointError,
     ServerStatus,
@@ -356,3 +358,74 @@ def test_cli_add_stdio_unaffected(tmp_path):
     servers = _cli_add(tmp_path, "add fs npx -y server")
     assert servers["fs"]["command"] == "npx"
     assert servers["fs"]["args"] == ["-y", "server"]
+
+
+# ---------------------------------------------------------------------------
+# Default User-Agent for URL-transport MCP requests (#34883 borrow)
+# ---------------------------------------------------------------------------
+
+def test_user_agent_constant_is_named_and_versioned():
+    # Server operators identify agentao by this string; keep the name/version
+    # shape so it stays greppable in their logs.
+    assert _MCP_USER_AGENT.startswith("agentao-mcp/")
+    assert _MCP_USER_AGENT != "agentao-mcp/"  # a real version is appended
+
+
+def test_with_default_user_agent_adds_when_absent():
+    assert _with_default_user_agent(None) == {"User-Agent": _MCP_USER_AGENT}
+    assert _with_default_user_agent({}) == {"User-Agent": _MCP_USER_AGENT}
+
+
+def test_with_default_user_agent_added_alongside_other_headers():
+    result = _with_default_user_agent({"Authorization": "Bearer x"})
+    assert result["Authorization"] == "Bearer x"
+    assert result["User-Agent"] == _MCP_USER_AGENT
+
+
+@pytest.mark.parametrize("name", ["User-Agent", "user-agent", "USER-AGENT", "User-agent"])
+def test_with_default_user_agent_preserves_configured_value_any_casing(name):
+    # HTTP header names are case-insensitive: a configured UA under any casing
+    # wins, and no duplicate canonical-cased default is added beside it.
+    result = _with_default_user_agent({name: "my-client/9"})
+    assert result[name] == "my-client/9"
+    ua_keys = [k for k in result if k.lower() == "user-agent"]
+    assert ua_keys == [name]
+
+
+def test_with_default_user_agent_does_not_mutate_input():
+    original = {"Authorization": "Bearer x"}
+    _with_default_user_agent(original)
+    assert original == {"Authorization": "Bearer x"}  # UA did not leak back in
+
+
+def test_streamable_http_sends_default_user_agent():
+    _, captured = _drive_connect({"url": "https://h/mcp"})
+    assert captured["client"]["headers"]["User-Agent"] == _MCP_USER_AGENT
+
+
+def test_sse_sends_default_user_agent():
+    _, captured = _drive_connect({"type": "sse", "url": "https://h/sse"})
+    assert captured["sse"]["headers"]["User-Agent"] == _MCP_USER_AGENT
+
+
+def test_preflight_probe_receives_default_user_agent():
+    # The UA is injected before the preflight call, so the probe identifies
+    # agentao too — not only the handshake and tool calls.
+    seen = {}
+
+    async def capture_preflight(self, url, headers):
+        seen["headers"] = headers
+
+    client = McpClient("svr", {"url": "https://h/mcp"})
+    with patch.object(McpClient, "_preflight_content_type", capture_preflight):
+        _url, headers, _timeout = run_async(client._prepare_url_connect(60.0, None))
+    assert seen["headers"]["User-Agent"] == _MCP_USER_AGENT
+    assert headers["User-Agent"] == _MCP_USER_AGENT  # same headers reach the transport
+
+
+def test_connect_does_not_mutate_configured_headers():
+    # The default UA must not leak back into the caller-owned config, which is
+    # re-read on every reconnect.
+    config = {"url": "https://h/mcp", "headers": {"Authorization": "Bearer x"}}
+    _drive_connect(config)
+    assert config["headers"] == {"Authorization": "Bearer x"}
