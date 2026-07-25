@@ -316,3 +316,90 @@ def test_summaries_survive_a_missing_optional_field():
         assert isinstance(
             _summarize_replay_event({"kind": kind, "payload": {}}), str
         )
+
+
+# ── End-to-end through the real recorder + adapter + sink ───────────
+
+
+def test_audit_events_land_in_their_turn_through_the_real_wiring(tmp_path):
+    """The gap the hand-written fixtures above cannot close.
+
+    Every other render test in this file builds its event list by hand,
+    which is how the original defect shipped green: the fixture stamped
+    ``turn_id: "t1"`` on all events because that is what the author
+    assumed the recorder produced. It does not — host-projected events
+    carried the runtime's uuid4 while ``ReplayAdapter`` mints a short id,
+    so they grouped into phantom turns.
+
+    This drives the production wiring instead: a real ``ReplayRecorder``,
+    a real ``ReplayAdapter``, and ``HostReplaySink`` constructed with
+    ``adapter._current_turn_id`` exactly as ``ReplayManager.start()``
+    does — no stub provider.
+    """
+    import json
+
+    from agentao.host.models import (
+        PermissionDecisionEvent,
+        SubagentLifecycleEvent,
+        ToolLifecycleEvent,
+    )
+    from agentao.host.replay_projection import HostReplaySink
+    from agentao.replay.adapter import ReplayAdapter
+    from agentao.replay.recorder import ReplayRecorder
+    from agentao.transport.null import NullTransport
+
+    recorder = ReplayRecorder.create("sess", tmp_path)
+    adapter = ReplayAdapter(NullTransport(), recorder)
+    sink = HostReplaySink(recorder, turn_id_provider=adapter._current_turn_id)
+
+    turn_id = adapter.begin_turn("do it")
+    now = "2026-07-25T00:00:00Z"
+    runtime_turn = "00000000-1111-2222-3333-444444444444"
+
+    sink.record(PermissionDecisionEvent(
+        session_id="sess", turn_id=runtime_turn, tool_name="run_shell_command",
+        decision_id="d1", outcome="deny", mode="read-only",
+        reason="blocked in read-only", loaded_sources=[], decided_at=now,
+    ))
+    sink.record(ToolLifecycleEvent(
+        session_id="sess", turn_id=runtime_turn, tool_call_id="tc-1",
+        tool_name="run_shell_command", phase="failed", outcome="error",
+        error_type="PermissionDenied", started_at=now, completed_at=now,
+    ))
+    sink.record(SubagentLifecycleEvent(
+        session_id="sess", parent_session_id="sess", child_task_id="bg-7",
+        phase="completed", task_summary="audit the config",
+        started_at=now, completed_at=now,
+    ))
+    adapter.end_turn("done")
+    recorder.close()
+
+    events = [
+        json.loads(line)
+        for line in recorder.path.read_text().splitlines()
+        if line.strip()
+    ]
+    audit = [e for e in events if e["kind"] in _V12_AUDIT]
+    assert len(audit) == 3
+
+    # Envelope is the replay id space...
+    for e in audit:
+        assert e["turn_id"] == turn_id, (
+            f"{e['kind']} escaped the turn: {e['turn_id']} != {turn_id}"
+        )
+    # ...and the host contract's own value survives in the payload.
+    payload_turns = {
+        e["kind"]: e["payload"].get("turn_id") for e in audit
+    }
+    assert payload_turns["tool_lifecycle"] == runtime_turn
+    assert payload_turns["permission_decision"] == runtime_turn
+    assert payload_turns["subagent_lifecycle"] is None  # model has no field
+
+    console = Console(width=120, record=True, force_terminal=False)
+    _render_replay_grouped(events, _Meta(), console)
+    out = console.export_text()
+
+    assert out.count("━ Turn ") == 1, "phantom turn group — id spaces diverged"
+    assert "deny" in out
+    assert "PermissionDenied" in out
+    assert "bg-7" in out
