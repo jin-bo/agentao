@@ -1,12 +1,18 @@
 """Test that /clear command resets tool confirmation mode.
 
 These tests drive the production reset path rather than simulating it. `/clear`
-(``agentao/cli/input_loop.py``) resets blanket tool auto-approval indirectly, by
-calling ``cli._apply_mode(PermissionMode.WORKSPACE_WRITE)`` — which is where
+(``agentao/cli/commands/reset.py::handle_clear_command``) resets blanket tool
+auto-approval indirectly, by calling
+``cli._apply_mode(PermissionMode.WORKSPACE_WRITE)`` — which is where
 ``allow_all_tools = False`` actually lives (``agentao/cli/app.py::_apply_mode``).
 Asserting a hand-assigned ``cli.allow_all_tools = False`` would pass even if
 that line were deleted, leaving a user who answered "yes to all" with blanket
 auto-approval across `/clear`.
+
+Until the dispatch-table refactor, `/clear` lived inline in ``run_loop`` and
+was unreachable from a test, so ``_clear_reset`` below re-implemented the one
+line it cared about. It now calls the real handler, so a reordering or removal
+inside the production reset sequence is caught here.
 
 The runtime is injected via ``AgentaoCLI(agent_factory=...)`` and pinned to a
 ``tmp_path``. Patching ``agentao.cli.app.build_from_environment`` was never a
@@ -34,8 +40,10 @@ def cli(tmp_path):
 
 
 def _clear_reset(cli):
-    """The reset `/clear` performs — input_loop.py's `elif command == "clear"`."""
-    cli._apply_mode(PermissionMode.WORKSPACE_WRITE)
+    """Run the real `/clear` handler."""
+    from agentao.cli.commands import handle_clear_command
+
+    handle_clear_command(cli, "")
 
 
 def test_clear_resets_confirmation(cli):
@@ -48,11 +56,14 @@ def test_clear_resets_confirmation(cli):
 
 
 def test_clear_command_flow(cli):
-    """History clearing and confirmation reset both happen."""
+    """History clearing and confirmation reset both happen.
+
+    ``clear_history`` is asserted on the *handler's* call, not a manual one
+    the test makes itself — that is what makes this a regression test.
+    """
     cli.allow_all_tools = True
 
     with patch.object(cli.agent, 'clear_history') as mock_clear:
-        cli.agent.clear_history()
         _clear_reset(cli)
 
     assert cli.allow_all_tools is False, "Confirmation should be reset"

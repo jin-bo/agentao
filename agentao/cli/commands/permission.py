@@ -1,23 +1,64 @@
-"""``/permission`` and ``/sandbox`` — execution-policy controls.
+"""``/permission``, ``/mode`` and ``/sandbox`` — execution-policy controls.
 
-Both surfaces govern how the agent is allowed to *act* (filesystem,
+All three surfaces govern how the agent is allowed to *act* (filesystem,
 shell, network) — ``/permission`` reads the active rule set
-declaratively, ``/sandbox`` is the macOS sandbox-exec switch.
+declaratively, ``/mode`` switches the permission posture, ``/sandbox`` is
+the macOS sandbox-exec switch.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ...permissions import PermissionMode
 from .._globals import console, split_subcommand
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
 
 
+# ``plan`` is a posture but not a ``/mode`` target — it is entered via
+# ``/plan`` so the plan controller can set up its session state.
+_MODE_DESCRIPTIONS = {
+    "read-only":       "write & shell tools are blocked",
+    "workspace-write": "file writes & safe shell allowed, web asks",
+    "full-access":     "all tools allowed without prompting",
+}
+
+
 def handle_permission_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /permission command — show active permission rules."""
     console.print(f"\n{cli.permission_engine.get_rules_display()}\n")
+
+
+def handle_mode_command(cli: AgentaoCLI, args: str) -> None:
+    """Handle /mode command — show or switch the permission posture."""
+    valid = {m.value: m for m in PermissionMode if m != PermissionMode.PLAN}
+
+    if args == "":
+        console.print(f"\n[info]Permission mode:[/info] {cli.current_mode.value}\n")
+        return
+
+    if args not in valid:
+        console.print(
+            "\n[warning]Usage: /mode [read-only|workspace-write|full-access][/warning]\n"
+        )
+        return
+
+    if cli._plan_session.is_active:
+        console.print(
+            "\n[warning]Cannot change permission mode while in plan mode.[/warning]"
+        )
+        console.print(
+            "[dim]Exit plan mode first with /plan implement or /plan clear.[/dim]\n"
+        )
+        return
+
+    cli._apply_mode(valid[args])
+    console.print(
+        f"\n[green]✓ Permission mode: {args}[/green]  "
+        f"[dim]({_MODE_DESCRIPTIONS.get(args, '')})[/dim]\n"
+    )
 
 
 def handle_sandbox_command(cli: AgentaoCLI, args: str) -> None:
