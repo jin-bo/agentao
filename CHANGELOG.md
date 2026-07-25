@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+_Targeting 0.4.17. Add entries under the relevant heading as work lands._
+
+### Added
+
+### Changed
+
+### Fixed
+
+---
+
 ## [0.4.16] — 2026-07-25
 
 A **boundary-hardening release**. 0.4.15 was about the harness not lying about
