@@ -11,7 +11,7 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Dict, Optional
 
 import readchar
 from prompt_toolkit.formatted_text import ANSI
@@ -19,10 +19,14 @@ from rich.markdown import Markdown
 from rich.markup import escape as markup_escape
 
 from ..capabilities.process import build_child_env, kill_process_tree
-from ._globals import console
+from ._globals import console, split_subcommand
 
 if TYPE_CHECKING:
     from .app import AgentaoCLI
+
+# Every slash command reduces to this shape: the CLI instance plus the raw
+# argument remainder after ``/<name>``.
+CommandHandler = Callable[["AgentaoCLI", str], None]
 
 
 # ── Input / Status bar ──────────────────────────────────────────────
@@ -158,22 +162,105 @@ def get_status_toolbar(cli: "AgentaoCLI") -> ANSI:
 # ── Main loop ───────────────────────────────────────────────────────
 
 
-def run_loop(cli: "AgentaoCLI") -> None:
-    """Main input loop — slash-command dispatch + agent turn handling."""
+# Adapters for the handful of handlers that predate the uniform
+# ``(cli, args)`` shape. Kept as named functions rather than lambdas so
+# tracebacks name the command.
+
+def _handle_help_command(cli: "AgentaoCLI", args: str) -> None:
+    cli.print_help()
+
+
+def _handle_status_command(cli: "AgentaoCLI", args: str) -> None:
+    cli.show_status()
+
+
+def _handle_copy_command(cli: "AgentaoCLI", args: str) -> None:
+    _copy_last_response(cli)
+
+
+def _handle_markdown_command(cli: "AgentaoCLI", args: str) -> None:
+    cli.markdown_mode = not cli.markdown_mode
+    state = "ON" if cli.markdown_mode else "OFF"
+    console.print(f"\n[cyan]Markdown rendering: {state}[/cyan]\n")
+
+
+def _handle_memory_command(cli: "AgentaoCLI", args: str) -> None:
+    from .commands_ext import show_memories
+
+    # ``strip_rest=False`` preserves the pre-table behavior: the memory
+    # value in ``/memory save <key> <value>`` keeps its trailing spaces.
+    sub, rest = split_subcommand(args, strip_rest=False)
+    show_memories(cli, sub, rest)
+
+
+def _build_command_table() -> Dict[str, "CommandHandler"]:
+    """Map slash-command name → handler.
+
+    Built on first use rather than at module import for two reasons:
+    ``commands.goal`` imports ``run_goal_continuation`` back out of this
+    module (a real cycle), and ``commands_ext`` pulls the heavier optional
+    dependencies that ``agentao --help`` must not pay for.
+
+    ``exit`` / ``quit`` are deliberately absent — they terminate the loop,
+    which is control flow the table cannot express.
+    """
     from .commands import (
-        handle_todos_command, handle_plan_command, handle_provider_command,
-        handle_model_command, handle_temperature_command, handle_thinking_command,
-        handle_context_command,
-        handle_mcp_command, handle_permission_command, handle_sessions_command,
-        handle_tools_command, handle_sandbox_command, handle_compact_command,
-        handle_image_command, handle_goal_command,
+        handle_clear_command, handle_compact_command, handle_context_command,
+        handle_goal_command, handle_image_command, handle_mcp_command,
+        handle_mode_command, handle_model_command, handle_new_command,
+        handle_permission_command, handle_plan_command, handle_provider_command,
+        handle_sandbox_command, handle_sessions_command, handle_skills_command,
+        handle_temperature_command, handle_thinking_command, handle_todos_command,
+        handle_tools_command,
+    )
+    from .commands_ext import (
+        _show_agents_dashboard, handle_acp_command, handle_agent_command,
+        handle_crystallize_command,
     )
     from .replay_commands import handle_replay_command
-    from .commands_ext import (
-        handle_crystallize_command, show_memories, handle_agent_command,
-        _show_agents_dashboard, handle_acp_command,
-    )
     from .subcommands import _handle_plugins_interactive
+
+    return {
+        "acp": handle_acp_command,
+        "agent": handle_agent_command,
+        "agents": lambda cli, args: _show_agents_dashboard(cli),
+        "clear": handle_clear_command,
+        "compact": handle_compact_command,
+        "context": handle_context_command,
+        "copy": _handle_copy_command,
+        "crystallize": handle_crystallize_command,
+        "goal": handle_goal_command,
+        "help": _handle_help_command,
+        "image": handle_image_command,
+        "markdown": _handle_markdown_command,
+        "mcp": handle_mcp_command,
+        "memory": _handle_memory_command,
+        "mode": handle_mode_command,
+        "model": handle_model_command,
+        "new": handle_new_command,
+        "permission": handle_permission_command,
+        "plan": handle_plan_command,
+        "plugin": lambda cli, args: _handle_plugins_interactive(),
+        "plugins": lambda cli, args: _handle_plugins_interactive(),
+        "provider": handle_provider_command,
+        "replay": handle_replay_command,
+        "sandbox": handle_sandbox_command,
+        "sessions": handle_sessions_command,
+        "skills": handle_skills_command,
+        "status": _handle_status_command,
+        "temperature": handle_temperature_command,
+        "thinking": handle_thinking_command,
+        "todos": handle_todos_command,
+        "tools": handle_tools_command,
+    }
+
+
+_EXIT_COMMANDS = frozenset({"exit", "quit"})
+
+
+def run_loop(cli: "AgentaoCLI") -> None:
+    """Main input loop — slash-command dispatch + agent turn handling."""
+    commands = _build_command_table()
 
     cli.on_session_start()
     while True:
@@ -193,232 +280,19 @@ def run_loop(cli: "AgentaoCLI") -> None:
                 command = parts[0].lower()
                 args = parts[1] if len(parts) > 1 else ""
 
-                if command in ["exit", "quit"]:
+                if command in _EXIT_COMMANDS:
                     cli._save_session_on_exit()
                     console.print("\n[success]Goodbye![/success]\n")
                     break
 
-                elif command == "help":
-                    cli.print_help()
-                    continue
-
-                elif command == "clear":
-                    cli.on_session_end()
-                    cli.current_session_id = None
-                    if cli._plan_session.is_active:
-                        cli._plan_controller.exit_plan_mode()
-                    cli.agent.clear_history()
-                    cli.agent.memory_manager.clear()
-                    cli.agent.memory_manager.clear_all_session_summaries()
-                    cli._staged_images = []
-                    cli.last_response = None
-                    cli._cached_ctx_pct = 0.0
-                    from ..permissions import PermissionMode
-                    cli._apply_mode(PermissionMode.WORKSPACE_WRITE)
-                    cli.on_session_start()
-                    console.print("\n[success]Session and all memories cleared.[/success]")
-                    console.print("[info]Permission mode reset to workspace-write.[/info]\n")
-                    continue
-
-                elif command == "new":
-                    cli.on_session_end()
-                    cli.current_session_id = None
-                    if cli._plan_session.is_active:
-                        cli._plan_controller.exit_plan_mode()
-                    cli.agent.clear_history()
-                    cli._staged_images = []
-                    cli.last_response = None
-                    cli._cached_ctx_pct = 0.0
-                    from ..permissions import PermissionMode
-                    cli._apply_mode(PermissionMode.WORKSPACE_WRITE)
-                    cli.on_session_start()
-                    console.print("\n[success]New session started. Long-term memories preserved.[/success]")
-                    console.print("[info]Permission mode reset to workspace-write.[/info]\n")
-                    continue
-
-                elif command == "status":
-                    cli.show_status()
-                    continue
-
-                elif command == "skills":
-                    if not args:
-                        cli.list_skills()
-                    else:
-                        sub_parts = args.split(maxsplit=1)
-                        sub_cmd = sub_parts[0]
-                        sub_arg = sub_parts[1].strip() if len(sub_parts) > 1 else ""
-                        if sub_cmd == "activate":
-                            if not sub_arg:
-                                console.print("[warning]Usage: /skills activate <skill_name>[/warning]")
-                            else:
-                                result = cli.agent.skill_manager.activate_skill(
-                                    sub_arg, "Manually activated via /skills activate"
-                                )
-                                if result.startswith("Error"):
-                                    console.print(f"\n[warning]{result}[/warning]\n")
-                                else:
-                                    console.print(f"\n[success]Skill '{sub_arg}' activated.[/success]\n")
-                        elif sub_cmd == "deactivate":
-                            if not sub_arg:
-                                console.print("[warning]Usage: /skills deactivate <skill_name>[/warning]")
-                            elif sub_arg not in cli.agent.skill_manager.available_skills:
-                                available = ", ".join(sorted(cli.agent.skill_manager.list_available_skills()))
-                                console.print(f"[warning]Unknown skill '{sub_arg}'. Available: {available}[/warning]")
-                            else:
-                                deactivated = cli.agent.skill_manager.deactivate_skill(sub_arg)
-                                if deactivated:
-                                    console.print(f"\n[success]Skill '{sub_arg}' deactivated.[/success]\n")
-                                else:
-                                    console.print(f"\n[info]Skill '{sub_arg}' is not currently active.[/info]\n")
-                        elif sub_cmd == "disable":
-                            if not sub_arg:
-                                console.print("[warning]Usage: /skills disable <skill_name>[/warning]")
-                            else:
-                                result = cli.agent.skill_manager.disable_skill(sub_arg)
-                                console.print(f"\n{result}\n")
-                        elif sub_cmd == "enable":
-                            if not sub_arg:
-                                console.print("[warning]Usage: /skills enable <skill_name>[/warning]")
-                            else:
-                                result = cli.agent.skill_manager.enable_skill(sub_arg)
-                                console.print(f"\n{result}\n")
-                        elif sub_cmd == "reload":
-                            cli.agent.skill_manager.reload_skills()
-                            count = len(cli.agent.skill_manager.list_available_skills())
-                            console.print(f"\n[success]Skills reloaded. {count} available.[/success]\n")
-                        else:
-                            console.print(f"[warning]Unknown subcommand '{sub_cmd}'. Use: activate, deactivate, disable, enable, reload[/warning]")
-                    continue
-
-                elif command == "crystallize":
-                    handle_crystallize_command(cli, args)
-                    continue
-
-                elif command == "memory":
-                    if args:
-                        subcommand_parts = args.split(maxsplit=1)
-                        subcommand = subcommand_parts[0]
-                        subcommand_arg = subcommand_parts[1] if len(subcommand_parts) > 1 else ""
-                        show_memories(cli, subcommand, subcommand_arg)
-                    else:
-                        show_memories(cli)
-                    continue
-
-                elif command == "model":
-                    handle_model_command(cli, args)
-                    continue
-
-                elif command == "provider":
-                    handle_provider_command(cli, args)
-                    continue
-
-                elif command == "context":
-                    handle_context_command(cli, args)
-                    continue
-
-                elif command == "image":
-                    handle_image_command(cli, args)
-                    continue
-
-                elif command == "compact":
-                    handle_compact_command(cli, args)
-                    continue
-
-                elif command == "mcp":
-                    handle_mcp_command(cli, args)
-                    continue
-
-                elif command in ("plugins", "plugin"):
-                    _handle_plugins_interactive()
-                    continue
-
-                elif command == "acp":
-                    handle_acp_command(cli, args)
-                    continue
-
-                elif command == "agent":
-                    handle_agent_command(cli, args)
-                    continue
-
-                elif command == "agents":
-                    _show_agents_dashboard(cli)
-                    continue
-
-                elif command == "mode":
-                    from ..permissions import PermissionMode
-                    _valid = {m.value: m for m in PermissionMode if m != PermissionMode.PLAN}
-                    if args == "":
-                        console.print(f"\n[info]Permission mode:[/info] {cli.current_mode.value}\n")
-                    elif args in _valid:
-                        if cli._plan_session.is_active:
-                            console.print("\n[warning]Cannot change permission mode while in plan mode.[/warning]")
-                            console.print("[dim]Exit plan mode first with /plan implement or /plan clear.[/dim]\n")
-                        else:
-                            cli._apply_mode(_valid[args])
-                            _descriptions = {
-                                "read-only":       "write & shell tools are blocked",
-                                "workspace-write": "file writes & safe shell allowed, web asks",
-                                "full-access":     "all tools allowed without prompting",
-                            }
-                            console.print(f"\n[green]✓ Permission mode: {args}[/green]  [dim]({_descriptions.get(args, '')})[/dim]\n")
-                    else:
-                        console.print("\n[warning]Usage: /mode [read-only|workspace-write|full-access][/warning]\n")
-                    continue
-
-                elif command == "plan":
-                    handle_plan_command(cli, args)
-                    continue
-
-                elif command == "copy":
-                    _copy_last_response(cli)
-                    continue
-
-                elif command == "markdown":
-                    cli.markdown_mode = not cli.markdown_mode
-                    state = "ON" if cli.markdown_mode else "OFF"
-                    console.print(f"\n[cyan]Markdown rendering: {state}[/cyan]\n")
-                    continue
-
-                elif command == "permission":
-                    handle_permission_command(cli, args)
-                    continue
-
-                elif command == "sandbox":
-                    handle_sandbox_command(cli, args)
-                    continue
-
-                elif command == "sessions":
-                    handle_sessions_command(cli, args)
-                    continue
-
-                elif command == "temperature":
-                    handle_temperature_command(cli, args)
-                    continue
-
-                elif command == "thinking":
-                    handle_thinking_command(cli, args)
-                    continue
-
-                elif command == "todos":
-                    handle_todos_command(cli, args)
-                    continue
-
-                elif command == "tools":
-                    handle_tools_command(cli, args)
-                    continue
-
-                elif command == "replay":
-                    handle_replay_command(cli, args)
-                    continue
-
-                elif command == "goal":
-                    handle_goal_command(cli, args)
-                    continue
-
-                else:
+                handler = commands.get(command)
+                if handler is None:
                     console.print(f"\n[error]Unknown command: /{command}[/error]")
                     console.print("Type [cyan]/help[/cyan] for available commands.\n")
                     continue
+
+                handler(cli, args)
+                continue
 
             # Issue 12 Part A: explicit ACP server routing takes
             # priority over the normal agent path.
