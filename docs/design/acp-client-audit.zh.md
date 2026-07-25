@@ -158,8 +158,8 @@
 - **修复(顺手):** 在**两条**路径展示前剥离/替换 C0/C1 控制字节(保留 `\n`/`\t`),并对读取的
   每行/每片长度设上限。下次动 `render.py`/`helpers.py` 时并入。(信任姿态:同一 server 已作为
   env 被剥离的子进程运行——这是对*输出*通道的纵深防御,不是头号漏洞。)
-- **状态:已实现**(两条路径都做转义清理 + 每片尺寸上限);readline 级上限**延期**(需重写
-  帧解析)。详见下方"实现状态"。
+- **状态:已实现** —— 两条路径转义清理 + 每片尺寸上限,**以及** readline 级帧上限
+  (`process._read_bounded_lines`,丢弃超大帧策略)。详见下方"实现状态"。
 
 ### AC6 —— re-session + sticky-fatal 的 handshake"舞蹈"复制在 5 处入口 · MEDIUM(危险重复——合并)
 分类*原语*已被提取(`_reclassify_as_handshake_fail` / `_note_handshake_failure_and_maybe_fatal`
@@ -356,7 +356,7 @@ AC8 仍记录待办(顺手项)。
   `finally`;handshake 锁/turn 锁次序、fail-fast 的 `_rollback_ephemeral_on_busy` 门、"别停活赢家
   在用的 proc"守卫均原样保留(逐字搬进 helper)。绿:252 个 acp_client + headless 测试。
 
-- **AC5 —— 已实现(输出加固),一个子项延期。** 新增 `render._sanitize_terminal_text`(剥离 C0
+- **AC5 —— 已实现(输出加固)。** 新增 `render._sanitize_terminal_text`(剥离 C0
   含 ESC、DEL、C1 控制字符;保留 `\n`/`\t`),接入**两条**展示路径:plain 的 `render_plain` 回退
   (那条原样 `sys.stdout.write` 的载体)与 Rich 路径(agent-Markdown 累积 + 前缀行分支)。只剥 ESC
   字节即可让每个 CSI/OSC 序列失效——这是标准、稳健的做法——残留的 `[2J` 之类是惰性文本;我们
@@ -364,11 +364,13 @@ AC8 仍记录待办(顺手项)。
   = 256 KiB`)于 `agent_message_chunk` / `agent_thought_chunk`(唯二不截断返回的 kind),使被攻陷
   server 无法在 inbox + Markdown 累积器里强制多 GB 缓冲;上限远高于任何真实流式增量,故绝不触碰
   合法内容。+9 个有牙测试(`TestTerminalSanitization`/`TestChunkCap`,含 Rich 路径 OSC-设标题/BEL
-  剥离)。**延期(已记录):** `process.py` 的 readline 级硬上限——多 GB 缓冲发生在 C 层
-  `for raw_line in stdout` 内、任何 Python 检查看到该行之前,故真正的上限需要一个带*丢弃超大帧*
-  策略的定长帧 NDJSON 读取器(行内截断会破坏一个合法的超大 JSON-RPC 帧)。那是客户端最热路径上的
-  帧解析重写;鉴于子进程已 env 被剥离、展示缓冲现已被 `_cap_chunk` 限住,留作记录性后续,而不在
-  "顺手"名义下仓促发布。
+  剥离)。**readline 级帧上限——亦已实现**(原本延期的子项):`process._read_bounded_lines`
+  取代 `_feed_stdout` 里的 `for raw_line in stdout`。它以定长 64 KiB `read1()` 切片读管道(保住
+  逐行流式延迟)并跨切片重组帧;当单帧越过 `_MAX_FRAME_BYTES = 16 MiB` 仍无换行时**整帧丢弃**
+  (丢到下一个换行)并记录丢弃字节数,而非行内截断(截断后的行不是合法 JSON-RPC——挂起请求会正常
+  超时而非误解析)。单帧峰值内存被限到 `16 MiB + read_size`,堵住"一条多 GB 行 → 数 GB 驻留"的
+  载体。+7 个测试(`TestBoundedStdoutReader`)覆盖跨切片重组、超大后恢复、超大完整帧、丢弃中 EOF、
+  恰好到上限、以及 `_feed_stdout` 集成丢弃。
 
 - **AC8 —— 部分实现(无漂移的净收益),两项有据跳过。** 已做:(a)`helpers.py`——提取模块级
   `_opt_id` 与参数化的 `_select_option(options, *, canonical_kind, kind_prefix, hints)`;三份复制
@@ -415,6 +417,6 @@ AC8 仍记录待办(顺手项)。
 
 **净结果:** 三个真缺陷已处理(AC1 崩溃、AC2 锁、AC3 孤立孙进程),配有"证明有牙"/行为保持的
 覆盖;两个 Tier-3 重构在并发测试护航下落地(AC6 handshake 舞蹈合并、AC7 `prompt_once` 拆分);
-AC5 输出加固已发布(转义清理 + 分片上限;readline 级上限作为帧解析重写延期);AC8 的无漂移合并
+AC5 输出加固已全部发布(转义清理 + 分片上限 + readline 级定长帧上限);AC8 的无漂移合并
 已落地(`_select_option`、`_selected_outcome`、`_resolve_and_respond`),两个消息-/并发-敏感项留作
 记录。AC4 的"死代码"桶仍降级为一个已实现的测试正确性项(AC4′)+ 一个维护者产品决定。
