@@ -7,13 +7,18 @@ take the ``AgentaoCLI`` instance as their first argument.
 from __future__ import annotations
 
 import subprocess
+import sys
+import tempfile
+import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import readchar
 from prompt_toolkit.formatted_text import ANSI
 from rich.markdown import Markdown
+from rich.markup import escape as markup_escape
 
+from ..capabilities.process import build_child_env, kill_process_tree
 from ._globals import console
 
 if TYPE_CHECKING:
@@ -508,33 +513,131 @@ def run_loop(cli: "AgentaoCLI") -> None:
             continue
 
 
+# Clipboard utilities tried in order by ``/copy``. First one that exists
+# *and* exits 0 wins; a missing binary falls through to the next.
+_CLIPBOARD_COMMANDS: tuple[tuple[str, ...], ...] = (
+    ("pbcopy",),                            # macOS
+    ("xclip", "-selection", "clipboard"),   # X11
+    ("xsel", "--clipboard", "--input"),     # X11 fallback
+)
+
+# A clipboard helper should answer instantly. The bound exists because an
+# unbounded wait can wedge the whole CLI: pbcopy inherits the terminal and
+# has been observed to block indefinitely when the pasteboard server is
+# unresponsive.
+_CLIPBOARD_TIMEOUT = 5.0
+
+
+def _run_clipboard_command(
+    cmd: "tuple[str, ...]", payload: str, timeout: float
+) -> "tuple[int, str]":
+    """Feed ``payload`` to ``cmd``; return ``(returncode, stderr_text)``.
+
+    **Deliberately not** ``capabilities.process.run_captured``, even though
+    the harness rule points there. ``run_captured`` pipes stdout/stderr and
+    ``communicate()`` then waits for *every descendant* to close the write
+    ends. ``xclip`` forks a background process that must outlive its parent
+    to own the X selection, so it never closes them: the call would block
+    for the whole timeout and then have the selection owner destroyed by
+    the tree kill — leaving the clipboard holding stale content. The two
+    properties the rule actually exists for are kept: the child leads its
+    own process group, and a timeout reaps the whole tree via the shared
+    :func:`kill_process_tree`.
+
+    stderr goes to a temporary *file* rather than a pipe. A file has no
+    EOF-blocking semantics, so we can wait on the direct child alone while
+    a lingering grandchild holding the fd costs nothing — diagnostics are
+    preserved without reintroducing the hang.
+
+    Raises ``FileNotFoundError`` / ``OSError`` on spawn failure and
+    ``subprocess.TimeoutExpired`` on timeout, like ``subprocess.run``.
+    """
+    popen_kwargs: dict = {
+        "stdin": subprocess.PIPE,
+        "stdout": subprocess.DEVNULL,
+        "env": build_child_env(),
+    }
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    with tempfile.TemporaryFile() as errfile:
+        proc = subprocess.Popen(list(cmd), stderr=errfile, **popen_kwargs)
+
+        # The write runs on a daemon thread so an oversized payload cannot
+        # deadlock against a child that stops reading: a full pipe buffer
+        # would block us *before* ever reaching wait(), and the timeout
+        # would never fire. On timeout the tree dies, the write fails with
+        # BrokenPipeError, and the thread goes with the interpreter.
+        def _feed() -> None:
+            try:
+                assert proc.stdin is not None
+                # Always UTF-8, byte-exact — never the process locale.
+                proc.stdin.write(payload.encode("utf-8"))
+            except OSError:
+                pass
+            finally:
+                try:
+                    if proc.stdin is not None:
+                        proc.stdin.close()
+                except OSError:
+                    pass
+
+        writer = threading.Thread(target=_feed, daemon=True)
+        writer.start()
+        try:
+            returncode = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            kill_process_tree(proc)
+            raise
+        finally:
+            writer.join(timeout=1.0)
+
+        errfile.seek(0)
+        stderr_text = errfile.read().decode("utf-8", errors="replace")
+
+    return returncode, stderr_text
+
+
 def _copy_last_response(cli: "AgentaoCLI") -> None:
     if cli.last_response is None:
         console.print("\n[warning]No response to copy yet.[/warning]\n")
         return
-    try:
-        subprocess.run(
-            ["pbcopy"], input=cli.last_response.encode(), check=True
-        )
-        console.print("\n[cyan]Copied to clipboard.[/cyan]\n")
-    except FileNotFoundError:
+
+    last_error: Optional[str] = None
+    for cmd in _CLIPBOARD_COMMANDS:
         try:
-            subprocess.run(
-                ["xclip", "-selection", "clipboard"],
-                input=cli.last_response.encode(), check=True
+            returncode, stderr_text = _run_clipboard_command(
+                cmd, cli.last_response, _CLIPBOARD_TIMEOUT
             )
+        except FileNotFoundError:
+            continue  # utility not installed — try the next one
+        except subprocess.TimeoutExpired:
+            last_error = f"{cmd[0]} timed out after {_CLIPBOARD_TIMEOUT:g}s"
+            continue
+        except OSError as e:
+            last_error = f"{cmd[0]}: {e}"
+            continue
+
+        if returncode == 0:
             console.print("\n[cyan]Copied to clipboard.[/cyan]\n")
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            try:
-                subprocess.run(
-                    ["xsel", "--clipboard", "--input"],
-                    input=cli.last_response.encode(), check=True
-                )
-                console.print("\n[cyan]Copied to clipboard.[/cyan]\n")
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                console.print("\n[error]No clipboard utility found (pbcopy/xclip/xsel).[/error]\n")
-    except subprocess.CalledProcessError as e:
-        console.print(f"\n[error]Copy failed: {e}[/error]\n")
+            return
+        last_error = stderr_text.strip() or f"{cmd[0]} exited {returncode}"
+
+    if last_error is None:
+        console.print(
+            "\n[error]No clipboard utility found (pbcopy/xclip/xsel).[/error]\n"
+        )
+    else:
+        # ``last_error`` carries raw child stderr. Rich parses any
+        # ``[token]`` as markup, so an unescaped bracketed path in it
+        # (``xclip: [/dev/null] not writable``) raises MarkupError out of
+        # this function and the real diagnostic is lost behind a parse
+        # error. Escape it, as every other untrusted interpolation does.
+        console.print(
+            f"\n[error]Copy failed: {markup_escape(last_error)}[/error]\n"
+        )
 
 
 def _handle_plan_approval(cli: "AgentaoCLI") -> None:
