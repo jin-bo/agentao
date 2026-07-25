@@ -35,6 +35,7 @@ Pick the path that matches your goal:
 - Logging and debugging: [guides/logging.md](guides/logging.md)
 - Model and provider switching: [guides/model-switching.md](guides/model-switching.md)
 - Skills and runtime extension: [guides/skills.md](guides/skills.md)
+- Adding a built-in tool or skill to this repo: [guides/adding-components.md](guides/adding-components.md)
 
 ## Start
 
@@ -58,6 +59,7 @@ Task-oriented how-to guides and per-feature documentation.
 | [guides/logging.md](guides/logging.md) | You are debugging sessions, tool calls, or model behavior |
 | [guides/model-switching.md](guides/model-switching.md) | You want to switch providers or models cleanly |
 | [guides/skills.md](guides/skills.md) | You are creating, installing, or managing skills |
+| [guides/adding-components.md](guides/adding-components.md) | You are adding a built-in tool or skill to the Agentao codebase |
 | [guides/memory-quickstart.md](guides/memory-quickstart.md) | Memory usage from a user perspective |
 | [guides/memory-management.md](guides/memory-management.md) | Memory behavior and implementation details |
 | [guides/session-replay.md](guides/session-replay.md) | Structured JSONL replay of runtime events |
