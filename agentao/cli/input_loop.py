@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import readchar
 from prompt_toolkit.formatted_text import ANSI
 from rich.markdown import Markdown
 
+from ..capabilities.process import run_captured
 from ._globals import console
 
 if TYPE_CHECKING:
@@ -508,33 +509,60 @@ def run_loop(cli: "AgentaoCLI") -> None:
             continue
 
 
+# Clipboard utilities tried in order by ``/copy``. First one that exists
+# *and* exits 0 wins; a missing binary falls through to the next.
+_CLIPBOARD_COMMANDS: tuple[tuple[str, ...], ...] = (
+    ("pbcopy",),                            # macOS
+    ("xclip", "-selection", "clipboard"),   # X11
+    ("xsel", "--clipboard", "--input"),     # X11 fallback
+)
+
+# A clipboard helper should answer instantly. The bound exists because a
+# bare ``subprocess.run`` without one can wedge the whole CLI: pbcopy
+# inherits the terminal and has been observed to block indefinitely when
+# the pasteboard server is unresponsive.
+_CLIPBOARD_TIMEOUT = 5.0
+
+
 def _copy_last_response(cli: "AgentaoCLI") -> None:
     if cli.last_response is None:
         console.print("\n[warning]No response to copy yet.[/warning]\n")
         return
-    try:
-        subprocess.run(
-            ["pbcopy"], input=cli.last_response.encode(), check=True
-        )
-        console.print("\n[cyan]Copied to clipboard.[/cyan]\n")
-    except FileNotFoundError:
+
+    # ``run_captured`` (not ``subprocess.run``) per the harness-wide rule:
+    # it puts the child in its own process group and kills the whole tree
+    # on timeout, so a grandchild holding the captured pipe cannot outlive
+    # the bound. See ``agentao/capabilities/process.py``.
+    last_error: Optional[str] = None
+    for cmd in _CLIPBOARD_COMMANDS:
         try:
-            subprocess.run(
-                ["xclip", "-selection", "clipboard"],
-                input=cli.last_response.encode(), check=True
+            proc = run_captured(
+                list(cmd),
+                input=cli.last_response,
+                timeout=_CLIPBOARD_TIMEOUT,
             )
+        except FileNotFoundError:
+            continue  # utility not installed — try the next one
+        except subprocess.TimeoutExpired:
+            last_error = f"{cmd[0]} timed out after {_CLIPBOARD_TIMEOUT:g}s"
+            continue
+        except OSError as e:
+            last_error = f"{cmd[0]}: {e}"
+            continue
+
+        if proc.returncode == 0:
             console.print("\n[cyan]Copied to clipboard.[/cyan]\n")
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            try:
-                subprocess.run(
-                    ["xsel", "--clipboard", "--input"],
-                    input=cli.last_response.encode(), check=True
-                )
-                console.print("\n[cyan]Copied to clipboard.[/cyan]\n")
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                console.print("\n[error]No clipboard utility found (pbcopy/xclip/xsel).[/error]\n")
-    except subprocess.CalledProcessError as e:
-        console.print(f"\n[error]Copy failed: {e}[/error]\n")
+            return
+        last_error = (proc.stderr or "").strip() or (
+            f"{cmd[0]} exited {proc.returncode}"
+        )
+
+    if last_error is None:
+        console.print(
+            "\n[error]No clipboard utility found (pbcopy/xclip/xsel).[/error]\n"
+        )
+    else:
+        console.print(f"\n[error]Copy failed: {last_error}[/error]\n")
 
 
 def _handle_plan_approval(cli: "AgentaoCLI") -> None:
