@@ -246,6 +246,25 @@ def _print_turn(turn: dict, console_) -> None:
                 f"  [dim]state[/dim]   "
                 f"[cyan]{kind}[/cyan] {_summarize_replay_event(e)}"
             )
+        # v1.2 host-projected audit kinds. This loop is an allowlist —
+        # a kind that is not named here is dropped silently, which is
+        # how these three (recorded correctly to JSONL since v1.2)
+        # stayed invisible in the default grouped view.
+        #
+        # Only what the turn does not already show. ``_collect_tool_rows``
+        # above already prints one row per call with name, status, error
+        # and approved/denied, so echoing every started/ok lifecycle and
+        # every ``allow`` decision would bury the conversation under ~3
+        # duplicate lines per tool call. The grouped view is a narrative;
+        # ``--raw`` remains the complete record.
+        elif kind == "tool_lifecycle":
+            if (e.get("payload") or {}).get("outcome") in ("error", "cancelled"):
+                console_.print(f"  [dim]tool*[/dim]   {_summarize_replay_event(e)}")
+        elif kind == "subagent_lifecycle":
+            console_.print(f"  [dim]agent*[/dim]  {_summarize_replay_event(e)}")
+        elif kind == "permission_decision":
+            if (e.get("payload") or {}).get("outcome") != "allow":
+                console_.print(f"  [dim]perm[/dim]    {_summarize_replay_event(e)}")
         elif kind == "plugin_hook_fired":
             p = e.get("payload") or {}
             outcome = p.get("outcome", "allow")

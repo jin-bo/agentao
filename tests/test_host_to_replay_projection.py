@@ -431,3 +431,125 @@ def test_reverse_projection_strips_sanitizer_metadata(tmp_path: Path) -> None:
     assert rehydrated.tool_call_id == tool.tool_call_id
     assert rehydrated.session_id == tool.session_id
     assert rehydrated.summary is not None and secret not in rehydrated.summary
+
+
+# ── Envelope turn_id is the *replay* id space, not the runtime's ─────
+
+
+def test_envelope_turn_id_comes_from_the_provider_not_the_payload(tmp_path: Path) -> None:
+    """The JSONL envelope and the host payload are two id spaces.
+
+    ``ReplayAdapter`` mints a short per-turn id and stamps every
+    replay-native event with it; the host payload carries the *runtime's*
+    ``turn_id`` (a uuid4). Forwarding the payload's value into the
+    envelope — which is what ``_group_events_into_turns`` keys on — put
+    these events in an id space the grouper had never seen, so
+    ``/replay show`` rendered them as extra phantom turns with no user
+    message and no final text.
+    """
+    recorder = ReplayRecorder.create("sess-x", tmp_path)
+    sink = HostReplaySink(recorder, turn_id_provider=lambda: "replay-turn")
+
+    assert sink.record(
+        ToolLifecycleEvent(
+            session_id="sess-x",
+            turn_id="00000000-1111-2222-3333-444444444444",  # runtime uuid4
+            tool_call_id="tc-1",
+            tool_name="run_shell_command",
+            phase="completed",
+            started_at=_now(),
+            completed_at=_now(),
+            outcome="ok",
+        )
+    )
+    recorder.close()
+
+    (event,) = [
+        e for e in _read_jsonl(recorder.path)
+        if e["kind"] == EventKind.TOOL_LIFECYCLE
+    ]
+    assert event["turn_id"] == "replay-turn", "envelope must use the replay id space"
+    # The host contract value is untouched — a rehydrated event still
+    # reports the runtime turn it belonged to.
+    assert event["payload"]["turn_id"] == "00000000-1111-2222-3333-444444444444"
+
+
+def test_subagent_lifecycle_gets_a_turn_id_despite_having_no_field(tmp_path: Path) -> None:
+    """``SubagentLifecycleEvent`` has no ``turn_id`` field at all, so the
+    payload fallback wrote ``None`` and every such row fell out of its
+    turn into the flat session-level block."""
+    recorder = ReplayRecorder.create("sess-x", tmp_path)
+    sink = HostReplaySink(recorder, turn_id_provider=lambda: "replay-turn")
+
+    assert sink.record(
+        SubagentLifecycleEvent(
+            session_id="sess-x",
+            parent_session_id="sess-x",
+            child_task_id="ct-1",
+            phase="completed",
+            started_at=_now(),
+            completed_at=_now(),
+        )
+    )
+    recorder.close()
+
+    (event,) = [
+        e for e in _read_jsonl(recorder.path)
+        if e["kind"] == EventKind.SUBAGENT_LIFECYCLE
+    ]
+    assert event["turn_id"] == "replay-turn"
+    assert "turn_id" not in event["payload"], "model has no such field"
+
+
+def test_without_a_provider_the_payload_fallback_is_preserved(tmp_path: Path) -> None:
+    """A standalone sink (tests, pull-mode callers) keeps prior behavior."""
+    recorder = ReplayRecorder.create("sess-x", tmp_path)
+    sink = HostReplaySink(recorder)  # no provider
+
+    assert sink.record(
+        ToolLifecycleEvent(
+            session_id="sess-x",
+            turn_id="turn-from-payload",
+            tool_call_id="tc-1",
+            tool_name="t",
+            phase="completed",
+            started_at=_now(),
+            completed_at=_now(),
+            outcome="ok",
+        )
+    )
+    recorder.close()
+
+    (event,) = [
+        e for e in _read_jsonl(recorder.path)
+        if e["kind"] == EventKind.TOOL_LIFECYCLE
+    ]
+    assert event["turn_id"] == "turn-from-payload"
+
+
+def test_a_raising_provider_degrades_to_no_turn_id(tmp_path: Path) -> None:
+    """Audit storage must never take the runtime down with it."""
+    recorder = ReplayRecorder.create("sess-x", tmp_path)
+
+    def _boom():
+        raise RuntimeError("adapter went away")
+
+    sink = HostReplaySink(recorder, turn_id_provider=_boom)
+    assert sink.record(
+        PermissionDecisionEvent(
+            session_id="sess-x",
+            tool_name="write_file",
+            decision_id="d-1",
+            outcome="deny",
+            mode="read-only",
+            loaded_sources=[],
+            decided_at=_now(),
+        )
+    )
+    recorder.close()
+
+    (event,) = [
+        e for e in _read_jsonl(recorder.path)
+        if e["kind"] == EventKind.PERMISSION_DECISION
+    ]
+    assert event["turn_id"] is None

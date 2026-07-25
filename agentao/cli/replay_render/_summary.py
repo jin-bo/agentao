@@ -45,6 +45,11 @@ def _summarize_replay_event(event: dict) -> str:
             f"[dim]cwd={markup_escape(str(payload.get('cwd', '')))} "
             f"model={markup_escape(str(payload.get('model', '')))}[/dim]"
         )
+    if kind == "session_ended":
+        # Written by ``ReplayManager.end()`` on /clear, /new and exit, so
+        # it lands in every completed replay file — it was previously
+        # exempted here as "never emitted" and degraded to a key preview.
+        return f"[dim]session={markup_escape(str(payload.get('session_id', ''))[:8])}[/dim]"
     if kind == "user_message":
         text = str(payload.get("content", ""))
         return f"[dim]{markup_escape(text[:120])}[/dim]" + ("…" if len(text) > 120 else "")
@@ -195,6 +200,60 @@ def _summarize_replay_event(event: dict) -> str:
             f"[dim]{markup_escape(str(payload.get('hook_name', '')))} "
             f"rules={payload.get('rule_count')}[/dim]"
         )
+    # ── v1.2 host-projected audit kinds ─────────────────────────────
+    # These mirror the public models in ``agentao.host.models``. They
+    # exist so an embedded host has one audit artifact instead of two
+    # parallel streams, so the CLI's own view must render them rather
+    # than fall through to the key-name preview below.
+    if kind == "tool_lifecycle":
+        phase = str(payload.get("phase", ""))
+        outcome = payload.get("outcome")
+        label = str(outcome or phase)
+        color = {
+            "ok": "green", "error": "error", "cancelled": "warning",
+        }.get(label, "cyan")
+        bits = [str(payload.get("tool_name", ""))]
+        # ``tool_call_id`` is required on ToolLifecycleEvent. Without it,
+        # three interleaved read_file calls render as three identical
+        # lines that cannot be told apart or joined to the ``id=`` column
+        # in the turn's tools table — which defeats the whole point of a
+        # single audit artifact.
+        call_id = str(payload.get("tool_call_id", "") or "")
+        if call_id:
+            bits.append(f"id={call_id[:8]}")
+        if payload.get("error_type"):
+            bits.append(str(payload["error_type"]))
+        if payload.get("summary"):
+            bits.append(str(payload["summary"])[:80])
+        return (
+            f"[{color}]{markup_escape(label)}[/{color}] "
+            f"[dim]{markup_escape(' · '.join(b for b in bits if b))}[/dim]"
+        )
+    if kind == "subagent_lifecycle":
+        phase = str(payload.get("phase", ""))
+        color = {
+            "completed": "green", "failed": "error", "cancelled": "warning",
+        }.get(phase, "cyan")
+        task = str(payload.get("task_summary", "") or "")
+        tail = f" {markup_escape(task[:80])}" if task else ""
+        return (
+            f"[{color}]{markup_escape(phase)}[/{color}] "
+            f"[dim]task={markup_escape(str(payload.get('child_task_id', '')))}"
+            f"{tail}[/dim]"
+        )
+    if kind == "permission_decision":
+        outcome = str(payload.get("outcome", ""))
+        color = {
+            "allow": "green", "deny": "error", "prompt": "warning",
+        }.get(outcome, "cyan")
+        reason = str(payload.get("reason", "") or "")
+        tail = f" {markup_escape(reason[:80])}" if reason else ""
+        return (
+            f"[{color}]{markup_escape(outcome)}[/{color}] "
+            f"[dim]{markup_escape(str(payload.get('tool_name', '')))} "
+            f"mode={markup_escape(str(payload.get('mode', '')))}{tail}[/dim]"
+        )
+
     # Unknown kind — preview payload keys rather than a crash or a blank.
     preview_keys = ", ".join(sorted(str(k) for k in payload.keys())[:5])
     return f"[dim]{markup_escape(preview_keys)}[/dim]"

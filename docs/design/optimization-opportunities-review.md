@@ -7,8 +7,18 @@ records where the codebase carries localized performance cost, packaging dead
 weight, or drift-prone duplication — and, *for the maintainer's judgment*, what
 to fix now, what to consolidate, and what to leave alone.
 **Audience:** Agentao maintainers.
+
+> **Superseded in part (2026-07-25).** Tier 1–2 shipped in v0.4.12 (see
+> *Implementation status* at the end of this doc). **Tier 3 is formally
+> declined** — `refactor-audit-2026-07.md` §5 re-examined all three items and
+> found the maintenance-cost premise unsupported by 12-month churn data, and
+> T3.2 additionally breaking for embedded hosts. Do not re-raise them without
+> new evidence.
+
 **Companion:** `optimization-opportunities-review.zh.md`.
 **Related:**
+- `refactor-audit-2026-07.md` — the July follow-up audit + reverse review;
+  declines this doc's Tier 3 and records what else was rejected and why.
 - `core-boundary-review.md` — the core/host package-boundary audit; several
   findings here respect the boundaries it documents (don't pull display logic
   into core, etc.).

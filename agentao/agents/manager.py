@@ -9,6 +9,13 @@ from ..tools.base import RegistrableTool, Tool
 from .tools import AgentToolWrapper, CheckBackgroundAgentTool
 
 if TYPE_CHECKING:
+    # Declared here, not at module scope: the plugin subsystem is an
+    # optional dependency, so ``register_plugin_agents`` keeps its real
+    # import inside the function body. Without these the string
+    # annotations on that method name types that nothing ever binds, so
+    # no static checker can resolve them (ruff F821).
+    from agentao.plugins.models import PluginAgentDefinition, PluginLoadError
+
     from .bg_store import BackgroundTaskStore
 
 
