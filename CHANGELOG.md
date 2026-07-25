@@ -5,11 +5,49 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.4.16] — 2026-07-25
 
-_Targeting 0.4.16. Add entries under the relevant heading as work lands._
+A **boundary-hardening release**. 0.4.15 was about the harness not lying about
+its own internals; 0.4.16 extends that to the seams where agentao talks to
+something it does not control — an ACP server subprocess, an MCP server over
+HTTP, a keyless search backend, a clipboard helper — and to the audit trail
+meant to record what happened at those seams.
+
+No breaking changes. It upgrades in place.
 
 ### Added
+
+- **A host embedding the interactive CLI can now inject its own runtime.**
+  `Agentao` has accepted `extra_tools` / `disable_tools` / `enabled_tools` for
+  several releases and `build_from_environment(**overrides)` forwards them, but
+  `AgentaoCLI` called the factory with a fixed kwarg set and `main()`
+  constructed the CLI and ran it immediately — so that contract was unreachable
+  from the CLI surface. The only workaround was patching module globals, which
+  fails silently: `cli/app.py` imported a name it never used, and four test
+  modules had been patching that dead name while intercepting nothing.
+
+  Both entry points now take a keyword-only `agent_factory`, called as
+  `factory(transport=self, max_context_tokens=…, plan_session=…)` — the shape
+  `acp/session_new.py` already used. Default `None` takes the existing path, so
+  console startup is unchanged.
+
+  ```python
+  main(agent_factory=partial(
+      build_from_environment,
+      extra_tools=[NewsSearchTool(), PublishTool()],
+      disable_tools={"web_search"},
+  ))
+  ```
+
+  The returned runtime is checked against the post-conditions the CLI relies on
+  — required attributes reported together in one `TypeError`, a non-`None`
+  `permission_engine`, a `_plan_session` identical to the CLI's, and the CLI
+  reachable from both `agent.transport` and `tool_runner._transport` — so a
+  mis-wired factory names the violated contract instead of failing later as an
+  `AttributeError` on `None`. A `functools.partial` that pre-binds `transport=`
+  is rejected before the call, since Python resolves `partial(f, k=v)(k=w)` to
+  `w` and would silently discard the host's value while every post-condition
+  still passed. (#133)
 
 ### Changed
 
@@ -52,7 +90,91 @@ _Targeting 0.4.16. Add entries under the relevant heading as work lands._
   spec-conformant client already handles all five, but a client that hardcoded
   the previous four will see a value it did not expect.
 
+- **MCP URL-transport requests now identify themselves.** SSE and Streamable
+  HTTP traffic — the content-type preflight, the handshake, and every tool call
+  — went out with httpx's bare `python-httpx/x.y.z`, leaving agentao anonymous
+  in server logs and indistinguishable from any other Python client. They now
+  send `User-Agent: agentao-mcp/<version>`. A `User-Agent` set in the server's
+  `headers` block still wins, matched case-insensitively, and the config dict is
+  copied rather than mutated, so a reconnect does not accumulate state. stdio
+  servers are unaffected. This does change what remote servers see on the wire:
+  a server or WAF that filters on User-Agent may need its allow-list updated,
+  which the `headers` override covers. (#136)
+
+- `run_loop`'s 31-branch slash-command if/elif chain is now a dispatch table
+  (353 → 127 LOC, cyclomatic complexity 74 → 26); no behavior change, and
+  `/sandbox` gained the tab-completion entry it had always been missing. (#142)
+
 ### Fixed
+
+- **`web_search` no longer reports a bot-challenge page as "no results".**
+  `html.duckduckgo.com` answers HTTP 202 with a captcha page instead of a result
+  set. `raise_for_status()` waves 202 through (it is 2xx), the result-div scan
+  yields zero, and the formatter turned that into a confident
+  `No search results found for: <query>` — indistinguishable from a genuine
+  empty answer. On a keyless host that was the entire search surface failing
+  quietly, since `duckduckgo` is the only backend in the chain when no key
+  resolves. The backend now raises when the response is 202 **or** the `#links`
+  results container is absent; a real zero-hit SERP still renders `#links` and
+  stays terminal. Relatedly, six sites claiming the `jina` backend works without
+  a key were corrected — `s.jina.ai` began requiring one after 0.4.14. (#135)
+
+- **`/copy` can no longer hang the input loop.** It called `subprocess.run`
+  three times with no `timeout=`, so a `pbcopy` wedged on an unresponsive
+  pasteboard server blocked the loop with no way out but `Ctrl+C`. Every attempt
+  is now bounded at 5s and routed through `run_captured`, so a grandchild
+  holding the captured pipe cannot outlive the bound. A timeout or non-zero exit
+  now also falls through to the next utility instead of aborting the chain —
+  a failing `pbcopy` previously reported "Copy failed" without ever trying
+  `xclip` or `xsel`. (#139)
+
+- **Replay's v1.2 audit events are rendered, not just recorded.**
+  `tool_lifecycle`, `subagent_lifecycle`, and `permission_decision` exist so an
+  embedded host has one audit artifact instead of two parallel streams. The
+  JSONL side was correct; both CLI views were not — `--raw` degraded them to a
+  sorted payload-key preview, and the default grouped view dropped them
+  entirely, because `_print_turn`'s event loop is an allowlist that silently
+  skips an unnamed kind. A turn containing a **denied** permission decision and
+  a **failed** tool rendered as a bare `└─ ok`. (#141)
+
+- **`stop_all()` no longer crashes mid-shutdown and leaks servers.** It iterated
+  the live `_clients` dict that a concurrent liveness poll could pop from,
+  raising `dictionary changed size during iteration` and leaving the remaining
+  subprocesses running. Now snapshots with `list(...)`. Bites concurrent
+  embedding, not the CLI. (#137)
+
+- **Killing an ACP server no longer orphans its grandchildren.** Server
+  subprocesses were spawned without their own process group, so a force-kill
+  reaped the server and left the MCP or shell children it had spawned running.
+  They now start with `start_new_session` / `CREATE_NEW_PROCESS_GROUP`, the
+  final force-kill routes through `kill_process_tree`, and a whole-tree sweep
+  runs **unconditionally** after SIGTERM — a server that dies on SIGTERM without
+  reaping its own children would otherwise still orphan them. (#137)
+
+- The ACP handshake-fail-streak reset now holds `_recovery_lock`, like every
+  other write to that state. (#137)
+
+### Security
+
+- **A hostile or buggy ACP server can no longer write escape sequences to your
+  terminal.** `render._sanitize_terminal_text` strips C0/DEL/C1 controls and the
+  Unicode bidi-override characters behind Trojan-Source (CVE-2021-42574) at
+  **every** display boundary — the render layer *and* the inline interaction
+  handler in `cli/commands_ext/acp.py`. The second one is the point: a sanitizer
+  that covers all but one display path is not a sanitizer. (#137)
+
+- **Server output is bounded at three levels.** `helpers._cap_chunk` caps agent
+  chunks, permission titles, and `ask_user` questions at 262,144 chars;
+  `render._MAX_AGENT_RENDER_CHARS` bounds cross-chunk Markdown accumulation at
+  1,048,576 chars; and `process._read_bounded_lines` caps a single stdout frame
+  at 16 MiB.
+  The last closes the deepest hole: `for raw_line in stdout` would buffer one
+  gigantic newline-less line whole — gigabytes in RAM — before Python ever saw
+  it. The reader now consumes the pipe in 64 KiB `read1()` slices, reassembles
+  newline-delimited frames across them, and **drops** an oversized frame whole
+  rather than truncating it, because a truncated line is not valid JSON-RPC and
+  would mis-parse instead of letting the pending request time out cleanly. Peak
+  per-frame memory is 16 MiB + one read slice. (#137, #138)
 
 ---
 
