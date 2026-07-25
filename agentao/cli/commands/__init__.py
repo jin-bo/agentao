@@ -13,7 +13,11 @@ from .context import handle_context_command
 from .goal import handle_goal_command
 from .image import handle_image_command
 from .mcp import handle_mcp_command
-from .permission import handle_permission_command, handle_sandbox_command
+from .permission import (
+    handle_mode_command,
+    handle_permission_command,
+    handle_sandbox_command,
+)
 from .planning import handle_plan_command, handle_todos_command
 from .provider import (
     handle_model_command,
@@ -21,21 +25,27 @@ from .provider import (
     handle_temperature_command,
     handle_thinking_command,
 )
+from .reset import handle_clear_command, handle_new_command
 from .sessions import handle_sessions_command, resume_session
+from .skills import handle_skills_command
 from .tools_intro import handle_tools_command
 
 __all__ = [
+    "handle_clear_command",
     "handle_compact_command",
     "handle_context_command",
     "handle_goal_command",
     "handle_image_command",
     "handle_mcp_command",
+    "handle_mode_command",
     "handle_model_command",
+    "handle_new_command",
     "handle_permission_command",
     "handle_plan_command",
     "handle_provider_command",
     "handle_sandbox_command",
     "handle_sessions_command",
+    "handle_skills_command",
     "handle_temperature_command",
     "handle_thinking_command",
     "handle_todos_command",
