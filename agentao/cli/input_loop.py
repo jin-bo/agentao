@@ -187,9 +187,11 @@ def _handle_markdown_command(cli: "AgentaoCLI", args: str) -> None:
 def _handle_memory_command(cli: "AgentaoCLI", args: str) -> None:
     from .commands_ext import show_memories
 
-    # ``strip_rest=False`` preserves the pre-table behavior: the memory
-    # value in ``/memory save <key> <value>`` keeps its trailing spaces.
-    sub, rest = split_subcommand(args, strip_rest=False)
+    # Equivalent to the pre-table ``args.split(maxsplit=1)``: ``args``
+    # already arrives stripped from run_loop, and ``split(None, 1)`` never
+    # leaves whitespace on either end of the remainder — so the default
+    # ``strip_rest=True`` is byte-identical here, not a behavior change.
+    sub, rest = split_subcommand(args)
     show_memories(cli, sub, rest)
 
 

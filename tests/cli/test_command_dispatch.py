@@ -48,8 +48,16 @@ def test_every_command_is_tab_completable(table):
 
 
 def test_every_command_appears_in_help(table):
-    src = open(help_text.__file__, encoding="utf-8").read()
-    mentioned = set(re.findall(r"/([a-z]+)", src))
+    """Matched against ``CLI_HELP_TEXT`` — the string ``/help`` actually
+    prints — not the module's raw bytes.
+
+    Greping the source file would count any lowercase token after a slash
+    anywhere in the module: ``.agentao/settings.json``, ``--clipboard
+    --input``, doc prose. That makes the guard one edit away from silent —
+    drop ``/tools`` from the help body while any string in the file
+    contains ``agentao/tools/`` and this would still pass.
+    """
+    mentioned = set(re.findall(r"/([a-z]+)", help_text.CLI_HELP_TEXT))
     dispatchable = (set(table) | set(_EXIT_COMMANDS)) - _UNADVERTISED_ALIASES
     missing = dispatchable - mentioned
     assert not missing, f"dispatchable but absent from /help: {sorted(missing)}"
@@ -81,8 +89,32 @@ def test_every_handler_accepts_cli_and_args(table):
 
 
 def test_table_is_rebuilt_not_cached_across_calls():
-    """Handlers are looked up once per loop start; two builds must agree."""
-    assert set(_build_command_table()) == set(_build_command_table())
+    """Two builds must be distinct objects, not a memoized singleton.
+
+    Comparing key *sets* — as the first version of this test did — is true
+    by construction: it holds for the same object and cannot fail for the
+    property the name claims. Identity can.
+    """
+    assert _build_command_table() is not _build_command_table()
+
+
+def test_handlers_are_bound_to_the_right_function(table):
+    """Key-set comparisons never touch the values, so a swapped binding
+    (``"clear": handle_new_command``) would go unnoticed. Spot-check the
+    pairs where a mix-up is both plausible and damaging."""
+    from agentao.cli.commands import (
+        handle_clear_command,
+        handle_mode_command,
+        handle_new_command,
+        handle_permission_command,
+        handle_skills_command,
+    )
+
+    assert table["clear"] is handle_clear_command
+    assert table["new"] is handle_new_command
+    assert table["mode"] is handle_mode_command
+    assert table["permission"] is handle_permission_command
+    assert table["skills"] is handle_skills_command
 
 
 # ── Behavior preserved through the extraction ───────────────────────
