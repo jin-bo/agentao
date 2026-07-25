@@ -246,6 +246,16 @@ def _print_turn(turn: dict, console_) -> None:
                 f"  [dim]state[/dim]   "
                 f"[cyan]{kind}[/cyan] {_summarize_replay_event(e)}"
             )
+        # v1.2 host-projected audit kinds. This loop is an allowlist —
+        # a kind that is not named here is dropped silently, which is
+        # how these three (recorded correctly to JSONL since v1.2)
+        # stayed invisible in the default grouped view.
+        elif kind == "tool_lifecycle":
+            console_.print(f"  [dim]tool*[/dim]   {_summarize_replay_event(e)}")
+        elif kind == "subagent_lifecycle":
+            console_.print(f"  [dim]agent*[/dim]  {_summarize_replay_event(e)}")
+        elif kind == "permission_decision":
+            console_.print(f"  [dim]perm[/dim]    {_summarize_replay_event(e)}")
         elif kind == "plugin_hook_fired":
             p = e.get("payload") or {}
             outcome = p.get("outcome", "allow")

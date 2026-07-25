@@ -53,7 +53,8 @@ Retrospective analyses — competitive/borrow reviews, conformance gap reviews, 
 - **code-mode-ptc-review** *(zh only)* — Code Mode / Programmatic Tool Calling decision record; 4 peer impls compared, current decision **not to start** pending demand (2026-07-09, 4th impl added 07-11).
 - **codex-goal-mechanism-review** — two parts: Codex `/goal` mechanism teardown (§§1–9, descriptive) + agentao candidate design (§§10–11, **not approved**) (2026-06-23).
 - **subagent-discovery-entrypoint-review** — sub-agent discovery asymmetry across the three entry points; corrects the skill-vs-plugin conflation the original report assumed (2026-06-23).
-- **optimization-opportunities-review** — multi-dimension audit (complexity / per-turn perf / duplication / packaging); Tier 1–3 findings, evidence-backed (2026-06-19).
+- **refactor-audit-2026-07** — full-tree refactor audit **plus an adversarial reverse review of its own findings**: 7 candidates → 3 shipped (#139/#140 + replay v1.2 render), 4 declined with evidence. Formally declines `optimization-opportunities-review`'s Tier 3 on churn data. Read the *declined* half first (2026-07-24/25).
+- **optimization-opportunities-review** — multi-dimension audit (complexity / per-turn perf / duplication / packaging); Tier 1–3 findings, evidence-backed (2026-06-19). **Tier 1–2 shipped in v0.4.12; Tier 3 declined — see refactor-audit-2026-07 §5.**
 - **vendor-sdk-convergence-review** — Claude/OpenAI Agent SDKs converged on Path A's pitch; §16.4 trigger determination (2026-06-18).
 - **acp-server-conformance-review** — agentao ACP server vs official ACP v1; gaps G1–G6 + chat/automation target decision (2026-06-18).
 - **core-boundary-review** — core vs host package-boundary audit (codex parallel, 2026-05).

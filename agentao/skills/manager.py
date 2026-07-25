@@ -4,11 +4,19 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 from agentao.frontmatter import parse_frontmatter
 
 from ..paths import user_root
+
+if TYPE_CHECKING:
+    # Declared here, not at module scope: the plugin subsystem is an
+    # optional dependency, so ``register_plugin_skills`` keeps its real
+    # import inside the function body. Without these the string
+    # annotations on that method name types that nothing ever binds, so
+    # no static checker can resolve them (ruff F821).
+    from agentao.plugins.models import PluginLoadError, PluginSkillEntry
 
 # Global skills directory (shared across all projects). Cwd-independent.
 _GLOBAL_SKILLS_DIR = user_root() / "skills"
