@@ -166,6 +166,10 @@ The authoritative list with full subcommand syntax lives in `agentao/cli/help_te
 - `/clear` — saves current session, clears conversation + **all memories**, starts a new one.
 - `/model`, `/provider`, `/temperature`, `/thinking` — LLM config. `/thinking [minimal|low|medium|high|off]` sets thinking depth (`reasoning_effort`) on the live client's `extra_body` passthrough (`cli/commands/provider.py::handle_thinking_command`); `off` clears it. No auto-recovery — a model that rejects `reasoning_effort` fails until `off` (see `docs/design/host-llm-extra-params.md`).
 
+## Adding new components
+
+Adding a built-in tool or a skill to this repo: see [docs/guides/adding-components.md](docs/guides/adding-components.md). The non-obvious part is that tools register in `agentao/tooling/registry.py::register_builtin_tools()`, not in `agent.py`.
+
 ## Common gotchas
 
 - **`cli.py` was split into the `cli/` package** in 0.4.x. Older docs and design notes may still say `cli.py` — grep `agentao/cli/` for the actual handler.
