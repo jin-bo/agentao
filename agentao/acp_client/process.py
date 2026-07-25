@@ -11,12 +11,13 @@ layered on top in Issues 03–04.
 from __future__ import annotations
 
 import collections
+import io
 import logging
 import queue
 import subprocess
 import sys
 import threading
-from typing import List, Optional
+from typing import Callable, Iterator, List, Optional
 
 from ..capabilities.process import build_child_env, kill_process_tree
 from .models import AcpProcessInfo, AcpServerConfig, ServerState
@@ -35,7 +36,90 @@ _TERMINATE_STOP_TIMEOUT = 5.0
 # Final reap window after force-killing the process tree.
 _KILL_STOP_TIMEOUT = 2.0
 
+# Hard cap on a single stdout frame (one newline-delimited JSON-RPC line). A
+# malicious/buggy server can emit a gigantic line with no newline; the naive
+# ``for line in stdout`` (``readline``) would buffer the whole thing (GB in RAM)
+# before Python ever saw it. Frames larger than this are dropped whole — far
+# above any legitimate ACP message. See docs/design/acp-client-audit.md AC5.
+_MAX_FRAME_BYTES = 16 * 1024 * 1024
+# Slice size for the bounded reader's ``read1()`` calls — keeps line-at-a-time
+# streaming latency while never pulling more than this into memory per read.
+_STDOUT_READ_CHUNK = 64 * 1024
+
 logger = logging.getLogger("agentao.acp_client")
+
+
+def _read_bounded_lines(
+    stream: io.BufferedIOBase,
+    max_bytes: int,
+    *,
+    on_oversize: Callable[[int], None],
+    read_size: int = _STDOUT_READ_CHUNK,
+) -> Iterator[bytes]:
+    """Yield newline-terminated frames (``bytes``, incl. the trailing ``\\n``).
+
+    Reads *stream* (a binary file object) in bounded ``read_size`` slices via
+    ``read1`` — so a server that streams one line and waits still sees it
+    delivered promptly, exactly like ``for line in stream`` — and reassembles
+    frames across slices. When a single frame grows past *max_bytes* without a
+    terminating newline, the rest of that frame (up to the next newline) is
+    discarded and its total size reported via *on_oversize(nbytes)*.
+
+    Dropping (not truncating) is deliberate: a truncated line is not valid
+    JSON-RPC, so the client will time out the pending request normally rather
+    than mis-parse a corrupted frame. Peak memory is bounded to
+    ``max_bytes + read_size``.
+    """
+    read = getattr(stream, "read1", None) or stream.read
+    buf = bytearray()
+    dropping = False
+    dropped = 0
+    while True:
+        chunk = read(read_size)
+        if not chunk:
+            break
+        pos = 0
+        n = len(chunk)
+        while pos < n:
+            nl = chunk.find(b"\n", pos)
+            if nl == -1:
+                seg_len = n - pos
+                if dropping:
+                    dropped += seg_len
+                elif len(buf) + seg_len > max_bytes:
+                    # Overflow with no terminator yet — start dropping this frame.
+                    dropped = len(buf) + seg_len
+                    buf.clear()
+                    dropping = True
+                else:
+                    buf += chunk[pos:]
+                break
+            # A newline terminates the current frame at index ``nl``. Count the
+            # newline itself in the dropped total so the reported size matches the
+            # cap comparison (which uses ``nl + 1 - pos``) — otherwise a frame of
+            # exactly ``max_bytes`` content + newline reports the impossible
+            # "``max_bytes`` bytes > ``max_bytes`` cap".
+            if dropping:
+                dropped += nl + 1 - pos
+                on_oversize(dropped)
+                dropping = False
+                dropped = 0
+            elif len(buf) + (nl + 1 - pos) > max_bytes:
+                # The completed frame is itself oversized — drop it whole.
+                on_oversize(len(buf) + (nl + 1 - pos))
+                buf.clear()
+            else:
+                buf += chunk[pos:nl + 1]
+                yield bytes(buf)
+                buf.clear()
+            pos = nl + 1
+    # EOF: report a still-open oversized frame, or emit a final line that had no
+    # trailing newline (matching ``for line in stream`` semantics).
+    if dropping:
+        if dropped:
+            on_oversize(dropped)
+    elif buf:
+        yield bytes(buf)
 
 
 class ACPProcessHandle:
@@ -336,9 +420,20 @@ class ACPProcessHandle:
         stdout = proc.stdout
         if stdout is None:
             return
+
+        def _on_oversize(nbytes: int) -> None:
+            logger.warning(
+                "acp server '%s': dropped an oversized stdout frame "
+                "(%d bytes > %d cap) — a valid JSON-RPC message is never this "
+                "large; a pending request on it may time out",
+                self.name, nbytes, _MAX_FRAME_BYTES,
+            )
+
         last_sub = None
         try:
-            for raw_line in stdout:
+            for raw_line in _read_bounded_lines(
+                stdout, _MAX_FRAME_BYTES, on_oversize=_on_oversize
+            ):
                 with self._subscriber_lock:
                     sub = self._stdout_subscriber
                 # Only route to subscriber if this feeder's process is still

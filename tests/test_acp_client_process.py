@@ -1,7 +1,9 @@
 """Tests for ACP client process handle and manager (Issue 02)."""
 
+import io
 import json
 import os
+import queue
 import signal
 import sys
 import textwrap
@@ -503,3 +505,98 @@ class TestACPManager:
         # would make ``_clients == {}`` true even if a client were skipped).
         assert client_a.closed and client_b.closed
         assert mgr._clients == {}
+
+
+# ---------------------------------------------------------------------------
+# AC5 — bounded stdout frame reader (drop-oversized-frame DoS backstop)
+# ---------------------------------------------------------------------------
+
+
+class TestBoundedStdoutReader:
+    """A server must not force unbounded stdout buffering with a giant line."""
+
+    def _collect(self, data: bytes, max_bytes: int, read_size: int = 8):
+        over: list = []
+        lines = list(
+            acp_process._read_bounded_lines(
+                io.BytesIO(data),
+                max_bytes,
+                on_oversize=over.append,
+                read_size=read_size,
+            )
+        )
+        return lines, over
+
+    def test_multiline_reassembles_across_slices(self) -> None:
+        # read_size=8 forces frames to span multiple read1() slices.
+        lines, over = self._collect(b"a\nbb\nccc\n", 100)
+        assert lines == [b"a\n", b"bb\n", b"ccc\n"]
+        assert over == []
+
+    def test_trailing_unterminated_line_delivered(self) -> None:
+        # Matches ``for line in stream``: a final newline-less line is yielded.
+        lines, over = self._collect(b"x\ntail", 100)
+        assert lines == [b"x\n", b"tail"]
+        assert over == []
+
+    def test_oversized_newlineless_frame_dropped_then_recovers(self) -> None:
+        lines, over = self._collect(b"X" * 50 + b"more\n" + b"ok\n", 10)
+        assert lines == [b"ok\n"]  # the giant frame is dropped whole
+        # 50 X + "more" + the terminating newline = 55 bytes; the count includes
+        # the newline so it can never read "N bytes > N cap".
+        assert over == [55]
+        # Every delivered frame is within the cap.
+        assert all(len(l) <= 10 for l in lines)
+
+    def test_oversized_complete_frame_dropped(self) -> None:
+        # Frame has a terminator but is itself over the cap -> dropped whole.
+        # read_size large enough that the whole frame+newline arrives in one
+        # slice while buf is empty, directly exercising the completed-oversized
+        # branch (not the no-newline-overflow -> dropping path).
+        lines, over = self._collect(b"Y" * 20 + b"\n" + b"z\n", 10, read_size=1024)
+        assert lines == [b"z\n"]
+        assert over == [21]  # 20 Y + newline
+
+    def test_oversized_reported_count_includes_newline(self) -> None:
+        # Boundary: content exactly at the cap plus the terminator is dropped
+        # (content+newline = 5 > 4) and reported as 5, never the impossible
+        # "4 bytes > 4 cap".
+        lines, over = self._collect(b"abcd\n", 4, read_size=1024)
+        assert lines == []
+        assert over == [5]
+
+    def test_eof_while_dropping_reports_once(self) -> None:
+        # Unterminated giant frame that never ends before EOF.
+        lines, over = self._collect(b"Z" * 40, 10)
+        assert lines == []
+        assert over == [40]
+
+    def test_frame_exactly_at_cap_kept(self) -> None:
+        lines, over = self._collect(b"abc\n", 4)  # 3 content + newline = 4, at cap
+        assert lines == [b"abc\n"]
+        assert over == []
+
+    def test_feed_stdout_drops_oversized_frame(self, monkeypatch) -> None:
+        # Integration: the feeder routes valid frames to the subscriber and
+        # skips an oversized one, then delivers the EOF sentinel.
+        monkeypatch.setattr(acp_process, "_MAX_FRAME_BYTES", 10)
+
+        class _FakeProc:
+            def __init__(self, data: bytes) -> None:
+                self.stdout = io.BytesIO(data)
+
+        handle = ACPProcessHandle("t", _make_config(auto_start=False))
+        fake = _FakeProc(b"a\n" + b"X" * 50 + b"\n" + b"b\n")
+        handle._proc = fake  # feeder routes only while proc is self._proc
+        q: "queue.Queue" = queue.Queue()
+        handle.subscribe_stdout(q)
+
+        handle._feed_stdout(fake)
+
+        got = []
+        while True:
+            item = q.get_nowait()
+            if item is None:  # EOF sentinel
+                break
+            got.append(item)
+        assert got == [b"a\n", b"b\n"]  # the 51-byte middle frame was dropped

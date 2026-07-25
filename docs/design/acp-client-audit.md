@@ -206,9 +206,9 @@ The renderer prints a **third-party** ACP server's output to the user's terminal
   Fold in next time `render.py` / `helpers.py` is touched. (Trust posture: the
   same server already runs as a spawned child with scrubbed env — this is
   defense-in-depth on the *output* channel, not a headline hole.)
-- **Status: IMPLEMENTED** (escape sanitization on both paths + per-chunk cap);
-  the readline-level cap is **deferred** (framing rewrite). See the Implementation
-  status section below.
+- **Status: IMPLEMENTED** — escape sanitization on both paths + per-chunk cap,
+  **and** the readline-level frame cap (`process._read_bounded_lines`, drop-oversized
+  policy). See the Implementation status section below.
 
 ### AC6 — The re-session + sticky-fatal handshake "dance" is copy-pasted across 5 entry points · MEDIUM (dangerous duplication — consolidate)
 The classification *primitives* were already extracted (`_reclassify_as_handshake_fail`
@@ -487,14 +487,22 @@ dead). AC5 and AC8 remain recorded (opportunistic).
   buffering in the inbox + Markdown accumulator. The cap is far above any real
   streaming delta, so it never touches legitimate content. +9 teeth tests
   (`test_acp_client_inbox.py::TestTerminalSanitization`/`TestChunkCap`), incl.
-  Rich-path OSC-set-title/BEL removal. **Deferred (documented):** the
-  readline-level hard cap in `process.py` — the multi-GB buffering happens inside
-  the C-level `for raw_line in stdout` before any Python check can see the line, so
-  a real cap there needs a bounded-frame NDJSON reader with a *drop-oversized-frame*
-  policy (a mid-line truncation would corrupt a legitimately-large valid JSON-RPC
-  frame). That is a framing rewrite on the hottest client path; given the child is
-  already env-scrubbed and the display buffer is now bounded by `_cap_chunk`, it is
-  left as a recorded follow-up rather than shipped under the "opportunistic" label.
+  Rich-path OSC-set-title/BEL removal. **Readline-level frame cap — now also
+  implemented** (was the one deferred sub-part): `process._read_bounded_lines`
+  replaces `for raw_line in stdout` in `_feed_stdout`. It reads the pipe in bounded
+  64 KiB `read1()` slices (preserving line-at-a-time streaming) and reassembles
+  frames; when a single frame passes `_MAX_FRAME_BYTES = 16 MiB` without a newline
+  it **drops the whole frame** (up to the next newline) and logs the dropped size,
+  rather than mid-line-truncating (a truncated line is not valid JSON-RPC — the
+  pending request times out normally instead of mis-parsing). Peak per-frame memory
+  is bounded to `16 MiB + read_size`, closing the "one multi-GB line → GB in RAM"
+  vector. Dropped-byte counts include the terminating newline (matching the cap
+  comparison), so a warning can never read the impossible "N bytes > N cap" — a
+  Codex review round caught that off-by-one. +8 tests
+  (`test_acp_client_process.py::TestBoundedStdoutReader`) covering cross-slice
+  reassembly, oversized-then-recover, oversized-complete-frame (directly, via a
+  large read slice), the newline-inclusive count boundary, EOF-while-dropping,
+  exact-cap, and a `_feed_stdout` integration drop.
 
 - **AC8 — partially implemented (the no-drift wins), two items skipped with cause.**
   Done: (a) `helpers.py` — extracted a module-level `_opt_id` and a parameterized
@@ -563,8 +571,8 @@ dead). AC5 and AC8 remain recorded (opportunistic).
 **Net:** three real defects addressed (AC1 crash, AC2 lock, AC3 orphaned
 grandchildren) with teeth-proven / behavior-preserving coverage; two Tier-3
 refactors landed behind their concurrency tests (AC6 handshake-dance consolidation,
-AC7 `prompt_once` decomposition); AC5 output-hardening shipped (escape sanitization
-+ chunk cap; the readline-level cap deferred as a framing rewrite); AC8's no-drift
+AC7 `prompt_once` decomposition); AC5 output-hardening shipped in full (escape
+sanitization + chunk cap + the readline-level bounded-frame cap); AC8's no-drift
 consolidations landed (`_select_option`, `_selected_outcome`, `_resolve_and_respond`)
 with the two message-/concurrency-sensitive items left recorded. The AC4 "dead code"
 bucket stays downgraded to one implemented test-correctness item (AC4′) plus one
