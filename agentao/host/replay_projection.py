@@ -25,7 +25,7 @@ exactly.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from pydantic import BaseModel
 
@@ -99,8 +99,10 @@ class HostReplaySink:
         recorder: Optional["ReplayRecorder"],
         *,
         stream: Optional["EventStream"] = None,
+        turn_id_provider: Optional[Callable[[], Optional[str]]] = None,
     ) -> None:
         self._recorder = recorder
+        self._turn_id_provider = turn_id_provider
         self._stream: Optional["EventStream"] = None
         self._observer: Optional[Any] = None
         if stream is not None:
@@ -147,6 +149,35 @@ class HostReplaySink:
         if isinstance(event, BaseModel):
             self.record(event)
 
+    def _envelope_turn_id(self, payload: Any) -> Optional[str]:
+        """Pick the ``turn_id`` for the JSONL *envelope*.
+
+        The envelope's ``turn_id`` and the payload's are two different id
+        spaces and must not be conflated. The replay file groups events by
+        the envelope id, which :class:`~agentao.replay.adapter.ReplayAdapter`
+        mints per turn (a short id). The payload carries the *runtime's*
+        turn id (a uuid4 from ``runtime/identity.py``). Forwarding the
+        payload's value into the envelope — as this did originally — put
+        host-projected events in an id space the grouper had never seen,
+        so ``/replay show`` rendered them as extra phantom turns with no
+        user message and no final text, instead of interleaved with the
+        tool calls they describe. ``SubagentLifecycleEvent`` has no
+        ``turn_id`` field at all, so those rows fell out of every turn.
+
+        When a provider is supplied (``ReplayManager`` passes the
+        adapter's current-turn accessor) it is authoritative. Without one
+        the payload fallback is kept so a sink constructed standalone —
+        as tests and pull-mode callers do — behaves as before.
+        """
+        if self._turn_id_provider is not None:
+            try:
+                turn_id = self._turn_id_provider()
+            except Exception:
+                turn_id = None
+            return turn_id if isinstance(turn_id, str) else None
+        turn_id = payload.get("turn_id") if isinstance(payload, dict) else None
+        return turn_id if isinstance(turn_id, str) else None
+
     def record(self, event: BaseModel) -> bool:
         """Write a host event into the replay JSONL.
 
@@ -160,10 +191,10 @@ class HostReplaySink:
             return False
         try:
             payload = host_event_to_replay_payload(event)
-            turn_id = payload.get("turn_id") if isinstance(payload, dict) else None
+            turn_id = self._envelope_turn_id(payload)
             self._recorder.record(
                 kind,
-                turn_id=turn_id if isinstance(turn_id, str) else None,
+                turn_id=turn_id,
                 payload=payload,
             )
             return True

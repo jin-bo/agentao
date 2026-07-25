@@ -110,8 +110,14 @@ class ReplayManager:
         # land in one audit artifact. ``end()`` detaches.
         try:
             from ..host.replay_projection import HostReplaySink
+            # ``turn_id_provider`` is what puts host-projected events in
+            # the *replay* turn-id space. The host payload carries the
+            # runtime's uuid4 turn id, which the grouper has never seen —
+            # forwarding it made these events render as phantom turns.
             self._host_replay_sink = HostReplaySink(
-                recorder, stream=agent._host_events,
+                recorder,
+                stream=agent._host_events,
+                turn_id_provider=adapter._current_turn_id,
             )
         except Exception as exc:
             agent.llm.logger.warning(

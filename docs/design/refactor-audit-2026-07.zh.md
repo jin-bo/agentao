@@ -158,6 +158,40 @@ import 只在**函数体内部**（这是刻意的——插件子系统是可选
 
 ---
 
+## 落地后的代码评审（xhigh，2026-07-25）
+
+对三个分支做的对抗性多智能体评审返回 **14 条已确认缺陷**，全部落在本文已声称
+"已落地"的工作里。最重要的三条：
+
+- **v1.2 渲染在生产环境根本不生效。** 审计事件携带的是**运行时**的 `turn_id`
+  （`runtime/identity.py` 的 uuid4），而 `ReplayAdapter` 为每个 replay turn 生成
+  自己的短 id。信封把前者写进了一个按后者分组的文件，于是 `/replay show` 把它们
+  渲染成额外的幽灵 turn；而 `SubagentLifecycleEvent` **根本没有 `turn_id` 字段**，
+  每次都掉出所有 turn。**该 PR 自己的测试之所以通过，是因为我手工给全部六个事件写死
+  了 `turn_id: "t1"`——这是 recorder 产生不出来的形状。** 已修：给 `HostReplaySink`
+  加 `turn_id_provider`，信封走 replay 的 id 空间，payload 保留 host 的。
+- **一个测试软删了开发者真实的 `~/.agentao/memory.db`。** 让 `_clear_reset` 走真实
+  handler 是对的，但 `MemoryManager.clear()` 在 `scope=None` 下会清**用户**存储，
+  而该存储解析到 `user_root()`，与 fixture 的 `working_directory` 无关。每次
+  `pytest tests/` 都在销毁跨项目用户记忆——静默、全绿。已修：fixture 重定向 `HOME`，
+  并加测试断言重定向确实生效。
+- **`/copy` 因为改用 `run_captured` 而回归。** 它的管道意味着 `communicate()` 要等
+  **每一个后代**关闭写端；`xclip` fork 出的后台选区持有者永远不会关。实测：5.01s
+  超时 vs 0.05s。已改为本地 runner，保留进程组与整树 kill，但把 stderr 写进临时文件。
+
+两个教训，指向同一种失效模式——**与代码同源心智模型写出的测试无法证伪它**：
+
+1. v1.2 的测试夹具是我按对 `host/models.py` 的理解构造的，不是从 recorder 取的。
+   它编码了与渲染器完全相同的错误假设。
+2. 九个 `/copy` 测试全部 stub 掉了 `run_captured`，于是重构真正改变的那个性质
+   ——管道/EOF 语义——对测试完全不可见。替换版本会真的拉起 fork 子进程。
+
+另修正：新的穷尽性守卫把 `session_ended` 豁免为"从不发射"，而 `ReplayManager.end()`
+会把它写进**每一个**完成的 replay 文件——这个守卫认证了它本该抓住的那个缺陷。豁免
+列表现在有测试去 grep 发射点，而不是相信注释。
+
+---
+
 ## 已核实的非问题
 
 已对照源码核查并排除——请勿"修复"：

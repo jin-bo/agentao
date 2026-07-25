@@ -180,6 +180,50 @@ code.
 
 ---
 
+## Post-landing code review (xhigh, 2026-07-25)
+
+An adversarial multi-agent review of all three branches returned **14
+confirmed defects**, all of them in work this document had already described
+as shipped. The three that matter most:
+
+- **The v1.2 render did not actually work in production.** The audit events
+  carry the *runtime's* `turn_id` (a uuid4 from `runtime/identity.py`), while
+  `ReplayAdapter` mints a short id per replay turn. The envelope forwarded the
+  former into a file grouped by the latter, so `/replay show` rendered them as
+  extra phantom turns — and `SubagentLifecycleEvent`, which has no `turn_id`
+  field at all, fell out of every turn. **The PR's own test passed because it
+  hand-wrote `turn_id: "t1"` on all six events, a shape the recorder cannot
+  produce.** Fixed by giving `HostReplaySink` a `turn_id_provider`: the
+  envelope is now the replay id space, the payload keeps the host's.
+- **A test soft-deleted the developer's real `~/.agentao/memory.db`.** Routing
+  `_clear_reset` through the real handler was correct, but `MemoryManager.clear()`
+  at `scope=None` clears the *user* store, which resolves to `user_root()`
+  regardless of the fixture's `working_directory`. Every `pytest tests/` run
+  destroyed cross-project user memories, silently, all green. Fixed by
+  redirecting `HOME` in the fixture, with a test asserting the redirect took.
+- **`/copy` regressed by adopting `run_captured`.** Its pipes mean
+  `communicate()` waits for *every descendant* to close the write ends; `xclip`
+  forks a background selection owner that never does. Measured: 5.01s timeout
+  vs 0.05s. Replaced with a local runner that keeps the process-group and
+  tree-kill properties but sends stderr to a temp file.
+
+Two lessons, both about the same failure mode — **a test written from the same
+mental model as the code cannot falsify it**:
+
+1. The v1.2 fixture was built from my reading of `host/models.py`, not from a
+   recorder. It encoded the same wrong assumption as the renderer.
+2. All nine `/copy` tests stubbed `run_captured`, so the one property the
+   refactor actually changed — pipe/EOF semantics — was invisible. The
+   replacement spawns real forking children.
+
+Also corrected: `session_ended` was exempted in the new exhaustiveness guard
+as "never emitted" when `ReplayManager.end()` writes it to every completed
+replay file — the guard certified the exact defect it exists to catch. The
+exemption list now has a test that greps for emission sites rather than
+trusting the comment.
+
+---
+
 ## Verified non-findings
 
 Checked against source and cleared — do not "fix" these:

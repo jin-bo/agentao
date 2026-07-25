@@ -38,7 +38,11 @@ _NO_SUMMARY_EXPECTED = {
     # but never passed to ``recorder.record`` anywhere in the tree.
     # ``session_saved`` is marked "reserved; not emitted in v1" in
     # EventKind's own docstring.
-    "session_ended",
+    #
+    # ``session_ended`` was wrongly listed here: ``ReplayManager.end()``
+    # records it on /clear, /new and exit, so it is in *every* completed
+    # replay file. The exemption certified the exact key-preview
+    # degradation this module exists to catch.
     "session_forked",
     "session_loaded",
     "session_saved",
@@ -47,6 +51,29 @@ _NO_SUMMARY_EXPECTED = {
     # line would be noise.
     "turn_started",
 }
+
+
+def _emission_sites(kind: str) -> int:
+    """Count non-declaration references to ``kind`` in the package.
+
+    The exemptions above all rest on "this is never recorded". That claim
+    decays silently the moment someone wires an emission point, so check
+    it rather than trust the comment.
+    """
+    import subprocess
+
+    const = kind.upper()
+    out = subprocess.run(
+        ["git", "grep", "-l", "-e", f"EventKind.{const}", "-e", f'"{kind}"',
+         "--", "agentao"],
+        capture_output=True, text=True,
+    ).stdout
+    hits = {
+        line for line in out.splitlines()
+        # events.py declares the vocabulary; schema.py maps it to variants.
+        if not line.endswith(("replay/events.py", "replay/schema.py"))
+    }
+    return len(hits)
 
 
 def _all_kinds() -> set[str]:
@@ -78,6 +105,32 @@ def test_no_summary_list_has_not_gone_stale():
 
 def test_exemptions_are_all_real_event_kinds():
     assert _NO_SUMMARY_EXPECTED <= _all_kinds()
+
+
+@pytest.mark.parametrize(
+    "kind", sorted(_NO_SUMMARY_EXPECTED - {"turn_started"})
+)
+def test_exempted_kinds_really_have_no_emission_site(kind):
+    """The 'never recorded' justification, checked instead of trusted.
+
+    ``session_ended`` sat in this list with that exact comment while
+    ``ReplayManager.end()`` wrote it to every replay file. Wire an
+    emission point for one of the remaining three and this fails, which
+    is the moment it needs a renderer.
+    """
+    assert _emission_sites(kind) == 0, (
+        f"{kind} is referenced outside its declaration — it may now be "
+        f"emitted, in which case it needs a summary branch"
+    )
+
+
+def test_the_session_ended_regression_stays_fixed():
+    """It ships in every completed replay; it must not read as a key list."""
+    out = _summarize_replay_event(
+        {"kind": "session_ended", "payload": {"session_id": "abc12345xyz"}}
+    )
+    assert "session_id" not in out, "degraded back to the payload-key preview"
+    assert "abc12345" in out
 
 
 # ── The v1.2 audit kinds specifically ───────────────────────────────
@@ -133,6 +186,91 @@ def test_grouped_view_shows_audit_events():
     assert "deny" in out, "a denied permission decision must be visible"
     assert "PermissionDenied" in out
     assert "bg-7" in out
+
+
+# Kinds the grouped turn view deliberately does not print as their own
+# line, each with the reason. This is the ``_print_turn`` counterpart of
+# ``_NO_SUMMARY_EXPECTED``; the summary guard alone cannot catch a kind
+# that gets a summary branch but no ``elif`` in ``_turn.py`` — which is
+# exactly the half of the original defect that was worse.
+_NOT_IN_TURN_VIEW = {
+    # Rendered structurally by the turn header / body / footer.
+    "turn_started", "turn_completed", "user_message",
+    "assistant_text_chunk", "assistant_thought_chunk",
+    # Folded into the per-turn `tools` table by _collect_tool_rows.
+    "tool_started", "tool_completed", "tool_output_chunk", "tool_result",
+    "tool_confirmation_requested", "tool_confirmation_resolved",
+    # Folded into the per-turn llm aggregation line.
+    "llm_call_started", "llm_call_completed", "llm_call_delta", "llm_call_io",
+    # Session-scoped: carry no turn_id, rendered in the session block.
+    "replay_header", "replay_footer", "session_started", "session_ended",
+    "session_saved", "session_loaded", "session_forked",
+    # Rendered by the subagent section rather than the one-liner loop.
+    "subagent_started", "subagent_completed",
+    # Memory/skill writes are session-scoped bookkeeping, not turn narrative.
+    "memory_write", "memory_delete", "memory_cleared",
+    "skill_activated", "skill_deactivated",
+    "background_notification_injected",
+}
+
+
+# Kinds the turn view renders only for the *interesting* outcome, so the
+# probe has to supply one — see the filtering rationale in _turn.py.
+_PROBE_PAYLOADS = {
+    "tool_lifecycle": {
+        "tool_name": "t", "phase": "failed", "outcome": "error",
+        "tool_call_id": "c1",
+    },
+    "permission_decision": {
+        "tool_name": "t", "outcome": "deny", "mode": "read-only",
+    },
+}
+
+
+def _turn_view_renders(kind: str) -> bool:
+    """Does adding an event of ``kind`` change what the turn view prints?
+
+    Differential, not a substring search: several handled kinds print a
+    *label* rather than the kind name (``compact``, ``ask``, ``hook``), so
+    looking for the kind string reports them as dropped. Comparing the
+    render with and against without the event is label-agnostic.
+    """
+    frame = [
+        {"seq": 1, "kind": "turn_started", "ts": "", "turn_id": "t1", "payload": {}},
+        {"seq": 3, "kind": "turn_completed", "ts": "", "turn_id": "t1",
+         "payload": {"status": "ok", "final_text": ""}},
+    ]
+    probe = {
+        "seq": 2, "kind": kind, "ts": "", "turn_id": "t1",
+        "payload": dict(_PROBE_PAYLOADS.get(kind, {"__probe__": "ZZ"})),
+    }
+
+    def _render_events(events):
+        console = Console(width=120, record=True, force_terminal=False)
+        _render_replay_grouped(events, _Meta(), console)
+        return console.export_text()
+
+    without = _render_events(frame)
+    with_ = _render_events([frame[0], probe, frame[1]])
+    return with_ != without
+
+
+def test_every_event_kind_is_handled_by_the_turn_view():
+    """A kind with a summary but no ``elif`` in _turn.py is silently
+    dropped from the *default* view — correct in JSONL, visible in
+    ``--raw``, invisible where people actually look."""
+    unhandled = {
+        k for k in _all_kinds()
+        if k not in _NOT_IN_TURN_VIEW and not _turn_view_renders(k)
+    }
+    assert not unhandled, (
+        f"kind(s) dropped by _print_turn's allowlist: {sorted(unhandled)} — "
+        f"add an elif in _turn.py or justify it in _NOT_IN_TURN_VIEW"
+    )
+
+
+def test_turn_view_exemptions_are_all_real_event_kinds():
+    assert _NOT_IN_TURN_VIEW <= _all_kinds()
 
 
 def test_raw_view_shows_audit_events_not_key_names():
