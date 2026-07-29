@@ -27,6 +27,11 @@ from agentao.tools import web as web_mod
 from agentao.tools.web import WebFetchTool
 
 
+#: Long enough that paying it would be unmistakable in the wall-clock
+#: assertion below, short enough not to drag the suite if the fix regresses.
+_STALL_SECONDS = 3.0
+
+
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
     monkeypatch.delenv("AGENTAO_WEB_FETCH_FALLBACK", raising=False)
@@ -659,9 +664,7 @@ def test_a_stalled_dns_lookup_blocks_and_does_not_freeze_the_loop(monkeypatch):
     asyncio.run(web_mod._render_with_playwright("https://x.test/"))
 
     def stalling_validator(url, **kwargs):
-        # Only needs to outlast the 0.05s budget; asyncio.run joins the
-        # executor at shutdown, so a long sleep would just slow the suite.
-        time.sleep(0.5)
+        time.sleep(_STALL_SECONDS)
 
     monkeypatch.setattr(web_mod, "validate_outbound_url", stalling_validator)
 
@@ -682,9 +685,20 @@ def test_a_stalled_dns_lookup_blocks_and_does_not_freeze_the_loop(monkeypatch):
         spinner.cancel()
         return route.action, ticks
 
+    started = time.monotonic()
     action, ticks = asyncio.run(drive())
+    elapsed = time.monotonic() - started
+
     assert action == "abort"
     assert ticks > 0, "the event loop was blocked by the DNS lookup"
+    # And the stalled lookup must not hold up the way out either. asyncio.run
+    # joins the *default* executor at loop shutdown, so `asyncio.to_thread`
+    # would pay the full stall here even though wait_for already returned —
+    # cancelling the future does not cancel the thread. A daemon thread is
+    # abandoned instead.
+    assert elapsed < _STALL_SECONDS / 2, (
+        f"loop shutdown waited on the stalled lookup ({elapsed:.2f}s)"
+    )
 
 
 def test_subresource_requests_are_guarded_too(monkeypatch):

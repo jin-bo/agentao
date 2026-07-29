@@ -127,7 +127,12 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   budget: `validate_outbound_url` calls `socket.getaddrinfo`, and doing that on
   the event-loop thread would stall the very timer enforcing the render
   ceiling — letting a page-controlled hostname defeat it just by resolving
-  slowly. A stalled lookup blocks the request rather than passing it.
+  slowly. A stalled lookup blocks the request rather than passing it. The
+  thread is a *daemon* thread rather than `asyncio.to_thread`: the latter uses
+  the loop's default executor, which `asyncio.run` joins at shutdown, so a
+  lookup that outlived its budget would still be waited on during teardown
+  (cancelling the future does not cancel the thread) and the ceiling would be
+  defeated on the way out instead of on the way in.
 
 - **An unhydrated DOM is no longer returned as a successful render.** The
   settle step absorbs its own timeout by design — long-poll pages never reach

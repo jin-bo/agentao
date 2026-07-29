@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import quote_plus, urlparse
@@ -159,6 +160,43 @@ _BROWSER_STARTUP_TIMEOUT_S = 30.0
 #: It resolves DNS, and the page chooses the hostnames — so it is bounded, and
 #: a stall is a block rather than a pass.
 _POLICY_CHECK_TIMEOUT_S = 5.0
+
+
+def _call_on_daemon_thread(fn: Any, *args: Any, **kwargs: Any) -> "asyncio.Future":
+    """Run blocking ``fn`` on a daemon thread; return an awaitable future.
+
+    Not ``asyncio.to_thread``: that uses the loop's *default* executor, whose
+    threads are non-daemon and joined by ``asyncio.run`` during loop shutdown.
+    A ``getaddrinfo`` that outlives its ``wait_for`` budget would therefore
+    still hold up the caller on the way out — cancelling the future does not
+    cancel the thread — which defeats the very ceiling the budget enforces. A
+    daemon thread is simply abandoned instead.
+    """
+    loop = asyncio.get_running_loop()
+    future: "asyncio.Future" = loop.create_future()
+
+    def _settle(setter: Any, value: Any) -> None:
+        # The waiter may have timed out and cancelled; a cancelled future is
+        # done, so this is also what keeps the late thread from exploding.
+        if not future.done():
+            setter(value)
+
+    def _runner() -> None:
+        try:
+            result = fn(*args, **kwargs)
+        except BaseException as exc:
+            setter, value = future.set_exception, exc
+        else:
+            setter, value = future.set_result, result
+        try:
+            loop.call_soon_threadsafe(_settle, setter, value)
+        except RuntimeError:
+            pass  # loop already closed — nobody is waiting on this any more
+
+    threading.Thread(
+        target=_runner, daemon=True, name="agentao-url-policy"
+    ).start()
+    return future
 
 
 async def _render_page(page: Any, url: str) -> tuple[Optional[int], str]:
@@ -346,7 +384,7 @@ async def _guard_context_requests(context: Any, allow_networks: tuple) -> None:
                 # a page-controlled subresource hostname could defeat it just
                 # by resolving slowly.
                 await asyncio.wait_for(
-                    asyncio.to_thread(
+                    _call_on_daemon_thread(
                         validate_outbound_url,
                         request_url,
                         allow_networks=allow_networks,
