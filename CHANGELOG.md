@@ -146,6 +146,17 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   had it off. `web_fetch` reads `page.content()` and nothing else, so a
   download could only ever be a hostile page writing to the host's disk.
 
+  **A second crawl4ai default is deliberately not carried over.** Its
+  `BrowserConfig` set `ignore_https_errors=True`; the render context sets it
+  explicitly to `False`. Pages with an expired or self-signed certificate that
+  crawl4ai used to render now fail. This is intentional: the fallback runs
+  *after* the certificate-verifying httpx path failed, so ignoring cert errors
+  would mean a site whose TLS is broken — or being intercepted — fails
+  correctly on the primary path and is then rendered and handed to the model as
+  though it were fine. A JS-rendering fallback is not a licence to relax TLS,
+  and `url_policy` already blocks the non-public targets where a self-signed
+  certificate is most common.
+
 - **An unhydrated DOM is no longer returned as a successful render.** The
   settle step absorbs its own timeout by design — long-poll pages never reach
   `networkidle` and their DOM is already usable — but it also swallowed a

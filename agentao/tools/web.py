@@ -352,7 +352,22 @@ async def _render_with_playwright(
         # `page.content()` and nothing else, so a download can only ever be a
         # hostile page writing to the host's disk until teardown. crawl4ai
         # defaulted it off; keep it off.
-        context = await browser.new_context(accept_downloads=False)
+        context = await browser.new_context(
+            accept_downloads=False,
+            # Explicit, though it matches Playwright's default, because this is
+            # a deliberate divergence from crawl4ai — whose BrowserConfig
+            # defaulted `ignore_https_errors` to True — and an invisible
+            # reliance on a default invites a later "restore parity" edit.
+            #
+            # The fallback is reached *from* `except httpx.HTTPError`, and the
+            # httpx path verifies certificates. Ignoring them here would mean a
+            # site with an expired or attacker-supplied certificate fails
+            # correctly on the primary path and is then rendered and handed to
+            # the model as though it were fine — the same "clean failure turned
+            # into apparent success" shape as returning a 404 body as content.
+            # A JS-rendering fallback is not a licence to relax TLS.
+            ignore_https_errors=False,
+        )
         await _guard_context_requests(context, allow_networks)
         page = await context.new_page()
         return await _render_page(page, url)

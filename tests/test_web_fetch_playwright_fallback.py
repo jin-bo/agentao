@@ -259,6 +259,7 @@ def test_playwright_api_matches_our_call_sites():
 
     new_context = inspect.signature(async_api.Browser.new_context).parameters
     assert "accept_downloads" in new_context
+    assert "ignore_https_errors" in new_context
 
     goto = inspect.signature(async_api.Page.goto).parameters
     assert "wait_until" in goto
@@ -536,6 +537,11 @@ def test_guard_is_installed_on_the_context_so_popups_are_covered(monkeypatch):
     # accept_downloads defaults to true upstream; web_fetch never consumes a
     # download, so leaving it on only lets a hostile page write to our disk.
     assert browser.new_context_kwargs["accept_downloads"] is False
+    # A deliberate divergence from crawl4ai, which defaulted this to True. The
+    # fallback runs *after* the certificate-verifying httpx path failed, so
+    # ignoring cert errors here would render an expired or attacker-supplied
+    # certificate's page and hand it to the model as though it were fine.
+    assert browser.new_context_kwargs["ignore_https_errors"] is False
 
 
 def test_unexpected_settle_failure_is_not_returned_as_a_successful_render(
