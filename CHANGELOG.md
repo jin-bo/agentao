@@ -108,20 +108,29 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   like every other child agentao spawns — this is the one child that executes
   attacker-controlled JavaScript.
 
-- **In-browser navigation is re-validated against the URL policy.** The httpx
-  path checks every redirect hop, but once Chromium took over it chased
+- **Every in-browser request is re-validated against the URL policy.** The
+  httpx path checks every redirect hop, but once Chromium took over it chased
   redirects and client-side navigation unguarded — a page that passed the
   guard and then navigated to `169.254.169.254` had that body returned to the
   model. A `page.route` handler now re-applies `validate_outbound_url` to
-  navigation requests (subresources are not re-validated: they never reach the
-  model, and it would cost a DNS resolution per request).
+  **all** requests, not only navigations: a permissive-CORS or JSONP endpoint
+  lets the page's own JavaScript read an internal response and write it into
+  the DOM, which is precisely what `page.content()` returns, and a no-CORS
+  request still reaches an internal service as a side effect. Verdicts are
+  cached per `(scheme, host, port)` so a page pulling fifty assets from one
+  origin costs one DNS resolution; `data:` / `blob:` / `about:` are passed
+  through untouched (they never leave the machine, and the policy rejects any
+  non-http(s) scheme).
 
 - **The render has a wall-clock ceiling.** `page.content()` takes no timeout
   at all, so the `goto`/settle timeouts bounded navigation only and a page
-  that pegged its renderer afterwards blocked the caller forever with no
-  `kill_process_tree()` backstop. Teardown is now bounded too, and wrapped so
-  a failing `browser.close()` cannot replace the error that actually explains
-  the failure.
+  that pegged its renderer afterwards blocked the caller forever. Teardown is
+  bounded too, and wrapped so a failing `browser.close()` cannot replace the
+  error that actually explains the failure. Bounding `browser.close()` alone
+  was not enough: `async_playwright()`'s own `__aexit__` waits on the same
+  driver with no deadline, so the context is now driven by hand with its own
+  budget, and a driver that blows through it is killed via
+  `kill_process_tree()` rather than left orphaned with its Chromium tree.
 
 - **The retired-value substitution is visible.** The warning went only to the
   `agentao` logger, whose sole handler is `agentao.log`'s file handler — no

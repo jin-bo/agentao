@@ -75,3 +75,7 @@ scratch_*.py
 HIDDEN_*.md
 *_DRAFT.md
 *.tmp
+
+# pytest-cov data file
+.coverage
+.coverage.*

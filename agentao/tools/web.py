@@ -5,7 +5,7 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Dict, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 # `httpx`, `bs4`, and `playwright` are deferred (P0.5): the web tools may
 # never be registered in an embedded host that doesn't expose web
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from bs4 import BeautifulSoup as _BeautifulSoup_t
 
 from .base import Tool
-from ..capabilities.process import build_child_env
+from ..capabilities.process import build_child_env, kill_process_tree
 from ..security.url_policy import (
     UrlPolicyError,
     guarded_get,
@@ -184,6 +184,31 @@ async def _render_page(page: Any, url: str) -> tuple[Optional[int], str]:
     return (response.status if response is not None else None), await page.content()
 
 
+def _kill_playwright_driver(playwright: Any) -> None:
+    """Last-resort teardown when the Playwright driver stops responding.
+
+    The driver is a node subprocess that owns the Chromium tree; if it is
+    wedged, exiting the ``async_playwright()`` context waits on it forever and
+    the whole tree is orphaned. Reaching the ``Popen`` means walking private
+    attributes, so every step is guarded and a miss degrades to a warning —
+    the alternative (an unbounded wait) is strictly worse.
+    """
+    proc = playwright
+    for attribute in ("_connection", "_transport", "_proc"):
+        proc = getattr(proc, attribute, None)
+        if proc is None:
+            logger.warning(
+                "playwright driver is wedged and its process handle could not"
+                " be reached (%s missing); the browser tree may be orphaned",
+                attribute,
+            )
+            return
+    try:
+        kill_process_tree(proc)
+    except Exception as e:  # pragma: no cover - platform-dependent
+        logger.warning("failed to kill the playwright driver tree: %s", e)
+
+
 async def _render_with_playwright(
     url: str, *, allow_networks: tuple = ()
 ) -> tuple[Optional[int], str]:
@@ -191,10 +216,17 @@ async def _render_with_playwright(
 
     Deferred import: Playwright ships a large driver and the caller may never
     select this fallback.
+
+    The context manager is driven by hand rather than with ``async with``
+    because its ``__aexit__`` waits on the driver with no deadline of its own:
+    bounding ``browser.close()`` alone still leaves the exact wedged-driver
+    case unbounded, which is the one this budget exists for.
     """
     from playwright.async_api import async_playwright
 
-    async with async_playwright() as p:
+    manager = async_playwright()
+    p = await manager.__aenter__()
+    try:
         # Scrubbed env, same as every other child agentao spawns. This is the
         # one child that executes attacker-controlled JavaScript, so handing it
         # the provider credentials in `os.environ` is the worst version of the
@@ -218,32 +250,83 @@ async def _render_with_playwright(
                 )
             except Exception as e:
                 logger.warning("browser teardown failed for %s: %s", url, e)
+    finally:
+        try:
+            await asyncio.wait_for(
+                manager.__aexit__(None, None, None),
+                timeout=_BROWSER_CLOSE_TIMEOUT_S,
+            )
+        except Exception as e:
+            logger.warning("playwright driver teardown failed for %s: %s", url, e)
+            _kill_playwright_driver(p)
+
+
+#: Schemes a page issues that are not network requests to a host — inline
+#: images, object URLs, `about:blank`. `validate_outbound_url` rejects anything
+#: that is not http(s), so passing these through it would block them and break
+#: ordinary rendering.
+_NON_NETWORK_SCHEMES = frozenset({"data", "blob", "about", "file", "chrome-extension"})
 
 
 async def _guard_page_requests(page: Any, allow_networks: tuple) -> None:
-    """Re-apply the outbound URL policy to navigations Chromium makes itself.
+    """Re-apply the outbound URL policy to every request Chromium makes.
 
     The httpx path validates the initial URL and every redirect hop. Once the
     browser takes over it chases redirects and client-side navigation on its
     own, so without this a page that passes the guard and then navigates to
     ``http://169.254.169.254/latest/meta-data/`` hands that body to the LLM.
 
-    Scoped to navigation requests: those are what end up in ``page.content()``.
-    Subresource fetches (images, XHR) are not re-validated — they never reach
-    the model, and validating each one costs a DNS resolution per request.
+    Subresources are guarded too, not just navigations. "It never reaches the
+    model" is false: a permissive-CORS or JSONP endpoint lets the page's own
+    JavaScript read an internal response and write it into the DOM, which is
+    exactly what ``page.content()`` returns — and a no-CORS request still
+    reaches an internal service as a side effect even when the response is
+    opaque.
+
+    Verdicts are cached per ``(scheme, host, port)`` so a page pulling fifty
+    assets from one origin costs one DNS resolution, not fifty.
     """
+    verdicts: Dict[tuple, Optional[str]] = {}
+
+    def _verdict(request_url: str) -> Optional[str]:
+        """Return None to allow, or a string reason to block."""
+        parsed = urlparse(request_url)
+        if (parsed.scheme or "").lower() in _NON_NETWORK_SCHEMES:
+            return None
+        key = ((parsed.scheme or "").lower(), (parsed.hostname or "").lower(), parsed.port)
+        if key not in verdicts:
+            try:
+                validate_outbound_url(request_url, allow_networks=allow_networks)
+                verdicts[key] = None
+            except UrlPolicyError as e:
+                verdicts[key] = str(e)
+            except Exception as e:
+                # Fail closed on an unexpected validator failure, matching
+                # `_resolve_host_addresses`, which treats "cannot resolve" as
+                # "reject" rather than "allow".
+                verdicts[key] = f"policy check errored: {e}"
+        return verdicts[key]
+
+    async def _act(coro: Any, url: str) -> None:
+        # The page can be torn down between interception and the verdict (nav
+        # timeout, renderer crash), at which point abort/continue_ raise. An
+        # exception escaping a route handler leaves the request hanging until
+        # the navigation timeout, so it is logged and swallowed here.
+        try:
+            await coro
+        except Exception as e:
+            logger.debug("route action failed for %s: %s", url, e)
+
     async def _handler(route: Any) -> None:
         request = route.request
-        if not request.is_navigation_request():
-            await route.continue_()
+        reason = _verdict(request.url)
+        if reason is not None:
+            logger.warning(
+                "blocked in-browser request to %s: %s", request.url, reason
+            )
+            await _act(route.abort(), request.url)
             return
-        try:
-            validate_outbound_url(request.url, allow_networks=allow_networks)
-        except UrlPolicyError as e:
-            logger.warning("blocked in-browser navigation to %s: %s", request.url, e)
-            await route.abort()
-            return
-        await route.continue_()
+        await _act(route.continue_(), request.url)
 
     await page.route("**/*", _handler)
 

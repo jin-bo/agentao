@@ -446,13 +446,96 @@ def test_in_browser_navigation_to_blocked_target_is_aborted(monkeypatch):
     assert allowed.action == "continue"
 
 
-def test_subresource_requests_are_not_revalidated(monkeypatch):
-    """Only navigations end up in page.content(); per-subresource DNS is not
-    worth paying, and blocking them would break ordinary pages."""
+def test_route_guard_fails_closed_on_an_unexpected_validator_error(monkeypatch):
+    """An error that is not a policy verdict must block, not wave through."""
+    page = _FakePage()
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    def exploding_validator(url, **kwargs):
+        raise OSError("resolver blew up")
+
+    monkeypatch.setattr(web_mod, "validate_outbound_url", exploding_validator)
+    route = _FakeRoute("https://1.1.1.1/next")
+    asyncio.run(page.route_handler(route))
+    assert route.action == "abort"
+
+
+def test_route_action_failure_does_not_escape_the_handler(monkeypatch):
+    """A page torn down mid-verdict makes abort/continue_ raise; an exception
+    escaping the handler leaves the request hanging until the nav timeout."""
+    page = _FakePage()
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    route = _FakeRoute("https://1.1.1.1/next")
+
+    async def dead_continue():
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    route.continue_ = dead_continue
+    asyncio.run(page.route_handler(route))  # must not raise
+
+
+def test_subresource_requests_are_guarded_too(monkeypatch):
+    """"It never reaches the model" is false for subresources.
+
+    A permissive-CORS or JSONP endpoint lets the page's own JavaScript read an
+    internal response and write it into the DOM — which is precisely what
+    page.content() returns — and a no-CORS request still hits an internal
+    service as a side effect even when the response is opaque.
+    """
     page = _FakePage()
     _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
     asyncio.run(web_mod._render_with_playwright("https://x.test/"))
 
     subresource = _FakeRoute("http://127.0.0.1/img.png", navigation=False)
     asyncio.run(page.route_handler(subresource))
-    assert subresource.action == "continue"
+    assert subresource.action == "abort"
+
+    xhr = _FakeRoute("http://169.254.169.254/latest/meta-data/", navigation=False)
+    asyncio.run(page.route_handler(xhr))
+    assert xhr.action == "abort"
+
+
+def test_non_network_schemes_are_not_run_through_the_url_policy(monkeypatch):
+    """data:/blob:/about: never leave the machine, and the policy rejects any
+    non-http(s) scheme — passing them through it would break normal rendering.
+    """
+    page = _FakePage()
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    for url in (
+        "data:image/png;base64,iVBORw0KGgo=",
+        "blob:https://x.test/9f3c",
+        "about:blank",
+    ):
+        route = _FakeRoute(url, navigation=False)
+        asyncio.run(page.route_handler(route))
+        assert route.action == "continue", url
+
+
+def test_policy_verdicts_are_cached_per_origin(monkeypatch):
+    """A page pulling many assets from one origin must cost one DNS lookup."""
+    page = _FakePage()
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    seen = []
+
+    def counting_validator(url, **kwargs):
+        seen.append(url)
+
+    monkeypatch.setattr(web_mod, "validate_outbound_url", counting_validator)
+    for path in ("/a.js", "/b.css", "/c.png"):
+        route = _FakeRoute(f"https://cdn.example/{path}", navigation=False)
+        asyncio.run(page.route_handler(route))
+        assert route.action == "continue"
+
+    assert len(seen) == 1, seen
+
+    # A different port is a different origin and must be validated again.
+    other = _FakeRoute("https://cdn.example:8443/d.js", navigation=False)
+    asyncio.run(page.route_handler(other))
+    assert len(seen) == 2, seen
