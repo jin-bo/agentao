@@ -331,39 +331,50 @@ async def _render_with_playwright(
     except BaseException:
         _kill_playwright_driver(manager)
         raise
-    try:
+    browser: Any = None
+
+    async def _setup_and_render() -> tuple[Optional[int], str]:
+        nonlocal browser
         # Scrubbed env, same as every other child agentao spawns. This is the
         # one child that executes attacker-controlled JavaScript, so handing it
         # the provider credentials in `os.environ` is the worst version of the
         # leak `build_child_env()` exists to close.
         browser = await p.chromium.launch(headless=True, env=build_child_env())
-        try:
-            # The guard is installed on the *context*, not the page: a route
-            # registered on one Page does not cover a popup the page opens with
-            # `window.open`, and that popup's very first request would reach an
-            # internal target before any policy ran. Context routes apply to
-            # every page in the context, popups included — so the context must
-            # exist before navigation, which `browser.new_page()` (which
-            # creates its own context implicitly) gives no chance to do.
-            context = await browser.new_context()
-            await _guard_context_requests(context, allow_networks)
-            page = await context.new_page()
-            return await asyncio.wait_for(
-                _render_page(page, url), timeout=_BROWSER_TOTAL_TIMEOUT_S
-            )
-        finally:
-            # Teardown must never replace the in-flight result or exception:
-            # Playwright's `Browser.close` re-raises anything that is not a
-            # target-closed error, so an OOM-killed Chromium would otherwise
-            # report a driver-transport failure instead of the navigation
-            # timeout that actually explains the failure.
+        # The guard is installed on the *context*, not the page: a route
+        # registered on one Page does not cover a popup the page opens with
+        # `window.open`, and that popup's very first request would reach an
+        # internal target before any policy ran. Context routes apply to every
+        # page in the context, popups included — so the context must exist
+        # before navigation, which `browser.new_page()` (which creates its own
+        # context implicitly) gives no chance to do.
+        context = await browser.new_context()
+        await _guard_context_requests(context, allow_networks)
+        page = await context.new_page()
+        return await _render_page(page, url)
+
+    try:
+        # The budget covers launch and setup, not just navigation: `launch`,
+        # `new_context`, `route` and `new_page` are all driver channel calls
+        # with no timeout of their own, so a driver that wedges during any of
+        # them would hang here with the browser left running. `browser` is
+        # assigned through the closure so teardown can still reach it when the
+        # deadline fires after launch succeeded.
+        return await asyncio.wait_for(
+            _setup_and_render(), timeout=_BROWSER_TOTAL_TIMEOUT_S
+        )
+    finally:
+        # Teardown must never replace the in-flight result or exception:
+        # Playwright's `Browser.close` re-raises anything that is not a
+        # target-closed error, so an OOM-killed Chromium would otherwise
+        # report a driver-transport failure instead of the navigation
+        # timeout that actually explains the failure.
+        if browser is not None:
             try:
                 await asyncio.wait_for(
                     browser.close(), timeout=_BROWSER_CLOSE_TIMEOUT_S
                 )
             except Exception as e:
                 logger.warning("browser teardown failed for %s: %s", url, e)
-    finally:
         try:
             await asyncio.wait_for(
                 manager.__aexit__(None, None, None),

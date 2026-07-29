@@ -572,6 +572,40 @@ def test_settle_timeout_is_still_absorbed(monkeypatch):
     assert (status, "Usable anyway" in html) == (200, True)
 
 
+@pytest.mark.parametrize("stall_at", ["launch", "new_context", "route", "new_page"])
+def test_a_wedged_driver_during_setup_is_bounded_and_the_browser_closed(
+    monkeypatch, stall_at
+):
+    """launch / new_context / route / new_page are driver channel calls with no
+    timeout of their own. Wrapping only _render_page left every one of them
+    able to hang web_fetch with the browser left running."""
+    monkeypatch.setattr(web_mod, "_BROWSER_TOTAL_TIMEOUT_S", 0.05)
+    page = _FakePage()
+    browser = _FakeBrowser(page)
+    pw = _FakePlaywright(browser)
+
+    async def stall(*args, **kwargs):
+        await asyncio.sleep(30)
+
+    if stall_at == "launch":
+        pw._launch = stall
+        pw.chromium = SimpleNamespace(launch=stall)
+    elif stall_at == "new_context":
+        browser.new_context = stall
+    elif stall_at == "route":
+        browser.context.route = stall
+    else:
+        browser.context.new_page = stall
+
+    _install_fake_playwright(monkeypatch, pw)
+
+    with pytest.raises(asyncio.TimeoutError):
+        asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    # A browser that did get launched must still be closed on the way out.
+    assert browser.closed is (stall_at != "launch")
+
+
 def test_render_wrapper_reports_http_status(monkeypatch):
     page = _FakePage(html="<html><body>404 not found</body></html>", status=404)
     _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))

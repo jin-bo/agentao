@@ -149,7 +149,11 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
 
 - **The render has a wall-clock ceiling.** `page.content()` takes no timeout
   at all, so the `goto`/settle timeouts bounded navigation only and a page
-  that pegged its renderer afterwards blocked the caller forever. Teardown is
+  that pegged its renderer afterwards blocked the caller forever. The budget
+  covers browser launch and setup as well as navigation — `launch`,
+  `new_context`, `route` and `new_page` are driver channel calls with no
+  timeout of their own, so a driver wedging in any of them would hang
+  `web_fetch` with the browser left running. Teardown is
   bounded too, and wrapped so a failing `browser.close()` cannot replace the
   error that actually explains the failure. Bounding `browser.close()` alone
   was not enough: `async_playwright()`'s own `__aexit__` waits on the same
