@@ -7,7 +7,6 @@ other errors surface without reconnecting.
 """
 
 import asyncio
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -18,6 +17,8 @@ from agentao.mcp.client import (
     ServerStatus,
     classify_mcp_error,
 )
+
+from tests.support.mcp import text_block, tool_result
 
 
 # ---------------------------------------------------------------------------
@@ -104,8 +105,10 @@ def _patch_connect_with_ok_session(text: str):
     """Patch McpClient.connect to install a session whose call_tool
     returns a single text block containing ``text``.
     """
-    success_block = SimpleNamespace(type="text", text=text)
-    success_result = SimpleNamespace(content=[success_block], isError=False)
+    # Real ``mcp.types`` models, not a namespace: a hand-rolled stand-in
+    # carries agentao's assumption about the wire field names rather than the
+    # SDK's, and silently survives a rename the real code path dies on.
+    success_result = tool_result([text_block(text)])
 
     async def _fake_connect(self_):
         class _SessionOk:

@@ -146,7 +146,9 @@ External MCP servers via `.agentao/mcp.json` (project) + `<home>/.agentao/mcp.js
 
 Transports (`mcp/config.py :: resolve_transport`, fail-closed): `command` → stdio, or `url` → **Streamable HTTP by default** (add `"type": "sse"` for the legacy SSE transport; `"type": "http"` is the explicit form). A bare `url` used to mean SSE — this is a **breaking change**. Tools are registered as `mcp_{server}_{tool}`. The MCP SDK is async-only; `McpClientManager` runs a dedicated event loop and bridges into sync Agentao via `run_until_complete()`.
 
-Key files: `agentao/mcp/config.py`, `client.py`, `tool.py`.
+**Both SDK majors are supported** (`mcp>=1.26.0,<3`). mcp 2.0 renamed every wire field to snake_case, moved to `httpx2`, changed `read_timeout_seconds` from `timedelta` to float, and dropped the third element from the Streamable HTTP stream tuple. `agentao/mcp/_compat.py` absorbs all four by **probing the installed SDK**, never by parsing a version string — read it before touching `client.py` / `tool.py`. Tests must build inputs from real `mcp.types` models: `SimpleNamespace` / `MagicMock` fakes hid every one of those breaks behind a green suite (`MagicMock` is actively harmful here — it answers `hasattr` for any name, so it satisfies a 2.x probe on a 1.x SDK).
+
+Key files: `agentao/mcp/config.py`, `client.py`, `tool.py`, `_compat.py`.
 
 CLI: `/mcp list`, `/mcp add [--http|--sse] <name> <command|url>`, `/mcp remove <name>`.
 

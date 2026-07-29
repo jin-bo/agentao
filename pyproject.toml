@@ -27,7 +27,14 @@ dependencies = [
     "httpx>=0.25.0",
     "pydantic>=2",
     "pyyaml>=6.0.3",
-    "mcp>=1.26.0",
+    # Both SDK majors are supported — see agentao/mcp/_compat.py. The upper
+    # bound is deliberate: mcp 2.0 was a breaking release (snake_case wire
+    # fields, httpx→httpx2, float timeouts, 2-tuple transports) and a bare
+    # ">=1.26.0" let a fresh install silently resolve to it. Upstream still
+    # ships v1 (1.29.0 landed the same day as 2.0.0), so agentao tracks both
+    # rather than forcing hosts off 1.x. Raise the floor only when agentao
+    # actually needs a 2.x-only capability, and do it on a major boundary.
+    "mcp>=1.26.0,<3",
     "python-dotenv>=1.0.0",
     # Required at runtime by agentao/skills/registry.py for cross-process
     # locking. Lazy-imported, but kept in core because any host that

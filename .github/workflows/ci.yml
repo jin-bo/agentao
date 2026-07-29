@@ -86,12 +86,57 @@ jobs:
         run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short
 
   # ─────────────────────────────────────────────────────────────
+  # Job 1b · MCP SDK compatibility across both supported majors
+  # ─────────────────────────────────────────────────────────────
+  # The lockfile pins one mcp version, so the `test` job above can only ever
+  # exercise that one. agentao supports both majors (see agentao/mcp/_compat.py)
+  # and the 1.x/2.x differences are exactly the kind that a single-version run
+  # cannot see: renamed wire fields, httpx vs httpx2, timedelta vs float
+  # timeouts, and a transport tuple that lost an element in 2.0. Each of those
+  # passed a green suite on one major while being fatal on the other.
+  #
+  # Specs, not just pins: `>=1,<2` and `>=2,<3` track whatever upstream ships
+  # next, so a future 1.x/2.x release that breaks the shim fails here rather
+  # than in a user's install. The `==1.26.0` entry guards the declared floor.
+  mcp-compat:
+    name: MCP SDK · ${{ matrix.mcp-spec }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mcp-spec: ["mcp==1.26.0", "mcp>=1,<2", "mcp>=2,<3"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --python 3.12 --extra cli --extra web --extra i18n
+
+      - name: Override the locked MCP SDK
+        run: uv pip install --python 3.12 "${{ matrix.mcp-spec }}"
+
+      - name: Report the resolved version
+        # Printed so a failure log says which release actually broke.
+        run: uv run --no-sync --python 3.12 python -c "import importlib.metadata as m; print('mcp ==', m.version('mcp'))"
+
+      - name: Run the MCP boundary tests
+        # Name-selected rather than a file list so tests added later are picked
+        # up automatically. The full suite already runs under the locked
+        # version in the `test` job; this job's value is the SDK boundary.
+        run: uv run --no-sync --python 3.12 python -m pytest tests/ -k mcp -v --tb=short
+
+  # ─────────────────────────────────────────────────────────────
   # Job 2 · Build wheel + sdist, verify metadata with twine
   # ─────────────────────────────────────────────────────────────
   build:
     name: Build distribution
     runs-on: ubuntu-latest
-    needs: test
+    # Gate on mcp-compat too: a wheel whose MCP path is broken on one of the
+    # two majors the metadata claims to support should not be publishable.
+    needs: [test, mcp-compat]
 
     steps:
       - uses: actions/checkout@v5
