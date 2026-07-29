@@ -11,9 +11,77 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`[playwright]` extra** — the local headless-browser fallback for
+  `web_fetch`, now driving Playwright directly. Pulls `[web]` because the
+  fallback reuses the same BeautifulSoup extraction as the primary path.
+  Still requires `playwright install chromium` on top of the pip install; a
+  missing browser binary surfaces at render time (Playwright reports it at
+  launch, not at import) and is returned as a normal tool error.
+
+- **Tests for the `web_fetch` local-render fallback**
+  (`tests/test_web_fetch_playwright_fallback.py`). Its crawl4ai predecessor
+  shipped from 0.4.7 to 0.4.17 with **zero** coverage — the only reference to
+  it under `tests/` was a `monkeypatch.delenv` clearing its env var. Covers
+  selection, dispatch, both setup failures, the retired-value alias, the
+  nested-event-loop path, and the SSRF invariant that a blocked target never
+  reaches Chromium. One test introspects the **real** installed Playwright
+  signatures rather than a fake, and CI's test job installs the extra so it
+  cannot silently `importorskip` into retirement.
+
 ### Changed
 
+- **BREAKING: the `[crawl4ai]` extra is replaced by `[playwright]`, and
+  `AGENTAO_WEB_FETCH_FALLBACK=crawl4ai` is renamed to `=playwright`.**
+
+  agentao only ever used ~9 lines of crawl4ai as a "render page → markdown"
+  wrapper, and paid 51 transitive packages for it — 48% of the entire `[full]`
+  closure — including two browser-automation stacks (playwright *and*
+  patchright), a computational-geometry stack (numpy/scipy/shapely/trimesh/
+  rtree/networkx/alphashape), an NLP stack (nltk/tokenizers/huggingface-hub),
+  and an LLM client. crawl4ai 0.9.2 additionally swapped its `litellm`
+  dependency for `unclecode-litellm`, a fork published by crawl4ai's own
+  author. The behavior agentao wanted — render locally, never proxy through a
+  third party — is unchanged; only the engine underneath it is.
+
+  `[full]` goes from **107 packages to 59**.
+
+  **Migration:** `pip install 'agentao[playwright]'` (or `[full]`) and
+  `playwright install chromium`, then set
+  `AGENTAO_WEB_FETCH_FALLBACK=playwright`. The old value still works — it maps
+  to `playwright` and logs a warning naming the substitution — but
+  `pip install 'agentao[crawl4ai]'` no longer resolves. Nothing changes for
+  the default (`none`) or for `jina`.
+
+  The value is kept honest rather than silently reinterpreted: running a
+  different engine than the operator configured, without saying so, is the
+  same class of behavior as the silent third-party proxy that 0.4.7 removed.
+
+  **One capability is genuinely lost.** The old call passed crawl4ai's
+  `enable_stealth=True`, which applied `playwright-stealth` patches to evade
+  basic headless detection (`navigator.webdriver` and friends). The
+  replacement launches a stock headless Chromium, so sites that fingerprint
+  for automation may now serve a challenge page where they previously did
+  not. Restoring parity is a one-package addition to the extra
+  (`playwright-stealth`) if that turns out to matter in practice; it is left
+  out for now rather than carried on the assumption that someone needs it.
+
 ### Fixed
+
+- **`web_fetch`'s fallback no longer masks errors raised by the renderer.**
+  `_run_async` was `try: asyncio.run(coro) / except RuntimeError:
+  get_event_loop().run_until_complete(coro)` — which could not distinguish
+  "`asyncio.run` refused to nest" from "the coroutine itself raised
+  `RuntimeError`", and reported the latter as an unrelated *"There is no
+  current event loop"* message. It also could not have worked as intended:
+  `run_until_complete` fails on a loop that is actually running, and `coro` is
+  already closed by the time the handler retries it. It now asks whether a
+  loop is running, and hands the coroutine to a worker thread with its own
+  loop when one is — so an async host driving this sync tool works, and
+  genuine errors propagate with their own message. Found by the new tests.
+
+- **Stale extras in the developer guide.** `part-1/5-requirements.md` (both
+  languages) still advertised `[pdf]` / `[excel]` / `[image]` / `[crypto]` /
+  `[google]`, which were removed in **0.4.12** and have not resolved since.
 
 ---
 

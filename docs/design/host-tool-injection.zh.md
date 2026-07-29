@@ -198,7 +198,7 @@ class WebSearchTool(Tool):
 |---|---|---|---|
 | `web_search` | `backend`、`api_key` | `BOCHA_API_KEY` | §1 的多实例 env 泄漏——这是被问题陈述**证明**的真实缺陷,不是"可能有用" |
 
-**`web_fetch` 的 `fallback`:同类多实例裂缝(`WebFetchTool.__init__` 同样读进程全局 `AGENTAO_WEB_FETCH_FALLBACK`,`web.py:139/30`),但其 env 是非密钥、偏部署级的模式开关(none/jina/crawl4ai),每实例变化优先级低,首版暂缓。** 详细论证留后续 issue/ADR。
+**`web_fetch` 的 `fallback`:同类多实例裂缝(`WebFetchTool.__init__` 同样读进程全局 `AGENTAO_WEB_FETCH_FALLBACK`,`web.py:139/30`),但其 env 是非密钥、偏部署级的模式开关(none/jina/playwright),每实例变化优先级低,首版暂缓。** 详细论证留后续 issue/ADR。
 
 **真正的"可能有用"档**:`read/write` 的 `max_bytes/max_lines`、shell 的 `timeout/prefix` ——无 agentao 当前必须的证据,出现具体需求再逐个补,**一次一个工具**。
 

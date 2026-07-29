@@ -3,10 +3,11 @@
 import asyncio
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import quote_plus
 
-# `httpx`, `bs4`, and `crawl4ai` are deferred (P0.5): the web tools may
+# `httpx`, `bs4`, and `playwright` are deferred (P0.5): the web tools may
 # never be registered in an embedded host that doesn't expose web
 # capabilities, so importing this module should not pay for the parsing /
 # HTTP / headless-browser stack until a tool actually runs.
@@ -27,14 +28,32 @@ logger = logging.getLogger("agentao.tools.web")
 # the user-supplied URL through a third party. Hosts opt in explicitly.
 _FALLBACK_NONE = "none"
 _FALLBACK_JINA = "jina"
-_FALLBACK_CRAWL4AI = "crawl4ai"
-_VALID_FALLBACKS = {_FALLBACK_NONE, _FALLBACK_JINA, _FALLBACK_CRAWL4AI}
+_FALLBACK_PLAYWRIGHT = "playwright"
+_VALID_FALLBACKS = {_FALLBACK_NONE, _FALLBACK_JINA, _FALLBACK_PLAYWRIGHT}
+
+#: Retired value → its replacement. ``crawl4ai`` named the *engine*, and the
+#: engine changed (0.4.18) while the behavior — render locally in a headless
+#: Chromium, never proxy through a third party — did not. Keeping the old
+#: value working spares every existing `.env`, but the substitution is loud:
+#: silently running a different engine than the operator configured is exactly
+#: the kind of thing this tool refuses to do elsewhere.
+_RETIRED_FALLBACKS = {"crawl4ai": _FALLBACK_PLAYWRIGHT}
 
 
 def _read_fallback_setting() -> str:
     raw = (os.getenv("AGENTAO_WEB_FETCH_FALLBACK") or "").strip().lower()
     if raw in _VALID_FALLBACKS:
         return raw
+    if raw in _RETIRED_FALLBACKS:
+        replacement = _RETIRED_FALLBACKS[raw]
+        logger.warning(
+            "AGENTAO_WEB_FETCH_FALLBACK=%r is retired — the local headless-browser"
+            " fallback now drives Playwright directly instead of crawl4ai. Using"
+            " %r for this session; update your configuration, and install it with"
+            " `pip install 'agentao[playwright]'` + `playwright install chromium`.",
+            raw, replacement,
+        )
+        return replacement
     if raw:
         logger.warning(
             "Ignoring invalid AGENTAO_WEB_FETCH_FALLBACK=%r; expected one of %s",
@@ -57,6 +76,12 @@ _JS_MARKERS = [
 
 _TEXT_RATIO_THRESHOLD = 0.05
 _MIN_TEXT_LENGTH = 200
+
+#: Presented by both of `web_fetch`'s local paths — the httpx fetch and the
+#: headless-browser fallback — so a site sees one identity either way.
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+)
 
 
 def _needs_js_rendering(html: str, soup: "_BeautifulSoup_t") -> bool:
@@ -96,24 +121,74 @@ def _format_fallback_body(url: str, label: str, body: str) -> str:
     return f"URL: {url}\nFallback: {label}\n\n{_truncate(body, 20000)}"
 
 
-async def _fetch_with_crawl4ai(url: str) -> str:
-    # Deferred import: crawl4ai pulls in Playwright + Chromium; only
-    # imported when this fallback is actually selected and invoked.
-    from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+#: Navigation ceiling — matches the 30s the httpx path allows itself.
+_BROWSER_NAV_TIMEOUT_MS = 30_000
+#: Extra grace for client-side rendering *after* DOMContentLoaded. Deliberately
+#: short and deliberately optional: a page holding a websocket or long-poll open
+#: never reaches `networkidle`, and its DOM is already usable, so expiring here
+#: is a normal outcome rather than a failure.
+_BROWSER_SETTLE_TIMEOUT_MS = 5_000
 
-    config = BrowserConfig(enable_stealth=True, headless=True, verbose=False)
-    run_config = CrawlerRunConfig(verbose=False)
-    async with AsyncWebCrawler(config=config) as crawler:
-        result = await crawler.arun(url=url, config=run_config)
-        return result.markdown or ""
+
+async def _render_with_playwright(url: str) -> str:
+    """Render ``url`` in a local headless Chromium and return its final HTML.
+
+    Deferred import: Playwright ships a large driver and the caller may never
+    select this fallback.
+    """
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page(user_agent=_USER_AGENT)
+            await page.goto(
+                url, wait_until="domcontentloaded", timeout=_BROWSER_NAV_TIMEOUT_MS
+            )
+            # Best-effort settle: a page with a long-poll / websocket never goes
+            # idle, and its DOM is already usable. Timing out here is normal, so
+            # it must not discard the render.
+            try:
+                await page.wait_for_load_state(
+                    "networkidle", timeout=_BROWSER_SETTLE_TIMEOUT_MS
+                )
+            except Exception:
+                logger.debug("networkidle not reached for %s; using current DOM", url)
+            return await page.content()
+        finally:
+            await browser.close()
+
+
+def _html_to_text(html: str) -> str:
+    from bs4 import BeautifulSoup
+
+    return _extract_text(BeautifulSoup(html, "html.parser"))
 
 
 def _run_async(coro):
+    """Run ``coro`` to completion from sync code, nested loop or not.
+
+    The previous form was ``try: asyncio.run(coro) / except RuntimeError:
+    get_event_loop().run_until_complete(coro)``, which had three faults: it
+    could not tell "``asyncio.run`` refused to nest" from "the coroutine
+    itself raised ``RuntimeError``" — masking the latter behind an unrelated
+    event-loop message — ``run_until_complete`` would fail anyway on a loop
+    that is actually running, and ``coro`` is already closed by the time the
+    handler retries it.
+
+    Asking whether a loop is running answers the nesting question directly,
+    and leaves genuine ``RuntimeError``s from the coroutine to propagate.
+    """
     try:
-        return asyncio.run(coro)
+        asyncio.get_running_loop()
     except RuntimeError:
-        loop = asyncio.get_event_loop()
-        return loop.run_until_complete(coro)
+        return asyncio.run(coro)
+
+    # Already inside a running loop — e.g. an async host driving this sync
+    # tool. A nested asyncio.run is illegal, so give the coroutine its own
+    # loop on a worker thread and block for the result.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def _jina_proxy_url(url: str) -> str:
@@ -166,11 +241,12 @@ class WebFetchTool(Tool):
                 " fetch fails, falls back to Jina Reader — the URL is sent"
                 " to https://r.jina.ai and rendered server-side."
             )
-        elif self._fallback == _FALLBACK_CRAWL4AI:
+        elif self._fallback == _FALLBACK_PLAYWRIGHT:
             base += (
                 " If the page requires JavaScript rendering or the direct"
                 " fetch fails, falls back to a local headless browser"
-                " (crawl4ai)."
+                " (Playwright/Chromium) — the URL is not sent to any third"
+                " party."
             )
         else:
             base += " No JS-rendering fallback is configured."
@@ -209,9 +285,7 @@ class WebFetchTool(Tool):
         import httpx
         from bs4 import BeautifulSoup
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+        headers = {"User-Agent": _USER_AGENT}
 
         try:
             # SSRF guard: follow_redirects=False so guarded_get owns the
@@ -240,7 +314,7 @@ class WebFetchTool(Tool):
             js_note = (
                 "Note: page appears to require JS rendering; only the static"
                 " shell was captured. Set AGENTAO_WEB_FETCH_FALLBACK=jina"
-                " (sends URL to r.jina.ai) or =crawl4ai (local headless"
+                " (sends URL to r.jina.ai) or =playwright (local headless"
                 " browser) to enable a fallback.\n"
                 if js_detected
                 else ""
@@ -252,7 +326,7 @@ class WebFetchTool(Tool):
             )
 
         except UrlPolicyError as e:
-            # Blocked target — do NOT fall through to the jina/crawl4ai
+            # Blocked target — do NOT fall through to the jina/playwright
             # fallbacks: those would exfiltrate the internal URL through a
             # third party or fetch it via a local headless browser.
             return f"Error: blocked outbound request — {e}"
@@ -277,7 +351,7 @@ class WebFetchTool(Tool):
         ``validate_outbound_url`` on the primary path (a blocked target raises
         ``UrlPolicyError``, which the caller returns without falling back). But
         the fallbacks themselves are NOT per-hop guarded — Jina fetches the
-        target server-side and the crawl4ai headless browser follows
+        target server-side and the Playwright-driven headless browser follows
         redirects / JS navigation on its own. Both are opt-in
         (``AGENTAO_WEB_FETCH_FALLBACK``, default ``none``) and surfaced in the
         tool description; closing the in-browser redirect path would require
@@ -288,8 +362,8 @@ class WebFetchTool(Tool):
         if self._fallback == _FALLBACK_JINA:
             logger.info("web_fetch fallback=jina for %s (%s)", url, reason)
             return self._jina_fetch(url)
-        logger.info("web_fetch fallback=crawl4ai for %s (%s)", url, reason)
-        return self._crawl4ai_fetch(url)
+        logger.info("web_fetch fallback=playwright for %s (%s)", url, reason)
+        return self._playwright_fetch(url)
 
     def _jina_fetch(self, url: str) -> str:
         label = f"jina reader ({_jina_proxy_url(url)})"
@@ -300,20 +374,23 @@ class WebFetchTool(Tool):
             return f"URL: {url}\nFallback: {label}\nError: {e}"
         return _format_fallback_body(url, label, markdown)
 
-    def _crawl4ai_fetch(self, url: str) -> str:
-        label = "crawl4ai (headless browser)"
+    def _playwright_fetch(self, url: str) -> str:
+        label = "playwright (local headless browser)"
         try:
-            markdown = _run_async(_fetch_with_crawl4ai(url))
+            html = _run_async(_render_with_playwright(url))
         except ImportError as e:
             return (
-                f"URL: {url}\nFallback: {label}\nError: crawl4ai not"
-                f" installed — install with `pip install agentao[crawl4ai]`"
+                f"URL: {url}\nFallback: {label}\nError: playwright not"
+                f" installed — install with `pip install 'agentao[playwright]'`"
                 f" and run `playwright install chromium`. ({e})"
             )
         except Exception as e:
-            logger.warning("crawl4ai failed for %s: %s", url, e)
+            # Covers the other half of the setup story: the package imports
+            # fine but the browser binary was never downloaded, which
+            # Playwright reports at launch, not at import.
+            logger.warning("playwright render failed for %s: %s", url, e)
             return f"URL: {url}\nFallback: {label}\nError: {e}"
-        return _format_fallback_body(url, label, markdown)
+        return _format_fallback_body(url, label, _html_to_text(html))
 
 
 #: Per-snippet cap so one verbose result can't dominate the tool output.

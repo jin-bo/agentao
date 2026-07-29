@@ -99,18 +99,19 @@ pip install 'agentao[cli]'       # rich + prompt-toolkit + readchar + pygments
 pip install 'agentao[web]'       # beautifulsoup4 —— web_fetch / web_search 必需
 pip install 'agentao[i18n]'      # jieba —— 中文记忆召回
 
-# 重型文件处理工具
-pip install 'agentao[pdf]'       # PDF 读取（pymupdf、pdfplumber）
-pip install 'agentao[excel]'     # Excel 读写（pandas、openpyxl）
-pip install 'agentao[image]'     # 图像处理（Pillow）
-pip install 'agentao[crypto]'    # pycryptodome
-pip install 'agentao[google]'    # google-genai
-pip install 'agentao[crawl4ai]'  # crawl4ai
-pip install 'agentao[tokenizer]' # tiktoken —— 精确 token 计数
+# 较重的可选能力
+pip install 'agentao[playwright]'  # 本地无头 Chromium —— web_fetch 的 JS 渲染
+                                   # 回退。还需要 `playwright install chromium`。
+pip install 'agentao[tokenizer]'   # tiktoken —— 精确 token 计数
 
 # 元 extras
-pip install 'agentao[full]'      # 全部（与 0.3.x 闭包等价）
+pip install 'agentao[full]'        # cli + web + i18n + playwright + tokenizer
 ```
+
+> `[pdf]` / `[excel]` / `[image]` / `[crypto]` / `[google]` 这几个 extras 已在
+> **0.4.12 删除**（零 in-tree 消费者 —— 见
+> `docs/design/optimization-opportunities-review.md` T1.1），`[crawl4ai]` 在
+> **0.4.18 被 `[playwright]` 取代**。它们现在都解析不到了。
 
 > 不装 `[web]` 时注册阶段就会**跳过** `web_fetch` / `web_search`——LLM 在工具
 > 列表里看不到它们，避免 model 调一个会失败的工具。不装 `[i18n]` 时 CJK 记忆

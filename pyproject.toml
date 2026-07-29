@@ -52,9 +52,15 @@ cli       = ["rich>=13.0.0", "prompt-toolkit>=3.0.52", "readchar>=4.2.1", "pygme
 web       = ["beautifulsoup4>=4.12.0"]
 # Chinese-text tokenization for memory keyword retrieval
 i18n      = ["jieba>=0.42.1"]
-crawl4ai  = ["crawl4ai>=0.8.0"]
+# Local headless-browser fallback for `web_fetch` (JS-rendered pages).
+# Playwright directly, not crawl4ai: agentao only ever used ~9 lines of it as
+# a "render page → markdown" wrapper, and it dragged in 51 transitive packages
+# (two browser stacks, a geometry stack, an LLM client) for that. Needs
+# `playwright install chromium` on top of the pip install. Pulls [web] because
+# the fallback reuses the same BeautifulSoup extraction as the primary path.
+playwright = ["agentao[web]", "playwright>=1.40.0"]
 tokenizer = ["tiktoken>=0.7.0"]
-full      = ["agentao[cli,web,i18n,crawl4ai,tokenizer]"]
+full      = ["agentao[cli,web,i18n,playwright,tokenizer]"]
 
 [project.urls]
 Homepage = "https://github.com/jin-bo/agentao"
