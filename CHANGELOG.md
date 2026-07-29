@@ -7,7 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Targeting 0.4.17. Add entries under the relevant heading as work lands._
+_Targeting 0.4.18. Add entries under the relevant heading as work lands._
+
+---
+
+## [0.4.17] — 2026-07-29
+
+An **SDK-compatibility release**. `mcp` 2.0.0 landed on 2026-07-28 as a breaking
+rewrite of the wire models, and agentao's dependency floor had no upper bound —
+so a fresh install of 0.4.16 already resolved to it, and every MCP path failed.
+0.4.17 makes agentao run on both majors and puts CI in a position to notice next
+time.
+
+No breaking changes. It upgrades in place.
 
 ### Added
 
@@ -32,6 +44,17 @@ _Targeting 0.4.17. Add entries under the relevant heading as work lands._
   majors rather than forcing hosts off 1.x. The floor rises only when agentao
   actually needs a 2.x-only capability, and on a major boundary. The lockfile
   tracks the newest 2.x; the floor and the newest 1.x are held by CI.
+
+- **The four-domain taxonomy is stated once in the system prompt** (#147).
+  `identity`, `task_classification`, and `completion_standard` each enumerated
+  the same four domains from a different angle, so no section was authoritative
+  and all three were free to drift. They now share one table in
+  `task_classification` (Domain | Covers | Deliver | Done when); `identity`
+  keeps the bare names and `completion_standard` points at the "Done when"
+  column. `## Failure retry discipline` was a near-verbatim restatement of
+  Reliability #3 and is folded into it. No rule is dropped. Static sections go
+  2542 → 2320 tokens (−8.7%), but that saving sits in the cached stable prefix —
+  the point is removing the drift surface, not the tokens.
 
 ### Fixed
 
