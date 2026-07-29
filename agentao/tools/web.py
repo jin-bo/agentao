@@ -354,6 +354,14 @@ async def _render_with_playwright(
         # defaulted it off; keep it off.
         context = await browser.new_context(
             accept_downloads=False,
+            # Playwright's own docs for `route`: "will not intercept requests
+            # intercepted by Service Worker... We recommend disabling Service
+            # Workers when using request interception by setting
+            # `serviceWorkers` to `'block'`." Default is 'allow', so an
+            # untrusted page could register one and reach loopback or
+            # cloud-metadata straight through the guard. A one-shot render has
+            # no use for them regardless.
+            service_workers="block",
             # Explicit, though it matches Playwright's default, because this is
             # a deliberate divergence from crawl4ai — whose BrowserConfig
             # defaulted `ignore_https_errors` to True — and an invisible

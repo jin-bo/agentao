@@ -260,6 +260,7 @@ def test_playwright_api_matches_our_call_sites():
     new_context = inspect.signature(async_api.Browser.new_context).parameters
     assert "accept_downloads" in new_context
     assert "ignore_https_errors" in new_context
+    assert "service_workers" in new_context
 
     goto = inspect.signature(async_api.Page.goto).parameters
     assert "wait_until" in goto
@@ -556,6 +557,11 @@ def test_guard_is_installed_on_the_context_so_popups_are_covered(monkeypatch):
     # ignoring cert errors here would render an expired or attacker-supplied
     # certificate's page and hand it to the model as though it were fine.
     assert browser.new_context_kwargs["ignore_https_errors"] is False
+    # Playwright's own route() docs: it "will not intercept requests
+    # intercepted by Service Worker... We recommend disabling Service Workers
+    # when using request interception". Default is 'allow', so leaving it would
+    # be a straight hole through the SSRF guard.
+    assert browser.new_context_kwargs["service_workers"] == "block"
 
 
 def test_unexpected_settle_failure_is_not_returned_as_a_successful_render(

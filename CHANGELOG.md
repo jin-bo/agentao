@@ -150,6 +150,13 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   extra floors at **playwright>=1.48**, where `route_web_socket` landed,
   rather than the 1.40 it was first written against.
 
+  **Service workers are blocked.** Playwright's own documentation for `route`
+  says it "will not intercept requests intercepted by Service Worker" and
+  recommends setting `serviceWorkers` to `'block'` when using request
+  interception; the default is `'allow'`. Without it an untrusted page could
+  register a worker and reach loopback or cloud-metadata straight through the
+  guard. A one-shot render has no use for them.
+
 - **Downloads are disabled in the render context.** Playwright's
   `new_context()` defaults `accept_downloads` to true ("Whether to
   automatically download all the attachments" — its own docs), and crawl4ai
