@@ -140,6 +140,12 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   many are live, so a page spraying randomised hostnames that miss the cache by
   construction cannot accumulate threads until the process dies.
 
+- **Downloads are disabled in the render context.** Playwright's
+  `new_context()` defaults `accept_downloads` to true ("Whether to
+  automatically download all the attachments" — its own docs), and crawl4ai
+  had it off. `web_fetch` reads `page.content()` and nothing else, so a
+  download could only ever be a hostile page writing to the host's disk.
+
 - **An unhydrated DOM is no longer returned as a successful render.** The
   settle step absorbs its own timeout by design — long-poll pages never reach
   `networkidle` and their DOM is already usable — but it also swallowed a

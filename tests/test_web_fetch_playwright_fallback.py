@@ -257,6 +257,9 @@ def test_playwright_api_matches_our_call_sites():
     assert "headless" in launch
     assert "env" in launch  # credential scrubbing depends on this
 
+    new_context = inspect.signature(async_api.Browser.new_context).parameters
+    assert "accept_downloads" in new_context
+
     goto = inspect.signature(async_api.Page.goto).parameters
     assert "wait_until" in goto
     assert "timeout" in goto
@@ -530,6 +533,9 @@ def test_guard_is_installed_on_the_context_so_popups_are_covered(monkeypatch):
 
     assert browser.context.route_pattern == "**/*"
     assert browser.context.route_handler is not None
+    # accept_downloads defaults to true upstream; web_fetch never consumes a
+    # download, so leaving it on only lets a hostile page write to our disk.
+    assert browser.new_context_kwargs["accept_downloads"] is False
 
 
 def test_unexpected_settle_failure_is_not_returned_as_a_successful_render(

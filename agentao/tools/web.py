@@ -347,7 +347,12 @@ async def _render_with_playwright(
         # page in the context, popups included — so the context must exist
         # before navigation, which `browser.new_page()` (which creates its own
         # context implicitly) gives no chance to do.
-        context = await browser.new_context()
+        # accept_downloads defaults to true ("Whether to automatically download
+        # all the attachments" — Playwright's own docs). `web_fetch` reads
+        # `page.content()` and nothing else, so a download can only ever be a
+        # hostile page writing to the host's disk until teardown. crawl4ai
+        # defaulted it off; keep it off.
+        context = await browser.new_context(accept_downloads=False)
         await _guard_context_requests(context, allow_networks)
         page = await context.new_page()
         return await _render_page(page, url)
