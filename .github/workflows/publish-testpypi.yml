@@ -51,7 +51,10 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --python 3.12
+        # Same extras as ci.yml's Test job and publish.yml — a bare sync
+        # silently skips every extra-gated test, including the Playwright
+        # API-drift guard.
+        run: uv sync --python 3.12 --extra cli --extra web --extra i18n --extra playwright
 
       - name: Run tests in CI offline mode
         env:

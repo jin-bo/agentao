@@ -17,6 +17,7 @@ import asyncio
 import inspect
 import logging
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -58,13 +59,13 @@ def _tool(monkeypatch, fallback: str | None) -> WebFetchTool:
 def test_fallback_setting_parsing(monkeypatch, raw, expected):
     if raw is not None:
         monkeypatch.setenv("AGENTAO_WEB_FETCH_FALLBACK", raw)
-    assert web_mod._read_fallback_setting() == expected
+    assert web_mod._read_fallback_setting()[0] == expected
 
 
 def test_retired_crawl4ai_value_maps_to_playwright_and_warns(monkeypatch, caplog):
     monkeypatch.setenv("AGENTAO_WEB_FETCH_FALLBACK", "crawl4ai")
     with caplog.at_level(logging.WARNING, logger="agentao.tools.web"):
-        assert web_mod._read_fallback_setting() == "playwright"
+        assert web_mod._read_fallback_setting() == ("playwright", "crawl4ai")
 
     # The substitution must be loud: the operator configured one engine and is
     # getting another. Silence here would be the same class of bug as a silent
@@ -104,21 +105,22 @@ def test_description_states_when_no_fallback_configured(monkeypatch):
 
 
 def test_none_returns_none_so_caller_keeps_primary_result(monkeypatch):
-    assert _tool(monkeypatch, None)._run_fallback("https://x.test", reason="t") is None
+    assert _tool(monkeypatch, None)._run_fallback("https://x.test", reason="t") == (None, None)
 
 
 def test_playwright_fallback_renders_and_extracts_text(monkeypatch):
-    async def fake_render(url):
+    async def fake_render(url, **kwargs):
         assert url == "https://x.test/"
-        return (
+        return 200, (
             "<html><head><style>.a{color:red}</style></head>"
             "<body><script>var x=1</script><p>Hydrated content</p></body></html>"
         )
 
     monkeypatch.setattr(web_mod, "_render_with_playwright", fake_render)
-    out = _tool(monkeypatch, "playwright")._run_fallback(
+    out, error = _tool(monkeypatch, "playwright")._run_fallback(
         "https://x.test/", reason="JS rendering detected"
     )
+    assert error is None
 
     assert "Fallback: playwright (local headless browser)" in out
     assert "Hydrated content" in out
@@ -130,7 +132,8 @@ def test_playwright_fallback_renders_and_extracts_text(monkeypatch):
 
 def test_jina_still_dispatches_to_jina(monkeypatch):
     monkeypatch.setattr(web_mod, "_fetch_via_jina", lambda url: "# proxied")
-    out = _tool(monkeypatch, "jina")._run_fallback("https://x.test/", reason="t")
+    out, error = _tool(monkeypatch, "jina")._run_fallback("https://x.test/", reason="t")
+    assert error is None
     assert "r.jina.ai" in out
     assert "# proxied" in out
 
@@ -146,23 +149,28 @@ def test_missing_playwright_package_names_both_install_steps(monkeypatch):
     monkeypatch.setitem(sys.modules, "playwright", None)
     monkeypatch.setitem(sys.modules, "playwright.async_api", None)
 
-    out = _tool(monkeypatch, "playwright")._run_fallback("https://x.test/", reason="t")
-    assert "agentao[playwright]" in out
-    assert "playwright install chromium" in out
+    body, error = _tool(monkeypatch, "playwright")._run_fallback(
+        "https://x.test/", reason="t"
+    )
+    assert body is None
+    assert "agentao[playwright]" in error
+    assert "playwright install chromium" in error
 
 
 def test_missing_browser_binary_is_reported_not_swallowed(monkeypatch):
     # Package present, Chromium never downloaded — Playwright raises at launch,
     # long after the import succeeded.
-    async def fake_render(url):
+    async def fake_render(url, **kwargs):
         raise RuntimeError(
             "Executable doesn't exist at /root/.cache/ms-playwright/chromium-1234"
         )
 
     monkeypatch.setattr(web_mod, "_render_with_playwright", fake_render)
-    out = _tool(monkeypatch, "playwright")._run_fallback("https://x.test/", reason="t")
-    assert "Error:" in out
-    assert "Executable doesn't exist" in out
+    body, error = _tool(monkeypatch, "playwright")._run_fallback(
+        "https://x.test/", reason="t"
+    )
+    assert body is None
+    assert "Executable doesn't exist" in error
 
 
 def test_fallback_runs_from_inside_a_running_event_loop(monkeypatch):
@@ -171,8 +179,8 @@ def test_fallback_runs_from_inside_a_running_event_loop(monkeypatch):
     ``asyncio.run`` refuses to nest, so `_run_async` hands the coroutine to a
     worker thread with its own loop.
     """
-    async def fake_render(url):
-        return "<html><body><p>Rendered under a live loop</p></body></html>"
+    async def fake_render(url, **kwargs):
+        return 200, "<html><body><p>Rendered under a live loop</p></body></html>"
 
     monkeypatch.setattr(web_mod, "_render_with_playwright", fake_render)
     tool = _tool(monkeypatch, "playwright")
@@ -180,7 +188,8 @@ def test_fallback_runs_from_inside_a_running_event_loop(monkeypatch):
     async def host():
         return tool._run_fallback("https://x.test/", reason="t")
 
-    out = asyncio.run(host())
+    out, error = asyncio.run(host())
+    assert error is None
     assert "Rendered under a live loop" in out
 
 
@@ -198,9 +207,9 @@ def test_blocked_target_never_reaches_the_headless_browser(monkeypatch):
     """
     calls = []
 
-    async def fake_render(url):
+    async def fake_render(url, **kwargs):
         calls.append(url)
-        return "<html><body>should never happen</body></html>"
+        return 200, "<html><body>should never happen</body></html>"
 
     def boom(client, url, **kwargs):
         raise UrlPolicyError("resolves to loopback")
@@ -220,14 +229,27 @@ def test_blocked_target_never_reaches_the_headless_browser(monkeypatch):
 
 
 def test_playwright_api_matches_our_call_sites():
-    """Assert the kwargs `_render_with_playwright` passes still exist upstream.
+    """Assert every upstream name and literal `_render_with_playwright` uses.
 
-    Skipped when the optional extra isn't installed; CI's playwright job is
-    what makes this meaningful.
+    Kwarg names alone are not enough: the call site also depends on
+    `Playwright.chromium`, `Page.content()`, `Page.route()`, `Route.abort/
+    continue_`, `Request.is_navigation_request()`, `Response.status`, and on the
+    string *values* "domcontentloaded" and "networkidle" still being accepted —
+    Playwright already marks the latter DISCOURAGED, and its removal would be
+    swallowed by the settle handler while CI stayed green.
+
+    Skipped when the optional extra isn't installed; CI installs it in the test
+    job and in both publish workflows so this cannot quietly retire.
     """
     async_api = pytest.importorskip("playwright.async_api")
 
     assert hasattr(async_api, "async_playwright")
+    assert hasattr(async_api, "TimeoutError")
+    assert isinstance(getattr(async_api.Playwright, "chromium", None), property)
+
+    launch = inspect.signature(async_api.BrowserType.launch).parameters
+    assert "headless" in launch
+    assert "env" in launch  # credential scrubbing depends on this
 
     goto = inspect.signature(async_api.Page.goto).parameters
     assert "wait_until" in goto
@@ -237,5 +259,200 @@ def test_playwright_api_matches_our_call_sites():
     assert "state" in wait_for_load_state
     assert "timeout" in wait_for_load_state
 
-    assert "user_agent" in inspect.signature(async_api.Browser.new_page).parameters
-    assert "headless" in inspect.signature(async_api.BrowserType.launch).parameters
+    # The literals, not just the parameter names.
+    assert "domcontentloaded" in str(goto["wait_until"].annotation)
+    assert "networkidle" in str(wait_for_load_state["state"].annotation)
+
+    for owner, name in [
+        (async_api.Page, "content"),
+        (async_api.Page, "route"),
+        (async_api.Page, "goto"),
+        (async_api.Browser, "new_page"),
+        (async_api.Browser, "close"),
+        (async_api.Route, "abort"),
+        (async_api.Route, "continue_"),
+        (async_api.Request, "is_navigation_request"),
+    ]:
+        assert callable(getattr(owner, name, None)), f"{owner.__name__}.{name}"
+
+    assert isinstance(getattr(async_api.Response, "status", None), property)
+
+
+# --------------------------------------------------------------------------
+# the wrapper body itself — executed, not mocked away
+# --------------------------------------------------------------------------
+
+
+class _FakeRoute:
+    def __init__(self, url, navigation=True):
+        self.request = SimpleNamespace(
+            url=url, is_navigation_request=lambda: navigation
+        )
+        self.action = None
+
+    async def continue_(self):
+        self.action = "continue"
+
+    async def abort(self):
+        self.action = "abort"
+
+
+class _FakePage:
+    def __init__(self, *, html="<html><body>ok</body></html>", status=200):
+        self._html = html
+        self._status = status
+        self.goto_kwargs = None
+        self.settle_kwargs = None
+        self.route_handler = None
+        self.content_calls = 0
+
+    async def route(self, pattern, handler):
+        self.route_pattern = pattern
+        self.route_handler = handler
+
+    async def goto(self, url, **kwargs):
+        self.goto_kwargs = kwargs
+        return SimpleNamespace(status=self._status)
+
+    async def wait_for_load_state(self, state, **kwargs):
+        self.settle_kwargs = {"state": state, **kwargs}
+
+    async def content(self):
+        self.content_calls += 1
+        return self._html
+
+
+class _FakeBrowser:
+    def __init__(self, page):
+        self._page = page
+        self.closed = False
+
+    async def new_page(self, **kwargs):
+        self.new_page_kwargs = kwargs
+        return self._page
+
+    async def close(self):
+        self.closed = True
+
+
+class _FakePlaywright:
+    def __init__(self, browser):
+        self.chromium = SimpleNamespace(launch=self._launch)
+        self._browser = browser
+        self.launch_kwargs = None
+
+    async def _launch(self, **kwargs):
+        self.launch_kwargs = kwargs
+        return self._browser
+
+
+def _install_fake_playwright(monkeypatch, playwright):
+    class _Ctx:
+        async def __aenter__(self):
+            return playwright
+
+        async def __aexit__(self, *exc):
+            return False
+
+    module = SimpleNamespace(
+        async_playwright=lambda: _Ctx(),
+        TimeoutError=type("PlaywrightTimeoutError", (Exception,), {}),
+    )
+    monkeypatch.setitem(sys.modules, "playwright", SimpleNamespace(async_api=module))
+    monkeypatch.setitem(sys.modules, "playwright.async_api", module)
+    return module
+
+
+def test_render_wrapper_executes_and_scrubs_child_env(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-should-not-reach-chromium")
+    page = _FakePage(html="<html><body><p>Rendered</p></body></html>", status=200)
+    browser = _FakeBrowser(page)
+    pw = _FakePlaywright(browser)
+    _install_fake_playwright(monkeypatch, pw)
+
+    status, html = asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    assert (status, "Rendered" in html) == (200, True)
+    assert page.goto_kwargs["wait_until"] == "domcontentloaded"
+    assert page.settle_kwargs["state"] == "networkidle"
+    assert browser.closed is True
+    # The one child that runs attacker-controlled JS must not inherit
+    # agentao's provider credentials.
+    assert "OPENAI_API_KEY" not in pw.launch_kwargs["env"]
+    # And the malformed httpx UA must not be forced onto a real browser.
+    assert "user_agent" not in browser.new_page_kwargs
+
+
+def test_render_wrapper_closes_browser_when_navigation_fails(monkeypatch):
+    page = _FakePage()
+
+    async def boom(url, **kwargs):
+        raise RuntimeError("navigation exploded")
+
+    page.goto = boom
+    browser = _FakeBrowser(page)
+    _install_fake_playwright(monkeypatch, _FakePlaywright(browser))
+
+    with pytest.raises(RuntimeError, match="navigation exploded"):
+        asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    assert browser.closed is True
+
+
+def test_render_wrapper_reports_http_status(monkeypatch):
+    page = _FakePage(html="<html><body>404 not found</body></html>", status=404)
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+
+    status, _ = asyncio.run(web_mod._render_with_playwright("https://x.test/gone"))
+    assert status == 404
+
+
+def test_teardown_failure_does_not_mask_the_render_error(monkeypatch):
+    page = _FakePage()
+
+    async def boom(url, **kwargs):
+        raise RuntimeError("the real failure")
+
+    page.goto = boom
+    browser = _FakeBrowser(page)
+
+    async def bad_close():
+        raise RuntimeError("teardown noise")
+
+    browser.close = bad_close
+    _install_fake_playwright(monkeypatch, _FakePlaywright(browser))
+
+    # The navigation error must survive; the teardown error is logged.
+    with pytest.raises(RuntimeError, match="the real failure"):
+        asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+
+def test_in_browser_navigation_to_blocked_target_is_aborted(monkeypatch):
+    """Chromium chases redirects itself — the URL policy must re-apply."""
+    page = _FakePage()
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    blocked = _FakeRoute("http://169.254.169.254/latest/meta-data/")
+    asyncio.run(page.route_handler(blocked))
+    assert blocked.action == "abort"
+
+    # A globally-routable IP literal, so the assertion does not depend on the
+    # DNS the test host happens to have — a fake-IP proxy (Clash/V2Ray maps
+    # every name into 198.18.0.0/15) would otherwise make a hostname here
+    # resolve to a non-public address and flip this to "abort".
+    allowed = _FakeRoute("https://1.1.1.1/next")
+    asyncio.run(page.route_handler(allowed))
+    assert allowed.action == "continue"
+
+
+def test_subresource_requests_are_not_revalidated(monkeypatch):
+    """Only navigations end up in page.content(); per-subresource DNS is not
+    worth paying, and blocking them would break ordinary pages."""
+    page = _FakePage()
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    subresource = _FakeRoute("http://127.0.0.1/img.png", navigation=False)
+    asyncio.run(page.route_handler(subresource))
+    assert subresource.action == "continue"

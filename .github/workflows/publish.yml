@@ -58,7 +58,11 @@ jobs:
         # all import from agentao.cli or read prompt_toolkit/readchar at
         # collect time. Without these extras the test step fails before
         # build/publish run.
-        run: uv sync --python 3.12 --extra cli --extra web --extra i18n
+        # [playwright] must stay in lockstep with ci.yml's Test job: the
+        # API-drift guard in tests/test_web_fetch_playwright_fallback.py
+        # importorskips without it, so omitting it here would retire the
+        # guard in precisely the workflow that publishes to PyPI.
+        run: uv sync --python 3.12 --extra cli --extra web --extra i18n --extra playwright
 
       - name: Run tests in CI offline mode
         env:

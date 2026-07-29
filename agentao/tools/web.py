@@ -15,10 +15,12 @@ if TYPE_CHECKING:
     from bs4 import BeautifulSoup as _BeautifulSoup_t
 
 from .base import Tool
+from ..capabilities.process import build_child_env
 from ..security.url_policy import (
     UrlPolicyError,
     guarded_get,
     read_allow_cidrs_setting,
+    validate_outbound_url,
 )
 
 logger = logging.getLogger("agentao.tools.web")
@@ -40,10 +42,18 @@ _VALID_FALLBACKS = {_FALLBACK_NONE, _FALLBACK_JINA, _FALLBACK_PLAYWRIGHT}
 _RETIRED_FALLBACKS = {"crawl4ai": _FALLBACK_PLAYWRIGHT}
 
 
-def _read_fallback_setting() -> str:
+def _read_fallback_setting() -> tuple[str, str | None]:
+    """Return ``(fallback, retired_value)``.
+
+    ``retired_value`` is the deprecated spelling the operator actually
+    configured, so the caller can surface the substitution somewhere a human
+    will see it. The ``logger.warning`` below is not that place: the only
+    handler on the ``agentao`` logger is `agentao.log`'s file handler, so a
+    warning alone reaches nobody's terminal.
+    """
     raw = (os.getenv("AGENTAO_WEB_FETCH_FALLBACK") or "").strip().lower()
     if raw in _VALID_FALLBACKS:
-        return raw
+        return raw, None
     if raw in _RETIRED_FALLBACKS:
         replacement = _RETIRED_FALLBACKS[raw]
         logger.warning(
@@ -53,13 +63,13 @@ def _read_fallback_setting() -> str:
             " `pip install 'agentao[playwright]'` + `playwright install chromium`.",
             raw, replacement,
         )
-        return replacement
+        return replacement, raw
     if raw:
         logger.warning(
             "Ignoring invalid AGENTAO_WEB_FETCH_FALLBACK=%r; expected one of %s",
             raw, sorted(_VALID_FALLBACKS),
         )
-    return _FALLBACK_NONE
+    return _FALLBACK_NONE, None
 
 _JS_MARKERS = [
     "__NEXT_DATA__",        # Next.js
@@ -77,8 +87,12 @@ _JS_MARKERS = [
 _TEXT_RATIO_THRESHOLD = 0.05
 _MIN_TEXT_LENGTH = 200
 
-#: Presented by both of `web_fetch`'s local paths — the httpx fetch and the
-#: headless-browser fallback — so a site sees one identity either way.
+#: Sent by the httpx path only. Deliberately *not* forced onto the headless
+#: browser: this string stops before the `(KHTML, like Gecko) Chrome/<ver>
+#: Safari/537.36` tail, so as a browser UA it would contradict the truthful
+#: `Sec-CH-UA` headers and `navigator.userAgentData` Chromium keeps sending —
+#: a stronger bot signal than Chromium's own identity. The fallback lets
+#: Playwright present its real UA.
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 )
@@ -128,10 +142,52 @@ _BROWSER_NAV_TIMEOUT_MS = 30_000
 #: never reaches `networkidle`, and its DOM is already usable, so expiring here
 #: is a normal outcome rather than a failure.
 _BROWSER_SETTLE_TIMEOUT_MS = 5_000
+#: Wall-clock ceiling on the whole render. The two timeouts above bound
+#: *navigation* only — `page.content()` takes no timeout at all (its signature
+#: is `(self) -> str`), so a page that pegs its renderer after DOMContentLoaded
+#: would otherwise wait on the driver channel forever, with `_run_async`
+#: blocking the caller and no `kill_process_tree()` backstop of the kind
+#: `capabilities/process.py` gives every other child agentao spawns.
+_BROWSER_TOTAL_TIMEOUT_S = 45.0
+#: Teardown gets its own small budget so a wedged browser cannot turn cleanup
+#: into a second unbounded wait.
+_BROWSER_CLOSE_TIMEOUT_S = 10.0
 
 
-async def _render_with_playwright(url: str) -> str:
-    """Render ``url`` in a local headless Chromium and return its final HTML.
+async def _render_page(page: Any, url: str) -> tuple[Optional[int], str]:
+    """Navigate, settle, and return ``(http_status, html)``.
+
+    The status is the caller's only signal that Chromium rendered an error
+    page: unlike httpx, ``page.goto`` does not raise on 4xx/5xx, and this
+    fallback is reached *from* ``except httpx.HTTPError`` — so without it a 404
+    or bot-challenge body is indistinguishable from the article.
+    """
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    response = await page.goto(
+        url, wait_until="domcontentloaded", timeout=_BROWSER_NAV_TIMEOUT_MS
+    )
+    try:
+        await page.wait_for_load_state(
+            "networkidle", timeout=_BROWSER_SETTLE_TIMEOUT_MS
+        )
+    except PlaywrightTimeoutError:
+        # The documented, expected outcome for long-poll / websocket pages:
+        # they never go idle and their DOM is already usable.
+        logger.debug("networkidle not reached for %s; using current DOM", url)
+    except Exception as e:
+        # Anything else here is a real signal — a crashed renderer, or a
+        # Playwright release that stopped accepting the "networkidle" literal
+        # (upstream already marks it DISCOURAGED). Swallowing it at DEBUG would
+        # let every fallback silently skip hydration with nothing in the log.
+        logger.warning("settle wait failed for %s: %s", url, e)
+    return (response.status if response is not None else None), await page.content()
+
+
+async def _render_with_playwright(
+    url: str, *, allow_networks: tuple = ()
+) -> tuple[Optional[int], str]:
+    """Render ``url`` in a local headless Chromium; return ``(status, html)``.
 
     Deferred import: Playwright ships a large driver and the caller may never
     select this fallback.
@@ -139,24 +195,57 @@ async def _render_with_playwright(url: str) -> str:
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        # Scrubbed env, same as every other child agentao spawns. This is the
+        # one child that executes attacker-controlled JavaScript, so handing it
+        # the provider credentials in `os.environ` is the worst version of the
+        # leak `build_child_env()` exists to close.
+        browser = await p.chromium.launch(headless=True, env=build_child_env())
         try:
-            page = await browser.new_page(user_agent=_USER_AGENT)
-            await page.goto(
-                url, wait_until="domcontentloaded", timeout=_BROWSER_NAV_TIMEOUT_MS
+            page = await browser.new_page()
+            await _guard_page_requests(page, allow_networks)
+            return await asyncio.wait_for(
+                _render_page(page, url), timeout=_BROWSER_TOTAL_TIMEOUT_S
             )
-            # Best-effort settle: a page with a long-poll / websocket never goes
-            # idle, and its DOM is already usable. Timing out here is normal, so
-            # it must not discard the render.
-            try:
-                await page.wait_for_load_state(
-                    "networkidle", timeout=_BROWSER_SETTLE_TIMEOUT_MS
-                )
-            except Exception:
-                logger.debug("networkidle not reached for %s; using current DOM", url)
-            return await page.content()
         finally:
-            await browser.close()
+            # Teardown must never replace the in-flight result or exception:
+            # Playwright's `Browser.close` re-raises anything that is not a
+            # target-closed error, so an OOM-killed Chromium would otherwise
+            # report a driver-transport failure instead of the navigation
+            # timeout that actually explains the failure.
+            try:
+                await asyncio.wait_for(
+                    browser.close(), timeout=_BROWSER_CLOSE_TIMEOUT_S
+                )
+            except Exception as e:
+                logger.warning("browser teardown failed for %s: %s", url, e)
+
+
+async def _guard_page_requests(page: Any, allow_networks: tuple) -> None:
+    """Re-apply the outbound URL policy to navigations Chromium makes itself.
+
+    The httpx path validates the initial URL and every redirect hop. Once the
+    browser takes over it chases redirects and client-side navigation on its
+    own, so without this a page that passes the guard and then navigates to
+    ``http://169.254.169.254/latest/meta-data/`` hands that body to the LLM.
+
+    Scoped to navigation requests: those are what end up in ``page.content()``.
+    Subresource fetches (images, XHR) are not re-validated — they never reach
+    the model, and validating each one costs a DNS resolution per request.
+    """
+    async def _handler(route: Any) -> None:
+        request = route.request
+        if not request.is_navigation_request():
+            await route.continue_()
+            return
+        try:
+            validate_outbound_url(request.url, allow_networks=allow_networks)
+        except UrlPolicyError as e:
+            logger.warning("blocked in-browser navigation to %s: %s", request.url, e)
+            await route.abort()
+            return
+        await route.continue_()
+
+    await page.route("**/*", _handler)
 
 
 def _html_to_text(html: str) -> str:
@@ -178,6 +267,18 @@ def _run_async(coro):
 
     Asking whether a loop is running answers the nesting question directly,
     and leaves genuine ``RuntimeError``s from the coroutine to propagate.
+
+    **Known limitation.** The nested branch still *blocks* the caller's loop
+    for the duration — ``Future.result()`` is a synchronous wait executed on
+    the loop thread, so no other task on that loop runs and a
+    ``CancelledError`` cannot be delivered. This is inherent to a sync
+    ``Tool.execute`` being driven from inside a loop; the real fix is porting
+    ``WebFetchTool`` to :class:`AsyncToolBase`, which is out of scope here.
+    What bounds the damage is that ``_render_with_playwright`` carries its own
+    total deadline (``_BROWSER_TOTAL_TIMEOUT_S`` + ``_BROWSER_CLOSE_TIMEOUT_S``)
+    rather than an open-ended wait. In-process this branch is not normally
+    reached: agentao dispatches sync tools on a worker thread, where
+    ``get_running_loop()`` raises and the plain ``asyncio.run`` path is taken.
     """
     try:
         asyncio.get_running_loop()
@@ -216,7 +317,7 @@ class WebFetchTool(Tool):
         # fallback target is part of the audit surface — the description below
         # tells the LLM and the host operator exactly where outbound traffic
         # can go before the user is ever asked to confirm a fetch.
-        self._fallback = _read_fallback_setting()
+        self._fallback, self._retired_fallback_value = _read_fallback_setting()
         # Opt-in SSRF allowlist (AGENTAO_WEB_FETCH_ALLOW_CIDRS): CIDRs that are
         # not globally routable but the operator trusts — e.g. a fake-IP proxy
         # range (Clash/V2Ray → 198.18.0.0/15) or an internal service. Empty =
@@ -250,6 +351,12 @@ class WebFetchTool(Tool):
             )
         else:
             base += " No JS-rendering fallback is configured."
+        if self._retired_fallback_value:
+            base += (
+                f" NOTE: AGENTAO_WEB_FETCH_FALLBACK={self._retired_fallback_value}"
+                f" is retired and was mapped to '{self._fallback}'; update the"
+                " configuration."
+            )
         if self._allow_cidrs:
             base += (
                 " SSRF allowlist active (AGENTAO_WEB_FETCH_ALLOW_CIDRS): also"
@@ -304,21 +411,31 @@ class WebFetchTool(Tool):
             soup = BeautifulSoup(html, "html.parser")
 
             js_detected = _needs_js_rendering(html, soup)
+            fallback_error: str | None = None
             if js_detected:
-                fallback_result = self._run_fallback(
-                    url, reason="JS rendering detected"
+                fallback_result, fallback_error = self._run_fallback(
+                    url, reason="JS rendering detected", extract_text=extract_text
                 )
                 if fallback_result is not None:
                     return fallback_result
 
-            js_note = (
-                "Note: page appears to require JS rendering; only the static"
-                " shell was captured. Set AGENTAO_WEB_FETCH_FALLBACK=jina"
-                " (sends URL to r.jina.ai) or =playwright (local headless"
-                " browser) to enable a fallback.\n"
-                if js_detected
-                else ""
-            )
+            if not js_detected:
+                js_note = ""
+            elif fallback_error:
+                # The static shell is still the best thing we have; say why the
+                # richer render is missing instead of discarding both.
+                js_note = (
+                    "Note: page appears to require JS rendering and the"
+                    f" configured fallback failed ({fallback_error}); only the"
+                    " static shell was captured.\n"
+                )
+            else:
+                js_note = (
+                    "Note: page appears to require JS rendering; only the static"
+                    " shell was captured. Set AGENTAO_WEB_FETCH_FALLBACK=jina"
+                    " (sends URL to r.jina.ai) or =playwright (local headless"
+                    " browser) to enable a fallback.\n"
+                )
             body = _extract_text(soup) if extract_text else html
             return (
                 f"URL: {url}\nStatus: {response.status_code}\n{js_note}\n"
@@ -331,66 +448,100 @@ class WebFetchTool(Tool):
             # third party or fetch it via a local headless browser.
             return f"Error: blocked outbound request — {e}"
         except httpx.TimeoutException:
-            fallback_result = self._run_fallback(url, reason="httpx timeout")
+            fallback_result, fallback_error = self._run_fallback(
+                url, reason="httpx timeout", extract_text=extract_text
+            )
             if fallback_result is not None:
                 return fallback_result
-            return f"Error: Request timed out for {url}"
+            message = f"Error: Request timed out for {url}"
+            if fallback_error:
+                message += f"\nFallback also failed: {fallback_error}"
+            return message
         except httpx.HTTPError as e:
-            fallback_result = self._run_fallback(url, reason=f"httpx error: {e}")
+            fallback_result, fallback_error = self._run_fallback(
+                url, reason=f"httpx error: {e}", extract_text=extract_text
+            )
             if fallback_result is not None:
                 return fallback_result
-            return f"Error fetching URL: {e}"
+            # The httpx error is the more accurate diagnosis of what the site
+            # did; the fallback's failure is appended, not substituted.
+            message = f"Error fetching URL: {e}"
+            if fallback_error:
+                message += f"\nFallback also failed: {fallback_error}"
+            return message
         except Exception as e:
             return f"Error: {e}"
 
-    def _run_fallback(self, url: str, *, reason: str) -> str | None:
-        """Returns None when fallback is ``none``, signalling the caller to
-        keep the primary result.
+    def _run_fallback(
+        self, url: str, *, reason: str, extract_text: bool = True
+    ) -> tuple[str | None, str | None]:
+        """Run the configured fallback; return ``(body, error)``.
+
+        Both ``None`` means no fallback is configured — the caller keeps its
+        own result. A non-None ``error`` means the fallback was attempted and
+        failed, which is **not** the same thing: the caller still has a
+        successfully-fetched static page (or its own more accurate HTTP error)
+        and must not throw it away for a browser-setup message. Returning a
+        single string conflated the two, so a host that installed the extra but
+        never ran ``playwright install chromium`` turned every JS-flagged fetch
+        into a hard failure strictly worse than ``fallback=none``.
 
         SSRF note: ``url`` reaching here has already passed
         ``validate_outbound_url`` on the primary path (a blocked target raises
-        ``UrlPolicyError``, which the caller returns without falling back). But
-        the fallbacks themselves are NOT per-hop guarded — Jina fetches the
-        target server-side and the Playwright-driven headless browser follows
-        redirects / JS navigation on its own. Both are opt-in
-        (``AGENTAO_WEB_FETCH_FALLBACK``, default ``none``) and surfaced in the
-        tool description; closing the in-browser redirect path would require
-        intercepting Chromium's network, which is out of scope here.
+        ``UrlPolicyError``, which the caller returns without falling back).
+        In-browser navigation is re-validated per request by
+        ``_guard_page_requests``. **Jina is not** — it fetches the target
+        server-side, where agentao has no visibility. That fallback stays opt-in
+        (``AGENTAO_WEB_FETCH_FALLBACK``, default ``none``) and is surfaced in
+        the tool description.
         """
         if self._fallback == _FALLBACK_NONE:
-            return None
+            return None, None
         if self._fallback == _FALLBACK_JINA:
             logger.info("web_fetch fallback=jina for %s (%s)", url, reason)
             return self._jina_fetch(url)
         logger.info("web_fetch fallback=playwright for %s (%s)", url, reason)
-        return self._playwright_fetch(url)
+        return self._playwright_fetch(url, extract_text=extract_text)
 
-    def _jina_fetch(self, url: str) -> str:
+    def _jina_fetch(self, url: str) -> tuple[str | None, str | None]:
         label = f"jina reader ({_jina_proxy_url(url)})"
         try:
             markdown = _fetch_via_jina(url)
         except Exception as e:
             logger.warning("jina reader failed for %s: %s", url, e)
-            return f"URL: {url}\nFallback: {label}\nError: {e}"
-        return _format_fallback_body(url, label, markdown)
+            return None, f"{label}: {e}"
+        return _format_fallback_body(url, label, markdown), None
 
-    def _playwright_fetch(self, url: str) -> str:
+    def _playwright_fetch(
+        self, url: str, *, extract_text: bool = True
+    ) -> tuple[str | None, str | None]:
         label = "playwright (local headless browser)"
         try:
-            html = _run_async(_render_with_playwright(url))
+            status, html = _run_async(
+                _render_with_playwright(url, allow_networks=self._allow_cidrs)
+            )
+            # `page.goto` does not raise on 4xx/5xx, and this fallback is
+            # reached *from* `except httpx.HTTPError` — so without this check a
+            # rendered 404 / paywall / bot-challenge page is handed to the model
+            # as though it were the requested document.
+            if status is not None and status >= 400:
+                return None, f"{label}: HTTP {status}"
+            body = _html_to_text(html) if extract_text else html
         except ImportError as e:
-            return (
-                f"URL: {url}\nFallback: {label}\nError: playwright not"
-                f" installed — install with `pip install 'agentao[playwright]'`"
-                f" and run `playwright install chromium`. ({e})"
+            return None, (
+                f"{label}: playwright not installed — install with"
+                f" `pip install 'agentao[playwright]'` and run"
+                f" `playwright install chromium`. ({e})"
             )
         except Exception as e:
-            # Covers the other half of the setup story: the package imports
+            # Covers the other half of the setup story (the package imports
             # fine but the browser binary was never downloaded, which
-            # Playwright reports at launch, not at import.
+            # Playwright reports at launch, not at import), the render
+            # timeout, and a parse failure on a multi-megabyte SPA DOM —
+            # which must not escape into the caller's own except handler.
             logger.warning("playwright render failed for %s: %s", url, e)
-            return f"URL: {url}\nFallback: {label}\nError: {e}"
-        return _format_fallback_body(url, label, _html_to_text(html))
+            return None, f"{label}: {e}"
+        return _format_fallback_body(url, label, body), None
 
 
 #: Per-snippet cap so one verbose result can't dominate the tool output.

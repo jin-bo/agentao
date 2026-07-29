@@ -83,6 +83,68 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   languages) still advertised `[pdf]` / `[excel]` / `[image]` / `[crypto]` /
   `[google]`, which were removed in **0.4.12** and have not resolved since.
 
+- **A failing fallback no longer discards a good page.** `_run_fallback`
+  returned one string for both "not configured" and "tried and failed", so a
+  host that installed the extra but never ran `playwright install chromium`
+  got the browser-setup error *instead of* the static HTML `web_fetch` had
+  already fetched successfully — strictly worse than `fallback=none`. It now
+  returns `(body, error)`; the primary result wins and the fallback's failure
+  is appended as a note.
+
+- **The local render reports HTTP status.** `page.goto` does not raise on
+  4xx/5xx and the fallback is reached *from* `except httpx.HTTPError`, so a
+  rendered 404 / paywall / bot-challenge page was handed to the model as
+  though it were the requested document. A `>= 400` status is now a fallback
+  failure, which means the caller keeps httpx's more accurate diagnosis.
+
+- **`extract_text=False` is honored on the fallback path.** The flag was
+  dropped the moment the fallback fired, so a caller asking for markup — to
+  read an `href`, a `<meta>`, or an embedded JSON blob — silently got prose
+  back and reported the data as absent.
+
+- **The headless browser gets a scrubbed environment.** `chromium.launch()`
+  passed no `env=`, so the browser tree inherited agentao's own provider
+  credentials. It now routes through `capabilities/process.py::build_child_env()`
+  like every other child agentao spawns — this is the one child that executes
+  attacker-controlled JavaScript.
+
+- **In-browser navigation is re-validated against the URL policy.** The httpx
+  path checks every redirect hop, but once Chromium took over it chased
+  redirects and client-side navigation unguarded — a page that passed the
+  guard and then navigated to `169.254.169.254` had that body returned to the
+  model. A `page.route` handler now re-applies `validate_outbound_url` to
+  navigation requests (subresources are not re-validated: they never reach the
+  model, and it would cost a DNS resolution per request).
+
+- **The render has a wall-clock ceiling.** `page.content()` takes no timeout
+  at all, so the `goto`/settle timeouts bounded navigation only and a page
+  that pegged its renderer afterwards blocked the caller forever with no
+  `kill_process_tree()` backstop. Teardown is now bounded too, and wrapped so
+  a failing `browser.close()` cannot replace the error that actually explains
+  the failure.
+
+- **The retired-value substitution is visible.** The warning went only to the
+  `agentao` logger, whose sole handler is `agentao.log`'s file handler — no
+  operator ever saw it. It is now also projected into the tool description,
+  matching how `AGENTAO_WEB_FETCH_ALLOW_CIDRS` surfaces its own relaxation.
+
+- **The settle handler no longer swallows real failures.** A bare
+  `except Exception` at DEBUG absorbed a crashed renderer, and would absorb
+  Playwright dropping the `networkidle` literal (already DISCOURAGED
+  upstream) — every fallback would silently stop waiting for hydration with
+  nothing above DEBUG in the log. Only the expected timeout is quiet now.
+
+- **The browser is no longer forced to send the httpx User-Agent.** That
+  string stops before the `Chrome/<ver>` token, so as a *browser* UA it
+  contradicted the truthful `Sec-CH-UA` headers Chromium keeps sending — a
+  stronger bot signal than Chromium's own identity.
+
+- **`--extra playwright` reaches the publishing workflows.** It was added only
+  to `ci.yml`'s test job, so the API-drift guard `importorskip`ped away in
+  `publish.yml` and `publish-testpypi.yml` — the two workflows that gate PyPI
+  publication, and exactly the "silently retire the guard" outcome the extra
+  was added to prevent.
+
 ---
 
 ## [0.4.17] — 2026-07-29
