@@ -155,6 +155,10 @@ _BROWSER_CLOSE_TIMEOUT_S = 10.0
 #: driver that starts but never handshakes would otherwise hang `__aenter__`
 #: before any other deadline applies.
 _BROWSER_STARTUP_TIMEOUT_S = 30.0
+#: Per-origin budget for the outbound-policy check on an intercepted request.
+#: It resolves DNS, and the page chooses the hostnames — so it is bounded, and
+#: a stall is a block rather than a pass.
+_POLICY_CHECK_TIMEOUT_S = 5.0
 
 
 async def _render_page(page: Any, url: str) -> tuple[Optional[int], str]:
@@ -327,7 +331,7 @@ async def _guard_context_requests(context: Any, allow_networks: tuple) -> None:
     """
     verdicts: Dict[tuple, Optional[str]] = {}
 
-    def _verdict(request_url: str) -> Optional[str]:
+    async def _verdict(request_url: str) -> Optional[str]:
         """Return None to allow, or a string reason to block."""
         parsed = urlparse(request_url)
         if (parsed.scheme or "").lower() in _NON_NETWORK_SCHEMES:
@@ -335,15 +339,28 @@ async def _guard_context_requests(context: Any, allow_networks: tuple) -> None:
         key = ((parsed.scheme or "").lower(), (parsed.hostname or "").lower(), parsed.port)
         if key not in verdicts:
             try:
-                validate_outbound_url(request_url, allow_networks=allow_networks)
+                # Off the loop thread, and bounded. `validate_outbound_url`
+                # calls `socket.getaddrinfo`, which blocks for as long as the
+                # OS resolver takes — on the event-loop thread that would stall
+                # the `asyncio.wait_for` timer enforcing the render ceiling, so
+                # a page-controlled subresource hostname could defeat it just
+                # by resolving slowly.
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        validate_outbound_url,
+                        request_url,
+                        allow_networks=allow_networks,
+                    ),
+                    timeout=_POLICY_CHECK_TIMEOUT_S,
+                )
                 verdicts[key] = None
             except UrlPolicyError as e:
                 verdicts[key] = str(e)
             except Exception as e:
-                # Fail closed on an unexpected validator failure, matching
+                # Fail closed on a stalled or unexpected check, matching
                 # `_resolve_host_addresses`, which treats "cannot resolve" as
                 # "reject" rather than "allow".
-                verdicts[key] = f"policy check errored: {e}"
+                verdicts[key] = f"policy check failed: {e}"
         return verdicts[key]
 
     async def _act(coro: Any, url: str) -> None:
@@ -358,7 +375,7 @@ async def _guard_context_requests(context: Any, allow_networks: tuple) -> None:
 
     async def _handler(route: Any) -> None:
         request = route.request
-        reason = _verdict(request.url)
+        reason = await _verdict(request.url)
         if reason is not None:
             logger.warning(
                 "blocked in-browser request to %s: %s", request.url, reason

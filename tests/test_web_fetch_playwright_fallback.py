@@ -17,6 +17,7 @@ import asyncio
 import inspect
 import logging
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -642,6 +643,48 @@ def test_route_action_failure_does_not_escape_the_handler(monkeypatch):
 
     route.continue_ = dead_continue
     asyncio.run(page.route_handler(route))  # must not raise
+
+
+def test_a_stalled_dns_lookup_blocks_and_does_not_freeze_the_loop(monkeypatch):
+    """`validate_outbound_url` calls socket.getaddrinfo, which blocks.
+
+    Run on the event-loop thread it would stall the very timer enforcing the
+    render ceiling, so a page-controlled hostname that resolves slowly could
+    defeat it. The check runs in a worker thread with its own budget, and a
+    stall fails closed.
+    """
+    monkeypatch.setattr(web_mod, "_POLICY_CHECK_TIMEOUT_S", 0.05)
+    page = _FakePage()
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    def stalling_validator(url, **kwargs):
+        # Only needs to outlast the 0.05s budget; asyncio.run joins the
+        # executor at shutdown, so a long sleep would just slow the suite.
+        time.sleep(0.5)
+
+    monkeypatch.setattr(web_mod, "validate_outbound_url", stalling_validator)
+
+    async def drive():
+        # The loop must stay responsive while the lookup stalls: this ticker
+        # cannot advance if the resolution is running on the loop thread.
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        spinner = asyncio.create_task(ticker())
+        route = _FakeRoute("https://slow-dns.test/asset.js", navigation=False)
+        await page.route_handler(route)
+        spinner.cancel()
+        return route.action, ticks
+
+    action, ticks = asyncio.run(drive())
+    assert action == "abort"
+    assert ticks > 0, "the event loop was blocked by the DNS lookup"
 
 
 def test_subresource_requests_are_guarded_too(monkeypatch):

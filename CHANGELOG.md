@@ -123,7 +123,11 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   non-http(s) scheme). The handler is installed on the **browser context**,
   not the page: a page-level route does not cover a popup opened with
   `window.open`, whose very first request would otherwise reach an internal
-  target unchecked.
+  target unchecked. The check itself runs in a worker thread with its own
+  budget: `validate_outbound_url` calls `socket.getaddrinfo`, and doing that on
+  the event-loop thread would stall the very timer enforcing the render
+  ceiling — letting a page-controlled hostname defeat it just by resolving
+  slowly. A stalled lookup blocks the request rather than passing it.
 
 - **An unhydrated DOM is no longer returned as a successful render.** The
   settle step absorbs its own timeout by design — long-poll pages never reach
