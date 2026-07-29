@@ -6,7 +6,7 @@ import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Dict, Optional
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote_plus, urlparse, urlunparse
 
 # `httpx`, `bs4`, and `playwright` are deferred (P0.5): the web tools may
 # never be registered in an embedded host that doesn't expose web
@@ -411,6 +411,11 @@ async def _render_with_playwright(
 #: ordinary rendering.
 _NON_NETWORK_SCHEMES = frozenset({"data", "blob", "about", "file", "chrome-extension"})
 
+#: WebSocket schemes mapped onto the http(s) equivalents `validate_outbound_url`
+#: understands. They share default ports (80/443), so the swap does not change
+#: which target is being checked.
+_WS_SCHEME_MAP = {"ws": "http", "wss": "https"}
+
 
 async def _guard_context_requests(context: Any, allow_networks: tuple) -> None:
     """Re-apply the outbound URL policy to every request Chromium makes.
@@ -507,6 +512,34 @@ async def _guard_context_requests(context: Any, allow_networks: tuple) -> None:
     # Context-level, so popups opened by the page are covered from their very
     # first request. A page-level route is not.
     await context.route("**/*", _handler)
+
+    async def _ws_handler(ws: Any) -> None:
+        # WebSockets do not go through `context.route`; Playwright gives them
+        # their own interception API. Without this, rendered JavaScript could
+        # open `ws://169.254.169.254/` — reaching an internal endpoint, causing
+        # side effects, and copying accepted frames into the DOM that
+        # `page.content()` then returns.
+        parsed = urlparse(ws.url)
+        scheme = (parsed.scheme or "").lower()
+        # `validate_outbound_url` only speaks http(s). ws/wss share their
+        # default ports (80/443) with http/https, so the swap is faithful.
+        probe = urlunparse(
+            parsed._replace(scheme=_WS_SCHEME_MAP.get(scheme, scheme))
+        )
+        reason = await _verdict(probe)
+        if reason is not None:
+            logger.warning(
+                "blocked in-browser websocket to %s: %s", ws.url, reason
+            )
+            await _act(ws.close(), ws.url)
+            return
+        # Not awaited: `connect_to_server` is a plain method in the async API.
+        try:
+            ws.connect_to_server()
+        except Exception as e:
+            logger.debug("websocket passthrough failed for %s: %s", ws.url, e)
+
+    await context.route_web_socket("**/*", _ws_handler)
 
 
 def _html_to_text(html: str) -> str:

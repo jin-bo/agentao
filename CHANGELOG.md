@@ -140,6 +140,16 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   many are live, so a page spraying randomised hostnames that miss the cache by
   construction cannot accumulate threads until the process dies.
 
+  **WebSockets get their own guard.** They do not pass through
+  `context.route` — Playwright intercepts them via `route_web_socket` — so
+  rendered JavaScript could otherwise open `ws://169.254.169.254/`, reach an
+  internal endpoint, and copy accepted frames into the DOM that
+  `page.content()` returns. `ws://` / `wss://` are mapped onto `http` /
+  `https` for the validator, which speaks only those (the schemes share
+  default ports, so the target checked is the same one). This is why the
+  extra floors at **playwright>=1.48**, where `route_web_socket` landed,
+  rather than the 1.40 it was first written against.
+
 - **Downloads are disabled in the render context.** Playwright's
   `new_context()` defaults `accept_downloads` to true ("Whether to
   automatically download all the attachments" — its own docs), and crawl4ai

@@ -273,7 +273,13 @@ def test_playwright_api_matches_our_call_sites():
     assert "domcontentloaded" in str(goto["wait_until"].annotation)
     assert "networkidle" in str(wait_for_load_state["state"].annotation)
 
+    assert callable(getattr(async_api.BrowserContext, "route_web_socket", None)), (
+        "route_web_socket landed in Playwright 1.48 and the extra floors there;"
+        " without it a page's WebSockets bypass the outbound guard"
+    )
     for owner, name in [
+        (async_api.WebSocketRoute, "connect_to_server"),
+        (async_api.WebSocketRoute, "close"),
         (async_api.Page, "content"),
         (async_api.Page, "goto"),
         (async_api.Browser, "new_context"),
@@ -315,6 +321,7 @@ class _FakePage:
         self.goto_kwargs = None
         self.settle_kwargs = None
         self.route_handler = None
+        self.ws_route_handler = None
         self.content_calls = 0
 
     async def route(self, pattern, handler):
@@ -338,6 +345,8 @@ class _FakeContext:
         self._page = page
         self.route_pattern = None
         self.route_handler = None
+        self.ws_route_pattern = None
+        self.ws_route_handler = None
         self.new_page_kwargs = None
 
     async def route(self, pattern, handler):
@@ -347,6 +356,11 @@ class _FakeContext:
         # popups included. The tests read the handler off the page for
         # convenience, so publish it there too.
         self._page.route_handler = handler
+
+    async def route_web_socket(self, pattern, handler):
+        self.ws_route_pattern = pattern
+        self.ws_route_handler = handler
+        self._page.ws_route_handler = handler
 
     async def new_page(self, **kwargs):
         self.new_page_kwargs = kwargs
@@ -835,6 +849,64 @@ def test_subresource_requests_are_guarded_too(monkeypatch):
     xhr = _FakeRoute("http://169.254.169.254/latest/meta-data/", navigation=False)
     asyncio.run(page.route_handler(xhr))
     assert xhr.action == "abort"
+
+
+class _FakeWebSocketRoute:
+    def __init__(self, url):
+        self.url = url
+        self.action = None
+
+    def connect_to_server(self):  # plain method in Playwright's async API
+        self.action = "connect"
+
+    async def close(self, **kwargs):
+        self.action = "close"
+
+
+def test_websockets_are_guarded_by_their_own_route(monkeypatch):
+    """WebSockets do not pass through `context.route`.
+
+    Playwright gives them a separate interception API, so without
+    `route_web_socket` rendered JavaScript could open ws://169.254.169.254/,
+    reach an internal endpoint, and copy accepted frames into the DOM that
+    page.content() returns.
+    """
+    page = _FakePage()
+    browser = _FakeBrowser(page)
+    _install_fake_playwright(monkeypatch, _FakePlaywright(browser))
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    assert browser.context.ws_route_pattern == "**/*"
+    handler = browser.context.ws_route_handler
+    assert handler is not None
+
+    blocked = _FakeWebSocketRoute("ws://169.254.169.254/")
+    asyncio.run(handler(blocked))
+    assert blocked.action == "close"
+
+    allowed = _FakeWebSocketRoute("wss://1.1.1.1/live")
+    asyncio.run(handler(allowed))
+    assert allowed.action == "connect"
+
+
+def test_websocket_scheme_is_mapped_for_the_http_only_validator(monkeypatch):
+    """`validate_outbound_url` only speaks http(s); ws/wss must be translated
+    rather than rejected outright (or, worse, waved through)."""
+    page = _FakePage()
+    browser = _FakeBrowser(page)
+    _install_fake_playwright(monkeypatch, _FakePlaywright(browser))
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    seen = []
+
+    def recording_validator(url, **kwargs):
+        seen.append(url)
+
+    monkeypatch.setattr(web_mod, "validate_outbound_url", recording_validator)
+    asyncio.run(
+        browser.context.ws_route_handler(_FakeWebSocketRoute("wss://host.test:8443/s"))
+    )
+    assert seen == ["https://host.test:8443/s"]
 
 
 def test_non_network_schemes_are_not_run_through_the_url_policy(monkeypatch):

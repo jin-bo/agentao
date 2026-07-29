@@ -58,7 +58,11 @@ i18n      = ["jieba>=0.42.1"]
 # (two browser stacks, a geometry stack, an LLM client) for that. Needs
 # `playwright install chromium` on top of the pip install. Pulls [web] because
 # the fallback reuses the same BeautifulSoup extraction as the primary path.
-playwright = ["agentao[web]", "playwright>=1.40.0"]
+# Floor is 1.48, not the older 1.40: `BrowserContext.route_web_socket`
+# landed there, and without it a rendered page's WebSocket connections
+# bypass the outbound-URL guard entirely (`context.route` does not cover
+# them). The extra is new in 0.4.18, so nothing is stranded by the floor.
+playwright = ["agentao[web]", "playwright>=1.48.0"]
 tokenizer = ["tiktoken>=0.7.0"]
 full      = ["agentao[cli,web,i18n,playwright,tokenizer]"]
 
