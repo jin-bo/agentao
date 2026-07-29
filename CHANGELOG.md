@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 _Targeting 0.4.18. Add entries under the relevant heading as work lands._
 
+### Added
+
+### Changed
+
+### Fixed
+
 ---
 
 ## [0.4.17] — 2026-07-29
