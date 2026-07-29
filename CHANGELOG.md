@@ -128,9 +128,19 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   bounded too, and wrapped so a failing `browser.close()` cannot replace the
   error that actually explains the failure. Bounding `browser.close()` alone
   was not enough: `async_playwright()`'s own `__aexit__` waits on the same
-  driver with no deadline, so the context is now driven by hand with its own
-  budget, and a driver that blows through it is killed via
-  `kill_process_tree()` rather than left orphaned with its Chromium tree.
+  driver with no deadline, and `__aenter__` can hang just as long if the
+  driver spawns but never completes its protocol handshake — a wedge that
+  never even reaches teardown. The context is now driven by hand, with
+  startup, render, and teardown each carrying a budget; a driver that blows
+  through one is killed rather than left running.
+
+  The kill is deliberately **not** `kill_process_tree()`. That helper
+  documents its precondition — `start_new_session=True` makes the child a
+  group leader, so `pid == pgid` and `killpg(pid)` reaps the tree. Playwright
+  spawns its driver with no new session, so it shares agentao's process group
+  and its pid is not a pgid; `killpg` on it would fail, or on a coincidence
+  signal an unrelated group. Verified against the installed 1.61.0 (`pgid` of
+  the driver == agentao's own).
 
 - **The retired-value substitution is visible.** The warning went only to the
   `agentao` logger, whose sole handler is `agentao.log`'s file handler — no

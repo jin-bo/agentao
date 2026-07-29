@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from bs4 import BeautifulSoup as _BeautifulSoup_t
 
 from .base import Tool
-from ..capabilities.process import build_child_env, kill_process_tree
+from ..capabilities.process import build_child_env
 from ..security.url_policy import (
     UrlPolicyError,
     guarded_get,
@@ -146,12 +146,15 @@ _BROWSER_SETTLE_TIMEOUT_MS = 5_000
 #: *navigation* only — `page.content()` takes no timeout at all (its signature
 #: is `(self) -> str`), so a page that pegs its renderer after DOMContentLoaded
 #: would otherwise wait on the driver channel forever, with `_run_async`
-#: blocking the caller and no `kill_process_tree()` backstop of the kind
-#: `capabilities/process.py` gives every other child agentao spawns.
+#: blocking the caller with the browser tree left running.
 _BROWSER_TOTAL_TIMEOUT_S = 45.0
 #: Teardown gets its own small budget so a wedged browser cannot turn cleanup
 #: into a second unbounded wait.
 _BROWSER_CLOSE_TIMEOUT_S = 10.0
+#: Driver startup — spawning node and completing the protocol handshake. A
+#: driver that starts but never handshakes would otherwise hang `__aenter__`
+#: before any other deadline applies.
+_BROWSER_STARTUP_TIMEOUT_S = 30.0
 
 
 async def _render_page(page: Any, url: str) -> tuple[Optional[int], str]:
@@ -184,29 +187,45 @@ async def _render_page(page: Any, url: str) -> tuple[Optional[int], str]:
     return (response.status if response is not None else None), await page.content()
 
 
-def _kill_playwright_driver(playwright: Any) -> None:
+def _kill_playwright_driver(manager: Any) -> None:
     """Last-resort teardown when the Playwright driver stops responding.
 
-    The driver is a node subprocess that owns the Chromium tree; if it is
-    wedged, exiting the ``async_playwright()`` context waits on it forever and
-    the whole tree is orphaned. Reaching the ``Popen`` means walking private
-    attributes, so every step is guarded and a miss degrades to a warning —
-    the alternative (an unbounded wait) is strictly worse.
+    The driver is a node subprocess; if it is wedged, the context manager's
+    ``__aexit__`` waits on it with no deadline of its own and the process is
+    left running. The handle lives at
+    ``PlaywrightContextManager._connection._transport._proc`` — note it hangs
+    off the *context manager*, not off the ``Playwright`` object ``__aenter__``
+    returns, which only carries ``_impl_obj`` / ``_loop`` / ``_wrap_handler``.
+    Every step is guarded, and a miss degrades to a warning: the alternative
+    (an unbounded wait) is strictly worse.
+
+    Deliberately **not** ``kill_process_tree``. That helper documents its own
+    precondition — ``start_new_session=True`` makes the child a group leader,
+    so ``pid == pgid`` and ``killpg(pid)`` reaps the tree. Playwright spawns
+    its driver via ``asyncio.create_subprocess_exec`` with no new session, so
+    the driver shares agentao's process group and its pid is not a pgid.
+    ``killpg`` on it would either fail or, on a pid/pgid coincidence, signal an
+    unrelated process group. Killing the driver directly is what is actually
+    safe here; a Chromium that outlives its own driver is the residual risk,
+    and it is the smaller one.
     """
-    proc = playwright
-    for attribute in ("_connection", "_transport", "_proc"):
-        proc = getattr(proc, attribute, None)
-        if proc is None:
-            logger.warning(
-                "playwright driver is wedged and its process handle could not"
-                " be reached (%s missing); the browser tree may be orphaned",
-                attribute,
-            )
-            return
+    target = getattr(manager, "_connection", None)
+    for attribute in ("_transport", "_proc"):
+        if target is None:
+            break
+        target = getattr(target, attribute, None)
+    if target is None:
+        logger.warning(
+            "playwright driver is wedged and its process handle could not be"
+            " reached; the driver process may be orphaned"
+        )
+        return
     try:
-        kill_process_tree(proc)
+        target.kill()
+        logger.warning("killed the wedged playwright driver (pid %s)",
+                       getattr(target, "pid", "?"))
     except Exception as e:  # pragma: no cover - platform-dependent
-        logger.warning("failed to kill the playwright driver tree: %s", e)
+        logger.warning("failed to kill the playwright driver: %s", e)
 
 
 async def _render_with_playwright(
@@ -225,7 +244,16 @@ async def _render_with_playwright(
     from playwright.async_api import async_playwright
 
     manager = async_playwright()
-    p = await manager.__aenter__()
+    try:
+        # Startup is inside the budget too: the driver can spawn and then never
+        # complete its protocol handshake, and `__aenter__` waits on that with
+        # no deadline — a wedge that would never even reach the teardown below.
+        p = await asyncio.wait_for(
+            manager.__aenter__(), timeout=_BROWSER_STARTUP_TIMEOUT_S
+        )
+    except BaseException:
+        _kill_playwright_driver(manager)
+        raise
     try:
         # Scrubbed env, same as every other child agentao spawns. This is the
         # one child that executes attacker-controlled JavaScript, so handing it
@@ -258,7 +286,7 @@ async def _render_with_playwright(
             )
         except Exception as e:
             logger.warning("playwright driver teardown failed for %s: %s", url, e)
-            _kill_playwright_driver(p)
+            _kill_playwright_driver(manager)
 
 
 #: Schemes a page issues that are not network requests to a host — inline

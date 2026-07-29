@@ -346,21 +346,48 @@ class _FakePlaywright:
         return self._browser
 
 
-def _install_fake_playwright(monkeypatch, playwright):
-    class _Ctx:
-        async def __aenter__(self):
-            return playwright
+class _FakeDriverProc:
+    def __init__(self):
+        self.pid = 4242
+        self.killed = False
 
-        async def __aexit__(self, *exc):
-            return False
+    def kill(self):
+        self.killed = True
 
+
+class _FakeCtx:
+    """Mirrors `PlaywrightContextManager`: the driver handle hangs off the
+    *context manager*, not off the object `__aenter__` returns."""
+
+    def __init__(self, playwright, *, enter=None, exit=None):
+        self._playwright = playwright
+        self._enter = enter
+        self._exit = exit
+        self.driver_proc = _FakeDriverProc()
+        self._connection = SimpleNamespace(
+            _transport=SimpleNamespace(_proc=self.driver_proc)
+        )
+
+    async def __aenter__(self):
+        if self._enter is not None:
+            await self._enter()
+        return self._playwright
+
+    async def __aexit__(self, *exc):
+        if self._exit is not None:
+            await self._exit()
+        return False
+
+
+def _install_fake_playwright(monkeypatch, playwright, *, enter=None, exit=None):
+    ctx = _FakeCtx(playwright, enter=enter, exit=exit)
     module = SimpleNamespace(
-        async_playwright=lambda: _Ctx(),
+        async_playwright=lambda: ctx,
         TimeoutError=type("PlaywrightTimeoutError", (Exception,), {}),
     )
     monkeypatch.setitem(sys.modules, "playwright", SimpleNamespace(async_api=module))
     monkeypatch.setitem(sys.modules, "playwright.async_api", module)
-    return module
+    return ctx
 
 
 def test_render_wrapper_executes_and_scrubs_child_env(monkeypatch):
@@ -381,6 +408,62 @@ def test_render_wrapper_executes_and_scrubs_child_env(monkeypatch):
     assert "OPENAI_API_KEY" not in pw.launch_kwargs["env"]
     # And the malformed httpx UA must not be forced onto a real browser.
     assert "user_agent" not in browser.new_page_kwargs
+
+
+def test_hanging_driver_startup_is_bounded_and_the_driver_killed(monkeypatch):
+    """A driver that spawns but never handshakes must not hang __aenter__.
+
+    Nothing else covers this: the total deadline wraps _render_page, which a
+    stalled startup never reaches.
+    """
+    monkeypatch.setattr(web_mod, "_BROWSER_STARTUP_TIMEOUT_S", 0.05)
+
+    async def never_finishes():
+        await asyncio.sleep(30)
+
+    ctx = _install_fake_playwright(
+        monkeypatch, _FakePlaywright(_FakeBrowser(_FakePage())), enter=never_finishes
+    )
+
+    with pytest.raises(asyncio.TimeoutError):
+        asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    assert ctx.driver_proc.killed is True
+
+
+def test_hanging_driver_teardown_is_bounded_and_the_driver_killed(monkeypatch):
+    """Bounding browser.close() alone leaves __aexit__ waiting on the same
+    wedged driver — the exact case the budget exists for."""
+    monkeypatch.setattr(web_mod, "_BROWSER_CLOSE_TIMEOUT_S", 0.05)
+
+    async def never_finishes():
+        await asyncio.sleep(30)
+
+    page = _FakePage()
+    ctx = _install_fake_playwright(
+        monkeypatch, _FakePlaywright(_FakeBrowser(page)), exit=never_finishes
+    )
+
+    status, _ = asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    # The render still succeeds — teardown trouble must not destroy the result.
+    assert status == 200
+    assert ctx.driver_proc.killed is True
+
+
+def test_driver_handle_lives_on_the_context_manager_not_the_playwright_object():
+    """Guards the private-attribute walk against the shape it actually has.
+
+    `Playwright` (what __aenter__ returns) carries only _impl_obj / _loop /
+    _wrap_handler; the connection belongs to PlaywrightContextManager. A walk
+    starting from the returned object stops at its first hop and silently
+    never kills anything.
+    """
+    async_api = pytest.importorskip("playwright.async_api")
+    from playwright.async_api._context_manager import PlaywrightContextManager
+
+    assert not hasattr(async_api.Playwright, "_connection")
+    assert "_connection" in inspect.getsource(PlaywrightContextManager.__init__)
 
 
 def test_render_wrapper_closes_browser_when_navigation_fails(monkeypatch):
