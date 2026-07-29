@@ -132,7 +132,13 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   the loop's default executor, which `asyncio.run` joins at shutdown, so a
   lookup that outlived its budget would still be waited on during teardown
   (cancelling the future does not cancel the thread) and the ceiling would be
-  defeated on the way out instead of on the way in.
+  defeated on the way out instead of on the way in. Because those threads are
+  abandoned rather than joined, they are bounded three ways: lookups in flight
+  for the same origin are deduplicated (a page can queue a hundred requests to
+  one host before the first resolution returns), concurrent lookups per render
+  are gated, and a global cap refuses — and therefore blocks — a check once too
+  many are live, so a page spraying randomised hostnames that miss the cache by
+  construction cannot accumulate threads until the process dies.
 
 - **An unhydrated DOM is no longer returned as a successful render.** The
   settle step absorbs its own timeout by design — long-poll pages never reach

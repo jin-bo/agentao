@@ -701,6 +701,75 @@ def test_a_stalled_dns_lookup_blocks_and_does_not_freeze_the_loop(monkeypatch):
     )
 
 
+def test_concurrent_requests_to_one_origin_share_a_single_lookup(monkeypatch):
+    """Dedup must cover in-flight lookups, not just finished verdicts.
+
+    A page can schedule a hundred requests to one origin before the first
+    resolution returns; a cache holding only completed verdicts would start a
+    hundred threads for them.
+    """
+    page = _FakePage()
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    calls = []
+
+    def slow_validator(url, **kwargs):
+        calls.append(url)
+        time.sleep(0.05)
+
+    monkeypatch.setattr(web_mod, "validate_outbound_url", slow_validator)
+
+    async def drive():
+        routes = [
+            _FakeRoute(f"https://cdn.example/a{i}.js", navigation=False)
+            for i in range(25)
+        ]
+        await asyncio.gather(*(page.route_handler(r) for r in routes))
+        return routes
+
+    routes = asyncio.run(drive())
+    assert all(r.action == "continue" for r in routes)
+    assert len(calls) == 1, f"one origin should cost one lookup, got {len(calls)}"
+
+
+def test_a_flood_of_distinct_origins_cannot_exhaust_threads(monkeypatch):
+    """Randomised hostnames miss the per-origin cache by construction.
+
+    Since a timed-out lookup thread is deliberately abandoned, an unbounded
+    spray would accumulate threads until the process died. Over the cap the
+    check is refused, and a refusal blocks the request.
+    """
+    monkeypatch.setattr(web_mod, "_POLICY_THREAD_HARD_CAP", 4)
+    monkeypatch.setattr(web_mod, "_POLICY_CHECK_CONCURRENCY", 64)
+    monkeypatch.setattr(web_mod, "_POLICY_CHECK_TIMEOUT_S", 0.05)
+    page = _FakePage()
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    peak = 0
+
+    def stalling_validator(url, **kwargs):
+        nonlocal peak
+        peak = max(peak, web_mod._live_policy_threads)
+        time.sleep(0.3)
+
+    monkeypatch.setattr(web_mod, "validate_outbound_url", stalling_validator)
+
+    async def drive():
+        routes = [
+            _FakeRoute(f"https://r{i}.evil.test/x.js", navigation=False)
+            for i in range(40)
+        ]
+        await asyncio.gather(*(page.route_handler(r) for r in routes))
+        return routes
+
+    routes = asyncio.run(drive())
+
+    assert peak <= 4, f"live lookup threads exceeded the cap: {peak}"
+    assert all(r.action == "abort" for r in routes)
+
+
 def test_subresource_requests_are_guarded_too(monkeypatch):
     """"It never reaches the model" is false for subresources.
 

@@ -160,6 +160,20 @@ _BROWSER_STARTUP_TIMEOUT_S = 30.0
 #: It resolves DNS, and the page chooses the hostnames — so it is bounded, and
 #: a stall is a block rather than a pass.
 _POLICY_CHECK_TIMEOUT_S = 5.0
+#: Checks in flight at once for a single render. The page picks the hostnames,
+#: so this is what keeps a burst of distinct origins from becoming a burst of
+#: threads; anything over the limit waits on the loop, bounded by the render
+#: ceiling above.
+_POLICY_CHECK_CONCURRENCY = 8
+#: Hard ceiling on live lookup threads across *all* renders. Timed-out threads
+#: are deliberately abandoned (see `_call_on_daemon_thread`), so without a cap
+#: a page spraying randomised hostnames — which miss the per-origin cache by
+#: construction — could accumulate them until the process runs out. Refusing a
+#: check blocks the request; failing closed is the safe direction.
+_POLICY_THREAD_HARD_CAP = 32
+
+_live_policy_threads = 0
+_policy_thread_lock = threading.Lock()
 
 
 def _call_on_daemon_thread(fn: Any, *args: Any, **kwargs: Any) -> "asyncio.Future":
@@ -172,8 +186,21 @@ def _call_on_daemon_thread(fn: Any, *args: Any, **kwargs: Any) -> "asyncio.Futur
     cancel the thread — which defeats the very ceiling the budget enforces. A
     daemon thread is simply abandoned instead.
     """
+    global _live_policy_threads
+
     loop = asyncio.get_running_loop()
     future: "asyncio.Future" = loop.create_future()
+
+    with _policy_thread_lock:
+        if _live_policy_threads >= _POLICY_THREAD_HARD_CAP:
+            future.set_exception(
+                RuntimeError(
+                    f"{_live_policy_threads} outbound-policy lookups are still"
+                    " running; refusing this one rather than allowing it"
+                )
+            )
+            return future
+        _live_policy_threads += 1
 
     def _settle(setter: Any, value: Any) -> None:
         # The waiter may have timed out and cancelled; a cancelled future is
@@ -182,16 +209,21 @@ def _call_on_daemon_thread(fn: Any, *args: Any, **kwargs: Any) -> "asyncio.Futur
             setter(value)
 
     def _runner() -> None:
+        global _live_policy_threads
         try:
-            result = fn(*args, **kwargs)
-        except BaseException as exc:
-            setter, value = future.set_exception, exc
-        else:
-            setter, value = future.set_result, result
-        try:
-            loop.call_soon_threadsafe(_settle, setter, value)
-        except RuntimeError:
-            pass  # loop already closed — nobody is waiting on this any more
+            try:
+                result = fn(*args, **kwargs)
+            except BaseException as exc:
+                setter, value = future.set_exception, exc
+            else:
+                setter, value = future.set_result, result
+            try:
+                loop.call_soon_threadsafe(_settle, setter, value)
+            except RuntimeError:
+                pass  # loop already closed — nobody is waiting on this any more
+        finally:
+            with _policy_thread_lock:
+                _live_policy_threads -= 1
 
     threading.Thread(
         target=_runner, daemon=True, name="agentao-url-policy"
@@ -368,14 +400,11 @@ async def _guard_context_requests(context: Any, allow_networks: tuple) -> None:
     assets from one origin costs one DNS resolution, not fifty.
     """
     verdicts: Dict[tuple, Optional[str]] = {}
+    pending: Dict[tuple, "asyncio.Future"] = {}
+    gate = asyncio.Semaphore(_POLICY_CHECK_CONCURRENCY)
 
-    async def _verdict(request_url: str) -> Optional[str]:
-        """Return None to allow, or a string reason to block."""
-        parsed = urlparse(request_url)
-        if (parsed.scheme or "").lower() in _NON_NETWORK_SCHEMES:
-            return None
-        key = ((parsed.scheme or "").lower(), (parsed.hostname or "").lower(), parsed.port)
-        if key not in verdicts:
+    async def _decide(key: tuple, request_url: str) -> Optional[str]:
+        async with gate:
             try:
                 # Off the loop thread, and bounded. `validate_outbound_url`
                 # calls `socket.getaddrinfo`, which blocks for as long as the
@@ -395,11 +424,33 @@ async def _guard_context_requests(context: Any, allow_networks: tuple) -> None:
             except UrlPolicyError as e:
                 verdicts[key] = str(e)
             except Exception as e:
-                # Fail closed on a stalled or unexpected check, matching
-                # `_resolve_host_addresses`, which treats "cannot resolve" as
-                # "reject" rather than "allow".
+                # Fail closed on a stalled, refused, or unexpected check,
+                # matching `_resolve_host_addresses`, which treats "cannot
+                # resolve" as "reject" rather than "allow".
                 verdicts[key] = f"policy check failed: {e}"
         return verdicts[key]
+
+    async def _verdict(request_url: str) -> Optional[str]:
+        """Return None to allow, or a string reason to block."""
+        parsed = urlparse(request_url)
+        if (parsed.scheme or "").lower() in _NON_NETWORK_SCHEMES:
+            return None
+        key = ((parsed.scheme or "").lower(), (parsed.hostname or "").lower(), parsed.port)
+        if key in verdicts:
+            return verdicts[key]
+
+        # Dedup *in flight*, not just once a verdict is stored: a page can
+        # schedule a hundred requests to one origin before the first lookup
+        # returns, and a cache that only holds finished verdicts would start a
+        # hundred threads for them.
+        task = pending.get(key)
+        if task is None:
+            task = asyncio.ensure_future(_decide(key, request_url))
+            pending[key] = task
+            task.add_done_callback(lambda _t, k=key: pending.pop(k, None))
+        # Shielded: one aborted request must not cancel the lookup its
+        # siblings are waiting on.
+        return await asyncio.shield(task)
 
     async def _act(coro: Any, url: str) -> None:
         # The page can be torn down between interception and the verdict (nav
