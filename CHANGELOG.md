@@ -120,7 +120,17 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   cached per `(scheme, host, port)` so a page pulling fifty assets from one
   origin costs one DNS resolution; `data:` / `blob:` / `about:` are passed
   through untouched (they never leave the machine, and the policy rejects any
-  non-http(s) scheme).
+  non-http(s) scheme). The handler is installed on the **browser context**,
+  not the page: a page-level route does not cover a popup opened with
+  `window.open`, whose very first request would otherwise reach an internal
+  target unchecked.
+
+- **An unhydrated DOM is no longer returned as a successful render.** The
+  settle step absorbs its own timeout by design — long-poll pages never reach
+  `networkidle` and their DOM is already usable — but it also swallowed a
+  crashed renderer, and would swallow Playwright dropping the `networkidle`
+  literal. Those now fail the render, so the caller keeps the static shell and
+  says why, instead of presenting a half-rendered page as the article.
 
 - **The render has a wall-clock ceiling.** `page.content()` takes no timeout
   at all, so the `goto`/settle timeouts bounded navigation only and a page

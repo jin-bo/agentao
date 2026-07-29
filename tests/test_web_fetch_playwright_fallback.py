@@ -265,9 +265,10 @@ def test_playwright_api_matches_our_call_sites():
 
     for owner, name in [
         (async_api.Page, "content"),
-        (async_api.Page, "route"),
         (async_api.Page, "goto"),
-        (async_api.Browser, "new_page"),
+        (async_api.Browser, "new_context"),
+        (async_api.BrowserContext, "route"),  # context-level: covers popups
+        (async_api.BrowserContext, "new_page"),
         (async_api.Browser, "close"),
         (async_api.Route, "abort"),
         (async_api.Route, "continue_"),
@@ -322,14 +323,42 @@ class _FakePage:
         return self._html
 
 
-class _FakeBrowser:
+class _FakeContext:
     def __init__(self, page):
         self._page = page
-        self.closed = False
+        self.route_pattern = None
+        self.route_handler = None
+        self.new_page_kwargs = None
+
+    async def route(self, pattern, handler):
+        self.route_pattern = pattern
+        self.route_handler = handler
+        # Mirror Playwright: a context route covers every page in the context,
+        # popups included. The tests read the handler off the page for
+        # convenience, so publish it there too.
+        self._page.route_handler = handler
 
     async def new_page(self, **kwargs):
         self.new_page_kwargs = kwargs
         return self._page
+
+
+class _FakeBrowser:
+    def __init__(self, page):
+        self._page = page
+        self.closed = False
+        self.context = _FakeContext(page)
+        self.new_page_kwargs = None
+
+    async def new_context(self, **kwargs):
+        self.new_context_kwargs = kwargs
+        return self.context
+
+    async def new_page(self, **kwargs):  # must NOT be used: bypasses the guard
+        raise AssertionError(
+            "browser.new_page() creates an implicit context, leaving popups"
+            " unguarded; use new_context() + context.new_page()"
+        )
 
     async def close(self):
         self.closed = True
@@ -407,7 +436,7 @@ def test_render_wrapper_executes_and_scrubs_child_env(monkeypatch):
     # agentao's provider credentials.
     assert "OPENAI_API_KEY" not in pw.launch_kwargs["env"]
     # And the malformed httpx UA must not be forced onto a real browser.
-    assert "user_agent" not in browser.new_page_kwargs
+    assert "user_agent" not in browser.context.new_page_kwargs
 
 
 def test_hanging_driver_startup_is_bounded_and_the_driver_killed(monkeypatch):
@@ -480,6 +509,61 @@ def test_render_wrapper_closes_browser_when_navigation_fails(monkeypatch):
         asyncio.run(web_mod._render_with_playwright("https://x.test/"))
 
     assert browser.closed is True
+
+
+def test_guard_is_installed_on_the_context_so_popups_are_covered(monkeypatch):
+    """A route registered on one Page does not cover a popup that page opens
+    with window.open — the popup's first request would reach an internal
+    target before any policy ran. _FakeBrowser.new_page() raises to keep the
+    implicit-context shortcut from creeping back in."""
+    page = _FakePage()
+    browser = _FakeBrowser(page)
+    _install_fake_playwright(monkeypatch, _FakePlaywright(browser))
+
+    asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    assert browser.context.route_pattern == "**/*"
+    assert browser.context.route_handler is not None
+
+
+def test_unexpected_settle_failure_is_not_returned_as_a_successful_render(
+    monkeypatch,
+):
+    """An unhydrated DOM must not come back as a success.
+
+    The settle step absorbs its own timeout by design. Anything else — a
+    crashed renderer, or Playwright dropping the "networkidle" literal — is a
+    real failure, and continuing to page.content() would hand back exactly the
+    unhydrated page this fallback exists to avoid.
+    """
+    page = _FakePage()
+
+    async def bad_settle(state, **kwargs):
+        raise ValueError('state: expected one of (load|domcontentloaded)')
+
+    page.wait_for_load_state = bad_settle
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+
+    with pytest.raises(ValueError):
+        asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+
+    assert page.content_calls == 0
+
+
+def test_settle_timeout_is_still_absorbed(monkeypatch):
+    """The documented case: long-poll pages never go idle and their DOM is
+    already usable, so the expected timeout must not fail the render."""
+    page = _FakePage(html="<html><body><p>Usable anyway</p></body></html>")
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+    timeout_cls = sys.modules["playwright.async_api"].TimeoutError
+
+    async def timing_out(state, **kwargs):
+        raise timeout_cls("Timeout 5000ms exceeded")
+
+    page.wait_for_load_state = timing_out
+
+    status, html = asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+    assert (status, "Usable anyway" in html) == (200, True)
 
 
 def test_render_wrapper_reports_http_status(monkeypatch):

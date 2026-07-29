@@ -179,11 +179,14 @@ async def _render_page(page: Any, url: str) -> tuple[Optional[int], str]:
         # they never go idle and their DOM is already usable.
         logger.debug("networkidle not reached for %s; using current DOM", url)
     except Exception as e:
-        # Anything else here is a real signal — a crashed renderer, or a
-        # Playwright release that stopped accepting the "networkidle" literal
-        # (upstream already marks it DISCOURAGED). Swallowing it at DEBUG would
-        # let every fallback silently skip hydration with nothing in the log.
+        # Anything else is a real failure — a crashed renderer, or a Playwright
+        # release that stopped accepting the "networkidle" literal (upstream
+        # already marks it DISCOURAGED). Logging and continuing to
+        # `page.content()` would hand back an unhydrated DOM *as a success*,
+        # which is the failure mode this fallback exists to avoid. Treat it as
+        # a fallback failure so the caller keeps the static shell and says why.
         logger.warning("settle wait failed for %s: %s", url, e)
+        raise
     return (response.status if response is not None else None), await page.content()
 
 
@@ -261,8 +264,16 @@ async def _render_with_playwright(
         # leak `build_child_env()` exists to close.
         browser = await p.chromium.launch(headless=True, env=build_child_env())
         try:
-            page = await browser.new_page()
-            await _guard_page_requests(page, allow_networks)
+            # The guard is installed on the *context*, not the page: a route
+            # registered on one Page does not cover a popup the page opens with
+            # `window.open`, and that popup's very first request would reach an
+            # internal target before any policy ran. Context routes apply to
+            # every page in the context, popups included — so the context must
+            # exist before navigation, which `browser.new_page()` (which
+            # creates its own context implicitly) gives no chance to do.
+            context = await browser.new_context()
+            await _guard_context_requests(context, allow_networks)
+            page = await context.new_page()
             return await asyncio.wait_for(
                 _render_page(page, url), timeout=_BROWSER_TOTAL_TIMEOUT_S
             )
@@ -296,7 +307,7 @@ async def _render_with_playwright(
 _NON_NETWORK_SCHEMES = frozenset({"data", "blob", "about", "file", "chrome-extension"})
 
 
-async def _guard_page_requests(page: Any, allow_networks: tuple) -> None:
+async def _guard_context_requests(context: Any, allow_networks: tuple) -> None:
     """Re-apply the outbound URL policy to every request Chromium makes.
 
     The httpx path validates the initial URL and every redirect hop. Once the
@@ -356,7 +367,9 @@ async def _guard_page_requests(page: Any, allow_networks: tuple) -> None:
             return
         await _act(route.continue_(), request.url)
 
-    await page.route("**/*", _handler)
+    # Context-level, so popups opened by the page are covered from their very
+    # first request. A page-level route is not.
+    await context.route("**/*", _handler)
 
 
 def _html_to_text(html: str) -> str:
@@ -601,7 +614,7 @@ class WebFetchTool(Tool):
         ``validate_outbound_url`` on the primary path (a blocked target raises
         ``UrlPolicyError``, which the caller returns without falling back).
         In-browser navigation is re-validated per request by
-        ``_guard_page_requests``. **Jina is not** — it fetches the target
+        ``_guard_context_requests``. **Jina is not** — it fetches the target
         server-side, where agentao has no visibility. That fallback stays opt-in
         (``AGENTAO_WEB_FETCH_FALLBACK``, default ``none``) and is surfaced in
         the tool description.
