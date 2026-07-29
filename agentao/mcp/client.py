@@ -5,7 +5,6 @@ import json
 import logging
 import os
 from contextlib import AsyncExitStack
-from datetime import timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -20,6 +19,7 @@ from mcp.types import Tool as McpToolDef
 
 from .. import __version__
 from ..capabilities.process import build_child_env
+from ._compat import field, httpx_for_mcp, read_timeout as _sdk_read_timeout
 from .config import (
     McpServerConfig,
     McpTransportConfigError,
@@ -456,11 +456,15 @@ class McpClient:
         ``create_mcp_http_client`` (the SDK's own factory: ``follow_redirects``
         + the recommended defaults) so the semantics match the SSE path exactly.
 
-        Two structural differences from SSE: the httpx client is caller-managed
+        One structural difference from SSE: the httpx client is caller-managed
         (entered into the exit stack *before* the transport so the LIFO unwind
-        tears the transport down before closing the client), and
-        ``streamable_http_client`` yields a **3-tuple** — the third element is a
-        ``get_session_id`` callback we don't surface in v1.
+        tears the transport down before closing the client).
+
+        The yielded tuple's **arity differs across SDK majors** — mcp 1.x
+        yields ``(read, write, get_session_id)``; 2.0 dropped the third element
+        so every transport now yields the same 2-tuple (``TransportStreams``).
+        agentao never surfaced ``get_session_id``, so the streams are indexed
+        rather than unpacked and both shapes work.
 
         ``terminate_on_close=False``: the SDK's session-terminate ``DELETE``
         would reuse this client, whose ``read`` timeout is raised to cover long
@@ -471,8 +475,6 @@ class McpClient:
         skipping it keeps the transports consistent; the server expires the idle
         session on its own (the terminate ``DELETE`` is a spec SHOULD, not MUST).
         """
-        import httpx
-
         url, headers, sse_read_timeout = await self._prepare_url_connect(
             startup_timeout, request_timeout
         )
@@ -480,7 +482,10 @@ class McpClient:
             # ``headers`` always carries at least the default User-Agent (see
             # _prepare_url_connect), so it is never empty — pass it directly.
             headers=headers,
-            timeout=httpx.Timeout(startup_timeout, read=sse_read_timeout),
+            # ``httpx_for_mcp`` is the flavour the *installed* SDK accepts:
+            # httpx on mcp 1.x, httpx2 on 2.x. Passing the wrong one raises
+            # ``TypeError: unhashable type: 'Timeout'`` inside httpx2.
+            timeout=httpx_for_mcp.Timeout(startup_timeout, read=sse_read_timeout),
         )
         # Caller-managed lifecycle: enter the client first so the LIFO unwind
         # tears down the transport before closing the client.
@@ -492,8 +497,11 @@ class McpClient:
                 terminate_on_close=False,  # see docstring — avoid teardown hang
             )
         )
-        # ``streamable_http_client`` yields a 3-tuple; discard get_session_id.
-        read_stream, write_stream, _get_session_id = http_transport
+        # Index, don't unpack: 1.x yields 3 items, 2.0 yields 2 (see docstring).
+        # A bare ``a, b, c = …`` raises ValueError on 2.0 and is exactly the
+        # kind of break a signature/field-name audit misses — the arity only
+        # shows up at the yield.
+        read_stream, write_stream = http_transport[0], http_transport[1]
         self._session = await self._exit_stack.enter_async_context(
             ClientSession(read_stream, write_stream)
         )
@@ -512,9 +520,9 @@ class McpClient:
         unset the call is unbounded (the MCP SDK default).
         """
         _startup_timeout, request_timeout = resolve_timeouts(self.config)
-        read_timeout = (
-            timedelta(seconds=request_timeout) if request_timeout is not None else None
-        )
+        # mcp 1.x wants a timedelta here, 2.x plain float seconds — the shim
+        # asks the installed SDK's own signature which one to hand over.
+        read_timeout = _sdk_read_timeout(request_timeout)
         for attempt in range(2):
             if not self._session or self.status != ServerStatus.CONNECTED:
                 try:
@@ -553,7 +561,7 @@ class McpClient:
                 if block.type == "text":
                     parts.append(block.text)
                 elif block.type == "image":
-                    parts.append(f"[image: {block.mimeType}]")
+                    parts.append(f"[image: {field(block, 'mimeType', 'mime_type')}]")
                 elif block.type == "resource":
                     text = getattr(block.resource, "text", None)
                     if text:
@@ -570,17 +578,19 @@ class McpClient:
             # server that returns *only* ``structuredContent`` (content == [])
             # would otherwise hand the model an empty string — so serialize
             # the structured payload instead of dropping it.
-            if not result.content and result.structuredContent is not None:
-                # ensure_ascii=False keeps CJK/emoji readable (codebase-wide
-                # convention); default=str makes a non-JSON-native value
-                # degrade to its repr instead of raising out of call_tool.
-                parts.append(
-                    json.dumps(result.structuredContent, ensure_ascii=False, default=str)
-                )
+            if not result.content:
+                structured = field(result, "structuredContent", "structured_content")
+                if structured is not None:
+                    # ensure_ascii=False keeps CJK/emoji readable (codebase-wide
+                    # convention); default=str makes a non-JSON-native value
+                    # degrade to its repr instead of raising out of call_tool.
+                    parts.append(
+                        json.dumps(structured, ensure_ascii=False, default=str)
+                    )
 
             text = "\n".join(parts)
 
-            if result.isError:
+            if field(result, "isError", "is_error"):
                 return f"MCP tool error: {text}"
             return text
 

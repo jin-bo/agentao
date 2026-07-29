@@ -207,6 +207,11 @@ SDK 已在模块顶部即时导入（`from mcp.client.sse import sse_client`，�
 Streamable HTTP 属同一包，故无新的懒加载顾虑 —— `agentao.mcp/__init__.py` 的
 PEP-562 闸门已把整个 SDK 推迟到首次触碰 `McpClientManager` 时。
 
+> **更新 —— mcp 2.0（agentao 0.4.17）。** mcp 2.0 **直接删除**了弃用别名
+> `streamablehttp_client`，只剩 `streamable_http_client`。当初在这里选规范名，
+> 正是这个导入能原封不动跨过大版本的原因 —— 它当时规避的那个弃用警告，后来
+> 兑现成了移除。§5.1 无需改动。
+
 ### 5.2 `transport_type` 与分发 → 委托 `resolve_transport`
 
 该属性用于*展示*、绝不能抛（`get_server_status`、`/mcp list`），故它把失败即关闭的
@@ -245,6 +250,19 @@ else:  # "unknown" —— 无 type 且无 command/url
 无下游 `KeyError`。
 
 ### 5.3 结构差异 —— 建客户端 + 元组元数
+
+> **更新 —— mcp 2.0（agentao 0.4.17）。** 下面有两条只对 1.x 成立。mcp 2.0
+> **去掉了元组的第三个元素**，所有传输现在统一 yield 2 元组
+> （`mcp.client._transport.TransportStreams`）；并且**从 `httpx` 迁到了
+> `httpx2`**，把 `httpx.Timeout` 交给 `create_mcp_http_client` 会抛
+> `TypeError: unhashable type: 'Timeout'`。现网代码改为按下标取流
+> （`transport[0]`、`transport[1]`）而非解包，`Timeout` 类则取自已安装 SDK 实际
+> 使用的那个 httpx —— 两处都在 `agentao/mcp/_compat.py` 里解决，靠探测 SDK 本身
+> 而非解析版本号。本节的设计未变，变的只是元数和 httpx 模块。
+>
+> 注意这个元数**不体现在签名或字段名上**，只在 `yield` 那一行才看得见。在一个
+> 大版本上全绿，对另一个大版本什么都证明不了 —— 这正是新增 `mcp-compat` CI job
+> 的理由。
 
 对钉住的 SDK 的内省（实测，非记忆）：
 

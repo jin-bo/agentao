@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from mcp.types import Tool as McpToolDef
 
 from ..tools.base import Tool
+from ._compat import annotations_dict, field
 
 # Characters allowed in tool names (OpenAI function calling)
 _INVALID_CHARS_RE = re.compile(r"[^a-zA-Z0-9_]")
@@ -70,7 +71,7 @@ class McpTool(Tool):
 
     @property
     def parameters(self) -> Dict[str, Any]:
-        schema = self._mcp_tool.inputSchema or {}
+        schema = field(self._mcp_tool, "inputSchema", "input_schema") or {}
         # Ensure it's a valid JSON Schema object
         if not isinstance(schema, dict):
             return {"type": "object", "properties": {}}
@@ -85,9 +86,12 @@ class McpTool(Tool):
         """Return the server-supplied ``ToolAnnotations`` as a plain
         dict so hosts can introspect hints without importing MCP SDK
         types. Empty dict when the server provided no annotations.
+
+        Keys are the camelCase names from the MCP spec on both SDK majors
+        (mcp 2.0 renamed the Python attributes to snake_case) — see
+        :func:`._compat.annotations_dict`.
         """
-        ann = self._mcp_tool.annotations
-        return ann.model_dump(exclude_none=True) if ann is not None else {}
+        return annotations_dict(self._mcp_tool.annotations)
 
     @property
     def is_read_only(self) -> bool:

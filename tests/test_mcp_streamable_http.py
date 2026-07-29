@@ -7,16 +7,41 @@ Covers the design in ``docs/design/mcp-streamable-http.md``:
   ``type`` or a missing required key.
 - ``McpClient.transport_type`` — display-only, never raises.
 - ``connect()`` dispatch — ``type:"http"`` and bare ``url`` route to
-  ``_connect_streamable_http`` (3-tuple unpack), ``type:"sse"`` to
-  ``_connect_sse``; timeout / ``sse_read_timeout`` / ``terminate_on_close``
-  wiring.
+  ``_connect_streamable_http``, ``type:"sse"`` to ``_connect_sse``; timeout /
+  ``sse_read_timeout`` / ``terminate_on_close`` wiring.
 - The §5.7 bare-``url``-defaulted-to-http connect hint and its gating.
+- The stream-tuple **arity split** across SDK majors — see
+  :data:`_HTTP_STREAM_SHAPES`.
 """
 
+import importlib.metadata as md
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+
+
+# The two shapes ``streamable_http_client`` actually yields. mcp 1.x yields
+# ``(read, write, get_session_id)``; 2.0 dropped the third element so every
+# transport now yields the same 2-tuple (``mcp.client._transport
+# .TransportStreams``). Production must accept either, and this used to be
+# hardcoded to the 3-tuple — which is why a hard ``ValueError: not enough
+# values to unpack`` on mcp 2.0 sailed through a green suite.
+_MCP1_STREAMS = ("r", "w", lambda: "the-sid")
+_MCP2_STREAMS = ("r", "w")
+_HTTP_STREAM_SHAPES = [
+    pytest.param(_MCP1_STREAMS, id="mcp1-3tuple"),
+    pytest.param(_MCP2_STREAMS, id="mcp2-2tuple"),
+]
+
+
+def _installed_http_streams():
+    """The shape the *installed* SDK yields, so the default path tests reality.
+
+    Derived from the distribution version rather than by importing the private
+    ``_transport`` alias, which only exists on 2.x.
+    """
+    return _MCP1_STREAMS if int(md.version("mcp").split(".")[0]) < 2 else _MCP2_STREAMS
 
 from agentao.mcp.client import (
     _DEFAULT_SSE_READ_TIMEOUT,
@@ -75,7 +100,7 @@ class _FakeHttpClient:
 def _drive_connect(
     config,
     *,
-    http_streams=("r", "w", lambda: "sid"),
+    http_streams=None,
     http_aenter_exc=None,
     sse_aenter_exc=None,
     preflight_exc=None,
@@ -85,7 +110,12 @@ def _drive_connect(
     ``captured["http"]`` records the ``streamable_http_client`` args (url,
     terminate_on_close), ``captured["client"]`` the ``create_mcp_http_client``
     args (headers, timeout), ``captured["sse"]`` the ``sse_client`` args.
+
+    ``http_streams`` defaults to whatever the installed SDK really yields, so
+    tests that don't care about arity still exercise the true shape.
     """
+    if http_streams is None:
+        http_streams = _installed_http_streams()
     captured = {}
 
     def fake_create_client(headers=None, timeout=None, auth=None):
@@ -232,14 +262,19 @@ def test_sse_dispatches_sse():
     assert "sse" in captured and "http" not in captured
 
 
-def test_streamable_http_three_tuple_unpacked():
-    # A 3-tuple (with a get_session_id callback) must connect cleanly; the
-    # callback is discarded, never required.
+@pytest.mark.parametrize("http_streams", _HTTP_STREAM_SHAPES)
+def test_streamable_http_connects_on_either_stream_arity(http_streams):
+    """Both real yield shapes must connect — see :data:`_HTTP_STREAM_SHAPES`.
+
+    On 1.x the trailing ``get_session_id`` is discarded, never required; on
+    2.0 it is simply absent. Indexing rather than unpacking in
+    ``_connect_streamable_http`` is what makes both work.
+    """
     client, _ = _drive_connect(
-        {"type": "http", "url": "https://h/mcp"},
-        http_streams=("r", "w", lambda: "the-sid"),
+        {"type": "http", "url": "https://h/mcp"}, http_streams=http_streams
     )
     assert client.status == ServerStatus.CONNECTED
+    assert client.error_message is None
 
 
 def test_streamable_http_timeout_and_terminate_on_close():

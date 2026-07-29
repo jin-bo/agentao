@@ -89,25 +89,30 @@ def test_parse_mcp_tool_name_invalid_prefix():
 # ---------------------------------------------------------------------------
 
 def _make_mcp_tool_def(name="list_repos", description="List repos", schema=None, annotations=None):
-    """Build a stub MCP tool definition.
+    """Build a **real** ``mcp.types.Tool``, not a mock.
 
-    ``annotations`` accepts either ``None`` (server provided none),
-    a real ``ToolAnnotations`` Pydantic instance, or a dict that we
-    convert to one so production-realistic ``model_dump`` paths are
-    exercised.
+    A ``MagicMock`` answers ``hasattr`` for every name, which makes it
+    actively wrong for testing code that probes across the mcp 1.x/2.x
+    field-naming split (``inputSchema`` → ``input_schema``): the mock would
+    satisfy the 2.x branch on a 1.x SDK and hand back a child mock instead of
+    the schema. Constructing the real model with the camelCase spec names —
+    field names on 1.x, aliases on 2.x — exercises the same object production
+    gets, on either major.
+
+    ``annotations`` accepts ``None`` (server provided none), a real
+    ``ToolAnnotations``, or a dict we convert to one so production-realistic
+    ``model_dump`` paths are exercised.
     """
-    mcp_tool = MagicMock()
-    mcp_tool.name = name
-    mcp_tool.description = description
-    mcp_tool.inputSchema = schema or {"type": "object", "properties": {}}
-    if annotations is None:
-        mcp_tool.annotations = None
-    elif isinstance(annotations, dict):
-        from mcp.types import ToolAnnotations
-        mcp_tool.annotations = ToolAnnotations(**annotations)
-    else:
-        mcp_tool.annotations = annotations
-    return mcp_tool
+    from mcp.types import Tool as McpToolDef, ToolAnnotations
+
+    if isinstance(annotations, dict):
+        annotations = ToolAnnotations(**annotations)
+    return McpToolDef(
+        name=name,
+        description=description,
+        inputSchema=schema or {"type": "object", "properties": {}},
+        annotations=annotations,
+    )
 
 
 def test_mcptool_name_property():
@@ -141,8 +146,20 @@ def test_mcptool_parameters_adds_type_when_missing():
 
 
 def test_mcptool_parameters_handles_non_dict_schema():
-    tool_def = _make_mcp_tool_def()
-    tool_def.inputSchema = "invalid"
+    """``parameters`` is defensive against a schema the model would reject.
+
+    Built with ``model_construct`` because the real ``Tool`` validates
+    ``inputSchema`` as an object — the branch under test only fires for a
+    server whose payload got past (or around) that validation, so the fixture
+    has to bypass it too. The field name differs across SDK majors, so it is
+    read off the model rather than hardcoded.
+    """
+    from mcp.types import Tool as McpToolDef
+
+    key = "input_schema" if "input_schema" in McpToolDef.model_fields else "inputSchema"
+    tool_def = McpToolDef.model_construct(
+        name="list_repos", description="List repos", **{key: "invalid"}
+    )
     t = McpTool("github", tool_def, call_fn=Mock())
     assert t.parameters == {"type": "object", "properties": {}}
 

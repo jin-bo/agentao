@@ -98,7 +98,20 @@ def test_no_request_timeout_passes_none():
     assert capture["read_timeout_seconds"] is None
 
 
-def test_request_timeout_passed_as_timedelta():
+def test_request_timeout_passed_in_sdk_native_units():
+    """The 42 s budget must arrive in the unit the installed SDK declares.
+
+    mcp 1.x types ``read_timeout_seconds`` as ``timedelta``; 2.x as plain
+    float seconds, which flow into ``anyio.fail_after`` — where a timedelta
+    raises ``TypeError``. Hand over the wrong flavour and every bounded MCP
+    call breaks, so assert the flavour, not just the magnitude.
+
+    The expected flavour is derived from the installed **distribution
+    version**, deliberately a different source of truth from
+    ``_compat.read_timeout``, which probes the ``call_tool`` *signature*. If
+    that probe ever mis-fires, this cross-check is what catches it.
+    """
+    import importlib.metadata as md
     from datetime import timedelta
 
     capture = {}
@@ -106,7 +119,11 @@ def test_request_timeout_passed_as_timedelta():
         tool_result([text_block("ok")]), config={"command": "echo", "timeout": {"request": 42}}, capture=capture
     )
     run_async(client.call_tool("t", {}))
-    assert capture["read_timeout_seconds"] == timedelta(seconds=42)
+    got = capture["read_timeout_seconds"]
+
+    wants_timedelta = int(md.version("mcp").split(".")[0]) < 2
+    assert isinstance(got, timedelta) is wants_timedelta
+    assert (got.total_seconds() if wants_timedelta else got) == 42
 
 
 def test_legacy_int_timeout_does_not_bound_request():

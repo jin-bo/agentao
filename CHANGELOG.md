@@ -11,9 +11,63 @@ _Targeting 0.4.17. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **MCP SDK 2.x support, alongside 1.x.** `mcp` 2.0.0 shipped 2026-07-28 and is
+  a breaking release; agentao now runs on either major. The differences are
+  probed off the installed SDK rather than sniffed from a version string — a
+  version string is a second source of truth that a vendored or patched SDK
+  would make wrong. See `agentao/mcp/_compat.py`.
+
+- **A CI job that runs the MCP boundary tests against both majors**
+  (`mcp==1.26.0`, `mcp>=1,<2`, `mcp>=2,<3`). The lockfile pins one version, so
+  the existing test job can only ever exercise that one — and every defect
+  fixed below passed a fully green suite on one major while being fatal on the
+  other. `build` now gates on this job: a wheel whose MCP path is broken on a
+  major its metadata claims to support should not be publishable.
+
 ### Changed
 
+- **`mcp>=1.26.0` → `mcp>=1.26.0,<3`.** The bare lower bound let a fresh
+  install silently resolve to 2.0 against code that only spoke 1.x. Upstream
+  still ships v1 — 1.29.0 landed the same day as 2.0.0 — so agentao tracks both
+  majors rather than forcing hosts off 1.x. The floor rises only when agentao
+  actually needs a 2.x-only capability, and on a major boundary. The lockfile
+  tracks the newest 2.x; the floor and the newest 1.x are held by CI.
+
 ### Fixed
+
+- **Every MCP tool call failed on mcp 2.0.** 2.0 moved its wire models into the
+  split-out `mcp-types` package and renamed each field from its camelCase JSON
+  name to a snake_case Python attribute, demoting the old name to an alias —
+  which attribute access does not honor. Five sites broke: `Tool.inputSchema`
+  (raised on every turn, since the tool schema is rebuilt per turn), plus
+  `CallToolResult.isError`, `.structuredContent`, `ImageContent.mimeType`, and
+  the `ToolAnnotations` hints.
+
+- **Streamable HTTP could not connect on mcp 2.0** — the default transport for
+  a bare `url`. Two independent causes: `create_mcp_http_client` moved to
+  `httpx2`, so the `httpx.Timeout` agentao passed raised `TypeError: unhashable
+  type: 'Timeout'`; and 2.0 dropped the trailing `get_session_id` from the
+  yielded stream tuple, so a 3-element unpack raised `ValueError: not enough
+  values to unpack (expected 3, got 2)`.
+
+- **Per-request tool-call timeouts raised on mcp 2.0.** `read_timeout_seconds`
+  went from `timedelta` to float seconds and flows into `anyio.fail_after`,
+  where a `timedelta` is a `TypeError`.
+
+- **`McpTool.mcp_annotations` keys are stable across both majors.** The dump now
+  uses `by_alias=True` — a no-op on 1.x, where the field names already are the
+  camelCase spec names — so hosts introspecting `readOnlyHint` /
+  `destructiveHint` (documented in the 0.4.3 notes) keep working unchanged.
+  Without it, a trusted server's `destructiveHint=true` would stop forcing
+  confirmation on 2.x. That defect was latent rather than live: the tool-schema
+  crash above fires first on every turn, so no call ever reached the check.
+
+- **MCP tests now build their inputs from real `mcp.types` models.** The fakes
+  were `SimpleNamespace` / `MagicMock` stand-ins carrying agentao's assumption
+  about the wire shape instead of the SDK's, and the Streamable HTTP fixture
+  hardcoded the 1.x 3-tuple. That is why a 3600-test suite stayed green through
+  all of the above. `MagicMock` was the worst of the three: it answers `hasattr`
+  for every name, so it satisfies a 2.x-shaped probe even on a 1.x SDK.
 
 ---
 

@@ -235,6 +235,12 @@ sse_client`, line 14); Streamable HTTP is the same package, so no new lazy-load
 concern — `agentao.mcp/__init__.py`'s PEP-562 gate already defers the whole SDK
 until `McpClientManager` is first touched.
 
+> **Update — mcp 2.0 (agentao 0.4.17).** mcp 2.0 **removed** the deprecated
+> `streamablehttp_client` alias outright; only `streamable_http_client` exists.
+> Choosing the canonical name here is the reason this import survived the major
+> bump untouched — the deprecation warning it was avoiding turned out to be a
+> removal notice. Nothing in §5.1 changes.
+
 ### 5.2 `transport_type` and dispatch → delegate to `resolve_transport`
 
 The property is for *display* and must never throw (`get_server_status`,
@@ -274,6 +280,21 @@ Because `resolve_transport` has already validated the required key (D3 step 3),
 `self.config["url"]` are guaranteed present — no downstream `KeyError`.
 
 ### 5.3 The structural differences — client-building + tuple arity
+
+> **Update — mcp 2.0 (agentao 0.4.17).** Two of the facts below are 1.x-only.
+> mcp 2.0 **dropped the third tuple element**, so every transport now yields the
+> same 2-tuple (`mcp.client._transport.TransportStreams`), and it **moved off
+> `httpx` onto `httpx2`**, so an `httpx.Timeout` handed to
+> `create_mcp_http_client` raises `TypeError: unhashable type: 'Timeout'`.
+> Shipping code indexes the streams (`transport[0]`, `transport[1]`) instead of
+> unpacking, and takes the `Timeout` class from whichever httpx flavour the
+> installed SDK uses — both resolved in `agentao/mcp/_compat.py`, probed off the
+> SDK rather than from a version string. The design in this section is
+> unchanged; only the arity and the httpx module are.
+>
+> Note this arity is not visible in a signature or a field name — it only shows
+> up at the `yield`. A green suite on one major said nothing about the other,
+> which is what the `mcp-compat` CI job now exists to catch.
 
 Introspection of the pinned SDK (verified, not recalled):
 
