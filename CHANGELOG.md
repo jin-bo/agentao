@@ -67,13 +67,27 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   executor thread, so leaving it inline would have made this port a regression
   on its own headline axis.
 
-  A cancelled fetch waits (bounded, 10s) for its in-flight parse before letting
-  the cancellation surface. `asyncio.to_thread` cancels only the awaiter — the
-  worker runs to completion either way, since nothing can interrupt a running
-  Python call from outside it — so returning straight away would leave a
-  multi-megabyte DOM parse burning CPU with nobody waiting on the result, and a
-  host that cancels repeatedly could stack several up. The canceller pays
-  latency it was going to pay regardless.
+  That HTML work runs on a **dedicated thread pool**, not the loop's default
+  executor. `Agentao.arun` parks the whole `chat()` turn on the default executor
+  and that worker then blocks waiting on the tool coroutine — so borrowing a
+  second worker from the same pool for the parse is a pool-exhaustion deadlock.
+  Measured: a default executor with one free worker hangs the fetch outright,
+  and `max_workers` concurrent `arun` turns reproduce it on a normally-sized
+  pool. (`arun`'s use of the *default* executor remains a hazard for any future
+  async tool that reaches for `asyncio.to_thread`; giving it its own executor
+  would fix the class rather than this instance, but that is a core-runtime
+  change and out of scope here.)
+
+  A cancelled fetch waits (bounded) for its in-flight parse before letting the
+  cancellation surface. Cancelling an executor future that has already started
+  cancels only the awaiter — the worker runs to completion either way, since
+  nothing can interrupt a running Python call from outside it — so returning
+  straight away would leave a multi-megabyte DOM parse burning CPU with nobody
+  waiting on the result, and a host that cancels repeatedly could stack several
+  up. The canceller pays latency it was going to pay regardless. The budget sits
+  below the AsyncTool dispatcher's own cleanup-ack window, since draining for
+  longer than the dispatcher will wait would produce the very detached work the
+  drain exists to prevent, only with the invocation already reported complete.
 
   Hosts that call `WebFetchTool().execute(...)` from ordinary synchronous code
   are unaffected. Hosts already on a loop should switch to
