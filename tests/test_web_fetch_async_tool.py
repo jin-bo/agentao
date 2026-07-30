@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import threading
 import time
 
@@ -291,6 +292,111 @@ def test_a_rendered_dom_is_also_extracted_off_the_loop(monkeypatch):
 
     assert "Fallback: playwright" in out
     assert ticks > 0, "the event loop was frozen extracting the rendered DOM"
+
+
+# --------------------------------------------------------------------------
+# cancellation must not orphan the CPU work
+# --------------------------------------------------------------------------
+
+
+def test_cancelling_a_fetch_does_not_orphan_the_parse(monkeypatch):
+    """`to_thread` cancels the awaiter, never the worker.
+
+    Nothing can interrupt a running Python call from outside it, so the parse
+    finishes either way. Returning immediately would leave it burning CPU and
+    holding a multi-megabyte DOM with nobody waiting on the result, and a host
+    that cancels repeatedly could stack several up. Waiting costs the canceller
+    latency it was going to pay regardless.
+    """
+    finished = threading.Event()
+    started = threading.Event()
+
+    def slow_extract(soup):
+        started.set()
+        time.sleep(_SLOW_S)
+        finished.set()
+        return "extracted"
+
+    _stub_primary(monkeypatch)
+    monkeypatch.setattr(web_mod, "_extract_text", slow_extract)
+    monkeypatch.delenv("AGENTAO_WEB_FETCH_FALLBACK", raising=False)
+    tool = WebFetchTool()
+
+    async def drive():
+        task = asyncio.create_task(tool.async_execute("https://x.test/"))
+        # Let the fetch reach the extraction, then cancel mid-flight.
+        while not started.is_set():
+            await asyncio.sleep(0.005)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The cancellation is only allowed to surface once the worker is done.
+        return finished.is_set()
+
+    assert asyncio.run(drive()) is True, (
+        "the cancelled fetch returned while its parse was still running"
+    )
+
+
+def _cancel_a_wedged_fetch(monkeypatch, drain_budget: float):
+    """Cancel a fetch whose extraction is wedged; return the drain latency.
+
+    The measurement stops when `CancelledError` reaches the canceller — *not*
+    when `asyncio.run` returns. Those are different numbers on purpose: the
+    budget bounds the former, while loop shutdown joins the default executor
+    regardless of it. Conflating the two is how the first draft of this test
+    "measured" 30s and concluded the budget was ignored.
+    """
+    monkeypatch.setattr(web_mod, "_CPU_CANCEL_DRAIN_TIMEOUT_S", drain_budget)
+    release = threading.Event()
+    started = threading.Event()
+
+    def wedged_extract(soup):
+        started.set()
+        release.wait(timeout=30)
+        return "eventually"
+
+    _stub_primary(monkeypatch)
+    monkeypatch.setattr(web_mod, "_extract_text", wedged_extract)
+    monkeypatch.delenv("AGENTAO_WEB_FETCH_FALLBACK", raising=False)
+    tool = WebFetchTool()
+
+    async def drive():
+        task = asyncio.create_task(tool.async_execute("https://x.test/"))
+        while not started.is_set():
+            await asyncio.sleep(0.005)
+        task.cancel()
+        t0 = time.monotonic()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            # Before unwinding, so loop shutdown does not join a 30s sleeper.
+            release.set()
+        return time.monotonic() - t0
+
+    return asyncio.run(drive())
+
+
+def test_a_wedged_parse_cannot_hold_a_cancellation_open_forever(monkeypatch):
+    """The drain is bounded, mirroring the AsyncTool dispatcher's cleanup-ack.
+
+    Waiting for the worker is right; waiting for it *without limit* would let one
+    pathological document make a cancellation un-cancellable on a host loop that
+    never shuts down.
+    """
+    drain_s = _cancel_a_wedged_fetch(monkeypatch, 0.05)
+    assert drain_s < 2.0, f"the drain budget was not enforced ({drain_s:.2f}s)"
+
+
+def test_the_drain_says_so_when_it_gives_up(monkeypatch, caplog):
+    """Falling back to orphaning must be loud, not silent."""
+    with caplog.at_level(logging.WARNING, logger="agentao.tools.web"):
+        _cancel_a_wedged_fetch(monkeypatch, 0.05)
+
+    assert "cancelled fetch left" in caplog.text
+    assert "wedged_extract" in caplog.text
+    assert "holds CPU and memory" in caplog.text
 
 
 def test_the_primary_fetch_keeps_the_loop_free_during_resolution(monkeypatch):

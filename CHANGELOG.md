@@ -67,6 +67,14 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   executor thread, so leaving it inline would have made this port a regression
   on its own headline axis.
 
+  A cancelled fetch waits (bounded, 10s) for its in-flight parse before letting
+  the cancellation surface. `asyncio.to_thread` cancels only the awaiter — the
+  worker runs to completion either way, since nothing can interrupt a running
+  Python call from outside it — so returning straight away would leave a
+  multi-megabyte DOM parse burning CPU with nobody waiting on the result, and a
+  host that cancels repeatedly could stack several up. The canceller pays
+  latency it was going to pay regardless.
+
   Hosts that call `WebFetchTool().execute(...)` from ordinary synchronous code
   are unaffected. Hosts already on a loop should switch to
   `await tool.async_execute(...)`; the sync wrapper still works there, and
