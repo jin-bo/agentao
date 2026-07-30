@@ -95,7 +95,12 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   4xx/5xx and the fallback is reached *from* `except httpx.HTTPError`, so a
   rendered 404 / paywall / bot-challenge page was handed to the model as
   though it were the requested document. A `>= 400` status is now a fallback
-  failure, which means the caller keeps httpx's more accurate diagnosis.
+  failure, which means the caller keeps httpx's more accurate diagnosis. The
+  status tracked is the *latest main-frame navigation*, not `goto`'s: a 200
+  shell that client-side navigates to a 401/404/paywall after DOMContentLoaded
+  leaves `page.content()` describing the later page while `goto` still reports
+  200. Sub-frame and subresource responses are ignored — a broken ad iframe or
+  a missing image is not a failed page.
 
 - **`extract_text=False` is honored on the fallback path.** The flag was
   dropped the moment the fallback fired, so a caller asking for markup — to

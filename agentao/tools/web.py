@@ -241,6 +241,25 @@ async def _render_page(page: Any, url: str) -> tuple[Optional[int], str]:
     """
     from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
+    # `page.goto`'s Response describes the *initial* navigation. A 200 shell
+    # that client-side navigates to a 401/404/paywall after DOMContentLoaded
+    # leaves `page.content()` describing the later page while goto still
+    # reports 200 — which would walk straight past the status check below.
+    # Track the most recent main-frame navigation response instead.
+    latest_status: Dict[str, Optional[int]] = {"value": None}
+
+    def _on_response(response: Any) -> None:
+        try:
+            if (
+                response.request.is_navigation_request()
+                and response.frame == page.main_frame
+            ):
+                latest_status["value"] = response.status
+        except Exception:  # pragma: no cover - defensive around a callback
+            pass
+
+    page.on("response", _on_response)
+
     response = await page.goto(
         url, wait_until="domcontentloaded", timeout=_BROWSER_NAV_TIMEOUT_MS
     )
@@ -261,7 +280,13 @@ async def _render_page(page: Any, url: str) -> tuple[Optional[int], str]:
         # a fallback failure so the caller keeps the static shell and says why.
         logger.warning("settle wait failed for %s: %s", url, e)
         raise
-    return (response.status if response is not None else None), await page.content()
+    html = await page.content()
+    # The tracked value wins; goto's own response is the fallback for the case
+    # where no response event fired at all (a cached or non-HTTP navigation).
+    status = latest_status["value"]
+    if status is None and response is not None:
+        status = response.status
+    return status, html
 
 
 def _kill_playwright_driver(manager: Any) -> None:

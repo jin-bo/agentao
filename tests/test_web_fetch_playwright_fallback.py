@@ -294,6 +294,11 @@ def test_playwright_api_matches_our_call_sites():
         assert callable(getattr(owner, name, None)), f"{owner.__name__}.{name}"
 
     assert isinstance(getattr(async_api.Response, "status", None), property)
+    # Main-frame status tracking depends on all of these.
+    assert isinstance(getattr(async_api.Response, "frame", None), property)
+    assert isinstance(getattr(async_api.Response, "request", None), property)
+    assert isinstance(getattr(async_api.Page, "main_frame", None), property)
+    assert callable(getattr(async_api.Page, "on", None))
 
 
 # --------------------------------------------------------------------------
@@ -315,10 +320,23 @@ class _FakeRoute:
         self.action = "abort"
 
 
+class _FakeFrame:
+    pass
+
+
+class _FakeResponse:
+    def __init__(self, status, frame, navigation=True):
+        self.status = status
+        self.frame = frame
+        self.request = SimpleNamespace(is_navigation_request=lambda: navigation)
+
+
 class _FakePage:
     def __init__(self, *, html="<html><body>ok</body></html>", status=200):
         self._html = html
         self._status = status
+        self.main_frame = _FakeFrame()
+        self._listeners = {}
         self.goto_kwargs = None
         self.settle_kwargs = None
         self.route_handler = None
@@ -329,9 +347,18 @@ class _FakePage:
         self.route_pattern = pattern
         self.route_handler = handler
 
+    def on(self, event, handler):
+        self._listeners.setdefault(event, []).append(handler)
+
+    def emit(self, event, *args):
+        for handler in self._listeners.get(event, []):
+            handler(*args)
+
     async def goto(self, url, **kwargs):
         self.goto_kwargs = kwargs
-        return SimpleNamespace(status=self._status)
+        response = _FakeResponse(self._status, self.main_frame)
+        self.emit("response", response)
+        return response
 
     async def wait_for_load_state(self, state, **kwargs):
         self.settle_kwargs = {"state": state, **kwargs}
@@ -644,6 +671,57 @@ def test_render_wrapper_reports_http_status(monkeypatch):
 
     status, _ = asyncio.run(web_mod._render_with_playwright("https://x.test/gone"))
     assert status == 404
+
+
+def test_a_client_side_navigation_to_an_error_page_is_reported(monkeypatch):
+    """goto's Response describes the *initial* navigation.
+
+    A 200 shell that navigates to a 401/404/paywall after DOMContentLoaded
+    leaves page.content() describing the later page while goto still says 200 —
+    walking straight past the status check that keeps error pages from being
+    returned as the article.
+    """
+    page = _FakePage(html="<html><body>Members only</body></html>", status=200)
+
+    async def settle_then_navigate(state, **kwargs):
+        # Whatever the shell's JS does during the settle window.
+        page.emit("response", _FakeResponse(403, page.main_frame))
+
+    page.wait_for_load_state = settle_then_navigate
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+
+    status, _ = asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+    assert status == 403
+
+
+def test_subframe_responses_do_not_override_the_main_frame_status(monkeypatch):
+    """An ad iframe returning 404 must not fail the page that embeds it."""
+    page = _FakePage(status=200)
+
+    async def settle_with_a_broken_iframe(state, **kwargs):
+        page.emit("response", _FakeResponse(404, _FakeFrame()))
+
+    page.wait_for_load_state = settle_with_a_broken_iframe
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+
+    status, _ = asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+    assert status == 200
+
+
+def test_subresource_responses_do_not_override_the_status(monkeypatch):
+    """Only navigation responses count; a missing image is not a failed page."""
+    page = _FakePage(status=200)
+
+    async def settle_with_a_missing_image(state, **kwargs):
+        page.emit(
+            "response", _FakeResponse(404, page.main_frame, navigation=False)
+        )
+
+    page.wait_for_load_state = settle_with_a_missing_image
+    _install_fake_playwright(monkeypatch, _FakePlaywright(_FakeBrowser(page)))
+
+    status, _ = asyncio.run(web_mod._render_with_playwright("https://x.test/"))
+    assert status == 200
 
 
 def test_teardown_failure_does_not_mask_the_render_error(monkeypatch):
