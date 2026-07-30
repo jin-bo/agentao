@@ -7,7 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Targeting 0.4.18. Add entries under the relevant heading as work lands._
+_Targeting 0.4.19. Add entries under the relevant heading as work lands._
+
+---
+
+## [0.4.18] — 2026-07-30
+
+A **`web_fetch` release**, in two parts that had to ship together.
+
+The local JS-rendering fallback is rebuilt on Playwright directly, replacing
+crawl4ai — and the rebuild is mostly a security story, because the retired
+implementation had shipped since 0.4.7 with **zero** test coverage. Then
+`web_fetch` becomes agentao's first built-in `AsyncToolBase`, so driving
+Playwright's async API no longer requires blocking an async host's event loop.
+
+**Breaking:** the `[crawl4ai]` extra is replaced by `[playwright]`, `web_fetch`
+changes base class, and `Agentao.arun` no longer uses the event loop's default
+executor. Each is detailed below.
 
 ### Added
 
@@ -40,10 +56,16 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
 
 ### Changed
 
-- **`web_fetch` is now an `AsyncToolBase`, so it no longer blocks an async
-  host's event loop.** The tool's implementation moved from `execute` to
+- **BREAKING: `web_fetch` is now an `AsyncToolBase`, so it no longer blocks an
+  async host's event loop.** The tool's implementation moved from `execute` to
   `async_execute`; `execute` stays as a synchronous wrapper for embedders that
   are not async.
+
+  What breaks is the *type*, not the call: `web_fetch` is no longer an instance
+  of `Tool`, so host code that narrows the registry with `isinstance(t, Tool)`
+  — or annotates against it — now silently skips this tool and must widen to
+  `RegistrableTool`. Calling `WebFetchTool().execute(...)` from ordinary
+  synchronous code is unaffected.
 
   It had to drive an event loop of its own to reach Playwright's async API, and
   from inside a caller's running loop there is no way to do that without
@@ -85,9 +107,11 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   is waiting on a deadline there, and a slow-but-working close should not be
   turned into a killed driver.)
 
-- **`Agentao.arun` no longer runs `chat()` on the event loop's default
+- **BREAKING: `Agentao.arun` no longer runs `chat()` on the event loop's default
   executor.** It uses a dedicated pool with the same capacity asyncio would have
-  given, so concurrency is unchanged.
+  given, so concurrency is unchanged — but a host that called
+  `loop.set_default_executor(...)` to size or instrument agentao's thread usage
+  no longer controls this path.
 
   A turn holds its worker for the whole turn, and partway through it blocks
   waiting on a tool coroutine running on the host loop. Once concurrent turns
