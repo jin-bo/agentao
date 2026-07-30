@@ -88,7 +88,11 @@ def register_builtin_tools(agent: "Agentao") -> None:
     initialized. Working directory is bound per-tool here so each tool's
     ``_resolve_path`` resolves against the session's root (Issue 05).
     """
-    tools_to_register = [
+    # Annotated because the list is heterogeneous by design: ``WebFetchTool`` is
+    # an ``AsyncToolBase`` while its neighbours are sync ``Tool``s, and the
+    # inferred element type would otherwise narrow to whatever the literal
+    # happens to contain.
+    tools_to_register: list["RegistrableTool"] = [
         ReadFileTool(),
         WriteFileTool(),
         EditTool(),

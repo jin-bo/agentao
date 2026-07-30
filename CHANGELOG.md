@@ -28,7 +28,64 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   signatures rather than a fake, and CI's test job installs the extra so it
   cannot silently `importorskip` into retirement.
 
+- **Tests for `web_fetch`'s async surface**
+  (`tests/test_web_fetch_async_tool.py`), plus an async section in
+  `tests/test_url_policy.py`. The load-bearing ones measure rather than assert
+  intent: a 10ms ticker task alongside the fetch proves the caller's loop keeps
+  running, and the render is checked to observe the *caller's* thread and loop
+  rather than a nested pair. The sync wrapper's counterpart assertion is
+  `ticks == 0` — keeping the wrapper's cost documented, and keeping the async
+  half honest about what it measures. Both fail if the previous bridge is put
+  back.
+
 ### Changed
+
+- **`web_fetch` is now an `AsyncToolBase`, so it no longer blocks an async
+  host's event loop.** The tool's implementation moved from `execute` to
+  `async_execute`; `execute` stays as a synchronous wrapper for embedders that
+  are not async.
+
+  It had to drive an event loop of its own to reach Playwright's async API, and
+  from inside a caller's running loop there is no way to do that without
+  blocking it — a synchronous function cannot yield, so the helper submitted the
+  coroutine to a worker thread and waited on `Future.result()` **on the loop
+  thread**. For that duration nothing else on the host's loop ran and a
+  `CancelledError` could not be delivered. Awaiting `async_execute` removes the
+  bridge rather than improving it, and the runtime's existing `AsyncToolBase`
+  dispatch gains token-driven cancellation on this tool for free.
+
+  Two other blocking calls on the same path went with it: the HTTP fetch now
+  uses `httpx.AsyncClient` (via the new `guarded_get_async`), and the SSRF
+  policy's `socket.getaddrinfo` runs on a bounded off-loop thread. The
+  BeautifulSoup parse deliberately stays on the loop thread — `html.parser` is
+  pure Python and holds the GIL, so `asyncio.to_thread` would relocate the
+  stall without shortening it.
+
+  Hosts that call `WebFetchTool().execute(...)` from ordinary synchronous code
+  are unaffected. Hosts already on a loop should switch to
+  `await tool.async_execute(...)`; the sync wrapper still works there, and
+  still blocks, which is now asserted by a test rather than left implied.
+
+  `web_search` is deliberately unchanged: it never drove its own loop, and it
+  blocks in exactly the way every other synchronous built-in does. Making it
+  async is a separate question about the tool base class in general, not about
+  this defect.
+
+- **`url_policy` grows an async surface paired with the sync one** —
+  `validate_outbound_url_async` and `guarded_get_async`, both exported from
+  `agentao.security`. The async validator delegates to the sync one on a
+  bounded daemon thread rather than reimplementing the checks against an async
+  resolver: the policy is security-critical and two copies would drift. The
+  redirect-hop predicate is likewise shared (`_redirect_target`), so the two
+  `guarded_get` forms cannot disagree about what counts as a hop — the property
+  per-hop re-validation rests on. Every async failure mode, including a lookup
+  that stalls past its budget or is refused by the process-wide thread cap,
+  raises `UrlPolicyError`, so callers need one `except` clause to stay closed.
+
+  Side effect worth naming: name resolution on the `web_fetch` primary path is
+  now **bounded** (30s per hop, matching the request timeout). It previously
+  inherited `getaddrinfo`'s effectively unbounded behavior, which was tolerable
+  only because it blocked its own thread.
 
 - **BREAKING: the `[crawl4ai]` extra is replaced by `[playwright]`, and
   `AGENTAO_WEB_FETCH_FALLBACK=crawl4ai` is renamed to `=playwright`.**
@@ -78,6 +135,8 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   loop is running, and hands the coroutine to a worker thread with its own
   loop when one is — so an async host driving this sync tool works, and
   genuine errors propagate with their own message. Found by the new tests.
+  (The helper survives as `_run_coroutine_blocking`, reached only by the sync
+  `execute` wrapper now that `web_fetch` is async — see *Changed*.)
 
 - **Stale extras in the developer guide.** `part-1/5-requirements.md` (both
   languages) still advertised `[pdf]` / `[excel]` / `[image]` / `[crypto]` /
