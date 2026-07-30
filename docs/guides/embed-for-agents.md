@@ -140,6 +140,13 @@ async def handle(req):
 worker checks it at every tool boundary and LLM chunk. Cancelling the
 awaiting `asyncio` task (timeout / client disconnect) also forwards.
 
+The worker comes from agentao's own pool (`agentao-arun-*`), not the loop's
+default executor — a turn would otherwise hold a default-executor worker
+while blocking on a tool coroutine on your loop, starving anything else
+that needs one (`loop.getaddrinfo`, and so every `httpx.AsyncClient`
+hostname connect). So `loop.set_default_executor(...)` does not size
+agentao's turn concurrency.
+
 ```python
 from agentao.cancellation import CancellationToken
 

@@ -361,6 +361,17 @@ tool boundary and at each LLM streaming chunk. Cancelling the awaiting
 `asyncio` task (e.g. `asyncio.wait_for` timeout, client disconnect)
 also forwards into the same token.
 
+That worker comes from a pool agentao owns (threads named
+`agentao-arun-*`), **not** the event loop's default executor. A turn holds
+its worker for the whole turn and blocks partway through waiting on a tool
+coroutine back on your loop, so occupying default-executor workers would
+starve anything else on the loop that needs one — including
+`loop.getaddrinfo`, which is how every `httpx.AsyncClient` connect to a
+hostname resolves. Consequence for hosts: `loop.set_default_executor(...)`
+does not size agentao's turn concurrency. The pool matches what asyncio
+would have given (`min(32, cpu_count + 4)`) and is created on first
+`arun()`, so sync-only hosts never pay for the threads.
+
 ```python
 from agentao.cancellation import CancellationToken
 
