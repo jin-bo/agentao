@@ -2,7 +2,10 @@
 
 import asyncio
 import logging
+import os
+import threading
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union, TYPE_CHECKING
 
@@ -45,6 +48,45 @@ if TYPE_CHECKING:
 
 
 _logger = logging.getLogger(__name__)
+
+
+#: Workers for the ``arun`` bridge pool. Deliberately the same capacity
+#: ``asyncio`` gives its own default executor, so moving off that executor costs
+#: no concurrency.
+_ARUN_POOL_MAX_WORKERS = min(32, (os.cpu_count() or 1) + 4)
+
+_arun_pool: Optional[ThreadPoolExecutor] = None
+_arun_pool_lock = threading.Lock()
+
+
+def _get_arun_pool() -> ThreadPoolExecutor:
+    """The pool :meth:`Agentao.arun` runs ``chat()`` on.
+
+    **Not the loop's default executor**, which is what ``run_in_executor(None,
+    ...)`` used to mean here. A turn holds its worker for the whole turn, and
+    partway through it blocks in ``tool_executor._run_async_tool`` waiting on a
+    tool coroutine running on the host loop. So once concurrent turns reach the
+    pool's worker count, anything on that loop needing a default-executor worker
+    can never get one — and the turns are waiting on precisely that work.
+
+    That includes code agentao does not control. ``loop.getaddrinfo`` submits
+    ``socket.getaddrinfo`` to the default executor, and every
+    ``httpx.AsyncClient`` connect to a hostname goes through it (measured: one
+    ``run_in_executor`` call against the default executor per request, resolving
+    on an ``asyncio_N`` thread). An async tool doing an ordinary HTTPS fetch
+    would therefore hang, with no way to redirect the lookup from our side.
+
+    Shared and lazily built: a host that only ever calls the sync ``chat()``
+    never pays for the threads, and N ``Agentao`` instances do not mean N pools.
+    """
+    global _arun_pool
+    with _arun_pool_lock:
+        if _arun_pool is None:
+            _arun_pool = ThreadPoolExecutor(
+                max_workers=_ARUN_POOL_MAX_WORKERS,
+                thread_name_prefix="agentao-arun",
+            )
+        return _arun_pool
 
 
 class Agentao:
@@ -1163,7 +1205,9 @@ class Agentao:
         permission, and replay surfaces are all sequential I/O). This
         method bridges through ``run_in_executor`` so async hosts can
         ``await agent.arun(...)`` without their own thread bridge while
-        the same turn lifecycle from :meth:`chat` runs unchanged.
+        the same turn lifecycle from :meth:`chat` runs unchanged. The
+        executor is agentao's own, never the loop's default — see
+        :func:`_get_arun_pool` for the deadlock that choice avoids.
 
         Cancellation, replay, and ``max_iterations`` behave identically
         across both surfaces; the executor thread reads the same
@@ -1186,13 +1230,14 @@ class Agentao:
         # ``chat`` with the historical three positional args for text turns —
         # test/host stubs that patch ``chat`` with a 3-arg signature stay
         # working, while async hosts can still send multimodal input.
+        pool = _get_arun_pool()
         if images:
             future = loop.run_in_executor(
-                None, self.chat, user_message, max_iterations, token, images
+                pool, self.chat, user_message, max_iterations, token, images
             )
         else:
             future = loop.run_in_executor(
-                None, self.chat, user_message, max_iterations, token
+                pool, self.chat, user_message, max_iterations, token
             )
         try:
             return await future

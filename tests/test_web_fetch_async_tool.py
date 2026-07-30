@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -356,6 +357,166 @@ def test_the_html_pool_is_bounded_and_shared(monkeypatch):
     finally:
         pool.shutdown(wait=False)
         web_mod._cpu_pool = None
+
+
+def test_arun_does_not_run_chat_on_the_default_executor():
+    """The other half of the same deadlock, and the half we cannot route around.
+
+    A turn holds its worker for the whole turn and then blocks waiting on a tool
+    coroutine on the host loop. Anything on that loop needing a *default*
+    executor worker while turns are in flight can therefore never get one —
+    including `loop.getaddrinfo`, which is how every `httpx.AsyncClient` connect
+    to a hostname resolves. Measured with proxies disabled: one
+    `run_in_executor` call against the default executor per request, resolving on
+    an `asyncio_N` thread. No amount of pool choice inside `web_fetch` fixes
+    that, so `arun` had to stop occupying the default executor.
+    """
+    from agentao import agent as agent_mod
+
+    # `arun` only reaches `self.chat`, so a stand-in is enough to observe where
+    # the turn lands — and avoids building a whole Agentao for a threading fact.
+    class _Stub:
+        arun = agent_mod.Agentao.arun
+
+        def chat(self, *args, **kwargs):
+            return threading.current_thread().name
+
+    running = threading.Event()
+    release = threading.Event()
+
+    def hog():
+        running.set()
+        release.wait(timeout=30)
+
+    async def drive():
+        loop = asyncio.get_running_loop()
+        starved = ThreadPoolExecutor(max_workers=1)
+        loop.set_default_executor(starved)
+        hogged = loop.run_in_executor(None, hog)
+        while not running.is_set():
+            await asyncio.sleep(0.005)
+        try:
+            # If the turn needs a default-executor worker, this never returns.
+            return await asyncio.wait_for(_Stub().arun("hi"), timeout=10)
+        finally:
+            release.set()
+            await hogged
+            starved.shutdown(wait=True)
+
+    thread_name = asyncio.run(drive())
+    assert thread_name.startswith("agentao-arun"), thread_name
+
+    pool = agent_mod._get_arun_pool()
+    assert pool is agent_mod._get_arun_pool(), "a second call built a second pool"
+    # Same capacity asyncio's own default executor would have given, so moving
+    # off it costs no concurrency.
+    assert pool._max_workers == min(32, (os.cpu_count() or 1) + 4)  # noqa: SLF001
+
+
+def test_httpx_resolves_on_the_default_executor():
+    """Pins the fact the fix above rests on, against the real httpx.
+
+    If a future httpx/anyio moves DNS onto its own workers, `arun`'s dedicated
+    pool stops being load-bearing for this reason — and the comment saying it is
+    becomes a lie. `trust_env=False` is essential: with proxy env vars set httpx
+    connects to the proxy by address and never resolves at all, which is how an
+    earlier attempt at this measurement "proved" the opposite.
+    """
+    import httpx
+
+    seen = []
+
+    async def probe():
+        loop = asyncio.get_running_loop()
+        original = loop.run_in_executor
+
+        def spy(executor, func, *args):
+            if executor is None:
+                seen.append(getattr(func, "__name__", str(func)))
+            return original(executor, func, *args)
+
+        loop.run_in_executor = spy
+        try:
+            async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
+                try:
+                    await client.get("https://example.com/")
+                except Exception:
+                    pass  # a network failure still tells us where DNS ran
+        finally:
+            loop.run_in_executor = original
+
+    asyncio.run(probe())
+
+    if not seen:
+        pytest.skip("no DNS observed — sandboxed or cached resolver")
+    assert any("getaddrinfo" in name for name in seen), seen
+
+
+def test_browser_teardown_fits_inside_the_dispatcher_ack_budget():
+    """Cancelled teardown runs twice (browser, driver), so the pair must fit.
+
+    Spending the normal 10s budget on each would report `TOOL_COMPLETE` with
+    Chromium still shutting down — the same defect as an over-long parse drain,
+    one layer down.
+    """
+    from agentao.runtime import tool_executor
+
+    assert (
+        2 * web_mod._BROWSER_CANCEL_CLOSE_TIMEOUT_S
+        < tool_executor._ASYNC_CANCEL_ACK_TIMEOUT_S
+    ), (
+        f"2 x {web_mod._BROWSER_CANCEL_CLOSE_TIMEOUT_S}s teardown >= dispatcher "
+        f"ack {tool_executor._ASYNC_CANCEL_ACK_TIMEOUT_S}s"
+    )
+    # And the non-cancelled path keeps the generous one — a slow-but-working
+    # close should not be turned into a killed driver.
+    assert web_mod._BROWSER_CANCEL_CLOSE_TIMEOUT_S < web_mod._BROWSER_CLOSE_TIMEOUT_S
+
+
+def test_a_queued_parse_is_cancelled_rather_than_drained(monkeypatch):
+    """With the pool saturated, a cancelled fetch's job may not have started.
+
+    Draining it would keep the response alive and then run work nobody wants,
+    which defeats the bound the pool exists to provide. A not-yet-started job is
+    dropped from the queue instead.
+    """
+    monkeypatch.setattr(web_mod, "_cpu_pool", None)
+    monkeypatch.setattr(web_mod, "_CPU_POOL_MAX_WORKERS", 1)
+    release = threading.Event()
+    running = threading.Event()
+    ran = []
+
+    def occupy(*_a):
+        running.set()
+        release.wait(timeout=30)
+        return "occupier"
+
+    def queued(*_a):
+        ran.append("queued")
+        return "queued"
+
+    async def drive():
+        hog = asyncio.ensure_future(web_mod._in_worker(occupy, None))
+        while not running.is_set():
+            await asyncio.sleep(0.005)
+        # The single worker is busy, so this one can only be queued.
+        waiter = asyncio.ensure_future(web_mod._in_worker(queued, None))
+        await asyncio.sleep(0.05)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        release.set()
+        assert await hog == "occupier"
+
+    try:
+        asyncio.run(drive())
+    finally:
+        release.set()
+        if web_mod._cpu_pool is not None:
+            web_mod._cpu_pool.shutdown(wait=True)
+        web_mod._cpu_pool = None
+
+    assert ran == [], "a cancelled fetch's queued job ran anyway"
 
 
 def test_the_drain_fits_inside_the_dispatcher_ack_budget():

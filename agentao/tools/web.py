@@ -152,6 +152,16 @@ _BROWSER_TOTAL_TIMEOUT_S = 45.0
 #: Teardown gets its own small budget so a wedged browser cannot turn cleanup
 #: into a second unbounded wait.
 _BROWSER_CLOSE_TIMEOUT_S = 10.0
+#: Teardown budget when unwinding from a *cancellation* rather than finishing.
+#: Applied per step, and there are two (browser, then driver), so the pair has to
+#: fit inside ``tool_executor._ASYNC_CANCEL_ACK_TIMEOUT_S`` (5s) — that is how
+#: long the AsyncTool dispatcher waits for this coroutine before it emits
+#: ``TOOL_COMPLETE`` and moves on. Spending the full ``_BROWSER_CLOSE_TIMEOUT_S``
+#: twice would report the invocation complete with Chromium still shutting down.
+#: A normal (non-cancelled) close keeps the generous budget: there, nothing is
+#: waiting on a deadline. Pinned against the dispatcher by
+#: ``test_browser_teardown_fits_inside_the_dispatcher_ack_budget``.
+_BROWSER_CANCEL_CLOSE_TIMEOUT_S = 2.0
 #: Driver startup — spawning node and completing the protocol handshake. A
 #: driver that starts but never handshakes would otherwise hang `__aenter__`
 #: before any other deadline applies.
@@ -349,6 +359,7 @@ async def _render_with_playwright(
         page = await context.new_page()
         return await _render_page(page, url)
 
+    cancelled = False
     try:
         # The budget covers launch and setup, not just navigation: `launch`,
         # `new_context`, `route` and `new_page` are all driver channel calls
@@ -359,25 +370,34 @@ async def _render_with_playwright(
         return await asyncio.wait_for(
             _setup_and_render(), timeout=_BROWSER_TOTAL_TIMEOUT_S
         )
+    except asyncio.CancelledError:
+        # Teardown below has to be quick in this case: something is waiting on a
+        # deadline for us. `wait_for`'s own expiry raises TimeoutError, not this,
+        # so a plain render timeout keeps the generous budget.
+        cancelled = True
+        raise
     finally:
         # Teardown must never replace the in-flight result or exception:
         # Playwright's `Browser.close` re-raises anything that is not a
         # target-closed error, so an OOM-killed Chromium would otherwise
         # report a driver-transport failure instead of the navigation
         # timeout that actually explains the failure.
+        close_budget = (
+            _BROWSER_CANCEL_CLOSE_TIMEOUT_S if cancelled else _BROWSER_CLOSE_TIMEOUT_S
+        )
         if browser is not None:
             try:
-                await asyncio.wait_for(
-                    browser.close(), timeout=_BROWSER_CLOSE_TIMEOUT_S
-                )
-            except Exception as e:
+                await asyncio.wait_for(browser.close(), timeout=close_budget)
+            # CancelledError included deliberately: if the canceller re-cancels
+            # us mid-teardown it would otherwise escape here and skip the driver
+            # teardown below, leaving the node process orphaned.
+            except (Exception, asyncio.CancelledError) as e:
                 logger.warning("browser teardown failed for %s: %s", url, e)
         try:
             await asyncio.wait_for(
-                manager.__aexit__(None, None, None),
-                timeout=_BROWSER_CLOSE_TIMEOUT_S,
+                manager.__aexit__(None, None, None), timeout=close_budget
             )
-        except Exception as e:
+        except (Exception, asyncio.CancelledError) as e:
             logger.warning("playwright driver teardown failed for %s: %s", url, e)
             _kill_playwright_driver(manager)
 
@@ -579,12 +599,11 @@ def _get_cpu_pool() -> ThreadPoolExecutor:
 async def _in_worker(fn: Any, *args: Any) -> Any:
     """Run blocking CPU work on a worker thread without orphaning it on cancel.
 
-    Cancelling an executor future that has already started cancels only the
-    *awaiter*. The worker runs to completion regardless — there is no way to
-    interrupt a Python call from outside it — so returning straight away would
-    leave a multi-megabyte DOM parse burning CPU and holding its memory with
-    nobody waiting on the result. A host that cancels fetches repeatedly could
-    stack several of those up.
+    A job that has not started yet is simply cancelled. One that is *running*
+    cannot be: there is no way to interrupt a Python call from outside it, so
+    returning straight away would leave a multi-megabyte DOM parse burning CPU
+    and holding its memory with nobody waiting on the result. A host that
+    cancels fetches repeatedly could stack several of those up.
 
     Since the work will finish either way, waiting for it is the honest choice:
     the canceller pays latency it was going to pay anyway, and nothing outlives
@@ -607,11 +626,18 @@ async def _in_worker(fn: Any, *args: Any) -> Any:
     ``url_policy._POLICY_THREAD_HARD_CAP`` exists to patch over on the lookup
     path, where abandonment is mandatory and so a cap has to be bolted on.
     """
-    loop = asyncio.get_running_loop()
-    task = asyncio.ensure_future(loop.run_in_executor(_get_cpu_pool(), fn, *args))
+    # ``submit`` rather than ``loop.run_in_executor``, which hides the
+    # ``concurrent.futures.Future`` — and that handle is the only way to cancel a
+    # job that has not *started*. With the pool saturated, later fetches queue;
+    # draining a queued job would keep its multi-megabyte response alive and then
+    # run work nobody wants, which is exactly the bound the pool is for.
+    cf = _get_cpu_pool().submit(fn, *args)
+    task = asyncio.ensure_future(asyncio.wrap_future(cf))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
+        if cf.cancel():
+            raise  # never started — dropped from the queue, nothing to drain
         try:
             await asyncio.wait_for(
                 asyncio.shield(task), timeout=_CPU_CANCEL_DRAIN_TIMEOUT_S

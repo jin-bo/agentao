@@ -68,26 +68,37 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   on its own headline axis.
 
   That HTML work runs on a **dedicated thread pool**, not the loop's default
-  executor. `Agentao.arun` parks the whole `chat()` turn on the default executor
-  and that worker then blocks waiting on the tool coroutine — so borrowing a
-  second worker from the same pool for the parse is a pool-exhaustion deadlock.
-  Measured: a default executor with one free worker hangs the fetch outright,
-  and `max_workers` concurrent `arun` turns reproduce it on a normally-sized
-  pool. (`arun`'s use of the *default* executor remains a hazard for any future
-  async tool that reaches for `asyncio.to_thread`; giving it its own executor
-  would fix the class rather than this instance, but that is a core-runtime
-  change and out of scope here.)
+  executor, and a not-yet-started parse job is cancelled outright rather than
+  drained (draining a queued job would hold its response alive and then run work
+  nobody wants — defeating the bound the pool is for).
 
   A cancelled fetch waits (bounded) for its in-flight parse before letting the
-  cancellation surface. Cancelling an executor future that has already started
-  cancels only the awaiter — the worker runs to completion either way, since
-  nothing can interrupt a running Python call from outside it — so returning
-  straight away would leave a multi-megabyte DOM parse burning CPU with nobody
-  waiting on the result, and a host that cancels repeatedly could stack several
-  up. The canceller pays latency it was going to pay regardless. The budget sits
-  below the AsyncTool dispatcher's own cleanup-ack window, since draining for
-  longer than the dispatcher will wait would produce the very detached work the
-  drain exists to prevent, only with the invocation already reported complete.
+  cancellation surface. A *running* job cannot be cancelled — nothing can
+  interrupt a Python call from outside it — so returning straight away would
+  leave a multi-megabyte DOM parse burning CPU with nobody waiting on the result,
+  and a host that cancels repeatedly could stack several up. The canceller pays
+  latency it was going to pay regardless. Both this budget and the browser/driver
+  teardown budgets now sit inside the AsyncTool dispatcher's cleanup-ack window,
+  since cleaning up for longer than the dispatcher will wait produces the very
+  detached work they exist to prevent, only with the invocation already reported
+  complete. (A *non-cancelled* browser close keeps its generous budget: nothing
+  is waiting on a deadline there, and a slow-but-working close should not be
+  turned into a killed driver.)
+
+- **`Agentao.arun` no longer runs `chat()` on the event loop's default
+  executor.** It uses a dedicated pool with the same capacity asyncio would have
+  given, so concurrency is unchanged.
+
+  A turn holds its worker for the whole turn, and partway through it blocks
+  waiting on a tool coroutine running on the host loop. Once concurrent turns
+  reach the pool's worker count, anything on that loop needing a
+  default-executor worker can never get one — and the turns are waiting on
+  exactly that work. That includes code agentao does not control:
+  `loop.getaddrinfo` submits to the default executor, and **every**
+  `httpx.AsyncClient` connect to a hostname resolves through it, so an async tool
+  doing an ordinary HTTPS fetch would hang with no way to redirect the lookup
+  from agentao's side. Hosts that called `loop.set_default_executor(...)`
+  expecting to size agentao's thread usage no longer control this path.
 
   Hosts that call `WebFetchTool().execute(...)` from ordinary synchronous code
   are unaffected. Hosts already on a loop should switch to
