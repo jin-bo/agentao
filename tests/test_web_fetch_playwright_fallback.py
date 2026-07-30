@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from agentao.security import url_policy as url_policy_mod
 from agentao.security.url_policy import UrlPolicyError
 from agentao.tools import web as web_mod
 from agentao.tools.web import WebFetchTool
@@ -42,6 +43,11 @@ def _tool(monkeypatch, fallback: str | None) -> WebFetchTool:
     if fallback is not None:
         monkeypatch.setenv("AGENTAO_WEB_FETCH_FALLBACK", fallback)
     return WebFetchTool()
+
+
+def _fallback(tool: WebFetchTool, url: str, **kwargs):
+    """Drive the (async) fallback dispatch from a sync test."""
+    return asyncio.run(tool._run_fallback(url, **kwargs))
 
 
 # --------------------------------------------------------------------------
@@ -111,7 +117,7 @@ def test_description_states_when_no_fallback_configured(monkeypatch):
 
 
 def test_none_returns_none_so_caller_keeps_primary_result(monkeypatch):
-    assert _tool(monkeypatch, None)._run_fallback("https://x.test", reason="t") == (None, None)
+    assert _fallback(_tool(monkeypatch, None), "https://x.test", reason="t") == (None, None)
 
 
 def test_playwright_fallback_renders_and_extracts_text(monkeypatch):
@@ -123,8 +129,10 @@ def test_playwright_fallback_renders_and_extracts_text(monkeypatch):
         )
 
     monkeypatch.setattr(web_mod, "_render_with_playwright", fake_render)
-    out, error = _tool(monkeypatch, "playwright")._run_fallback(
-        "https://x.test/", reason="JS rendering detected"
+    out, error = _fallback(
+        _tool(monkeypatch, "playwright"),
+        "https://x.test/",
+        reason="JS rendering detected",
     )
     assert error is None
 
@@ -137,8 +145,11 @@ def test_playwright_fallback_renders_and_extracts_text(monkeypatch):
 
 
 def test_jina_still_dispatches_to_jina(monkeypatch):
-    monkeypatch.setattr(web_mod, "_fetch_via_jina", lambda url: "# proxied")
-    out, error = _tool(monkeypatch, "jina")._run_fallback("https://x.test/", reason="t")
+    async def fake_jina(url):
+        return "# proxied"
+
+    monkeypatch.setattr(web_mod, "_fetch_via_jina", fake_jina)
+    out, error = _fallback(_tool(monkeypatch, "jina"), "https://x.test/", reason="t")
     assert error is None
     assert "r.jina.ai" in out
     assert "# proxied" in out
@@ -155,9 +166,7 @@ def test_missing_playwright_package_names_both_install_steps(monkeypatch):
     monkeypatch.setitem(sys.modules, "playwright", None)
     monkeypatch.setitem(sys.modules, "playwright.async_api", None)
 
-    body, error = _tool(monkeypatch, "playwright")._run_fallback(
-        "https://x.test/", reason="t"
-    )
+    body, error = _fallback(_tool(monkeypatch, "playwright"), "https://x.test/", reason="t")
     assert body is None
     assert "agentao[playwright]" in error
     assert "playwright install chromium" in error
@@ -172,19 +181,13 @@ def test_missing_browser_binary_is_reported_not_swallowed(monkeypatch):
         )
 
     monkeypatch.setattr(web_mod, "_render_with_playwright", fake_render)
-    body, error = _tool(monkeypatch, "playwright")._run_fallback(
-        "https://x.test/", reason="t"
-    )
+    body, error = _fallback(_tool(monkeypatch, "playwright"), "https://x.test/", reason="t")
     assert body is None
     assert "Executable doesn't exist" in error
 
 
 def test_fallback_runs_from_inside_a_running_event_loop(monkeypatch):
-    """An async host driving this sync tool must not deadlock or crash.
-
-    ``asyncio.run`` refuses to nest, so `_run_async` hands the coroutine to a
-    worker thread with its own loop.
-    """
+    """An async host awaiting this tool renders on its own loop, no nesting."""
     async def fake_render(url, **kwargs):
         return 200, "<html><body><p>Rendered under a live loop</p></body></html>"
 
@@ -192,7 +195,7 @@ def test_fallback_runs_from_inside_a_running_event_loop(monkeypatch):
     tool = _tool(monkeypatch, "playwright")
 
     async def host():
-        return tool._run_fallback("https://x.test/", reason="t")
+        return await tool._run_fallback("https://x.test/", reason="t")
 
     out, error = asyncio.run(host())
     assert error is None
@@ -217,16 +220,20 @@ def test_blocked_target_never_reaches_the_headless_browser(monkeypatch):
         calls.append(url)
         return 200, "<html><body>should never happen</body></html>"
 
-    def boom(client, url, **kwargs):
+    async def boom(client, url, **kwargs):
         raise UrlPolicyError("resolves to loopback")
 
     monkeypatch.setattr(web_mod, "_render_with_playwright", fake_render)
-    monkeypatch.setattr(web_mod, "guarded_get", boom)
+    monkeypatch.setattr(web_mod, "guarded_get_async", boom)
 
-    out = _tool(monkeypatch, "playwright").execute("http://169.254.169.254/latest/")
+    tool = _tool(monkeypatch, "playwright")
+    out = asyncio.run(tool.async_execute("http://169.254.169.254/latest/"))
 
     assert calls == []
     assert "blocked outbound request" in out
+
+    # And through the sync wrapper, which a non-async embedder may still use.
+    assert "blocked outbound request" in tool.execute("http://169.254.169.254/latest/")
 
 
 # --------------------------------------------------------------------------
@@ -772,7 +779,7 @@ def test_route_guard_fails_closed_on_an_unexpected_validator_error(monkeypatch):
     def exploding_validator(url, **kwargs):
         raise OSError("resolver blew up")
 
-    monkeypatch.setattr(web_mod, "validate_outbound_url", exploding_validator)
+    monkeypatch.setattr(url_policy_mod, "validate_outbound_url", exploding_validator)
     route = _FakeRoute("https://1.1.1.1/next")
     asyncio.run(page.route_handler(route))
     assert route.action == "abort"
@@ -810,7 +817,7 @@ def test_a_stalled_dns_lookup_blocks_and_does_not_freeze_the_loop(monkeypatch):
     def stalling_validator(url, **kwargs):
         time.sleep(_STALL_SECONDS)
 
-    monkeypatch.setattr(web_mod, "validate_outbound_url", stalling_validator)
+    monkeypatch.setattr(url_policy_mod, "validate_outbound_url", stalling_validator)
 
     async def drive():
         # The loop must stay responsive while the lookup stalls: this ticker
@@ -862,7 +869,7 @@ def test_concurrent_requests_to_one_origin_share_a_single_lookup(monkeypatch):
         calls.append(url)
         time.sleep(0.05)
 
-    monkeypatch.setattr(web_mod, "validate_outbound_url", slow_validator)
+    monkeypatch.setattr(url_policy_mod, "validate_outbound_url", slow_validator)
 
     async def drive():
         routes = [
@@ -884,7 +891,7 @@ def test_a_flood_of_distinct_origins_cannot_exhaust_threads(monkeypatch):
     spray would accumulate threads until the process died. Over the cap the
     check is refused, and a refusal blocks the request.
     """
-    monkeypatch.setattr(web_mod, "_POLICY_THREAD_HARD_CAP", 4)
+    monkeypatch.setattr(url_policy_mod, "_POLICY_THREAD_HARD_CAP", 4)
     monkeypatch.setattr(web_mod, "_POLICY_CHECK_CONCURRENCY", 64)
     monkeypatch.setattr(web_mod, "_POLICY_CHECK_TIMEOUT_S", 0.05)
     page = _FakePage()
@@ -895,10 +902,10 @@ def test_a_flood_of_distinct_origins_cannot_exhaust_threads(monkeypatch):
 
     def stalling_validator(url, **kwargs):
         nonlocal peak
-        peak = max(peak, web_mod._live_policy_threads)
+        peak = max(peak, url_policy_mod._live_policy_threads)
         time.sleep(0.3)
 
-    monkeypatch.setattr(web_mod, "validate_outbound_url", stalling_validator)
+    monkeypatch.setattr(url_policy_mod, "validate_outbound_url", stalling_validator)
 
     async def drive():
         routes = [
@@ -986,7 +993,7 @@ def test_websocket_scheme_is_mapped_for_the_http_only_validator(monkeypatch):
     def recording_validator(url, **kwargs):
         seen.append(url)
 
-    monkeypatch.setattr(web_mod, "validate_outbound_url", recording_validator)
+    monkeypatch.setattr(url_policy_mod, "validate_outbound_url", recording_validator)
     asyncio.run(
         browser.context.ws_route_handler(_FakeWebSocketRoute("wss://host.test:8443/s"))
     )
@@ -1022,7 +1029,7 @@ def test_policy_verdicts_are_cached_per_origin(monkeypatch):
     def counting_validator(url, **kwargs):
         seen.append(url)
 
-    monkeypatch.setattr(web_mod, "validate_outbound_url", counting_validator)
+    monkeypatch.setattr(url_policy_mod, "validate_outbound_url", counting_validator)
     for path in ("/a.js", "/b.css", "/c.png"):
         route = _FakeRoute(f"https://cdn.example/{path}", navigation=False)
         asyncio.run(page.route_handler(route))

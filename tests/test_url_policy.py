@@ -15,7 +15,11 @@ fake resolver maps hostnames to IP strings; numeric/short host forms
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import ipaddress
+import threading
+import time
 
 import pytest
 
@@ -370,3 +374,348 @@ def test_webfetch_tool_wires_allowlist_into_description(monkeypatch):
     assert tool._allow_cidrs == (ipaddress.ip_network("198.18.0.0/15"),)
     assert "SSRF allowlist active" in tool.description
     assert "198.18.0.0/15" in tool.description
+
+
+# --------------------------------------------------------------------------
+# Async surface — same policy, off the loop thread
+#
+# The async twins exist because `getaddrinfo` blocks: on an event-loop thread a
+# slow resolver stalls every other task, including the timers a caller relies on
+# for its own deadline. These tests assert the pair cannot diverge — same
+# verdicts, same per-hop re-validation — plus the two properties only the async
+# form has: the lookup does not run on the loop thread, and every way it can go
+# wrong arrives as a rejection.
+# --------------------------------------------------------------------------
+
+
+class _FakeAsyncResponse(_FakeResponse):
+    def __init__(self, status_code, location=None):
+        super().__init__(status_code, location)
+        self.closed = False
+
+    async def aclose(self):
+        self.closed = True
+
+
+class _FakeAsyncClient:
+    """Async twin of `_FakeClient`."""
+
+    def __init__(self, responses):
+        self._responses = dict(responses)
+        self.requested: list[str] = []
+
+    async def get(self, url, headers=None):
+        self.requested.append(url)
+        return self._responses[url]
+
+
+def test_validate_async_accepts_what_the_sync_form_accepts(fake_resolver):
+    fake_resolver["example.com"] = ["93.184.216.34"]
+    asyncio.run(url_policy.validate_outbound_url_async("http://example.com/"))
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://[::ffff:127.0.0.1]/",
+        "ftp://example.com/",
+        "http://user:pw@example.com/",
+        "http://localhost/",
+        "http://single-label/",
+    ],
+)
+def test_validate_async_rejects_what_the_sync_form_rejects(url):
+    """The async form delegates rather than reimplementing, so this is a
+    regression guard on that delegation, not a second copy of the policy."""
+    with pytest.raises(UrlPolicyError):
+        validate_outbound_url(url)
+    with pytest.raises(UrlPolicyError):
+        asyncio.run(url_policy.validate_outbound_url_async(url))
+
+
+def test_validate_async_resolves_off_the_loop_thread(monkeypatch):
+    """A blocking resolver on the loop thread stalls the whole loop."""
+    seen: dict[str, object] = {}
+
+    def _resolve(host, port):
+        seen["thread"] = threading.current_thread()
+        return {ipaddress.ip_address("93.184.216.34")}
+
+    monkeypatch.setattr(url_policy, "_resolve_host_addresses", _resolve)
+
+    async def drive():
+        await url_policy.validate_outbound_url_async("http://example.com/")
+        return threading.current_thread()
+
+    loop_thread = asyncio.run(drive())
+    assert seen["thread"] is not loop_thread
+
+
+def test_validate_async_keeps_the_loop_responsive_and_fails_closed(monkeypatch):
+    """A stalled lookup must not freeze the loop, hold up shutdown, or pass."""
+    stall = 3.0
+
+    def _stalling_resolver(host, port):
+        time.sleep(stall)
+        return {ipaddress.ip_address("93.184.216.34")}
+
+    monkeypatch.setattr(url_policy, "_resolve_host_addresses", _stalling_resolver)
+
+    async def drive():
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        spinner = asyncio.create_task(ticker())
+        try:
+            with pytest.raises(UrlPolicyError):
+                await url_policy.validate_outbound_url_async(
+                    "http://slow.example.com/", timeout=0.05
+                )
+        finally:
+            spinner.cancel()
+        return ticks
+
+    started = time.monotonic()
+    ticks = asyncio.run(drive())
+    elapsed = time.monotonic() - started
+
+    assert ticks > 0, "the event loop was blocked by the resolver"
+    # `asyncio.run` joins the *default* executor at loop shutdown, so
+    # `asyncio.to_thread` would pay the full stall here even though `wait_for`
+    # already returned. A daemon thread is abandoned instead.
+    assert elapsed < stall / 2, f"shutdown waited on the stalled lookup ({elapsed:.2f}s)"
+
+
+def test_validate_async_refusal_over_the_thread_cap_is_a_rejection(monkeypatch):
+    """Over the process-wide cap the check is refused — and a refusal blocks."""
+    monkeypatch.setattr(url_policy, "_POLICY_THREAD_HARD_CAP", 0)
+
+    with pytest.raises(UrlPolicyError) as excinfo:
+        asyncio.run(url_policy.validate_outbound_url_async("http://example.com/"))
+    assert "refusing" in str(excinfo.value)
+
+
+def test_a_failed_thread_start_does_not_leak_a_cap_slot(monkeypatch):
+    """`Thread.start()` can fail — at the OS thread limit, for one.
+
+    The slot is reserved before the thread exists, and the runner's `finally` is
+    the only thing that releases it. If `start()` raises, that `finally` never
+    runs, so each failure would burn a slot permanently: the cap fills up and
+    every later check is refused for the life of the process, long after the
+    pressure cleared. Fail closed on the call, not on all future ones.
+    """
+    before = url_policy._live_policy_threads
+
+    class _RefusingThread:
+        def __init__(self, *a, **kw):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(url_policy.threading, "Thread", _RefusingThread)
+
+    for _ in range(3):
+        with pytest.raises(UrlPolicyError) as excinfo:
+            asyncio.run(url_policy.validate_outbound_url_async("http://example.com/"))
+        assert "can't start new thread" in str(excinfo.value)
+
+    assert url_policy._live_policy_threads == before, (
+        "a failed thread start leaked a slot from the process-wide cap"
+    )
+    assert url_policy._live_policy_threads >= 0, (
+        "the counter went negative — the cap is now permanently disabled, which "
+        "is a fail-*open*: nothing else bounds the abandoned lookup threads"
+    )
+
+    # And the very next check, with threads working again, must go through.
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        url_policy, "_resolve_host_addresses",
+        lambda host, port: {ipaddress.ip_address("93.184.216.34")},
+    )
+    asyncio.run(url_policy.validate_outbound_url_async("http://example.com/"))
+
+
+def test_validate_async_converts_an_unexpected_resolver_error(monkeypatch):
+    """Fail closed: anything the resolver throws becomes a rejection, never a
+    pass, and never an exception shape the caller has to know about."""
+    def _explode(host, port):
+        raise OSError("resolver blew up")
+
+    monkeypatch.setattr(url_policy, "_resolve_host_addresses", _explode)
+    with pytest.raises(UrlPolicyError) as excinfo:
+        asyncio.run(url_policy.validate_outbound_url_async("http://example.com/"))
+    assert "resolver blew up" in str(excinfo.value)
+
+
+def test_guarded_get_async_returns_final_non_redirect(fake_resolver):
+    fake_resolver["example.com"] = ["93.184.216.34"]
+    client = _FakeAsyncClient({"http://example.com/": _FakeAsyncResponse(200)})
+    resp = asyncio.run(url_policy.guarded_get_async(client, "http://example.com/"))
+    assert resp.status_code == 200
+    assert client.requested == ["http://example.com/"]
+
+
+def test_guarded_get_async_follows_public_redirect(fake_resolver):
+    fake_resolver["a.example.com"] = ["93.184.216.34"]
+    fake_resolver["b.example.com"] = ["93.184.216.35"]
+    first = _FakeAsyncResponse(302, "http://b.example.com/")
+    client = _FakeAsyncClient(
+        {
+            "http://a.example.com/": first,
+            "http://b.example.com/": _FakeAsyncResponse(200),
+        }
+    )
+    resp = asyncio.run(url_policy.guarded_get_async(client, "http://a.example.com/"))
+    assert resp.status_code == 200
+    assert client.requested == ["http://a.example.com/", "http://b.example.com/"]
+    # The abandoned hop must be released — `aclose`, not the sync `close`.
+    assert first.closed is True
+
+
+def test_guarded_get_async_blocks_redirect_to_internal(fake_resolver):
+    """The hole the whole per-hop design exists to close."""
+    fake_resolver["a.example.com"] = ["93.184.216.34"]
+    fake_resolver["internal.example.com"] = ["10.0.0.5"]
+    client = _FakeAsyncClient(
+        {"http://a.example.com/": _FakeAsyncResponse(302, "http://internal.example.com/")}
+    )
+    with pytest.raises(UrlPolicyError):
+        asyncio.run(url_policy.guarded_get_async(client, "http://a.example.com/"))
+    assert "http://internal.example.com/" not in client.requested
+
+
+def test_guarded_get_async_resolves_relative_redirect(fake_resolver):
+    fake_resolver["a.example.com"] = ["93.184.216.34"]
+    client = _FakeAsyncClient(
+        {
+            "http://a.example.com/start": _FakeAsyncResponse(302, "/next"),
+            "http://a.example.com/next": _FakeAsyncResponse(200),
+        }
+    )
+    resp = asyncio.run(
+        url_policy.guarded_get_async(client, "http://a.example.com/start")
+    )
+    assert resp.status_code == 200
+    assert client.requested[-1] == "http://a.example.com/next"
+
+
+def test_guarded_get_async_redirect_budget(fake_resolver):
+    fake_resolver["loop.example.com"] = ["93.184.216.34"]
+    client = _FakeAsyncClient(
+        {"http://loop.example.com/": _FakeAsyncResponse(302, "http://loop.example.com/")}
+    )
+    with pytest.raises(UrlPolicyError):
+        asyncio.run(
+            url_policy.guarded_get_async(
+                client, "http://loop.example.com/", max_redirects=3
+            )
+        )
+
+
+def test_guarded_get_async_threads_the_allowlist_to_every_hop(fake_resolver):
+    fake_resolver["a.example.com"] = ["93.184.216.34"]
+    fake_resolver["proxied.example.com"] = ["198.18.0.42"]
+    client = _FakeAsyncClient(
+        {"http://a.example.com/": _FakeAsyncResponse(302, "http://proxied.example.com/")}
+    )
+    with pytest.raises(UrlPolicyError):
+        asyncio.run(url_policy.guarded_get_async(client, "http://a.example.com/"))
+
+    client2 = _FakeAsyncClient(
+        {
+            "http://a.example.com/": _FakeAsyncResponse(302, "http://proxied.example.com/"),
+            "http://proxied.example.com/": _FakeAsyncResponse(200),
+        }
+    )
+    resp = asyncio.run(
+        url_policy.guarded_get_async(
+            client2, "http://a.example.com/", allow_networks=_FAKE_IP_RANGE
+        )
+    )
+    assert resp.status_code == 200
+
+
+def test_redirect_decision_is_shared_by_both_surfaces():
+    """`_redirect_target` is the single answer to "is this a hop?".
+
+    Two copies of that predicate is how per-hop re-validation silently stops
+    covering a status one side forgot.
+    """
+    assert "_REDIRECT_STATUSES" in inspect.getsource(url_policy._redirect_target)
+    for fn in (url_policy.guarded_get, url_policy.guarded_get_async):
+        body = inspect.getsource(fn)
+        assert "_redirect_target(" in body, f"{fn.__name__} bypasses the shared helper"
+        # Not a count over the whole module — a mention in a comment elsewhere
+        # is not a defect. What matters is that neither chase decides for itself.
+        assert "_REDIRECT_STATUSES" not in body
+        assert "301" not in body and "302" not in body
+
+
+def _redirect_handler(request):
+    import httpx
+
+    if request.url.path == "/start":
+        return httpx.Response(302, headers={"location": "https://8.8.8.8/next"})
+    return httpx.Response(200, text="final")
+
+
+def test_both_surfaces_chase_a_redirect_through_the_real_httpx():
+    """Drive the chase with real `httpx.Response` objects, not the fakes above.
+
+    The fakes implement `close` / `aclose` by construction, so they can only
+    confirm that the code calls *something*. What they cannot answer is whether
+    httpx tolerates being asked to release a response `client.get()` has already
+    read to completion — `Response.aclose()` raises `RuntimeError` outright when
+    handed a sync stream, and a redirect hop is the only place either function
+    releases anything. A public IP literal is used so no DNS is involved.
+    """
+    import httpx
+
+    async def via_async():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_redirect_handler),
+            follow_redirects=False,
+            timeout=5.0,
+        ) as client:
+            return await url_policy.guarded_get_async(client, "https://8.8.8.8/start")
+
+    with httpx.Client(
+        transport=httpx.MockTransport(_redirect_handler),
+        follow_redirects=False,
+        timeout=5.0,
+    ) as client:
+        sync_response = guarded_get(client, "https://8.8.8.8/start")
+
+    async_response = asyncio.run(via_async())
+
+    assert sync_response.status_code == async_response.status_code == 200
+    assert sync_response.text == async_response.text == "final"
+
+
+def test_async_call_sites_match_the_real_httpx():
+    """Probe the installed httpx rather than trusting the fakes above.
+
+    Hand-written fakes answer whatever the code asks them, so they can only
+    confirm what the author already believed. `guarded_get_async` depends on
+    three things being true of the real client: `AsyncClient(...)` takes the
+    kwargs `web_fetch` passes, `.get()` is awaitable, and a response is released
+    with `aclose()` — the sync `close()` would be a silent connection leak.
+    """
+    import httpx
+
+    params = inspect.signature(httpx.AsyncClient.__init__).parameters
+    assert "follow_redirects" in params
+    assert "timeout" in params
+    assert inspect.iscoroutinefunction(httpx.AsyncClient.get)
+    assert inspect.iscoroutinefunction(httpx.Response.aclose)
+    # And the sync pair still exists, since `guarded_get` remains supported.
+    assert not inspect.iscoroutinefunction(httpx.Client.get)

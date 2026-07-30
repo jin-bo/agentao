@@ -15,13 +15,13 @@ from urllib.parse import quote_plus, urlparse, urlunparse
 if TYPE_CHECKING:
     from bs4 import BeautifulSoup as _BeautifulSoup_t
 
-from .base import Tool
+from .base import AsyncToolBase, Tool
 from ..capabilities.process import build_child_env
 from ..security.url_policy import (
     UrlPolicyError,
-    guarded_get,
+    guarded_get_async,
     read_allow_cidrs_setting,
-    validate_outbound_url,
+    validate_outbound_url_async,
 )
 
 logger = logging.getLogger("agentao.tools.web")
@@ -146,89 +146,43 @@ _BROWSER_SETTLE_TIMEOUT_MS = 5_000
 #: Wall-clock ceiling on the whole render. The two timeouts above bound
 #: *navigation* only — `page.content()` takes no timeout at all (its signature
 #: is `(self) -> str`), so a page that pegs its renderer after DOMContentLoaded
-#: would otherwise wait on the driver channel forever, with `_run_async`
-#: blocking the caller with the browser tree left running.
+#: would otherwise wait on the driver channel forever with the browser tree
+#: left running.
 _BROWSER_TOTAL_TIMEOUT_S = 45.0
 #: Teardown gets its own small budget so a wedged browser cannot turn cleanup
 #: into a second unbounded wait.
 _BROWSER_CLOSE_TIMEOUT_S = 10.0
+#: Teardown budget when unwinding from a *cancellation* rather than finishing.
+#: Applied per step, and there are two (browser, then driver), so the pair has to
+#: fit inside ``tool_executor._ASYNC_CANCEL_ACK_TIMEOUT_S`` (5s) — that is how
+#: long the AsyncTool dispatcher waits for this coroutine before it emits
+#: ``TOOL_COMPLETE`` and moves on. Spending the full ``_BROWSER_CLOSE_TIMEOUT_S``
+#: twice would report the invocation complete with Chromium still shutting down.
+#: A normal (non-cancelled) close keeps the generous budget: there, nothing is
+#: waiting on a deadline. Pinned against the dispatcher by
+#: ``test_browser_teardown_fits_inside_the_dispatcher_ack_budget``.
+_BROWSER_CANCEL_CLOSE_TIMEOUT_S = 2.0
 #: Driver startup — spawning node and completing the protocol handshake. A
 #: driver that starts but never handshakes would otherwise hang `__aenter__`
 #: before any other deadline applies.
 _BROWSER_STARTUP_TIMEOUT_S = 30.0
-#: Per-origin budget for the outbound-policy check on an intercepted request.
-#: It resolves DNS, and the page chooses the hostnames — so it is bounded, and
-#: a stall is a block rather than a pass.
+#: Request timeout on the httpx path, and — now that resolution is bounded too —
+#: the per-hop budget for the outbound-policy check. One number because they are
+#: two halves of the same "reach this host" attempt. The sync predecessor left
+#: resolution unbounded, which was tolerable only because it blocked its own
+#: thread.
+_HTTP_TIMEOUT_S = 30.0
+#: Per-origin budget for the outbound-policy check on an intercepted browser
+#: request. Much tighter than the httpx path's: here the *page* chooses the
+#: hostnames, so a slow-resolving name is an attacker-controlled input rather
+#: than the user's own target.
 _POLICY_CHECK_TIMEOUT_S = 5.0
 #: Checks in flight at once for a single render. The page picks the hostnames,
 #: so this is what keeps a burst of distinct origins from becoming a burst of
 #: threads; anything over the limit waits on the loop, bounded by the render
-#: ceiling above.
+#: ceiling above. (The process-wide thread ceiling that backs it lives with the
+#: policy itself — ``url_policy._POLICY_THREAD_HARD_CAP``.)
 _POLICY_CHECK_CONCURRENCY = 8
-#: Hard ceiling on live lookup threads across *all* renders. Timed-out threads
-#: are deliberately abandoned (see `_call_on_daemon_thread`), so without a cap
-#: a page spraying randomised hostnames — which miss the per-origin cache by
-#: construction — could accumulate them until the process runs out. Refusing a
-#: check blocks the request; failing closed is the safe direction.
-_POLICY_THREAD_HARD_CAP = 32
-
-_live_policy_threads = 0
-_policy_thread_lock = threading.Lock()
-
-
-def _call_on_daemon_thread(fn: Any, *args: Any, **kwargs: Any) -> "asyncio.Future":
-    """Run blocking ``fn`` on a daemon thread; return an awaitable future.
-
-    Not ``asyncio.to_thread``: that uses the loop's *default* executor, whose
-    threads are non-daemon and joined by ``asyncio.run`` during loop shutdown.
-    A ``getaddrinfo`` that outlives its ``wait_for`` budget would therefore
-    still hold up the caller on the way out — cancelling the future does not
-    cancel the thread — which defeats the very ceiling the budget enforces. A
-    daemon thread is simply abandoned instead.
-    """
-    global _live_policy_threads
-
-    loop = asyncio.get_running_loop()
-    future: "asyncio.Future" = loop.create_future()
-
-    with _policy_thread_lock:
-        if _live_policy_threads >= _POLICY_THREAD_HARD_CAP:
-            future.set_exception(
-                RuntimeError(
-                    f"{_live_policy_threads} outbound-policy lookups are still"
-                    " running; refusing this one rather than allowing it"
-                )
-            )
-            return future
-        _live_policy_threads += 1
-
-    def _settle(setter: Any, value: Any) -> None:
-        # The waiter may have timed out and cancelled; a cancelled future is
-        # done, so this is also what keeps the late thread from exploding.
-        if not future.done():
-            setter(value)
-
-    def _runner() -> None:
-        global _live_policy_threads
-        try:
-            try:
-                result = fn(*args, **kwargs)
-            except BaseException as exc:
-                setter, value = future.set_exception, exc
-            else:
-                setter, value = future.set_result, result
-            try:
-                loop.call_soon_threadsafe(_settle, setter, value)
-            except RuntimeError:
-                pass  # loop already closed — nobody is waiting on this any more
-        finally:
-            with _policy_thread_lock:
-                _live_policy_threads -= 1
-
-    threading.Thread(
-        target=_runner, daemon=True, name="agentao-url-policy"
-    ).start()
-    return future
 
 
 async def _render_page(page: Any, url: str) -> tuple[Optional[int], str]:
@@ -405,6 +359,7 @@ async def _render_with_playwright(
         page = await context.new_page()
         return await _render_page(page, url)
 
+    cancelled = False
     try:
         # The budget covers launch and setup, not just navigation: `launch`,
         # `new_context`, `route` and `new_page` are all driver channel calls
@@ -415,25 +370,34 @@ async def _render_with_playwright(
         return await asyncio.wait_for(
             _setup_and_render(), timeout=_BROWSER_TOTAL_TIMEOUT_S
         )
+    except asyncio.CancelledError:
+        # Teardown below has to be quick in this case: something is waiting on a
+        # deadline for us. `wait_for`'s own expiry raises TimeoutError, not this,
+        # so a plain render timeout keeps the generous budget.
+        cancelled = True
+        raise
     finally:
         # Teardown must never replace the in-flight result or exception:
         # Playwright's `Browser.close` re-raises anything that is not a
         # target-closed error, so an OOM-killed Chromium would otherwise
         # report a driver-transport failure instead of the navigation
         # timeout that actually explains the failure.
+        close_budget = (
+            _BROWSER_CANCEL_CLOSE_TIMEOUT_S if cancelled else _BROWSER_CLOSE_TIMEOUT_S
+        )
         if browser is not None:
             try:
-                await asyncio.wait_for(
-                    browser.close(), timeout=_BROWSER_CLOSE_TIMEOUT_S
-                )
-            except Exception as e:
+                await asyncio.wait_for(browser.close(), timeout=close_budget)
+            # CancelledError included deliberately: if the canceller re-cancels
+            # us mid-teardown it would otherwise escape here and skip the driver
+            # teardown below, leaving the node process orphaned.
+            except (Exception, asyncio.CancelledError) as e:
                 logger.warning("browser teardown failed for %s: %s", url, e)
         try:
             await asyncio.wait_for(
-                manager.__aexit__(None, None, None),
-                timeout=_BROWSER_CLOSE_TIMEOUT_S,
+                manager.__aexit__(None, None, None), timeout=close_budget
             )
-        except Exception as e:
+        except (Exception, asyncio.CancelledError) as e:
             logger.warning("playwright driver teardown failed for %s: %s", url, e)
             _kill_playwright_driver(manager)
 
@@ -475,27 +439,26 @@ async def _guard_context_requests(context: Any, allow_networks: tuple) -> None:
     async def _decide(key: tuple, request_url: str) -> Optional[str]:
         async with gate:
             try:
-                # Off the loop thread, and bounded. `validate_outbound_url`
-                # calls `socket.getaddrinfo`, which blocks for as long as the
-                # OS resolver takes — on the event-loop thread that would stall
-                # the `asyncio.wait_for` timer enforcing the render ceiling, so
-                # a page-controlled subresource hostname could defeat it just
-                # by resolving slowly.
-                await asyncio.wait_for(
-                    _call_on_daemon_thread(
-                        validate_outbound_url,
-                        request_url,
-                        allow_networks=allow_networks,
-                    ),
+                # The async validator runs `getaddrinfo` off the loop thread and
+                # bounds it: on the loop thread it would stall the
+                # `asyncio.wait_for` timer enforcing the render ceiling, so a
+                # page-controlled subresource hostname could defeat that ceiling
+                # just by resolving slowly. A stall, a refusal, or any unexpected
+                # resolver error arrives here as `UrlPolicyError` — fail-closed
+                # is the validator's contract, not this caller's job.
+                await validate_outbound_url_async(
+                    request_url,
+                    allow_networks=allow_networks,
                     timeout=_POLICY_CHECK_TIMEOUT_S,
                 )
                 verdicts[key] = None
             except UrlPolicyError as e:
                 verdicts[key] = str(e)
             except Exception as e:
-                # Fail closed on a stalled, refused, or unexpected check,
-                # matching `_resolve_host_addresses`, which treats "cannot
-                # resolve" as "reject" rather than "allow".
+                # Unreachable by that contract, and kept anyway: this is the one
+                # branch where an escaping exception is a fail-*open*. A route
+                # handler that raises leaves the request to hang, not to be
+                # blocked, and the request is an SSRF probe.
                 verdicts[key] = f"policy check failed: {e}"
         return verdicts[key]
 
@@ -581,40 +544,158 @@ def _html_to_text(html: str) -> str:
     return _extract_text(BeautifulSoup(html, "html.parser"))
 
 
-def _run_async(coro):
-    """Run ``coro`` to completion from sync code, nested loop or not.
+#: How long a cancelled fetch waits for its in-flight parse to finish before
+#: giving up and letting it run unwatched. Must stay **below**
+#: ``tool_executor._ASYNC_CANCEL_ACK_TIMEOUT_S`` (5s): that is how long the
+#: AsyncTool dispatcher waits for this coroutine's cleanup before it emits
+#: ``TOOL_COMPLETE`` and moves on. Draining for longer than the dispatcher will
+#: wait produces exactly the detached work this drain exists to prevent, only
+#: now with the invocation already reported complete. Not imported from
+#: ``runtime`` — tools do not depend on the runtime — so
+#: ``test_the_drain_fits_inside_the_dispatcher_ack_budget`` pins the relation.
+_CPU_CANCEL_DRAIN_TIMEOUT_S = 3.0
 
-    The previous form was ``try: asyncio.run(coro) / except RuntimeError:
-    get_event_loop().run_until_complete(coro)``, which had three faults: it
-    could not tell "``asyncio.run`` refused to nest" from "the coroutine
-    itself raised ``RuntimeError``" — masking the latter behind an unrelated
-    event-loop message — ``run_until_complete`` would fail anyway on a loop
-    that is actually running, and ``coro`` is already closed by the time the
-    handler retries it.
+#: Workers for the HTML pool below. Small on purpose: it bounds how many
+#: multi-megabyte parses can be in flight at once, and parsing is CPU-bound, so
+#: more threads than a handful buy nothing but memory.
+_CPU_POOL_MAX_WORKERS = 4
 
-    Asking whether a loop is running answers the nesting question directly,
-    and leaves genuine ``RuntimeError``s from the coroutine to propagate.
+_cpu_pool: Optional[ThreadPoolExecutor] = None
+_cpu_pool_lock = threading.Lock()
 
-    **Known limitation.** The nested branch still *blocks* the caller's loop
-    for the duration — ``Future.result()`` is a synchronous wait executed on
-    the loop thread, so no other task on that loop runs and a
-    ``CancelledError`` cannot be delivered. This is inherent to a sync
-    ``Tool.execute`` being driven from inside a loop; the real fix is porting
-    ``WebFetchTool`` to :class:`AsyncToolBase`, which is out of scope here.
-    What bounds the damage is that ``_render_with_playwright`` carries its own
-    total deadline (``_BROWSER_TOTAL_TIMEOUT_S`` + ``_BROWSER_CLOSE_TIMEOUT_S``)
-    rather than an open-ended wait. In-process this branch is not normally
-    reached: agentao dispatches sync tools on a worker thread, where
-    ``get_running_loop()`` raises and the plain ``asyncio.run`` path is taken.
+
+def _get_cpu_pool() -> ThreadPoolExecutor:
+    """The dedicated pool for this tool's blocking HTML work.
+
+    **Not the loop's default executor**, which is what ``asyncio.to_thread``
+    would use — and which is where :meth:`Agentao.arun` parks ``chat()`` for the
+    whole turn (``agent.py``, ``loop.run_in_executor(None, self.chat, ...)``).
+    That worker then blocks in ``tool_executor._run_async_tool`` waiting on this
+    very coroutine, so asking the same pool for a parse worker is a textbook
+    pool-exhaustion deadlock: measured, a default executor with one free worker
+    hangs the fetch outright, and ``max_workers`` concurrent turns reproduce it
+    on a normally-sized pool.
+
+    Created lazily so a host that never fetches never pays for the threads, and
+    shared across instances rather than per-tool so N registrations do not mean
+    N pools. ``ThreadPoolExecutor``'s own ``atexit`` hook retires idle workers,
+    so a module-level pool does not hold the interpreter open.
+
+    (``arun`` monopolising the *default* executor is a hazard for any future
+    async tool that reaches for ``to_thread``; giving it its own executor would
+    fix the class rather than this instance, but that is a core-runtime change
+    and not this tool's call to make.)
+    """
+    global _cpu_pool
+    with _cpu_pool_lock:
+        if _cpu_pool is None:
+            _cpu_pool = ThreadPoolExecutor(
+                max_workers=_CPU_POOL_MAX_WORKERS,
+                thread_name_prefix="agentao-web-html",
+            )
+        return _cpu_pool
+
+
+async def _in_worker(fn: Any, *args: Any) -> Any:
+    """Run blocking CPU work on a worker thread without orphaning it on cancel.
+
+    A job that has not started yet is simply cancelled. One that is *running*
+    cannot be: there is no way to interrupt a Python call from outside it, so
+    returning straight away would leave a multi-megabyte DOM parse burning CPU
+    and holding its memory with nobody waiting on the result. A host that
+    cancels fetches repeatedly could stack several of those up.
+
+    Since the work will finish either way, waiting for it is the honest choice:
+    the canceller pays latency it was going to pay anyway, and nothing outlives
+    the call. The wait is bounded — if it expires we are back to orphaning, but
+    loudly rather than silently.
+
+    Two scope notes, because the budget above does less than it looks like:
+
+    * It bounds the **persistent-host-loop** case, which is the one that can
+      accumulate orphans: the loop keeps running, so nothing else would ever
+      wait for the worker.
+    * It does **not** guarantee prompt process exit — ``ThreadPoolExecutor``'s
+      ``atexit`` hook joins in-flight work. Fine here, and deliberately not the
+      choice made for ``getaddrinfo``: a parse always terminates, a name lookup
+      may not.
+
+    A bounded pool rather than a daemon thread per call, because it caps
+    concurrent parses. A thread per parse would trade a bounded pool that gets
+    joined for an unbounded one that does not — the problem
+    ``url_policy._POLICY_THREAD_HARD_CAP`` exists to patch over on the lookup
+    path, where abandonment is mandatory and so a cap has to be bolted on.
+    """
+    # ``submit`` rather than ``loop.run_in_executor``, which hides the
+    # ``concurrent.futures.Future`` — and that handle is the only way to cancel a
+    # job that has not *started*. With the pool saturated, later fetches queue;
+    # draining a queued job would keep its multi-megabyte response alive and then
+    # run work nobody wants, which is exactly the bound the pool is for.
+    cf = _get_cpu_pool().submit(fn, *args)
+    task = asyncio.ensure_future(asyncio.wrap_future(cf))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        if cf.cancel():
+            raise  # never started — dropped from the queue, nothing to drain
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task), timeout=_CPU_CANCEL_DRAIN_TIMEOUT_S
+            )
+        except (Exception, asyncio.CancelledError):
+            # Either the work itself failed — irrelevant, we are unwinding — or
+            # the drain budget expired, or the canceller re-cancelled us while we
+            # waited. Report only the case a reader would care about.
+            if not task.done():
+                logger.warning(
+                    "cancelled fetch left %s running after %ss; it holds CPU and"
+                    " memory until it finishes",
+                    getattr(fn, "__name__", fn),
+                    _CPU_CANCEL_DRAIN_TIMEOUT_S,
+                )
+        raise
+
+
+def _parse_page(response: Any) -> tuple[str, "_BeautifulSoup_t", bool]:
+    """Decode, parse, and JS-sniff a response. Returns ``(html, soup, needs_js)``.
+
+    Grouped into one function so the whole CPU-bound stretch crosses to a worker
+    thread in a single hop (see the call site for why it must).
+    """
+    from bs4 import BeautifulSoup
+
+    html = response.text
+    soup = BeautifulSoup(html, "html.parser")
+    return html, soup, _needs_js_rendering(html, soup)
+
+
+def _run_coroutine_blocking(coro):
+    """Drive ``coro`` to completion from synchronous code, nested loop or not.
+
+    Used only by the sync :meth:`WebFetchTool.execute` convenience wrapper.
+    The tool's real implementation is ``async_execute``; nothing inside agentao
+    reaches this function.
+
+    Asking whether a loop is running answers the nesting question directly.
+    (An earlier form guessed from ``except RuntimeError`` around
+    ``asyncio.run``, which could not tell "refused to nest" from "the coroutine
+    itself raised ``RuntimeError``", and retried an already-closed coroutine.)
+
+    **The nested branch blocks the caller's loop** for the duration —
+    ``Future.result()`` is a synchronous wait executed on the loop thread, so no
+    other task on that loop runs and a ``CancelledError`` cannot be delivered.
+    That is inherent to demanding a synchronous return value from inside a
+    running loop; there is no version of this function that avoids it. A caller
+    on a loop thread should ``await tool.async_execute(...)`` instead, which is
+    exactly why that method exists.
     """
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
 
-    # Already inside a running loop — e.g. an async host driving this sync
-    # tool. A nested asyncio.run is illegal, so give the coroutine its own
-    # loop on a worker thread and block for the result.
+    # Already inside a running loop. A nested asyncio.run is illegal, so give
+    # the coroutine its own loop on a worker thread and block for the result.
     with ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, coro).result()
 
@@ -623,7 +704,7 @@ def _jina_proxy_url(url: str) -> str:
     return f"https://r.jina.ai/{url}"
 
 
-def _fetch_via_jina(url: str) -> str:
+async def _fetch_via_jina(url: str) -> str:
     import httpx
 
     proxy_url = _jina_proxy_url(url)
@@ -632,13 +713,19 @@ def _fetch_via_jina(url: str) -> str:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-        response = client.get(proxy_url, headers=headers)
+    # No `validate_outbound_url` here, deliberately: the target is r.jina.ai
+    # itself, a fixed public host, and it is *jina* that fetches the
+    # user-supplied URL server-side. That is the whole reason this fallback is
+    # opt-in and disclosed in the tool description.
+    async with httpx.AsyncClient(
+        follow_redirects=True, timeout=_HTTP_TIMEOUT_S
+    ) as client:
+        response = await client.get(proxy_url, headers=headers)
         response.raise_for_status()
     return response.text or ""
 
 
-class WebFetchTool(Tool):
+class WebFetchTool(AsyncToolBase):
     def __init__(self) -> None:
         # Read env once at construction (matches WebSearchTool pattern). The
         # fallback target is part of the audit surface — the description below
@@ -716,31 +803,62 @@ class WebFetchTool(Tool):
         return True
 
     def execute(self, url: str, extract_text: bool = True) -> str:
+        """Synchronous wrapper over :meth:`async_execute`, for sync embedders.
+
+        Kept because a host may hold this tool instance and fetch from ordinary
+        synchronous code, where blocking is what it asked for. Callers already
+        on an event loop must ``await async_execute(...)`` instead — see
+        :func:`_run_coroutine_blocking` for what this method does to their loop.
+        """
+        return _run_coroutine_blocking(
+            self.async_execute(url, extract_text=extract_text)
+        )
+
+    async def async_execute(self, url: str, extract_text: bool = True) -> str:
         import httpx
-        from bs4 import BeautifulSoup
 
         headers = {"User-Agent": _USER_AGENT}
 
         try:
-            # SSRF guard: follow_redirects=False so guarded_get owns the
+            # SSRF guard: follow_redirects=False so guarded_get_async owns the
             # redirect chase and re-validates the target on every hop. The
             # static PermissionEngine blocklist already ran at the plan-phase
             # gate on the original URL; this catches what a string check
             # can't — names that *resolve* to private/loopback addresses and
             # redirects into the internal network.
-            with httpx.Client(follow_redirects=False, timeout=30.0) as client:
-                response = guarded_get(
-                    client, url, headers=headers, allow_networks=self._allow_cidrs
+            async with httpx.AsyncClient(
+                follow_redirects=False, timeout=_HTTP_TIMEOUT_S
+            ) as client:
+                response = await guarded_get_async(
+                    client,
+                    url,
+                    headers=headers,
+                    allow_networks=self._allow_cidrs,
+                    resolve_timeout=_HTTP_TIMEOUT_S,
                 )
                 response.raise_for_status()
 
-            html = response.text
-            soup = BeautifulSoup(html, "html.parser")
-
-            js_detected = _needs_js_rendering(html, soup)
+            # Off the loop thread. The body is remote input of unbounded size —
+            # httpx has already read all of it into memory — and decoding it,
+            # parsing it, and walking the tree are all pure-Python CPU work.
+            # Measured on a 2.2MB DOM (0.74s to parse): run inline on the loop, a
+            # 10ms heartbeat task ticks **0** times; on a worker it ticks 31.
+            # CPython hands the GIL over every `sys.getswitchinterval()` (5ms
+            # default) between bytecodes, so a worker thread does not lock the
+            # loop out — it shares with it, and cancellation stays deliverable.
+            #
+            # This is also what the sync tool got for free: agentao dispatched it
+            # on an executor thread, so the parse was never on the loop. Keeping
+            # it inline here would have made the port a regression on exactly the
+            # axis it exists to improve.
+            #
+            # The pool is this tool's own, not the loop's default executor:
+            # `arun` parks `chat()` there for the whole turn, so borrowing from
+            # it deadlocks. See `_get_cpu_pool`.
+            html, soup, js_detected = await _in_worker(_parse_page, response)
             fallback_error: str | None = None
             if js_detected:
-                fallback_result, fallback_error = self._run_fallback(
+                fallback_result, fallback_error = await self._run_fallback(
                     url, reason="JS rendering detected", extract_text=extract_text
                 )
                 if fallback_result is not None:
@@ -763,7 +881,12 @@ class WebFetchTool(Tool):
                     " (sends URL to r.jina.ai) or =playwright (local headless"
                     " browser) to enable a fallback.\n"
                 )
-            body = _extract_text(soup) if extract_text else html
+            # Second hop rather than folding this into `_parse_page`: the
+            # extraction walks and mutates the whole tree, and a successful
+            # fallback above returns without ever needing it.
+            body = (
+                await _in_worker(_extract_text, soup) if extract_text else html
+            )
             return (
                 f"URL: {url}\nStatus: {response.status_code}\n{js_note}\n"
                 f"{_truncate(body, 10000)}"
@@ -775,7 +898,7 @@ class WebFetchTool(Tool):
             # third party or fetch it via a local headless browser.
             return f"Error: blocked outbound request — {e}"
         except httpx.TimeoutException:
-            fallback_result, fallback_error = self._run_fallback(
+            fallback_result, fallback_error = await self._run_fallback(
                 url, reason="httpx timeout", extract_text=extract_text
             )
             if fallback_result is not None:
@@ -785,7 +908,7 @@ class WebFetchTool(Tool):
                 message += f"\nFallback also failed: {fallback_error}"
             return message
         except httpx.HTTPError as e:
-            fallback_result, fallback_error = self._run_fallback(
+            fallback_result, fallback_error = await self._run_fallback(
                 url, reason=f"httpx error: {e}", extract_text=extract_text
             )
             if fallback_result is not None:
@@ -799,7 +922,7 @@ class WebFetchTool(Tool):
         except Exception as e:
             return f"Error: {e}"
 
-    def _run_fallback(
+    async def _run_fallback(
         self, url: str, *, reason: str, extract_text: bool = True
     ) -> tuple[str | None, str | None]:
         """Run the configured fallback; return ``(body, error)``.
@@ -826,26 +949,26 @@ class WebFetchTool(Tool):
             return None, None
         if self._fallback == _FALLBACK_JINA:
             logger.info("web_fetch fallback=jina for %s (%s)", url, reason)
-            return self._jina_fetch(url)
+            return await self._jina_fetch(url)
         logger.info("web_fetch fallback=playwright for %s (%s)", url, reason)
-        return self._playwright_fetch(url, extract_text=extract_text)
+        return await self._playwright_fetch(url, extract_text=extract_text)
 
-    def _jina_fetch(self, url: str) -> tuple[str | None, str | None]:
+    async def _jina_fetch(self, url: str) -> tuple[str | None, str | None]:
         label = f"jina reader ({_jina_proxy_url(url)})"
         try:
-            markdown = _fetch_via_jina(url)
+            markdown = await _fetch_via_jina(url)
         except Exception as e:
             logger.warning("jina reader failed for %s: %s", url, e)
             return None, f"{label}: {e}"
         return _format_fallback_body(url, label, markdown), None
 
-    def _playwright_fetch(
+    async def _playwright_fetch(
         self, url: str, *, extract_text: bool = True
     ) -> tuple[str | None, str | None]:
         label = "playwright (local headless browser)"
         try:
-            status, html = _run_async(
-                _render_with_playwright(url, allow_networks=self._allow_cidrs)
+            status, html = await _render_with_playwright(
+                url, allow_networks=self._allow_cidrs
             )
             # `page.goto` does not raise on 4xx/5xx, and this fallback is
             # reached *from* `except httpx.HTTPError` — so without this check a
@@ -853,7 +976,11 @@ class WebFetchTool(Tool):
             # as though it were the requested document.
             if status is not None and status >= 400:
                 return None, f"{label}: HTTP {status}"
-            body = _html_to_text(html) if extract_text else html
+            # Off the loop for the same reason as the httpx path: a rendered SPA
+            # DOM is the largest, least bounded HTML this tool ever parses.
+            body = (
+                await _in_worker(_html_to_text, html) if extract_text else html
+            )
         except ImportError as e:
             return None, (
                 f"{label}: playwright not installed — install with"

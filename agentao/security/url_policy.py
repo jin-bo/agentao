@@ -31,16 +31,26 @@ Scope is deliberately narrow:
   the resolved IP and connecting to it with a ``Host`` header. We match the
   resolve-then-check level rather than pin, which already closes every
   string-bypass and redirect vector above.
+
+Sync and async surfaces are paired: :func:`validate_outbound_url` /
+:func:`validate_outbound_url_async` and :func:`guarded_get` /
+:func:`guarded_get_async`. The async twins exist because ``getaddrinfo``
+blocks: on an event-loop thread a slow resolver stalls every other task on
+that loop, including the timers enforcing a caller's own deadline. There is
+still exactly **one** implementation of the policy — the async validator runs
+the sync one off-thread — so the two surfaces cannot drift apart.
 """
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import os
 import re
 import socket
-from typing import TYPE_CHECKING, Optional
+import threading
+from typing import TYPE_CHECKING, Any, Optional
 from urllib.parse import urljoin, urlparse
 
 if TYPE_CHECKING:
@@ -275,6 +285,176 @@ def _resolve_host_addresses(host: str, port: int) -> set[_IPAddress]:
     return addresses
 
 
+#: Ceiling on the off-loop resolution performed by
+#: :func:`validate_outbound_url_async` when the caller does not pass its own.
+#: Callers with a budget of their own should pass ``timeout=`` explicitly.
+#: Unbounded is not an option on the async path: the whole point is that the
+#: loop stays responsive, and an unbounded await would just move the stall from
+#: the loop thread to the caller's deadline.
+_DEFAULT_RESOLVE_TIMEOUT_S = 5.0
+
+#: Hard ceiling on live resolver threads for the whole process. A timed-out
+#: lookup thread is deliberately abandoned rather than joined (see
+#: :func:`_call_on_daemon_thread`), so without a cap a caller feeding
+#: randomised hostnames — which miss any per-origin cache by construction —
+#: could accumulate them until the process ran out. Refusing a check rejects
+#: the URL; failing closed is the safe direction.
+_POLICY_THREAD_HARD_CAP = 32
+
+_live_policy_threads = 0
+_policy_thread_lock = threading.Lock()
+
+
+def _call_on_daemon_thread(fn: Any, *args: Any, **kwargs: Any) -> "asyncio.Future":
+    """Run blocking ``fn`` on a daemon thread; return an awaitable future.
+
+    Not ``asyncio.to_thread``: that uses the loop's *default* executor, whose
+    threads are non-daemon and joined by ``asyncio.run`` during loop shutdown.
+    A ``getaddrinfo`` that outlives its ``wait_for`` budget would therefore
+    still hold up the caller on the way out — cancelling the future does not
+    cancel the thread — which defeats the very ceiling the budget enforces. A
+    daemon thread is simply abandoned instead.
+    """
+    global _live_policy_threads
+
+    loop = asyncio.get_running_loop()
+    future: "asyncio.Future" = loop.create_future()
+
+    with _policy_thread_lock:
+        if _live_policy_threads >= _POLICY_THREAD_HARD_CAP:
+            future.set_exception(
+                RuntimeError(
+                    f"{_live_policy_threads} outbound-policy lookups are still"
+                    " running; refusing this one rather than allowing it"
+                )
+            )
+            return future
+        _live_policy_threads += 1
+
+    released = False
+
+    def _release_slot() -> None:
+        """Return this call's slot to the cap. Idempotent, under the lock.
+
+        Two paths can reach it — ``_runner``'s ``finally`` and the
+        ``start()``-failed path below — and they are not mutually exclusive in
+        principle. Double-decrementing would drive the counter negative, which
+        does not merely miscount: it disables the cap, and the cap is the only
+        thing bounding threads that are deliberately abandoned.
+        """
+        global _live_policy_threads
+        nonlocal released
+        with _policy_thread_lock:
+            if released:
+                return
+            released = True
+            _live_policy_threads -= 1
+
+    def _settle(setter: Any, value: Any) -> None:
+        # The waiter may have timed out and cancelled; a cancelled future is
+        # done, so this is also what keeps the late thread from exploding.
+        if not future.done():
+            setter(value)
+
+    def _runner() -> None:
+        try:
+            try:
+                result = fn(*args, **kwargs)
+            except BaseException as exc:
+                setter, value = future.set_exception, exc
+            else:
+                setter, value = future.set_result, result
+            try:
+                loop.call_soon_threadsafe(_settle, setter, value)
+            except RuntimeError:
+                pass  # loop already closed — nobody is waiting on this any more
+        finally:
+            _release_slot()
+
+    try:
+        threading.Thread(
+            target=_runner, daemon=True, name="agentao-url-policy"
+        ).start()
+    except BaseException:
+        # ``start()`` can fail outright — most plausibly ``RuntimeError: can't
+        # start new thread`` when the process is at its OS thread limit. The slot
+        # was reserved above but ``_runner`` never ran, so its ``finally`` will
+        # never release it. Without this, each failure leaks a slot and the cap
+        # eventually refuses *every* check for the life of the process, long
+        # after the pressure that caused it cleared. Fail closed on this call,
+        # not on all future ones. Re-raised rather than set on the future so a
+        # ``KeyboardInterrupt`` still propagates as one.
+        _release_slot()
+        raise
+    return future
+
+
+async def validate_outbound_url_async(
+    url: str,
+    *,
+    allow_networks: tuple[_IPNetwork, ...] = (),
+    timeout: float = _DEFAULT_RESOLVE_TIMEOUT_S,
+) -> None:
+    """Async twin of :func:`validate_outbound_url` — same policy, off the loop.
+
+    Deliberately delegates to the sync function rather than reimplementing the
+    checks against an async resolver: the policy is security-critical and two
+    copies would drift. Only the *blocking* part is moved, onto a bounded
+    daemon thread.
+
+    Every failure is raised as :class:`UrlPolicyError`, including a lookup that
+    stalls past ``timeout`` or is refused by the thread cap. That is the same
+    fail-closed direction :func:`_resolve_host_addresses` already takes — "we
+    could not establish that this target is safe" is a rejection, never a pass —
+    and it means callers need exactly one ``except`` clause to stay closed.
+    """
+    try:
+        await asyncio.wait_for(
+            _call_on_daemon_thread(
+                validate_outbound_url, url, allow_networks=allow_networks
+            ),
+            timeout=timeout,
+        )
+    except UrlPolicyError:
+        raise
+    except asyncio.TimeoutError as exc:
+        # `asyncio.TimeoutError`, not the builtin: on 3.10 they are distinct
+        # classes and only this spelling catches what `wait_for` raises. On 3.11+
+        # they are the same object, hence also an ``OSError`` — which cannot
+        # confuse this branch, because a resolver timeout never reaches it:
+        # `_resolve_host_addresses` absorbs ``OSError`` and reports it as "host
+        # did not resolve", a ``UrlPolicyError`` handled above.
+        #
+        # The message matters — a bare ``TimeoutError`` has none, and the caller
+        # would surface "Error: " with nothing after it.
+        raise UrlPolicyError(
+            f"outbound policy check did not finish within {timeout}s: {url!r}"
+        ) from exc
+    except Exception as exc:
+        raise UrlPolicyError(
+            f"outbound policy check failed for {url!r}: {exc}"
+        ) from exc
+
+
+#: Statuses that carry a ``Location`` we are willing to chase.
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+def _redirect_target(response: Any, current: str) -> Optional[str]:
+    """Absolute URL of ``response``'s redirect, or ``None`` if it is the end.
+
+    Shared by :func:`guarded_get` and :func:`guarded_get_async` so the two
+    cannot disagree about what counts as a hop — the property the whole
+    per-hop re-validation rests on.
+    """
+    if response.status_code not in _REDIRECT_STATUSES:
+        return None
+    location = response.headers.get("location")
+    if not location:
+        return None
+    return urljoin(current, location)
+
+
 def guarded_get(
     client: "httpx.Client",
     url: str,
@@ -297,16 +477,48 @@ def guarded_get(
 
     Raises :class:`UrlPolicyError` on a disallowed target (initial or any
     hop) or when the redirect budget is exhausted.
+
+    agentao's own ``web_fetch`` uses :func:`guarded_get_async`; this sync form
+    stays for hosts fetching from sync code, where the blocking resolution it
+    performs is not a problem.
     """
     current = url
     for _ in range(max_redirects + 1):
         validate_outbound_url(current, allow_networks=allow_networks)
         response = client.get(current, headers=headers)
-        if response.status_code in (301, 302, 303, 307, 308):
-            location = response.headers.get("location")
-            if location:
-                response.close()
-                current = urljoin(current, location)
-                continue
-        return response
+        target = _redirect_target(response, current)
+        if target is None:
+            return response
+        response.close()
+        current = target
+    raise UrlPolicyError(f"too many redirects ({max_redirects}) for {url!r}")
+
+
+async def guarded_get_async(
+    client: "httpx.AsyncClient",
+    url: str,
+    *,
+    headers: Optional[dict[str, str]] = None,
+    max_redirects: int = _MAX_REDIRECTS,
+    allow_networks: tuple[_IPNetwork, ...] = (),
+    resolve_timeout: float = _DEFAULT_RESOLVE_TIMEOUT_S,
+) -> "httpx.Response":
+    """Async twin of :func:`guarded_get`; identical policy, per hop.
+
+    ``resolve_timeout`` bounds each hop's name resolution. The sync form
+    inherits ``getaddrinfo``'s own (effectively unbounded) behavior, which is
+    tolerable when it only blocks its own thread; here it would block the
+    caller's loop, so a budget is mandatory.
+    """
+    current = url
+    for _ in range(max_redirects + 1):
+        await validate_outbound_url_async(
+            current, allow_networks=allow_networks, timeout=resolve_timeout
+        )
+        response = await client.get(current, headers=headers)
+        target = _redirect_target(response, current)
+        if target is None:
+            return response
+        await response.aclose()
+        current = target
     raise UrlPolicyError(f"too many redirects ({max_redirects}) for {url!r}")
