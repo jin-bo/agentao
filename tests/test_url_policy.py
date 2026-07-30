@@ -502,6 +502,48 @@ def test_validate_async_refusal_over_the_thread_cap_is_a_rejection(monkeypatch):
     assert "refusing" in str(excinfo.value)
 
 
+def test_a_failed_thread_start_does_not_leak_a_cap_slot(monkeypatch):
+    """`Thread.start()` can fail — at the OS thread limit, for one.
+
+    The slot is reserved before the thread exists, and the runner's `finally` is
+    the only thing that releases it. If `start()` raises, that `finally` never
+    runs, so each failure would burn a slot permanently: the cap fills up and
+    every later check is refused for the life of the process, long after the
+    pressure cleared. Fail closed on the call, not on all future ones.
+    """
+    before = url_policy._live_policy_threads
+
+    class _RefusingThread:
+        def __init__(self, *a, **kw):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(url_policy.threading, "Thread", _RefusingThread)
+
+    for _ in range(3):
+        with pytest.raises(UrlPolicyError) as excinfo:
+            asyncio.run(url_policy.validate_outbound_url_async("http://example.com/"))
+        assert "can't start new thread" in str(excinfo.value)
+
+    assert url_policy._live_policy_threads == before, (
+        "a failed thread start leaked a slot from the process-wide cap"
+    )
+    assert url_policy._live_policy_threads >= 0, (
+        "the counter went negative — the cap is now permanently disabled, which "
+        "is a fail-*open*: nothing else bounds the abandoned lookup threads"
+    )
+
+    # And the very next check, with threads working again, must go through.
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        url_policy, "_resolve_host_addresses",
+        lambda host, port: {ipaddress.ip_address("93.184.216.34")},
+    )
+    asyncio.run(url_policy.validate_outbound_url_async("http://example.com/"))
+
+
 def test_validate_async_converts_an_unexpected_resolver_error(monkeypatch):
     """Fail closed: anything the resolver throws becomes a rejection, never a
     pass, and never an exception shape the caller has to know about."""
@@ -616,6 +658,47 @@ def test_redirect_decision_is_shared_by_both_surfaces():
         body = inspect.getsource(fn)
         assert "_redirect_target(" in body, f"{fn.__name__} bypasses the shared helper"
         assert "_REDIRECT_STATUSES" not in body
+
+
+def _redirect_handler(request):
+    import httpx
+
+    if request.url.path == "/start":
+        return httpx.Response(302, headers={"location": "https://8.8.8.8/next"})
+    return httpx.Response(200, text="final")
+
+
+def test_both_surfaces_chase_a_redirect_through_the_real_httpx():
+    """Drive the chase with real `httpx.Response` objects, not the fakes above.
+
+    The fakes implement `close` / `aclose` by construction, so they can only
+    confirm that the code calls *something*. What they cannot answer is whether
+    httpx tolerates being asked to release a response `client.get()` has already
+    read to completion — `Response.aclose()` raises `RuntimeError` outright when
+    handed a sync stream, and a redirect hop is the only place either function
+    releases anything. A public IP literal is used so no DNS is involved.
+    """
+    import httpx
+
+    async def via_async():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_redirect_handler),
+            follow_redirects=False,
+            timeout=5.0,
+        ) as client:
+            return await url_policy.guarded_get_async(client, "https://8.8.8.8/start")
+
+    with httpx.Client(
+        transport=httpx.MockTransport(_redirect_handler),
+        follow_redirects=False,
+        timeout=5.0,
+    ) as client:
+        sync_response = guarded_get(client, "https://8.8.8.8/start")
+
+    async_response = asyncio.run(via_async())
+
+    assert sync_response.status_code == async_response.status_code == 200
+    assert sync_response.text == async_response.text == "final"
 
 
 def test_async_call_sites_match_the_real_httpx():

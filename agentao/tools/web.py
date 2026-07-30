@@ -523,6 +523,19 @@ def _html_to_text(html: str) -> str:
     return _extract_text(BeautifulSoup(html, "html.parser"))
 
 
+def _parse_page(response: Any) -> tuple[str, "_BeautifulSoup_t", bool]:
+    """Decode, parse, and JS-sniff a response. Returns ``(html, soup, needs_js)``.
+
+    Grouped into one function so the whole CPU-bound stretch crosses to a worker
+    thread in a single hop (see the call site for why it must).
+    """
+    from bs4 import BeautifulSoup
+
+    html = response.text
+    soup = BeautifulSoup(html, "html.parser")
+    return html, soup, _needs_js_rendering(html, soup)
+
+
 def _run_coroutine_blocking(coro):
     """Drive ``coro`` to completion from synchronous code, nested loop or not.
 
@@ -670,7 +683,6 @@ class WebFetchTool(AsyncToolBase):
 
     async def async_execute(self, url: str, extract_text: bool = True) -> str:
         import httpx
-        from bs4 import BeautifulSoup
 
         headers = {"User-Agent": _USER_AGENT}
 
@@ -693,15 +705,24 @@ class WebFetchTool(AsyncToolBase):
                 )
                 response.raise_for_status()
 
-            html = response.text
-            # Parsed on the loop thread on purpose. `html.parser` is pure
-            # Python, so it holds the GIL for its whole run — handing it to
-            # `asyncio.to_thread` would move the stall without shortening it,
-            # while adding a non-daemon executor thread `asyncio.run` has to
-            # join on the way out.
-            soup = BeautifulSoup(html, "html.parser")
-
-            js_detected = _needs_js_rendering(html, soup)
+            # Off the loop thread. The body is remote input of unbounded size —
+            # httpx has already read all of it into memory — and decoding it,
+            # parsing it, and walking the tree are all pure-Python CPU work.
+            # Measured on a 2.2MB DOM (0.74s to parse): run inline on the loop, a
+            # 10ms heartbeat task ticks **0** times; via `to_thread` it ticks 31.
+            # CPython hands the GIL over every `sys.getswitchinterval()` (5ms
+            # default) between bytecodes, so a worker thread does not lock the
+            # loop out — it shares with it, and cancellation stays deliverable.
+            #
+            # This is also what the sync tool got for free: agentao dispatched it
+            # on an executor thread, so the parse was never on the loop. Keeping
+            # it inline here would have made the port a regression on exactly the
+            # axis it exists to improve.
+            #
+            # `to_thread`'s non-daemon executor thread is joined at
+            # `asyncio.run` shutdown — safe here, unlike for `getaddrinfo`,
+            # because a parse always terminates.
+            html, soup, js_detected = await asyncio.to_thread(_parse_page, response)
             fallback_error: str | None = None
             if js_detected:
                 fallback_result, fallback_error = await self._run_fallback(
@@ -727,7 +748,12 @@ class WebFetchTool(AsyncToolBase):
                     " (sends URL to r.jina.ai) or =playwright (local headless"
                     " browser) to enable a fallback.\n"
                 )
-            body = _extract_text(soup) if extract_text else html
+            # Second hop rather than folding this into `_parse_page`: the
+            # extraction walks and mutates the whole tree, and a successful
+            # fallback above returns without ever needing it.
+            body = (
+                await asyncio.to_thread(_extract_text, soup) if extract_text else html
+            )
             return (
                 f"URL: {url}\nStatus: {response.status_code}\n{js_note}\n"
                 f"{_truncate(body, 10000)}"
@@ -817,7 +843,11 @@ class WebFetchTool(AsyncToolBase):
             # as though it were the requested document.
             if status is not None and status >= 400:
                 return None, f"{label}: HTTP {status}"
-            body = _html_to_text(html) if extract_text else html
+            # Off the loop for the same reason as the httpx path: a rendered SPA
+            # DOM is the largest, least bounded HTML this tool ever parses.
+            body = (
+                await asyncio.to_thread(_html_to_text, html) if extract_text else html
+            )
         except ImportError as e:
             return None, (
                 f"{label}: playwright not installed — install with"

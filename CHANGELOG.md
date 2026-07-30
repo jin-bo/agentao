@@ -54,12 +54,18 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   bridge rather than improving it, and the runtime's existing `AsyncToolBase`
   dispatch gains token-driven cancellation on this tool for free.
 
-  Two other blocking calls on the same path went with it: the HTTP fetch now
-  uses `httpx.AsyncClient` (via the new `guarded_get_async`), and the SSRF
-  policy's `socket.getaddrinfo` runs on a bounded off-loop thread. The
-  BeautifulSoup parse deliberately stays on the loop thread — `html.parser` is
-  pure Python and holds the GIL, so `asyncio.to_thread` would relocate the
-  stall without shortening it.
+  Every other blocking call on the same path went with it, since fixing only
+  the fallback would have moved the ceiling without changing its nature: the
+  HTTP fetch uses `httpx.AsyncClient` (via the new `guarded_get_async`), the
+  SSRF policy's `socket.getaddrinfo` runs on a bounded off-loop thread, and the
+  HTML decode / parse / text-extraction runs on a worker thread. That last one
+  matters more than it looks: on a 2.2MB DOM (~0.7s in `html.parser`) a 10ms
+  heartbeat task ticks **0** times with the parse inline and ~31 with it on a
+  thread — CPython hands the GIL over every `sys.getswitchinterval()` between
+  bytecodes, so a worker shares the CPU with the loop rather than locking it
+  out. It is also what the sync tool got for free by being dispatched on an
+  executor thread, so leaving it inline would have made this port a regression
+  on its own headline axis.
 
   Hosts that call `WebFetchTool().execute(...)` from ordinary synchronous code
   are unaffected. Hosts already on a loop should switch to
@@ -86,6 +92,12 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
   now **bounded** (30s per hop, matching the request timeout). It previously
   inherited `getaddrinfo`'s effectively unbounded behavior, which was tolerable
   only because it blocked its own thread.
+
+  A latent bug in the resolver-thread accounting went with it: the process-wide
+  cap reserves a slot before starting the thread, and only the thread's own
+  `finally` releases it — so a `Thread.start()` that failed (at the OS thread
+  limit, say) burned a slot permanently. Enough failures and every later policy
+  check is refused for the life of the process, long after the pressure cleared.
 
 - **BREAKING: the `[crawl4ai]` extra is replaced by `[playwright]`, and
   `AGENTAO_WEB_FETCH_FALLBACK=crawl4ai` is renamed to `=playwright`.**
