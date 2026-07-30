@@ -523,6 +523,65 @@ def _html_to_text(html: str) -> str:
     return _extract_text(BeautifulSoup(html, "html.parser"))
 
 
+#: How long a cancelled fetch waits for its in-flight parse to finish before
+#: giving up and letting it run unwatched. Mirrors the bounded cleanup-ack the
+#: AsyncTool dispatcher already uses (``tool_executor._run_async_tool``): a
+#: pathological document must not be able to hold a cancellation open forever.
+_CPU_CANCEL_DRAIN_TIMEOUT_S = 10.0
+
+
+async def _in_worker(fn: Any, *args: Any) -> Any:
+    """Run blocking CPU work on a worker thread without orphaning it on cancel.
+
+    ``asyncio.to_thread`` cancels only the *awaiter*. The worker runs to
+    completion regardless — there is no way to interrupt a Python call from
+    outside it — so returning straight away would leave a multi-megabyte DOM
+    parse burning CPU and holding its memory with nobody waiting on the result.
+    A host that cancels fetches repeatedly could stack several of those up.
+
+    Since the work will finish either way, waiting for it is the honest choice:
+    the canceller pays latency it was going to pay anyway, and nothing outlives
+    the call. The wait is bounded — if it expires we are back to orphaning, but
+    loudly rather than silently.
+
+    Two scope notes, because the budget above does less than it looks like:
+
+    * It bounds the **persistent-host-loop** case, which is the one that can
+      accumulate orphans: the loop keeps running, so nothing else would ever
+      wait for the worker.
+    * It does **not** make an ``asyncio.run`` caller (the sync ``execute``
+      wrapper) return promptly — that loop joins its default executor during
+      shutdown regardless. Fine here, and deliberately not the choice made for
+      ``getaddrinfo``: a parse always terminates, a name lookup may not.
+
+    The default executor, rather than a daemon thread per call, for the same
+    reason: it caps concurrent parses at its worker count. A thread per parse
+    would trade a bounded pool that gets joined for an unbounded one that does
+    not, which is the problem ``url_policy._POLICY_THREAD_HARD_CAP`` exists to
+    patch over on the lookup path.
+    """
+    task = asyncio.ensure_future(asyncio.to_thread(fn, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task), timeout=_CPU_CANCEL_DRAIN_TIMEOUT_S
+            )
+        except (Exception, asyncio.CancelledError):
+            # Either the work itself failed — irrelevant, we are unwinding — or
+            # the drain budget expired, or the canceller re-cancelled us while we
+            # waited. Report only the case a reader would care about.
+            if not task.done():
+                logger.warning(
+                    "cancelled fetch left %s running after %ss; it holds CPU and"
+                    " memory until it finishes",
+                    getattr(fn, "__name__", fn),
+                    _CPU_CANCEL_DRAIN_TIMEOUT_S,
+                )
+        raise
+
+
 def _parse_page(response: Any) -> tuple[str, "_BeautifulSoup_t", bool]:
     """Decode, parse, and JS-sniff a response. Returns ``(html, soup, needs_js)``.
 
@@ -722,7 +781,7 @@ class WebFetchTool(AsyncToolBase):
             # `to_thread`'s non-daemon executor thread is joined at
             # `asyncio.run` shutdown — safe here, unlike for `getaddrinfo`,
             # because a parse always terminates.
-            html, soup, js_detected = await asyncio.to_thread(_parse_page, response)
+            html, soup, js_detected = await _in_worker(_parse_page, response)
             fallback_error: str | None = None
             if js_detected:
                 fallback_result, fallback_error = await self._run_fallback(
@@ -752,7 +811,7 @@ class WebFetchTool(AsyncToolBase):
             # extraction walks and mutates the whole tree, and a successful
             # fallback above returns without ever needing it.
             body = (
-                await asyncio.to_thread(_extract_text, soup) if extract_text else html
+                await _in_worker(_extract_text, soup) if extract_text else html
             )
             return (
                 f"URL: {url}\nStatus: {response.status_code}\n{js_note}\n"
@@ -846,7 +905,7 @@ class WebFetchTool(AsyncToolBase):
             # Off the loop for the same reason as the httpx path: a rendered SPA
             # DOM is the largest, least bounded HTML this tool ever parses.
             body = (
-                await asyncio.to_thread(_html_to_text, html) if extract_text else html
+                await _in_worker(_html_to_text, html) if extract_text else html
             )
         except ImportError as e:
             return None, (

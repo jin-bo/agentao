@@ -650,14 +650,14 @@ def test_redirect_decision_is_shared_by_both_surfaces():
     Two copies of that predicate is how per-hop re-validation silently stops
     covering a status one side forgot.
     """
-    src = inspect.getsource(url_policy)
-    assert src.count("_REDIRECT_STATUSES") == 2, (
-        "the redirect status set should be defined once and read once"
-    )
+    assert "_REDIRECT_STATUSES" in inspect.getsource(url_policy._redirect_target)
     for fn in (url_policy.guarded_get, url_policy.guarded_get_async):
         body = inspect.getsource(fn)
         assert "_redirect_target(" in body, f"{fn.__name__} bypasses the shared helper"
+        # Not a count over the whole module — a mention in a comment elsewhere
+        # is not a defect. What matters is that neither chase decides for itself.
         assert "_REDIRECT_STATUSES" not in body
+        assert "301" not in body and "302" not in body
 
 
 def _redirect_handler(request):
