@@ -23,8 +23,20 @@ def safe_load_dotenv(dotenv_path: Optional[Union[str, Path]] = None) -> None:
 
     ``dotenv_values`` parses the file in pure Python without touching
     ``os.environ``, so it does not raise on NUL-containing values. We
-    then strip NULs and assign via ``setdefault`` to match the default
-    no-override behavior of ``load_dotenv``.
+    then strip NULs and assign, preserving the default no-override
+    behavior of ``load_dotenv`` — with one deliberate exception.
+
+    **Present-but-empty is treated as absent.** A plain ``setdefault``
+    lets an empty string in the ambient environment permanently mask the
+    real value in ``.env``: the key *is* set, so no-override declines to
+    write, and every downstream ``os.getenv`` sees ``""``. That is not
+    hypothetical — Claude Code injects ``ANTHROPIC_API_KEY=""`` into
+    child processes to neuter their LLM calls, so any agentao invoked
+    from a Claude Code session fails with "no API key" while a valid key
+    sits unread in ``.env``. An empty or whitespace-only value carries no
+    configuration meaning, so letting ``.env`` fill it in loses nothing
+    and unbreaks that case. A non-empty ambient value still wins, which
+    is the part of no-override callers actually rely on.
     """
     path = str(dotenv_path) if dotenv_path is not None else find_dotenv(usecwd=True)
     if not path:
@@ -32,4 +44,6 @@ def safe_load_dotenv(dotenv_path: Optional[Union[str, Path]] = None) -> None:
     for key, value in dotenv_values(path).items():
         if value is None:
             continue
-        os.environ.setdefault(key, value.replace("\x00", ""))
+        if os.environ.get(key, "").strip():
+            continue  # a real ambient value wins (load_dotenv's no-override)
+        os.environ[key] = value.replace("\x00", "")
