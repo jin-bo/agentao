@@ -15,6 +15,18 @@ _Targeting 0.4.19. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **An empty ambient env var no longer permanently masks the real value in
+  `.env`.** `safe_load_dotenv` assigned via `os.environ.setdefault`, so a key
+  that was *present but empty* counted as set: no-override declined to write,
+  and every downstream `os.getenv` saw `""` forever. This is not hypothetical
+  — Claude Code injects `ANTHROPIC_API_KEY=""` into child processes to neuter
+  their LLM calls, so **any agentao invoked from a Claude Code session failed
+  with "no API key" while a valid key sat unread in `.env`**. Present-but-empty
+  (or whitespace-only) is now treated as absent; a non-empty ambient value
+  still wins, which is the part of no-override callers actually rely on. NUL
+  scrubbing — the reason this wrapper exists — is unchanged and now covered by
+  a test. See `tests/test_env_dotenv.py`.
+
 ---
 
 ## [0.4.18] — 2026-07-30
