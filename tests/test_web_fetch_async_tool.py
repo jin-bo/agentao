@@ -206,6 +206,93 @@ def test_async_execute_leaves_the_loop_free_but_the_sync_wrapper_does_not(monkey
     )
 
 
+#: Big enough to take a measurable fraction of a second in `html.parser`, which
+#: is what a remote page can hand us: httpx reads the whole body into memory
+#: before anything caps it.
+_BIG_DOM = (
+    "<html><body>"
+    + "".join(f"<div class='r'><p>row {i}</p></div>" for i in range(60000))
+    + "</body></html>"
+)
+
+
+def test_parsing_a_large_dom_does_not_freeze_the_loop(monkeypatch):
+    """Decode + parse + JS-sniff is CPU-bound on unbounded remote input.
+
+    Measured on this DOM (~2.2MB, ~0.7s to parse): run inline on the loop, a
+    10ms heartbeat ticks **0** times; on a worker thread it ticks ~31. CPython
+    yields the GIL every `sys.getswitchinterval()` (5ms) between bytecodes, so a
+    worker shares with the loop instead of locking it out, and cancellation stays
+    deliverable. An earlier comment in `web.py` claimed the opposite — that pure
+    Python holds the GIL for its whole run — and the numbers above are why it no
+    longer does.
+
+    This is also what the sync tool had for free: agentao dispatched it on an
+    executor thread, so the parse was never on the loop. Leaving it inline would
+    have made the port a regression on the one axis it exists to improve.
+
+    `extract_text=False` on purpose — it is what makes this measure the *parse*.
+    With extraction enabled, its own off-loop hop would supply the ticks and this
+    would still pass with the parse moved back onto the loop.
+    """
+    _stub_primary(monkeypatch, _FakeResponse(text=_BIG_DOM))
+    monkeypatch.delenv("AGENTAO_WEB_FETCH_FALLBACK", raising=False)
+    tool = WebFetchTool()
+
+    async def drive():
+        return await _ticks_while(
+            lambda: tool.async_execute("https://x.test/", extract_text=False)
+        )
+
+    (out, ticks) = asyncio.run(drive())
+
+    assert "Status: 200" in out
+    assert ticks > 0, "the event loop was frozen for the whole parse"
+
+
+def test_text_extraction_is_also_off_the_loop(monkeypatch):
+    """The second hop, isolated by making only *it* slow.
+
+    A blocking `time.sleep` is the probe rather than a big DOM: it freezes a loop
+    thread outright and cannot be starved of the GIL, so the tick count answers
+    "was this call dispatched off the loop" and nothing else.
+    """
+    def slow_extract(soup):
+        time.sleep(_SLOW_S)
+        return "extracted"
+
+    _stub_primary(monkeypatch)
+    monkeypatch.setattr(web_mod, "_extract_text", slow_extract)
+    monkeypatch.delenv("AGENTAO_WEB_FETCH_FALLBACK", raising=False)
+    tool = WebFetchTool()
+
+    async def drive():
+        return await _ticks_while(lambda: tool.async_execute("https://x.test/"))
+
+    (out, ticks) = asyncio.run(drive())
+
+    assert "extracted" in out
+    assert ticks > 0, "text extraction ran on the loop thread"
+
+
+def test_a_rendered_dom_is_also_extracted_off_the_loop(monkeypatch):
+    """The fallback's DOM is the largest, least bounded HTML this tool parses."""
+    async def fake_render(url, **kwargs):
+        return 200, _BIG_DOM
+
+    monkeypatch.setattr(web_mod, "_render_with_playwright", fake_render)
+    _stub_primary(monkeypatch)
+    tool = _tool(monkeypatch)
+
+    async def drive():
+        return await _ticks_while(lambda: tool.async_execute("https://x.test/"))
+
+    (out, ticks) = asyncio.run(drive())
+
+    assert "Fallback: playwright" in out
+    assert ticks > 0, "the event loop was frozen extracting the rendered DOM"
+
+
 def test_the_primary_fetch_keeps_the_loop_free_during_resolution(monkeypatch):
     """The httpx leg blocks too, and for longer than anyone expects.
 

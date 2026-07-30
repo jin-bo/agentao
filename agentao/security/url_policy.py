@@ -331,6 +331,25 @@ def _call_on_daemon_thread(fn: Any, *args: Any, **kwargs: Any) -> "asyncio.Futur
             return future
         _live_policy_threads += 1
 
+    released = False
+
+    def _release_slot() -> None:
+        """Return this call's slot to the cap. Idempotent, under the lock.
+
+        Two paths can reach it — ``_runner``'s ``finally`` and the
+        ``start()``-failed path below — and they are not mutually exclusive in
+        principle. Double-decrementing would drive the counter negative, which
+        does not merely miscount: it disables the cap, and the cap is the only
+        thing bounding threads that are deliberately abandoned.
+        """
+        global _live_policy_threads
+        nonlocal released
+        with _policy_thread_lock:
+            if released:
+                return
+            released = True
+            _live_policy_threads -= 1
+
     def _settle(setter: Any, value: Any) -> None:
         # The waiter may have timed out and cancelled; a cancelled future is
         # done, so this is also what keeps the late thread from exploding.
@@ -338,7 +357,6 @@ def _call_on_daemon_thread(fn: Any, *args: Any, **kwargs: Any) -> "asyncio.Futur
             setter(value)
 
     def _runner() -> None:
-        global _live_policy_threads
         try:
             try:
                 result = fn(*args, **kwargs)
@@ -351,12 +369,23 @@ def _call_on_daemon_thread(fn: Any, *args: Any, **kwargs: Any) -> "asyncio.Futur
             except RuntimeError:
                 pass  # loop already closed — nobody is waiting on this any more
         finally:
-            with _policy_thread_lock:
-                _live_policy_threads -= 1
+            _release_slot()
 
-    threading.Thread(
-        target=_runner, daemon=True, name="agentao-url-policy"
-    ).start()
+    try:
+        threading.Thread(
+            target=_runner, daemon=True, name="agentao-url-policy"
+        ).start()
+    except BaseException:
+        # ``start()`` can fail outright — most plausibly ``RuntimeError: can't
+        # start new thread`` when the process is at its OS thread limit. The slot
+        # was reserved above but ``_runner`` never ran, so its ``finally`` will
+        # never release it. Without this, each failure leaks a slot and the cap
+        # eventually refuses *every* check for the life of the process, long
+        # after the pressure that caused it cleared. Fail closed on this call,
+        # not on all future ones. Re-raised rather than set on the future so a
+        # ``KeyboardInterrupt`` still propagates as one.
+        _release_slot()
+        raise
     return future
 
 
