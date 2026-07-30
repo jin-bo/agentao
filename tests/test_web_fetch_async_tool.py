@@ -24,6 +24,7 @@ import inspect
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -292,6 +293,90 @@ def test_a_rendered_dom_is_also_extracted_off_the_loop(monkeypatch):
 
     assert "Fallback: playwright" in out
     assert ticks > 0, "the event loop was frozen extracting the rendered DOM"
+
+
+def test_the_html_pool_is_not_the_loops_default_executor(monkeypatch):
+    """A fetch must not need a worker from the pool `arun` is sitting in.
+
+    `Agentao.arun` parks the whole `chat()` turn on the loop's **default**
+    executor (`agent.py`: `loop.run_in_executor(None, self.chat, ...)`), and that
+    worker then blocks in `tool_executor._run_async_tool` waiting on this very
+    coroutine. Asking the same pool for a parse worker is a pool-exhaustion
+    deadlock: measured, a default executor with one free worker hangs the fetch
+    outright, and `max_workers` concurrent turns reproduce it on a normal pool.
+
+    Driven here by starving the default executor completely — every worker busy
+    and staying busy — and asserting the fetch still finishes.
+    """
+    async def fake_render(url, **kwargs):
+        return 200, "<html><body><p>done anyway</p></body></html>"
+
+    monkeypatch.setattr(web_mod, "_render_with_playwright", fake_render)
+    _stub_primary(monkeypatch)
+    tool = _tool(monkeypatch)
+
+    running = threading.Event()
+    release = threading.Event()
+
+    def hog():
+        running.set()
+        release.wait(timeout=30)
+
+    async def drive():
+        loop = asyncio.get_running_loop()
+        starved = ThreadPoolExecutor(max_workers=1)
+        loop.set_default_executor(starved)
+        # Occupy the one and only default-executor worker — this stands in for
+        # the `chat()` turn `arun` parks there — and wait until it is genuinely
+        # running before the fetch begins.
+        hogged = loop.run_in_executor(None, hog)
+        while not running.is_set():
+            await asyncio.sleep(0.005)
+        try:
+            return await asyncio.wait_for(
+                tool.async_execute("https://x.test/"), timeout=10
+            )
+        finally:
+            release.set()
+            await hogged
+            starved.shutdown(wait=True)
+
+    out = asyncio.run(drive())
+    assert "done anyway" in out
+
+
+def test_the_html_pool_is_bounded_and_shared(monkeypatch):
+    """One small pool for the process, not one per tool instance."""
+    monkeypatch.setattr(web_mod, "_cpu_pool", None)
+    pool = web_mod._get_cpu_pool()
+    try:
+        assert pool is web_mod._get_cpu_pool(), "a second call built a second pool"
+        assert pool._max_workers == web_mod._CPU_POOL_MAX_WORKERS  # noqa: SLF001
+        assert pool._max_workers <= 8, "an unbounded parse pool defeats the point"
+    finally:
+        pool.shutdown(wait=False)
+        web_mod._cpu_pool = None
+
+
+def test_the_drain_fits_inside_the_dispatcher_ack_budget():
+    """The drain must finish before the dispatcher stops waiting for it.
+
+    `_run_async_tool` waits `_ASYNC_CANCEL_ACK_TIMEOUT_S` for this coroutine's
+    cleanup, then emits `TOOL_COMPLETE` regardless. A drain longer than that
+    budget produces exactly the detached work the drain exists to prevent, with
+    the invocation already reported complete — so the relation is asserted rather
+    than left to a comment. Not an import in `web.py`: tools do not depend on the
+    runtime, so this test is the coupling.
+    """
+    from agentao.runtime import tool_executor
+
+    assert (
+        web_mod._CPU_CANCEL_DRAIN_TIMEOUT_S
+        < tool_executor._ASYNC_CANCEL_ACK_TIMEOUT_S
+    ), (
+        f"drain {web_mod._CPU_CANCEL_DRAIN_TIMEOUT_S}s >= dispatcher ack "
+        f"{tool_executor._ASYNC_CANCEL_ACK_TIMEOUT_S}s"
+    )
 
 
 # --------------------------------------------------------------------------

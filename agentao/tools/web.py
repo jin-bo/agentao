@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import quote_plus, urlparse, urlunparse
@@ -524,20 +525,66 @@ def _html_to_text(html: str) -> str:
 
 
 #: How long a cancelled fetch waits for its in-flight parse to finish before
-#: giving up and letting it run unwatched. Mirrors the bounded cleanup-ack the
-#: AsyncTool dispatcher already uses (``tool_executor._run_async_tool``): a
-#: pathological document must not be able to hold a cancellation open forever.
-_CPU_CANCEL_DRAIN_TIMEOUT_S = 10.0
+#: giving up and letting it run unwatched. Must stay **below**
+#: ``tool_executor._ASYNC_CANCEL_ACK_TIMEOUT_S`` (5s): that is how long the
+#: AsyncTool dispatcher waits for this coroutine's cleanup before it emits
+#: ``TOOL_COMPLETE`` and moves on. Draining for longer than the dispatcher will
+#: wait produces exactly the detached work this drain exists to prevent, only
+#: now with the invocation already reported complete. Not imported from
+#: ``runtime`` — tools do not depend on the runtime — so
+#: ``test_the_drain_fits_inside_the_dispatcher_ack_budget`` pins the relation.
+_CPU_CANCEL_DRAIN_TIMEOUT_S = 3.0
+
+#: Workers for the HTML pool below. Small on purpose: it bounds how many
+#: multi-megabyte parses can be in flight at once, and parsing is CPU-bound, so
+#: more threads than a handful buy nothing but memory.
+_CPU_POOL_MAX_WORKERS = 4
+
+_cpu_pool: Optional[ThreadPoolExecutor] = None
+_cpu_pool_lock = threading.Lock()
+
+
+def _get_cpu_pool() -> ThreadPoolExecutor:
+    """The dedicated pool for this tool's blocking HTML work.
+
+    **Not the loop's default executor**, which is what ``asyncio.to_thread``
+    would use — and which is where :meth:`Agentao.arun` parks ``chat()`` for the
+    whole turn (``agent.py``, ``loop.run_in_executor(None, self.chat, ...)``).
+    That worker then blocks in ``tool_executor._run_async_tool`` waiting on this
+    very coroutine, so asking the same pool for a parse worker is a textbook
+    pool-exhaustion deadlock: measured, a default executor with one free worker
+    hangs the fetch outright, and ``max_workers`` concurrent turns reproduce it
+    on a normally-sized pool.
+
+    Created lazily so a host that never fetches never pays for the threads, and
+    shared across instances rather than per-tool so N registrations do not mean
+    N pools. ``ThreadPoolExecutor``'s own ``atexit`` hook retires idle workers,
+    so a module-level pool does not hold the interpreter open.
+
+    (``arun`` monopolising the *default* executor is a hazard for any future
+    async tool that reaches for ``to_thread``; giving it its own executor would
+    fix the class rather than this instance, but that is a core-runtime change
+    and not this tool's call to make.)
+    """
+    global _cpu_pool
+    with _cpu_pool_lock:
+        if _cpu_pool is None:
+            _cpu_pool = ThreadPoolExecutor(
+                max_workers=_CPU_POOL_MAX_WORKERS,
+                thread_name_prefix="agentao-web-html",
+            )
+        return _cpu_pool
 
 
 async def _in_worker(fn: Any, *args: Any) -> Any:
     """Run blocking CPU work on a worker thread without orphaning it on cancel.
 
-    ``asyncio.to_thread`` cancels only the *awaiter*. The worker runs to
-    completion regardless — there is no way to interrupt a Python call from
-    outside it — so returning straight away would leave a multi-megabyte DOM
-    parse burning CPU and holding its memory with nobody waiting on the result.
-    A host that cancels fetches repeatedly could stack several of those up.
+    Cancelling an executor future that has already started cancels only the
+    *awaiter*. The worker runs to completion regardless — there is no way to
+    interrupt a Python call from outside it — so returning straight away would
+    leave a multi-megabyte DOM parse burning CPU and holding its memory with
+    nobody waiting on the result. A host that cancels fetches repeatedly could
+    stack several of those up.
 
     Since the work will finish either way, waiting for it is the honest choice:
     the canceller pays latency it was going to pay anyway, and nothing outlives
@@ -549,18 +596,19 @@ async def _in_worker(fn: Any, *args: Any) -> Any:
     * It bounds the **persistent-host-loop** case, which is the one that can
       accumulate orphans: the loop keeps running, so nothing else would ever
       wait for the worker.
-    * It does **not** make an ``asyncio.run`` caller (the sync ``execute``
-      wrapper) return promptly — that loop joins its default executor during
-      shutdown regardless. Fine here, and deliberately not the choice made for
-      ``getaddrinfo``: a parse always terminates, a name lookup may not.
+    * It does **not** guarantee prompt process exit — ``ThreadPoolExecutor``'s
+      ``atexit`` hook joins in-flight work. Fine here, and deliberately not the
+      choice made for ``getaddrinfo``: a parse always terminates, a name lookup
+      may not.
 
-    The default executor, rather than a daemon thread per call, for the same
-    reason: it caps concurrent parses at its worker count. A thread per parse
-    would trade a bounded pool that gets joined for an unbounded one that does
-    not, which is the problem ``url_policy._POLICY_THREAD_HARD_CAP`` exists to
-    patch over on the lookup path.
+    A bounded pool rather than a daemon thread per call, because it caps
+    concurrent parses. A thread per parse would trade a bounded pool that gets
+    joined for an unbounded one that does not — the problem
+    ``url_policy._POLICY_THREAD_HARD_CAP`` exists to patch over on the lookup
+    path, where abandonment is mandatory and so a cap has to be bolted on.
     """
-    task = asyncio.ensure_future(asyncio.to_thread(fn, *args))
+    loop = asyncio.get_running_loop()
+    task = asyncio.ensure_future(loop.run_in_executor(_get_cpu_pool(), fn, *args))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
@@ -768,7 +816,7 @@ class WebFetchTool(AsyncToolBase):
             # httpx has already read all of it into memory — and decoding it,
             # parsing it, and walking the tree are all pure-Python CPU work.
             # Measured on a 2.2MB DOM (0.74s to parse): run inline on the loop, a
-            # 10ms heartbeat task ticks **0** times; via `to_thread` it ticks 31.
+            # 10ms heartbeat task ticks **0** times; on a worker it ticks 31.
             # CPython hands the GIL over every `sys.getswitchinterval()` (5ms
             # default) between bytecodes, so a worker thread does not lock the
             # loop out — it shares with it, and cancellation stays deliverable.
@@ -778,9 +826,9 @@ class WebFetchTool(AsyncToolBase):
             # it inline here would have made the port a regression on exactly the
             # axis it exists to improve.
             #
-            # `to_thread`'s non-daemon executor thread is joined at
-            # `asyncio.run` shutdown — safe here, unlike for `getaddrinfo`,
-            # because a parse always terminates.
+            # The pool is this tool's own, not the loop's default executor:
+            # `arun` parks `chat()` there for the whole turn, so borrowing from
+            # it deadlocks. See `_get_cpu_pool`.
             html, soup, js_detected = await _in_worker(_parse_page, response)
             fallback_error: str | None = None
             if js_detected:
