@@ -199,7 +199,7 @@ class WebSearchTool(Tool):
 |---|---|---|---|
 | `web_search` | `backend`, `api_key` | `BOCHA_API_KEY` | The §1 multi-instance env leak — a **demonstrated** defect, not "might be useful" |
 
-**`web_fetch`'s `fallback`: same-class multi-instance crack** (`WebFetchTool.__init__` likewise reads the process-global `AGENTAO_WEB_FETCH_FALLBACK`, `web.py:139/30`), **but its env is a non-secret, deployment-level mode switch (none/jina/crawl4ai) with low per-instance-variance priority, so it is deferred in v1.** Detailed rationale left to a follow-up issue/ADR.
+**`web_fetch`'s `fallback`: same-class multi-instance crack** (`WebFetchTool.__init__` likewise reads the process-global `AGENTAO_WEB_FETCH_FALLBACK`, `web.py:139/30`), **but its env is a non-secret, deployment-level mode switch (none/jina/playwright) with low per-instance-variance priority, so it is deferred in v1.** Detailed rationale left to a follow-up issue/ADR.
 
 **The genuinely "might be useful" tier**: `read/write`'s `max_bytes/max_lines`, shell's `timeout/prefix` — no evidence agentao needs them now; add them one tool at a time when a concrete need appears.
 

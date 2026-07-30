@@ -101,18 +101,20 @@ pip install 'agentao[cli]'       # rich + prompt-toolkit + readchar + pygments
 pip install 'agentao[web]'       # beautifulsoup4 — required for web_fetch / web_search
 pip install 'agentao[i18n]'      # jieba — Chinese-text memory recall
 
-# Heavy file-format tools
-pip install 'agentao[pdf]'       # PDF reading (pymupdf, pdfplumber)
-pip install 'agentao[excel]'     # Excel read/write (pandas, openpyxl)
-pip install 'agentao[image]'     # Image processing (Pillow)
-pip install 'agentao[crypto]'    # pycryptodome
-pip install 'agentao[google]'    # google-genai
-pip install 'agentao[crawl4ai]'  # crawl4ai
-pip install 'agentao[tokenizer]' # tiktoken — precise token accounting
+# Heavier optional capabilities
+pip install 'agentao[playwright]'  # local headless Chromium — JS-rendering
+                                   # fallback for web_fetch. Also needs
+                                   # `playwright install chromium`.
+pip install 'agentao[tokenizer]'   # tiktoken — precise token accounting
 
 # Meta extras
-pip install 'agentao[full]'      # Everything (0.3.x-equivalent closure)
+pip install 'agentao[full]'        # cli + web + i18n + playwright + tokenizer
 ```
+
+> The `[pdf]` / `[excel]` / `[image]` / `[crypto]` / `[google]` extras were
+> **removed in 0.4.12** (zero in-tree consumers — see
+> `docs/design/optimization-opportunities-review.md` T1.1), and `[crawl4ai]`
+> was **replaced by `[playwright]` in 0.4.18**. None of them resolve any more.
 
 > Without `[web]`, the registry **omits** `web_fetch` and `web_search` entirely
 > — the model will not see them in its tool schema, avoiding the trap where a

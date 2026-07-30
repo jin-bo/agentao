@@ -208,6 +208,6 @@ Open source. Use and modify as needed.
 
 - LLM client: [OpenAI Python SDK](https://github.com/openai/openai-python)
 - CLI: [Rich](https://github.com/Textualize/rich) · [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) · [readchar](https://github.com/magmax/python-readchar)
-- Optional web fetch: [Crawl4AI](https://github.com/unclecode/crawl4ai)
+- Optional local JS rendering for `web_fetch`: [Playwright](https://github.com/microsoft/playwright-python)
 - MCP: [Model Context Protocol SDK](https://github.com/modelcontextprotocol/python-sdk) — architecture inspired by [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 - Inspired by [Claude Code](https://github.com/anthropics/claude-code)

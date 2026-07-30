@@ -11,9 +11,226 @@ _Targeting 0.4.18. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`[playwright]` extra** — the local headless-browser fallback for
+  `web_fetch`, now driving Playwright directly. Pulls `[web]` because the
+  fallback reuses the same BeautifulSoup extraction as the primary path.
+  Still requires `playwright install chromium` on top of the pip install; a
+  missing browser binary surfaces at render time (Playwright reports it at
+  launch, not at import) and is returned as a normal tool error.
+
+- **Tests for the `web_fetch` local-render fallback**
+  (`tests/test_web_fetch_playwright_fallback.py`). Its crawl4ai predecessor
+  shipped from 0.4.7 to 0.4.17 with **zero** coverage — the only reference to
+  it under `tests/` was a `monkeypatch.delenv` clearing its env var. Covers
+  selection, dispatch, both setup failures, the retired-value alias, the
+  nested-event-loop path, and the SSRF invariant that a blocked target never
+  reaches Chromium. One test introspects the **real** installed Playwright
+  signatures rather than a fake, and CI's test job installs the extra so it
+  cannot silently `importorskip` into retirement.
+
 ### Changed
 
+- **BREAKING: the `[crawl4ai]` extra is replaced by `[playwright]`, and
+  `AGENTAO_WEB_FETCH_FALLBACK=crawl4ai` is renamed to `=playwright`.**
+
+  agentao only ever used ~9 lines of crawl4ai as a "render page → markdown"
+  wrapper, and paid 51 transitive packages for it — 48% of the entire `[full]`
+  closure — including two browser-automation stacks (playwright *and*
+  patchright), a computational-geometry stack (numpy/scipy/shapely/trimesh/
+  rtree/networkx/alphashape), an NLP stack (nltk/tokenizers/huggingface-hub),
+  and an LLM client. crawl4ai 0.9.2 additionally swapped its `litellm`
+  dependency for `unclecode-litellm`, a fork published by crawl4ai's own
+  author. The behavior agentao wanted — render locally, never proxy through a
+  third party — is unchanged; only the engine underneath it is.
+
+  `[full]` goes from **107 packages to 59**.
+
+  **Migration:** `pip install 'agentao[playwright]'` (or `[full]`) and
+  `playwright install chromium`, then set
+  `AGENTAO_WEB_FETCH_FALLBACK=playwright`. The old value still works — it maps
+  to `playwright` and logs a warning naming the substitution — but
+  `pip install 'agentao[crawl4ai]'` no longer resolves. Nothing changes for
+  the default (`none`) or for `jina`.
+
+  The value is kept honest rather than silently reinterpreted: running a
+  different engine than the operator configured, without saying so, is the
+  same class of behavior as the silent third-party proxy that 0.4.7 removed.
+
+  **One capability is genuinely lost.** The old call passed crawl4ai's
+  `enable_stealth=True`, which applied `playwright-stealth` patches to evade
+  basic headless detection (`navigator.webdriver` and friends). The
+  replacement launches a stock headless Chromium, so sites that fingerprint
+  for automation may now serve a challenge page where they previously did
+  not. Restoring parity is a one-package addition to the extra
+  (`playwright-stealth`) if that turns out to matter in practice; it is left
+  out for now rather than carried on the assumption that someone needs it.
+
 ### Fixed
+
+- **`web_fetch`'s fallback no longer masks errors raised by the renderer.**
+  `_run_async` was `try: asyncio.run(coro) / except RuntimeError:
+  get_event_loop().run_until_complete(coro)` — which could not distinguish
+  "`asyncio.run` refused to nest" from "the coroutine itself raised
+  `RuntimeError`", and reported the latter as an unrelated *"There is no
+  current event loop"* message. It also could not have worked as intended:
+  `run_until_complete` fails on a loop that is actually running, and `coro` is
+  already closed by the time the handler retries it. It now asks whether a
+  loop is running, and hands the coroutine to a worker thread with its own
+  loop when one is — so an async host driving this sync tool works, and
+  genuine errors propagate with their own message. Found by the new tests.
+
+- **Stale extras in the developer guide.** `part-1/5-requirements.md` (both
+  languages) still advertised `[pdf]` / `[excel]` / `[image]` / `[crypto]` /
+  `[google]`, which were removed in **0.4.12** and have not resolved since.
+
+- **A failing fallback no longer discards a good page.** `_run_fallback`
+  returned one string for both "not configured" and "tried and failed", so a
+  host that installed the extra but never ran `playwright install chromium`
+  got the browser-setup error *instead of* the static HTML `web_fetch` had
+  already fetched successfully — strictly worse than `fallback=none`. It now
+  returns `(body, error)`; the primary result wins and the fallback's failure
+  is appended as a note.
+
+- **The local render reports HTTP status.** `page.goto` does not raise on
+  4xx/5xx and the fallback is reached *from* `except httpx.HTTPError`, so a
+  rendered 404 / paywall / bot-challenge page was handed to the model as
+  though it were the requested document. A `>= 400` status is now a fallback
+  failure, which means the caller keeps httpx's more accurate diagnosis. The
+  status tracked is the *latest main-frame navigation*, not `goto`'s: a 200
+  shell that client-side navigates to a 401/404/paywall after DOMContentLoaded
+  leaves `page.content()` describing the later page while `goto` still reports
+  200. Sub-frame and subresource responses are ignored — a broken ad iframe or
+  a missing image is not a failed page.
+
+- **`extract_text=False` is honored on the fallback path.** The flag was
+  dropped the moment the fallback fired, so a caller asking for markup — to
+  read an `href`, a `<meta>`, or an embedded JSON blob — silently got prose
+  back and reported the data as absent.
+
+- **The headless browser gets a scrubbed environment.** `chromium.launch()`
+  passed no `env=`, so the browser tree inherited agentao's own provider
+  credentials. It now routes through `capabilities/process.py::build_child_env()`
+  like every other child agentao spawns — this is the one child that executes
+  attacker-controlled JavaScript.
+
+- **Every in-browser request is re-validated against the URL policy.** The
+  httpx path checks every redirect hop, but once Chromium took over it chased
+  redirects and client-side navigation unguarded — a page that passed the
+  guard and then navigated to `169.254.169.254` had that body returned to the
+  model. A `page.route` handler now re-applies `validate_outbound_url` to
+  **all** requests, not only navigations: a permissive-CORS or JSONP endpoint
+  lets the page's own JavaScript read an internal response and write it into
+  the DOM, which is precisely what `page.content()` returns, and a no-CORS
+  request still reaches an internal service as a side effect. Verdicts are
+  cached per `(scheme, host, port)` so a page pulling fifty assets from one
+  origin costs one DNS resolution; `data:` / `blob:` / `about:` are passed
+  through untouched (they never leave the machine, and the policy rejects any
+  non-http(s) scheme). The handler is installed on the **browser context**,
+  not the page: a page-level route does not cover a popup opened with
+  `window.open`, whose very first request would otherwise reach an internal
+  target unchecked. The check itself runs in a worker thread with its own
+  budget: `validate_outbound_url` calls `socket.getaddrinfo`, and doing that on
+  the event-loop thread would stall the very timer enforcing the render
+  ceiling — letting a page-controlled hostname defeat it just by resolving
+  slowly. A stalled lookup blocks the request rather than passing it. The
+  thread is a *daemon* thread rather than `asyncio.to_thread`: the latter uses
+  the loop's default executor, which `asyncio.run` joins at shutdown, so a
+  lookup that outlived its budget would still be waited on during teardown
+  (cancelling the future does not cancel the thread) and the ceiling would be
+  defeated on the way out instead of on the way in. Because those threads are
+  abandoned rather than joined, they are bounded three ways: lookups in flight
+  for the same origin are deduplicated (a page can queue a hundred requests to
+  one host before the first resolution returns), concurrent lookups per render
+  are gated, and a global cap refuses — and therefore blocks — a check once too
+  many are live, so a page spraying randomised hostnames that miss the cache by
+  construction cannot accumulate threads until the process dies.
+
+  **WebSockets get their own guard.** They do not pass through
+  `context.route` — Playwright intercepts them via `route_web_socket` — so
+  rendered JavaScript could otherwise open `ws://169.254.169.254/`, reach an
+  internal endpoint, and copy accepted frames into the DOM that
+  `page.content()` returns. `ws://` / `wss://` are mapped onto `http` /
+  `https` for the validator, which speaks only those (the schemes share
+  default ports, so the target checked is the same one). This is why the
+  extra floors at **playwright>=1.48**, where `route_web_socket` landed,
+  rather than the 1.40 it was first written against.
+
+  **Service workers are blocked.** Playwright's own documentation for `route`
+  says it "will not intercept requests intercepted by Service Worker" and
+  recommends setting `serviceWorkers` to `'block'` when using request
+  interception; the default is `'allow'`. Without it an untrusted page could
+  register a worker and reach loopback or cloud-metadata straight through the
+  guard. A one-shot render has no use for them.
+
+- **Downloads are disabled in the render context.** Playwright's
+  `new_context()` defaults `accept_downloads` to true ("Whether to
+  automatically download all the attachments" — its own docs), and crawl4ai
+  had it off. `web_fetch` reads `page.content()` and nothing else, so a
+  download could only ever be a hostile page writing to the host's disk.
+
+  **A second crawl4ai default is deliberately not carried over.** Its
+  `BrowserConfig` set `ignore_https_errors=True`; the render context sets it
+  explicitly to `False`. Pages with an expired or self-signed certificate that
+  crawl4ai used to render now fail. This is intentional: the fallback runs
+  *after* the certificate-verifying httpx path failed, so ignoring cert errors
+  would mean a site whose TLS is broken — or being intercepted — fails
+  correctly on the primary path and is then rendered and handed to the model as
+  though it were fine. A JS-rendering fallback is not a licence to relax TLS,
+  and `url_policy` already blocks the non-public targets where a self-signed
+  certificate is most common.
+
+- **An unhydrated DOM is no longer returned as a successful render.** The
+  settle step absorbs its own timeout by design — long-poll pages never reach
+  `networkidle` and their DOM is already usable — but it also swallowed a
+  crashed renderer, and would swallow Playwright dropping the `networkidle`
+  literal. Those now fail the render, so the caller keeps the static shell and
+  says why, instead of presenting a half-rendered page as the article.
+
+- **The render has a wall-clock ceiling.** `page.content()` takes no timeout
+  at all, so the `goto`/settle timeouts bounded navigation only and a page
+  that pegged its renderer afterwards blocked the caller forever. The budget
+  covers browser launch and setup as well as navigation — `launch`,
+  `new_context`, `route` and `new_page` are driver channel calls with no
+  timeout of their own, so a driver wedging in any of them would hang
+  `web_fetch` with the browser left running. Teardown is
+  bounded too, and wrapped so a failing `browser.close()` cannot replace the
+  error that actually explains the failure. Bounding `browser.close()` alone
+  was not enough: `async_playwright()`'s own `__aexit__` waits on the same
+  driver with no deadline, and `__aenter__` can hang just as long if the
+  driver spawns but never completes its protocol handshake — a wedge that
+  never even reaches teardown. The context is now driven by hand, with
+  startup, render, and teardown each carrying a budget; a driver that blows
+  through one is killed rather than left running.
+
+  The kill is deliberately **not** `kill_process_tree()`. That helper
+  documents its precondition — `start_new_session=True` makes the child a
+  group leader, so `pid == pgid` and `killpg(pid)` reaps the tree. Playwright
+  spawns its driver with no new session, so it shares agentao's process group
+  and its pid is not a pgid; `killpg` on it would fail, or on a coincidence
+  signal an unrelated group. Verified against the installed 1.61.0 (`pgid` of
+  the driver == agentao's own).
+
+- **The retired-value substitution is visible.** The warning went only to the
+  `agentao` logger, whose sole handler is `agentao.log`'s file handler — no
+  operator ever saw it. It is now also projected into the tool description,
+  matching how `AGENTAO_WEB_FETCH_ALLOW_CIDRS` surfaces its own relaxation.
+
+- **The settle handler no longer swallows real failures.** A bare
+  `except Exception` at DEBUG absorbed a crashed renderer, and would absorb
+  Playwright dropping the `networkidle` literal (already DISCOURAGED
+  upstream) — every fallback would silently stop waiting for hydration with
+  nothing above DEBUG in the log. Only the expected timeout is quiet now.
+
+- **The browser is no longer forced to send the httpx User-Agent.** That
+  string stops before the `Chrome/<ver>` token, so as a *browser* UA it
+  contradicted the truthful `Sec-CH-UA` headers Chromium keeps sending — a
+  stronger bot signal than Chromium's own identity.
+
+- **`--extra playwright` reaches the publishing workflows.** It was added only
+  to `ci.yml`'s test job, so the API-drift guard `importorskip`ped away in
+  `publish.yml` and `publish-testpypi.yml` — the two workflows that gate PyPI
+  publication, and exactly the "silently retire the guard" outcome the extra
+  was added to prevent.
 
 ---
 

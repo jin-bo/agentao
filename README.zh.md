@@ -205,6 +205,6 @@ uv run python -m pytest tests/
 
 - LLM 客户端：[OpenAI Python SDK](https://github.com/openai/openai-python)
 - CLI：[Rich](https://github.com/Textualize/rich) · [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) · [readchar](https://github.com/magmax/python-readchar)
-- 可选 web fetch：[Crawl4AI](https://github.com/unclecode/crawl4ai)
+- `web_fetch` 的可选本地 JS 渲染：[Playwright](https://github.com/microsoft/playwright-python)
 - MCP：[Model Context Protocol SDK](https://github.com/modelcontextprotocol/python-sdk) —— 架构灵感来自 [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 - 灵感来源：[Claude Code](https://github.com/anthropics/claude-code)

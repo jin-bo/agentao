@@ -74,13 +74,20 @@ jobs:
       - name: Install Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Install dependencies (with cli/web/i18n extras for CLI-dependent unit tests)
+      - name: Install dependencies (with cli/web/i18n/playwright extras for extra-dependent unit tests)
         # Default unit tests import agentao.cli.AgentaoCLI / web fetch tool /
         # jieba memory paths, which after the P0.9 dependency split live
-        # in optional extras. Install all three so the existing test
+        # in optional extras. Install them so the existing test
         # surface still resolves; the core-only contract is separately
         # validated by the smoke job and tests/test_dependency_split.py.
-        run: uv sync --python ${{ matrix.python-version }} --extra cli --extra web --extra i18n
+        #
+        # [playwright] is here for one test — the API-drift guard in
+        # tests/test_web_fetch_playwright_fallback.py, which introspects the
+        # real Playwright signatures rather than a fake. It importorskips
+        # without the extra, so omitting it would silently retire the guard.
+        # Note this installs the Python package only; no browser binary is
+        # downloaded, and no test launches Chromium.
+        run: uv sync --python ${{ matrix.python-version }} --extra cli --extra web --extra i18n --extra playwright
 
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short
