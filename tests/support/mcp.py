@@ -19,14 +19,40 @@ on 2.x, so one call site works on both majors.
 import asyncio
 from typing import Any, Dict, List, Optional
 
-from mcp.types import CallToolResult, ImageContent, TextContent
+from mcp.types import (
+    CallToolResult,
+    ImageContent,
+    Implementation,
+    InitializeResult,
+    ServerCapabilities,
+    TextContent,
+)
 
 from agentao.mcp.client import McpClient, ServerStatus
+
+#: Protocol version the shared handshake fake reports. Deliberately *not* the
+#: newest one: a fake echoing back the client's own offer would still pass a
+#: test against a client that never read the server's answer.
+FAKE_PROTOCOL_VERSION = "2025-06-18"
 
 
 def run_async(coro):
     """Run an awaitable to completion (test entry point)."""
     return asyncio.run(coro)
+
+
+def initialize_result(version: str = FAKE_PROTOCOL_VERSION) -> InitializeResult:
+    """A real ``InitializeResult`` for a fake session's ``initialize()``.
+
+    Fakes must return this rather than ``None`` — ``McpClient`` reads the
+    negotiated protocol version straight off the result, so a ``None`` fake
+    asserts a contract the SDK does not have.
+    """
+    return InitializeResult(
+        protocolVersion=version,
+        capabilities=ServerCapabilities(),
+        serverInfo=Implementation(name="fake-server", version="1.0"),
+    )
 
 
 def text_block(text: str) -> TextContent:
@@ -52,16 +78,21 @@ def connected_client(
 ) -> McpClient:
     """Build a CONNECTED ``McpClient`` whose session returns ``result``.
 
-    ``capture`` (when given) records the ``read_timeout_seconds`` each
-    ``call_tool`` was invoked with, so timeout-passthrough is assertable.
+    ``capture`` (when given) records every keyword ``call_tool`` was invoked
+    with — ``read_timeout_seconds``, and on mcp 2.x ``allow_input_required`` —
+    so argument passthrough is assertable.
     """
     client = McpClient("svr", config or {"command": "echo"})
     client.status = ServerStatus.CONNECTED
 
     class _Session:
-        async def call_tool(self, tool_name, arguments, read_timeout_seconds=None):
+        # ``**kwargs``, not a fixed signature: agentao passes era-dependent
+        # keywords (``allow_input_required`` exists only on 2.x), and a fake
+        # that rejected them would fail for a reason the real SDK never would.
+        async def call_tool(self, tool_name, arguments, read_timeout_seconds=None, **kwargs):
             if capture is not None:
                 capture["read_timeout_seconds"] = read_timeout_seconds
+                capture.update(kwargs)
             return result
 
     client._session = _Session()

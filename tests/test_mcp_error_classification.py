@@ -87,7 +87,11 @@ def _make_client_with_session(call_results):
     iter_results = iter(call_results)
 
     class _FakeSession:
-        async def call_tool(self, tool_name, arguments, read_timeout_seconds=None):
+        # ``**kwargs``: agentao passes era-dependent keywords the real
+        # ClientSession accepts and mcp 1.x does not (``allow_input_required``).
+        # A fixed signature would fail these tests for a reason the SDK never
+        # would, and only on the 2.x cell.
+        async def call_tool(self, tool_name, arguments, read_timeout_seconds=None, **kwargs):
             outcome = next(iter_results)
             if isinstance(outcome, Exception):
                 raise outcome
@@ -112,7 +116,7 @@ def _patch_connect_with_ok_session(text: str):
 
     async def _fake_connect(self_):
         class _SessionOk:
-            async def call_tool(self, tool_name, arguments, read_timeout_seconds=None):
+            async def call_tool(self, tool_name, arguments, read_timeout_seconds=None, **kwargs):
                 return success_result
 
         self_._session = _SessionOk()

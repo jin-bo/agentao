@@ -52,7 +52,7 @@ from agentao.mcp.client import (
     ServerStatus,
 )
 from agentao.mcp.config import McpTransportConfigError, resolve_transport
-from tests.support.mcp import run_async
+from tests.support.mcp import initialize_result, run_async
 
 # Distinctive substring of the §5.7 connect hint.
 _HINT_MARKER = "tried as Streamable HTTP"
@@ -79,8 +79,12 @@ class _FakeCM:
 
 
 class _FakeSession:
+    # No ``discover``, and none is needed: these tests are about transport
+    # dispatch, and ``_negotiate`` only reaches for it after a protocol
+    # rejection this session never produces (``_can_discover`` also checks the
+    # live object, so an injected session without it is never called into).
     async def initialize(self):
-        return None
+        return initialize_result()
 
     async def list_tools(self):
         return SimpleNamespace(tools=[])

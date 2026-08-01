@@ -434,6 +434,173 @@ Low-noise (fires only on an actual connect failure, never on stdio/sse/explicit
 http, never on a non-MCP-content-type verdict) and high-value (the one-token fix
 rides along the failures where it actually applies).
 
+### 5.8 Protocol era — handshake first, escalate to `server/discover` on `-32022`
+
+*(Added 2026-07-30 after the mcp 2.0 work, as a record of why the handshake was
+pinned at `2025-11-25`. **Implemented 2026-07-31** — the closing verdict below
+is superseded; the analysis that leads to it still holds and is what the
+implementation is built on.)*
+
+Before this change, `McpClient` built a **bare** session on every transport —
+`ClientSession(read_stream, write_stream)` (client.py:326, 442, 506) — and ran
+the handshake with a plain `await self._session.initialize()` (client.py:298,
+inside `_handshake`). No protocol-version argument was passed anywhere, and
+`agentao/mcp/` contained no `mode=` at all.
+
+Introspection across all three `mcp-spec` CI cells (verified, not recalled):
+
+| SDK | `types.LATEST_PROTOCOL_VERSION` | what `initialize()` offers | modern era |
+|---|---|---|---|
+| `1.26.0` (pin floor) | `2025-11-25` | `types.LATEST_PROTOCOL_VERSION` → `2025-11-25` | absent |
+| `1.29.0` (latest 1.x) | `2025-11-25` | `types.LATEST_PROTOCOL_VERSION` → `2025-11-25` | absent |
+| `2.0.0` (lock) | `2026-07-28` | `LATEST_HANDSHAKE_VERSION` → `2025-11-25` | present, unreachable here |
+
+**Same number on every supported SDK, for two different reasons.** Under 1.x the
+offer is bound to `types.LATEST_PROTOCOL_VERSION`, so it *tracks the SDK* — an
+upstream bump to that constant would have moved agentao's wire behaviour with no
+code change on our side. Under 2.x the offer is bound to
+`LATEST_HANDSHAKE_VERSION`, a constant upstream deliberately **split away** from
+`LATEST_PROTOCOL_VERSION` (`2026-07-28`, also exposed as `LATEST_MODERN_VERSION`,
+with `MODERN_PROTOCOL_VERSIONS = ('2026-07-28',)`). The split froze this path.
+The practical consequence: **upgrading to mcp 2.0 did not change what agentao
+says on the wire.** It granted the *capability* to speak `2026-07-28`; agentao
+never exercises it.
+
+The negotiated version is a **ceiling, not a constant** — `initialize()` only
+*offers* `2025-11-25`; the server picks, and 2.x validates the answer against
+`HANDSHAKE_PROTOCOL_VERSIONS` (`2024-11-05`, `2025-03-26`, `2025-06-18`,
+`2025-11-25`) before `adopt()`ing it. So nothing downstream may assume
+`2025-11-25` semantics — only `≤` it.
+
+Reaching the modern era is **not a missing kwarg**, which is the easy misread.
+`mode='auto'` is a field on mcp 2.x's new `mcp.client.client.Client` facade; it
+does not exist on `ClientSession.__init__` (probed: 15 parameters, no `mode`).
+Adopting that facade means handing it the transport, which agentao establishes
+itself across three code paths — so it is a rewrite, not a swap. And the modern
+era does not exist in 1.x at all, so under `mcp>=1.26.0,<3` any of this has to
+be a probed branch in `agentao/mcp/_compat.py`, never a swapped construction.
+
+~~**v1 stays pinned, per the §5.6 watch-item convention.**~~ *(Superseded — see
+§5.8.1. The trigger named here, a server speaking **only** `2026-07-28` and
+rejecting the legacy `initialize` with `-32022`, is what the probe now avoids.)*
+
+#### 5.8.1 What was implemented (2026-07-31)
+
+One correction to the analysis above, found by re-probing rather than by
+re-reading it: **`negotiate_auto` being private does not make the modern era
+private.** The pieces it drives — `ClientSession.discover()`, `send_discover()`,
+`adopt()`, `protocol_version` — are all public on 2.0.0, and `discover()`
+already carries the -32022 mutual-version retry. Only the *policy* had to be
+written here, and policy is agentao's to own anyway.
+
+`_compat.py` gains three probes (never a version string, per §5.1's rule):
+`SUPPORTS_MODERN_ERA = hasattr(ClientSession, "discover")`, `McpProtocolError`
+(1.x `McpError` / 2.x `MCPError`, renamed with no alias), and
+`UNSUPPORTED_PROTOCOL_VERSION` read off `mcp.types` (`None` on 1.x, where
+nothing can raise it).
+
+`McpClient._negotiate()` sends `initialize()`, and escalates to `discover()`
+**only** when the server rejects it with `-32022`.
+
+##### Why not probe first — the measurement that decided it
+
+The first cut led with `server/discover` (upstream's `mode='auto'` order) and
+fell back on anything short of a usable `DiscoverResult`. Then it was run
+against real servers, one per SDK generation, over stdio:
+
+| Peer | Negotiated | Server stderr, per connect |
+|---|---|---|
+| `MCPServer` on mcp **2.0.0** | `2026-07-28` | 0 lines |
+| `FastMCP` on mcp **1.26.0** | `2025-11-25` (fell back, worked) | **258 lines** |
+
+The 1.x server rejects the unknown method by dumping a 31-error pydantic
+*union*-validation failure — it tries `server/discover` against every member of
+`ClientRequest` and prints all of them. For **stdio that stderr is agentao's
+stderr** (`stdio_client` defaults `errlog=sys.stderr`, and agentao passes no
+override), so it lands in the user's terminal on every connect and reconnect.
+
+That is a per-connect cost on the most common kind of server today, paid for a
+capability with **no consumer**: agentao does tool discovery and tool calls, and
+both eras serve those identically — verified, not assumed, in the 2.0.0 row
+above (modern era negotiated, `tools/list` and `tools/call` both fine).
+
+So the order is inverted from upstream's, deliberately. The escalation is driven
+by the server rather than by a guess: a modern-*only* server rejects the legacy
+handshake with `-32022 UnsupportedProtocolVersion`, and that code — and only that
+code — triggers one `discover()`, which itself retries at the highest mutual
+version if the server names one. **That rejection is precisely the connect
+failure §5.8 named as the trigger for doing any of this**, and it is now handled
+at zero cost to every server that is not modern-only.
+
+Re-measured after the flip: the 1.x server drops to 4 stderr lines (its own
+ordinary `INFO` request logs — nothing from us).
+
+##### What this gives up
+
+A server supporting *both* eras stays on the handshake one, and its full
+`supportedVersions` list is never learned. The tripwire is
+`test_a_dual_era_server_is_left_on_the_handshake_era` (in
+`tests/test_mcp_protocol_negotiation.py`), so the day it stops being acceptable,
+the change is a deliberate edit rather than a surprise. The fix that day is to
+lead with the probe again — `_negotiate`'s ordering is the whole switch, and the
+noise above is what it will cost. Demand-gated per the §5.6 convention.
+
+Smaller notes:
+
+- Two codes escalate, with different weight. `-32022` is **definite** — the
+  server is naming the versions it supports. `-32601` is **speculative**: the
+  modern era replaces `initialize`, so a modern-only server has no handler for
+  it, but neither does a URL that isn't an MCP endpoint. Worth one probe on a
+  connect that has already failed; if the probe also fails, the *original*
+  rejection surfaces unchanged rather than being renamed after a method the
+  user never heard of.
+- A failed escalation off a `-32022` raises `McpProtocolEraError` carrying
+  **both** halves — the handshake rejection (the only one that names the
+  server's `supported` list) and the probe's own error. Its type is
+  load-bearing: `connect()` suppresses the "try `type: sse`" hint for it, since
+  no transport change fixes a version mismatch, and on the 1.x cell that hint
+  would otherwise ride every modern-only rejection.
+- Anything else — a transport failure, any other JSON-RPC error — propagates.
+  An outage is never reinterpreted as an era verdict.
+- One bound is not ours: the SDK caps each `server/discover` send at its own
+  `DISCOVER_TIMEOUT_SECONDS` (10 s on 2.0.0) and exposes no parameter to raise
+  it, so a `timeout.startup` above that does not extend this round-trip. The
+  enclosing `startup` budget still bounds the handshake as a whole.
+- **Interactive input on the modern era is refused, in words the model can
+  use.** The modern era re-encodes sampling / elicitation / roots: instead of a
+  server→client request over a back-channel (which the SDK's own
+  `NoBackChannelError` exists for), `tools/call` *returns* an
+  `InputRequiredResult` carrying the requests plus an opaque `requestState`,
+  and the client answers and calls again. agentao wires none of the three
+  resolvers in *either* era — on the handshake era the SDK's defaults answer
+  "not supported" — so the capability gap is not new; only the failure shape
+  is. Left alone the SDK raises `RuntimeError("… pass
+  allow_input_required=True … retry call_tool(…)")`, an instruction addressed
+  to a *programmer*, which `call_tool`'s broad `except` would hand to the LLM
+  as the tool's result. So `call_tool` opts in to *receive* the result
+  (`allow_input_required=True`, probed) and names what was asked for instead.
+  The sibling `UnexpectedClaimedResult` arm leaks the same way and is caught by
+  type alongside it. Neither is reachable today: the modern era needs a
+  modern-only peer, and no SDK can build one. Implementing the protocol —
+  answering the requests and retrying — remains out of scope.
+
+The outcome lands on `McpClient.protocol_version` — read off the
+`InitializeResult`, because 1.x's `ClientSession` keeps no public record of what
+it negotiated — and is surfaced through `get_server_status()["protocol"]` and
+`/mcp list`. It is a **ceiling, not a constant**; gate on `>=`, never equality.
+
+Tests: `tests/test_mcp_protocol_negotiation.py`, driving a real `ClientSession`
+over the SDK's in-memory streams against a hand-rolled JSON-RPC peer. A stubbed
+`session.discover()` would have restated agentao's assumptions instead of
+testing them; the wire is where the era split is actually observable. Green on
+all three `mcp-spec` cells (`1.26.0`, `1.29.0`, `2.0.0`). The escalation path is
+covered there and **not** against a live server — the 2.x SDK has no knob to
+make a server modern-only, so no such peer can be built today.
+
+One thing the real-wire harness caught that a stub would not: in the modern era
+`tools/list` results are **validated per version**, and `ttlMs` / `cacheScope` /
+`resultType` are required there while the handshake era defaults them.
+
 ## 6. ACP changes — flip the three gates
 
 All three were written to reject `http` *because the client couldn't dispatch
