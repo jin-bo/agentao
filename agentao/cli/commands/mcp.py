@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rich.markup import escape
+
 from .._globals import console, split_subcommand, unknown_subcommand
 
 if TYPE_CHECKING:
@@ -28,14 +30,21 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
         for s in statuses:
             color = "green" if s["status"] == "connected" else "red"
             trust_marker = " [dim](trusted)[/dim]" if s["trusted"] else ""
+            # ``protocol`` and ``error`` are server-authored strings, and every
+            # line here is parsed as Rich markup: an unmatched "[/b]" in a
+            # third-party error message raises MarkupError out of the command
+            # and takes the *whole* listing with it, healthy servers included.
+            # Escaping also stops a crafted message from painting itself
+            # "[green]connected[/green]".
+            protocol = f" [dim]{escape(s['protocol'])}[/dim]" if s.get("protocol") else ""
             console.print(
-                f"  [{color}]●[/{color}] [cyan]{s['name']}[/cyan] "
-                f"[dim]{s['transport']}[/dim] — "
+                f"  [{color}]●[/{color}] [cyan]{escape(s['name'])}[/cyan] "
+                f"[dim]{escape(s['transport'])}[/dim]{protocol} — "
                 f"[{color}]{s['status']}[/{color}], "
                 f"{s['tools']} tool(s){trust_marker}"
             )
             if s["error"]:
-                console.print(f"    [red]{s['error']}[/red]")
+                console.print(f"    [red]{escape(s['error'])}[/red]")
         console.print()
 
     elif sub == "add":

@@ -379,6 +379,142 @@ except Exception as e:
 低噪（仅在真实 connect 失败时触发，绝不对 stdio/sse/显式 http，绝不对非-MCP-content-type
 判定，绝不对 auth 失败）且高价值（一词修复只在真正适用的失败上随之带出）。
 
+### 5.8 协议纪元 —— 先握手，被 `-32022` 拒绝时才升级到 `server/discover`
+
+*（2026-07-30 补记于 mcp 2.0 工作之后，记录握手为何钉在 `2025-11-25`。**2026-07-31
+已实现** —— 下方的结论段作废；导出该结论的分析仍然成立，实现正是建立在它之上。）*
+
+在本次改动之前，`McpClient` 在每种传输上建的都是**裸**会话 ——
+`ClientSession(read_stream, write_stream)`（client.py:326、442、506）—— 握手就是一句
+朴素的 `await self._session.initialize()`（client.py:298，在 `_handshake` 内）。任何
+地方都没有传协议版本参数，`agentao/mcp/` 里也根本没有 `mode=`。
+
+对 `mcp-spec` CI 三格全部做的内省（验证所得，非回忆）：
+
+| SDK | `types.LATEST_PROTOCOL_VERSION` | `initialize()` 实际报价 | modern 纪元 |
+|---|---|---|---|
+| `1.26.0`（pin 下界） | `2025-11-25` | `types.LATEST_PROTOCOL_VERSION` → `2025-11-25` | 不存在 |
+| `1.29.0`（最新 1.x） | `2025-11-25` | `types.LATEST_PROTOCOL_VERSION` → `2025-11-25` | 不存在 |
+| `2.0.0`（lock） | `2026-07-28` | `LATEST_HANDSHAKE_VERSION` → `2025-11-25` | 存在，但此处够不到 |
+
+**每个受支持的 SDK 上数字相同，成因却是两回事。** 1.x 里报价绑的是
+`types.LATEST_PROTOCOL_VERSION`，因此**跟着 SDK 走** —— 上游把这个常量往上抬一次，
+agentao 的线上行为就会跟着变，我们这边一行代码都不用改。2.x 里报价绑的是
+`LATEST_HANDSHAKE_VERSION` —— 上游刻意把它与 `LATEST_PROTOCOL_VERSION` **拆开**了
+（后者为 `2026-07-28`，同时也以 `LATEST_MODERN_VERSION` 暴露，另有
+`MODERN_PROTOCOL_VERSIONS = ('2026-07-28',)`）。这次拆分把这条路径**冻死**了。
+实际结论：**升到 mcp 2.0 并没有改变 agentao 在线上说什么。** 它带来的是说
+`2026-07-28` 的*能力*，而 agentao 从不行使。
+
+协商出来的版本是**上限，不是常量** —— `initialize()` 只是*报价* `2025-11-25`，选哪个
+是服务端的事；2.x 会先拿 `HANDSHAKE_PROTOCOL_VERSIONS`（`2024-11-05`、`2025-03-26`、
+`2025-06-18`、`2025-11-25`）校验应答，再 `adopt()`。所以下游任何地方都不得假定
+`2025-11-25` 的语义 —— 只知道 `≤`。
+
+走到 modern 纪元**不是少传一个 kwarg**，这是最容易的误读。`mode='auto'` 是 mcp 2.x
+新增的 `mcp.client.client.Client` 门面类上的字段，`ClientSession.__init__` 上并不存在
+（探测所得：15 个参数，无 `mode`）。改用那个门面等于把传输交给它接管，而 agentao 的
+传输是自己在三条代码路径上建的 —— 那是重写，不是替换。而 modern 纪元在 1.x 里压根
+不存在，所以在 `mcp>=1.26.0,<3` 之下这一切只能是 `agentao/mcp/_compat.py` 里的探测
+分支，绝不能是换个写法建会话。
+
+~~**v1 维持钉住，遵 §5.6 的观察项惯例。**~~ *（已作废，见 §5.8.1。当时给出的触发
+条件 —— 出现**只**说 `2026-07-28`、用 `-32022` 拒掉 legacy `initialize` 的服务器 ——
+正是现在这个探测所规避的。）*
+
+#### 5.8.1 实际实现了什么（2026-07-31）
+
+对上面分析的一处订正，是重新**探测**得到的，不是重读得到的：**`negotiate_auto` 是私有
+的，并不等于 modern 纪元是私有的。** 它驱动的那几件东西 —— `ClientSession.discover()`、
+`send_discover()`、`adopt()`、`protocol_version` —— 在 2.0.0 上全是公开的，且
+`discover()` 内部已经带了 -32022 的"取双方共同版本重试一次"。真正需要在这里写的只有
+*策略*，而策略本来就该由 agentao 自己拥有。
+
+`_compat.py` 增加三个探测（绝不看版本号字符串，遵 §5.1 的规矩）：
+`SUPPORTS_MODERN_ERA = hasattr(ClientSession, "discover")`、`McpProtocolError`
+（1.x 叫 `McpError`、2.x 叫 `MCPError`，改名且没留别名）、以及从 `mcp.types` 上读到的
+`UNSUPPORTED_PROTOCOL_VERSION`（1.x 上为 `None`，那里没有任何路径能抛出它）。
+
+`McpClient._negotiate()` 发 `initialize()`，**只有**在服务端用 `-32022` 拒绝时才升级到
+`discover()`。
+
+##### 为什么不先探测 —— 决定此事的是一次实测
+
+第一版是先发 `server/discover`（即上游 `mode='auto'` 的顺序），拿不到可用
+`DiscoverResult` 就退回。随后拿两代 SDK 各一台**真实**服务器、走 stdio 实测：
+
+| 对端 | 协商结果 | 每次连接的服务端 stderr |
+|---|---|---|
+| mcp **2.0.0** 上的 `MCPServer` | `2026-07-28` | 0 行 |
+| mcp **1.26.0** 上的 `FastMCP` | `2025-11-25`（退回，可用） | **258 行** |
+
+1.x 服务端拒绝未知方法的方式，是把一个 31 项的 pydantic **联合类型**校验失败整个打出来
+—— 它拿 `server/discover` 去挨个匹配 `ClientRequest` 的每一个成员，然后全部打印。而
+**对 stdio 而言，那条 stderr 就是 agentao 的 stderr**（`stdio_client` 默认
+`errlog=sys.stderr`，agentao 没有覆盖），于是每次连接、每次重连都会糊在用户终端上。
+
+这是在今天最常见的一类服务器上、每次连接都要付的成本，换来的能力**没有任何消费者**：
+agentao 只做 tool 发现与 tool 调用，两个纪元对此表现完全一致 —— 这是上表 2.0.0 那一行
+**实测**出来的（协商进了 modern 纪元，`tools/list` 与 `tools/call` 均正常），不是假定。
+
+所以顺序被刻意反转了。升级由服务端驱动，而不是靠我们猜：modern-*only* 服务器会用
+`-32022 UnsupportedProtocolVersion` 拒掉 legacy 握手，而**只有**这个错误码会触发一次
+`discover()`；后者若拿到服务端点名的版本，还会自己在最高共同版本上重试。**这个拒绝，
+正是 §5.8 当初写下的、值得做这件事的那个触发条件** —— 现在它被处理了，而所有不是
+modern-only 的服务器一分钱都不用付。
+
+翻转后复测：1.x 服务器的 stderr 降到 4 行（都是它自己正常的 `INFO` 请求日志，与我们无关）。
+
+##### 放弃了什么
+
+同时支持两个纪元的服务器会停在握手纪元，其完整 `supportedVersions` 列表我们永远不会
+知道。`tests/…::test_a_dual_era_server_is_left_on_the_handshake_era` 把这条钉住了 ——
+等到哪天这不再可接受，改动会是一次**有意的**编辑，而不是意外。那天的修法就是把探测重新
+放到前面 —— `_negotiate` 的顺序就是全部开关，而上面那段噪音就是它的代价。此事按 §5.6
+惯例做需求驱动（demand-gated）。
+
+若干小注：
+
+- 有**两个**错误码会触发升级，但分量不同。`-32022` 是**确定**的 —— 服务端在点名它支持
+  哪些版本。`-32601` 是**推测**的：modern 纪元把 `initialize` 整个替换掉了，所以
+  modern-only 服务器根本没有该方法的 handler；但一个压根不是 MCP 端点的 URL 也一样没有。
+  在一个已经失败的 connect 上值得探一次；若探测也失败，浮出来的是**原始**拒绝，而不是被
+  改名成一个用户从没听说过的方法。
+- `-32022` 之后升级失败，抛的是 `McpProtocolEraError`，且**两半都带上** —— 握手拒绝
+  （唯一列出服务端 `supported` 的那个）与探测自身的错误。它的类型是有承重作用的：
+  `connect()` 会对它抑制"试试 `type: sse`"提示，因为换传输修不了版本不匹配；在 1.x 那格
+  上，否则每一次 modern-only 拒绝都会挂上这句误导。
+- 其余一切 —— 传输故障、任何其他 JSON-RPC 错误 —— 一律上抛。绝不把一次故障重新解释成
+  "纪元判定"。
+- 有一个界不归我们管：SDK 给每次 `server/discover` 发送套了自己的
+  `DISCOVER_TIMEOUT_SECONDS`（2.0.0 上是 10 秒），且不暴露参数抬高它，所以配置里高于该值
+  的 `timeout.startup` 并不会延长这一次往返。外层 `startup` 预算仍然框住整个握手。
+- **modern 纪元的交互式输入被拒绝，但用的是模型能理解的话。** modern 纪元把
+  sampling / elicitation / roots 重新编码了：不再由服务端走反向通道发 server→client 请求
+  （SDK 里的 `NoBackChannelError` 就是为没有该通道的传输准备的），而是让 `tools/call`
+  **返回**一个 `InputRequiredResult`，带上请求集合与不透明的 `requestState`，由客户端答完
+  再调一次。agentao 在**两个纪元里都没接**这三个 resolver —— 握手纪元下 SDK 的默认回调会
+  回一句 "not supported" —— 所以能力缺口不是新的，变的只是失败形状。放任不管，SDK 会抛
+  `RuntimeError("… pass allow_input_required=True … retry call_tool(…)")`，这是一句写给
+  **程序员**的指令，而 `call_tool` 的宽 `except` 会把它原样当作工具结果交给 LLM。因此
+  `call_tool` 选择**接收**该结果（`allow_input_required=True`，探装得到），并改为说明服务端
+  到底要什么。兄弟分支 `UnexpectedClaimedResult` 泄漏方式相同，按类型一并捕获。两者今天都
+  触发不了：进 modern 纪元需要 modern-only 对端，而没有 SDK 造得出来。真正实现该协议
+  （答完请求再重试）仍然在范围之外。
+
+结果落在 `McpClient.protocol_version` 上 —— 从 `InitializeResult` 上读，因为 1.x 的
+`ClientSession` 不公开保存它协商出的版本 —— 并经 `get_server_status()["protocol"]` 与
+`/mcp list` 呈现。它是**上限，不是常量**；判定请用 `>=`，绝不用相等。
+
+测试：`tests/test_mcp_protocol_negotiation.py` —— 用 SDK 自带的内存流驱动一个**真实**
+`ClientSession`，对面是手写的 JSON-RPC 对端。把 `session.discover()` 打桩只会把
+agentao 对这些的假设重述一遍，而不是检验它们；纪元分裂真正可观测的地方是线上报文。三格
+`mcp-spec`（`1.26.0`、`1.29.0`、`2.0.0`）全绿。升级路径**只**在那里覆盖，**没有**对真实
+服务器验证 —— 2.x SDK 没有把服务端设为 modern-only 的开关，今天造不出这样的对端。
+
+真实线上测试抓到、打桩绝不会抓到的一点：modern 纪元里 `tools/list` 的结果是**按版本
+校验**的，`ttlMs` / `cacheScope` / `resultType` 在那里是必填，而握手纪元会给默认值。
+
 ## 6. ACP 改动 —— 放开三处闸门
 
 三处当初拒绝 `http` 都是**因为客户端无法分发**。§5 移除了那个理由，故三处齐放。

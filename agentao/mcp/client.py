@@ -15,11 +15,22 @@ from mcp.client.streamable_http import (
     create_mcp_http_client,
     streamable_http_client,
 )
+from mcp.types import METHOD_NOT_FOUND
 from mcp.types import Tool as McpToolDef
 
 from .. import __version__
 from ..capabilities.process import build_child_env
-from ._compat import field, httpx_for_mcp, read_timeout as _sdk_read_timeout
+from ._compat import (
+    SUPPORTS_INPUT_REQUIRED,
+    SUPPORTS_MODERN_ERA,
+    UNSUPPORTED_PROTOCOL_VERSION,
+    InputRequiredResult,
+    McpProtocolError,
+    UnexpectedClaimedResult,
+    field,
+    httpx_for_mcp,
+    read_timeout as _sdk_read_timeout,
+)
 from .config import (
     McpServerConfig,
     McpTransportConfigError,
@@ -121,6 +132,18 @@ class NonMcpEndpointError(ConnectionError):
     """
 
 
+class McpProtocolEraError(ConnectionError):
+    """agentao and the server share no usable MCP protocol era.
+
+    Raised by :meth:`McpClient._negotiate` when a ``-32022`` rejection of the
+    legacy handshake cannot be resolved by escalating to ``server/discover`` —
+    either because the installed SDK has no modern era (mcp 1.x) or because the
+    escalation itself failed. Its own type is load-bearing: :meth:`connect`
+    suppresses the "try ``type: sse``" hint for it, since no transport change
+    can fix a protocol-version mismatch.
+    """
+
+
 # Allow-list of content types a real MCP Streamable-HTTP / SSE endpoint
 # serves. The preflight rejects a 2xx response only when it advertises a
 # *definite* type outside this set (text/html, text/plain, application/xml,
@@ -181,6 +204,7 @@ class McpClient:
         self._session: Optional[ClientSession] = None
         self._exit_stack: Optional[AsyncExitStack] = None
         self._tools: List[McpToolDef] = []
+        self._protocol_version: Optional[str] = None
 
     @property
     def transport_type(self) -> str:
@@ -197,6 +221,20 @@ class McpClient:
         return self._tools
 
     @property
+    def protocol_version(self) -> Optional[str]:
+        """MCP protocol version negotiated with this server, or ``None``.
+
+        ``None`` until :meth:`connect` completes its handshake, and again after
+        :meth:`disconnect` — the version is a property of the live session, not
+        of the config.
+
+        Treat the value as a **ceiling, not a constant**: the server picks it,
+        and it can be older than anything agentao offered. Gate features with a
+        ``>=`` comparison, never equality.
+        """
+        return self._protocol_version
+
+    @property
     def is_trusted(self) -> bool:
         return bool(self.config.get("trust", False))
 
@@ -204,6 +242,9 @@ class McpClient:
         """Connect to the MCP server and discover tools."""
         self.status = ServerStatus.CONNECTING
         self.error_message = None
+        # Stale on a reconnect: the version belongs to the session about to be
+        # replaced, and the new one renegotiates from scratch.
+        self._protocol_version = None
 
         # Resolve once and thread down (avoids a second parse — and a second
         # malformed-config warning — inside ``_connect_sse``). ``startup``
@@ -237,26 +278,34 @@ class McpClient:
                     f"(need 'command', or 'url' with type 'sse'/'http')"
                 )
 
-            # Bound the initialize()/list_tools() handshake so a server that
-            # opens the stream (or spawns) but never answers can't hang connect
-            # forever — the SSE HTTP-open timeout doesn't cover these request
-            # round-trips, and stdio has no transport-level connect bound at
-            # all. ``wait_for`` is safe here: these are plain awaits on the
-            # already-established session and enter no exit-stack context, so a
-            # timeout cancellation never crosses an anyio cancel scope into the
-            # transport cleanup that ``connect``'s ``except`` performs.
+            # Bound the whole handshake so a server that opens the stream (or
+            # spawns) but never answers can't hang connect forever — the SSE
+            # HTTP-open timeout doesn't cover these request round-trips, and
+            # stdio has no transport-level connect bound at all. ``wait_for`` is
+            # safe here: these are plain awaits on the already-established
+            # session and enter no exit-stack context, so a timeout cancellation
+            # never crosses an anyio cancel scope into the transport cleanup
+            # that ``connect``'s ``except`` performs.
             try:
                 self._tools = (
                     await asyncio.wait_for(self._handshake(), timeout=startup_timeout)
                 ).tools
             except asyncio.TimeoutError:
+                # Name every round-trip the budget covers: the escalation added
+                # ``server/discover``, and pointing the user at a step that
+                # already completed sends them looking in the wrong place.
                 raise TimeoutError(
                     f"MCP server '{self.name}' did not complete the "
-                    f"initialize/list_tools handshake within {startup_timeout:g}s"
+                    f"initialize / server-discover / list_tools handshake "
+                    f"within {startup_timeout:g}s"
                 ) from None
 
             self.status = ServerStatus.CONNECTED
-            logger.info(f"MCP server '{self.name}' connected via {transport}, {len(self._tools)} tools")
+            logger.info(
+                f"MCP server '{self.name}' connected via {transport} "
+                f"(protocol {self._protocol_version or 'unknown'}), "
+                f"{len(self._tools)} tools"
+            )
 
         except Exception as e:
             self.status = ServerStatus.ERROR
@@ -266,12 +315,14 @@ class McpClient:
             # actually be a legacy SSE endpoint — surface the one-token fix.
             # Skip it for: an explicit ``type: "http"`` (SSE isn't the likely
             # intent); a NonMcpEndpointError (its own verdict already says the
-            # URL isn't MCP at all); and an auth failure (switching to SSE
-            # won't fix a 401/403 — it would send the user down a wrong path).
+            # URL isn't MCP at all); an auth failure (switching to SSE won't fix
+            # a 401/403 — it would send the user down a wrong path); and a
+            # protocol-era mismatch, where the transport was fine and only the
+            # version wasn't, so "try SSE" earns a second identical failure.
             if (
                 transport == "http"
                 and source == "inferred"
-                and not isinstance(e, NonMcpEndpointError)
+                and not isinstance(e, (NonMcpEndpointError, McpProtocolEraError))
                 and classify_mcp_error(e) is not McpErrorKind.AUTH
             ):
                 message += (
@@ -281,7 +332,13 @@ class McpClient:
                 )
             self.error_message = message
             logger.error(f"Failed to connect to MCP server '{self.name}': {message}")
-            # Cleanup on failure
+            # Cleanup on failure. The session and the negotiated version belong
+            # to the transport being torn down here: a connect that got as far
+            # as ``initialize`` and then failed would otherwise leave a version
+            # hanging off an ERROR server (and ``call_tool``'s reconnect leg
+            # would call into a dead session object).
+            self._session = None
+            self._protocol_version = None
             if self._exit_stack:
                 try:
                     await self._exit_stack.__aexit__(None, None, None)
@@ -290,13 +347,135 @@ class McpClient:
                 self._exit_stack = None
 
     async def _handshake(self):
-        """Run the MCP ``initialize()`` + ``list_tools()`` round-trips.
+        """Settle the protocol era, then run the ``list_tools()`` round-trip.
 
         Factored out so :meth:`connect` can wrap the whole handshake in a
         single ``startup`` budget via ``asyncio.wait_for``.
         """
-        await self._session.initialize()
+        await self._negotiate()
         return await self._session.list_tools()
+
+    def _can_discover(self) -> bool:
+        """Whether the **live session** can probe the modern era.
+
+        Two independent questions, both of which have to be yes.
+        ``SUPPORTS_MODERN_ERA`` answers for the imported ``ClientSession``
+        class — the SDK-major gate. The attribute check answers for the object
+        actually installed on this client, which an embedding host (or a test)
+        may have supplied instead. Gating on the class alone would send
+        ``discover()`` to a delegate that has no such method and report the
+        resulting ``AttributeError`` as the server's error.
+        """
+        return SUPPORTS_MODERN_ERA and hasattr(self._session, "discover")
+
+    async def _negotiate(self) -> None:
+        """Run the handshake, escalating to the modern era only when refused.
+
+        Two protocol eras exist. The legacy handshake (``2024-11-05`` …
+        ``2025-11-25``) is a single ``initialize`` offer the server answers with
+        a counter-offer — it never reports a version above the one proposed, and
+        the SDK always proposes ``LATEST_HANDSHAKE_VERSION``, so the modern era
+        is unreachable through it *by construction*. The modern era
+        (``2026-07-28`` and up) replaces it with ``server/discover``, which
+        returns the server's whole ``supportedVersions`` list.
+
+        **Handshake first, deliberately** — the reverse of upstream's
+        ``mode='auto'``. Leading with ``server/discover`` reaches the newest era
+        on a modern server, but a handshake-era server has to reject the unknown
+        method, and a server built on the *python* mcp 1.x SDK rejects it by
+        dumping a 31-error pydantic union-validation failure — 258 lines,
+        measured — to its stderr, which for stdio **is agentao's stderr**. That
+        is a per-connect cost on the most common kind of server today, paid for
+        a capability with no consumer: agentao does tool discovery and tool
+        calls, and both eras serve those identically.
+
+        So the escalation is driven by the server, not by a guess, and it reads
+        two rejection codes with deliberately different weight:
+
+        - ``-32022 UnsupportedProtocolVersion`` is **definite** — the server is
+          naming the versions it does support. If the escalation then fails,
+          that is the era mismatch itself, reported as
+          :class:`McpProtocolEraError`.
+        - ``-32601 MethodNotFound`` is **speculative**. The modern era replaces
+          ``initialize``, so a server built modern-only has no handler for it
+          and answers this — but so does a URL that is not an MCP endpoint at
+          all. Worth one probe on a connect that has already failed; if the
+          probe fails too, the original rejection is what surfaces, unchanged.
+
+        ``discover()`` itself retries at the highest mutual version when the
+        server names one, so the escalation is a single call either way.
+
+        What this gives up: a server supporting *both* eras stays on the
+        handshake one, and its full ``supportedVersions`` list is never learned.
+        The day agentao needs a modern-only capability, the fix is to lead with
+        the probe again — this method's ordering is the whole switch. Until
+        then it is demand-gated, per the §5.6 watch-item convention in
+        ``docs/design/mcp-streamable-http.md``.
+
+        One bound is not ours: the SDK caps each ``server/discover`` send at its
+        own ``DISCOVER_TIMEOUT_SECONDS`` (10 s on 2.0.0) with no parameter to
+        raise it, so a configured ``timeout.startup`` above that does not extend
+        this one round-trip. The enclosing ``startup`` budget in :meth:`connect`
+        still bounds the handshake as a whole.
+        """
+        try:
+            self._record_handshake_version(await self._session.initialize())
+            return
+        except McpProtocolError as exc:
+            # Bind outside the handler: ``exc`` is cleared when the block ends.
+            handshake_error = exc
+            code = getattr(getattr(exc, "error", None), "code", None)
+
+        definite = code == UNSUPPORTED_PROTOCOL_VERSION
+        if not (definite or code == METHOD_NOT_FOUND):
+            raise handshake_error
+
+        if not self._can_discover():
+            if not definite:
+                raise handshake_error
+            # Two different reasons we cannot escalate, and blaming the wrong
+            # one sends the user to the wrong fix.
+            why = (
+                "this session cannot speak it"
+                if SUPPORTS_MODERN_ERA
+                else "the installed MCP SDK cannot speak it — mcp 1.x has no "
+                "'server/discover'; upgrade to mcp>=2"
+            )
+            raise McpProtocolEraError(
+                f"MCP server '{self.name}' rejected the protocol version agentao "
+                f"offered ({handshake_error}). It is asking for the modern "
+                f"protocol era and {why}."
+            ) from handshake_error
+
+        logger.debug(
+            f"MCP '{self.name}': handshake refused ({handshake_error}), "
+            "escalating to server/discover"
+        )
+        try:
+            await self._session.discover()
+        except Exception as probe_error:
+            if not definite:
+                # The probe was a guess; keep the server's own verdict.
+                raise handshake_error
+            # Both eras are now ruled out. Report that, carrying the handshake
+            # rejection — it names the versions the server does support, which
+            # the probe's own error does not.
+            raise McpProtocolEraError(
+                f"MCP server '{self.name}' rejected the legacy handshake "
+                f"({handshake_error}) and the modern 'server/discover' "
+                f"escalation also failed: {probe_error}"
+            ) from probe_error
+        self._protocol_version = self._session.protocol_version
+
+    def _record_handshake_version(self, result: Any) -> None:
+        """Store the version off an ``InitializeResult``.
+
+        Read from the result rather than the session: 1.x's ``ClientSession``
+        keeps no public record of what it negotiated. ``field()`` resolves the
+        *declared* field, so a server shipping a ``protocol_version`` extra
+        cannot shadow the SDK-validated ``protocolVersion`` on 1.x.
+        """
+        self._protocol_version = field(result, "protocolVersion", "protocol_version")
 
     async def _connect_stdio(self) -> None:
         """Establish stdio transport."""
@@ -529,13 +708,39 @@ class McpClient:
                     logger.info(f"MCP '{self.name}': reconnecting (attempt {attempt + 1})...")
                     await self.connect()
                 except Exception as e:
+                    # Only reachable for a failure ``connect()`` does not handle
+                    # itself (e.g. a malformed ``timeout`` block, parsed before
+                    # its try). Everything inside connect() reports through
+                    # status/error_message instead of raising — which is why the
+                    # check below, not this handler, is what catches a failed
+                    # reconnect.
                     return f"MCP connection error for '{self.name}': {e}"
+                if self.status != ServerStatus.CONNECTED or not self._session:
+                    return (
+                        f"MCP connection error for '{self.name}': "
+                        f"{self.error_message or 'reconnect failed'}"
+                    )
 
             try:
                 result = await self._session.call_tool(
-                    tool_name, arguments, read_timeout_seconds=read_timeout
+                    tool_name, arguments, read_timeout_seconds=read_timeout,
+                    # Take delivery of an ``InputRequiredResult`` instead of
+                    # letting the SDK raise on it — see _explain_input_required.
+                    **({"allow_input_required": True} if SUPPORTS_INPUT_REQUIRED else {}),
                 )
             except Exception as e:
+                if UnexpectedClaimedResult is not None and isinstance(
+                    e, UnexpectedClaimedResult
+                ):
+                    # Same shape as the input-required arm below: the SDK's text
+                    # tells a *programmer* to register the owning extension.
+                    # agentao registers none, so say that instead of forwarding
+                    # an API instruction into the model's context.
+                    return (
+                        f"MCP tool error: '{tool_name}' answered with a protocol "
+                        "extension agentao did not negotiate, so its result "
+                        "cannot be read."
+                    )
                 kind = classify_mcp_error(e)
                 if kind is McpErrorKind.AUTH:
                     return f"MCP auth error: {e}"
@@ -554,6 +759,11 @@ class McpClient:
                     await self.disconnect()
                     continue
                 return f"MCP tool error: {e}"
+
+            if InputRequiredResult is not None and isinstance(
+                result, InputRequiredResult
+            ):
+                return self._explain_input_required(tool_name, result)
 
             # Convert result content to text
             parts = []
@@ -596,6 +806,57 @@ class McpClient:
 
         return "MCP tool error: failed after reconnect attempt"
 
+    #: What the modern era's three input requests are asking agentao to be.
+    _INPUT_REQUEST_LABELS = {
+        "sampling/createMessage": "an LLM completion (sampling)",
+        "elicitation/create": "an answer from the user (elicitation)",
+        "roots/list": "the client's roots",
+    }
+
+    def _explain_input_required(self, tool_name: str, result: Any) -> str:
+        """Turn a modern-era ``InputRequiredResult`` into something the model can use.
+
+        On the modern era (2026-07-28) a server that needs sampling, elicitation
+        or roots mid-call no longer opens a back-channel request: ``tools/call``
+        *returns* with the list of things it needs plus an opaque
+        ``requestState``, expecting the client to answer them and call again.
+
+        agentao wires none of the three client-side resolvers, in either era —
+        on the handshake era the SDK's own defaults answer the server with a
+        clean "not supported". So the gap is not new; only the failure shape is.
+        Left alone, the SDK raises ``RuntimeError("… pass
+        allow_input_required=True … retry call_tool(…)")``, an instruction
+        addressed to a *programmer*, and ``call_tool``'s broad ``except`` would
+        hand that string to the model as the tool's result. Opting in to receive
+        the result (rather than string-matching that error) is what lets this
+        say something true instead.
+        """
+        # ``InputRequests`` is a *mapping* — ``dict[str, request]``, keyed by the
+        # id the client would echo back in ``input_responses``. Only the values
+        # carry the method, and only the methods are of interest here.
+        requests = field(result, "inputRequests", "input_requests") or {}
+        asked = sorted(
+            {
+                self._INPUT_REQUEST_LABELS.get(method, method)
+                for method in (
+                    getattr(req, "method", None) for req in requests.values()
+                )
+                if method
+            }
+        )
+        wanted = "; ".join(asked) if asked else "input agentao cannot provide"
+        logger.info(
+            f"MCP '{self.name}': tool '{tool_name}' requires interactive input "
+            f"({wanted}) — unsupported, reporting to the model"
+        )
+        return (
+            f"MCP tool error: '{tool_name}' cannot complete without {wanted}. "
+            "agentao does not provide sampling, elicitation, or roots to MCP "
+            "servers, so this tool is unusable here — use a different tool, or "
+            "supply the needed information in the arguments if the server "
+            "accepts it that way."
+        )
+
     async def disconnect(self) -> None:
         """Disconnect from the server."""
         if self._exit_stack:
@@ -606,6 +867,7 @@ class McpClient:
             self._exit_stack = None
         self._session = None
         self._tools = []
+        self._protocol_version = None
         self.status = ServerStatus.DISCONNECTED
 
 
@@ -701,6 +963,8 @@ class McpClientManager:
                 "name": name,
                 "status": client.status.value,
                 "transport": client.transport_type,
+                # None until the handshake settles it (see McpClient.protocol_version).
+                "protocol": client.protocol_version,
                 "tools": len(client.tools),
                 "trusted": client.is_trusted,
                 "error": client.error_message,
