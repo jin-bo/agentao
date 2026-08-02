@@ -1,5 +1,7 @@
 """Tests for the Transport abstraction layer."""
 
+import logging
+
 from agentao.transport import (
     AgentEvent,
     EventType,
@@ -81,6 +83,88 @@ class TestSdkTransport:
 
     def test_satisfies_transport_protocol(self):
         assert isinstance(SdkTransport(), Transport)
+
+
+class TestSubscriberErrorReporting:
+    """A raising subscriber is swallowed — but not silently.
+
+    Swallowing keeps the side channel from breaking the emit path; the
+    WARNING is what makes it debuggable. Without it the only symptom a
+    host gets is "my listener does nothing", with nothing in any log to
+    explain why.
+    """
+
+    def test_raising_subscriber_does_not_break_emit(self):
+        t = SdkTransport()
+        t.subscribe(lambda e: (_ for _ in ()).throw(RuntimeError("oops")))
+        t.emit(AgentEvent(EventType.TURN_START))  # must not raise
+
+    def test_raising_subscriber_does_not_stop_later_subscribers(self):
+        seen = []
+        t = SdkTransport()
+        t.subscribe(lambda e: (_ for _ in ()).throw(RuntimeError("oops")))
+        t.subscribe(seen.append)
+        e = AgentEvent(EventType.TURN_START)
+        t.emit(e)
+        assert seen == [e]
+
+    def test_subscriber_error_is_logged_with_event_type(self, caplog):
+        def boom(event):
+            raise RuntimeError("listener blew up")
+
+        t = SdkTransport()
+        t.subscribe(boom)
+        with caplog.at_level(logging.WARNING, logger="agentao.transport.broadcast"):
+            t.emit(AgentEvent(EventType.TOOL_START, {"tool": "shell"}))
+
+        records = [r for r in caplog.records if r.name == "agentao.transport.broadcast"]
+        assert len(records) == 1
+        assert records[0].levelno == logging.WARNING
+        # The event type is what lets a host find which emit site broke.
+        assert "tool_start" in records[0].getMessage()
+        # exc_info carries the traceback — a swallowed exception with no
+        # stack is barely more useful than silence.
+        assert records[0].exc_info is not None
+        assert "listener blew up" in caplog.text
+
+    def test_subscriber_error_log_omits_event_payload(self, caplog):
+        """``event.data`` must never reach the log record.
+
+        Payloads carry tool arguments, full tool results and LLM text.
+        Credential redaction lives on agentao's *own* file handler, so a
+        payload logged here would reach an embedded host's handlers
+        unredacted — and the type alone is what identifies the emit site.
+        """
+        def boom(event):
+            raise RuntimeError("nope")
+
+        t = SdkTransport()
+        t.subscribe(boom)
+        with caplog.at_level(logging.WARNING, logger="agentao.transport.broadcast"):
+            t.emit(
+                AgentEvent(
+                    EventType.TOOL_START,
+                    {"tool": "shell", "args": {"cmd": "curl -H 'Authorization: sk-secret'"}},
+                )
+            )
+
+        # Assert the record exists FIRST. Without this the payload
+        # assertions below pass vacuously the moment logging is removed
+        # or the logger is renamed — a spy that reports success because
+        # it never observed anything.
+        records = [r for r in caplog.records if r.name == "agentao.transport.broadcast"]
+        assert len(records) == 1
+        assert "tool_start" in records[0].getMessage()
+
+        assert "sk-secret" not in caplog.text
+        assert "Authorization" not in caplog.text
+
+    def test_no_log_when_subscriber_succeeds(self, caplog):
+        t = SdkTransport()
+        t.subscribe(lambda e: None)
+        with caplog.at_level(logging.WARNING, logger="agentao.transport.broadcast"):
+            t.emit(AgentEvent(EventType.TURN_START))
+        assert [r for r in caplog.records if r.name == "agentao.transport.broadcast"] == []
 
 
 class TestBuildCompatTransport:
