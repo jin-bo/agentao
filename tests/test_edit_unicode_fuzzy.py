@@ -10,6 +10,11 @@ Tier 3 mirrors the fuzzy behaviour of `git apply` — it covers the case where
 the LLM emits ASCII punctuation but the source file (or vice versa) contains
 typographic Unicode (smart quotes, em-dash, NBSP, …). Higher tiers run first,
 so byte-identical edits never reach this code path.
+
+Tier 3 normalizes in two passes (NFKC, then a codepoint table). The
+``TestNfkcFolding`` class below pins the half NFKC contributes — full-width
+punctuation, which the table has no entries for and which is the common case
+in a CJK source file.
 """
 
 from __future__ import annotations
@@ -103,6 +108,104 @@ def test_mixed_typography_normalized(project_root):
 
     assert _EDIT_SUFFIX_UNICODE in result
     assert target.read_text() == 'say "hi" then continue\n'
+
+
+# ---------------------------------------------------------------------------
+# NFKC half of tier 3 — compatibility forms the codepoint table cannot reach
+# ---------------------------------------------------------------------------
+
+
+class TestNfkcFolding:
+    """Full-width and other compatibility forms must fold before matching.
+
+    The codepoint table only knows dashes, quotes and spaces, so before NFKC
+    every one of these fell through tier 3 to ``_not_found_hint``. Borrowed
+    from pi-mono ``edit-diff.ts::normalizeForFuzzyMatch``.
+    """
+
+    def test_fullwidth_punctuation_in_source_matches_ascii_prompt(self, project_root):
+        """The CJK case: source written with 全角 punctuation, prompt in 半角."""
+        target = project_root / "cjk.py"
+        target.write_text('print（"你好"）；\n')
+
+        tool = _bind(EditTool(), project_root)
+        result = tool.execute(
+            file_path="cjk.py",
+            old_text='print("你好");',
+            new_text='print("世界")',
+        )
+
+        assert _EDIT_SUFFIX_UNICODE in result
+        assert target.read_text() == 'print("世界")\n'
+
+    def test_fullwidth_alphanumerics_fold_to_ascii(self, project_root):
+        target = project_root / "fw.txt"
+        target.write_text("ＴＯＴＡＬ＝４２\n")
+
+        tool = _bind(EditTool(), project_root)
+        result = tool.execute(
+            file_path="fw.txt",
+            old_text="TOTAL=42",
+            new_text="TOTAL=43",
+        )
+
+        assert _EDIT_SUFFIX_UNICODE in result
+        assert target.read_text() == "TOTAL=43\n"
+
+    def test_prompt_is_fullwidth_and_source_is_ascii(self, project_root):
+        """Reverse direction: the *model* emitted 全角. Both sides normalize,
+        so tier 3 must still land."""
+        target = project_root / "rev.txt"
+        target.write_text("total = 42\n")
+
+        tool = _bind(EditTool(), project_root)
+        result = tool.execute(
+            file_path="rev.txt",
+            old_text="ｔｏｔａｌ　＝　４２",
+            new_text="total = 43",
+        )
+
+        assert _EDIT_SUFFIX_UNICODE in result
+        assert target.read_text() == "total = 43\n"
+
+    def test_nfkc_runs_before_the_codepoint_table(self, project_root):
+        """Ordering regression.
+
+        U+FE58 ``﹘`` (CJK compatibility small em-dash) has no table entry.
+        NFKC folds it to U+2014, which the table then maps to ASCII ``-``.
+        Table-first would strand it one step short and this falls to tier 4.
+        """
+        target = project_root / "order.txt"
+        target.write_text("a ﹘ b\n")
+
+        tool = _bind(EditTool(), project_root)
+        result = tool.execute(
+            file_path="order.txt",
+            old_text="a - b",
+            new_text="a + b",
+        )
+
+        assert _EDIT_SUFFIX_UNICODE in result
+        assert target.read_text() == "a + b\n"
+
+    def test_fullwidth_on_both_sides_still_uses_tier_1(self, project_root):
+        """NFKC must not steal a byte-exact match. A file and prompt that agree
+        on 全角 punctuation is tier 1, and the file keeps whatever new_text says.
+        """
+        target = project_root / "both_fw.py"
+        target.write_text('print（"你好"）\n')
+
+        tool = _bind(EditTool(), project_root)
+        result = tool.execute(
+            file_path="both_fw.py",
+            old_text='print（"你好"）',
+            new_text='print（"世界"）',
+        )
+
+        assert "Replaced" in result
+        assert _EDIT_SUFFIX_UNICODE not in result
+        assert _EDIT_SUFFIX_FLEXIBLE not in result
+        assert target.read_text() == 'print（"世界"）\n'
 
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 import difflib
 import os
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -17,8 +18,10 @@ MAX_LINE_LENGTH = 2000
 BINARY_CHECK_SIZE = 8192
 
 # Codepoint table copied from codex-rs/apply-patch/src/seek_sequence.rs:79-92.
-# Mirrors the fuzzy behaviour of `git apply` — applied as the final fallback
-# in EditTool's match pyramid so byte-identical edits are unaffected.
+# Mirrors the fuzzy behaviour of `git apply`. This is the half of
+# ``_edit_normalize_for_match`` that NFKC cannot do; see that function for why
+# both passes exist. Applied as the final fallback in EditTool's match pyramid,
+# so byte-identical edits are unaffected.
 _EDIT_DASHES = "‐‑‒–—―−"
 _EDIT_SQUOTES = "‘’‚‛"
 _EDIT_DQUOTES = "“”„‟"
@@ -37,8 +40,21 @@ _EDIT_NORMALIZE_TABLE = str.maketrans(
 
 
 def _edit_normalize_for_match(s: str) -> str:
-    """Map common typographic codepoints to ASCII for fuzzy edit matching."""
-    return s.translate(_EDIT_NORMALIZE_TABLE)
+    """Map common typographic codepoints to ASCII for fuzzy edit matching.
+
+    Two passes, because neither subsumes the other. NFKC folds compatibility
+    variants the table has no entries for — most importantly full-width forms
+    (``Ａ`` → ``A``, ``（`` → ``(``, ``；`` → ``;``), which is what makes this
+    tier usable on a CJK source file mixing 全角 and 半角 punctuation. But
+    NFKC leaves smart quotes and en/em dashes alone (they have no
+    compatibility decomposition), and those are exactly what the table covers.
+
+    Order matters: NFKC runs first so a compatibility form that folds *into* a
+    table entry still reaches ASCII. U+FE31 ``︱`` and U+FE58 ``﹘`` (CJK
+    compatibility dashes) fold to U+2014, and U+207B ``⁻`` / U+208B ``₋`` fold
+    to U+2212; table-first would strand all four one step short.
+    """
+    return unicodedata.normalize("NFKC", s).translate(_EDIT_NORMALIZE_TABLE)
 
 
 # Success-message suffixes for non-exact match tiers. Tests assert against these,
