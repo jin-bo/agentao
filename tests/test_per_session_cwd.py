@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -48,7 +47,7 @@ from agentao.tools.file_ops import (
     ReadFolderTool,
     WriteFileTool,
 )
-from agentao.tools.search import FindFilesTool, SearchTextTool
+from agentao.tools.search import FindFilesTool
 from agentao.tools.shell import ShellTool
 
 

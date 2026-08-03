@@ -20,7 +20,6 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import TypeAdapter
 
 from agentao.host.models import (
     PermissionDecisionEvent,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rich.markup import escape as markup_escape
 from rich.prompt import Confirm
 
 from .._globals import console, unknown_subcommand
@@ -18,10 +19,22 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
     mgr = cli.agent.memory_manager
 
     def _print_entry(e) -> None:
-        console.print(f"  • [cyan]{e.title}[/cyan] [{e.scope}]: {e.content[:120]}")
+        # Titles / contents / tags are LLM-written and routinely contain
+        # brackets (remembered paths, quoted tags). Unescaped, a single
+        # `[/...]` raises MarkupError mid-loop: the header prints, some
+        # entries print, and everything after — including the tag
+        # summary — is silently dropped from what the user is auditing.
+        # `[{scope}]` is escaped too; it is meant as literal brackets,
+        # not a style tag. Convention is `from rich.markup import
+        # escape`, as in replay_commands.py and input_loop.py.
+        scope = markup_escape(f"[{e.scope}]")
+        console.print(
+            f"  • [cyan]{markup_escape(e.title)}[/cyan] "
+            f"{scope}: {markup_escape(e.content[:120])}"
+        )
         if e.tags:
-            console.print(f"    Tags: {', '.join(e.tags)}")
-        console.print(f"    Updated: {e.updated_at}")
+            console.print(f"    Tags: {markup_escape(', '.join(e.tags))}")
+        console.print(f"    Updated: {markup_escape(str(e.updated_at))}")
         console.print()
 
     if subcommand in ["", "list"]:
@@ -39,7 +52,7 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
         if all_tags:
             console.print("[info]Tag Summary:[/info]")
             for tag, count in sorted(all_tags.items(), key=lambda x: -x[1]):
-                console.print(f"  [dim]#{tag}[/dim] ({count})")
+                console.print(f"  [dim]#{markup_escape(tag)}[/dim] ({count})")
             console.print()
 
     elif subcommand == "search":
@@ -48,9 +61,9 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
             return
         results = mgr.search(arg)
         if not results:
-            console.print(f"\n[warning]No memories found matching '{arg}'[/warning]\n")
+            console.print(f"\n[warning]No memories found matching '{markup_escape(arg)}'[/warning]\n")
             return
-        console.print(f"\n[info]Found {len(results)} memory(ies) matching '{arg}':[/info]\n")
+        console.print(f"\n[info]Found {len(results)} memory(ies) matching '{markup_escape(arg)}':[/info]\n")
         for e in results:
             _print_entry(e)
 
@@ -60,9 +73,9 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
             return
         results = mgr.filter_by_tag(arg)
         if not results:
-            console.print(f"\n[warning]No memories found with tag '{arg}'[/warning]\n")
+            console.print(f"\n[warning]No memories found with tag '{markup_escape(arg)}'[/warning]\n")
             return
-        console.print(f"\n[info]Found {len(results)} memory(ies) with tag '{arg}':[/info]\n")
+        console.print(f"\n[info]Found {len(results)} memory(ies) with tag '{markup_escape(arg)}':[/info]\n")
         for e in results:
             _print_entry(e)
 
@@ -89,9 +102,9 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
                 }))
             except Exception:
                 pass
-            console.print(f"\n[success]Successfully deleted memory: {arg}[/success]\n")
+            console.print(f"\n[success]Successfully deleted memory: {markup_escape(arg)}[/success]\n")
         else:
-            console.print(f"\n[warning]Memory not found: {arg}[/warning]\n")
+            console.print(f"\n[warning]Memory not found: {markup_escape(arg)}[/warning]\n")
 
     elif subcommand == "clear":
         if Confirm.ask("\n[warning]Are you sure you want to delete ALL memories? This cannot be undone.[/warning]", default=False):
@@ -112,11 +125,15 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
 
     elif subcommand == "user":
         entries = mgr.get_all_entries(scope="user")
-        _display_layered_entries(entries, "[Profile Memory]")
+        # Pass this module's `console` explicitly: swapping the console
+        # attribute on the handler module is how this repo captures and
+        # redirects command output (see test_acp_client_cli.py), and the
+        # renderer lives in a different module with its own import.
+        _display_layered_entries(entries, "[Profile Memory]", console)
 
     elif subcommand == "project":
         entries = mgr.get_all_entries(scope="project")
-        _display_layered_entries(entries, "[Project Memory]")
+        _display_layered_entries(entries, "[Project Memory]", console)
 
     elif subcommand == "session":
         summaries = mgr.get_recent_session_summaries(limit=10)
@@ -134,9 +151,12 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
             return
         console.print(f"\n[info]Added/updated {len(items)} review queue item(s):[/info]\n")
         for it in items:
-            console.print(f"  • [cyan]{it.title}[/cyan] [{it.type}, {it.scope}] occ={it.occurrences}")
+            console.print(
+                f"  • [cyan]{markup_escape(it.title)}[/cyan] "
+                f"{markup_escape(f'[{it.type}, {it.scope}]')} occ={it.occurrences}"
+            )
             if it.evidence:
-                console.print(f"    [dim]Evidence:[/dim] {it.evidence[:120]}")
+                console.print(f"    [dim]Evidence:[/dim] {markup_escape(it.evidence[:120])}")
         console.print()
 
     elif subcommand == "review":
@@ -150,23 +170,29 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
                 return
             console.print(f"\n[info]Pending review items ({len(items)}):[/info]\n")
             for it in items:
-                console.print(f"  [{it.id}] [cyan]{it.title}[/cyan] {it.type}/{it.scope} occ={it.occurrences}")
+                console.print(
+                    f"  {markup_escape(f'[{it.id}]')} [cyan]{markup_escape(it.title)}[/cyan] "
+                    f"{markup_escape(f'{it.type}/{it.scope}')} occ={it.occurrences}"
+                )
                 if it.evidence:
-                    console.print(f"      [dim]{it.evidence[:120]}[/dim]")
+                    console.print(f"      [dim]{markup_escape(it.evidence[:120])}[/dim]")
             console.print("\n  Approve: /memory review approve <id>")
             console.print("  Reject:  /memory review reject <id>\n")
         elif action == "approve" and target:
             rec = mgr.approve_review_item(target)
             if rec:
-                console.print(f"\n[success]Approved → memory '{rec.title}' (source=crystallized)[/success]\n")
+                console.print(
+                    f"\n[success]Approved → memory '{markup_escape(rec.title)}' "
+                    f"(source=crystallized)[/success]\n"
+                )
             else:
-                console.print(f"\n[warning]No pending review item with id '{target}'[/warning]\n")
+                console.print(f"\n[warning]No pending review item with id '{markup_escape(str(target))}'[/warning]\n")
         elif action == "reject" and target:
             ok = mgr.reject_review_item(target)
             if ok:
                 console.print(f"\n[success]Rejected[/success]\n")
             else:
-                console.print(f"\n[warning]No pending review item with id '{target}'[/warning]\n")
+                console.print(f"\n[warning]No pending review item with id '{markup_escape(str(target))}'[/warning]\n")
         else:
             console.print("\n[error]Usage: /memory review [approve|reject <id>][/error]\n")
 
@@ -188,7 +214,7 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
         console.print(f"  Recall hits (session):  {recall_count}")
         console.print(f"  Recall errors (session):{error_count}")
         if last_error:
-            console.print(f"  Last recall error:      {last_error}")
+            console.print(f"  Last recall error:      {markup_escape(str(last_error))}")
         console.print(f"  Stable block size:      {stable_chars} chars")
         console.print(f"  Latest session summary: {session_chars} chars\n")
 

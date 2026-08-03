@@ -12,7 +12,7 @@ from agentao.skills.installer import (
     SkillValidationError,
     normalize_skill_name,
 )
-from agentao.skills.registry import InstalledSkillRecord, SkillRegistry
+from agentao.skills.registry import SkillRegistry
 from agentao.skills.sources import FetchResult, SkillSource, SourceSpec, UpdateInfo
 from agentao.skills.sources import GitHubSkillSource
 

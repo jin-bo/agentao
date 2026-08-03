@@ -67,13 +67,26 @@ jobs:
       - name: Install Python 3.12
         run: uv python install 3.12
 
-      - name: Install dependencies (incl. dev group for ruff)
-        run: uv sync --python 3.12 --group dev
-
-      # Rule selection lives in pyproject.toml :: [tool.ruff.lint]. It is
-      # deliberately narrow (E9/F402/F811/F821) — see docs/design/lint-gate.md.
+      # One step, no separate `uv sync`: `uv run` syncs on its own, and a
+      # preceding `uv sync --only-group dev` would just be undone by it
+      # (measured — `uv run` re-syncs the default set and evicts ruff, so
+      # the two-step form fails with "Failed to spawn: ruff").
+      #
+      # `--only-group dev` and not `--group dev`: ruff is a static analyser
+      # that never imports the project, so building and installing agentao
+      # (plus mypy/pytest/build/twine) is pure wall-clock. Measured at 33
+      # packages and no project build, versus a full sync for typing-gate.
+      #
+      # Both the rules AND the scope live in pyproject.toml — rules in
+      # [tool.ruff.lint], scope via ruff's own repo walk (it honours
+      # .gitignore and [tool.ruff] exclude). Passing `.` rather than a
+      # hand-written directory list is what keeps this command and the one
+      # in docs/design/lint-gate.md from drifting apart, and it is what
+      # puts skills/skill-creator/ — which ships inside the wheel — under
+      # the gate. Rules: E9/F401/F402/F405/F811/F821, with F401 exempted
+      # for agentao/. See docs/design/lint-gate.md.
       - name: ruff check
-        run: uv run --python 3.12 ruff check agentao/ tests/ examples/
+        run: uv run --python 3.12 --only-group dev ruff check .
 
   # ─────────────────────────────────────────────────────────────
   # Job 1 · Unit tests across Python 3.10 / 3.11 / 3.12

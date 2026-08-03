@@ -23,7 +23,6 @@ from agentao.memory.crystallizer import (
     suggest_prompt,
 )
 from agentao.skills.drafts import (
-    SkillDraft,
     SkillEvidence,
     SkillFeedbackEntry,
     append_skill_feedback,

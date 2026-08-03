@@ -51,11 +51,10 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import pytest
 
-from agentao.acp import initialize as acp_initialize
 from agentao.acp import session_cancel as acp_session_cancel
 from agentao.acp import session_load as acp_session_load
 from agentao.acp import session_new as acp_session_new
@@ -80,7 +79,6 @@ from agentao.embedding.sessions import save_session
 from .support.acp_agents import (
     StallingFakeAgent,
     make_factory,
-    make_round_robin_factory,
 )
 from .support.acp_agents import FakeAgent as _FakeAgent
 from .support.acp_server import (

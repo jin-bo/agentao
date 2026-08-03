@@ -6,7 +6,6 @@ request logger must **summarize** those parts — never dump the raw base64
 blob, which is megabytes per image and would bloat ``agentao.log``.
 """
 
-import logging
 from pathlib import Path
 
 import pytest

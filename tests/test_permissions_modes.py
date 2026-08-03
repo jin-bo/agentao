@@ -6,7 +6,7 @@ hardline floor and sensitive-write preset live in their own modules.
 
 from agentao.permissions import PermissionDecision, PermissionEngine, PermissionMode
 
-from tests.support.permissions import allow, ask, deny, make_engine as _engine
+from tests.support.permissions import allow, deny, make_engine as _engine
 
 
 # ---------------------------------------------------------------------------

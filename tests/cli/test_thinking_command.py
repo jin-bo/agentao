@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 
 from agentao.cli.commands import handle_thinking_command
 

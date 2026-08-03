@@ -21,7 +21,6 @@ Design rules:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
 from unittest.mock import MagicMock, patch
 
 import pytest

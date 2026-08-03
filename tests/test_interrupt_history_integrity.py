@@ -21,7 +21,6 @@ from types import SimpleNamespace
 import pytest
 
 from agentao import Agentao
-from agentao.cancellation import AgentCancelledError
 from agentao.runtime.sanitize import backfill_orphaned_tool_calls
 from agentao.tools.base import Tool
 

@@ -32,17 +32,14 @@ from __future__ import annotations
 
 import asyncio
 import compileall
-import inspect
 import logging
 import threading
 import time
-import typing
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Union, get_type_hints
+from typing import Any, Dict, List, Optional, get_type_hints
 from unittest.mock import MagicMock, Mock, patch
 
-import pytest
 
 from agentao import tools as tools_pkg
 from agentao.cancellation import CancellationToken
@@ -51,7 +48,6 @@ from agentao.runtime.tool_executor import (
     ASYNC_CANCEL_REASON,
     ToolExecutionResult,
     ToolExecutor,
-    _AsyncToolOutcome,
 )
 from agentao.runtime.tool_planning import (
     ToolCallDecision,
@@ -60,7 +56,7 @@ from agentao.runtime.tool_planning import (
 )
 from agentao.tools import AsyncToolBase, RegistrableTool, Tool, ToolRegistry
 from agentao.tools.base import _BaseTool
-from agentao.transport import AgentEvent, EventType
+from agentao.transport import EventType
 
 from tests.support.host_events import CapturingTransport as _CapturingTransport
 

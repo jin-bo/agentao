@@ -9,7 +9,6 @@ agent constructor itself never has to.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 from agentao.embedding import build_from_environment

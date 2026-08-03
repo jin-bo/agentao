@@ -26,7 +26,6 @@ exit code ``0`` means every required path worked.
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import textwrap
@@ -38,7 +37,6 @@ from typing import List
 from agentao.acp_client import (
     ACPManager,
     AcpClientConfig,
-    AcpClientError,
     AcpErrorCode,
     AcpInteractionRequiredError,
     AcpServerConfig,

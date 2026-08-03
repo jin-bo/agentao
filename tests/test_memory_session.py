@@ -3,7 +3,6 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import pytest
 
 
 def _make_manager(tmp_path: Path):
@@ -257,7 +256,6 @@ def test_clear_all_session_summaries_unblocks_review_queue_starvation(tmp_path):
 def test_context_manager_writes_session_summary(tmp_path, monkeypatch):
     """compress_messages() writes to SQLite when memory_manager is present."""
     from agentao.context_manager import ContextManager
-    from agentao.memory.manager import MemoryManager
 
     mock_llm = Mock()
     mock_llm.logger = Mock()

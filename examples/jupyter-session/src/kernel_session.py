@@ -12,7 +12,7 @@ import asyncio
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from agentao import Agentao
 from agentao.host.models import HostEvent

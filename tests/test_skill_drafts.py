@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from agentao.skills.drafts import (
-    SkillDraft,
     clear_skill_draft,
     extract_skill_name,
     get_skill_draft_path,

@@ -15,7 +15,6 @@ import io
 import json
 import threading
 from types import SimpleNamespace
-from typing import Any, Callable, List, Optional, Tuple
 
 import pytest
 
@@ -26,10 +25,7 @@ from agentao.acp.models import AcpSessionState
 from agentao.acp.protocol import (
     ACP_PROTOCOL_VERSION,
     INTERNAL_ERROR,
-    INVALID_PARAMS,
     INVALID_REQUEST,
-    METHOD_INITIALIZE,
-    METHOD_SESSION_NEW,
     METHOD_SESSION_PROMPT,
     SERVER_NOT_INITIALIZED,
 )

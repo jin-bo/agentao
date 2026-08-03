@@ -21,7 +21,6 @@ Scenarios covered:
 import io
 import json
 
-import pytest
 
 from agentao.acp.protocol import (
     INTERNAL_ERROR,

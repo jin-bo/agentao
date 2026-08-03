@@ -1,11 +1,9 @@
 """Tests for SkillManager two-layer scan, bootstrap, and config persistence."""
 
 import json
-import shutil
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 import agentao.skills.manager as _mod
 from agentao.skills.manager import SkillManager

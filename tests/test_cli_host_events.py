@@ -18,7 +18,6 @@ import logging
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
-import pytest
 
 from agentao.host.events import EventStream
 from agentao.host.models import ToolLifecycleEvent

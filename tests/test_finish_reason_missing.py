@@ -442,7 +442,6 @@ class TestDownstreamCoverage:
         assert agent.last_turn.finish_reason_missing is False
 
     def test_replay_turn_completed_records_the_flag(self):
-        from agentao.transport import AgentEvent, EventType
 
         recorded = []
         adapter_mod = __import__(

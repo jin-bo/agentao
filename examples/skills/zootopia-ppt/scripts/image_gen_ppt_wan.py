@@ -24,7 +24,6 @@ Markdown 格式：
 import os
 import sys
 import re
-import json
 import time
 import argparse
 import logging

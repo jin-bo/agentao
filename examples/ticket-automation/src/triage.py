@@ -9,8 +9,6 @@ auto-sends (confidence >= 0.9) or drafts for a human reviewer.
 from __future__ import annotations
 
 import argparse
-import shutil
-import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 

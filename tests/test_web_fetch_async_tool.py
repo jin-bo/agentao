@@ -30,7 +30,6 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from agentao.security import url_policy as url_policy_mod
-from agentao.security.url_policy import UrlPolicyError
 from agentao.tools import web as web_mod
 from agentao.tools.base import AsyncToolBase, Tool
 from agentao.tools.web import WebFetchTool

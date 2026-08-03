@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 from typing import Dict
 
@@ -16,7 +15,6 @@ import pytest
 
 from agentao.cli.diagnostics_cli import (
     DiagnosticReport,
-    Finding,
     _collect_mcp,
     _collect_permissions,
     _collect_provider,

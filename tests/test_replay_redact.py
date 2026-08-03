@@ -1174,7 +1174,7 @@ def test_render_replay_grouped_errors_only_filter_works(tmp_path):
     from agentao.cli.replay_render import _render_replay_grouped
     from agentao.replay.adapter import ReplayAdapter
     from agentao.replay.reader import ReplayReader
-    from agentao.transport import AgentEvent, EventType, NullTransport
+    from agentao.transport import NullTransport
 
     rec = ReplayRecorder.create("sess", tmp_path)
     adapter = ReplayAdapter(NullTransport(), rec)

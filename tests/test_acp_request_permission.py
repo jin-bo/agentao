@@ -35,10 +35,8 @@ from agentao.acp import session_prompt as acp_session_prompt
 from agentao.acp.models import AcpSessionState
 from agentao.acp.protocol import (
     ACP_PROTOCOL_VERSION,
-    INTERNAL_ERROR,
     INVALID_REQUEST,
     METHOD_REQUEST_PERMISSION,
-    METHOD_SESSION_NEW,
     METHOD_SESSION_PROMPT,
 )
 from agentao.acp.server import (

@@ -1,7 +1,6 @@
 """Tests for AgentManager definition discovery and YAML parsing."""
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 

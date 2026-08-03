@@ -1,6 +1,6 @@
 """Test single-key confirmation with readchar."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 import readchar
 
 

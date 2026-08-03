@@ -6,14 +6,11 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import pytest
 
 from agentao.memory.manager import MemoryManager
 from agentao.memory.models import MemoryRecord, RecallCandidate
 from agentao.memory.retriever import (
     MemoryRetriever,
-    _jaccard,
-    _days_since,
     _ensure_jieba_ready,
     _initialize_jieba_with_logging,
     _normalize_token,

@@ -5,9 +5,12 @@ Uses a fake agent factory so we don't pull the LLM stack or need
 default factory does, so the test double also validates that the handler
 passes the expected arguments.
 
-Test doubles (:class:`FakeAgent`, :class:`ExplodingAgent`, factory
-helpers) live in :mod:`tests.support.acp_agents`; the server builders
-live in :mod:`tests.support.acp_server`.
+Test doubles (:class:`FakeAgent`, :func:`make_failing_factory`,
+:func:`make_recording_factory`) live in :mod:`tests.support.acp_agents`;
+the server builders live in :mod:`tests.support.acp_server`. The
+agent-construction-failure case uses ``make_failing_factory``; the
+``ExplodingAgent`` double this file once imported is exercised in
+``tests/test_acp_session_manager.py`` instead.
 """
 
 from __future__ import annotations
@@ -22,20 +25,15 @@ from agentao.acp import initialize as acp_initialize
 from agentao.acp import session_new as acp_session_new
 from agentao.acp.models import AcpSessionState
 from agentao.acp.protocol import (
-    ACP_PROTOCOL_VERSION,
     INTERNAL_ERROR,
     INVALID_PARAMS,
-    METHOD_INITIALIZE,
     METHOD_SESSION_NEW,
     SERVER_NOT_INITIALIZED,
 )
-from agentao.acp.server import AcpServer
-from agentao.acp.session_manager import DuplicateSessionError
 from agentao.acp.transport import ACPTransport
 from agentao.permissions import PermissionMode
 
 from .support.acp_agents import (
-    ExplodingAgent,
     FakeAgent,
     make_failing_factory,
     make_recording_factory,
