@@ -118,6 +118,84 @@ def test_replace_skill_name_requires_frontmatter():
         replace_skill_name("no frontmatter", "x")
 
 
+# ---------------------------------------------------------------------------
+# Byte-for-byte preservation.
+#
+# ``replace_skill_name`` rewrites a file the user wrote, so everything except
+# the ``name:`` value must survive untouched. An earlier implementation
+# rebuilt the frontmatter from the literal f"---\n{block}\n---\n", which
+# reformatted every document whose layout differed from that one shape — most
+# importantly it ate the blank line between the closing fence and the body,
+# which is the layout _SAMPLE and every skill in this repo actually use.
+#
+# The assertions below compare whole strings, not substrings: the pre-existing
+# test above passes against the buggy version precisely because `"# Python
+# Testing" in out` cannot see a deleted blank line.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "label,src",
+    [
+        ("blank line after closing fence", "---\nname: a\ndesc: d\n---\n\n# Body\n"),
+        ("two blank lines after fence", "---\nname: a\n---\n\n\n# Body\n"),
+        ("no blank line after fence", "---\nname: a\n---\n# Body\n"),
+        ("file ends at the closing fence", "---\nname: a\n---"),
+        ("no trailing newline on body", "---\nname: a\n---\n# Body"),
+        ("leading blank line before fence", "\n---\nname: a\n---\n# Body\n"),
+        ("trailing spaces on opening fence", "---  \nname: a\n---\n# Body\n"),
+        ("CRLF throughout", "---\r\nname: a\r\n---\r\n# Body\r\n"),
+        ("blank line inside frontmatter", "---\nname: a\n\ndesc: d\n---\n# B\n"),
+        ("indented name key", "---\n  name: a\n---\n# B\n"),
+        ("spaces around the colon", "---\nname   :   a\n---\n# B\n"),
+    ],
+)
+def test_replace_skill_name_changes_only_the_name_value(label, src):
+    """Output must equal the input with the value swapped — nothing else."""
+    out = replace_skill_name(src, "z")
+    expected = src.replace(": a", ": z").replace(":   a", ":   z")
+    assert out == expected, (
+        f"{label}: layout was rewritten\n  in : {src!r}\n  out: {out!r}\n  want: {expected!r}"
+    )
+    assert extract_skill_name(out) == "z"
+
+
+def test_replace_skill_name_preserves_the_sample_layout_exactly():
+    """The repo's own skill layout — the shape the old code corrupted."""
+    out = replace_skill_name(_SAMPLE, "js-testing")
+    assert out == _SAMPLE.replace("name: python-testing", "name: js-testing")
+    # Spelled out, because this is the byte the old implementation deleted:
+    assert "---\n\n# Python Testing" in out
+
+
+def test_replace_skill_name_is_idempotent():
+    once = replace_skill_name(_SAMPLE, "z")
+    assert replace_skill_name(once, "z") == once
+
+
+def test_replace_skill_name_prepends_when_no_name_line():
+    src = "---\ndesc: d\n---\n\n# Body\n"
+    out = replace_skill_name(src, "z")
+    assert extract_skill_name(out) == "z"
+    assert out == "---\nname: z\ndesc: d\n---\n\n# Body\n"
+
+
+def test_replace_skill_name_prepend_matches_crlf_line_endings():
+    src = "---\r\ndesc: d\r\n---\r\n# Body\r\n"
+    out = replace_skill_name(src, "z")
+    assert extract_skill_name(out) == "z"
+    assert "name: z\r\n" in out
+    # No LF-only line ending was introduced into a CRLF document: after
+    # removing every CRLF pair, no bare \n may remain.
+    assert out.replace("\r\n", "").count("\n") == 0
+
+
+def test_replace_skill_name_quoted_value_is_replaced():
+    out = replace_skill_name('---\nname: "old"\n---\n# B\n', "z")
+    assert extract_skill_name(out) == "z"
+    assert out == "---\nname: z\n---\n# B\n"
+
+
 def test_save_updates_updated_at(tmp_path: Path):
     draft = new_draft(content=_SAMPLE, suggested_name="x")
     save_skill_draft(draft, working_directory=tmp_path)

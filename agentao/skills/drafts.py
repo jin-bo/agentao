@@ -248,19 +248,39 @@ def extract_skill_name(skill_md: str) -> str | None:
 
 
 def replace_skill_name(skill_md: str, new_name: str) -> str:
-    """Replace `name:` in the frontmatter; raise if no frontmatter present."""
+    """Replace `name:` in the frontmatter; raise if no frontmatter present.
+
+    Everything except the ``name:`` value is preserved byte-for-byte. That
+    is the whole contract, and it is easy to get wrong: an earlier version
+    rebuilt the frontmatter from the literal ``f"---\\n{block}\\n---\\n"``,
+    which silently reformatted every document whose layout differed from
+    that one shape — it ate the blank line between the closing fence and
+    the body (the layout every skill in this repo uses), added a trailing
+    newline to files that ended at the fence, dropped leading whitespace
+    and trailing spaces on the fence line, and rewrote CRLF to LF.
+
+    Two things make the preservation work:
+
+    - The result is *spliced* into the original string by the frontmatter
+      block's own span, so no character outside that block is retyped.
+    - Within the block, only the value span of the ``name:`` line is
+      replaced. Replacing the whole match would take the trailing
+      whitespace with it, because ``_NAME_LINE_RE`` ends in ``\\s*$`` and
+      ``\\s`` swallows a trailing ``\\r`` — or a following blank line.
+    """
     m = _FRONTMATTER_RE.match(skill_md or "")
     if not m:
         raise ValueError("SKILL.md is missing YAML frontmatter")
     block = m.group(1)
-    if _NAME_LINE_RE.search(block):
-        new_block = _NAME_LINE_RE.sub(lambda _m: f"{_m.group(1)}{new_name}", block, count=1)
+    nm = _NAME_LINE_RE.search(block)
+    if nm:
+        new_block = block[: nm.start(2)] + new_name + block[nm.end(2) :]
     else:
-        new_block = f"name: {new_name}\n{block}"
-    prefix_end = m.end()
-    # Reconstruct: replace the captured block within the original match
-    old_fm = m.group(0)
-    # Rebuild frontmatter literal preserving leading/trailing fences
-    new_fm = f"---\n{new_block}\n---\n"
-    # Drop any extra trailing newline beyond what old_fm had, keep body intact
-    return new_fm + skill_md[prefix_end:]
+        # No `name:` line at all — prepend one, matching the document's own
+        # line ending so a CRLF file stays CRLF. Take that from the opening
+        # fence rather than from `block`: the pattern's own `\n---` consumes
+        # the block's final newline, so a CRLF block ends in a bare `\r` and
+        # contains no `\r\n` to find.
+        eol = "\r\n" if skill_md[: m.start(1)].endswith("\r\n") else "\n"
+        new_block = f"name: {new_name}{eol}{block}"
+    return skill_md[: m.start(1)] + new_block + skill_md[m.end(1) :]
