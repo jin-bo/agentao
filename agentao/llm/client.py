@@ -763,6 +763,7 @@ class LLMClient(_LoggingMixin):
 
             if choice.finish_reason:
                 acc.finish_reason = choice.finish_reason
+                acc.finish_reason_reported = True
 
             if hasattr(chunk, "model") and chunk.model:
                 acc.response_model = chunk.model

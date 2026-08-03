@@ -403,10 +403,19 @@ if not outcome.is_answer:
 `agent.last_turn` mirrors the `TURN_END` payload — `text`, `status`,
 `incomplete_reason` (a single closed vocabulary: `no_output` /
 `reasoning_only` / `length_truncated` / `doom_loop` / `llm_error`, or
-`None` for a real answer), `tool_count`, `error` — as a synchronous
-read-after, no subscription required. `outcome.is_answer` is the one
-check that folds all of it together: `True` only when the turn ended
-`"ok"` with nothing classifying it incomplete.
+`None` for a real answer), `tool_count`, `error`, `finish_reason_missing`
+— as a synchronous read-after, no subscription required.
+`outcome.is_answer` is the one check that folds all of it together:
+`True` only when the turn ended `"ok"` with nothing classifying it
+incomplete.
+
+`finish_reason_missing` is deliberately outside that fold. It is `True`
+when at least one LLM call in the turn ended without the provider saying
+*why* generation stopped, so agentao's `"stop"` fallback is what claims
+the answer is complete. It does not affect `is_answer`, because a server
+that omits the field omits it on every call and every turn would
+otherwise become a failure. Write `outcome.is_answer and not
+outcome.finish_reason_missing` if you want the strict reading.
 
 This is a pull surface: it answers "how did the turn I just awaited
 end?". If instead you need the outcome *pushed* to an async observer

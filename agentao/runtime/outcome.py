@@ -31,6 +31,11 @@ class TurnOutcome:
                             ``length_truncated`` / ``doom_loop`` / ``llm_error``.
         tool_count        — tool calls the model made across the turn
         error             — error detail when ``status != "ok"``, else ``None``
+        finish_reason_missing
+                          — at least one LLM call in this turn ended without
+                            the provider reporting *why* generation stopped.
+                            See below; ``False`` on a cancelled turn, where the
+                            absence is explained by the cancellation itself.
     """
 
     text: str
@@ -38,6 +43,22 @@ class TurnOutcome:
     incomplete_reason: Optional[str]
     tool_count: int
     error: Optional[str] = None
+    #: A separate axis from ``incomplete_reason``, deliberately.
+    #:
+    #: A stream can end without the provider ever sending ``finish_reason`` —
+    #: a gateway closing the SSE body after its own upstream timeout, or a
+    #: partially-compatible local server that never emits the field. agentao
+    #: falls back to ``"stop"``, so such a turn is otherwise indistinguishable
+    #: from a clean completion: the text may be a truncated fragment reported
+    #: as a finished answer.
+    #:
+    #: This flag reports that, and nothing more. It does **not** make the turn
+    #: incomplete and does **not** affect :attr:`is_answer`, because for the
+    #: servers that simply never send the field, every turn would otherwise
+    #: become a failure. Hosts that would rather be strict can treat
+    #: ``finish_reason_missing`` as fatal themselves; hosts on a known-lenient
+    #: provider can keep ignoring it. agentao does not guess which you are.
+    finish_reason_missing: bool = False
 
     @property
     def is_answer(self) -> bool:
@@ -47,6 +68,12 @@ class TurnOutcome:
         reply: the turn ended ``"ok"`` and nothing classified it as incomplete.
         A cancelled or errored turn, or one the harness could not get an answer
         out of, is ``False``.
+
+        :attr:`finish_reason_missing` is deliberately *not* part of this: the
+        answer is complete as far as anything agentao can observe, and the
+        providers that omit the field omit it on every call. A host that wants
+        the stricter reading writes ``o.is_answer and not
+        o.finish_reason_missing``.
         """
         return self.status == "ok" and self.incomplete_reason is None
 

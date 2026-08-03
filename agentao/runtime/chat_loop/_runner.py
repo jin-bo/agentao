@@ -396,6 +396,36 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             assistant_message = response.choices[0].message
             finish_reason = getattr(response.choices[0], "finish_reason", None)
 
+            # Did the provider actually say why generation stopped? Two
+            # producers, one question: the streaming path carries an explicit
+            # flag (its ``finish_reason`` falls back to "stop"), while a real
+            # ChatCompletion that omits the field simply reports ``None``.
+            #
+            # Sticky for the whole turn, set by *any* call — not just the last.
+            # An intermediate call that ends without a finish_reason may have
+            # had its tool-call arguments cut off with nothing to detect it:
+            # ``_is_length_truncation`` never fires, so those arguments are
+            # executed. That is the sharper hazard, and it is invisible if only
+            # the final call is inspected.
+            #
+            # Reported, never acted on. This deliberately does NOT join
+            # ``INCOMPLETE_ANSWER_REASONS`` (see that set's comment): every
+            # value there becomes a CLI error envelope, which would turn a
+            # merely-unconfirmed turn into a hard failure for every provider
+            # that omits the field — the strict behaviour agentao chose not to
+            # adopt. It rides its own axis, like ``max_iterations``.
+            # ``not finish_reason`` rather than ``is None``: the streaming
+            # recorder gates on truthiness (``if choice.finish_reason:`` in
+            # client.py), so a provider sending ``""`` leaves the flag False
+            # there. Testing ``is None`` here would call the identical ``""``
+            # reported, and the answer would then depend on whether the turn
+            # happened to take the streaming or the bypass path — a transport
+            # detail no host can see.
+            if not finish_reason or not getattr(
+                response, "finish_reason_reported", True
+            ):
+                agent._turn_finish_reason_missing = True
+
             if assistant_message.tool_calls:
                 if _is_length_truncation(finish_reason):
                     # The message hit the output-token limit mid-stream, so the
@@ -1102,6 +1132,10 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             t0 = time.monotonic()
             pre_msgs = len(agent.messages)
             agent.messages = agent.context_manager.compress_messages(agent.messages)
+            # Same fold-in as the threshold path in ``_compaction.py``: the
+            # summarization call never passes the detector above.
+            if agent.context_manager.last_summary_finish_reason_missing:
+                agent._turn_finish_reason_missing = True
             agent.context_manager.invalidate_token_anchor()  # prefix rewritten; anchor is stale
             system_prompt = agent._build_system_prompt()
             messages_with_system = [

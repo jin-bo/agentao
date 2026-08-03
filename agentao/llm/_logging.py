@@ -231,7 +231,20 @@ class _LoggingMixin:
 
         # Log basic info
         self.logger.info(f"Model: {response.model}")
-        self.logger.info(f"Finish Reason: {choice.finish_reason}")
+        # When the provider never sent a finish_reason the value above is
+        # agentao's own "stop" fallback, so the bare line would assert a clean
+        # provider-confirmed stop for a stream that may have been cut off.
+        # agentao.log is the documented first stop for debugging LLM behaviour
+        # (CLAUDE.md), so the qualifier has to be here and not only on
+        # ``TurnOutcome``.
+        if getattr(response, "finish_reason_reported", True):
+            self.logger.info(f"Finish Reason: {choice.finish_reason}")
+        else:
+            self.logger.info(
+                f"Finish Reason: {choice.finish_reason} "
+                "(NOT reported by provider — agentao fallback; the stream "
+                "ended without one, so this response may be truncated)"
+            )
 
         # Log usage stats if available
         if hasattr(response, 'usage') and response.usage:

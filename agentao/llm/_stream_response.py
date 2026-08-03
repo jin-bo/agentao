@@ -47,6 +47,18 @@ class _StreamAccumulator:
         self._tc_last_key: Optional[int] = None
         self._tc_next_key: int = 0
         self.finish_reason: str = "stop"
+        # Whether the provider ever sent a ``finish_reason``. The default
+        # above is a *fallback*, not an observation: a stream that ends
+        # without one (a gateway closing the SSE body after its own upstream
+        # timeout, a partially-compatible local server) is otherwise
+        # indistinguishable from a clean completion, and the turn is reported
+        # as a finished answer. Kept separate from ``finish_reason`` so the
+        # fallback stays "stop" on the wire — flipping it to ``None`` would
+        # change LLM_CALL_COMPLETED payloads and replay renders for every
+        # provider that omits the field. Surfaced on the built response and
+        # folded into ``TurnOutcome.finish_reason_missing``; it never changes
+        # control flow here.
+        self.finish_reason_reported: bool = False
         self.response_model: str = model
         self.usage_data: Any = None
         # True only after on_text_chunk has fired with non-empty text — i.e.,
@@ -91,6 +103,7 @@ class _StreamAccumulator:
             content="".join(self.content_parts) if self.content_parts else None,
             tool_calls_data=self.tool_calls_data,
             finish_reason=self.finish_reason,
+            finish_reason_reported=self.finish_reason_reported,
             usage=self.usage_data,
             reasoning_content="".join(self.reasoning_parts) if self.reasoning_parts else None,
         )
@@ -137,11 +150,26 @@ class _StreamResponse:
         content: Optional[str],
         tool_calls_data: Dict[int, Dict[str, str]],
         finish_reason: str,
+        finish_reason_reported: bool,
         usage: Any = None,
         reasoning_content: Optional[str] = None,
     ):
         self.model = model
         self.usage = usage  # populated when provider supports stream_options include_usage
+        # False when the stream ended without the provider ever sending a
+        # ``finish_reason`` — ``choices[0].finish_reason`` is then the "stop"
+        # fallback rather than something the provider said. A real
+        # ``ChatCompletion`` has no such attribute, so readers use
+        # ``getattr(response, "finish_reason_reported", True)``; on that path
+        # the same condition shows up as a falsy ``finish_reason``.
+        #
+        # Required, deliberately: a default would have to be ``True`` to match
+        # the getattr fallback, and a second construction site that forgot the
+        # kwarg would then assert the provider reported a stop reason for a
+        # stream that never did — failing open, silently, with no test able to
+        # catch it. ``build()`` is the only caller today; keep it that way or
+        # pass the value.
+        self.finish_reason_reported = finish_reason_reported
 
         tool_calls = None
         if tool_calls_data:

@@ -360,7 +360,16 @@ for ev in events:
   可以同步拿到：`agent.last_turn` 返回一个 `TurnOutcome`（`text`、`status`、
   一套单一封闭词表的 `incomplete_reason`——`no_output`、`reasoning_only`、
   `length_truncated`、`doom_loop`、`llm_error`，或 `None`；`tool_count`；
-  `error`），`.is_answer` 把它折成一个判断。这是一个 **pull** 面：它回答
+  `error`；`finish_reason_missing`），`.is_answer` 把它折成一个判断。
+
+  `finish_reason_missing` 是与 `max_iterations` 并列的第三根独立轴：这个
+  turn 里至少有一次 LLM 调用结束时，provider 从未说明生成为何停止，所以
+  "答案完整"这句话是 agentao 的 `"stop"` 兜底说的，不是 provider 说的。
+  它**不影响** `.is_answer`——不发这个字段的服务端是每次都不发，否则每个
+  turn 都会变成失败。想要严格语义的宿主自己写 `o.is_answer and not
+  o.finish_reason_missing`；确知 provider 宽松的宿主继续忽略它即可。
+
+  这是一个 **pull** 面：它回答
   "我刚 await 完的这个 turn 是怎么结束的"，覆盖 `chat()` / `arun()` 调用方、
   `agentao run` 和任何嵌入方。**尚未**进稳定契约的是 **push** 形态——一个
   不驱动 turn 的异步观察者可以订阅的 `HostEvent`。这个缺口现在**只剩主循环**：
