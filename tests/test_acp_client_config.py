@@ -9,7 +9,6 @@ from agentao.acp_client.config import load_acp_client_config
 from agentao.acp_client.models import (
     AcpClientConfig,
     AcpConfigError,
-    AcpServerConfig,
 )
 
 # ---------------------------------------------------------------------------

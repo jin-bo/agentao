@@ -8,7 +8,6 @@ Covers ``session/set_model``, ``session/set_mode``, and
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -18,7 +17,6 @@ from agentao.acp import session_set_mode as acp_set_mode
 from agentao.acp import session_set_model as acp_set_model
 from agentao.acp.models import AcpSessionState
 from agentao.acp.protocol import (
-    INVALID_PARAMS,
     INVALID_REQUEST,
     METHOD_SESSION_LIST_MODELS,
     METHOD_SESSION_SET_MODE,

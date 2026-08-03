@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agentao.memory.models import SaveMemoryRequest
 
 from src.protocol_demo import (
     AuditingShellExecutor,

@@ -31,7 +31,6 @@ from typing import Any, Dict, List
 import pytest
 
 from agentao.acp import initialize as acp_initialize
-from agentao.acp import session_load as acp_session_load
 from agentao.acp import session_new as acp_session_new
 from agentao.acp.mcp_translate import (
     _name_value_list_to_dict,

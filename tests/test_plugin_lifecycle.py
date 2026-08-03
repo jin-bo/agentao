@@ -1,20 +1,15 @@
 """Tests for Phase 6: lifecycle hooks, matcher, CLI, and diagnostics."""
 
 import json
-import subprocess
-import sys
 from pathlib import Path
 
-import pytest
 
 from agentao.plugins.hooks import (
     ClaudeHookPayloadAdapter,
     PluginHookDispatcher,
-    ToolAliasResolver,
     resolve_all_hook_rules,
 )
 from agentao.plugins.models import (
-    HookAttachmentRecord,
     LoadedPlugin,
     ParsedHookRule,
     PluginManifest,

@@ -2,7 +2,6 @@
 
 from unittest.mock import Mock
 
-import pytest
 
 from agentao.context_manager import ContextManager
 

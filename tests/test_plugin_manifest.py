@@ -11,7 +11,6 @@ from agentao.plugins.models import (
     PluginCommandMetadata,
     PluginLoadError,
     PluginManifest,
-    PluginWarning,
     PluginWarningSeverity,
 )
 

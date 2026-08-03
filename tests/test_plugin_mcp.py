@@ -3,10 +3,8 @@
 import json
 from pathlib import Path
 
-import pytest
 
 from agentao.embedding.plugins.mcp import (
-    McpMergeResult,
     merge_plugin_mcp_servers,
     resolve_plugin_mcp_servers,
 )

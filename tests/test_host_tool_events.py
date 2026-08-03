@@ -13,14 +13,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-import time
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pytest
 
 from agentao.cancellation import CancellationToken
-from agentao.host.events import EventStream
 from agentao.host.models import ToolLifecycleEvent
 from agentao.host.projection import HostToolEmitter
 from agentao.runtime.tool_executor import ToolExecutor

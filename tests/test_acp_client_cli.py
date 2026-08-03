@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,7 +14,6 @@ from agentao.acp_client.interaction import (
 )
 from agentao.acp_client.models import (
     AcpClientConfig,
-    AcpProcessInfo,
     AcpServerConfig,
     ServerState,
 )

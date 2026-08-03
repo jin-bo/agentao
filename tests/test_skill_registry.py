@@ -1,8 +1,6 @@
 """Tests for agentao.skills.registry."""
 
-import json
 
-import pytest
 
 from agentao.skills.registry import (
     InstalledSkillRecord,

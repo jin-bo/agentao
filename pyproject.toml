@@ -142,12 +142,32 @@ target-version = "py310"
 # F821 is the reason this gate exists: it was 0 when the gate landed, but
 # PR #141 had to fix one, so the class is reachable here.
 #
-# NOT selected: F401 (unused-import). It cannot be enforced on `agentao/`
-# without per-file exemptions, because a re-export reads as unused inside
-# the module that defines it — `ruff --fix` on the full tree deleted the
-# re-exports in `llm/client.py`, `acp_client/client.py` and `cli/__init__.py`
-# and broke 9 test modules at collection. Tracked separately.
-select = ["E9", "F402", "F811", "F821"]
+# F401 (unused-import) is enforced on `tests/` and `examples/` only — see
+# the per-file-ignores below for why `agentao/` is exempt.
+select = ["E9", "F401", "F402", "F811", "F821"]
+
+[tool.ruff.lint.per-file-ignores]
+# `agentao/` is a published library, so F401 is not decidable there: a name
+# re-exported for downstream embedders is imported by nobody in this repo,
+# which is exactly what a public API looks like to a single-file linter.
+# Deleting one is a silent breaking change for embedders, and this package
+# maintains an explicit stability boundary (`agentao.host`, schema-drift CI).
+#
+# This is not a guess. Three independent checks disagreed with each other:
+#
+#   1. `ruff check --select F401 --fix` over the tree applied 212 fixes and
+#      broke 9 test modules at collection, deleting the public surface of
+#      `llm/client.py`, `acp_client/client.py` and `cli/__init__.py`.
+#   2. A static "is this name imported from this module anywhere else"
+#      classifier called `AcpInteractionRequiredError` and `_parse_retry_after`
+#      dead — the two names check 1 proved were load-bearing.
+#   3. The same classifier called `HostEvent` dead. It is in
+#      `agentao.host.__all__`, i.e. the documented public surface.
+#
+# Since no available signal separates re-export from dead here, the rule is
+# off for the whole package rather than per-module. Revisit only with an
+# explicit `__all__` on every re-export hub, which would make it decidable.
+"agentao/**" = ["F401"]
 
 [tool.mypy]
 # P0.4 typing gate — strict only on the public host boundary; the rest of

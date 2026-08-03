@@ -1,6 +1,5 @@
 """Tests for plan_save and plan_finalize model tools."""
 
-import tempfile
 from pathlib import Path
 from unittest.mock import Mock
 

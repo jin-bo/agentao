@@ -13,9 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List
 
-import pytest
 
-from agentao.capabilities import FileEntry, FileStat, FileSystem
+from agentao.capabilities import FileEntry, FileStat
 from agentao.tools.file_ops import (
     EditTool,
     ReadFileTool,

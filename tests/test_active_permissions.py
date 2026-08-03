@@ -17,7 +17,6 @@ import json
 from pathlib import Path
 from typing import List
 
-import pytest
 
 from agentao.host.models import ActivePermissions
 from agentao.permissions import PermissionEngine, PermissionMode

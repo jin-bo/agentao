@@ -1,8 +1,6 @@
 """Test menu-based tool confirmation feature."""
 
-from unittest.mock import Mock, patch, call
-import sys
-from io import StringIO
+from unittest.mock import patch
 
 
 def test_menu_confirmation_yes():

@@ -334,7 +334,6 @@ class TestIntegration:
     def test_injection_into_system_prompt(self, tmp_path):
         """Memory blocks appear in agent's system prompt as structured XML."""
         import tempfile
-        from contextlib import contextmanager
         from pathlib import Path
         from unittest.mock import Mock, patch
 

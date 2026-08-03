@@ -1,13 +1,9 @@
 """Tests for Phase 5: hooks parser, payload adapters, dispatch, and prepare_user_turn."""
 
 import json
-import os
 import stat
-import textwrap
 from pathlib import Path
-from typing import Any
 
-import pytest
 
 from agentao.plugins.hooks import (
     ClaudeHookPayloadAdapter,
@@ -18,13 +14,9 @@ from agentao.plugins.hooks import (
     resolve_all_hook_rules,
 )
 from agentao.plugins.models import (
-    HookAttachmentRecord,
     LoadedPlugin,
     ParsedHookRule,
     PluginManifest,
-    PreparedTurnMessage,
-    PreparedUserTurn,
-    UserPromptSubmitResult,
 )
 
 

@@ -1,15 +1,12 @@
 """Tests for Phase 2: plugin skills and commands resolution + registration."""
 
-import json
 import textwrap
 from pathlib import Path
 
-import pytest
 
 from agentao.plugins.models import (
     LoadedPlugin,
     PluginCommandMetadata,
-    PluginLoadError,
     PluginManifest,
     PluginSkillEntry,
 )

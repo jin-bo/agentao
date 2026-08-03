@@ -19,11 +19,9 @@ threads and never-collected futures across many short request lifetimes.
 from __future__ import annotations
 
 import asyncio
-import threading
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import pytest
 
 from agentao.cancellation import CancellationToken
 from agentao.host.models import ToolLifecycleEvent

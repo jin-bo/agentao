@@ -24,7 +24,6 @@ Markdown 格式：
 import os
 import sys
 import re
-import json
 import time
 import argparse
 import logging
@@ -37,7 +36,6 @@ if not sys.stdout.isatty():
 import yaml
 from google import genai
 from google.genai import types
-from PIL import Image
 from dotenv import load_dotenv
 
 # Load environment variables from .env if present

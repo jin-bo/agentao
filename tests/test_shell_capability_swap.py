@@ -7,7 +7,6 @@ so without monkey-patching ``subprocess``.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import List
 
 from agentao.capabilities import (

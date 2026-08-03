@@ -7,11 +7,9 @@ this file live in :mod:`tests.support.acp_client`.
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 from pathlib import Path
-from typing import Tuple
 
 import pytest
 
@@ -838,7 +836,6 @@ class TestClientCreateSessionFailureClearsMetadata:
         fingerprint when the underlying ``session/new`` RPC fails — so
         downstream code never reuses stale metadata after a rejected
         cwd/mcp override."""
-        from agentao.acp_client.client import ACPClient
 
         mgr = _make_mgr(tmp_path)
         try:

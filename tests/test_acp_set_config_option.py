@@ -13,7 +13,6 @@ handler resolves the key server-side and rejects any ``apiKey`` / ``baseUrl``
 
 from __future__ import annotations
 
-import threading
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -23,8 +22,6 @@ from agentao.acp import session_set_config_option as acp_set_config
 from agentao.acp.models import AcpSessionState
 from agentao.acp.protocol import (
     INVALID_REQUEST,
-    METHOD_AGENTAO_SET_MODEL,
-    METHOD_SESSION_SET_CONFIG_OPTION,
     SERVER_NOT_INITIALIZED,
 )
 from agentao.acp.server import AcpServer, JsonRpcHandlerError

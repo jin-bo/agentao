@@ -8,9 +8,8 @@ without raw user input.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, List
 
-import pytest
 
 from agentao.host.models import SubagentLifecycleEvent
 from agentao.host.projection import HostSubagentEmitter
@@ -152,7 +151,6 @@ def test_background_pending_cancel_emits_terminal_so_no_orphan_spawn():
     harness subscribers saw a child task that never completed or
     cancelled. The fix emits ``cancelled`` in that branch so the
     lifecycle pair is closed."""
-    from typing import List
 
     from agentao.agents.tools import AgentToolWrapper
     from agentao.host.projection import HostSubagentEmitter
@@ -231,7 +229,6 @@ def test_agent_tool_wrapper_task_summary_excludes_raw_user_task():
     and truncates, so any user-supplied secret in the first 80 chars
     of the task ended up on the public stream verbatim. The wrapper
     now publishes a generic ``"sub-agent: <name>"`` label instead."""
-    from typing import List
 
     from agentao.agents.tools import AgentToolWrapper
     from agentao.host.projection import HostSubagentEmitter

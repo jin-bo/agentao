@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 
 from agentao.agents.bg_store import BackgroundTaskStore
 from agentao.cli.commands_ext.agents import handle_agent_command

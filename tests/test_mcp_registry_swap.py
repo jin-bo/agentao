@@ -10,7 +10,6 @@ source the agent consults, and a registry that returns an empty dict
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Dict, List
 from unittest.mock import patch
 

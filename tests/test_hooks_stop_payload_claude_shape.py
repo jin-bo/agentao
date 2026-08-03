@@ -9,7 +9,6 @@ PreCompact only" decision.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from agentao.plugins.hooks import (
     ClaudeHookPayloadAdapter,

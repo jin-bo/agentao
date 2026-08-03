@@ -3,11 +3,9 @@
 import json
 from pathlib import Path
 
-import pytest
 
 from agentao.embedding.plugins.diagnostics import PluginDiagnostics, build_diagnostics
 from agentao.embedding.plugins.manager import PluginManager
-from agentao.plugins.models import LoadedPlugin, PluginLoadError, PluginWarning
 
 
 def _write_plugin(plugin_dir: Path, manifest: dict):

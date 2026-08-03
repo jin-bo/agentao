@@ -1,6 +1,5 @@
 """Test ContextManager: token estimation, compression, and memory recall."""
 
-import json
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock
@@ -256,7 +255,6 @@ def test_compress_messages_prepends_summary_system_msg():
 
 def test_compress_messages_saves_summary_to_memory(tmp_path):
     from agentao.context_manager import ContextManager
-    from agentao.memory.manager import MemoryManager
 
     memory_tool = _make_memory_tool(tmp_path)
     mgr = memory_tool.memory_manager

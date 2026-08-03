@@ -26,31 +26,26 @@ import json
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import pytest
 
-from agentao.acp import initialize as acp_initialize
 from agentao.acp import session_load as acp_session_load
-from agentao.acp import session_new as acp_session_new
 from agentao.acp import session_prompt as acp_session_prompt
 from agentao.acp.models import AcpSessionState
 from agentao.acp.protocol import (
-    ACP_PROTOCOL_VERSION,
-    INVALID_PARAMS,
     INVALID_REQUEST,
     METHOD_SESSION_LOAD,
     METHOD_SESSION_PROMPT,
     METHOD_SESSION_UPDATE,
     SERVER_NOT_INITIALIZED,
 )
-from agentao.acp.server import AcpServer, JsonRpcHandlerError
+from agentao.acp.server import JsonRpcHandlerError
 from agentao.acp.transport import (
     ACPTransport,
     _coerce_message_text,
     _strip_system_reminder_blocks,
 )
-from agentao.cancellation import CancellationToken
 from agentao.embedding.sessions import save_session
 
 from .support.acp_agents import FakeAgent, make_factory

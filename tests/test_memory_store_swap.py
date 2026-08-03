@@ -8,7 +8,6 @@ manager never reaches for SQLite when a fake is injected.
 
 from __future__ import annotations
 
-import json
 from typing import Dict, List, Optional
 
 from agentao.capabilities import MemoryStore  # re-export

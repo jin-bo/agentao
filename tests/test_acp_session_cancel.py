@@ -23,7 +23,7 @@ import io
 import json
 import threading
 import time
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Tuple
 
 import pytest
 

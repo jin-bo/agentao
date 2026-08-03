@@ -22,20 +22,15 @@ from agentao.acp import initialize as acp_initialize
 from agentao.acp import session_new as acp_session_new
 from agentao.acp.models import AcpSessionState
 from agentao.acp.protocol import (
-    ACP_PROTOCOL_VERSION,
     INTERNAL_ERROR,
     INVALID_PARAMS,
-    METHOD_INITIALIZE,
     METHOD_SESSION_NEW,
     SERVER_NOT_INITIALIZED,
 )
-from agentao.acp.server import AcpServer
-from agentao.acp.session_manager import DuplicateSessionError
 from agentao.acp.transport import ACPTransport
 from agentao.permissions import PermissionMode
 
 from .support.acp_agents import (
-    ExplodingAgent,
     FakeAgent,
     make_failing_factory,
     make_recording_factory,

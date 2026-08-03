@@ -10,7 +10,6 @@ import json
 import logging
 from unittest.mock import Mock, patch
 
-import pytest
 
 from agentao.prompts.builder import SystemPromptBuilder
 

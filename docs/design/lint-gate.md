@@ -4,14 +4,15 @@
 
 ## What it is
 
-`ruff check agentao/ tests/ examples/` with exactly four rule groups:
+`ruff check agentao/ tests/ examples/` with exactly five rule groups:
 
-| Rule | Catches |
-|---|---|
-| `E9` | Syntax / IO errors — code that cannot run at all |
-| `F402` | Import shadowed by a loop variable — latent `UnboundLocalError` |
-| `F811` | Redefinition of an unused name — one of the two is dead |
-| `F821` | Undefined name — guaranteed `NameError` at runtime |
+| Rule | Catches | Scope |
+|---|---|---|
+| `E9` | Syntax / IO errors — code that cannot run at all | everywhere |
+| `F402` | Import shadowed by a loop variable — latent `UnboundLocalError` | everywhere |
+| `F811` | Redefinition of an unused name — one of the two is dead | everywhere |
+| `F821` | Undefined name — guaranteed `NameError` at runtime | everywhere |
+| `F401` | Unused import | `tests/` + `examples/` only — see below |
 
 Nothing else. No style, no formatting, no import sorting, no modernization.
 
@@ -26,6 +27,9 @@ The selection came from measuring, not from taste. Run against the tree at
 | `F401` (unused-import) | 255 (169 `tests/`, 68 `agentao/`) | 0 |
 | `E9,F402,F811,F821` | 4 | **0** |
 
+(The `tests/` figure grew to 184 by the time F401 was applied — the two
+preceding test-cleanup PRs stranded imports of their own.)
+
 All four gate findings were read individually before being fixed; none was a
 live bug. So the honest claim for this gate is **not** "it found bugs" — it is
 "it costs ~15s of CI and pins a class that has already bitten this repo once."
@@ -39,15 +43,18 @@ repo has already declined a comparable ratchet on the same grounds — see
 `docs/design/refactor-audit-2026-07.md`, where 27 of 89 mypy findings were
 mixin false positives.
 
-## Why F401 is not in the gate
+## Why F401 is off for `agentao/`
 
-`F401` (unused-import) is the largest single category and looks like the
-obvious win. It is not enforceable on `agentao/` as-is, because **a re-export
-reads as unused inside the module that defines it.**
+`F401` is enforced on `tests/` and `examples/`, and **exempted wholesale for
+`agentao/`** via `per-file-ignores`. The exemption is deliberately the whole
+package, not a per-module list, and that is the interesting part.
 
-Measured, not assumed: running `ruff check --select F401 --fix` over
-`agentao/` + `tests/` applied 212 fixes and then broke **9 test modules at
-collection**:
+The original plan was to exempt only the "re-export modules". That turned out
+not to be a knowable set. Three independent checks disagreed with each other:
+
+**1. Empirical — deleting them breaks the build.** `ruff check --select F401
+--fix` over `agentao/` + `tests/` applied 212 fixes, then broke **9 test
+modules at collection**:
 
 ```
 E ImportError: cannot import name 'AcpInteractionRequiredError' from 'agentao.acp_client.client'
@@ -55,15 +62,33 @@ E ImportError: cannot import name '_parse_retry_after' from 'agentao.llm.client'
 E ImportError: cannot import name 'acp_client' from 'agentao'
 ```
 
-Every failure was in `agentao/`, none in `tests/`. The deleted names were the
-public surface of `agentao/llm/client.py`, `agentao/acp_client/client.py` and
-the `__init__.py` re-export hubs (`agentao/cli/__init__.py` alone accounts for
-20 of the 68).
+Every failure was in `agentao/`, none in `tests/`.
 
-Enforcing F401 therefore needs `per-file-ignores` for the re-export modules
-first. That is tracked as separate work: clean the 169 in `tests/` (no
-re-export semantics there), exempt the re-export modules in `agentao/`, then
-add `F401` to `select`.
+**2. Static classification contradicts it.** A "is this name imported from
+this module anywhere else in the repo" pass classified
+`AcpInteractionRequiredError` and `_parse_retry_after` as *dead* — the two
+names check 1 had just proved were load-bearing. Multi-line parenthesised
+imports defeat the grep.
+
+**3. The same pass called `HostEvent` dead.** `HostEvent` is in
+`agentao.host.__all__` — the documented stability boundary this package
+advertises to embedders.
+
+The root cause is not tooling quality. **agentao is a published library.** A
+name re-exported for downstream embedders is imported by nobody in this
+repository — which is precisely what a public API looks like to a single-file
+linter, and to an in-repo grep, and to the test suite. None of the three
+signals available can separate "public surface" from "dead", so deleting on
+their advice risks a silent breaking change for embedders.
+
+`tests/` has no such ambiguity: nothing imports from a test module, so an
+unused import there is unambiguously dead. That half was cleaned (184
+findings across 91 files) and is now gated.
+
+To make `agentao/` decidable later, give every re-export hub an explicit
+`__all__` — ruff treats `__all__` membership as usage, at which point the rule
+can be turned on per-module with the ambiguity actually resolved rather than
+assumed away.
 
 ## The four findings this gate fixed on landing
 

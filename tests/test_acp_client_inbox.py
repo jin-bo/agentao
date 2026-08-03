@@ -1,13 +1,11 @@
 """Tests for ACP client inbox queue and render (Issue 05)."""
 
-import time
 import threading
 from typing import List
 
 import pytest
 
 from agentao.acp_client.inbox import (
-    DEFAULT_CAPACITY,
     Inbox,
     InboxMessage,
     MessageKind,

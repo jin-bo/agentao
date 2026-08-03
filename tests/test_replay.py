@@ -30,12 +30,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from agentao.replay import (
     REPLAY_DEFAULTS,
     ReplayAdapter,
-    ReplayConfig,
     ReplayReader,
     ReplayRecorder,
     ReplayRetentionPolicy,

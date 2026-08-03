@@ -5,12 +5,10 @@ exercise the real NDJSON wire protocol end-to-end. The mock server and
 its handle builder live in :mod:`tests.support.acp_client`.
 """
 
-import json
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock
+from typing import Any, Dict, List
 
 import pytest
 
@@ -18,7 +16,6 @@ from agentao.acp_client.client import (
     ACPClient,
     AcpClientError,
     AcpRpcError,
-    _PendingRequest,
 )
 from agentao.acp_client.models import ServerState
 

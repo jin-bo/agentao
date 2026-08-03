@@ -22,9 +22,9 @@ import asyncio
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Callable
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 
 from agentao import Agentao
 from agentao.cancellation import CancellationToken

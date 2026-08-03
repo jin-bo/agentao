@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-from agentao.agent import Agentao
 from agentao.embedding import build_from_environment
 from agentao.agents.bg_store import (
     BackgroundTaskStore,

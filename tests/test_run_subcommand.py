@@ -20,7 +20,6 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List
-from unittest.mock import patch
 
 import pytest
 
@@ -71,7 +70,6 @@ def stub_pipeline(monkeypatch, tmp_path):
     enough that the pipeline can run without an LLM. Returns a
     ``StubAgent`` factory the test customizes.
     """
-    from agentao.transport import NonInteractiveTransport
 
     captured: Dict[str, Any] = {}
 

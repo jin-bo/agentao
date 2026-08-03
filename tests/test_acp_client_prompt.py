@@ -4,7 +4,6 @@ Uses a mock ACP server script that handles initialize, session/new,
 session/prompt, and session/cancel over NDJSON stdio.
 """
 
-import json
 import sys
 import textwrap
 import threading
