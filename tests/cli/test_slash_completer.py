@@ -7,6 +7,8 @@ Covers the two papercuts that motivated the rewrite:
 2. Prefix completion of arg-taking commands must add a trailing space so
    ``/ageplease refactor`` completes to ``/agent please refactor``
    instead of the broken ``/agentplease refactor``.
+3. The exact-match hint must not *suppress* subcommand completions — see
+   the ``hint_does_not_hide_subcommands`` tests below.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import pytest
 prompt_toolkit = pytest.importorskip("prompt_toolkit")
 from prompt_toolkit.document import Document  # noqa: E402
 
-from agentao.cli._utils import _SlashCompleter  # noqa: E402
+from agentao.cli._utils import _SLASH_COMMANDS, _SLASH_COMMAND_HINTS, _SlashCompleter  # noqa: E402
 
 
 def _complete(buffer: str, cursor: int | None = None) -> list:
@@ -136,3 +138,55 @@ def test_command_without_hint_completes_plainly():
     texts = _texts(completions)
     assert "/help" in texts
     assert "/help " not in texts
+
+
+# ---------------------------------------------------------------------------
+# Bug 3: the exact-match hint must not suppress subcommand completions.
+#
+# ``get_completions`` used to ``return`` straight after yielding the hint. Any
+# command that is BOTH hint-bearing AND a prefix of its own subcommands
+# therefore offered the hint and nothing else. Only ``/goal`` and ``/image``
+# have that shape, which is why the breakage stayed invisible next to
+# ``/mcp`` and ``/replay`` — those carry no hint entry, so they never took the
+# early return.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cmd", ["/goal", "/image"])
+def test_hint_does_not_hide_subcommands(cmd):
+    """Typing the bare command must still offer every subcommand."""
+    expected = {c for c in _SLASH_COMMANDS if c.startswith(cmd + " ")}
+    assert expected, f"{cmd} has no subcommands — pick a different fixture command"
+
+    texts = _texts(_complete(cmd))
+    # Completion text carries a trailing space for arg-taking subcommands.
+    offered = {t.rstrip() for t in texts if t}
+    missing = expected - offered
+    assert not missing, f"{cmd} + Tab hid these subcommands: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("cmd", ["/goal", "/image"])
+def test_hint_still_shown_alongside_subcommands(cmd):
+    """The arg hint is additive, not replaced by the subcommand list."""
+    completions = _complete(cmd)
+    hints = [c for c in completions if c.text == "" and c.start_position == 0]
+    assert len(hints) == 1, f"expected exactly one display-only hint for {cmd}"
+    display = hints[0].display if isinstance(hints[0].display, str) else "".join(
+        seg[1] for seg in hints[0].display
+    )
+    assert display == _SLASH_COMMAND_HINTS[cmd]
+
+
+@pytest.mark.parametrize("cmd", ["/goal", "/image"])
+def test_hint_command_not_re_offered_as_its_own_completion(cmd):
+    """The hint already describes the bare command; don't also insert it."""
+    texts = _texts(_complete(cmd))
+    assert cmd not in texts
+    assert cmd + " " not in texts
+
+
+def test_hintless_command_subcommands_unaffected():
+    """Regression guard for the commands that always worked (``/mcp``)."""
+    expected = {c for c in _SLASH_COMMANDS if c.startswith("/mcp ")}
+    offered = {t.rstrip() for t in _texts(_complete("/mcp")) if t}
+    assert expected <= offered

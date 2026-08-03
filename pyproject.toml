@@ -131,20 +131,36 @@ target-version = "py310"
 
 [tool.ruff.lint]
 # Only rules that flag a genuine defect, never style. Measured against the
-# tree at 7eb762e: the opinionated sets would have fired 2652 times (UP) and
-# 255 times (F401) without identifying a single live bug, so they are out.
+# tree at 7eb762e: the opinionated sets would have fired 2743 times (UP) and
+# 253 times (F401) without identifying a single live bug, so they are out.
 #
 #   E9   syntax / IO errors — code that cannot run
 #   F402 import shadowed by a loop variable — latent UnboundLocalError
 #   F811 redefinition of an unused name — one of the two is dead
 #   F821 undefined name — guaranteed NameError at runtime
+#   F405 undefined name *in a module with a star import* — see below
 #
 # F821 is the reason this gate exists: it was 0 when the gate landed, but
 # PR #141 had to fix one, so the class is reachable here.
 #
-# F401 (unused-import) is enforced on `tests/` and `examples/` only — see
-# the per-file-ignores below for why `agentao/` is exempt.
-select = ["E9", "F401", "F402", "F811", "F821"]
+# F405 is not a separate ambition — it is what makes F821 actually hold.
+# pyflakes downgrades every undefined name to F405 in any module containing
+# `from x import *`, so with F821 alone the rule is silently inert in
+# exactly the 8 star-import shims: `agentao/harness/*` (the deprecated
+# public alias, which carries real post-import logic) and
+# `agentao/tool_runner.py`. Verified by probe: an undefined name in a
+# star-import module reports `All checks passed` under F821 and `F405`
+# under F405. It measures 0 across the repo, so it costs nothing today and
+# closes the hole before the 0.5.0 alias removal edits those files.
+#
+# `select` replaces ruff's default `E4,E7,E9,F` rather than extending it.
+# That is deliberate but worth stating: it also drops F841 (unused
+# variable, 25 hits) and the E4/E7 groups. F841 was measured, not
+# overlooked — see docs/design/lint-gate.md.
+#
+# F401 (unused-import) is enforced everywhere except `agentao/` — see
+# the per-file-ignores below for why.
+select = ["E9", "F401", "F402", "F405", "F811", "F821"]
 
 [tool.ruff.lint.per-file-ignores]
 # `agentao/` is a published library, so F401 is not decidable there: a name
@@ -167,6 +183,13 @@ select = ["E9", "F401", "F402", "F811", "F821"]
 # Since no available signal separates re-export from dead here, the rule is
 # off for the whole package rather than per-module. Revisit only with an
 # explicit `__all__` on every re-export hub, which would make it decidable.
+#
+# Known to be wider than the evidence: of the 68 hits, 25 are in __init__.py
+# and 42 are in 22 leaf modules, of which check 1 proved exactly 2 load-bearing
+# — and at least one silenced hit (sandbox/policy.py:32, `import platform`) is
+# genuinely dead. Narrowing to __init__.py + the two named hubs was considered
+# and declined: those two were found by breaking the build, not by a method
+# that generalises, so the enumeration is not known to be complete.
 "agentao/**" = ["F401"]
 
 [tool.mypy]

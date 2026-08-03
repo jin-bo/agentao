@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from prompt_toolkit.completion import Completer, Completion
+from rich.markup import escape as markup_escape
 
 from ._globals import _TOOL_SUMMARY_KEYS, console
 
@@ -114,6 +115,13 @@ class _SlashCompleter(Completer):
       space unless the cursor is already followed by whitespace. This
       keeps ``/ageplease refactor`` → ``/agent please refactor`` instead
       of the broken ``/agentplease refactor``.
+    - The hint does **not** suppress subcommand completions. A command
+      can be both arg-taking and a prefix of its own subcommands —
+      ``/goal <objective>`` alongside ``/goal show``, ``/goal pause``,
+      … — and returning after the hint hid every one of those. Only
+      ``/goal`` and ``/image`` have that shape today, which is why the
+      breakage was invisible next to ``/mcp`` and ``/replay`` (no hint
+      entry, so they never took the early return).
     """
 
     def get_completions(self, document, complete_event):
@@ -126,7 +134,8 @@ class _SlashCompleter(Completer):
 
         # Exact match → display-only hint. Inserting ``''`` keeps the
         # popup informational without rewriting the buffer.
-        if stripped in _SLASH_COMMAND_HINTS:
+        showed_hint = stripped in _SLASH_COMMAND_HINTS
+        if showed_hint:
             hint = _SLASH_COMMAND_HINTS[stripped]
             yield Completion(
                 text='',
@@ -134,11 +143,14 @@ class _SlashCompleter(Completer):
                 display=hint,
                 display_meta='arg',
             )
-            return
 
-        # Prefix completion for command names.
+        # Prefix completion for command names. Fall through after the
+        # hint so subcommands stay reachable, but skip re-offering the
+        # exact command the hint just described.
         for cmd in _SLASH_COMMANDS:
             if not cmd.startswith(text_before):
+                continue
+            if showed_hint and cmd == stripped:
                 continue
             takes_args = cmd in _SLASH_COMMAND_HINTS
             needs_space = takes_args and not (
@@ -151,21 +163,35 @@ class _SlashCompleter(Completer):
             )
 
 
-def _display_layered_entries(entries, header: str) -> None:
+def _display_layered_entries(entries, header: str, console_=None) -> None:
     """Display MemoryRecord list in a readable format.
 
-    Prints via the module-level ``console`` singleton. This used to take
-    ``console`` as a third parameter, but both call sites passed the same
-    ``._globals.console`` this module already imports — the parameter only
-    shadowed it.
+    The parameter is named ``console_``, not ``console``: the plain name
+    would shadow the module-level import above (F402/F811), and the
+    sibling renderers in ``replay_render/`` already solved the identical
+    collision the same way. Deleting the parameter outright would work
+    for the linter too, but it would also delete the injection point —
+    a host or test that swaps ``console`` on the *calling* module to
+    capture ``/memory user`` output would get the chrome and lose the
+    entries themselves. Defaults to the ``_globals`` singleton so
+    existing two-argument callers are unaffected.
+
+    Entry titles and contents are LLM-written and routinely contain
+    brackets (paths, quoted tags), so they are escaped before hitting
+    rich's markup parser — an unescaped ``[/...]`` aborts the whole
+    listing with ``MarkupError`` partway through.
     """
+    out = console if console_ is None else console_
     if not entries:
-        console.print(f"\n[warning]{header}: no entries.[/warning]\n")
+        out.print(f"\n[warning]{markup_escape(header)}: no entries.[/warning]\n")
         return
-    console.print(f"\n[info]{header} ({len(entries)} total):[/info]\n")
+    out.print(f"\n[info]{markup_escape(header)} ({len(entries)} total):[/info]\n")
     for e in entries:
         excerpt = e.content[:120] + "..." if len(e.content) > 120 else e.content
-        console.print(f"  [dim]{e.id}[/dim] • [cyan]{e.title}[/cyan]: {excerpt}")
+        out.print(
+            f"  [dim]{markup_escape(str(e.id))}[/dim] • "
+            f"[cyan]{markup_escape(e.title)}[/cyan]: {markup_escape(excerpt)}"
+        )
         if e.tags:
-            console.print(f"    Tags: {', '.join(e.tags)}")
-    console.print()
+            out.print(f"    Tags: {markup_escape(', '.join(e.tags))}")
+    out.print()

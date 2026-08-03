@@ -44,6 +44,7 @@ Shipped behavior — read as reference for what exists today.
 - **host-llm-extra-params** — host LLM request passthrough `extra_body` (v1).
 - **run-spec-parameters** — `agentao run` spec parameters & instructions (shipped 2026-05-25).
 - **mcp-streamable-http** — MCP Streamable HTTP transport; bare `url` now defaults to it (**breaking**, SSE is opt-in via `type: "sse"`). Shipped 0.4.14, 2026-07-02. **§5.1/§5.3 carry mcp-2.0 update blocks** (0.4.17): the stream tuple lost its third element and the SDK moved to `httpx2` — an arity that no signature or field name exposes, only the `yield`.
+- **lint-gate** — the CI `ruff check .` gate: which rules, and the measurement behind each inclusion *and exclusion* (2026-08-03). Two non-obvious records: `F821` is inert in star-import modules unless `F405` is also selected, and `F401` is undecidable inside `agentao/` because a name re-exported for embedders looks identical to dead code from in-repo.
 
 ## Review & decision records · 评审与决策记录 *(the "backlog" class)*
 
