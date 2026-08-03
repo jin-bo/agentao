@@ -66,7 +66,7 @@ locked ruff 0.16.1 against the merge-base tree (`7eb762e`), using
 | `UP` (pyupgrade) | 2743 | — not a defect class |
 | ruff's own default (`E4,E7,E9,F`) | 344 | 1 (see below) |
 | `F401` (unused-import) | 253 = 68 `agentao/` + 169 `tests/` + 16 `examples/` | 0 |
-| `F841` (unused variable) | 25 | 1 |
+| `F841` (unused variable) | 25 | 1 — fixed, see below |
 | `E9,F402,F811,F821` | 4 | **0** |
 | `F405` | 0 | 0 |
 
@@ -91,25 +91,43 @@ ruff's default `E4,E7,E9,F`. The practical consequence is that `F841`
 (unused variable, 25 hits) is not enforced even though ruff enables it out of
 the box.
 
-That is a deliberate call, not an oversight, and it is not free. One of the
-25 is a real defect in shipped code: `agentao/skills/drafts.py:262` binds
-`old_fm = m.group(0)` under the comment *"Drop any extra trailing newline
-beyond what old_fm had, keep body intact"*, then returns a hardcoded
-`new_fm` and never consults `old_fm`. Since `_FRONTMATTER_RE` is
-`\A\s*---\s*\n(.*?)\n---\s*\n?`, renaming a skill whose `SKILL.md` has
-leading whitespace before `---`, or no trailing newline after the closing
-fence, rewrites the file's frontmatter layout rather than preserving it.
+That is a deliberate call, not an oversight, and it was not free. One of the
+25 was a real defect in shipped code, **since fixed**:
+`agentao/skills/drafts.py:262` bound `old_fm = m.group(0)` under the comment
+*"Drop any extra trailing newline beyond what old_fm had, keep body intact"*,
+then returned a hardcoded `new_fm` and never consulted `old_fm`.
 
-F841 is left out for now because the other 24 need reading one at a time
+`replace_skill_name` rewrites a file the user wrote, so the contract is that
+everything except the `name:` value survives byte-for-byte. Rebuilding the
+frontmatter from the literal `f"---\n{block}\n---\n"` broke that for **6 of 7**
+layouts measured — including the one every skill in this repo uses:
+
+| Input shape | Old output |
+|---|---|
+| `---\n…\n---\n\n# Body` (blank line before body) | blank line deleted |
+| `---\n…\n---` (file ends at the fence) | trailing newline added |
+| `\n---\n…` (leading blank line) | leading whitespace dropped |
+| `---  \n…` (spaces on the fence line) | spaces dropped |
+| CRLF document | rewritten to LF |
+| `name: a\n\ndesc:` (blank line inside frontmatter) | blank line deleted |
+
+The fix splices the new value into the original string by the frontmatter
+block's span, and within that block replaces only the `name:` *value* span —
+replacing the whole match would take the trailing whitespace with it, because
+`_NAME_LINE_RE` ends in `\s*$` and `\s` swallows a trailing `\r`. 16 tests
+now compare whole strings; the pre-existing test passed against the buggy
+version because `"# Python Testing" in out` cannot see a deleted blank line.
+
+F841 is still left out, because the remaining hits need reading one at a time
 (loop variables and deliberate `_`-style bindings are common false-positive
-shapes) and because that is a separate change from standing this gate up.
-It is the strongest candidate for the next rule to add. The `drafts.py`
-defect is tracked independently of the rule.
+shapes) and because that is a separate change from standing this gate up. It
+remains the strongest candidate for the next rule to add.
 
 ## Why F401 is off for `agentao/`
 
-`F401` is enforced on `tests/` and `examples/`, and **exempted wholesale for
-`agentao/`** via `per-file-ignores`. The exemption is deliberately the whole
+`F401` is enforced everywhere the gate walks — `tests/`, `examples/`,
+`skills/`, `scripts/`, `main.py` — and **exempted wholesale for `agentao/`**
+via `per-file-ignores`. The exemption is deliberately the whole
 package, not a per-module list, and that is the interesting part.
 
 The original plan was to exempt only the "re-export modules". That turned out
@@ -231,7 +249,8 @@ Add rules one at a time, and only after measuring what each would fire on and
 reading a sample of the hits. The precedent this document sets is that a
 ruleset earns its place by finding defects, not by being a recognised standard.
 
-Next candidate, in order: **`F841`** (25 hits, one confirmed live defect —
-see above). After that, `B` (flake8-bugbear) is worth measuring; `UP`, `SIM`
+Next candidate, in order: **`F841`** — it already earned its place by
+surfacing the `drafts.py` frontmatter defect (see above); what remains is
+reading its other hits. After that, `B` (flake8-bugbear) is worth measuring; `UP`, `SIM`
 and `I` are explicitly out until someone can point at a defect they would
 have caught here.
