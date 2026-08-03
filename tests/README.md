@@ -1,59 +1,73 @@
 # Agentao Tests
 
-This directory contains test files for the Agentao project.
+~3800 tests across `tests/`. This file documents **layout and conventions**;
+it deliberately does not enumerate test files — an earlier version listed 14
+of them by hand and rotted into naming files that no longer exist.
 
-## Running Tests
+## Running
 
-### Run all tests
 ```bash
-python -m pytest tests/
+uv run python -m pytest tests/          # default suite
+uv run python -m pytest -m slow         # clean-install smoke tests
+uv run python -m pytest tests/test_replay.py -v
 ```
 
-### Run a specific test file
-```bash
-python -m pytest tests/test_imports.py
-```
+`pyproject.toml :: tool.pytest.ini_options` sets
+`addopts = "--tb=short -m 'not slow'"`, so **`slow` is excluded by default**.
+It marks the three modules that build wheels or boot subprocess venvs
+(`test_clean_install_smoke.py`, `test_dependency_split.py`,
+`test_cli_missing_dep_message.py`) and needs `uv build` to have run first.
 
-### With verbose output
-```bash
-python -m pytest tests/ -v
-```
+## Layout
 
-> **Note:** If running from a source checkout with `uv`, use `uv run python -m pytest tests/`.
+| Path | Contents |
+|---|---|
+| `tests/*.py` | The bulk of the suite — one module per contract, named after the thing under test. |
+| `tests/cli/` | Slash-command and `agentao run` argument handling. |
+| `tests/support/` | Shared scaffolding — fake servers, agent doubles, param builders. See its own README. |
+| `tests/data/` | Static fixtures (e.g. `full_extras_baseline.txt`, the dependency-split baseline). |
+| `tests/conftest.py` | Two autouse credential fixtures plus `search_tool` / `capture_subprocess_run`. |
 
-## Test Files
+## Conventions
 
-### Core Functionality Tests
-- `test_imports.py` - Test module imports
-- `test_logging.py` - Test logging functionality
-- `test_multi_turn.py` - Test multi-turn conversations
+**Credentials are stubbed for every test.** `conftest.py::_stub_llm_credentials`
+sets `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`, and
+`_agentao_env_default_credentials` backfills them onto direct
+`Agentao(working_directory=...)` construction — mirroring what
+`build_from_environment` does, so production code never sees an implicit env
+read from `Agentao.__init__`. Note both fixtures *defer to a real exported
+value* (`os.environ.get(key, default)`); a test that reaches the network will
+use a developer's real key.
 
-### Feature Tests
-- `test_agentao_md.py` - Test AGENTAO.md auto-loading
-- `test_tool_confirmation.py` - Test tool confirmation mechanism
-- `test_menu_confirmation.py` - Test menu-based confirmation
-- `test_readchar_confirmation.py` - Test single-key confirmation with readchar
-- `test_clear_resets_confirm.py` - Test /clear command resets confirmation state
-- `test_date_in_prompt.py` - Test date/time injection in system prompt
-- `test_status_pause.py` - Test status and pause functionality
+**Do not reach the network by default.** The two tests that legitimately call
+a live model gate themselves on an env var and default to offline in CI:
 
-### Skills Tests
-- `test_skills.py` - Test skills loading and management
-- `test_skills_prompt.py` - Test skills prompt integration
-- `test_skill_resources.py` - Test skill resource loading
-- `test_skill_integration.py` - Test skill integration
+| Gate | Used by |
+|---|---|
+| `AGENTAO_TEST_LIVE_LLM` | `test_multi_turn.py` |
+| `AGENTAO_TEST_LIVE_MODELS` | `test_model_command.py` |
 
-### Command Tests
-- `test_model_command.py` - Test /model command
+Both are pinned to `0` in `.github/workflows/publish*.yml`. A new test that
+talks to a provider needs the same gate *and* an assertion that still holds on
+the offline path — see `test_multi_turn.py::test_multi_turn_tool_calls` for the
+degradation branch.
 
-## Test Requirements
+**Write under `tmp_path`, never `Path.cwd()`.** A test rooted at the repo
+working directory mutates the developer's real `.agentao/` state (memory DB,
+sessions, replays).
 
-Tests use the following:
-- Python 3.10+
-- Dependencies from `pyproject.toml`
+**No side effects at import time.** Module-level `os.environ` writes land
+during *collection*, before any fixture runs, and leak into every other test in
+the session. Use `monkeypatch`.
 
-## Notes
+**Assert, don't print.** A test whose failure path is a `print` or an early
+`return` passes unconditionally and is worse than no test.
 
-- Tests are designed to be run independently
-- Some tests may require environment variables (see `.env.example`)
-- Test files follow the naming pattern `test_*.py`
+**Helpers duplicated across 2+ files belong in `tests/support/`** — that
+directory's README defines what is in and out of scope.
+
+## Requirements
+
+Python 3.10+ and the dev dependency group (`uv sync`). Some tests skip
+themselves on platform grounds (POSIX-only, macOS-only, `rg` not installed) or
+when `mypy` is unavailable; those skips are expected.
