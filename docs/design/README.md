@@ -61,6 +61,7 @@ Retrospective analyses — competitive/borrow reviews, conformance gap reviews, 
 - **core-boundary-review** — core vs host package-boundary audit (codex parallel, 2026-05).
 - **codex-reverse-review** *(en only)* — reverse-review discipline record (2026-05-12).
 - **pi-mono-borrow-review** — pi-mono v0.66→v0.73 borrow analysis; demand-gated precedent anchor.
+- **pi-mono-pull-review-2026-08** — pi-mono v0.80.6→v0.83.0 (434 commits). 3 landed (#159 NFKC edit matching, #160 listener-error logging, #161 `finish_reason_missing` — the last **adopted inverted** from pi's error-by-default). 2 deferred as contract decisions (sub-agent boundary, ACP channel). `watch()` snapshot/subscribe recorded as the one real architectural gap, but its assumed trigger `agentao serve` is ✗-listed in the roadmap, so read §"Recorded, demand-gated" before assuming it is scheduled. 8 not-applicable, each with the query that settled it — **do not re-raise those without new evidence** (2026-08-02).
 - **pi-mono-tools-review** — pi-mono tools-level companion review.
 - **pi-mono-openai-stream-fix** — pi-mono OpenAI-compat stream fix + agentao-side gap analysis.
 - **system-prompt-profile** — host-injectable collaboration posture (review record; impl deferred).
