@@ -210,16 +210,16 @@ def _validate_field_types(cfg: Dict[str, Any], source: Path) -> List[str]:
     parse failures so the whole stack fails-closed uniformly.
     """
     errors: List[str] = []
-    for field, allowed in _FIELD_TYPES.items():
-        if field not in cfg:
+    for field_name, allowed in _FIELD_TYPES.items():
+        if field_name not in cfg:
             continue
-        value = cfg[field]
+        value = cfg[field_name]
         if not isinstance(value, allowed):
             expected = "/".join(
                 t.__name__ if t is not type(None) else "null" for t in allowed
             )
             errors.append(
-                f"{source}: field '{field}' must be {expected} "
+                f"{source}: field '{field_name}' must be {expected} "
                 f"but got {type(value).__name__}"
             )
     return errors

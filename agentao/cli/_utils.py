@@ -151,8 +151,14 @@ class _SlashCompleter(Completer):
             )
 
 
-def _display_layered_entries(entries, header: str, console) -> None:
-    """Display MemoryRecord list in a readable format."""
+def _display_layered_entries(entries, header: str) -> None:
+    """Display MemoryRecord list in a readable format.
+
+    Prints via the module-level ``console`` singleton. This used to take
+    ``console`` as a third parameter, but both call sites passed the same
+    ``._globals.console`` this module already imports — the parameter only
+    shadowed it.
+    """
     if not entries:
         console.print(f"\n[warning]{header}: no entries.[/warning]\n")
         return

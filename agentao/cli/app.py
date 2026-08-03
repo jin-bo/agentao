@@ -269,7 +269,7 @@ class AgentaoCLI:
         # Images staged via /image, attached to (and consumed by) the next
         # chat turn. Each entry is {"data": <base64>, "mimeType": ...}.
         self._staged_images: list = []
-        from ..plan import PlanSession, PlanController
+        from ..plan import PlanSession
         self._plan_session = PlanSession()
         self._plan_controller: Optional[object] = None
         provider = resolve_provider_name()

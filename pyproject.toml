@@ -121,7 +121,33 @@ dev = [
     "twine>=6.1.0",
     "mypy>=1.13.0",
     "packaging>=25.0",
+    "ruff>=0.14.0",
 ]
+
+[tool.ruff]
+# Lint gate — deliberately narrow. See docs/design/lint-gate.md for the
+# measurement behind the selection.
+target-version = "py310"
+
+[tool.ruff.lint]
+# Only rules that flag a genuine defect, never style. Measured against the
+# tree at 7eb762e: the opinionated sets would have fired 2652 times (UP) and
+# 255 times (F401) without identifying a single live bug, so they are out.
+#
+#   E9   syntax / IO errors — code that cannot run
+#   F402 import shadowed by a loop variable — latent UnboundLocalError
+#   F811 redefinition of an unused name — one of the two is dead
+#   F821 undefined name — guaranteed NameError at runtime
+#
+# F821 is the reason this gate exists: it was 0 when the gate landed, but
+# PR #141 had to fix one, so the class is reachable here.
+#
+# NOT selected: F401 (unused-import). It cannot be enforced on `agentao/`
+# without per-file exemptions, because a re-export reads as unused inside
+# the module that defines it — `ruff --fix` on the full tree deleted the
+# re-exports in `llm/client.py`, `acp_client/client.py` and `cli/__init__.py`
+# and broke 9 test modules at collection. Tracked separately.
+select = ["E9", "F402", "F811", "F821"]
 
 [tool.mypy]
 # P0.4 typing gate — strict only on the public host boundary; the rest of

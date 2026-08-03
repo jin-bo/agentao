@@ -54,6 +54,27 @@ jobs:
       - name: mypy --strict --package agentao.host
         run: uv run --python 3.12 mypy --strict --package agentao.host
 
+  lint-gate:
+    name: Lint gate (ruff, defect rules only)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (incl. dev group for ruff)
+        run: uv sync --python 3.12 --group dev
+
+      # Rule selection lives in pyproject.toml :: [tool.ruff.lint]. It is
+      # deliberately narrow (E9/F402/F811/F821) — see docs/design/lint-gate.md.
+      - name: ruff check
+        run: uv run --python 3.12 ruff check agentao/ tests/ examples/
+
   # ─────────────────────────────────────────────────────────────
   # Job 1 · Unit tests across Python 3.10 / 3.11 / 3.12
   # ─────────────────────────────────────────────────────────────
