@@ -18,43 +18,9 @@ from __future__ import annotations
 
 import pytest
 
-from agentao import Agentao
-from agentao.host import Tool
 from agentao.tooling import BUILTIN_TOOL_NAMES
 
-
-def _make_agent(tmp_path, **kwargs) -> Agentao:
-    """Construct an Agentao with a dummy LLM config (no network at init)."""
-    return Agentao(
-        working_directory=tmp_path,
-        api_key="x",
-        base_url="http://localhost:0",
-        model="dummy",
-        **kwargs,
-    )
-
-
-class _NamedTool(Tool):
-    """Minimal concrete Tool with a configurable name."""
-
-    def __init__(self, name: str, description: str = "marker") -> None:
-        self._name = name
-        self._description = description
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def description(self) -> str:
-        return self._description
-
-    @property
-    def parameters(self):
-        return {"type": "object", "properties": {}}
-
-    def execute(self, **kwargs) -> str:
-        return "ran"
+from tests.support.tools import NamedTool, make_dummy_agent
 
 
 # A small set of unconditional built-ins (no [web]/bg_store dependency).
@@ -67,7 +33,7 @@ _CORE = {"read_file", "write_file", "replace",
 
 def test_enabled_none_is_status_quo(tmp_path):
     """``enabled_tools=None`` registers built-ins as before."""
-    agent = _make_agent(tmp_path)
+    agent = make_dummy_agent(tmp_path)
     try:
         # Sanity: unconditional built-ins all present without an allowlist.
         assert _CORE <= set(agent.tools.tools)
@@ -80,7 +46,7 @@ def test_enabled_none_is_status_quo(tmp_path):
 
 def test_allowlist_keeps_only_named_builtins(tmp_path):
     keep = {"read_file", "run_shell_command"}
-    agent = _make_agent(tmp_path, enabled_tools=keep)
+    agent = make_dummy_agent(tmp_path, enabled_tools=keep)
     try:
         present = set(agent.tools.tools)
         assert keep <= present
@@ -93,7 +59,7 @@ def test_allowlist_keeps_only_named_builtins(tmp_path):
 
 def test_allowlist_prunes_optional_builtins(tmp_path):
     """A built-in left out of the allowlist is gone even if normally present."""
-    agent = _make_agent(tmp_path, enabled_tools={"read_file"})
+    agent = make_dummy_agent(tmp_path, enabled_tools={"read_file"})
     try:
         present = set(agent.tools.tools)
         for name in ("todo_write", "save_memory", "activate_skill", "ask_user"):
@@ -107,7 +73,7 @@ def test_allowlist_prunes_optional_builtins(tmp_path):
 
 def test_empty_set_prunes_all_builtins(tmp_path):
     """``enabled_tools=set()`` removes every built-in / agent tool."""
-    agent = _make_agent(tmp_path, enabled_tools=set())
+    agent = make_dummy_agent(tmp_path, enabled_tools=set())
     try:
         present = set(agent.tools.tools)
         # No built-in survives an empty allowlist.
@@ -121,9 +87,9 @@ def test_empty_set_prunes_all_builtins(tmp_path):
 
 def test_extra_tools_kept_despite_allowlist(tmp_path):
     """An injected extra survives even when not named in the allowlist."""
-    agent = _make_agent(
+    agent = make_dummy_agent(
         tmp_path,
-        extra_tools=[_NamedTool("my_retrieval")],
+        extra_tools=[NamedTool("my_retrieval")],
         enabled_tools={"read_file"},
     )
     try:
@@ -137,9 +103,9 @@ def test_extra_tools_kept_despite_allowlist(tmp_path):
 
 def test_extra_name_in_allowlist_is_not_required_but_harmless(tmp_path):
     """Naming the extra in the allowlist too is allowed (no typo error)."""
-    agent = _make_agent(
+    agent = make_dummy_agent(
         tmp_path,
-        extra_tools=[_NamedTool("my_retrieval")],
+        extra_tools=[NamedTool("my_retrieval")],
         enabled_tools={"read_file", "my_retrieval"},
     )
     try:
@@ -153,7 +119,7 @@ def test_extra_name_in_allowlist_is_not_required_but_harmless(tmp_path):
 
 def test_enabled_and_disable_mutually_exclusive(tmp_path):
     with pytest.raises(ValueError, match="mutually exclusive"):
-        _make_agent(
+        make_dummy_agent(
             tmp_path,
             enabled_tools={"read_file"},
             disable_tools={"web_search"},
@@ -163,7 +129,7 @@ def test_enabled_and_disable_mutually_exclusive(tmp_path):
 def test_empty_allowlist_still_excludes_disable(tmp_path):
     """Even an empty allowlist is 'enabled', so it clashes with disable_tools."""
     with pytest.raises(ValueError, match="mutually exclusive"):
-        _make_agent(tmp_path, enabled_tools=set(), disable_tools={"read_file"})
+        make_dummy_agent(tmp_path, enabled_tools=set(), disable_tools={"read_file"})
 
 
 # ── Reserved names raise at construction ──────────────────────────────────
@@ -171,12 +137,12 @@ def test_empty_allowlist_still_excludes_disable(tmp_path):
 
 def test_allowlist_mcp_prefix_rejected(tmp_path):
     with pytest.raises(ValueError, match="reserved 'mcp_' prefix"):
-        _make_agent(tmp_path, enabled_tools={"read_file", "mcp_alpha_ping"})
+        make_dummy_agent(tmp_path, enabled_tools={"read_file", "mcp_alpha_ping"})
 
 
 def test_allowlist_plan_only_rejected(tmp_path):
     with pytest.raises(ValueError, match="reserved for plan mode"):
-        _make_agent(tmp_path, enabled_tools={"plan_save"})
+        make_dummy_agent(tmp_path, enabled_tools={"plan_save"})
 
 
 # ── Unknown name typo guard (apply-time, against live registry) ────────────
@@ -184,7 +150,7 @@ def test_allowlist_plan_only_rejected(tmp_path):
 
 def test_allowlist_unknown_name_rejected(tmp_path):
     with pytest.raises(ValueError, match="unknown tool name"):
-        _make_agent(tmp_path, enabled_tools={"read_fil"})
+        make_dummy_agent(tmp_path, enabled_tools={"read_fil"})
 
 
 def test_allowlist_known_builtin_without_extra_is_legal(tmp_path):
@@ -193,7 +159,7 @@ def test_allowlist_known_builtin_without_extra_is_legal(tmp_path):
     ``web_search`` only registers with the ``[web]`` extra, but it's a legal
     built-in name, so allowlisting it must not be flagged as a typo.
     """
-    agent = _make_agent(tmp_path, enabled_tools={"read_file", "web_search"})
+    agent = make_dummy_agent(tmp_path, enabled_tools={"read_file", "web_search"})
     try:
         assert "read_file" in agent.tools.tools
     finally:

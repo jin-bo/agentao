@@ -21,10 +21,9 @@ from __future__ import annotations
 
 import io
 import json
-import queue
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import pytest
 
@@ -45,7 +44,11 @@ from agentao.acp.server import AcpServer, JsonRpcHandlerError
 from agentao.cancellation import CancellationToken
 
 from .support.acp_agents import StallingFakeAgent
-from .support.acp_server import make_initialized_server, make_server
+from .support.acp_server import (
+    BlockingStdin,
+    make_initialized_server,
+    make_server,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -395,36 +398,6 @@ def test_register_populates_handler_dict(initialized_server):
 # ===========================================================================
 # End-to-end: cancel a turn that is mid-flight
 # ===========================================================================
-
-
-class BlockingStdin:
-    """Queue-backed stdin for end-to-end tests.
-
-    StringIO returns ``''`` immediately on EOF, which races the worker
-    pool. A queue lets the test control exactly when EOF lands so we
-    can guarantee the cancel arrives before run() exits.
-    """
-
-    def __init__(self) -> None:
-        self._q: "queue.Queue[Optional[str]]" = queue.Queue()
-        self._closed = False
-
-    def push_line(self, line: str) -> None:
-        if not line.endswith("\n"):
-            line += "\n"
-        self._q.put(line)
-
-    def push_eof(self) -> None:
-        self._q.put(None)
-
-    def readline(self) -> str:
-        if self._closed:
-            return ""
-        item = self._q.get()
-        if item is None:
-            self._closed = True
-            return ""
-        return item
 
 
 class TestEndToEndCancel:

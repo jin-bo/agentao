@@ -12,7 +12,7 @@ import io
 import json
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict
 
 import pytest
 
@@ -21,22 +21,7 @@ from agentao.acp.server import AcpServer
 from agentao.acp.transport import ACPTransport, _json_safe, _todo_write_plan, _tool_kind
 from agentao.transport.events import AgentEvent, EventType
 
-
-# ---------------------------------------------------------------------------
-# Test doubles
-# ---------------------------------------------------------------------------
-
-class RecordingServer:
-    """Stand-in for :class:`AcpServer` that captures notification calls."""
-
-    def __init__(self) -> None:
-        self.notifications: List[Tuple[str, Dict[str, Any]]] = []
-
-    def write_notification(self, method: str, params: Dict[str, Any]) -> None:
-        # Round-trip through json to guarantee JSON-safety of payloads —
-        # if any value is not serializable the test fails loudly.
-        encoded = json.dumps(params, separators=(",", ":"))
-        self.notifications.append((method, json.loads(encoded)))
+from .support.acp_server import RecordingServer
 
 
 @pytest.fixture

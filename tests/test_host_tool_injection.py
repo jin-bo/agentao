@@ -17,51 +17,18 @@ from __future__ import annotations
 
 import pytest
 
-from agentao import Agentao
 from agentao.host import AsyncToolBase, RegistrableTool, Tool
 from agentao.tooling import BUILTIN_TOOL_NAMES
 from agentao.tools.web import WebSearchTool
 
-
-def _make_agent(tmp_path, **kwargs) -> Agentao:
-    """Construct an Agentao with a dummy LLM config (no network at init)."""
-    return Agentao(
-        working_directory=tmp_path,
-        api_key="x",
-        base_url="http://localhost:0",
-        model="dummy",
-        **kwargs,
-    )
-
-
-class _NamedTool(Tool):
-    """Minimal concrete Tool with a configurable name + marker description."""
-
-    def __init__(self, name: str, description: str = "marker") -> None:
-        self._name = name
-        self._description = description
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def description(self) -> str:
-        return self._description
-
-    @property
-    def parameters(self):
-        return {"type": "object", "properties": {}}
-
-    def execute(self, **kwargs) -> str:
-        return "ran"
+from tests.support.tools import NamedTool, make_dummy_agent
 
 
 # ── Contract 1: extra_tools register last & override ──────────────────────
 
 
 def test_extra_tools_add_new_tool(tmp_path):
-    agent = _make_agent(tmp_path, extra_tools=[_NamedTool("my_retrieval")])
+    agent = make_dummy_agent(tmp_path, extra_tools=[NamedTool("my_retrieval")])
     try:
         assert "my_retrieval" in agent.tools.tools
     finally:
@@ -76,8 +43,8 @@ def test_extra_tools_override_builtin(tmp_path):
     conditional tool like ``web_search`` would silently degrade to an "add"
     when ``bs4`` is absent.
     """
-    custom = _NamedTool("read_file", description="custom-override")
-    agent = _make_agent(tmp_path, extra_tools=[custom])
+    custom = NamedTool("read_file", description="custom-override")
+    agent = make_dummy_agent(tmp_path, extra_tools=[custom])
     try:
         assert agent.tools.tools["read_file"] is custom
         assert agent.tools.tools["read_file"].description == "custom-override"
@@ -87,8 +54,8 @@ def test_extra_tools_override_builtin(tmp_path):
 
 def test_extra_tools_inherit_capability_binding(tmp_path):
     """Injected tools get the same wd/filesystem/shell binding as built-ins."""
-    tool = _NamedTool("my_retrieval")
-    agent = _make_agent(tmp_path, extra_tools=[tool])
+    tool = NamedTool("my_retrieval")
+    agent = make_dummy_agent(tmp_path, extra_tools=[tool])
     try:
         registered = agent.tools.tools["my_retrieval"]
         assert registered.working_directory == agent._working_directory
@@ -106,14 +73,14 @@ def test_extra_tools_inherit_capability_binding(tmp_path):
 
 def test_extra_tools_mcp_prefix_rejected(tmp_path):
     with pytest.raises(ValueError, match="reserved 'mcp_' prefix"):
-        _make_agent(tmp_path, extra_tools=[_NamedTool("mcp_alpha_ping")])
+        make_dummy_agent(tmp_path, extra_tools=[NamedTool("mcp_alpha_ping")])
 
 
 def test_extra_tools_duplicate_name_rejected(tmp_path):
     with pytest.raises(ValueError, match="duplicate tool name"):
-        _make_agent(
+        make_dummy_agent(
             tmp_path,
-            extra_tools=[_NamedTool("dup"), _NamedTool("dup")],
+            extra_tools=[NamedTool("dup"), NamedTool("dup")],
         )
 
 
@@ -122,11 +89,11 @@ def test_extra_tools_duplicate_name_rejected(tmp_path):
 
 def test_disable_unknown_tool_raises(tmp_path):
     with pytest.raises(ValueError, match="unknown built-in tool name"):
-        _make_agent(tmp_path, disable_tools={"web_serach"})
+        make_dummy_agent(tmp_path, disable_tools={"web_serach"})
 
 
 def test_disable_known_tool_skips_registration(tmp_path):
-    agent = _make_agent(tmp_path, disable_tools={"read_file"})
+    agent = make_dummy_agent(tmp_path, disable_tools={"read_file"})
     try:
         assert "read_file" not in agent.tools.tools
         # Other built-ins remain.
@@ -142,7 +109,7 @@ def test_disable_tool_without_extra_dep_is_noop_not_error(tmp_path):
     not live availability — so ``web_search`` is always a valid name even
     when ``[web]`` isn't installed; disabling it is simply a no-op then.
     """
-    agent = _make_agent(tmp_path, disable_tools={"web_search", "web_fetch"})
+    agent = make_dummy_agent(tmp_path, disable_tools={"web_search", "web_fetch"})
     try:
         assert "web_search" not in agent.tools.tools
         assert "web_fetch" not in agent.tools.tools
@@ -156,8 +123,8 @@ def test_disable_plus_extra_replacement(tmp_path):
     Uses ``read_file`` (unconditional) so the disable+replace path is
     exercised on any install, not only when ``[web]`` is present.
     """
-    custom = _NamedTool("read_file", description="host-owned")
-    agent = _make_agent(
+    custom = NamedTool("read_file", description="host-owned")
+    agent = make_dummy_agent(
         tmp_path, disable_tools={"read_file"}, extra_tools=[custom]
     )
     try:
@@ -218,7 +185,7 @@ def test_web_search_bocha_backend_without_key_raises(monkeypatch):
 
 def test_extra_tools_empty_name_rejected(tmp_path):
     with pytest.raises(ValueError, match="non-empty string"):
-        _make_agent(tmp_path, extra_tools=[_NamedTool("")])
+        make_dummy_agent(tmp_path, extra_tools=[NamedTool("")])
 
 
 def test_extra_tools_override_is_logged_and_unwarned(tmp_path, caplog):
@@ -233,9 +200,9 @@ def test_extra_tools_override_is_logged_and_unwarned(tmp_path, caplog):
     # ``read_file`` is unconditional — without it (e.g. overriding the
     # bs4-gated web_search on a bare install) replace would be False and the
     # asserted INFO line would never fire.
-    custom = _NamedTool("read_file", description="host-owned")
+    custom = NamedTool("read_file", description="host-owned")
     with caplog.at_level(logging.INFO):
-        agent = _make_agent(tmp_path, extra_tools=[custom])
+        agent = make_dummy_agent(tmp_path, extra_tools=[custom])
     try:
         infos = [r for r in caplog.records if r.levelno == logging.INFO
                  and "overrides an already-registered tool" in r.getMessage()]
@@ -275,8 +242,8 @@ def test_builtin_tool_names_constant_in_sync(tmp_path):
     fake._disable_tools = frozenset()
     fake.bg_store = Mock()  # truthy → bg tools register
     fake.skill_manager = Mock()
-    fake.todo_tool = _NamedTool("todo_write")
-    fake.memory_tool = _NamedTool("save_memory")
+    fake.todo_tool = NamedTool("todo_write")
+    fake.memory_tool = NamedTool("save_memory")
     fake.transport = Mock()
 
     from agentao.tools.base import ToolRegistry

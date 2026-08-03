@@ -23,11 +23,10 @@ from __future__ import annotations
 
 import io
 import json
-import queue
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import pytest
 
@@ -52,31 +51,16 @@ from agentao.acp.transport import (
     _strip_system_reminder_blocks,
 )
 from agentao.cancellation import CancellationToken
-from agentao.session import save_session
+from agentao.embedding.sessions import save_session
 
 from .support.acp_agents import FakeAgent, make_factory
-from .support.acp_server import make_initialized_server, make_server
-
-
-# ---------------------------------------------------------------------------
-# Test doubles
-# ---------------------------------------------------------------------------
-
-
-class RecordingServer:
-    """Stand-in for :class:`AcpServer` that captures notifications.
-
-    Used by the unit tests for ``ACPTransport.replay_history`` so we can
-    inspect the produced notifications without spinning up a real server.
-    """
-
-    def __init__(self) -> None:
-        self.notifications: List[Tuple[str, Dict[str, Any]]] = []
-
-    def write_notification(self, method: str, params: Dict[str, Any]) -> None:
-        # Round-trip through JSON to assert payloads are serializable.
-        encoded = json.dumps(params, separators=(",", ":"))
-        self.notifications.append((method, json.loads(encoded)))
+from .support.acp_server import (
+    BlockingStdin,
+    CapturingStdout,
+    RecordingServer,
+    make_initialized_server,
+    make_server,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -113,51 +97,6 @@ def _load_params(cwd: Path, session_id: str) -> Dict[str, Any]:
         "cwd": str(cwd),
         "mcpServers": [],
     }
-
-
-class BlockingStdin:
-    """Queue-backed stdin so a test can interleave reads with run()."""
-
-    def __init__(self) -> None:
-        self._q: "queue.Queue[Optional[str]]" = queue.Queue()
-        self._closed = False
-
-    def push_line(self, line: str) -> None:
-        if not line.endswith("\n"):
-            line += "\n"
-        self._q.put(line)
-
-    def push_eof(self) -> None:
-        self._q.put(None)
-
-    def readline(self) -> str:
-        if self._closed:
-            return ""
-        item = self._q.get()
-        if item is None:
-            self._closed = True
-            return ""
-        return item
-
-
-class CapturingStdout:
-    """Stdout double that lets a test poll for completed responses."""
-
-    def __init__(self) -> None:
-        self._buf = io.StringIO()
-        self._lock = threading.Lock()
-
-    def write(self, data: str) -> int:
-        with self._lock:
-            return self._buf.write(data)
-
-    def flush(self) -> None:
-        with self._lock:
-            self._buf.flush()
-
-    def getvalue(self) -> str:
-        with self._lock:
-            return self._buf.getvalue()
 
 
 # ===========================================================================
