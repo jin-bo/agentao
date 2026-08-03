@@ -224,7 +224,6 @@ def test_harness_alias_emits_deprecation_warning_and_re_exports():
     ``agentao/harness/`` shim package) together.
     """
     import importlib
-    import sys
     import warnings
 
     # Force a fresh import so the warning fires deterministically.

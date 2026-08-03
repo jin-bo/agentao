@@ -112,11 +112,11 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
 
     elif subcommand == "user":
         entries = mgr.get_all_entries(scope="user")
-        _display_layered_entries(entries, "[Profile Memory]", console)
+        _display_layered_entries(entries, "[Profile Memory]")
 
     elif subcommand == "project":
         entries = mgr.get_all_entries(scope="project")
-        _display_layered_entries(entries, "[Project Memory]", console)
+        _display_layered_entries(entries, "[Project Memory]")
 
     elif subcommand == "session":
         summaries = mgr.get_recent_session_summaries(limit=10)
