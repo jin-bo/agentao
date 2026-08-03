@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import io
 import json
-import queue
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -57,6 +56,8 @@ from agentao.acp.transport import (
     _build_permission_options,
 )
 from agentao.cancellation import CancellationToken
+
+from .support.acp_server import BlockingStdin
 
 
 # ---------------------------------------------------------------------------
@@ -119,40 +120,6 @@ def _register_session(server: Any, session_id: str = "sess_test") -> AcpSessionS
     state = AcpSessionState(session_id=session_id)
     server.sessions.create(state)
     return state
-
-
-class BlockingStdin:
-    """File-like stdin that blocks on readline until a line is pushed.
-
-    ``StringIO`` won't work for the end-to-end permission tests because
-    ``StringIO.readline()`` returns ``''`` immediately once EOF is
-    reached, so ``AcpServer.run`` bails out and cancels every pending
-    outbound request before any injector thread has a chance to route a
-    response. A queue-backed stdin lets the test control when EOF lands
-    — we push the permission response line and then push a sentinel
-    ``None`` to signal EOF explicitly.
-    """
-
-    def __init__(self) -> None:
-        self._queue: "queue.Queue[Optional[str]]" = queue.Queue()
-        self._closed = False
-
-    def push_line(self, line: str) -> None:
-        if not line.endswith("\n"):
-            line = line + "\n"
-        self._queue.put(line)
-
-    def push_eof(self) -> None:
-        self._queue.put(None)
-
-    def readline(self) -> str:
-        if self._closed:
-            return ""
-        item = self._queue.get()
-        if item is None:
-            self._closed = True
-            return ""
-        return item
 
 
 # ===========================================================================
