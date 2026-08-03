@@ -70,7 +70,8 @@ class AgentEvent:
         TURN_END      {"final_text": "...", "status": "ok"|"error"|"cancelled",
                        "error": None, "tool_count": 3,
                        "incomplete_reason": None|"no_output"|"reasoning_only"
-                       |"length_truncated"|"doom_loop"}
+                       |"length_truncated"|"doom_loop",
+                       "finish_reason_missing": False}
         TOOL_START    {"tool": "run_shell_command", "args": {...}, "call_id": "uuid"}
         TOOL_OUTPUT   {"tool": "run_shell_command", "chunk": "hello\\n", "call_id": "uuid"}
         TOOL_COMPLETE {"tool": "run_shell_command", "call_id": "uuid",

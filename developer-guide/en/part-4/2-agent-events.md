@@ -74,7 +74,7 @@ Distinct from `TURN_START` (which fires per LLM iteration). `TURN_BEGIN` carries
 | Field | Description |
 |-------|-------------|
 | Trigger | Once at the end of each user-driven turn, after the final assistant reply (or on error / cancellation) |
-| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None, "tool_count": 3, "incomplete_reason": None}` |
+| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None, "tool_count": 3, "incomplete_reason": None, "finish_reason_missing": False}` |
 | Typical use | Close the turn frame; flush per-turn metrics — `tool_count` is the number of tool calls the LLM made across all iterations of the turn, so a host can size a turn without replaying every `TOOL_START` |
 
 `incomplete_reason` is `None` on an ordinary turn. It is set when the turn ended without a complete, model-authored answer, and says why:
@@ -90,6 +90,8 @@ Distinct from `TURN_START` (which fires per LLM iteration). `TURN_BEGIN` carries
 This is a **single closed vocabulary**: every turn-ending path commits exactly one of these, or `None` for a real answer — there is no unclassified ending. The first two mean the turn ended normally with no answer; the middle two mean the harness stopped a turn that was not converging; the last means the provider call never yielded a turn. (`max_iterations` is a sixth way a turn ends without a complete answer, but it is a deliberately separate axis — a sticky transport flag with its own exit code 4 and its own `on_max_iterations` interaction, not a value here.)
 
 Prefer it over string-matching `final_text` — the harness substitutes a placeholder or a canned notice there (including the `[LLM API error: …]` notice, now classified `llm_error`), and a Stop hook may decorate it, so the text is not a reliable signal. A cancelled turn is never reported via `incomplete_reason` (it carries `status: "cancelled"`). `agentao run` maps a non-`None` value to a non-zero exit; other hosts are free to retry, prompt, or ignore.
+
+`finish_reason_missing` is a **separate axis**, not a member of that vocabulary. It is `True` when at least one LLM call in the turn ended without the provider reporting *why* generation stopped — a gateway closing the SSE body after its own upstream timeout, or a partially-compatible server that never emits the field — so agentao's `"stop"` fallback, rather than the provider, is what says the answer is complete. It does **not** affect `incomplete_reason`, `is_answer`, or the `agentao run` exit code: the servers that omit the field omit it on every call, so gating on it would fail every turn against them. A host that wants the strict reading checks the key itself. Suppressed on a cancelled turn (the cancellation already explains the absence), reported on an errored one.
 
 Replay recorders pair this with `TURN_BEGIN` to delimit a turn. Drives the runtime → replay handoff that used to be a direct call into the replay adapter.
 

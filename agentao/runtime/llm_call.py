@@ -163,12 +163,20 @@ def run_llm_call(
         raise
 
     finish_reason: Optional[str] = None
+    # False when the value above is agentao's "stop" fallback rather than
+    # something the provider sent. Additive key on LLM_CALL_COMPLETED so a
+    # per-call consumer can tell the two apart; ``finish_reason`` itself keeps
+    # its existing value so payloads and replay renders do not shift.
+    finish_reason_reported: bool = True
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     try:
         choices = getattr(response, "choices", None)
         if choices:
             finish_reason = getattr(choices[0], "finish_reason", None)
+        finish_reason_reported = bool(
+            finish_reason
+        ) and getattr(response, "finish_reason_reported", True)
         usage = getattr(response, "usage", None)
         if usage is not None:
             prompt_tokens = getattr(usage, "prompt_tokens", None)
@@ -186,6 +194,7 @@ def run_llm_call(
         "error_class": None,
         "error_message": None,
         "finish_reason": finish_reason,
+        "finish_reason_reported": finish_reason_reported,
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
     }))

@@ -91,6 +91,18 @@ def run_turn(
     # rejects outright, and under ``from __future__ import annotations`` the
     # annotation is inert anyway — it matches the un-annotated sibling above.
     agent._turn_incomplete_reason = None
+    # Turn-level "at least one LLM call in this turn ended without the
+    # provider reporting a finish_reason" flag, typed bool. Set by the chat
+    # loop; reset per turn like the two above.
+    agent._turn_finish_reason_missing = False
+    # The compaction summarizer records its own observation on the context
+    # manager (it bypasses the chat loop's detector); clear it here so a
+    # truncated summary from an earlier turn cannot leak into this one's flag
+    # via a ``compress_messages`` call that never re-summarizes.
+    try:
+        agent.context_manager.last_summary_finish_reason_missing = False
+    except Exception:
+        pass
     # Snapshot the latest session-summary id so the inner loop can
     # fire SESSION_SUMMARY_WRITTEN each time compress_messages writes
     # a new one. Held on the instance so compression paths inside the
@@ -181,12 +193,29 @@ def run_turn(
             if status == "ok"
             else None
         )
+        # Cancellation is suppressed, errors are not — the two differ.
+        #
+        # A cancelled turn breaks out of the chunk loop before any
+        # finish_reason can arrive, so the flag would fire on *every*
+        # cancellation and say nothing ``status`` does not already say.
+        #
+        # An errored turn is the opposite case: a stream truncated mid
+        # tool-call arguments can get those arguments repaired into something
+        # parseable-but-wrong, run the tool, and raise. Reporting ``False``
+        # there would tell a triager the provider confirmed a clean stop for
+        # the very turn it truncated — the case this field exists to expose.
+        finish_reason_missing = (
+            bool(getattr(agent, "_turn_finish_reason_missing", False))
+            if status != "cancelled"
+            else False
+        )
         agent._last_turn_outcome = TurnOutcome(
             text=final_text,
             status=status,
             incomplete_reason=incomplete_reason,
             tool_count=tool_count,
             error=error_detail,
+            finish_reason_missing=finish_reason_missing,
         )
         try:
             agent.transport.emit(AgentEvent(EventType.TURN_END, {
@@ -195,6 +224,7 @@ def run_turn(
                 "error": error_detail,
                 "tool_count": tool_count,
                 "incomplete_reason": incomplete_reason,
+                "finish_reason_missing": finish_reason_missing,
             }))
         except Exception:
             pass

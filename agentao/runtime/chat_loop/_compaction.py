@@ -70,6 +70,12 @@ class _CompactionMixin:
         pre_tokens = agent.context_manager.estimate_tokens(messages_with_system)
         pre_msgs = len(agent.messages)
         agent.messages = agent.context_manager.compress_messages(agent.messages, is_auto=True)
+        # The summarization LLM call bypasses the runner's detector (it goes
+        # straight to ``llm_client``), so fold its observation in here. This is
+        # the call whose output permanently rewrites history, so a turn that
+        # compacted against an unconfirmed summary must say so.
+        if agent.context_manager.last_summary_finish_reason_missing:
+            agent._turn_finish_reason_missing = True
         agent.context_manager.invalidate_token_anchor()  # prefix rewritten; real count is stale
         system_prompt = agent._build_system_prompt()
         messages_with_system = [

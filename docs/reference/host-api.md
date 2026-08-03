@@ -431,8 +431,18 @@ meaning changed under a name consumers already read.
   `agent.last_turn` returns a `TurnOutcome` (`text`, `status`,
   `incomplete_reason` over a single closed vocabulary — `no_output`,
   `reasoning_only`, `length_truncated`, `doom_loop`, `llm_error`, or
-  `None`; `tool_count`; `error`), and `.is_answer` folds it into one
-  check. That is a **pull** surface: it answers "how did the turn I just
+  `None`; `tool_count`; `error`; `finish_reason_missing`), and
+  `.is_answer` folds it into one check.
+
+  `finish_reason_missing` is a third separate axis, alongside
+  `max_iterations`: at least one LLM call in the turn ended without the
+  provider reporting *why* generation stopped, so agentao's `"stop"`
+  fallback — not the provider — is what says the answer is complete. It
+  does **not** affect `.is_answer`, because the servers that omit the
+  field omit it on every call and every turn would become a failure. A
+  host that wants the strict reading writes `o.is_answer and not
+  o.finish_reason_missing`; one on a known-lenient provider keeps
+  ignoring it. That is a **pull** surface: it answers "how did the turn I just
   awaited end?", which covers `chat()` / `arun()` callers, `agentao
   run`, and any embedder. What is **not** on the stable contract is the
   **push** shape — a `HostEvent` an async observer that does *not* drive

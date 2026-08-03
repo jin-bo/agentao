@@ -74,6 +74,7 @@ class ReplayAdapter:
         error: Optional[str] = None,
         tool_count: Optional[int] = None,
         incomplete_reason: Optional[str] = None,
+        finish_reason_missing: bool = False,
     ) -> None:
         turn_id = self._turn_id
         if turn_id is None:
@@ -92,6 +93,12 @@ class ReplayAdapter:
             # turn and give a triager no way to see why the run reported a
             # failure.
             payload["incomplete_reason"] = incomplete_reason
+        if finish_reason_missing:
+            # Only written when true, like ``incomplete_reason``: an audit
+            # trail of a turn whose provider never said why it stopped is the
+            # whole point of recording it, but stamping ``false`` on every
+            # ordinary turn would bloat every replay file for no signal.
+            payload["finish_reason_missing"] = True
         self._recorder.record(
             EventKind.TURN_COMPLETED,
             turn_id=turn_id,
@@ -266,6 +273,9 @@ class ReplayAdapter:
                     tool_count=tc if isinstance(tc, int) else None,
                     incomplete_reason=(
                         incomplete if isinstance(incomplete, str) else None
+                    ),
+                    finish_reason_missing=bool(
+                        data.get("finish_reason_missing", False)
                     ),
                 )
             except Exception:

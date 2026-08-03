@@ -90,6 +90,19 @@ class ContextManager:
         # Circuit breaker: stop auto-compact after too many consecutive failures
         self._consecutive_compact_failures: int = 0
 
+        # True when the most recent ``_summarize_messages`` call ended without
+        # the provider reporting a finish_reason. That call does not go through
+        # ``ChatLoopRunner`` — it is issued straight against ``llm_client`` —
+        # so the runner's detector never sees it, yet it is the one call whose
+        # output *permanently replaces* conversation history. A truncated
+        # summary is inherited by every later turn.
+        #
+        # Recorded here rather than written to the agent directly: this class
+        # deliberately holds no agent reference (it borrows ``llm_client`` and
+        # ``memory_tool``). The compaction call sites in
+        # ``runtime/chat_loop/_compaction.py`` own turn state and fold it in.
+        self.last_summary_finish_reason_missing: bool = False
+
         # Stats from the last completed compaction (surfaced via get_usage_stats)
         self._last_compact_stats: Optional[Dict[str, Any]] = None
 
@@ -559,6 +572,11 @@ class ContextManager:
         Returns:
             Formatted summary text, or empty string on failure.
         """
+        # Per-call, so the flag describes *this* summarization and not one
+        # from an earlier compaction. ``run_turn`` additionally clears it per
+        # turn, for the case where ``compress_messages`` returns without ever
+        # reaching this method.
+        self.last_summary_finish_reason_missing = False
         try:
             to_summarize = [
                 m for m in messages
@@ -573,6 +591,12 @@ class ContextManager:
                 {"role": "user", "content": f"Summarize this conversation:\n\n{formatted}"},
             ]
             response = self.llm_client.chat(messages=recall_messages, tools=None)
+            # Same two-producer test the chat loop applies (see
+            # ``runtime/chat_loop/_runner.py``): a falsy finish_reason, or a
+            # streamed response whose provider never sent one.
+            _fr = getattr(response.choices[0], "finish_reason", None)
+            if not _fr or not getattr(response, "finish_reason_reported", True):
+                self.last_summary_finish_reason_missing = True
             raw = response.choices[0].message.content or ""
             return self._format_summary(raw)
         except Exception as e:

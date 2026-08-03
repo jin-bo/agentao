@@ -74,7 +74,7 @@ TURN_END   -> (turn 结束；携带最终 assistant 文本 + status/error)
 | 字段 | 说明 |
 |------|------|
 | 触发时机 | 每个用户驱动 turn 结束时**一次**，在最终 assistant 回复之后（或出错 / 被取消时） |
-| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None, "tool_count": 3, "incomplete_reason": None}` |
+| `data` | `{"final_text": "...", "status": "ok"\|"error"\|"cancelled", "error": None, "tool_count": 3, "incomplete_reason": None, "finish_reason_missing": False}` |
 | 典型用法 | 关闭 turn 帧；刷出 per-turn 指标 —— `tool_count` 是这个 turn 内所有迭代里 LLM 发起的工具调用总数，宿主无需重放每个 `TOOL_START` 就能掂量这一 turn 的规模 |
 
 `incomplete_reason` 在普通 turn 上为 `None`。当 turn 结束但没有拿到完整的、模型撰写的答案时它会被置位，并说明原因：
@@ -90,6 +90,8 @@ TURN_END   -> (turn 结束；携带最终 assistant 文本 + status/error)
 这是**一套单一封闭的词表**：每一条 turn 结束路径都恰好提交其中一个取值，或对真实答案提交 `None`——不存在未被分类的结束。前两者表示 turn 正常结束但没有答案；中间两者表示 harness 停掉了一个不收敛的 turn；最后一个表示 provider 调用根本没产出一个 turn。（`max_iterations` 是第六种"结束但无完整答案"的方式，但它是刻意独立的一根轴——一个带自己退出码 4 和 `on_max_iterations` 交互的粘性 transport 标志，不是这里的取值。）
 
 优先用它来判断，而不要去字符串匹配 `final_text` —— harness 会在那里替换占位符或固定话术（包括现已被分类为 `llm_error` 的 `[LLM API error: …]` 提示），而 Stop hook 还可能装饰它，所以文本并不是可靠信号。被取消的 turn 不会通过 `incomplete_reason` 上报（它携带 `status: "cancelled"`）。`agentao run` 会把非 `None` 的值映射为非零退出码；其他宿主可以自行选择重试、追问或忽略。
+
+`finish_reason_missing` 是**另一根独立的轴**，不属于上面那套词表。当这个 turn 里至少有一次 LLM 调用结束时 provider 从未说明生成为何停止（网关在自己的上游超时后关掉 SSE body，或者部分兼容的服务端根本不发这个字段），它为 `True`——也就是说"答案完整"这句话是 agentao 的 `"stop"` 兜底说的，不是 provider 说的。它**不影响** `incomplete_reason`、`is_answer`，也不影响 `agentao run` 的退出码：不发这个字段的服务端是每次都不发，以它为门会让针对这些服务端的每个 turn 都失败。想要严格语义的宿主自己检查这个键。被取消的 turn 上会被抑制（取消本身已经解释了缺失），出错的 turn 上照常上报。
 
 Replay 录制器靠它和 `TURN_BEGIN` 配对来界定一个 turn。它替代了运行时直接调用 replay adapter 的旧路径。
 

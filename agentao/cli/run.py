@@ -638,9 +638,11 @@ def _run_pipeline(
     tool_calls_count = 0
     captured_turn_id: Optional[str] = None
     incomplete_reason: Optional[str] = None
+    finish_reason_missing = False
 
     def _on_tool_event(event: Any) -> None:
         nonlocal tool_calls_count, captured_turn_id, incomplete_reason
+        nonlocal finish_reason_missing
         ev_type = getattr(event, "type", None)
         # ``run_turn`` clears ``agent._current_turn_id`` in its finally
         # block, so by the time we serialize RunResult the field is
@@ -653,8 +655,13 @@ def _run_pipeline(
         # classifier below turns that into a non-zero exit so a pipeline
         # can't read "the model said nothing" as success.
         if ev_type == EventType.TURN_END:
-            incomplete_reason = (getattr(event, "data", None) or {}).get(
-                "incomplete_reason"
+            _turn_data = getattr(event, "data", None) or {}
+            incomplete_reason = _turn_data.get("incomplete_reason")
+            # Reported on the envelope, never fed to ``_classify_outcome``:
+            # exiting non-zero on this would fail every run against a provider
+            # that never sends finish_reason. See RunResult.
+            finish_reason_missing = bool(
+                _turn_data.get("finish_reason_missing", False)
             )
             return
         # ToolExecutor fires TOOL_START *before* the deny check, so
@@ -722,6 +729,7 @@ def _run_pipeline(
         replay_path=replay_path,
         usage=usage,
         tool_calls=tool_calls_count,
+        finish_reason_missing=finish_reason_missing,
         warnings=warnings,
     )
 

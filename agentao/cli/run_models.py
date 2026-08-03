@@ -292,6 +292,17 @@ class RunResult(BaseModel):
     replay_path: Optional[str] = None
     usage: Optional[RunUsage] = None
     tool_calls: Optional[int] = None
+    #: True when at least one LLM call in the turn ended without the provider
+    #: reporting *why* generation stopped, so ``final_text`` may be a truncated
+    #: fragment that agentao's ``"stop"`` fallback presented as complete.
+    #:
+    #: Deliberately does **not** affect ``status`` or the exit code: the
+    #: servers that omit the field omit it on every call, so gating on it would
+    #: fail every run against them. A pipeline that wants the strict reading
+    #: checks this key itself. Without it the fact is unreachable from
+    #: ``agentao run`` — there is no ``TurnOutcome`` on that surface, only this
+    #: envelope.
+    finish_reason_missing: bool = False
     warnings: List[str] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="ignore")
