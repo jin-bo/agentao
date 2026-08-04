@@ -1,7 +1,10 @@
 # Tool Search: Deferred-Loading Tool Discovery
 
 **Status:** Design draft. Decision captured 2026-05-24. Implementation deferred
-until a trigger condition (below) is met.
+until a trigger condition (below) is met. **Updated 2026-08-03** with pi-mono as
+a second reference implementation — it does *not* change the decision, and its
+driver is provider-led rather than tool-list bloat, so it is not a second
+instance of the trigger.
 **Audience:** agentao maintainers considering tool-list-budget pressure from
 MCP / plugin growth.
 **Companion:** `tool-search.zh.md`.
@@ -64,6 +67,91 @@ Codex's solution has four moving parts (verified by grep in the codex tree on
 
 A companion tool, `request_plugin_install`, handles "plugin not yet installed"
 flows. That depends on Codex's plugin marketplace and is not relevant here.
+
+## pi-mono's design (second reference)
+
+Added 2026-08-03; verified in the pi-mono tree at `aa0ec808b`.
+
+pi-mono solves the same problem with a **materially different decomposition**:
+the harness owns only the *split and the serialization*. The search itself is
+not in core at all.
+
+1. **`splitDeferredTools`** (`packages/ai/src/utils/deferred-tools.ts` — the
+   whole mechanism, 39 lines). Stateless; re-derives the split from the
+   transcript on every request. Returns `{immediate, deferred}` — `immediate`
+   goes in the request's tool prefix, `deferred` is injected inline at the
+   transcript position where it was loaded. A tool stays deferred until the
+   model actually **calls** it, then graduates to immediate.
+
+2. **The contract is one optional field** — `ToolResultMessage.addedToolNames?:
+   string[]` (`packages/ai/src/types.ts:428`). Its doc comment *is* the
+   degradation rule: "Providers with native deferred tool loading use this as
+   the load point; other providers ignore it and use `Context.tools` normally."
+
+3. **Three provider serializations, each capability-gated:**
+
+   | Provider | Gate | Wire form |
+   |---|---|---|
+   | OpenAI Responses | `supportsToolSearch` (`types.ts:589`) | synthesized `tool_search_call` + `tool_search_output`, `execution: "client"` (`api/openai-responses-shared.ts:305-331`) |
+   | Anthropic Messages | `supportsToolReferences` (`types.ts:647`) | `tool_reference` blocks in tool results; default true for first-party Claude 4.5+, false for Haiku / older / third-party |
+   | Kimi | `deferredToolsMode: "kimi"` (`types.ts:569`) | provider-specific serialization |
+
+   Gate off → `splitDeferredTools` returns everything as `immediate`
+   (`deferred-tools.ts:15`), i.e. exactly today's behavior. Note also the
+   empty-prefix guard at `api/anthropic-messages.ts:956-958`: if *every* tool
+   ended up deferred, they are promoted back to immediate rather than sending
+   an empty tool list.
+
+4. **No `tool_search` tool in core.** pi's built-ins are
+   bash/edit/find/grep/ls/read/write (`packages/coding-agent/src/core/tools/`);
+   `grep -rln tool_search` over that directory returns nothing. The tree's only
+   `tool_search` registration is `examples/extensions/kimi-deferred-tools.ts`,
+   a ~60-line **example extension** whose entire search is
+   `params.query.toLowerCase().includes("calc")`. It runs on `getActiveTools()`
+   / `setActiveTools()` (`core/extensions/types.ts:1331,1337`).
+
+### What this changes for agentao
+
+Two findings, pulling in opposite directions.
+
+**For the lighter shape.** agentao already owns pi's userland half:
+`add_tool` / `remove_tool` (`agentao/agent.py:895,934`, runtime-tool-injection,
+landed) is the same primitive as `setActiveTools`, and `enabled_tools` is
+already a prune pass over the emitted list. If search policy is host code, then
+§"Schema (when implemented)" **§3** (a core `ToolSearchTool` + `rank-bm25`) and
+**§5** (the MCP defer threshold) both leave the critical path — the harness
+would need only the exposure axis (§1) and the `to_openai_format` filter (§2).
+
+**Against.** pi's mechanism draws its value from *provider-native* deferred
+loading, which is precisely what agentao has nowhere to put. pi pays for it
+with a per-model capability table (three flags across two API families, plus a
+Kimi-specific mode) and three separate serializations. agentao is
+provider-neutral by design and drives one chat-completions function-calling
+path; there is no `tool_search_output` item type to emit there. Without a
+provider-native load point, a deferred tool has nowhere to ride except prose in
+a tool result — which is already this draft's §4(a).
+
+**So pi-mono does not lower agentao's implementation cost.** What it supplies
+is a sharper §4 (below) and one caution about reading it as demand evidence:
+pi's driver looks **provider-led** — OpenAI and Anthropic shipped native
+deferred-tool features and pi added support — not tool-list bloat. It is
+therefore *not* a second instance of this document's trigger conditions.
+
+### A third activation model
+
+§4 below lists stateless (a) and stateful (b). pi-mono is neither:
+
+- **(c) Transcript-carried.** The tool result declares `addedToolNames`; the
+  *provider adapter* then injects real API-level tool definitions at that
+  transcript position. The model receives genuine tool defs rather than prose
+  describing them, and the request's tool prefix stays byte-identical — so
+  prompt caching survives a mid-session load.
+
+The draft's (a) says history "naturally carries the spec forward in the prior
+`tool` message". (c) is the strict form of that claim: definitions rather than
+description, with an explicit load point. It is the better design **wherever
+the provider supports it**, and unavailable where it does not — which, for
+agentao's single chat-completions path today, is everywhere.
 
 ## Decision
 
@@ -148,7 +236,8 @@ insufficient. Rebuild the index per turn — at 100s of tools it is microseconds
 
 ### 4. Activation model
 
-Two candidates:
+Three candidates — (c) was added 2026-08-03 from pi-mono; see that section for
+why it is unavailable to agentao today:
 
 - **(a) Stateless.** `tool_search` returns matched specs in its tool result.
   The model issues the call by name on the next turn; dispatch already works
@@ -158,9 +247,17 @@ Two candidates:
   `to_openai_format` includes promoted tools on subsequent turns until session
   end.
 
+- **(c) Transcript-carried** (pi-mono). The tool result declares which names
+  became loadable; the provider adapter injects real tool definitions at that
+  transcript position, keeping the tool prefix byte-stable. Requires a
+  provider-native load point (`tool_search_output` / `tool_reference`), which
+  agentao's chat-completions path does not have.
+
 **Recommendation: (a) Stateless.** Simpler. No session-state divergence. No
 replay / compaction interaction to design. Matches codex's behavior — codex
-re-injects via search results, not via persistent state.
+re-injects via search results, not via persistent state. (c) is strictly better
+where a provider supports it, and is the shape to revisit if agentao ever grows
+a Responses-API or Anthropic-native path.
 
 ### 5. Default decision rule for MCP
 
@@ -248,8 +345,25 @@ rather than weeks when triggered.
   - `codex-rs/core/src/tools/spec_plan.rs:762-781` — `append_tool_search_executor`.
   - `codex-rs/core/templates/search_tool/tool_description.md` — model-facing
     prompt copy.
+- **pi-mono implementation (verified 2026-08-03 at `aa0ec808b`):**
+  - `packages/ai/src/utils/deferred-tools.ts` — `splitDeferredTools`, the whole
+    mechanism in 39 lines.
+  - `packages/ai/src/types.ts:428` — `ToolResultMessage.addedToolNames`, the
+    entire contract, with the graceful-degradation rule in its doc comment.
+  - `packages/ai/src/types.ts:589,647,569` — the three capability gates
+    (`supportsToolSearch`, `supportsToolReferences`, `deferredToolsMode`).
+  - `packages/ai/src/api/openai-responses-shared.ts:305-331` — OpenAI
+    `tool_search_call` / `tool_search_output` synthesis.
+  - `packages/ai/src/api/anthropic-messages.ts:949-960` — Anthropic path plus
+    the empty-immediate-list guard.
+  - `packages/coding-agent/examples/extensions/kimi-deferred-tools.ts` — the
+    only `tool_search` in the tree, as a ~60-line example extension.
+  - `packages/coding-agent/src/core/extensions/types.ts:1331,1337` —
+    `getActiveTools` / `setActiveTools`, the userland activation surface.
 - **Agentao surfaces touched:**
   - `agentao/tools/base.py:198-263` — `ToolRegistry.to_openai_format`.
   - `agentao/mcp/tool.py:71-81` — `McpTool` schema bridging.
+  - `agentao/agent.py:895,934` — `add_tool` / `remove_tool`, agentao's existing
+    equivalent of pi's `setActiveTools`.
 - **Related agentao designs:** [codex-reverse-review.md](codex-reverse-review.md).
 - **BM25 implementation:** `rank-bm25` (PyPI, MIT, pure Python).

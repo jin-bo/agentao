@@ -15,7 +15,6 @@ Covers the design in ``docs/design/mcp-streamable-http.md``:
 """
 
 import importlib.metadata as md
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -52,7 +51,7 @@ from agentao.mcp.client import (
     ServerStatus,
 )
 from agentao.mcp.config import McpTransportConfigError, resolve_transport
-from tests.support.mcp import initialize_result, run_async
+from tests.support.mcp import initialize_result, run_async, tools_result
 
 # Distinctive substring of the §5.7 connect hint.
 _HINT_MARKER = "tried as Streamable HTTP"
@@ -86,8 +85,10 @@ class _FakeSession:
     async def initialize(self):
         return initialize_result()
 
-    async def list_tools(self):
-        return SimpleNamespace(tools=[])
+    # ``params`` is keyword-only on the real ``ClientSession.list_tools`` across
+    # every supported SDK major, and agentao always passes it.
+    async def list_tools(self, *, params=None):
+        return tools_result([])
 
 
 class _FakeHttpClient:

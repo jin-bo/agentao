@@ -1,6 +1,8 @@
 # 工具搜索：按需加载的工具发现机制
 
 **状态：** 设计草案。决策时间 2026-05-24。实现推迟，直到触发条件（见下文）满足。
+**2026-08-03 更新**：补入 pi-mono 作为第二个参考实现 —— 它**不改变决策**，且其驱动力
+是 provider 主导而非工具列表膨胀，因此不构成触发条件的第二个实例。
 **读者：** 关注 MCP / 插件工具数膨胀带来的工具列表预算压力的 agentao 维护者。
 **配套：** `tool-search.md`（英文版）。
 
@@ -55,6 +57,80 @@ Codex 的方案由四部分组成（2026-05-24 在 codex 仓库 grep 验证）�
 
 配套的 `request_plugin_install` 工具处理「插件尚未安装」流程，依赖 codex 的插件
 市场，本设计不涉及。
+
+## pi-mono 的设计（第二参考）
+
+2026-08-03 补入；已在 pi-mono 树 `aa0ec808b` 上核验。
+
+pi-mono 解决同一问题，但**分解方式实质不同**：harness 只拥有「切分 + 序列化」，
+搜索本身根本不在核心里。
+
+1. **`splitDeferredTools`**（`packages/ai/src/utils/deferred-tools.ts` —— 整个机制，
+   39 行）。无状态；每次请求都从 transcript 重新推导切分。返回
+   `{immediate, deferred}` —— `immediate` 进请求的工具前缀，`deferred` 内联注入到
+   「它被加载的那个 transcript 位置」。一个工具保持 deferred，**直到模型真的调用
+   了它**，之后毕业进 immediate。
+
+2. **契约只有一个可选字段** —— `ToolResultMessage.addedToolNames?: string[]`
+   （`packages/ai/src/types.ts:428`）。它的注释**就是**降级规则："Providers with
+   native deferred tool loading use this as the load point; other providers ignore
+   it and use `Context.tools` normally."
+
+3. **三种 provider 序列化，各自能力门控：**
+
+   | Provider | 门控 | 线上形态 |
+   |---|---|---|
+   | OpenAI Responses | `supportsToolSearch`（`types.ts:589`） | 合成 `tool_search_call` + `tool_search_output`，`execution: "client"`（`api/openai-responses-shared.ts:305-331`） |
+   | Anthropic Messages | `supportsToolReferences`（`types.ts:647`） | tool result 里的 `tool_reference` 块；一方 Claude 4.5+ 默认 true，Haiku / 更老 / 三方 false |
+   | Kimi | `deferredToolsMode: "kimi"`（`types.ts:569`） | provider 专有序列化 |
+
+   门控关闭 → `splitDeferredTools` 把一切都当作 `immediate` 返回
+   （`deferred-tools.ts:15`），即与今天行为完全一致。另注意
+   `api/anthropic-messages.ts:956-958` 的空前缀护栏：若**所有**工具都被判为 deferred，
+   会被提回 immediate，而不是发一个空工具列表。
+
+4. **核心里没有 `tool_search` 工具。** pi 的内建工具是
+   bash/edit/find/grep/ls/read/write（`packages/coding-agent/src/core/tools/`）；
+   对该目录 `grep -rln tool_search` 零匹配。全树唯一注册 `tool_search` 的地方是
+   `examples/extensions/kimi-deferred-tools.ts`，一个约 60 行的**示例扩展**，其全部
+   搜索逻辑是 `params.query.toLowerCase().includes("calc")`。它跑在
+   `getActiveTools()` / `setActiveTools()` 上（`core/extensions/types.ts:1331,1337`）。
+
+### 这对 agentao 意味着什么
+
+两个方向相反的发现。
+
+**支持轻型形态。** agentao 已经拥有 pi 的 userland 那一半：`add_tool` /
+`remove_tool`（`agentao/agent.py:895,934`，runtime-tool-injection 已落地）就是
+`setActiveTools` 的同一原语，而 `enabled_tools` 已经是对输出列表的一道剪枝。若搜索
+策略归宿主代码，那么「Schema（实现时）」的 **§3**（核心 `ToolSearchTool` +
+`rank-bm25`）与 **§5**（MCP defer 阈值）都可以离开关键路径 —— harness 只需要
+exposure 维度（§1）和 `to_openai_format` 过滤（§2）。
+
+**反对。** pi 的机制价值来自 **provider 原生**的 deferred 加载，而这恰恰是 agentao
+无处安放的东西。pi 为此付出的代价是一张按模型的能力表（横跨两个 API 家族的三个开关，
+外加一个 Kimi 专有模式）和三套独立序列化。agentao 按设计是 provider 中立的，只驱动
+一条 chat-completions function-calling 路径；那里没有 `tool_search_output` 这种 item
+类型可发。没有 provider 原生的加载点，deferred 工具除了「tool result 里的散文」无处
+可搭 —— 而那正是本草案的 §4(a)。
+
+**所以 pi-mono 并不降低 agentao 的实现成本。** 它提供的是一个更锐利的 §4（见下），
+外加一条关于「别把它当需求证据」的提醒：pi 的驱动力看起来是 **provider 主导** ——
+OpenAI 与 Anthropic 上线了原生 deferred-tool 能力，pi 去适配 —— 而不是工具列表膨胀。
+因此它**不**构成本文档触发条件的第二个实例。
+
+### 第三种激活模型
+
+下文 §4 列了无状态 (a) 与有状态 (b)。pi-mono 两者都不是：
+
+- **(c) transcript 携带**。tool result 声明 `addedToolNames`；随后由 **provider
+  适配层**在那个 transcript 位置注入真正的 API 级工具定义。模型收到的是真工具定义
+  而非描述它们的散文，且请求的工具前缀保持逐字节不变 —— 于是会话中途加载工具不会
+  打掉 prompt 缓存。
+
+草案的 (a) 说历史「自然带着规格」。(c) 是这句话的严格形式：是定义而非描述，且有明确
+的加载点。**在 provider 支持的地方**它是更好的设计，不支持的地方则不可用 —— 而对
+agentao 今天这条 chat-completions 单路径而言，处处不可用。
 
 ## 决策
 
@@ -132,7 +208,7 @@ class ToolSearchTool(Tool):
 
 ### 4. 激活模型
 
-两个候选：
+三个候选 ——(c) 于 2026-08-03 从 pi-mono 补入，为何 agentao 今天用不上见该节：
 
 - **(a) 无状态**：`tool_search` 在返回结果里携带匹配的工具规格。模型下一轮直接
   按名调用，dispatcher 本来就能跑（工具一直注册着）。历史里上一条 `tool` 消息
@@ -140,9 +216,15 @@ class ToolSearchTool(Tool):
 - **(b) 有状态**：`tool_search` 在 session 上标记「已提升」的工具；
   `to_openai_format` 在后续轮里把它们包含进来直到 session 结束。
 
+- **(c) transcript 携带**（pi-mono）：tool result 声明哪些名字变得可加载；provider
+  适配层在该 transcript 位置注入真正的工具定义，工具前缀保持逐字节不变。需要
+  provider 原生的加载点（`tool_search_output` / `tool_reference`），而 agentao 的
+  chat-completions 路径没有。
+
 **推荐 (a) 无状态**。更简单。没有 session 状态分歧。不需要设计 replay /
 compaction 的交互。与 codex 行为一致——codex 也是通过搜索结果重新注入，不是
-持久状态。
+持久状态。(c) 在 provider 支持处严格更优，若 agentao 将来长出 Responses-API 或
+Anthropic 原生路径，应回头重估这个形态。
 
 ### 5. MCP 默认决策规则
 
@@ -220,8 +302,25 @@ agent = Agentao(
   - `codex-rs/core/src/mcp_tool_exposure.rs:17-48`——MCP defer 决策。
   - `codex-rs/core/src/tools/spec_plan.rs:762-781`——`append_tool_search_executor`。
   - `codex-rs/core/templates/search_tool/tool_description.md`——模型可见 prompt。
+- **pi-mono 实现（2026-08-03 于 `aa0ec808b` 验证）：**
+  - `packages/ai/src/utils/deferred-tools.ts`——`splitDeferredTools`，整个机制
+    39 行。
+  - `packages/ai/src/types.ts:428`——`ToolResultMessage.addedToolNames`，全部契约，
+    降级规则就写在它的注释里。
+  - `packages/ai/src/types.ts:589,647,569`——三个能力门控
+    （`supportsToolSearch`、`supportsToolReferences`、`deferredToolsMode`）。
+  - `packages/ai/src/api/openai-responses-shared.ts:305-331`——OpenAI
+    `tool_search_call` / `tool_search_output` 的合成。
+  - `packages/ai/src/api/anthropic-messages.ts:949-960`——Anthropic 路径及空
+    immediate 列表护栏。
+  - `packages/coding-agent/examples/extensions/kimi-deferred-tools.ts`——全树唯一的
+    `tool_search`，形态是约 60 行的示例扩展。
+  - `packages/coding-agent/src/core/extensions/types.ts:1331,1337`——
+    `getActiveTools` / `setActiveTools`，userland 的激活面。
 - **Agentao 触及面：**
   - `agentao/tools/base.py:198-263`——`ToolRegistry.to_openai_format`。
   - `agentao/mcp/tool.py:71-81`——`McpTool` 的 schema 桥接。
+  - `agentao/agent.py:895,934`——`add_tool` / `remove_tool`，agentao 已有的、与 pi
+    `setActiveTools` 对等的原语。
 - **相关 agentao 设计：** [codex-reverse-review.md](codex-reverse-review.md)。
 - **BM25 实现：** `rank-bm25`（PyPI，MIT 许可，纯 Python）。

@@ -23,22 +23,23 @@ Escalation tests are skipped on mcp 1.x, which has no ``server/discover`` at
 all; :func:`test_no_probe_is_ever_sent_to_a_handshake_server` covers both cells.
 """
 
-import asyncio
-from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
 import pytest
 
 import mcp.types as mcp_types
-from mcp import ClientSession
-from mcp.shared.memory import create_client_server_memory_streams
-from mcp.shared.message import SessionMessage
-from mcp.types import ErrorData, JSONRPCError, JSONRPCResponse
+from mcp.types import ErrorData
 
 from agentao.mcp._compat import SUPPORTS_MODERN_ERA, McpProtocolError
 from agentao.mcp.client import McpClient, McpProtocolEraError, ServerStatus
-from tests.support.mcp import connected_client, run_async
+from tests.support.mcp import (
+    FakeMcpServer as _FakeMcpServer,
+    client_against as _client_against,
+    connected_client,
+    handshake_result,
+    run_async,
+)
 
 modern_only = pytest.mark.skipif(
     not SUPPORTS_MODERN_ERA, reason="installed mcp SDK has no modern protocol era"
@@ -66,37 +67,9 @@ def _modern_version() -> str:
 # Wire plumbing
 # ---------------------------------------------------------------------------
 
-def _wrap(message: Any) -> SessionMessage:
-    """Put a concrete JSON-RPC model into whatever ``SessionMessage`` takes.
-
-    1.x wraps every message in the ``JSONRPCMessage`` RootModel; 2.0 made
-    ``SessionMessage.message`` a plain union and demoted ``JSONRPCMessage`` to a
-    bare type alias, which is not callable. Probed by attempting the call, not
-    by a version check.
-    """
-    try:
-        return SessionMessage(mcp_types.JSONRPCMessage(message))
-    except TypeError:
-        return SessionMessage(message)
-
-
-def _unwrap(session_message: SessionMessage) -> Any:
-    """The concrete JSON-RPC model inside a received ``SessionMessage``."""
-    message = session_message.message
-    return getattr(message, "root", message)
-
-
-def _initialize_result(version: str = HANDSHAKE_VERSION) -> Dict[str, Any]:
-    """A handshake result as it appears on the wire.
-
-    Dumped from the real model so the keys are whatever the installed SDK
-    actually validates, rather than a hand-typed guess at the wire shape.
-    """
-    return mcp_types.InitializeResult(
-        protocolVersion=version,
-        capabilities=mcp_types.ServerCapabilities(),
-        serverInfo=mcp_types.Implementation(name="fake-server", version="1.0"),
-    ).model_dump(by_alias=True, mode="json", exclude_none=True)
+#: A handshake result as it appears on the wire. Shared with the pagination
+#: tests — same fake server, same dumped-from-the-real-model discipline.
+_initialize_result = handshake_result
 
 
 def _discover_result(versions: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -105,58 +78,6 @@ def _discover_result(versions: Optional[List[str]] = None) -> Dict[str, Any]:
         supportedVersions=versions if versions is not None else [_modern_version()],
         capabilities={"tools": {}},
     ).model_dump(by_alias=True, mode="json", exclude_none=True)
-
-
-class _FakeMcpServer:
-    """A JSON-RPC peer for the far end of a real ``ClientSession``.
-
-    ``handlers`` maps a method name to its reply — a result ``dict`` or an
-    ``ErrorData``. Unmapped methods answer ``-32601``, which is what a
-    spec-compliant handshake-era server does with ``server/discover``.
-    """
-
-    def __init__(self, handlers: Dict[str, Any]):
-        self._handlers = handlers
-        self.methods: List[str] = []  # every method that crossed the wire, in order
-
-    async def serve(self, read_stream, write_stream) -> None:
-        async for item in read_stream:
-            if isinstance(item, Exception):
-                continue
-            message = _unwrap(item)
-            method = getattr(message, "method", None)
-            request_id = getattr(message, "id", None)
-            if method is None or request_id is None:
-                continue  # a notification (``initialized``) — nothing to answer
-            self.methods.append(method)
-
-            reply = self._handlers.get(
-                method,
-                ErrorData(code=METHOD_NOT_FOUND, message=f"Unknown method {method}"),
-            )
-            if isinstance(reply, ErrorData):
-                out: Any = JSONRPCError(jsonrpc="2.0", id=request_id, error=reply)
-            else:
-                out = JSONRPCResponse(jsonrpc="2.0", id=request_id, result=reply)
-            await write_stream.send(_wrap(out))
-
-
-@asynccontextmanager
-async def _client_against(server: _FakeMcpServer):
-    """An ``McpClient`` whose ``_session`` is a real ``ClientSession`` on *server*."""
-    async with create_client_server_memory_streams() as (client_streams, server_streams):
-        serving = asyncio.ensure_future(server.serve(*server_streams))
-        try:
-            async with ClientSession(*client_streams) as session:
-                client = McpClient("fake", {"command": "echo"})
-                client._session = session
-                yield client
-        finally:
-            serving.cancel()
-            try:
-                await serving
-            except asyncio.CancelledError:
-                pass
 
 
 def _negotiate(server: _FakeMcpServer) -> McpClient:
@@ -418,7 +339,9 @@ def test_tools_are_listable_after_escalating_to_the_modern_era():
 
     client, result = run_async(run())
 
-    assert result.tools == []
+    # ``_handshake`` returns the flattened, fully-paginated tool list now, not
+    # the raw ``ListToolsResult`` of a single page.
+    assert result == []
     assert client.protocol_version == modern
     assert server.methods == ["initialize", "server/discover", "tools/list"]
 

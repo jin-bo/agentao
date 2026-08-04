@@ -15,7 +15,7 @@ from mcp.client.streamable_http import (
     create_mcp_http_client,
     streamable_http_client,
 )
-from mcp.types import METHOD_NOT_FOUND
+from mcp.types import METHOD_NOT_FOUND, PaginatedRequestParams
 from mcp.types import Tool as McpToolDef
 
 from .. import __version__
@@ -132,6 +132,20 @@ class NonMcpEndpointError(ConnectionError):
     """
 
 
+class McpCatalogError(ConnectionError):
+    """A server's ``tools/list`` catalog violated one of the pagination bounds.
+
+    Its own type is load-bearing for the same reason
+    :class:`McpProtocolEraError`'s is: :meth:`connect` appends a "try
+    ``type: sse``" hint to failures on an *inferred* http transport, and that
+    hint is actively wrong here. Reaching a pagination bound means
+    ``initialize`` and at least one ``tools/list`` already succeeded — the
+    transport provably works, and the fault is the server's cursor or catalog
+    size. Sending the operator to change transports earns them an identical
+    failure and hides the real cause.
+    """
+
+
 class McpProtocolEraError(ConnectionError):
     """agentao and the server share no usable MCP protocol era.
 
@@ -162,6 +176,21 @@ _PREFLIGHT_TIMEOUT_SECONDS = 5.0
 # can actually run to completion over SSE, while small per-request budgets
 # don't shorten the idle tolerance of the long-lived stream between calls.
 _DEFAULT_SSE_READ_TIMEOUT = 300.0
+
+# Bounds on the ``tools/list`` pagination loop (see
+# docs/design/mcp-tool-list-pagination.md §5.3). A paginating server is an
+# untrusted peer driving a loop, so every one of these is a hard failure for
+# that server rather than a truncation — a partial catalog is the exact silent
+# wrongness the loop exists to remove.
+#
+# ``_MAX_TOOLS`` bounds the *accumulated catalog*, not the wire: by the time we
+# see ``result.tools`` the SDK has already read, parsed and modelled the
+# response, so a single oversized page has cost its memory regardless. Checking
+# it before ``extend`` keeps that page out of the accumulator rather than
+# copying it in and only then objecting.
+_MAX_TOOL_PAGES = 100
+_MAX_TOOLS = 1024
+_MAX_CURSOR_BYTES = 64 * 1024
 
 # Default ``User-Agent`` for URL-transport MCP requests. Without it every SSE /
 # Streamable HTTP request (and the content-type preflight) goes out as the bare
@@ -287,17 +316,19 @@ class McpClient:
             # never crosses an anyio cancel scope into the transport cleanup
             # that ``connect``'s ``except`` performs.
             try:
-                self._tools = (
-                    await asyncio.wait_for(self._handshake(), timeout=startup_timeout)
-                ).tools
+                self._tools = await asyncio.wait_for(
+                    self._handshake(), timeout=startup_timeout
+                )
             except asyncio.TimeoutError:
                 # Name every round-trip the budget covers: the escalation added
                 # ``server/discover``, and pointing the user at a step that
                 # already completed sends them looking in the wrong place.
+                # ``list_tools`` is plural because it paginates — the budget
+                # spans every page, not just the first.
                 raise TimeoutError(
                     f"MCP server '{self.name}' did not complete the "
-                    f"initialize / server-discover / list_tools handshake "
-                    f"within {startup_timeout:g}s"
+                    f"initialize / server-discover / list_tools (all pages) "
+                    f"handshake within {startup_timeout:g}s"
                 ) from None
 
             self.status = ServerStatus.CONNECTED
@@ -318,11 +349,16 @@ class McpClient:
             # URL isn't MCP at all); an auth failure (switching to SSE won't fix
             # a 401/403 — it would send the user down a wrong path); and a
             # protocol-era mismatch, where the transport was fine and only the
-            # version wasn't, so "try SSE" earns a second identical failure.
+            # version wasn't, so "try SSE" earns a second identical failure; and
+            # a catalog/pagination bound, which is reached only *after*
+            # ``initialize`` and a ``tools/list`` both succeeded — the transport
+            # is proven working and the fault is the server's cursor or catalog.
             if (
                 transport == "http"
                 and source == "inferred"
-                and not isinstance(e, (NonMcpEndpointError, McpProtocolEraError))
+                and not isinstance(
+                    e, (NonMcpEndpointError, McpProtocolEraError, McpCatalogError)
+                )
                 and classify_mcp_error(e) is not McpErrorKind.AUTH
             ):
                 message += (
@@ -346,14 +382,86 @@ class McpClient:
                     pass
                 self._exit_stack = None
 
-    async def _handshake(self):
-        """Settle the protocol era, then run the ``list_tools()`` round-trip.
+    async def _handshake(self) -> List[McpToolDef]:
+        """Settle the protocol era, then collect every ``tools/list`` page.
 
         Factored out so :meth:`connect` can wrap the whole handshake in a
-        single ``startup`` budget via ``asyncio.wait_for``.
+        single ``startup`` budget via ``asyncio.wait_for`` — which is also what
+        bounds the pagination loop as a whole, so it needs no timeout of its
+        own.
         """
         await self._negotiate()
-        return await self._session.list_tools()
+        return await self._list_all_tools()
+
+    async def _list_all_tools(self) -> List[McpToolDef]:
+        """Collect every page of ``tools/list``, bounded against a hostile peer.
+
+        Reading only the first page — which is what a bare ``list_tools()``
+        returns — silently drops every tool a paginating server exposes beyond
+        it, with no error anywhere. That is the defect this exists to fix; the
+        bounds are what make driving a peer-controlled loop safe.
+
+        ``params=`` is the one spelling that works across every supported SDK:
+        mcp 1.x also accepts a positional ``cursor=``, but 2.x dropped it, and
+        ``PaginatedRequestParams`` is present from the 1.26.0 floor up. The
+        cursor *field* does need :func:`field` — 1.x spells it ``nextCursor``,
+        2.x ``next_cursor``.
+
+        Raises ``RuntimeError`` on any bound. :meth:`connect` catches it, marks
+        the server ``ERROR`` with the message, and leaves every other server
+        untouched.
+        """
+        tools: List[McpToolDef] = []
+        seen_cursors: set = set()
+        cursor: Optional[str] = None
+
+        for _ in range(_MAX_TOOL_PAGES):
+            # ``params=None`` on the first page keeps the request byte-identical
+            # to the single call this replaced. Note ``cursor is not None`` and
+            # never ``if cursor``: an MCP cursor is an opaque *string* and ``""``
+            # is a legal one. Truthiness would rewrite it back to ``None`` and
+            # re-request page 1 — not a hang (the repeated-cursor guard catches
+            # it next pass) but a wrong verdict, reporting a compliant server as
+            # having repeated a cursor.
+            params = (
+                PaginatedRequestParams(cursor=cursor) if cursor is not None else None
+            )
+            result = await self._session.list_tools(params=params)
+
+            # ``result.tools`` is ``list[Tool]``, required, on every supported
+            # major — no ``or []`` guard, and no defensive copy: the length is
+            # read and the list is immediately extended into the accumulator.
+            # Before ``extend``, deliberately — see ``_MAX_TOOLS``.
+            if len(tools) + len(result.tools) > _MAX_TOOLS:
+                raise McpCatalogError(
+                    f"MCP server '{self.name}' exceeded the {_MAX_TOOLS}-tool "
+                    f"catalog limit"
+                )
+            tools.extend(result.tools)
+
+            cursor = field(result, "nextCursor", "next_cursor")
+            if cursor is None:
+                return tools
+            # Byte length, not ``len()``: 64 KiB is a byte budget, and a
+            # multibyte cursor would otherwise get up to 4x the allowance.
+            if len(cursor.encode("utf-8")) > _MAX_CURSOR_BYTES:
+                raise McpCatalogError(
+                    f"MCP server '{self.name}' returned a tools/list pagination "
+                    f"cursor larger than {_MAX_CURSOR_BYTES} bytes"
+                )
+            if cursor in seen_cursors:
+                raise McpCatalogError(
+                    f"MCP server '{self.name}' returned a repeated tools/list "
+                    f"pagination cursor"
+                )
+            seen_cursors.add(cursor)
+
+        # Falling out of the loop still holding a cursor *is* the page-cap
+        # failure — no separate counter to keep in sync.
+        raise McpCatalogError(
+            f"MCP server '{self.name}' exceeded {_MAX_TOOL_PAGES} pages of "
+            f"tools/list"
+        )
 
     def _can_discover(self) -> bool:
         """Whether the **live session** can probe the modern era.
