@@ -5,13 +5,158 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.4.19] — 2026-08-04
 
-_Targeting 0.4.19. Add entries under the relevant heading as work lands._
+A **correctness release**. Nothing in it is a new capability anyone asked for;
+every user-facing item is a defect that failed *silently* — a key that was read
+as empty, tools that were never listed, a command that walked past the security
+floor, a stream that ended mid-answer and reported success.
+
+The three worth upgrading for:
+
+- **agentao launched from a Claude Code session could not find its API key.**
+  A present-but-empty ambient variable permanently masked the real value in
+  `.env`. It has shipped since 0.4.8, when the wrapper was added.
+- **The shell hardline floor was bypassable with a run modifier.**
+  `timeout 5 rm -rf /` and eight sibling shapes passed a floor that sits above
+  every mode preset and user rule. The same grammar was exponentially
+  backtrackable on the tool-execution hot path.
+- **MCP tools past page 1 were invisible.** A server paginating a 400-tool
+  catalog presented whatever fit on page 1, with no error, no warning, and
+  nothing in `/mcp list` saying so.
 
 ### Added
 
+- **agentao negotiates the MCP protocol era instead of pinning the handshake.**
+  mcp 2.0 added a second protocol era, and the legacy `initialize` handshake can
+  only ever report the version the *client* proposed or older — so a modern-only
+  server (2026-07-28+) was unreachable by construction and failed the connect
+  outright with `-32022`. `McpClient._negotiate()` now sends `initialize` and
+  escalates to `server/discover` only when the server *rejects* it: definitely
+  (`-32022`, which names the server's own `supportedVersions`) or speculatively
+  (`-32601`, since the modern era has no `initialize` handler at all — a failed
+  speculative probe re-raises the original error rather than renaming the
+  failure after a method the operator never heard of).
+
+  Handshake-first is deliberately the reverse of upstream's `mode='auto'`, and
+  the order was decided by measurement rather than preference. Probe-first was
+  built and then run against a real server per SDK generation over stdio: an
+  mcp 2.0.0 `MCPServer` negotiated silently, but an mcp 1.26.0 `FastMCP`
+  rejected the unknown method with a 31-error pydantic union-validation dump —
+  **258 lines**, and for stdio that stderr *is* agentao's stderr. That is a
+  per-connect cost on the commonest server there is, paid for a capability with
+  no consumer today: tool discovery and tool calls behave identically in both
+  eras, verified against the 2.0.0 peer rather than assumed. The tradeoff is
+  that a dual-era server stays on the handshake era;
+  `test_a_dual_era_server_is_left_on_the_handshake_era` pins it, so the day a
+  modern-only capability is needed the flip is one deliberate edit in
+  `_negotiate`.
+
+  The negotiated version lands on `McpClient.protocol_version`,
+  `get_server_status()["protocol"]` and `/mcp list`. It is a **ceiling, not a
+  constant** — gate on `>=`, never equality. An unresolvable mismatch raises
+  `McpProtocolEraError`, carrying both halves of the failure; its type
+  suppresses the "try `type: sse`" hint, which no transport change could act on.
+
+  Six defects found while reviewing that change ship with it: `_compat.field()`
+  now dispatches on a model's *declared* fields instead of `hasattr` (every wire
+  model is `extra='allow'` on both majors, so a server shipping its own
+  `protocol_version` / `is_error` key made the old probe resolve to the peer's
+  unvalidated value over the SDK-validated camelCase field — this affected every
+  `field()` call site); `/mcp list` escapes server-authored strings (an unmatched
+  `[/b]` in a third-party error message raised `MarkupError` out of the command
+  and took the whole listing with it, healthy servers included); `call_tool`
+  checks that a reconnect actually succeeded, instead of handing the model
+  `'NoneType' object has no attribute 'call_tool'` in place of the reason;
+  `connect()` clears `_session` and `_protocol_version` on its failure path, so
+  a version can no longer hang off an ERROR server; `_can_discover()` probes the
+  live session rather than the imported class; and `call_tool` opts in to
+  `InputRequiredResult`, so an SDK `RuntimeError` telling a *programmer* to pass
+  `allow_input_required=True` no longer arrives as the tool's result.
+
+  Design: `docs/design/mcp-streamable-http.md` §5.8/§5.8.1 (EN + zh).
+
+- **`TurnOutcome.finish_reason_missing` — agentao now reports when a provider
+  never said why generation stopped.** A stream can end with no `finish_reason`
+  at all: a gateway closing the SSE body after its own upstream timeout, or a
+  partially-compatible local server that never emits the field.
+  `_StreamAccumulator` falls back to `"stop"`, so such a turn was
+  indistinguishable from a clean completion — a truncated fragment came back as
+  a finished answer with `is_answer` True.
+
+  **Reported, not classified.** The flag is deliberately *not* a member of
+  `INCOMPLETE_ANSWER_REASONS` and deliberately does not affect `is_answer`:
+  every value in that closed set becomes a CLI error envelope, so joining it
+  would make each turn a hard failure on every provider that omits the field.
+  It rides its own axis, the way `max_iterations` does. A host that wants the
+  strict reading writes `o.is_answer and not o.finish_reason_missing`; one on a
+  known-lenient provider keeps ignoring it. The wire value of `finish_reason`
+  itself keeps its `"stop"` fallback — flipping that to `None` would shift
+  LLM_CALL_COMPLETED payloads and replay renders for every provider that omits
+  it.
+
+  Sticky across every LLM call in the turn, not only the last: an intermediate
+  call that ends without a finish_reason may have had its tool-call arguments
+  cut off with nothing to detect it, since `_is_length_truncation` never fires
+  and the arguments get executed. The compaction summarizer bypasses the chat
+  loop entirely and so records its own observation, which the two compaction
+  call sites fold in — that is the one call whose output permanently rewrites
+  history, and a truncated summary is inherited by every later turn. Suppressed
+  on a cancelled turn, where the cancellation already explains the absence;
+  reported on an errored one, where it does not.
+
+  It reaches every surface that exists to explain a turn after the fact:
+  `agentao.log` qualifies its `Finish Reason:` line, LLM_CALL_COMPLETED carries
+  `finish_reason_reported`, the replay `turn_completed` record carries the flag
+  when set, and `agentao run`'s JSON envelope gains `finish_reason_missing`
+  without it touching the exit code.
+
 ### Changed
+
+- **CI gains a narrow ruff gate — defect rules only, and it is a required
+  check.** `ruff check .` selecting `E9`, `F401`, `F402`, `F405`, `F811`,
+  `F821` and nothing else. The selection is measured, not chosen by taste:
+  against the tree it landed on, `UP` fired 2652 findings and `F401` 255, with
+  zero live bugs between them, while the defect group fired 4 — each read
+  individually, none live. So the claim for this gate is deliberately not "it
+  found bugs"; it is that F821 has already bitten this repo (#141 is titled
+  "declare plugin types for F821"), it measures 0 today, and ~15s of CI keeps
+  it there.
+
+  `F401` is enforced in `tests/` and `examples/` — 184 findings cleaned across
+  92 files — and exempted **wholesale** for `agentao/`. That exemption is not
+  squeamishness: agentao is a published library, so a name re-exported for
+  downstream embedders is imported by nobody in this repo, which is exactly
+  what a public API looks like to a single-file linter. `--fix` over the tree
+  applied 212 fixes and broke 9 test modules at collection, deleting the public
+  surface of `llm/client.py`, `acp_client/client.py` and the `__init__.py`
+  re-export hubs. Making `agentao/` decidable later means giving every
+  re-export hub an explicit `__all__`. Suppress with a reason
+  (`# noqa: F401 — pytest fixture injection`), never bare. See
+  `docs/design/lint-gate.md`.
+
+- **Five pre-pytest test scripts removed, and duplicated test helpers hoisted
+  into `tests/support/`.** Nothing in the published package changes; two of the
+  removals had measured side effects on every default `pytest tests/` run.
+  Three of the five defined no `def test_*` at all — they were module-level
+  scripts that ran during *collection* and printed, with every failure path a
+  `print("✗ ...")` rather than a raise, so none could report a problem even in
+  principle. One of those wrote `OPENAI_API_KEY` and `OPENAI_BASE_URL` into
+  `os.environ` at collection time, outside monkeypatch and so unrollbackable,
+  which left all 3806 other tests inheriting `https://api.example.com/v1` as
+  their base URL, decided by collection order. Another called `agent.chat()`
+  for real on every run — taking a 401 and passing anyway, or sending a
+  developer's genuine exported key to api.openai.com — and constructed
+  `Agentao(working_directory=Path.cwd())`, mutating the developer's own
+  `.agentao/memory.db`.
+
+- **Docs**: the pi-mono v0.80.6→v0.83.0 pull review is recorded
+  (`docs/design/pi-mono-pull-review-2026-08.md`), the `flint-chart-author` skill
+  joins the `examples/skills/` gallery (prose only — no install, no script, no
+  API key), and three places that said skill `references/*.md` are "loaded on
+  activation" are corrected: `activate_skill` *enumerates* them by absolute path
+  and tells the model to `read_file` what it needs, which is the whole point —
+  the always-resident cost stays at name + description.
 
 ### Fixed
 
@@ -26,6 +171,133 @@ _Targeting 0.4.19. Add entries under the relevant heading as work lands._
   still wins, which is the part of no-override callers actually rely on. NUL
   scrubbing — the reason this wrapper exists — is unchanged and now covered by
   a test. See `tests/test_env_dotenv.py`.
+
+- **MCP `tools/list` is paginated instead of silently dropping page 2 and
+  beyond.** `McpClient` issued exactly one `list_tools()` and took `.tools`, so
+  every tool a paginating server exposed past the first page was invisible to
+  the model — with no error, no warning, and nothing in `/mcp list` or
+  `get_server_status()` distinguishing "this server has 12 tools" from "this
+  server has 12 of its 400". `grep next_cursor` returned zero matches
+  repo-wide, tests included.
+
+  `_list_all_tools()` now walks the cursor, bounded against a hostile peer:
+  repeated cursor, 64 KiB cursor (UTF-8 bytes), 1024 accumulated tools (checked
+  *before* `extend`), and 100 pages. Every bound raises `McpCatalogError`,
+  which `connect()` absorbs into `status=ERROR` for that one server —
+  truncation is deliberately not a supported outcome, since a partial catalog
+  is the same silent wrongness this removes. `McpCatalogError` is its own type
+  so it can be excluded from the "try `type: sse`" hint: a bound is reachable
+  only after `initialize` and one `tools/list` have already succeeded, so the
+  transport provably works and pointing the operator at it would hide the real
+  cause.
+
+  Cross-major: `params=` is the one call spelling accepted on all three CI SDK
+  cells including the 1.26.0 floor (positional `cursor=` is 1.x-only, gone in
+  2.x), and the cursor field needs `_compat.field` (`nextCursor` →
+  `next_cursor`). Note there is **no page-size field in the MCP spec** — the
+  server decides. Design, including three regression profiles accepted and
+  recorded rather than fixed: `docs/design/mcp-tool-list-pagination.md` §9.
+
+- **`replace` folds Unicode compatibility forms (NFKC) before fuzzy matching.**
+  The tier-3 match normalized through a codepoint table only (dashes, quotes,
+  spaces), and that table has no entries for compatibility forms — so an edit
+  whose `old_text` differed from the file only by full-width punctuation fell
+  straight through to `_not_found_hint`. In a CJK source file mixing 全角 and
+  半角 that is the common case, not an exotic one: `print（"你好"）；` was
+  unreachable from `print("你好");`.
+
+  Tier 3 now runs NFKC first, then the table. Neither pass subsumes the other —
+  NFKC folds full-width forms, ligatures and every space variant but leaves
+  smart quotes and en/em dashes alone (they have no compatibility
+  decomposition), which is exactly what the table covers. The order is
+  load-bearing: sweeping the Unicode planes finds five characters that NFKC
+  folds *into* a table entry without being in the table themselves (U+207B,
+  U+208B, U+FE31, U+FE32, U+FE58), and table-first strands all five one step
+  short of ASCII. Byte offsets are unaffected — `line_transform` only builds
+  the per-line comparison keys, while the prefix table is built from the
+  original line lengths, so spliced spans still index the original content.
+
+- **Event-listener exceptions are logged instead of swallowed in silence.**
+  `EventBroadcaster.notify` caught every subscriber exception with a bare
+  `except Exception: pass`. Swallowing is correct and stays — a subscriber is a
+  side channel and must never break the emit path — but being *silent* about it
+  is not: the only symptom an embedded host got was "my listener does nothing",
+  with no record anywhere and the swallow three call frames from any code they
+  wrote. WARNING-and-swallow was already the documented convention for the
+  other side-channel sink on this contract (`HostReplaySink`); `broadcast.py`
+  was the one place that did not follow it.
+
+  Logged, not re-emitted as an error event: an event would re-enter `notify`,
+  so a listener that raises on everything would spin forever. `event.type`
+  only, never `event.data` — payloads carry tool arguments, full tool results
+  and LLM text, and agentao's credential redaction is a `Formatter` on its own
+  file handler (deliberately not a `Filter`, so it does not leak into a host's
+  handlers), which means a payload logged here would reach those handlers
+  unredacted. With `exc_info=True`, since a swallowed exception with no stack
+  is barely better than silence.
+
+- **Renaming a skill preserves its `SKILL.md` layout byte-for-byte.**
+  `replace_skill_name` rewrites a file the user wrote, so everything except the
+  `name:` value must survive. It rebuilt the frontmatter from a literal
+  `f"---\n{block}\n---\n"` instead, reformatting every document whose layout
+  differed from that one shape — 6 of 7 measured layouts were corrupted,
+  including the one every skill in this repo uses (the blank line between the
+  closing fence and the body, silently deleted by `/crystallize`). Also
+  affected: a file ending at the fence gained a trailing newline, leading
+  whitespace was dropped, trailing spaces on the fence line were dropped, CRLF
+  documents were rewritten to LF, and a blank line inside the frontmatter was
+  deleted.
+
+  The fix splices the new block into the original string by the frontmatter's
+  own span, so no character outside that block is retyped, and within the block
+  replaces only the *value* span of the `name:` line — replacing the whole match
+  takes the trailing whitespace with it, because `_NAME_LINE_RE` ends in `\s*$`
+  and `\s` swallows a trailing `\r`. +16 tests, all comparing whole strings; the
+  pre-existing test passed against the buggy version precisely because a
+  substring assertion cannot see a deleted blank line.
+
+### Security
+
+- **The shell hardline floor no longer lets a run modifier walk past it.**
+  `permissions.py` documents that `full-access` may omit its sensitive-file
+  rule because "disk-wipe-class attacks already trip the hardline floor". The
+  floor did not uphold that — a run modifier in front of the command was enough:
+
+      timeout 5 rm -rf /        nice -n 5 rm -rf /
+      stdbuf -oL rm -rf /       chrt 10 rm -rf /
+      taskset ff rm -rf /       /usr/bin/timeout 5 rm -rf /
+      exec -a login rm -rf /    nice --adj 5 rm -rf /
+      timeout .5 rm -rf /
+
+  Root cause: the wrapper prefix carried one value-flag set copied from
+  `sudo`/`env`, and had no notion of a wrapper that consumes a positional
+  operand; `timeout` and `stdbuf` were absent entirely. A shared set cannot
+  work — `sudo -n` takes no value while `nice -n 5` does, so any single set
+  breaks one of them. Each family now carries its own set, and
+  `timeout`/`chrt`/`taskset` declare their bare operand.
+
+- **The wrapper grammar is no longer exponentially backtrackable.** It ran on
+  the tool-execution hot path, for every shell call. Two ambiguities, both
+  fixed by making the arms disjoint rather than by bounding input: a separated
+  flag value could also start a fresh wrapper (`sudo -u sudo ...`), so wrapper
+  words are excluded from the value arm; and a bare `-n` matched both the
+  short-flag and the general-flag arm. `"sudo " + "-u sudo "*16 + "X"` — 134
+  characters — took **35 minutes** through `hardline_check`; it now takes
+  0.80 ms, and every ambiguous shape scales linearly to n=128. The ReDoS
+  predates the wrapper additions above (`sudo` was already exponential), so
+  this fixes it rather than merely avoiding widening it.
+
+- **Two false-positive directions closed with it.**
+  `shutdown`/`reboot`/`halt`/`poweroff` matched on `\b`, which also fires
+  before `-` and `.`, so promoting a wrapper operand to command position made
+  `timeout 60 reboot-check.sh` read as `reboot`. Because the floor sits above
+  mode presets and user rules, no `permissions.json` allow and no
+  `/mode full-access` could unblock it. Verified against a 56-command
+  must-block corpus (0 false negatives) and a 14-command must-allow corpus
+  (0 false positives); the new tests fail 4/4 against the previous grammar.
+  Still not recognised as wrappers, all pre-existing: `flock`, `setarch`,
+  `doas`, `unshare`, `runuser` — expanding that inventory is a separate call
+  with its own false-positive cost.
 
 ---
 
