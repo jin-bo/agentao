@@ -114,7 +114,7 @@ Agentao.chat() / Agentao.arun()
 
 ### Skills
 
-Auto-discovered from `skills/`. Each subdir has `SKILL.md` (YAML frontmatter `name:` / `description:`) and optional `references/*.md` (loaded on activation). The skill manager (`agentao/skills/`) maintains `available_skills` (all) and `active_skills` (this session). Cross-process locking via `filelock` — installs and updates are safe across concurrent CLI processes.
+Auto-discovered from `skills/`. Each subdir has `SKILL.md` (YAML frontmatter `name:` / `description:`) and optional `references/*.md`, which are **not** inlined — activation *enumerates* them by absolute path and tells the model to `read_file` what it needs (`skills/manager.py::activate_skill`). That is the whole point: the always-resident cost stays at name + description. The skill manager (`agentao/skills/`) maintains `available_skills` (all) and `active_skills` (this session). Cross-process locking via `filelock` — installs and updates are safe across concurrent CLI processes.
 
 Activate via the `activate_skill` tool or `/skills activate <name>`.
 
