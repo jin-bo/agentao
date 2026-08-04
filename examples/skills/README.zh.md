@@ -18,6 +18,7 @@
 | [`pro-ppt/`](./pro-ppt/) | 同一套流程的「**高端商务编辑**」风变体（极浅灰主色 + 金色点缀 + 深蓝灰背景，麦肯锡 / Apple Keynote 调性）。**复用** `zootopia-ppt/scripts/image_gen_ppt.py`，请一起安装。 | "做一份高级感 / 咨询风 / 编辑风的 PPT" | 同 `zootopia-ppt` |
 | [`ocr/`](./ocr/) | 用 Qwen-VL 做一次性图片 OCR（`scripts/ocr.py`）。 | "把这张截图里的文字提出来 / OCR 这张图" | `.env` 里配 `QWEN_API_KEY` + `QWEN_BASE_URL` |
 | [`kanban-tasks/`](./kanban-tasks/) | 驱动 `agentao-kanban` 看板：把需求拆成原子卡片，推它们走 `INBOX → READY → DOING → REVIEW → DONE`，启停 daemon + Web UI，定位产物。"启动 kanban" / "停止 kanban" 等复合短语对应一键脚本。 | "看板 / kanban / 拆任务 / task board / dispatcher / 启动 kanban …" | 项目 venv 里装好 `agentao-kanban`（统一走 `uv run kanban …`）；cwd 可写以便落 `.kanban/` 和 `workspace/board/` |
+| [`flint-chart-author/`](./flint-chart-author/) | 把**已经拿到手**的结构化数据变成可渲染的 ` ```flint ` 块：选图型、必要时先聚合，然后生成 / 修复 / 解释 / 校验规格。[Flint](https://github.com/microsoft/flint-chart) 是微软研究院的可视化中间语言，所以这个 skill 只写「要展示什么」，不碰 Vega-Lite / ECharts 底层配置。参考表由钉住的版本导出生成，不手抄。 | "画个图 / 可视化 / 出个图表 / chart / visualize / plot this"，或给出一个渲染失败的 ` ```flint ` 块要求修 | **无** —— 无脚本、无需安装、无需 API key。渲染那一步由宿主负责 |
 
 ## 安装
 
@@ -50,6 +51,10 @@ pip install -r examples/skills/zootopia-ppt/requirements.txt
 
 `ocr` 无需安装步骤：脚本内置 PEP 723 行内元数据，`uv run` 会自动解析依赖
 （没有 uv 的环境：`pip install openai python-dotenv`）。
+
+`flint-chart-author` 完全无需安装：它只有文字，产出一个交给宿主渲染的围栏块。
+它的参考表钉在某个 `flint-chart` 版本上，并自带重新生成的命令
+（`references/flint-spec.md` 第 7 节）——挪动钉版时重跑那两条命令，不要手改表格。
 
 `zootopia-ppt` 里的图像生成后端（`google-genai`、`dashscope` 等）是**互为替代**的——只装你要用的那一个，其他用 `#` 注释掉。
 
