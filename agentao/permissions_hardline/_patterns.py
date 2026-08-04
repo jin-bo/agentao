@@ -11,7 +11,7 @@ Public-via-package:
 from __future__ import annotations
 
 import re
-from typing import List, Tuple
+from typing import List, Sequence, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +57,146 @@ _HARDLINE_BIN_PATH = (
     r"(?=[^\s]*[?*\[])/[^\s]+/"
     r")?"
 )
+
+
+def _long_flag_prefixes(word: str) -> str:
+    """Regex matching any non-empty prefix of ``word``.
+
+    GNU ``getopt_long`` accepts any *unambiguous abbreviation* of a long
+    option, so ``nice --adj 5 rm -rf /`` is the same command as
+    ``nice --adjustment 5 rm -rf /`` at exec time. Matching only the
+    fully spelled name let ``--adj`` fall through to the general flag
+    arm, which does not consume the separated value — reopening exactly
+    the ``nice -n 5`` hole this grammar exists to close.
+
+    Accepting *every* prefix rather than only the unambiguous ones is
+    the conservative direction here: the separated-value branch is
+    optional, so when a prefix guess is wrong the engine still explores
+    the parse that leaves the next token at command position.
+    """
+    tail = ""
+    for ch in reversed(word[1:]):
+        tail = f"(?:{re.escape(ch)}{tail})?"
+    return re.escape(word[0]) + tail
+
+
+# Every wrapper word the families below recognise, as one alternation.
+#
+# This exists to break an ambiguity that costs exponential time. A
+# separated flag value and a fresh wrapper iteration can consume the
+# *same span* whenever the value token happens to be a wrapper name:
+# ``sudo -u sudo …`` parses either as (``-u`` with value ``sudo``) or as
+# (``-u`` alone, then ``sudo`` starts another wrapper). Nested inside the
+# outer wrapper repetition that is 2^n parses — ``"sudo " + "-u sudo "*12``
+# (102 chars) took 10.8s on the tool-execution hot path *before* this
+# grammar was split per family, and splitting it spread the same trap to
+# every family that gained a value-taking short flag.
+#
+# Excluding wrapper words from the value arm removes one side of the
+# ambiguity outright. It cannot cause a miss: if a user really is named
+# ``sudo``, the surviving parse treats it as a wrapper and the command
+# after it still lands at command position — the conservative direction.
+# End-of-command-name boundary for the bare system commands
+# (``shutdown`` / ``reboot`` / ``halt`` / ``poweroff``). Unlike ``\b`` it
+# also rejects a following ``-``, ``.`` or ``/``, so a script whose name
+# merely *starts* with one of those words is a different program and not
+# the floor's business.
+_SYSTEM_CMD_END = r"(?![\w.\-/])"
+
+_WRAPPER_WORDS = (
+    r"sudo|env|nice|ionice|chrt|taskset|timeout|stdbuf|exec"
+    r"|command|builtin|eval|nohup|setsid|time|coproc|busybox"
+    r"|then|do|else|elif"
+)
+
+# The separated-value tail shared by the short- and long-flag arms:
+# ``=VALUE`` attached, or whitespace then a non-flag token that is not
+# itself a wrapper word.
+_FLAG_VALUE = rf"(?:=[^\s]*|\s+(?!(?:{_WRAPPER_WORDS})(?:\s|$))[^\s\-=][^\s]*)?"
+
+# Wrapper argument grammar, built per *family* rather than once for
+# every wrapper. This matters: which flags take a **separate** value is
+# a property of the individual program, and a single shared set gets it
+# wrong in both directions. ``sudo -n`` (non-interactive) takes no
+# value, while ``nice -n 5`` does — so one set that contains ``n``
+# breaks ``sudo -n rm -rf /`` (the ``rm`` is swallowed as ``-n``'s
+# value) and one that omits it breaks ``nice -n 5 rm -rf /`` (the ``5``
+# matches no arm, the wrapper loop stops early, and ``rm`` is no longer
+# at command position). Both spellings must keep working, so each
+# family carries its own value-flag set.
+#
+# ``positional`` covers wrappers that consume a bare non-flag operand
+# before the command — ``timeout``'s duration, ``chrt``'s priority,
+# ``taskset``'s CPU mask. Nothing in a flags-only grammar can skip
+# those, which is why ``timeout 5 rm -rf /`` reached the floor
+# unmatched.
+def _wrapper_family(
+    names: str,
+    *,
+    short: str = "",
+    long: Sequence[str] = (),
+    assignments: bool = True,
+    positional: str = "",
+    positional_optional: bool = False,
+) -> str:
+    """Build one alternation arm: a wrapper name, its flags, its operand.
+
+    ``short`` is the set of single letters whose flag takes a separate
+    value (``-u root``); ``long`` is the sequence of long option names
+    that do the same (``--user root`` / ``--user=root``), each expanded
+    to accept GNU abbreviations. Both value forms stay optional so a
+    value-less spelling still matches, and the ``(?=\\s|=|$)`` lookahead
+    keeps an attached spelling (``-uroot``, ``-n5``) out of this arm —
+    it falls through to the general flag arm, which is correct, since
+    the value is already part of the token.
+
+    ``positional`` is the operand arm. It must not be able to match the
+    empty string: pass ``positional_optional=True`` for wrappers whose
+    operand may be absent, so the *separator* is optional along with it.
+    Emitting ``\\s+`` outside an operand that can match empty is what
+    made bare ``chrt rm -rf /`` require two spaces — and, because the
+    empty match then split one whitespace run two ways inside the outer
+    wrapper repetition, it also made this regex backtrack exponentially.
+
+    Every family takes ``assignments`` by default: an ``NAME=VALUE``
+    prefix is legal on *any* simple command in bash, so
+    ``time FOO=bar rm -rf /`` and ``if true; then FOO=bar rm -rf /; fi``
+    run the destructive command regardless of which wrapper precedes it.
+    """
+    arms = []
+    if short:
+        arms.append(rf"-[{short}](?=\s|=|$){_FLAG_VALUE}")
+    if long:
+        spellings = "|".join(_long_flag_prefixes(name) for name in long)
+        # ``(?=[\s=]|$)`` stops a shorter name's prefix from matching
+        # inside a longer one (``--classdata`` must not match ``class``
+        # and strand ``data``).
+        arms.append(rf"--(?:{spellings})(?=[\s=]|$){_FLAG_VALUE}")
+    # General flag — any other -X / --xxx token, including bundled
+    # combinations (``-nE``, ``-oL``) and the end-of-options ``--``.
+    #
+    # The lookahead keeps this arm disjoint from the short-flag arm
+    # above: a bare ``-n`` would otherwise match both over the identical
+    # span, which is the second half of the exponential blowup described
+    # at :data:`_WRAPPER_WORDS`. Attached spellings (``-n5``, ``-nE``)
+    # fail the short arm's ``(?=\s|=|$)`` and so still land here.
+    arms.append(rf"(?!-[{short}](?=\s|=|$))-[^\s]+" if short else r"-[^\s]+")
+    if assignments:
+        # NAME=VALUE assignment — legal before any simple command.
+        arms.append(r"[A-Za-z_][A-Za-z0-9_]*=[^\s]*")
+    if positional:
+        operand = rf"(?:\s+{positional})?" if positional_optional else rf"\s+{positional}"
+    else:
+        operand = ""
+    # The wrapper name accepts the same ``/usr/bin/`` style prefix every
+    # hardline *command* accepts — otherwise writing the absolute path
+    # (``/usr/bin/timeout 5 rm -rf /``) walks past the whole grammar.
+    return (
+        _HARDLINE_BIN_PATH
+        + rf"(?:{names})"
+        + r"(?:\s+(?:" + "|".join(arms) + r"))*"
+        + operand
+    )
 
 # Match a "command position": start of string, or after a shell separator
 # (``;`` ``&&`` ``||`` ``|`` ``` ` ``` ``$(`` *or a literal newline*),
@@ -148,29 +288,84 @@ _CMDPOS_HEAD = (
     # ``eval "$(cat file)"`` still slip through — those require data-
     # flow analysis the floor explicitly does not attempt — but the
     # literal form is the one prompt-injected attacks actually use.
-    r"(?:sudo|env|command|builtin|exec|eval|nohup|setsid|nice|ionice|taskset|chrt|time|coproc|busybox|then|do|else|elif)"
-    r"(?:\s+(?:"
-    # Short flag known to accept a separate argument value
-    # (sudo: -u/-U/-g/-G/-h/-H/-p/-P/-D/-C/-r/-R/-t/-T;
-    # env: -u/-U/-S/-C). The lookahead guards against partial matches
-    # like ``-uroot`` slipping through as ``-u`` + leftover text — those
-    # fall to the general flag arm below.
-    r"-[uUgGhHpPDCrRtTS](?=\s|=|$)(?:=[^\s]*|\s+[^\s\-=][^\s]*)?"
-    r"|"
-    # Long flag known to accept a separate argument value
-    # (``--user=root``, ``--user root``, ``--chdir /tmp``, ...).
-    r"--(?:user|group|host|prompt|role|type|chdir|close-from"
-    r"|unset|split-string)(?:=[^\s]*|\s+[^\s\-=][^\s]*)?"
-    r"|"
-    # General flag — any other -X / --xxx token, including bundled
-    # combinations (``-nE``, ``-uroot``) and the end-of-options
-    # separator ``--``.
-    r"-[^\s]+"
-    r"|"
-    # NAME=VALUE assignment (sudo and env both accept these inline).
-    r"[A-Za-z_][A-Za-z0-9_]*=[^\s]*"
-    r"))*"
-    r"\s+"
+    #   timeout / stdbuf (run-modifiers that sit in front of any
+    #     command; ``timeout`` additionally eats a bare duration operand).
+    # Each family below carries its own value-flag set — see
+    # :func:`_wrapper_family` for why a single shared set cannot work.
+    # The families are wrapped in their own group so the trailing
+    # ``\s+`` applies to every arm, not just the last one.
+    r"(?:"
+    + _wrapper_family(
+        # sudo / env — privilege and environment adjusters.
+        r"sudo|env",
+        short="uUgGhHpPDCrRtTS",
+        long=("user", "group", "host", "prompt", "role", "type", "chdir",
+              "close-from", "unset", "split-string"),
+    )
+    + r"|"
+    + _wrapper_family(
+        # nice / ionice — scheduling priority. ``-n`` is an adjustment
+        # value here, unlike ``sudo -n``; ``ionice`` adds ``-c`` class
+        # and ``-p`` pid.
+        r"nice|ionice",
+        short="ncp",
+        long=("adjustment", "class", "classdata", "pid"),
+    )
+    + r"|"
+    + _wrapper_family(
+        # chrt / taskset — scheduling policy and CPU affinity. Both take
+        # a bare operand (priority, CPU mask) unless ``-p`` targets an
+        # existing pid, so the operand is optional — and because it is
+        # optional the engine explores *both* parses, which is what keeps
+        # ``taskset dd if=… of=/dev/sda`` on the floor even though
+        # ``dd`` is also a legal bare-hex mask.
+        #
+        # taskset's mask is hex with an OPTIONAL ``0x`` (util-linux parses
+        # it with ``strtoul(base 16)``), so ``taskset ff rm -rf /`` is a
+        # real root wipe; the leading char therefore accepts a hex digit,
+        # not just a decimal one.
+        r"chrt|taskset",
+        short="p",
+        long=("pid",),
+        positional=r"(?:0x[0-9a-fA-F]+|[0-9a-fA-F][0-9a-fA-F,\-]*)",
+        positional_optional=True,
+    )
+    + r"|"
+    + _wrapper_family(
+        # timeout — ``timeout [opts] DURATION command``. The duration is
+        # mandatory (``timeout rm`` is a usage error), so requiring it
+        # here cannot swallow a command name. GNU parses it with
+        # ``strtod``, which accepts the leading-dot form (``.5``).
+        r"timeout",
+        short="sk",
+        long=("signal", "kill-after"),
+        positional=r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)[smhd]?",
+    )
+    + r"|"
+    + _wrapper_family(
+        # stdbuf — stream buffering. ``-i`` / ``-o`` / ``-e`` take a
+        # mode value, usually attached (``-oL``) but legally separate.
+        r"stdbuf",
+        short="ioe",
+        long=("input", "output", "error"),
+    )
+    + r"|"
+    + _wrapper_family(
+        # exec — ``exec [-cl] [-a name] command`` replaces the shell.
+        # ``-a`` takes a separate argv[0], so ``exec -a login rm -rf /``
+        # needs the value skipped like any other separated flag value.
+        r"exec",
+        short="a",
+    )
+    + r"|"
+    + _wrapper_family(
+        # Flag-only wrappers — nothing here consumes a separate value or
+        # a bare operand, so the general flag arm covers them.
+        r"command|builtin|eval|nohup|setsid|time|coproc|busybox"
+        r"|then|do|else|elif",
+    )
+    + r")"
+    + r"\s+"
     r")*"
 )
 
@@ -322,10 +517,19 @@ _HARDLINE_PATTERNS: List[Tuple[str, str]] = [
         _CMDPOS + _HARDLINE_BIN_PATH + r"kill\s+-(?:9|KILL)\s+-1\b",
         "kill -KILL broadcast",
     ),
-    (_CMDPOS + _HARDLINE_BIN_PATH + r"shutdown\b", "shutdown"),
-    (_CMDPOS + _HARDLINE_BIN_PATH + r"reboot\b", "reboot"),
-    (_CMDPOS + _HARDLINE_BIN_PATH + r"halt\b", "halt"),
-    (_CMDPOS + _HARDLINE_BIN_PATH + r"poweroff\b", "poweroff"),
+    # ``_SYSTEM_CMD_END`` rather than ``\b``: these four are whole command
+    # names, and ``\b`` also fires between the name and a ``-``/``.``/``/``,
+    # so ``reboot-check.sh`` and ``shutdown-monitor`` read as the system
+    # command. That was survivable while only ``nohup``/``nice`` could put
+    # a script at command position, but wrapper operands (``timeout 60
+    # reboot-check.sh``) make it reachable for ordinary tooling — and
+    # because the floor sits above mode presets and user rules, no
+    # ``permissions.json`` allow and no ``/mode full-access`` can unblock
+    # it. A hyphen or dot means a different program, never these.
+    (_CMDPOS + _HARDLINE_BIN_PATH + r"shutdown" + _SYSTEM_CMD_END, "shutdown"),
+    (_CMDPOS + _HARDLINE_BIN_PATH + r"reboot" + _SYSTEM_CMD_END, "reboot"),
+    (_CMDPOS + _HARDLINE_BIN_PATH + r"halt" + _SYSTEM_CMD_END, "halt"),
+    (_CMDPOS + _HARDLINE_BIN_PATH + r"poweroff" + _SYSTEM_CMD_END, "poweroff"),
     (
         _CMDPOS + _HARDLINE_BIN_PATH + r"(?:tel)?init\s+[06]\b",
         "init runlevel 0/6",
