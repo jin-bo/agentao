@@ -18,7 +18,12 @@ from agentao.mcp.client import (
     ServerStatus,
 )
 from agentao.mcp.config import resolve_timeouts
-from tests.support.mcp import FAKE_PROTOCOL_VERSION, initialize_result, run_async
+from tests.support.mcp import (
+    FAKE_PROTOCOL_VERSION,
+    initialize_result,
+    run_async,
+    tools_result,
+)
 
 
 class _FakeCM:
@@ -114,8 +119,8 @@ def test_connect_times_out_on_slow_handshake():
         async def initialize(self):
             await asyncio.sleep(5)
 
-        async def list_tools(self):  # pragma: no cover - never reached
-            return MagicMock(tools=[])
+        async def list_tools(self, *, params=None):  # pragma: no cover - never reached
+            return tools_result([])
 
     async def fake_connect_sse(self, startup_timeout, request_timeout):
         self._session = _SlowSession()
@@ -131,18 +136,18 @@ def test_connect_times_out_on_slow_handshake():
 
 
 def test_connect_succeeds_within_startup_budget():
-    tools = [MagicMock()]
-
     async def fake_connect_sse(self, startup_timeout, request_timeout):
         # An explicit class, not a MagicMock: a mock auto-answers every
         # attribute, so a test built on one cannot show which methods the
-        # handshake actually reached.
+        # handshake actually reached. The *result* is a real ``ListToolsResult``
+        # for the same reason squared — ``field()``'s tail case is a ``hasattr``
+        # probe, which a mock satisfies for any name.
         class _Session:
             async def initialize(self):
                 return initialize_result()
 
-            async def list_tools(self):
-                return MagicMock(tools=tools)
+            async def list_tools(self, *, params=None):
+                return tools_result(["a"])
 
         self._session = _Session()
 
@@ -153,6 +158,6 @@ def test_connect_succeeds_within_startup_budget():
         run_async(client.connect())
 
     assert client.status == ServerStatus.CONNECTED
-    assert client.tools == tools
+    assert [t.name for t in client.tools] == ["a"]
     # connect() → _handshake() → _negotiate() records the server's pick.
     assert client.protocol_version == FAKE_PROTOCOL_VERSION
