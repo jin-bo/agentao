@@ -7,6 +7,8 @@ its bypass-resistance against wrappers, quoting, splits, and shell
 syntax. Split out from the original monolithic ``test_permissions.py``.
 """
 
+import time
+
 from agentao.permissions import PermissionDecision, PermissionEngine, PermissionMode
 
 from tests.support.permissions import deny, make_engine as _engine
@@ -841,6 +843,14 @@ def test_hardline_blocks_builtin_wrappers(tmp_path):
         "nohup rm -rf /",
         "setsid rm -rf /",
         "nice rm -rf /",
+        "ionice rm -rf /",
+        # chrt / taskset take a bare operand, so their *bare* form is the
+        # one an operand-aware grammar can regress without any other test
+        # noticing — it did exactly that once. Keep both spellings here.
+        "chrt rm -rf /",
+        "taskset rm -rf /",
+        "timeout 5 rm -rf /",
+        "stdbuf -oL rm -rf /",
         "time rm -rf /",
         "busybox rm -rf /",
         "sudo command rm -rf /",
@@ -848,6 +858,146 @@ def test_hardline_blocks_builtin_wrappers(tmp_path):
     ]:
         d = e.decide("run_shell_command", {"command": cmd})
         assert d == PermissionDecision.DENY, f"{cmd!r} should hit hardline"
+
+
+def test_hardline_blocks_wrappers_with_separated_flag_values(tmp_path):
+    """A wrapper flag whose value is a *separate* token must be skipped
+    along with its value.
+
+    Regression: the value-flag set used to be one shared list copied
+    from ``sudo`` / ``env``, so ``nice -n 5 rm -rf /`` fell through —
+    ``-n`` matched the general flag arm, nothing consumed ``5``, the
+    wrapper loop stopped early, and ``rm`` was no longer at command
+    position. The attached spelling (``nice -n5``) hid the bug because
+    it needs no separate-value handling at all, and the only test here
+    used the bare ``nice rm -rf /``.
+
+    ``sudo -n`` is the counter-example that forbids the easy fix: it
+    takes *no* value, so a shared set containing ``n`` would swallow
+    ``rm`` as its argument. Each family carries its own set instead.
+    """
+    e = PermissionEngine(project_root=tmp_path)
+    e.set_mode(PermissionMode.FULL_ACCESS)
+    for cmd in [
+        "nice -n 5 rm -rf /",
+        "nice -n5 rm -rf /",
+        "nice --adjustment 5 rm -rf /",
+        "nice --adjustment=5 rm -rf /",
+        "ionice -n 3 rm -rf /",
+        "ionice -c 3 rm -rf /",
+        "ionice -c3 rm -rf /",
+        "stdbuf -oL rm -rf /",
+        "stdbuf -o L rm -rf /",
+        # sudo -n takes no value — the rm must still be found.
+        "sudo -n rm -rf /",
+        "sudo -u root rm -rf /",
+        "env -u FOO rm -rf /",
+    ]:
+        d = e.decide("run_shell_command", {"command": cmd})
+        assert d == PermissionDecision.DENY, f"{cmd!r} should hit hardline"
+
+
+def test_hardline_blocks_wrappers_taking_a_positional_operand(tmp_path):
+    """``timeout`` / ``chrt`` / ``taskset`` consume a bare non-flag
+    operand before the command they run.
+
+    Regression: ``timeout`` and ``stdbuf`` were absent from the wrapper
+    list entirely, and no wrapper grammar could skip a positional, so
+    ``timeout 5 rm -rf /`` reached the floor unmatched. That contradicts
+    the invariant stated in ``permissions.py`` — full-access omits the
+    sensitive-file rule precisely because "disk-wipe-class attacks
+    already trip the hardline floor".
+    """
+    e = PermissionEngine(project_root=tmp_path)
+    e.set_mode(PermissionMode.FULL_ACCESS)
+    for cmd in [
+        "timeout 5 rm -rf /",
+        "timeout 10s rm -rf /home",
+        "timeout 1.5 rm -rf /",
+        "timeout -k 2 5 rm -rf /",
+        "timeout --signal=KILL 5 rm -rf /",
+        "timeout 5 mkfs.ext4 /dev/sda1",
+        # Stacked wrappers, in both orders.
+        "timeout 5 sudo rm -rf /",
+        "sudo timeout 5 rm -rf /",
+        "chrt 10 rm -rf /",
+        "chrt -f 10 rm -rf /",
+        "taskset 0x1 rm -rf /",
+        "taskset -c 0 rm -rf /",
+    ]:
+        d = e.decide("run_shell_command", {"command": cmd})
+        assert d == PermissionDecision.DENY, f"{cmd!r} should hit hardline"
+
+
+def test_hardline_wrapper_operands_do_not_create_false_positives(tmp_path):
+    """The positional arms must not turn benign text into a denial.
+
+    A wrapper only counts at a real command position, and a destructive
+    string sitting in an argument or a quoted literal stays data.
+
+    Every row here is chosen to *discriminate*: each one exercises an
+    operand or flag form the new grammar consumes. An earlier version of
+    this test passed identically against the pre-change grammar, which
+    made it worthless as a guard on the change it was named for.
+    """
+    e = PermissionEngine(project_root=tmp_path)
+    e.set_mode(PermissionMode.FULL_ACCESS)
+    for cmd in [
+        "timeout 5 pytest tests/",
+        "timeout 30 npm test",
+        "nice -n 10 make -j4",
+        "stdbuf -oL tail -f app.log",
+        "timeout 5 rm -rf ./build",
+        # Operands the new arms consume, in front of a benign command.
+        "chrt 10 make",
+        "taskset 0x1 make",
+        "taskset ff ./run-benchmark.sh",
+        "timeout .5 curl https://example.com",
+        "exec -a myapp ./server",
+        # A script whose name merely starts with a system-command word.
+        # Promoting a wrapper operand to command position made these
+        # reachable, and the floor sits above every mode and rule, so a
+        # denial here would be unappealable.
+        "timeout 60 reboot-check.sh",
+        "stdbuf -oL shutdown-monitor --dry-run",
+        "nohup reboot-check.sh",
+        "./reboot-checker",
+        # ``timeout`` here is an argv to echo/grep, not a command.
+        "echo timeout 5 rm -rf /",
+        'echo "timeout 5 rm -rf /"',
+        'grep -r "timeout 5 rm -rf /" .',
+        'git commit -m "timeout 5 rm -rf /"',
+    ]:
+        d = e.decide("run_shell_command", {"command": cmd})
+        assert d != PermissionDecision.DENY, f"{cmd!r} should not hit hardline"
+
+
+def test_hardline_wrapper_grammar_is_not_exponential(tmp_path):
+    """A flag value that is itself a wrapper name must not blow up.
+
+    ``sudo -u sudo …`` can parse as (``-u`` with value ``sudo``) or as
+    (``-u`` alone, then ``sudo`` opens another wrapper) — the same span,
+    two ways — and a bare ``-n`` used to match both the short-flag arm
+    and the general flag arm. Nested inside the wrapper repetition each
+    ambiguity is 2^n, and this regex runs on the tool-execution hot path
+    for every shell call, so the blowup is a hang, not a slow test.
+
+    A 102-character input took 10.8s before the arms were made disjoint.
+    The budget here is deliberately loose: it is checking for
+    catastrophic backtracking, not benchmarking.
+    """
+    e = PermissionEngine(project_root=tmp_path)
+    e.set_mode(PermissionMode.FULL_ACCESS)
+    for cmd in [
+        "sudo " + "-u sudo " * 14 + "X",
+        "nice " + "-n nice " * 14 + "X",
+        "timeout " + "-s timeout " * 14 + "X",
+        ("chrt" + "    ") * 14 + "ls",
+    ]:
+        started = time.perf_counter()
+        e.decide("run_shell_command", {"command": cmd})
+        elapsed = time.perf_counter() - started
+        assert elapsed < 1.0, f"{cmd[:40]!r}… took {elapsed:.2f}s — backtracking regression"
 
 
 def test_hardline_blocks_shell_interpreter_wrappers(tmp_path):
