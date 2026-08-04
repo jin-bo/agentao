@@ -242,7 +242,7 @@ print(agent.skill_manager.get_skills_context())
 
 ## TL;DR
 
-- A skill is a **directory** with `SKILL.md` (YAML frontmatter + body) and optional `references/*.md` loaded on activation.
+- A skill is a **directory** with `SKILL.md` (YAML frontmatter + body) and optional `references/*.md`, which activation lists rather than inlines — the model `read_file`s them on demand (see [On-demand references](#on-demand-references)).
 - The `description` decides *when* the LLM activates the skill — write it from the LLM's POV ("activate this when the user asks about X").
 - 3 search layers: `~/.agentao/skills/` (global) → `<wd>/.agentao/skills/` → `<wd>/skills/`. Project-local wins.
 - Many small specific skills > one monster skill. Activating a skill costs context tokens; small ones stay cheap.

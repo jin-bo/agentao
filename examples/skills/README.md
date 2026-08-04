@@ -18,6 +18,7 @@ A skill is just a directory with a `SKILL.md` (YAML frontmatter + instructions) 
 | [`pro-ppt/`](./pro-ppt/) | Same pipeline, **editorial-premium business** style (light-grey base + gold accents + deep navy, McKinsey/Apple-Keynote vibe). **Reuses** `zootopia-ppt/scripts/image_gen_ppt.py`, so install both together. | "make this deck in a premium / consulting / editorial style" | Same as `zootopia-ppt` |
 | [`ocr/`](./ocr/) | One-shot OCR on an image file via Qwen-VL (`scripts/ocr.py`). | "OCR this screenshot / extract text from this image" | `QWEN_API_KEY` + `QWEN_BASE_URL` in `.env` |
 | [`kanban-tasks/`](./kanban-tasks/) | Drive an `agentao-kanban` board: break a request into atomic cards, push them through `INBOX → READY → DOING → REVIEW → DONE`, start/stop the daemon + Web UI, locate artifacts. Compound triggers like "启动 kanban" / "停止 kanban" map to one-shot scripts. | "看板 / kanban / 拆任务 / task board / dispatcher / 启动 kanban …" | `agentao-kanban` installed in the project venv (`uv run kanban …`); a writable cwd for `.kanban/` + `workspace/board/` |
+| [`flint-chart-author/`](./flint-chart-author/) | Turn structured data you already have into a renderable ` ```flint ` block: pick the chart type, aggregate first when needed, then emit / repair / explain / validate the spec. [Flint](https://github.com/microsoft/flint-chart) is Microsoft Research's visualization intermediate language, so the skill writes *what to show*, never Vega-Lite or ECharts internals. Reference tables are generated from the pinned version, not hand-copied. | "画个图 / 可视化 / 出个图表 / chart / visualize / plot this", or a failing ` ```flint ` block to fix | **Nothing** — no scripts, no install, no API key. Rendering the block is the host's job |
 
 ## Install
 
@@ -51,6 +52,12 @@ pip install -r examples/skills/zootopia-ppt/requirements.txt
 `ocr` needs no install step: its script carries PEP 723 inline metadata, so
 `uv run` resolves its deps automatically (without uv: `pip install openai
 python-dotenv`).
+
+`flint-chart-author` needs no install step at all — it ships prose only, and
+emits a fenced block for the host to render. Its reference tables are pinned to
+a `flint-chart` version and carry the commands that regenerate them
+(`references/flint-spec.md` §7), so re-run those when you move the pin rather
+than editing the tables by hand.
 
 The image-gen backends in `zootopia-ppt` (`google-genai`, `dashscope`, etc.) are alternatives — comment out the lines you don't use.
 

@@ -42,8 +42,9 @@ also caps how much of that work can pile up.
 
 1. Create `skills/<my-skill>/SKILL.md` with YAML frontmatter (`name:`, `description:` —
    the trigger text the model sees).
-2. Optionally add `references/*.md` files. These load only on activation, which keeps the
-   always-resident cost to just the name and description.
+2. Optionally add `references/*.md` files. Activation *lists* these by absolute path and
+   tells the model to `read_file` them as needed — they are never inlined, so the
+   always-resident cost stays at just the name and description.
 3. Restart the agent or run `/skills reload`.
 
 For discovery, activation, and the full frontmatter schema, see [skills.md](skills.md).
