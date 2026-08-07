@@ -105,6 +105,37 @@ def test_cancelled_turn_is_not_reported_as_incomplete():
     assert outcome.is_answer is False
 
 
+def _tool_call_response(name="read_file", args='{"file_path": "x"}'):
+    """A response that always asks for another tool call — never converges."""
+    call = SimpleNamespace(
+        id="call-1", type="function",
+        function=SimpleNamespace(name=name, arguments=args),
+    )
+    message = SimpleNamespace(content=None, tool_calls=[call], reasoning_content=None)
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="tool_calls")],
+        usage=None, model="test-model",
+    )
+
+
+def test_max_iterations_turn_is_not_reported_as_an_answer():
+    """A turn that exhausts its tool-call budget returns the harness's own
+    "Maximum tool call iterations reached." string. Before this was classified,
+    ``is_answer`` reported True and a host had no way to tell that text from a
+    model answer unless it happened to be on ``NonInteractiveTransport`` (whose
+    ``max_iterations_hit`` flag is the CLI's separate exit-4 channel)."""
+    agent = _make_agent()
+    agent._llm_call = lambda messages, tools, token: _tool_call_response()
+
+    reply = agent.chat("hi", max_iterations=1)
+
+    outcome = agent.last_turn
+    assert outcome.status == "ok"
+    assert outcome.incomplete_reason == "max_iterations"
+    assert outcome.is_answer is False
+    assert outcome.text == reply
+
+
 def test_last_turn_mirrors_the_turn_end_wire_field():
     """The read-after and the TURN_END event must never disagree — both are
     fed from the same single gated value in ``runtime/turn.py``."""

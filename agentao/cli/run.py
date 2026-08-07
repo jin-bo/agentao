@@ -49,13 +49,18 @@ DEFAULT_MAX_ITERATIONS = 100
 # to hand back either way — and the ``type`` separates the sub-families a
 # pipeline may want to treat differently: "the model said nothing"
 # (``empty_response``), "the harness halted a non-converging turn"
-# (``length_truncated`` / ``doom_loop`` — worth retrying with a smaller task),
-# and "the LLM call itself failed" (``runtime_error``). Exit 4 is deliberately
-# not reused for these: its documented meaning is the iteration cap, which is a
-# separate axis (``transport.max_iterations_hit``, checked first below). Keys
-# are the runtime's ``INCOMPLETE_*`` constants (agentao/runtime/chat_loop/
-# _runner.py) — the wire vocabulary, kept as literals here so the CLI does not
-# import runtime internals at module scope; a parity test binds the two sets.
+# (``length_truncated`` / ``doom_loop`` / ``max_iterations`` — worth retrying
+# with a smaller task), and "the LLM call itself failed" (``runtime_error``).
+#
+# ``max_iterations`` is the one entry this map does not normally serve: the
+# iteration cap has its own exit code (4) on the sticky transport flag, which
+# ``_classify_outcome`` checks *before* reaching here, so on ``agentao run`` the
+# flag always wins. The entry exists because the reason is part of the runtime's
+# wire vocabulary regardless (an embedded host on a transport without the flag
+# reads it off ``agent.last_turn``), and the parity test below requires the two
+# sets to match. Keys are the runtime's ``INCOMPLETE_*`` constants
+# (agentao/runtime/chat_loop/_runner.py), kept as literals here so the CLI does
+# not import runtime internals at module scope.
 _INCOMPLETE_OUTCOMES: Dict[str, Tuple[str, str]] = {
     "no_output": ("empty_response", "the model returned an empty response"),
     "reasoning_only": (
@@ -69,6 +74,10 @@ _INCOMPLETE_OUTCOMES: Dict[str, Tuple[str, str]] = {
         "doom_loop",
         "the model repeated the same tool call until the doom-loop detector "
         "halted the turn",
+    ),
+    "max_iterations": (
+        "max_iterations",
+        "the tool call iteration budget ran out before the model answered",
     ),
     "llm_error": (
         "runtime_error",

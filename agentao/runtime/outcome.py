@@ -28,7 +28,8 @@ class TurnOutcome:
         incomplete_reason — why the turn has no complete model answer, or
                             ``None`` for a real answer. A single closed
                             vocabulary: ``no_output`` / ``reasoning_only`` /
-                            ``length_truncated`` / ``doom_loop`` / ``llm_error``.
+                            ``length_truncated`` / ``doom_loop`` /
+                            ``max_iterations`` / ``llm_error``.
         tool_count        — tool calls the model made across the turn
         error             — error detail when ``status != "ok"``, else ``None``
         finish_reason_missing
