@@ -85,8 +85,9 @@ def run_turn(
     agent._turn_tool_count = 0
     # Turn-level "this turn has no complete model answer" classification
     # (None / "no_output" / "reasoning_only" / "length_truncated" /
-    # "doom_loop"), typed Optional[str]. The chat loop sets it at whichever
-    # site ends the turn; reset per turn (and read defensively in the finally).
+    # "doom_loop" / "max_iterations" / "llm_error"), typed Optional[str]. The
+    # chat loop sets it at whichever site ends the turn; reset per turn (and
+    # read defensively in the finally).
     # No PEP 526 annotation here: this is a non-self attribute, which mypy
     # rejects outright, and under ``from __future__ import annotations`` the
     # annotation is inert anyway — it matches the un-annotated sibling above.

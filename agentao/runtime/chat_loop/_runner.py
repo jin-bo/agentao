@@ -77,19 +77,27 @@ EMPTY_RESPONSE_PLACEHOLDER = "[No response]"
 #                          arguments were truncated, or a final answer cut off
 #                          mid-sentence)
 #       DOOM_LOOP        — the same call repeated until the detector fired
+#       MAX_ITERATIONS   — the tool-call budget ran out before the model
+#                          answered, so the caller receives the last partial
+#                          text (or the canned "Maximum tool call iterations
+#                          reached." string)
 #   the LLM call itself failed and never yielded a turn
 #       LLM_ERROR       — the provider call raised (5xx / rate limit / auth)
 #                          after retries; the harness returned its own
 #                          ``[LLM API error: …]`` notice, not a model answer
 #
-# ``max_iterations`` is a *sixth* way a turn ends without a complete answer, but
-# it is a deliberately separate axis — not a value here. It rides a sticky
-# transport flag (``NonInteractiveTransport.max_iterations_hit``), reached
-# through the ``transport.on_max_iterations`` interaction callback, and carries
-# its own exit code (4). The flag is set when the cap is *hit* (even if a host
-# hook then continues past it), whereas this field is set only when a turn
-# *ends*; collapsing the two would lose that distinction. The host reconciles
-# them in ``cli/run.py::_classify_outcome`` (the flag is checked first).
+# ``max_iterations`` also rides a sticky transport flag
+# (``NonInteractiveTransport.max_iterations_hit``), reached through the
+# ``transport.on_max_iterations`` interaction callback, which carries its own
+# exit code (4). The two are not redundant: the flag is set when the cap is
+# *hit* — even if a host hook then continues past it and the turn goes on to
+# answer — whereas this field is committed only when a turn *ends* at the cap
+# (``_resolve_stop_hook`` clears it on force-continue). Keeping both preserves
+# that distinction; ``cli/run.py::_classify_outcome`` checks the flag first, so
+# ``agentao run`` still exits 4. The field exists because the flag lives on one
+# transport class: an embedded host reading ``agent.last_turn`` has no other way
+# to tell a capped turn from an answered one, and without it ``is_answer``
+# reports ``True`` for a turn whose "answer" is a harness string.
 #
 # These are the wire values hosts branch on, so they are part of the event
 # contract — see developer-guide part-4/2-agent-events.md.
@@ -97,6 +105,7 @@ INCOMPLETE_NO_OUTPUT = "no_output"
 INCOMPLETE_REASONING_ONLY = "reasoning_only"
 INCOMPLETE_LENGTH_TRUNCATED = "length_truncated"
 INCOMPLETE_DOOM_LOOP = "doom_loop"
+INCOMPLETE_MAX_ITERATIONS = "max_iterations"
 INCOMPLETE_LLM_ERROR = "llm_error"
 
 # The complete closed set — the ``incomplete_reason`` wire vocabulary. The CLI
@@ -107,6 +116,7 @@ INCOMPLETE_ANSWER_REASONS = frozenset({
     INCOMPLETE_REASONING_ONLY,
     INCOMPLETE_LENGTH_TRUNCATED,
     INCOMPLETE_DOOM_LOOP,
+    INCOMPLETE_MAX_ITERATIONS,
     INCOMPLETE_LLM_ERROR,
 })
 
@@ -115,7 +125,11 @@ INCOMPLETE_ANSWER_REASONS = frozenset({
 # the ``_resolve_stop_hook`` paths that clear the answerless family. (LLM_ERROR
 # is not here: it never reaches ``_resolve_stop_hook`` — see the error-return
 # path in ``run()``.)
-_HALTED_REASONS = frozenset({INCOMPLETE_LENGTH_TRUNCATED, INCOMPLETE_DOOM_LOOP})
+_HALTED_REASONS = frozenset({
+    INCOMPLETE_LENGTH_TRUNCATED,
+    INCOMPLETE_DOOM_LOOP,
+    INCOMPLETE_MAX_ITERATIONS,
+})
 
 
 # Model-facing tool-result stamped on every tool call in an assistant message
@@ -413,7 +427,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             # value there becomes a CLI error envelope, which would turn a
             # merely-unconfirmed turn into a hard failure for every provider
             # that omits the field — the strict behaviour agentao chose not to
-            # adopt. It rides its own axis, like ``max_iterations``.
+            # adopt. It rides its own axis.
             # ``not finish_reason`` rather than ``is None``: the streaming
             # recorder gates on truthiness (``if choice.finish_reason:`` in
             # client.py), so a provider sending ``""`` leaves the flag False
@@ -548,6 +562,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             assistant_content=assistant_content_max,
             final_msg=final_msg_max,
             system_prompt=system_prompt,
+            incomplete_reason=INCOMPLETE_MAX_ITERATIONS,
         )
 
     def _serialize_and_record_assistant_tool_message(
@@ -906,10 +921,11 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         original answer never leaks into history on a block.
 
         ``incomplete_reason`` is the caller's classification of *why* the turn
-        has no complete model-authored answer. Three of the four sites pass a
-        value — ``final_response`` (``no_output`` / ``reasoning_only`` /
-        ``length_truncated``), ``length_truncation``, and ``doom_loop``; only
-        ``max_iterations`` omits it, keeping its own exit-4 channel. It is
+        has no complete model-authored answer. All four sites pass a value —
+        ``final_response`` (``no_output`` / ``reasoning_only`` /
+        ``length_truncated``), ``length_truncation``, ``doom_loop``, and
+        ``max_iterations`` (which additionally keeps its own exit-4 channel via
+        the transport flag; see the vocabulary comment). It is
         recorded on the agent at each return point rather than at substitution
         time, because only here is the turn's outcome final: the Stop hook may
         replace the answer (block), hand the turn back to the loop
@@ -917,8 +933,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         decorate the answer (additional_contexts). A hook supplying text cures
         the *answerless* family (``no_output`` / ``reasoning_only``) — the
         caller now receives that text — but does not cure a *halted* turn
-        (``length_truncated`` / ``doom_loop``): hook text does not make a
-        non-converging turn converge, so ``_HALTED_REASONS`` survives the block.
+        (``length_truncated`` / ``doom_loop`` / ``max_iterations``): hook text
+        does not make a non-converging turn converge, so ``_HALTED_REASONS``
+        survives the block.
         """
         agent = self._agent
         site = self._STOP_SITES[turn_end_reason]
