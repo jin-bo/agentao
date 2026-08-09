@@ -12,6 +12,7 @@ concern. ``ToolRunner.reset()`` delegates to ``ToolCallPlanner.reset()``.
 
 from __future__ import annotations
 
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
@@ -62,6 +63,28 @@ _EMPTY_NAME_PLACEHOLDER = "unknown"
 # The full reason is either exactly this string or ``"<prefix>: <hook reason>"``.
 PRE_TOOL_HOOK_REASON = "pre-tool-hook"
 
+#: Cap on the hook-supplied reason text forwarded to the *model* in a deny
+#: result, **inclusive of the elision marker** — ``pre_tool_hook_detail`` never
+#: returns more than this many characters. The reason is arbitrary stdout from
+#: a hook subprocess (``_dispatcher.py::_run_pre_tool_use_command``) with no
+#: length bound of its own, and the next bound downstream is not a truncation
+#: at all: ``tool_result_formatter`` spills anything over
+#: ``TOOL_OUTPUT_SAVE_THRESHOLD`` (40_000) to a file under
+#: ``.agentao/tool-outputs/`` and invites the model to ``read_file`` it back.
+#: (Its ``MAX_TOOL_RESULT_CHARS`` = 80_000 branch is an ``elif`` under that
+#: 40K test, so it is unreachable — do not relax this cap on the strength of
+#: it.)
+#:
+#: Deliberately looser than the host's own ``MAX_SUMMARY_CHARS`` (240), which
+#: ``host/projection.py::redact_summary`` applies to the same reason on its way
+#: to ``PermissionDecisionEvent`` — that one is a UI/audit summary, this one has
+#: to carry enough policy for the model to pick a different course. Neither is
+#: the unabridged string; both sinks clip independently.
+PRE_TOOL_HOOK_REASON_MAX_CHARS = 500
+
+#: Appended when a reason is clipped. Counted *inside* the cap above.
+_HOOK_REASON_ELISION = " [...]"
+
 
 def _synth(
     decision: PermissionDecision,
@@ -83,6 +106,85 @@ def is_pre_tool_hook_reason(reason: str | None) -> bool:
     return reason == PRE_TOOL_HOOK_REASON or (
         reason is not None and reason.startswith(PRE_TOOL_HOOK_REASON + ": ")
     )
+
+
+def _continues_grapheme(ch: str) -> bool:
+    """True if ``ch`` only makes sense attached to the character before it."""
+    return (
+        unicodedata.combining(ch) != 0
+        or ch == "‍"                 # ZERO WIDTH JOINER
+        or "︀" <= ch <= "️"     # variation selectors
+    )
+
+
+def _trim_partial_grapheme(text: str, end: int) -> int:
+    """Move ``end`` back until ``text[:end]`` does not split a grapheme.
+
+    ``str`` slices count code points, not grapheme clusters, so a cut can
+    strand a combining mark or joiner on either side of the boundary. Both
+    directions matter and they fail differently: dropping a trailing joiner
+    only costs a glyph, but cutting a decomposed accent off its base silently
+    *rewrites a word* — an NFD ``café`` clipped after the ``e`` reads as
+    ``cafe``, changing the last word of the policy the model is being asked to
+    obey. So the retained side gives up its own final base character whenever
+    the first dropped one continues it.
+
+    Regional-indicator pairs (flags) are deliberately left alone: halving one
+    costs a glyph, not a word, and detecting them needs pair-parity tracking
+    this boundary does not justify.
+    """
+    if end <= 0 or end >= len(text):
+        return end
+    while end > 0 and _continues_grapheme(text[end]):
+        end -= 1
+    # A joiner may now be last on the retained side with nothing to join to.
+    while end > 0 and (text[end - 1] == "‍" or "︀" <= text[end - 1] <= "️"):
+        end -= 1
+    return end
+
+
+def pre_tool_hook_detail(reason: str | None) -> str | None:
+    """Recover the hook's own explanation from a :func:`pre_tool_hook_reason`.
+
+    Inverse of :func:`pre_tool_hook_reason`. Returns ``None`` when the hook
+    denied without a reason (the bare prefix), when ``reason`` came from
+    somewhere other than a hook, or when the reason held no printable text.
+
+    The result goes into a ``role="tool"`` message, i.e. into conversation
+    history and onto the wire, so the raw hook stdout is conditioned first:
+
+    * **Surrogates repaired.** Tool-role content is the one message class
+      ``runtime/sanitize.py`` never walks — ``sanitize_assistant_message``
+      covers assistant messages only — so a lone surrogate out of a hook's
+      JSON would reach ``httpx``'s ``encode_json`` unrepaired and raise
+      ``UnicodeEncodeError``. The message is already in ``agent.messages`` by
+      then, so it would re-raise on every later turn: a bricked session, not
+      a failed turn.
+    * **Whitespace flattened**, matching the host sink
+      (``host/projection.py::redact_summary``). Beyond parity this denies a
+      hook whose reason is assembled from repo-controlled text the line breaks
+      it would need to forge a block resembling agentao's own
+      ``<system-reminder>`` framing.
+    * **Clipped** to :data:`PRE_TOOL_HOOK_REASON_MAX_CHARS` *including* the
+      elision marker, on a grapheme-safe boundary.
+    """
+    # Local import: ``sanitize`` imports ``make_tool_result_message`` from this
+    # module, so the dependency only runs one way at import time.
+    from .sanitize import sanitize_surrogates
+
+    if reason is None or not reason.startswith(PRE_TOOL_HOOK_REASON + ": "):
+        return None
+    detail = " ".join(
+        sanitize_surrogates(reason[len(PRE_TOOL_HOOK_REASON) + 2:]).split()
+    )
+    if not detail:
+        return None
+    if len(detail) > PRE_TOOL_HOOK_REASON_MAX_CHARS:
+        keep = PRE_TOOL_HOOK_REASON_MAX_CHARS - len(_HOOK_REASON_ELISION)
+        base = detail[:_trim_partial_grapheme(detail, keep)].rstrip()
+        # ``lstrip`` covers the pathological all-marks reason that trims to "".
+        detail = (base + _HOOK_REASON_ELISION).lstrip()
+    return detail
 
 
 def _ensure_tool_call_id(tool_call: Any) -> str:

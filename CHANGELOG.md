@@ -13,7 +13,33 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **Read-only mode's deny message now tells the model not to retry.** It was the
+  one deny branch without that close, and it is evaluated first, so it also
+  shadowed a PreToolUse hook's. The three copies of the sentence in
+  `tool_executor.py` are now one constant.
+
 ### Fixed
+
+- **A PreToolUse hook's deny reason never reached the model.** The reason was
+  parsed, prefixed, and delivered to the *host* on
+  `PermissionDecisionEvent.reason` — but the tool result handed back to the LLM
+  was the bare `Tool execution blocked by a PreToolUse hook: '<tool>'.`, with no
+  explanation and, unlike the engine-deny and user-cancel branches, no
+  instruction about what to do next. A hook denying with "npm is banned here,
+  use pnpm" left the model unable to distinguish a blanket ban from a redirect:
+  it either abandoned the task or re-issued the call with varied arguments,
+  which slips past the doom-loop counter (that keys on identical
+  `(name, args_raw)` and cuts off at three) and burns iterations. The reason now
+  rides the deny result, whitespace-flattened, surrogate-repaired and clipped to
+  500 characters — a hook's stdout is unbounded, and the next bound downstream
+  is not a truncation but a spill to `.agentao/tool-outputs/`.
+
+  The hook branch gets its own close — `Do not re-issue this call unchanged; if
+  the hook's reason below names an alternative, follow it.` — rather than the
+  blanket one the other deny paths share, whose "do not … or use a different
+  tool" negates distributively and would forbid the very alternative a redirect
+  reason recommends. The instruction is placed *before* the reason so it
+  survives the 200-character tool-result cut that builds a compaction summary.
 
 ---
 
