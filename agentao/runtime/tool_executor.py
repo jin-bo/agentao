@@ -32,7 +32,12 @@ from ..sandbox import SandboxMisconfiguredError, SandboxPolicy
 from ..tools.base import AsyncToolBase
 from ..transport import AgentEvent, EventType
 from . import identity as _identity
-from .tool_planning import ToolCallDecision, ToolCallPlan, is_pre_tool_hook_reason
+from .tool_planning import (
+    ToolCallDecision,
+    ToolCallPlan,
+    is_pre_tool_hook_reason,
+    pre_tool_hook_detail,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
     from ..host.projection import HostToolEmitter
@@ -50,6 +55,35 @@ _ASYNC_CANCEL_ACK_TIMEOUT_S = 5.0
 # when the token has no reason of its own. Shared so the agent surface, the
 # dispatcher, and tests stay in lock-step on the single canonical value.
 ASYNC_CANCEL_REASON = "async-cancel"
+
+
+# Close appended to every deny/cancel result whose block is *unconditional* —
+# the model must not reach the same outcome by any route. One constant because
+# the sentence had drifted into three verbatim copies in one function, and the
+# read-only branch had been missed entirely.
+#
+# The PreToolUse-hook branch deliberately does NOT use it. A hook reason is
+# allowed to be a redirect ("npm is banned here, use pnpm"), and the negation
+# in "do not ... or use a different tool" distributes over the list — it would
+# forbid exactly the alternative the reason just recommended.
+_DO_NOT_RETRY_CLOSE = (
+    "Do not retry this call, rephrase its arguments, "
+    "or use a different tool to achieve the same outcome."
+)
+
+# Hook-branch closes. These bar only the identical re-issue and defer to the
+# hook for what to do instead. Both are placed *before* the reason so they
+# survive ``context_manager._format_for_summary``'s 200-char tool-result cut
+# when a compaction summary is built — the reason is variable-length and would
+# otherwise push the instruction past it.
+_HOOK_DENY_CLOSE_WITH_REASON = (
+    "Do not re-issue this call unchanged; if the hook's reason below names an "
+    "alternative, follow it."
+)
+_HOOK_DENY_CLOSE_NO_REASON = (
+    "Do not re-issue this call unchanged; use a different tool or approach to "
+    "achieve the same outcome."
+)
 
 
 @dataclass
@@ -215,18 +249,34 @@ class ToolExecutor:
             if readonly_mode and not tool.is_read_only:
                 result_text = (
                     f"[Readonly mode] Tool '{fn}' is blocked — "
-                    f"only read-only tools are permitted in readonly mode."
+                    f"only read-only tools are permitted in readonly mode. "
+                    + _DO_NOT_RETRY_CLOSE
                 )
                 summary = "denied by permission engine"
             elif is_pre_tool_hook_reason(deny_reason):
-                result_text = f"Tool execution blocked by a PreToolUse hook: '{fn}'."
+                # Forward the hook's own explanation. It is already plumbed to
+                # the *host* on ``PermissionDecisionEvent.reason``; leaving it
+                # off the model-facing copy was an asymmetry, not a policy —
+                # without it the model cannot tell a blanket ban from "use the
+                # other tool". The reason goes last, untouched: it is the only
+                # untrusted span in the message, and appending nothing after it
+                # means no punctuation has to be normalized onto text whose
+                # script we do not know (a Chinese reason ending in "。" was
+                # getting a second, ASCII terminator).
+                hook_detail = pre_tool_hook_detail(deny_reason)
+                parts = [
+                    f"Tool execution blocked by a PreToolUse hook: '{fn}'.",
+                    _HOOK_DENY_CLOSE_WITH_REASON if hook_detail
+                    else _HOOK_DENY_CLOSE_NO_REASON,
+                ]
+                if hook_detail:
+                    parts.append(f"Hook reason: {hook_detail}")
+                result_text = " ".join(parts)
                 summary = "denied by pre-tool-use hook"
             else:
                 result_text = (
                     f"Tool execution denied: '{fn}' is not permitted "
-                    f"by the current permission rules. "
-                    f"Do not retry this call, rephrase its arguments, "
-                    f"or use a different tool to achieve the same outcome."
+                    f"by the current permission rules. " + _DO_NOT_RETRY_CLOSE
                 )
                 summary = "denied by permission engine"
             self._emit_complete(fn, call_id, "cancelled", 0, summary)
@@ -239,9 +289,7 @@ class ToolExecutor:
         if decision == ToolCallDecision.CANCELLED:
             result_text = (
                 f"Tool execution cancelled by user. "
-                f"The user declined to execute {fn}. "
-                f"Do not retry this call, rephrase its arguments, "
-                f"or use a different tool to achieve the same outcome."
+                f"The user declined to execute {fn}. " + _DO_NOT_RETRY_CLOSE
             )
             self._emit_complete(fn, call_id, "cancelled", 0, "cancelled by user")
             self._emit_host_terminal_cancelled(
