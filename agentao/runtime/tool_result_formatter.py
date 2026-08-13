@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..security.secret_scan import scan_and_redact
+from ..security.unicode_tags import count_unicode_tags, strip_unicode_tags
 from ..transport import AgentEvent, EventType
 from .tool_executor import ToolExecutionResult
 from .tool_planning import ToolCallPlan
@@ -187,6 +188,23 @@ class ToolResultFormatter:
             "duration_ms": info.duration_ms,
             "error": info.error,
         }))
+
+        # Strip invisible tag-block characters from the copy that becomes
+        # model-visible history. Deliberately AFTER the replay emit above:
+        # the replay record and the on-disk file keep the original bytes, so
+        # a forensic reader can still see exactly what the tool returned —
+        # only the model's copy is rewritten. Every untrusted-content tool
+        # (web_fetch, MCP results, read_file, search_file_content) funnels
+        # through here, which is what makes this the one boundary to hold.
+        if isinstance(result, str):
+            cleaned = strip_unicode_tags(result)
+            if cleaned is not result:
+                self._logger.warning(
+                    "Tool result from %s contained %d invisible Unicode tag "
+                    "character(s); stripped before the model saw it",
+                    fn_name, count_unicode_tags(result),
+                )
+                result = cleaned
 
         return {
             "role": "tool",
