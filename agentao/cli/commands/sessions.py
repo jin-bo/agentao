@@ -89,6 +89,7 @@ def resume_session(cli: AgentaoCLI, session_id: Optional[str] = None) -> None:
     import uuid as _uuid_mod
 
     from ...embedding.sessions import list_sessions, load_session
+    from ...runtime.model import purge_thinking_artifacts
 
     project_root = cli.agent.working_directory
     sessions = list_sessions(project_root=project_root)
@@ -119,6 +120,13 @@ def resume_session(cli: AgentaoCLI, session_id: Optional[str] = None) -> None:
     # History was replaced wholesale; the Tier-1 token anchor describes the
     # prior conversation's prefix and must not survive into the resumed one.
     cli.agent.context_manager.invalidate_token_anchor()
+    # Same reasoning applies to the saved conversation's thinking artifacts.
+    # Because the persisted model is deliberately not restored (see below),
+    # a resumed session is a model switch in everything but name — the
+    # reasoning_content and thought_signatures on disk were minted by
+    # whatever model that session ran, and are replayed to whatever model
+    # this process is bound to.
+    purge_thinking_artifacts(cli.agent.messages)
     # Intentionally do NOT restore the persisted model. A session stores only
     # the model *name*, not its provider (api_key / base_url never touch disk).
     # Re-binding the name onto whatever provider the current process happens to

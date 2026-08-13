@@ -71,6 +71,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from agentao.embedding.sessions import load_session, load_session_record
+from agentao.runtime.model import purge_thinking_artifacts
 
 from .mcp_translate import translate_acp_mcp_servers
 from .models import AcpSessionState, ResumeDirective
@@ -306,6 +307,10 @@ def _instantiate_loaded_session(
             # first post-load threshold check does not reuse a stale prefix
             # count from a prior conversation served by this instance.
             agent.context_manager.invalidate_token_anchor()
+            # And drop the loaded conversation's thinking artifacts: they were
+            # minted by whichever model wrote that session, and this instance
+            # is not necessarily bound to it. Same hygiene as a model switch.
+            purge_thinking_artifacts(agent.messages)
         except Exception:
             logger.exception(
                 "acp: %s could not hydrate agent.messages for %s",
