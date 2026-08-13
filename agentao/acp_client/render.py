@@ -15,6 +15,7 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 
+from ..security.unicode_tags import strip_unicode_tags
 from .inbox import InboxMessage, MessageKind
 
 logger = logging.getLogger("agentao.acp_client")
@@ -110,12 +111,24 @@ def _sanitize_terminal_text(text: str) -> str:
     """Drop terminal control chars from server-controlled text before display.
 
     Removes C0 controls (U+0000–U+001F, including ESC), DEL (U+007F), C1
-    controls (U+0080–U+009F), and the Unicode bidirectional-override / direction
-    controls (Trojan-Source), preserving ``\\n`` / ``\\t``. Printable text and
-    other higher Unicode pass through untouched, so Markdown / prose renders
-    unchanged.
+    controls (U+0080–U+009F), the Unicode bidirectional-override / direction
+    controls (Trojan-Source), and invisible tag-block characters
+    (U+E0000–U+E007F) that are not part of an emoji tag sequence — preserving
+    ``\\n`` / ``\\t``. Printable text and other higher Unicode pass through
+    untouched, so Markdown / prose renders unchanged.
+
+    The tag-block pass is the same defense as the bidi one and belongs with
+    it: both are text whose only function is to make what the operator sees
+    diverge from what is actually there. It cannot be folded into
+    ``_is_disallowed_control`` because it is *structural* — whether a tag
+    character is legitimate depends on the characters around it (a real
+    subdivision-flag emoji is a base plus a payload plus a terminator), so it
+    needs a windowed pass rather than a per-character predicate.
     """
-    if not text or not any(_is_disallowed_control(ch) for ch in text):
+    if not text:
+        return text
+    text = strip_unicode_tags(text)
+    if not any(_is_disallowed_control(ch) for ch in text):
         return text
     return "".join(ch for ch in text if not _is_disallowed_control(ch))
 

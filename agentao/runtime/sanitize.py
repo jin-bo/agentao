@@ -8,6 +8,15 @@ Two concerns, both about *what we ship back to the API on the next turn*:
    OpenAI / httpx JSON encoder crashes on them, killing the session.
    Replace each with U+FFFD (Unicode replacement char).
 
+1b. **Invisible Unicode tag characters** (U+E0000–U+E007F), stripped via
+   ``sanitize_text_field`` from ``content``, ``reasoning_content`` and
+   ``tool_calls[*].function.name``. A model that read injected content can
+   relay it back out — into ``content`` the user then reads, or into a tool
+   ``name`` the registry and the permission engine match on.
+   ``tool_calls[*].id`` and ``function.arguments`` are exempt for reasons
+   given on ``sanitize_assistant_message``.
+   See ``agentao/security/unicode_tags.py``.
+
 2. **Non-canonical / invalid JSON in tool_call arguments.** The planner
    uses repaired args to *execute*, but the original raw string was being
    serialised verbatim into conversation history — meaning strict API
@@ -37,6 +46,7 @@ import re
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from ..security.unicode_tags import strip_unicode_tags
 from .arg_repair import parse_tool_arguments
 from .tool_planning import make_tool_result_message
 
@@ -51,6 +61,21 @@ def sanitize_surrogates(text: str) -> str:
     if SURROGATE_RE.search(text) is None:
         return text
     return SURROGATE_RE.sub("�", text)
+
+
+def sanitize_text_field(text: str) -> str:
+    """Surrogate-replace **and** strip invisible Unicode tag characters.
+
+    The composed transform applied to every model-emitted string that either
+    re-enters history or drives a tool call. Returns the same object when
+    both passes are no-ops, so identity-based change detection still works.
+
+    ``tool_calls[*].id`` deliberately does NOT go through here — see
+    :func:`_normalize_one`.
+    """
+    if not isinstance(text, str):
+        return text
+    return strip_unicode_tags(sanitize_surrogates(text))
 
 
 def canonicalize_tool_arguments(
@@ -195,7 +220,18 @@ def _normalize_one(
         # tool_call_id between assistant and tool roles.
         from . import identity as _identity
         new_id = _identity.normalize_tool_call_id(raw_id)
-    new_name = sanitize_surrogates(raw_name) if isinstance(raw_name, str) else raw_name
+    # The *name* additionally gets invisible tag characters stripped: it is
+    # what the registry lookup and the permission rule match run against, so a
+    # name carrying zero-width tag characters must be reduced to what it
+    # actually reads as *before* either gate sees it.
+    #
+    # ``id`` and ``arguments`` stay on plain surrogate sanitization; the two
+    # exemptions are justified in full on ``sanitize_assistant_message``, and
+    # the two functions must agree — a field stripped on one path and not the
+    # other desynchronises history from the live tool call. (The ``id``
+    # exemption is also where this design departs from goose #10745, which
+    # strips ids and then needs a duplicate-collision guard as a consequence.)
+    new_name = sanitize_text_field(raw_name) if isinstance(raw_name, str) else raw_name
     new_args = sanitize_surrogates(raw_args) if isinstance(raw_args, str) else raw_args
 
     if repair_name_fn is not None and isinstance(new_name, str):
@@ -238,13 +274,19 @@ def _normalize_one(
     ), True
 
 
-def _sanitize_str_field(d: Dict[str, Any], key: str) -> bool:
-    """If ``d[key]`` is a string with surrogates, replace in place. Returns True
-    iff a substitution happened. Cheap fast-no-op via ``sanitize_surrogates``."""
+def _sanitize_str_field(
+    d: Dict[str, Any], key: str, *, strip_tags: bool = True,
+) -> bool:
+    """Rewrite ``d[key]`` in place if it needs sanitizing. Returns True iff a
+    substitution happened. Cheap fast-no-op on clean input.
+
+    ``strip_tags=False`` selects surrogate replacement only — for fields whose
+    bytes must survive round-tripping (see :func:`sanitize_assistant_message`).
+    """
     val = d.get(key)
     if not isinstance(val, str):
         return False
-    cleaned = sanitize_surrogates(val)
+    cleaned = sanitize_text_field(val) if strip_tags else sanitize_surrogates(val)
     if cleaned is val:
         return False
     d[key] = cleaned
@@ -252,11 +294,29 @@ def _sanitize_str_field(d: Dict[str, Any], key: str) -> bool:
 
 
 def sanitize_assistant_message(msg: Dict[str, Any]) -> bool:
-    """In-place surrogate sanitization of an assistant message dict.
+    """In-place sanitization of an assistant message dict.
 
-    Walks ``content``, ``reasoning_content``, and each
-    ``tool_calls[*].function.{name,arguments}`` / ``tool_calls[*].id``.
-    Returns True if any field was changed — useful for telemetry.
+    Replaces lone surrogates in ``content``, ``reasoning_content``, each
+    ``tool_calls[*].function.{name,arguments}`` and ``tool_calls[*].id``, and
+    additionally strips invisible tag characters from every one of those
+    **except** ``id`` and ``arguments``. Returns True if any field changed.
+
+    Two deliberate exemptions, both about not corrupting bytes that have to
+    round-trip:
+
+    - ``id`` — an opaque token the provider expects echoed back unchanged.
+      Stripping it here would rewrite the assistant-side id *after*
+      ``_normalize_one`` already handed the untouched id to the answering
+      ``role: "tool"`` message, desynchronising the pair that strict
+      Chat-Completions APIs reject. Surrogates are still replaced because
+      those cannot be JSON-encoded at all.
+    - ``arguments`` — this is raw JSON *text*, not a decoded value. Whether
+      the tag characters are literal codepoints or ``\\uXXXX`` escapes depends
+      on the provider's ``ensure_ascii`` setting, so stripping at this layer
+      is vacuous for one provider and mutates decoded string values for
+      another: the same tool call would behave differently on two backends.
+      Doing it correctly means stripping post-decode, which is a change to
+      the argument-parsing path rather than to this serializer.
     """
     found = _sanitize_str_field(msg, "content")
     found |= _sanitize_str_field(msg, "reasoning_content")
@@ -266,11 +326,11 @@ def sanitize_assistant_message(msg: Dict[str, Any]) -> bool:
         for tc in tool_calls:
             if not isinstance(tc, dict):
                 continue
-            found |= _sanitize_str_field(tc, "id")
+            found |= _sanitize_str_field(tc, "id", strip_tags=False)
             fn = tc.get("function")
             if isinstance(fn, dict):
                 found |= _sanitize_str_field(fn, "name")
-                found |= _sanitize_str_field(fn, "arguments")
+                found |= _sanitize_str_field(fn, "arguments", strip_tags=False)
 
     return found
 

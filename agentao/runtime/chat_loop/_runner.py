@@ -555,7 +555,8 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         _attach_reasoning(final_msg_max, reasoning_content_max)
         if sanitize_assistant_message(final_msg_max):
             agent.llm.logger.warning(
-                "Sanitised lone surrogates in max-iteration assistant message"
+                "Sanitised max-iteration assistant message (lone surrogates and/or "
+                "invisible Unicode tag characters)"
             )
         return self._resolve_stop_hook(
             turn_end_reason="max_iterations",
@@ -610,8 +611,8 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         msg_sanitized = sanitize_assistant_message(assistant_msg)
         if tcs_changed or msg_sanitized:
             agent.llm.logger.warning(
-                "Sanitised lone surrogates in outbound assistant "
-                "message (iteration %d)",
+                "Sanitised outbound assistant message (lone surrogates and/or "
+                "invisible Unicode tag characters) (iteration %d)",
                 iteration,
             )
         agent.messages.append(assistant_msg)
@@ -716,7 +717,8 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             _attach_reasoning(final_msg, reasoning_content)
             if sanitize_assistant_message(final_msg):
                 agent.llm.logger.warning(
-                    "Sanitised lone surrogates in length-truncation abort message"
+                    "Sanitised length-truncation abort message (lone surrogates and/or "
+                    "invisible Unicode tag characters)"
                 )
             # The harness gave up on a turn the model could not get through, so
             # ``assistant_content`` is either our canned string or whatever
@@ -790,7 +792,8 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             _attach_reasoning(final_msg_doom, reasoning_content)
             if sanitize_assistant_message(final_msg_doom):
                 agent.llm.logger.warning(
-                    "Sanitised lone surrogates in doom-loop assistant message"
+                    "Sanitised doom-loop assistant message (lone surrogates and/or "
+                    "invisible Unicode tag characters)"
                 )
             # ToolRunner's doom counter is NOT reset across a Stop-hook
             # force_continue — re-tripping doom is a reasonable outcome of
@@ -891,8 +894,8 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         _attach_reasoning(final_msg, reasoning_content)
         if sanitize_assistant_message(final_msg):
             agent.llm.logger.warning(
-                "Sanitised lone surrogates in final assistant message "
-                "(iteration %d)", iteration,
+                "Sanitised final assistant message (lone surrogates and/or invisible "
+                "Unicode tag characters) (iteration %d)", iteration,
             )
         return self._resolve_stop_hook(
             turn_end_reason="final_response",
@@ -938,6 +941,19 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         survives the block.
         """
         agent = self._agent
+        # Take the answer from the *sanitized* message rather than the
+        # caller's local. Every site builds ``final_msg`` from its own
+        # ``assistant_content`` string and then sanitizes the dict in place —
+        # which rewrites ``final_msg["content"]`` and leaves that local
+        # untouched. Since this local is what reaches the Stop hook, the CLI,
+        # `agentao run` stdout and the ACP final text, trusting it would ship
+        # the reader an answer that history no longer contains: surrogates for
+        # the original fix, and invisible smuggled instructions for the tag
+        # strip. Re-reading here fixes all four sites at once and keeps a
+        # fifth from reintroducing the split.
+        sanitized_content = final_msg.get("content")
+        if isinstance(sanitized_content, str):
+            assistant_content = sanitized_content
         site = self._STOP_SITES[turn_end_reason]
         stop_result = self._dispatch_stop(
             turn_end_reason=turn_end_reason,
