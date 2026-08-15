@@ -254,16 +254,67 @@ async def chat(req: ChatRequest):
         return {"reply": reply}
 ```
 
-Deeper: wrap `LLMClient` / `Tool.execute` and instrument each call.
+### Inner spans: use the event stream, don't monkey-patch
 
-### Recommended LLM span attributes
+There is no need to wrap `LLMClient` or `Tool.execute` — the runtime already emits its lifecycle as events. Two entry points, different trade-offs:
 
-- `gen_ai.system` = "openai"
-- `gen_ai.request.model` = model name
-- `gen_ai.usage.prompt_tokens` / `completion_tokens`
-- `gen_ai.response.finish_reason`
+| Entry point | What you get | Stability |
+|---|---|---|
+| `Agentao.events()` / `add_host_event_observer()` | Typed `HostEvent`: tool / sub-agent / permission decisions, carrying `session_id`, `turn_id`, and RFC3339 start/end timestamps | The `agentao.host` public contract |
+| `Agentao(transport=SdkTransport(on_event=...))` / `transport.subscribe()` | Every `AgentEvent`, **including LLM calls** | **Not** under the host stability boundary; fields may change between versions |
+
+Use the first for tool spans — `ToolLifecycleEvent`'s fields are already span-shaped. LLM spans currently need the second: the `HostEvent` union has no LLM event (`agentao/host/models.py:158`).
+
+```python
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from agentao.transport import EventType, SdkTransport
+
+tracer = trace.get_tracer(__name__)
+open_spans = {}
+
+def on_event(ev):
+    if ev.type == EventType.LLM_CALL_STARTED:
+        span = tracer.start_span("chat")
+        span.set_attribute("gen_ai.system", "openai")
+        span.set_attribute("gen_ai.request.model", ev.data["model"])
+        open_spans[ev.data["attempt"]] = span
+    elif ev.type == EventType.LLM_CALL_COMPLETED:
+        span = open_spans.pop(ev.data["attempt"], None)
+        if span is None:
+            return
+        for attr, key in (
+            ("gen_ai.usage.prompt_tokens", "prompt_tokens"),
+            ("gen_ai.usage.completion_tokens", "completion_tokens"),
+            ("gen_ai.response.finish_reason", "finish_reason"),
+        ):
+            if ev.data.get(key) is not None:   # all three are None on a failed call
+                span.set_attribute(attr, ev.data[key])
+        if ev.data["status"] == "error":
+            span.set_status(Status(StatusCode.ERROR, ev.data["error_class"]))
+        span.end()
+
+agent = Agentao(working_directory=".", transport=SdkTransport(on_event=on_event))
+```
+
+### Which event supplies which attribute
+
+| Attribute | Source event | Payload key |
+|---|---|---|
+| `gen_ai.system` | — | set it yourself, per provider |
+| `gen_ai.request.model` / `.temperature` / `.max_tokens` | `LLM_CALL_STARTED` | `model` / `temperature` / `max_tokens` |
+| `gen_ai.usage.prompt_tokens` / `completion_tokens` | `LLM_CALL_COMPLETED` | same names |
+| `gen_ai.response.finish_reason` | `LLM_CALL_COMPLETED` | `finish_reason` (`None` on failure) |
+| Tool span name / span id / start-end | `ToolLifecycleEvent` | `tool_name` / `tool_call_id` / `started_at`, `completed_at` |
 
 Follow OpenTelemetry GenAI semantic conventions.
+
+### Two traps
+
+- **A raw `AgentEvent` carries no timestamp and no turn_id.** `TURN_BEGIN`'s payload is just `user_message`, so a subscriber stamps the time on receipt and pairs turns positionally between `TURN_BEGIN` and `TURN_END`. The typed `HostEvent` carries both — prefer the first entry point wherever it covers you.
+- **Listeners run synchronously on the emitting thread**, and anything they raise is logged and swallowed (`agentao/transport/broadcast.py:42`). Your exporter must sit behind an OTel batch processor; do not do network I/O inside the callback, or you are adding latency to every turn.
+
+> **Agentao itself has no OpenTelemetry dependency and ships no built-in exporter.** Everything above is host-side wiring — `opentelemetry-*` is installed in your application. That boundary is deliberate; for how peer harnesses divide it four different ways, see `docs/design/otel-peer-survey.zh.md`.
 
 ## Audit and compliance
 

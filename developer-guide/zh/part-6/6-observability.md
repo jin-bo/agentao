@@ -251,16 +251,67 @@ async def chat(req: ChatRequest):
         return {"reply": reply}
 ```
 
-更深度接入：包装 LLMClient / Tool 的 execute，把每次调用都埋点。
+### 内层 span：用事件流，别 monkey-patch
 
-### LLM 调用的 span 属性建议
+不用去包 `LLMClient` 或 `Tool.execute`——运行时已经把生命周期发成事件了。两个接入点，取舍不同：
 
-- `gen_ai.system` = "openai"
-- `gen_ai.request.model` = 模型名
-- `gen_ai.usage.prompt_tokens` / `completion_tokens`
-- `gen_ai.response.finish_reason`
+| 接入点 | 拿到什么 | 稳定性 |
+|---|---|---|
+| `Agentao.events()` / `add_host_event_observer()` | 带类型的 `HostEvent`：工具 / 子代理 / 权限决策，自带 `session_id`、`turn_id`、RFC3339 起止时间戳 | `agentao.host` 公共契约 |
+| `Agentao(transport=SdkTransport(on_event=...))` / `transport.subscribe()` | 全部 `AgentEvent`，**含 LLM 调用** | **不在** host 稳定边界内，字段可能随版本变 |
+
+工具 span 用第一个——`ToolLifecycleEvent` 的字段本来就是 span 形状。LLM span 目前只能用第二个：`HostEvent` 联合里没有 LLM 事件（`agentao/host/models.py:158`）。
+
+```python
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from agentao.transport import EventType, SdkTransport
+
+tracer = trace.get_tracer(__name__)
+open_spans = {}
+
+def on_event(ev):
+    if ev.type == EventType.LLM_CALL_STARTED:
+        span = tracer.start_span("chat")
+        span.set_attribute("gen_ai.system", "openai")
+        span.set_attribute("gen_ai.request.model", ev.data["model"])
+        open_spans[ev.data["attempt"]] = span
+    elif ev.type == EventType.LLM_CALL_COMPLETED:
+        span = open_spans.pop(ev.data["attempt"], None)
+        if span is None:
+            return
+        for attr, key in (
+            ("gen_ai.usage.prompt_tokens", "prompt_tokens"),
+            ("gen_ai.usage.completion_tokens", "completion_tokens"),
+            ("gen_ai.response.finish_reason", "finish_reason"),
+        ):
+            if ev.data.get(key) is not None:   # 失败的调用这三项都是 None
+                span.set_attribute(attr, ev.data[key])
+        if ev.data["status"] == "error":
+            span.set_status(Status(StatusCode.ERROR, ev.data["error_class"]))
+        span.end()
+
+agent = Agentao(working_directory=".", transport=SdkTransport(on_event=on_event))
+```
+
+### 属性从哪个事件来
+
+| 属性 | 来源事件 | 载荷键 |
+|---|---|---|
+| `gen_ai.system` | —— | 按 provider 自己填 |
+| `gen_ai.request.model` / `.temperature` / `.max_tokens` | `LLM_CALL_STARTED` | `model` / `temperature` / `max_tokens` |
+| `gen_ai.usage.prompt_tokens` / `completion_tokens` | `LLM_CALL_COMPLETED` | 同名 |
+| `gen_ai.response.finish_reason` | `LLM_CALL_COMPLETED` | `finish_reason`（失败时为 `None`） |
+| 工具 span 名 / span id / 起止时间 | `ToolLifecycleEvent` | `tool_name` / `tool_call_id` / `started_at`、`completed_at` |
 
 参考 OpenTelemetry GenAI 语义约定。
+
+### 两个坑
+
+- **原始 `AgentEvent` 不带时间戳，也不带 turn_id。** `TURN_BEGIN` 的载荷只有 `user_message`，所以订阅者要在收到时自己打时间戳，turn 靠 `TURN_BEGIN`…`TURN_END` 成对配。类型化的 `HostEvent` 两样都有——能用第一个接入点的地方就用它。
+- **监听器在发射线程上同步执行**，抛出的异常记日志后被吞掉（`agentao/transport/broadcast.py:42`）。导出器必须挂 OTel 的批处理 processor，别在回调里做网络 I/O——那是在给每一轮加延迟。
+
+> **Agentao 自身不依赖 OpenTelemetry，也没有内建 exporter。** 上面全部是宿主侧接线，`opentelemetry-*` 装在你的应用里。这是刻意的边界；同类 harness 的四种做法对照见 `docs/design/otel-peer-survey.zh.md`。
 
 ## 审计与合规
 
