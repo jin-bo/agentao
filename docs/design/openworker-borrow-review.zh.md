@@ -64,9 +64,9 @@ https://github.com/andrewyng/openworker）。agentao `main`@`50d55a2`（2026-07-
 | 1 | **后台子代理 ASK 被静默批准** | 未识别 | **P1 行动项**（与 OpenWorker 无关） |
 | 2 | 子代理 `tools:` 声明卫生 | 「第三方信任边界」 | **降级为配置纠错**，不引入 Capability 层 |
 | 3 | 后台 shell 输出被丢弃 | 记录待判 | **需求门控**，形态已收窄 |
-| 4 | 会话只在退出时持久化 | 记录待判 | **需求门控**，形态已收窄（**非** append-only） |
+| 4 | 会话只在退出时持久化 | 记录待判 | **需求门控**；**形态本次不定**（2026-08-21 评审） |
 | 5 | `confirm_tool -> bool` 表达力 | 降级 | 维持降级，不重开 |
-| 6 | 读侧完全无路径约束 | 重 framing | 维持 |
+| 6 | 读侧完全无路径约束 | 重 framing | **裁定不引入读侧 containment**（2026-08-21 评审） |
 | 7 | 按风险分组并行 / web_fetch 框定 | 已有裁定 / 已证伪 | 维持 |
 | 8 | 持久 shell 会话 | 拒绝（理由：破坏 containment） | **拒绝，理由更正为进程管理成本** |
 | 9 | MCP OAuth | 降级为一条原则 | 维持 |
@@ -78,24 +78,51 @@ https://github.com/andrewyng/openworker）。agentao `main`@`50d55a2`（2026-07-
 
 **判定：现存缺陷，需单独修复。这不是 OpenWorker 借鉴项，是复核过程中撞见的。**
 
-### 1.1 链路（三处均已读码复核）
+### 1.1 链路（**2026-08-21 评审更正：中段选错了 Transport**）
+
+原文写的是 `transport/sdk.py:101-104`。实测后台路径**根本走不到那里** —— `suppress_output=True`
+让 `step_cb` / `output_callback` / `tool_complete_callback` / `ask_user_callback` 一并为 `None`，
+于是 `_has_legacy` 为假，选中的是 `NullTransport`：
 
 ```
 agents/tools/_wrapper.py:502-506
     # Background agents: pass None so tool_runner auto-approves (no stdin reads
     # from background threads, which would corrupt the terminal raw mode).
     if suppress_output or not self._confirmation_callback:
-        confirm_cb = None
+        confirm_cb = None          # 且 step/output/tool_complete/ask_user 同为 None
               │
-              ▼  Agentao(confirmation_callback=None)
-transport/sdk.py:101-104
+              ▼
+agent.py:777-791
+    _has_legacy = any(callbacks.values())     # ← 全 None ⇒ False
+    ...
+    else: self.transport = NullTransport()
+              │
+              ▼
+transport/null.py:28
     def confirm_tool(...) -> bool:
-        if self._confirm_tool: return self._confirm_tool(...)
-        return True          # ← auto-approve when no callback
+        return True                            # ← 后台子代理实际命中的自动放行
               │
               ▼
 runtime/tool_runner.py:216-226   Phase 2：decision == ASK → confirm_tool(...) → ALLOW
 ```
+
+**两个 Transport 都会自动放行，但只有前者是本节的行动项：**
+
+| 场景 | 选中的 Transport | 自动放行处 |
+|---|---|---|
+| **后台**子代理（全部回调为 `None`） | `NullTransport` | `null.py:28` |
+| 前台子代理，构造时未传 `confirmation_callback` | `SdkTransport` | `sdk.py:104` |
+
+实测（两条均已构造复现）：`NullTransport | confirm_tool(ASK): True`、
+`SdkTransport | confirm_tool(ASK): True`。结论不变，**行号变了**。
+
+**2026-08-21 收窄（`codex-subagent-v2-vs-agentao.zh.md` §2，8 组实测）：第二行在生产接线下不可达。**
+唯一的生产构造点 `tooling/agent_tools.py:89` 恒定注入
+`confirmation_callback=lambda *a, **kw: agent.transport.confirm_tool(*a, **kw)`，
+故 `_wrapper.py:506` 的 `not self._confirmation_callback` 分支无调用方，**前台子代理的 ASK 一律回到父方
+transport**（父能问→实测返回 `False`，且带 `[agent_name]` 前缀）。父方自身自动放行时子代理也放行，
+那是**继承**而非降级：模型在父 turn 里直接调同一个工具本来就会被放行，委派没换来任何东西。
+**只有后台路径是降级，且选择走后台的是模型自己。**
 
 **后果：`workspace-write` 下本应 ASK 的 `run_shell_command`，在后台子代理里被静默执行。**
 
@@ -108,7 +135,18 @@ runtime/tool_runner.py:216-226   Phase 2：decision == ASK → confirm_tool(...)
 
 ### 1.3 最小修复（不需要 catalog，不需要风险枚举）
 
+**约束（2026-08-21 评审补充）：修在子代理侧，不要改 `NullTransport` / `SdkTransport` 的全局语义。**
+`null.py:10-17` 的 docstring 把「auto-approves all interactions」定为**无配置 headless 嵌入的既定默认**；
+改它会改变每一个无回调宿主的行为，波及面远大于本条要修的东西。
+
 - 后台子代理对 `ASK` 固定返回 `False`；
+  **（2026-08-21 复审确认）本节这条固定拒绝就是定案，不要再加条件——但定的是*形态*，不是*排期*：`codex-subagent-v2-vs-agentao.zh.md` 已标注为仅分析、暂不实施。** 实测已证明修复只需落在后台一侧
+  （前台子代理的 ASK 本就抵达父方，见 `codex-subagent-v2-vs-agentao.zh.md` §2）；headless 宿主的后台子代理
+  因此严于其父，属**合理的最小权限收紧**，写进 changelog 即可。**否决**「给 transport 加 `can_prompt` 能力位、
+  仅当父方能问时才拒绝」这一变体：`Transport` 是结构化 Protocol（`transport/base.py:9-30`，实现全部方法非必须），
+  能力位只能 `getattr` 带默认值地读——默认假等于给第三方 transport 留着原 bug，默认真则与固定拒绝等价；
+  且待覆盖实现不止 4 个（含包装器 `replay/adapter.py:141` 与 `cli/app.py:445`），而「有 confirm 回调」本就
+  不等于「能问到人」。
 - 权限引擎给出的**显式 `ALLOW`** 规则不受影响，照常执行；
 - `DENY` 保持拒绝。
 
@@ -198,7 +236,8 @@ host 的 UI 层。但「需求门控」这一纪律同样适用：**当前无 li
 
 agentao 只在退出时存：`cli/app.py:494 _save_session_on_exit` ← `input_loop.py:286`；
 ACP teardown `acp/models.py:289,318`。grep 不到任何 per-turn 落盘。
-**崩溃 / SIGKILL / 断电 = 整个会话丢失。**
+**崩溃 / SIGKILL / 断电 = 丢失本次进程中尚未保存的进展**
+（2026-08-21 评审更正：原文写「整个会话丢失」，对一个中途经由 `/clear` 等路径存过盘的会话并不成立）。
 
 rev 2 曾想说 O(n²) 写放大 —— 错的（只在退出时写，字节开销不是问题）。
 **真正的差异是耐久性。**
@@ -213,11 +252,18 @@ openworker 用 append-only JSONL + SQLite 索引（`conversations.py:1-9`：
 `compress_messages` 进一步用摘要替换前缀。**agentao 的历史是会被改写的**，
 append-only 日志会与实时 `messages` 状态发散。
 
-### 4.3 收窄后的形态（若需求出现）
+### 4.3 形态：本次不定（2026-08-21 评审收窄）
 
-**每个成功 turn 结束时，对一个稳定的 session snapshot 做原子覆盖写。**
-不引入 SQLite，不引入 append-only 日志。参照 agentao 自家已有的 per-turn 持久化
-——`/goal` 状态每轮都写（`cli/input_loop.py:737,745`）。
+原文这里写死了「每个成功 turn 结束时，对一个稳定的 session snapshot 做原子覆盖写」。
+**这个方案与当前存储不兼容，且在没有需求数据时就选定实现是过早的。**
+
+事实：`embedding/sessions.py:142-157` 每次调用都**新建一个带时间戳的文件**
+（`{YYYYmmdd_HHMMSS}_{microsecond}.json`），直接 `open(..., "w")` 写入——
+**既不是稳定文件，也不是原子覆盖**，写完还会调 `_rotate_sessions` 轮转。
+逐轮复用这条路径会产生大量重复快照并持续触发轮转。
+
+**本次裁定：不设计形态。** 只记录事实——异常退出会丢失本次进程中尚未保存的进展；
+**出现用户报告后再单独立项设计**，届时需一并决定稳定快照文件与轮转策略如何共存。
 
 ### 4.4 缺数据
 
@@ -247,7 +293,9 @@ openworker 的 `ApprovalOutcome`（`engine.py:29-33`）是四值枚举
 
 ## 6. 读侧完全无路径约束
 
-**判定：维持 rev 2 的 framing。「多根」有先例且已有设计；「读完全无约束」在其声明范围之外。**
+**裁定（2026-08-21 评审补充）：接受当前的默认本地读语义，本次不引入读侧 containment。
+若将来形成明确的隐私边界需求，另行立项。** 「多根」有先例且已有设计（§6.1）；
+「读完全无约束」在其声明范围之外，故记录事实但不据此立项。
 
 ### 6.1 先例边界（必须先读）
 
@@ -270,7 +318,15 @@ openworker 的 `ApprovalOutcome`（`engine.py:29-33`）是四值枚举
 | `shell.py:230` | `ShellTool` 的 cwd |
 
 `ReadFileTool.execute`（`file_ops.py:127`）与 `ReadFolderTool.execute`（`file_ops.py:522`）
-**不在其中**。故 `read_file("/etc/passwd")` 在任何模式下都可读。
+**不在其中**。
+
+**2026-08-21 评审补充两点更正：**
+
+1. **覆盖不止这两个。** 搜索侧同样经 `_resolve_path` 接受工作区外的绝对目录：
+   `search.py:173`（`SearchFilesTool.execute`）与 `search.py:357`（内容搜索的 `execute`）。
+2. **范围要限定。** 两类工具都经 `self._get_fs()` 取 FileSystem，**宿主注入的 FileSystem 可以自行限制访问**。
+   故准确表述是「在**默认 `LocalFileSystem`** 下 `read_file("/etc/passwd")` 可读」，
+   而非「在任何模式下都可读」。
 
 > **文档卫生：** `host-fs-policy.zh.md:62` 记的调用点是 `file_ops.py:197,368`，
 > 当前实际为 `238,433` —— 行号已漂移，回链时需校正。
@@ -290,13 +346,14 @@ openworker 的 `ApprovalOutcome`（`engine.py:29-33`）是四值枚举
 故 `roots.py:5-8` 那句「三方共享引用」**只对 Cowork 成立**。rev 1 把它当成「peer 指明的
 方向」是过度解读。
 
-### 6.4 真正新的那一小块（需求门控）
+### 6.4 已并入本节裁定（原「真正新的那一小块」）
 
-`request_directory`（`tools/directories.py`）是 **agent 发起、用户运行时授予**的扩权路径，
-而 `host-fs-policy` 的 `fs_policy` 是**宿主构造期声明**的 —— **不同的轴**，既有设计未覆盖。
-`roots.py:61-75` `render_context()`（把访问图写进提示词）同理。
+原文在此把 openworker 的 `request_directory`（agent 发起、用户运行时授予的扩权路径）与
+`roots.py:61-75 render_context()` 记为「既有设计未覆盖的新轴」。
 
-**两者都依赖 aisuite 的多根 toolkit 语义，本次未验证（§需要进一步的分析 #2）。当前不立项。**
+**2026-08-21 评审收窄：不再展开。** 这两项都依赖 aisuite 的多根 toolkit 语义（本次未验证），
+把「多根」「运行时扩权」「aisuite 研究」混进读侧裁定里，会把一条本来干净的「不引入」重新
+撑成路线图。本节的裁定就是节首那一句，不附带任何待研究项。
 
 ---
 
@@ -410,7 +467,10 @@ rev 2 称 openworker `RiskClass` 的五个消费者在 agentao「全部存在」
 五个里只有一个真正存在。「为第六个消费者提前统一」的重构理由**不成立**。
 一个只有单一消费者的横切维度就是它当前的形态（`requires_confirmation` 布尔）。
 
-**裁定：不引入。** 若 §3 / §4 / §7.1 中任一条将来立项并真的需要第二个消费者，届时再议。
+**裁定：不引入。** 若**出现真实的第二个消费者**，届时再议。
+
+> 2026-08-21 评审更正：原文把 §3（后台输出）/ §4（会话持久化）列为潜在第二消费者——
+> 二者都与工具风险分类无直接关系，已删除这两个触发条件。
 
 ---
 
@@ -418,18 +478,19 @@ rev 2 称 openworker `RiskClass` 的五个消费者在 agentao「全部存在」
 
 以下为**本次未验证或未读**的部分。任何据此推进的工作应先补掉相应项。
 
+> **2026-08-21 评审收窄：** 原表还有四行（aisuite 未读、`personas/registry.py` 未读、`automation/` 仅读
+> docstring、§3 实现形态未设计）。它们服务的章节本轮已全部关闭（§6.4 不再展开、§3 需求门控无形态、
+> §2 已降级），留着只会把「零功能立项」重新撑成研究路线图，故删除。
+> **保留的六行都仍有归属**——或指向本文保留的裁定，或是文档卫生。
+
 | # | 项 | 为什么重要 | 现状 |
 |---|---|---|---|
 | 1 | §1 的爆炸半径未量化 | 有多少现存项目 agent 定义未写 `tools:`（即落入 `None = all`）？后台子代理在实际使用中触发 ASK 的频率？**决定 §1 是「静默提权」还是「理论缺口」** | **未测** |
-| 2 | aisuite 未读 | §6.4 的 `request_directory` → `add_root` → 读工具是否**端到端可用**完全依赖它。`server/manager.py:3426-3428` 声称「file tools 立即可见」，但读工具的 root 是构造期闭包（`tools/files.py:50`）—— **矛盾未解** | **未读** |
-| 3 | `personas/registry.py`（414 行）未读 | 安装同意屏是否真实存在（rev 2 从 `loading.py:28` + docstring **推断**）。**rev 3 已不依赖它**（§2 降级），仅作为背景遗留 | **未读** |
-| 4 | `automation/` 仅读 docstring | 调度策略（run-once-catch-up + skip-on-overlap）与 `/goal` 的关系；`selfwake.py` 与 §3 的配套 | **仅 docstring** |
-| 5 | §3 实现形态未设计 | 内存任务表的上限、进程退出后条目的生命周期、与 `CancellationToken` 的关系、ACP 下的事件形态 | **未设计** |
-| 6 | §9 原则的全路径审计未做 | 需逐条检查 `agentao run` / ACP server / `/goal` 循环 / 后台子代理是否存在「后台上下文走到需要人的决策点」的其它实例。§1 是已找到的一处，**是否还有第二处未知** | **未审计** |
-| 7 | §4 缺数据 | 会话崩溃丢失是否真的发生过、典型会话文件多大、ACP 长会话时长分布 | **无数据** |
-| 8 | §7.1 可达性未测 | 真实模型是否会在**同一批次**发出 `write_file` + `run_shell_command`。**不能用自造 fixture 验证**——需从真实 `agentao.log` 捞 trace | **未测** |
-| 9 | 文档卫生 | `host-fs-policy.zh.md:62` 的 `PathPolicy` 调用点行号已漂移（`197,368` → 实际 `238,433`） | **待修** |
-| 10 | 英文版 | 本仓惯例为 `.md` / `.zh.md` 成对 | **待补** |
+| 2 | §9 原则的全路径审计未做 | 需逐条检查 `agentao run` / ACP server / `/goal` 循环 / 后台子代理是否存在「后台上下文走到需要人的决策点」的其它实例。§1 是已找到的一处，**是否还有第二处未知** | **未审计** |
+| 3 | §4 缺数据 | 会话崩溃丢失是否真的发生过、典型会话文件多大、ACP 长会话时长分布 | **无数据** |
+| 4 | §7.1 可达性未测 | 真实模型是否会在**同一批次**发出 `write_file` + `run_shell_command`。**不能用自造 fixture 验证**——需从真实 `agentao.log` 捞 trace | **未测** |
+| 5 | 文档卫生 | `host-fs-policy.zh.md:62` 的 `PathPolicy` 调用点行号已漂移（`197,368` → 实际 `238,433`） | **待修** |
+| 6 | 英文版 | 本仓惯例为 `.md` / `.zh.md` 成对 | **待补** |
 
 ---
 
