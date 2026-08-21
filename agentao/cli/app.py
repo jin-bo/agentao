@@ -385,10 +385,40 @@ class AgentaoCLI:
         from ..replay.config import settings_path
         path = settings_path(self._project_root)
         if path.exists():
+            # ``escape`` because the interpolated path and exception text are
+            # arbitrary: ``PermissionError`` stringifies as ``[Errno 13] ...``
+            # and an unbalanced ``[/...]`` makes Rich raise ``MarkupError`` —
+            # re-introducing the startup crash this branch exists to prevent.
+            from rich.markup import escape as _esc
+
             try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                pass
+                data = json.loads(path.read_text(encoding="utf-8-sig"))
+            except UnicodeDecodeError as exc:
+                # Runs from AgentaoCLI.__init__, before the factory, so an
+                # uncaught decode error here killed interactive startup
+                # outright.
+                console.print(
+                    f"[warning]Ignoring {_esc(str(path))}: not valid UTF-8 "
+                    f"({_esc(exc.reason)} at byte {exc.start}). Re-save it as "
+                    "UTF-8 — PowerShell 5.1 writes UTF-16LE from `>` and "
+                    "`Out-File`.[/warning]"
+                )
+            except (OSError, json.JSONDecodeError) as exc:
+                console.print(
+                    f"[warning]Ignoring {_esc(str(path))}: "
+                    f"{type(exc).__name__}: {_esc(str(exc))}[/warning]"
+                )
+            else:
+                # ``_save_settings`` assigns into this and ``_load_saved_mode``
+                # calls ``.get`` on it, so a top-level list or string has to be
+                # rejected here rather than crash the caller.
+                if isinstance(data, dict):
+                    return data
+                console.print(
+                    f"[warning]Ignoring {_esc(str(path))}: top-level value "
+                    f"must be a JSON object, got {type(data).__name__}."
+                    "[/warning]"
+                )
         return {}
 
     def _save_settings(self) -> None:

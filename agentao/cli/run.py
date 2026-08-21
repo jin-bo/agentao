@@ -373,6 +373,22 @@ def execute(argv: Optional[Sequence[str]] = None) -> int:
     return _execute_with_args(args)
 
 
+def _spec_engine_rules(spec: RunSpec) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Convert a spec's ``permissions`` block into engine rule dicts.
+
+    Called twice — once by the pre-flight validation in
+    :func:`_execute_run`, once at the apply site in :func:`_run_pipeline`
+    — so both see byte-identical rules. Conversion is pure and cheap;
+    sharing it is what keeps the two from drifting apart.
+    """
+    if spec.permissions is None:
+        return [], []
+    return (
+        [r.to_engine_dict("allow") for r in spec.permissions.allow],
+        [r.to_engine_dict("deny") for r in spec.permissions.deny],
+    )
+
+
 def _emit_invalid_usage(
     message: str, output_format: str, *, cwd: Optional[str] = None,
     model: str = "",
@@ -466,6 +482,35 @@ def _execute_with_args(args: argparse.Namespace) -> int:
             "is not supported (M0 accepts only 'reject').",
             output_format,
         )
+
+    # Permission rules are validated here, with the rest of the spec
+    # checks, because this is the last point before a runtime exists.
+    # ``RunPermissionRule.args`` is ``Dict[str, Any]``, so pydantic
+    # accepts ``args: {command: 1}`` and the engine's validator is the
+    # first thing to reject it — a *spec* error that has to be reported
+    # as one. Validating after ``build_from_environment`` cannot do that:
+    # any unrelated construction failure (a missing API key, an unusable
+    # user permissions file) reports first and turns an invalid spec into
+    # ``runtime_error``/exit 1, and even on the success path the whole
+    # runtime and its on-disk side effects are created before the input
+    # that was invalid all along is rejected.
+    from ..permissions import (
+        format_permission_rule_errors,
+        validate_permission_rules,
+    )
+
+    pre_allow, pre_deny = _spec_engine_rules(spec)
+    for subject, candidate in (
+        ("permissions.deny", pre_deny),
+        ("permissions.allow", pre_allow),
+    ):
+        rule_errors = validate_permission_rules(candidate)
+        if rule_errors:
+            return _emit_invalid_usage(
+                f"agentao run: invalid {subject}:"
+                + format_permission_rule_errors(rule_errors, subject=subject),
+                output_format,
+            )
 
     return _run_pipeline(spec, output_format=output_format, warnings=warnings)
 
@@ -571,15 +616,39 @@ def _run_pipeline(
         permission_mode == PermissionMode.READ_ONLY,
     )
 
-    if spec.permissions is not None and agent.permission_engine is not None:
-        engine_allow = [r.to_engine_dict("allow") for r in spec.permissions.allow]
-        engine_deny = [r.to_engine_dict("deny") for r in spec.permissions.deny]
+    if agent.permission_engine is not None:
+        engine_allow, engine_deny = _spec_engine_rules(spec)
         if engine_allow or engine_deny:
-            agent.permission_engine.add_run_rules(
-                allow=engine_allow,
-                deny=engine_deny,
-                source="run-spec",
-            )
+            from ..permissions import PermissionRuleError
+
+            try:
+                agent.permission_engine.add_run_rules(
+                    allow=engine_allow,
+                    deny=engine_deny,
+                    source="run-spec",
+                )
+            except PermissionRuleError as exc:
+                # Backstop only. ``_execute_run`` validates these same
+                # rules — from the same converter — before the agent is
+                # built, so this is reachable only if a caller reaches
+                # ``_run_pipeline`` directly. Kept because the envelope
+                # is still the right answer if that happens: a traceback
+                # here would give a JSON caller nothing to parse.
+                _emit(RunResult(
+                    status="error",
+                    session_id=agent._session_id or "",
+                    turn_id=agent._current_turn_id,
+                    cwd=str(cwd),
+                    model=agent.llm.model,
+                    error=RunErrorEnvelope(
+                        type="invalid_spec",
+                        message=f"invalid permissions rule: {exc}",
+                    ),
+                    tool_calls=0,
+                    warnings=warnings,
+                ), output_format)
+                agent.close()
+                return EXIT_INVALID_USAGE
 
     try:
         _load_and_register_plugins(agent)

@@ -1,6 +1,7 @@
 """Skills manager for Agentao."""
 
 import json
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -9,6 +10,8 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set
 from agentao.frontmatter import parse_frontmatter
 
 from ..paths import user_root
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     # Declared here, not at module scope: the plugin subsystem is an
@@ -150,10 +153,33 @@ class SkillManager:
         """Load disabled skills list from config file."""
         if self._config_file.exists():
             try:
-                with open(self._config_file, "r", encoding="utf-8") as f:
+                with open(self._config_file, "r", encoding="utf-8-sig") as f:
                     config = json.load(f)
+                if not isinstance(config, dict):
+                    # ``config.get`` below is an AttributeError on a top-level
+                    # list — the same uncaught-shape crash the decode branch
+                    # was added to close, one line further down.
+                    logger.warning(
+                        "Ignoring %s: top-level value must be a JSON object, "
+                        "got %s.",
+                        self._config_file, type(config).__name__,
+                    )
+                    self.disabled_skills = set()
+                    return
                 self.disabled_skills = set(config.get("disabled_skills", []))
-            except (IOError, json.JSONDecodeError):
+            except UnicodeDecodeError as exc:
+                logger.warning(
+                    "Ignoring %s: not valid UTF-8 (%s at byte %d). Re-save it "
+                    "as UTF-8 — PowerShell 5.1 writes UTF-16LE from `>` and "
+                    "`Out-File`.",
+                    self._config_file, exc.reason, exc.start,
+                )
+                self.disabled_skills = set()
+            except (IOError, json.JSONDecodeError) as exc:
+                logger.warning(
+                    "Ignoring %s: %s: %s",
+                    self._config_file, type(exc).__name__, exc,
+                )
                 self.disabled_skills = set()
 
     def _save_config(self):

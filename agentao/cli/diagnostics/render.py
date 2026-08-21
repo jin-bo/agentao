@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+from rich.markup import escape as _esc
+
 from .._globals import console
 from .models import DiagnosticReport
+
+# Every interpolation below that carries a path, an env value, exception
+# text, or a Finding message goes through ``_esc``. All of them are
+# user-controlled, and Rich reads ``[...]`` as markup: a config key named
+# ``[/oops]``, a repo checked out under ``~/[wip]/``, or an ``OSError``
+# stringifying as ``[Errno 13] ...`` would otherwise raise ``MarkupError``
+# out of the renderer — aborting the report at exactly the moment the user
+# ran ``agentao doctor`` because something was already broken. Literal
+# style tags stay outside the escaped spans.
 
 
 _FINDING_TAG = {
@@ -23,30 +34,34 @@ def _render_human(report: DiagnosticReport, *, header: str) -> None:
     if "settings" in sections:
         s = sections["settings"]
         status = s.get("status", "absent")
-        console.print(f"[bold]settings.json[/bold]: {status}  [dim]{s['path']}[/dim]")
+        console.print(
+            f"[bold]settings.json[/bold]: {_esc(str(status))}  "
+            f"[dim]{_esc(str(s['path']))}[/dim]"
+        )
 
     if "provider" in sections:
         s = sections["provider"]
         marker = "[green]yes[/green]" if s["api_key_present"] else "[red]no[/red]"
         console.print(
-            f"[bold]LLM provider[/bold]: {s['provider']} "
-            f"(api_key={marker}, model={s.get('model') or '-'}, "
-            f"base_url={s.get('base_url') or '-'})"
+            f"[bold]LLM provider[/bold]: {_esc(str(s['provider']))} "
+            f"(api_key={marker}, model={_esc(str(s.get('model') or '-'))}, "
+            f"base_url={_esc(str(s.get('base_url') or '-'))})"
         )
 
     if "permissions" in sections:
         s = sections["permissions"]
         console.print(
-            f"[bold]Permissions[/bold]: user={s['user_status']} "
-            f"(rules={s['rule_count']}), project={s['project_status']}"
+            f"[bold]Permissions[/bold]: {_esc(str(s['user_status']))} "
+            f"(rules={s['rule_count']}), project={_esc(str(s['project_status']))}"
         )
 
     if "mcp" in sections:
         s = sections["mcp"]
         console.print(
-            f"[bold]MCP[/bold]: user={s['user_status']} "
+            f"[bold]MCP[/bold]: user={_esc(str(s['user_status']))} "
             f"(servers={s['user_server_count']}), "
-            f"project={s['project_status']} (servers={s['project_server_count']})"
+            f"project={_esc(str(s['project_status']))} "
+            f"(servers={s['project_server_count']})"
         )
 
     if "replay" in sections:
@@ -66,13 +81,17 @@ def _render_human(report: DiagnosticReport, *, header: str) -> None:
                 f"events_defs={s['events_defs']}, acp_defs={s['acp_defs']}"
             )
         else:
-            console.print(f"[bold]ACP schema[/bold]: [red]error[/red] — {s.get('error','')}")
+            console.print(
+                f"[bold]ACP schema[/bold]: [red]error[/red] — "
+                f"{_esc(str(s.get('error', '')))}"
+            )
 
     if "memory" in sections:
         s = sections["memory"]
         console.print(
-            f"[bold]Memory stores[/bold]: project={s['project_status']}, "
-            f"user={s['user_status']}"
+            f"[bold]Memory stores[/bold]: "
+            f"project={_esc(str(s['project_status']))}, "
+            f"user={_esc(str(s['user_status']))}"
         )
 
     if "plugins" in sections:
@@ -84,14 +103,18 @@ def _render_human(report: DiagnosticReport, *, header: str) -> None:
                 f"errors={len(s.get('errors', []))}"
             )
         else:
-            console.print(f"[bold]Plugins[/bold]: [red]error[/red] — {s.get('error','')}")
+            console.print(
+                f"[bold]Plugins[/bold]: [red]error[/red] — "
+                f"{_esc(str(s.get('error', '')))}"
+            )
 
     if "optional_deps" in sections:
         deps = sections["optional_deps"]
         missing = [name for name, info in deps.items() if not info["present"]]
         if missing:
             console.print(
-                f"[bold]Optional deps[/bold]: missing {', '.join(missing)} "
+                f"[bold]Optional deps[/bold]: "
+                f"missing {_esc(', '.join(missing))} "
                 f"[dim](features may degrade)[/dim]"
             )
         else:
@@ -102,8 +125,10 @@ def _render_human(report: DiagnosticReport, *, header: str) -> None:
         console.print("[bold]Findings[/bold]:")
         for f in report.findings:
             tag = _FINDING_TAG.get(f.level, f.level.upper())
-            src = f" [dim]({f.source})[/dim]" if f.source else ""
-            console.print(f"  {tag} [{f.area}] {f.message}{src}")
+            src = f" [dim]({_esc(str(f.source))})[/dim]" if f.source else ""
+            console.print(
+                f"  {tag} \\[{_esc(str(f.area))}] {_esc(str(f.message))}{src}"
+            )
     else:
         console.print()
         console.print("[green]No findings.[/green]")

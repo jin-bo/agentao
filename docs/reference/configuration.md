@@ -82,7 +82,7 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 - **Loaders.**
   - `embedding/factory.py::_load_settings` — reads `agents.enable_builtin` / `enable_builtin_agents` to default the constructor's `enable_builtin_agents` flag.
   - `plan/controller.py::_load_settings` — reads `mode` when restoring the active permission mode after a plan-mode session ends.
-- **Failure mode.** Missing file or malformed JSON → silently treated as `{}` (no startup error).
+- **Failure mode.** Missing file → treated as `{}`, silently. Unreadable, not valid UTF-8, or malformed JSON → **a warning naming the path**, then treated as `{}` (still no startup error). Read as `utf-8-sig`, so a BOM'd file loads rather than being discarded. The warning goes to the `agentao` logger: it reaches the terminal only while no handler is attached yet (Python's `lastResort`), which in practice covers the `settings.json` reads but **not** `mcp.json` / `skills_config.json`, both of which are read after the LLM client attaches its file handler — those land in `agentao.log`. `agentao doctor` surfaces all of them.
 - **Important.** The factory does **not** apply `mode` to the engine on startup; the `PermissionEngine` always initializes at `workspace-write`. The `mode` field is the *persisted last-known mode* used for restoration paths and CLI inspection — runtime mode changes go through CLI commands or `PermissionEngine.set_mode()`.
 
 ### Schema
@@ -127,7 +127,9 @@ See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each
 - **Paths.**
   1. `~/.agentao/permissions.json` (user-level) — the only file-based rule source.
   2. `<cwd>/.agentao/permissions.json` (project-level) — **ignored** with a warning. See "Why no project scope?" below.
-- **Loader.** `permissions.py::PermissionEngine._load_file`. Missing file or malformed JSON → empty rule list (no startup error). A file that loads successfully contributes a `loaded_sources` label (`user:<path>`) returned from `PermissionEngine.active_permissions()` and `Agentao.active_permissions()` — see [`docs/reference/host-api.md`](host-api.md).
+- **Loader.** `embedding/permission_loader.py::load_permission_rules`. The engine itself does no file I/O.
+- **Failure mode — this file fails closed** (changed in 0.4.20; it previously degraded to an empty rule list with no startup error). Missing file → empty rule list, silently. Anything else — unreadable, not valid UTF-8, malformed JSON, a top level that is not an object, an unknown top-level key (`rules` is the only legal one, so `{"rule": [...]}` is rejected rather than silently loading zero rules), or a rule that fails validation — raises `PermissionConfigError` naming the path, and session construction aborts. The asymmetry with every other config file is deliberate: a dropped `deny` on a shell or web tool degrades to *ask*, and a dropped `deny` on an `mcp_*` tool degrades to nothing at all (the engine returns no decision, the runtime falls through to the tool's own `requires_confirmation`, and a `trust: true` server's tool then runs unprompted). `agentao doctor` reports the same failures without aborting. Read as `utf-8-sig`, so a BOM'd file loads.
+- **Provenance.** A file that loads successfully contributes a `loaded_sources` label (`user:<path>`) returned from `PermissionEngine.active_permissions()` and `Agentao.active_permissions()` — see [`docs/reference/host-api.md`](host-api.md).
 - **Public getter.** `PermissionEngine.active_permissions()` returns a cached, JSON-safe `ActivePermissions` snapshot (`mode`, `rules`, `loaded_sources`). Hosts that layer policy on top can call `add_loaded_source("injected:<name>")` so the snapshot reflects their provenance. The cache is invalidated on `set_mode()` and `add_loaded_source()`.
 - **Evaluation order.**
   - Modes `read-only` / `workspace-write`: `[user rules] → [active mode preset rules]` (first match wins).
@@ -158,7 +160,9 @@ See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each
 | `tool` | string | yes | Tool name; matched as a regex via `re.fullmatch` (use `"*"` for wildcard). |
 | `args` | object | no | Map of `<arg_name>` → regex; **all** entries must `re.search`-match for the rule to fire. Bad regex falls back to literal equality. |
 | `domain` | object | no | URL-tool only (`web_fetch`). Keys: `url_arg` (default `"url"`), `allowlist`, `blocklist`. Patterns starting with `.` do suffix matching (e.g. `.github.com` matches `github.com` and `api.github.com`); otherwise exact match. A rule with `domain` matches **only** when the hostname hits one of its lists. |
-| `action` | string | yes | `"allow"` \| `"deny"` \| `"ask"` (case-insensitive; unknown values treated as `"ask"`). |
+| `action` | string | yes | `"allow"` \| `"deny"` \| `"ask"`. Case-insensitive. **Unknown values are rejected** as of 0.4.20 — they were previously treated as `"ask"`, which is what let `{"action": "alow"}` sit in a config doing nothing while `/permissions` printed it back as `[? ALOW]`. |
+
+**The key set is closed, and `tool` / `action` are required.** `tool`, `args`, `domain`, `action` — and under `domain`, `url_arg` / `allowlist` / `blocklist`. Any other key is a validation error rather than a silently ignored field (0.4.20). Presence is checked too, because the engine's fallback for an *absent* key rewrites the rule instead of refusing it: `rule.get("tool", "*")` makes `{"action": "allow"}` an allow-**everything** rule, and `rule.get("action", "ask")` quietly re-labels a rule its author meant as a deny. Write `{"tool": "*"}` for a deliberate wildcard. The engine reads only these four, so before validation existed a one-word typo dropped a rule's condition and widened it: `{"tool": "run_shell_command", "pattern": "^git ", "action": "allow"}` — `pattern` should be `args` — allowed *every* shell command, and rendered as an ordinary `[✓ ALLOW]`. Types are checked too; the same validator runs for file rules, `PermissionEngine(rules=...)`, and a run spec's `permissions:` block.
 
 **Built-in presets** live in `permissions.py::_PRESET_RULES` and run after custom rules (or before, in `full-access` / `plan`):
 
@@ -177,6 +181,7 @@ Full rule taxonomy, examples, and runtime semantics → [TOOL_CONFIRMATION_FEATU
   1. `~/.agentao/mcp.json` (user-level) — authoritative for any name it declares.
   2. `<cwd>/.agentao/mcp.json` (project-level) — **add-only**: may declare new server names, but cannot override a user-scope name with the same key. Collisions log a warning and skip the project entry.
 - **Loader.** `mcp/config.py`. Env vars in values are expanded (`$VAR` form).
+- **Failure mode.** Missing file → silent. Unreadable, not valid UTF-8, or malformed JSON → a warning naming the path, then the default (no servers from that file). Read as `utf-8-sig`, so a BOM'd file loads. The warning goes to the `agentao` logger: it reaches the terminal only while no handler is attached yet (Python's `lastResort`), which in practice covers the `settings.json` reads but **not** `mcp.json` / `skills_config.json`, both of which are read after the LLM client attaches its file handler — those land in `agentao.log`. `agentao doctor` surfaces all of them.
 
 ### Schema
 
@@ -241,7 +246,7 @@ Tools are registered as `mcp_{server}_{tool}`. See `CLAUDE.md` → "MCP" section
 
 - **Path.** `<cwd>/.agentao/acp.json` only. **No user-level variant** — ACP servers are explicitly project-scoped.
 - **Loader.** `acp_client/config.py::load_acp_config` (parsed into `AcpServerConfig` via `acp_client/models.py::AcpServerConfig.from_dict`).
-- **Failure mode.** Missing `command` / `args` / `env` / `cwd` raises `AcpConfigError` at config load — startup errors out.
+- **Failure mode.** Missing `command` / `args` / `env` / `cwd` raises `AcpConfigError` at config load — startup errors out. So does an unreadable, non-UTF-8, or malformed file: this surface fails closed, and every failure arrives as `AcpConfigError`, never as a raw traceback. Read as `utf-8-sig`.
 - **Hot-reload.** The CLI watches the file's mtime; edits are picked up on the next inbox poll (`cli/acp_inbox.py`).
 - **Child environment.** An ACP server is a third-party binary spawned from config — the same trust position as an MCP server — so it starts from `capabilities/process.py::build_child_env()` and does **not** inherit agentao's own provider credentials. A server that used to work by inheriting `OPENAI_API_KEY` now gets a 401; declare the key in its `env` block instead, or set `AGENTAO_SCRUB_CHILD_ENV=0` to restore full inheritance process-wide.
 
@@ -289,6 +294,7 @@ Full ACP semantics → [acp-client.md](../guides/acp-client.md) and [acp-embeddi
 
 - **Path.** `<cwd>/.agentao/skills_config.json` (project-only).
 - **Loader.** `skills/manager.py`.
+- **Failure mode.** Missing file → silent. Unreadable, not valid UTF-8, or malformed JSON → a warning naming the path, then the default (no skills disabled). Read as `utf-8-sig`, so a BOM'd file loads. The warning goes to the `agentao` logger: it reaches the terminal only while no handler is attached yet (Python's `lastResort`), which in practice covers the `settings.json` reads but **not** `mcp.json` / `skills_config.json`, both of which are read after the LLM client attaches its file handler — those land in `agentao.log`. `agentao doctor` surfaces all of them.
 
 ### Schema
 

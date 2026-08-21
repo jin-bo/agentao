@@ -258,13 +258,39 @@ def _expand_config_env(config: McpServerConfig) -> McpServerConfig:
 
 
 def _load_json_file(path: Path) -> Dict[str, Any]:
-    """Load a JSON file, returning empty dict if missing or invalid."""
+    """Load a JSON file, returning empty dict if missing or unusable.
+
+    Missing is silent; every other failure warns with the path. Reads
+    ``utf-8-sig`` so a BOM'd file loads, and catches
+    ``UnicodeDecodeError`` explicitly — it subclasses ``ValueError``, so
+    the original ``(json.JSONDecodeError, OSError)`` pair let a UTF-16
+    file raise straight out of config loading.
+    """
     if not path.is_file():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except UnicodeDecodeError as exc:
+        _logger.warning(
+            "Ignoring %s: not valid UTF-8 (%s at byte %d). Re-save it as "
+            "UTF-8 — PowerShell 5.1 writes UTF-16LE from `>` and `Out-File`.",
+            path, exc.reason, exc.start,
+        )
         return {}
+    except (json.JSONDecodeError, OSError) as exc:
+        _logger.warning("Ignoring %s: %s: %s", path, type(exc).__name__, exc)
+        return {}
+    # The return type is the contract every caller relies on: ``load_mcp_config``
+    # does ``.get("mcpServers")`` and ``save_mcp_config`` does ``existing[...] =``,
+    # so a top-level list or string would be an AttributeError / TypeError out
+    # of config loading rather than the documented "warn and use the default".
+    if not isinstance(data, dict):
+        _logger.warning(
+            "Ignoring %s: top-level value must be a JSON object, got %s.",
+            path, type(data).__name__,
+        )
+        return {}
+    return data
 
 
 def load_mcp_config(

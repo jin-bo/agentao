@@ -115,8 +115,8 @@ def _read_mcp_json(
 ) -> dict[str, dict[str, Any]]:
     """Read a ``.mcp.json`` file and return the ``mcpServers`` dict."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
         warnings.append(
             PluginWarning(
                 plugin_name=plugin_name,

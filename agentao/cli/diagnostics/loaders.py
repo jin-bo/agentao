@@ -49,7 +49,23 @@ def _load_json_object(
     if not path.is_file():
         return None, "absent", None
     try:
-        text = path.read_text(encoding="utf-8")
+        # ``utf-8-sig`` so a BOM'd file reads instead of being reported
+        # malformed. ``UnicodeDecodeError`` is caught explicitly because it
+        # subclasses ``ValueError`` — neither ``OSError`` nor
+        # ``json.JSONDecodeError`` covers it, and this reader is the one a
+        # user reaches for *because* their config is broken.
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        return None, "malformed", Finding(
+            level="error",
+            area=area,
+            message=(
+                f"{display} is not valid UTF-8 ({exc.reason} at byte "
+                f"{exc.start}). Re-save it as UTF-8 — PowerShell 5.1 writes "
+                "UTF-16LE from `>` and `Out-File`."
+            ),
+            source=str(path),
+        )
     except OSError as exc:
         return None, "unreadable", Finding(
             level="error",
