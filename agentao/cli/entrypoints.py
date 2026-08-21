@@ -102,7 +102,15 @@ def main(
         console.print("\n\n[success]Goodbye![/success]\n")
         sys.exit(0)
     except Exception as e:
-        console.print(f"\n[error]Fatal error: {str(e)}[/error]\n")
+        # ``escape`` because this renders arbitrary exception text into
+        # markup. ``PermissionConfigError`` quotes the offending config
+        # key verbatim, so a rule named ``[/oops]`` would make Rich raise
+        # ``MarkupError`` here — replacing the typed startup error the
+        # user needs with a traceback from the handler meant to prevent
+        # one. Same for ``OSError``, which stringifies as ``[Errno 13]``.
+        from rich.markup import escape as _esc
+
+        console.print(f"\n[error]Fatal error: {_esc(str(e))}[/error]\n")
         sys.exit(1)
 
 

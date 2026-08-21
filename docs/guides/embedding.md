@@ -117,6 +117,10 @@ What the factory does, in order:
    (`{PROVIDER}_API_KEY`, `{PROVIDER}_BASE_URL`,
    `{PROVIDER}_MODEL`, plus `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`).
 4. Builds `PermissionEngine(project_root=wd, user_root=user_root())`.
+   Raises `PermissionConfigError` if `~/.agentao/permissions.json`
+   exists but cannot be honored — this one config file fails closed,
+   because silently dropping a `deny` rule turns it into an *ask*
+   (or, for an `mcp_*` tool, into no prompt at all).
 5. Builds `MemoryManager` with `SQLiteMemoryStore.open_or_memory(...)`
    for the project DB and `SQLiteMemoryStore.open(...)` for the user
    DB (disabled with a warning if either path is unwritable).

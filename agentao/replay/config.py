@@ -12,9 +12,12 @@ safe loaders/writers used by both the CLI and runtime.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+_logger = logging.getLogger(__name__)
 
 
 # v1.1 capture-flag defaults. The design decision (step 2 of
@@ -109,8 +112,16 @@ def _load_settings(project_root: Optional[Path] = None) -> Dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except UnicodeDecodeError as exc:
+        _logger.warning(
+            "Ignoring %s: not valid UTF-8 (%s at byte %d). Re-save it as "
+            "UTF-8 — PowerShell 5.1 writes UTF-16LE from `>` and `Out-File`.",
+            path, exc.reason, exc.start,
+        )
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        _logger.warning("Ignoring %s: %s: %s", path, type(exc).__name__, exc)
         return {}
     return data if isinstance(data, dict) else {}
 

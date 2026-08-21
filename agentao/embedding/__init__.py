@@ -16,11 +16,15 @@ import path remains as a deprecation shim until 0.5.0; new code should
 `permission_loader` holds :func:`load_permission_rules`, the public
 helper that reads ``<user_root>/permissions.json``. Hosts pass the
 returned ``(rules, sources)`` to ``PermissionEngine(rules=..., loaded_sources=...)``
-so the engine itself does no file I/O.
+so the engine itself does no file I/O. Unlike every other config reader
+in the tree it **fails closed**: a file that exists but cannot be honored
+raises :class:`PermissionConfigError` rather than degrading to an empty
+rule list. Hosts that must survive a broken policy file — a diagnostics
+command, say — catch it; hosts that construct a session must not.
 """
 
 from .factory import build_from_environment
-from .permission_loader import load_permission_rules
+from .permission_loader import PermissionConfigError, load_permission_rules
 from .sessions import (
     delete_all_sessions,
     delete_session,
@@ -34,6 +38,7 @@ from .sessions import (
 __all__ = [
     "build_from_environment",
     "load_permission_rules",
+    "PermissionConfigError",
     "save_session",
     "load_session",
     "list_sessions",

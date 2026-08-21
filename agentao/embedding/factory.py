@@ -39,8 +39,16 @@ def _load_settings(wd: Path) -> Dict[str, Any]:
     if not path.is_file():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except UnicodeDecodeError as exc:
+        logger.warning(
+            "Ignoring %s: not valid UTF-8 (%s at byte %d). Re-save it as "
+            "UTF-8 — PowerShell 5.1 writes UTF-16LE from `>` and `Out-File`.",
+            path, exc.reason, exc.start,
+        )
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Ignoring %s: %s: %s", path, type(exc).__name__, exc)
         return {}
     return data if isinstance(data, dict) else {}
 

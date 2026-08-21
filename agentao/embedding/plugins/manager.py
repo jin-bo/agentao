@@ -424,9 +424,14 @@ class PluginManager:
         if not path.exists():
             return {}
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            # ``utf-8-sig`` + an explicit ``UnicodeDecodeError`` clause for the
+            # same reason as ``_resolve_mcp_servers`` below: that exception
+            # subclasses ``ValueError``, so neither name in the original pair
+            # caught it and a UTF-16LE ``plugins_config.json`` (PowerShell
+            # 5.1's ``>`` default) escaped straight out of plugin discovery.
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
             return data if isinstance(data, dict) else {}
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return {}
 
 
@@ -500,7 +505,7 @@ def _resolve_mcp_servers(
                 ))
             return {}
         try:
-            data = json.loads(mcp_path.read_text(encoding="utf-8"))
+            data = json.loads(mcp_path.read_text(encoding="utf-8-sig"))
             servers = data.get("mcpServers", data)
             if not isinstance(servers, dict):
                 if warnings is not None:
@@ -512,7 +517,7 @@ def _resolve_mcp_servers(
                     ))
                 return {}
             return servers
-        except (json.JSONDecodeError, OSError) as exc:
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
             if warnings is not None:
                 from .models import PluginWarning
                 warnings.append(PluginWarning(

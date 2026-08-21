@@ -39,7 +39,15 @@ def load_acp_client_config(
         return AcpClientConfig()
 
     try:
-        text = config_path.read_text(encoding="utf-8")
+        text = config_path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        # Subclasses ValueError, not OSError — without this clause a
+        # UTF-16 acp.json bypassed AcpConfigError and surfaced as a raw
+        # traceback, the one failure mode this function exists to prevent.
+        raise AcpConfigError(
+            f"{config_path} is not valid UTF-8 ({exc.reason} at byte "
+            f"{exc.start}). Re-save it as UTF-8 — PowerShell 5.1 writes UTF-16LE from `>` and `Out-File`."
+        ) from exc
     except OSError as exc:
         raise AcpConfigError(f"cannot read {config_path}: {exc}") from exc
 

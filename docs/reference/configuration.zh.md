@@ -80,7 +80,7 @@
 - **Loaders。**
   - `embedding/factory.py::_load_settings` — 读取 `agents.enable_builtin` / `enable_builtin_agents` 用作构造器的 `enable_builtin_agents` 默认值。
   - `plan/controller.py::_load_settings` — 在 plan-mode 会话结束后**恢复**权限模式时读取 `mode`。
-- **失败行为。** 文件缺失或 JSON 损坏 → 静默当作 `{}` 处理（不会启动报错）。
+- **失败行为。** 文件缺失 → 静默当作 `{}`。文件不可读、不是合法 UTF-8、或 JSON 损坏 → **打一条带路径的 warning**，再当作 `{}`（仍不会启动报错）。按 `utf-8-sig` 读取，因此带 BOM 的文件能正常加载，而不是被整份丢弃。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
 - **重要。** factory 启动时**不会**把 `mode` 应用到引擎；`PermissionEngine` 始终以 `workspace-write` 初始化。`mode` 字段是"上次持久化的模式"，用于恢复路径与 CLI 展示——运行期模式切换走 CLI 命令或 `PermissionEngine.set_mode()`。
 
 ### Schema
@@ -108,7 +108,9 @@
 - **路径。**
   1. `~/.agentao/permissions.json`（用户级）—— 唯一基于文件的规则来源。
   2. `<cwd>/.agentao/permissions.json`（项目级）—— **被忽略**并打 warning。原因见下方"为何不再支持项目级？"。
-- **Loader。** `permissions.py::PermissionEngine._load_file`。文件缺失或 JSON 损坏 → 空规则列表（不报错）。成功加载的文件会贡献 `loaded_sources` 标签（`user:<path>`），由 `PermissionEngine.active_permissions()` 与 `Agentao.active_permissions()` 暴露 —— 详见 [`docs/reference/host-api.md`](host-api.md)。
+- **Loader。** `embedding/permission_loader.py::load_permission_rules`。引擎自身不做任何文件 I/O。
+- **失败行为 —— 这份文件 fail closed**（0.4.20 变更；此前是降级为空规则列表、不报错）。文件缺失 → 静默返回空规则列表。其余任何情况 —— 不可读、不是合法 UTF-8、JSON 损坏、顶层不是 object、出现未知的顶层键（`rules` 是唯一合法键，因此 `{"rule": [...]}` 会被拒绝，而不是静默加载出零条规则）、或某条规则校验不通过 —— 都会抛出带路径的 `PermissionConfigError`，并中止会话构造。与其他配置文件的这种不对称是刻意的：丢掉一条 shell/web 工具的 `deny` 会降级成 *ask*，而丢掉一条 `mcp_*` 工具的 `deny` 会降级成**什么都不剩**（引擎返回无决策，runtime 落到工具自身的 `requires_confirmation`，于是 `trust: true` server 的工具直接无提示执行）。`agentao doctor` 会报告同样的失败但不会中止。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。
+- **来源标记。** 成功加载的文件会贡献 `loaded_sources` 标签（`user:<path>`），由 `PermissionEngine.active_permissions()` 与 `Agentao.active_permissions()` 暴露 —— 详见 [`docs/reference/host-api.md`](host-api.md)。
 - **公共 getter。** `PermissionEngine.active_permissions()` 返回一个缓存的、JSON 安全的 `ActivePermissions` 快照（`mode`、`rules`、`loaded_sources`）。叠加策略的宿主可调用 `add_loaded_source("injected:<name>")` 让快照反映其 provenance。`set_mode()` 与 `add_loaded_source()` 会使缓存失效。
 - **求值顺序。**
   - `read-only` / `workspace-write` 模式：`[用户规则] → [当前 mode 的 preset 规则]`，首个命中胜出。
@@ -139,7 +141,9 @@
 | `tool` | string | 是 | 工具名；通过 `re.fullmatch` 当作 regex 匹配（`"*"` 表示通配）。 |
 | `args` | object | 否 | `<arg_name>` → regex 的映射；**所有**条目都需 `re.search` 命中规则才生效。坏 regex 会回退为字面相等比较。 |
 | `domain` | object | 否 | URL 类工具专用（如 `web_fetch`）。键：`url_arg`（默认 `"url"`）、`allowlist`、`blocklist`。以 `.` 开头的 pattern 做后缀匹配（如 `.github.com` 同时匹配 `github.com` 与 `api.github.com`）；否则做精确匹配。带 `domain` 的规则**只有**当 hostname 命中其中一个列表时才匹配。 |
-| `action` | string | 是 | `"allow"` \| `"deny"` \| `"ask"`（大小写不敏感；未知值按 `"ask"` 处理）。 |
+| `action` | string | 是 | `"allow"` \| `"deny"` \| `"ask"`。大小写不敏感。**未知值一律拒绝**（0.4.20 变更）—— 此前按 `"ask"` 处理，正是这一点让 `{"action": "alow"}` 静静躺在配置里什么也不做，而 `/permissions` 还把它原样打印成 `[? ALOW]`。 |
+
+**键集合是封闭的，且 `tool` / `action` 必填。** `tool`、`args`、`domain`、`action`，以及 `domain` 下的 `url_arg` / `allowlist` / `blocklist`。其余任何键都是校验错误，而不再是被静默忽略的字段（0.4.20）。**存在性**同样会校验，因为引擎对*缺失*键的兜底是改写规则而不是拒绝它：`rule.get("tool", "*")` 会把 `{"action": "allow"}` 变成放行**一切**的规则，而 `rule.get("action", "ask")` 会悄悄把作者本意为 deny 的规则改标成 ask。要显式通配请写 `{"tool": "*"}`。引擎只读这四个键，所以在校验存在之前，一个词的拼写错误会丢掉规则的**条件**并把它放宽：`{"tool": "run_shell_command", "pattern": "^git ", "action": "allow"}`（`pattern` 本该是 `args`）会放行**任意** shell 命令，而且显示成一条普通的 `[✓ ALLOW]`。类型同样会校验；文件规则、`PermissionEngine(rules=...)`、run spec 的 `permissions:` 块共用同一个 validator。
 
 **内置 preset** 在 `permissions.py::_PRESET_RULES`，按上述顺序追加在自定义规则之后（或在 `full-access` / `plan` 下放在前面）：
 
@@ -158,6 +162,7 @@
   1. `~/.agentao/mcp.json`（用户级）—— 任何在该文件声明的 server name 都以此为准。
   2. `<cwd>/.agentao/mcp.json`（项目级）—— **仅可新增**：可以声明*新*的 server name，但不能覆盖用户级同名条目。冲突时打 warning + 跳过项目项。
 - **Loader。** `mcp/config.py`。值里的环境变量会被展开（`$VAR` 形式）。
+- **失败行为。** 文件缺失 → 静默。文件不可读、不是合法 UTF-8、或 JSON 损坏 → 打一条带路径的 warning，然后退回默认值（该文件不贡献任何 server）。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
 
 ### Schema
 
@@ -210,7 +215,7 @@
 
 - **路径。** 仅 `<cwd>/.agentao/acp.json`。**没有用户级变体**——ACP 服务器明确按项目隔离。
 - **Loader。** `acp_client/config.py::load_acp_config`（解析后通过 `acp_client/models.py::AcpServerConfig.from_dict` 转为 `AcpServerConfig`）。
-- **失败行为。** `command` / `args` / `env` / `cwd` 缺失会在配置加载时抛 `AcpConfigError`——直接启动失败。
+- **失败行为。** `command` / `args` / `env` / `cwd` 缺失会在配置加载时抛 `AcpConfigError`——直接启动失败。文件不可读、不是合法 UTF-8、或 JSON 损坏同样如此：这个面 fail closed，且所有失败都以 `AcpConfigError` 形式抛出，不会变成裸 traceback。按 `utf-8-sig` 读取。
 - **热加载。** CLI 监听文件 mtime；编辑会在下一次 inbox 轮询时被发现（`cli/acp_inbox.py`）。
 - **子进程环境。** ACP 服务器是从配置里拉起的第三方二进制——和 MCP 服务器处在同一信任位置——所以它的基础环境来自 `capabilities/process.py::build_child_env()`，**不会**继承 agentao 自己的 provider 凭据。原本靠继承 `OPENAI_API_KEY` 跑通的 server 现在会拿到 401；请在它的 `env` 块里显式声明，或设 `AGENTAO_SCRUB_CHILD_ENV=0` 在整个进程范围恢复完整继承。
 
@@ -258,6 +263,7 @@
 
 - **路径。** `<cwd>/.agentao/skills_config.json`（仅项目级）。
 - **Loader。** `skills/manager.py`。
+- **失败行为。** 文件缺失 → 静默。文件不可读、不是合法 UTF-8、或 JSON 损坏 → 打一条带路径的 warning，然后退回默认值（不禁用任何 skill）。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
 
 ### Schema
 

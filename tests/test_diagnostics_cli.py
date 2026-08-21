@@ -569,3 +569,65 @@ class TestRejectUnknownArgs:
         monkeypatch.setattr(_sys, "argv", ["agentao", "doctor", "--json"])
         cli.entrypoint()
         assert called.get("ran") is True
+
+
+# ----------------------------------------------------------------------
+# Rich display boundary
+# ----------------------------------------------------------------------
+
+
+class TestRendererSurvivesHostileMarkup:
+    """``agentao doctor`` runs *because* something is already broken.
+
+    Every dynamic value it prints — a config path, an env value, exception
+    text, a Finding message — is user-controlled, and Rich reads ``[...]``
+    as markup. A permission rule named ``[/oops]``, a repo checked out
+    under ``~/[wip]/``, or an ``OSError`` stringifying as ``[Errno 13]``
+    would otherwise raise ``MarkupError`` out of the renderer and abort the
+    report at the worst possible moment.
+    """
+
+    def _report(self, **finding_kwargs):
+        from agentao.cli.diagnostics.models import DiagnosticReport, Finding
+
+        report = DiagnosticReport()
+        report.add(Finding(**finding_kwargs))
+        return report
+
+    def test_an_unbalanced_closing_tag_is_genuinely_hostile(self):
+        """Counterfactual: prove the payload breaks an unescaped print."""
+        import pytest as _pytest
+        from rich.console import Console
+        from rich.errors import MarkupError
+
+        with _pytest.raises(MarkupError):
+            Console().print("[dim]unknown field '[/oops]'[/dim]")
+
+    def test_finding_message_and_source_are_escaped(self, capsys):
+        from agentao.cli.diagnostics.render import _render_human
+
+        report = self._report(
+            level="error",
+            area="permissions",
+            message="rules[0]: unknown field '[/oops]'",
+            source="/home/u/[wip]/.agentao/permissions.json",
+        )
+        _render_human(report, header="agentao doctor")  # must not raise
+        out = capsys.readouterr().out
+        assert "[/oops]" in out
+        assert "[wip]" in out
+
+    def test_section_paths_and_error_text_are_escaped(self, capsys):
+        from agentao.cli.diagnostics.models import DiagnosticReport
+        from agentao.cli.diagnostics.render import _render_human
+
+        report = DiagnosticReport()
+        report.sections["settings"] = {
+            "status": "malformed", "path": "/home/u/[wip]/settings.json",
+        }
+        report.sections["plugins"] = {
+            "status": "error", "error": "[Errno 13] Permission denied",
+        }
+        _render_human(report, header="agentao doctor")  # must not raise
+        out = capsys.readouterr().out
+        assert "[Errno 13]" in out

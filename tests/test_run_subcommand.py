@@ -919,3 +919,113 @@ def test_print_mode_shim_returns_4_on_max_iter(
 
     rc = run_print_mode("hello world")
     assert rc == 4
+
+
+# ---------------------------------------------------------------------------
+# Spec permission rules — validated before the runtime exists
+# ---------------------------------------------------------------------------
+
+
+class TestSpecPermissionRulesArePreflighted:
+    """``permissions:`` is spec input, so a bad rule is an ``invalid_spec``.
+
+    The engine's validator is the first thing that can reject
+    ``args: {command: 1}`` — ``RunPermissionRule.args`` is
+    ``Dict[str, Any]``, so pydantic lets it through. Validating it after
+    ``build_from_environment`` would misreport it as whatever construction
+    failed on first, and would build the whole runtime before rejecting
+    input that was invalid from the start.
+    """
+
+    SPEC = {
+        "prompt": "hi",
+        "permissions": {
+            "allow": [{"tool": "run_shell_command", "args": {"command": 1}}],
+        },
+    }
+
+    def _run(self, monkeypatch, tmp_path, fmt="json"):
+        spec_path = tmp_path / "task.json"
+        spec_path.write_text(json.dumps(self.SPEC), encoding="utf-8")
+        _no_stdin(monkeypatch)
+        from agentao.cli import run
+
+        return run._execute_with_args(
+            _build_args(spec_path=str(spec_path), output_format=fmt),
+        )
+
+    def test_rejected_as_invalid_spec(self, monkeypatch, tmp_path, stub_pipeline, capsys):
+        from agentao.cli.run import EXIT_INVALID_USAGE
+
+        assert self._run(monkeypatch, tmp_path) == EXIT_INVALID_USAGE
+        payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert payload["error"]["type"] == "invalid_spec"
+        assert "permissions.allow[0]" in payload["error"]["message"]
+
+    def test_no_agent_is_constructed(self, monkeypatch, tmp_path, capsys):
+        """The point of pre-flighting: no runtime, no on-disk side effects.
+
+        Deliberately does **not** use ``stub_pipeline`` — the factory here
+        raises, standing in for any construction failure at all (a missing
+        API key is the common one). If the rule check still runs first,
+        this call never reaches it.
+        """
+        def _boom(**kwargs):  # pragma: no cover - must never be called
+            raise AssertionError("agent was constructed before the spec was validated")
+
+        monkeypatch.setattr("agentao.embedding.build_from_environment", _boom)
+        from agentao.cli.run import EXIT_INVALID_USAGE
+
+        assert self._run(monkeypatch, tmp_path) == EXIT_INVALID_USAGE
+
+    def test_invalid_spec_outranks_a_construction_failure(
+        self, monkeypatch, tmp_path, capsys,
+    ):
+        """A missing API key must not turn exit 2 into exit 1.
+
+        This is the ordering bug itself: with the check after
+        construction, the runtime error is reported first and automation
+        reads a spec typo as a transient runtime problem.
+        """
+        monkeypatch.setattr(
+            "agentao.embedding.build_from_environment",
+            lambda **kw: (_ for _ in ()).throw(ValueError("api_key required")),
+        )
+        from agentao.cli.run import EXIT_INVALID_USAGE, EXIT_RUNTIME_ERROR
+
+        rc = self._run(monkeypatch, tmp_path)
+        assert rc == EXIT_INVALID_USAGE
+        assert rc != EXIT_RUNTIME_ERROR
+        payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert payload["error"]["type"] == "invalid_spec"
+        assert "api_key" not in payload["error"]["message"]
+
+    def test_a_valid_permissions_block_passes_the_gate(
+        self, monkeypatch, tmp_path, stub_pipeline,
+    ):
+        """Counterfactual — the gate must not reject working specs.
+
+        Scoped to the gate: the stub agent carries
+        ``permission_engine = None``, so this asserts the pre-flight let
+        the spec through, not that the rules were installed. The engine
+        side is covered by
+        ``test_permission_rule_validation.py::TestCallers``.
+        """
+        captured, _ = stub_pipeline
+        spec_path = tmp_path / "task.json"
+        spec_path.write_text(json.dumps({
+            "prompt": "hi",
+            "permissions": {
+                "allow": [{"tool": "run_shell_command",
+                           "args": {"command": "^git "}}],
+                "deny": [{"tool": "web_fetch",
+                          "domain": {"blocklist": [".evil.example"]}}],
+            },
+        }), encoding="utf-8")
+        _no_stdin(monkeypatch)
+        from agentao.cli import run
+
+        rc = run._execute_with_args(
+            _build_args(spec_path=str(spec_path), output_format="text"),
+        )
+        assert rc == 0

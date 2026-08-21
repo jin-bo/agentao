@@ -102,9 +102,17 @@ def _collect_provider(report: DiagnosticReport) -> None:
 def _collect_permissions(wd: Path, report: DiagnosticReport) -> None:
     """Load permission rules and capture parse-status findings.
 
-    Mirrors ``embedding.permission_loader.load_permission_rules`` but
-    distinguishes 'missing' from 'malformed' so the user knows when their file
-    is being silently ignored.
+    Deliberately **mirrors** ``embedding.permission_loader`` rather than
+    calling it. That loader fails closed — it raises
+    ``PermissionConfigError`` and lets session construction abort — and a
+    doctor that propagates the same exception would exit at exactly the
+    moment the user needs it. So the checks are duplicated here in a
+    catch-and-report shape: same failures, same rule validator, all
+    downgraded to Findings, and the report always finishes.
+
+    The duplication is the standing risk. When the runtime loader's
+    behaviour changes, this mirror has to move in the same commit or it
+    goes on describing the old contract.
     """
     from ...paths import user_root
 
@@ -124,22 +132,65 @@ def _collect_permissions(wd: Path, report: DiagnosticReport) -> None:
     data, status, finding = _load_json_object(
         user_path, area="permissions", label="user-scope permissions.json",
     )
+    section["user_status"] = status
+    # Every branch below that the runtime loader would have raised on sets
+    # this, so the "will not start" finding is emitted exactly once at the
+    # end — including for an invalid *rule*, which is the likeliest new
+    # failure and the one a per-rule message alone does not explain.
+    unusable = finding is not None
     if finding is not None:
         report.add(finding)
-    section["user_status"] = status
+
     if status == "ok" and data is not None:
+        from ...permissions import validate_permission_rules
+
+        # Mirror the loader's *document*-level check as well: ``{"rule":
+        # [...]}`` parses cleanly and drops every rule, so a doctor that ran
+        # only the rule validator would report the file as healthy.
+        stray_keys = sorted(k for k in data if k != "rules")
         rules = data.get("rules", [])
-        if not isinstance(rules, list):
+        rule_errors = validate_permission_rules(rules)
+        if stray_keys or rule_errors:
+            unusable = True
             section["user_status"] = "malformed"
-            report.add(Finding(
-                level="error",
-                area="permissions",
-                message="'rules' in permissions.json must be a list",
-                source=str(user_path),
-            ))
+            for key in stray_keys:
+                report.add(Finding(
+                    level="error",
+                    area="permissions",
+                    message=(
+                        f"permissions.json has unknown top-level key {key!r} "
+                        "(allowed: rules). A typo here is silent: the file "
+                        "parses and every rule is dropped."
+                    ),
+                    source=str(user_path),
+                ))
+            for index, reason in rule_errors:
+                where = "rules" if index is None else f"rules[{index}]"
+                report.add(Finding(
+                    level="error",
+                    area="permissions",
+                    message=f"permissions.json {where}: {reason}",
+                    source=str(user_path),
+                ))
         else:
             section["rule_count"] = len(rules)
             section["loaded_sources"].append(f"user:{user_path}")
+
+    if unusable:
+        # ``_load_json_object`` / the validator above already reported *what*
+        # is wrong. Say what it now costs, which is no longer "the file is
+        # ignored".
+        report.add(Finding(
+            level="error",
+            area="permissions",
+            message=(
+                "Agentao will not start while user-scope permissions.json "
+                "is unusable: a dropped deny rule silently becomes an ask, "
+                "and for an mcp_* tool it becomes no prompt at all. Fix the "
+                "file, or move it aside to run with defaults."
+            ),
+            source=str(user_path),
+        ))
 
     if project_path.exists():
         section["project_status"] = "ignored"

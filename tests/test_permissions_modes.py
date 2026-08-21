@@ -4,6 +4,8 @@ Split out from the original monolithic ``test_permissions.py``. The
 hardline floor and sensitive-write preset live in their own modules.
 """
 
+import pytest
+
 from agentao.permissions import PermissionDecision, PermissionEngine, PermissionMode
 
 from tests.support.permissions import allow, deny, make_engine as _engine
@@ -277,12 +279,27 @@ def test_wildcard_tool_rule(tmp_path, monkeypatch):
 # Error handling
 # ---------------------------------------------------------------------------
 
-def test_invalid_json_user_config_graceful_fallback(tmp_path):
+def test_invalid_json_user_config_fails_closed(tmp_path):
+    """Breaking-change acceptance test (was ``..._graceful_fallback``).
+
+    Until 0.4.20 this asserted the opposite — engine construction had to
+    survive an unparseable policy file with ``rules == []``. Silently
+    dropping rules is not a neutral degradation: a user ``deny`` on a
+    shell tool degrades to ASK, and on an ``mcp_*`` tool it degrades to
+    no prompt at all. The policy file now fails closed.
+    """
+    from agentao.embedding.permission_loader import PermissionConfigError
+
     user_root = tmp_path / "home" / ".agentao"
     user_root.mkdir(parents=True)
-    (user_root / "permissions.json").write_text("not valid json", encoding="utf-8")
-    e = PermissionEngine(project_root=tmp_path, user_root=user_root)  # should not raise
-    assert e.rules == []
+    bad = user_root / "permissions.json"
+    bad.write_text("not valid json", encoding="utf-8")
+
+    with pytest.raises(PermissionConfigError) as excinfo:
+        PermissionEngine(project_root=tmp_path, user_root=user_root)
+
+    assert excinfo.value.path == bad
+    assert str(bad) in str(excinfo.value)
 
 
 def test_stray_project_config_does_not_raise(tmp_path):

@@ -333,10 +333,25 @@ do not disable the engine.
 - Modes (`agentao.permissions.PermissionMode`): `read-only`,
   `workspace-write` (default), `full-access`, `plan`. Set with
   `agent.permission_engine.set_mode(PermissionMode.WORKSPACE_WRITE)`.
-- Rules come from `.agentao/permissions.json` (project) +
-  `~/.agentao/permissions.json` (user). The engine does no file I/O;
+- Rules come from `~/.agentao/permissions.json` (user scope only — a
+  project-scope file is ignored with a warning, because a checked-in
+  `{"tool": "*", "action": "allow"}` would defeat the user's policy on
+  the first match). The engine does no file I/O;
   `agentao.embedding.permission_loader.load_permission_rules()` reads
   them.
+- **That loader fails closed.** A policy file that exists but cannot be
+  honored — unreadable, not valid UTF-8, malformed JSON, or carrying a
+  rule that fails validation — raises `PermissionConfigError` instead of
+  degrading to an empty rule list. Let it propagate when constructing a
+  session; catch it only in a diagnostics path that must still finish.
+- **Rules you pass yourself are validated too.** `PermissionEngine(rules=...)`
+  and `add_run_rules()` raise `PermissionRuleError` on an unknown field or
+  a wrong type. The legal key set is closed: `tool`, `args`, `domain`,
+  `action` — and `tool` / `action` must be present, since the engine's
+  fallbacks (`"*"` / `"ask"`) rewrite an incomplete rule rather than
+  refuse it. Pass `{"tool": "*"}` for a deliberate wildcard. Before this
+  existed, a `pattern`-for-`args` typo silently dropped the rule's
+  condition and widened it to the whole tool.
 - Inspect what *will* apply: `agent.active_permissions()` →
   `{mode, rules, loaded_sources}` (JSON-safe snapshot).
 - Layering host policy? Tag provenance with
