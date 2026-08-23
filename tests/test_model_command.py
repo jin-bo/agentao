@@ -19,9 +19,18 @@ _FAKE_KEY = "test-key"
 
 
 def _has_fake_openai_key() -> bool:
-    """True if OPENAI_API_KEY is an obvious placeholder (e.g. set by another test)."""
-    key = os.getenv("OPENAI_API_KEY", "")
-    return key.startswith("test-key") or key in {"", "dummy", "fake"}
+    """True if OPENAI_API_KEY is an obvious placeholder (e.g. set by another test).
+
+    Matches the whole ``test-`` family rather than one literal: the suite injects
+    at least two spellings (``test-key`` here, ``test-dummy-key`` from
+    ``conftest.py`` and several ACP/MCP tests), and enumerating them drifts —
+    ``test-dummy-key`` used to slip through, so this test would take the *live*
+    branch and fire a real request that 401s. No real provider key starts with
+    ``test-``, so the prefix is the safe generalisation; a developer's genuine
+    key still selects live mode.
+    """
+    key = os.getenv("OPENAI_API_KEY", "").strip().lower()
+    return key.startswith("test-") or key in {"", "dummy", "fake"}
 
 
 def _use_live_models() -> bool:
