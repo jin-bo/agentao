@@ -29,6 +29,15 @@ class _CompactionMixin:
         agent = self._agent
         if not agent.context_manager.needs_microcompaction(messages_with_system, tokens=tokens):
             return messages_with_system, system_prompt
+        if not agent.context_manager.microcompact_would_mutate(agent.messages):
+            # Same stand-down as the open breaker below, one tier cheaper.
+            # Being *in* the 55-65% band says nothing about there being
+            # anything left to shorten: once every old tool result is at or
+            # under the limit, every further iteration in the band is a no-op —
+            # and running the preamble anyway forks a PreCompact hook
+            # subprocess per iteration and emits a CONTEXT_COMPRESSED reporting
+            # pre == post, on top of two full-history token estimates.
+            return messages_with_system, system_prompt
         self._dispatch_pre_compact(
             compaction_type="microcompact",
             reason="microcompact_threshold",
@@ -37,7 +46,12 @@ class _CompactionMixin:
         pre_tokens = agent.context_manager.estimate_tokens(messages_with_system)
         pre_msgs = len(agent.messages)
         agent.messages = agent.context_manager.microcompact_messages(agent.messages)
-        agent.context_manager.invalidate_token_anchor()  # tool results truncated in place
+        if agent.context_manager.last_microcompact_mutated:
+            # Only a pass that actually shortened something invalidates the
+            # already-sent prefix. Dropping the anchor unconditionally forced a
+            # full re-encode of the entire history on every iteration spent in
+            # the microcompact band — precisely when it is most expensive.
+            agent.context_manager.invalidate_token_anchor()
         messages_with_system = [
             {"role": "system", "content": system_prompt}
         ] + agent.messages
@@ -60,6 +74,22 @@ class _CompactionMixin:
     ) -> Tuple[list, str]:
         agent = self._agent
         if not agent.context_manager.needs_compression(messages_with_system, tokens=tokens):
+            return messages_with_system, system_prompt
+        if agent.context_manager.compaction_circuit_open:
+            # Every attempt now returns history unchanged, so announcing the
+            # compaction would fork a PreCompact hook subprocess per iteration
+            # for something that never happens — and emit a CONTEXT_COMPRESSED
+            # reporting pre == post. Stand down and let the API-overflow
+            # recovery path in ``_runner`` own it from here.
+            #
+            # Still log it: standing down before ``compress_messages`` skips
+            # the breaker warning *it* used to emit, and that line was the only
+            # signal that auto-compaction is dead for the rest of the session
+            # (the counter has no reset path).
+            agent.llm.logger.warning(
+                "Compact circuit breaker open — skipping auto-compaction; "
+                "context stays over threshold until the API-overflow path recovers it"
+            )
             return messages_with_system, system_prompt
         self._dispatch_pre_compact(
             compaction_type="full",

@@ -46,10 +46,19 @@ def test_pre_compact_fires_before_mutation_and_message_still_compacts(
     )
 
     # Seed agent.messages with something pre-mutation so we can detect
-    # that the mutation actually ran.
+    # that the mutation actually ran. It has to be a history microcompaction
+    # would *genuinely* shorten: ``_maybe_microcompact`` stands down before
+    # dispatching when there is nothing left to truncate, and that predicate
+    # (``microcompact_would_mutate``) is deliberately left un-stubbed here —
+    # stubbing it too would let this test pass against a build that announces
+    # compactions it never performs.
+    _oversized = "x" * (agent.context_manager.MICROCOMPACT_TOOL_LIMIT + 1_000)
     agent.messages = [
         {"role": "user", "content": "earlier turn"},
         {"role": "assistant", "content": "earlier reply"},
+    ] + [
+        {"role": "tool", "name": "read_file", "content": _oversized}
+        for _ in range(agent.context_manager.MICROCOMPACT_PRESERVE_RECENT + 1)
     ]
     pre_len = len(agent.messages)
     messages_with_system = [
@@ -87,3 +96,45 @@ def test_pre_compact_fires_before_mutation_and_message_still_compacts(
     assert pre_event.data["trigger"] == "auto"
     assert pre_event.data["matched_rule_count"] == 1
     assert pre_event.data["outcome"] == "allow"
+
+
+def test_no_op_microcompaction_does_not_announce_a_compaction(tmp_path, monkeypatch):
+    """Being in the 55-65% band is not on its own a reason to fire PreCompact.
+
+    Once every old tool result is already at or under
+    ``MICROCOMPACT_TOOL_LIMIT``, every further pass in the band shortens
+    nothing. Running the preamble anyway forks a hook subprocess per loop
+    iteration and emits a ``CONTEXT_COMPRESSED`` reporting ``pre == post`` —
+    the same defect the open-circuit guard fixes for full compression.
+    """
+    script, capture = write_capture_script(tmp_path)
+    rule = ParsedHookRule(
+        event="PreCompact",
+        hook_type="command",
+        command=f"sh '{script}'",
+        plugin_name="t",
+    )
+    runner, transport = make_runner_with_rules(tmp_path, rules=[rule])
+    agent = runner._agent
+
+    monkeypatch.setattr(
+        agent.context_manager, "needs_microcompaction",
+        lambda messages, tokens=None: True,
+    )
+    # Nothing oversized: real history, real predicate.
+    agent.messages = [
+        {"role": "user", "content": "go"},
+        {"role": "tool", "name": "read_file", "content": "short"},
+    ]
+    before = list(agent.messages)
+    messages_with_system = [{"role": "system", "content": "sys"}] + agent.messages
+
+    result, prompt = runner._maybe_microcompact(messages_with_system, "sys")
+
+    assert result is messages_with_system, "history must be handed back untouched"
+    assert prompt == "sys"
+    assert agent.messages == before
+    assert not capture.exists(), "PreCompact hook subprocess was forked for a no-op"
+    kinds = [e.type.value for e in transport.events]
+    assert "plugin_hook_fired" not in kinds
+    assert "context_compressed" not in kinds

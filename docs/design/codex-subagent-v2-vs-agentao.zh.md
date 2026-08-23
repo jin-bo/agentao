@@ -8,6 +8,7 @@
 **锚点：** codex `openai/codex@2151d3a5b7`（增量 `2230d64464..2151d3a5b7`，487 commit）；agentao `main@c06a143`。英文孪生待写。
 **先前记录：** `openworker-borrow-review.zh.md` §1 —— **§2 那条 fail-open 是它首报并已完整定规的 P1，本文不是首报**。另见 `codex-goal-mechanism-review.zh.md`、`subagent-discovery-entrypoint-review.zh.md`。
 **已移出：** 项目级 agent 定义的信任线不一致（与 codex 无关）→ `agent-definition-trust-line.zh.md`。
+**同锚点对照：** `codex-compaction-vs-agentao.zh.md`（同一 codex 锚点 `2151d3a5b7`，压缩子系统侧）。
 **方法：** 两侧都读源码，每条主张就地附 `file:line`；**§2 的传输选择是实测的**（附可复现脚本），不是读出来的。
 
 ---

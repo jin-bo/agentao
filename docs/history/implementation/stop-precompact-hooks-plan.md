@@ -6,6 +6,28 @@
 **Companion:** `STOP_PRECOMPACT_HOOKS_PLAN.zh.md`.
 **Scope:** Two new lifecycle events (`Stop`, `PreCompact`) on the existing plugin-hook surface, split into two layered phases — event surface (Phase A) and control-aware gate (Phase B).
 
+
+> **⚠️ Errata banner — 2026-08-22 (nothing in the body below was edited).**
+>
+> This is a **superseded 2026-05 implementation plan**, filed under `docs/history/` per `docs/README.md:137`; the body and its "Revision notes" are preserved as written, **not retro-edited**. But this document's "Claude Code compatibility matrix" is the **only** place in the repo that records the `PreCompact` hook contract, and other docs still cite it as authoritative — so the following **present-tense** claims need marking as expired in place.
+>
+> **Trigger: `/compact` shipped after this plan** (`agentao/cli/input_loop.py:230` → `agentao/cli/commands/compact.py:82`) and it **does** dispatch PreCompact (`compact.py:44-79`, passing `compaction_type="full"`, `reason="manual_cli"`). No such path existed when this plan was written, and several passages assume "Agentao has no manual `/compact` CLI".
+>
+> | Location | What this doc says | Reality as of 2026-08-22 |
+> |---|---|---|
+> | Matrix row `PreCompact input trigger` (`:82`) | "`"manual"` is never emitted (**Agentao has no manual `/compact` CLI**)" 🟡 | **Reason expired.** `/compact` exists. `"manual"` is still never emitted, but the cause is now that `build_pre_compact` **hardcodes** `"trigger": "auto"` (`agentao/plugins/hooks/_payload.py:160`, no parameter to override it). This is no longer "a narrower value set" but a **wrong value** — manual compaction reports itself as `auto`: an **agentao post-translation matcher object** `{"trigger": "manual"}` can never match, while `{"trigger": "auto"}` **wrongly matches manual compaction** (**note**: Claude's own config shape is the top-level string `{"matcher": "manual\|auto"}`, see this doc's `Matcher (PreCompact) — config-file shape` row; `{"trigger": ...}` is the host-pre-translated agentao object form). By this doc's own matrix convention the row should be ❌, not 🟡. |
+> | Matrix row `PreCompact input custom_instructions` (`:83`) | "Always empty (**no manual trigger**)" 🟡 | **Reason expired, conclusion still holds.** It is now empty because `_payload.py:161` hardcodes `""`, and because `handle_compact_command(cli, args)` **ignores** the `args` it receives entirely (`compact.py:82`) — so `/compact <instructions>` never reaches the hook. |
+> | A3 `compaction_type` field row (`:441`) | "subdivides under `trigger="auto"`" | The manual site also lands under `trigger="auto"` — **because it is hardcoded, not because it is auto**. |
+> | A3 `reason` stable-value list (`:442`) | Four values: `microcompact_threshold` / `compression_threshold` / `api_overflow` / `api_overflow_after_compression` | **Missing `"manual_cli"`** (`compact.py:63`). |
+> | A4 emit-site table (from `:480`) | Four emit sites | **Now five**, adding the manual site at `cli/commands/compact.py:44`. |
+> | A5 `PLUGIN_HOOK_FIRED` projection (`:512`) | "`trigger` is always `"auto"` under this plan" | Qualified by "under this plan", so **still accurate as a historical statement**; but the manual site emits `"trigger": "manual"` in its replay event (`compact.py:75`), **contradicting the hook payload (`"auto"`) for the same compaction**. |
+>
+> **Two items this banner does not resolve (they need a separate decision, not a doc edit):**
+> 1. **Code defect** — `build_pre_compact` takes no `trigger` argument, so a manual compaction's hook payload and its replay event report different `trigger` values for the same compaction. Fixing it **changes the hook contract** (the match set of agentao's post-translation matcher objects shifts), and `tests/test_hooks_pre_compact_payload_claude_shape.py:60-74` enumerates only the four sites, without `manual_cli` — **the existing tests cannot catch it**.
+> 2. **The contract recorded here has no living document** — the `PreCompact` payload/matcher contract exists only inside this superseded plan (`grep -rl PreCompact docs/ --include=*.md` hits nothing outside `docs/history/` except design reviews and release notes).
+>
+> Source of this banner: `docs/design/codex-compaction-vs-agentao.zh.md` §8.
+
 ---
 
 ## TL;DR

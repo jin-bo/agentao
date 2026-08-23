@@ -1,5 +1,6 @@
 """Test ContextManager: token estimation, compression, and memory recall."""
 
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock
@@ -520,3 +521,210 @@ if __name__ == "__main__":
     print("✓ Integration test passed")
 
     print("\n✅ All ContextManager tests passed!")
+
+
+# ---------------------------------------------------------------------------
+# _format_for_summary — tool-call invocations (F1)
+#
+# The summary prompt asks for "Every file examined, created, or modified" and
+# for error messages quoted verbatim. Both live in the tool *call* arguments,
+# not in the tool result — and an assistant turn that only called tools stores
+# ``content == ""``, so before this the whole message was dropped and the
+# summarizer saw results with no invocation.
+# ---------------------------------------------------------------------------
+
+def _cm():
+    from agentao.context_manager import ContextManager
+    return ContextManager(_make_mock_llm(), Mock(), max_tokens=200_000)
+
+
+def _tool_call(name, arguments, call_id="call_1"):
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": arguments},
+    }
+
+
+def test_format_for_summary_renders_tool_call_from_empty_content_assistant():
+    """A pure tool-call assistant turn (content=="") must not vanish."""
+    cm = _cm()
+    out = cm._format_for_summary([
+        {"role": "assistant", "content": "",
+         "tool_calls": [_tool_call("read_file", '{"file_path": "/repo/agentao/agent.py"}')]},
+        {"role": "tool", "name": "read_file", "content": "x" * 5_000},
+    ])
+    assert "[Tool Call - read_file]" in out
+    assert "/repo/agentao/agent.py" in out, out
+    assert "[Tool Result - read_file]" in out
+
+
+def test_format_for_summary_keeps_short_args_when_one_value_is_huge():
+    """A write_file body must not evict the file_path beside it.
+
+    This is the whole point of parsing the JSON instead of truncating the raw
+    blob: the path is the datum the summary needs, and it may be emitted
+    after the oversized one.
+    """
+    cm = _cm()
+    args = json.dumps({"content": "B" * 60_000, "file_path": "/repo/deep/nested/target.py"})
+    out = cm._format_for_summary([
+        {"role": "assistant", "content": "", "tool_calls": [_tool_call("write_file", args)]},
+    ])
+    assert "/repo/deep/nested/target.py" in out, out
+    assert "B" * 300 not in out          # body was clipped
+    assert "chars)" in out               # omission marker present
+
+
+def test_format_for_summary_renders_content_and_tool_calls_together():
+    """An assistant turn with both prose and calls keeps both."""
+    cm = _cm()
+    out = cm._format_for_summary([
+        {"role": "assistant", "content": "Let me check the config.",
+         "tool_calls": [_tool_call("run_shell_command", '{"command": "pytest -q"}')]},
+    ])
+    assert "[ASSISTANT]: Let me check the config." in out
+    assert "[Tool Call - run_shell_command]" in out
+    assert "pytest -q" in out
+
+
+def test_format_for_summary_tolerates_malformed_tool_calls():
+    """Non-JSON args, non-dict entries and a missing function must not raise."""
+    cm = _cm()
+    out = cm._format_for_summary([
+        {"role": "assistant", "content": "", "tool_calls": [
+            _tool_call("broken", "{not valid json"),
+            "not-a-dict",
+            {"id": "x", "type": "function"},          # no function key
+            _tool_call("scalar_args", '"just-a-string"'),
+        ]},
+        {"role": "assistant", "content": "", "tool_calls": "not-a-list"},
+    ])
+    assert "[Tool Call - broken]: {not valid json" in out
+    assert "[Tool Call - unknown]" in out
+    assert "[Tool Call - scalar_args]" in out
+
+
+def test_format_for_summary_caps_tool_calls_per_message():
+    """A wide parallel-call turn is bounded, and says how much it dropped."""
+    from agentao.context_manager import ContextManager
+    cm = _cm()
+    n = ContextManager._MAX_TOOL_CALLS_RENDERED + 3
+    calls = [_tool_call("read_file", json.dumps({"file_path": f"/f{i}.py"}), f"c{i}")
+             for i in range(n)]
+    out = cm._format_for_summary([{"role": "assistant", "content": "", "tool_calls": calls}])
+    assert out.count("[Tool Call - read_file]") == ContextManager._MAX_TOOL_CALLS_RENDERED
+    assert "3 more tool call(s) omitted" in out
+
+
+def test_format_for_summary_tool_messages_still_have_no_call_line():
+    """role=='tool' short-circuits — a stray tool_calls key must not render."""
+    cm = _cm()
+    out = cm._format_for_summary([
+        {"role": "tool", "name": "read_file", "content": "data",
+         "tool_calls": [_tool_call("should_not_render", "{}")]},
+    ])
+    assert "should_not_render" not in out
+    assert out == "[Tool Result - read_file]: data"
+
+
+# ---------------------------------------------------------------------------
+# F2 — split-point selection must not silently no-op
+#
+# The split used to *require* a 'user' boundary in the summarizable range.
+# A long agentic turn routinely ends in 20 consecutive assistant/tool messages
+# (~10 tool calls), which made compaction a permanent no-op: it returned the
+# history unchanged, counted no failure, and the caller re-entered every
+# iteration until the API rejected the context.
+# ---------------------------------------------------------------------------
+
+def _agentic_tail(n_calls):
+    """assistant(tool_calls) + tool, repeated — no user message anywhere."""
+    out = []
+    for i in range(n_calls):
+        out.append({"role": "assistant", "content": "",
+                    "tool_calls": [_tool_call("read_file",
+                                              json.dumps({"file_path": f"/f{i}.py"}), f"c{i}")]})
+        out.append({"role": "tool", "name": "read_file", "content": f"body {i}"})
+    return out
+
+
+def test_find_split_index_prefers_user_boundary():
+    from agentao.context_manager import ContextManager
+    msgs = [{"role": "assistant", "content": "a"},
+            {"role": "tool", "name": "t", "content": "r"},
+            {"role": "user", "content": "next request"},
+            {"role": "assistant", "content": "b"}]
+    assert ContextManager._find_split_index(msgs, 1) == 2
+
+
+def test_find_split_index_falls_back_to_non_tool_boundary():
+    """No user message in range → still finds a safe (non-tool) split."""
+    from agentao.context_manager import ContextManager
+    msgs = [{"role": "user", "content": "go"}] + _agentic_tail(4)
+    idx = ContextManager._find_split_index(msgs, 3)
+    assert idx is not None
+    assert msgs[idx]["role"] != "tool", msgs[idx]
+
+
+def test_find_split_index_never_lands_on_a_tool_message():
+    """Orphaned tool results are the one thing the split must never produce."""
+    from agentao.context_manager import ContextManager
+    msgs = [{"role": "user", "content": "go"}] + _agentic_tail(6)
+    for start in range(len(msgs)):
+        idx = ContextManager._find_split_index(msgs, start)
+        if idx is not None:
+            assert msgs[idx].get("role") != "tool", (start, idx)
+
+
+def test_compress_messages_compacts_a_tail_with_no_user_message(tmp_path):
+    """The regression itself: an all-assistant/tool tail must still compact."""
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm("SUMMARY TEXT"), _make_memory_tool(tmp_path),
+                        max_tokens=200_000)
+    msgs = [{"role": "user", "content": "start"}] + _agentic_tail(25)
+    out = cm.compress_messages(msgs)
+    assert len(out) < len(msgs), "compaction was a no-op"
+    assert out[0]["content"].startswith("[Compact Boundary")
+    assert cm._consecutive_compact_failures == 0
+
+
+def test_compress_messages_no_safe_split_counts_a_failure():
+    """A history that is nothing but tool messages trips the breaker."""
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm("S"), Mock(), max_tokens=200_000)
+    msgs = [{"role": "tool", "name": "t", "content": f"r{i}"} for i in range(10)]
+    for expected in (1, 2, 3):
+        assert cm.compress_messages(msgs) == msgs
+        assert cm._consecutive_compact_failures == expected
+    assert cm.compaction_circuit_open is True
+
+
+def test_circuit_open_property_tracks_the_limit():
+    from agentao.context_manager import ContextManager
+    cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=200_000)
+    assert cm.compaction_circuit_open is False
+    cm._consecutive_compact_failures = ContextManager.CIRCUIT_BREAKER_LIMIT - 1
+    assert cm.compaction_circuit_open is False
+    cm._consecutive_compact_failures = ContextManager.CIRCUIT_BREAKER_LIMIT
+    assert cm.compaction_circuit_open is True
+
+
+# ---------------------------------------------------------------------------
+# F3 — microcompaction reports whether it actually shortened anything
+# ---------------------------------------------------------------------------
+
+def test_microcompact_reports_mutation():
+    cm = _cm()
+    big = [{"role": "tool", "name": "t", "content": "x" * 50_000} for _ in range(8)]
+    cm.microcompact_messages(big)
+    assert cm.last_microcompact_mutated is True
+
+
+def test_microcompact_reports_no_mutation_when_nothing_oversized():
+    """A fresh list is always returned, so identity cannot answer this."""
+    cm = _cm()
+    small = [{"role": "tool", "name": "t", "content": "short"} for _ in range(8)]
+    out = cm.microcompact_messages(small)
+    assert out is not small          # new list, as before
+    assert cm.last_microcompact_mutated is False

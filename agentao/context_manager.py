@@ -103,6 +103,14 @@ class ContextManager:
         # ``runtime/chat_loop/_compaction.py`` own turn state and fold it in.
         self.last_summary_finish_reason_missing: bool = False
 
+        # True when the most recent ``microcompact_messages`` call actually
+        # shortened something. It always returns a fresh list, so identity
+        # cannot answer this — and the answer decides whether the Tier-1 token
+        # anchor is stale. Dropping the anchor on a no-op pass forces a full
+        # re-encode of the whole history every iteration in the 55-65% band,
+        # which is exactly when the history is largest.
+        self.last_microcompact_mutated: bool = False
+
         # Stats from the last completed compaction (surfaced via get_usage_stats)
         self._last_compact_stats: Optional[Dict[str, Any]] = None
 
@@ -279,6 +287,35 @@ class ContextManager:
     # 20% head (command invoked, initial output) + 80% tail (errors, final results).
     MICROCOMPACT_HEAD_RATIO = 0.2
 
+    def _microcompactable_indices(self, messages: List[Dict[str, Any]]) -> set:
+        """Indices of tool messages a microcompact pass would actually shorten.
+
+        Factored out so the *predicate* and the *transform* can never disagree:
+        callers that must decide before mutating (announcing ``PreCompact``)
+        ask :meth:`microcompact_would_mutate`, and the transform below simply
+        rewrites this exact index set.
+        """
+        tool_indices = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+        preserve = set(tool_indices[-self.MICROCOMPACT_PRESERVE_RECENT:])
+        return {
+            i for i in tool_indices
+            if i not in preserve
+            and isinstance(messages[i].get("content"), str)
+            and len(messages[i]["content"]) > self.MICROCOMPACT_TOOL_LIMIT
+        }
+
+    def microcompact_would_mutate(self, messages: List[Dict[str, Any]]) -> bool:
+        """True when :meth:`microcompact_messages` would shorten something.
+
+        Cheap (lengths only, no encoding). Callers gate the whole microcompact
+        step on this *before* announcing the imminent compaction: once every
+        old tool result is already at or under ``MICROCOMPACT_TOOL_LIMIT``,
+        every further pass in the 55-65% band is a no-op, and announcing one
+        would fork a ``PreCompact`` hook subprocess per iteration and emit a
+        ``CONTEXT_COMPRESSED`` reporting ``pre == post``.
+        """
+        return bool(self._microcompactable_indices(messages))
+
     def microcompact_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Truncate large tool results without calling the LLM.
 
@@ -287,29 +324,35 @@ class ContextManager:
         a head+tail strategy: 20% from the start (command context) and 80% from
         the end (errors and final output tend to appear last).
         Returns a new list; does not mutate the original.
+
+        Records whether anything was actually shortened on
+        :attr:`last_microcompact_mutated`. The return value cannot carry it —
+        a fresh list is always built, so ``result is not messages`` says
+        nothing — and callers need it to decide whether the token anchor is
+        now stale. Same out-of-band-flag pattern as
+        ``last_summary_finish_reason_missing``, and for the same reason: this
+        class holds no agent reference, so the call sites fold it in.
         """
-        tool_indices = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
-        preserve = set(tool_indices[-self.MICROCOMPACT_PRESERVE_RECENT:])
+        targets = self._microcompactable_indices(messages)
 
         head_chars = int(self.MICROCOMPACT_TOOL_LIMIT * self.MICROCOMPACT_HEAD_RATIO)
         tail_chars = self.MICROCOMPACT_TOOL_LIMIT - head_chars
 
         result = []
-        mutated = 0
         for i, msg in enumerate(messages):
-            if msg.get("role") == "tool" and i not in preserve:
-                content = msg.get("content", "")
-                if isinstance(content, str) and len(content) > self.MICROCOMPACT_TOOL_LIMIT:
-                    msg = dict(msg)
-                    omitted = len(content) - self.MICROCOMPACT_TOOL_LIMIT
-                    msg["content"] = (
-                        content[:head_chars]
-                        + f"\n[… {omitted:,} chars omitted by microcompact …]\n"
-                        + content[len(content) - tail_chars:]
-                    )
-                    mutated += 1
+            if i in targets:
+                content = msg["content"]
+                msg = dict(msg)
+                omitted = len(content) - self.MICROCOMPACT_TOOL_LIMIT
+                msg["content"] = (
+                    content[:head_chars]
+                    + f"\n[… {omitted:,} chars omitted by microcompact …]\n"
+                    + content[len(content) - tail_chars:]
+                )
             result.append(msg)
 
+        mutated = len(targets)
+        self.last_microcompact_mutated = bool(mutated)
         if mutated:
             try:
                 self.llm_client.logger.info(
@@ -323,6 +366,61 @@ class ContextManager:
     # Full compression
     # -----------------------------------------------------------------------
 
+    @property
+    def compaction_circuit_open(self) -> bool:
+        """True once :meth:`compress_messages` has given up on auto-compaction.
+
+        Callers gate on this *before* announcing an imminent compaction
+        (``PreCompact``): with the breaker open every attempt returns the
+        history unchanged, so a caller that keeps announcing would fork a hook
+        subprocess per iteration for a compaction that never happens.
+        """
+        return self._consecutive_compact_failures >= self.CIRCUIT_BREAKER_LIMIT
+
+    @staticmethod
+    def _find_split_index(
+        messages: List[Dict[str, Any]], start: int
+    ) -> Optional[int]:
+        """First safe split point at or after ``start``; ``None`` if there is none.
+
+        A split is unsafe only when it lands **on** a ``role: "tool"`` message:
+        tool results are appended contiguously after the assistant message that
+        requested them, so cutting anywhere else keeps every result with its
+        call. Cutting on one strands it from its ``tool_calls`` and strict APIs
+        reject the result.
+
+        A ``user`` boundary is still *preferred* — the kept window then opens on
+        a coherent request rather than mid-exchange — but it is no longer
+        required. It used to be, and a tail with no user message (routine: 20
+        consecutive assistant/tool messages is ~10 tool calls in one turn) made
+        compaction a silent permanent no-op.
+
+        Never returns ``len(messages)``: that would leave nothing to keep.
+        """
+        if start < 0:
+            start = 0
+        limit = len(messages) - 1
+        preferred = None
+        fallback = None
+        for i in range(start, limit + 1):
+            role = messages[i].get("role")
+            if role == "tool":
+                continue
+            if role == "user":
+                preferred = i
+                break
+            if fallback is None:
+                fallback = i
+        chosen = preferred if preferred is not None else fallback
+        # ``to_summarize`` is ``messages[:chosen]``, so index 0 — a legitimate
+        # find — would summarize nothing. Spelled out rather than left to
+        # truthiness: ``chosen or None`` silently folds "found index 0" into
+        # "no split exists", and the caller charges the difference to the
+        # circuit breaker.
+        if chosen is None or chosen == 0:
+            return None
+        return chosen
+
     def compress_messages(
         self,
         messages: List[Dict[str, Any]],
@@ -334,7 +432,9 @@ class ContextManager:
           1. Apply microcompact pass (strip oversized tool results cheaply)
           2. Partial compaction: keep last N messages verbatim (never more than
              KEEP_RECENT_MESSAGES or 60% of total, whichever is smaller)
-          3. Advance split point to next 'user' boundary (tool_use/tool_result safety)
+          3. Advance the split point to the first *safe* boundary — any non-tool
+             message, preferring a 'user' one (see :meth:`_find_split_index`);
+             landing on a ``role: "tool"`` message is what orphans a result
           4. Extract recently read file paths from the to-summarize window
           5. Call LLM with structured 9-section prompt to summarize old messages
           6. Save summary to memory
@@ -351,7 +451,7 @@ class ContextManager:
             Compressed messages list
         """
         # --- Circuit breaker ------------------------------------------------
-        if self._consecutive_compact_failures >= self.CIRCUIT_BREAKER_LIMIT:
+        if self.compaction_circuit_open:
             try:
                 self.llm_client.logger.warning(
                     f"Compact circuit breaker open "
@@ -373,20 +473,40 @@ class ContextManager:
             self.KEEP_RECENT_MESSAGES,
             max(4, int(len(messages) * 0.60)),
         )
-        split_index = len(messages) - keep_count
+        split_index = self._find_split_index(messages, len(messages) - keep_count)
 
-        # Advance to next 'user' boundary to avoid orphaned tool results
-        while split_index < len(messages) - 1 and messages[split_index].get("role") != "user":
-            split_index += 1
+        if split_index is None:
+            # Structural failure, not a summarization failure — but on the auto
+            # path it has to count as one, or the caller re-enters every
+            # iteration (firing PreCompact hook subprocesses each time) while
+            # the context keeps growing, until the API rejects it and the
+            # overflow ladder cuts history to the last two messages.
+            #
+            # Manual ``/compact`` is deliberately exempt: it is user-driven and
+            # does not loop, so there is no runaway to arrest — and the breaker
+            # it would trip disables *automatic* compaction for the rest of the
+            # session with no reset path.
+            if is_auto:
+                self._consecutive_compact_failures += 1
+                tally = f" ({self._consecutive_compact_failures} consecutive failures)"
+            else:
+                # The manual path does not increment, so reporting the counter
+                # here would attribute the auto path's tally — usually 0 — to
+                # this failure.
+                tally = ""
+            try:
+                self.llm_client.logger.warning(
+                    "Compaction found no safe split point — history has no non-tool "
+                    f"boundary in the summarizable range; skipping{tally}"
+                )
+            except Exception:
+                pass
+            return messages
 
-        if messages[split_index].get("role") != "user":
-            return messages  # no safe split point found
-
+        # ``_find_split_index`` never returns 0, so ``to_summarize`` is
+        # non-empty by construction — no second emptiness check needed here.
         to_summarize = messages[:split_index]
         to_keep = messages[split_index:]
-
-        if not to_summarize:
-            return messages
 
         # --- Step 3: extract pinned messages --------------------------------
         pinned = [
@@ -528,6 +648,14 @@ class ContextManager:
     _HIGH_FIDELITY_TOOLS = {"write_file", "replace", "edit_file"}
     _TOOL_RESULT_TRUNCATION = 200
     _HIGH_FIDELITY_TRUNCATION = 1_000
+    # Tool *invocations* get their own budget, separate from tool results.
+    # A result says what came back; only the call says which file was read or
+    # which command ran — and the summary prompt asks for exactly that
+    # ("Every file examined, created, or modified"). Kept deliberately modest:
+    # the per-message worst case is _MAX_TOOL_CALLS_RENDERED × ~300 chars.
+    _TOOL_CALL_VALUE_TRUNCATION = 200   # per argument value
+    _TOOL_CALL_ARGS_TRUNCATION = 300    # per call, after joining values
+    _MAX_TOOL_CALLS_RENDERED = 8        # per assistant message
 
     _SUMMARIZE_SYSTEM_PROMPT = (
         "You are a conversation summarization assistant. Your task is to produce a "
@@ -647,9 +775,115 @@ class ContextManager:
                     else self._TOOL_RESULT_TRUNCATION
                 )
                 lines.append(f"[Tool Result - {tool_name}]: {str(content)[:limit]}")
-            elif content:
+                continue  # tool messages never carry tool_calls
+            if content:
                 lines.append(f"[{role.upper()}]: {str(content)[:500]}")
+            # An assistant turn that only called tools has ``content == ""``
+            # (``chat_loop/_runner.py`` stores ``content or ""``), so the branch
+            # above skips it entirely. Render the calls separately — otherwise
+            # the transcript shows results with no invocation and the summary
+            # cannot name the file that was read or the command that failed.
+            lines.extend(self._format_tool_calls(msg.get("tool_calls")))
         return "\n".join(lines)
+
+    @classmethod
+    def _format_tool_call_args(cls, raw: Any) -> str:
+        """Render one tool call's ``arguments`` blob for the summary transcript.
+
+        Parses the JSON rather than truncating the raw string, and emits the
+        **shortest values first**, so a single oversized argument (a
+        ``write_file`` body) cannot evict the short high-value ones beside it
+        (``file_path``). Truncating the raw blob would keep whichever key the
+        model happened to emit first, which is not a property worth relying on.
+
+        Falls back to raw-string truncation when the blob is not JSON or not an
+        object — this is display text for another LLM, so a degraded render is
+        always preferable to dropping the call.
+
+        ``arguments`` already decoded to a ``dict`` is accepted as-is, the same
+        way :meth:`_extract_recently_read_files` accepts it: ``str()``-ing it
+        first would produce a Python repr that ``json.loads`` rejects, so the
+        blob would take the raw-truncation path and lose exactly the
+        shortest-values-first ordering this method exists to provide.
+        """
+        if isinstance(raw, dict):
+            parsed: Any = raw
+        else:
+            if not isinstance(raw, str):
+                raw = "" if raw is None else str(raw)
+            if not raw:
+                return ""
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                return cls._clip_args(raw)
+            if not isinstance(parsed, dict):
+                return cls._clip_args(str(parsed))
+        if not parsed:
+            return ""
+
+        rendered: List[str] = []
+        for key, value in parsed.items():
+            if isinstance(value, str):
+                text = value
+            else:
+                try:
+                    text = json.dumps(value, ensure_ascii=False, default=str)
+                except Exception:
+                    text = str(value)
+            if len(text) > cls._TOOL_CALL_VALUE_TRUNCATION:
+                omitted = len(text) - cls._TOOL_CALL_VALUE_TRUNCATION
+                text = f"{text[: cls._TOOL_CALL_VALUE_TRUNCATION]}…(+{omitted:,} chars)"
+            rendered.append(f"{key}={text}")
+        rendered.sort(key=len)
+        return cls._clip_args(", ".join(rendered))
+
+    @classmethod
+    def _clip_args(cls, text: str) -> str:
+        """Cut to the per-call budget, marking the cut so it reads as a cut.
+
+        The per-*value* path already appends ``…(+N chars)``; without the same
+        marker here the joined render can amputate a value mid-way and hand the
+        summarizer a plausible-looking but wrong path or command.
+        """
+        if len(text) <= cls._TOOL_CALL_ARGS_TRUNCATION:
+            return text
+        return text[: cls._TOOL_CALL_ARGS_TRUNCATION] + "…"
+
+    @classmethod
+    def _format_tool_calls(cls, tool_calls: Any) -> List[str]:
+        """Render an assistant message's tool calls as transcript lines.
+
+        Returns one ``[Tool Call - name]`` line per call (capped), so the
+        summarizer sees the invocation next to the result it produced.
+
+        Accepts both the serialized dict form and the raw SDK object form —
+        :meth:`_extract_recently_read_files` is fed the *same* ``to_summarize``
+        list and already handles both, so dropping objects here would give an
+        embedder-supplied history file hints with no matching invocation line.
+        """
+        if not isinstance(tool_calls, list) or not tool_calls:
+            return []
+        lines: List[str] = []
+        for tc in tool_calls[: cls._MAX_TOOL_CALLS_RENDERED]:
+            if isinstance(tc, dict):
+                fn: Any = tc.get("function")
+                fn = fn if isinstance(fn, dict) else {}
+                name = fn.get("name") or tc.get("name") or "unknown"
+                raw_args = fn.get("arguments")
+            else:
+                fn = getattr(tc, "function", None)
+                name = getattr(fn, "name", None) or getattr(tc, "name", None) or "unknown"
+                raw_args = getattr(fn, "arguments", None)
+            args = cls._format_tool_call_args(raw_args)
+            # Every entry in the window yields exactly one line — an
+            # unrenderable one degrades to ``[Tool Call - unknown]`` rather
+            # than vanishing, so the ``omitted`` count below stays truthful.
+            lines.append(f"[Tool Call - {name}]" + (f": {args}" if args else ""))
+        overflow = len(tool_calls) - cls._MAX_TOOL_CALLS_RENDERED
+        if overflow > 0:
+            lines.append(f"[… {overflow} more tool call(s) omitted …]")
+        return lines
 
     # -----------------------------------------------------------------------
     # Usage stats
