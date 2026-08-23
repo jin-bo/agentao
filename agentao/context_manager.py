@@ -287,6 +287,27 @@ class ContextManager:
     # 20% head (command invoked, initial output) + 80% tail (errors, final results).
     MICROCOMPACT_HEAD_RATIO = 0.2
 
+    @classmethod
+    def _head_tail_clip(cls, text: str, limit: int, note: str = "omitted") -> str:
+        """Keep the head + tail of ``text`` and say how much fell out between.
+
+        One copy, because the two call sites — microcompaction and the summary
+        transcript's failure tier — need the identical shape, and the notice is
+        load-bearing at both: without it a reader (or the summarizing model)
+        cannot tell a clipped result from a complete one and will quote half a
+        command or half a path as fact.
+        """
+        if len(text) <= limit:
+            return text
+        head = int(limit * cls.MICROCOMPACT_HEAD_RATIO)
+        tail = limit - head
+        omitted = len(text) - limit
+        return (
+            text[:head]
+            + f"\n[… {omitted:,} chars {note} …]\n"
+            + text[len(text) - tail:]
+        )
+
     def _microcompactable_indices(self, messages: List[Dict[str, Any]]) -> set:
         """Indices of tool messages a microcompact pass would actually shorten.
 
@@ -335,19 +356,14 @@ class ContextManager:
         """
         targets = self._microcompactable_indices(messages)
 
-        head_chars = int(self.MICROCOMPACT_TOOL_LIMIT * self.MICROCOMPACT_HEAD_RATIO)
-        tail_chars = self.MICROCOMPACT_TOOL_LIMIT - head_chars
-
         result = []
         for i, msg in enumerate(messages):
             if i in targets:
-                content = msg["content"]
                 msg = dict(msg)
-                omitted = len(content) - self.MICROCOMPACT_TOOL_LIMIT
-                msg["content"] = (
-                    content[:head_chars]
-                    + f"\n[… {omitted:,} chars omitted by microcompact …]\n"
-                    + content[len(content) - tail_chars:]
+                msg["content"] = self._head_tail_clip(
+                    msg["content"],
+                    self.MICROCOMPACT_TOOL_LIMIT,
+                    note="omitted by microcompact",
                 )
             result.append(msg)
 
@@ -645,9 +661,91 @@ class ContextManager:
     # Structured 9-section summarization
     # -----------------------------------------------------------------------
 
-    _HIGH_FIDELITY_TOOLS = {"write_file", "replace", "edit_file"}
-    _TOOL_RESULT_TRUNCATION = 200
-    _HIGH_FIDELITY_TRUNCATION = 1_000
+    # Per-entry ceilings for the summary transcript, in characters.
+    #
+    # These used to be 200 (tool results) / 500 (messages), with a 1000-char
+    # carve-out for a ``_HIGH_FIDELITY_TOOLS`` name list. Measured against the
+    # saved sessions in ``.agentao/sessions``: **12% of tool-result content
+    # survived**, while the summary prompt below demands error messages
+    # "verbatim" and calls Files/Errors "the most important" sections. The
+    # prompt was asking for what the input pipeline had already deleted.
+    #
+    # The name-based carve-out was worse than useless. ``write_file`` and
+    # ``replace`` return ``f"Successfully {action} {path}"`` /
+    # ``f"Replaced {n} occurrence(s) in {path}"`` (``tools/file_ops.py:260,394``)
+    # — confirmation strings bounded by a path length, measured median 114
+    # chars. The 1000-char budget was structurally unreachable, and the file
+    # content it was meant to preserve lives in the *call arguments*, which
+    # ``_format_tool_calls`` now renders. So the tier is gone, replaced by one
+    # keyed on content: a result carrying a failure is what the prompt actually
+    # wants quoted, and failures are cheap — 23 of 167 measured results, 3% of
+    # the bytes.
+    _TOOL_RESULT_TRUNCATION = 1_000
+    # Strictly above ``MICROCOMPACT_TOOL_LIMIT`` plus the notice line
+    # microcompaction leaves behind (~3_050 chars worst case), and that margin
+    # is the point, not slack. ``compress_messages`` microcompacts the whole
+    # list *before* this runs, so at 3_000 the two head+tail clips used the
+    # identical limit and the identical ratio: the second cut landed exactly on
+    # the first one's ``[… 200,000 chars omitted by microcompact …]`` notice and
+    # replaced it with a claim of 45. The summarizer was told a result lost 45
+    # characters when it had lost two hundred thousand — and the summary is what
+    # *permanently* replaces the history. Keeping this above the microcompact
+    # limit makes an already-clipped result pass through untouched.
+    _ERROR_RESULT_TRUNCATION = 4_000
+    _MESSAGE_TRUNCATION = 2_000
+    # A rehydrated ``[Conversation Summary]`` folded into a new one. Larger than
+    # an ordinary message, and exempt from budget eviction in
+    # :meth:`_join_within_budget`, because it is the only surviving record of
+    # everything before the previous compaction — see :meth:`_clip_carry_summary`.
+    _CARRY_SUMMARY_TRUNCATION = 8_000
+
+    # Total ceiling on the assembled transcript, as a fraction of the context
+    # window. Raising the per-entry caps without this would be trading one
+    # defect for another: nothing bounded the transcript before, so a
+    # tool-dense window could overflow the summarization call itself — and a
+    # failed summarization increments the circuit breaker, turning a fidelity
+    # improvement into a compaction outage. Budget is spent newest-first, so
+    # what a long window loses is its oldest end rather than the tail of every
+    # single message.
+    _SUMMARY_INPUT_BUDGET_RATIO = 0.10
+    _SUMMARY_INPUT_BUDGET_FLOOR = 2_000  # tokens
+
+    # A tool result is "high value" when it reports a failure — that is the
+    # text ``## 4. Errors and Fixes`` asks to be quoted verbatim.
+    #
+    # Anchored on *diagnostic shapes* (a traceback header, an exception line at
+    # column 0, a non-zero exit, a runner's FAILED/ERROR column) rather than on
+    # bare words. A bare-word scan is not the cheap over-approximation it looks
+    # like: over-tiering does not cost "a few hundred characters", it costs a
+    # 4x share of the transcript budget below, and that budget is spent
+    # newest-first — so every mis-tiered success evicts *older* messages
+    # wholesale. Measured on this repo, ``traceback|exception|\berror\b|…``
+    # matched **169 of 272** source files, i.e. two thirds of ordinary
+    # ``read_file`` results (and ``read_file`` is 173KB of the 239KB of tool
+    # output measured in the sessions that motivated this change). The shapes
+    # below match 9 of 272 while still hitting every one of: python traceback,
+    # pytest FAILED/E-lines, ``command not found``, non-zero exit, permission
+    # denied, ``No such file or directory``, git ``fatal:``, npm ``ERR!``,
+    # ruff/mypy ``Found N error(s)``, ``Connection refused``, go ``exit status``.
+    #
+    # ``(?i:…)`` scopes case-insensitivity to the literals that need it; the
+    # column-0 anchors must stay case-sensitive or every ``    error: ...``
+    # docstring line and ``ERROR = "error"`` enum member matches again.
+    _FAILURE_MARKERS = re.compile(
+        r"Traceback \(most recent call last\)"
+        r"|^[A-Za-z_][\w.]*(?:Error|Exception)\s*:"
+        r"|^(?i:error|fatal|panic|abort)\s*:"
+        r"|^(?:FAILED|ERROR|FAIL|E) "
+        r"|ERR!"
+        r"|(?i:\bexit (?:code|status) [1-9])"
+        r"|(?i:\b(?:permission|access) denied\b)"
+        r"|(?i:\bcommand not found\b)"
+        r"|(?i:\bno such file or directory\b)"
+        r"|(?i:\bconnection (?:refused|reset)\b)"
+        r"|(?i:\b\d+ (?:failed|errors?)\b)",
+        re.MULTILINE,
+    )
+
     # Tool *invocations* get their own budget, separate from tool results.
     # A result says what came back; only the call says which file was read or
     # which command ran — and the summary prompt asks for exactly that
@@ -746,11 +844,17 @@ class ContextManager:
         return raw
 
     def _format_for_summary(self, messages: List[Dict[str, Any]]) -> str:
-        """Format messages as readable text for the summarization prompt."""
-        lines = []
+        """Format messages as readable text for the summarization prompt.
+
+        Each message renders to a *block* of lines (content and/or tool-call
+        lines); ``_join_within_budget`` then decides how many blocks fit.
+        """
+        blocks: List[List[str]] = []
+        carry_index: Optional[int] = None
         for msg in messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
+            is_carry = False
             if isinstance(content, list):
                 content = " ".join(
                     b.get("text", "")
@@ -767,23 +871,169 @@ class ContextManager:
                 # Anchored on the summary prefix so an unrelated message that merely
                 # contains the marker substring is never truncated.
                 content = content.split(self.SUMMARY_END_MARKER)[0].rstrip()
+                is_carry = True
             if role == "tool":
                 tool_name = msg.get("name", "")
-                limit = (
-                    self._HIGH_FIDELITY_TRUNCATION
-                    if tool_name in self._HIGH_FIDELITY_TOOLS
-                    else self._TOOL_RESULT_TRUNCATION
-                )
-                lines.append(f"[Tool Result - {tool_name}]: {str(content)[:limit]}")
+                blocks.append([
+                    f"[Tool Result - {tool_name}]: {self._clip_tool_result(str(content))}"
+                ])
                 continue  # tool messages never carry tool_calls
+            block = []
             if content:
-                lines.append(f"[{role.upper()}]: {str(content)[:500]}")
+                text = (
+                    self._clip_carry_summary(str(content))
+                    if is_carry
+                    else str(content)[: self._MESSAGE_TRUNCATION]
+                )
+                block.append(f"[{role.upper()}]: {text}")
             # An assistant turn that only called tools has ``content == ""``
             # (``chat_loop/_runner.py`` stores ``content or ""``), so the branch
             # above skips it entirely. Render the calls separately — otherwise
             # the transcript shows results with no invocation and the summary
             # cannot name the file that was read or the command that failed.
-            lines.extend(self._format_tool_calls(msg.get("tool_calls")))
+            block.extend(self._format_tool_calls(msg.get("tool_calls")))
+            if is_carry and block:
+                # Newest wins: summary N was itself produced from a window
+                # containing summary N-1, so it already subsumes it.
+                carry_index = len(blocks)
+            blocks.append(block)
+        return self._join_within_budget(blocks, carry_index)
+
+    @classmethod
+    def _clip_tool_result(cls, text: str) -> str:
+        """Clip one tool result, giving failures a larger head+tail window.
+
+        Two things the flat head-truncation got wrong. A failing command's
+        diagnostic is at the *end* of its output — the traceback, the non-zero
+        exit, the assertion — which is why microcompaction already keeps a tail
+        (``MICROCOMPACT_HEAD_RATIO``). Truncating a failure from the head alone
+        would satisfy the larger budget while still dropping the exact text
+        ``## 4. Errors and Fixes`` asks to be quoted verbatim, so the failure
+        tier keeps both ends and marks the gap.
+
+        And the marker scan runs over the *whole* string for the same reason:
+        scanning only the first N characters would miss every command that runs
+        fine and then fails, which is most of them.
+
+        Both tiers mark the cut. An unmarked clip is the failure mode
+        :meth:`_clip_args` already documents one layer down: the summarizer
+        cannot tell a clipped result from a complete one, so it quotes the
+        amputated path or command as if it were the whole thing.
+        """
+        if len(text) <= cls._TOOL_RESULT_TRUNCATION:
+            return text
+        if not cls._FAILURE_MARKERS.search(text):
+            # Head-only: a success's useful part is its opening, and the two
+            # disjoint fragments a head+tail split leaves read worse here.
+            omitted = len(text) - cls._TOOL_RESULT_TRUNCATION
+            return (
+                text[: cls._TOOL_RESULT_TRUNCATION]
+                + f"\n[… {omitted:,} chars omitted …]"
+            )
+        return cls._head_tail_clip(text, cls._ERROR_RESULT_TRUNCATION)
+
+    def _clip_carry_summary(self, text: str) -> str:
+        """Clip a prior ``[Conversation Summary]`` being folded into a new one.
+
+        Capped at half the transcript budget, so the carried history can never
+        starve the live messages it exists to give context to — and so a small
+        ``max_tokens`` (where the budget is the 2_000-token floor) still gets a
+        proportional carve-out rather than the flat 8_000 chars.
+        """
+        clipped = text[: self._CARRY_SUMMARY_TRUNCATION]
+        reserve = max(1, self._summary_input_budget() // 2)
+        cost = self.count_tokens_in_text(clipped)
+        if cost > reserve:
+            clipped = clipped[: max(1, len(clipped) * reserve // cost)]
+        return clipped
+
+    def _summary_input_budget(self) -> int:
+        """Token ceiling for the assembled summary transcript."""
+        return max(
+            self._SUMMARY_INPUT_BUDGET_FLOOR,
+            int(self.max_tokens * self._SUMMARY_INPUT_BUDGET_RATIO),
+        )
+
+    def _block_cost(self, block: List[str]) -> int:
+        """Estimated token cost of one rendered message block.
+
+        Goes through :meth:`count_tokens_in_text`, not ``_heuristic_token_count``
+        directly, so the budget is denominated in the *same* unit as the
+        ``max_tokens`` it is a fraction of — tiktoken where the model family is
+        known, and the CJK-aware heuristic (non-ASCII 1.3 tok/char vs ASCII's
+        0.25) exactly as before where it is not. Either way this must not be a
+        character budget: that would under-count Chinese more than fivefold, on
+        the very histories most likely to be long.
+        """
+        return self.count_tokens_in_text("\n".join(block))
+
+    def _join_within_budget(
+        self, blocks: List[List[str]], carry_index: Optional[int] = None
+    ) -> str:
+        """Join per-message blocks newest-first until the token budget runs out.
+
+        Spending from the newest end means an over-long window loses its oldest
+        messages whole, rather than losing the tail of every message — the
+        recent end is both the more relevant half and the half the kept-verbatim
+        window no longer covers. Because allocation runs strictly backwards, the
+        survivors are a contiguous suffix, so the transcript stays chronological
+        with one elision marker at the seam.
+
+        ``carry_index`` is the one exception, and it is not a decoration. A
+        rehydrated ``[Conversation Summary]`` is by construction the *oldest*
+        block in the window — ``compress_messages`` puts it at position 1 of the
+        list it returns — so plain newest-first spending drops it first, and
+        every compaction after the first would amputate the entire accumulated
+        history: sections 1 and 6 of the prompt ("every explicit goal the user
+        stated", "all non-trivial user messages") describe exactly the content
+        that only lives there. It is charged before anything else and never
+        evicted; :meth:`_clip_carry_summary` bounds it to half the budget so it
+        cannot starve the live tail.
+        """
+        total = self._summary_input_budget()
+        budget = total
+        indexed = [(i, b) for i, b in enumerate(blocks) if b]
+        keep: set = set()
+        if carry_index is not None and blocks[carry_index]:
+            budget -= self._block_cost(blocks[carry_index])
+            keep.add(carry_index)
+        kept_recent = 0
+        for i, block in reversed(indexed):
+            if i in keep:
+                continue
+            cost = self._block_cost(block)
+            if cost > budget and kept_recent:
+                # Stop at the first block that does not fit — do not skip it
+                # and keep spending on older ones. Skipping would punch a hole
+                # in the middle of the transcript, handing the summarizer a
+                # history that omits a step without saying where; the whole
+                # point of spending backwards is that the survivors form a
+                # contiguous suffix. (``kept_recent`` keeps the newest block
+                # unconditionally — counted separately from ``keep`` so a
+                # charged carry block cannot satisfy it: a transcript of
+                # nothing but an elision marker summarizes to nothing, which
+                # counts as a compaction failure and increments the circuit
+                # breaker.)
+                break
+            budget -= cost
+            keep.add(i)
+            kept_recent += 1
+        dropped = len(indexed) - len(keep)
+        # One marker, placed immediately above the surviving suffix rather than
+        # at index 0. With a carry block protected the gap opens *after* it, and
+        # a marker at the head would read as if the summary itself was dropped.
+        # With no carry the suffix starts at the first kept block, so this is
+        # the head — the same position as before.
+        seam = min((i for i in keep if i != carry_index), default=None)
+        lines: List[str] = []
+        for i, block in indexed:
+            if dropped and i == seam:
+                lines.append(
+                    f"[… {dropped} earlier message(s) omitted — summary input "
+                    f"budget ({total:,} tokens) exhausted …]"
+                )
+            if i in keep:
+                lines.extend(block)
         return "\n".join(lines)
 
     @classmethod

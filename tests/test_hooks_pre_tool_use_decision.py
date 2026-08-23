@@ -252,10 +252,13 @@ def test_runner_hook_deny_forwards_reason_to_the_model(tmp_path):
 def test_runner_hook_deny_puts_the_instruction_before_the_reason(tmp_path):
     """Fixed instruction first, variable-length untrusted reason last.
 
-    ``context_manager._format_for_summary`` truncates a tool result to 200
-    chars when building a compaction summary; a long reason placed first would
-    push the instruction past that cut and resurrect the retry loop after
-    every compaction.
+    ``context_manager._format_for_summary`` clips a tool result when building
+    a compaction summary; a long reason placed first would push the
+    instruction past that cut and resurrect the retry loop after every
+    compaction. The budget has since been raised and made content-aware, so
+    the ordering matters less than it did — but it is still the only thing
+    guaranteeing the instruction survives, since a deny reason is attacker-
+    influenced text of unbounded length.
     """
     runner, _, _, _ = _build_runner(
         tmp_path,
