@@ -6,6 +6,27 @@
 **配套文档：** `STOP_PRECOMPACT_HOOKS_PLAN.md`（英文版）。
 **范围：** 在现有 plugin-hook 表面新增两个 lifecycle 事件（`Stop`、`PreCompact`），分两层：事件表面（Phase A）+ control-aware gate（Phase B）。
 
+> **⚠️ 勘误横幅 —— 2026-08-22（本文正文一概未改动）。**
+>
+> 本文是 **2026-05 的已废止实施计划**，按 `docs/README.md:137` 归入 `docs/history/`；正文与「修订备忘」如实保留写作当时的状态，**不做回溯改写**。但本文的「Claude Code 兼容性矩阵」是目前仓库里**唯一**记录 PreCompact hook 契约的地方，仍被其它文档当权威引用，因此以下**当前式**陈述需要就地标注为已过期：
+>
+> **触发原因：`/compact` 已于本计划之后落地**（`agentao/cli/input_loop.py:230` → `agentao/cli/commands/compact.py:82`），并且**确实会 dispatch PreCompact**（`compact.py:44-79`，传 `compaction_type="full"`、`reason="manual_cli"`）。本计划写作时不存在这条路径，多处措辞以「Agentao 没有 manual `/compact` CLI」为前提。
+>
+> | 位置 | 本文写的 | 2026-08-22 实际 |
+> |---|---|---|
+> | 矩阵 `PreCompact 输入 trigger` 行（`:82`） | 「`"manual"` 永不发出（**Agentao 没有 manual `/compact` CLI**）」🟡 | **理由已过期。** `/compact` 存在。`"manual"` 仍不发出，但原因变成 `build_pre_compact` 把 `"trigger": "auto"` **写死**（`agentao/plugins/hooks/_payload.py:160`，无参数可覆盖）。**这已不是「取值面更窄」而是取值错误**——手动压缩自报为 `auto`：**agentao 翻译后的 matcher 对象** `{"trigger": "manual"}` 永不命中，而 `{"trigger": "auto"}` **会错误命中手动压缩**（**注意**：Claude 自身的配置形态是顶层字符串 `{"matcher": "manual\|auto"}`，见本文矩阵 `Matcher（PreCompact）—— 配置文件形态` 行；`{"trigger": ...}` 是 host 预翻译后的 agentao 对象形态）。按本文矩阵口径应为 ❌ 而非 🟡。 |
+> | 矩阵 `PreCompact 输入 custom_instructions` 行（`:83`） | 「始终为空（**无 manual 触发**）」🟡 | **理由已过期，结论仍成立。** 现在为空的原因是 `_payload.py:161` 写死 `""`，且 `handle_compact_command(cli, args)` **完全忽略** 它收到的 `args`（`compact.py:82`）——即 `/compact <instructions>` 的参数不会到达 hook。 |
+> | A3 `compaction_type` 字段行（`:441`） | 「在 `trigger="auto"` 下细分」 | 手动位置也落在 `trigger="auto"` 下——**因为写死，不是因为它真的是 auto**。 |
+> | A3 `reason` 稳定取值列表（`:442`） | 四个值：`microcompact_threshold` / `compression_threshold` / `api_overflow` / `api_overflow_after_compression` | **缺 `"manual_cli"`**（`compact.py:63`）。 |
+> | A4 emit 位置表（`:480` 起） | 四个 emit 位置 | **现为五个**，新增 `cli/commands/compact.py:44` 的手动位置。 |
+> | A5 `PLUGIN_HOOK_FIRED` 投影（`:512`） | 「`trigger` 在本计划下恒为 `"auto"`」 | 该句以「本计划下」限定，**作为历史陈述仍准确**；但手动位置的 replay 事件发的是 `"trigger": "manual"`（`compact.py:75`），**与它同一次压缩的 hook payload（`"auto"`）自相矛盾**。 |
+>
+> **未由本横幅解决的两项（需另行决策，不属于「修文档」范围）：**
+> 1. **代码缺陷** —— `build_pre_compact` 无 `trigger` 参数，手动压缩的 hook payload 与 replay 事件对同一次压缩给出不同的 `trigger`。修复会**改变 hook 契约**（agentao 翻译后 matcher 对象的命中集合随之变化），且 `tests/test_hooks_pre_compact_payload_claude_shape.py:60-74` 的站点清单只列了四个位置、不含 `manual_cli`，**现有测试抓不到它**。
+> 2. **本文所载契约没有在世文档** —— `PreCompact` 的 payload / matcher 契约目前只存在于这份已废止计划里（`grep -rl PreCompact docs/ --include=*.md` 在 `docs/history` 之外只命中 design 评审与 release notes）。
+>
+> 本横幅的触发来源：`docs/design/codex-compaction-vs-agentao.zh.md` §8。
+
 ---
 
 ## 摘要
