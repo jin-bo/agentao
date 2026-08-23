@@ -805,7 +805,10 @@ def test_a_microcompacted_failure_passes_through_the_summary_clip_untouched():
     )
     out = cm._clip_tool_result(microcompacted)
     assert out == microcompacted
-    honest = f"{len(original) - cm.MICROCOMPACT_TOOL_LIMIT:,} chars omitted by microcompact"
+    # Measured against the retained content, since the notice is budgeted
+    # inside the limit rather than appended on top of it.
+    kept = len(microcompacted) - len(cm._OMISSION_NOTICE.search(microcompacted).group(0)) - 2
+    honest = f"{len(original) - kept:,} chars omitted by microcompact"
     assert honest in out, "the real omitted count must survive"
 
 
@@ -975,3 +978,74 @@ def test_a_carried_conversation_summary_is_never_evicted_by_the_budget():
     assert cm.count_tokens_in_text(
         out.split("earlier message(s) omitted")[0]
     ) <= cm._summary_input_budget() // 2 + 100
+
+
+# ---------------------------------------------------------------------------
+# Double truncation: microcompact -> summary clip
+#
+# The live 55% pass rewrites history in place, so a result reaching
+# ``_format_for_summary`` has usually been cut once already. The second cut
+# used to report only its own slice, and ``compress_messages`` added a third
+# by microcompacting the half it was about to discard.
+# ---------------------------------------------------------------------------
+
+def test_second_clip_reports_the_total_lost_not_just_its_own_slice():
+    """A 200KB result clipped twice must not claim it lost 2,000 characters."""
+    from agentao.context_manager import ContextManager
+    cm = _cm()
+    original = "setup\n" * 10 + "y" * 200_000 + "\ndone"
+    once = ContextManager._head_tail_clip(
+        original, cm.MICROCOMPACT_TOOL_LIMIT, note="omitted by microcompact"
+    )
+    twice = cm._clip_tool_result(once)
+    reported = max(
+        int(m.group(1).replace(",", ""))
+        for m in ContextManager._OMISSION_NOTICE.finditer(twice)
+    )
+    assert reported > 190_000, f"reported {reported:,}, the real loss is ~199,000"
+
+
+def test_compress_does_not_microcompact_the_half_it_is_about_to_discard():
+    """Clipping the summarize window before summarizing it is pure loss.
+
+    ``_format_for_summary`` applies its own content-aware budget — four times
+    the room for a failure, and the tail kept where the diagnostic is. Cutting
+    the same text to 3,000 chars first only takes that choice away, and it is
+    the ``MICROCOMPACT_TOOL_LIMIT`` half of the double truncation.
+    """
+    cm = _cm()
+    seen = {}
+    real = cm.microcompact_messages
+
+    def _spy(messages):
+        seen["contents"] = [str(m.get("content", "")) for m in messages]
+        return real(messages)
+
+    old_result = "OLD-RESULT-" + "z" * 50_000
+    msgs = (
+        [{"role": "user", "content": "start"}]
+        + [{"role": "tool", "name": "run_shell_command", "content": old_result}]
+        + [{"role": "assistant", "content": f"step {i}"} for i in range(8)]
+        + [{"role": "user", "content": "go on"}]
+        + [{"role": "assistant", "content": f"more {i}"} for i in range(24)]
+    )
+    summarized = {}
+    cm.microcompact_messages = _spy  # type: ignore[method-assign]
+
+    def _capture(window):
+        summarized["raw"] = "".join(str(x.get("content", "")) for x in window)
+        return ""
+
+    # ``_summarize_messages`` is what calls ``_format_for_summary``; stub it at
+    # that level so the window it receives is observable.
+    cm._summarize_messages = _capture  # type: ignore[method-assign]
+    cm.compress_messages(msgs, is_auto=True)
+
+    assert "contents" in seen, "microcompaction must still run on the kept half"
+    assert not any(c.startswith("OLD-RESULT-") for c in seen["contents"]), (
+        "the summarized half must never reach microcompaction"
+    )
+    assert len(seen["contents"]) < len(msgs)
+    # And the summarizer sees the result at full length, not pre-clipped.
+    assert len(summarized["raw"]) > cm.MICROCOMPACT_TOOL_LIMIT
+    assert "OLD-RESULT-" in summarized["raw"]

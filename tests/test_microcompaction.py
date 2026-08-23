@@ -40,11 +40,50 @@ def test_old_large_result_is_truncated():
 
 
 def test_omission_marker_contains_char_count():
+    """The count is what actually fell out, and the whole result fits the limit.
+
+    The notice is budgeted *inside* ``MICROCOMPACT_TOOL_LIMIT`` rather than
+    appended on top, so the retained content is ``limit - len(notice)`` and the
+    omitted figure is measured against that. Appending it made the output
+    longer than the limit that produced it, which re-selected the result on
+    every later pass — see ``test_microcompaction_is_a_fixed_point``.
+    """
     large = "B" * (_LIMIT * 2)
     messages = [_tool_msg(large)] + [_tool_msg("s") for _ in range(_PRESERVE)]
     result = _cm().microcompact_messages(messages)
-    omitted = len(large) - _LIMIT
-    assert f"{omitted:,}" in result[0]["content"]
+    body = result[0]["content"]
+    assert len(body) <= _LIMIT
+    kept_b = body.count("B")
+    assert f"{len(large) - kept_b:,}" in body
+
+
+def test_microcompaction_is_a_fixed_point():
+    """A second pass over already-microcompacted content must change nothing.
+
+    It used to change plenty: the output was ``limit + len(notice)`` chars, so
+    it stayed over the limit forever. Pass 2 cut the honest
+    ``197,020 chars omitted`` notice out of the middle and wrote ``45`` in its
+    place; every pass after that reported ``40``. It also pinned
+    ``microcompact_would_mutate()`` at True for the whole 55-65% band, so the
+    no-op stand-down that exists to stop per-iteration PreCompact subprocesses
+    never fired, and the token anchor was invalidated every iteration.
+    """
+    cm = _cm()
+    original = "START\n" + "x" * 200_000 + "\nEND"
+    msgs = [_tool_msg(original)] + [_tool_msg("s") for _ in range(_PRESERVE)]
+    once = cm.microcompact_messages(msgs)
+    assert cm.last_microcompact_mutated is True
+    honest = once[0]["content"]
+    notice = ContextManager._OMISSION_NOTICE.search(honest)
+    retained = len(honest) - len(notice.group(0)) - 2  # the notice's own newlines
+    reported = int(notice.group(1).replace(",", ""))
+    assert reported == len(original) - retained, "the count must be what fell out"
+    assert reported > 190_000, "not the ~45 a re-clip of its own output reported"
+
+    twice = cm.microcompact_messages(once)
+    assert cm.last_microcompact_mutated is False, "second pass must be a no-op"
+    assert cm.microcompact_would_mutate(once) is False
+    assert twice[0]["content"] == honest
 
 
 def test_preserves_last_n_tool_results_at_full_fidelity():
@@ -86,10 +125,13 @@ def test_head_tail_split_ratio():
     messages = [_tool_msg(content)] + [_tool_msg("s") for _ in range(_PRESERVE)]
     result = _cm().microcompact_messages(messages)
     truncated = result[0]["content"]
-    expected_head = int(_LIMIT * ContextManager.MICROCOMPACT_HEAD_RATIO)
+    # The ratio applies to the space left after reserving the notice, not to
+    # the raw limit — the notice lives inside the budget.
+    avail = truncated.count("H") + truncated.count("T")
+    assert len(truncated) <= _LIMIT
+    expected_head = int(avail * ContextManager.MICROCOMPACT_HEAD_RATIO)
     assert truncated.startswith("H" * expected_head)
-    expected_tail = _LIMIT - expected_head
-    assert truncated.endswith("T" * expected_tail)
+    assert truncated.endswith("T" * (avail - expected_head))
 
 
 # ---------------------------------------------------------------------------
