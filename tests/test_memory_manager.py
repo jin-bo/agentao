@@ -352,13 +352,31 @@ def test_stable_entries_caps_incidental_types(tmp_path):
     assert len(note_entries) == 3
 
 
-def test_stable_entries_incidental_takes_most_recent(tmp_path):
-    """When capping incidental entries, the most-recently-updated ones are kept."""
-    import time
+def test_stable_entries_incidental_takes_most_recent(tmp_path, monkeypatch):
+    """When capping incidental entries, the most-recently-updated ones are kept.
+
+    Timestamps are driven explicitly rather than by a sleep. ``storage._now_iso``
+    formats to whole seconds, so the ``time.sleep(0.01)`` this used to rely on
+    produced *identical* ``created_at`` and ``updated_at`` for both rows in
+    ~99% of runs. With every sort key tied, the outcome fell through to
+    SQLite's unspecified ordering for equal ``ORDER BY created_at`` keys — it
+    happened to return the newest row first on most builds and the oldest on
+    others, so the test asserted nothing and still went red on CI's Python 3.10.
+    """
+    from agentao.memory import storage
+
+    stamps = iter(["2026-01-01T00:00:00", "2026-01-02T00:00:00"])
+    monkeypatch.setattr(storage, "_now_iso", lambda: next(stamps))
+
     mgr = _make_manager(tmp_path)
     mgr.save_from_tool("old_note", "old", [])
-    time.sleep(0.01)  # ensure distinct updated_at
     mgr.save_from_tool("new_note", "new", [])
+
+    # Guard the premise: if these ever tie again the assertions below go back
+    # to riding on SQLite's tie-break instead of on the recency rule.
+    by_title = {e.title: e.updated_at for e in mgr.get_all_entries()}
+    assert by_title["old_note"] < by_title["new_note"]
+
     stable = mgr.get_stable_entries(recent_project_limit=1)
     stable_titles = {e.title for e in stable}
     assert "new_note" in stable_titles
