@@ -150,7 +150,34 @@ lines.append(f"[{role.upper()}]: {str(content)[:500]}")               # :651
 4. **普通档的截断不打标记。** 只有失败档标了省略；普通档直接砍到 1000 字符就交出去，摘要模型无从分辨「完整」与「被砍」——这正是同文件 `_clip_args` 已经写明的失败模式（会把半截路径/命令当成事实引用）。现在两档都标。
 5. **两处测试是空转的。** `test_a_single_oversized_message_still_produces_a_transcript` 名义上钉住「装不下也要保住最新一条」，但 ASCII 消息被 `_MESSAGE_TRUNCATION` 卡在 2000 字符 ≈ 500 token，永远够不到 2000 token 的预算下限，那条分支根本没被走到（改用 CJK 才真正触发）；`test_write_file_result_no_longer_gets_a_privileged_budget` 断的是 `not hasattr(...)`，任何拼写错误都能让它通过。两条都改成行为断言。另外预算的 token 计量从直接调 `_heuristic_token_count` 改为走 `count_tokens_in_text`，使它与所占比例的 `max_tokens` **同一单位**（有 tiktoken 用 tiktoken，没有则回落到同一个 CJK 启发式）。
 
-**未做：** 没有动 `MICROCOMPACT_TOOL_LIMIT = 3000`，所以双重截断（§本节上文）仍在——只是第二道从 200 抬到了 1000/4000，且两刀的切点不再重合。
+### 第三轮：双重截断本身（2026-08-23，同日）
+
+**上一轮记的「未做」被查实为更严重的问题：`_head_tail_clip` 不是幂等的，而且第二遍会覆盖掉第一遍诚实的计数。**
+
+它把提示行**追加在 limit 之外**，所以输出长度是 `limit + len(提示)`——**严格大于产生它的那个 limit**。而下游一律用「是否超过 limit」来判定，于是这个裁剪会永远重新选中自己的输出。实测四遍：
+
+```
+原文 200,020 字符
+pass 1: len=3045  mutated=True   [… 197,020 chars omitted by microcompact …]   ← 诚实
+pass 2: len=3040  mutated=True   [… 45 chars omitted by microcompact …]        ← 覆盖掉了
+pass 3: len=3040  mutated=True   [… 40 chars omitted by microcompact …]
+```
+
+**这条 bug 顺带废掉了 PR #181 的两处修复**,而 #181 和 #183 两轮评审都没发现:`microcompact_would_mutate()` 因此**恒为 True**,所以 55–65% 区间里的「无事可做就站下」永远不触发——每轮照样 fork 一次 PreCompact 子进程、emit 一条 `pre == post`;`last_microcompact_mutated` 同样恒为 True,token anchor 每轮照旧失效。**F1 和 F3 在最常见的情形下形同虚设。**
+
+三处修改:
+
+1. **提示行改为占用 limit 之内**,输出恰好 ≤ limit,裁剪成为不动点。第二遍起 `mutated=False`、`would_mutate=False`,诚实计数永久保留。
+2. **重复裁剪时把先前的省略数累加进来**(`_prior_omissions`),所以第二刀报的是**累计损失**而不是自己那一片——否则摘要模型会被告知一条丢了 20 万字符的结果「少了 2,000 字符」。
+3. **`compress_messages` 不再裁剪它即将丢弃的那一半**。原先在切分**之前**跑 microcompact,于是 `to_summarize` 被白切一刀——而 `_format_for_summary` 自己的分级本来就会给失败输出四倍空间并保住尾部。现在只对 `to_keep` 跑。
+
+实测存活率(同一批会话、真实窗口):**15% → 25%(#183) → 29%**。
+
+**仍未做:** `MICROCOMPACT_TOOL_LIMIT = 3000` 这个数值本身没动——它服务的是 55% 那一档对**活历史**的压缩,与摘要保真度是两个目标。真正的双重截断(同一段文本被两把互不知情的刀切)已经消除。
+
+---
+
+**教训(与 [[feedback_eviction_policy_check_the_discarded_end]] 同源):** 一个「裁剪到 N」的函数,其输出必须满足「不需要再裁剪」的判定。我写它的时候只想着「切完是 N 字符加一行说明」,没想到那行说明会让它越过自己的阈值。**任何带谓词的变换都要问一句:它的输出喂回谓词,答案是什么。**
 
 ---
 
