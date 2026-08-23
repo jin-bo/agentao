@@ -1,10 +1,11 @@
 # Codex `/compact` 与 Agentao `/compact` 对照
 
-> **⚠️ 本文仅为分析记录，暂不实施。** 第 1 节的分级是**分析结论的优先级排序**，不是工单：
-> 截至 2026-08-22，唯一一项 P1**未获授权动工**，开工前需维护者另行拍板。
+> **⚠️ 对 codex 的部分仅为分析记录，暂不实施。** 第 1 节的分级是**分析结论的优先级排序**，不是工单。
+> **例外：唯一一项 P1（§3）是 agentao 自身的缺陷，已于 2026-08-23 实施收口**（见 §3 节末「收口记录」）。
+> 其余各项（远端压缩、token-budget 空窗模式、压缩遥测矩阵等）仍**未获授权动工**。
 > 引用本文时请一并引用这一行——它防止下一个人把排序当排期。
 
-**状态：** 仅分析（未授权实施）。2026-08-22 起草；**rev 2 经评审一轮 8 项修正（初稿两项 P1 中撤回一项，另撤回一项「待定契约」结论）；rev 3 落地 §8 勘误横幅并自查出第 9 项；rev 4 再经一轮评审 5 项；rev 5 收 4 项；rev 6 收 1 项；rev 7 收 2 项；rev 8 收 1 项（共 **22** 条修正，六轮评审）**。修正明细见 §13——**再次提出本文任何结论前先读 §13**。
+**状态：** 对 codex 的对照部分仅分析（未授权实施）；**§3 的 P1 已实施**（2026-08-23，rev 9）。2026-08-22 起草；**rev 2 经评审一轮 8 项修正（初稿两项 P1 中撤回一项，另撤回一项「待定契约」结论）；rev 3 落地 §8 勘误横幅并自查出第 9 项；rev 4 再经一轮评审 5 项；rev 5 收 4 项；rev 6 收 1 项；rev 7 收 2 项；rev 8 收 1 项（共 **22** 条修正，六轮评审）**。修正明细见 §13——**再次提出本文任何结论前先读 §13**。
 **锚点：** codex `openai/codex@2151d3a5b7`（2026-08-21）；agentao `main@dc11298`（2026-08-21）。英文孪生待写。
 
 **范围（rev 2 新增，rev 4 更正，读本文前必读）：** codex 的压缩入口会**四路分发**（§2.1）。本文 §4 / §5 / §9.3 描述的是其中的 **local 路径**（`core/src/compact.rs`）——**在默认配置下，凡 provider 声明 `RemoteCompactionSupport::V2` 的都命中 remote v2，不是 local**。
@@ -15,7 +16,7 @@
 
 但**「codex 怎么做」这句话在本文里一律指 local 路径**，不可泛化为 codex 的默认行为。
 
-**方法：** 两侧都读源码，每条主张就地附 `file:line`。**唯一的 P1（§3）是 agentao 内部的自相矛盾，与 codex 无关**——即使一条也不借鉴 codex，它仍然成立。
+**方法：** 两侧都读源码，每条主张就地附 `file:line`。**唯一的 P1（§3）是 agentao 内部的自相矛盾，与 codex 无关**——即使一条也不借鉴 codex，它仍然成立；它也确实是本文唯一被实施的一条。
 **相关：** `codex-subagent-v2-vs-agentao.zh.md`（同一 codex 锚点的另一侧对照）、`codex-goal-mechanism-review.zh.md`、`docs/history/implementation/stop-precompact-hooks-plan.zh.md`（§8 的权威出处）。
 
 ---
@@ -26,7 +27,7 @@
 
 | 若实施，优先级 | 内容 | 依据 |
 |---|---|---|
-| **P1（未实施）** | 摘要**输入端**的 200/500 字符截断，与摘要 prompt 自己要求的 "verbatim / be thorough" 直接冲突 | §3 |
+| **~~P1~~ 已收口 2026-08-23** | 摘要**输入端**的 200/500 字符截断，与摘要 prompt 自己要求的 "verbatim / be thorough" 直接冲突。**已实施**：按内容分级 + 从新到旧的总 token 预算；实测常规窗口存活率 15% → 46–76% | §3 |
 | **观察** | `/compact` 只在交互式 CLI 可达，`agentao run` / ACP 拿不到 | §7 |
 | **观察** | 没有任何路径会从模型推断上下文窗口；`/model` 后 `max_tokens` 保持不变 | §6 |
 | **观察** | microcompaction 回写已发送前缀，代价是 provider prompt cache | §9.2 |
@@ -70,9 +71,11 @@ codex 的压缩窗口是**编号**的（`advance_auto_compact_window`，`compact
 
 ---
 
-## 3. 【P1，未实施】摘要输入端与摘要 prompt 自相矛盾
+## 3. 【P1，已收口 2026-08-23】摘要输入端与摘要 prompt 自相矛盾
 
 **这是 agentao 内部的矛盾，不是「codex 有我们没有」。评审一轮未对本节提出异议。**
+
+> **已实施。** 本节保留原始论证；**结论与实测数据见节末「收口记录」**。下方 (a)–(d) 四条候选路径是当时的待选项，**不再是开放问题**。
 
 `context_manager.py:532` 的 `_SUMMARIZE_SYSTEM_PROMPT` 是一个 9 段式结构化模板，其中：
 
@@ -107,6 +110,48 @@ lines.append(f"[{role.upper()}]: {str(content)[:500]}")               # :651
 
 **建议先做的是测量，不是改码：** 取若干真实 `agentao.log` 里的压缩现场，统计被 200/500 截断掉的比例与截断处的内容类型，再决定走哪条。
 
+### 收口记录（2026-08-23）
+
+**先测量，后改码——测量结果直接淘汰了一半选项。** 数据源：本机 `.agentao/sessions/*.json` 共 10 份真实会话，167 条 tool result、67 条 user/assistant 消息、239KB tool 输出。
+
+| 实测 | 值 |
+|---|---|
+| tool result 超预算被截 | **125 / 167（75%）** |
+| tool result 内容存活率 | **12%** |
+| user/assistant 存活率 | 49% |
+| `read_file` 占 tool 输出总量 | 173KB / 239KB |
+| `write_file`/`replace`/`edit_file` 结果长度中位数 | **114 字符** |
+
+**决定性的一条是最后一行：`_HIGH_FIDELITY_TOOLS` 的 1000 字符预算结构上永远够不着。** `write_file` 返回 `f"Successfully {action} {file_path}"`、`replace` 返回 `f"Replaced {n} occurrence(s) in {file_path}"`（`tools/file_ops.py:260,394`）——受路径长度约束的确认串，不是文件内容。它想保住的东西在 **tool call 的参数里**，而那正是 F1 刚开始渲染的东西。所以 (d) 里说的「把按工具名扩成按内容」不是扩，是**替换**：这一档整个删掉了。
+
+**落地 = (c) + (d)，两条一起，因为它们各自都不完整：**
+
+- **(d) 按内容分级** —— 失败输出（traceback / 非零退出 / `error` / `denied`）3000 字符，普通 tool result 1000（原 200），user/assistant 2000（原 500）。失败很便宜：167 条里 23 条、占 3% 字节。
+- **(c) 总预算，从新到旧分配** —— `max_tokens × 10%`，用 `_heuristic_token_count` 按**估算 token** 而不是字符计——CJK 是 1.3 token/字符 vs ASCII 0.25，用字符预算会把中文低估五倍以上，而中文历史恰恰最容易长。
+- **单独做 (d) 会制造新缺陷**：抬高单条上限而不封顶，摘要调用自身可能溢出，而摘要失败会 `_consecutive_compact_failures += 1` 触发熔断——把保真度改进变成压缩中断。这正是 code review #8 提的那条，**与本节是同一个决策的两面**，一起收。
+- **(a) 单纯放宽预算** 就是「只做 (d)」。**(b) 改 prompt** 是撤退，数据不支持——真正被浪费的预算是那档够不着的 1000，不是模板要求过高。
+
+**一个非显然的实现细节：失败输出要留尾巴。** 命令的诊断信息在**末尾**（traceback、非零退出、assertion），只从头截 3000 字会满足了大预算却仍然丢掉 `## 4. Errors and Fixes` 要求逐字引用的那一句。所以失败档走 head+tail（复用 `MICROCOMPACT_HEAD_RATIO`），且标记扫描扫**全串**——只扫前 N 字符会把「先正常跑一阵再失败」的命令全部误判为普通档，而那是绝大多数。
+
+**实测效果**（同一批会话，按真实 `to_summarize` 窗口，即扣掉尾部 20 条 verbatim）：
+
+| 窗口规模 | 存活率 |
+|---|---|
+| 常规窗口（6–14 条） | **46% / 51% / 74% / 76%**（原 15%） |
+| 一个 165 条的病态窗口 | 16%，且**显式封顶在 19,275 token 并标注省略条数**——原实现在这里**完全无上限** |
+
+**新增 12 条测试。其中一条抓出了我自己的 bug**：第一版契约测试用等长消息，因此没能发现「预算装不下的块被跳过、继续给更老的块花预算」会在 transcript 中间**打洞**。改成随机尺寸的性质测试（200 次试验，断言存活集合恒为连续后缀）后立刻暴露。实现改为遇到第一个装不下的块即停止。
+
+**代码评审（同日，第二轮）又收了 5 条**，其中前两条是**首版实现自己制造的新缺陷**，不是原有问题：
+
+1. **双重截断会吃掉 microcompact 的省略提示。** 首版把 `_ERROR_RESULT_TRUNCATION` 定为 3000，与 `MICROCOMPACT_TOOL_LIMIT` **完全相等**、且两者共用 `MICROCOMPACT_HEAD_RATIO`——于是第二刀的头尾切点与第一刀**逐字符对齐**，正好落在第一刀写下的 `[… 200,000 chars omitted by microcompact …]` 上，把它删掉并改写成「45 chars omitted」。摘要模型被告知这条结果只少了 45 个字符，而实际少了二十万，**而摘要是要永久顶替 history 的**。改为 4000（严格高于 microcompact 上限 + 提示行长度），已被 microcompact 处理过的结果因此原样通过。
+2. **老的 `[Conversation Summary]` 会被总预算整条淘汰。** `compress_messages` 返回的是 `[boundary, summary, …, recent]`，所以重新压缩时**上一轮的摘要恒为最老的块**，而预算恰恰从新到旧花——它第一个被丢。丢的是 prompt 第 1 节（「用户提出的每一个目标」）与第 6 节（「所有非平凡用户消息」）唯一的载体：第二次压缩就会把在此之前的全部历史一次性截肢。实测（200K 窗口 / 400 条工具密集历史）确认它被丢掉。修复：摘要块单独计费、永不淘汰，上限为预算的一半（`_clip_carry_summary`），省略标记改放在**接缝处**而非行首（否则读起来像是摘要本身被丢了）。
+3. **失败标记的匹配面过宽，而过宽在共享预算下不是免费的。** 首版用 `traceback|exception|\berror\b|…` 裸词匹配，实测命中本仓 **169/272** 个源码文件——也就是三分之二的普通 `read_file` 结果（而 `read_file` 正是 239KB 工具输出里的 173KB）被误判为失败、拿走 4 倍预算，再由「从新到旧」把更老的消息整条挤出去。原注释「误判一次只多花几百字符」因此是错的。改为按**诊断形状**匹配（traceback 头、列 0 的异常行、非零退出、runner 的 FAILED/ERROR 列……），误判降到 **9/272**，同时 traceback / pytest / `command not found` / 非零退出 / `Permission denied` / git `fatal:` / npm `ERR!` / ruff / mypy / `Connection refused` / go `exit status` 全部仍然命中。
+4. **普通档的截断不打标记。** 只有失败档标了省略；普通档直接砍到 1000 字符就交出去，摘要模型无从分辨「完整」与「被砍」——这正是同文件 `_clip_args` 已经写明的失败模式（会把半截路径/命令当成事实引用）。现在两档都标。
+5. **两处测试是空转的。** `test_a_single_oversized_message_still_produces_a_transcript` 名义上钉住「装不下也要保住最新一条」，但 ASCII 消息被 `_MESSAGE_TRUNCATION` 卡在 2000 字符 ≈ 500 token，永远够不到 2000 token 的预算下限，那条分支根本没被走到（改用 CJK 才真正触发）；`test_write_file_result_no_longer_gets_a_privileged_budget` 断的是 `not hasattr(...)`，任何拼写错误都能让它通过。两条都改成行为断言。另外预算的 token 计量从直接调 `_heuristic_token_count` 改为走 `count_tokens_in_text`，使它与所占比例的 `max_tokens` **同一单位**（有 tiktoken 用 tiktoken，没有则回落到同一个 CJK 启发式）。
+
+**未做：** 没有动 `MICROCOMPACT_TOOL_LIMIT = 3000`，所以双重截断（§本节上文）仍在——只是第二道从 200 抬到了 1000/4000，且两刀的切点不再重合。
+
 ---
 
 ## 4. 摘要怎么生成（codex local 路径 vs agentao）
@@ -122,14 +167,14 @@ lines.append(f"[{role.upper()}]: {str(content)[:500]}")               # :651
 
 **agentao —— 带外（out-of-band）。** `context_manager.py:566` `_summarize_messages`：
 
-1. `_format_for_summary` 把 history **压平成纯文本**（并按 200/500 字符截断，见 §3）；
+1. `_format_for_summary` 把 history **压平成纯文本**（并按内容分级的字符上限 + 从新到旧的总 token 预算裁剪，见 §3「收口记录」；2026-08-23 之前是固定的 200/500 字符截断）；
 2. 构造一个全新的 2 条消息会话 `[system=9段式模板, user="Summarize this conversation:\n\n"+flattened]`；
 3. `self.llm_client.chat(messages=recall_messages, tools=None)` —— **绕过 `ChatLoopRunner`**；
 4. `_format_summary` 剥掉 `<analysis>` 思考块、解包 `<summary>` 标签。
 
 第 3 步的绕过有已知代价，代码里自陈（`context_manager.py:75-85`）：这次调用不经过 runner 的 `finish_reason` 探测器，而它偏偏是**唯一一次输出会永久改写 history 的调用**——一个被 length 截断的摘要会被之后每一轮继承。所以 `last_summary_finish_reason_missing` 必须由压缩调用点手工折回（`_compaction.py:77-78`、`_runner.py:1170-1171`）。这是带外方案的固有税，不是疏漏。
 
-**核心差异因此应表述为：codex local 给摘要模型的是原生结构，agentao 给的是 200/500 字符扁平化文本。** 代价对称：codex 要重发整份 history（前缀命中 prompt cache），agentao 极便宜但输入有损、且要自己补齐 runner 的观测。
+**核心差异因此应表述为：codex local 给摘要模型的是原生结构，agentao 给的是扁平化文本（原 200/500 固定截断，2026-08-23 起为分级上限 + 总预算，见 §3）。** 代价对称：codex 要重发整份 history（前缀命中 prompt cache），agentao 极便宜但输入有损、且要自己补齐 runner 的观测。
 
 ---
 
@@ -288,7 +333,7 @@ agentao 的更 recency-aware（延迟到真需要时才做），**代价是它�
 
 ## 12. 若要动手，建议顺序
 
-1. **先测量，不改码**（对应 §3）：从真实 `agentao.log` 采样压缩现场，统计 200/500 截断的命中率与被截内容类型。这决定 §3 走 (a)/(b)/(c)/(d) 哪条。
+1. ~~**先测量，不改码**（对应 §3）~~ —— **已于 2026-08-23 完成**：测量走的是 `.agentao/sessions/*.json` 而非 `agentao.log`，结论选定 (c)+(d)，实现与实测数据见 §3「收口记录」。
 2. ~~**§8 的文档漂移单独回填**~~ —— **已于 2026-08-22 完成**（勘误横幅，见 §8）。横幅同时记下两项**未解决**、需另行决策的事：(i) `build_pre_compact` 写死 `trigger="auto"` 导致手动压缩自报为 auto 的代码缺陷；(ii) PreCompact 的 payload / matcher 契约**没有在世文档**，目前只存在于那份已废止计划里。
 3. §6 / §7 / §9.2 保持观察，等真实需求或实测数据。
 
