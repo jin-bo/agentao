@@ -533,9 +533,9 @@ if __name__ == "__main__":
 # summarizer saw results with no invocation.
 # ---------------------------------------------------------------------------
 
-def _cm():
+def _cm(max_tokens=200_000):
     from agentao.context_manager import ContextManager
-    return ContextManager(_make_mock_llm(), Mock(), max_tokens=200_000)
+    return ContextManager(_make_mock_llm(), Mock(), max_tokens=max_tokens)
 
 
 def _tool_call(name, arguments, call_id="call_1"):
@@ -728,3 +728,250 @@ def test_microcompact_reports_no_mutation_when_nothing_oversized():
     out = cm.microcompact_messages(small)
     assert out is not small          # new list, as before
     assert cm.last_microcompact_mutated is False
+
+
+# ---------------------------------------------------------------------------
+# _format_for_summary — input budget (§3 P1)
+#
+# The 9-section prompt demands error messages "verbatim" and calls Files and
+# Errors "the most important" sections, while the input pipeline used to clip
+# every tool result to 200 chars and every message to 500. Measured against
+# the saved sessions in ``.agentao/sessions``: 12% of tool-result content
+# survived. These pin the replacement — content-tiered per-entry ceilings
+# under one recency-ordered total budget.
+# ---------------------------------------------------------------------------
+
+def test_failing_tool_result_keeps_its_tail_where_the_error_actually_is():
+    """A traceback sits at the END of a failing command's output.
+
+    Head-only truncation would satisfy the larger failure budget and still
+    drop the one string ``## 4. Errors and Fixes`` asks to be quoted verbatim.
+    """
+    cm = _cm()
+    noise = "compiling module\n" * 900
+    out = cm._clip_tool_result(noise + "Traceback (most recent call last):\nAssertionError: boom")
+    assert out.endswith("AssertionError: boom")
+    assert out.startswith("compiling module")
+    assert "omitted" in out
+
+
+def test_failure_marker_is_searched_past_the_plain_budget():
+    """Most commands run fine for a while and fail at the end.
+
+    Scanning only the first ``_TOOL_RESULT_TRUNCATION`` chars for a marker
+    would file every one of those under the plain tier.
+    """
+    cm = _cm()
+    text = "ok\n" * 2000 + "\nERROR: exit code 1"
+    assert len(text) > cm._TOOL_RESULT_TRUNCATION
+    assert len(cm._clip_tool_result(text)) > cm._TOOL_RESULT_TRUNCATION
+
+
+def test_successful_tool_result_stays_on_the_plain_budget():
+    cm = _cm()
+    out = cm._clip_tool_result("x" * 50_000)
+    assert out.startswith("x" * cm._TOOL_RESULT_TRUNCATION)
+    assert not out.startswith("x" * (cm._TOOL_RESULT_TRUNCATION + 1))
+
+
+def test_every_clip_tier_marks_the_cut():
+    """An unmarked clip reads as a complete result.
+
+    ``_clip_args`` already documents the failure one layer down: the summarizer
+    cannot tell an amputated path or command from a whole one, and quotes it as
+    fact. The plain tier used to cut silently.
+    """
+    cm = _cm()
+    plain = cm._clip_tool_result("x" * 50_000)
+    failing = cm._clip_tool_result("Traceback (most recent call last):\n" + "x" * 50_000)
+    assert "49,000 chars omitted" in plain
+    assert "chars omitted" in failing
+
+
+def test_a_microcompacted_failure_passes_through_the_summary_clip_untouched():
+    """The two head+tail clips must not land on the same boundary.
+
+    ``compress_messages`` microcompacts the whole list before the transcript is
+    built. When ``_ERROR_RESULT_TRUNCATION`` equalled ``MICROCOMPACT_TOOL_LIMIT``
+    the second clip cut exactly where the first one had written
+    ``[… 200,000 chars omitted by microcompact …]`` — deleting the only honest
+    record of the loss and replacing it with a claim of ~45 chars.
+    """
+    from agentao.context_manager import ContextManager
+    cm = _cm()
+    original = "build\n" * 20 + "x" * 200_000 + "\nTraceback (most recent call last):\nboom"
+    microcompacted = ContextManager._head_tail_clip(
+        original, cm.MICROCOMPACT_TOOL_LIMIT, note="omitted by microcompact"
+    )
+    out = cm._clip_tool_result(microcompacted)
+    assert out == microcompacted
+    honest = f"{len(original) - cm.MICROCOMPACT_TOOL_LIMIT:,} chars omitted by microcompact"
+    assert honest in out, "the real omitted count must survive"
+
+
+def test_failure_markers_do_not_fire_on_ordinary_source_code():
+    """Over-tiering is not free: it takes a 4x share of a budget spent
+    newest-first, so each mis-tiered success evicts *older* messages whole.
+
+    The bare-word scan this replaced (``traceback|exception|\\berror\\b|…``)
+    matched 169 of this repo's 272 source files — i.e. two thirds of ordinary
+    ``read_file`` results, the single largest class of tool output measured.
+    """
+    from agentao.context_manager import ContextManager as CM
+    benign = [
+        'except Exception as e:\n    raise ValueError("bad")\n',
+        '    ERROR = "error"   # enum member\n',
+        '    Raises:\n        KeyError: with a descriptive message\n',
+        '    error: Optional[Dict[str, Any]] = None\n',
+    ]
+    for text in benign:
+        assert not CM._FAILURE_MARKERS.search(text), text
+    diagnostics = [
+        "Traceback (most recent call last):\nValueError: bad",
+        "FAILED tests/test_a.py::test_b - AssertionError\n1 failed, 3 passed",
+        "bash: foo: command not found\nExit code: 127",
+        "cp: /etc/hosts: Permission denied",
+        "fatal: not a git repository",
+        "npm ERR! code E404",
+        "curl: (7) Failed to connect: Connection refused",
+        "x.py:1: error: Incompatible types\nFound 1 error in 1 file",
+        "./main.go:5:2: undefined: foo\nexit status 1",
+    ]
+    for text in diagnostics:
+        assert CM._FAILURE_MARKERS.search(text), text
+
+
+def test_short_tool_result_is_returned_untouched():
+    cm = _cm()
+    assert cm._clip_tool_result("done") == "done"
+
+
+def test_transcript_stays_within_the_token_budget():
+    """Nothing bounded the transcript before; a tool-dense window could
+    overflow the summarization call, and a failed summarization increments the
+    circuit breaker — turning a fidelity fix into a compaction outage."""
+    from agentao.context_manager import _heuristic_token_count
+    cm = _cm(max_tokens=20_000)
+    msgs = [{"role": "user", "content": "u" * 4_000} for _ in range(200)]
+    out = cm._format_for_summary(msgs)
+    # Budget plus the one elision line added after accounting.
+    assert _heuristic_token_count(out) <= cm._summary_input_budget() + 100
+
+
+def test_budget_drops_the_oldest_and_says_so():
+    cm = _cm(max_tokens=20_000)
+    msgs = [{"role": "user", "content": f"MARK{i} " + "u" * 4_000} for i in range(200)]
+    out = cm._format_for_summary(msgs)
+    assert "MARK199" in out, "newest message must survive"
+    assert "MARK0" not in out, "oldest must be the one dropped"
+    assert "earlier message(s) omitted" in out.split("\n")[0]
+
+
+def test_survivors_are_contiguous_under_wildly_varying_message_sizes():
+    """Allocation runs newest->oldest, so what survives must be a suffix.
+
+    Randomised sizes on purpose. The first version of this test used uniform
+    2KB messages and passed against an implementation that *skipped* a block
+    too big to fit and kept spending on older ones — punching a hole in the
+    middle of the transcript and handing the summarizer a history that omits a
+    step without saying where. Only a mix containing the occasional giant
+    exposes it, so the mix is the test.
+    """
+    import random
+    from agentao.context_manager import _heuristic_token_count
+    rng = random.Random(7)
+    for trial in range(200):
+        cm = _cm(max_tokens=rng.choice([8_000, 20_000, 60_000, 200_000]))
+        n = rng.randint(1, 120)
+        msgs = [
+            {
+                "role": rng.choice(["user", "assistant", "tool"]),
+                "name": "read_file",
+                "content": f"MARK{i:03d} " + "u" * rng.choice([10, 500, 9_000, 60_000]),
+            }
+            for i in range(n)
+        ]
+        out = cm._format_for_summary(msgs)
+        seen = [i for i in range(n) if f"MARK{i:03d}" in out]
+        assert seen, f"trial {trial}: empty transcript"
+        assert seen == list(range(seen[0], n)), f"trial {trial}: gap at {seen[:5]}"
+        assert _heuristic_token_count(out) <= cm._summary_input_budget() + 100
+
+
+def test_a_single_oversized_message_still_produces_a_transcript():
+    """An empty transcript summarizes to nothing, which counts as a failure
+    and increments the circuit breaker.
+
+    The block genuinely has to exceed the budget, which an ASCII message cannot
+    do: ``_MESSAGE_TRUNCATION`` caps it at 2_000 chars = ~500 estimated tokens
+    against a 2_000-token floor. CJK is charged 1.3 tok/char, so 2_000 Chinese
+    characters cost ~2_600 — the first input that actually reaches the branch.
+    """
+    from agentao.context_manager import _heuristic_token_count
+    cm = _cm(max_tokens=20_000)          # budget == the 2_000-token floor
+    msgs = [{"role": "user", "content": "严重错误：无法打开该文件。" * 500}]
+    out = cm._format_for_summary(msgs)
+    assert _heuristic_token_count(out) > cm._summary_input_budget(), (
+        "guard: this input must exercise the keep-the-newest-block-anyway branch"
+    )
+    assert out.strip()
+    assert "[USER]" in out
+
+
+def test_write_file_result_no_longer_gets_a_privileged_budget():
+    """``write_file`` returns ``f"Successfully {action} {path}"`` — a
+    confirmation bounded by a path length (measured median 114 chars). The
+    1000-char carve-out it used to get was structurally unreachable, and the
+    content it meant to preserve is in the call arguments.
+
+    Asserted behaviourally: an ``hasattr`` check for the deleted constant
+    passes for any misspelling of it, and would keep passing if the carve-out
+    came back under a new name.
+    """
+    cm = _cm()
+    out = cm._format_for_summary([
+        {"role": "assistant", "content": "",
+         "tool_calls": [_tool_call("write_file", json.dumps(
+             {"file_path": "/repo/x.py", "content": "C" * 40_000}))]},
+        {"role": "tool", "name": "write_file", "content": "y" * 50_000},
+    ])
+    assert "/repo/x.py" in out, "the path lives in the call args, not the result"
+    body = out.split("[Tool Result - write_file]: ")[1]
+    assert body.startswith("y" * cm._TOOL_RESULT_TRUNCATION)
+    assert not body.startswith("y" * (cm._TOOL_RESULT_TRUNCATION + 1))
+
+
+def test_a_carried_conversation_summary_is_never_evicted_by_the_budget():
+    """It is the oldest block in the window and the only record of everything
+    before the previous compaction.
+
+    ``compress_messages`` returns ``[boundary, summary, …, recent]``, so plain
+    newest-first spending drops the summary *first* — and sections 1 and 6 of
+    the prompt ("every explicit goal the user stated", "all non-trivial user
+    messages") describe content that by then lives nowhere else. Each further
+    compaction would amputate the whole accumulated history.
+    """
+    cm = _cm(max_tokens=200_000)
+    carry = {
+        "role": "system",
+        "content": (
+            "[Conversation Summary]\n## 1. Primary Request and Intent\n"
+            "SHIP THE PARSER REWRITE\n" + "detail line\n" * 400
+            + cm.SUMMARY_END_MARKER + "\n(historical context)"
+        ),
+    }
+    filler = []
+    for i in range(200):
+        filler.append({"role": "assistant", "content": "",
+                       "tool_calls": [_tool_call("read_file", '{"path": "/a.py"}', f"c{i}")]})
+        filler.append({"role": "tool", "name": "read_file", "content": "def f():\n" * 400})
+    out = cm._format_for_summary([{"role": "system", "content": "[Compact Boundary]"}] + [carry] + filler)
+
+    assert "SHIP THE PARSER REWRITE" in out, "the carried summary must survive"
+    assert "earlier message(s) omitted" in out, "the window really did overflow"
+    # …and it stays chronological: summary first, then the elision seam.
+    assert out.index("SHIP THE PARSER REWRITE") < out.index("earlier message(s) omitted")
+    # The carve-out is bounded so it cannot starve the live tail.
+    assert cm.count_tokens_in_text(
+        out.split("earlier message(s) omitted")[0]
+    ) <= cm._summary_input_budget() // 2 + 100

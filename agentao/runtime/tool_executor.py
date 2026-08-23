@@ -73,9 +73,12 @@ _DO_NOT_RETRY_CLOSE = (
 
 # Hook-branch closes. These bar only the identical re-issue and defer to the
 # hook for what to do instead. Both are placed *before* the reason so they
-# survive ``context_manager._format_for_summary``'s 200-char tool-result cut
-# when a compaction summary is built — the reason is variable-length and would
-# otherwise push the instruction past it.
+# survive ``context_manager._clip_tool_result``'s head cut when a compaction
+# summary is built — the reason is attacker-influenced text of unbounded length
+# and would otherwise push the instruction past it. (That cut was 200 chars
+# when this was written and is now content-tiered and larger, which shortens
+# the odds but does not remove them: the ordering is still the only thing
+# guaranteeing the instruction survives.)
 _HOOK_DENY_CLOSE_WITH_REASON = (
     "Do not re-issue this call unchanged; if the hook's reason below names an "
     "alternative, follow it."
