@@ -287,25 +287,62 @@ class ContextManager:
     # 20% head (command invoked, initial output) + 80% tail (errors, final results).
     MICROCOMPACT_HEAD_RATIO = 0.2
 
+    # Matches an omission notice this class wrote, so a re-clip can carry the
+    # earlier count forward instead of reporting only its own slice.
+    _OMISSION_NOTICE = re.compile(r"\[… ([\d,]+) chars [^\]]*?…\]")
+
+    @classmethod
+    def _prior_omissions(cls, text: str) -> int:
+        """Total already reported as dropped by an earlier clip of ``text``."""
+        return sum(
+            int(m.group(1).replace(",", ""))
+            for m in cls._OMISSION_NOTICE.finditer(text)
+        )
+
     @classmethod
     def _head_tail_clip(cls, text: str, limit: int, note: str = "omitted") -> str:
         """Keep the head + tail of ``text`` and say how much fell out between.
 
-        One copy, because the two call sites — microcompaction and the summary
+        One copy, because the call sites — microcompaction and the summary
         transcript's failure tier — need the identical shape, and the notice is
         load-bearing at both: without it a reader (or the summarizing model)
         cannot tell a clipped result from a complete one and will quote half a
         command or half a path as fact.
+
+        **The notice is budgeted *inside* ``limit``, which makes this a fixed
+        point.** It used to be appended on top, so the output was
+        ``limit + len(notice)`` characters — strictly longer than the limit
+        that produced it. Everything downstream tests "is this over the limit?",
+        so the clip re-selected its own output forever: a second pass cut the
+        honest ``197,020 chars omitted`` notice out of the middle and wrote
+        ``45 chars omitted`` in its place, and every later pass reported ``40``.
+        That also pinned ``microcompact_would_mutate()`` at True and
+        ``last_microcompact_mutated`` at True for the whole 55-65% band,
+        silently defeating both stand-downs added in #181.
+
+        A re-clip of already-clipped text carries the earlier count forward
+        (:meth:`_prior_omissions`), so the figure the summarizer sees is the
+        total lost, not the last slice.
         """
         if len(text) <= limit:
             return text
-        head = int(limit * cls.MICROCOMPACT_HEAD_RATIO)
-        tail = limit - head
-        omitted = len(text) - limit
+        # ``omitted`` can never exceed ``len(text)``, so a notice sized for that
+        # worst case is an upper bound on the real one — which makes the final
+        # result at most ``limit`` characters without a second pass.
+        reserve = len(f"\n[… {len(text):,} chars {note} …]\n")
+        avail = max(1, limit - reserve)
+        head = int(avail * cls.MICROCOMPACT_HEAD_RATIO)
+        tail = avail - head
+        kept = text[:head] + text[len(text) - tail:] if tail else text[:head]
+        omitted = (
+            len(text) - avail
+            + cls._prior_omissions(text)
+            - cls._prior_omissions(kept)
+        )
         return (
             text[:head]
             + f"\n[… {omitted:,} chars {note} …]\n"
-            + text[len(text) - tail:]
+            + (text[len(text) - tail:] if tail else "")
         )
 
     def _microcompactable_indices(self, messages: List[Dict[str, Any]]) -> set:
@@ -480,9 +517,6 @@ class ContextManager:
         if len(messages) < 5:
             return messages
 
-        # --- Step 1: microcompact (free) ------------------------------------
-        messages = self.microcompact_messages(messages)
-
         # --- Step 2: partial compaction split -------------------------------
         # Keep at most KEEP_RECENT_MESSAGES, but no more than 60% of total
         keep_count = min(
@@ -522,7 +556,13 @@ class ContextManager:
         # ``_find_split_index`` never returns 0, so ``to_summarize`` is
         # non-empty by construction — no second emptiness check needed here.
         to_summarize = messages[:split_index]
-        to_keep = messages[split_index:]
+        # Microcompact only the half that survives — the summarized half is
+        # discarded once the summary exists, so clipping it here is pure loss:
+        # ``_format_for_summary`` applies its own content-aware budget, which
+        # gives a failing command four times what this pass would have left and
+        # keeps the tail where its diagnostic is. Running before the split (as
+        # this did) cut the same text twice for no gain.
+        to_keep = self.microcompact_messages(messages[split_index:])
 
         # --- Step 3: extract pinned messages --------------------------------
         pinned = [
@@ -925,11 +965,19 @@ class ContextManager:
         if not cls._FAILURE_MARKERS.search(text):
             # Head-only: a success's useful part is its opening, and the two
             # disjoint fragments a head+tail split leaves read worse here.
-            omitted = len(text) - cls._TOOL_RESULT_TRUNCATION
-            return (
-                text[: cls._TOOL_RESULT_TRUNCATION]
-                + f"\n[… {omitted:,} chars omitted …]"
+            #
+            # The count carries any earlier clip's forward. This is the second
+            # cut by construction — full compression microcompacts the kept
+            # window first, and the live 55% pass has usually already run — so
+            # reporting only this slice would tell the summarizer a result lost
+            # 2,000 characters when it lost 199,065.
+            kept = text[: cls._TOOL_RESULT_TRUNCATION]
+            omitted = (
+                len(text) - cls._TOOL_RESULT_TRUNCATION
+                + cls._prior_omissions(text)
+                - cls._prior_omissions(kept)
             )
+            return kept + f"\n[… {omitted:,} chars omitted …]"
         return cls._head_tail_clip(text, cls._ERROR_RESULT_TRUNCATION)
 
     def _clip_carry_summary(self, text: str) -> str:
