@@ -13,6 +13,26 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **Full LLM compaction now triggers at 80% of `max_context_tokens`, not 65%**
+  (`ContextManager.COMPRESSION_THRESHOLD` 0.65 → 0.80). agentao was the most
+  conservative of its peers by 25–27 points (pi-mono compacts at
+  `contextWindow − reserveTokens` ≈ 92%; codex at
+  `min(config, context_window × 9/10)`), and the accuracy argument for
+  compacting early does not hold — the threshold estimate is anchored to the
+  API's own `prompt_tokens` whenever a fresh anchor exists, so it is not a
+  guess that needs a wide margin. Two consequences to know about. **The cheap
+  tier's band widens**: `MICROCOMPACT_THRESHOLD` is unchanged at 0.55, so
+  microcompaction now covers `(55%, 80%]` instead of `(55%, 65%]` — more
+  no-LLM tool-result clearing passes run before the expensive summarization
+  fires, which is the point, but a session can now sit well above the old
+  threshold with tool results already fully clipped and no summarization
+  scheduled. **Headroom narrows from 35% to 20% of the configured window**:
+  that margin is what absorbs a mis-set `max_context_tokens` (the CLI applies
+  one `200_000` default to every model and `/model` does no reconciliation),
+  and it is what the 2-rung API-overflow ladder falls back on. Hosts running a
+  window larger than their model's real one will reach the ladder sooner. The
+  ratios remain **not configurable**.
+
 - **BREAKING — a broken `permissions.json` now aborts session creation instead
   of silently loading no rules.** Unreadable, not valid UTF-8, malformed JSON, a
   top level that is not an object, an unknown top-level key, or a rule that

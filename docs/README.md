@@ -86,7 +86,7 @@ Schema snapshots are checked in. A model change that shifts the wire form must u
 
 ## Design Records
 
-Architecture decisions, host-facing contracts, and cross-repo reviews. These are not implementation plans by themselves, but plans should point back to them when they affect public behavior. Full set under [design/](design).
+Architecture decisions, host-facing contracts, cross-repo reviews, and implementation plans. Documents here carry a **Status** line and stay put across their whole lifecycle — `Draft, not yet implemented` → `Implementation in progress` → `Implemented` → `Shipped in x.y.z` — so a plan is not moved when it lands, only restatused. Full set under [design/](design).
 
 | Document | Scope |
 |----------|-------|
@@ -94,6 +94,7 @@ Architecture decisions, host-facing contracts, and cross-repo reviews. These are
 | [design/embedding-vs-acp.md](design/embedding-vs-acp.md) | Which surface to use: in-process embed vs ACP server vs ACP client |
 | [design/metacognitive-boundary.md](design/metacognitive-boundary.md) | Host-injectable self-vs-project boundary protocol |
 | [design/codex-reverse-review.md](design/codex-reverse-review.md) | Reverse review of Codex changes: adopt / done / defer |
+| [design/compaction-orchestration-plan.md](design/compaction-orchestration-plan.md) | Six-PR plan converging the five compaction entry points behind one coordinator (`.zh.md` twin). Reviewed twelve times, **not authorized for implementation** |
 
 ## Releases & Migration
 
@@ -104,7 +105,7 @@ Architecture decisions, host-facing contracts, and cross-repo reviews. These are
 
 Superseded plans, archived dev-notes, and old change logs. Useful for archaeology and context, **not** the source of truth for current behavior.
 
-- [history/implementation/](history/implementation) — engineering plans, GitHub epics, and per-issue breakdowns
+- [history/implementation/](history/implementation) — a **frozen snapshot** of the old `docs/implementation/` directory as it stood on 2026-06-05, swept here wholesale by the docs reorg (#80). Engineering plans, GitHub epics, and per-issue breakdowns from before that date. **New plans do not go here** — they go in [design/](design), which carries a Status line instead.
 - [history/dev-notes/](history/dev-notes) — archived development summaries and fix notes
 - [history/updates/](history/updates) — historical change logs
 - `history/headless-runtime-issues.md`, `history/headless-runtime-plan.md`, `history/kanban-acp-embedded-client-issue.md` — older planning notes

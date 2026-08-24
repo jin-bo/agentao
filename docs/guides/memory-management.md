@@ -56,7 +56,7 @@ schema_meta        — 版本元数据
 
 **产生时机：** 由上下文压缩管道写入——
 - **Microcompaction**（55% 用量）：截断大型工具结果，不生成摘要文本
-- **Full LLM summarization**（65% 用量）：将早期消息浓缩为结构化摘要，调用 `MemoryManager.save_session_summary()` 持久化
+- **Full LLM summarization**（80% 用量）：将早期消息浓缩为结构化摘要，调用 `MemoryManager.save_session_summary()` 持久化
 
 **关键字段：**
 
@@ -225,5 +225,5 @@ AI: [调用 save_memory，key 相同时自动覆盖]
 
 ### 会话摘要丢失
 
-- 摘要仅在触发全量 LLM 压缩（65% 用量）时写入，短会话不会生成
+- 摘要仅在触发全量 LLM 压缩（80% 用量）时写入，短会话不会生成
 - `/memory clear` 会同时清空会话摘要；`/clear` 仅清空对话历史，不清空摘要

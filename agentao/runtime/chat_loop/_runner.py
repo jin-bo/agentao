@@ -359,7 +359,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
 
             # One threshold estimate per iteration, shared by both compaction
             # predicates (T1.3). The ranges are mutually exclusive (micro
-            # 55-65%, full >65%) and microcompaction only lowers the count, so
+            # 55-80%, full >80%) and microcompaction only lowers the count, so
             # reusing the pre-mutation estimate yields the same fire/no-op
             # decision as recomputing — without the redundant second estimate.
             est_tokens = agent.context_manager._threshold_token_estimate(messages_with_system)

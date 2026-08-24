@@ -104,7 +104,7 @@ def test_needs_compression_false_below_threshold():
 def test_needs_compression_true_above_threshold():
     from agentao.context_manager import ContextManager
     cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
-    # 2000 msgs * 4 chars = 8000 chars / 4 = 2000 tokens >> 1000 * 0.8
+    # 2000 msgs * 4 chars = 8000 chars / 4 = 2000 tokens >> 1000 * 0.80 (800)
     msgs = [{"role": "user", "content": "abcd"} for _ in range(2_000)]
     assert cm.needs_compression(msgs) is True
 
@@ -120,13 +120,13 @@ def test_threshold_uses_tier1_anchor_not_full_reencode():
     cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
     # Prefix is locally tiny (3 tokens) but the API reported it as 600 tokens.
     msgs = [{"role": "user", "content": "x" * 4} for _ in range(3)]
-    cm.record_api_usage(600, message_count=3)
-    # Append one tail message: 240 chars / 4 = 60 tokens. anchor+tail = 660.
+    cm.record_api_usage(760, message_count=3)
+    # Append one tail message: 240 chars / 4 = 60 tokens. anchor+tail = 820.
     msgs.append({"role": "assistant", "content": "x" * 240})
 
     # estimate_tokens (full re-encode) must NOT be consulted on the hot path.
     cm.estimate_tokens = Mock(side_effect=AssertionError("full re-encode on hot path"))
-    # 660 > 1000 * 0.65 (650) -> compress. A full local estimate would be
+    # 820 > 1000 * 0.80 (800) -> compress. A full local estimate would be
     # ~3 + 60 = 63 and would (wrongly) return False, so True proves the anchor.
     assert cm.needs_compression(msgs) is True
 
@@ -148,7 +148,7 @@ def test_invalidate_token_anchor_forces_full_estimate():
     from agentao.context_manager import ContextManager
     cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
     msgs = [{"role": "user", "content": "x" * 4} for _ in range(3)]
-    cm.record_api_usage(600, message_count=3)
+    cm.record_api_usage(760, message_count=3)
     msgs.append({"role": "assistant", "content": "x" * 240})
     assert cm.needs_compression(msgs) is True  # anchor active
 
@@ -196,13 +196,13 @@ def test_threshold_guards_non_numeric_anchor():
 
 
 def test_microcompaction_uses_anchored_threshold():
-    """needs_microcompaction shares the anchored estimate (55-65% band)."""
+    """needs_microcompaction shares the anchored estimate (55-80% band)."""
     from agentao.context_manager import ContextManager
     cm = ContextManager(_make_mock_llm(), Mock(), max_tokens=1_000)
     msgs = [{"role": "user", "content": "x" * 4} for _ in range(3)]
     cm.record_api_usage(580, message_count=3)  # 58% via anchor
     cm.estimate_tokens = Mock(side_effect=AssertionError("full re-encode on hot path"))
-    # 580 is in (550, 650] -> microcompaction warranted.
+    # 580 is in (550, 800] -> microcompaction warranted.
     assert cm.needs_microcompaction(msgs) is True
 
 

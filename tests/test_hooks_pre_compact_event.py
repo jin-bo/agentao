@@ -99,7 +99,7 @@ def test_pre_compact_fires_before_mutation_and_message_still_compacts(
 
 
 def test_no_op_microcompaction_does_not_announce_a_compaction(tmp_path, monkeypatch):
-    """Being in the 55-65% band is not on its own a reason to fire PreCompact.
+    """Being in the 55-80% band is not on its own a reason to fire PreCompact.
 
     Once every old tool result is already at or under
     ``MICROCOMPACT_TOOL_LIMIT``, every further pass in the band shortens

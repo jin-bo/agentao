@@ -22,7 +22,11 @@ def handle_context_command(cli: AgentaoCLI, args: str) -> None:
         console.print(f"  Max tokens:       [cyan]{stats['max_tokens']:,}[/cyan]")
 
         pct = stats["usage_percent"]
-        color = "green" if pct < 55 else "yellow" if pct < 65 else "red"
+        # Read the tiers off the constants — hard-coded 55/65 silently lied
+        # about when compaction fires the moment a threshold moved.
+        micro_pct = cm.MICROCOMPACT_THRESHOLD * 100
+        full_pct = cm.COMPRESSION_THRESHOLD * 100
+        color = "green" if pct < micro_pct else "yellow" if pct < full_pct else "red"
         console.print(f"  Usage:            [{color}]{pct:.1f}%[/{color}]")
         console.print(f"  Messages:         {stats['message_count']}")
 

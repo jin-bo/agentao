@@ -1046,7 +1046,7 @@ Claude Code 的 PreCompact 支持 exit code 2 与 JSON `decision: "block"` 来�
 
 这是**有意保留的兼容性 gap**，不是 roadmap 的「下一步」。一份用 `decision: "block"` 的 Claude Stop hook 在 Agentao 里能工作；同样模式的 Claude PreCompact hook 会被观察到，但 block 决策会被丢弃。host 不能在没有显式验证的前提下假设 Claude PreCompact 脚本在 Agentao 里有 gate。
 
-如果某 host 真的需要 PreCompact gate，相关工作放进单独计划（`PRECOMPACT_GATE_PLAN.md`），先把「host 拒绝、仍然超长」的恢复路径解决了再做。本计划范围外。
+如果某 host 真的需要 PreCompact gate，相关工作放进单独计划（`docs/design/compaction-orchestration-plan.md`），先把「host 拒绝、仍然超长」的恢复路径解决了再做。本计划范围外。
 
 ### B6. 测试
 
@@ -1216,7 +1216,7 @@ Claude Code 的 PreCompact 支持 exit code 2 与 JSON `decision: "block"` 来�
 - **PR-2（Phase B，约 2 天）：** B1–B4、B6–B7。新增 Stop 专用 runner（兑现 exit code 2 与 Claude Code JSON 解析）。依赖 PR-1 已合入，但不修改 A 的 emit 位置。
    - **本 PR 内的破坏性签名变更：** `dispatch_stop` 从 `list[HookAttachmentRecord]` 升级到 `StopHookResult`（见 B2 的「测试影响」一段）。A6 的 `test_hook_dispatcher_stop.py` 改写为 walk `result.messages` 并覆盖新加的 gate 信号字段。`dispatch_pre_compact` 保留 Phase-A 返回类型 —— PreCompact 仍 observe-only（B5）。
 
-合计约 3.5 个开发日（触发后）。PreCompact blocking 是 Claude Code 兼容性 gap（B5），不在 roadmap 上；如某 host 必须用，相关工作进 `PRECOMPACT_GATE_PLAN.md`。
+合计约 3.5 个开发日（触发后）。PreCompact blocking 是 Claude Code 兼容性 gap（B5），不在 roadmap 上；如某 host 必须用，相关工作进 `docs/design/compaction-orchestration-plan.md`。
 
 ---
 
@@ -1361,7 +1361,7 @@ B7 outcome 表的 `reentry_capped` 行同步更新——从旧的「max-iter cap
 **rev 2026-05-05 —— 评审七轮（prompt 型拒绝的理由成文）。** 无新发现；本轮把评审五/六轮中「Stop / PreCompact 上 prompt / agent 型 hook 在解析期被拒绝」从一条**有记录的行为**升格为**有记录的决定**。在兼容性矩阵与 Phase A 之间新增顶层一节「为什么 Stop / PreCompact 不支持 prompt 型 hook」，说明：
 
 - **Stop：** 与 `command` 型 hook 在能力上重复。reviewer 用例完全由「内部调 LLM、emit Claude Code Stop JSON」的 command-hook shim 覆盖；原生支持 prompt 型会迫使 Agentao 定义第三个 Stop 控制面（直接注入会话），而 Claude 文档本身**没有**把自由文本回复映射到结构化 output schema 的标准答案。失去的移植性被矩阵已存在的「Hook 配置文件路径 / 形态」❌ 行吞掉。
-- **PreCompact：** 在我们的 observe-only PreCompact 契约下（B5），prompt-hook 的回复**无目的地**：不能 gate 压缩、不能改向压缩，而用 LLM 调用产生审计信号是错的工具（`PLUGIN_HOOK_FIRED` 已经覆盖观察）。仅当 PreCompact gating 真的落地（当前在单独的 `PRECOMPACT_GATE_PLAN.md` follow-up，不在 roadmap 上）时再回头看。
+- **PreCompact：** 在我们的 observe-only PreCompact 契约下（B5），prompt-hook 的回复**无目的地**：不能 gate 压缩、不能改向压缩，而用 LLM 调用产生审计信号是错的工具（`PLUGIN_HOOK_FIRED` 已经覆盖观察）。仅当 PreCompact gating 真的落地（当前在单独的 `docs/design/compaction-orchestration-plan.md` follow-up，不在 roadmap 上）时再回头看。
 
 矩阵中三条 prompt/agent Stop 与 PreCompact 的 ❌ 行现在指向这一节，并改写为「**有意为之**，不是『还没做』」。Out-of-scope 中的 prompt-type 条目同样链接到这一节。无代码或测试改动 —— 本轮纯属文档正确性收口，让「为什么」与「是什么」并列可见。
 

@@ -1078,7 +1078,7 @@ Reasons:
 
 This is a **deliberate compatibility gap**, not a roadmap "next step." A Claude Stop hook script that uses `decision: "block"` will work in Agentao; a Claude PreCompact hook script that uses the same pattern will be observed but its block decision will be discarded. Hosts should not assume Claude PreCompact scripts are gating in Agentao without explicit verification.
 
-When/if a host concretely needs PreCompact gating, the work goes in a follow-up plan (`PRECOMPACT_GATE_PLAN.md`) that resolves the "host said no, still doesn't fit" question first. Out of scope here.
+When/if a host concretely needs PreCompact gating, the work goes in a follow-up plan (`docs/design/compaction-orchestration-plan.md`) that resolves the "host said no, still doesn't fit" question first. Out of scope here.
 
 ### B6. Tests
 
@@ -1250,7 +1250,7 @@ The `"modify"` label from `_dispatch_user_prompt_submit` does **not** apply here
 - **PR-2 (Phase B, ~2 days):** B1–B4, B6–B7. Adds the Stop-specific runner with exit code 2 honoring and Claude Code JSON parsing. Depends on PR-1 being merged but does not change A's emit sites.
    - **Breaking signature change inside this PR:** `dispatch_stop` is upgraded from `list[HookAttachmentRecord]` to `StopHookResult` (see B2's "Test impact" note). The A6 test `test_hook_dispatcher_stop.py` is rewritten to walk `result.messages` and to cover the new gate-signal fields. `dispatch_pre_compact` keeps its Phase-A return type — PreCompact stays observe-only (B5).
 
-Total: ~3.5 dev-days when triggered. PreCompact blocking is a Claude Code compatibility gap (B5), not on the roadmap; if a host requires it, that work goes in `PRECOMPACT_GATE_PLAN.md`.
+Total: ~3.5 dev-days when triggered. PreCompact blocking is a Claude Code compatibility gap (B5), not on the roadmap; if a host requires it, that work goes in `docs/design/compaction-orchestration-plan.md`.
 
 ---
 
@@ -1395,7 +1395,7 @@ No code or behavior changes — pure spec alignment so PR-1 / PR-2 implementers 
 **rev 2026-05-05 — review pass 7 (prompt-type rejection rationale).** No new findings; this pass converts the pass-5/pass-6 parse-time rejection of prompt/agent hook types for Stop and PreCompact from a documented *behavior* into a documented *decision*. New top-level section "Why not prompt-type hooks for Stop / PreCompact" sits between the compatibility matrix and Phase A and explains:
 
 - **Stop:** capability-redundant with `command`-type hooks. A reviewer use case is fully served by a command-hook shim that internally calls an LLM and emits Claude Code Stop JSON; supporting prompt-type natively would force Agentao to define a third Stop control surface (raw conversation injection) for which the Claude documentation itself has no canonical free-text → structured-output mapping. The lost portability is subsumed by the pre-existing "Hook config file path / shape" ❌ row.
-- **PreCompact:** no destination for a prompt-hook response under our observe-only PreCompact contract (B5). It cannot gate compaction, cannot redirect compaction, and using an LLM call to produce an audit signal is the wrong tool for the job (`PLUGIN_HOOK_FIRED` already covers observation). Revisit if/when PreCompact gating lands (currently `PRECOMPACT_GATE_PLAN.md`, not on roadmap).
+- **PreCompact:** no destination for a prompt-hook response under our observe-only PreCompact contract (B5). It cannot gate compaction, cannot redirect compaction, and using an LLM call to produce an audit signal is the wrong tool for the job (`PLUGIN_HOOK_FIRED` already covers observation). Revisit if/when PreCompact gating lands (currently `docs/design/compaction-orchestration-plan.md`, not on roadmap).
 
 The matrix's three ❌ rows for prompt/agent Stop and PreCompact now point at this section and label themselves "deliberate, not 'not yet'". The Out-of-scope entry for prompt-type hooks links to the same section. No code or test changes; this is purely a documentation-correctness pass making the why visible alongside the what.
 
