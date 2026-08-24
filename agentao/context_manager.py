@@ -66,7 +66,7 @@ class ContextManager:
     """Manages context window size, compression, and memory recall."""
 
     DEFAULT_MAX_TOKENS = 200_000
-    COMPRESSION_THRESHOLD = 0.65    # Full LLM compression at 65%
+    COMPRESSION_THRESHOLD = 0.80    # Full LLM compression at 80%
     MICROCOMPACT_THRESHOLD = 0.55   # Cheap tool-result clearing at 55%
     KEEP_RECENT_MESSAGES = 20       # Hard cap on verbatim-kept messages
     CIRCUIT_BREAKER_LIMIT = 3       # Stop auto-compact after N consecutive failures
@@ -107,7 +107,7 @@ class ContextManager:
         # shortened something. It always returns a fresh list, so identity
         # cannot answer this — and the answer decides whether the Tier-1 token
         # anchor is stale. Dropping the anchor on a no-op pass forces a full
-        # re-encode of the whole history every iteration in the 55-65% band,
+        # re-encode of the whole history every iteration in the 55-80% band,
         # which is exactly when the history is largest.
         self.last_microcompact_mutated: bool = False
 
@@ -256,7 +256,7 @@ class ContextManager:
     def needs_compression(
         self, messages: List[Dict[str, Any]], tokens: Optional[int] = None
     ) -> bool:
-        """Return True when full LLM compression is needed (>= 65%).
+        """Return True when full LLM compression is needed (> 80%).
 
         ``tokens`` lets the caller pass a pre-computed
         :meth:`_threshold_token_estimate` so the same per-iteration estimate
@@ -269,7 +269,7 @@ class ContextManager:
     def needs_microcompaction(
         self, messages: List[Dict[str, Any]], tokens: Optional[int] = None
     ) -> bool:
-        """Return True when cheap tool-result clearing is warranted (55-65%).
+        """Return True when cheap tool-result clearing is warranted (55-80%).
 
         See :meth:`needs_compression` for the ``tokens`` pre-computation hook.
         """
@@ -317,7 +317,7 @@ class ContextManager:
         honest ``197,020 chars omitted`` notice out of the middle and wrote
         ``45 chars omitted`` in its place, and every later pass reported ``40``.
         That also pinned ``microcompact_would_mutate()`` at True and
-        ``last_microcompact_mutated`` at True for the whole 55-65% band,
+        ``last_microcompact_mutated`` at True for the whole 55-80% band,
         silently defeating both stand-downs added in #181.
 
         A re-clip of already-clipped text carries the earlier count forward
@@ -368,7 +368,7 @@ class ContextManager:
         Cheap (lengths only, no encoding). Callers gate the whole microcompact
         step on this *before* announcing the imminent compaction: once every
         old tool result is already at or under ``MICROCOMPACT_TOOL_LIMIT``,
-        every further pass in the 55-65% band is a no-op, and announcing one
+        every further pass in the 55-80% band is a no-op, and announcing one
         would fork a ``PreCompact`` hook subprocess per iteration and emit a
         ``CONTEXT_COMPRESSED`` reporting ``pre == post``.
         """

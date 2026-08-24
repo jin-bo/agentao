@@ -64,7 +64,7 @@ def test_microcompaction_is_a_fixed_point():
     it stayed over the limit forever. Pass 2 cut the honest
     ``197,020 chars omitted`` notice out of the middle and wrote ``45`` in its
     place; every pass after that reported ``40``. It also pinned
-    ``microcompact_would_mutate()`` at True for the whole 55-65% band, so the
+    ``microcompact_would_mutate()`` at True for the whole 55-80% band, so the
     no-op stand-down that exists to stop per-iteration PreCompact subprocesses
     never fired, and the token anchor was invalidated every iteration.
     """

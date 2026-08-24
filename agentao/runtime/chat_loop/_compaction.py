@@ -31,7 +31,7 @@ class _CompactionMixin:
             return messages_with_system, system_prompt
         if not agent.context_manager.microcompact_would_mutate(agent.messages):
             # Same stand-down as the open breaker below, one tier cheaper.
-            # Being *in* the 55-65% band says nothing about there being
+            # Being *in* the 55-80% band says nothing about there being
             # anything left to shorten: once every old tool result is at or
             # under the limit, every further iteration in the band is a no-op —
             # and running the preamble anyway forks a PreCompact hook
