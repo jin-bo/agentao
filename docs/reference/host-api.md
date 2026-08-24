@@ -127,6 +127,31 @@ v1 supports calling these methods **between** turns only (not from a concurrent
 task, nor from inside a tool's `execute()` mid-turn — see
 [`runtime-tool-injection.md`](../design/runtime-tool-injection.md) §7).
 
+## Compaction (`Agentao.compact`)
+
+```python
+outcome = agent.compact()                              # a manual compaction
+outcome = agent.compact(reason="api_overflow")         # on behalf of the ladder
+```
+
+Returns a `CompactionOutcome`
+(`agentao.compaction.types`) — `status` is
+`success | cancelled | failed | skipped`, with `detail` naming the case
+(`circuit_open`, `history_too_short`, `no_safe_split`, `summary_empty`, …).
+**History is byte-identical on every status but `success`.** Both token
+fields exclude the system prompt and are `None` where no estimate exists.
+
+`reason` selects which policy applies, not just a label. `manual_cli` (the
+default) and `api_overflow` are allowed through an open circuit breaker as
+half-open probes; `compression_threshold` is paused by it.
+
+**`ContextManager.compress_messages()` is an internal transform, not this.**
+It keeps its signature and its return type, but it hands back a bare list —
+it cannot tell you whether anything changed or why it did not — and it
+bypasses both the host control plane (`PreCompact` dispatch) and the
+breaker's probe policy. It is not deprecated; it is simply the wrong level
+for host code.
+
 ## Capability protocols (`agentao.host.protocols`)
 
 Embedded hosts override IO by injecting these `Protocol` types into

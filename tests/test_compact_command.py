@@ -112,15 +112,32 @@ def test_compact_command_skips_short_history():
     agent._emit_context_compressed.assert_not_called()
 
 
-def test_compact_command_reports_an_open_breaker_in_words(monkeypatch):
-    """The gate's ``skipped`` outcome reaches the user as a reason.
+def test_compact_runs_as_a_probe_through_an_open_breaker(monkeypatch):
+    """An open breaker must not block the one action that can close it.
 
-    Before, an open breaker produced "Compaction made no change — nothing to
-    summarize (or summarization failed; see agentao.log)", which named
-    neither the cause nor the fact that it will keep happening.
+    The breaker exists to stop the *threshold* tier re-entering every
+    iteration. Manual ``/compact`` is user-driven and does not loop, so
+    blocking it left the user with no way back: the only other reset is a
+    successful compaction, and the open breaker is what prevents one.
     """
     messages = [{"role": "user", "content": f"m{i}"} for i in range(10)]
-    cli, agent, cm = _cli_with_messages(messages)
+    compacted = [{"role": "system", "content": "[Compact Boundary]"}] + messages[-2:]
+    cli, agent, cm = _cli_with_messages(
+        messages, _outcome("success", compacted, pre_tokens=900, post_tokens=100),
+    )
+    cm.compaction_circuit_open = True
+    cm.circuit_breaker_failures = 3
+
+    handle_compact_command(cli, "")
+
+    cm._run_compaction.assert_called_once()
+    assert agent.messages == compacted
+
+
+def test_a_failed_probe_says_the_breaker_is_still_open(monkeypatch):
+    """Otherwise "no change" hides that automatic compaction stays paused."""
+    messages = [{"role": "user", "content": f"m{i}"} for i in range(10)]
+    cli, agent, cm = _cli_with_messages(messages, _outcome("failed", messages))
     cm.compaction_circuit_open = True
     cm.circuit_breaker_failures = 3
     printed: list[str] = []
@@ -134,5 +151,4 @@ def test_compact_command_reports_an_open_breaker_in_words(monkeypatch):
 
     handle_compact_command(cli, "")
 
-    cm._run_compaction.assert_not_called()
-    assert any("circuit breaker" in line for line in printed), printed
+    assert any("circuit breaker is still open" in line for line in printed), printed

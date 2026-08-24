@@ -141,6 +141,14 @@ SQLite writes and the new list). `_run_compaction` strings those together and
 owns all three failure-counting points — they cannot live in commit, which
 never runs when summarization returns nothing.
 
+**The circuit breaker is a recoverable state machine, and its state stays in
+`ContextManager`.** Three consecutive *automatic* failures pause the threshold
+tier; manual `/compact` and `api_overflow` run as half-open **probes** through
+an open breaker (`_PROBE_REASONS` in `coordinator.py`), and a successful probe
+closes it. `clear_history()` / `/clear` closes it too. The coordinator only
+applies policy — it never touches the counter. `Agentao.compact()` is the
+public entry.
+
 **`skipped` emits no event.** Three of its four cases re-trigger on every loop
 iteration; one event each would be a storm. `CONTEXT_COMPRESSED` fires only on
 `success`; `COMPACTION_SETTLED` fires for `success | cancelled | failed`.

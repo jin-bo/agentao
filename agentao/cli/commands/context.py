@@ -32,12 +32,26 @@ def handle_context_command(cli: AgentaoCLI, args: str) -> None:
 
         failures = stats.get("circuit_breaker_failures", 0)
         if failures > 0:
-            fb_color = "yellow" if failures < cm.CIRCUIT_BREAKER_LIMIT else "red"
+            is_open = stats.get("circuit_breaker_open", failures >= cm.CIRCUIT_BREAKER_LIMIT)
+            fb_color = "red" if is_open else "yellow"
+            state = "open" if is_open else "closed"
+            why = stats.get("last_compaction_failure")
             console.print(
-                f"  Compact failures: [{fb_color}]{failures}/{cm.CIRCUIT_BREAKER_LIMIT}[/{fb_color}]"
-                + (" [dim](circuit open — auto-compact disabled)[/dim]"
-                   if failures >= cm.CIRCUIT_BREAKER_LIMIT else "")
+                f"  Compact breaker:  [{fb_color}]{state}[/{fb_color}] "
+                f"[dim]({failures}/{cm.CIRCUIT_BREAKER_LIMIT} consecutive failures"
+                + (f", last: {why}" if why else "")
+                + ")[/dim]"
             )
+            if is_open:
+                # Say how to get out of it. The old line said "auto-compact
+                # disabled" and stopped there, which was true and useless:
+                # the state is recoverable and the user is the one who can
+                # recover it.
+                console.print(
+                    "  [dim]                  automatic compaction is paused; "
+                    "/compact runs as a probe and a success resets it "
+                    "(so does /clear)[/dim]"
+                )
 
         lc = stats.get("last_compact")
         if lc:

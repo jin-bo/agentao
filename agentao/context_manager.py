@@ -160,6 +160,13 @@ class ContextManager:
         # Circuit breaker: stop auto-compact after too many consecutive failures
         self._consecutive_compact_failures: int = 0
 
+        # Why the last counted failure happened ("no_safe_split" /
+        # "summary_empty" / …). The count alone tells a user that compaction
+        # stopped but not what to do about it, and the two classes need
+        # different answers: a structural failure will recur until history
+        # changes, an empty summary is usually the provider.
+        self.last_compaction_failure: Optional[str] = None
+
         # True when the most recent ``_summarize_messages`` call ended without
         # the provider reporting a finish_reason. That call does not go through
         # ``ChatLoopRunner`` — it is issued straight against ``llm_client`` —
@@ -488,6 +495,18 @@ class ContextManager:
     # -----------------------------------------------------------------------
     # Full compression
     # -----------------------------------------------------------------------
+
+    def reset_compaction_circuit(self) -> None:
+        """Close the breaker and forget the last failure class.
+
+        The counter measures *this* conversation's compaction failures, so
+        anything that replaces the conversation invalidates the evidence
+        behind it. Before this existed the only reset was a successful
+        compaction — which the open breaker itself prevented on the automatic
+        path, so ``/clear`` left a session permanently unable to auto-compact.
+        """
+        self._consecutive_compact_failures = 0
+        self.last_compaction_failure = None
 
     @property
     def circuit_breaker_failures(self) -> int:
@@ -899,6 +918,7 @@ class ContextManager:
                 # rest of the session with no reset path.
                 if is_auto:
                     self._consecutive_compact_failures += 1
+                    self.last_compaction_failure = prep.detail
                     tally = f" ({self._consecutive_compact_failures} consecutive failures)"
                 else:
                     # The manual path does not increment, so reporting the
@@ -994,7 +1014,15 @@ class ContextManager:
             internal_reason = (
                 f"{internal_reason}+summary_empty" if internal_reason else "summary_empty"
             )
-            self._consecutive_compact_failures += 1
+            # Same exemption the structural failure above has, and for the
+            # same reason: a user-driven compaction does not loop, so there
+            # is no runaway to arrest — and the breaker it would trip pauses
+            # *automatic* compaction, which is not the thing that just
+            # failed. This increment used to be unconditional, which is how
+            # three manual retries could disable auto-compaction.
+            if is_auto:
+                self._consecutive_compact_failures += 1
+                self.last_compaction_failure = internal_reason
             return CompactionOutcome(
                 status="failed",
                 trigger=trigger,
@@ -1007,7 +1035,7 @@ class ContextManager:
             )
 
         result = self.commit_compaction(prep, summary)
-        self._consecutive_compact_failures = 0  # reset on success
+        self.reset_compaction_circuit()  # a success closes the breaker
         return CompactionOutcome(
             status="success",
             trigger=trigger,
@@ -1599,6 +1627,8 @@ class ContextManager:
             "message_count": len(messages),
             "token_breakdown": breakdown,
             "circuit_breaker_failures": self._consecutive_compact_failures,
+            "circuit_breaker_open": self.compaction_circuit_open,
+            "last_compaction_failure": self.last_compaction_failure,
         }
         if self._last_compact_stats:
             stats["last_compact"] = self._last_compact_stats

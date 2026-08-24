@@ -35,6 +35,14 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..agent import Agentao
 
 
+#: Reasons allowed through an open breaker as a half-open probe. Both are
+#: outside what the breaker describes: it exists to stop the *threshold* tier
+#: re-entering every iteration. Manual compaction is user-driven and does not
+#: loop; an API overflow has already been rejected by the provider, so
+#: blocking it leaves the recovery ladder with nothing but ``messages[-2:]``.
+_PROBE_REASONS = frozenset({"manual_cli", "api_overflow"})
+
+
 @dataclass(frozen=True)
 class CompactionRequest:
     """Which compaction is being asked for.
@@ -222,22 +230,35 @@ class CompactionCoordinator:
         cm = agent.context_manager
 
         if request.kind == "full" and cm.compaction_circuit_open:
-            # Announcing this would fork a PreCompact hook subprocess per
-            # iteration for something that never happens, and emit a
-            # CONTEXT_COMPRESSED reporting pre == post. Stand down and let
-            # the API-overflow recovery path own it from here.
-            #
-            # Still log it: standing down before the transform skips the
-            # breaker warning it used to emit, and that line is the only
-            # signal that auto-compaction is dead for the rest of the session
-            # (the counter has no reset path).
-            self._warn(
-                "Compact circuit breaker open "
-                f"({cm.circuit_breaker_failures} consecutive failures) — "
-                "skipping compaction; context stays over threshold until the "
-                "API-overflow path recovers it"
-            )
-            return self._skipped(request, "circuit_open")
+            if request.reason in _PROBE_REASONS:
+                # Half-open. The breaker describes *threshold* behaviour —
+                # "stop re-entering every iteration" — and neither of these
+                # is that. Manual compaction is user-driven and does not
+                # loop; an API overflow has already happened, so blocking it
+                # leaves the ladder with nothing to fall back on but
+                # ``messages[-2:]``. One attempt is allowed; a success
+                # closes the breaker (``_run_compaction`` resets on commit),
+                # a failure leaves it exactly as it was.
+                self._info(
+                    f"Compact circuit breaker open ({cm.circuit_breaker_failures} "
+                    f"consecutive failures) — allowing {request.reason} as a probe"
+                )
+            else:
+                # Announcing this would fork a PreCompact hook subprocess per
+                # iteration for something that never happens, and emit a
+                # CONTEXT_COMPRESSED reporting pre == post. Stand down and let
+                # the probes above own recovery from here.
+                #
+                # Still log it: standing down before the transform skips the
+                # breaker warning it used to emit, and that line is the only
+                # signal that automatic compaction is paused.
+                self._warn(
+                    "Compact circuit breaker open "
+                    f"({cm.circuit_breaker_failures} consecutive failures) — "
+                    "pausing automatic compaction; /compact or an API overflow "
+                    "runs as a probe and a success resets it"
+                )
+                return self._skipped(request, "circuit_open")
 
         if request.kind == "microcompact" and not cm.microcompact_would_mutate(
             agent.messages
