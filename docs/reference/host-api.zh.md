@@ -89,6 +89,28 @@ if isinstance(ev, SubagentLifecycleEvent) and ev.phase == "failed":
 同步变化，所以 `check_background_agent` 对"没答出来"同样报 `failed`
 ——并且会把这次跑出来的部分结果一并带上。
 
+## 压缩（`Agentao.compact`）
+
+```python
+outcome = agent.compact()                              # 一次手动压缩
+outcome = agent.compact(reason="api_overflow")         # 代表溢出恢复阶梯
+```
+
+返回 `CompactionOutcome`（`agentao.compaction.types`）—— `status` 取
+`success | cancelled | failed | skipped`，`detail` 指明具体是哪一种
+（`circuit_open`、`history_too_short`、`no_safe_split`、`summary_empty` …）。
+**除 `success` 外，任何状态下历史都逐字节不变。** 两个 token 字段都**不含**
+system prompt，没有估算的路径上为 `None`。
+
+`reason` 选的是**适用哪条策略**，不只是一个标签：`manual_cli`（默认）与
+`api_overflow` 会以半开探针的身份穿过已打开的熔断器；`compression_threshold`
+则被它暂停。
+
+**`ContextManager.compress_messages()` 是内部变换，不是这个。** 它的签名和返回
+类型都保留，但它只交回一个裸列表——说不出有没有变、也说不出为什么没变——而且
+**绕过** host 控制面（`PreCompact` 分发）与熔断器的探针策略。它没有被废弃，只是
+对 host 代码来说层级不对。
+
 ## 能力协议（`agentao.host.protocols`）
 
 嵌入宿主通过向 `Agentao(filesystem=..., shell=..., mcp_registry=..., memory_manager=...)`

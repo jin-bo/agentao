@@ -38,6 +38,7 @@ from .sandbox import SandboxPolicy
 from .transport import NullTransport, build_compat_transport
 
 if TYPE_CHECKING:
+    from .compaction.types import CompactionOutcome
     from .agents.bg_store import BackgroundTaskStore  # noqa: F401
     from .capabilities import FileSystem, MCPRegistry, ShellExecutor
     from .mcp import McpClientManager  # type-only; MCP SDK is heavy
@@ -1132,6 +1133,34 @@ class Agentao:
             self._compaction_coordinator = CompactionCoordinator(self)
         return self._compaction_coordinator
 
+    def compact(self, *, reason: str = "manual_cli") -> "CompactionOutcome":
+        """Compact conversation history now, and say what happened.
+
+        The public compaction entry. Before it existed every caller reached
+        straight into ``context_manager``, which is how five entry points came
+        to disagree about what a compaction had done — a bare list cannot say
+        whether it changed, why it did not, or whether the failure counted.
+
+        ``reason`` picks which entry point this is on behalf of and therefore
+        which policy applies: ``manual_cli`` (the default) and
+        ``api_overflow`` are allowed through an open circuit breaker as
+        half-open probes, ``compression_threshold`` is not.
+
+        Returns the :class:`~agentao.compaction.types.CompactionOutcome`;
+        ``outcome.status`` is ``success | cancelled | failed | skipped`` and
+        ``outcome.detail`` says which case. History is left byte-identical on
+        every status but ``success``.
+        """
+        from .compaction.coordinator import CompactionRequest
+        run = self.compaction_coordinator.run(
+            CompactionRequest(
+                "manual" if reason == "manual_cli" else "auto", "full", reason,
+            ),
+            system_prompt=self._build_system_prompt(),
+            measure_system_tokens=True,
+        )
+        return run.outcome
+
     def _emit_context_compressed(
         self,
         *,
@@ -1183,6 +1212,12 @@ class Agentao:
         self.todo_tool.clear()
         # Reset context and session token counters for the fresh session
         self.context_manager.invalidate_token_anchor()
+        # The compaction breaker counts *this* conversation's failures, so
+        # replacing the conversation invalidates its evidence. Without this a
+        # session that tripped it stayed unable to auto-compact across
+        # ``/clear``, because the only other reset is a successful compaction
+        # and the open breaker is what prevents one on the automatic path.
+        self.context_manager.reset_compaction_circuit()
         self.llm.total_prompt_tokens = 0
         self.llm.total_completion_tokens = 0
 

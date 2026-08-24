@@ -31,11 +31,10 @@ _MIN_MESSAGES_TO_COMPACT = 5
 
 # Why nothing happened, in the user's terms. ``detail`` values come from
 # ``CompactionOutcome``; anything unlisted falls back to the log pointer.
+# ``circuit_open`` is deliberately absent: an open breaker no longer blocks
+# this command. ``/compact`` is a half-open probe — user-driven, non-looping,
+# and the one action a user can take to close the breaker again.
 _FAILURE_HINTS = {
-    "circuit_open": (
-        "auto-compaction is disabled after repeated failures "
-        "(circuit breaker open)"
-    ),
     "history_too_short": "there is not enough history to summarize yet",
     "no_safe_split": (
         "no safe split point — every candidate boundary would orphan a tool "
@@ -69,8 +68,18 @@ def handle_compact_command(cli: AgentaoCLI, args: str) -> None:
     if outcome.status != "success":
         hint = _FAILURE_HINTS.get(outcome.detail or "")
         detail = f" — {hint}" if hint else " (see agentao.log)"
+        note = ""
+        if cm.compaction_circuit_open:
+            # The probe was allowed and did not succeed, so nothing closed
+            # the breaker. Say so, or the user reads "no change" and has no
+            # idea automatic compaction is still paused.
+            note = (
+                "\n[dim]The compaction circuit breaker is still open — "
+                "automatic compaction stays paused until a compaction "
+                "succeeds (or /clear).[/dim]"
+            )
         console.print(
-            f"\n[warning]Compaction made no change{detail}.[/warning]\n"
+            f"\n[warning]Compaction made no change{detail}.[/warning]{note}\n"
         )
         return
 

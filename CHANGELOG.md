@@ -38,6 +38,52 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **The compaction circuit breaker is recoverable.** It was a one-way latch:
+  three consecutive failures set a counter, the counter's only reset was a
+  successful compaction, and the short-circuit sat *above* every branch — so
+  the one action a user could take to recover, `/compact`, was itself blocked.
+  `/clear` did not help either; it clears messages, skills, todos, the token
+  anchor and the token counters, but never the failure count. A session that
+  tripped it could not auto-compact again, at all, ever.
+
+  Now three failures pause the **threshold** tier only. Manual `/compact` and
+  an API overflow run as **half-open probes** — neither is what the breaker
+  describes, which is "stop re-entering every iteration", and blocking an
+  overflow leaves the recovery ladder with nothing to fall back on but
+  `messages[-2:]`. A successful probe closes the breaker immediately; a
+  failed one leaves it exactly as it was.
+
+  **`/clear` now closes it too** (via `ContextManager.reset_compaction_circuit()`,
+  called from `clear_history()`): the count measures *this* conversation's
+  failures, so replacing the conversation invalidates the evidence behind it.
+
+  **Behaviour change: a failed summarization on the manual path no longer
+  counts.** The increment was unconditional, so three manual retries could
+  disable automatic compaction for the rest of the session. It now carries the
+  same `is_auto` exemption the structural-failure path already had, for the
+  same stated reason — a user-driven compaction does not loop, so there is no
+  runaway to arrest.
+
+- **`/context` reports the breaker as a state, not a tally.** It showed
+  `Compact failures: 3/3 (circuit open — auto-compact disabled)`, which was
+  true and useless. It now names the state (`open` / `closed`), the class of
+  the last failure (`no_safe_split` / `summary_empty` — they need different
+  answers), and how to get out of it. `get_usage_stats()` gains
+  `circuit_breaker_open` and `last_compaction_failure`; the existing
+  `circuit_breaker_failures` key is unchanged.
+
+### Added
+
+- **`Agentao.compact(*, reason="manual_cli") -> CompactionOutcome`** — the
+  public compaction entry. There was none: all three call sites reached
+  straight into `context_manager`, which is how five entry points came to
+  disagree about what a compaction had done. `reason` selects which policy
+  applies — `manual_cli` and `api_overflow` probe through an open breaker,
+  `compression_threshold` is paused by it — and the returned outcome says
+  `success | cancelled | failed | skipped` with a `detail`. History is
+  byte-identical on every status but `success`.
+
+
 - **All five compaction entry points now go through one `CompactionCoordinator`,
   and every attempt returns one `CompactionOutcome`.** Microcompaction, the
   threshold tier, both rungs of the API-overflow ladder and manual `/compact`
