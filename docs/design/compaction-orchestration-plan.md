@@ -5,7 +5,7 @@
 > quote the PR table.
 
 **Date:** 2026-08-23
-**Status:** plan, rev 13 — twelve maintainer reviews folded into the body (§9 is the record, not an
+**Status:** plan, rev 14 — twelve maintainer reviews folded into the body (§9 is the record, not an
 override; the body is authoritative on its own).
 **Anchors:** agentao `main@a996395`, plus two uncommitted working-tree changes that this plan
 already accounts for: `COMPRESSION_THRESHOLD` 0.65 → 0.80 (`agentao/context_manager.py:69`) and the
@@ -1282,8 +1282,28 @@ the gate.
 
 ## 8. What would change this plan
 
-- **§3.1 weakens** if a `{"trigger": ...}` matcher turns out to be unused in every shipped plugin —
-  it would still be a contract bug, but a P2. Re-grep the marketplace manifests before downgrading.
+- ~~**§3.1 weakens** if a `{"trigger": ...}` matcher turns out to be unused in every shipped plugin —
+  it would still be a contract bug, but a P2. Re-grep the marketplace manifests before
+  downgrading.~~ **This downgrade condition was closed on 2026-08-24 as "undecidable by the method it
+  prescribes"; §3.1 stays a P1.** The condition asks for a **measured zero** across shipped plugins,
+  but the plugin marketplace has not been built — so there is **no population to measure**. That is
+  "no population", not "measured zero", and only the latter would support a downgrade. Plugins do not
+  go through a marketplace anyway: `PluginManager` loads from `~/.agentao/plugins`
+  (`embedding/plugins/manager.py:96`) and `<cwd>/.agentao/plugins` (`:100`), with the marketplace being
+  only a **directory level inside that** (`:297-312`, "Scan *plugins_dir* for plugins organised by
+  marketplace"). So the real plugin population today is exactly the one the bullet below already
+  concedes a grep cannot reach. **And the direction is inverted: no marketplace is an argument for
+  landing PR-1 sooner, not for downgrading it.** PR-1 is a matcher **behaviour change** — today
+  `{"trigger": "auto"}` matches all five entries including manual `/compact` (everything is hard-coded
+  at `_payload.py:160`), and after PR-1 it stops matching manual. Done before the ecosystem exists it
+  breaks only locally hand-written rules; done after shipped plugins encode `{"trigger": "auto"}` in
+  their manifests, the same fix is a breaking change to third-party config. Finally, **one shipped
+  document is now wrong regardless of adoption**: `docs/releases/v0.4.4.md:131` states
+  `trigger | PreCompact only: auto (no manual site exists)`, and that parenthetical was true at 0.4.4
+  and false since manual `/compact` shipped. **No re-open trigger** — by the time a marketplace exists
+  the question is moot. One follow-on: PR-1's doc work should add an **erratum** line to
+  `docs/releases/v0.4.4.md:131` (the same treatment `stop-precompact-hooks-plan` got — annotate, do not
+  rewrite a historical statement).
 - ~~**§3.5's "no opt-in gate needed" fails** if any shipped PreCompact hook writes
   `hookSpecificOutput` to stdout for another purpose.~~ **Structurally removed by §4.4.1's choice of
   key**: `compactionDecision` has never existed, so no existing script can produce it by accident. A
@@ -1309,7 +1329,7 @@ the gate.
 
 ## 9. Review record
 
-Items from all twelve reviews are folded into the body above. Recorded here as history, **not** as an
+Items from all twelve reviews are folded into the body above (rev 13 and rev 14 are a maintainer instruction and a closed condition, not review rounds). Recorded here as history, **not** as an
 override layer: §§1–8 are authoritative on their own and no section needs this one to be read
 correctly.
 
@@ -1701,3 +1721,50 @@ references across the twins**: the body carried one more §4.4.2 in en than in z
 exposed it. One more rule: **after moving a section, replace the `§`-prefixed references *and* sweep for
 bare section numbers** — the symbol an author drops in passing is exactly what automated replacement
 cannot reach. After the fix both bodies carry the same 89 `§` references, one for one.
+
+### rev 14 — closing §8's first downgrade condition
+
+The maintainer reports that **the plugin marketplace has not been built**. That triggers a review of
+§8's first condition, not the grep the condition prescribes. Verdict: **the condition is undecidable
+by its own method; closed in place, and §3.1 stays a P1.**
+
+Four grounds, all checked against source:
+
+1. **The premise is not satisfied.** The condition asks for a **measured zero** across shipped
+   plugins; "no marketplace yet" delivers **no population to measure**. Two different epistemic
+   states, and only the first supports a downgrade.
+2. **Plugins do not ship through a marketplace.** `PluginManager` loads from `~/.agentao/plugins`
+   (`embedding/plugins/manager.py:96`) and `<cwd>/.agentao/plugins` (`:100`); the marketplace is only a
+   directory level inside that (`:297-312`). So today's real plugin population is exactly the one §8's
+   next bullet already concedes a grep cannot reach — a zero measured with an instrument that cannot
+   reach the target population is not evidence.
+3. **The direction is inverted.** If the question were "how much damage right now", zero adoption →
+   less damage → downgrade. But the decision at hand is "when is a contract defect cheapest to fix",
+   and the answer is **before the ecosystem exists**. PR-1 is a matcher **behaviour change**
+   (`{"trigger": "auto"}` matches all five entries today and stops matching manual afterwards), so
+   doing it now touches only locally hand-written rules, while doing it after a marketplace ships makes
+   it a breaking change to third-party config.
+4. **One shipped document is now wrong, regardless of adoption.**
+   `docs/releases/v0.4.4.md:131` states `trigger | PreCompact only: auto (no manual site exists)`; that
+   parenthetical was true at 0.4.4 and false since manual `/compact` shipped. Existing tests do not
+   catch it either — and in fact **encodes the same stale premise in its own name and docstring**:
+   `test_pre_compact_trigger_always_auto_for_every_emit_site`
+   (`tests/test_hooks_pre_compact_payload_claude_shape.py:60`, docstring "no manual surface"), whose
+   site list (`:62-66`) holds four entries with `manual_cli` not among them. PR-1 has to update that
+   test too.
+
+**One pragmatic point on top: the label changes no decision here.** PR-1 is already first in the
+dependency order; P1 vs P2 governs *whether* something is built, not *when*. So the condition is closed
+and no further cost is spent on it.
+
+Noted as PR-1 doc work: add an **erratum** line to `docs/releases/v0.4.4.md:131` — the same treatment
+`stop-precompact-hooks-plan` got, annotating rather than rewriting a published historical statement.
+
+**Method note.** The lesson is that **"no data" and "data is zero" have to be recorded separately.**
+§8's original wording collapsed them into one sentence, so "the marketplace was never built" *looked*
+like it satisfied the downgrade condition — when in fact nothing was ever measured. The rule: **a
+downgrade condition premised on a measured zero must also name the population it is measured over; when
+that population does not exist, the correct verdict is "undecidable, severity unchanged", not "zero".**
+The other half is worth keeping too: **the same evidence yields opposite conclusions under different
+questions** — "nobody uses it" mitigates *present damage* and simultaneously argues for *acting sooner*.
+A downgrade condition has to say which question it serves.
