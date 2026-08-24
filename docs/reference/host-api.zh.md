@@ -167,6 +167,30 @@ host 摘要在提交前会被校验（非空、是 `str`、不超过 `ctx.max_su
 必须逐字节往返；host 交回一条孤儿 tool result 就会造出 provider 拒收的请求，
 而那时历史已经被销毁了。
 
+### 两个上下文窗口
+
+| | 含义 | 谁写 |
+|---|---|---|
+| `context_manager.max_tokens` | host **配置的**值 | host（`max_context_tokens=`、`/context limit`、ACP `contextLength`） |
+| `context_manager.effective_max_tokens` | `min(configured, observed)` | 派生，只读 |
+| `context_manager.observed_limit` | **provider 自己声明的**窗口，从溢出错误里学到 | agentao |
+
+**所有内部预算**——压缩阈值、微压缩带、摘要输入预算、`usage_percent`——都以
+**effective** 窗口计。**`get_usage_stats()['max_tokens']` 与 ACP
+`session/set_model` 的回显仍返回 configured**：前者是为了不动既有读者，后者是因为
+`session/set_model` 是 setter，回显必须等于刚写进去的值，否则客户端会把 agentao 的
+自愈读成一次写入失败。`effective_max_tokens`、`observed_limit`、
+`observed_limit_provenance` 都是 `get_usage_stats()` 上的**新增**键。
+
+observed 只能**收窄**：provider 在 N 上拒绝，是关于 N 的证据，不是越过 host 上限的
+许可。切模型或切端点时它会被丢弃（并告警：新模型的窗口尚未验证）；单纯轮换凭据则
+保持不动。
+
+**这个解析拒绝猜。** 大多数溢出消息带**两个**数字——请求大小和上限——所以每条模式
+都锚在**点名上限**的那句话上；越界值不采纳；**两条模式给出不同答案时什么都不采纳**。
+它唯一的输入就是一次溢出错误，所以它**挡不住第一次**掉进恢复阶梯，只能减少之后再掉
+进去的次数。
+
 ## 能力协议（`agentao.host.protocols`）
 
 嵌入宿主通过向 `Agentao(filesystem=..., shell=..., mcp_registry=..., memory_manager=...)`

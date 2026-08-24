@@ -108,7 +108,13 @@ class _FakeAgent:
             reconfigure=self._reconfigure,
         )
         self.context_manager = SimpleNamespace(
-            _encoding=None, invalidate_token_anchor=lambda: None,
+            _encoding=None,
+            invalidate_token_anchor=lambda: None,
+            # Part of the same clear-on-switch family; stubbed rather than
+            # spied on because asserting it here would be a spy nobody reads.
+            # It is covered against the real ContextManager in
+            # tests/test_context_window_validation.py.
+            clear_observed_limit=lambda *_a, **_k: None,
         )
         self.transport = SimpleNamespace(emit=lambda _e: None)
 

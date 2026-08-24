@@ -177,6 +177,15 @@ class ContextManager:
         self.max_tokens = max_tokens
         self.memory_manager = memory_manager
 
+        # The window the *provider* asserted, learned from an overflow error.
+        # ``max_tokens`` above stays exactly what the host configured — it is
+        # a documented host-owned knob on four surfaces and reads back what
+        # the host wrote. This is a separate, lower ceiling that only ever
+        # narrows the budgets below, and it is cleared on a model or provider
+        # switch because it describes the model that rejected the request.
+        self._observed_limit: Optional[int] = None
+        self._observed_limit_provenance: Optional[str] = None
+
         # Circuit breaker: stop auto-compact after too many consecutive failures
         self._consecutive_compact_failures: int = 0
 
@@ -361,7 +370,7 @@ class ContextManager:
         computed twice (T1.3). Omit it to estimate locally.
         """
         est = tokens if tokens is not None else self._threshold_token_estimate(messages)
-        return est > self.max_tokens * self.COMPRESSION_THRESHOLD
+        return est > self.effective_max_tokens * self.COMPRESSION_THRESHOLD
 
     def needs_microcompaction(
         self, messages: List[Dict[str, Any]], tokens: Optional[int] = None
@@ -372,8 +381,8 @@ class ContextManager:
         """
         est = tokens if tokens is not None else self._threshold_token_estimate(messages)
         return (
-            est > self.max_tokens * self.MICROCOMPACT_THRESHOLD
-            and est <= self.max_tokens * self.COMPRESSION_THRESHOLD
+            est > self.effective_max_tokens * self.MICROCOMPACT_THRESHOLD
+            and est <= self.effective_max_tokens * self.COMPRESSION_THRESHOLD
         )
 
     # -----------------------------------------------------------------------
@@ -515,6 +524,96 @@ class ContextManager:
     # -----------------------------------------------------------------------
     # Full compression
     # -----------------------------------------------------------------------
+
+    @property
+    def effective_max_tokens(self) -> int:
+        """The window every internal budget is actually denominated in.
+
+        ``min(configured, observed)``. Read-only: a host that wants to change
+        the window sets :attr:`max_tokens`, which this can only narrow, never
+        widen — a provider that rejected a request at N is evidence about N,
+        not permission to exceed the host's own ceiling.
+        """
+        if self._observed_limit is None:
+            return self.max_tokens
+        return min(self.max_tokens, self._observed_limit)
+
+    @property
+    def observed_limit(self) -> Optional[int]:
+        """The provider-asserted window, or ``None`` if none has been learned."""
+        return self._observed_limit
+
+    @property
+    def observed_limit_provenance(self) -> Optional[str]:
+        """Which pattern :attr:`observed_limit` was read from."""
+        return self._observed_limit_provenance
+
+    def observe_overflow_error(self, exc: Exception) -> bool:
+        """Learn the provider's window from an overflow error, if it is certain.
+
+        Returns True when a limit was adopted. **This cannot prevent the
+        first fall into the recovery ladder** — an overflow error is its only
+        input, so by the time it can act, the ladder has already engaged. It
+        reduces how often you fall in again afterwards; it does not stand
+        between a mis-set window and the ladder.
+
+        A parse that is not certain adopts nothing: see
+        :func:`parse_observed_context_limit`.
+        """
+        parsed = parse_observed_context_limit(exc)
+        if parsed is None:
+            return False
+        limit, provenance = parsed
+        if self._observed_limit == limit:
+            return False
+        previous = self._observed_limit
+        self._observed_limit = limit
+        self._observed_limit_provenance = provenance
+        try:
+            if limit < self.max_tokens:
+                self.llm_client.logger.warning(
+                    f"Provider asserted a context window of {limit:,} tokens "
+                    f"({provenance}); the configured window is "
+                    f"{self.max_tokens:,}. Compaction budgets now use "
+                    f"{self.effective_max_tokens:,}."
+                )
+            else:
+                self.llm_client.logger.info(
+                    f"Provider asserted a context window of {limit:,} tokens "
+                    f"({provenance}); at or above the configured "
+                    f"{self.max_tokens:,}, so budgets are unchanged."
+                )
+            if previous is not None and previous != limit:
+                self.llm_client.logger.info(
+                    f"Observed context limit changed {previous:,} -> {limit:,}"
+                )
+        except Exception:
+            pass
+        return True
+
+    def clear_observed_limit(self, reason: str = "model switch") -> None:
+        """Forget the provider-asserted window.
+
+        Joins the existing clear-on-switch family (thinking artifacts, the
+        tiktoken encoding, the token anchor, the capability latches): the
+        limit describes the model that rejected the request, and the next
+        model's window is simply unverified. Never silently overwrite the
+        host's configured value — the point is that it was never overwritten
+        in the first place.
+        """
+        if self._observed_limit is None:
+            return
+        previous = self._observed_limit
+        self._observed_limit = None
+        self._observed_limit_provenance = None
+        try:
+            self.llm_client.logger.warning(
+                f"Discarding the observed context limit of {previous:,} tokens "
+                f"({reason}); the window is unverified for the new model until "
+                "it rejects a request."
+            )
+        except Exception:
+            pass
 
     def reset_compaction_circuit(self) -> None:
         """Close the breaker and forget the last failure class.
@@ -1456,7 +1555,7 @@ class ContextManager:
         """Token ceiling for the assembled summary transcript."""
         return max(
             self._SUMMARY_INPUT_BUDGET_FLOOR,
-            int(self.max_tokens * self._SUMMARY_INPUT_BUDGET_RATIO),
+            int(self.effective_max_tokens * self._SUMMARY_INPUT_BUDGET_RATIO),
         )
 
     def _block_cost(self, block: List[str]) -> int:
@@ -1669,11 +1768,19 @@ class ContextManager:
         else:
             estimated = breakdown["total"]
             source = "local"
-        usage_percent = (estimated / self.max_tokens * 100) if self.max_tokens > 0 else 0.0
+        # Denominated in the effective window, or ``/context`` reports 70%
+        # while the API is already rejecting the request.
+        _window = self.effective_max_tokens
+        usage_percent = (estimated / _window * 100) if _window > 0 else 0.0
         stats: Dict[str, Any] = {
             "estimated_tokens": estimated,
             "token_count_source": source,
+            # Unchanged meaning: what the host configured. Old readers are
+            # unaffected; the two keys below are additive.
             "max_tokens": self.max_tokens,
+            "effective_max_tokens": self.effective_max_tokens,
+            "observed_limit": self._observed_limit,
+            "observed_limit_provenance": self._observed_limit_provenance,
             "usage_percent": round(usage_percent, 1),
             "message_count": len(messages),
             "token_breakdown": breakdown,
@@ -1731,6 +1838,86 @@ _NON_OVERFLOW_PATTERNS = [
         r"service unavailable",  # 503
     )
 ]
+
+
+# Patterns that read the provider's **stated limit** out of an overflow error.
+#
+# This is deliberately not a number scrape. Of the 21 detection patterns above,
+# roughly half carry no number at all, and most of the ones that do carry
+# **two** — Anthropic's "213462 tokens > 200000 maximum" has the request size
+# and the limit, and so does OpenAI's. Picking the wrong one permanently
+# shrinks the effective window until the next model switch: a silent
+# degradation with no warning, which is the exact failure class this work
+# exists to remove.
+#
+# So every pattern here is anchored to the phrase that *names* the limit and
+# captures exactly one group. Ollama's "exceeded max context length by 1200
+# tokens" is the case that proves the rule: 1200 is a delta, and no pattern
+# below can match it.
+_OBSERVED_LIMIT_PATTERNS = [
+    (re.compile(p, re.IGNORECASE), name)
+    for p, name in (
+        # Anthropic: "prompt is too long: 213462 tokens > 200000 maximum"
+        (r"\d[\d,]*\s*tokens?\s*>\s*([\d,]+)\s*maximum", "anthropic:tokens>maximum"),
+        # OpenAI / LiteLLM / OpenRouter: "maximum context length is|of N tokens"
+        (r"maximum context length\s+(?:is|of)\s+([\d,]+)", "maximum_context_length_is"),
+        # OpenAI paren form: "exceeds model's maximum context length (262144)"
+        (r"maximum context length\s*\(\s*([\d,]+)", "maximum_context_length_paren"),
+        # Mistral: "too large for model with 32768 maximum context length"
+        (r"model with\s+([\d,]+)\s+maximum context length", "model_with_n_maximum_context_length"),
+        # xAI: "This model's maximum prompt length is 131072 but ..."
+        (r"maximum prompt length is\s+([\d,]+)", "maximum_prompt_length_is"),
+        # OpenRouter / Poolside: "maximum allowed input length of 4096 tokens"
+        (r"maximum allowed input length of\s+([\d,]+)", "maximum_allowed_input_length_of"),
+        # Google: "exceeds the maximum number of tokens allowed (1048575)"
+        (r"maximum number of tokens allowed\s*\(\s*([\d,]+)", "maximum_number_of_tokens_allowed"),
+        # Together AI: "is longer than the model's context length (8192 tokens)"
+        (r"longer than the model'?s context length\s*\(\s*([\d,]+)", "longer_than_model_context_length"),
+        # Kimi: "Your request exceeded model token limit: 131072 (requested: ...)"
+        (r"exceeded model token limit:\s*([\d,]+)", "exceeded_model_token_limit"),
+    )
+]
+
+# Sanity bounds. A parsed window below the floor or above the ceiling is a
+# misparse by definition, and adopting one would be worse than adopting
+# nothing: the fallback is the two-rung recovery ladder, which works.
+_OBSERVED_LIMIT_FLOOR = 1_024
+_OBSERVED_LIMIT_CEILING = 100_000_000
+
+
+def parse_observed_context_limit(exc: Exception) -> Optional[tuple]:
+    """Read the provider's stated context limit out of an overflow error.
+
+    Returns ``(limit, provenance)`` or ``None``. **If the parse is not
+    certain, it returns ``None``** — three ways it can be uncertain, and all
+    three are treated the same:
+
+    * no anchored pattern matched at all;
+    * the value is outside the sanity bounds;
+    * two different patterns matched and disagreed. That last one is the
+      strongest guard, because it is exactly what a number scrape would get
+      wrong silently.
+
+    Falling back to the recovery ladder is the safe outcome; a wrong limit is
+    a permanent silent degradation.
+    """
+    msg = str(exc)
+    found = {}
+    for pattern, name in _OBSERVED_LIMIT_PATTERNS:
+        m = pattern.search(msg)
+        if not m:
+            continue
+        try:
+            value = int(m.group(1).replace(",", ""))
+        except (ValueError, IndexError):
+            continue
+        if not (_OBSERVED_LIMIT_FLOOR <= value <= _OBSERVED_LIMIT_CEILING):
+            continue
+        found[value] = found.get(value) or name
+    if len(found) != 1:
+        return None
+    value, provenance = next(iter(found.items()))
+    return value, provenance
 
 
 def is_context_too_long_error(exc: Exception) -> bool:

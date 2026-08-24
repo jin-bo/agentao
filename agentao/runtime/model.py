@@ -134,6 +134,11 @@ def set_provider(
     if model is not None and model != _old_model:
         agent.context_manager._encoding = _get_tiktoken_encoding(agent.llm.model)
         agent.context_manager.invalidate_token_anchor()
+        agent.context_manager.clear_observed_limit("model switch")
+    elif agent.llm.base_url != _old_base:
+        # Same model name behind a different endpoint is a different
+        # deployment, and deployments differ in what they will accept.
+        agent.context_manager.clear_observed_limit("provider switch")
     # Also purge on an endpoint change with the model name unchanged: the same
     # name behind a different backend is a different signer, so its thinking
     # artifacts are just as stale. A pure credential rotation (same model, same
@@ -170,6 +175,9 @@ def set_model(agent: "Agentao", model: str) -> str:
     agent.context_manager._encoding = _get_tiktoken_encoding(model)
     agent.context_manager.invalidate_token_anchor()
     if model != old_model:
+        # Joins the clear-on-switch family beside the encoding and the anchor:
+        # the observed limit describes the model that rejected the request.
+        agent.context_manager.clear_observed_limit("model switch")
         _purge_and_log(agent, "set_model")
     agent.llm.logger.info(f"Model changed from {old_model} to {model}")
     try:
