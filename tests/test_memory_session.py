@@ -325,7 +325,7 @@ def test_context_manager_crystallizes_from_raw_user_messages(tmp_path):
     msgs.append({"role": "user", "content": "trailing user msg"})
 
     with patch.object(cm, "estimate_tokens", return_value=150_000):
-        with patch.object(cm, "_summarize_messages", return_value="LLM narration with words like 'I prefer X'"):
+        with patch.object(cm, "_summarize_formatted", return_value="LLM narration with words like 'I prefer X'"):
             cm.compress_messages(msgs)
 
     items = mgr.list_review_items()

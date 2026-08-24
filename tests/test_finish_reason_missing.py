@@ -381,6 +381,26 @@ class TestSdkAssumption:
 # ---------------------------------------------------------------------------
 
 
+def _failed_outcome(msgs, reason):
+    """A compaction that attempted and returned history unchanged.
+
+    The compaction entry points go through ``CompactionCoordinator`` now, so
+    the stub has to sit at ``_run_compaction`` — the seam that produces the
+    outcome — rather than at ``compress_messages``, which is the legacy
+    wrapper and no longer on this path.
+    """
+    from agentao.compaction.types import CompactionOutcome
+
+    return CompactionOutcome(
+        status="failed",
+        trigger="auto" if reason != "manual_cli" else "manual",
+        kind="full",
+        reason=reason,
+        messages=msgs,
+        detail="summary_empty",
+    )
+
+
 class TestDownstreamCoverage:
     def test_compaction_summary_without_finish_reason_flags_the_turn(self):
         """The summarization call bypasses the chat loop's detector.
@@ -394,15 +414,15 @@ class TestDownstreamCoverage:
 
         cm = agent.context_manager
 
-        def _compress(msgs, is_auto=False):
-            # What `_summarize_messages` does when its own provider call ends
+        def _compact(msgs, *, is_auto=True, reason="compression_threshold", decide=None):
+            # What `_summarize_formatted` does when its own provider call ends
             # without a finish_reason. Set *inside* the turn on purpose:
             # `run_turn` clears this attribute at turn start, so seeding it
             # beforehand would prove nothing (and would have hidden the reset).
             cm.last_summary_finish_reason_missing = True
-            return msgs
+            return _failed_outcome(msgs, reason)
 
-        cm.compress_messages = _compress
+        cm._run_compaction = _compact
         cm.needs_compression = lambda *a, **k: True
         cm.needs_microcompaction = lambda *a, **k: False
 
@@ -427,16 +447,19 @@ class TestDownstreamCoverage:
         cm.needs_compression = lambda *a, **k: True
         cm.needs_microcompaction = lambda *a, **k: False
 
-        def _compress_and_flag(msgs, is_auto=False):
+        def _compact_and_flag(msgs, *, is_auto=True, reason="compression_threshold", decide=None):
             cm.last_summary_finish_reason_missing = True
-            return msgs
+            return _failed_outcome(msgs, reason)
 
-        cm.compress_messages = _compress_and_flag
+        cm._run_compaction = _compact_and_flag
         agent.chat("turn one, summary came back truncated")
         assert agent.last_turn.finish_reason_missing is True
 
         # Turn 2 compacts again, but nothing re-summarizes this time.
-        cm.compress_messages = lambda msgs, is_auto=False: msgs
+        cm._run_compaction = (
+            lambda msgs, *, is_auto=True, reason="compression_threshold", decide=None:
+            _failed_outcome(msgs, reason)
+        )
         agent.chat("turn two, nothing new to summarize")
 
         assert agent.last_turn.finish_reason_missing is False

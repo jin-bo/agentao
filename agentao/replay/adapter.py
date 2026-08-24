@@ -417,6 +417,15 @@ class ReplayAdapter:
             )
             return
 
+        if kind == EventType.COMPACTION_SETTLED:
+            self._recorder.record(
+                EventKind.COMPACTION_SETTLED,
+                turn_id=self._current_turn_id(),
+                parent_turn_id=self._current_parent_turn(),
+                payload=dict(data),
+            )
+            return
+
         if kind == EventType.SESSION_SUMMARY_WRITTEN:
             self._recorder.record(
                 EventKind.SESSION_SUMMARY_WRITTEN,

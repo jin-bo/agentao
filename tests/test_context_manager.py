@@ -1032,13 +1032,19 @@ def test_compress_does_not_microcompact_the_half_it_is_about_to_discard():
     summarized = {}
     cm.microcompact_messages = _spy  # type: ignore[method-assign]
 
+    real_format = cm._format_for_summary
+
     def _capture(window):
         summarized["raw"] = "".join(str(x.get("content", "")) for x in window)
-        return ""
+        return real_format(window)
 
-    # ``_summarize_messages`` is what calls ``_format_for_summary``; stub it at
-    # that level so the window it receives is observable.
-    cm._summarize_messages = _capture  # type: ignore[method-assign]
+    # ``prepare_compaction`` assembles the summarizer's input by running
+    # ``_format_for_summary`` over the to-summarize window; spy there so the
+    # window is observable **before** that budget applies, which is the
+    # truncation this test is about. ``_summarize_formatted`` is stubbed only
+    # to keep the LLM out of it.
+    cm._format_for_summary = _capture  # type: ignore[method-assign]
+    cm._summarize_formatted = lambda _formatted: ""  # type: ignore[method-assign]
     cm.compress_messages(msgs, is_auto=True)
 
     assert "contents" in seen, "microcompaction must still run on the kept half"

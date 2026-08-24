@@ -310,6 +310,10 @@ class Agentao:
             max_tokens=max_context_tokens,
             memory_manager=self._memory_manager,
         )
+        # Built on first use — see :attr:`compaction_coordinator`. Held
+        # rather than rebuilt per call because it is where per-turn
+        # compaction state lives.
+        self._compaction_coordinator = None
 
         # Session-scoped state (session id, host event stream, conversation
         # history, plan session, project instructions) must land before
@@ -1107,6 +1111,26 @@ class Agentao:
     def _latest_session_summary_id(self) -> Optional[str]:
         from .replay.observability import latest_session_summary_id
         return latest_session_summary_id(self)
+
+    @property
+    def compaction_coordinator(self):
+        """The single orchestrator every compaction entry point goes through.
+
+        Lazily built and then held: the coordinator is where compaction state
+        that outlives one call belongs, so a fresh instance per call would
+        quietly drop it.
+
+        Imported here rather than at module scope so that
+        ``agentao/compaction/__init__.py`` stays free of the coordinator —
+        ``agentao.host`` re-exports the public compaction types from that
+        package, and dragging ``coordinator -> context_manager ->`` the LLM
+        stack through it would break the host contract's standalone
+        importability.
+        """
+        if self._compaction_coordinator is None:
+            from .compaction.coordinator import CompactionCoordinator
+            self._compaction_coordinator = CompactionCoordinator(self)
+        return self._compaction_coordinator
 
     def _emit_context_compressed(
         self,

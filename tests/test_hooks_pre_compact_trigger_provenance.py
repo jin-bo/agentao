@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import json
 import stat
+from types import SimpleNamespace
 
 from agentao.cancellation import CancellationToken
-from agentao.cli.commands.compact import _dispatch_pre_compact as dispatch_manual
+from agentao.cli.commands.compact import handle_compact_command
+from agentao.compaction.types import CompactionOutcome
 from agentao.plugins.models import ParsedHookRule
 from agentao.runtime.chat_loop import ChatLoopRunner
 
@@ -90,14 +92,25 @@ def _neutralize(agent, monkeypatch):
     """Stub the parts of a compaction that need an LLM or a real prompt.
 
     Everything up to and including the hook dispatch stays real — that is
-    what is under test. ``compress_messages`` is the summarizing call and
-    is replaced with the identity, which is also exactly what it returns
-    today on every failure path.
+    what is under test. Only the summarizing transform is replaced, with a
+    ``failed`` outcome: history stays byte-identical, no LLM is reached, and
+    the hook has already fired by the time it is consulted.
     """
     monkeypatch.setattr(agent, "_build_system_prompt", lambda: "")
     monkeypatch.setattr(agent, "_emit_session_summary_if_new", lambda *_a, **_k: None)
     monkeypatch.setattr(
-        agent.context_manager, "compress_messages", lambda msgs, is_auto=True: msgs,
+        agent.context_manager,
+        "_run_compaction",
+        lambda msgs, *, is_auto=True, reason="compression_threshold", decide=None: (
+            CompactionOutcome(
+                status="failed",
+                trigger="auto" if is_auto else "manual",
+                kind="full",
+                reason=reason,
+                messages=msgs,
+                detail="summary_empty",
+            )
+        ),
     )
 
 
@@ -149,8 +162,15 @@ def _drive_overflow(tmp_path, monkeypatch, rules):
 
 
 def _drive_manual(tmp_path, monkeypatch, rules):
+    """The real ``/compact`` handler, through the real coordinator.
+
+    Only the summarizing step is stubbed — as a ``failed`` outcome, so the
+    hook still fires and history stays put.
+    """
     agent, transport = _agent(tmp_path, rules)
-    dispatch_manual(agent)
+    _neutralize(agent, monkeypatch)
+    cli = SimpleNamespace(agent=agent, _cached_ctx_pct=0.0)
+    handle_compact_command(cli, "")
     return transport
 
 

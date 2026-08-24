@@ -2,8 +2,14 @@
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+
+from .compaction.types import (
+    CompactionDecisionContext,
+    CompactionOutcome,
+)
 
 try:
     import tiktoken as _tiktoken
@@ -60,6 +66,70 @@ def _heuristic_token_count(text: str) -> int:
     ascii_count = len(text.encode("ascii", "ignore"))
     non_ascii = n - ascii_count
     return (ascii_count * 25 + non_ascii * 130) // 100
+
+
+# ---------------------------------------------------------------------------
+# The prepare -> commit snapshot types.
+#
+# Deliberately **not** in ``agentao/compaction/types.py``: that module is the
+# public contract, and these two are the private hand-off between two halves
+# of one method. The coordinator never sees either — it reaches this layer
+# only through ``_run_compaction`` and the narrow ``apply_*`` methods.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PrepareRejected:
+    """Prepare decided there is nothing to hand to a summarizer.
+
+    Two cases, and they are **not** the same severity: too little history is
+    ``skipped`` and costs nothing, while no safe split point is a structural
+    ``failed`` that has to be counted on the auto path or the caller re-enters
+    every iteration.
+    """
+
+    status: str          # "skipped" | "failed"
+    detail: str          # "history_too_short" | "no_safe_split"
+    counts_as_failure: bool
+
+
+@dataclass(frozen=True)
+class PreparedCompaction:
+    """Everything ``commit_compaction`` needs, computed before summarizing.
+
+    Every field here has a reader in commit — the crystallize input, the two
+    counts in the boundary marker and ``_last_compact_stats``, the pinned
+    block and surviving half that are spliced into the result, and
+    ``pre_tokens`` for the boundary marker and the session-summary row.
+    """
+
+    trigger: str
+    kind: str
+    reason: str
+    is_auto: bool
+    split_index: int
+    to_summarize: List[Dict[str, Any]]
+    to_keep: List[Dict[str, Any]]
+    pinned: List[Dict[str, Any]]
+    recently_read: List[str]
+    summary_messages: List[Dict[str, Any]]
+    summary_input: str
+    pre_tokens: int
+
+
+PrepareResult = Union[PreparedCompaction, PrepareRejected]
+
+
+def _compose_detail(internal: Optional[str], decision: Optional[str]) -> Optional[str]:
+    """Join the internal failure class with the control plane's own reason.
+
+    Composed here, inside the layer that holds the decision object, so that
+    ``CompactionOutcome.detail`` is final the moment it is built — the layer
+    above copies it straight across rather than appending to it.
+    """
+    if internal and decision:
+        return f"{internal}; {decision}"
+    return internal or decision or None
 
 
 class ContextManager:
@@ -420,6 +490,16 @@ class ContextManager:
     # -----------------------------------------------------------------------
 
     @property
+    def circuit_breaker_failures(self) -> int:
+        """Consecutive compaction failures — the breaker's read-only state.
+
+        Already exported through ``get_usage_stats()`` and rendered by
+        ``/context``; this is the same number without the dictionary, for
+        callers that only want to log it.
+        """
+        return self._consecutive_compact_failures
+
+    @property
     def compaction_circuit_open(self) -> bool:
         """True once :meth:`compress_messages` has given up on auto-compaction.
 
@@ -474,6 +554,26 @@ class ContextManager:
             return None
         return chosen
 
+    # -----------------------------------------------------------------------
+    # Compaction — the ``kind == "full"`` transform
+    #
+    # ``compress_messages`` used to do all of this in one call: the breaker
+    # short-circuit, the cut point, microcompaction of the surviving half, the
+    # crystallize write, summarization, failure counting, the session-summary
+    # write and message assembly. It comes apart because the host control
+    # plane has to replace exactly one step — summarization — and because a
+    # cancelled compaction must leave **no** irreversible side effect behind,
+    # which the old order could not promise: crystallize ran before the
+    # summarizer.
+    #
+    # The seam is prepare / commit, with the decision step between them.
+    # Ownership: ``prepare`` and ``commit`` make no policy judgement at all
+    # (no breaker query, no hook dispatch); the coordinator above owns policy
+    # and events; ``_run_compaction`` strings the four stages together and
+    # owns the failure counter, because it is the only layer both callers
+    # share — the legacy wrapper below has no coordinator in hand.
+    # -----------------------------------------------------------------------
+
     def compress_messages(
         self,
         messages: List[Dict[str, Any]],
@@ -496,6 +596,14 @@ class ContextManager:
         Circuit breaker: after CIRCUIT_BREAKER_LIMIT consecutive failures this
         method returns messages unchanged and logs a warning.
 
+        This is the **legacy surface**, kept because it is documented, pinned
+        by tests that call it directly, and reachable from outside the tree.
+        It is now a thin composition over :meth:`_run_compaction` and returns
+        only the message list, so it cannot say *why* nothing changed. New
+        code goes through ``CompactionCoordinator``, which additionally gets
+        the host control plane and the breaker's probe policy — a direct call
+        here bypasses both.
+
         Args:
             messages: Current conversation messages (without system prompt)
             is_auto: True for threshold-triggered compression, False for manual
@@ -503,7 +611,10 @@ class ContextManager:
         Returns:
             Compressed messages list
         """
-        # --- Circuit breaker ------------------------------------------------
+        # The gate stays in front of this method specifically: it is in the
+        # docstring above and pinned by a test that calls this method
+        # directly. The coordinator applies the same gate itself, one layer
+        # up, where it can also decide that this attempt is a probe.
         if self.compaction_circuit_open:
             try:
                 self.llm_client.logger.warning(
@@ -514,8 +625,39 @@ class ContextManager:
                 pass
             return messages
 
+        # This method has no ``reason`` parameter — its signature is pinned —
+        # so derive one. The mapping is one-to-one with the two values a
+        # direct caller could mean, and it serves out-of-tree callers only:
+        # every in-tree entry point passes its real reason through the
+        # coordinator, including API overflow, whose true reason is
+        # ``api_overflow`` and which used to ride this default.
+        reason = "compression_threshold" if is_auto else "manual_cli"
+        return self._run_compaction(
+            messages, is_auto=is_auto, reason=reason, decide=None,
+        ).messages
+
+    def prepare_compaction(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        trigger: str,
+        kind: str,
+        reason: str,
+    ) -> "PrepareResult":
+        """Everything up to — but not including — the summarization call.
+
+        Pure computation plus one flag and one log line. Deliberately **no**
+        SQLite write and no touch of ``agent.messages``: those are exactly the
+        side effects a cancelled compaction must not have already caused, so
+        they belong to :meth:`commit_compaction`.
+
+        Makes no breaker judgement. That is policy, and policy lives above.
+
+        Returns either a :class:`PreparedCompaction` snapshot or a
+        :class:`PrepareRejected` saying which of the two early exits fired.
+        """
         if len(messages) < 5:
-            return messages
+            return PrepareRejected("skipped", "history_too_short", False)
 
         # --- Step 2: partial compaction split -------------------------------
         # Keep at most KEEP_RECENT_MESSAGES, but no more than 60% of total
@@ -526,32 +668,14 @@ class ContextManager:
         split_index = self._find_split_index(messages, len(messages) - keep_count)
 
         if split_index is None:
-            # Structural failure, not a summarization failure — but on the auto
-            # path it has to count as one, or the caller re-enters every
+            # Structural failure, not a summarization failure — but the caller
+            # still has to count it on the auto path, or it re-enters every
             # iteration (firing PreCompact hook subprocesses each time) while
             # the context keeps growing, until the API rejects it and the
-            # overflow ladder cuts history to the last two messages.
-            #
-            # Manual ``/compact`` is deliberately exempt: it is user-driven and
-            # does not loop, so there is no runaway to arrest — and the breaker
-            # it would trip disables *automatic* compaction for the rest of the
-            # session with no reset path.
-            if is_auto:
-                self._consecutive_compact_failures += 1
-                tally = f" ({self._consecutive_compact_failures} consecutive failures)"
-            else:
-                # The manual path does not increment, so reporting the counter
-                # here would attribute the auto path's tally — usually 0 — to
-                # this failure.
-                tally = ""
-            try:
-                self.llm_client.logger.warning(
-                    "Compaction found no safe split point — history has no non-tool "
-                    f"boundary in the summarizable range; skipping{tally}"
-                )
-            except Exception:
-                pass
-            return messages
+            # overflow ladder cuts history to the last two messages. The
+            # counting itself is ``_run_compaction``'s, which is why this
+            # carries a flag rather than incrementing here.
+            return PrepareRejected("failed", "no_safe_split", True)
 
         # ``_find_split_index`` never returns 0, so ``to_summarize`` is
         # non-empty by construction — no second emptiness check needed here.
@@ -573,24 +697,56 @@ class ContextManager:
         # --- Step 4: extract recently read files ----------------------------
         recently_read = self._extract_recently_read_files(to_summarize)
 
+        # --- Step 4b: assemble the summarizer's input -----------------------
+        # ``[PIN]`` messages are dropped here rather than inside the
+        # summarizer: they are spliced verbatim into the result below, so
+        # summarizing them too would put the same text in twice — and a host
+        # inspecting ``summary_input`` should see exactly what the model will.
+        summary_messages = [m for m in to_summarize if m not in pinned]
+        summary_input = self._format_for_summary(summary_messages)
+
+        return PreparedCompaction(
+            trigger=trigger,
+            kind=kind,
+            reason=reason,
+            is_auto=(trigger == "auto"),
+            split_index=split_index,
+            to_summarize=to_summarize,
+            to_keep=to_keep,
+            pinned=pinned,
+            recently_read=recently_read,
+            summary_messages=summary_messages,
+            summary_input=summary_input,
+            # Excludes the system prompt — the same unit ``post_tokens``
+            # below is measured in, and *not* the unit the CONTEXT_COMPRESSED
+            # event's token pair uses.
+            pre_tokens=self.estimate_tokens(messages),
+        )
+
+    def commit_compaction(
+        self,
+        prep: "PreparedCompaction",
+        summary: str,
+    ) -> List[Dict[str, Any]]:
+        """The irreversible half: two SQLite writes and the new message list.
+
+        Everything here is reached only once a summary exists, so a
+        cancelled or failed compaction leaves the store untouched. That is a
+        deliberate change from the old ordering, where ``crystallize`` ran
+        *before* summarization and therefore wrote even when summarization
+        then returned nothing.
+        """
+        pre_tokens = prep.pre_tokens
+
         # --- Step 4b: crystallize from raw user messages --------------------
-        # Run *before* summarization so the rule-based extractor sees
-        # authentic user text, never the LLM's narration of it. Best-effort —
-        # must never break the compaction pipeline.
+        # Runs on the authentic user text, never the LLM's narration of it —
+        # ``to_summarize`` is the pre-summary window. Best-effort: it must
+        # never break the compaction pipeline.
         if self.memory_manager is not None:
             try:
-                self.memory_manager.crystallize_user_messages(to_summarize)
+                self.memory_manager.crystallize_user_messages(prep.to_summarize)
             except Exception:
                 pass
-
-        # --- Step 5: LLM summarization --------------------------------------
-        pre_tokens = self.estimate_tokens(messages)
-        summary = self._summarize_messages(to_summarize)
-        if not summary:
-            self._consecutive_compact_failures += 1
-            return messages  # graceful degradation
-
-        self._consecutive_compact_failures = 0  # reset on success
 
         # --- Step 6: save session summary to SQLite --------------------------
         if self.memory_manager is not None:
@@ -598,7 +754,7 @@ class ContextManager:
                 self.memory_manager.save_session_summary(
                     summary=summary,
                     tokens_before=pre_tokens,
-                    messages_summarized=len(to_summarize),
+                    messages_summarized=len(prep.to_summarize),
                 )
             except Exception:
                 pass
@@ -608,10 +764,10 @@ class ContextManager:
             "role": "system",
             "content": (
                 f"[Compact Boundary | tokens_before={pre_tokens} | "
-                f"messages_summarized={len(to_summarize)} | "
-                f"messages_kept={len(to_keep)} | "
+                f"messages_summarized={len(prep.to_summarize)} | "
+                f"messages_kept={len(prep.to_keep)} | "
                 f"timestamp={datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
-                f"auto={is_auto}]"
+                f"auto={prep.is_auto}]"
             ),
         }
 
@@ -626,8 +782,8 @@ class ContextManager:
         }
 
         file_hint_msgs: List[Dict[str, Any]] = []
-        if recently_read:
-            file_list = "\n".join(f"  - {p}" for p in recently_read)
+        if prep.recently_read:
+            file_list = "\n".join(f"  - {p}" for p in prep.recently_read)
             file_hint_msgs.append({
                 "role": "system",
                 "content": (
@@ -636,27 +792,235 @@ class ContextManager:
                 ),
             })
 
-        result = [boundary_msg, summary_msg] + file_hint_msgs + pinned + to_keep
+        result = [boundary_msg, summary_msg] + file_hint_msgs + prep.pinned + prep.to_keep
 
         post_tokens = self.estimate_tokens(result)
         self._last_compact_stats = {
             "timestamp": datetime.now().isoformat(),
             "pre_compact_tokens": pre_tokens,
             "post_compact_tokens": post_tokens,
-            "messages_summarized": len(to_summarize),
-            "messages_kept": len(to_keep),
-            "is_auto": is_auto,
-            "recently_read_files": recently_read,
+            "messages_summarized": len(prep.to_summarize),
+            "messages_kept": len(prep.to_keep),
+            "is_auto": prep.is_auto,
+            "recently_read_files": prep.recently_read,
         }
         try:
             self.llm_client.logger.info(
                 f"Compression complete: {pre_tokens} → {post_tokens} tokens, "
-                f"{len(to_summarize)} messages summarized, {len(to_keep)} kept"
+                f"{len(prep.to_summarize)} messages summarized, {len(prep.to_keep)} kept"
             )
         except Exception:
             pass
 
         return result
+
+    def apply_minimal_history(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        keep_tail: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """The overflow ladder's last rung: keep only the newest ``keep_tail``.
+
+        One line, and it lived inline in the runner. It belongs here because
+        rewriting history is this class's job and the coordinator's explicit
+        non-job — and because the ladder's most destructive step deserves a
+        named, unit-testable seam rather than a slice buried in an
+        exception handler.
+        """
+        return messages[-keep_tail:]
+
+    def _validate_host_summary(
+        self,
+        summary: Any,
+        max_summary_tokens: int,
+    ) -> Optional[str]:
+        """Return the name of the first failed check, or ``None`` if valid.
+
+        Four shapes are rejected. The last is the least obvious: a host
+        summary containing ``SUMMARY_END_MARKER`` would break the *next*
+        compaction's carry-stripping, so the damage would surface one
+        compaction later, attributed to the wrong place.
+        """
+        if not isinstance(summary, str):
+            return "not_a_string"
+        if not summary.strip():
+            return "empty"
+        if self.SUMMARY_END_MARKER in summary:
+            return "contains_end_marker"
+        if self.count_tokens_in_text(summary) > max_summary_tokens:
+            return "over_budget"
+        return None
+
+    def _run_compaction(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        is_auto: bool,
+        reason: str,
+        decide=None,
+    ) -> CompactionOutcome:
+        """prepare -> decide -> summarize -> commit, and the failure counter.
+
+        Handles ``kind == "full"`` only. Microcompaction and
+        ``minimal_history`` do not come through here because they have
+        nothing to share with it: neither calls a summarizer, writes SQLite,
+        or touches the breaker counter. Forcing them through would make every
+        field optional and buy no reuse.
+
+        ``trigger`` and ``kind`` are not parameters because they are not
+        inputs: ``trigger`` is exactly ``is_auto`` in another encoding, and
+        ``kind`` is constantly ``full`` here. ``is_auto`` stays in the
+        signature rather than being replaced by ``trigger`` because
+        :meth:`compress_messages`'s signature is pinned and both callers
+        share this layer.
+
+        All three counting points live here — increment on a structural
+        failure, increment on an empty summary, reset on success. They cannot
+        live in ``commit``, which never runs when summarization returns
+        nothing, and they cannot live in the coordinator, which
+        :meth:`compress_messages` does not have.
+
+        Never returns ``skipped`` for an open breaker or a suppression latch:
+        both are decided above and never reach here. The only ``skipped`` it
+        can produce is ``history_too_short``.
+        """
+        trigger = "auto" if is_auto else "manual"
+        kind = "full"
+
+        prep = self.prepare_compaction(
+            messages, trigger=trigger, kind=kind, reason=reason,
+        )
+        if isinstance(prep, PrepareRejected):
+            if prep.counts_as_failure:
+                # Manual ``/compact`` is deliberately exempt: it is user-driven
+                # and does not loop, so there is no runaway to arrest — and the
+                # breaker it would trip disables *automatic* compaction for the
+                # rest of the session with no reset path.
+                if is_auto:
+                    self._consecutive_compact_failures += 1
+                    tally = f" ({self._consecutive_compact_failures} consecutive failures)"
+                else:
+                    # The manual path does not increment, so reporting the
+                    # counter here would attribute the auto path's tally —
+                    # usually 0 — to this failure.
+                    tally = ""
+                try:
+                    self.llm_client.logger.warning(
+                        "Compaction found no safe split point — history has no non-tool "
+                        f"boundary in the summarizable range; skipping{tally}"
+                    )
+                except Exception:
+                    pass
+            return CompactionOutcome(
+                status=prep.status,
+                trigger=trigger,
+                kind=kind,
+                reason=reason,
+                messages=messages,
+                pre_tokens=None,
+                post_tokens=None,
+                detail=prep.detail,
+            )
+
+        # ``decision_reason`` starts unset and is assigned **only** once
+        # ``decide`` has actually been called and returned a usable decision.
+        # The two branches above return before the decision step exists at
+        # all, and ``decide`` may legitimately be ``None`` (the legacy
+        # wrapper passes exactly that) — so there is no ``decision.reason`` to
+        # read on either path, and no exception has to be carved out of the
+        # composition rule below.
+        decision_reason: Optional[str] = None
+        internal_reason: Optional[str] = None
+        summary: Optional[str] = None
+
+        if decide is not None:
+            max_summary_tokens = self._summary_input_budget() // 2
+            ctx = CompactionDecisionContext(
+                trigger=trigger,
+                kind=kind,
+                reason=reason,
+                pre_tokens=prep.pre_tokens,
+                messages_to_summarize=len(prep.to_summarize),
+                messages_to_keep=len(prep.to_keep),
+                recently_read_files=tuple(prep.recently_read),
+                summary_input_budget=self._summary_input_budget(),
+                max_summary_tokens=max_summary_tokens,
+                can_provide_summary=True,
+                tool_results_to_clip=None,
+            )
+            decision = decide(ctx)
+            decision_reason = decision.reason
+            if decision.action == "cancel":
+                # No internal reason of its own: running the decision's own
+                # reason through the composition rule as well would render it
+                # twice.
+                return CompactionOutcome(
+                    status="cancelled",
+                    trigger=trigger,
+                    kind=kind,
+                    reason=reason,
+                    messages=messages,
+                    pre_tokens=prep.pre_tokens,
+                    post_tokens=None,
+                    detail=_compose_detail(None, decision_reason),
+                )
+            if decision.action == "provide_summary":
+                failed_check = self._validate_host_summary(
+                    decision.summary, max_summary_tokens,
+                )
+                if failed_check is None:
+                    summary = decision.summary
+                else:
+                    # Rejecting host text is **not** a terminal state: fall
+                    # through to the built-in summarizer as if the host had
+                    # said ``allow``. So a bad controller costs one extra
+                    # summarization and can never disable auto-compaction in
+                    # three calls — what the breaker counts is always the
+                    # built-in summarizer's failure.
+                    internal_reason = f"host_summary_rejected:{failed_check}"
+                    try:
+                        self.llm_client.logger.warning(
+                            "Host-provided compaction summary rejected "
+                            f"({failed_check}); falling back to the built-in summarizer"
+                        )
+                    except Exception:
+                        pass
+
+        if summary is None:
+            summary = self._summarize_formatted(prep.summary_input)
+
+        if not summary:
+            internal_reason = (
+                f"{internal_reason}+summary_empty" if internal_reason else "summary_empty"
+            )
+            self._consecutive_compact_failures += 1
+            return CompactionOutcome(
+                status="failed",
+                trigger=trigger,
+                kind=kind,
+                reason=reason,
+                messages=messages,
+                pre_tokens=prep.pre_tokens,
+                post_tokens=None,
+                detail=_compose_detail(internal_reason, decision_reason),
+            )
+
+        result = self.commit_compaction(prep, summary)
+        self._consecutive_compact_failures = 0  # reset on success
+        return CompactionOutcome(
+            status="success",
+            trigger=trigger,
+            kind=kind,
+            reason=reason,
+            messages=result,
+            pre_tokens=prep.pre_tokens,
+            # Written by ``commit_compaction`` a moment ago. Read back rather
+            # than re-estimated: a second ``estimate_tokens`` over the whole
+            # result is the one cost this plan promises not to add.
+            post_tokens=(self._last_compact_stats or {}).get("post_compact_tokens"),
+            detail=_compose_detail(internal_reason, decision_reason),
+        )
 
     # -----------------------------------------------------------------------
     # Recently read file extraction
@@ -835,23 +1199,37 @@ class ContextManager:
         Uses an <analysis> thinking block (stripped from output) followed by
         a <summary> block for the final result.
 
+        Takes a raw message window and does its own ``[PIN]`` filtering and
+        formatting. The compaction path no longer comes through here — it
+        assembles the input in ``prepare_compaction`` (so the host control
+        plane can see exactly what the model will) and calls
+        :meth:`_summarize_formatted` directly. Kept for callers that hold
+        messages rather than a formatted transcript.
+
+        Returns:
+            Formatted summary text, or empty string on failure.
+        """
+        to_summarize = [
+            m for m in messages
+            if not (
+                isinstance(m.get("content"), str)
+                and m["content"].startswith("[PIN]")
+            )
+        ]
+        return self._summarize_formatted(self._format_for_summary(to_summarize))
+
+    def _summarize_formatted(self, formatted: str) -> str:
+        """The LLM half of summarization, over an already-assembled transcript.
+
         Returns:
             Formatted summary text, or empty string on failure.
         """
         # Per-call, so the flag describes *this* summarization and not one
         # from an earlier compaction. ``run_turn`` additionally clears it per
-        # turn, for the case where ``compress_messages`` returns without ever
-        # reaching this method.
+        # turn, for the case where a compaction returns without ever reaching
+        # this method.
         self.last_summary_finish_reason_missing = False
         try:
-            to_summarize = [
-                m for m in messages
-                if not (
-                    isinstance(m.get("content"), str)
-                    and m["content"].startswith("[PIN]")
-                )
-            ]
-            formatted = self._format_for_summary(to_summarize)
             recall_messages = [
                 {"role": "system", "content": self._SUMMARIZE_SYSTEM_PROMPT},
                 {"role": "user", "content": f"Summarize this conversation:\n\n{formatted}"},

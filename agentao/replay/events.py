@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 
-SCHEMA_VERSION = "1.2"
+SCHEMA_VERSION = "1.3"
 
 
 class EventKind:
@@ -39,6 +39,15 @@ class EventKind:
       payload schemas as the per-kind variant. v1.0 / v1.1 schemas
       remain frozen and continue to validate older replays — see
       ``docs/reference/replay-schema-policy.md``.
+    - 1.3 — adds ``compaction_settled``, the terminal event for one
+      compaction attempt whatever the outcome. ``context_compressed``
+      only ever describes a compaction that changed history — and until
+      the compaction entry points were unified it did not even manage
+      that, since the API-overflow path emitted it unconditionally, so a
+      no-op under an open circuit breaker was recorded as a successful
+      compression. Reading the audit trail now means reading both:
+      ``compaction_settled`` for what was attempted and how it ended,
+      ``context_compressed`` for the successes.
     """
 
     REPLAY_HEADER = "replay_header"
@@ -153,9 +162,18 @@ class EventKind:
 
     V1_2 = V1_1 | V1_2_NEW
 
+    # v1.3 event kinds — compaction orchestration.
+    COMPACTION_SETTLED = "compaction_settled"
+
+    V1_3_NEW = frozenset({
+        COMPACTION_SETTLED,
+    })
+
+    V1_3 = V1_2 | V1_3_NEW
+
     # Back-compat alias. Existing callers that imported ``EventKind.ALL``
     # keep working; new code should pick the version-specific set.
-    ALL = V1_2
+    ALL = V1_3
 
 
 @dataclass
