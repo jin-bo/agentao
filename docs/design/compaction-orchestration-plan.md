@@ -1,12 +1,20 @@
 # Compaction Orchestration — Implementation Plan
 
-> **⚠️ Plan, reviewed twelve times, not authorized for implementation.** The PR ordering below is a
-> **dependency order, not a schedule**. Nothing here has been built. Quote this line whenever you
-> quote the PR table.
+> **⚠️ Implementation in progress — 2026-08-24.** All six PRs are built and open as a stack
+> (PR-1 #187 → PR-3 #188 → PR-2 #189 → PR-4 #190 → PR-5 #191 → PR-6 #192), in the dependency
+> order below. The banner this replaces read "reviewed twelve times, **not authorized for
+> implementation** — nothing here has been built"; that is no longer true and is recorded here
+> rather than deleted, because seven other documents quote it.
+>
+> **The PR ordering below is still a dependency order, not a schedule.** Two deliberate departures
+> from it, both stated in their PR descriptions: PR-3 also lands the `cancel` / host-summary
+> branches of `_run_compaction` (leaving a `decide` parameter whose `cancel` is not honoured is a
+> worse half-state than a larger PR) and the replay projection of `COMPACTION_SETTLED` (without it
+> PR-3 would remove audit records without adding the replacement).
 
 **Date:** 2026-08-23
-**Status:** plan, rev 14 — twelve maintainer reviews folded into the body (§9 is the record, not an
-override; the body is authoritative on its own).
+**Status:** **Implementation in progress** (2026-08-24) — rev 14, twelve maintainer reviews folded
+into the body (§9 is the record, not an override; the body is authoritative on its own).
 **Anchors:** agentao `main@a996395`, plus two uncommitted working-tree changes that this plan
 already accounts for: `COMPRESSION_THRESHOLD` 0.65 → 0.80 (`agentao/context_manager.py:69`) and the
 `/context` colour tiers now reading off the constants (`cli/commands/context.py:25-29`).

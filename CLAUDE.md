@@ -186,6 +186,20 @@ signature is documented and pinned by tests that call it directly). It returns
 a bare list and so cannot say *why* nothing changed; it also bypasses the
 host control plane and the breaker's probe policy.
 
+**What the summarizer is fed** (`_format_for_summary`): a
+`<previous-summary>` section (the carried summary, **out of the newest-first
+eviction pool** — it used to be a block inside it, where it is by construction
+the oldest and got dropped first), optionally an `<originating-request>`
+section (only when that message did not survive the ordinary spend), then the
+live transcript. Two invariants: carry ≤ half the summary-input budget, and
+carry + live ≤ the whole budget. The transcript's survivors are always a
+**contiguous suffix** — a hole hands the summarizer a history that omits a
+step without saying where.
+
+`keep_recent_token_ratio` (default `None`) and `image_token_estimator`
+(default `None`) are opt-in knobs, both off because the right values are
+per-deployment and unmeasured here.
+
 Design: `docs/design/compaction-orchestration-plan.md`.
 
 ### Skills

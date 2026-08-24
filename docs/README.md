@@ -94,7 +94,7 @@ Architecture decisions, host-facing contracts, cross-repo reviews, and implement
 | [design/embedding-vs-acp.md](design/embedding-vs-acp.md) | Which surface to use: in-process embed vs ACP server vs ACP client |
 | [design/metacognitive-boundary.md](design/metacognitive-boundary.md) | Host-injectable self-vs-project boundary protocol |
 | [design/codex-reverse-review.md](design/codex-reverse-review.md) | Reverse review of Codex changes: adopt / done / defer |
-| [design/compaction-orchestration-plan.md](design/compaction-orchestration-plan.md) | Six-PR plan converging the five compaction entry points behind one coordinator (`.zh.md` twin). Reviewed twelve times, **not authorized for implementation** |
+| [design/compaction-orchestration-plan.md](design/compaction-orchestration-plan.md) | Six-PR plan converging the five compaction entry points behind one coordinator (`.zh.md` twin). Reviewed twelve times; **implementation in progress** — all six PRs built and open as a stack (2026-08-24) |
 
 ## Releases & Migration
 

@@ -895,9 +895,20 @@ def test_survivors_are_contiguous_under_wildly_varying_message_sizes():
             for i in range(n)
         ]
         out = cm._format_for_summary(msgs)
-        seen = [i for i in range(n) if f"MARK{i:03d}" in out]
+        # The out-of-band sections are labelled restatements, not transcript.
+        # Contiguity is a property of the transcript, so measure it there —
+        # and separately assert that anything restated says so.
+        transcript = out.split("</originating-request>\n\n")[-1]
+        seen = [i for i in range(n) if f"MARK{i:03d}" in transcript]
         assert seen, f"trial {trial}: empty transcript"
         assert seen == list(range(seen[0], n)), f"trial {trial}: gap at {seen[:5]}"
+        restated = [
+            i for i in range(n)
+            if f"MARK{i:03d}" in out and f"MARK{i:03d}" not in transcript
+        ]
+        assert all(
+            f"MARK{i:03d}" in out.split("</originating-request>")[0] for i in restated
+        ), f"trial {trial}: {restated} appeared outside both the transcript and the section"
         assert _heuristic_token_count(out) <= cm._summary_input_budget() + 100
 
 
