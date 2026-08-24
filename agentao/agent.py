@@ -1128,11 +1128,12 @@ class Agentao:
         quietly drop it.
 
         Imported here rather than at module scope so that
-        ``agentao/compaction/__init__.py`` stays free of the coordinator —
-        ``agentao.host`` re-exports the public compaction types from that
-        package, and dragging ``coordinator -> context_manager ->`` the LLM
-        stack through it would break the host contract's standalone
-        importability.
+        ``agentao/compaction/__init__.py`` stays free of the coordinator: that
+        ``__init__`` runs on every import of ``agentao.compaction.types``,
+        including the one in ``agentao/plugins/hooks/_payload.py``, and
+        dragging ``coordinator -> context_manager ->`` the LLM stack through
+        it would put the whole LLM stack behind a stdlib-only vocabulary
+        import.
         """
         if self._compaction_coordinator is None:
             from .compaction.coordinator import CompactionCoordinator

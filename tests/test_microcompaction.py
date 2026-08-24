@@ -148,3 +148,35 @@ def test_returns_new_list_not_mutating_original():
 
 def test_empty_messages_returns_empty():
     assert _cm().microcompact_messages([]) == []
+
+
+# ---------------------------------------------------------------------------
+# The clip is a fixed point — including on text that already carries a notice
+# ---------------------------------------------------------------------------
+
+def test_a_carried_omission_count_cannot_push_the_clip_over_its_limit():
+    """The reserve has to bound the notice *this* call writes, not ``len(text)``.
+
+    ``omitted`` carries every earlier clip's count forward, so it can be far
+    larger than the text being clipped — and a reserve sized on ``len(text)``
+    alone is then short by exactly the extra digits. Measured on this input:
+    3004 characters against a 3000 limit, on every pass, with the reported
+    figure growing each time. That re-arms the re-clip loop the notice-inside-
+    the-budget rule exists to close: ``_microcompactable_indices`` keeps
+    selecting the result, so ``microcompact_would_mutate()`` never stands down
+    and every iteration in the 55-80%% band forces a full history re-encode.
+    """
+    limit = 3_000
+    # The carried notice has to fall in the region this clip *drops* — if it
+    # survives in the head or tail its count is subtracted back off and the
+    # figure stays bounded by ``len(text)``. 999,999 then needs two more
+    # digits than the text's own length does.
+    text = "h" * 3_000 + "\n[… 999,999 chars omitted …]\n" + "t" * 3_000
+
+    once = ContextManager._head_tail_clip(text, limit)
+
+    assert len(once) <= limit
+    # Fixed point: the limit that produced it does not re-select it.
+    assert ContextManager._head_tail_clip(once, limit) is once
+    # And the carried figure is still the *total* lost, not the last slice.
+    assert ContextManager._prior_omissions(once) > 999_999

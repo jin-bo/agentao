@@ -204,9 +204,8 @@ class CompactionCoordinator:
                 cm.invalidate_token_anchor()
             if request.kind == "full":
                 system_prompt = agent._build_system_prompt()
-
-        if outcome.status == "success":
             messages_with_system = self._with_system(system_prompt)
+
         post_est_tokens = (
             cm.estimate_tokens(messages_with_system)
             if measure_system_tokens and outcome.status == "success"
@@ -594,11 +593,22 @@ class CompactionCoordinator:
         """Both events, from the one place that knows the outcome.
 
         ``COMPACTION_SETTLED`` fires for ``success | cancelled | failed``;
-        ``skipped`` never reaches here. ``CONTEXT_COMPRESSED`` fires only on
-        success — that is the change from today, where the overflow path
-        emitted it unconditionally and therefore reported compactions that
-        returned history unchanged.
+        ``skipped`` is silent. ``CONTEXT_COMPRESSED`` fires only on success —
+        that is the change from today, where the overflow path emitted it
+        unconditionally and therefore reported compactions that returned
+        history unchanged.
+
+        Three of the four skipped cases are decided by :meth:`_gate`, which
+        returns before this method is reached. The fourth —
+        ``history_too_short`` — is decided *inside* the transform, so it
+        arrives here and has to be filtered explicitly. It re-triggers on
+        every loop iteration exactly like the gated three (four huge messages
+        over the threshold is enough), so letting it through was an event
+        storm on the one status documented to stay silent.
         """
+        if outcome.status == "skipped":
+            return
+
         agent = self._agent
         from ..transport import AgentEvent, EventType
 

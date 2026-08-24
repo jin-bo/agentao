@@ -113,7 +113,14 @@ def test_every_non_skipped_status_emits_exactly_one_settled_event(status):
 
 
 def test_skipped_emits_nothing_at_all():
-    """Both skipped cases stay silent — they re-trigger every iteration."""
+    """All **four** skipped cases stay silent — each re-triggers every iteration.
+
+    Three are decided by ``_gate`` and return before ``_emit`` is reached;
+    the fourth, ``history_too_short``, is decided inside the transform and so
+    arrives at ``_emit`` and has to be filtered there explicitly. Covering
+    only the gated ones is how it went out emitting a ``COMPACTION_SETTLED``
+    per loop iteration on the one status documented to stay silent.
+    """
     cm = _make_cm()
 
     # (a) breaker open, kind == full
@@ -137,6 +144,31 @@ def test_skipped_emits_nothing_at_all():
     assert run2.outcome.status == "skipped"
     assert run2.outcome.detail == "no_microcompact_targets"
     assert events2 == []
+
+    # (c) suppressed by the cancellation latch
+    cm3 = _make_cm()
+    agent3, events3 = _make_agent(cm3, _history())
+    agent3.compaction_coordinator._cancel_latch.add(("full", "compression_threshold"))
+    run3 = agent3.compaction_coordinator.run(
+        CompactionRequest("auto", "full", "compression_threshold"),
+        system_prompt="sys",
+    )
+    assert run3.outcome.status == "skipped"
+    assert run3.outcome.detail == "suppressed_by_latch"
+    assert events3 == []
+
+    # (d) too little history to summarize — decided *inside* the transform,
+    # so this is the one that reaches ``_emit``. Four large messages over the
+    # threshold is enough to reach it for real.
+    cm4 = _make_cm()
+    agent4, events4 = _make_agent(cm4, _history(2))
+    run4 = agent4.compaction_coordinator.run(
+        CompactionRequest("auto", "full", "compression_threshold"),
+        system_prompt="sys",
+    )
+    assert run4.outcome.status == "skipped"
+    assert run4.outcome.detail == "history_too_short"
+    assert events4 == []
 
 
 def test_success_is_not_inferred_from_message_count():
@@ -251,6 +283,13 @@ def test_apply_minimal_history_is_a_named_seam():
     msgs = _history(4)
     assert cm.apply_minimal_history(msgs) == msgs[-2:]
     assert cm.apply_minimal_history(msgs, keep_tail=5) == msgs[-5:]
+    # Sliced from the front, not as ``messages[-keep_tail:]``: at zero the
+    # negative form is ``messages[-0:]`` — the **whole list** — so the
+    # ladder's most destructive rung would silently keep everything, report
+    # ``success``, and leave the retry to fail on the same overflow.
+    assert cm.apply_minimal_history(msgs, keep_tail=0) == []
+    # And asking for more than there is keeps what there is.
+    assert cm.apply_minimal_history(msgs, keep_tail=len(msgs) + 10) == msgs
 
 
 # ---------------------------------------------------------------------------
