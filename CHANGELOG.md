@@ -11,6 +11,44 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **The context window is validated against the provider, and self-heals.**
+  `max_tokens` is a documented host-owned knob on four surfaces, and this does
+  not take that ownership away: it stays exactly what the host configured and
+  reads back unchanged. What is new is a second, lower ceiling learned from
+  the provider's own overflow errors — `effective_max_tokens = min(configured,
+  observed)` — which every internal budget is now denominated in
+  (`needs_compression`, the microcompaction band, the summary-input budget,
+  and `usage_percent`, which otherwise reported 70% while the API was already
+  rejecting).
+
+  **The parse is provider-asserted, not a number scrape, and when it is not
+  certain it adopts nothing.** Of the 21 overflow patterns roughly half carry
+  no number, and most of the ones that do carry **two** — Anthropic's
+  `213462 tokens > 200000 maximum` has the request size *and* the limit.
+  Adopting the wrong one permanently shrinks the window until the next model
+  switch: a silent degradation with no warning, which is the failure class
+  this exists to remove. So every pattern is anchored to the phrase that
+  *names* the limit, a value outside sanity bounds is refused, and **two
+  patterns disagreeing adopts nothing**. Ollama's `exceeded max context length
+  by 1200 tokens` is the case that proves it: 1200 is a delta, and nothing
+  matches it.
+
+  The observed limit is discarded on a model or endpoint switch — joining the
+  existing clear-on-switch family (thinking artifacts, tiktoken encoding,
+  token anchor, capability latches) — with a warning that the window is
+  unverified for the new model. A pure credential rotation leaves it alone.
+  `/context` shows configured, effective, and the provenance string the limit
+  was read from. `get_usage_stats()` keeps `max_tokens` meaning *configured*,
+  so old readers are unaffected, and gains `effective_max_tokens`,
+  `observed_limit` and `observed_limit_provenance`. ACP's
+  `session/set_model` echo still returns the configured value — it is a
+  setter, and its echo must equal what was just written.
+
+  **What this cannot do, stated plainly:** an overflow error is its only
+  input, so **the first fall into the recovery ladder is its input, not
+  something it can prevent**. It reduces how often you fall in again.
+
+
 - **`PreCompact` can now say no.** It was notify-only: `dispatch_pre_compact`
   fired the hook through `_dispatch_lifecycle` and threw the output away, so a
   host watching its own context about to be rewritten had no way to stop it.

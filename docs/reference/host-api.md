@@ -218,6 +218,36 @@ list where `tool_calls[*].id` must round-trip byte-for-byte, and a host
 returning an orphaned tool result would produce a request the provider refuses
 at a point where history has already been destroyed.
 
+### Two context windows
+
+| | Meaning | Who writes it |
+|---|---|---|
+| `context_manager.max_tokens` | what the host **configured** | the host (`max_context_tokens=`, `/context limit`, ACP `contextLength`) |
+| `context_manager.effective_max_tokens` | `min(configured, observed)` | derived, read-only |
+| `context_manager.observed_limit` | what the **provider asserted**, learned from an overflow error | agentao |
+
+**Every internal budget** — the compaction thresholds, the microcompaction
+band, the summary-input budget, `usage_percent` — is denominated in the
+*effective* window. **`get_usage_stats()['max_tokens']` and ACP's
+`session/set_model` echo keep returning the configured value**: the first so
+existing readers are unaffected, the second because `session/set_model` is a
+setter and its echo must equal what was just written, or a client reads
+agentao's self-healing as a failed write. `effective_max_tokens`,
+`observed_limit` and `observed_limit_provenance` are additive keys on
+`get_usage_stats()`.
+
+The observed limit can only **narrow**: a provider rejecting at N is evidence
+about N, not permission to exceed the host's ceiling. It is discarded on a
+model or endpoint switch (with a warning that the window is unverified for the
+new model); a pure credential rotation leaves it alone.
+
+**The parse refuses to guess.** Most overflow messages carry two numbers —
+the request size and the limit — so every pattern is anchored to the phrase
+that *names* the limit, values outside sanity bounds are refused, and two
+patterns disagreeing adopts nothing. An overflow error is its only input, so
+it cannot prevent the **first** fall into the recovery ladder; it reduces how
+often you fall in again.
+
 ## Capability protocols (`agentao.host.protocols`)
 
 Embedded hosts override IO by injecting these `Protocol` types into

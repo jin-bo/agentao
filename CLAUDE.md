@@ -171,6 +171,16 @@ falling through to `messages[-2:]`.
 `COMPACTION_SETTLED`'s `pre_tokens_history` / `post_tokens_history` exclude
 it. Never wire one into the other.
 
+**Two windows, and they are not interchangeable.** `max_tokens` is the
+host's configured knob and reads back what the host wrote;
+`effective_max_tokens` is `min(configured, observed)`, where `observed` is
+learned from a provider overflow error via `parse_observed_context_limit`.
+**Every internal budget uses effective**; `get_usage_stats()['max_tokens']`
+and ACP's `session/set_model` echo keep returning configured. The parse is
+provider-asserted and refuses to adopt anything it is not certain of — most
+overflow messages carry *two* numbers and picking the request size instead of
+the limit is a permanent silent degradation.
+
 `ContextManager.compress_messages()` survives as the legacy wrapper (its
 signature is documented and pinned by tests that call it directly). It returns
 a bare list and so cannot say *why* nothing changed; it also bypasses the

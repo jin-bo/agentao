@@ -19,7 +19,23 @@ def handle_context_command(cli: AgentaoCLI, args: str) -> None:
         stats = cm.get_usage_stats(cli.agent.messages)
         console.print("\n[info]Context Window Status:[/info]")
         console.print(f"  Estimated tokens: [cyan]{stats['estimated_tokens']:,}[/cyan]")
-        console.print(f"  Max tokens:       [cyan]{stats['max_tokens']:,}[/cyan]")
+        console.print(f"  Max tokens:       [cyan]{stats['max_tokens']:,}[/cyan] [dim](configured)[/dim]")
+        observed = stats.get("observed_limit")
+        effective = stats.get("effective_max_tokens", stats["max_tokens"])
+        if observed is not None and effective != stats["max_tokens"]:
+            # The mismatch is the whole point of showing this: budgets are
+            # denominated in the effective window, and a user reading only
+            # the configured one would not know why compaction fires early.
+            console.print(
+                f"  Effective:        [yellow]{effective:,}[/yellow] "
+                f"[dim](provider asserted {observed:,} — "
+                f"{stats.get('observed_limit_provenance')})[/dim]"
+            )
+        elif observed is not None:
+            console.print(
+                f"  Effective:        [cyan]{effective:,}[/cyan] "
+                f"[dim](provider asserted {observed:,}, at or above configured)[/dim]"
+            )
 
         pct = stats["usage_percent"]
         # Read the tiers off the constants — hard-coded 55/65 silently lied

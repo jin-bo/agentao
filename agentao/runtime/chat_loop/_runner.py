@@ -1159,6 +1159,11 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 agent.messages.append({"role": "assistant", "content": err_msg})
                 return ChatLoopRunner._LlmOutcome(error_return=err_msg)
             agent.llm.logger.warning(f"Context overflow from API, forcing compression: {e}")
+            # The provider just told us its real window, if it named one.
+            # This is the only place that information exists, and it is why
+            # PR-5 cannot prevent the *first* fall into this ladder — an
+            # overflow error is its sole input.
+            agent.context_manager.observe_overflow_error(e)
             # Rung 1 of the ladder. It goes through the coordinator like every
             # other entry — which is what finally lets it pass its real
             # ``api_overflow`` reason instead of riding ``compress_messages``'s
@@ -1204,6 +1209,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     agent.llm.logger.warning(
                         "Context still too long after compression, keeping minimal history"
                     )
+                    agent.context_manager.observe_overflow_error(e2)
                     run = agent.compaction_coordinator.run(
                         CompactionRequest(
                             "auto", "minimal_history", "api_overflow_after_compression",
