@@ -1,20 +1,34 @@
 # Compaction Orchestration — Implementation Plan
 
-> **⚠️ Implementation in progress — 2026-08-24.** All six PRs are built and open as a stack
-> (PR-1 #187 → PR-3 #188 → PR-2 #189 → PR-4 #190 → PR-5 #191 → PR-6 #192), in the dependency
-> order below. The banner this replaces read "reviewed twelve times, **not authorized for
-> implementation** — nothing here has been built"; that is no longer true and is recorded here
-> rather than deleted, because seven other documents quote it.
+> **✅ Implemented — 2026-08-24. All six PRs are merged to `main`, in the dependency order below.**
+> Not yet released; targeting 0.4.20.
 >
-> **The PR ordering below is still a dependency order, not a schedule.** Two deliberate departures
-> from it, both stated in their PR descriptions: PR-3 also lands the `cancel` / host-summary
-> branches of `_run_compaction` (leaving a `decide` parameter whose `cancel` is not honoured is a
-> worse half-state than a larger PR) and the replay projection of `COMPACTION_SETTLED` (without it
-> PR-3 would remove audit records without adding the replacement).
+> | | PR | Squashed onto `main` as |
+> |---|---|---|
+> | PR-1 | #187 | `8d38e0b` |
+> | PR-3 | #188 | `05b6c93` |
+> | PR-2 | #189 | `2661ff1` |
+> | PR-4 | #190 | `a0ba5ca` |
+> | PR-5 | #191 | `96340b4` |
+> | PR-6 | #192 | `d4c95ad` |
+>
+> The banner this replaces read "reviewed twelve times, **not authorized for implementation** —
+> nothing here has been built". That is recorded here rather than deleted, because seven other
+> documents quote it.
+>
+> **Two deliberate departures from the PR split**, both stated in their PR descriptions: PR-3 also
+> landed the `cancel` / host-summary branches of `_run_compaction` (leaving a `decide` parameter
+> whose `cancel` is not honoured is a worse half-state than a larger PR, and §4.2's status table is
+> explicitly pinned *before* PR-3) and the replay projection of `COMPACTION_SETTLED` (without it
+> PR-3 would have removed audit records — the overflow path's unconditional `CONTEXT_COMPRESSED` —
+> without adding the replacement; replay schema 1.2 → 1.3).
+>
+> **Read §§1–8 for the design; read the six PR descriptions for what shipped.** Where they differ,
+> the PRs are what is on `main`.
 
 **Date:** 2026-08-23
-**Status:** **Implementation in progress** (2026-08-24) — rev 14, twelve maintainer reviews folded
-into the body (§9 is the record, not an override; the body is authoritative on its own).
+**Status:** **Implemented** (2026-08-24, unreleased — targeting 0.4.20) — rev 14, twelve maintainer
+reviews folded into the body (§9 is the record, not an override; the body is authoritative on its own).
 **Anchors:** agentao `main@a996395`, plus two uncommitted working-tree changes that this plan
 already accounts for: `COMPRESSION_THRESHOLD` 0.65 → 0.80 (`agentao/context_manager.py:69`) and the
 `/context` colour tiers now reading off the constants (`cli/commands/context.py:25-29`).
