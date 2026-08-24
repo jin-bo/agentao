@@ -104,6 +104,14 @@ def run_turn(
         agent.context_manager.last_summary_finish_reason_missing = False
     except Exception:
         pass
+    # Compaction cancellations are remembered for the rest of the turn (the
+    # loop re-checks both thresholds every iteration, so honouring a cancel
+    # without a latch would mean asking again next iteration). This is the
+    # other half of that: read off the attribute rather than the property so
+    # a turn that never compacts does not construct a coordinator.
+    _coordinator = getattr(agent, "_compaction_coordinator", None)
+    if _coordinator is not None:
+        _coordinator.reset_cancellation_latch()
     # Snapshot the latest session-summary id so the inner loop can
     # fire SESSION_SUMMARY_WRITTEN each time compress_messages writes
     # a new one. Held on the instance so compression paths inside the

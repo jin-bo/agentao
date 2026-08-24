@@ -153,6 +153,19 @@ public entry.
 iteration; one event each would be a storm. `CONTEXT_COMPRESSED` fires only on
 `success`; `COMPACTION_SETTLED` fires for `success | cancelled | failed`.
 
+**The control plane has two layers and one merge rule.** Command hooks first
+(`dispatch_pre_compact_decision`, wire key `hookSpecificOutput.compactionDecision`,
+first-cancel-wins), then — only if they all allowed — `compaction_controller=`,
+a keyword-only constructor argument. A cancel in either layer is a cancel;
+`provide_summary` can only come from the controller. **Everything that is not
+an explicit cancel means allow, including a raise**: two entry points are the
+overflow recovery ladder, so a control-plane error must never be able to end
+the turn it exists to save. A cancelled threshold compaction enters a
+coordinator-owned latch keyed `(kind, reason)`, cleared per turn in
+`runtime/turn.py`; `manual_cli` and both overflow reasons never enter it. A
+cancelled **overflow** returns the provider's context-length error rather than
+falling through to `messages[-2:]`.
+
 **Two token units, deliberately named apart.** `CONTEXT_COMPRESSED`'s
 `pre_est_tokens` / `post_est_tokens` **include** the system prompt;
 `COMPACTION_SETTLED`'s `pre_tokens_history` / `post_tokens_history` exclude

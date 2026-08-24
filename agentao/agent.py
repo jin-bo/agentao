@@ -38,7 +38,7 @@ from .sandbox import SandboxPolicy
 from .transport import NullTransport, build_compat_transport
 
 if TYPE_CHECKING:
-    from .compaction.types import CompactionOutcome
+    from .compaction.types import CompactionController, CompactionOutcome
     from .agents.bg_store import BackgroundTaskStore  # noqa: F401
     from .capabilities import FileSystem, MCPRegistry, ShellExecutor
     from .mcp import McpClientManager  # type-only; MCP SDK is heavy
@@ -124,6 +124,11 @@ class Agentao:
         # (see _validate_construction_args).
         extra_body: Optional[Dict[str, Any]] = None,
         extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None,
+        # Host compaction control plane. KEYWORD-ONLY for the same reason as
+        # ``extra_body`` above — inserting it into the older group would shift
+        # the legacy positional callback arguments. At most one: this is not a
+        # list, and it is consulted only after every command hook has allowed.
+        compaction_controller: Optional["CompactionController"] = None,
         # ── Host tool injection ───────────────────────────────────────────
         extra_tools: Optional[Sequence["RegistrableTool"]] = None,
         disable_tools: Optional[Iterable[str]] = None,
@@ -315,6 +320,7 @@ class Agentao:
         # rather than rebuilt per call because it is where per-turn
         # compaction state lives.
         self._compaction_coordinator = None
+        self.compaction_controller = compaction_controller
 
         # Session-scoped state (session id, host event stream, conversation
         # history, plan session, project instructions) must land before

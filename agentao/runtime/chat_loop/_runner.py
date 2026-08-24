@@ -1176,6 +1176,20 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 # already blown up.
                 measure_system_tokens=False,
             )
+            if run.outcome.status == "cancelled":
+                # The host said no to the *overflow* question, which is a
+                # separate question from the threshold one it may have
+                # already declined. Return the provider's own error rather
+                # than quietly falling through to the next rung: the runaway
+                # the earlier design feared comes from a cancel that is
+                # ignored, not from one that is honoured and reported.
+                err_msg = f"[LLM API error: {e}]"
+                agent.llm.logger.warning(
+                    "Compaction cancelled by the host on an API overflow; "
+                    "returning the context-length error"
+                )
+                agent.messages.append({"role": "assistant", "content": err_msg})
+                return ChatLoopRunner._LlmOutcome(error_return=err_msg)
             system_prompt = run.system_prompt
             messages_with_system = run.messages_with_system
             try:
@@ -1198,6 +1212,22 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                         messages_with_system=messages_with_system,
                         measure_system_tokens=False,
                     )
+                    if run.outcome.status == "cancelled":
+                        # A separate dispatch site from the rung above, and
+                        # reachable only once that one was allowed, compacted
+                        # successfully, and the request *still* overflowed —
+                        # so it gets its own answer, with the same semantics:
+                        # honoured and reported, never a quiet fall-through to
+                        # ``messages[-2:]``.
+                        err_msg = f"[LLM API error: {e2}]"
+                        agent.llm.logger.warning(
+                            "Minimal-history compaction cancelled by the host; "
+                            "returning the context-length error"
+                        )
+                        agent.messages.append(
+                            {"role": "assistant", "content": err_msg}
+                        )
+                        return ChatLoopRunner._LlmOutcome(error_return=err_msg)
                     messages_with_system = run.messages_with_system
                     try:
                         response = agent._llm_call(messages_with_system, tools, token)

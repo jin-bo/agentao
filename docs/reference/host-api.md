@@ -152,6 +152,72 @@ bypasses both the host control plane (`PreCompact` dispatch) and the
 breaker's probe policy. It is not deprecated; it is simply the wrong level
 for host code.
 
+### Vetoing or replacing a compaction
+
+Two layers, consulted in that order. A cancel in either is a cancel.
+
+**Command hooks** — a `PreCompact` hook that prints this on stdout cancels it:
+
+```json
+{"hookSpecificOutput": {"compactionDecision": "cancel",
+                        "compactionDecisionReason": "mid-refactor"}}
+```
+
+First cancel wins and stops the remaining forks. The key is
+`compactionDecision`, not `permissionDecision` — a key that has never existed,
+so no script can produce it by accident, which is why no opt-in flag is
+needed. **Anything that is not an explicit `cancel` means allow**, including
+an unknown value (logged): a typo must not be able to pause compaction until
+the context blows up. Exit code 2 stays unhonoured. Hooks cannot supply
+summary text — they have no trust boundary, and summary text permanently
+rewrites history.
+
+**`compaction_controller=`** (keyword-only constructor argument, at most one):
+
+```python
+def controller(ctx: CompactionDecisionContext) -> CompactionDecision:
+    if ctx.kind == "full" and ctx.messages_to_summarize > 200:
+        return CompactionDecision("provide_summary", summary=my_summary())
+    return CompactionDecision("allow")
+
+agent = Agentao(..., compaction_controller=controller)
+```
+
+`ctx` carries counts, budgets and recently-read paths — **never message
+text**. It is a redaction boundary and it is never serialized; a host that
+needs the text reads `agent.messages`. `provide_summary` is legal only when
+`ctx.can_provide_summary` (i.e. `kind == "full"`).
+
+The contract is **fail-open, and that is a hard rule**: a raise, an awaitable
+(v1 is synchronous), an unknown `action`, or `provide_summary` with no text
+are all treated as `allow` with a warning. Two of the five compaction entry
+points *are* the API-overflow recovery ladder, so an exception escaping a
+controller would turn "context too long" into "the turn crashes". There is no
+timeout — if it hangs, it hangs the turn, exactly like the host's other
+callbacks.
+
+A host summary is validated before it is committed (non-empty, a `str`, at
+most `ctx.max_summary_tokens`, free of the summary end marker). An invalid one
+is rejected and the built-in summarizer runs **once**, as if the host had said
+`allow`; `outcome.detail` records which check failed. What the circuit breaker
+counts is always the built-in summarizer's failure, so a bad controller can
+never disable automatic compaction.
+
+**What a cancel means, per entry point.** History is byte-identical in every
+case.
+
+| Cancelled | Result |
+|---|---|
+| Microcompaction | that pass is skipped; no error; not re-asked this turn |
+| Threshold | not re-asked this turn; if the API then overflows the host is asked **again**, with `reason=api_overflow` — a different question |
+| API overflow (either rung) | the provider's context-length error is returned to the caller. It does **not** fall through to `messages[-2:]` |
+| Manual `/compact` | reported as cancelled; an immediate retry dispatches normally (it never latches) |
+
+Arbitrary message-list replacement is **out**: agentao's history is a flat
+list where `tool_calls[*].id` must round-trip byte-for-byte, and a host
+returning an orphaned tool result would produce a request the provider refuses
+at a point where history has already been destroyed.
+
 ## Capability protocols (`agentao.host.protocols`)
 
 Embedded hosts override IO by injecting these `Protocol` types into
