@@ -1430,7 +1430,7 @@ class ContextManager:
     # A rehydrated ``[Conversation Summary]`` folded into a new one. Larger than
     # an ordinary message, and exempt from budget eviction in
     # :meth:`_join_within_budget`, because it is the only surviving record of
-    # everything before the previous compaction — see :meth:`_clip_carry_summary`.
+    # everything before the previous compaction — see :meth:`_render_carry_summary`.
     _CARRY_SUMMARY_TRUNCATION = 8_000
 
     # Total ceiling on the assembled transcript, as a fraction of the context
