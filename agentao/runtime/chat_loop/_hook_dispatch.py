@@ -16,6 +16,11 @@ from __future__ import annotations
 
 from typing import Literal
 
+from ...compaction.types import (
+    CompactionKind,
+    CompactionReason,
+    CompactionTrigger,
+)
 from ...plugins.models import StopHookResult
 from ...transport import AgentEvent, EventType
 from ._outcomes import _HookOutcome
@@ -163,12 +168,18 @@ class _HookDispatchMixin:
     def _dispatch_pre_compact(
         self,
         *,
-        compaction_type: str,
-        reason: str,
+        trigger: CompactionTrigger,
+        compaction_type: CompactionKind,
+        reason: CompactionReason,
     ) -> None:
         """PreCompact dispatch — fires before the about-to-mutate
         compaction site; side-effect only with the same no-emit gate as
         ``_dispatch_stop``.
+
+        ``trigger`` carries the provenance the matcher reads. Every site
+        reachable from here is automatic, so all four pass ``"auto"`` —
+        but it is passed rather than assumed, because assuming it is what
+        made manual ``/compact`` report itself as ``auto``.
         """
         agent = self._agent
         if not agent._plugin_hook_rules:
@@ -181,6 +192,7 @@ class _HookDispatchMixin:
         payload = ClaudeHookPayloadAdapter().build_pre_compact(
             session_id=agent._session_id,
             cwd=cwd,
+            trigger=trigger,
             compaction_type=compaction_type,
             reason=reason,
             permission_mode=agent.active_permissions().mode,
@@ -197,7 +209,7 @@ class _HookDispatchMixin:
                 "hook_name": "PreCompact",
                 "outcome": "allow",
                 "compaction_type": compaction_type,
-                "trigger": "auto",
+                "trigger": trigger,
                 "matched_rule_count": len(matched),
             }))
         except Exception:

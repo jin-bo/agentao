@@ -17,6 +17,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ...compaction.types import (
+    CompactionKind,
+    CompactionReason,
+    CompactionTrigger,
+)
 from ._alias import ToolAliasResolver
 
 
@@ -147,18 +152,29 @@ class ClaudeHookPayloadAdapter:
         *,
         session_id: str | None = None,
         cwd: Path | None = None,
-        compaction_type: str,
-        reason: str,
+        trigger: CompactionTrigger,
+        compaction_type: CompactionKind,
+        reason: CompactionReason,
+        custom_instructions: str = "",
         permission_mode: str | None = None,
     ) -> dict[str, Any]:
+        """Build the flat Claude-shape ``PreCompact`` payload.
+
+        ``trigger`` is **required and has no default**. It used to be
+        hardcoded ``"auto"`` for all five compaction entry points, which
+        made ``{"trigger": "manual"}`` a matcher value with no reachable
+        producer — a rule written against it could never fire anywhere.
+        A default here would let a new entry point silently reacquire that
+        bug, so the provenance is stated at every call site instead.
+        """
         return {
             "hook_event_name": "PreCompact",
             "session_id": session_id or "",
             "transcript_path": None,
             "cwd": str(cwd or Path.cwd()),
             "permission_mode": permission_mode or "workspace-write",
-            "trigger": "auto",
-            "custom_instructions": "",
+            "trigger": trigger,
+            "custom_instructions": custom_instructions,
             "compaction_type": compaction_type,
             "reason": reason,
         }

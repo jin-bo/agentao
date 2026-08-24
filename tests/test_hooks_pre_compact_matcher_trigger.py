@@ -14,11 +14,12 @@ from agentao.plugins.hooks import (
 from agentao.plugins.models import ParsedHookRule
 
 
-def _payload(tmp_path):
+def _payload(tmp_path, trigger="auto"):
     return ClaudeHookPayloadAdapter().build_pre_compact(
         cwd=tmp_path,
+        trigger=trigger,
         compaction_type="full",
-        reason="compression_threshold",
+        reason="compression_threshold" if trigger == "auto" else "manual_cli",
     )
 
 
@@ -44,11 +45,40 @@ def test_auto_matcher_fires(tmp_path):
     assert dispatcher._matches(rule, _payload(tmp_path))
 
 
+def test_manual_matcher_fires_on_manual_payload(tmp_path):
+    """The producer half of the pair above.
+
+    Before the trigger contract was fixed, ``build_pre_compact`` hardcoded
+    ``"auto"`` at all five entry points, so ``{"trigger": "manual"}`` was a
+    configuration value **no site could ever produce** — the rule above
+    passed while describing a dead matcher. This is the assertion that
+    makes it a real pair.
+    """
+    dispatcher = PluginHookDispatcher(cwd=tmp_path)
+    rule = _make_rule({"trigger": "manual"})
+    assert dispatcher._matches(rule, _payload(tmp_path, trigger="manual"))
+
+
+def test_auto_matcher_does_not_fire_on_manual_payload(tmp_path):
+    """The behaviour change PR-1 makes visible: an ``{"trigger": "auto"}``
+    rule used to match manual ``/compact`` too, because every payload said
+    ``auto``. It must not any more."""
+    dispatcher = PluginHookDispatcher(cwd=tmp_path)
+    rule = _make_rule({"trigger": "auto"})
+    assert not dispatcher._matches(rule, _payload(tmp_path, trigger="manual"))
+
+
 def test_alternation_pattern_fires_claude_parity(tmp_path):
-    """`manual|auto` must fire on `"auto"` payload — Claude Code parity."""
+    """`manual|auto` must fire on **both** payloads — Claude Code parity.
+
+    This is the regression guard for the trigger change: an existing host
+    rule written ``{"trigger": "manual|auto"}`` matched everything before
+    and must keep matching everything after.
+    """
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
     rule = _make_rule({"trigger": "manual|auto"})
-    assert dispatcher._matches(rule, _payload(tmp_path))
+    assert dispatcher._matches(rule, _payload(tmp_path, trigger="auto"))
+    assert dispatcher._matches(rule, _payload(tmp_path, trigger="manual"))
 
 
 def test_wildcard_regex_fires(tmp_path):

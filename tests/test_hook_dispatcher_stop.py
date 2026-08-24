@@ -57,6 +57,7 @@ def test_dispatch_pre_compact_returns_hook_success_attachment(tmp_path):
     payload = ClaudeHookPayloadAdapter().build_pre_compact(
         session_id="s1",
         cwd=tmp_path,
+        trigger="auto",
         compaction_type="microcompact",
         reason="microcompact_threshold",
         permission_mode="workspace-write",

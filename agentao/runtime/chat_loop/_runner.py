@@ -1159,6 +1159,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 return ChatLoopRunner._LlmOutcome(error_return=err_msg)
             agent.llm.logger.warning(f"Context overflow from API, forcing compression: {e}")
             self._dispatch_pre_compact(
+                trigger="auto",
                 compaction_type="full",
                 reason="api_overflow",
             )
@@ -1197,6 +1198,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                         "Context still too long after compression, keeping minimal history"
                     )
                     self._dispatch_pre_compact(
+                        trigger="auto",
                         compaction_type="minimal_history",
                         reason="api_overflow_after_compression",
                     )

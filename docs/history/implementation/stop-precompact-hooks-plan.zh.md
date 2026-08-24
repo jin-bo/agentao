@@ -21,6 +21,15 @@
 > | A4 emit 位置表（`:480` 起） | 四个 emit 位置 | **现为五个**，新增 `cli/commands/compact.py:44` 的手动位置。 |
 > | A5 `PLUGIN_HOOK_FIRED` 投影（`:512`） | 「`trigger` 在本计划下恒为 `"auto"`」 | 该句以「本计划下」限定，**作为历史陈述仍准确**；但手动位置的 replay 事件发的是 `"trigger": "manual"`（`compact.py:75`），**与它同一次压缩的 hook payload（`"auto"`）自相矛盾**。 |
 >
+> **后续 —— 2026-08-24：下方第 1 项已修复，第 2 项仍然成立。**
+> `build_pre_compact` 现在有一个必填的 `trigger` 参数，五个入口各自声明自己的来源
+> （`agentao/plugins/hooks/_payload.py`），因此手动 `/compact` 在 hook payload 与
+> `PLUGIN_HOOK_FIRED` 事件里都报 `manual`。本横幅预警的契约变化确实发生了：
+> `{"trigger": "auto"}` 规则**不再**命中手动 `/compact`，而 `{"trigger": "manual|auto"}`
+> 仍命中全部五个入口。第 1 项点名的测试盲区被两重堵上——站点清单已扩到五条、含
+> `manual_cli`，且 `tests/test_hooks_pre_compact_trigger_provenance.py` 驱动五个
+> **生产**调用点、从 hook 的 stdin 读回载荷，而不是手工构造。
+>
 > **未由本横幅解决的两项（需另行决策，不属于「修文档」范围）：**
 > 1. **代码缺陷** —— `build_pre_compact` 无 `trigger` 参数，手动压缩的 hook payload 与 replay 事件对同一次压缩给出不同的 `trigger`。修复会**改变 hook 契约**（agentao 翻译后 matcher 对象的命中集合随之变化），且 `tests/test_hooks_pre_compact_payload_claude_shape.py:60-74` 的站点清单只列了四个位置、不含 `manual_cli`，**现有测试抓不到它**。
 > 2. **本文所载契约没有在世文档** —— `PreCompact` 的 payload / matcher 契约目前只存在于这份已废止计划里（`grep -rl PreCompact docs/ --include=*.md` 在 `docs/history` 之外只命中 design 评审与 release notes）。

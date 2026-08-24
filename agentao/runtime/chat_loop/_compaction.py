@@ -39,6 +39,7 @@ class _CompactionMixin:
             # pre == post, on top of two full-history token estimates.
             return messages_with_system, system_prompt
         self._dispatch_pre_compact(
+            trigger="auto",
             compaction_type="microcompact",
             reason="microcompact_threshold",
         )
@@ -92,6 +93,7 @@ class _CompactionMixin:
             )
             return messages_with_system, system_prompt
         self._dispatch_pre_compact(
+            trigger="auto",
             compaction_type="full",
             reason="compression_threshold",
         )

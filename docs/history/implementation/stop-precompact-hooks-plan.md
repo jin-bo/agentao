@@ -22,6 +22,20 @@
 > | A4 emit-site table (from `:480`) | Four emit sites | **Now five**, adding the manual site at `cli/commands/compact.py:44`. |
 > | A5 `PLUGIN_HOOK_FIRED` projection (`:512`) | "`trigger` is always `"auto"` under this plan" | Qualified by "under this plan", so **still accurate as a historical statement**; but the manual site emits `"trigger": "manual"` in its replay event (`compact.py:75`), **contradicting the hook payload (`"auto"`) for the same compaction**. |
 >
+> **Follow-up — 2026-08-24: item 1 below is fixed; item 2 still stands.**
+> `build_pre_compact` now takes a required `trigger` argument and every
+> one of the five entry points states its own provenance
+> (`agentao/plugins/hooks/_payload.py`), so manual `/compact` reports
+> `manual` in both its hook payload and its `PLUGIN_HOOK_FIRED` event.
+> The contract change this banner warned about is real and shipped: a
+> rule written `{"trigger": "auto"}` no longer matches manual
+> `/compact`, while `{"trigger": "manual|auto"}` still matches all five.
+> The test-coverage gap named in item 1 is closed twice over — the
+> enumerated site list now carries five entries including `manual_cli`,
+> and `tests/test_hooks_pre_compact_trigger_provenance.py` drives all
+> five **production** call sites and reads the payload off the hook's
+> stdin rather than building it by hand.
+>
 > **Two items this banner does not resolve (they need a separate decision, not a doc edit):**
 > 1. **Code defect** — `build_pre_compact` takes no `trigger` argument, so a manual compaction's hook payload and its replay event report different `trigger` values for the same compaction. Fixing it **changes the hook contract** (the match set of agentao's post-translation matcher objects shifts), and `tests/test_hooks_pre_compact_payload_claude_shape.py:60-74` enumerates only the four sites, without `manual_cli` — **the existing tests cannot catch it**.
 > 2. **The contract recorded here has no living document** — the `PreCompact` payload/matcher contract exists only inside this superseded plan (`grep -rl PreCompact docs/ --include=*.md` hits nothing outside `docs/history/` except design reviews and release notes).
