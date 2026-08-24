@@ -221,6 +221,17 @@ def _print_turn(turn: dict, console_) -> None:
                 f"[dim]{markup_escape(str(p.get('type', '')))}  "
                 f"msgs {p.get('pre_msgs')}→{p.get('post_msgs')}[/dim]"
             )
+        elif kind == "compaction_settled":
+            p = e.get("payload") or {}
+            status = str(p.get("status", ""))
+            console_.print(
+                f"  [dim]compact[/dim]  "
+                f"[dim]{markup_escape(str(p.get('kind', '')))} "
+                f"{markup_escape(status)} "
+                f"({markup_escape(str(p.get('reason', '')))})"
+                + (f" {markup_escape(str(p.get('detail'))[:80])}" if p.get("detail") else "")
+                + "[/dim]"
+            )
         elif kind == "session_summary_written":
             p = e.get("payload") or {}
             console_.print(

@@ -1,10 +1,15 @@
 """An open compaction circuit breaker must stop announcing compactions.
 
-Once ``compress_messages`` has failed ``CIRCUIT_BREAKER_LIMIT`` times in a row
-it returns history unchanged. Before this, ``_maybe_full_compress`` still ran
-its whole preamble on every iteration — dispatching ``PreCompact`` (which forks
-a hook subprocess per matching rule) and emitting ``CONTEXT_COMPRESSED`` with
-``pre_msgs == post_msgs`` — for a compaction that could no longer happen.
+Once compaction has failed ``CIRCUIT_BREAKER_LIMIT`` times in a row every
+further attempt returns history unchanged. Before this, ``_maybe_full_compress``
+still ran its whole preamble on every iteration — dispatching ``PreCompact``
+(which forks a hook subprocess per matching rule) and emitting
+``CONTEXT_COMPRESSED`` with ``pre_msgs == post_msgs`` — for a compaction that
+could no longer happen.
+
+The gate now lives in ``CompactionCoordinator``, which is what the
+API-overflow ladder goes through too — so this behaviour reaches the entry
+point that used to lack it entirely.
 
 Pairs with the split-point fix in ``test_context_manager.py``: that one stops
 the breaker from being reached spuriously, this one bounds the cost once it is.
@@ -12,6 +17,7 @@ the breaker from being reached spuriously, this one bounds the cost once it is.
 
 from __future__ import annotations
 
+from agentao.compaction.types import CompactionOutcome
 from agentao.plugins.models import ParsedHookRule
 
 from tests.support.stop_precompact import (
@@ -33,8 +39,25 @@ def _arm(tmp_path, monkeypatch, *, circuit_open: bool):
     cm = agent.context_manager
 
     monkeypatch.setattr(cm, "needs_compression", lambda messages, tokens=None: True)
-    # compress_messages is the no-op an open breaker produces.
-    monkeypatch.setattr(cm, "compress_messages", lambda messages, is_auto=True: messages)
+
+    def _compact(msgs, *, is_auto=True, reason="compression_threshold", decide=None):
+        # Stubbed at the seam that produces the outcome, so the closed-breaker
+        # case exercises a real success rather than asserting on a no-op that
+        # would emit nothing either way.
+        return CompactionOutcome(
+            status="success",
+            trigger="auto" if is_auto else "manual",
+            kind="full",
+            reason=reason,
+            messages=[
+                {"role": "system", "content": "[Compact Boundary | auto=True]"},
+                {"role": "system", "content": "[Conversation Summary]\nx"},
+            ] + msgs[-1:],
+            pre_tokens=100,
+            post_tokens=20,
+        )
+
+    monkeypatch.setattr(cm, "_run_compaction", _compact)
     if circuit_open:
         cm._consecutive_compact_failures = cm.CIRCUIT_BREAKER_LIMIT
 
@@ -59,6 +82,11 @@ def test_open_circuit_skips_precompact_dispatch_and_event(tmp_path, monkeypatch)
     assert not capture.exists(), "PreCompact hook subprocess was forked anyway"
     assert "plugin_hook_fired" not in kinds
     assert "context_compressed" not in kinds
+    # And the terminal event stays silent too. ``skipped`` emits nothing, on
+    # purpose: this gate fires on *every* loop iteration once the breaker is
+    # open, so one event each would be a fresh storm in place of the one this
+    # guard removed.
+    assert "compaction_settled" not in kinds
 
 
 def test_closed_circuit_still_dispatches(tmp_path, monkeypatch):
@@ -67,3 +95,4 @@ def test_closed_circuit_still_dispatches(tmp_path, monkeypatch):
 
     assert capture.exists(), "PreCompact should still fire while the breaker is closed"
     assert "context_compressed" in kinds
+    assert "compaction_settled" in kinds

@@ -38,6 +38,54 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **All five compaction entry points now go through one `CompactionCoordinator`,
+  and every attempt returns one `CompactionOutcome`.** Microcompaction, the
+  threshold tier, both rungs of the API-overflow ladder and manual `/compact`
+  used to orchestrate compaction independently, and they disagreed about the
+  two things that matter: whether a failure counts, and whether "compacted"
+  means history actually changed.
+
+  **The observable fix: `CONTEXT_COMPRESSED` is emitted only when the
+  compaction succeeded.** The API-overflow path emitted it unconditionally, so
+  with the circuit breaker open it reported a compaction that returned the
+  message list untouched — `pre_msgs == post_msgs`, no summary, nothing
+  written. The threshold tier got this treatment in 0.4.19; the overflow path
+  was missed. **`CONTEXT_COMPRESSED`'s payload does not change by a single
+  key**, and both its token fields keep their system-*inclusive* unit.
+
+  A new `COMPACTION_SETTLED` event (replay schema **1.3**) is the terminal
+  event for one attempt whatever the outcome — `success | cancelled | failed`,
+  with `trigger` / `kind` / `reason` / `detail`. `skipped` emits **nothing**,
+  deliberately: three of its four cases re-trigger on every loop iteration, so
+  one event each would be an event storm rather than a signal. Its
+  `pre_tokens_history` / `post_tokens_history` are named apart from the old
+  event's pair because they **exclude** the system prompt — two units, two
+  names, so they cannot be wired to each other by accident. Both stay `null`
+  on the overflow rungs and on microcompaction, since filling them in means
+  full-history estimates exactly where they cost most.
+
+  **Second deliberate behaviour change: a failed summarization no longer
+  writes to the memory store.** `crystallize_user_messages` ran *before*
+  summarization, so a summarization that then returned nothing had already
+  crystallized. `compress_messages` splits into `prepare_compaction` /
+  `commit_compaction`, and both SQLite writes moved to commit — which does not
+  run unless a summary exists.
+
+  Also: the API-overflow rung finally passes its real `reason`
+  (`api_overflow`) instead of riding `compress_messages(is_auto=True)`'s
+  default and reporting itself as a threshold compaction, contradicting the
+  hook payload it had just emitted; `/compact` stops guessing success by
+  sniffing `messages[0]` for a `[Compact Boundary]` marker and reports the
+  actual reason it made no change; and the duplicated `PreCompact` dispatch in
+  the CLI is gone — one implementation serves all five entries.
+
+  `ContextManager.compress_messages()` keeps its signature, its return type
+  and its breaker gate, and is now a thin wrapper over the split. It cannot
+  say *why* nothing changed, so new code should go through the coordinator;
+  a direct call bypasses the host control plane and the breaker's probe
+  policy.
+
+
 - **Full LLM compaction now triggers at 80% of `max_context_tokens`, not 65%**
   (`ContextManager.COMPRESSION_THRESHOLD` 0.65 → 0.80). agentao was the most
   conservative of its peers by 25–27 points (pi-mono compacts at

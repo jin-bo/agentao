@@ -253,10 +253,13 @@ class MemoryManager:
     ) -> None:
         """Persist a compact summary block to SQLite. Never raises.
 
-        This method does NOT crystallize. Crystallization runs upstream in
-        ``ContextManager.compress_messages()`` against the raw user messages
+        This method does NOT crystallize. Crystallization runs beside it in
+        ``ContextManager.commit_compaction()`` against the raw user messages
         that are about to be summarized away — the LLM-generated summary text
-        contains assistant narration and is not safe to regex against.
+        contains assistant narration and is not safe to regex against. Both
+        writes live in commit rather than before summarization, so a
+        compaction that is cancelled or whose summarization fails leaves the
+        store untouched.
         """
         try:
             record = SessionSummaryRecord(
@@ -377,8 +380,10 @@ class MemoryManager:
 
         Used by:
 
-        - ``ContextManager.compress_messages()`` — passes the about-to-be-
+        - ``ContextManager.commit_compaction()`` — passes the about-to-be-
           summarized window so we crystallize before the messages are gone.
+          It runs only once a summary exists, so a failed summarization no
+          longer writes.
         - ``/memory crystallize`` (CLI) — passes ``self.agent.messages`` so
           the user can manually re-run extraction over the live conversation
           buffer.

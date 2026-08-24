@@ -315,10 +315,23 @@ for ev in events:
 | LLM 调用 | `LLM_CALL_STARTED`、`LLM_CALL_COMPLETED`、`LLM_CALL_DELTA`、`LLM_CALL_IO`、`LLM_TEXT`、`THINKING` |
 | 子 Agent（原始） | `AGENT_START`、`AGENT_END` |
 | 交互 | `TOOL_CONFIRMATION`、`ASK_USER_REQUESTED`、`ASK_USER_ANSWERED` |
-| 历史 | `BACKGROUND_NOTIFICATION_INJECTED`、`CONTEXT_COMPRESSED`、`SESSION_SUMMARY_WRITTEN` |
+| 历史 | `BACKGROUND_NOTIFICATION_INJECTED`、`CONTEXT_COMPRESSED`、`COMPACTION_SETTLED`、`SESSION_SUMMARY_WRITTEN` |
 | Memory | `MEMORY_WRITE`、`MEMORY_DELETE`、`MEMORY_CLEARED` |
 | Runtime 状态 | `SKILL_ACTIVATED`、`SKILL_DEACTIVATED`、`MODEL_CHANGED`、`PERMISSION_MODE_CHANGED`、`READONLY_MODE_CHANGED`、`PLUGIN_HOOK_FIRED` |
 | 错误 | `ERROR` |
+
+**两个压缩事件要一起读。** `CONTEXT_COMPRESSED` 只描述**真的改动了历史**
+的那次压缩，且在改动之后发出。`COMPACTION_SETTLED` 是**一次压缩尝试**的终态
+事件，被否决和失败的那些也在内（`status` 取 `success | cancelled | failed`）。
+`skipped` 的尝试**两个都不发**，这是有意的：四类 skipped 里有三类**每轮迭代
+都会重新触发**，一次一个事件就不是信号而是事件风暴。
+
+两者的 token 字段是**不同单位，正因如此才取了不同的名字**。
+`CONTEXT_COMPRESSED` 的 `pre_est_tokens` / `post_est_tokens` 量的是
+`[system prompt] + messages`；`COMPACTION_SETTLED` 的
+`pre_tokens_history` / `post_tokens_history` 只量消息列表本身。**不要把它们
+接到一起。** 在 API 溢出的两级和微压缩上两者都是 `null` —— 在那些路径上补齐
+它们意味着在最贵的时候做全量历史估算。
 
 每个 `AgentEvent` 都带 `schema_version: int` 字段；这是载荷形状变化
 的**唯一**信号。它是**所有事件类型共用的单个值**，不是按载荷分版本的

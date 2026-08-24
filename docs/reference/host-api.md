@@ -380,10 +380,27 @@ of this writing:
 | LLM call | `LLM_CALL_STARTED`, `LLM_CALL_COMPLETED`, `LLM_CALL_DELTA`, `LLM_CALL_IO`, `LLM_TEXT`, `THINKING` |
 | Sub-agent (raw) | `AGENT_START`, `AGENT_END` |
 | Interaction | `TOOL_CONFIRMATION`, `ASK_USER_REQUESTED`, `ASK_USER_ANSWERED` |
-| History | `BACKGROUND_NOTIFICATION_INJECTED`, `CONTEXT_COMPRESSED`, `SESSION_SUMMARY_WRITTEN` |
+| History | `BACKGROUND_NOTIFICATION_INJECTED`, `CONTEXT_COMPRESSED`, `COMPACTION_SETTLED`, `SESSION_SUMMARY_WRITTEN` |
 | Memory | `MEMORY_WRITE`, `MEMORY_DELETE`, `MEMORY_CLEARED` |
 | Runtime state | `SKILL_ACTIVATED`, `SKILL_DEACTIVATED`, `MODEL_CHANGED`, `PERMISSION_MODE_CHANGED`, `READONLY_MODE_CHANGED`, `PLUGIN_HOOK_FIRED` |
 | Errors | `ERROR` |
+
+**Reading the two compaction events together.** `CONTEXT_COMPRESSED`
+describes only a compaction that **changed history**, and it is emitted
+after the change. `COMPACTION_SETTLED` is the terminal event for one
+compaction *attempt* and also covers the ones that were vetoed or failed
+(`status` is `success | cancelled | failed`). A `skipped` attempt emits
+**neither**, deliberately: three of the four skipped cases re-trigger on
+every loop iteration, so one event each would be an event storm rather
+than a signal.
+
+Their token fields are **different units and are named apart for that
+reason**. `CONTEXT_COMPRESSED`'s `pre_est_tokens` / `post_est_tokens`
+measure `[system prompt] + messages`; `COMPACTION_SETTLED`'s
+`pre_tokens_history` / `post_tokens_history` measure the message list
+alone. Do not wire one into the other. Both are `null` on the two
+API-overflow rungs and on microcompaction, because filling them in would
+mean full-history estimates on the paths where they are most expensive.
 
 Every `AgentEvent` carries a `schema_version: int` field; bumps are
 the *only* signal that a payload's shape changed. It is a **single

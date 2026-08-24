@@ -59,6 +59,7 @@ Agentao is an **embedded agent harness**: the same runtime drives the interactiv
 |---|---|
 | `agentao/agent.py` | `Agentao` class — sync `chat()` and async `arun()`. Construction wires LLM, tools, skills, plugins, permissions, replay. |
 | `agentao/runtime/` | Per-turn machinery extracted from `Agentao` — `ChatLoopRunner` (loop body), `ToolRunner` (4-phase tool pipeline: plan / execute / format / sanitize), `run_llm_call`, model/provider switching. |
+| `agentao/compaction/` | Compaction orchestration. `types.py` is the contract (`CompactionOutcome`, `CompactionDecisionContext`, `CompactionDecision`, `CompactionController`, and the `trigger`/`kind`/`reason` vocabulary) and **imports nothing but the standard library**; `coordinator.py` holds `CompactionCoordinator`. `__init__.py` must never re-export `coordinator` — see Common gotchas. |
 | `agentao/host/` | **Public host contract.** `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `EventStream`, `ActivePermissions`. Stability boundary for embedded hosts. |
 | `agentao/harness/` | **Deprecated alias for `agentao.host`** (renamed in 0.4.2). Re-exports with old names + `DeprecationWarning`; scheduled for removal in 0.5.0. |
 | `agentao/embedding/` | Host-side construction: `build_from_environment()` (env / dotenv / `.agentao/*.json` reads routed through explicit kwargs), `permission_loader`, `sessions`, `plugins/` (manifest loader, validators, MCP merge, resolvers). |
@@ -111,6 +112,50 @@ Agentao.chat() / Agentao.arun()
 ```
 
 `arun()` is the async path; the sync `chat()` wraps it. AsyncTools dispatch on `runtime_loop` so cancellation works inside the LLM-driven turn.
+
+### Compaction
+
+Five entry points detect their own condition and hand off to one
+`CompactionCoordinator` (`agentao/compaction/coordinator.py`), reached as
+`agent.compaction_coordinator`:
+
+| # | Entry point | `kind` | `reason` |
+|---|---|---|---|
+| 1 | Microcompaction (`runtime/chat_loop/_compaction.py`) | `microcompact` | `microcompact_threshold` |
+| 2 | Threshold full (same file) | `full` | `compression_threshold` |
+| 3 | API overflow, rung 1 (`runtime/chat_loop/_runner.py`) | `full` | `api_overflow` |
+| 4 | API overflow, rung 2 (same file) | `minimal_history` | `api_overflow_after_compression` |
+| 5 | Manual `/compact` (`cli/commands/compact.py`) | `full` | `manual_cli` |
+
+The coordinator owns *whether to run, whose summary to take, and what to
+emit*: the circuit-breaker gate, the `PreCompact` hook dispatch, history
+assignment, and both events. `ContextManager` owns every content transform —
+and **the dependency points one way only: `ContextManager` neither imports
+nor holds a coordinator**. That is why the shared types live in the neutral
+`types.py`.
+
+`compress_messages` is split at the summarization call:
+`prepare_compaction` (pure computation, **no SQLite write, no touch of
+`agent.messages`**) → decide → summarize → `commit_compaction` (the two
+SQLite writes and the new list). `_run_compaction` strings those together and
+owns all three failure-counting points — they cannot live in commit, which
+never runs when summarization returns nothing.
+
+**`skipped` emits no event.** Three of its four cases re-trigger on every loop
+iteration; one event each would be a storm. `CONTEXT_COMPRESSED` fires only on
+`success`; `COMPACTION_SETTLED` fires for `success | cancelled | failed`.
+
+**Two token units, deliberately named apart.** `CONTEXT_COMPRESSED`'s
+`pre_est_tokens` / `post_est_tokens` **include** the system prompt;
+`COMPACTION_SETTLED`'s `pre_tokens_history` / `post_tokens_history` exclude
+it. Never wire one into the other.
+
+`ContextManager.compress_messages()` survives as the legacy wrapper (its
+signature is documented and pinned by tests that call it directly). It returns
+a bare list and so cannot say *why* nothing changed; it also bypasses the
+host control plane and the breaker's probe policy.
+
+Design: `docs/design/compaction-orchestration-plan.md`.
 
 ### Skills
 
@@ -189,6 +234,8 @@ Adding a built-in tool or a skill to this repo: see [docs/guides/adding-componen
 - **Don't intuition-audit architecture.** Before recommending borrowed patterns or claiming a gap exists, grep agentao to verify; subpackage `__init__.py` docstrings document intentional shims and rename trails.
 - **`/goal --turns` is NOT `max_iterations`.** `--turns` caps the *outer* continuation count (how many `chat()` calls the goal loop drives); `max_iterations` caps the *inner* tool-call loop within a single `chat()`. They are orthogonal — both stay in force. The goal loop is host-owned (`cli/input_loop.py`), deliberately not the plugin `Stop`/`force_continue` path. Design: `docs/design/codex-goal-mechanism-review.md` §11.
 - **Never move `arun` back onto the loop's default executor, and don't reach for `asyncio.to_thread` from an async tool.** `agent.py::arun` runs `chat()` on agentao's own `_get_arun_pool()`. This looks like pointless ceremony over `run_in_executor(None, ...)` and is not: a turn holds its worker for the *whole turn*, and partway through it blocks in `tool_executor._run_async_tool` waiting on a tool coroutine running on the host loop. Once concurrent turns reach the pool's worker count, anything on that loop needing a default-executor worker can never get one — and the turns are waiting on precisely that work. That includes code agentao does not control: `loop.getaddrinfo` submits to the default executor, so **every `httpx.AsyncClient` connect to a hostname** goes through it (measured with `trust_env=False`; with proxy env vars set httpx never resolves at all, which is how two earlier attempts at this measurement "proved" the opposite). Same reason `web.py` parses HTML on its own `_get_cpu_pool()`. Three pools, no contention: `agentao-arun-*` (turns), `agentao-web-html-*` (parsing), loop default (left free for httpx). Tests: `tests/test_web_fetch_async_tool.py` starves a one-worker default executor and asserts both still complete.
+
+- **`agentao/compaction/__init__.py` must not re-export `coordinator`.** `agentao.host` re-exports the public compaction types from that package; pulling `coordinator` in through the `__init__` would drag `context_manager` → the LLM stack behind it and trip import-layering rule 5 (`tests/test_import_layering.py`, "`import agentao.host` must not drag in the runtime or the LLM stack"). Same reason `types.py` imports only the standard library: `context_manager.py` and `coordinator.py` both import from it, so both edges point down.
 
 - **Unicode tag stripping is structural, not a range filter — don't "simplify" it.** `security/unicode_tags.py::strip_unicode_tags` removes invisible U+E0000–E007F characters (ASCII smuggling: they render as nothing, tokenize losslessly, and let a web page or MCP result carry instructions only the model sees). Applied at three boundaries: the model-bound copy of every tool result (`runtime/tool_result_formatter.py::_format_one`, *after* the replay emit so the audit record keeps the original bytes), model output re-entering the runtime (`runtime/sanitize.py::sanitize_text_field`), and the terminal display (`acp_client/render.py::_sanitize_terminal_text`, alongside the bidi controls). It is a transform applied at named boundaries — **not** an ambient guarantee; skill/MCP descriptions inlined into the system prompt do not pass through it.
   - The block's one legitimate use is RGI emoji tag sequences, so a blind range filter destroys every subdivision flag — 🏴󠁧󠁢󠁳󠁣󠁴󠁿/🏴󠁧󠁢󠁷󠁬󠁳󠁿/🏴󠁧󠁢󠁥󠁮󠁧󠁿 all collapse to 🏴 (a live defect in goose's own fix, #10745). A run survives only as `U+1F3F4` + ≤5 lowercase-alnum tag chars + `U+E007F`. **Both bounds are load-bearing**: the per-sequence cap alone bounds nothing, since chaining N valid sequences yields N×5 hidden characters — hence `_MAX_TAG_SEQUENCES` caps how many survive per string.

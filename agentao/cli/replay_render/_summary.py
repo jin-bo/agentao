@@ -158,6 +158,25 @@ def _summarize_replay_event(event: dict) -> str:
             f"tok={payload.get('pre_est_tokens')}→{payload.get('post_est_tokens')}"
             f"[/dim]"
         )
+    if kind == "compaction_settled":
+        # Both non-success statuses and the token unit are the point here:
+        # ``context_compressed`` above reports the system-**inclusive**
+        # estimate, these two exclude the system prompt.
+        status = str(payload.get("status", "?"))
+        detail = payload.get("detail")
+        line = (
+            f"{markup_escape(str(payload.get('kind', '?')))} "
+            f"{markup_escape(status)} "
+            f"({markup_escape(str(payload.get('trigger', '?')))}/"
+            f"{markup_escape(str(payload.get('reason', '?')))}) "
+            f"msgs={payload.get('pre_msgs')}→{payload.get('post_msgs')} "
+            f"hist_tok={payload.get('pre_tokens_history')}→"
+            f"{payload.get('post_tokens_history')}"
+        )
+        if detail:
+            line += f" {markup_escape(str(detail)[:80])}"
+        colour = "dim" if status == "success" else "warning"
+        return f"[{colour}]{line}[/{colour}]"
     if kind == "session_summary_written":
         return (
             f"[dim]id={markup_escape(str(payload.get('summary_id', ''))[:8])} "

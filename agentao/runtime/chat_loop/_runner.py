@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from xml.sax.saxutils import quoteattr
 
 from ...cancellation import AgentCancelledError, CancellationToken
+from ...compaction.coordinator import CompactionRequest
 from ...context_manager import is_context_too_long_error
 from ...llm._retry import _is_image_unsupported
 from ...transport import AgentEvent, EventType
@@ -1158,33 +1159,25 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 agent.messages.append({"role": "assistant", "content": err_msg})
                 return ChatLoopRunner._LlmOutcome(error_return=err_msg)
             agent.llm.logger.warning(f"Context overflow from API, forcing compression: {e}")
-            self._dispatch_pre_compact(
-                trigger="auto",
-                compaction_type="full",
-                reason="api_overflow",
+            # Rung 1 of the ladder. It goes through the coordinator like every
+            # other entry — which is what finally lets it pass its real
+            # ``api_overflow`` reason instead of riding ``compress_messages``'s
+            # ``is_auto=True`` default and reporting itself as a threshold
+            # compaction, contradicting the hook payload it just emitted. It
+            # also stops announcing success when the breaker made the attempt
+            # a no-op.
+            run = agent.compaction_coordinator.run(
+                CompactionRequest("auto", "full", "api_overflow"),
+                system_prompt=system_prompt,
+                messages_with_system=messages_with_system,
+                # Unchanged from today: this rung has never carried tokens on
+                # the event, and filling them in would mean two new
+                # full-history estimates on the path where the context has
+                # already blown up.
+                measure_system_tokens=False,
             )
-            t0 = time.monotonic()
-            pre_msgs = len(agent.messages)
-            agent.messages = agent.context_manager.compress_messages(agent.messages)
-            # Same fold-in as the threshold path in ``_compaction.py``: the
-            # summarization call never passes the detector above.
-            if agent.context_manager.last_summary_finish_reason_missing:
-                agent._turn_finish_reason_missing = True
-            agent.context_manager.invalidate_token_anchor()  # prefix rewritten; anchor is stale
-            system_prompt = agent._build_system_prompt()
-            messages_with_system = [
-                {"role": "system", "content": system_prompt}
-            ] + agent.messages
-            agent._emit_context_compressed(
-                compression_type="full",
-                reason="api_overflow",
-                pre_msgs=pre_msgs,
-                post_msgs=len(agent.messages),
-                duration_ms=round((time.monotonic() - t0) * 1000),
-            )
-            agent._last_session_summary_id = agent._emit_session_summary_if_new(
-                agent._last_session_summary_id,
-            )
+            system_prompt = run.system_prompt
+            messages_with_system = run.messages_with_system
             try:
                 response = agent._llm_call(messages_with_system, tools, token)
                 return ChatLoopRunner._LlmOutcome(
@@ -1197,22 +1190,15 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     agent.llm.logger.warning(
                         "Context still too long after compression, keeping minimal history"
                     )
-                    self._dispatch_pre_compact(
-                        trigger="auto",
-                        compaction_type="minimal_history",
-                        reason="api_overflow_after_compression",
+                    run = agent.compaction_coordinator.run(
+                        CompactionRequest(
+                            "auto", "minimal_history", "api_overflow_after_compression",
+                        ),
+                        system_prompt=system_prompt,
+                        messages_with_system=messages_with_system,
+                        measure_system_tokens=False,
                     )
-                    pre = len(agent.messages)
-                    agent.messages = agent.messages[-2:]
-                    messages_with_system = [
-                        {"role": "system", "content": system_prompt}
-                    ] + agent.messages
-                    agent._emit_context_compressed(
-                        compression_type="minimal_history",
-                        reason="api_overflow_after_compression",
-                        pre_msgs=pre,
-                        post_msgs=len(agent.messages),
-                    )
+                    messages_with_system = run.messages_with_system
                     try:
                         response = agent._llm_call(messages_with_system, tools, token)
                         return ChatLoopRunner._LlmOutcome(

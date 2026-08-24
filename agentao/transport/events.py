@@ -34,6 +34,12 @@ class EventType(str, Enum):
     ASK_USER_ANSWERED  = "ask_user_answered"
     BACKGROUND_NOTIFICATION_INJECTED = "background_notification_injected"
     CONTEXT_COMPRESSED = "context_compressed"
+    # Terminal event for one compaction attempt, whatever the outcome.
+    # CONTEXT_COMPRESSED only ever describes a compaction that *changed*
+    # history; this one also reports the attempts that were skipped by
+    # policy, vetoed, or failed — and its two token fields are named apart
+    # because they exclude the system prompt where the older pair includes it.
+    COMPACTION_SETTLED = "compaction_settled"
     SESSION_SUMMARY_WRITTEN = "session_summary_written"
     # Step 6 — runtime state changes
     SKILL_ACTIVATED         = "skill_activated"

@@ -1,7 +1,7 @@
 # Replay schema versioning policy
 
 This document defines how the JSON Schema files under `schemas/` evolve.
-It exists so that "what does `SCHEMA_VERSION = "1.2"` mean?" has a
+It exists so that "what does `SCHEMA_VERSION = "1.3"` mean?" has a
 machine-checkable answer instead of living in a dataclass docstring.
 
 ## Source of truth
@@ -56,7 +56,8 @@ Required when:
   would fail validation.
 
 Major bumps freeze the previous schema file. `schemas/replay-event-1.0.json`,
-`schemas/replay-event-1.1.json`, and `schemas/replay-event-1.2.json` each
+`schemas/replay-event-1.1.json`, `schemas/replay-event-1.2.json`, and
+`schemas/replay-event-1.3.json` each
 keep validating every replay file written under their respective minor,
 indefinitely.
 
@@ -149,3 +150,16 @@ belongs in `agentao/replay/schema.py` so it is unit-testable.
   the sink so every published harness event also lands in the JSONL.
   Backward-compatible with 1.1 — every 1.1 kind survives, and a 1.0 /
   1.1 reader treats the three new kinds as unknown and skips them.
+- **1.3** — adds one kind, `compaction_settled`: the terminal event for
+  one compaction attempt, whatever the outcome
+  (`success | cancelled | failed`; `skipped` is silent by design,
+  because three of its four cases re-trigger on every loop iteration).
+  It exists because `context_compressed` describes only compactions that
+  changed history — and, before the entry points were unified, not even
+  that: the API-overflow path emitted it unconditionally, so a no-op
+  under an open circuit breaker was recorded as a successful
+  compression. `context_compressed`'s own payload is **unchanged**,
+  including both token fields' system-**inclusive** unit; the new event's
+  `pre_tokens_history` / `post_tokens_history` are named apart precisely
+  because they exclude the system prompt. Backward-compatible with 1.2 —
+  every 1.2 kind survives, and older readers skip the new one.

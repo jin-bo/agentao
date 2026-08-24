@@ -344,10 +344,17 @@ def test_recorder_event_line_has_per_event_redaction_hits(tmp_path):
 
 
 def test_header_declares_latest_schema_version():
-    """SCHEMA_VERSION tracks the highest supported version."""
-    from agentao.replay.events import SCHEMA_VERSION
+    """SCHEMA_VERSION tracks the highest supported version.
 
-    assert SCHEMA_VERSION == "1.2"
+    Asserted against ``SUPPORTED_VERSIONS`` rather than a literal: the point
+    is the *relation*, and a literal makes every minor bump edit this test
+    without ever being able to catch the mistake it exists to catch —
+    adding a kind and forgetting the bump.
+    """
+    from agentao.replay.events import SCHEMA_VERSION
+    from agentao.replay.schema import SUPPORTED_VERSIONS
+
+    assert SCHEMA_VERSION == SUPPORTED_VERSIONS[-1]
 
 
 def test_header_records_capture_flags_when_provided(tmp_path):

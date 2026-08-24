@@ -1,138 +1,86 @@
 """``/compact`` — manually trigger full conversation-history compaction.
 
-Mirrors the threshold-driven path in
-``runtime/chat_loop/_compaction.py::_maybe_full_compress`` but runs on
-demand: it calls ``ContextManager.compress_messages(..., is_auto=False)``,
-swaps in the summarized history, fires the same ``CONTEXT_COMPRESSED`` /
-session-summary observability events, and refreshes the cached context
-percentage shown in the prompt.
+Runs the same path as the threshold-driven tier, on demand: it goes through
+``CompactionCoordinator`` with ``trigger="manual"`` / ``reason="manual_cli"``,
+which fires the ``PreCompact`` hook, applies the circuit-breaker gate, swaps
+in the summarized history, and emits both compaction events. All this file
+adds is the console report.
+
+It used to carry its own copy of the hook dispatch and its own success
+heuristic — sniffing ``messages[0]`` for a freshly prepended
+``[Compact Boundary]`` marker, because ``compress_messages`` returned a bare
+list and could not say whether anything happened. Both are gone: the
+coordinator returns a ``CompactionOutcome`` with a ``status``.
 """
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
+from ...compaction.coordinator import CompactionRequest
 from .._globals import console
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
 
 # Below this many messages there is nothing worth summarizing — matches the
-# guard inside ``ContextManager.compress_messages``.
+# ``history_too_short`` guard inside ``ContextManager.prepare_compaction``.
+# Checked here as well so the user gets a sentence rather than a silent
+# no-op; the guard downstream is what actually enforces it.
 _MIN_MESSAGES_TO_COMPACT = 5
 
-
-def _produced_fresh_compaction(before: list, after: list) -> bool:
-    """True if ``compress_messages`` actually built a new compact block.
-
-    A successful compaction returns ``[boundary_marker, summary, …]`` — a
-    brand-new first message. Every failure path (circuit breaker open, no
-    safe split, summarization error) instead returns the original list or
-    a microcompacted copy that leaves the first message untouched. Probing
-    for *any* ``[Conversation Summary]`` would misfire when an older summary
-    from a previous compaction is still in history, so key off the freshly
-    prepended ``[Compact Boundary]`` marker instead.
-    """
-    if not after or after[0] is (before[0] if before else None):
-        return False
-    head = after[0].get("content")
-    return isinstance(head, str) and head.startswith("[Compact Boundary")
-
-
-def _dispatch_pre_compact(agent) -> None:
-    """Best-effort ``PreCompact`` plugin-hook dispatch (side-effect only).
-
-    Mirrors ``ChatLoopRunner._dispatch_pre_compact`` — dispatch matching
-    rules *and* emit the ``PLUGIN_HOOK_FIRED`` replay event so manual
-    ``/compact`` runs keep the same observability contract as the
-    threshold-driven path.
-    """
-    rules = getattr(agent, "_plugin_hook_rules", None)
-    if not rules:
-        return
-    try:
-        from ...plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
-        from ...transport import AgentEvent, EventType
-
-        cwd = agent.working_directory
-        payload = ClaudeHookPayloadAdapter().build_pre_compact(
-            session_id=agent._session_id,
-            cwd=cwd,
-            trigger="manual",
-            compaction_type="full",
-            reason="manual_cli",
-            permission_mode=agent.active_permissions().mode,
-        )
-        dispatcher = PluginHookDispatcher(cwd=cwd)
-        matched = dispatcher.select_matching_rules("PreCompact", payload, rules)
-        if not matched:
-            return
-        dispatcher.dispatch_pre_compact(payload=payload, rules=matched)
-        agent.transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
-            "hook_name": "PreCompact",
-            "outcome": "allow",
-            "compaction_type": "full",
-            "trigger": "manual",
-            "matched_rule_count": len(matched),
-        }))
-    except Exception:
-        pass
+# Why nothing happened, in the user's terms. ``detail`` values come from
+# ``CompactionOutcome``; anything unlisted falls back to the log pointer.
+_FAILURE_HINTS = {
+    "circuit_open": (
+        "auto-compaction is disabled after repeated failures "
+        "(circuit breaker open)"
+    ),
+    "history_too_short": "there is not enough history to summarize yet",
+    "no_safe_split": (
+        "no safe split point — every candidate boundary would orphan a tool "
+        "result"
+    ),
+    "summary_empty": "the summarization call returned nothing",
+}
 
 
 def handle_compact_command(cli: AgentaoCLI, args: str) -> None:
     """Handle ``/compact`` — summarize old history into a compact block."""
     agent = cli.agent
     cm = agent.context_manager
-    messages = agent.messages
 
-    if len(messages) < _MIN_MESSAGES_TO_COMPACT:
+    if len(agent.messages) < _MIN_MESSAGES_TO_COMPACT:
         console.print(
             "\n[info]Not enough conversation history to compact yet.[/info]\n"
         )
         return
 
-    _dispatch_pre_compact(agent)
-
-    pre_msgs = len(messages)
     system_prompt = agent._build_system_prompt()
-    pre_tokens = cm.estimate_tokens(
-        [{"role": "system", "content": system_prompt}] + messages
+    pre_msgs = len(agent.messages)
+
+    run = agent.compaction_coordinator.run(
+        CompactionRequest("manual", "full", "manual_cli"),
+        system_prompt=system_prompt,
+        measure_system_tokens=True,
     )
+    outcome = run.outcome
 
-    t0 = time.monotonic()
-    compacted = cm.compress_messages(messages, is_auto=False)
-
-    if not _produced_fresh_compaction(messages, compacted):
+    if outcome.status != "success":
+        hint = _FAILURE_HINTS.get(outcome.detail or "")
+        detail = f" — {hint}" if hint else " (see agentao.log)"
         console.print(
-            "\n[warning]Compaction made no change — nothing to summarize "
-            "(or summarization failed; see agentao.log).[/warning]\n"
+            f"\n[warning]Compaction made no change{detail}.[/warning]\n"
         )
         return
 
-    agent.messages = compacted
-    cm.invalidate_token_anchor()  # prefix rewritten; anchor is stale
-    system_prompt = agent._build_system_prompt()
     post_msgs = len(agent.messages)
-    post_tokens = cm.estimate_tokens(
-        [{"role": "system", "content": system_prompt}] + agent.messages
-    )
-
-    agent._emit_context_compressed(
-        compression_type="full",
-        reason="manual_cli",
-        pre_msgs=pre_msgs,
-        post_msgs=post_msgs,
-        pre_tokens=pre_tokens,
-        post_tokens=post_tokens,
-        duration_ms=round((time.monotonic() - t0) * 1000),
-    )
-    # ``_last_session_summary_id`` is created lazily on the first chat turn
-    # (runtime/turn.py); a manual /compact may run before that — e.g. right
-    # after /sessions resume — so fall back to None.
-    agent._last_session_summary_id = agent._emit_session_summary_if_new(
-        getattr(agent, "_last_session_summary_id", None),
-    )
+    # Measured by the coordinator, in the system-inclusive unit this report
+    # has always used. Asked for rather than re-measured: two estimates over
+    # the full history is what a manual compaction costs today, and routing
+    # through the coordinator must not quietly double that.
+    pre_tokens = run.pre_est_tokens or 0
+    post_tokens = run.post_est_tokens or 0
 
     pct = cm.get_usage_stats(agent.messages).get("usage_percent", 0.0)
     cli._cached_ctx_pct = pct

@@ -10,10 +10,22 @@ in the runtime or the LLM stack").
 
 from __future__ import annotations
 
-from .types import CompactionKind, CompactionReason, CompactionTrigger
+from .types import (
+    CompactionController,
+    CompactionDecision,
+    CompactionDecisionContext,
+    CompactionKind,
+    CompactionOutcome,
+    CompactionReason,
+    CompactionTrigger,
+)
 
 __all__ = [
+    "CompactionController",
+    "CompactionDecision",
+    "CompactionDecisionContext",
     "CompactionKind",
+    "CompactionOutcome",
     "CompactionReason",
     "CompactionTrigger",
 ]

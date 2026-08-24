@@ -172,45 +172,18 @@ class _HookDispatchMixin:
         compaction_type: CompactionKind,
         reason: CompactionReason,
     ) -> None:
-        """PreCompact dispatch — fires before the about-to-mutate
-        compaction site; side-effect only with the same no-emit gate as
-        ``_dispatch_stop``.
+        """PreCompact dispatch — thin delegation to the coordinator.
 
-        ``trigger`` carries the provenance the matcher reads. Every site
-        reachable from here is automatic, so all four pass ``"auto"`` —
-        but it is passed rather than assumed, because assuming it is what
-        made manual ``/compact`` report itself as ``auto``.
+        The dispatch itself moved to ``CompactionCoordinator``, which every
+        compaction entry point now goes through, so that the payload and the
+        ``PLUGIN_HOOK_FIRED`` event are built once instead of once here and
+        once in the CLI's manual ``/compact`` copy — the split that let the
+        two disagree about ``trigger`` for the same compaction.
+
+        Kept as a method because the mixin is this class's documented hook
+        surface and callers reach it as ``runner._dispatch_pre_compact``.
         """
-        agent = self._agent
-        if not agent._plugin_hook_rules:
-            return
-        from ...plugins.hooks import (
-            ClaudeHookPayloadAdapter,
-            PluginHookDispatcher,
+        from ...compaction.coordinator import CompactionRequest
+        self._agent.compaction_coordinator.dispatch_pre_compact(
+            CompactionRequest(trigger, compaction_type, reason),
         )
-        cwd = agent.working_directory
-        payload = ClaudeHookPayloadAdapter().build_pre_compact(
-            session_id=agent._session_id,
-            cwd=cwd,
-            trigger=trigger,
-            compaction_type=compaction_type,
-            reason=reason,
-            permission_mode=agent.active_permissions().mode,
-        )
-        dispatcher = PluginHookDispatcher(cwd=cwd)
-        matched = dispatcher.select_matching_rules(
-            "PreCompact", payload, agent._plugin_hook_rules,
-        )
-        if not matched:
-            return
-        dispatcher.dispatch_pre_compact(payload=payload, rules=matched)
-        try:
-            agent.transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
-                "hook_name": "PreCompact",
-                "outcome": "allow",
-                "compaction_type": compaction_type,
-                "trigger": trigger,
-                "matched_rule_count": len(matched),
-            }))
-        except Exception:
-            pass

@@ -46,6 +46,8 @@ def _kinds_for_version(version: str) -> FrozenSet[str]:
         return EventKind.V1_1
     if version == "1.2":
         return EventKind.V1_2
+    if version == "1.3":
+        return EventKind.V1_3
     raise ValueError(f"unknown replay schema version: {version!r}")
 
 
@@ -216,7 +218,7 @@ def build_event_schema(version: str) -> dict:
     }
 
 
-SUPPORTED_VERSIONS: tuple = ("1.0", "1.1", "1.2")
+SUPPORTED_VERSIONS: tuple = ("1.0", "1.1", "1.2", "1.3")
 
 
 def render(version: str) -> str:
