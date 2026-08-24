@@ -243,3 +243,64 @@ def test_a_raising_estimator_does_not_break_the_estimate():
         {"type": "image_url", "image_url": {"url": "x"}},
     ]}
     assert cm._count_message_tokens(msg) == cm.count_tokens_in_text("look")
+
+
+# ---------------------------------------------------------------------------
+# The tail budget has a structural floor, and the transcript costs lazily
+# ---------------------------------------------------------------------------
+
+def test_the_tail_budget_never_starts_past_the_last_message():
+    """The floor of 1 is enforced here — it is not inherited.
+
+    When even the newest message alone busts the budget the backwards scan
+    stops at ``len(messages)``. ``_find_split_index`` takes that as a search
+    *start* and scans forward, so the range is empty, it returns ``None``, and
+    that is a counted ``no_safe_split`` failure — three of them open the
+    circuit breaker and disable automatic compaction for the rest of the
+    session, on exactly the oversized-tail history this knob exists to shrink.
+    """
+    cm = _cm(10_000)
+    cm.keep_recent_token_ratio = 0.01  # 100 tokens — nothing fits
+    msgs = [{"role": "user", "content": "x" * 20_000} for _ in range(8)]
+
+    start = cm._apply_keep_token_budget(msgs, count_start=6)
+
+    assert start <= len(msgs) - 1
+
+
+def test_an_oversized_tail_does_not_open_the_breaker():
+    """End to end: the knob's own worst case still compacts."""
+    cm = _cm(10_000)
+    cm.keep_recent_token_ratio = 0.01
+    cm._summarize_formatted = lambda _f: "a summary"
+    msgs = [{"role": "user", "content": "x" * 20_000} for _ in range(8)]
+
+    for _ in range(cm.CIRCUIT_BREAKER_LIMIT):
+        outcome = cm._run_compaction(msgs, is_auto=True, reason="compression_threshold")
+        assert outcome.status == "success", outcome.detail
+
+    assert cm.compaction_circuit_open is False
+
+
+def test_the_transcript_costs_only_the_blocks_it_looks_at():
+    """The cost memo is filled on demand, not precomputed.
+
+    ``_join_within_budget`` spends newest-first and stops at the first block
+    that does not fit, so on a long history it never looks at most of the
+    list. Costing every block up front — to save the second allocation that
+    only runs when the originating request did not survive — would encode
+    hundreds of blocks the first pass alone would have skipped, and
+    ``_block_cost`` is a full tiktoken encode of a whole rendered message.
+    """
+    cm = _cm(20_000)
+    msgs = [{"role": "user", "content": f"m{i} " + "x" * 8_000} for i in range(200)]
+    calls = []
+    real = cm._block_cost
+    cm._block_cost = lambda block: (calls.append(1), real(block))[1]
+
+    cm._format_for_summary(msgs)
+
+    assert len(calls) < len(msgs) // 2, (
+        f"costed {len(calls)} of {len(msgs)} blocks — the memo is being "
+        "precomputed, not filled on demand"
+    )

@@ -275,3 +275,67 @@ def test_agent_compact_reports_a_paused_breaker_rather_than_raising(tmp_path):
     assert outcome.status == "skipped"
     assert outcome.detail == "circuit_open"
     assert outcome.messages is agent.messages
+
+
+# ---------------------------------------------------------------------------
+# A history that cannot be rendered degrades — it does not escape
+# ---------------------------------------------------------------------------
+
+def _unrenderable():
+    """A history whose transcript assembly raises.
+
+    ``_format_for_summary`` does ``role.upper()``; a ``None`` role is what a
+    host that appended to ``agent.messages`` by hand can leave behind. It has
+    to sit in the *summarized* half — the kept tail is spliced in verbatim and
+    never rendered — so put it near the front.
+    """
+    msgs = _history(6)
+    msgs[1] = {"role": None, "content": "cannot render"}
+    return msgs
+
+
+def test_an_unrenderable_history_fails_gracefully_instead_of_raising():
+    """Transcript assembly used to run inside the summarization ``try``.
+
+    Splitting prepare out of the summarization call moved it outside that
+    guard, and ``prepare_compaction`` is on the API-overflow recovery ladder:
+    an exception escaping there ends the very turn the ladder exists to save.
+    """
+    cm = _make_cm()
+
+    outcome = cm._run_compaction(
+        _unrenderable(), is_auto=True, reason="api_overflow",
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.detail == "summary_input_error"
+    # History is handed back untouched, exactly as the other structural
+    # rejection does.
+    assert outcome.messages == _unrenderable()
+
+
+def test_an_unrenderable_history_still_arrests_the_breaker():
+    """Degrading must not mean looping: it is a *counted* failure.
+
+    Every iteration re-enters on the same unrenderable history, so silently
+    returning ``skipped`` here would re-run the whole prepare step forever.
+    """
+    cm = _make_cm()
+
+    for _ in range(cm.CIRCUIT_BREAKER_LIMIT):
+        cm._run_compaction(_unrenderable(), is_auto=True, reason="compression_threshold")
+
+    assert cm.compaction_circuit_open is True
+    assert cm.last_compaction_failure == "summary_input_error"
+
+
+def test_the_manual_path_reports_it_without_counting_it():
+    cm = _make_cm()
+
+    outcome = cm._run_compaction(
+        _unrenderable(), is_auto=False, reason="manual_cli",
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.detail == "summary_input_error"
+    assert cm.circuit_breaker_failures == 0

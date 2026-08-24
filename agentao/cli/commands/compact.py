@@ -18,16 +18,20 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ...compaction.coordinator import CompactionRequest
+from ...context_manager import ContextManager
 from .._globals import console
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
 
-# Below this many messages there is nothing worth summarizing — matches the
-# ``history_too_short`` guard inside ``ContextManager.prepare_compaction``.
-# Checked here as well so the user gets a sentence rather than a silent
-# no-op; the guard downstream is what actually enforces it.
-_MIN_MESSAGES_TO_COMPACT = 5
+# Below this many messages there is nothing worth summarizing. Read off the
+# ``ContextManager`` *class*, not the live instance, so this pre-check and
+# the ``history_too_short`` guard inside ``prepare_compaction`` cannot
+# drift apart — and so a test double standing in for the instance does not
+# turn the comparison into a Mock. Checked here as well so the user gets a
+# sentence rather than a silent no-op; the guard downstream is what
+# actually enforces it.
+_MIN_MESSAGES_TO_COMPACT = ContextManager.MIN_MESSAGES_TO_COMPACT
 
 # Why nothing happened, in the user's terms. ``detail`` values come from
 # ``CompactionOutcome``; anything unlisted falls back to the log pointer.
@@ -41,6 +45,10 @@ _FAILURE_HINTS = {
         "result"
     ),
     "summary_empty": "the summarization call returned nothing",
+    "summary_input_error": (
+        "the conversation history could not be rendered into a transcript "
+        "for the summarizer (see agentao.log)"
+    ),
 }
 
 

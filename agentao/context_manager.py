@@ -82,14 +82,15 @@ def _heuristic_token_count(text: str) -> int:
 class PrepareRejected:
     """Prepare decided there is nothing to hand to a summarizer.
 
-    Two cases, and they are **not** the same severity: too little history is
-    ``skipped`` and costs nothing, while no safe split point is a structural
-    ``failed`` that has to be counted on the auto path or the caller re-enters
-    every iteration.
+    Three cases, and they are **not** the same severity: too little history is
+    ``skipped`` and costs nothing, while no safe split point and an
+    un-renderable transcript are structural ``failed``s that have to be
+    counted on the auto path or the caller re-enters every iteration.
     """
 
     status: str          # "skipped" | "failed"
-    detail: str          # "history_too_short" | "no_safe_split"
+    # "history_too_short" | "no_safe_split" | "summary_input_error"
+    detail: str
     counts_as_failure: bool
 
 
@@ -140,6 +141,20 @@ class PreparedMinimalHistory:
 PrepareResult = Union[PreparedCompaction, PrepareRejected]
 
 
+def _is_pinned(msg: Any) -> bool:
+    """True for a ``[PIN]`` message — the one predicate, used by both halves.
+
+    Both the pinned list and its complement are built from this, so they can
+    never disagree. The complement used to be ``m not in pinned``, an O(n·k)
+    dict-equality scan that also silently folded "equal to a pinned message"
+    into "is pinned".
+    """
+    if not isinstance(msg, dict):
+        return False
+    content = msg.get("content")
+    return isinstance(content, str) and content.startswith("[PIN]")
+
+
 def _compose_detail(internal: Optional[str], decision: Optional[str]) -> Optional[str]:
     """Join the internal failure class with the control plane's own reason.
 
@@ -159,6 +174,9 @@ class ContextManager:
     COMPRESSION_THRESHOLD = 0.80    # Full LLM compression at 80%
     MICROCOMPACT_THRESHOLD = 0.55   # Cheap tool-result clearing at 55%
     KEEP_RECENT_MESSAGES = 20       # Hard cap on verbatim-kept messages
+    #: Below this many messages there is nothing worth summarizing. Named so
+    #: the CLI's pre-check and this class's guard cannot drift apart.
+    MIN_MESSAGES_TO_COMPACT = 5
     #: Opt-in token budget for the kept-verbatim tail, as a fraction of the
     #: effective window. ``None`` — the default — is today's behaviour
     #: exactly. Off by default on purpose: the right value has to come from
@@ -182,12 +200,6 @@ class ContextManager:
         self.max_tokens = max_tokens
         self.memory_manager = memory_manager
 
-        # The window the *provider* asserted, learned from an overflow error.
-        # ``max_tokens`` above stays exactly what the host configured — it is
-        # a documented host-owned knob on four surfaces and reads back what
-        # the host wrote. This is a separate, lower ceiling that only ever
-        # narrows the budgets below, and it is cleared on a model or provider
-        # switch because it describes the model that rejected the request.
         #: Per-instance override of :attr:`KEEP_RECENT_TOKEN_RATIO`.
         self.keep_recent_token_ratio: Optional[float] = self.KEEP_RECENT_TOKEN_RATIO
 
@@ -199,6 +211,12 @@ class ContextManager:
         #: every image-bearing history.
         self.image_token_estimator = None
 
+        # The window the *provider* asserted, learned from an overflow error.
+        # ``max_tokens`` above stays exactly what the host configured — it is
+        # a documented host-owned knob on four surfaces and reads back what
+        # the host wrote. This is a separate, lower ceiling that only ever
+        # narrows the budgets below, and it is cleared on a model or provider
+        # switch because it describes the model that rejected the request.
         self._observed_limit: Optional[int] = None
         self._observed_limit_provenance: Optional[str] = None
 
@@ -462,10 +480,17 @@ class ContextManager:
         """
         if len(text) <= limit:
             return text
-        # ``omitted`` can never exceed ``len(text)``, so a notice sized for that
-        # worst case is an upper bound on the real one — which makes the final
-        # result at most ``limit`` characters without a second pass.
-        reserve = len(f"\n[… {len(text):,} chars {note} …]\n")
+        # The reserve has to bound the notice this call will actually write,
+        # and ``omitted`` carries any earlier clip's count forward — so it can
+        # be *larger* than ``len(text)``. Sizing on ``len(text)`` alone made
+        # the notice too long by however many extra digits that carried count
+        # needed, pushing the result past ``limit`` and re-arming the very
+        # re-clip loop this method exists to close: a result already carrying
+        # "999,999 chars omitted" oscillated at ``limit + 4`` forever, with the
+        # reported figure growing on every pass. ``len(text) + prior`` is the
+        # true worst case (every kept character dropped, every prior notice
+        # carried).
+        reserve = len(f"\n[… {len(text) + cls._prior_omissions(text):,} chars {note} …]\n")
         avail = max(1, limit - reserve)
         head = int(avail * cls.MICROCOMPACT_HEAD_RATIO)
         tail = avail - head
@@ -701,8 +726,16 @@ class ContextManager:
         ``max(4, …)`` inside ``keep_count`` is overridden by the outer ``max``,
         and there was never a real message-count floor anyway —
         ``_find_split_index`` only takes this as a *search start* and scans
-        forward. The one structural floor is 1. Logged whenever it drops
-        below 4.
+        forward. Logged whenever it drops below 4.
+
+        The structural floor of 1 is **enforced here**, not inherited. When
+        even the newest message alone busts the budget the backwards scan
+        stops at ``len(messages)``, and handing that to
+        ``_find_split_index`` gives it an empty range: it returns ``None``,
+        which is a counted ``no_safe_split`` failure, so three iterations of
+        it open the circuit breaker and disable automatic compaction —
+        permanently, on exactly the oversized-tail history this knob exists
+        to shrink.
 
         Off unless a ratio is configured; then this returns ``count_start``
         unchanged and the behaviour is bit-for-bit what it was.
@@ -724,7 +757,8 @@ class ContextManager:
                 break
             token_start = i
 
-        start = max(count_start, token_start)
+        # Never past the last message: see the floor note in the docstring.
+        start = min(max(count_start, token_start), max(0, len(messages) - 1))
         if start > count_start:
             kept = len(messages) - start
             try:
@@ -883,7 +917,7 @@ class ContextManager:
         Returns either a :class:`PreparedCompaction` snapshot or a
         :class:`PrepareRejected` saying which of the two early exits fired.
         """
-        if len(messages) < 5:
+        if len(messages) < self.MIN_MESSAGES_TO_COMPACT:
             return PrepareRejected("skipped", "history_too_short", False)
 
         # --- Step 2: partial compaction split -------------------------------
@@ -918,10 +952,7 @@ class ContextManager:
         to_keep = self.microcompact_messages(messages[split_index:])
 
         # --- Step 3: extract pinned messages --------------------------------
-        pinned = [
-            m for m in to_summarize
-            if isinstance(m.get("content"), str) and m["content"].startswith("[PIN]")
-        ]
+        pinned = [m for m in to_summarize if _is_pinned(m)]
 
         # --- Step 4: extract recently read files ----------------------------
         recently_read = self._extract_recently_read_files(to_summarize)
@@ -931,8 +962,26 @@ class ContextManager:
         # summarizer: they are spliced verbatim into the result below, so
         # summarizing them too would put the same text in twice — and a host
         # inspecting ``summary_input`` should see exactly what the model will.
-        summary_messages = [m for m in to_summarize if m not in pinned]
-        summary_input = self._format_for_summary(summary_messages)
+        summary_messages = [m for m in to_summarize if not _is_pinned(m)]
+        try:
+            summary_input = self._format_for_summary(summary_messages)
+        except Exception as exc:
+            # Transcript assembly used to sit inside ``_summarize_messages``'s
+            # ``try``, so a history entry it could not render (a non-dict, a
+            # non-string ``role``) degraded to an empty summary and a counted
+            # failure. Splitting prepare out of the summarization call moved it
+            # outside that guard, and this method is on the API-overflow
+            # recovery ladder: an escaping exception there ends the very turn
+            # the ladder exists to save. Restored as a *counted* failure, so
+            # the breaker still arrests a history that cannot be rendered at
+            # all.
+            try:
+                self.llm_client.logger.warning(
+                    f"Could not assemble the summarization transcript: {exc!r}"
+                )
+            except Exception:
+                pass
+            return PrepareRejected("failed", "summary_input_error", True)
 
         return PreparedCompaction(
             trigger=trigger,
@@ -1087,8 +1136,13 @@ class ContextManager:
         non-job — and because the ladder's most destructive step deserves a
         named, unit-testable seam rather than a slice buried in an
         exception handler.
+
+        Sliced from the front rather than as ``messages[-keep_tail:]``: at
+        ``keep_tail == 0`` the negative form is ``messages[-0:]``, which is
+        the **whole list** — so the ladder's most destructive rung would
+        silently become a no-op and the turn would loop on the same overflow.
         """
-        return messages[-keep_tail:]
+        return messages[len(messages) - max(0, keep_tail):]
 
     def _validate_host_summary(
         self,
@@ -1166,11 +1220,18 @@ class ContextManager:
                     # counter here would attribute the auto path's tally —
                     # usually 0 — to this failure.
                     tally = ""
-                try:
-                    self.llm_client.logger.warning(
-                        "Compaction found no safe split point — history has no non-tool "
-                        f"boundary in the summarizable range; skipping{tally}"
+                if prep.detail == "no_safe_split":
+                    why = (
+                        "Compaction found no safe split point — history has no "
+                        "non-tool boundary in the summarizable range"
                     )
+                else:
+                    why = (
+                        "Compaction could not assemble a summarization "
+                        f"transcript ({prep.detail})"
+                    )
+                try:
+                    self.llm_client.logger.warning(f"{why}; skipping{tally}")
                 except Exception:
                     pass
             return CompactionOutcome(
@@ -1610,8 +1671,17 @@ class ContextManager:
         # normally, and only if the request did not survive does it come back
         # as its own labelled section, with the live budget reduced by exactly
         # what that section costs.
+        # A memo, filled in on demand — deliberately **not** precomputed. The
+        # join spends newest-first and stops at the first block that does not
+        # fit, so on a long history it never looks at most of the list;
+        # costing every block up front to save the rare second allocation
+        # would encode hundreds of blocks the first pass alone would have
+        # skipped, turning a fix for the uncommon path into a regression on
+        # the common one. Shared across both calls, so the second re-encodes
+        # nothing it has already seen.
+        costs: Dict[int, int] = {}
         live, kept = self._join_within_budget(
-            blocks, budget=live_budget, total=total,
+            blocks, budget=live_budget, total=total, costs=costs,
         )
         origin_section = ""
         if origin_index is not None and origin_index not in kept and blocks[origin_index]:
@@ -1621,6 +1691,7 @@ class ContextManager:
             if origin_cost:
                 live, _ = self._join_within_budget(
                     blocks, budget=live_budget - origin_cost, total=total,
+                    costs=costs,
                 )
         return carry_section + origin_section + live
 
@@ -1752,6 +1823,7 @@ class ContextManager:
         *,
         budget: Optional[int] = None,
         total: Optional[int] = None,
+        costs: Optional[Dict[int, int]] = None,
     ) -> "tuple":
         """Join per-message blocks newest-first until the token budget runs out.
 
@@ -1764,7 +1836,11 @@ class ContextManager:
 
         ``budget`` is what is left after the caller has charged anything it
         renders out of band; ``total`` is only for the elision message, so the
-        reader sees the whole budget rather than the remainder.
+        reader sees the whole budget rather than the remainder. ``costs`` is
+        an optional ``{index: token cost}`` memo, **filled in here as blocks
+        are costed** rather than supplied precomputed, so a caller that
+        allocates twice over the same blocks does not encode them twice and a
+        caller that allocates once pays for nothing it did not look at.
 
         Returns ``(text, kept_indices)`` — the caller needs to know what
         survived to decide whether anything has to be restated out of band.
@@ -1777,9 +1853,12 @@ class ContextManager:
         keep: set = set()
         kept_recent = 0
         for i, block in reversed(indexed):
-            if i in keep:
-                continue
-            cost = self._block_cost(block)
+            if costs is None:
+                cost = self._block_cost(block)
+            else:
+                cost = costs.get(i)
+                if cost is None:
+                    cost = costs[i] = self._block_cost(block)
             if cost > budget and kept_recent:
                 # Stop at the first block that does not fit — do not skip it
                 # and keep spending on older ones. Skipping would punch a hole
@@ -1787,11 +1866,9 @@ class ContextManager:
                 # history that omits a step without saying where; the whole
                 # point of spending backwards is that the survivors form a
                 # contiguous suffix. (``kept_recent`` keeps the newest block
-                # unconditionally — counted separately from ``keep`` so a
-                # ``kept_recent`` keeps the newest block unconditionally: a transcript of
-                # nothing but an elision marker summarizes to nothing, which
-                # counts as a compaction failure and increments the circuit
-                # breaker.)
+                # unconditionally: a transcript of nothing but an elision
+                # marker summarizes to nothing, which counts as a compaction
+                # failure and increments the circuit breaker.)
                 break
             budget -= cost
             keep.add(i)
