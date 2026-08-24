@@ -59,6 +59,7 @@ def _dispatch_pre_compact(agent) -> None:
         payload = ClaudeHookPayloadAdapter().build_pre_compact(
             session_id=agent._session_id,
             cwd=cwd,
+            trigger="manual",
             compaction_type="full",
             reason="manual_cli",
             permission_mode=agent.active_permissions().mode,

@@ -64,6 +64,7 @@ def test_runtime_non_dict_matcher_returns_false_no_match(tmp_path):
     )
     payload = ClaudeHookPayloadAdapter().build_pre_compact(
         cwd=tmp_path,
+        trigger="auto",
         compaction_type="full",
         reason="compression_threshold",
     )

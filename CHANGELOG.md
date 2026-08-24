@@ -11,6 +11,31 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`PreCompact` hooks can finally match on where a compaction came from.**
+  `build_pre_compact` takes a required `trigger` argument and each of the five
+  compaction entry points states its own provenance, so manual `/compact`
+  reports `manual` and the four automatic sites report `auto`. `trigger` keeps
+  Claude Code's `manual | auto` vocabulary — the finer provenance was already
+  in `compaction_type` and `reason`, which are now typed (`CompactionKind`,
+  `CompactionReason`) in a new standard-library-only `agentao/compaction/`
+  module. `custom_instructions` also becomes a parameter instead of a hardcoded
+  `""`, though nothing passes it yet.
+
+  **This changes which rules fire.** Until now the payload hardcoded
+  `"trigger": "auto"` everywhere, so `{"trigger": "manual"}` was a matcher value
+  with **no reachable producer** — a rule written against it could never fire at
+  any entry point, in any configuration — while `{"trigger": "auto"}` wrongly
+  matched manual `/compact` too. After this change `{"trigger": "manual"}` fires
+  on `/compact` and only on `/compact`, and `{"trigger": "auto"}` stops matching
+  it. A rule written `{"trigger": "manual|auto"}` (Claude Code's own alternation
+  form) matches all five entry points before and after, and is the shape to
+  reach for if you want everything.
+
+  Also fixes the disagreement where manual `/compact`'s hook payload said
+  `auto` while its own `PLUGIN_HOOK_FIRED` replay event said `manual` for the
+  same compaction. `docs/releases/v0.4.4.md` gains an erratum, since its
+  `trigger` row's "no `manual` site exists" was true at 0.4.4 and false since.
+
 ### Changed
 
 - **Full LLM compaction now triggers at 80% of `max_context_tokens`, not 65%**
