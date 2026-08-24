@@ -56,7 +56,7 @@ schema_meta        — 版本元数据
 
 **产生时机：** 由上下文压缩管道写入——
 - **Microcompaction**（55% 用量）：截断大型工具结果，不生成摘要文本
-- **Full LLM summarization**（80% 用量）：将早期消息浓缩为结构化摘要，调用 `MemoryManager.save_session_summary()` 持久化
+- **Full LLM summarization**（80% 用量）：将早期消息浓缩为结构化摘要，调用 `MemoryManager.save_session_summary()` 持久化。**仅在压缩成功时写入**——0.4.20 起,一次被跳过、被否决或摘要失败的压缩不再落一条摘要（此前是压缩尝试后无条件写入）
 
 **关键字段：**
 
@@ -225,5 +225,12 @@ AI: [调用 save_memory，key 相同时自动覆盖]
 
 ### 会话摘要丢失
 
-- 摘要仅在触发全量 LLM 压缩（80% 用量）时写入，短会话不会生成
+- 摘要仅在全量 LLM 压缩（80% 用量）**成功**时写入,短会话不会生成
+- **熔断器打开时自动压缩已暂停**,因此不会再产生摘要。`/context` 会在有失败记录时打印
+  `Compact breaker: open (3/3 consecutive failures, last: …)`,并给出恢复方式:
+  `/compact` 以半开探针身份运行,成功即复位(`/clear` 同样复位)
+- 压缩也可能被**否决**:一个 `PreCompact` 命令钩子返回
+  `{"hookSpecificOutput": {"compactionDecision": "cancel"}}`,或宿主传入的
+  `compaction_controller=` 返回 `cancel`。这种情况不计入熔断器,`/context` 的
+  breaker 那行也不会出现——查 `agentao.log` 里的 `Compaction cancelled:`
 - `/memory clear` 会同时清空会话摘要；`/clear` 仅清空对话历史，不清空摘要
