@@ -140,6 +140,66 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **The carried summary is out of the summary-input eviction pool.** A prior
+  `[Conversation Summary]` was fed back as a block *inside* the newest-first
+  allocator, where it is by construction the **oldest** block in the window —
+  so plain backwards spending drops it first, and every compaction after the
+  first would amputate the accumulated history. Three local patches existed to
+  stop that (`carry_index`, `_clip_carry_summary`, and the special case in
+  `_join_within_budget`); all three are gone. It is now rendered as its own
+  `<previous-summary>` section, so the guarantee is structural rather than
+  patched — there is no eviction to be exempt from — and the summarization
+  prompt asks for an **UPDATE** that supersedes it rather than a fresh
+  summary.
+
+  **The replacement ceiling is mandatory, not optional**, and is restated
+  rather than inherited: carry ≤ half the summary-input budget, and
+  carry + live ≤ the whole budget. Both texts still go into one provider
+  request, so "its own budget" only changes the bookkeeping — the
+  provider-level competition is unchanged.
+
+### Added
+
+- **An opt-in token budget for the kept-verbatim tail**
+  (`ContextManager.keep_recent_token_ratio`, default `None` = today's
+  behaviour exactly). `KEEP_RECENT_MESSAGES = 20` is a *message count*, and 20
+  messages can be 500 tokens or 200 K. This is aimed at "still heavy **after**
+  compaction", not at the summary input: the kept tail never reaches the
+  summarizer — it is spliced verbatim into the result — so a heavy tail
+  re-crosses the threshold immediately and the next iteration compacts again.
+
+  The count start and the token start are combined with **`max`**, not `min`:
+  a later start means fewer kept, and the token budget is the tightening
+  constraint, so taking the earlier one would simply violate it on exactly the
+  heavy tail this exists to fix. **Accepted consequence: fewer than 4 messages
+  can be kept** — there was never a real message-count floor anyway
+  (`keep_count` only sets a *search start*; `_find_split_index` scans forward
+  from it), and the one structural floor is 1. Logged when it drops below 4.
+
+  Off by default on purpose: the right value has to come from measurement
+  against the 0.80 baseline, and nothing here has measured it.
+
+- **Two P3 partial mitigations, labelled as partial.**
+
+  *The originating request.* A cut landing mid-turn gave no guarantee that the
+  request which started the work survives to the summarizer — it is in the
+  window, but nothing reserved budget for it, so a long tail of tool traffic
+  could evict the one sentence saying what the work was for. It is now
+  restated in an `<originating-request>` section **when, and only when, it did
+  not survive the ordinary spend** — so the common case is unchanged and the
+  transcript's survivors stay a contiguous suffix (a hole would hand the
+  summarizer a history that omits a step without saying where). **This does
+  not close the P3**: reserving *input* budget does not make the model write
+  the request into its *output*.
+
+  *Images.* `_count_message_tokens` sums only `type == "text"` blocks, so
+  images are estimated at **zero**. That is unchanged by default and now
+  stated; `ContextManager.image_token_estimator` lets a host inject a charge.
+  Injectable rather than a constant because the right number is per-provider
+  and per-resolution, and a wrong constant baked in would be a silent
+  mis-estimate on every image-bearing history.
+
+
 - **The compaction circuit breaker is recoverable.** It was a one-way latch:
   three consecutive failures set a counter, the counter's only reset was a
   successful compaction, and the short-circuit sat *above* every branch — so

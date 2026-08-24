@@ -159,6 +159,11 @@ class ContextManager:
     COMPRESSION_THRESHOLD = 0.80    # Full LLM compression at 80%
     MICROCOMPACT_THRESHOLD = 0.55   # Cheap tool-result clearing at 55%
     KEEP_RECENT_MESSAGES = 20       # Hard cap on verbatim-kept messages
+    #: Opt-in token budget for the kept-verbatim tail, as a fraction of the
+    #: effective window. ``None`` — the default — is today's behaviour
+    #: exactly. Off by default on purpose: the right value has to come from
+    #: measurement, and nothing here has measured it.
+    KEEP_RECENT_TOKEN_RATIO: Optional[float] = None
     CIRCUIT_BREAKER_LIMIT = 3       # Stop auto-compact after N consecutive failures
     MICROCOMPACT_TOOL_LIMIT = 3_000 # Max chars kept from any old tool result in microcompact
     MICROCOMPACT_PRESERVE_RECENT = 5  # Keep the most recent N tool results at full fidelity
@@ -183,6 +188,17 @@ class ContextManager:
         # the host wrote. This is a separate, lower ceiling that only ever
         # narrows the budgets below, and it is cleared on a model or provider
         # switch because it describes the model that rejected the request.
+        #: Per-instance override of :attr:`KEEP_RECENT_TOKEN_RATIO`.
+        self.keep_recent_token_ratio: Optional[float] = self.KEEP_RECENT_TOKEN_RATIO
+
+        #: Charge for a non-text content block (an image). ``None`` keeps
+        #: today's behaviour, which is to charge **zero** — images are simply
+        #: invisible to the estimate. Injectable rather than a constant
+        #: because the right number is per-provider and per-resolution, and a
+        #: wrong constant baked in here would be a silent mis-estimate on
+        #: every image-bearing history.
+        self.image_token_estimator = None
+
         self._observed_limit: Optional[int] = None
         self._observed_limit_provenance: Optional[str] = None
 
@@ -303,8 +319,22 @@ class ContextManager:
             tokens += self.count_tokens_in_text(content)
         elif isinstance(content, list):
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
                     tokens += self.count_tokens_in_text(block.get("text", ""))
+                elif self.image_token_estimator is not None:
+                    # Non-text blocks are charged **zero** by default, which
+                    # is what they have always been charged: an image-bearing
+                    # history under-estimates by however much the provider
+                    # actually bills for it. The charge is injected rather
+                    # than constant because the right number is per-provider
+                    # and per-resolution, and a wrong constant here would be a
+                    # silent mis-estimate on every such history.
+                    try:
+                        tokens += int(self.image_token_estimator(block))
+                    except Exception:
+                        pass
         # reasoning_content is truncated to MAX_REASONING_HISTORY_CHARS before storage
         rc = msg.get("reasoning_content")
         if isinstance(rc, str) and rc:
@@ -648,6 +678,65 @@ class ContextManager:
         """
         return self._consecutive_compact_failures >= self.CIRCUIT_BREAKER_LIMIT
 
+    def _apply_keep_token_budget(
+        self, messages: List[Dict[str, Any]], count_start: int,
+    ) -> int:
+        """Tighten the split-point search start with a token budget.
+
+        Aimed at "still heavy *after* compaction", not at the summary input
+        budget. The kept tail never reaches the summarizer — only
+        ``messages[:split_index]`` does, while the tail is spliced verbatim
+        into the result. So a heavy tail does not blow out the summary input;
+        it blows out the **post-compaction context**: a compaction replaces
+        the old half with a few hundred tokens of summary and leaves tens of
+        thousands of tokens of tail untouched, so the threshold is crossed
+        again immediately and the next iteration compacts again.
+
+        Combined with ``max``, not ``min``. A later start means fewer kept, so
+        the two constraints must be combined by taking the **later** one —
+        taking the earlier simply violates the budget on a heavy tail, which
+        is the exact thing this exists to fix.
+
+        **Accepted consequence: fewer than 4 messages can be kept.** The
+        ``max(4, …)`` inside ``keep_count`` is overridden by the outer ``max``,
+        and there was never a real message-count floor anyway —
+        ``_find_split_index`` only takes this as a *search start* and scans
+        forward. The one structural floor is 1. Logged whenever it drops
+        below 4.
+
+        Off unless a ratio is configured; then this returns ``count_start``
+        unchanged and the behaviour is bit-for-bit what it was.
+        """
+        ratio = self.keep_recent_token_ratio
+        if not ratio or ratio <= 0:
+            return count_start
+
+        budget = int(self.effective_max_tokens * ratio)
+        if budget <= 0:
+            return count_start
+
+        # Accumulate backwards: the smallest i whose suffix still fits.
+        spent = 0
+        token_start = len(messages)
+        for i in range(len(messages) - 1, -1, -1):
+            spent += self._count_message_tokens(messages[i])
+            if spent > budget:
+                break
+            token_start = i
+
+        start = max(count_start, token_start)
+        if start > count_start:
+            kept = len(messages) - start
+            try:
+                self.llm_client.logger.info(
+                    f"Keep-tail token budget ({budget:,}) tightened the split "
+                    f"start {count_start} -> {start} ({kept} message(s) kept)"
+                    + (" — below the nominal 4" if kept < 4 else "")
+                )
+            except Exception:
+                pass
+        return start
+
     @staticmethod
     def _find_split_index(
         messages: List[Dict[str, Any]], start: int
@@ -803,7 +892,9 @@ class ContextManager:
             self.KEEP_RECENT_MESSAGES,
             max(4, int(len(messages) * 0.60)),
         )
-        split_index = self._find_split_index(messages, len(messages) - keep_count)
+        count_start = len(messages) - keep_count
+        start = self._apply_keep_token_budget(messages, count_start)
+        split_index = self._find_split_index(messages, start)
 
         if split_index is None:
             # Structural failure, not a summarization failure — but the caller
@@ -1368,7 +1459,13 @@ class ContextManager:
         "being done, which file, which function, which step. Be as specific as possible.\n\n"
         "## 9. Next Step\n"
         "The single most logical next action, directly aligned with the user's latest request.\n\n"
-        "Sections 3, 4, and 8 are the most important — prioritize completeness there."
+        "Sections 3, 4, and 8 are the most important — prioritize completeness there.\n\n"
+        "If the input begins with a <previous-summary> block, it is the summary "
+        "of everything before this transcript. Produce an UPDATED summary that "
+        "supersedes it: carry forward everything from it that is still true, "
+        "fold in what the transcript adds or changes, and drop nothing that is "
+        "still relevant. The previous summary is the only record of that "
+        "earlier history — anything you omit is gone."
     )
 
     def _summarize_messages(self, messages: List[Dict[str, Any]]) -> str:
@@ -1446,7 +1543,8 @@ class ContextManager:
         lines); ``_join_within_budget`` then decides how many blocks fit.
         """
         blocks: List[List[str]] = []
-        carry_index: Optional[int] = None
+        carry_text: Optional[str] = None
+        origin_index: Optional[int] = None
         for msg in messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
@@ -1476,11 +1574,9 @@ class ContextManager:
                 continue  # tool messages never carry tool_calls
             block = []
             if content:
-                text = (
-                    self._clip_carry_summary(str(content))
-                    if is_carry
-                    else str(content)[: self._MESSAGE_TRUNCATION]
-                )
+                # A carry block is rendered out of band below; only its
+                # presence matters here.
+                text = str(content)[: self._MESSAGE_TRUNCATION]
                 block.append(f"[{role.upper()}]: {text}")
             # An assistant turn that only called tools has ``content == ""``
             # (``chat_loop/_runner.py`` stores ``content or ""``), so the branch
@@ -1490,10 +1586,104 @@ class ContextManager:
             block.extend(self._format_tool_calls(msg.get("tool_calls")))
             if is_carry and block:
                 # Newest wins: summary N was itself produced from a window
-                # containing summary N-1, so it already subsumes it.
-                carry_index = len(blocks)
+                # containing summary N-1, so it already subsumes it. Held out
+                # of ``blocks`` entirely — it is not a message competing for
+                # eviction, it is the accumulated history everything else is
+                # an update to.
+                carry_text = str(content)
+                continue
             blocks.append(block)
-        return self._join_within_budget(blocks, carry_index)
+            if role == "user" and block:
+                # The most recent user message in the summarized window is the
+                # request whose work may straddle the cut point. Remembered so
+                # it can be reserved below.
+                origin_index = len(blocks) - 1
+
+        total = self._summary_input_budget()
+        carry_section, carry_cost = self._render_carry_summary(carry_text, total // 2)
+        live_budget = total - carry_cost
+
+        # The originating request gets a reserve, but **never a hole**. The
+        # transcript's survivors must stay a contiguous suffix — a gap hands
+        # the summarizer a history that omits a step without saying where — so
+        # protecting an index in place is not available. Instead: spend
+        # normally, and only if the request did not survive does it come back
+        # as its own labelled section, with the live budget reduced by exactly
+        # what that section costs.
+        live, kept = self._join_within_budget(
+            blocks, budget=live_budget, total=total,
+        )
+        origin_section = ""
+        if origin_index is not None and origin_index not in kept and blocks[origin_index]:
+            origin_section, origin_cost = self._render_origin_request(
+                blocks[origin_index], live_budget // 4,
+            )
+            if origin_cost:
+                live, _ = self._join_within_budget(
+                    blocks, budget=live_budget - origin_cost, total=total,
+                )
+        return carry_section + origin_section + live
+
+    def _render_origin_request(self, block: List[str], budget: int) -> "tuple":
+        """Render the originating user request as its own labelled section.
+
+        A cut landing mid-turn gives no *guarantee* the request that started
+        the work survives to the summarizer: it is in the window, but nothing
+        reserved budget for it, so a long tail of tool traffic could evict the
+        one sentence saying what the work was for.
+
+        **This is a partial mitigation and not a fix.** Reserving *input*
+        budget does not make the summarizing model write the request into its
+        *output*. Actually closing it means one of: splicing the raw request
+        into the result without going through the summarizer, validating the
+        output and retrying, or a dedicated turn-prefix summarization call —
+        all out of scope here.
+        """
+        text = self._clip_to_token_budget("\n".join(block), max(1, budget))
+        section = f"<originating-request>\n{text}\n</originating-request>\n\n"
+        return section, self.count_tokens_in_text(section)
+
+    def _render_carry_summary(
+        self, text: Optional[str], budget: int,
+    ) -> "tuple":
+        """Render a prior summary as its own ``<previous-summary>`` section.
+
+        Out of band, and that is the point. A rehydrated summary used to be
+        fed back as a block **inside the newest-first allocator**, where it is
+        by construction the oldest block in the window — so plain backwards
+        spending dropped it first and every compaction after the first
+        amputated the entire accumulated history. Three local patches fixed
+        that (charge it first, never evict it, clip it to half the budget).
+        Taking it out of the pool makes the same guarantee structural instead:
+        there is no eviction to be exempt from.
+
+        The ceiling is **not** optional and is restated here rather than
+        inherited: this text comes back as context in front of the live
+        transcript, and past half the budget it starves the messages it exists
+        to give context to. Returns ``(section, cost)`` where the cost covers
+        the rendered section including its tags, so the caller's
+        ``carry + live <= budget`` arithmetic is about what is actually sent.
+        """
+        if not text:
+            return "", 0
+        clipped = self._clip_to_token_budget(
+            text[: self._CARRY_SUMMARY_TRUNCATION], budget,
+        )
+        section = f"<previous-summary>\n{clipped}\n</previous-summary>\n\n"
+        return section, self.count_tokens_in_text(section)
+
+    def _clip_to_token_budget(self, text: str, budget: int) -> str:
+        """Clip ``text`` so it costs at most ``budget`` tokens.
+
+        Proportional, not a character constant: a flat char cap under-counts
+        CJK more than fivefold, on exactly the histories most likely to be
+        long.
+        """
+        reserve = max(1, budget)
+        cost = self.count_tokens_in_text(text)
+        if cost <= reserve:
+            return text
+        return text[: max(1, len(text) * reserve // cost)]
 
     @classmethod
     def _clip_tool_result(cls, text: str) -> str:
@@ -1536,21 +1726,6 @@ class ContextManager:
             return kept + f"\n[… {omitted:,} chars omitted …]"
         return cls._head_tail_clip(text, cls._ERROR_RESULT_TRUNCATION)
 
-    def _clip_carry_summary(self, text: str) -> str:
-        """Clip a prior ``[Conversation Summary]`` being folded into a new one.
-
-        Capped at half the transcript budget, so the carried history can never
-        starve the live messages it exists to give context to — and so a small
-        ``max_tokens`` (where the budget is the 2_000-token floor) still gets a
-        proportional carve-out rather than the flat 8_000 chars.
-        """
-        clipped = text[: self._CARRY_SUMMARY_TRUNCATION]
-        reserve = max(1, self._summary_input_budget() // 2)
-        cost = self.count_tokens_in_text(clipped)
-        if cost > reserve:
-            clipped = clipped[: max(1, len(clipped) * reserve // cost)]
-        return clipped
-
     def _summary_input_budget(self) -> int:
         """Token ceiling for the assembled summary transcript."""
         return max(
@@ -1572,8 +1747,12 @@ class ContextManager:
         return self.count_tokens_in_text("\n".join(block))
 
     def _join_within_budget(
-        self, blocks: List[List[str]], carry_index: Optional[int] = None
-    ) -> str:
+        self,
+        blocks: List[List[str]],
+        *,
+        budget: Optional[int] = None,
+        total: Optional[int] = None,
+    ) -> "tuple":
         """Join per-message blocks newest-first until the token budget runs out.
 
         Spending from the newest end means an over-long window loses its oldest
@@ -1583,24 +1762,19 @@ class ContextManager:
         survivors are a contiguous suffix, so the transcript stays chronological
         with one elision marker at the seam.
 
-        ``carry_index`` is the one exception, and it is not a decoration. A
-        rehydrated ``[Conversation Summary]`` is by construction the *oldest*
-        block in the window — ``compress_messages`` puts it at position 1 of the
-        list it returns — so plain newest-first spending drops it first, and
-        every compaction after the first would amputate the entire accumulated
-        history: sections 1 and 6 of the prompt ("every explicit goal the user
-        stated", "all non-trivial user messages") describe exactly the content
-        that only lives there. It is charged before anything else and never
-        evicted; :meth:`_clip_carry_summary` bounds it to half the budget so it
-        cannot starve the live tail.
+        ``budget`` is what is left after the caller has charged anything it
+        renders out of band; ``total`` is only for the elision message, so the
+        reader sees the whole budget rather than the remainder.
+
+        Returns ``(text, kept_indices)`` — the caller needs to know what
+        survived to decide whether anything has to be restated out of band.
         """
-        total = self._summary_input_budget()
-        budget = total
+        if total is None:
+            total = self._summary_input_budget()
+        if budget is None:
+            budget = total
         indexed = [(i, b) for i, b in enumerate(blocks) if b]
         keep: set = set()
-        if carry_index is not None and blocks[carry_index]:
-            budget -= self._block_cost(blocks[carry_index])
-            keep.add(carry_index)
         kept_recent = 0
         for i, block in reversed(indexed):
             if i in keep:
@@ -1614,7 +1788,7 @@ class ContextManager:
                 # point of spending backwards is that the survivors form a
                 # contiguous suffix. (``kept_recent`` keeps the newest block
                 # unconditionally — counted separately from ``keep`` so a
-                # charged carry block cannot satisfy it: a transcript of
+                # ``kept_recent`` keeps the newest block unconditionally: a transcript of
                 # nothing but an elision marker summarizes to nothing, which
                 # counts as a compaction failure and increments the circuit
                 # breaker.)
@@ -1623,12 +1797,9 @@ class ContextManager:
             keep.add(i)
             kept_recent += 1
         dropped = len(indexed) - len(keep)
-        # One marker, placed immediately above the surviving suffix rather than
-        # at index 0. With a carry block protected the gap opens *after* it, and
-        # a marker at the head would read as if the summary itself was dropped.
-        # With no carry the suffix starts at the first kept block, so this is
-        # the head — the same position as before.
-        seam = min((i for i in keep if i != carry_index), default=None)
+        # One marker, immediately above the surviving suffix. Survivors are a
+        # contiguous suffix by construction, so this is its head.
+        seam = min(keep, default=None)
         lines: List[str] = []
         for i, block in indexed:
             if dropped and i == seam:
@@ -1638,7 +1809,7 @@ class ContextManager:
                 )
             if i in keep:
                 lines.extend(block)
-        return "\n".join(lines)
+        return "\n".join(lines), keep
 
     @classmethod
     def _format_tool_call_args(cls, raw: Any) -> str:
