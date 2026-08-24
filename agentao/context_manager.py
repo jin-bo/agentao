@@ -117,6 +117,26 @@ class PreparedCompaction:
     pre_tokens: int
 
 
+@dataclass(frozen=True)
+class PreparedMicrocompact:
+    """What a microcompaction pass is about to do, in counts.
+
+    ``tool_results_to_clip`` is this kind's whole decision signal: for
+    microcompaction ``messages_to_summarize`` is 0 and ``messages_to_keep``
+    is the entire list, so neither tells a host anything. ``pre_tokens`` is
+    deliberately absent — see :meth:`ContextManager.prepare_microcompact`.
+    """
+
+    tool_results_to_clip: int
+
+
+@dataclass(frozen=True)
+class PreparedMinimalHistory:
+    """The ladder's last rung, in counts. Nothing is estimated here."""
+
+    keep_tail: int
+
+
 PrepareResult = Union[PreparedCompaction, PrepareRejected]
 
 
@@ -832,6 +852,37 @@ class ContextManager:
             pass
 
         return result
+
+    def prepare_microcompact(
+        self,
+        messages: List[Dict[str, Any]],
+    ) -> "PreparedMicrocompact":
+        """Count what a microcompaction pass would shorten, without doing it.
+
+        Exists so the coordinator can populate a decision context **without
+        reaching into a private member** — it wraps
+        ``_microcompactable_indices``, the same index set the transform
+        rewrites, so the count and the transform can never disagree.
+
+        No token estimate. Microcompaction runs on every iteration inside its
+        band, and the only estimate that path has today measures
+        ``[system] + messages`` — the wrong unit for a field declared
+        system-exclusive. Computing a fresh history-only one means another
+        full-history encode per iteration, precisely when the history is
+        largest.
+        """
+        return PreparedMicrocompact(
+            tool_results_to_clip=len(self._microcompactable_indices(messages)),
+        )
+
+    def prepare_minimal_history(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        keep_tail: int = 2,
+    ) -> "PreparedMinimalHistory":
+        """Describe the last rung. It makes no token estimate — nor does this."""
+        return PreparedMinimalHistory(keep_tail=keep_tail)
 
     def apply_minimal_history(
         self,

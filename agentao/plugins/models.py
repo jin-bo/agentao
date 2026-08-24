@@ -323,6 +323,34 @@ class PreToolUseHookResult:
 
 
 @dataclass
+class PreCompactHookResult:
+    """Aggregated decision from all PreCompact hooks for one compaction.
+
+    ``decision`` is ``"cancel"`` or ``None`` (allow). The wire key is
+    ``hookSpecificOutput.compactionDecision`` — deliberately **not**
+    ``permissionDecision``. That choice is the whole argument for needing no
+    opt-in gate: "a script that prints nothing means allow" only proves that
+    *silent* scripts are safe, and says nothing about a private script that
+    writes ``hookSpecificOutput`` for some other purpose. A key that has
+    never existed in agentao cannot be produced by accident.
+
+    Merge rule: **first cancel wins**, and the caller stops forking once one
+    is seen. One tier, not the two PreToolUse has ("first deny, else first
+    ask"), because there is no ``ask`` here — a compaction has no third
+    answer.
+
+    Any value outside ``allow`` / ``cancel`` is treated as ``allow`` with a
+    warning: a typo must not be able to block compaction permanently and
+    drive the context into the overflow ladder. Exit-code 2 stays
+    unhonoured, matching the PreToolUse precedent.
+    """
+
+    decision: Literal["cancel"] | None = None
+    reason: str | None = None
+    matched_rule_count: int = 0
+
+
+@dataclass
 class StopHookResult:
     """Aggregated result of all hooks for a single Stop event.
 

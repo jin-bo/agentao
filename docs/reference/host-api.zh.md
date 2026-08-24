@@ -111,6 +111,62 @@ system prompt，没有估算的路径上为 `None`。
 **绕过** host 控制面（`PreCompact` 分发）与熔断器的探针策略。它没有被废弃，只是
 对 host 代码来说层级不对。
 
+### 否决或替换一次压缩
+
+两层，按此顺序征询。**任一层否决即否决。**
+
+**命令 hook** —— `PreCompact` hook 在 stdout 打印下面这段即可取消：
+
+```json
+{"hookSpecificOutput": {"compactionDecision": "cancel",
+                        "compactionDecisionReason": "重构做到一半"}}
+```
+
+**第一个 cancel 生效**，随后的 hook 不再 fork。键名是 `compactionDecision`，
+不是 `permissionDecision`——一个 agentao 里从未存在过的键，任何脚本都不可能
+误产出它，这正是**不需要任何 opt-in 开关**的完整理由。**凡不是显式 `cancel`
+的一律按 allow 处理**，包括未知取值（会记日志）：一个笔误不该能把压缩一直
+拦到上下文炸掉。exit code 2 仍不予采纳。hook **不能**提供摘要文本——它没有
+信任边界，而摘要文本会永久改写历史。
+
+**`compaction_controller=`**（仅关键字构造参数，至多一个）：
+
+```python
+def controller(ctx: CompactionDecisionContext) -> CompactionDecision:
+    if ctx.kind == "full" and ctx.messages_to_summarize > 200:
+        return CompactionDecision("provide_summary", summary=my_summary())
+    return CompactionDecision("allow")
+
+agent = Agentao(..., compaction_controller=controller)
+```
+
+`ctx` 带的是计数、预算和近期读过的路径，**从不带消息正文**。它是一道脱敏边界，
+且永不序列化；需要正文的 host 自己读 `agent.messages`。`provide_summary` 只在
+`ctx.can_provide_summary`（即 `kind == "full"`）时合法。
+
+契约是 **fail-open，而且这是硬规则**：抛异常、返回 awaitable（v1 是同步的）、
+未知 `action`、或 `provide_summary` 不带文本，一律按 allow 处理并告警。五个压缩
+入口里有**两个就是 API 溢出恢复阶梯**，controller 里逸出一个异常会把「上下文太长」
+变成「这一轮直接崩」。没有超时——它挂住就挂住这一轮，和 host 其它回调一样。
+
+host 摘要在提交前会被校验（非空、是 `str`、不超过 `ctx.max_summary_tokens`、
+不含摘要结束标记）。不合格的会被拒绝，然后**内建摘要器照跑一次**，就当 host 说了
+`allow`；`outcome.detail` 记下是哪一项没过。**熔断器计的永远是内建摘要器的失败**，
+所以一个坏 controller 绝无可能把自动压缩关掉。
+
+**取消在各入口分别意味着什么。** 所有情况下历史都逐字节不变。
+
+| 被取消的 | 结果 |
+|---|---|
+| 微压缩 | 跳过这一趟；不报错；本轮不再问 |
+| 阈值压缩 | 本轮不再问；若 API 随后真的溢出，会**再问一次**，`reason=api_overflow`——那是另一个问题 |
+| API 溢出（两级都是） | 把 provider 自己的 context-length 错误返回给调用方，**不会**悄悄落到 `messages[-2:]` |
+| 手动 `/compact` | 报 cancelled；紧接着重试会照常分发（它从不进闩锁） |
+
+**不接受任意替换消息列表**：agentao 的历史是扁平列表，`tool_calls[*].id`
+必须逐字节往返；host 交回一条孤儿 tool result 就会造出 provider 拒收的请求，
+而那时历史已经被销毁了。
+
 ## 能力协议（`agentao.host.protocols`）
 
 嵌入宿主通过向 `Agentao(filesystem=..., shell=..., mcp_registry=..., memory_manager=...)`

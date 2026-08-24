@@ -65,6 +65,15 @@ def handle_compact_command(cli: AgentaoCLI, args: str) -> None:
     )
     outcome = run.outcome
 
+    if outcome.status == "cancelled":
+        why = f" — {outcome.detail}" if outcome.detail else ""
+        console.print(
+            f"\n[warning]Compaction cancelled by the host{why}.[/warning]\n"
+            "[dim]History is unchanged. A PreCompact hook or the configured "
+            "compaction controller vetoed it.[/dim]\n"
+        )
+        return
+
     if outcome.status != "success":
         hint = _FAILURE_HINTS.get(outcome.detail or "")
         detail = f" — {hint}" if hint else " (see agentao.log)"

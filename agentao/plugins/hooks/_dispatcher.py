@@ -26,6 +26,7 @@ from ..models import (
     CLAUDE_FLAT_EVENTS,
     HookAttachmentRecord,
     ParsedHookRule,
+    PreCompactHookResult,
     PreToolUseHookResult,
     StopHookResult,
     UserPromptSubmitResult,
@@ -162,6 +163,89 @@ class PluginHookDispatcher(_OutputParsingMixin):
         rules: list[ParsedHookRule],
     ) -> list[HookAttachmentRecord]:
         return self._dispatch_lifecycle("PreCompact", payload, rules)
+
+    def dispatch_pre_compact_decision(
+        self,
+        *,
+        payload: dict[str, Any],
+        rules: list[ParsedHookRule],
+    ) -> PreCompactHookResult:
+        """Run matching PreCompact hooks; aggregate a cancel/allow decision.
+
+        Sibling of :meth:`dispatch_pre_compact`, which is side-effect only
+        and does not read stdout at all. This one parses each hook's stdout
+        for ``hookSpecificOutput.compactionDecision`` and merges: the first
+        ``cancel`` wins and stops the remaining forks; ``allow`` is a no-op.
+
+        Everything that is not an explicit ``cancel`` means allow — a missing
+        key, a missing ``hookSpecificOutput``, non-JSON stdout, a script that
+        prints nothing, a non-zero exit, an unknown value. A control plane
+        that fails must not be able to pause compaction indefinitely.
+        """
+        result = PreCompactHookResult()
+        matched = self.select_matching_rules("PreCompact", payload, rules)
+        result.matched_rule_count = len(matched)
+        for rule in matched:
+            if rule.hook_type != "command":
+                continue
+            self._run_pre_compact_command(rule, payload, result)
+            if result.decision == "cancel":
+                break
+        return result
+
+    def _run_pre_compact_command(
+        self,
+        rule: ParsedHookRule,
+        payload: dict[str, Any],
+        result: PreCompactHookResult,
+    ) -> None:
+        """Run one PreCompact command hook and fold its verdict into ``result``."""
+        proc, _timed_out = self._run_subprocess(rule, payload)
+        if proc is None:  # empty / timed out / failed to start — already logged
+            return
+
+        if proc.returncode != 0:
+            # Exit-code 2 is not honoured here either — only the JSON shape,
+            # matching ``dispatch_pre_tool_use_decision``. Any JSON on stdout
+            # is still parsed below.
+            logger.warning(
+                "PreCompact hook exited %d: %s (stderr: %s)",
+                proc.returncode, rule.command, (proc.stderr or "")[:200],
+            )
+
+        stdout = (proc.stdout or "").strip()
+        if not stdout:
+            return
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(data, dict):
+            return
+
+        hook_specific = data.get("hookSpecificOutput")
+        if not isinstance(hook_specific, dict):
+            return
+        raw = hook_specific.get("compactionDecision")
+        if raw is None:
+            return
+        if raw != "cancel":
+            if raw != "allow":
+                logger.warning(
+                    "PreCompact hook returned an unknown compactionDecision %r: %s "
+                    "— treating as allow",
+                    raw, rule.command,
+                )
+            return
+
+        reason: str | None = None
+        for key in ("compactionDecisionReason", "reason"):
+            rv = hook_specific.get(key)
+            if isinstance(rv, str):
+                reason = rv
+                break
+        result.decision = "cancel"
+        result.reason = reason
 
     def select_matching_rules(
         self,

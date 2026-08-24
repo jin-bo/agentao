@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .types import (
+    CompactionDecision,
+    CompactionDecisionContext,
     CompactionKind,
     CompactionOutcome,
     CompactionReason,
@@ -41,6 +43,19 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: loop; an API overflow has already been rejected by the provider, so
 #: blocking it leaves the recovery ladder with nothing but ``messages[-2:]``.
 _PROBE_REASONS = frozenset({"manual_cli", "api_overflow"})
+
+#: Reasons a cancellation is remembered for, until the start of the next turn.
+#: Exactly the two the loop **re-checks on every iteration** — without a latch,
+#: honouring a cancel would mean asking again next iteration, which is the
+#: per-iteration hook fork the stand-down gates exist to prevent.
+#:
+#: ``manual_cli`` is deliberately absent: it is user-driven, does not loop, and
+#: **runs outside a turn**, so a turn-reset latch would mean "cancel manually
+#: once and every immediate retry stays suppressed until you first run an
+#: ordinary turn". Neither overflow reason is here either — a cancelled
+#: overflow returns the context-length error and ends the turn on the spot, so
+#: there is no re-dispatch to suppress.
+_LATCHED_REASONS = frozenset({"microcompact_threshold", "compression_threshold"})
 
 
 @dataclass(frozen=True)
@@ -85,6 +100,10 @@ class CompactionCoordinator:
 
     def __init__(self, agent: "Agentao") -> None:
         self._agent = agent
+        # ``(kind, reason)`` pairs cancelled during this turn. Owned here and
+        # not on ``ContextManager``: unlike the breaker's counter, this has no
+        # existing public surface to serve, and its lifetime is one turn.
+        self._cancel_latch: set = set()
 
     # ------------------------------------------------------------------
     # The one entry point
@@ -140,7 +159,11 @@ class CompactionCoordinator:
         self._info(
             f"Compaction triggered: kind={request.kind} reason={request.reason}"
         )
-        self.dispatch_pre_compact(request)
+        # Command hooks run **first**, and a cancel from either layer is a
+        # cancel. Dispatched here rather than inside the decide step so the
+        # hook still fires exactly where it always has: before anything is
+        # touched, and once per attempt.
+        hook_result = self.dispatch_pre_compact(request)
 
         t0 = time.monotonic()
         pre_msgs = len(agent.messages)
@@ -150,7 +173,14 @@ class CompactionCoordinator:
             cm.estimate_tokens(messages_with_system) if measure_system_tokens else None
         )
 
-        outcome = self._transform(request, keep_tail=keep_tail)
+        outcome = self._transform(
+            request,
+            keep_tail=keep_tail,
+            decide=self._compose_decide(request, hook_result),
+        )
+
+        if outcome.status == "cancelled" and request.reason in _LATCHED_REASONS:
+            self._cancel_latch.add((request.kind, request.reason))
 
         if request.kind == "full" and request.trigger == "auto":
             # The summarization LLM call goes straight to ``llm_client`` and
@@ -229,6 +259,12 @@ class CompactionCoordinator:
         agent = self._agent
         cm = agent.context_manager
 
+        if (request.kind, request.reason) in self._cancel_latch:
+            # Silent: no hook dispatch, no controller call, no event. This
+            # hits on every iteration for the rest of the turn, which is the
+            # entire reason the latch exists.
+            return self._skipped(request, "suppressed_by_latch")
+
         if request.kind == "full" and cm.compaction_circuit_open:
             if request.reason in _PROBE_REASONS:
                 # Half-open. The breaker describes *threshold* behaviour —
@@ -275,7 +311,7 @@ class CompactionCoordinator:
     # ------------------------------------------------------------------
 
     def _transform(
-        self, request: CompactionRequest, *, keep_tail: int,
+        self, request: CompactionRequest, *, keep_tail: int, decide=None,
     ) -> CompactionOutcome:
         agent = self._agent
         cm = agent.context_manager
@@ -285,14 +321,29 @@ class CompactionCoordinator:
             # ``compress_messages`` wrapper: it is the only layer that can
             # produce an authoritative ``status`` for this kind, and it owns
             # the failure counter, which the coordinator must never touch.
+            # It runs ``decide`` itself, after prepare and before summarize —
+            # the only point where a host summary can replace the LLM call.
             return cm._run_compaction(
                 agent.messages,
                 is_auto=(request.trigger == "auto"),
                 reason=request.reason,
-                decide=None,
+                decide=decide,
             )
 
+        # The other two kinds call no summarizer, write no SQLite and never
+        # touch the breaker counter, so they do not go through
+        # ``_run_compaction`` — but history is still rewritten behind a
+        # ``ContextManager`` method, never here.
         if request.kind == "microcompact":
+            prep = cm.prepare_microcompact(agent.messages)
+            cancelled = self._ask(
+                request,
+                decide,
+                messages_to_keep=len(agent.messages),
+                tool_results_to_clip=prep.tool_results_to_clip,
+            )
+            if cancelled is not None:
+                return cancelled
             return CompactionOutcome(
                 status="success",
                 trigger=request.trigger,
@@ -307,6 +358,12 @@ class CompactionCoordinator:
                 post_tokens=None,
             )
 
+        prep = cm.prepare_minimal_history(agent.messages, keep_tail=keep_tail)
+        cancelled = self._ask(
+            request, decide, messages_to_keep=prep.keep_tail,
+        )
+        if cancelled is not None:
+            return cancelled
         return CompactionOutcome(
             status="success",
             trigger=request.trigger,
@@ -319,22 +376,74 @@ class CompactionCoordinator:
             post_tokens=None,
         )
 
+    def _ask(
+        self,
+        request: CompactionRequest,
+        decide,
+        *,
+        messages_to_keep: int,
+        tool_results_to_clip: Optional[int] = None,
+    ) -> Optional[CompactionOutcome]:
+        """Run the decision step for a non-``full`` kind.
+
+        Returns a ``cancelled`` outcome, or ``None`` to proceed.
+        ``provide_summary`` is not legal here — ``can_provide_summary`` is
+        ``False`` — and an offer of one is downgraded to ``allow`` inside
+        ``_consult_controller``, so nothing is dropped silently.
+        """
+        if decide is None:
+            return None
+        ctx = CompactionDecisionContext(
+            trigger=request.trigger,
+            kind=request.kind,
+            reason=request.reason,
+            pre_tokens=None,
+            messages_to_summarize=0,
+            messages_to_keep=messages_to_keep,
+            recently_read_files=(),
+            summary_input_budget=None,
+            max_summary_tokens=None,
+            can_provide_summary=False,
+            tool_results_to_clip=tool_results_to_clip,
+        )
+        decision = decide(ctx)
+        if decision.action != "cancel":
+            return None
+        return CompactionOutcome(
+            status="cancelled",
+            trigger=request.trigger,
+            kind=request.kind,
+            reason=request.reason,
+            messages=self._agent.messages,
+            pre_tokens=None,
+            post_tokens=None,
+            detail=decision.reason,
+        )
+
     # ------------------------------------------------------------------
     # Host dispatch
     # ------------------------------------------------------------------
 
-    def dispatch_pre_compact(self, request: CompactionRequest) -> None:
-        """Fire matching ``PreCompact`` command hooks (side-effect only).
+    def dispatch_pre_compact(self, request: CompactionRequest) -> Optional[str]:
+        """Fire matching ``PreCompact`` command hooks; return a cancel reason.
 
         One implementation for all five entry points. There used to be two —
         the chat loop's and the CLI's — which is how manual ``/compact`` came
         to emit a replay event saying ``manual`` beside a hook payload saying
         ``auto`` for the same compaction.
+
+        Returns the reason string if any hook cancelled (``""`` when it gave
+        none), or ``None`` for allow. Everything that is not an explicit
+        ``{"hookSpecificOutput": {"compactionDecision": "cancel"}}`` on stdout
+        means allow, **including a raised exception here**: this whole method
+        is wrapped, because two of the five entry points are the API-overflow
+        recovery ladder and a control-plane error must never be able to end
+        the turn it exists to save.
         """
         agent = self._agent
         rules = getattr(agent, "_plugin_hook_rules", None)
         if not rules:
-            return
+            return None
         try:
             from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
             from ..transport import AgentEvent, EventType
@@ -351,17 +460,121 @@ class CompactionCoordinator:
             dispatcher = PluginHookDispatcher(cwd=cwd)
             matched = dispatcher.select_matching_rules("PreCompact", payload, rules)
             if not matched:
-                return
-            dispatcher.dispatch_pre_compact(payload=payload, rules=matched)
+                return None
+            result = dispatcher.dispatch_pre_compact_decision(
+                payload=payload, rules=matched,
+            )
+            cancelled = result.decision == "cancel"
             agent.transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
                 "hook_name": "PreCompact",
-                "outcome": "allow",
+                "outcome": "cancel" if cancelled else "allow",
                 "compaction_type": request.kind,
                 "trigger": request.trigger,
                 "matched_rule_count": len(matched),
             }))
+            return (result.reason or "") if cancelled else None
         except Exception:
-            pass
+            return None
+
+    # ------------------------------------------------------------------
+    # The control plane
+    # ------------------------------------------------------------------
+
+    def _compose_decide(self, request: CompactionRequest, hook_reason: Optional[str]):
+        """Merge the two control layers into one ``decide`` callable.
+
+        Ordering: command hooks first (already run — ``hook_reason`` is their
+        verdict), then, **only if they all allowed**, the host controller.
+        Asking a trusted host to compute a summary that is about to be thrown
+        away is pure waste.
+
+        The merge rule in one line: a cancel in either layer is a cancel, and
+        ``provide_summary`` can only come from the controller layer. Command
+        hooks cannot provide summary text — they have no trust boundary, and
+        summary text permanently rewrites history.
+        """
+        controller = getattr(self._agent, "compaction_controller", None)
+        if hook_reason is None and controller is None:
+            return None
+
+        def _decide(ctx: CompactionDecisionContext) -> CompactionDecision:
+            if hook_reason is not None:
+                return CompactionDecision("cancel", reason=hook_reason or None)
+            return self._consult_controller(controller, ctx)
+
+        return _decide
+
+    def _consult_controller(self, controller, ctx: CompactionDecisionContext):
+        """Call the host controller, and survive anything it does.
+
+        Every failure mode lands on ``allow``: a raise, an awaitable, an
+        unknown ``action``, ``provide_summary`` with no text, or
+        ``provide_summary`` where it has no legal meaning. Same direction as
+        the hook layer's "any other value is allow", and for the same reason —
+        **no control-plane error may be able to drive the context into the
+        overflow ladder, let alone end the turn.**
+
+        There is no timeout. It is a synchronous in-process callback; if it
+        hangs, it hangs the turn, exactly like the host's other callbacks.
+        """
+        allow = CompactionDecision("allow")
+        try:
+            decision = controller(ctx)
+        except Exception as exc:
+            self._warn(f"compaction_controller raised ({exc!r}); treating as allow")
+            return allow
+
+        if not isinstance(decision, CompactionDecision):
+            if hasattr(decision, "__await__"):
+                # Closed, not just dropped: an un-awaited coroutine warns at
+                # GC time, in whatever unrelated code happens to be running.
+                try:
+                    decision.close()
+                except Exception:
+                    pass
+                self._warn(
+                    "compaction_controller returned an awaitable; v1 does not "
+                    "support an async controller — treating as allow"
+                )
+            else:
+                self._warn(
+                    f"compaction_controller returned {type(decision).__name__}, "
+                    "not a CompactionDecision — treating as allow"
+                )
+            return allow
+
+        if decision.action == "cancel":
+            return decision
+        if decision.action == "allow":
+            return decision
+        if decision.action == "provide_summary":
+            if not ctx.can_provide_summary:
+                self._warn(
+                    f"compaction_controller offered a summary for kind={ctx.kind}, "
+                    "where provide_summary has no meaning — treating as allow"
+                )
+                return allow
+            if decision.summary is None:
+                self._warn(
+                    "compaction_controller returned provide_summary with no "
+                    "summary — treating as allow"
+                )
+                return allow
+            return decision
+
+        self._warn(
+            f"compaction_controller returned an unknown action {decision.action!r} "
+            "— treating as allow"
+        )
+        return allow
+
+    def reset_cancellation_latch(self) -> None:
+        """Forget this turn's cancellations. Called at the start of each turn.
+
+        The latch is what makes "not re-dispatched for the rest of the turn"
+        a mechanism rather than a promise; this is the other half of it.
+        """
+        self._cancel_latch.clear()
 
     # ------------------------------------------------------------------
     # Observability

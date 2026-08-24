@@ -11,6 +11,70 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`PreCompact` can now say no.** It was notify-only: `dispatch_pre_compact`
+  fired the hook through `_dispatch_lifecycle` and threw the output away, so a
+  host watching its own context about to be rewritten had no way to stop it.
+  Two layers, consulted in that order:
+
+  1. **Command hooks** — a hook that prints
+     `{"hookSpecificOutput": {"compactionDecision": "cancel", "compactionDecisionReason": "..."}}`
+     cancels the compaction. First cancel wins and stops the remaining forks.
+     The key is deliberately **not** `permissionDecision`: `compactionDecision`
+     has never existed in agentao, so no existing script can produce it by
+     accident — which is why this needs no opt-in gate. Everything that is not
+     an explicit `cancel` means allow, including an unknown value (with a
+     warning): a typo must not be able to pause compaction until the context
+     blows up. Exit code 2 stays unhonoured, matching `PreToolUse`.
+  2. **`compaction_controller=`**, a new keyword-only constructor argument for
+     trusted embedded hosts. It gets a `CompactionDecisionContext` — counts,
+     budgets and file paths, **never message text** — and returns `allow`,
+     `cancel`, or `provide_summary(text)`. Synchronous; v1 does not accept a
+     coroutine. **A controller that raises is caught, warned about and treated
+     as `allow`**, as is any unknown return: two of the five entry points *are*
+     the API-overflow recovery ladder, so an exception escaping a controller
+     would turn "context too long" into "the turn crashes".
+
+  A host summary is validated before it is committed (non-empty, a `str`,
+  within half the summary-input budget, and free of `SUMMARY_END_MARKER`,
+  which would break the *next* compaction's carry-stripping). An invalid one
+  is **not** a terminal state: it is rejected, logged, and the built-in
+  summarizer runs once as if the host had said `allow`. What the breaker
+  counts is always the built-in summarizer's failure, so a bad controller
+  costs one extra summarization and can never disable auto-compaction.
+
+  **Arbitrary message-list replacement is out of scope.** agentao's history is
+  a flat list where `tool_calls[*].id` must round-trip byte-for-byte; a host
+  returning an orphaned tool result would produce a request the provider
+  refuses, at a point where history has already been destroyed.
+
+- **Cancellation semantics, which is what made this shippable.** The 2026-05
+  plan deferred the gate because "a host denied and it is still too long"
+  looked like unrecoverable runaway. It is not, because a cancel is honoured
+  *and reported*:
+
+  - A cancelled **threshold** compaction is not re-dispatched for the rest of
+    the turn — a coordinator-owned latch keyed `(kind, reason)`, cleared at the
+    start of each turn. Without it, honouring a cancel would mean forking the
+    hook again on the very next iteration, which is the cost the stand-down
+    gates exist to remove. A latch hit is silent: no hook, no controller, no
+    event.
+  - If the API then really overflows, the host is asked **again** with
+    `reason=api_overflow`. That is a different question and gets its own
+    answer — the latch key carries the reason.
+  - A cancelled **overflow** returns the provider's context-length error to
+    the caller. It does **not** quietly fall through to `messages[-2:]`. Rung 2
+    is a separate dispatch site and behaves the same way.
+  - `manual_cli` never enters the latch: `/compact` is user-driven, does not
+    loop, and runs outside a turn, so a turn-reset latch would mean "cancel
+    once and every immediate retry stays suppressed until you first run an
+    ordinary turn".
+  - A cancelled **microcompaction** simply skips that pass and returns no
+    error — it was never the step you cannot proceed without.
+
+  `PLUGIN_HOOK_FIRED`'s `outcome` for `PreCompact` can now be `cancel` as well
+  as `allow`.
+
+
 - **`PreCompact` hooks can finally match on where a compaction came from.**
   `build_pre_compact` takes a required `trigger` argument and each of the five
   compaction entry points states its own provenance, so manual `/compact`
