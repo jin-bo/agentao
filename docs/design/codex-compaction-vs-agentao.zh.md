@@ -5,6 +5,11 @@
 > 其余各项（远端压缩、token-budget 空窗模式、压缩遥测矩阵等）仍**未获授权动工**。
 > 引用本文时请一并引用这一行——它防止下一个人把排序当排期。
 
+
+> **⚠️ 阈值已变更（2026-08-23，本文锚点之后）：** `COMPRESSION_THRESHOLD` 已由 **0.65 提高到 0.80**
+> （`agentao/context_manager.py:69`），廉价层区间随之由 `(55%, 65%]` 扩为 `(55%, 80%]`。
+> 正文各处的 65% 描述按锚点原样保留，**不要**当作当前值读。
+
 **状态：** 对 codex 的对照部分仅分析（未授权实施）；**§3 的 P1 已实施**（2026-08-23，rev 9）。2026-08-22 起草；**rev 2 经评审一轮 8 项修正（初稿两项 P1 中撤回一项，另撤回一项「待定契约」结论）；rev 3 落地 §8 勘误横幅并自查出第 9 项；rev 4 再经一轮评审 5 项；rev 5 收 4 项；rev 6 收 1 项；rev 7 收 2 项；rev 8 收 1 项（共 **22** 条修正，六轮评审）**。修正明细见 §13——**再次提出本文任何结论前先读 §13**。
 **锚点：** codex `openai/codex@2151d3a5b7`（2026-08-21）；agentao `main@dc11298`（2026-08-21）。英文孪生待写。
 
@@ -17,7 +22,7 @@
 但**「codex 怎么做」这句话在本文里一律指 local 路径**，不可泛化为 codex 的默认行为。
 
 **方法：** 两侧都读源码，每条主张就地附 `file:line`。**唯一的 P1（§3）是 agentao 内部的自相矛盾，与 codex 无关**——即使一条也不借鉴 codex，它仍然成立；它也确实是本文唯一被实施的一条。
-**相关：** `codex-subagent-v2-vs-agentao.zh.md`（同一 codex 锚点的另一侧对照）、`codex-goal-mechanism-review.zh.md`、`docs/history/implementation/stop-precompact-hooks-plan.zh.md`（§8 的权威出处）。
+**相关：** `codex-subagent-v2-vs-agentao.zh.md`（同一 codex 锚点的另一侧对照）、`codex-goal-mechanism-review.zh.md`、`docs/history/implementation/stop-precompact-hooks-plan.zh.md`（§8 的权威出处）、`pi-mono-compaction-vs-agentao.zh.md`（同一问题对 pi-mono 的对照；其 §8/§9.2 的两条 P1 与本文 §8 的 PreCompact 结论同源）。
 
 ---
 
@@ -286,7 +291,7 @@ codex 因为把它做成 `Op`，TUI 与 app-server 两个前端零成本共享�
 
 > **引用方式（rev 4）：** 上面刻意改用**章节名 / 矩阵行名**而非行号——该文件在 2026-08-22 被插入勘误横幅后正文整体下移 21 行，rev 3 里写死的行号已全部失效。行名不会随横幅漂移。
 
-**排除理由（该文**「Claude Code 兼容性矩阵」后的**范围说明段**，以及 **`B5. PreCompact gate` 一节**）：** PreCompact 的 emit 位置就在就地修改 `agent.messages` 之前，而周边的 overflow-recovery 代码假设压缩最终会成功。接受 host「拒绝」却没有「host 拒绝且仍然超长」的兜底，会产生不可恢复的失控行为。因此它被钉成 **gap 而非 roadmap**；真要做，须先解决那条恢复路径，并另开 `PRECOMPACT_GATE_PLAN.md`。
+**排除理由（该文**「Claude Code 兼容性矩阵」后的**范围说明段**，以及 **`B5. PreCompact gate` 一节**）：** PreCompact 的 emit 位置就在就地修改 `agent.messages` 之前，而周边的 overflow-recovery 代码假设压缩最终会成功。接受 host「拒绝」却没有「host 拒绝且仍然超长」的兜底，会产生不可恢复的失控行为。因此它被钉成 **gap 而非 roadmap**；真要做，须先解决那条恢复路径，并另开 `docs/design/compaction-orchestration-plan.md`。
 
 **本文对此不新增任何结论。** 但核实过程中发现该计划文档存在**落地后漂移**，已于 2026-08-22 以勘误横幅就地标注（该文件是 `docs/history/` 冻结归档，正文与修订备忘一概未改写）：`/compact` 已在本计划之后落地并确实 dispatch PreCompact（`compact.py:44-79`，`reason="manual_cli"`），因此矩阵里以「Agentao 没有 manual `/compact` CLI」为前提的多处措辞已过期。
 
