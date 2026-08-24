@@ -5,9 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.4.20. Add entries under the relevant heading as work lands._
+## [0.4.20] — 2026-08-24
 
 ### Added
 
@@ -47,7 +45,6 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
   **What this cannot do, stated plainly:** an overflow error is its only
   input, so **the first fall into the recovery ladder is its input, not
   something it can prevent**. It reduces how often you fall in again.
-
 
 - **`PreCompact` can now say no.** It was notify-only: `dispatch_pre_compact`
   fired the hook through `_dispatch_lifecycle` and threw the output away, so a
@@ -112,7 +109,6 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
   `PLUGIN_HOOK_FIRED`'s `outcome` for `PreCompact` can now be `cancel` as well
   as `allow`.
 
-
 - **`PreCompact` hooks can finally match on where a compaction came from.**
   `build_pre_compact` takes a required `trigger` argument and each of the five
   compaction entry points states its own provenance, so manual `/compact`
@@ -137,28 +133,6 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
   `auto` while its own `PLUGIN_HOOK_FIRED` replay event said `manual` for the
   same compaction. `docs/releases/v0.4.4.md` gains an erratum, since its
   `trigger` row's "no `manual` site exists" was true at 0.4.4 and false since.
-
-### Changed
-
-- **The carried summary is out of the summary-input eviction pool.** A prior
-  `[Conversation Summary]` was fed back as a block *inside* the newest-first
-  allocator, where it is by construction the **oldest** block in the window —
-  so plain backwards spending drops it first, and every compaction after the
-  first would amputate the accumulated history. Three local patches existed to
-  stop that (`carry_index`, `_clip_carry_summary`, and the special case in
-  `_join_within_budget`); all three are gone. It is now rendered as its own
-  `<previous-summary>` section, so the guarantee is structural rather than
-  patched — there is no eviction to be exempt from — and the summarization
-  prompt asks for an **UPDATE** that supersedes it rather than a fresh
-  summary.
-
-  **The replacement ceiling is mandatory, not optional**, and is restated
-  rather than inherited: carry ≤ half the summary-input budget, and
-  carry + live ≤ the whole budget. Both texts still go into one provider
-  request, so "its own budget" only changes the bookkeeping — the
-  provider-level competition is unchanged.
-
-### Added
 
 - **An opt-in token budget for the kept-verbatim tail**
   (`ContextManager.keep_recent_token_ratio`, default `None` = today's
@@ -199,7 +173,6 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
   and per-resolution, and a wrong constant baked in would be a silent
   mis-estimate on every image-bearing history.
 
-
 - **The compaction circuit breaker is recoverable.** It was a one-way latch:
   three consecutive failures set a counter, the counter's only reset was a
   successful compaction, and the short-circuit sat *above* every branch — so
@@ -234,8 +207,6 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
   `circuit_breaker_open` and `last_compaction_failure`; the existing
   `circuit_breaker_failures` key is unchanged.
 
-### Added
-
 - **`Agentao.compact(*, reason="manual_cli") -> CompactionOutcome`** — the
   public compaction entry. There was none: all three call sites reached
   straight into `context_manager`, which is how five entry points came to
@@ -244,7 +215,6 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
   `compression_threshold` is paused by it — and the returned outcome says
   `success | cancelled | failed | skipped` with a `detail`. History is
   byte-identical on every status but `success`.
-
 
 - **All five compaction entry points now go through one `CompactionCoordinator`,
   and every attempt returns one `CompactionOutcome`.** Microcompaction, the
@@ -292,7 +262,6 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
   say *why* nothing changed, so new code should go through the coordinator;
   a direct call bypasses the host control plane and the breaker's probe
   policy.
-
 
 - **Full LLM compaction now triggers at 80% of `max_context_tokens`, not 65%**
   (`ContextManager.COMPRESSION_THRESHOLD` 0.65 → 0.80). agentao was the most
@@ -357,7 +326,163 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
   shadowed a PreToolUse hook's. The three copies of the sentence in
   `tool_executor.py` are now one constant.
 
+### Changed
+
+- **The carried summary is out of the summary-input eviction pool.** A prior
+  `[Conversation Summary]` was fed back as a block *inside* the newest-first
+  allocator, where it is by construction the **oldest** block in the window —
+  so plain backwards spending drops it first, and every compaction after the
+  first would amputate the accumulated history. Three local patches existed to
+  stop that (`carry_index`, `_clip_carry_summary`, and the special case in
+  `_join_within_budget`); all three are gone. It is now rendered as its own
+  `<previous-summary>` section, so the guarantee is structural rather than
+  patched — there is no eviction to be exempt from — and the summarization
+  prompt asks for an **UPDATE** that supersedes it rather than a fresh
+  summary.
+
+  **The replacement ceiling is mandatory, not optional**, and is restated
+  rather than inherited: carry ≤ half the summary-input budget, and
+  carry + live ≤ the whole budget. Both texts still go into one provider
+  request, so "its own budget" only changes the bookkeeping — the
+  provider-level competition is unchanged.
+
 ### Fixed
+
+- **Invisible Unicode tag characters were passed straight to the model.** The
+  U+E0000–U+E007F block mirrors ASCII into codepoints that render as
+  **nothing** and round-trip losslessly through every tokenizer agentao uses,
+  so a web page, an MCP result or a file could carry instructions invisible in
+  the terminal, invisible in a diff, and fully legible to the model. Nothing
+  stripped them. `security/unicode_tags.py::strip_unicode_tags` now runs at
+  three boundaries: the model-bound copy of every tool result (deliberately
+  *after* the replay emit, so the audit record keeps the original bytes),
+  model output re-entering the runtime, and the terminal display.
+
+  **It is structural, not a range filter.** The block's one legitimate use is
+  RGI emoji tag sequences, so filtering the whole range destroys every
+  subdivision flag — 🏴󠁧󠁢󠁳󠁣󠁴󠁿/🏴󠁧󠁢󠁷󠁬󠁳󠁿/🏴󠁧󠁢󠁥󠁮󠁧󠁿 all collapse to 🏴. Here a run survives only as
+  `U+1F3F4` + at most five lowercase-alnum tag characters + `U+E007F`, and at
+  most `_MAX_TAG_SEQUENCES` (8) such runs per string — the per-sequence cap
+  alone bounds nothing, since chaining N valid sequences yields N×5 hidden
+  characters. `tool_calls[*].id` and `function.arguments` are exempt and both
+  sanitize paths agree on that: the id must round-trip byte-for-byte or
+  history desynchronises from the answering `role: "tool"` message.
+
+  This is a transform applied at named boundaries, **not an ambient
+  guarantee** — skill and MCP descriptions inlined into the system prompt do
+  not pass through it.
+
+- **Stale thinking artifacts went back on the wire after a model switch.**
+  `reasoning_content` and `thought_signature` are minted by one model and only
+  meaningful to it, agentao serialises both into history, and the OpenAI SDK
+  does not strip unknown message keys — so after `/model` or `/provider` they
+  were sent to a model that never issued them.
+  `runtime/model.py::purge_thinking_artifacts` drops both at **both levels** of
+  a tool call (the entry and its `function`, because the real Gemini shape puts
+  it on the entry). Wired into `set_model`, into `set_provider` when the model
+  *or* the endpoint changes (a bare credential rotation leaves history alone),
+  and into both wholesale-history-restore sites — `/resume`, which deliberately
+  does not restore the persisted model and is a model switch in all but name,
+  and ACP session load. It also invalidates the cached token anchor, since
+  history just shrank.
+
+- **The Stop hook, the CLI, `agentao run` stdout and the ACP final text all
+  received unsanitized assistant text.** `_resolve_stop_hook` read the turn's
+  answer from the caller's local variable while every call site sanitizes the
+  dict in place. Found while wiring the tag stripping above.
+
+- **A turn that exhausted its tool-call budget reported itself as an answer.**
+  It returned `TurnOutcome(status="ok", incomplete_reason=None)`, so
+  `is_answer` was True and the harness's own "Maximum tool call iterations
+  reached." string was indistinguishable from a model answer. The only signal
+  was `NonInteractiveTransport.max_iterations_hit`, a sticky flag on one
+  transport class; an embedded host reading `agent.last_turn` had no way to
+  tell the two apart. Surfaced by a GAIA Level 1 run where every capped task
+  scored as answered. `INCOMPLETE_MAX_ITERATIONS` joins the vocabulary and
+  `_handle_iteration_cap` now passes it. The transport flag stays for the
+  case it uniquely reports — the cap was hit but a Stop hook continued past
+  it — and `agentao run` is unaffected, since `_classify_outcome` checks the
+  flag before the `incomplete_reason` branch, so exit 4 still wins.
+
+  **This supersedes a statement in the 0.4.19 notes**, which described
+  `finish_reason_missing` as riding its own axis "the way `max_iterations`
+  does". `max_iterations` no longer does: it is now a member of
+  `INCOMPLETE_ANSWER_REASONS`. `finish_reason_missing` is unchanged and still
+  rides its own axis.
+
+- **Compaction could silently do nothing, forever, and announce passes it
+  never ran.** Three defects, all in the automatic path:
+
+  `compress_messages` advanced the split point to the next `user` message, so
+  a tail with no user message — routine, since 20 consecutive assistant/tool
+  messages is about ten tool calls in one turn — found no split and returned
+  history unchanged on every iteration. The only unsafe split is one landing
+  *on* a `role: "tool"` message, because tool results are appended contiguously
+  after the assistant message that requested them; `_find_split_index` now
+  takes any non-tool boundary and merely *prefers* a user one. A genuine
+  structural failure now counts toward the circuit breaker instead of spinning.
+
+  Both compaction steps announced work they were not going to do. With the
+  breaker open `compress_messages` returned immediately, but the `PreCompact`
+  dispatch sat *before* it — so every iteration forked a hook subprocess and
+  emitted a `CONTEXT_COMPRESSED` reporting `pre == post`. Microcompaction had
+  the same shape, gating on "am I in the band" and never on "is anything left
+  to truncate"; `microcompact_would_mutate()` now shares
+  `_microcompactable_indices()` with the transform so the two cannot drift.
+
+  And the token anchor was dropped on *every* microcompact pass, mutation or
+  not, forcing a full re-encode of the whole history each iteration in the
+  band. Now conditional on whether the pass actually shortened something.
+
+  Accepted consequence, stated plainly: relaxing the split means
+  post-compaction history can open on an `assistant` turn. Not a new break —
+  the overflow fallback (`messages[-2:]`) never guaranteed a user-first
+  history either.
+
+- **The summarization prompt demanded verbatim text the input pipeline had
+  already deleted.** `_SUMMARIZE_SYSTEM_PROMPT` asks for error messages
+  "verbatim" and calls Files and Errors the most important sections, while
+  `_format_for_summary` clipped every tool result to 200 characters and every
+  message to 500 first. Measured over 167 real tool results (239 KB): 75%
+  truncated, 12% of content surviving.
+
+  The same measurement retired the `_HIGH_FIDELITY_TOOLS` carve-out —
+  `write_file` and `replace` return confirmation strings bounded by a path
+  length (measured median 114 characters), so their 1000-character budget was
+  structurally unreachable, and the content it meant to preserve lives in the
+  call arguments, which are now rendered. Tiering keys on **content** instead:
+  a result carrying a failure gets `_ERROR_RESULT_TRUNCATION` (4,000 chars,
+  head *and* tail, because a failing command's diagnostic is at the end), a
+  plain result `_TOOL_RESULT_TRUNCATION` (1,000), a message
+  `_MESSAGE_TRUNCATION` (2,000). The failure markers are anchored on
+  diagnostic shapes rather than bare words — a bare-word scan matched 169 of
+  272 source files, the anchored one matches 9, with every real diagnostic
+  still caught.
+
+  Paired with a **total** ceiling on the assembled transcript
+  (`_SUMMARY_INPUT_BUDGET_RATIO`, 10% of the effective window, floor 2,000
+  tokens), spent newest-first and counted in tokens so it shares units with
+  the window it is a fraction of. Raising per-entry caps without a ceiling
+  would trade one defect for another: nothing bounded the transcript before,
+  and a summarization call that overflows increments the circuit breaker.
+  Ordinary windows go from about 15% retention to 46–76%.
+
+- **Truncation was not a fixed point, so the same text was cut twice and the
+  omission count lied.** `_head_tail_clip` appended its notice *outside* the
+  limit, making its output `limit + len(notice)` characters — strictly longer
+  than the limit that produced it. Everything downstream asks "is this over
+  the limit?", so the clip re-selected its own output forever: pass 2 cut the
+  honest `[… 197,020 chars omitted …]` notice out of the middle and wrote
+  `45` in its place, and every later pass reported `40`. The summarizer —
+  whose output *permanently* replaces history — was told a result had lost 40
+  characters when it had lost 197,020.
+
+  The knock-on was larger than the misreport: a microcompacted result stayed
+  over `MICROCOMPACT_TOOL_LIMIT` forever, so `microcompact_would_mutate()`
+  never returned False, which made both stand-downs above inert in the common
+  case. The notice is now budgeted *inside* the limit, a re-clip carries prior
+  counts forward, and `compress_messages` no longer microcompacts the half it
+  is about to discard.
 
 - **A one-word typo in a permission rule was a silent privilege escalation.**
   The engine reads exactly four keys off a rule and checked the type of none of
@@ -442,7 +567,9 @@ _Targeting 0.4.20. Add entries under the relevant heading as work lands._
   blanket one the other deny paths share, whose "do not … or use a different
   tool" negates distributively and would forbid the very alternative a redirect
   reason recommends. The instruction is placed *before* the reason so it
-  survives the 200-character tool-result cut that builds a compaction summary.
+  survives the tool-result cut that builds a compaction summary — 1,000
+  characters for a plain result since the tiering fix below, 200 when this
+  landed.
 
 ---
 
