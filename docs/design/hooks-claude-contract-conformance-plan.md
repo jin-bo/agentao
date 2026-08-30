@@ -1,11 +1,14 @@
 # Claude hook-contract conformance — a versioned compatibility layer
 
-> **⚠️ Plan. Nothing here is implemented.** The deviations it closes are catalogued in
-> `hooks-three-way-claude-codex-agentao.md` (rev 5), which remains analysis-only. **No PR is open.**
+> **⚠️ Implemented and merged** — PR #199, `18fb628` (2026-08-30). The deviations it closes are
+> catalogued in `hooks-three-way-claude-codex-agentao.md` (rev 5), which remains analysis-only.
+> **Unreleased**: it ships inside the 0.4.21 dev cycle, not in any published version.
 
 **Status:** **implemented** (rev 24, 2026-08-30) — all seven steps of §8 and all ten design gates.
 See §0 for what each gate closed on. rev 23's text stands; this is the same document with the
-closures recorded and the steps ticked off.
+closures recorded and the steps ticked off. Every `file.py:line` citation below still resolves
+against the **pre-implementation** anchor `main@10b5fb8`: they are the evidence for the gap, not a
+map of the code that closed it.
 
 **Was:** plan, rev 23 (2026-08-29), after twenty-one maintainer reviews. **Implementation
 authorized.** rev 23 is the gate-closure revision: the maintainer took the four decisions the document
@@ -96,20 +99,20 @@ controls that were not themselves reachability-checked.
 | **G6** | maintainer | **The fallback: "all matching handlers are submitted."** Not "all start". No per-dispatch admission control; under `SessionEnd`'s shared budget a queued handler may never run, and that is stated rather than engineered away. The declaration-order tie-break is unaffected | §2.5, §1, G6 |
 | **G8** (validator) | maintainer | **No pre-execution input validation.** No `jsonschema` promotion, no `Tool.preflight()`. §4.4's step 2 is deleted with its two tests, and §1 states the narrowed promise: agentao does not reject a tool's input against its schema before execution, so upstream's "invalid input fires no hook" rule has no analogue here | §1, §4.4, §12 |
 | **G7** (artifact) | maintainer | **Provenance table only.** The 295 KB reference page is not vendored; §3's table plus the probe document is what a reviewer gets. §11 q6 closes on that basis, with its cost restated: a quoted clause is locatable by `hooks.md:<line>`, not re-fetchable byte-for-byte | §3, §11 |
-| **G5** (shell) | **probe** | **agentao's `/bin/sh` baseline is conformant**, and `shell` is ignored-with-a-diagnostic rather than rejected. 2.1.251 runs command hooks under `sh` (`$0` = `/bin/sh`, `posix on`) and does not honor an explicit `"shell": "bash"`. The reference's self-contradiction is settled by measurement; deviation 10 drops to P3 and its premise is withdrawn | §2.4, §7 |
+| **G5** (shell) | **probe** | **agentao's `/bin/sh` baseline is conformant**, and `shell` is ignored-with-a-diagnostic rather than rejected. 2.1.251 runs command hooks under `sh` (`$0` = `/bin/sh`, `posix on`) and does not honor an explicit `"shell": "bash"`. The reference's self-contradiction is settled by measurement; deviation 10 drops to P3 and its premise is withdrawn. **The gate's other two halves closed at implementation on §9's own terms**: `_paths.py` substitutes all three placeholders and roots `${CLAUDE_PLUGIN_DATA}` at `~/.agentao/plugin-data/<plugin>`, and the dispatcher gained the `args` exec-form branch beside the `shell=True` one | §2.4, §7, §9 |
 | **G7** (`SessionStart`) | **probe** | **`continue:false` is discarded — the narrow reading is confirmed.** The hook ran, the session started, the turn completed, and the `stopReason` appeared nowhere. The flip list's "if it honors the stop" branch does **not** fire, and §12's non-stop test now pins a measurement instead of a reading | §5.1, §12 |
 | **G7** (`PostToolUseFailure`) | **probe** | **`decision:"block"` is honored — the narrow reading is reversed**, and all four of the probe's questions are answered: the reason reaches the **model** on its own line, the **original error is preserved** before it, and the **turn continues**. So the effect is feedback-and-continue: §5.4's conditional rank-2 row becomes unconditional and rank 1 is untouched. A control run proved the mechanism is the recognized field and not raw stdout — an unrelated key reached the model zero times | §5.1, §5.2, §5.4, §12 |
 | **G8** (invalid rewrite) | **probe** | **The plan's choice is what upstream does.** An `updatedInput` that fails the tool schema is rejected with a `tool_use_error` and the **original never runs**. It ships as conformance rather than as a documented deviation from safety. Note what agentao cannot copy: with the validator dropped, agentao has no way to *detect* the mismatch, so the rewritten call reaches the tool and fails there. The outcome that matters is the same — the original never runs — and the difference is the error surface, which §1 records | §4.4, §1 |
 | **G7** (input matrix) | **probe**, partly | Six real stdin payloads were captured. They **confirm** §5.3's shape — `permission_mode` present on four events and absent on `SessionStart` / `SessionEnd`, `prompt_id` absent before first input, `agent_id` / `agent_type` absent everywhere, `tool_response` a structured object — and they leave the *decisions* open: what agentao sources for `transcript_path`, and how it maps `permission_mode`. Two facts are new: upstream emits `background_tasks: []` / `session_crons: []` present-and-empty, and `permission_mode` differed within one session (`auto` on `UserPromptSubmit`, `default` on the tool events), which is recorded as an observation and not as a rule | §5.3 |
 | **G4** | plan's proposal, taken at implementation | **Tier 1 = 8 MiB per stream per invocation**, opt-in on the shared runner so no other caller's failure mode changes; over it the tree is killed and the hook fails, because output cut mid-JSON has no decision to contribute. **Tier 2 = 10,000 characters per channel** — the reference's own number, characters rather than tokens so the bound does not depend on the configured model. Spill to `.agentao/hook-outputs/`, files `0600`, redacted before the bytes land, pruned by age (7d) and count (200). A failed spill is **reported**, which the tool-output sink it copies does not do | §6, step 1 |
 | **G10** | plan's proposal, taken at implementation | **Session-scoped, lock-guarded, keyed by a content-derived rule key** — never `id(rule)`, which changes on reload and would silently re-announce everything. Dispatcher scope was the trap: the dispatcher is constructed at six sites, two inside pool workers, so its state would dedup nothing and race while doing it. `clear_session()` on a plugin reload and on `/clear`, so a corrected hook speaks up again while an unchanged one stays quiet | §4.2, step 2 |
-| **G3** | **probe** | **`*` is a wildcard; every other pattern is an anchored full match.** Seven probe points agree with `re.fullmatch` exactly, and two refute the *unanchored* reading this plan carried for its whole life: `ead` does not match `Read`, nor does `Rea|Wri`. So the fix is agentao's existing `_regex_match_full` with `*` special-cased, not a new three-way evaluator — while §2.3's headline stands, because `toolName` goes through `_glob_match` | §2.3, step 3 |
+| **G3** | **probe** | **`*` is a wildcard; every other pattern is an anchored full match.** Seven probe points agree with `re.fullmatch` exactly, and two refute the *unanchored* reading this plan carried for its whole life: `ead` does not match `Read`, nor does `Rea\|Wri`. So the fix is agentao's existing `_regex_match_full` with `*` special-cased, not a new three-way evaluator — while §2.3's headline stands, because `toolName` goes through `_glob_match` | §2.3, step 3 |
 | **G7** (input side) | plan's rule, applied at implementation | **`transcript_path` is an explicit `null`** — agentao writes no continuous transcript, and a path whose contents lag the session is worse than a null a hook can branch on; `null` rather than absent because the reference makes it required on all eight, so indexing it raises instead of branching. **`prompt_id` omitted** — the per-turn id is not a prompt id, and reusing it invents a correlation. **`permission_mode` mapped or omitted** — `plan`→`plan`, `full-access`→`bypassPermissions`; `workspace-write` is not `acceptEdits` and `read-only` has no analogue, so the field is absent rather than carrying agentao's own vocabulary. **`tool_response` stays a string**, a documented type divergence. The three private fields are **dropped** in profile mode and kept in v1 | §5.3, step 3 |
 | **G1** (session events) | plan's proposal, taken at implementation | **A result type plus a route per surface.** `LifecycleHookResult` carries `user_notices` / `model_contexts` / `stop_reason` out of the four lifecycle dispatches that returned attachments and nothing else. Interactive: the CLI consumes the return value it used to discard inside a bare `except: pass`. Headless: `SessionEnd` now dispatches **before** `_emit` and its notices ride on `RunResult.warnings`, which is already serialized — the old order left a headless user no path at all. The tool-worker half of the route (`PostToolUse*` stops) is step 4b | §5.2, §5.2.1, step 4 |
 | **G2** (the stop route) | plan's decisions + pair (ii) | **The verdict rides home on `ToolExecutionResult`**, is arbitrated in **plan order** on `ToolRunner`, and ends the turn through the ordinary `_resolve_stop_hook` path with a new `hook_stop` incomplete reason — so `agentao run` needs no exit code of its own. Surfaced as `runner.last_hook_stop` rather than a third tuple element: `execute`'s 2-tuple has callers whose tests are not about hooks, and `Agentao.last_turn` is the codebase's precedent. Both seams read a **string**, never a truthy value — a `MagicMock` runner answers any attribute, and truthiness there lets a stub end turns. Feedback (`additionalContext`, exit-2 stderr) is spliced **beside** the preserved result as a `<system-reminder>`, the shape probe §C measured | §5.2.2, step 4 |
 | **G1** (transport) | plan's cheaper option | **An extended `PLUGIN_HOOK_FIRED` payload**, not a new event type: the field is `user_notices`, and a host that renders hook notices reads it there. The two first-party surfaces do **not** depend on it — they route directly (§5.2.1) — which is what made the cheap option viable | §5.2.1, step 5 |
 | **G8** (the lifecycle) | plan's order, minus the validator | **The front half lands**: a call the engine already denied still fires the hook under the profile — observation and authority are separate, and the verdict stays DENY. `agentao-v1` keeps the skip. **The back half is a re-entry**: `updatedInput` replaces the arguments, the call is **re-decided** on what will actually run, and the two verdicts intersect to the stricter, so a hook `allow` cannot lift a re-computed DENY and phase 2 confirms the modified input. `defer` degrades to `deny` with the value named; exit 2 denies; `continue:false` ends the **turn**, not the call; `additionalContext` is injected beside the result instead of logged. No validation step, per the maintainer's decision (§1) | §4.4, step 6 |
-| **G9** | plan's design, one deviation | **Partition by contract, run, merge once.** All four decision-carrying dispatches are partitioned; a v1 short-circuit ends **only** the v1 group, which is the property that matters — its side effects are the reason the all-handlers rule exists. The merge is group-agnostic, over the event's lattice, with the reason tie-break ranking **inside the winning class** and by declaration order, never group order. **One deviation from the plan's text**: the groups run one after the other rather than concurrently, because G6 took its documented fallback and there is no hook pool to run them in. Sequential ordering *delays* the profile group; it cannot suppress it | G1's remaining half is the host-facing transport — a new event type or an extended `PLUGIN_HOOK_FIRED` payload — which neither surface above needs They gate steps 1, 3, 4, 5 and 6b and none of them is answerable by probing someone else's binary | §9 |
+| **G9** | plan's design, one deviation | **Partition by contract, run, merge once.** All four decision-carrying dispatches are partitioned; a v1 short-circuit ends **only** the v1 group, which is the property that matters — its side effects are the reason the all-handlers rule exists. The merge is group-agnostic, over the event's lattice, with the reason tie-break ranking **inside the winning class** and by declaration order, never group order. **One deviation from the plan's text**: the groups run one after the other rather than concurrently, because G6 took its documented fallback and there is no hook pool to run them in. Sequential ordering *delays* the profile group; it cannot suppress it | §9 |
 
 ---
 
@@ -1798,6 +1801,10 @@ user-facing change behind a refactor.
 
 Dependency order, not a schedule. 5 needs 2 and 3; 6 needs 2 and 4; 4 needs 2.
 
+**All of them landed** (rev 24) — in this dependency order, but inside a **single** PR
+(#199 / `18fb628`, 12 commits) rather than the seven the first line above imagines. §0 records the
+three places the implementation departed from this document's text.
+
 Step 1 is the one step that is **not** contract-scoped, and deliberately so: it lands two steps before
 `contract` is parsed, and a memory bound cannot be a per-file opt-in. That is the carve-out §3 makes
 explicit — `agentao-v1` freezes the contract surface, not the resource envelope.
@@ -1805,6 +1812,11 @@ explicit — `agentao-v1` freezes the contract surface, not the resource envelop
 ---
 
 ## 9. Design gates
+
+> **All ten are closed as of rev 24 — §0 is the index and the authority.** What follows is preserved
+> as the record of *what each gate had to decide*. The "Blocks step N" lines are historical, and the
+> per-gate closure markers below stop at rev 23, which is the last revision that wrote one. Read a
+> bullet for the question, §0 for the answer.
 
 Each must be closed **before** the step that depends on it. They are gates rather than open questions
 precisely because the steps already treat them as dependencies.
@@ -1939,7 +1951,7 @@ precisely because the steps already treat them as dependencies.
   because the alternative runs the input the hook was replacing. The sentence that used to settle this
   was never in the reference, so G8 settles it by probing — and if Claude Code does fall back to the
   original, that is adopted as a **documented deviation from safety**, in writing, not by default.
-- **G5 — `${CLAUDE_PLUGIN_DATA}`, exec form, and the shell.** **The shell half is CLOSED (rev 23) by measurement**: 2.1.251 runs command hooks under `sh` and ignores an explicit `shell`, so agentao's baseline is conformant and the field is ignored-with-a-diagnostic (§2.4, §0). No `executable=` change is needed. `${CLAUDE_PLUGIN_DATA}` and exec form stay open. Blocks step 3. The placeholder needs a
+- **G5 — `${CLAUDE_PLUGIN_DATA}`, exec form, and the shell.** **The shell half is CLOSED (rev 23) by measurement**: 2.1.251 runs command hooks under `sh` and ignores an explicit `shell`, so agentao's baseline is conformant and the field is ignored-with-a-diagnostic (§2.4, §0). No `executable=` change is needed. `${CLAUDE_PLUGIN_DATA}` and the exec form **closed at implementation** (§0). Blocked step 3. The placeholder needs a
   per-plugin data directory agentao does not have (location, creation, lifetime); `args` needs a
   field on `ParsedHookRule` and an exec-form branch at `_dispatcher.py:353`, which is `shell=True`
   unconditionally today; the same site must decide `executable="/bin/bash"` (§2.4, "The baseline
@@ -2024,12 +2036,15 @@ Not gates — they can be decided during the step that touches them.
    file. Roughly 290 KB of upstream prose in `docs/reference/snapshots/` is the direct answer and a
    redistribution question; the provenance table (URL, fetch time, sha256, changelog head) is the
    light one and **depends on an external copy surviving**, which is the assumption the drift just
-   made expensive. Until it is decided, every quotation in this plan carries its `hooks.md:<line>` so a
-   re-fetch can at least be located.
-7. **Is a real Claude Code probe harness ever worth building?** §3's second option. It is the only
-   thing that would let a label name a product version honestly, and it costs an installed CLI plus a
-   behavior suite. Until then `profile-N` is the accurate name and the provenance table carries what is
-   actually known.
+   made expensive. **Decided (rev 23): the provenance table, not the vendored copy** (§0). The cost is
+   stated rather than removed — every quotation carries its `hooks.md:<line>`, so a re-fetch can
+   *locate* a clause but cannot check it byte-for-byte against profile-1.
+7. **Is a real Claude Code probe harness ever worth building?** §3's second option — the only thing
+   that would let a label name a product version honestly, at the cost of an installed CLI plus a
+   behavior suite. **Half-paid since rev 23**: the CLI is installed and one probe set is on record
+   (`docs/reference/hooks-probe-2.1.251.md`), but that is a *transcript*, not a rerunnable suite, so it
+   dates rather than tracks. Until the other half exists, `profile-N` is the accurate name and the
+   provenance table carries what is actually known.
 8. **Does `reloadSkills` land in profile-1 or profile-2?** Accepting it looks defensible on the
    strength of an existing consumer, but that consumer scans a *different tree* (`~/.agentao/skills`,
    not `.claude/skills`) with no lock on the reload path, so profile-1 ignores it. The open question is whether skill discovery should learn the `.claude` tree — which is a

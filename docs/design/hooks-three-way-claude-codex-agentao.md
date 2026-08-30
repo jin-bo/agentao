@@ -3,7 +3,10 @@
 > **⚠️ Analysis only. Nothing here is authorized for implementation.** §1 is a **priority ordering
 > of findings**, not a work schedule. Quote this line whenever you quote the table.
 
-**Status:** analysis, **rev 5** (2026-08-26). No implementation authorized.
+**Status:** analysis, **rev 5** (2026-08-26). No implementation authorized *from this document* — the
+nine deviations it catalogues were closed by `hooks-claude-contract-conformance-plan.md`, merged
+2026-08-30 (PR #199, `18fb628`, unreleased). This doc stays the **evidence**, not the work item: its
+§1 ordering and its measured claims are as of `main@10b5fb8` and were not re-derived after the fix.
 **Anchors:** Claude Code hooks reference `<https://code.claude.com/docs/en/hooks>`, raw markdown
 fetched 2026-08-26 (3532 lines); codex `openai/codex@0d9bb6c34c` (2026-08-24), with OpenAI's own
 hooks reference `<https://developers.openai.com/codex/hooks>` fetched 2026-08-26 as a **secondary**
