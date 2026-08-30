@@ -463,11 +463,13 @@ class ToolExecutor:
             self._dispatch_post_tool_failure_hook(
                 fn, args, error_msg,
                 rules=hook_rules, cwd=hook_cwd, session_id=hook_session_id,
+                tool_use_id=call_id, duration_ms=duration_ms,
             )
         else:
             self._dispatch_post_tool_hook(
                 fn, args, result_text,
                 rules=hook_rules, cwd=hook_cwd, session_id=hook_session_id,
+                tool_use_id=call_id, duration_ms=duration_ms,
             )
 
         return call_id, ToolExecutionResult(
@@ -649,6 +651,8 @@ class ToolExecutor:
         rules: Optional[list],
         cwd: Optional[Path],
         session_id: Optional[str],
+        tool_use_id: str = "",
+        duration_ms: Optional[int] = None,
     ) -> None:
         if not rules:
             return
@@ -658,6 +662,10 @@ class ToolExecutor:
                 tool_name=tool_name, tool_input=tool_args,
                 tool_output=result if isinstance(result, str) else str(result),
                 session_id=session_id,
+                # Both are required or conditional in the input matrix and both
+                # already existed here — the id is the normalized call id, the
+                # duration is measured a few lines above.
+                tool_use_id=tool_use_id, duration_ms=duration_ms, cwd=cwd,
             )
             dispatcher = PluginHookDispatcher(cwd=cwd)
             dispatcher.dispatch_post_tool_use(payload=payload, rules=rules)
@@ -673,6 +681,8 @@ class ToolExecutor:
         rules: Optional[list],
         cwd: Optional[Path],
         session_id: Optional[str],
+        tool_use_id: str = "",
+        duration_ms: Optional[int] = None,
     ) -> None:
         if not rules:
             return
@@ -681,6 +691,7 @@ class ToolExecutor:
             payload = self._hook_adapter.build_post_tool_use_failure(
                 tool_name=tool_name, tool_input=tool_args, error=error,
                 session_id=session_id,
+                tool_use_id=tool_use_id, duration_ms=duration_ms, cwd=cwd,
             )
             dispatcher = PluginHookDispatcher(cwd=cwd)
             dispatcher.dispatch_post_tool_use_failure(

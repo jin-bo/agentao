@@ -87,6 +87,7 @@ changelog 头部为 **2.1.251**（`code.claude.com/docs/en/changelog.md`），�
 | **G4** | 实施时按计划的提案取定 | **Tier 1 = 每次调用每条流 8 MiB**，在共享 runner 上是 opt-in，所以其他调用方的失败模式一点不变；超限即杀进程树、该 hook 失败 —— 因为在 JSON 中途被切断的输出没有任何决定可贡献。**Tier 2 = 每个通道 10,000 字符** —— 上游自己的数字，按字符而不是 token，这样这条界限不随所配模型而变。溢出落 `.agentao/hook-outputs/`，文件 `0600`，字节落盘前先脱敏，按时龄（7 天）与数量（200）清理。落盘失败会**上报** —— 它抄的那个 tool-output sink 并不上报 | §6、第 1 步 |
 | **G10** | 实施时按计划的提案取定 | **会话级、加锁、以内容派生的 rule key 为键** —— 绝不用 `id(rule)`，它每次 reload 都变、会把一切静默重播一遍。陷阱在 dispatcher 作用域：它在六处被构造、其中两处**在池 worker 内**，所以挂在它身上的状态既去不了重、还会边去重边竞争。插件 reload 与 `/clear` 时调 `clear_session()`，这样改好的 hook 会重新出声、没改的继续闭嘴 | §4.2、第 2 步 |
 | **G3** | **探测** | **`*` 是通配符；其余一切都是锚定全匹配。** 七个探测点与 `re.fullmatch` 完全一致，其中两个推翻了本计划一直带着的**非锚定**读法：`ead` 匹配不上 `Read`，`Rea|Wri` 也不行。所以修法是复用 agentao 已有的 `_regex_match_full` 外加 `*` 特判，而不是新写三路求值器 —— 而 §2.3 的头条依然成立，因为 `toolName` 走的是 `_glob_match` | §2.3、第 3 步 |
+| **G7**（输入侧） | 实施时按计划的规则取定 | **`transcript_path` 发显式 `null`** —— agentao 没有持续写入的 transcript，而一个内容落后于会话的路径比一个 hook 能判断的 null 更糟；用 `null` 而非省略，是因为参考文档把它标为八个事件全required，省略会让取值直接抛异常。**`prompt_id` 省略** —— 逐 turn 的 id 不是 prompt id，挪用它等于编造一种不成立的关联。**`permission_mode` 能映射就映射、不能就省略** —— `plan`→`plan`、`full-access`→`bypassPermissions`；`workspace-write` 不是 `acceptEdits`、`read-only` 没有对应物，所以字段缺席，而不是把 agentao 自己的词表发出去。**`tool_response` 保持字符串**，作为写明的类型分歧。三个私有字段在 profile 模式**去掉**、v1 保留 | §5.3、第 3 步 |
 | **G1、G9** | —— | **仍然开放**，未变。它们卡住第 1、3、4、5、6b 步，而且没有一个是靠探测别人的二进制能回答的 | §9 |
 
 ---

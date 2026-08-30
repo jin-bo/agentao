@@ -281,6 +281,9 @@ class ToolRunner:
                 tool_name=plan.function_name,
                 tool_input=plan.function_args,
                 session_id=self._session_id,
+                # Required in the input matrix and already in hand: the
+                # normalized call id the runner assigned this plan.
+                tool_use_id=plan.tool_call_id or "",
             )
             try:
                 hook_result = dispatcher.dispatch_pre_tool_use_decision(

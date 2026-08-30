@@ -45,24 +45,40 @@ class ClaudeHookPayloadAdapter:
         }
 
     def build_session_start(
-        self, *, session_id: str | None = None, cwd: Path | None = None
+        self,
+        *,
+        session_id: str | None = None,
+        cwd: Path | None = None,
+        source: str = "startup",
+        model: str | None = None,
     ) -> dict[str, Any]:
         return {
             "event": "SessionStart",
             "data": {
                 "sessionId": session_id or "",
                 "cwd": str(cwd or Path.cwd()),
+                # ``source`` is required upstream and derivable at both dispatch
+                # sites; ``startup`` is the honest default, not a placeholder.
+                "source": source,
+                "model": model,
             },
         }
 
     def build_session_end(
-        self, *, session_id: str | None = None, cwd: Path | None = None
+        self,
+        *,
+        session_id: str | None = None,
+        cwd: Path | None = None,
+        reason: str = "other",
     ) -> dict[str, Any]:
         return {
             "event": "SessionEnd",
             "data": {
                 "sessionId": session_id or "",
                 "cwd": str(cwd or Path.cwd()),
+                # ``other`` is upstream's own value for "none of the named
+                # causes", so it is a real value rather than a stand-in.
+                "reason": reason,
             },
         }
 
@@ -72,6 +88,8 @@ class ClaudeHookPayloadAdapter:
         tool_name: str,
         tool_input: dict[str, Any] | None = None,
         session_id: str | None = None,
+        tool_use_id: str = "",
+        cwd: Path | None = None,
     ) -> dict[str, Any]:
         resolver = ToolAliasResolver()
         return {
@@ -80,6 +98,11 @@ class ClaudeHookPayloadAdapter:
                 "toolName": resolver.to_claude_name(tool_name),
                 "toolInput": tool_input or {},
                 "sessionId": session_id or "",
+                # Both were "exists, unplumbed" in the field matrix: the id is
+                # the normalized ``plan.tool_call_id`` the runner already has,
+                # and ``cwd`` is required on all eight events.
+                "toolUseId": tool_use_id or "",
+                "cwd": str(cwd or Path.cwd()),
             },
         }
 
@@ -90,6 +113,9 @@ class ClaudeHookPayloadAdapter:
         tool_input: dict[str, Any] | None = None,
         tool_output: str | None = None,
         session_id: str | None = None,
+        tool_use_id: str = "",
+        duration_ms: int | None = None,
+        cwd: Path | None = None,
     ) -> dict[str, Any]:
         resolver = ToolAliasResolver()
         return {
@@ -99,6 +125,9 @@ class ClaudeHookPayloadAdapter:
                 "toolInput": tool_input or {},
                 "toolOutput": tool_output or "",
                 "sessionId": session_id or "",
+                "toolUseId": tool_use_id or "",
+                "durationMs": duration_ms,
+                "cwd": str(cwd or Path.cwd()),
             },
         }
 
@@ -109,6 +138,10 @@ class ClaudeHookPayloadAdapter:
         tool_input: dict[str, Any] | None = None,
         error: str | None = None,
         session_id: str | None = None,
+        tool_use_id: str = "",
+        duration_ms: int | None = None,
+        is_interrupt: bool | None = None,
+        cwd: Path | None = None,
     ) -> dict[str, Any]:
         resolver = ToolAliasResolver()
         return {
@@ -118,6 +151,10 @@ class ClaudeHookPayloadAdapter:
                 "toolInput": tool_input or {},
                 "error": error or "",
                 "sessionId": session_id or "",
+                "toolUseId": tool_use_id or "",
+                "durationMs": duration_ms,
+                "isInterrupt": is_interrupt,
+                "cwd": str(cwd or Path.cwd()),
             },
         }
 

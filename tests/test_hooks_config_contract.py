@@ -315,9 +315,31 @@ def test_exec_form_runs_without_a_shell(tmp_path):
     assert "injected\n" not in proc.stdout.replace("a b; echo injected", "")
 
 
-def test_the_payload_still_reaches_the_hook_on_stdin(tmp_path):
+def test_a_profile_rule_receives_the_profile_shape_on_stdin(tmp_path):
+    """One rule, one contract, one wire shape — never both in one payload."""
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
     rule = ParsedHookRule(event="Stop", hook_type="command", command="cat",
                           contract=PROFILE_ID, plugin_name="p", timeout=30)
-    proc, _ = dispatcher._run_subprocess(rule, {"hook_event_name": "Stop", "k": "v"})
-    assert json.loads(proc.stdout)["k"] == "v"
+    proc, _ = dispatcher._run_subprocess(
+        rule, {"hook_event_name": "Stop", "session_id": "s", "cwd": "/proj",
+               "last_assistant_message": "hi", "turn_end_reason": "final_response"},
+    )
+    sent = json.loads(proc.stdout)
+    assert sent["hook_event_name"] == "Stop"
+    assert sent["last_assistant_message"] == "hi"
+    assert "transcript_path" in sent and sent["transcript_path"] is None
+    # agentao's own field is forbidden on this event and must not ride along.
+    assert "turn_end_reason" not in sent
+
+
+def test_a_v1_rule_still_receives_todays_envelope(tmp_path):
+    """`agentao-v1` is frozen: the same dispatch must hand it the old shape."""
+    dispatcher = PluginHookDispatcher(cwd=tmp_path)
+    rule = ParsedHookRule(event="Stop", hook_type="command", command="cat",
+                          contract=LEGACY_CONTRACT_ID, plugin_name="p", timeout=30)
+    proc, _ = dispatcher._run_subprocess(
+        rule, {"hook_event_name": "Stop", "k": "v", "turn_end_reason": "final_response"},
+    )
+    sent = json.loads(proc.stdout)
+    assert sent["k"] == "v"
+    assert sent["turn_end_reason"] == "final_response"

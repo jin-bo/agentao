@@ -36,6 +36,7 @@ from ._attachments import _make_attachment
 from ._budget import HOOK_RAW_OUTPUT_LIMIT_BYTES
 from ._paths import _placeholder_values, _substitute
 from ._profile import LEGACY_CONTRACT_ID
+from ._profile_payload import to_profile_payload
 from ._matchers import _claude_matcher_match, _glob_match, _regex_match_full
 from ._output_parsing import _OutputParsingMixin
 
@@ -380,6 +381,14 @@ class PluginHookDispatcher(_OutputParsingMixin):
             # timeout, kills the whole process tree rather than just the
             # shell — a hook that backgrounds a child would otherwise keep
             # the captured pipe open and hang dispatch past ``rule.timeout``.
+            # One rule, one contract, one wire shape. A profile rule gets the
+            # flat snake_case payload of §5.3; a v1 rule gets today's envelope,
+            # frozen. Never both in one payload — that would be a third contract.
+            wire_payload = (
+                to_profile_payload(payload)
+                if rule.contract != LEGACY_CONTRACT_ID
+                else payload
+            )
             placeholders = _placeholder_values(rule, self._cwd)
             if rule.args:
                 # Exec form: no shell, each element one argument. The reference
@@ -394,7 +403,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
                 use_shell = True
             proc = run_captured(
                 cmd,
-                input=json.dumps(payload),
+                input=json.dumps(wire_payload),
                 timeout=rule.timeout,
                 shell=use_shell,
                 cwd=str(self._cwd),
