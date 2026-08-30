@@ -3,10 +3,11 @@
 > **⚠️ Plan. Nothing here is implemented.** The deviations it closes are catalogued in
 > `hooks-three-way-claude-codex-agentao.md` (rev 5), which remains analysis-only. **No PR is open.**
 
-**Status:** plan, **rev 22** (2026-08-29), after twenty-one maintainer reviews. The twenty-first found
-nothing — the first round of the twenty-one to close with no finding — so the design below is exactly
-what it cleared; rev 22 changes status and this history only. **Review complete: cleared for the
-design-gate decision.** Direction approved; implementation not started.
+**Status:** plan, **rev 23** (2026-08-29), after twenty-one maintainer reviews. **Implementation
+authorized.** rev 23 is the gate-closure revision: the maintainer took the four decisions the document
+reserved, and a probe of a real `claude` binary settled the rest — §0 records every closure and what
+it changed. Six table rows moved with it; the design they belong to is otherwise the one review
+cleared at rev 22.
 **Source:** the maintainer's disposition of the nine deviations, restated with the code consequences
 each choice carries. Where this document disagrees it says so inline.
 **Anchors:** agentao `main@10b5fb8`; Claude Code hooks reference **fetched 2026-08-28 19:29** from
@@ -17,6 +18,8 @@ source text and is what this document quotes) — **295,595 bytes, sha256
 head at the same fetch: **2.1.251** (`code.claude.com/docs/en/changelog.md`), whose additions are
 **not** in the fetched page — see §3, which is why the label is a profile and not a product version.
 OpenAI codex hooks reference `<https://developers.openai.com/codex/hooks>` fetched 2026-08-26.
+**Measured behavior:** `docs/reference/hooks-probe-2.1.251.md` — what a real `claude` 2.1.251
+actually did for the rows the reference could not settle (§0).
 **Twin:** `hooks-claude-contract-conformance-plan.zh.md`.
 **Related:** `hooks-three-way-claude-codex-agentao.md` (the evidence; §5.1–§5.10 are the nine).
 
@@ -61,11 +64,39 @@ already written — and the round after it found nothing at all.
 | 19 | 1 P2 | rev 18 weakened the **test** and left the **promise** standing: a queued-sibling rule with an optional seam is one an implementation can violate and still pass every acceptance run. G2 now picks a **pair** — guarantee **and** seam, or neither, with §1 recording the queued moment as undefined. G6 already used this pattern (weaken the promise, not the test) one gate over | §12, G2 |
 | 20 | 1 P2 | rev 19's own seam list smuggled the hole back: it offered "an injectable executor**/cap**", and a bare configurable `max_workers` bounds concurrency without giving the test any control over the instant between the stop becoming observable and the tail being dequeued. A cap may ride along; it is never the seam | G2 |
 | 21 | 1 P3 | The self-violation tally had stopped counting itself: still "six rounds, unbroken since rev 13" while rev 18, 19 and 20 each recorded exactly that pattern. Nine now, with the broken rule named per round so the number is checkable — a statistic about a failure mode is not exempt from the failure mode | this section |
+| 23 | — | **Gates closed, implementation authorized.** Not a review round: the maintainer decided G2/G6 (weakened branch), G8 (no pre-execution validator) and G7's artifact question, and a probe of `claude` 2.1.251 settled both contested rows, G5's documented ambiguity and G8's flip. Six table rows changed; the two contested rows are now **measured**, one confirming the narrow reading and one reversing it | §0, §2.4, §5.1, §5.2, §5.4, §7 |
 | 22 | none | **Clean pass.** No P1, P2 or P3 — the first of the twenty-one rounds to find nothing. rev 22 is bookkeeping: the status line, this row, and the note that the self-violation run ended at 20. Nothing in §1–§12 moved, so what passed review is what is on disk | this section, §1 |
 
 Two process rules came out of these rounds and are followed here: every patch is re-grepped after
 applying (rev 4's English edit silently never ran, and the twins drifted on five items), and every
 quotation is copy-pasted from the archived snapshot and re-`grep -F`'d (rev 11).
+
+---
+
+## 0. Gate closures
+
+Nothing here is a new design. Each row is a gate the document deliberately left open, and the
+decision that closed it — either the maintainer's call or a measurement. **Where a closure changed a
+table, the table is the authority and this section is the index**; §12's tests follow the tables.
+
+Measurements come from `docs/reference/hooks-probe-2.1.251.md`: a real `claude` 2.1.251 driven
+headlessly in throwaway project directories, each with its own `.claude/settings.json`. That
+document carries the method, the raw observations and — for each finding — what it does **not**
+prove. It also records two false results the probe produced before it produced true ones, both from
+controls that were not themselves reachability-checked.
+
+| Gate | Closed by | Outcome | Changed |
+|---|---|---|---|
+| **G2** | maintainer | **Pair (ii): drop the queued-sibling guarantee.** No test seam is built. §1 records the queued-at-stop moment as undefined; §12's test shrinks to the invariant that holds either way — every plan yields a result and a `role:"tool"` message | §1, §12, G2 |
+| **G6** | maintainer | **The fallback: "all matching handlers are submitted."** Not "all start". No per-dispatch admission control; under `SessionEnd`'s shared budget a queued handler may never run, and that is stated rather than engineered away. The declaration-order tie-break is unaffected | §2.5, §1, G6 |
+| **G8** (validator) | maintainer | **No pre-execution input validation.** No `jsonschema` promotion, no `Tool.preflight()`. §4.4's step 2 is deleted with its two tests, and §1 states the narrowed promise: agentao does not reject a tool's input against its schema before execution, so upstream's "invalid input fires no hook" rule has no analogue here | §1, §4.4, §12 |
+| **G7** (artifact) | maintainer | **Provenance table only.** The 295 KB reference page is not vendored; §3's table plus the probe document is what a reviewer gets. §11 q6 closes on that basis, with its cost restated: a quoted clause is locatable by `hooks.md:<line>`, not re-fetchable byte-for-byte | §3, §11 |
+| **G5** (shell) | **probe** | **agentao's `/bin/sh` baseline is conformant**, and `shell` is ignored-with-a-diagnostic rather than rejected. 2.1.251 runs command hooks under `sh` (`$0` = `/bin/sh`, `posix on`) and does not honor an explicit `"shell": "bash"`. The reference's self-contradiction is settled by measurement; deviation 10 drops to P3 and its premise is withdrawn | §2.4, §7 |
+| **G7** (`SessionStart`) | **probe** | **`continue:false` is discarded — the narrow reading is confirmed.** The hook ran, the session started, the turn completed, and the `stopReason` appeared nowhere. The flip list's "if it honors the stop" branch does **not** fire, and §12's non-stop test now pins a measurement instead of a reading | §5.1, §12 |
+| **G7** (`PostToolUseFailure`) | **probe** | **`decision:"block"` is honored — the narrow reading is reversed**, and all four of the probe's questions are answered: the reason reaches the **model** on its own line, the **original error is preserved** before it, and the **turn continues**. So the effect is feedback-and-continue: §5.4's conditional rank-2 row becomes unconditional and rank 1 is untouched. A control run proved the mechanism is the recognized field and not raw stdout — an unrelated key reached the model zero times | §5.1, §5.2, §5.4, §12 |
+| **G8** (invalid rewrite) | **probe** | **The plan's choice is what upstream does.** An `updatedInput` that fails the tool schema is rejected with a `tool_use_error` and the **original never runs**. It ships as conformance rather than as a documented deviation from safety. Note what agentao cannot copy: with the validator dropped, agentao has no way to *detect* the mismatch, so the rewritten call reaches the tool and fails there. The outcome that matters is the same — the original never runs — and the difference is the error surface, which §1 records | §4.4, §1 |
+| **G7** (input matrix) | **probe**, partly | Six real stdin payloads were captured. They **confirm** §5.3's shape — `permission_mode` present on four events and absent on `SessionStart` / `SessionEnd`, `prompt_id` absent before first input, `agent_id` / `agent_type` absent everywhere, `tool_response` a structured object — and they leave the *decisions* open: what agentao sources for `transcript_path`, and how it maps `permission_mode`. Two facts are new: upstream emits `background_tasks: []` / `session_crons: []` present-and-empty, and `permission_mode` differed within one session (`auto` on `UserPromptSubmit`, `default` on the tool events), which is recorded as an observation and not as a rule | §5.3 |
+| **G1, G3, G4, G9, G10** | — | **Still open**, unchanged. They gate steps 1, 3, 4, 5 and 6b and none of them is answerable by probing someone else's binary | §9 |
 
 ---
 
@@ -119,6 +150,22 @@ Three rules make the profile honest rather than a way to shrink the target:
 - **Nothing is excluded silently.** A field agentao ignores appears in §5.1 with a reason, the way
   `SUPPORTED_HOOK_TYPES_BY_EVENT` already surfaces a dropped rule as a parser warning
   (`models.py:217`).
+
+**Three things profile-1 explicitly does not promise**, added by §0's gate closures rather than
+discovered later. Each is listed here because the alternative is the silent drop §1's third rule
+forbids, and each names the decision that produced it:
+
+- **Whether a queued sibling tool call runs after a hook stops the turn is undefined** (G2). agentao
+  promises the *batch outcome* — every plan yields a result and a `role:"tool"` message — and nothing
+  about the moment between a stop becoming observable and the tail being dequeued.
+- **All matching handlers are *submitted*, not guaranteed to start** (G6). Under `SessionEnd`'s shared
+  1.5-second budget a queued handler may never run. This is weaker than the reference's parallel
+  clause and stronger than today's serial short-circuit.
+- **agentao does not validate a tool's input against its schema before execution** (G8), so the
+  reference's "invalid input fires no hook" rule has no analogue here — there is no rejection for it
+  to describe. The visible consequence is on the rewrite path: where upstream refuses a schema-invalid
+  `updatedInput` with a `tool_use_error`, agentao passes it to the tool and the tool fails on its own
+  terms. The original input never runs either way; the error surface differs.
 
 This makes the event-count gap (comparison §0: 31 / 11 / 8) formally out of scope, the configuration
 shape formally *in*, and the field-count gap **enumerated** rather than either claimed away or
@@ -234,7 +281,7 @@ is the promise, or the promise narrows to "the listed subset". The matrix is the
 | `timeout` | per **type**: 600 for `command` / `http` / `mcp_tool`, 30 for `prompt`, 60 for `agent`; `UserPromptSubmit` lowers the command default to **30**; `SessionEnd` handlers share a **1.5 s** budget, raisable to the highest per-hook `timeout` set **in a settings file** — *"Timeouts set on plugin-provided hooks don't raise the budget"* | **60 everywhere** (`_parser.py:141`) | **accept**, with the reference's per-event defaults. Every agentao hook is plugin-provided, so the `SessionEnd` budget is one agentao **cannot** lift from configuration — which is what makes §2.5's all-start guarantee load-bearing precisely there |
 | `command` | shell form when `args` absent | always `shell=True` (`_dispatcher.py:353`) | accept (unchanged) |
 | `args` | **exec form** — no shell, each element one argument | **absent from `ParsedHookRule`** (`models.py:237`) | **accept.** Not optional: the reference tells authors to set `args` *whenever* the hook uses a path placeholder, so §7.1 without this is half a feature |
-| `shell` | `bash` \| `powershell` | n/a — `shell=True` means `/bin/sh` (`_dispatcher.py:353`) | **reject** every value with a warning, for now. `"bash"` is **not** a no-op (see below) and `"powershell"` would be an untested claim — agentao has no Windows CI job. Lifting the `"bash"` rejection is co-located with exec form, gate G5 |
+| `shell` | `bash` \| `powershell` | n/a — `shell=True` means `/bin/sh` (`_dispatcher.py:353`) | **ignore** with a diagnostic. **Measured**: Claude Code 2.1.251 runs command hooks under `sh` (`$0` = `/bin/sh`, `posix on`) and does **not** honor an explicit `"shell": "bash"` either (`docs/reference/hooks-probe-2.1.251.md` §A). Rejecting the *rule* would disable a hook that runs upstream — the regression direction §1 exists to prevent. `"powershell"` stays untested; agentao has no Windows CI job |
 | `async` / `asyncRewake` | background, exit-2 rewake | no background runner | **reject** with a warning |
 | `if` | one permission-rule pattern, best-effort | n/a | **reject** with a warning. Reachable in principle — agentao has a permission engine with pattern matching — but it is a sub-feature with its own Bash-subcommand semantics, not a field to wire up. §11 records why, and the disposition lives here |
 | `statusMessage` | spinner text | n/a | **ignore** — cosmetic, no contract effect |
@@ -996,7 +1043,7 @@ new field goes in this table before it goes anywhere else.
 | `terminalSequence` | universal | an OSC/BEL sequence Claude Code emits for the hook — restricted to OSC `0`/`1`/`2`/`9`/`99`/`777` and BEL, ignored if anything else appears | `ignore` — agentao's CLI has no hook-owned terminal-write path, and the allowlist is a security boundary this plan will not implement blind. Listed, not silent; **G7** may flip it to accept, since the transport is the same one `user_notices` needs (G1) |
 | `hookSpecificOutput.hookEventName` | wherever `hSO` is used | *"It requires a `hookEventName` field set to the event name"* — the **discriminator** of the whole nested object | **accept, and it is the one output field whose *value* can legitimately fail validation.** Absent or mismatched ⇒ `schema_invalid` for the **whole object**, top-level fields included. "The top-level fields still apply" is the tempting softening and it contradicts both the resolver (`parse_stdout` returns `parsed=None` outside `valid`, and `absorb_channels` runs only on `valid` — §4.2) and the reference, which validates the object as a unit (*"a parsed object that fails schema validation"*). A partial-validity state is a coherent alternative, but it is a **profile deviation** needing its own row here. Omitting this field from a sweep leaves the parser reading an `hSO` block addressed to another event |
 | `hSO.additionalContext` | 6 of 8 | context for the model | **accept** (§4.1) |
-| `decision` / `reason` | UPS, PostToolUse, Stop, PreCompact; **`PostToolUseFailure` contested** | block + reason | **accept** on the four — but note **`"block"` does not mean *stop* on `PostToolUse`**: *"adds the `reason` next to the tool result. Claude still sees the original output"* (`hooks.md:1933`), so it is a feedback channel and the turn continues. Only `continue:false` stops. On `PostToolUseFailure` the reference contradicts itself — see below. Pending **G7**, agentao does **not** honor a `decision` there (the narrower reading), while §4.1 keeps the capacity to represent one |
+| `decision` / `reason` | UPS, PostToolUse, Stop, PreCompact, **PostToolUseFailure** | block + reason | **accept** on all five — but `"block"` does not mean *stop* on either Post* event. `PostToolUse`: *"adds the `reason` next to the tool result. Claude still sees the original output"* (`hooks.md:1933`). `PostToolUseFailure`: **measured** the same shape — reason to the model, original error preserved, turn continues (`docs/reference/hooks-probe-2.1.251.md` §C). Both are feedback; only `continue:false` stops |
 | `permissionDecision` / `permissionDecisionReason` | PreToolUse | allow/deny/ask/defer | **accept** as a field; the **values** carry their own dispositions (§1): `allow` / `deny` / `ask` accept, **`defer` degrades to `deny`** with a `permissionDecisionReason` naming the unimplemented value, plus one diagnostic per (rule, field). Not "rejected with a reason", which §1's third rule forbids — and which no runtime could honor anyway: upstream `defer` *"exits gracefully so the tool can be resumed later"*, a resumption lifecycle (the session waits on disk, the hook may defer again) with no counterpart here — agentao has nowhere to park a pending call and no `tool_deferred` result. `deny` is the conservative degradation: the tool does not run, and the model is told why. The alternative is `ask`, which is closer in spirit and unavailable in non-interactive runs; **G7** picks. Degradation happens in `resolve()`, so the §5.4 lattice only ever sees `allow` / `deny` / `ask` |
 | `updatedInput` | PreToolUse | replaces the whole input object | **accept**, through §4.4's re-entry (G8) |
 | `updatedToolOutput` | PostToolUse | replaces the tool result; *"must match the tool's output shape"* | **accept, pending G2** — agentao has no tool output schemas (§5.3) |
@@ -1016,7 +1063,7 @@ never sees it. A predicate named in prose is not a mechanism — this is the tab
 
 | Event | `continue` / `stopReason` | `systemMessage` | `suppressOutput` | `terminalSequence` |
 |---|---|---|---|---|
-| `SessionStart` | **discarded — contested** (below) | honored | n/a — ignored | n/a — ignored |
+| `SessionStart` | **discarded — measured** (below) | honored | n/a — ignored | n/a — ignored |
 | `UserPromptSubmit` | honored | honored | n/a — ignored | n/a — ignored |
 | `PreToolUse` | honored | honored | n/a — ignored | n/a — ignored |
 | `PostToolUse` | honored | honored | n/a — ignored | n/a — ignored |
@@ -1051,10 +1098,15 @@ includes events which *also* sit in this table's no-decision rows — `SessionEn
 writes both sentences every time except here. So either `SessionStart` genuinely honors a stop nobody
 documented, or its section is missing the sentence its fourteen neighbours have.
 
-**Profile-1 takes the narrow reading — `continue:false` is `discarded` on `SessionStart`** — on §11
-q9's asymmetric-cost argument, which points harder here than it did for `PostToolUseFailure`: honoring
-an undocumented stop lets a hook refuse to start a session upstream would have started, and the cost
-of declining a stop nobody has asked for is nil. **G7** resolves it with the same probe.
+**Profile-1 takes the narrow reading — `continue:false` is `discarded` on `SessionStart`** — chosen
+on §11 q9's asymmetric-cost argument (honoring an undocumented stop lets a hook refuse to start a
+session upstream would have started; declining a stop nobody has asked for costs nothing) and since
+**confirmed by measurement**: a `SessionStart` hook printing `{"continue": false, "stopReason": …}`
+left the session started, the turn completed, and the reason nowhere in the output
+(`docs/reference/hooks-probe-2.1.251.md` §B, §0). So the fifteen-times-elsewhere sentence is missing
+from this event's section and the Decision-control row is what governs. The row is no longer
+contested; what remains unmeasured is whether `systemMessage` is *also* discarded here, which the
+probe's transport could not see — §5.1's matrix keeps it `honored` on the reference's own wording.
 
 `discarded` is the exact word, and it settles a question the cell would otherwise leave open: **the
 narrow branch is silent, not diagnosed.** A diagnostic belongs to the `ignore` axis, which reports an
@@ -1150,20 +1202,28 @@ where the `reason` goes, whether the original failure survives, or whether the t
 `PostToolUseFailure`'s own section defines `additionalContext` and no `decision` at all (`:2043-2046`),
 so there is no second source to read the effect out of.
 
-**G7** therefore probes **four** things, not one: (1) is a `decision` accepted at all; (2) where the
-`reason` is delivered — model, user, or transcript only; (3) is the original error preserved beside
-it; (4) does the turn continue afterwards. Only (1) decides the row; (2)–(4) decide the consumer, the
-lattice and the tests, and the plan must not pre-fill them from `PostToolUse`'s answers. The one thing
-that is not open: the event's *own* exit-2 row says it **cannot block** — *"Shows stderr to Claude;
-the tool already failed"*, in a table whose framing is that some events *"represent things that already
-happened or can't be prevented"* (`:838,855`). That constrains what a block could plausibly mean here;
-it is not a substitute for measuring it, and reading it as an answer to (1) is the inference §5.1
-already withdrew once. Until then the plan
-takes the narrow reading in behavior — **as a conservative profile deviation, not as a finding**: the
-evidence does not favour it, and it is chosen because the cost of being wrong is asymmetric (§11 q9).
-The wide reading is kept in *types*: §4.1's `BlockDecision` lists
-`PostToolUseFailure` again so the parse can represent a `decision` it does not yet honor — the same
-discipline §4.1 already applies to `defer`.
+**G7 probed four things, not one, and all four came back** (`docs/reference/hooks-probe-2.1.251.md`
+§C, §0): (1) a `decision` **is** accepted; (2) the `reason` reaches the **model**, on its own labelled
+line; (3) the **original error is preserved** before it; (4) the **turn continues**. So the wide
+reading of `hooks.md:999` is right for this event, and the narrow reading this plan held for seven
+revisions is **reversed** — profile-1 honors the `decision`, as feedback.
+
+**What the answers were not allowed to be, and the control that made them evidence.** (2)–(4) could
+not be pre-filled from `PostToolUse`, so they were measured; that they came back the *same* as
+`PostToolUse`'s is a result, not the assumption the flip list forbade. And a control run of the same
+event with an unrecognized key showed it reaching the model **zero** times, which is what separates
+"the field is honored" from "hook stdout is echoed at the model" — without it the finding would have
+measured the wrong mechanism.
+
+**The one thing that was never in tension.** The event's *own* exit-2 row says it **cannot block** —
+*"Shows stderr to Claude; the tool already failed"*, in a table framed around events that *"represent
+things that already happened or can't be prevented"* (`:838,855`). The measurement agrees with it:
+nothing is prevented, because a `block` here annotates rather than stops. Reading that row as an
+answer to (1) would still have been the inference §5.1 withdrew once — it constrains the *effect*, not
+the acceptance.
+
+§4.1's `BlockDecision` keeps listing `PostToolUseFailure`, now for a decision the profile **does**
+honor; the parse-wider-than-disposition split still earns its keep on `defer`.
 
 **Every `accept` in this table owes three things**: a field on `ParsedHookOutput` (§4.1), a row in the
 consumer table (§5.2), and an aggregation rule for when several handlers set it. This plan has shipped
@@ -1186,7 +1246,7 @@ easy to miss, because the dispatcher call sites look complete.
 | `UserPromptSubmit` | `decision:"block"`+`reason`, `hSO.additionalContext`, `continue`, exit 2; `suppressOriginalPrompt` **ignored** in profile-1 (§5.1) | partial (`_hook_dispatch.py`) | wire the three missing channels. **No route for `suppressOriginalPrompt`** — parsed and diagnosed, nothing consumes it, because agentao's block message never contains the prompt for it to suppress. a row demanding a route for an `ignore`d field is the drift to watch for here |
 | `PreToolUse` | `permissionDecision`, `updatedInput`, `hSO.additionalContext`, **`continue:false`** | decision yes; context parsed then logged | `tool_contexts` sink; `updated_tool_input` **plus the re-decide sequence** — the sink is the small half (§4.4, G8). And the turn-level stop route (§5.2.2), which is **not** the permission verdict: `continue:false` ends the turn, `deny` blocks one call |
 | `PostToolUse` | `decision:"block"`+`reason` (**feedback, not a stop** — below), `hSO.additionalContext`, `updatedToolOutput`, exit 2 → feedback, **`continue:false`** (a real stop) | **none** (`_dispatch_lifecycle`, `_dispatcher.py:120`) | result object + tool-result splice — and a decision about what `updatedToolOutput` replaces, since agentao's tool output is a string with no schema (§5.3). **Two different sinks, not one:** `decision:"block"` appends `reason` beside the preserved result and the turn continues; `continue:false` ends the turn (§5.2.2) |
-| `PostToolUseFailure` | `hSO.additionalContext`, exit-2 stderr → model, **`continue:false`**; `decision:"block"` **contested** (§5.1, G7) | **none** (`_dispatch_lifecycle`) | result object + model feedback; it must carry a turn-level `Stop` **unconditionally** (the universal row, §5.1). If G7 turns `decision` on, the sink follows **the probe's answers**, not `PostToolUse`'s — the shared global row fixes a wire shape and not an effect (§5.1, G7) |
+| `PostToolUseFailure` | `hSO.additionalContext`, exit-2 stderr → model, **`continue:false`**, and **`decision:"block"` → model feedback** (measured) | **none** (`_dispatch_lifecycle`) | result object + model feedback; it carries a turn-level `Stop` **unconditionally** (the universal row, §5.1). The `decision` sink is specified by measurement rather than inherited from `PostToolUse`: the `reason` reaches the **model** on its own line, the **original error is preserved** before it, and the **turn continues** (`docs/reference/hooks-probe-2.1.251.md` §C) |
 | `Stop` | `decision`, `hSO.additionalContext`, `continue`, exit 2 | mostly present | `user_notices` consumer; continuation from `hSO` |
 | `PreCompact` | exit 2, top-level `decision:"block"` | agentao's own spelling | the reference spellings (§3.3) |
 
@@ -1513,14 +1573,14 @@ lattice at rank 2, as the event's class rather than as a generic stop. On `Stop`
 normalization maps it to **continue**, which is why §4.2's `Block(reason)` spelling is a resolver-level
 name and not the merge-level class.
 
-**The same normalization is the door for a contested row.** Rank 1 admits anything whose *effect* is
-"ends processing", and the only test for membership is the effect. So if G7's probe finds that a
-`PostToolUseFailure` `decision:"block"` ends the turn, it does not stay a per-event `block`: `resolve()`
-normalizes it to `Stop(reason)` exactly as it normalizes exit 2 through `table.exit2(event)`, and it
-enters here — with the conditional rank-2 row below deleted rather than kept. If instead the probe
-finds it annotates and continues, it stays at rank 2 and rank 1 is untouched. **Which of the two is a
-probe result, not a plan decision**, which is why G7's flip list names both and §12 asserts neither
-until the probe returns.
+**The same normalization is the door for a contested row — and the probe walked through it.** Rank 1
+admits anything whose *effect* is "ends processing", and the only test for membership is the effect.
+`PostToolUseFailure`'s `decision:"block"` was the candidate: had it ended the turn, `resolve()` would
+normalize it to `Stop(reason)` exactly as it normalizes exit 2 through `table.exit2(event)`, and the
+rank-2 row below would be deleted rather than kept. **Measured, it annotates and continues**
+(`docs/reference/hooks-probe-2.1.251.md` §C), so it stays at rank 2 and rank 1 is untouched — the
+outcome the flip list reserved, reached by probing rather than by choosing. The door stays open for
+the next such row: membership is still decided by effect, never by which table a field appears in.
 
 Then, at rank 2, per event:
 
@@ -1528,7 +1588,7 @@ Then, at rank 2, per event:
 |---|---|---|
 | `PreToolUse` | **`deny > ask > allow`** | upstream's own multi-hook precedence is `deny > defer > ask > allow`; `defer` is **degraded to `deny` inside `resolve()`** (§5.1), so it never reaches the merge and the merger needs no arm for it. Keep this row and G9 spelling the same set of values, or the implementer cannot tell whether to handle `defer` |
 | `UserPromptSubmit`, `PostToolUse`, `PreCompact` | `block > none` | one axis, so a flat "deny wins" rule happens to be right here — and only here |
-| `PostToolUseFailure` | `block > none` — **conditional on G7** | Not in force today: profile-1 takes the narrow reading and honors no `decision` here (§5.1). The row exists because §5.1's rule is that an `accept` owes an aggregation rule, and G7 can turn this one on — at which point two profile handlers both returning `block` need a defined merge, and it is this one. Its `continue:false` arm is **not** conditional: that reaches the event through the universal row and merges at rank 1 |
+| `PostToolUseFailure` | `block > none` | **In force.** The probe found the event honors a top-level `decision` and that its effect is *feedback and continue*, so it merges here at rank 2 and rank 1 is untouched (`docs/reference/hooks-probe-2.1.251.md` §C). Two profile handlers both returning `block` merge on this row, tie-broken in declaration order. Its `continue:false` arm still merges at rank 1 through the universal row |
 | `Stop` | **`end-turn > continue > none`** | the only place the two contracts collide. Ending outranks continuing because it is the outcome the other cannot undo, and because agentao's own code already orders them that way (`_runner.py:964` returns before `:984` is reached). A continuation dropped this way becomes a `user_notices` entry naming the rule that lost — silently discarding it is how an author concludes their hook "sometimes doesn't fire" |
 
 None of this is expensive — it is one partition and one merge — but every part of it is observable,
@@ -1650,7 +1710,7 @@ two items moved for reasons that are not conformance.
 | 7 | `continue:false` honored on `Stop` only (§5.5) | Per the capability table — **not** a global switch — **and per §5.2.2's route table**: the switch is only half of it, since two of the five honoring events have no result object that can carry a stop, and their hooks run inside a tool worker three frames below anything that could act on one (`_dispatcher.py:267-288`, `tool_executor.py:462`, `tool_runner.py:249`). | **P2** | P2 |
 | 8 | exit 2 honored on `Stop` only (§5.6) | Per the capability table: block / feedback / ignore. | **P2** | P3 |
 | 9 | No `${CLAUDE_PLUGIN_ROOT}` (§5.7) | Placeholder substitution **and** env export — all **three** placeholders (§2.4). | **P1**, low cost | P3 — moved on cost |
-| 10 | **The `shell` field is not honored** (§2.4) | Reject it until G5 decides the shell; then honor it. Whether the `/bin/sh` baseline is itself a deviation is a **documented ambiguity in the reference**, not a finding. | **P2** | *not in the comparison* |
+| 10 | **The `shell` field is not honored** (§2.4) | **Ignore it with a diagnostic** — and the premise is withdrawn: 2.1.251 does not honor it either and runs command hooks under `sh`, so agentao's `/bin/sh` baseline is **conformant** (`docs/reference/hooks-probe-2.1.251.md` §A). The reference's self-contradiction is settled by measurement, not by picking a sentence. | **P3** | *not in the comparison* |
 | 11 | **Windows runs `cmd.exe`** — neither Git Bash nor PowerShell (§2.4) | Out of scope here; agentao has no Windows CI job, so any claim either way is untested. Recorded so it is not re-discovered. | *note* | *not in the comparison* |
 | 12 | **`Stop` reentry cap is 3 where the snapshot's is 8** | Contract-resolved: 8 in `claude-code`, 3 in `agentao-v1`. It reads as a lead to preserve and is a divergence (§10 item 2). | **P2** | *comparison table, not among the nine* |
 | 13 | **`updatedInput` would bypass the permission verdict** (§4.4) | Aggregate → validate → **re-decide** → intersect → re-confirm. Gate G8, blocking step 6. | **P1** | *not in the comparison* |
@@ -1722,7 +1782,7 @@ precisely because the steps already treat them as dependencies.
   `SessionEnd` fires at `:815` and has already detached observers at `:770`, so the transport decision
   alone leaves headless users with no path. The reference's wire form for the headless case is an
   `SDKInformationalMessage` under `--output-format stream-json`.
-- **G2 — lifecycle result types, and the stop route out of a tool worker (§5.2.2).** Blocks step 4.
+- **G2 — lifecycle result types, and the stop route out of a tool worker (§5.2.2).** **DECIDED (rev 23): pair (ii)** — the queued-sibling guarantee is dropped and no seam is built; §1 records the queued-at-stop moment as **undefined**, and §12's test shrinks to the invariant that holds either way. Everything below about result types, the aggregation path and the `stopReason` tie-break still stands. Blocks step 4.
   `SessionStart`, `PostToolUse` and `PostToolUseFailure` are lifecycle-only today: all three return
   `list[HookAttachmentRecord]` out of `_dispatch_lifecycle` (`_dispatcher.py:66,126,134,267-288`), so
   anything a hook decides is dropped at the call site. `SessionStart` needs its return value for the
@@ -1770,7 +1830,7 @@ precisely because the steps already treat them as dependencies.
   (characters need no tokenizer, tokens are what the budget protects); mode/quota/cleanup/failure
   per §6.1. Tier 1 no longer writes to disk, so the temporary-plaintext question is closed rather than
   answered.
-- **G6 — hook concurrency bound, overflow, and merge determinism.** Blocks step 6b. Three
+- **G6 — hook concurrency bound, overflow, and merge determinism.** **DECIDED (rev 23): the fallback** — the promise is "all matching handlers are **submitted**", not "all start", and under `SessionEnd`'s shared budget a queued handler may never run. No per-dispatch admission control. (c)'s declaration-order tie-break is unaffected and still required. Blocks step 6b. Three
   decisions, not one. (a) The pool's name and cap — a fourth pool, kept off the three `CLAUDE.md`
   documents. (b) **What happens past the cap.** A cap alone does not deliver "all matching handlers
   start": beyond it they queue, and under `SessionEnd`'s shared 1.5-second budget a queued handler
@@ -1784,7 +1844,7 @@ precisely because the steps already treat them as dependencies.
   that is too much machinery, is to weaken the promise to "all handlers are *submitted*" and accept
   that `SessionEnd`'s shared budget may expire on a queued one. (c) The tie-break that makes an
   aggregated `reason` reproducible — declaration order, never completion order.
-- **G7 — the profile's two field matrices (§5.1 output, §5.3 input).** Blocks step 3. On the input
+- **G7 — the profile's two field matrices (§5.1 output, §5.3 input).** **PARTLY CLOSED (rev 23).** Both contested rows are measured (§0): `SessionStart` discards `continue:false` — narrow reading confirmed; `PostToolUseFailure` **honors** `decision`, as feedback-and-continue — narrow reading reversed. The artifact question is decided: **provenance table only, no in-repo archive**. The input-side rows below are **corrected but not closed** — the probe captured six real payloads (§0), which confirms the matrix's shape without deciding what agentao sources. Blocks step 3. On the input
   side: what `transcript_path` points at (or that it stays `null`); the `permission_mode` mapping or
   its omission, **including its removal from `PreCompact`**; whether `tool_response` becomes an
   invented object, stays a string as a documented divergence, or waits for real tool output schemas;
@@ -1802,10 +1862,13 @@ precisely because the steps already treat them as dependencies.
   **Flip lists.** A contested row is decided against the reference's wider statement, so the probe can
   reverse it — and "invert the assertion" is not a plan. Each branch names what changes, once:
 
+  **Both probes have now returned** (§0). The rows are kept as they were written, with the outcome
+  marked, because a flip list read after the fact is how the next contested row gets planned.
+
   | If the probe finds… | Then, together in one change |
   |---|---|
-  | **`SessionStart` honors `continue:false`** | §5.1's matrix cell `discarded` → `honored`; §5.2's `SessionStart` row gains a **control result** beside the notice and context sinks; §5.2.2's route table gains the row deleted here — *the session, before its first turn*, with **both surface semantics** (interactive: notice, then exit without entering the input loop; `agentao run`: no turn runs, `RunResult` carries the reason) and a **headless exit code**, which mid-turn stops do not need because they map through the ordinary turn-outcome path; **G2** gains a seventh decision (`SessionStart`'s result type and that exit code — `3` was the proposal, or `1`); **step 4** gains the route; and §12 replaces the non-stop test with an end-to-end stop test on **both surfaces**, which fails against today's code because `cli/session.py:81` discards the dispatcher's return value |
-  | **`PostToolUseFailure` honors `decision`** | §5.1's row drops "contested" — **but only probe answer (1) is settled by that.** The rest of this branch is written *after* answers (2)–(4), not before: §5.2's row gets the `reason` channel the probe found (model / user / transcript-only), a statement on whether the original error survives beside it, and whether the turn continues; **§5.4 changes in one of two mutually exclusive ways, and the probe picks** — if answers (2)–(4) describe a *feedback / per-event* effect, the conditional `block > none` row at rank 2 simply becomes unconditional; if they describe *ending the turn*, that row is **deleted** instead and `resolve()` normalizes the block to `Stop(reason)` so it enters at **rank 1**, which then also changes rank 1's source list, **G9**'s parenthetical, and the resolver and consumer that produce and read it; §12 gains the `decision` branch it already reserves, **plus a multi-handler aggregation test**, since the `accept` owes an aggregation rule the moment it is honored (§5.1). What this row may **not** do is copy `PostToolUse`'s semantics across: the global row they share fixes a shape, not an effect (§5.1) |
+  | **`SessionStart` honors `continue:false`** — ❌ **did not fire**; measured `discarded` | §5.1's matrix cell `discarded` → `honored`; §5.2's `SessionStart` row gains a **control result** beside the notice and context sinks; §5.2.2's route table gains the row deleted here — *the session, before its first turn*, with **both surface semantics** (interactive: notice, then exit without entering the input loop; `agentao run`: no turn runs, `RunResult` carries the reason) and a **headless exit code**, which mid-turn stops do not need because they map through the ordinary turn-outcome path; **G2** gains a seventh decision (`SessionStart`'s result type and that exit code — `3` was the proposal, or `1`); **step 4** gains the route; and §12 replaces the non-stop test with an end-to-end stop test on **both surfaces**, which fails against today's code because `cli/session.py:81` discards the dispatcher's return value |
+  | **`PostToolUseFailure` honors `decision`** — ✅ **fired**, and answers (2)–(4) selected the *feedback* branch below | §5.1's row drops "contested" — **but only probe answer (1) is settled by that.** The rest of this branch is written *after* answers (2)–(4), not before: §5.2's row gets the `reason` channel the probe found (model / user / transcript-only), a statement on whether the original error survives beside it, and whether the turn continues; **§5.4 changes in one of two mutually exclusive ways, and the probe picks** — if answers (2)–(4) describe a *feedback / per-event* effect, the conditional `block > none` row at rank 2 simply becomes unconditional; if they describe *ending the turn*, that row is **deleted** instead and `resolve()` normalizes the block to `Stop(reason)` so it enters at **rank 1**, which then also changes rank 1's source list, **G9**'s parenthetical, and the resolver and consumer that produce and read it; §12 gains the `decision` branch it already reserves, **plus a multi-handler aggregation test**, since the `accept` owes an aggregation rule the moment it is honored (§5.1). What this row may **not** do is copy `PostToolUse`'s semantics across: the global row they share fixes a shape, not an effect (§5.1) |
 
   Neither list is speculative work: both name sections that were written and then deleted, or left
   conditional, when the narrow reading was taken. Writing them down is what stops that deletion from
@@ -1825,7 +1888,7 @@ precisely because the steps already treat them as dependencies.
   workers), the lock, the **stable rule key** that survives a plugin reload, and the lifecycle on
   reload and on `/clear`. Small, and it is the difference between a useful one-time notice and either
   a per-invocation storm or silence.
-- **G8 — the `PreToolUse` lifecycle (§4.4).** Blocks step 6. Ten steps, and the half that gets omitted
+- **G8 — the `PreToolUse` lifecycle (§4.4).** **PARTLY CLOSED (rev 23).** The invalid-rewrite branch is **measured**: upstream rejects the call and the original never runs, so the plan's choice ships as conformance, not as a deviation from safety. The **pre-execution validator is dropped** by maintainer decision — no `jsonschema` promotion, no `Tool.preflight()`, step 2 of the order below is deleted and §1 records the narrowed promise. What remains open is the rest of the lifecycle. Blocks step 6. Ten steps, and the half that gets omitted
   is the front: **when the hook fires** (never on an unknown tool or a failed input validation; **always** on a
   permission denial, which means deleting the `tool_runner.py:277` skip in `claude-code` mode and
   keeping it in `agentao-v1`), then aggregate, validate against the tool schema, **re-decide**,
@@ -1840,7 +1903,7 @@ precisely because the steps already treat them as dependencies.
   because the alternative runs the input the hook was replacing. The sentence that used to settle this
   was never in the reference, so G8 settles it by probing — and if Claude Code does fall back to the
   original, that is adopted as a **documented deviation from safety**, in writing, not by default.
-- **G5 — `${CLAUDE_PLUGIN_DATA}`, exec form, and the shell.** Blocks step 3. The placeholder needs a
+- **G5 — `${CLAUDE_PLUGIN_DATA}`, exec form, and the shell.** **The shell half is CLOSED (rev 23) by measurement**: 2.1.251 runs command hooks under `sh` and ignores an explicit `shell`, so agentao's baseline is conformant and the field is ignored-with-a-diagnostic (§2.4, §0). No `executable=` change is needed. `${CLAUDE_PLUGIN_DATA}` and exec form stay open. Blocks step 3. The placeholder needs a
   per-plugin data directory agentao does not have (location, creation, lifetime); `args` needs a
   field on `ParsedHookRule` and an exec-form branch at `_dispatcher.py:353`, which is `shell=True`
   unconditionally today; the same site must decide `executable="/bin/bash"` (§2.4, "The baseline
@@ -1936,15 +1999,17 @@ Not gates — they can be decided during the step that touches them.
    not `.claude/skills`) with no lock on the reload path, so profile-1 ignores it. The open question is whether skill discovery should learn the `.claude` tree — which is a
    compatibility feature well beyond hooks — or whether accepting-and-documenting the difference is
    good enough. **G7.**
-9. **Is a `PostToolUseFailure` `decision` honored, and if so what does it do?** The snapshot says both
-   things about *whether*, and **nothing at all about what** (§5.1): the global row it appears in fixes
-   a wire shape whose members' effects are mutually incompatible, and the event's own section defines
-   only `additionalContext`. Until a probe settles it the plan takes the narrow reading, and the
-   asymmetry is this: declining a `decision` the reference does define costs at most a feedback channel
-   `additionalContext` already covers, while honoring one commits agentao to an **effect it cannot
-   name** — and the candidate effects differ on whether the turn survives. An earlier revision of this
-   entry asserted that honoring would "stop a turn upstream would have continued", which pre-filled
-   exactly the answer G7 exists to obtain, and contradicted the flip list two sections away.
+9. **Is a `PostToolUseFailure` `decision` honored, and if so what does it do? — CLOSED (rev 23).**
+   **Yes, and it annotates**: the reason reaches the model, the original error survives beside it, and
+   the turn continues (§0). The snapshot said both things about *whether* and nothing about *what*, and
+   no amount of re-reading it would have produced this — the global row fixes a wire shape whose
+   members' effects are mutually incompatible. Two things are worth keeping now that the answer is in.
+   The asymmetric-cost argument that governed the interim (decline a defined `decision` and you lose a
+   feedback channel `additionalContext` already covers; honor one and you commit to an unnamed effect)
+   was the right *interim* rule and is the wrong *permanent* one — it was always a way to be safe while
+   ignorant, not a finding. And an earlier revision of this entry asserted that honoring would "stop a
+   turn upstream would have continued": that pre-filled the answer G7 existed to obtain, contradicted
+   the flip list two sections away, **and was wrong on the facts** — the turn continues.
 
 ---
 
@@ -2007,12 +2072,12 @@ Not gates — they can be decided during the step that touches them.
 - **An `updatedInput` re-decide test** (§4.4, G8), the security case: a `PreToolUse` hook that
   rewrites an allowed `Bash` argument into one the hardline scanner denies, asserting the call is
   **denied and never executed** — and its mirror, a rewrite that fails the tool's parameter
-  schema. That one is **branch-structured on G8**, the way the G6 bullet above is: under the plan's
-  default the call is **denied** and the test asserts the *original* arguments never reach the executor
-  — the regression the pre-rev-11 wording would have shipped; if G8's probe instead adopts the
-  fall-back-to-original behavior, the test asserts *that*, and the deviation note it requires is part
-  of the same change. What the test may not do is assert `deny` unconditionally while the design says
-  the question is open. Plus a confirmation test asserting the
+  schema. That one **was** branch-structured on G8 and is now settled: the probe found upstream
+  rejects the call and **never runs the original** (§0), which is the plan's own default, so the test
+  asserts it unconditionally. One thing it must not assert is upstream's *error surface*: with the
+  pre-execution validator dropped, agentao cannot detect the mismatch, so the rewritten call reaches
+  the tool and fails there. The assertion that carries the security property is that the **original**
+  arguments never reach the executor. Plus a confirmation test asserting the
   Phase 2 prompt shows the **modified** input, and a no-re-dispatch test asserting the hook fires
   once.
 - **A `Stop` cap test**: 8 consecutive continuations honored under `claude-code` and 3 under
@@ -2041,13 +2106,15 @@ Not gates — they can be decided during the step that touches them.
 - **Four `PreToolUse` lifecycle tests** (§4.4, G8), which is where the reference is explicit and
   agentao is not: a call the permission engine already **denied** still fires the hook, and the verdict
   stays `DENY` after it (`claude-code`) while the same case does **not** fire it under `agentao-v1`; a
-  call rejected for an unknown tool name fires **no** hook; and — the two that need G8's validator —
-  input that fails the tool's **JSON Schema** and input that fails a **tool-specific** check each fire
-  no hook and never execute, with the schema case asserted *after* argument repair has had its chance.
+  call rejected for an unknown tool name fires **no** hook. **The two validator tests are deleted**
+  (§0): with no pre-execution validation there is no rejection for them to observe, so "input that
+  fails the schema fires no hook" has nothing to fail the input. §1 records the narrowed promise in
+  their place — which is the point of listing a non-promise rather than dropping a test quietly.
 - **Mixed-contract tests** (§5.4, G9), one per decision-carrying event — `PreToolUse`,
   **`PostToolUse`**, `Stop`, `UserPromptSubmit`, `PreCompact` and **`PostToolUseFailure`**, the last
-  of them unconditionally: `continue:false` reaches it through §5.1's universal row whatever G7
-  decides about its event-level `decision`, so only that *arm* of its test is G7-gated. **Two shapes,
+  of them unconditionally: `continue:false` reaches it through §5.1's universal row independently of
+  its event-level `decision`, and that `decision` is now honored too (§0), so **neither arm is
+  gated** — the distinction survives only as the reason the event was in this set before the probe. **Two shapes,
   not one template.** On the four events where **both** contracts carry a decision
   (`PreToolUse`, `UserPromptSubmit`, `Stop`, `PreCompact`): a v1 rule that blocks and a Claude rule
   behind it in declaration order, asserting the Claude rule still **executed**, that the merged verdict
@@ -2060,12 +2127,13 @@ Not gates — they can be decided during the step that touches them.
   controls mean opposite things** (§5.2.2): with `decision:"block"`, assert the original tool output is
   **preserved**, the `reason` reaches the **model** beside it, and the turn **continues** to the next
   model call; with `continue:false`, assert the turn **ends** and no further model call is made. On
-  `PostToolUseFailure` the `continue:false` branch is unconditional and the `decision` branch is
-  G7-gated — and **if G7 turns it on, a two-handler test lands with it**: two profile `PostToolUseFailure`
-  handlers both returning `block`, asserting the merged verdict and that the surfaced `reason` is the
+  `PostToolUseFailure` **both** branches are now unconditional: the probe turned the `decision` on
+  (§0), so the two-handler test lands with it — two profile `PostToolUseFailure` handlers both
+  returning `block`, asserting the merged verdict and that the surfaced `reason` is the
   declaration-order winner, which is the aggregation rule §5.1 requires of every honored `accept`.
-  **That test cannot be written before the probe reports**, and it may not cite §5.4's conditional
-  rank-2 row as its merge: which rank the block merges at *is one of the probe's answers* (§5.4). It is
+  It merges at **rank 2** on §5.4's now-unconditional `block > none` row, because the probe's answers
+  (2)–(4) put its effect in the feedback class, and the test asserts those answers directly: the
+  reason reaches the model, the original error survives beside it, and a further model call happens. It is
   written against whichever branch the probe selects — rank 2 with the `block > none` row, or rank 1
   with the block normalized to `Stop(reason)` — and it asserts the probe's own findings for (2)–(4):
   where the `reason` was delivered, whether the original error survived beside it, and whether a
@@ -2091,7 +2159,11 @@ Not gates — they can be decided during the step that touches them.
   it cannot pass above the worker at all: `ToolRunner.execute` returns `(bool, list)`
   (`tool_runner.py:249`) and the chat loop reads only those two (`_runner.py:773`).
   **Two calls do not exercise the two rules G2 actually adds**, so two more tests come with it:
-- **A queued-sibling test — which cannot be written against today's executor, and that is the
+- **A queued-sibling test — dropped with its guarantee (G2 took pair (ii), §0).** What lands instead
+  is the invariant that holds either way: every plan yields a result and a `role:"tool"` message. The
+  analysis below is kept because it is *why* the guarantee was dropped rather than quietly weakened,
+  and because the seam it describes is what a future revision would have to build first.
+  **The original bullet — which cannot be written against today's executor, and that is the
   finding.** "Nine short tools with the stop on an early one" is a race: the stopping tool's worker is
   freed and can pick up the ninth plan before the assertion runs, so the test passes with nothing ever
   queued. **Latching plans 2–8 does not fix it.** It is true that the `PostToolUse` hook runs *inside*
@@ -2135,8 +2207,9 @@ Not gates — they can be decided during the step that touches them.
   **and no diagnostic is emitted** — `discarded` is a delivery outcome and takes the silence rule
   (§5.1), where a diagnostic would wrongly report it as an agentao capability gap. A sibling assertion
   pins that a `systemMessage` in the same output **is** delivered, which is what separates the two
-  fields on this event. The test must name which reading it pins: if G7's probe finds upstream honors
-  the stop, this whole test is replaced per G7's flip list, not merely inverted.
+  fields on this event. The reading it pins is now a **measurement**, not a choice: 2.1.251 started the
+  session, ran the turn, and surfaced the reason nowhere (§0). The flip list stays on file for the
+  next contested row, not for this one.
 - **A headless `SessionEnd` notice test** (§5.2.1) at `_run_pipeline` level, not resolver level: a
   `SessionEnd` hook exiting 2 under `agentao run --output-format json`, asserting the stderr reaches
   the emitted `RunResult`. Written against today's ordering it fails, because `_emit` runs at
