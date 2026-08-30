@@ -28,6 +28,15 @@ def _reset_session(cli: AgentaoCLI, *, clear_memories: bool) -> None:
     actually starts in.
     """
     cli.on_session_end()
+    # The hook one-shot diagnostic registry is keyed by session id, and the old
+    # id is about to go out of scope for good. Dropping its bucket here is what
+    # keeps ``_diagnostics``'s stated lifetime honest — without it the entries
+    # accumulate for the life of the process under a key nothing can reach.
+    try:
+        from ...plugins.hooks._diagnostics import clear_session
+        clear_session(cli.current_session_id)
+    except Exception:  # pragma: no cover - never block a reset
+        pass
     cli.current_session_id = None
     if cli._plan_session.is_active:
         cli._plan_controller.exit_plan_mode()

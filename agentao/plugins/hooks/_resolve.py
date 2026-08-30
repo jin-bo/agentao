@@ -211,7 +211,7 @@ def diagnose_fields(
     the channel.
     """
     from ._diagnostics import get_registry, rule_key
-    from ._profile import OUTPUT_FIELDS, ignore_reason
+    from ._profile import ignore_reason
 
     registry = get_registry(session_id)
     key = rule_key(rule)
@@ -223,25 +223,33 @@ def diagnose_fields(
 
     known_top = {"continue", "stopReason", "systemMessage", "terminalSequence",
                  "suppressOutput", "hookSpecificOutput", "decision", "reason"}
+
+    def _classify(name: str, qualified: str, always_name: bool) -> None:
+        """The disposition is read **per event**, not per field.
+
+        ``OUTPUT_FIELDS[x]`` alone answers "does the profile know this name
+        anywhere", which is a different question: ``reloadSkills`` emitted on
+        ``PostToolUse`` would be announced with ``SessionStart``'s reason, as
+        though agentao declined it there. It is an unrecognized key on that
+        event, and that is what the author needs to be told.
+        """
+        disposition = field_disposition(qualified, event)
+        if disposition == "ignore":
+            _announce(qualified,
+                      f"{event}: '{qualified}' is parsed and has no effect — "
+                      f"{ignore_reason(qualified)}")
+        elif disposition is None and (always_name or name not in known_top):
+            _announce(qualified,
+                      f"{event}: '{qualified}' is not a field "
+                      f"{PROFILE_ID_NAME} implements — ignored")
+
     for name in data:
-        spec = OUTPUT_FIELDS.get(name)
-        if spec is not None and spec.disposition == "ignore":
-            _announce(name, f"{event}: '{name}' is parsed and has no effect — {ignore_reason(name)}")
-        elif spec is None and name not in known_top:
-            _announce(name, f"{event}: '{name}' is not a field {PROFILE_ID_NAME} implements — ignored")
+        _classify(name, name, always_name=False)
 
     nested = data.get("hookSpecificOutput")
     if isinstance(nested, dict):
         for name in nested:
             if name == "hookEventName":
                 continue
-            qualified = f"hookSpecificOutput.{name}"
-            spec = OUTPUT_FIELDS.get(qualified)
-            if spec is not None and spec.disposition == "ignore":
-                _announce(qualified,
-                          f"{event}: '{qualified}' is parsed and has no effect — "
-                          f"{ignore_reason(qualified)}")
-            elif spec is None:
-                _announce(qualified,
-                          f"{event}: '{qualified}' is not a field {PROFILE_ID_NAME} implements — ignored")
+            _classify(name, f"hookSpecificOutput.{name}", always_name=True)
     return notes

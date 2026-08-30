@@ -136,8 +136,14 @@ class ToolResultFormatter:
             hook_contexts = list(getattr(plan, "hook_tool_contexts", []) or [])
             hook_contexts += list(info.hook_model_contexts or [])
             if hook_contexts:
+                # Through the same strip ``_format_one`` applies to the result
+                # itself. Appending after it would leave this the one model-bound
+                # string on the path that never passes the boundary — and hook
+                # text is routinely a relay of something a hook read (a fetched
+                # page, an MCP payload, a file), which is exactly the carrier the
+                # tag strip exists for.
                 extra = "\n".join(
-                    f"<system-reminder>\n{ctx}\n</system-reminder>"
+                    f"<system-reminder>\n{strip_unicode_tags(str(ctx))}\n</system-reminder>"
                     for ctx in hook_contexts
                 )
                 message["content"] = f"{message.get('content', '')}\n\n{extra}"

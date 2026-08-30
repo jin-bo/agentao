@@ -61,7 +61,13 @@ def _claude_matcher_match(pattern: str, value: str) -> bool:
     regex, so the engine would raise on it — and :func:`_regex_match_full`
     degrades a malformed pattern to *exact equality*, which would silently make
     the most common matcher in the ecosystem match nothing at all.
+
+    The **empty string** is the second wildcard spelling, and it is the one that
+    fails quietly: the reference documents `""` and an omitted ``matcher`` as
+    the same thing ("match all"), while ``re.fullmatch("", "Read")`` is a miss.
+    A config copied out of a Claude Code setup that writes `""` would parse
+    without a warning and then never fire.
     """
-    if pattern == "*":
+    if pattern in ("*", ""):
         return True
     return _regex_match_full(pattern, value)
