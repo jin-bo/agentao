@@ -90,10 +90,11 @@ class ToolRunner:
         )
         self._formatter = ToolResultFormatter(transport, logger)
         self.readonly_mode: bool = False
-        #: The ``continue: false`` a ``PostToolUse*`` hook returned for the
-        #: batch that just ran, in **plan order**, or ``None``. Read by the chat
-        #: loop immediately after ``execute()``; reset at the top of every call
-        #: so a stop can never leak into the next batch.
+        #: The ``continue: false`` a ``PreToolUse`` / ``PostToolUse*`` hook
+        #: returned for the batch that just ran, in **plan order**, or ``None``.
+        #: Read by the chat loop immediately after ``execute()``; reset at the
+        #: top of every call so a stop can never leak into the next batch and
+        #: so phase 1.5's write survives to the end of the pipeline.
         self.last_hook_stop: Optional[str] = None
         # Plugin hook rules — set by the agent after plugin loading.
         self._plugin_hook_rules: list = []
@@ -158,6 +159,12 @@ class ToolRunner:
               self.messages. Includes placeholder messages if doom-loop was triggered.
         """
         result_messages: List[Dict[str, Any]] = []
+        # Reset **here**, at the top, not after phase 4: every early return
+        # below (doom-loop, no plans) skips the tail, so a bottom reset leaves
+        # the previous batch's stop live for the next one — and it also wiped
+        # the stop a ``PreToolUse`` hook sets during phase 1.5, which is the
+        # only place that value is ever written before phase 3.
+        self.last_hook_stop = None
 
         # --- Phase 1: Planning (sequential, no I/O) ---
         # Doom-loop detection, JSON parse, tool lookup, and the
@@ -272,12 +279,42 @@ class ToolRunner:
         # Arbitration is **plan order** — the model's own tool-call order — and
         # never completion order, which would make the surfaced reason vary run
         # to run for the same batch.
-        self.last_hook_stop = None
+        # A ``PreToolUse`` stop was recorded in phase 1.5 and is *earlier*, so
+        # it wins; only look at the Post* verdicts when nothing has claimed the
+        # slot yet.
+        if self.last_hook_stop is None:
+            for _plan in _plans:
+                _info = _exec_results.get(_plan.tool_call_id)
+                if _info is not None and _info.hook_stop_reason is not None:
+                    self.last_hook_stop = _info.hook_stop_reason
+                    break
+
+        # `systemMessage` and the one-shot field diagnostics a `PostToolUse*`
+        # hook produced go to the **user**, and the worker that computed them
+        # has no user surface. They ride home on the result and are emitted on
+        # the same `PLUGIN_HOOK_FIRED` payload `UserPromptSubmit` uses (G1's
+        # transport half) — otherwise they are computed and dropped, which is
+        # the "a sink is not a route" defect this event set out to close.
+        _notices: List[str] = []
         for _plan in _plans:
             _info = _exec_results.get(_plan.tool_call_id)
-            if _info is not None and _info.hook_stop_reason is not None:
-                self.last_hook_stop = _info.hook_stop_reason
-                break
+            if _info is not None:
+                _notices.extend(_info.hook_user_notices or [])
+        if _notices:
+            try:
+                self._transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
+                    # `PostToolUse*`, not `PostToolUse`: the batch mixes both
+                    # events — a failing call routes through
+                    # `PostToolUseFailure` — and the notices are aggregated
+                    # across it, so naming one of the two would be wrong for
+                    # every notice the other produced.
+                    "hook_name": "PostToolUse*",
+                    "rule_count": len(self._plugin_hook_rules),
+                    "outcome": "notice",
+                    "user_notices": _notices,
+                }))
+            except Exception:
+                pass
 
         return False, result_messages
 
@@ -329,8 +366,11 @@ class ToolRunner:
                 tool_input=plan.function_args,
                 session_id=self._session_id,
                 # Required in the input matrix and already in hand: the
-                # normalized call id the runner assigned this plan.
+                # normalized call id the runner assigned this plan, and the
+                # session working directory the Post* events already send —
+                # without it this one event reported ``Path.cwd()`` instead.
                 tool_use_id=plan.tool_call_id or "",
+                cwd=self._working_directory,
             )
             try:
                 hook_result = dispatcher.dispatch_pre_tool_use_decision(
@@ -396,17 +436,46 @@ class ToolRunner:
 
         Not validated first: agentao has no pre-execution schema check (§1's
         stated non-promise), so a rewrite the tool cannot accept fails inside the
-        tool instead of being refused here. The original never runs either way.
+        tool instead of being refused here.
+
+        The re-decide runs **before** the arguments are swapped in, and the swap
+        happens only if it returned. Mutating first and bailing out of the
+        ``except`` left the plan holding rewritten arguments under a verdict
+        computed on the originals — the precise state the paragraph above says
+        must never exist.
+
+        And when the re-decide cannot be completed, the call is **denied**. The
+        two tempting alternatives are both states the plan rules out: keeping
+        the rewrite runs arguments no verdict covers, and dropping it runs the
+        original — the input the hook was replacing, which is the unsafe branch
+        §9's G8 entry rejects by name and §12 pins as the security property
+        (*"the original arguments never reach the executor"*). A hook that
+        rewrites a command has already said the original must not run; an
+        engine failure is not permission to run it anyway.
         """
         previous = plan.decision
-        plan.function_args = dict(updated)
+        candidate = dict(updated)
         try:
             new_decision, new_detail = self._planner._decide(
-                plan.tool, plan.function_name, plan.function_args, self.readonly_mode,
+                plan.tool, plan.function_name, candidate, self.readonly_mode,
             )
         except Exception as exc:  # pragma: no cover - defensive
-            self._logger.warning("re-decide after updatedInput failed: %s", exc)
+            self._logger.warning(
+                "re-decide after updatedInput failed, denying the call: %s", exc,
+            )
+            plan.decision = ToolCallDecision.DENY
+            # ``_synth``, not a bare string: ``permission_detail`` is read as a
+            # ``PermissionDecisionDetail`` (``.matched_rule`` / ``.reason``) by
+            # the host-event emitter, so a string here trades a security hole
+            # for an ``AttributeError`` on the path that reports the denial.
+            plan.permission_detail = _synth(
+                PermissionDecision.DENY,
+                "PreToolUse hook rewrote this call's input and the permission "
+                f"re-decision could not be computed ({exc}); denied rather than "
+                "running either the rewrite or the original",
+            )
             return
+        plan.function_args = candidate
         if _STRICTNESS.get(new_decision, 0) > _STRICTNESS.get(previous, 0):
             plan.decision = new_decision
             plan.permission_detail = new_detail

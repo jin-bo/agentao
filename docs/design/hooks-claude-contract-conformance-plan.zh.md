@@ -92,7 +92,7 @@ changelog 头部为 **2.1.251**（`code.claude.com/docs/en/changelog.md`），�
 | **G7**（输入矩阵） | **探测**，部分 | 捕获了六份真实 stdin payload。它们**确认**了 §5.3 的形状 —— `permission_mode` 在四个事件上有、在 `SessionStart` / `SessionEnd` 上没有，`prompt_id` 在首次输入前缺席，`agent_id` / `agent_type` 处处缺席，`tool_response` 是结构化对象 —— 而把那些*决定*留着：`transcript_path` 由 agentao 从哪里取、`permission_mode` 怎么映射。两条是新事实：上游把 `background_tasks: []` / `session_crons: []` 发成「存在且为空」，以及 `permission_mode` 在同一会话内取值不同（`UserPromptSubmit` 上是 `auto`、工具事件上是 `default`）—— 记为观察，不作规则 | §5.3 |
 | **G4** | 实施时按计划的提案取定 | **Tier 1 = 每次调用每条流 8 MiB**，在共享 runner 上是 opt-in，所以其他调用方的失败模式一点不变；超限即杀进程树、该 hook 失败 —— 因为在 JSON 中途被切断的输出没有任何决定可贡献。**Tier 2 = 每个通道 10,000 字符** —— 上游自己的数字，按字符而不是 token，这样这条界限不随所配模型而变。溢出落 `.agentao/hook-outputs/`，文件 `0600`，字节落盘前先脱敏，按时龄（7 天）与数量（200）清理。落盘失败会**上报** —— 它抄的那个 tool-output sink 并不上报 | §6、第 1 步 |
 | **G10** | 实施时按计划的提案取定 | **会话级、加锁、以内容派生的 rule key 为键** —— 绝不用 `id(rule)`，它每次 reload 都变、会把一切静默重播一遍。陷阱在 dispatcher 作用域：它在六处被构造、其中两处**在池 worker 内**，所以挂在它身上的状态既去不了重、还会边去重边竞争。插件 reload 与 `/clear` 时调 `clear_session()`，这样改好的 hook 会重新出声、没改的继续闭嘴 | §4.2、第 2 步 |
-| **G3** | **探测** | **`*` 是通配符；其余一切都是锚定全匹配。** 七个探测点与 `re.fullmatch` 完全一致，其中两个推翻了本计划一直带着的**非锚定**读法：`ead` 匹配不上 `Read`，`Rea\|Wri` 也不行。所以修法是复用 agentao 已有的 `_regex_match_full` 外加 `*` 特判，而不是新写三路求值器 —— 而 §2.3 的头条依然成立，因为 `toolName` 走的是 `_glob_match` | §2.3、第 3 步 |
+| **G3** | **探测** | **`*` 是通配符；其余一切都是锚定全匹配。** 七个探测点与 `re.fullmatch` 完全一致，其中两个推翻了本计划一直带着的**非锚定**读法：`ead` 匹配不上 `Read`，`Rea\|Wri` 也不行。所以修法是复用 agentao 已有的 `_regex_match_full` 外加 `*` 特判，而不是新写三路求值器 —— 而 §2.3 的头条依然成立，因为 `toolName` 走的是 `_glob_match`。**一次追加运行（探测 §G3b）补上了通配符的第二种拼法**：`""` 同样触发，而 `re.fullmatch("", …)` 不匹配，所以把通配符写成它的配置会不带告警地解析、然后永不触发 | §2.3、第 3 步 |
 | **G7**（输入侧） | 实施时按计划的规则取定 | **`transcript_path` 发显式 `null`** —— agentao 没有持续写入的 transcript，而一个内容落后于会话的路径比一个 hook 能判断的 null 更糟；用 `null` 而非省略，是因为参考文档把它标为八个事件全required，省略会让取值直接抛异常。**`prompt_id` 省略** —— 逐 turn 的 id 不是 prompt id，挪用它等于编造一种不成立的关联。**`permission_mode` 能映射就映射、不能就省略** —— `plan`→`plan`、`full-access`→`bypassPermissions`；`workspace-write` 不是 `acceptEdits`、`read-only` 没有对应物，所以字段缺席，而不是把 agentao 自己的词表发出去。**`tool_response` 保持字符串**，作为写明的类型分歧。三个私有字段在 profile 模式**去掉**、v1 保留 | §5.3、第 3 步 |
 | **G1**（会话事件） | 实施时按计划的提案取定 | **一个结果类型，加上每个 surface 各自的路由。** `LifecycleHookResult` 把 `user_notices` / `model_contexts` / `stop_reason` 从那四个「只返回 attachment」的生命周期分派里带出来。交互式：CLI 消费它过去在裸 `except: pass` 里丢掉的那个返回值。Headless：`SessionEnd` 现在在 `_emit` **之前**分派，通知搭 `RunResult.warnings`（本来就会序列化）—— 旧顺序下 headless 用户根本没有路径。路由里 tool worker 那一半（`PostToolUse*` 的停止）属第 4b 步 | §5.2、§5.2.1、第 4 步 |
 | **G2**（停止路由） | 计划的决定 + 第 (ii) 支 | **裁定搭 `ToolExecutionResult` 回家**，在 `ToolRunner` 上按 **plan 顺序**仲裁，并经原有的 `_resolve_stop_hook` 路径结束这一轮（新增 `hook_stop` 这个 incomplete 取值）—— 所以 `agentao run` 不需要为它单开退出码。以 `runner.last_hook_stop` 暴露、而不是加第三个元组元素：`execute` 的二元组有一批与 hook 无关的测试调用者，而 `Agentao.last_turn` 是本仓库现成的先例。两处接缝都按**字符串**读、绝不按真值 —— `MagicMock` runner 对任何属性都有应答，在这里按真值判断会让桩去结束 turn。反馈（`additionalContext`、exit-2 stderr）以 `<system-reminder>` 拼在**被保留的**结果旁边，正是探测 §C 测到的形状 | §5.2.2、第 4 步 |
@@ -244,8 +244,9 @@ Claude Code 配置里拷出来的文件**没有 `contract` 键** —— 它是 C
 
 - agentao 对 `toolName` 走 glob（`_matchers.py:15`）：`*` 匹配一切，否则**精确相等**。
 - agentao 对 `trigger` 走锚定的 fullmatch 正则（`_matchers.py:30`）。
-- Claude 的 matcher 是一个字符串，而它的求值是**实测**出来的、不是推断的：`*` 是通配符，其余一切都是
-  **锚定全匹配**（`docs/reference/hooks-probe-2.1.251.zh.md` §G3）。
+- Claude 的 matcher 是一个字符串，而它的求值是**实测**出来的、不是推断的：`*` **与 `""`** 都是通配符，
+  其余一切都是**锚定全匹配**（`docs/reference/hooks-probe-2.1.251.zh.md` §G3 与 §G3b —— 分两次运行，
+  因为空字符串不在头七个里）。
 
 这次测量修正了本节。早先的版本依据 codex 的实现与参考文档的措辞，说上游用的是**非锚定**正则；七个探测点
 给出了相反结论，其中两个是决定性的：`ead` **匹配不上** `Read`，`Rea|Wri` 也匹配不上 —— 这两个非锚定搜索
@@ -256,7 +257,8 @@ agentao 把 `toolName` 送进的是 `_glob_match`、不是它那条锚定正则�
 的字面串、按相等比较，什么都匹配不到。一个翻译层会把规则注册进去、然后永远不触发，这比拒绝它更糟。
 
 变的是**代价**：`claude-code` 模式不需要新写一个三路求值器，它需要的是 agentao 已经有的那个锚定全匹配
-（`_regex_match_full`）外加对 `*` 的特判 —— `*` 不是合法正则，不能直接透传。**G3** 据此结案（§0）。
+（`_regex_match_full`）外加对 `*` 与 `""` 的特判 —— `*` 不是合法正则、不能直接透传，而 `""` 在
+`fullmatch` 下什么都匹配不到、上游却当「全匹配」。**G3** 据此结案（§0）。
 
 ### 2.4 handler 字段矩阵
 

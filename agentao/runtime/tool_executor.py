@@ -108,6 +108,15 @@ def _hook_contexts_of(result: Any) -> List[str]:
     return [c for c in contexts if isinstance(c, str)]
 
 
+def _hook_notices_of(result: Any) -> List[str]:
+    """The user-bound channel — ``systemMessage`` and the one-shot field
+    diagnostics. Same duck-typing discipline as :func:`_hook_stop_of`."""
+    notices = getattr(result, "user_notices", None)
+    if not isinstance(notices, list):
+        return []
+    return [n for n in notices if isinstance(n, str)]
+
+
 @dataclass
 class ToolExecutionResult:
     """Outcome of a single tool invocation."""
@@ -126,6 +135,11 @@ class ToolExecutionResult:
     #: ``additionalContext``. Spliced beside the tool result by the formatter,
     #: which is where the model actually sees it.
     hook_model_contexts: List[str] = field(default_factory=list)
+    #: Hook-authored notices for the **user** — ``systemMessage`` and the
+    #: one-shot ignored/unknown-field diagnostics. A different reader from
+    #: ``hook_model_contexts``, so a different field: the worker that computed
+    #: them has no user surface, and ``ToolRunner`` emits them after the batch.
+    hook_user_notices: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -488,13 +502,13 @@ class ToolExecutor:
                 pass
 
         if errored:
-            hook_stop, hook_contexts = self._dispatch_post_tool_failure_hook(
+            hook_stop, hook_contexts, hook_notices = self._dispatch_post_tool_failure_hook(
                 fn, args, error_msg,
                 rules=hook_rules, cwd=hook_cwd, session_id=hook_session_id,
                 tool_use_id=call_id, duration_ms=duration_ms,
             )
         else:
-            hook_stop, hook_contexts = self._dispatch_post_tool_hook(
+            hook_stop, hook_contexts, hook_notices = self._dispatch_post_tool_hook(
                 fn, args, result_text,
                 rules=hook_rules, cwd=hook_cwd, session_id=hook_session_id,
                 tool_use_id=call_id, duration_ms=duration_ms,
@@ -504,6 +518,7 @@ class ToolExecutor:
             fn_name=fn, result=result_text, status=status,
             duration_ms=duration_ms, error=error_msg,
             hook_stop_reason=hook_stop, hook_model_contexts=hook_contexts,
+            hook_user_notices=hook_notices,
         )
 
     # ------------------------------------------------------------------
@@ -682,9 +697,9 @@ class ToolExecutor:
         session_id: Optional[str],
         tool_use_id: str = "",
         duration_ms: Optional[int] = None,
-    ) -> tuple[Optional[str], List[str]]:
+    ) -> tuple[Optional[str], List[str], List[str]]:
         if not rules:
-            return None, []
+            return None, [], []
         try:
             from ..plugins.hooks import PluginHookDispatcher
             payload = self._hook_adapter.build_post_tool_use(
@@ -698,10 +713,14 @@ class ToolExecutor:
             )
             dispatcher = PluginHookDispatcher(cwd=cwd)
             result = dispatcher.dispatch_post_tool_use(payload=payload, rules=rules)
-            return _hook_stop_of(result), _hook_contexts_of(result)
+            return (
+                _hook_stop_of(result),
+                _hook_contexts_of(result),
+                _hook_notices_of(result),
+            )
         except Exception as exc:
             self._logger.warning("PostToolUse hook dispatch error: %s", exc)
-        return None, []
+        return None, [], []
 
     def _dispatch_post_tool_failure_hook(
         self,
@@ -714,9 +733,9 @@ class ToolExecutor:
         session_id: Optional[str],
         tool_use_id: str = "",
         duration_ms: Optional[int] = None,
-    ) -> tuple[Optional[str], List[str]]:
+    ) -> tuple[Optional[str], List[str], List[str]]:
         if not rules:
-            return None, []
+            return None, [], []
         try:
             from ..plugins.hooks import PluginHookDispatcher
             payload = self._hook_adapter.build_post_tool_use_failure(
@@ -728,7 +747,11 @@ class ToolExecutor:
             result = dispatcher.dispatch_post_tool_use_failure(
                 payload=payload, rules=rules,
             )
-            return _hook_stop_of(result), _hook_contexts_of(result)
+            return (
+                _hook_stop_of(result),
+                _hook_contexts_of(result),
+                _hook_notices_of(result),
+            )
         except Exception as exc:
             self._logger.warning("PostToolUseFailure hook dispatch error: %s", exc)
-        return None, []
+        return None, [], []

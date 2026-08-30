@@ -54,6 +54,23 @@ from ._output_parsing import _cap, _OutputParsingMixin
 logger = logging.getLogger(__name__)
 
 
+def _payload_session_id(payload: dict[str, Any]) -> str | None:
+    """The session id out of either wire shape, or ``None``.
+
+    Flat ``Stop`` / ``PreCompact`` payloads carry ``session_id``; the
+    ``{event, data}`` envelope carries ``data.sessionId``.
+    """
+    flat = payload.get("session_id")
+    if isinstance(flat, str) and flat:
+        return flat
+    data = payload.get("data")
+    if isinstance(data, dict):
+        nested = data.get("sessionId")
+        if isinstance(nested, str) and nested:
+            return nested
+    return None
+
+
 class PluginHookDispatcher(_OutputParsingMixin):
     """Execute hooks for plugin-defined events.
 
@@ -380,7 +397,9 @@ class PluginHookDispatcher(_OutputParsingMixin):
                 continue
             if proc is None:
                 continue
-            self._route_lifecycle_output(event, rule, proc, result)
+            self._route_lifecycle_output(
+                event, rule, proc, result, session_id=_payload_session_id(payload),
+            )
             result.attachments.append(
                 _make_attachment(
                     "hook_success",
@@ -399,6 +418,8 @@ class PluginHookDispatcher(_OutputParsingMixin):
         rule: ParsedHookRule,
         proc: subprocess.CompletedProcess[str],
         result: LifecycleHookResult,
+        *,
+        session_id: str | None = None,
     ) -> None:
         """Route one lifecycle hook's output per the profile's tables.
 
@@ -451,7 +472,10 @@ class PluginHookDispatcher(_OutputParsingMixin):
         # G10's producer. An ignored or unrecognized field is named **once** per
         # (rule, field) per session, so the author learns it had no effect
         # without a notice on every invocation.
-        result.user_notices.extend(diagnose_fields(data, event, rule))
+        # The session id is what makes the registry session-scoped rather than
+        # process-wide; without it every caller shares one bucket and "once per
+        # session" quietly becomes "once per process, forever".
+        result.user_notices.extend(diagnose_fields(data, event, rule, session_id))
 
         system_message = data.get("systemMessage")
         if isinstance(system_message, str) and honors_system_message(event):
@@ -467,7 +491,14 @@ class PluginHookDispatcher(_OutputParsingMixin):
 
         if data.get("continue") is False and honors_continue(event):
             reason = data.get("stopReason")
-            result.stop_reason = _cap(str(reason), rule) if isinstance(reason, str) else ""
+            if isinstance(reason, str):
+                result.stop_reason = _cap(reason, rule)
+            elif result.stop_reason is None:
+                # A stop with no message. Still a stop — the empty string is what
+                # marks it, and `None` is what marks "no stop" — but it must not
+                # overwrite a reason an earlier matching rule (or the exit-2
+                # branch above) already supplied.
+                result.stop_reason = ""
 
     def _matches(self, rule: ParsedHookRule, payload: dict[str, Any]) -> bool:
         """Check if a rule's matcher applies to this payload."""
@@ -723,20 +754,27 @@ class PluginHookDispatcher(_OutputParsingMixin):
 
         decision: str | None = None
         reason: str | None = None
+        degraded_note: str | None = None
         hook_specific = data.get("hookSpecificOutput")
         if isinstance(hook_specific, dict):
             raw_decision = hook_specific.get("permissionDecision")
             if isinstance(raw_decision, str) and raw_decision in ("allow", "deny", "ask"):
                 decision = raw_decision
-            elif raw_decision in PERMISSION_DECISION_DEGRADES and profile:
+            elif isinstance(raw_decision, str) and raw_decision in PERMISSION_DECISION_DEGRADES \
+                    and profile:
                 # A value agentao cannot honor sits in exactly the position of a
                 # field it cannot honor: accept, ignore, or **degrade to a named
                 # alternative** — never "reject", which would discard every
                 # sibling field in the same object. The reason says which value
                 # was degraded, because silently substituting one permission
                 # verdict for another is the worst of the three outcomes.
+                #
+                # ``isinstance`` first: ``in`` on a dict hashes its operand, so a
+                # hook printing a list or an object here raised ``TypeError`` out
+                # of dispatch — which the caller swallows, dropping every *other*
+                # hook's verdict for this call and failing open.
                 decision = PERMISSION_DECISION_DEGRADES[raw_decision]
-                reason = (
+                degraded_note = (
                     f"hook returned permissionDecision {raw_decision!r}, which "
                     f"{PROFILE_ID} does not implement — degraded to "
                     f"{decision!r}"
@@ -746,6 +784,12 @@ class PluginHookDispatcher(_OutputParsingMixin):
                 if isinstance(rv, str):
                     reason = rv
                     break
+            if degraded_note:
+                # The hook's own reason does not *replace* the substitution
+                # notice — it qualifies it. Letting it win (which it did, since
+                # a `defer` almost always ships a reason) is exactly the silent
+                # verdict swap the branch above exists to prevent.
+                reason = f"{degraded_note}; hook said: {reason}" if reason else degraded_note
             self._harvest_additional_context(hook_specific.get("additionalContext"), result)
 
         # Tolerate top-level ``reason`` / ``additionalContext`` for hook
@@ -920,6 +964,11 @@ class PluginHookDispatcher(_OutputParsingMixin):
             result.force_continue = True
             result.follow_up_message = stderr
             result.stop_reason = stderr
+            # The reentry cap is contract-resolved, and exit 2 is the canonical
+            # way a Claude `Stop` hook blocks. Leaving this unset here gave the
+            # profile's own idiom the `agentao-v1` cap of 3 instead of 8 — the
+            # divergence the contract resolution exists to close.
+            result.continuation_contract = rule.contract
             result.messages.append(
                 _make_attachment(
                     "hook_stop_blocked_via_exit2",

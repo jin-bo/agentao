@@ -242,7 +242,34 @@ is still not a dict matcher spelled differently, because `toolName` is routed th
 where `Edit|Write` is a literal with no `*` and matches nothing.
 
 **What this does not prove.** Case sensitivity, what an *invalid* regex does, and whether MCP tool
-names (`mcp__server__tool`) are matched by the same path.
+names (`mcp__server__tool`) are matched by the same path. The **empty string** was not among the
+seven either — see G3b, a separate run.
+
+## G3b — the empty matcher (follow-up, 2026-08-30)
+
+Recorded as its own run rather than an eighth row above, because it is a different measurement: a
+`Bash` call driven by *"run: touch RAN.txt"*, not the `Read` call the seven shared. Merging them into
+one table would claim a coverage neither run has.
+
+Three throwaway projects, one `PreToolUse` handler each appending to a marker file, under
+`--permission-mode bypassPermissions`:
+
+| Matcher | Tool ran? | Hook fired? | Role |
+|---|---|---|---|
+| `*` | yes | **yes** | positive control — the mechanism is reachable |
+| `""` | yes | **yes** | the question |
+| `NoSuchToolName` | yes | **no** | negative control — the marker is not written unconditionally |
+
+**Finding.** `""` is a **wildcard**, alongside `*`. Both controls are present, which is what the
+first probe's method notes were written to require.
+
+**Consequence for agentao.** `re.fullmatch("", "Bash")` is a miss, so without a special case a config
+copied out of a Claude Code setup that spells the wildcard `""` parses with **no warning** and then
+never fires — the same silent-nothing failure as the unanchored reading, reached through a different
+spelling. `_claude_matcher_match` special-cases both.
+
+**What this does not prove.** Whether an omitted `matcher` key behaves the same way (untested here),
+and nothing about events other than `PreToolUse`.
 
 ## G6 — what a matcher compares against on the session events
 
