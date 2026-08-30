@@ -45,3 +45,23 @@ def _regex_match_full(pattern: str, value: str) -> bool:
         # A malformed pattern degrades to exact-equality so the rule is
         # not silently dropped at runtime.
         return pattern == value
+
+
+def _claude_matcher_match(pattern: str, value: str) -> bool:
+    """Evaluate a Claude-shaped string matcher against a tool name.
+
+    **Measured, not inferred** (``docs/reference/hooks-probe-2.1.251.md`` §G3):
+    ``*`` is a wildcard, and every other pattern is an **anchored full match**.
+    Seven probe points agree with ``re.fullmatch`` exactly, and two of them rule
+    out an unanchored search — ``ead`` does not match ``Read``, and neither does
+    ``Rea|Wri``. Earlier revisions of the design said unanchored, from codex's
+    implementation; this is the corrected reading.
+
+    ``*`` has to be special-cased rather than passed through: it is not a valid
+    regex, so the engine would raise on it — and :func:`_regex_match_full`
+    degrades a malformed pattern to *exact equality*, which would silently make
+    the most common matcher in the ecosystem match nothing at all.
+    """
+    if pattern == "*":
+        return True
+    return _regex_match_full(pattern, value)

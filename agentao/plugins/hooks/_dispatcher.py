@@ -21,8 +21,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from ...capabilities.process import run_captured
+from ...capabilities.process import OutputLimitExceeded, build_child_env, run_captured
 from ..models import (
+    LifecycleHookResult,
     CLAUDE_FLAT_EVENTS,
     HookAttachmentRecord,
     ParsedHookRule,
@@ -33,8 +34,22 @@ from ..models import (
 )
 from ._alias import ToolAliasResolver
 from ._attachments import _make_attachment
-from ._matchers import _glob_match, _regex_match_full
-from ._output_parsing import _OutputParsingMixin
+from ._budget import HOOK_RAW_OUTPUT_LIMIT_BYTES
+from ._paths import _placeholder_values, _substitute
+from ._resolve import diagnose_fields, parse_stdout
+from ._profile import (
+    LEGACY_CONTRACT_ID,
+    PLAIN_TEXT_CONTEXT_EVENTS,
+    PERMISSION_DECISION_DEGRADES,
+    PROFILE_ID,
+    exit2_outcome,
+    field_disposition,
+    honors_continue,
+    honors_system_message,
+)
+from ._profile_payload import to_profile_payload
+from ._matchers import _claude_matcher_match, _glob_match, _regex_match_full
+from ._output_parsing import _cap, _OutputParsingMixin
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +77,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
         *,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         return self._dispatch_lifecycle("SessionStart", payload, rules)
 
     def dispatch_session_end(
@@ -70,7 +85,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
         *,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         return self._dispatch_lifecycle("SessionEnd", payload, rules)
 
     def dispatch_pre_tool_use(
@@ -107,22 +122,87 @@ class PluginHookDispatcher(_OutputParsingMixin):
         is parsed and recorded on the result but not injected.
         """
         result = PreToolUseHookResult()
-        matched = self.select_matching_rules("PreToolUse", payload, rules)
+        matched = [
+            r for r in self.select_matching_rules("PreToolUse", payload, rules)
+            if r.hook_type == "command"
+        ]
         result.matched_rule_count = len(matched)
-        for rule in matched:
-            if rule.hook_type != "command":
-                continue
-            self._run_pre_tool_use_command(rule, payload, result)
-            if result.decision == "deny":
-                break
+        if not matched:
+            return result
+
+        # --- G9: partition by contract, run, merge once -------------------
+        # One event's rule list can hold both contracts, because the contract is
+        # file-scoped and ``resolve_all_hook_rules`` concatenates every plugin's
+        # every spec into one flat list. If dispatch walked that merged list, a
+        # v1 rule's short-circuit would stop the walk — and with it the
+        # *execution* of the profile rules behind it, breaking the one guarantee
+        # §2.5 exists to provide.
+        #
+        # So: two groups. The v1 group keeps its short-circuit and it ends
+        # **only** the v1 group. The profile group runs every handler.
+        #
+        # The groups run one after the other rather than concurrently: G6 took
+        # its documented fallback, so there is no hook pool to run them in, and
+        # sequential ordering only *delays* the profile group — it cannot
+        # suppress it, which is the property that matters.
+        per_rule: list[tuple[int, PreToolUseHookResult]] = []
+
+        v1_group = [(i, r) for i, r in enumerate(matched) if r.contract == LEGACY_CONTRACT_ID]
+        profile_group = [(i, r) for i, r in enumerate(matched) if r.contract != LEGACY_CONTRACT_ID]
+
+        for index, rule in v1_group:
+            one = PreToolUseHookResult()
+            self._run_pre_tool_use_command(rule, payload, one)
+            per_rule.append((index, one))
+            if one.decision == "deny":
+                break                      # ends this group only
+
+        for index, rule in profile_group:
+            one = PreToolUseHookResult()
+            self._run_pre_tool_use_command(rule, payload, one)
+            per_rule.append((index, one))
+
+        self._merge_pre_tool_use(per_rule, result)
         return result
+
+    @staticmethod
+    def _merge_pre_tool_use(
+        per_rule: list[tuple[int, PreToolUseHookResult]],
+        result: PreToolUseHookResult,
+    ) -> None:
+        """One merge, group-agnostic, over the event's lattice.
+
+        ``deny > ask > allow`` — ``defer`` never reaches here, having been
+        degraded inside the parser, so the merger needs no arm for it.
+
+        **The reason tie-break ranks only inside the winning class**, and by
+        *declaration* order rather than group order: surfacing an ``ask``'s
+        reason for a ``deny`` would attribute the verdict to a rule that did not
+        produce it. Contexts, rewrites and stops are orthogonal and concatenate
+        regardless of who won.
+        """
+        rank = {"deny": 2, "ask": 1, None: 0}
+        winner: tuple[int, PreToolUseHookResult] | None = None
+        for index, one in sorted(per_rule, key=lambda pair: pair[0]):
+            if one.additional_contexts:
+                result.additional_contexts.extend(one.additional_contexts)
+            if one.updated_tool_input is not None and result.updated_tool_input is None:
+                result.updated_tool_input = one.updated_tool_input
+            if one.stop_reason is not None and result.stop_reason is None:
+                result.stop_reason = one.stop_reason
+            if winner is None or rank[one.decision] > rank[winner[1].decision]:
+                if one.decision is not None:
+                    winner = (index, one)
+        if winner is not None:
+            result.decision = winner[1].decision
+            result.reason = winner[1].reason
 
     def dispatch_post_tool_use(
         self,
         *,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         return self._dispatch_lifecycle("PostToolUse", payload, rules)
 
     def dispatch_post_tool_use_failure(
@@ -130,7 +210,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
         *,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         return self._dispatch_lifecycle("PostToolUseFailure", payload, rules)
 
     def dispatch_stop(
@@ -149,11 +229,18 @@ class PluginHookDispatcher(_OutputParsingMixin):
         result = StopHookResult()
         stop_rules = self.select_matching_rules("Stop", payload, rules)
         result.matched_rule_count = len(stop_rules)
-        for rule in stop_rules:
-            if rule.hook_type == "command":
-                self._run_stop_command_hook(rule, payload, result)
-            if result.blocking_error or result.force_continue:
-                break
+        # G9 partitioning. On `Stop` the two contracts mean **opposite** things —
+        # v1's `blockingError` ends the turn while the profile's
+        # `decision:"block"` continues it — so letting a v1 short-circuit stop
+        # the walk would decide the event by which file happened to be first.
+        for group_is_v1 in (True, False):
+            for rule in stop_rules:
+                if (rule.contract == LEGACY_CONTRACT_ID) is not group_is_v1:
+                    continue
+                if rule.hook_type == "command":
+                    self._run_stop_command_hook(rule, payload, result)
+                if group_is_v1 and (result.blocking_error or result.force_continue):
+                    break                  # ends the v1 group only
         return result
 
     def dispatch_pre_compact(
@@ -161,7 +248,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
         *,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         return self._dispatch_lifecycle("PreCompact", payload, rules)
 
     def dispatch_pre_compact_decision(
@@ -185,12 +272,15 @@ class PluginHookDispatcher(_OutputParsingMixin):
         result = PreCompactHookResult()
         matched = self.select_matching_rules("PreCompact", payload, rules)
         result.matched_rule_count = len(matched)
-        for rule in matched:
-            if rule.hook_type != "command":
-                continue
-            self._run_pre_compact_command(rule, payload, result)
-            if result.decision == "cancel":
-                break
+        for group_is_v1 in (True, False):
+            for rule in matched:
+                if rule.hook_type != "command":
+                    continue
+                if (rule.contract == LEGACY_CONTRACT_ID) is not group_is_v1:
+                    continue
+                self._run_pre_compact_command(rule, payload, result)
+                if group_is_v1 and result.decision == "cancel":
+                    break                  # ends the v1 group only
         return result
 
     def _run_pre_compact_command(
@@ -269,26 +359,127 @@ class PluginHookDispatcher(_OutputParsingMixin):
         event: str,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         """Run all matching command hooks for a lifecycle event.
 
-        These hooks are side-effect only — failures produce warnings, not
-        errors, and never change tool input/output.
+        Returns a result rather than a bare attachment list: these four events
+        have channels the reference defines — exit-2 stderr, `additionalContext`,
+        `systemMessage` — and a caller that receives only attachments cannot
+        route any of them.
         """
-        attachments: list[HookAttachmentRecord] = []
+        result = LifecycleHookResult()
         matched = [r for r in rules if r.event == event and r.hook_type == "command"]
 
         for rule in matched:
             if not self._matches(rule, payload):
                 continue
-            attachment = self._run_lifecycle_command(rule, payload)
-            if attachment is not None:
-                attachments.append(attachment)
+            result.matched_rule_count += 1
+            proc, failure = self._run_subprocess(rule, payload)
+            if failure:
+                result.attachments.append(self._timeout_attachment(rule, failure))
+                continue
+            if proc is None:
+                continue
+            self._route_lifecycle_output(event, rule, proc, result)
+            result.attachments.append(
+                _make_attachment(
+                    "hook_success",
+                    {"stdout": _cap(proc.stdout.strip(), rule),
+                     "returncode": proc.returncode},
+                    hook_name=rule.command,
+                    hook_event=rule.event,
+                )
+            )
 
-        return attachments
+        return result
+
+    def _route_lifecycle_output(
+        self,
+        event: str,
+        rule: ParsedHookRule,
+        proc: subprocess.CompletedProcess[str],
+        result: LifecycleHookResult,
+    ) -> None:
+        """Route one lifecycle hook's output per the profile's tables.
+
+        A **narrow** interpreter, deliberately: step 6 replaces it with the full
+        ``resolve()`` over five stdout states and three exit-code branches. What
+        it must not do meanwhile is contradict the tables, so every branch here
+        asks ``_profile`` rather than deciding for itself.
+        """
+        if rule.contract == LEGACY_CONTRACT_ID:
+            # `agentao-v1` is frozen: these events were side-effect only and stay
+            # that way. Only a profile rule gets the new channels.
+            if proc.returncode != 0:
+                logger.warning(
+                    "Lifecycle hook exited %s: %s (stderr: %s)",
+                    proc.returncode, rule.command, proc.stderr[:200],
+                )
+            return
+
+        stderr = (proc.stderr or "").strip()
+        if proc.returncode == 2:
+            # Exit 2 is not a boolean: three outcomes, and all three are live
+            # across the eight events.
+            outcome = exit2_outcome(event)
+            if outcome == "user_notice" and stderr:
+                result.user_notices.append(_cap(stderr, rule))
+            elif outcome == "model_feedback" and stderr:
+                result.model_contexts.append(_cap(stderr, rule))
+            elif outcome == "block" and stderr:
+                result.stop_reason = result.stop_reason or _cap(stderr, rule)
+
+        # One classifier for the whole package: the five-state machine of §4.2,
+        # which decides whether to attempt JSON from **both ends** of the string
+        # and treats a parse failure as an error rather than as text.
+        stdout = (proc.stdout or "").strip()
+        data, state, failure = parse_stdout(stdout, event)
+
+        if data is None:
+            if state in ("parse_error", "schema_invalid") and proc.returncode != 2:
+                result.user_notices.append(f"{event} hook error: {failure}")
+            elif state == "plain" and proc.returncode == 0 and event in PLAIN_TEXT_CONTEXT_EVENTS:
+                result.model_contexts.append(_cap(stdout, rule))
+            elif proc.returncode not in (0, 2) and stderr:
+                first_line = stderr.splitlines()[0]
+                result.user_notices.append(
+                    f"{event} hook error: Failed with non-blocking status code: "
+                    f"{proc.returncode} {first_line}"
+                )
+            return
+
+        # G10's producer. An ignored or unrecognized field is named **once** per
+        # (rule, field) per session, so the author learns it had no effect
+        # without a notice on every invocation.
+        result.user_notices.extend(diagnose_fields(data, event, rule))
+
+        system_message = data.get("systemMessage")
+        if isinstance(system_message, str) and honors_system_message(event):
+            result.user_notices.append(_cap(system_message, rule))
+
+        if field_disposition("hookSpecificOutput.additionalContext", event) == "accept":
+            nested = data.get("hookSpecificOutput")
+            ctx = nested.get("additionalContext") if isinstance(nested, dict) else None
+            if isinstance(ctx, str):
+                result.model_contexts.append(_cap(ctx, rule))
+            elif isinstance(ctx, list):
+                result.model_contexts.extend(_cap(str(c), rule) for c in ctx)
+
+        if data.get("continue") is False and honors_continue(event):
+            reason = data.get("stopReason")
+            result.stop_reason = _cap(str(reason), rule) if isinstance(reason, str) else ""
 
     def _matches(self, rule: ParsedHookRule, payload: dict[str, Any]) -> bool:
         """Check if a rule's matcher applies to this payload."""
+        # A profile rule carries a *string* matcher, evaluated by Claude's own
+        # semantics — an anchored full match with ``*`` as a wildcard. It is
+        # deliberately not mapped onto the dict matcher below: that one globs, so
+        # ``Edit|Write`` would be compared literally and fire for nothing.
+        if rule.contract != LEGACY_CONTRACT_ID:
+            if rule.matcher_pattern is None:
+                return True
+            return _claude_matcher_match(rule.matcher_pattern, self._matched_name(rule, payload))
+
         if rule.matcher is None:
             return True
 
@@ -328,46 +519,137 @@ class PluginHookDispatcher(_OutputParsingMixin):
 
         return True
 
+    @staticmethod
+    def _matched_name(rule: ParsedHookRule, payload: dict[str, Any]) -> str:
+        """What a profile matcher is matched against, per event.
+
+        Tool events match on the tool name; ``PreCompact`` matches on its
+        trigger, the only other thing the reference gives a matcher. Events with
+        no documented matcher fall through to the empty string, where any
+        non-``*`` pattern simply fails — the conservative direction, since an
+        author who wrote a filter meant to narrow.
+        """
+        event = payload.get("hook_event_name") or rule.event
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        if event == "PreCompact":
+            return str(payload.get("trigger", ""))
+        # Measured, not assumed (probe §G6): a `SessionStart` matcher is
+        # compared against `source` — "startup" fires, "resume" does not — and a
+        # `SessionEnd` matcher against `reason`. Returning "" for these events
+        # made every non-`*` matcher on them silently dead, which is the exact
+        # failure §2.3 gives as the reason not to translate matchers.
+        if event == "SessionStart":
+            return str(payload.get("source") or data.get("source") or "")
+        if event == "SessionEnd":
+            return str(payload.get("reason") or data.get("reason") or "")
+        return str(payload.get("tool_name") or data.get("toolName") or "")
+
     def _run_subprocess(
         self, rule: ParsedHookRule, payload: dict[str, Any],
-    ) -> tuple[subprocess.CompletedProcess[str] | None, bool]:
+    ) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
         """Run ``rule.command`` with the JSON payload on stdin.
 
-        Returns ``(proc, timed_out)``: ``proc`` is the completed process,
-        or ``None`` when the command timed out (``timed_out=True``), or
-        when it is empty / failed to start (``timed_out=False``). A
-        warning is logged on timeout and spawn failure.
+        Returns ``(proc, failure)``: ``proc`` is the completed process, or
+        ``None`` when the hook produced no usable result. ``failure`` names
+        why — ``"timeout"``, ``"output_budget"``, or ``None`` for an empty
+        command / spawn failure, which stay silent as they always did.
+
+        ``failure`` is a string where it used to be a bool. Every call site
+        tests it for truthiness, so the three-state value is compatible by
+        construction — and the two failures that *are* the hook's own doing
+        now reach the user distinguishably instead of both reading "timed
+        out".
         """
-        if not rule.command:
-            return None, False
+        if not rule.command and not rule.args:
+            return None, None
         try:
             # Shared hardened runner: feeds the JSON payload on a stdin pipe
             # (so the user command can't read the host's real stdin) and, on
             # timeout, kills the whole process tree rather than just the
             # shell — a hook that backgrounds a child would otherwise keep
             # the captured pipe open and hang dispatch past ``rule.timeout``.
+            # One rule, one contract, one wire shape. A profile rule gets the
+            # flat snake_case payload of §5.3; a v1 rule gets today's envelope,
+            # frozen. Never both in one payload — that would be a third contract.
+            wire_payload = (
+                to_profile_payload(payload)
+                if rule.contract != LEGACY_CONTRACT_ID
+                else payload
+            )
+            placeholders = _placeholder_values(rule, self._cwd)
+            # Substitution is a *profile* feature (§2.4), and ``agentao-v1`` is
+            # frozen: a v1 command must still reach the shell byte-for-byte.
+            # Nothing is lost by it — the same three names are exported on the
+            # child's environment below, so ``${CLAUDE_PROJECT_DIR}`` in a v1
+            # command still resolves, expanded by the shell exactly as before.
+            subs = placeholders if rule.contract != LEGACY_CONTRACT_ID else {}
+            if rule.args:
+                # Exec form: no shell, each element one argument. The reference
+                # tells authors to use it whenever a hook takes a path — which is
+                # exactly when a shell is the thing that breaks it.
+                cmd: Any = [_substitute(rule.command or "", subs)] + [
+                    _substitute(a, subs) for a in rule.args
+                ]
+                use_shell = False
+            else:
+                cmd = _substitute(rule.command or "", subs)
+                use_shell = True
             proc = run_captured(
-                rule.command,
-                input=json.dumps(payload),
+                cmd,
+                input=json.dumps(wire_payload),
                 timeout=rule.timeout,
-                shell=True,
+                shell=use_shell,
                 cwd=str(self._cwd),
+                # The only correct spelling. ``env={...}`` or
+                # ``env=os.environ | {...}`` silently deletes the provider-key
+                # scrub ``run_captured`` applies when ``env`` is omitted — one of
+                # the five places agentao leads both peers. ``build_child_env``
+                # applies overrides *after* the scrub, by construction.
+                env=build_child_env(placeholders),
+                # Tier 1 (§6). ``communicate()`` reads to EOF, so without a
+                # ceiling here a hook that prints without stopping is bounded
+                # only by the host's memory — and it exhausts it long before
+                # any parser exists to apply the semantic cap.
+                max_output_bytes=HOOK_RAW_OUTPUT_LIMIT_BYTES,
             )
         except subprocess.TimeoutExpired:
             logger.warning(
                 "%s hook timed out after %ds: %s", rule.event, rule.timeout, rule.command,
             )
-            return None, True
+            return None, "timeout"
+        except OutputLimitExceeded as exc:
+            # Not a truncation. A hook cut off mid-JSON has no decision left to
+            # contribute, and pretending otherwise turns a resource failure
+            # into a silent semantic one.
+            logger.warning(
+                "%s hook exceeded the raw output budget: %s (%s)",
+                rule.event, rule.command, exc,
+            )
+            return None, "output_budget"
         except OSError as exc:
             logger.warning("%s hook failed to run: %s (%s)", rule.event, rule.command, exc)
-            return None, False
-        return proc, False
+            return None, None
+        return proc, None
 
     @staticmethod
-    def _timeout_attachment(rule: ParsedHookRule) -> HookAttachmentRecord:
+    def _timeout_attachment(
+        rule: ParsedHookRule, failure: str = "timeout",
+    ) -> HookAttachmentRecord:
+        """Attachment for a hook that produced nothing usable.
+
+        Kept under its original name because every call site and the tests
+        reach it that way; ``failure`` distinguishes the two causes so the
+        user is not told a hook "timed out" when it was killed for flooding
+        its pipe.
+        """
+        warning = (
+            f"Hook timed out after {rule.timeout}s"
+            if failure == "timeout"
+            else f"Hook killed: output exceeded {HOOK_RAW_OUTPUT_LIMIT_BYTES:,} bytes"
+        )
         return _make_attachment(
             "hook_success",
-            {"warning": f"Hook timed out after {rule.timeout}s"},
+            {"warning": warning},
             hook_name=rule.command,
             hook_event=rule.event,
         )
@@ -376,9 +658,9 @@ class PluginHookDispatcher(_OutputParsingMixin):
         self, rule: ParsedHookRule, payload: dict[str, Any]
     ) -> HookAttachmentRecord | None:
         """Execute a single lifecycle command hook.  Returns attachment or None."""
-        proc, timed_out = self._run_subprocess(rule, payload)
-        if timed_out:
-            return self._timeout_attachment(rule)
+        proc, failure = self._run_subprocess(rule, payload)
+        if failure:
+            return self._timeout_attachment(rule, failure)
         if proc is None:
             return None
 
@@ -390,7 +672,10 @@ class PluginHookDispatcher(_OutputParsingMixin):
 
         return _make_attachment(
             "hook_success",
-            {"stdout": proc.stdout.strip(), "returncode": proc.returncode},
+            # Capped: an attachment payload is rendered verbatim into a
+            # model-visible message by ``_attachment_to_message``, and tier 1
+            # lets a well-behaved hook print megabytes.
+            {"stdout": _cap(proc.stdout.strip(), rule), "returncode": proc.returncode},
             hook_name=rule.command,
             hook_event=rule.event,
         )
@@ -406,14 +691,18 @@ class PluginHookDispatcher(_OutputParsingMixin):
         result: PreToolUseHookResult,
     ) -> None:
         """Run one PreToolUse command hook and fold its verdict into ``result``."""
-        proc, _timed_out = self._run_subprocess(rule, payload)
+        proc, _failure = self._run_subprocess(rule, payload)
         if proc is None:  # empty / timed out / failed to start — warning already logged
             return
 
-        if proc.returncode != 0:
-            # MVP scope: exit-code-2 "block" is not honored — surface a
-            # warning like other lifecycle hooks. Any JSON on stdout is
-            # still parsed below.
+        profile = rule.contract != LEGACY_CONTRACT_ID
+        if proc.returncode == 2 and profile:
+            # Exit 2 blocks on this event, and the JSON is still read: its
+            # blocking reason wins when it has one, stderr otherwise. `agentao-v1`
+            # keeps the old warning-only behavior, which is what its hooks expect.
+            result.decision = "deny"
+            result.reason = _cap((proc.stderr or "").strip() or "blocked by hook (exit 2)", rule)
+        elif proc.returncode != 0:
             logger.warning(
                 "PreToolUse hook exited %d: %s (stderr: %s)",
                 proc.returncode, rule.command, (proc.stderr or "")[:200],
@@ -439,6 +728,19 @@ class PluginHookDispatcher(_OutputParsingMixin):
             raw_decision = hook_specific.get("permissionDecision")
             if isinstance(raw_decision, str) and raw_decision in ("allow", "deny", "ask"):
                 decision = raw_decision
+            elif raw_decision in PERMISSION_DECISION_DEGRADES and profile:
+                # A value agentao cannot honor sits in exactly the position of a
+                # field it cannot honor: accept, ignore, or **degrade to a named
+                # alternative** — never "reject", which would discard every
+                # sibling field in the same object. The reason says which value
+                # was degraded, because silently substituting one permission
+                # verdict for another is the worst of the three outcomes.
+                decision = PERMISSION_DECISION_DEGRADES[raw_decision]
+                reason = (
+                    f"hook returned permissionDecision {raw_decision!r}, which "
+                    f"{PROFILE_ID} does not implement — degraded to "
+                    f"{decision!r}"
+                )
             for key in ("permissionDecisionReason", "reason"):
                 rv = hook_specific.get(key)
                 if isinstance(rv, str):
@@ -451,6 +753,16 @@ class PluginHookDispatcher(_OutputParsingMixin):
         if reason is None and isinstance(data.get("reason"), str):
             reason = data["reason"]
         self._harvest_additional_context(data.get("additionalContext"), result)
+
+        if profile:
+            updated = hook_specific.get("updatedInput") if isinstance(hook_specific, dict) else None
+            if isinstance(updated, dict) and result.updated_tool_input is None:
+                result.updated_tool_input = dict(updated)
+            if data.get("continue") is False:
+                stop_reason = data.get("stopReason")
+                result.stop_reason = (
+                    _cap(stop_reason, rule) if isinstance(stop_reason, str) else ""
+                )
 
         # ``deny`` always wins (and the caller stops forking further hooks);
         # ``ask`` only takes hold if nothing stronger has been seen.
@@ -485,16 +797,48 @@ class PluginHookDispatcher(_OutputParsingMixin):
         result = UserPromptSubmitResult()
 
         ups_rules = [r for r in rules if r.event == "UserPromptSubmit" and r.is_supported]
+        if not ups_rules:
+            return result
 
-        for rule in ups_rules:
+        # G9, same shape as `PreToolUse`: a v1 rule's short-circuit must not
+        # stop a profile rule behind it from *running*. Its side effects — an
+        # audit line, a notification, a marker file — are the reason the
+        # all-handlers rule exists, and nothing tells their author when they
+        # silently stop happening.
+        def _run(rule) -> UserPromptSubmitResult:
+            one = UserPromptSubmitResult()
             if rule.hook_type == "command":
-                self._run_command_hook(rule, payload, result)
+                self._run_command_hook(rule, payload, one)
             elif rule.hook_type == "prompt":
-                self._run_prompt_hook(rule, payload, result)
+                self._run_prompt_hook(rule, payload, one)
+            return one
 
-            # Short-circuit on blocking error or prevent continuation.
-            if result.blocking_error or result.prevent_continuation:
-                break
+        per_rule: list[tuple[int, UserPromptSubmitResult]] = []
+        for index, rule in enumerate(ups_rules):
+            if rule.contract != LEGACY_CONTRACT_ID:
+                continue
+            one = _run(rule)
+            per_rule.append((index, one))
+            if one.blocking_error or one.prevent_continuation:
+                break                      # ends the v1 group only
+        for index, rule in enumerate(ups_rules):
+            if rule.contract == LEGACY_CONTRACT_ID:
+                continue
+            per_rule.append((index, _run(rule)))
+
+        # One merge over the event's lattice — `block > none`, one axis, so the
+        # flat "any block wins" rule happens to be right here. A **stop**
+        # outranks it: `continue:false` ends the turn, which the block cannot
+        # undo, and it is rank 1 of §5.4's cross-class order.
+        for index, one in sorted(per_rule, key=lambda pair: pair[0]):
+            result.messages.extend(one.messages)
+            result.additional_contexts.extend(one.additional_contexts)
+            result.user_notices.extend(one.user_notices)
+            if one.prevent_continuation and not result.prevent_continuation:
+                result.prevent_continuation = True
+                result.stop_reason = one.stop_reason
+            if one.blocking_error and not result.blocking_error:
+                result.blocking_error = one.blocking_error
 
         return result
 
@@ -508,11 +852,23 @@ class PluginHookDispatcher(_OutputParsingMixin):
         payload: dict[str, Any],
         result: UserPromptSubmitResult,
     ) -> None:
-        proc, timed_out = self._run_subprocess(rule, payload)
-        if timed_out:
-            result.messages.append(self._timeout_attachment(rule))
+        proc, failure = self._run_subprocess(rule, payload)
+        if failure:
+            result.messages.append(self._timeout_attachment(rule, failure))
             return
         if proc is None:
+            return
+
+        if rule.contract != LEGACY_CONTRACT_ID and proc.returncode == 2:
+            # Exit 2 blocks on this event, and it blocks **whether or not** JSON
+            # was printed: "even a JSON permissionDecision of allow can't
+            # override it". The JSON's own reason wins when it has one; stderr
+            # is the fallback.
+            self._parse_command_output(proc.stdout, rule, result)
+            if not result.blocking_error:
+                result.blocking_error = _cap(
+                    (proc.stderr or "").strip() or "blocked by hook (exit 2)", rule,
+                )
             return
 
         if proc.returncode != 0 and not proc.stdout.strip():
@@ -550,9 +906,9 @@ class PluginHookDispatcher(_OutputParsingMixin):
         benign warning, which would silently drop the most common Claude
         Stop control signal.
         """
-        proc, timed_out = self._run_subprocess(rule, payload)
-        if timed_out:
-            result.messages.append(self._timeout_attachment(rule))
+        proc, failure = self._run_subprocess(rule, payload)
+        if failure:
+            result.messages.append(self._timeout_attachment(rule, failure))
             return
         if proc is None:
             return

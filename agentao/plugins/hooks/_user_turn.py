@@ -41,7 +41,11 @@ def resolve_all_hook_rules(
                 # File path reference.
                 hook_path = (plugin.root_path / spec).resolve()
                 if hook_path.is_file():
-                    rules, warns = parser.parse_file(hook_path, plugin_name=plugin.name)
+                    rules, warns = parser.parse_file(
+                        hook_path,
+                        plugin_name=plugin.name,
+                        plugin_root=str(plugin.root_path),
+                    )
                     all_rules.extend(rules)
                     all_warnings.extend(warns)
                 else:
@@ -54,7 +58,9 @@ def resolve_all_hook_rules(
                     )
             elif isinstance(spec, dict):
                 # Inline hooks dict.
-                rules, warns = parser.parse_dict(spec, plugin_name=plugin.name)
+                rules, warns = parser.parse_dict(
+                    spec, plugin_name=plugin.name, plugin_root=str(plugin.root_path),
+                )
                 all_rules.extend(rules)
                 all_warnings.extend(warns)
 

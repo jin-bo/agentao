@@ -235,7 +235,19 @@ KNOWN_UNSUPPORTED_HOOK_TYPES: set[str] = {"http", "agent"}
 
 @dataclass
 class ParsedHookRule:
-    """A single hook rule from a hooks.json file."""
+    """A single hook rule from a hooks.json file.
+
+    ``contract`` is **file-scoped, resolved onto every rule**: one file has one
+    contract, and the value is copied here so the dispatcher — which holds a
+    rule, never a file, at every decision point — can act on it without
+    re-deriving anything.
+
+    ``matcher`` (a dict) and ``matcher_pattern`` (a string) are the two
+    contracts' two matcher shapes, kept apart rather than translated. They
+    evaluate differently: the dict globs ``toolName``, the string is an anchored
+    full match with ``*`` as a wildcard, so mapping one onto the other would
+    register rules that never fire.
+    """
 
     event: str
     hook_type: str  # "command" | "prompt" | "http" | "agent"
@@ -244,6 +256,18 @@ class ParsedHookRule:
     timeout: int = 60
     matcher: dict[str, Any] | None = None
     plugin_name: str | None = None
+    contract: str = "agentao-v1"
+    matcher_pattern: str | None = None
+    #: Exec form: no shell, each element one argument.
+    args: list[str] | None = None
+    #: The plugin's root directory, for ``${CLAUDE_PLUGIN_ROOT}``. Carried on the
+    #: rule because it is known where rules are parsed and needed where they run.
+    plugin_root: str | None = None
+    #: Position within its matcher group. Two byte-identical handlers in one
+    #: group are two rules the author edits independently, and nothing else on
+    #: this dataclass tells them apart — which is what the one-shot diagnostic
+    #: registry keys on (``_diagnostics.rule_key``).
+    handler_index: int = 0
 
     @property
     def is_supported(self) -> bool:
@@ -264,6 +288,31 @@ class HookAttachmentRecord:
     tool_use_id: str = ""
     uuid: str = ""
     timestamp: str = ""
+
+
+@dataclass
+class LifecycleHookResult:
+    """What a lifecycle-event dispatch produces.
+
+    ``SessionStart``, ``SessionEnd``, ``PostToolUse`` and ``PostToolUseFailure``
+    used to return ``list[HookAttachmentRecord]`` and nothing else, so anything a
+    hook decided was dropped at the call site — a sink is not a route, and these
+    four had neither.
+
+    The channels are **orthogonal to each other and to any verdict**: a hook that
+    stops a turn and prints a user notice does both. ``stop_reason`` is set only
+    on events whose profile row honors ``continue: false``; on the others the
+    field stays ``None`` because the reference discards it, not because nothing
+    was sent.
+    """
+
+    attachments: list[HookAttachmentRecord] = field(default_factory=list)
+    #: → the human. Never the log: a log line is not a surface the user sees.
+    user_notices: list[str] = field(default_factory=list)
+    #: → the model's context channel.
+    model_contexts: list[str] = field(default_factory=list)
+    stop_reason: str | None = None
+    matched_rule_count: int = 0
 
 
 @dataclass
@@ -296,6 +345,10 @@ class UserPromptSubmitResult:
     stop_reason: str | None = None
     additional_contexts: list[str] = field(default_factory=list)
     messages: list[HookAttachmentRecord] = field(default_factory=list)
+    #: ``systemMessage`` — a warning **to the user**, not to the model. Kept
+    #: apart from ``additional_contexts`` because the two go to different
+    #: readers, which is the whole of deviation 3.
+    user_notices: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -320,6 +373,15 @@ class PreToolUseHookResult:
     reason: str | None = None
     additional_contexts: list[str] = field(default_factory=list)
     matched_rule_count: int = 0
+    #: ``hookSpecificOutput.updatedInput`` — **replaces the entire input
+    #: object**. It is not a field to store and forward: the permission verdict
+    #: was computed on the original arguments, so the call has to be re-decided
+    #: before it runs (§4.4).
+    updated_tool_input: dict[str, Any] | None = None
+    #: ``continue: false`` — ends the **turn**, which is not the same as denying
+    #: the call. Folding one into the other because a verdict field is already
+    #: there is exactly the semantic divergence the profile exists to prevent.
+    stop_reason: str | None = None
 
 
 @dataclass
@@ -372,3 +434,8 @@ class StopHookResult:
     system_message: str | None = None
     messages: list[HookAttachmentRecord] = field(default_factory=list)
     matched_rule_count: int = 0
+    #: The contract of the rule that produced the surviving continuation. The
+    #: reentry cap is contract-resolved — 8 under the profile, 3 under
+    #: ``agentao-v1`` — so a pure v1 setup keeps its number and a mixed session
+    #: is not silently loosened for hooks that never asked for it.
+    continuation_contract: str | None = None

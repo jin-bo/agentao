@@ -1029,3 +1029,51 @@ class TestSpecPermissionRulesArePreflighted:
             _build_args(spec_path=str(spec_path), output_format="text"),
         )
         assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# SessionEnd hook notices — the headless route (conformance plan §5.2.1)
+# ---------------------------------------------------------------------------
+
+
+def test_session_end_hook_notices_reach_the_emitted_result(
+    monkeypatch, stub_pipeline, capsys,
+):
+    """A `SessionEnd` hook's exit-2 stderr is a **user** notice, and headless is
+    the surface where it had no path at all: observers are detached long before,
+    and `_emit` used to write the run's entire output *before* the dispatch ran.
+    Written against that ordering this test fails.
+    """
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    # ``_run_pipeline`` imports these lazily from ``.session``, so the patch has
+    # to land on the module the import resolves against — the same reason the
+    # ``build_from_environment`` patch above targets ``agentao.embedding``.
+    monkeypatch.setattr(
+        "agentao.cli.session.dispatch_plugin_session_end",
+        lambda agent, sid: ["goodbye-problem"],
+    )
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "goodbye-problem" in payload["warnings"]
+
+
+def test_session_start_hook_notices_reach_the_emitted_result(
+    monkeypatch, stub_pipeline, capsys,
+):
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    monkeypatch.setattr(
+        "agentao.cli.session.dispatch_plugin_session_start",
+        lambda agent, sid: ["startup-problem"],
+    )
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == 0
+    assert "startup-problem" in json.loads(capsys.readouterr().out)["warnings"]

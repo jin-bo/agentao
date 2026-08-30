@@ -64,7 +64,7 @@ def test_dispatch_pre_compact_returns_hook_success_attachment(tmp_path):
     )
 
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
-    attachments = dispatcher.dispatch_pre_compact(payload=payload, rules=[rule])
+    attachments = dispatcher.dispatch_pre_compact(payload=payload, rules=[rule]).attachments
 
     assert len(attachments) == 1
     assert attachments[0].attachment_type == "hook_success"

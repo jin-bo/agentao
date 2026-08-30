@@ -29,6 +29,7 @@ from ..sanitize import canonicalize_tool_arguments, sanitize_assistant_message
 from ..tool_planning import make_tool_result_message
 from ._compaction import _CompactionMixin
 from ._hook_dispatch import _HookDispatchMixin
+from ...plugins.hooks._profile import PROFILE_ID
 from ._outcomes import _HookOutcome
 from ._serialize import _attach_reasoning, _serialize_tool_call
 
@@ -108,6 +109,15 @@ INCOMPLETE_LENGTH_TRUNCATED = "length_truncated"
 INCOMPLETE_DOOM_LOOP = "doom_loop"
 INCOMPLETE_MAX_ITERATIONS = "max_iterations"
 INCOMPLETE_LLM_ERROR = "llm_error"
+# A ``PostToolUse`` / ``PostToolUseFailure`` hook returned ``continue: false``.
+# The tools ran; what did not happen is the model's answer, so this is an
+# incomplete turn rather than an error — and a *deliberate* one, which is why
+# it also joins the halted family below: hook text must not clear it.
+INCOMPLETE_HOOK_STOP = "hook_stop"
+
+#: The reference's `Stop` reentry cap. agentao's own default is 3 and stays 3
+#: for `agentao-v1`; a continuation produced by a profile rule gets this one.
+PROFILE_STOP_REENTRY_CAP = 8
 
 # The complete closed set — the ``incomplete_reason`` wire vocabulary. The CLI
 # maps each of these to an error envelope; a parity test binds the two so the
@@ -119,6 +129,7 @@ INCOMPLETE_ANSWER_REASONS = frozenset({
     INCOMPLETE_DOOM_LOOP,
     INCOMPLETE_MAX_ITERATIONS,
     INCOMPLETE_LLM_ERROR,
+    INCOMPLETE_HOOK_STOP,
 })
 
 # The "harness halted a non-converging turn" family. Hook text or a re-entry
@@ -129,6 +140,7 @@ INCOMPLETE_ANSWER_REASONS = frozenset({
 _HALTED_REASONS = frozenset({
     INCOMPLETE_LENGTH_TRUNCATED,
     INCOMPLETE_DOOM_LOOP,
+    INCOMPLETE_HOOK_STOP,
     INCOMPLETE_MAX_ITERATIONS,
 })
 
@@ -224,6 +236,14 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         "doom_loop": {
             "reentry_cap_log": "Stop hook reentry cap (%d) hit at doom-loop; ending turn.",
             "force_continue_log": "Stop hook force_continue at doom-loop",
+            "force_continue_outcome": "continue",
+            "echo_additional_contexts": False,
+        },
+        "hook_stop": {
+            "reentry_cap_log": (
+                "Stop hook reentry cap (%d) hit after a PostToolUse stop; ending turn."
+            ),
+            "force_continue_log": "Stop hook force_continue after a PostToolUse stop",
             "force_continue_outcome": "continue",
             "echo_additional_contexts": False,
         },
@@ -775,11 +795,40 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             cancellation_token=token,
         )
         agent.messages.extend(tool_results)
+        # The stop is read **after** the results are appended, never instead of
+        # them: ``format_batch`` emits exactly one message per plan, and an
+        # assistant ``tool_calls`` entry with no answering ``role:"tool"``
+        # message is rejected by strict APIs. Ending the turn is not a rollback.
+        _raw_hook_stop = getattr(agent.tool_runner, "last_hook_stop", None)
+        # A **string** or nothing. The runner may be a test double — this
+        # codebase substitutes ``MagicMock`` agents freely — and a mock attribute
+        # is neither ``None`` nor a string, so an ``is not None`` test here would
+        # let any stub end a turn it never meant to.
+        hook_stop = _raw_hook_stop if isinstance(_raw_hook_stop, str) else None
         # Turn-level telemetry: count tool calls the LLM made this
         # iteration; run_turn reset this to 0 and TURN_END reports the total.
         agent._turn_tool_count = (
             getattr(agent, "_turn_tool_count", 0) + len(clean_tool_calls)
         )
+        if hook_stop is not None:
+            # ``continue: false`` on a Post* event ends the **turn**, not the
+            # call: the tool already ran and its result is recorded above. The
+            # stop maps through the ordinary turn-outcome path, so `agentao run`
+            # needs no exit code of its own for it.
+            stop_content = hook_stop.strip() or "Turn stopped by a PostToolUse hook."
+            final_msg_hook: Dict[str, Any] = {
+                "role": "assistant",
+                "content": stop_content,
+            }
+            _attach_reasoning(final_msg_hook, reasoning_content)
+            sanitize_assistant_message(final_msg_hook)
+            return self._resolve_stop_hook(
+                turn_end_reason="hook_stop",
+                assistant_content=stop_content,
+                final_msg=final_msg_hook,
+                system_prompt=system_prompt,
+                incomplete_reason=INCOMPLETE_HOOK_STOP,
+            )
         if doom_triggered:
             doom_content = (assistant_msg.get("content") or "").strip()
             assistant_content_doom = (
@@ -982,10 +1031,21 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             return ChatLoopRunner._Step("return", value=blocked)
 
         if stop_result.force_continue:
+            # The cap is **contract-resolved**: 8 under `claude-code@profile-1`,
+            # which is the reference's own number, and 3 under `agentao-v1`,
+            # which is what a v1 author's hooks were written against. Keeping 3
+            # under a `claude-code` label would make reentries 4 through 8 behave
+            # differently on the two tools — the exact class of divergence the
+            # profile exists to close. The contract is the one that produced
+            # *this* continuation, so a pure v1 setup keeps its number and a
+            # mixed session is not silently loosened for hooks that never asked.
+            effective_cap = self._stop_reentry_cap
+            if stop_result.continuation_contract == PROFILE_ID:
+                effective_cap = PROFILE_STOP_REENTRY_CAP
             # Cap check FIRST — without it a cap-hit would fall through to
             # allow and silently mask the pathological hook.
-            if self._stop_reentries >= self._stop_reentry_cap:
-                agent.llm.logger.warning(site["reentry_cap_log"], self._stop_reentry_cap)
+            if self._stop_reentries >= effective_cap:
+                agent.llm.logger.warning(site["reentry_cap_log"], effective_cap)
                 agent.messages.append(final_msg)
                 # Capped: the caller receives ``assistant_content`` unchanged
                 # (no hook text substituted), so the turn is exactly as

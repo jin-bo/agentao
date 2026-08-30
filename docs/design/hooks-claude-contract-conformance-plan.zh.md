@@ -3,9 +3,12 @@
 > **⚠️ 计划。本文任何内容都尚未实施。** 它要收口的偏离编目在
 > `hooks-three-way-claude-codex-agentao.zh.md`（rev 5），那份文档仍是纯分析。**没有开任何 PR。**
 
-**状态：** 计划，**rev 22**（2026-08-29），经二十一轮维护者评审。第二十一轮**没有发现任何问题** ——
-二十一轮里第一次零发现收场 —— 所以下面的设计与它审过的一字不差；rev 22 只改状态和这份修订历史。
-**评审收口：可以进入设计门决策。** 方向已拍板，实施未开始。
+**状态：** **已实施**（rev 24，2026-08-30）—— §8 的七个步骤与十个设计门全部完成。每个门结在哪里见 §0。
+rev 23 的正文不变；这是同一份文档，记上了结案、勾掉了步骤。
+
+**原为：** 计划，rev 23（2026-08-29），经二十一轮维护者评审。**已授权实施。** rev 23 是门槛结案版：
+维护者做出了本文保留的四个决定，其余由对真实 `claude` 二进制的一次探测定案 —— §0 逐条记录每项结案及其
+改动。随之动了六格表格；除此之外，这套设计与评审在 rev 22 放行的那份一致。
 **来源：** 维护者对九条偏离的处置意见，在此逐条重述并补上每个选择在代码里实际会带出的后果。凡本文与
 该方向有分歧之处均就地写明。
 **锚点：** agentao `main@10b5fb8`；Claude Code hooks 参考**抓取于 2026-08-28 19:29**，来源
@@ -15,6 +18,8 @@
 changelog 头部为 **2.1.251**（`code.claude.com/docs/en/changelog.md`），而它新增的内容**并不在**抓到的页
 面里 —— 见 §3，这正是标签改成 profile、而不是产品版本号的原因。OpenAI codex hooks 参考
 `<https://developers.openai.com/codex/hooks>` 抓取于 2026-08-26。
+**实测行为：** `docs/reference/hooks-probe-2.1.251.zh.md` —— 真实的 `claude` 2.1.251 在那些参考文档
+无法了结的行上到底做了什么（§0）。
 **孪生：** `hooks-claude-contract-conformance-plan.md`。
 **相关：** `hooks-three-way-claude-codex-agentao.zh.md`（证据来源；九条即其 §5.1–§5.10）。
 
@@ -54,10 +59,44 @@ changelog 头部为 **2.1.251**（`code.claude.com/docs/en/changelog.md`），�
 | 19 | 1 P2 | rev 18 弱化了**测试**、却把**承诺**留在原地：一条接缝可选的排队兄弟规则，实现可以违反它并照样通过全部验收。G2 现在选的是一**对** —— 保证与接缝同进退，或者两者皆无、由 §1 记下「停止那一刻」未定义。隔壁 G6 早就用过这个模式（弱化承诺、不是弱化测试） | §12、G2 |
 | 20 | 1 P2 | rev 19 自己那份接缝清单又把洞带了回来：它写的是「让 executor**／cap** 可注入」，而一个光秃秃的可配置 `max_workers` 只限并发量，对「停止变为可观察」与「队尾出队」之间那一刻给不了测试任何控制权。cap 可以顺带有，但它永远不是接缝 | G2 |
 | 21 | 1 P3 | 自伤轮次的统计自己停止了自我计数：仍写着「六轮、自 rev 13 起未断」，而 rev 18、19、20 三条记的恰恰都是这个模式。现在是九轮，并逐轮点名被违反的是哪条规则，让这个数可核 —— **一个关于失效模式的统计，并不豁免于该失效模式** | 本节 |
+| 23 | —— | **门槛结案，实施获授权。** 不是一轮评审：维护者定了 G2/G6（取弱化支）、G8（不做执行前校验器）与 G7 的存证问题，另由对 `claude` 2.1.251 的一次探测了结两行存疑、G5 的成文歧义与 G8 的翻案项。六格表格随之改动；两行存疑现在都是**实测**的 —— 一行证实窄读法，一行推翻它 | §0、§2.4、§5.1、§5.2、§5.4、§7 |
+| 24 | —— | **已实施。** §8 的七个步骤分九个提交落地，十个门按 §0 记录的方式收口 —— 四个靠维护者决定、五个靠探测真实的 `claude` 2.1.251、一个取计划自己的提案。其中三次探测**修正了计划**：matcher 是锚定而非非锚定（§2.3）；`PostToolUseFailure` 认 `decision`（§5.1）；`SessionStart` / `SessionEnd` 的 matcher 比的是 `source` / `reason` | §8 全部 |
 | 22 | 零 | **通过。** 没有 P1、P2、P3 —— 二十一轮里第一次零发现。rev 22 是记账：状态行、本行，以及「自伤连续段止于 20」这一句。§1–§12 一个字没动，所以过了评审的那份就是盘上这份 | 本节、§1 |
 
 这些轮次里长出两条过程规则，本文遵守：**每个补丁跑完都要重新 grep 确认**（rev 4 的英文补丁曾整块静默没
 执行，孪生因此在五处漂移），以及**每一条引文都从存档快照复制粘贴、并回头 `grep -F` 复验**（rev 11）。
+
+---
+
+## 0. 门槛结案
+
+这里没有任何新设计。每一行都是本文有意留开的一个门槛，以及了结它的那个决定 —— 要么是维护者的裁决，要么
+是一次测量。**凡结案改动了某张表的，以表为准、本节只是索引**；§12 的测试跟着表走。
+
+测量来自 `docs/reference/hooks-probe-2.1.251.zh.md`：真实的 `claude` 2.1.251，以 headless 方式跑在一次性
+项目目录里，每个目录自带 `.claude/settings.json`。那份文档载有方法、原始观察，以及每条结论**不能**证明
+什么。它还记下了本次探测在得出真结果之前先得出的两个假结果 —— 两者都源于对照组自身没有做可达性检查。
+
+| 门槛 | 由谁了结 | 结果 | 改动 |
+|---|---|---|---|
+| **G2** | 维护者 | **取第 (ii) 支：放弃排队 sibling 的保证。** 不建测试接缝。§1 记下「停止那一刻队尾是否执行」未定义；§12 的那条测试缩到两种情况下都成立的不变式 —— 每个 plan 仍产出结果与 `role:"tool"` 消息 | §1、§12、G2 |
+| **G6** | 维护者 | **取兜底支：「所有匹配的 handler 都被提交」。** 不是「都启动」。不做逐 dispatch 准入；在 `SessionEnd` 的共享预算下排队的那个可能永远不跑 —— 这一点写明，而不是靠工程绕开。声明顺序平手规则不受影响 | §2.5、§1、G6 |
+| **G8**（校验器） | 维护者 | **不做执行前输入校验。** 不提 `jsonschema`，不加 `Tool.preflight()`。§4.4 的第 2 步连同它的两条测试一并删除，§1 写明被缩小的承诺：agentao 不在执行前按 schema 拒绝工具输入，所以上游那条「输入不合法则不触发 hook」在这里没有对应物 | §1、§4.4、§12 |
+| **G7**（存证） | 维护者 | **只留 provenance 表。** 那 295 KB 的参考页面不入库；评审者拿到的是 §3 那张表加这份探测文档。§11 q6 据此结案，并重述代价：引文靠 `hooks.md:<行号>` 可定位，但无法逐字节复取 | §3、§11 |
+| **G5**（shell） | **探测** | **agentao 的 `/bin/sh` 基线是合规的**，且 `shell` 按「忽略并出诊断」处理、而不是拒绝。2.1.251 用 `sh` 执行命令 hook（`$0` = `/bin/sh`、`posix on`），也不兑现显式的 `"shell": "bash"`。参考文档的自相矛盾由实测了结；第 10 条偏离降为 P3，其前提被撤回 | §2.4、§7 |
+| **G7**（`SessionStart`） | **探测** | **`continue:false` 被丢弃 —— 窄读法得到证实。** hook 跑了、会话开了、turn 跑完了，`stopReason` 哪儿都没出现。翻案清单里「若它认这个停止」那一支**不触发**，§12 那条非停止测试现在钉的是一次测量、而不是一种读法 | §5.1、§12 |
+| **G7**（`PostToolUseFailure`） | **探测** | **`decision:"block"` 被认 —— 窄读法被推翻**，且探针四问全部有答案：reason 以独立一行到达**模型**，其前**保留原始错误**，且 **turn 继续**。所以效果是反馈并继续：§5.4 那条有条件的第 2 序行变为无条件，第 1 序不受影响。一次对照运行证明起作用的是被识别的字段、不是原始 stdout —— 一个无关键到达模型 0 次 | §5.1、§5.2、§5.4、§12 |
+| **G8**（非法改写） | **探测** | **计划的选择正是上游的做法。** 不符合工具 schema 的 `updatedInput` 会以 `tool_use_error` 被拒，**原输入从不执行**。它作为合规落地，而不是作为「偏离安全」的书面声明。注意 agentao 学不来的那一半：校验器既已放弃，agentao 无从*察觉*这种不匹配，于是改写后的调用会到达工具并在那里失败。真正要紧的结果相同 —— 原输入从不执行 —— 差别在错误呈现面，§1 记下它 | §4.4、§1 |
+| **G7**（输入矩阵） | **探测**，部分 | 捕获了六份真实 stdin payload。它们**确认**了 §5.3 的形状 —— `permission_mode` 在四个事件上有、在 `SessionStart` / `SessionEnd` 上没有，`prompt_id` 在首次输入前缺席，`agent_id` / `agent_type` 处处缺席，`tool_response` 是结构化对象 —— 而把那些*决定*留着：`transcript_path` 由 agentao 从哪里取、`permission_mode` 怎么映射。两条是新事实：上游把 `background_tasks: []` / `session_crons: []` 发成「存在且为空」，以及 `permission_mode` 在同一会话内取值不同（`UserPromptSubmit` 上是 `auto`、工具事件上是 `default`）—— 记为观察，不作规则 | §5.3 |
+| **G4** | 实施时按计划的提案取定 | **Tier 1 = 每次调用每条流 8 MiB**，在共享 runner 上是 opt-in，所以其他调用方的失败模式一点不变；超限即杀进程树、该 hook 失败 —— 因为在 JSON 中途被切断的输出没有任何决定可贡献。**Tier 2 = 每个通道 10,000 字符** —— 上游自己的数字，按字符而不是 token，这样这条界限不随所配模型而变。溢出落 `.agentao/hook-outputs/`，文件 `0600`，字节落盘前先脱敏，按时龄（7 天）与数量（200）清理。落盘失败会**上报** —— 它抄的那个 tool-output sink 并不上报 | §6、第 1 步 |
+| **G10** | 实施时按计划的提案取定 | **会话级、加锁、以内容派生的 rule key 为键** —— 绝不用 `id(rule)`，它每次 reload 都变、会把一切静默重播一遍。陷阱在 dispatcher 作用域：它在六处被构造、其中两处**在池 worker 内**，所以挂在它身上的状态既去不了重、还会边去重边竞争。插件 reload 与 `/clear` 时调 `clear_session()`，这样改好的 hook 会重新出声、没改的继续闭嘴 | §4.2、第 2 步 |
+| **G3** | **探测** | **`*` 是通配符；其余一切都是锚定全匹配。** 七个探测点与 `re.fullmatch` 完全一致，其中两个推翻了本计划一直带着的**非锚定**读法：`ead` 匹配不上 `Read`，`Rea|Wri` 也不行。所以修法是复用 agentao 已有的 `_regex_match_full` 外加 `*` 特判，而不是新写三路求值器 —— 而 §2.3 的头条依然成立，因为 `toolName` 走的是 `_glob_match` | §2.3、第 3 步 |
+| **G7**（输入侧） | 实施时按计划的规则取定 | **`transcript_path` 发显式 `null`** —— agentao 没有持续写入的 transcript，而一个内容落后于会话的路径比一个 hook 能判断的 null 更糟；用 `null` 而非省略，是因为参考文档把它标为八个事件全required，省略会让取值直接抛异常。**`prompt_id` 省略** —— 逐 turn 的 id 不是 prompt id，挪用它等于编造一种不成立的关联。**`permission_mode` 能映射就映射、不能就省略** —— `plan`→`plan`、`full-access`→`bypassPermissions`；`workspace-write` 不是 `acceptEdits`、`read-only` 没有对应物，所以字段缺席，而不是把 agentao 自己的词表发出去。**`tool_response` 保持字符串**，作为写明的类型分歧。三个私有字段在 profile 模式**去掉**、v1 保留 | §5.3、第 3 步 |
+| **G1**（会话事件） | 实施时按计划的提案取定 | **一个结果类型，加上每个 surface 各自的路由。** `LifecycleHookResult` 把 `user_notices` / `model_contexts` / `stop_reason` 从那四个「只返回 attachment」的生命周期分派里带出来。交互式：CLI 消费它过去在裸 `except: pass` 里丢掉的那个返回值。Headless：`SessionEnd` 现在在 `_emit` **之前**分派，通知搭 `RunResult.warnings`（本来就会序列化）—— 旧顺序下 headless 用户根本没有路径。路由里 tool worker 那一半（`PostToolUse*` 的停止）属第 4b 步 | §5.2、§5.2.1、第 4 步 |
+| **G2**（停止路由） | 计划的决定 + 第 (ii) 支 | **裁定搭 `ToolExecutionResult` 回家**，在 `ToolRunner` 上按 **plan 顺序**仲裁，并经原有的 `_resolve_stop_hook` 路径结束这一轮（新增 `hook_stop` 这个 incomplete 取值）—— 所以 `agentao run` 不需要为它单开退出码。以 `runner.last_hook_stop` 暴露、而不是加第三个元组元素：`execute` 的二元组有一批与 hook 无关的测试调用者，而 `Agentao.last_turn` 是本仓库现成的先例。两处接缝都按**字符串**读、绝不按真值 —— `MagicMock` runner 对任何属性都有应答，在这里按真值判断会让桩去结束 turn。反馈（`additionalContext`、exit-2 stderr）以 `<system-reminder>` 拼在**被保留的**结果旁边，正是探测 §C 测到的形状 | §5.2.2、第 4 步 |
+| **G1**（传输面） | 取计划里更省的那个选项 | **扩展 `PLUGIN_HOOK_FIRED` 载荷**，不新开事件类型：字段是 `user_notices`，要渲染 hook 通知的宿主从这里读。两个一方 surface **不依赖**它 —— 它们直接路由（§5.2.1）—— 这正是省事那个选项站得住的原因 | §5.2.1、第 5 步 |
+| **G8**（生命周期） | 计划的顺序，去掉校验器 | **前半段落地**：引擎已经 DENY 的调用在 profile 下仍然触发 hook —— 观察与权限是两回事，裁定保持 DENY。`agentao-v1` 保留跳过。**后半段是重入**：`updatedInput` 替换参数，按**将要真正执行的内容重判**，两个裁定取更严的那个 —— 所以 hook 的 `allow` 抬不动重算出来的 DENY，Phase 2 确认框展示的也是改写后的输入。`defer` 降级为 `deny` 并点名该取值；exit 2 拒绝该调用；`continue:false` 结束的是**这一轮**、不是这次调用；`additionalContext` 拼在结果旁边而不是写日志。按维护者决定不做校验步骤（§1） | §4.4、第 6 步 |
+| **G9** | 计划的设计，一处偏离 | **按契约分组、运行、合并一次。** 四个带决策的分派全部分组；v1 的短路**只**结束 v1 那一组 —— 这才是要紧的性质，因为它的副作用正是「所有 handler 都要跑」这条规则存在的理由。合并与分组无关，走该事件自己的格，理由平手在**获胜类别之内**按声明顺序、绝不按分组顺序。**与计划正文有一处偏离**：两组是先后运行而不是并发，因为 G6 取了它写明的兜底支、没有 hook 池可用。先后运行只会*延迟*profile 组，压不掉它 | G1 余下那一半是面向宿主的传输面 —— 新事件类型或扩展 `PLUGIN_HOOK_FIRED` 载荷 —— 上面两个 surface 都不需要它它们卡住第 1、3、4、5、6b 步，而且没有一个是靠探测别人的二进制能回答的 | §9 |
 
 ---
 
@@ -102,6 +141,18 @@ run under Agentao without modification"*：
   —— 而降级必须说明降到哪、为什么，因为把一种权限结论悄悄换成另一种，是这三者里最糟的结果。
 - **不存在静默排除。** agentao 忽略的字段都要出现在 §5.1 里并写明理由 —— 就像
   `SUPPORTED_HOOK_TYPES_BY_EVENT` 今天已经把「被丢弃的规则」暴露成解析器警告那样（`models.py:217`）。
+
+**profile-1 明确不承诺的三件事**，由 §0 的门槛结案带来，而不是日后被发现。它们列在这里，因为另一种做法
+就是 §1 第三条规则禁止的静默丢弃；每条都点名产生它的那个决定：
+
+- **hook 停掉一轮之后，排队中的兄弟工具调用是否执行，未定义**（G2）。agentao 承诺的是*批次结果* ——
+  每个 plan 都产出结果与 `role:"tool"` 消息 —— 对「停止变为可观察」与「队尾出队」之间那一刻不作承诺。
+- **所有匹配的 handler 都被*提交*，但不保证都启动**（G6）。在 `SessionEnd` 的共享 1.5 秒预算下，排队的那个
+  可能永远不跑。这比参考文档的并行条款弱，比今天的串行短路强。
+- **agentao 不在执行前按 schema 校验工具输入**（G8），所以参考文档那条「输入不合法则不触发 hook」在这里
+  没有对应物 —— 根本不存在可供它描述的那次拒绝。可见后果在改写路径上：上游会用 `tool_use_error` 拒绝一个
+  schema 不合法的 `updatedInput`，而 agentao 把它交给工具、由工具按自己的方式失败。两种情况下原输入都不会
+  执行；不同的是错误呈现面。
 
 这把事件数差距（对照文档 §0：31 / 11 / 8）正式划出范围，把配置形状正式划**进**范围，并把字段差距**列举
 出来** —— 而不是靠一句话糊过去、或者一轮评审发现一个。
@@ -166,11 +217,17 @@ Claude Code 配置里拷出来的文件**没有 `contract` 键** —— 它是 C
 |---|---|---|
 | `hooks`（列表）、无 `type` | 官方 matcher group | agentao 当前所带的最新 `claude-code@profile-N` |
 | `type`、无 `hooks` | agentao 扁平 handler | `agentao-v1` |
-| 两者都有，或都没有 | 歧义 | **禁用该文件** |
+| **两者都有** | 歧义 | **禁用该文件** |
+| **两者都没有** | 未定 | 不投票；按该文件的契约解析，由那套契约**逐规则**报告 |
 
-**这里的每一种失败都是文件级的。** 一条规则，没有例外：歧义条目、混用两种形状的文件、以及与显式 `contract` 冲突的形
-状，都**整份禁用**并告警。一份被静默解析了一半的文件比一份被拒绝的更糟 —— 半份 hook 配置不是配置，而
-逐条目拒绝恰恰就是制造出半份配置的那条路。
+**这里的每一种*形状*失败都是文件级的。** 歧义条目、混用两种形状的文件、以及与显式 `contract` 冲突的形状，
+都**整份禁用**并告警。一份被静默解析了一半的文件比一份被拒绝的更糟 —— 半份 hook 配置不是配置，而逐条目
+拒绝恰恰就是制造出半份配置的那条路。
+
+**但「两个键都没有」不是形状失败**，把它当成形状失败，破坏掉的承诺比守住的更重。一个既没有 `type` 也没有
+`hooks` 的条目什么主张都没提；它是一个**畸形 handler**，而被 §3 冻结的 `agentao-v1` 一直是逐规则报告它
+（"Unknown hook type ''"）、其兄弟照常工作。把两者并成一类，会让一个打错字的条目停掉同一份 v1 文件里其余
+所有 hook。所以上面那张表由三个取值变成四个，规则也比「有歧义即致命」更窄：**只有自相矛盾才致命。**
 
 **显式**的 `contract` 仍然优先，且与之不符的形状是拒绝、不是强行迁就。而两个失败方向并不对称：
 
@@ -185,15 +242,19 @@ Claude Code 配置里拷出来的文件**没有 `contract` 键** —— 它是 C
 
 - agentao 对 `toolName` 走 glob（`_matchers.py:15`）：`*` 匹配一切，否则**精确相等**。
 - agentao 对 `trigger` 走锚定的 fullmatch 正则（`_matchers.py:30`）。
-- Claude 的 matcher 是字符串、三路求值，codex 实现的也是同样三路（对照文档 §2）：`*`、精确**并列**、
-  以及**非锚定**正则。
+- Claude 的 matcher 是一个字符串，而它的求值是**实测**出来的、不是推断的：`*` 是通配符，其余一切都是
+  **锚定全匹配**（`docs/reference/hooks-probe-2.1.251.zh.md` §G3）。
 
-于是 `"Edit|Write"` —— 公开示例里最常见的那个 matcher —— 在上游是并列，在 `_glob_match` 下则是一个不含
-`*` 的字面串、按相等比较。它什么都匹配不到。一个翻译层会把规则注册进去、然后永远不触发，这比拒绝它
-更糟。
+这次测量修正了本节。早先的版本依据 codex 的实现与参考文档的措辞，说上游用的是**非锚定**正则；七个探测点
+给出了相反结论，其中两个是决定性的：`ead` **匹配不上** `Read`，`Rea|Wri` 也匹配不上 —— 这两个非锚定搜索
+都会触发。七个点与 `re.fullmatch` 完全一致。
 
-因此 `claude-code` 模式需要的是 Claude 的 matcher 求值，而不是往 dict 上做映射。这是**设计门槛 G3**
-（§9）—— 三路语义必须在第 3 步之前钉死。
+头条在修正之后依然成立，值得把两件事分开：**字符串 matcher 仍然不是「换个写法的 dict matcher」**，因为
+agentao 把 `toolName` 送进的是 `_glob_match`、不是它那条锚定正则路径。`"Edit|Write"` 在那里是一个不含 `*`
+的字面串、按相等比较，什么都匹配不到。一个翻译层会把规则注册进去、然后永远不触发，这比拒绝它更糟。
+
+变的是**代价**：`claude-code` 模式不需要新写一个三路求值器，它需要的是 agentao 已经有的那个锚定全匹配
+（`_regex_match_full`）外加对 `*` 的特判 —— `*` 不是合法正则，不能直接透传。**G3** 据此结案（§0）。
 
 ### 2.4 handler 字段矩阵
 
@@ -207,7 +268,7 @@ Claude Code 配置里拷出来的文件**没有 `contract` 键** —— 它是 C
 | `timeout` | 按**类型**：`command` / `http` / `mcp_tool` 为 600、`prompt` 为 30、`agent` 为 60；`UserPromptSubmit` 把 command 的默认值降到 **30**；`SessionEnd` 的 handler 共享 **1.5 秒**预算，可被 settings 文件里更长的逐 hook `timeout` 抬高 —— 但 *"Timeouts set on plugin-provided hooks don't raise the budget"* | **一律 60**（`_parser.py:141`） | **接受**，并采用参考文档的逐事件默认值。agentao 的 hook 全部来自插件，所以那条 `SessionEnd` 预算是它**无法**从配置里抬起来的 —— 这正是 §2.5 的「全都启动」保证恰恰在这个事件上最吃紧的原因 |
 | `command` | `args` 缺省时走 shell 形式 | 恒 `shell=True`（`_dispatcher.py:353`） | 接受（不变） |
 | `args` | **exec 形式** —— 无 shell，每个元素即一个参数 | **`ParsedHookRule` 里根本没有**（`models.py:237`） | **接受。** 不是可选项：参考文档要求作者**只要**用到路径占位符就设 `args`，所以少了它，§7.1 只是半个特性 |
-| `shell` | `bash` \| `powershell` | 无 —— `shell=True` 意味着 `/bin/sh`（`_dispatcher.py:353`） | 目前**一律拒绝**并告警。`"bash"` **不是**空操作（见下），`"powershell"` 则是没被测过的承诺 —— agentao 没有 Windows CI job。解除对 `"bash"` 的拒绝与 exec 形式同处一地，归门槛 G5 |
+| `shell` | `bash` \| `powershell` | 无 —— `shell=True` 意味着 `/bin/sh`（`_dispatcher.py:353`） | **忽略**该字段并出一条诊断。**实测**：Claude Code 2.1.251 用 `sh` 执行命令 hook（`$0` = `/bin/sh`、`posix on`），并且**也不**兑现显式的 `"shell": "bash"`（`docs/reference/hooks-probe-2.1.251.zh.md` §A）。拒绝该*规则*会让一个在上游能跑的 hook 失效 —— 正是 §1 要防的那个倒退方向。`"powershell"` 仍未测；agentao 没有 Windows CI job |
 | `async` / `asyncRewake` | 后台执行、exit-2 唤醒 | 无后台 runner | **拒绝**并告警 |
 | `if` | 一条权限规则模式，尽力而为 | 无 | **拒绝**并告警。原理上够得着 —— agentao 有带模式匹配的权限引擎 —— 但它是一个带自己那套 Bash 子命令语义的子特性，不是一个接上去就完事的字段。§11 记录理由，处置归本表 |
 | `statusMessage` | spinner 文案 | 无 | **忽略** —— 纯装饰，对契约无影响 |
@@ -866,7 +927,7 @@ hook 的 `allow` 根本无权自动放行。
 | `terminalSequence` | 通用 | 由 Claude Code 代 hook 发出的 OSC/BEL 序列 —— 限 OSC `0`/`1`/`2`/`9`/`99`/`777` 与 BEL，出现别的就整条忽略 | `ignore` —— agentao 的 CLI 没有一条归 hook 用的终端写入通路，而那份 allowlist 是一条安全边界，本计划不会闭着眼睛实现它。列出来、不静默；**G7** 可以把它翻成 accept，因为它要的传输通道正是 `user_notices` 需要的那条（G1） |
 | `hookSpecificOutput.hookEventName` | 凡是用到 `hSO` 的地方 | *"It requires a `hookEventName` field set to the event name"* —— 整个嵌套对象的**判别字段** | **accept，而且它是唯一一个「取值」可以正当地校验失败的输出字段。** 缺失或对不上 ⇒ **整个对象** `schema_invalid`，顶层字段一并作废。「而顶层字段照常生效」是最诱人的那种放宽，它既与 resolver 矛盾（`parse_stdout` 在非 `valid` 时返回 `parsed=None`，`absorb_channels` 只在 `valid` 时跑，§4.2），也与参考文档矛盾 —— 后者是按整个对象描述校验的（*"a parsed object that fails schema validation"*）。「部分有效」是一个自洽的替代方案，但那是一处 **profile 偏离**、需要在本表里单独占一行。清扫时漏掉这个字段，会让解析器去读一个写给别的事件的 `hSO` 块 |
 | `hSO.additionalContext` | 8 中 6 | 给模型的 context | **accept**（§4.1） |
-| `decision` / `reason` | UPS、PostToolUse、Stop、PreCompact；**`PostToolUseFailure` 存疑** | 阻断 + 理由 | 那四个 **accept** —— 但注意 **`"block"` 在 `PostToolUse` 上并不表示*停止***：*"adds the `reason` next to the tool result. Claude still sees the original output"*（`hooks.md:1933`），它是一条反馈通道，这一轮继续。只有 `continue:false` 才停。`PostToolUseFailure` 上参考文档自相矛盾 —— 见下。在 **G7** 给出结论之前，agentao **不**认那里的 `decision`（较窄的读法），而 §4.1 保留表示它的能力 |
+| `decision` / `reason` | UPS、PostToolUse、Stop、PreCompact、**PostToolUseFailure** | 阻断 + 理由 | 五个**全部 accept** —— 但 `"block"` 在两个 Post* 事件上都不表示*停止*。`PostToolUse`：*"adds the `reason` next to the tool result. Claude still sees the original output"*（`hooks.md:1933`）。`PostToolUseFailure`：**实测**为同一形状 —— reason 进模型、原始错误保留、turn 继续（`docs/reference/hooks-probe-2.1.251.zh.md` §C）。两者都是反馈通道；只有 `continue:false` 才停 |
 | `permissionDecision` / `permissionDecisionReason` | PreToolUse | allow/deny/ask/defer | 字段 **accept**；**取值**各自带处置（§1）：`allow` / `deny` / `ask` 接受，**`defer` 降级为 `deny`**，并在 `permissionDecisionReason` 里点名这个未实现的取值，外加每（规则，字段）一条诊断。不是「带理由拒绝」，那违反 §1 第三条规则 —— 而且运行时本来也兑现不了：上游的 `defer` 是 *"exits gracefully so the tool can be resumed later"*，一整套可恢复生命周期（会话留在磁盘上等待恢复，hook 还能再 defer 一次），这边没有对应物 —— agentao 既没有地方停放待决调用，也没有 `tool_deferred` 结果。`deny` 是保守的降级：工具不跑，而且模型被告知原因。替代方案是 `ask`，它更接近原意但在非交互运行里不可用；**G7** 选一个。降级发生在 `resolve()` 里，所以 §5.4 那张格只会看到 `allow` / `deny` / `ask` |
 | `updatedInput` | PreToolUse | 替换整个输入对象 | **accept**，经 §4.4 的重新进入（G8） |
 | `updatedToolOutput` | PostToolUse | 替换 tool result；*"must match the tool's output shape"* | **accept，待 G2** —— agentao 没有工具输出 schema（§5.3） |
@@ -884,16 +945,16 @@ so."* agentao 的八个事件里有两个是被点名的例外 —— 所以把�
 hook 的 `systemMessage` 送到参考文档说根本看不到它的用户那里。一个只出现在散文里的谓词不是机制，这张表才
 是：
 
-| 事件 | `continue` / `stopReason` | `systemMessage` | `suppressOutput` | `terminalSequence` |
-|---|---|---|---|---|
-| `SessionStart` | **discarded —— 存疑**（见下） | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `UserPromptSubmit` | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `PreToolUse` | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `PostToolUse` | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `PostToolUseFailure` | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `Stop` | 认 | 认 | 不适用 —— 已 ignore（`agentao-v1` 里仍生效 —— §11 第 1 问） | 不适用 —— 已 ignore |
-| `PreCompact` | **丢弃** | **丢弃** | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `SessionEnd` | **丢弃** | **丢弃** | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| 事件 | `continue` | `stopReason` | `systemMessage` | `suppressOutput` | `terminalSequence` |
+|---|---|---|---|---|---|
+| `SessionStart` | **discarded —— 实测**（见下） | **丢弃** | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `UserPromptSubmit` | 认 | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `PreToolUse` | 认 | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `PostToolUse` | 认 | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `PostToolUseFailure` | 认 | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `Stop` | 认 | 认 | 认 | 不适用 —— 已 ignore（`agentao-v1` 里仍生效 —— §11 第 1 问） | 不适用 —— 已 ignore |
+| `PreCompact` | **丢弃** | **丢弃** | **丢弃** | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `SessionEnd` | **丢弃** | **丢弃** | **丢弃** | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
 
 *"Claude Code discards a PreCompact hook's `systemMessage` and `continue` fields"*；`SessionEnd`
 *"hooks have no decision control … Claude Code discards their JSON output fields, such as
@@ -918,9 +979,13 @@ false` **就是**它的决策模式之一 —— `TeammateIdle, TaskCompleted` �
 `PostCompact`（`:2973`）。上游每次都写两句，唯独这里没有。所以要么 `SessionStart` 真的认一个没人记录过的
 停止，要么是它的小节漏了十四个邻居都有的那句话。
 
-**profile-1 取窄读法 —— `SessionStart` 上 `continue:false` 是 `discarded`** —— 依据是 §11 第 9 问那条代价
-不对称的论证，而它在这里比在 `PostToolUseFailure` 上更硬：认一个没有文档依据的停止，等于让一个 hook 能拒绝
-启动一个上游本会启动的会话；而不认一个没人要求过的停止，代价为零。**G7** 用同一次探测收口。
+**profile-1 取窄读法 —— `SessionStart` 上 `continue:false` 是 `discarded`** —— 当初依据的是 §11 第 9 问
+那条代价不对称的论证（认一个没有文档依据的停止，等于让 hook 能拒绝启动一个上游本会启动的会话；不认一个没人
+要求过的停止，代价为零），此后**已被实测证实**：一个打印 `{"continue": false, "stopReason": …}` 的
+`SessionStart` hook 跑完之后，会话照常开始、turn 跑完，输出里哪儿都没有那个 reason
+（`docs/reference/hooks-probe-2.1.251.zh.md` §B、§0）。所以「别处写了十五次」的那句话确实是这个事件的小节漏
+了，起作用的是 Decision-control 那一行。该行不再存疑；仍未测的是 `systemMessage` 在这里是否**也**被丢弃 ——
+探测用的传输面看不到它，§5.1 的矩阵按参考文档自己的措辞保留 `honored`。
 
 用 `discarded` 这个词是精确的，它顺带定下一件本来会悬着的事：**窄读法这一支是静默的，不出诊断。** 诊断属
 于 `ignore` 那条轴，报告的是 *agentao* 的能力缺口；而 `continue` 在字段表里是 `accept`、在另外五个事件上有
@@ -996,15 +1061,23 @@ the tool result. Claude still sees the original output"*（`:1933`）—— 加�
 一轮是否继续**一个字都没说。而 `PostToolUseFailure` 自己那一节只定义了 `additionalContext`、根本没有
 `decision`（`:2043-2046`），所以也没有第二个来源可以读出效果。
 
-因此 **G7** 要探的是**四件事**，不是一件：(1) 到底认不认 `decision`；(2) `reason` 投递到哪 —— 模型、用户、
-还是只进 transcript；(3) 原始错误是否被保留在它旁边；(4) 之后这一轮是否继续。只有 (1) 决定那一行的判定；
-(2)–(4) 决定消费者、格与测试，而本计划**不得**拿 `PostToolUse` 的答案去预填它们。唯一不算开放的一点：该事
-件**自己**的 exit-2 行写着它**不能阻断** —— *"Shows stderr to Claude; the tool already failed"*，而那张表
-的开场就是「有些事件代表的是*已经发生、或无法阻止*的事情」（`:838,855`）。这约束了「block 在这里可能是什么
-意思」，但它不能替代实测；把它当成对 (1) 的回答，正是 §5.1 已经撤回过一次的那种推理。在那之前，本计划在**行为**上取窄读法 —— **作为一处保守的 profile 偏离，而不是一条发
-现**：证据并不偏向它，选它是因为判断错的代价不对称（§11 第 9 问）。宽读法保留在**类型**上：§4.1 的 `BlockDecision`
-重新列上 `PostToolUseFailure`，好让解析层能表示一个 profile 暂不兑现的 decision —— 这与 §4.1 早就对
-`defer` 采用的纪律是同一条。
+**G7 探的是四件事、不是一件，而四件都有了答案**（`docs/reference/hooks-probe-2.1.251.zh.md` §C、§0）：
+(1) `decision` **确实**被认；(2) `reason` 以带标签的独立一行到达**模型**；(3) 其前**保留原始错误**；
+(4) **turn 继续**。所以 `hooks.md:999` 的宽读法在这个事件上是对的，本计划坚持了七版的窄读法**被推翻** ——
+profile-1 认这个 `decision`，作为反馈。
+
+**这些答案不许是什么，以及让它们成为证据的那个对照组。** (2)–(4) 不得从 `PostToolUse` 预填，所以是测出来
+的；它们测回来*与* `PostToolUse` 相同，是一个结果，而不是翻案清单所禁止的那个假设。另外，同一事件用一个
+无法识别的键做的对照运行显示它到达模型 **0** 次 —— 正是这一点把「该字段被认」和「hook 的 stdout 会在模型
+那儿回显」分开；没有它，这条发现测的就是另一套机制。
+
+**唯一从来就不冲突的一点。** 该事件**自己**的 exit-2 行写着它**不能阻断** —— *"Shows stderr to Claude;
+the tool already failed"*，而那张表的开场就是「有些事件代表的是*已经发生、或无法阻止*的事情」
+（`:838,855`）。测量与它一致：这里什么也没被阻止，因为 `block` 在这里是加注、不是停止。但把那一行当作对
+(1) 的回答，仍然是 §5.1 撤回过一次的那种推理 —— 它约束的是*效果*，不是「认不认」。
+
+§4.1 的 `BlockDecision` 继续列着 `PostToolUseFailure`，现在对应的是 profile **确实**兑现的一个 decision；
+「解析层比处置层宽」这条分离在 `defer` 上依然值回票价。
 
 **这张表里每一个 `accept` 都欠三样东西**：`ParsedHookOutput` 上的一个字段（§4.1）、消费者表里的一行
 （§5.2）、以及多个 handler 都设置它时的聚合规则。本计划发出去过一个三样都没有的 `accept`，还有一行停在「建
@@ -1025,7 +1098,7 @@ profile 升版。
 | `UserPromptSubmit` | `decision:"block"`+`reason`、`hSO.additionalContext`、`continue`、exit 2；`suppressOriginalPrompt` 在 profile-1 里**忽略**（§5.1） | 部分（`_hook_dispatch.py`） | 接上缺的三条通道。**`suppressOriginalPrompt` 没有路由** —— 解析并给诊断，没有任何东西消费它，因为 agentao 的阻断消息里本来就没有 prompt 可关 —— 给一个已 `ignore` 的字段留着「要加路由」，正是这里要防的漂移 |
 | `PreToolUse` | `permissionDecision`、`updatedInput`、`hSO.additionalContext`、**`continue:false`** | decision 有；context 解析后只写日志 | `tool_contexts` sink；`updated_tool_input` **外加那套重判顺序** —— sink 是其中小的那一半（§4.4，G8）。还有 turn 级的停止路由（§5.2.2），它**不是**权限裁定：`continue:false` 结束整个 turn，`deny` 只挡一次调用 |
 | `PostToolUse` | `decision:"block"`+`reason`（**是反馈、不是停止** —— 见下）、`hSO.additionalContext`、`updatedToolOutput`、exit 2 → 反馈、**`continue:false`**（真正的停止） | **无**（`_dispatch_lifecycle`，`_dispatcher.py:120`） | 结果对象 + 拼接进 tool result —— 外加一个决定：`updatedToolOutput` 到底替换什么，因为 agentao 的工具输出是字符串、没有 schema（§5.3）。**是两个 sink 不是一个：** `decision:"block"` 把 `reason` 附在被保留的结果旁边、这一轮继续；`continue:false` 结束这一轮（§5.2.2） |
-| `PostToolUseFailure` | `hSO.additionalContext`、exit-2 stderr → 模型、**`continue:false`**；`decision:"block"` **存疑**（§5.1、G7） | **无**（`_dispatch_lifecycle`） | 结果对象 + 反馈给模型；它必须**无条件**承载 turn 级的 `Stop`（通用字段那一行，§5.1）。G7 若打开 `decision`，这个 sink 按**探针的答案**来定、而不是照抄 `PostToolUse` —— 它们共享的那一行钉的是 wire 形状、不是效果（§5.1、G7） |
+| `PostToolUseFailure` | `hSO.additionalContext`、exit-2 stderr → 模型、**`continue:false`**，以及 **`decision:"block"` → 模型反馈**（实测） | **无**（`_dispatch_lifecycle`） | 结果对象 + 模型反馈；它**无条件**携带一个 turn 级 `Stop`（通用字段行，§5.1）。`decision` 的落脚点由实测确定、而不是从 `PostToolUse` 继承：`reason` 以独立一行到达**模型**，其前**保留原始错误**，且 **turn 继续**（`docs/reference/hooks-probe-2.1.251.zh.md` §C） |
 | `Stop` | `decision`、`hSO.additionalContext`、`continue`、exit 2 | 基本齐 | `user_notices` 消费者；由 `hSO` 触发的 continuation |
 | `PreCompact` | exit 2、顶层 `decision:"block"` | agentao 自创拼法 | 参考文档的拼法（§3.3） |
 
@@ -1303,13 +1376,21 @@ exit 2 **先**经 `table.exit2(event)` 归一化 —— `block` / `model_feedbac
 上，这次归一化的结果是**继续**；这也是为什么 §4.2 里 `Block(reason)` 只是 resolver 层的名字、不是合并层
 的类别。
 
+**同一条归一化，也是一行存疑的入口 —— 而探测已经从这扇门走过去了。** 第 1 序收的是*效果*为「结束处理」
+的任何东西，判定成员资格的唯一标准就是效果。`PostToolUseFailure` 的 `decision:"block"` 曾是候选：它若结束
+这一轮，`resolve()` 就会像经 `table.exit2(event)` 归一化 exit 2 那样把它归一化成 `Stop(reason)` 送进第 1
+序，下面那条 rank-2 行则应删除而不是保留。**实测下来它是加注并继续**
+（`docs/reference/hooks-probe-2.1.251.zh.md` §C），所以它留在第 2 序、第 1 序不受影响 —— 正是翻案清单预留
+的那个结果，而且是探出来的、不是选出来的。这扇门对下一行存疑的仍然敞着：成员资格永远由效果决定，而不是由
+某个字段出现在哪张表里决定。
+
 然后是第 2 序、逐事件：
 
 | 事件 | 格 | 说明 |
 |---|---|---|
 | `PreToolUse` | **`deny > ask > allow`** | 上游自己写明的多 hook 优先级是 `deny > defer > ask > allow`；而 `defer` 在 `resolve()` 里就已经**降级成 `deny`**（§5.1），根本到不了合并层，合并器也就不需要为它留分支。本行与 G9 必须写同一组取值，否则实现者无从判断要不要处理 `defer` |
 | `UserPromptSubmit`、`PostToolUse`、`PreCompact` | `block > none` | 只有一个轴，所以扁平的「任一 deny 即 deny」在这里碰巧是对的 —— 也只在这里对 |
-| `PostToolUseFailure` | `block > none` —— **条件于 G7** | 今天不生效：profile-1 取窄读法，在这里不认任何 `decision`（§5.1）。这一行存在，是因为 §5.1 的规则是「一个 `accept` 欠一条聚合规则」，而 G7 可以把它打开 —— 一旦打开，两个 profile handler 同时返回 `block` 就需要一条定义好的合并规则，就是这一条。它的 `continue:false` 那一支**不是**条件的：那条走通用字段行到达该事件，在第 1 序合并 |
+| `PostToolUseFailure` | `block > none` | **生效。** 探测发现该事件认顶层 `decision`，且其效果是*反馈并继续*，所以它在第 2 序合并、第 1 序不受影响（`docs/reference/hooks-probe-2.1.251.zh.md` §C）。两个 profile handler 同时返回 `block` 就按这一行合并，平手按声明顺序。它的 `continue:false` 那一支仍走通用字段行在第 1 序合并 |
 | `Stop` | **`end-turn > continue > none`** | 两套契约唯一正面冲突的地方。「结束」压过「继续」，因为它是另一方撤不回的那个结果，也因为 agentao 自己的代码本来就是这个顺序（`_runner.py:964` 在走到 `:984` 之前就 return 了）。被这样丢掉的 continuation 要变成一条点名了失败规则的 `user_notices` —— 静默丢弃，正是作者最后得出「我的 hook 有时候不触发」这个结论的原因 |
 
 这些都不贵 —— 一次分组加一次合并 —— 但每一部分都是可观察的，所以它是门槛而不是实现细节；§12 也因此多出
@@ -1410,7 +1491,7 @@ OpenAI 自己的 hooks 参考也点出了同一个风险 —— 落盘会把 hoo
 | 7 | `continue:false` 仅 `Stop` 生效（§5.5） | 按能力表处理 —— **不是**全局开关 —— **并且按 §5.2.2 那张路由表**：开关只是一半 —— 五个「认」它的事件里有两个没有能承载停止的结果对象，而且它们的 hook 跑在 tool worker 里、离能处理它的地方隔着三层调用栈（`_dispatcher.py:267-288`、`tool_executor.py:462`、`tool_runner.py:249`）。 | **P2** | P2 |
 | 8 | exit 2 仅 `Stop` 生效（§5.6） | 按能力表：block / feedback / ignore。 | **P2** | P3 |
 | 9 | 没有 `${CLAUDE_PLUGIN_ROOT}`（§5.7） | 占位符替换**与**环境变量导出都要补 —— **三个**占位符全补（§2.4）。 | **P1**，低成本 | P3 —— 因成本上调 |
-| 10 | **`shell` 字段不被认**（§2.4） | 在 G5 定下 shell 之前先拒绝该字段；定了之后再认它。`/bin/sh` 这条基线本身算不算偏离，是**参考文档自身的歧义**，不是一条发现。 | **P2** | *对照文档里没有* |
+| 10 | **`shell` 字段不被认**（§2.4） | **忽略该字段并出诊断** —— 而且前提被撤回：2.1.251 自己也不认它、且用 `sh` 执行命令 hook，所以 agentao 的 `/bin/sh` 基线是**合规的**（`docs/reference/hooks-probe-2.1.251.zh.md` §A）。参考文档的自相矛盾由实测了结，而不是靠挑一句话。 | **P3** | *对照文档里没有* |
 | 11 | **Windows 上跑的是 `cmd.exe`** —— 既不是 Git Bash 也不是 PowerShell（§2.4） | 不在本文范围内；agentao 没有 Windows CI job，所以任何方向的断言都未经测试。记录在此以免被重新发现。 | *注记* | *对照文档里没有* |
 | 12 | **`Stop` 重入上限这边是 3，快照里是 8** | 按契约取值：`claude-code` 下 8，`agentao-v1` 下 3。它读起来像一条「要保住的领先项」，其实是一处偏离（§10 第 2 条）。 | **P2** | *在对照文档的表里，但不属于那九条* |
 | 13 | **`updatedInput` 会绕过已经算好的权限裁定**（§4.4） | 聚合 → 校验 → **重判** → 取交集 → 重新确认。门槛 G8，卡第 6 步。 | **P1** | *对照文档里没有* |
@@ -1476,7 +1557,7 @@ agentao 领先两个 peer 的五处之一。把导出写成 `env={...}` 或 `env
   了，而 `SessionEnd` 到 `:815` 才跑，观察者更是早在 `:770` 就摘掉了，所以只定传输形状会让 headless 用户完
   全没有路。headless 那条的 wire 形式，参考文档给的是 `--output-format stream-json` 下的
   `SDKInformationalMessage`。
-- **G2 —— 生命周期事件的结果类型，以及「从 tool worker 里出来」的停止路由（§5.2.2）。** 卡第 4 步。
+- **G2 —— 生命周期事件的结果类型，以及「从 tool worker 里出来」的停止路由（§5.2.2）。** **已定（rev 23）：取第 (ii) 支** —— 放弃排队 sibling 的保证，也不建接缝；§1 记下「停止那一刻队尾是否执行」**未定义**，§12 的那条测试缩到两种情况下都成立的不变式。下面关于结果类型、聚合路径与 `stopReason` 平手规则的内容全部照旧。卡第 4 步。
   `SessionStart`、`PostToolUse` 与 `PostToolUseFailure` 今天都只是 lifecycle：三个都从
   `_dispatch_lifecycle` 返回 `list[HookAttachmentRecord]`（`_dispatcher.py:66,126,134,267-288`），于是
   hook 决定的任何事都在调用点被丢掉。`SessionStart` 只需要用返回值承接 exit-2 用户通知与
@@ -1513,7 +1594,7 @@ agentao 领先两个 peer 的五处之一。把导出写成 `env={...}` 或 `env
 - **G4 —— 限额单位、上限、落盘策略。** 卡第 1 步。第一层的字节上限；第二层的单位（字符不需要 tokenizer，
   token 才是这份预算真正保护的东西）；以及 §6.1 的权限/配额/清理/失败处理。第一层不再落盘，所以
   本会引出的「临时明文文件」问题是被**关闭**了，而不是被回答了。
-- **G6 —— hook 并发上限、溢出处理与合并的确定性。** 卡第 6b 步。是三个决定，不是一个。(a) 池的名字与
+- **G6 —— hook 并发上限、溢出处理与合并的确定性。** **已定（rev 23）：取兜底支** —— 承诺是「所有匹配的 handler 都被**提交**」，而不是「都启动」，且在 `SessionEnd` 的共享预算下，排队的那个可能永远不跑。不做逐 dispatch 的准入控制。(c) 的声明顺序平手规则不受影响、仍然必须。卡第 6b 步。是三个决定，不是一个。(a) 池的名字与
   上限 —— 第四个池，不能碰 `CLAUDE.md` 记录的那三个。(b) **超出上限之后怎么办。** 光有 cap 并不能兑现
   「所有匹配 handler 都启动」：超出之后它们排队，而在 `SessionEnd` 共享的 1.5 秒预算下，排队的 handler
   可能根本不会启动 —— 那正是这项改动要修的那个失败。本计划的提案是**给每个事件的 handler 数设一
@@ -1524,7 +1605,7 @@ agentao 领先两个 peer 的五处之一。把导出写成 `env={...}` 或 `env
   部 handler 在任何一个启动之前一次性拿到容量。如果这套机制太重，退路是把承诺弱化成「所有 handler 都被
   *提交*」，并接受 `SessionEnd` 的共享预算可能在某个排队者身上耗尽。(c) 让聚合出的 `reason` 可复现的平手
   裁决 —— 按声明顺序，绝不按完成顺序。
-- **G7 —— profile 的两张字段矩阵（§5.1 输出、§5.3 输入）。** 卡第 3 步。输入侧：`transcript_path` 指向什
+- **G7 —— profile 的两张字段矩阵（§5.1 输出、§5.3 输入）。** **部分结案（rev 23）。** 两行存疑均已实测（§0）：`SessionStart` 丢弃 `continue:false` —— 窄读法被证实；`PostToolUseFailure` **认** `decision`，效果是反馈并继续 —— 窄读法被推翻。存证问题已定：**只留 provenance 表，不入库**。下面输入侧那些行**被修正但未结案** —— 探测捕获了六份真实 payload（§0），这确认了矩阵的形状，但没有决定 agentao 从哪里取值。卡第 3 步。输入侧：`transcript_path` 指向什
   么（或者就保持 `null`）；`permission_mode` 的映射表或不发这个字段，**包括把它从 `PreCompact` 上摘掉**；
   `tool_response` 是包成一个自创对象、还是作为一处写明的偏离继续发字符串、还是等真正的工具输出 schema；那
   三个 agentao 私有输入字段（`turn_end_reason`、`compaction_type`、`reason`）的处置 —— 丢掉，还是收进一个
@@ -1540,10 +1621,13 @@ agentao 领先两个 peer 的五处之一。把导出写成 `env={...}` 或 `env
   **翻案清单。** 一行存疑的，是**逆着**参考文档更宽的那句话定下来的，所以探测可以把它翻过来 —— 而「把断言
   反过来」不是一份计划。每一支各自一次性列出要改什么：
 
+  **两次探测都已回来**（§0）。两行按原样保留、只标上结果，因为一份事后再读的翻案清单，正是下一行存疑的
+  该怎么规划的范本。
+
   | 探测若发现…… | 就要一起改这些 |
   |---|---|
-  | **`SessionStart` 认 `continue:false`** | §5.1 矩阵那一格由 `discarded` 改回 `honored`；§5.2 的 `SessionStart` 行在通知与 context 两个 sink 之外**再加一个控制结果**；§5.2.2 的路由表补回这里删掉的那一行 —— *整个会话，在它第一个 turn 之前* —— 并带上**两个界面的语义**（交互式：先渲染通知、然后不进入输入循环就退出；`agentao run`：一个 turn 都不跑、`RunResult` 带上理由）以及一个 **headless 退出码**（轮内停止不需要它，因为那些走普通的 turn-outcome 映射）；**G2** 多出第七个决定（`SessionStart` 的结果类型与那个退出码 —— 之前的提案是 `3`，另一个是 `1`）；**第 4 步**补回该路由；§12 把「不停止测试」替换成**两个界面**的端到端停止测试，而它按今天的代码必然失败，因为 `cli/session.py:81` 把 dispatcher 的返回值丢了 |
-  | **`PostToolUseFailure` 认 `decision`** | §5.1 那一行去掉「存疑」—— **但那只定下了探针的第 (1) 问。** 这一支其余部分要在拿到 (2)–(4) 的答案**之后**写，而不是之前：§5.2 那一行填上探到的 `reason` 通道（模型／用户／只进 transcript）、原始错误是否保留在旁边、以及这一轮是否继续；**§5.4 会按两种互斥方式之一改动，由探针来选** —— 若 (2)–(4) 描述的是*反馈／逐事件*效果，那条条件的 `block > none` 行就直接变成无条件；若描述的是*结束这一轮*，那条行就被**删掉**，改由 `resolve()` 把这个 block 归一化成 `Stop(reason)`、从 **rank 1** 进场，而这同时还要改第 1 序的来源清单、**G9** 的那个括号、以及产出和读取它的 resolver 与消费者；§12 补上它已经预留的 `decision` 分支，**外加一个多 handler 聚合测试**，因为一个 `accept` 一旦被兑现就欠一条聚合规则（§5.1）。这一行**不许**做的是把 `PostToolUse` 的语义横移过来：它们共享的那一行钉的是形状、不是效果（§5.1） |
+  | **`SessionStart` 认 `continue:false`** —— ❌ **未触发**；实测为 `discarded` | §5.1 矩阵那一格由 `discarded` 改回 `honored`；§5.2 的 `SessionStart` 行在通知与 context 两个 sink 之外**再加一个控制结果**；§5.2.2 的路由表补回这里删掉的那一行 —— *整个会话，在它第一个 turn 之前* —— 并带上**两个界面的语义**（交互式：先渲染通知、然后不进入输入循环就退出；`agentao run`：一个 turn 都不跑、`RunResult` 带上理由）以及一个 **headless 退出码**（轮内停止不需要它，因为那些走普通的 turn-outcome 映射）；**G2** 多出第七个决定（`SessionStart` 的结果类型与那个退出码 —— 之前的提案是 `3`，另一个是 `1`）；**第 4 步**补回该路由；§12 把「不停止测试」替换成**两个界面**的端到端停止测试，而它按今天的代码必然失败，因为 `cli/session.py:81` 把 dispatcher 的返回值丢了 |
+  | **`PostToolUseFailure` 认 `decision`** —— ✅ **触发**，且 (2)–(4) 的答案选中了下面的*反馈*那一支 | §5.1 那一行去掉「存疑」—— **但那只定下了探针的第 (1) 问。** 这一支其余部分要在拿到 (2)–(4) 的答案**之后**写，而不是之前：§5.2 那一行填上探到的 `reason` 通道（模型／用户／只进 transcript）、原始错误是否保留在旁边、以及这一轮是否继续；**§5.4 会按两种互斥方式之一改动，由探针来选** —— 若 (2)–(4) 描述的是*反馈／逐事件*效果，那条条件的 `block > none` 行就直接变成无条件；若描述的是*结束这一轮*，那条行就被**删掉**，改由 `resolve()` 把这个 block 归一化成 `Stop(reason)`、从 **rank 1** 进场，而这同时还要改第 1 序的来源清单、**G9** 的那个括号、以及产出和读取它的 resolver 与消费者；§12 补上它已经预留的 `decision` 分支，**外加一个多 handler 聚合测试**，因为一个 `accept` 一旦被兑现就欠一条聚合规则（§5.1）。这一行**不许**做的是把 `PostToolUse` 的语义横移过来：它们共享的那一行钉的是形状、不是效果（§5.1） |
 
   两张清单都不是凭空加活：它们列的正是当初写好、又因为取了窄读法而被删掉或降为条件的那些小节。把它们写下
   来，就是为了不必再把那次删除重新推导一遍。
@@ -1558,7 +1642,7 @@ agentao 领先两个 peer 的五处之一。把导出写成 `env={...}` 或 `env
   不是 dispatcher 级 —— 它在六处新建，其中两处在池 worker 内）、那把锁、能扛过插件重载的**稳定规则键**，
   以及重载与 `/clear` 时的生命周期。东西很小，但它决定了这个机制是「一条有用的一次性提示」还是「每次调用
   刷屏」或者「彻底沉默」。
-- **G8 —— `PreToolUse` 的生命周期（§4.4）。** 卡第 6 步。十个步骤，而最容易被略掉的是前半段：**hook 什么时候
+- **G8 —— `PreToolUse` 的生命周期（§4.4）。** **部分结案（rev 23）。** 改写非法那一支已**实测**：上游拒绝该调用、原输入从不执行，所以计划的选择是作为合规落地、而不是「偏离安全」。**执行前校验器按维护者决定放弃** —— 不提 `jsonschema`、不加 `Tool.preflight()`，下面顺序里的第 2 步删除，§1 记下被缩小的承诺。仍然开放的是生命周期的其余部分。卡第 6 步。十个步骤，而最容易被略掉的是前半段：**hook 什么时候
   触发**（未知工具、输入校验失败时**不**触发；权限拒绝时**一定**触发 —— 也就是在 `claude-code` 模式下删掉
   `tool_runner.py:277` 那个跳过、在 `agentao-v1` 里保留它），然后才是聚合、按工具 schema 校验、**重判**、
   取交集（绝不向上放宽）、对改写后的输入重新确认、不重新 dispatch —— 外加两个 handler 改写同一个调用时的
@@ -1569,7 +1653,7 @@ agentao 领先两个 peer 的五处之一。把导出写成 `env={...}` 或 `env
   校验。**以及一次不合法的*改写*该怎么办**（§4.4 第 6 步）：本计划拒绝该调用，因为另一条路会去执行 hook 正
   在替换的那个输入。原本用来定这件事的那句话根本不在参考文档里，所以 G8 用探测来定 —— 如果 Claude Code 确
   实回退到原输入，那就把它作为一处**写明的、偏离安全侧的偏离**采纳，而不是让它当默认值。
-- **G5 —— `${CLAUDE_PLUGIN_DATA}`、exec 形式与 shell。** 卡第 3 步。该占位符需要一个 agentao 没有的逐
+- **G5 —— `${CLAUDE_PLUGIN_DATA}`、exec 形式与 shell。** **shell 那一半已由实测结案（rev 23）**：2.1.251 用 `sh` 执行命令 hook 且忽略显式 `shell`，所以 agentao 的基线合规、该字段按「忽略并出诊断」处理（§2.4、§0）。不需要改 `executable=`。`${CLAUDE_PLUGIN_DATA}` 与 exec 形式仍然开放。卡第 3 步。该占位符需要一个 agentao 没有的逐
   插件数据目录（位置、创建、生命周期）；`args` 需要在 `ParsedHookRule` 上加字段，并在
   `_dispatcher.py:353` 处加一条 exec 形式分支 —— 那里今天是无条件 `shell=True`；同一处还要决定
   `executable="/bin/bash"`（§2.4「基线 shell」）以及系统上没有 bash 时的兜底。
@@ -1650,13 +1734,14 @@ profile 下要 fork hook、在 v1 下不要。没有这个测试，两种模式�
    费者扫的是**另一棵树**（`~/.agentao/skills`，不是 `.claude/skills`），而且重载路径上没有锁，所以
    profile-1 忽略它。真正待决的是：skill 发现逻辑要不要认识 `.claude` 树 —— 那是一个远超 hook 范围的兼容
    特性 —— 还是「接受并写明差异」就够了。**G7。**
-9. **`PostToolUseFailure` 的 `decision` 到底认不认，认了又做什么？** 关于*认不认*，这份快照两种话都说了；
-   关于*做什么*，它**一个字都没说**（§5.1）：它所在的那一行钉的是 wire 形状，而该行成员的效果彼此互不相
-   容，事件自己的小节又只定义了 `additionalContext`。在探针给出结论之前本计划取窄读法，而不对称在于：不认
-   一个它其实定义了的 `decision`，最多少一条 `additionalContext` 已经覆盖的反馈通道；而认了它，就等于把
-   agentao 绑定到一个**自己叫不出名字的效果**上 —— 而候选的那几种效果，在「这一轮还活不活」这一点上是分
-   叉的。本条早先的版本断言「认了会停掉一轮上游本会继续的对话」，那正好预填了 G7 存在着要去取得的那个答
-   案，还和两节之外的翻案清单自相矛盾。
+9. **`PostToolUseFailure` 的 `decision` 到底认不认，认了又做什么？—— 已结案（rev 23）。**
+   **认，而且是加注**：reason 到模型、原始错误留在旁边、这一轮继续（§0）。关于*认不认*这份快照两种话都说
+   了，关于*做什么*一个字都没说 —— 再怎么重读它也读不出这个答案，因为那条全局行钉的是 wire 形状，而该行成
+   员的效果彼此互不相容。答案到手之后有两点值得留着。当初管着这段空窗期的「代价不对称」论证（不认一个它确
+   实定义了的 `decision`，最多少一条 `additionalContext` 已经覆盖的反馈通道；认了它，就等于绑定到一个叫不
+   出名字的效果上）是一条正确的**临时**规则、而不是正确的**长期**规则 —— 它一直是「无知时的稳妥做法」，不
+   是一条发现。另外，本条早先的版本断言「认了会停掉一轮上游本会继续的对话」：那预填了 G7 存在着要取得的答
+   案、和两节之外的翻案清单自相矛盾，**而且在事实上是错的** —— 这一轮会继续。
 
 ---
 
@@ -1708,10 +1793,10 @@ profile 下要 fork hook、在 v1 下不要。没有这个测试，两种模式�
   它必须能在「只有逐 dispatch 上限、没有全局准入」的实现上失败。
 - **一个 `updatedInput` 重判测试**（§4.4、G8），也就是那个安全用例：一个 `PreToolUse` hook 把已放行的
   `Bash` 参数改写成会被硬线扫描器拒绝的那种，断言该调用**被拒绝且从未执行** —— 以及它的镜像：一次通不过工具参数 schema 的改写。那一个是
-  **按 G8 分支的**，写法和上面 G6 那条兜底一样：在本计划的默认下该调用**被拒绝**，测试断言*原始*参数从未
-  抵达 executor —— 那正是「保留原输入」那套措辞会带出的回归；如果 G8 的探测结果改成「回退原输入」，测试就
-  断言那个，而它要求的那条偏离说明属于同一次改动。测试唯独不能做的，是在设计说「这个问题还开着」的同时无
-  条件断言 `deny`。再加一个确认测试，断言 Phase 2 的提示展示的
+  **曾经**按 G8 分支，现在已定案：探测发现上游拒绝该调用、**且原输入从不执行**（§0），正是本计划自己的默
+  认，所以测试无条件断言它。有一件事它不能断言 —— 上游的*错误呈现面*：执行前校验器既已放弃，agentao 察觉
+  不到这种不匹配，改写后的调用会到达工具并在那里失败。承载安全性质的那条断言是：**原始**参数从未抵达
+  executor。再加一个确认测试，断言 Phase 2 的提示展示的
   是**改写后**的输入；以及一个「不重新 dispatch」测试，断言 hook 只触发一次。
 - **一个 `Stop` 上限测试**：`claude-code` 下连续 8 次 continuation 被认，`agentao-v1` 下是 3（§10 第 2
   条），混装契约那种情况按 G9 的决定钉死。
@@ -1732,13 +1817,14 @@ profile 下要 fork hook、在 v1 下不要。没有这个测试，两种模式�
   而插件重载之后同一条规则会重新播报。
 - **四个 `PreToolUse` 生命周期测试**（§4.4、G8），也就是参考文档写得很明确而 agentao 没做到的那处：一个权
   限引擎**已经拒绝**的调用仍然触发 hook，且之后裁定仍是 `DENY`（`claude-code`），而同样的情形在
-  `agentao-v1` 下**不**触发；一个因未知工具名被拒的调用**完全不**触发 hook；以及需要 G8 校验器的那两个 ——
-  输入过不了工具 **JSON Schema** 的、和过不了**工具自定义**检查的，各自都不触发 hook、也不执行，其中 schema
-  那个要断言在参数修复已经有过机会**之后**。
+  `agentao-v1` 下**不**触发；一个因未知工具名被拒的调用**完全不**触发 hook。**那两条校验器测试删除**
+  （§0）：既然没有执行前校验，就不存在可供它们观察的那次拒绝，「输入过不了 schema 就不触发 hook」也就没有
+  东西能让输入失败。§1 用一条写明的「不承诺」取代它们 —— 这正是「列出非承诺、而不是悄悄删掉一条测试」的
+  意义所在。
 - **混装契约测试**（§5.4、G9），逐个决策事件各一个 —— `PreToolUse`、**`PostToolUse`**、`Stop`、
   `UserPromptSubmit`、`PreCompact` 与 **`PostToolUseFailure`**，最后这个是无条件的：`continue:false` 是
-  从 §5.1 通用字段那一行到达它的，与 G7 怎么处置它事件级的 `decision` 无关，所以只有它测试里的那一*支*受
-  G7 gate。**两种形状，不是一个模板。** 在两套契约都带决策的那四个事件上（`PreToolUse`、
+  从 §5.1 通用字段那一行到达它的，与它事件级的 `decision` 无关；而那个 `decision` 现在也被兑现了（§0），
+  所以**两支都不再受门控** —— 这个区分只作为「探测之前它为什么就在这个集合里」的理由留存。**两种形状，不是一个模板。** 在两套契约都带决策的那四个事件上（`PreToolUse`、
   `UserPromptSubmit`、`Stop`、`PreCompact`）：一条 v1 规则阻断、一条 Claude 规则在声明顺序上排它后面，断
   言那条 Claude 规则**仍然执行了**、合并后的结论是那个 deny、并且被呈现的 `reason` 是声明顺序的赢家，与哪
   一组先完成无关。在只有 profile 带决策的那两个上（`PostToolUse`、`PostToolUseFailure`），这套设置造不出
@@ -1747,13 +1833,11 @@ profile 下要 fork hook、在 v1 下不要。没有这个测试，两种模式�
   献控制。**`PostToolUse` 上要分两个分支，因为它那两种控制含义相反**（§5.2.2）：用 `decision:"block"` 时，
   断言原始工具输出**被保留**、`reason` 送到**模型**那里、并且这一轮**继续**走向下一次模型调用；用
   `continue:false` 时，断言这一轮**结束**、不再有下一次模型调用。`PostToolUseFailure` 上 `continue:false`
-  那支是无条件的，`decision` 那支受 G7 gate —— 而**一旦 G7 打开它，就要同时补一个双 handler 测试**：两个
-  profile 的 `PostToolUseFailure` handler 都返回 `block`，断言合并后的结论、以及呈现的 `reason` 是声明顺序
-  的赢家 —— 这是 §5.1 对每一个被兑现的 `accept` 所要求的聚合规则。**这条测试在探针出结果之前写不出来**，
-  而且它不许引用 §5.4 那条条件的 rank-2 行当作它的合并方式：block 到底在哪一序合并，**本身就是探针的答案
-  之一**（§5.4）。它按探针选中的那一支来写 —— rank 2 配 `block > none` 行，或者 rank 1 配被归一化成
-  `Stop(reason)` 的 block —— 并且断言探针对 (2)–(4) 的实际发现：`reason` 送到了哪、原始错误有没有留在旁
-  边、之后有没有再一次模型调用。把它预先绑到 rank 2，等于替 (4) 作答。无论哪一支，v1 那条都必须**跑了**，并且把 v1 规则放在声明顺
+  那支和 `decision` 那支现在**都是无条件的**：探测把 `decision` 打开了（§0），所以那个双 handler 测试随之
+  落地 —— 两个 profile 的 `PostToolUseFailure` handler 都返回 `block`，断言合并后的结论、以及呈现的
+  `reason` 是声明顺序的赢家（§5.1 对每一个被兑现的 `accept` 所要求的聚合规则）。它在 **rank 2** 合并、走
+  §5.4 那条现已无条件的 `block > none` 行，因为探针 (2)–(4) 的答案把它的效果归入反馈类；测试直接断言那些
+  答案：`reason` 到了模型、原始错误留在旁边、之后确实还有一次模型调用。无论哪一支，v1 那条都必须**跑了**，并且把 v1 规则放在声明顺
   序的*前面*，好让「遇到 profile 的控制就短路」的实现挂在这条上。「profile 的控制生效了」本身不是断言 ——
   它正是这两个分支要区分开的那个东西。拿单一模板去套这两个事件，得到的是一个写不出来的测试。然后是这张格
   存在的理由那三个，「任一 deny 即 deny」一个都表达不了：**`continue:false` 对 `block`**（stop 压过它，呈
@@ -1770,7 +1854,10 @@ profile 下要 fork hook、在 v1 下不要。没有这个测试，两种模式�
   天的代码写，它在 worker 之上的任何一层都过不了：`ToolRunner.execute` 只返回 `(bool, list)`
   （`tool_runner.py:249`），而 chat loop 只读那两个（`_runner.py:773`）。
   **但两个调用并不能覆盖 G2 真正新增的那两条规则**，所以还要跟两个测试：
-- **一个排队兄弟测试 —— 而它按今天的执行器根本写不出来，这本身就是结论。**「九个短工具、停止挂在靠前的那
+- **一个排队兄弟测试 —— 连同它的保证一起放弃（G2 取第 (ii) 支，§0）。** 落地的是两种情况下都成立的那条
+  不变式：每个 plan 都产出结果与 `role:"tool"` 消息。下面的分析保留，因为它记录的是这个保证**为什么被放弃
+  而不是被悄悄弱化**，也因为它描述的那个接缝，是将来某一版若要恢复该保证必须先建的东西。
+  **原文如下 —— 而它按今天的执行器根本写不出来，这本身就是结论。**「九个短工具、停止挂在靠前的那
   个上」是一处竞争：停止那个工具的 worker 会被释放，可能在断言跑到之前就把第 9 个 plan 取走，于是测试通
   过、却根本没有任何东西排过队。**把 plan 2–8 闩住并不能解决它。** `PostToolUse` hook 确实是在 worker 自
   己那个任务*内部*跑的（`tool_executor.py:468-471`），因此 hook 执行期间八个 worker 确实都忙着 —— 但那个
@@ -1803,7 +1890,8 @@ profile 下要 fork hook、在 v1 下不要。没有这个测试，两种模式�
   `{"continue": false, "stopReason": "…"}`，断言会话**照常启动**、第一个 turn 照跑，**并且不产生任何诊断**
   —— `discarded` 是一次投递结果、适用静默规则（§5.1），出诊断会把它错报成 agentao 的能力缺口。配套再断言同
   一份输出里的 `systemMessage` **确实**被投递，这正是这两个字段在该事件上的分野。测试必须说明自己钉的是哪
-  一种读法：如果 G7 的探测发现上游认这个停止，整条测试按 G7 的翻案清单**替换**，而不只是把断言反过来。
+  一种读法 —— 而现在它钉的是一次**实测**、不是一个选择：2.1.251 启动了会话、跑完了这一轮，那个 reason 哪儿
+  都没出现（§0）。翻案清单继续留档，是给下一行存疑的用的，不是给这一行的。
 - **一个 headless 的 `SessionEnd` 通知测试**（§5.2.1），跑在 `_run_pipeline` 这一层而不是 resolver 层：一个
   以 2 退出的 `SessionEnd` hook，在 `agentao run --output-format json` 下断言它的 stderr 进到了被输出的
   `RunResult` 里。按今天的顺序写，这个测试是失败的 —— 因为 `_emit` 在 `run.py:814`、dispatch 在 `:815`。

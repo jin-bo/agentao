@@ -255,6 +255,10 @@ class ToolCallPlan:
     # tool_result message and the public lifecycle events share the same
     # identifier even for providers that omit ids. Always a string.
     tool_call_id: str = ""
+    #: ``PreToolUse`` ``additionalContext``, injected beside this call's result.
+    #: The reference calls it context "for Claude"; agentao used to parse it and
+    #: log it, which is deviation 6.
+    hook_tool_contexts: List[str] = field(default_factory=list)
     # Public-event provenance: the structured permission detail (matched
     # rule, reason, raw outcome) the runtime needs to emit a
     # :class:`PermissionDecisionEvent`. ``None`` means the engine

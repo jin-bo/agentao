@@ -35,7 +35,7 @@ class TestSessionHooks:
         payload = adapter.build_session_start(session_id="s1", cwd=tmp_path)
 
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
-        attachments = dispatcher.dispatch_session_start(payload=payload, rules=[rule])
+        attachments = dispatcher.dispatch_session_start(payload=payload, rules=[rule]).attachments
         assert len(attachments) == 1
         assert attachments[0].hook_event == "SessionStart"
         assert attachments[0].attachment_type == "hook_success"
@@ -51,7 +51,7 @@ class TestSessionHooks:
         payload = adapter.build_session_end(session_id="s1", cwd=tmp_path)
 
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
-        attachments = dispatcher.dispatch_session_end(payload=payload, rules=[rule])
+        attachments = dispatcher.dispatch_session_end(payload=payload, rules=[rule]).attachments
         assert len(attachments) == 1
         assert attachments[0].hook_event == "SessionEnd"
 
@@ -64,7 +64,7 @@ class TestSessionHooks:
         )
         payload = {"event": "SessionStart", "data": {}}
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
-        attachments = dispatcher.dispatch_session_start(payload=payload, rules=[rule])
+        attachments = dispatcher.dispatch_session_start(payload=payload, rules=[rule]).attachments
         assert attachments == []
 
 
@@ -85,7 +85,7 @@ class TestToolHooks:
         payload = adapter.build_pre_tool_use(tool_name="read_file", tool_input={"path": "x"})
 
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
-        attachments = dispatcher.dispatch_pre_tool_use(payload=payload, rules=[rule])
+        attachments = dispatcher.dispatch_pre_tool_use(payload=payload, rules=[rule]).attachments
         assert len(attachments) == 1
         assert attachments[0].hook_event == "PreToolUse"
 
@@ -105,7 +105,7 @@ class TestToolHooks:
         payload = adapter.build_post_tool_use(tool_name="run_shell_command", tool_output="ok")
 
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
-        attachments = dispatcher.dispatch_post_tool_use(payload=payload, rules=[rule])
+        attachments = dispatcher.dispatch_post_tool_use(payload=payload, rules=[rule]).attachments
         assert len(attachments) == 1
 
     def test_post_tool_use_payload_fields(self):
@@ -130,7 +130,7 @@ class TestToolHooks:
         payload = adapter.build_post_tool_use_failure(tool_name="run_shell_command", error="boom")
 
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
-        attachments = dispatcher.dispatch_post_tool_use_failure(payload=payload, rules=[rule])
+        attachments = dispatcher.dispatch_post_tool_use_failure(payload=payload, rules=[rule]).attachments
         assert len(attachments) == 1
         assert attachments[0].hook_event == "PostToolUseFailure"
 
@@ -161,7 +161,7 @@ class TestMatcher:
         )
         payload = {"event": "PreToolUse", "data": {"toolName": "Read"}}
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
-        attachments = dispatcher.dispatch_pre_tool_use(payload=payload, rules=[rule])
+        attachments = dispatcher.dispatch_pre_tool_use(payload=payload, rules=[rule]).attachments
         assert len(attachments) == 1
 
     def test_tool_name_matcher_exact(self, tmp_path):
@@ -176,8 +176,8 @@ class TestMatcher:
         payload_miss = {"event": "PreToolUse", "data": {"toolName": "Read"}}
 
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
-        assert len(dispatcher.dispatch_pre_tool_use(payload=payload_match, rules=[rule])) == 1
-        assert len(dispatcher.dispatch_pre_tool_use(payload=payload_miss, rules=[rule])) == 0
+        assert len(dispatcher.dispatch_pre_tool_use(payload=payload_match, rules=[rule]).attachments) == 1
+        assert len(dispatcher.dispatch_pre_tool_use(payload=payload_miss, rules=[rule]).attachments) == 0
 
     def test_tool_name_matcher_wildcard(self, tmp_path):
         rule = ParsedHookRule(
@@ -189,7 +189,7 @@ class TestMatcher:
         )
         payload = {"event": "PreToolUse", "data": {"toolName": "Anything"}}
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
-        assert len(dispatcher.dispatch_pre_tool_use(payload=payload, rules=[rule])) == 1
+        assert len(dispatcher.dispatch_pre_tool_use(payload=payload, rules=[rule]).attachments) == 1
 
     def test_tool_name_matcher_glob_pattern(self, tmp_path):
         rule = ParsedHookRule(
@@ -203,8 +203,8 @@ class TestMatcher:
 
         payload_hit = {"event": "PreToolUse", "data": {"toolName": "WebFetch"}}
         payload_miss = {"event": "PreToolUse", "data": {"toolName": "Read"}}
-        assert len(dispatcher.dispatch_pre_tool_use(payload=payload_hit, rules=[rule])) == 1
-        assert len(dispatcher.dispatch_pre_tool_use(payload=payload_miss, rules=[rule])) == 0
+        assert len(dispatcher.dispatch_pre_tool_use(payload=payload_hit, rules=[rule]).attachments) == 1
+        assert len(dispatcher.dispatch_pre_tool_use(payload=payload_miss, rules=[rule]).attachments) == 0
 
 
 # ======================================================================
@@ -224,7 +224,7 @@ class TestFailureIsolation:
         payload = {"event": "SessionStart", "data": {}}
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
         # Should not raise.
-        attachments = dispatcher.dispatch_session_start(payload=payload, rules=[rule])
+        attachments = dispatcher.dispatch_session_start(payload=payload, rules=[rule]).attachments
         # Still produces an attachment (with returncode info).
         assert len(attachments) == 1
 
@@ -238,7 +238,7 @@ class TestFailureIsolation:
         )
         payload = {"event": "PreToolUse", "data": {"toolName": "Bash"}}
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
-        attachments = dispatcher.dispatch_pre_tool_use(payload=payload, rules=[rule])
+        attachments = dispatcher.dispatch_pre_tool_use(payload=payload, rules=[rule]).attachments
         assert len(attachments) == 1
         assert "timeout" in str(attachments[0].payload).lower() or "timed out" in str(attachments[0].payload).lower()
 
@@ -252,7 +252,7 @@ class TestFailureIsolation:
         )
         payload = {"event": "SessionStart", "data": {}}
         dispatcher = PluginHookDispatcher(cwd=tmp_path)
-        attachments = dispatcher.dispatch_session_start(payload=payload, rules=[rule])
+        attachments = dispatcher.dispatch_session_start(payload=payload, rules=[rule]).attachments
         assert attachments == []  # prompt hooks filtered out by lifecycle dispatch
 
 
