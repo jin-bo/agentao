@@ -85,7 +85,8 @@ changelog 头部为 **2.1.251**（`code.claude.com/docs/en/changelog.md`），�
 | **G8**（非法改写） | **探测** | **计划的选择正是上游的做法。** 不符合工具 schema 的 `updatedInput` 会以 `tool_use_error` 被拒，**原输入从不执行**。它作为合规落地，而不是作为「偏离安全」的书面声明。注意 agentao 学不来的那一半：校验器既已放弃，agentao 无从*察觉*这种不匹配，于是改写后的调用会到达工具并在那里失败。真正要紧的结果相同 —— 原输入从不执行 —— 差别在错误呈现面，§1 记下它 | §4.4、§1 |
 | **G7**（输入矩阵） | **探测**，部分 | 捕获了六份真实 stdin payload。它们**确认**了 §5.3 的形状 —— `permission_mode` 在四个事件上有、在 `SessionStart` / `SessionEnd` 上没有，`prompt_id` 在首次输入前缺席，`agent_id` / `agent_type` 处处缺席，`tool_response` 是结构化对象 —— 而把那些*决定*留着：`transcript_path` 由 agentao 从哪里取、`permission_mode` 怎么映射。两条是新事实：上游把 `background_tasks: []` / `session_crons: []` 发成「存在且为空」，以及 `permission_mode` 在同一会话内取值不同（`UserPromptSubmit` 上是 `auto`、工具事件上是 `default`）—— 记为观察，不作规则 | §5.3 |
 | **G4** | 实施时按计划的提案取定 | **Tier 1 = 每次调用每条流 8 MiB**，在共享 runner 上是 opt-in，所以其他调用方的失败模式一点不变；超限即杀进程树、该 hook 失败 —— 因为在 JSON 中途被切断的输出没有任何决定可贡献。**Tier 2 = 每个通道 10,000 字符** —— 上游自己的数字，按字符而不是 token，这样这条界限不随所配模型而变。溢出落 `.agentao/hook-outputs/`，文件 `0600`，字节落盘前先脱敏，按时龄（7 天）与数量（200）清理。落盘失败会**上报** —— 它抄的那个 tool-output sink 并不上报 | §6、第 1 步 |
-| **G1、G3、G9、G10** | —— | **仍然开放**，未变。它们卡住第 1、3、4、5、6b 步，而且没有一个是靠探测别人的二进制能回答的 | §9 |
+| **G10** | 实施时按计划的提案取定 | **会话级、加锁、以内容派生的 rule key 为键** —— 绝不用 `id(rule)`，它每次 reload 都变、会把一切静默重播一遍。陷阱在 dispatcher 作用域：它在六处被构造、其中两处**在池 worker 内**，所以挂在它身上的状态既去不了重、还会边去重边竞争。插件 reload 与 `/clear` 时调 `clear_session()`，这样改好的 hook 会重新出声、没改的继续闭嘴 | §4.2、第 2 步 |
+| **G1、G3、G9** | —— | **仍然开放**，未变。它们卡住第 1、3、4、5、6b 步，而且没有一个是靠探测别人的二进制能回答的 | §9 |
 
 ---
 
