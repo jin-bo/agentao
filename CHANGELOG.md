@@ -5,15 +5,180 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.4.21. Add entries under the relevant heading as work lands._
+## [0.4.21] — 2026-08-30
 
 ### Added
 
+- **A Claude-shaped `hooks.json` now parses, and what it can do is an
+  enumerated profile rather than a promise.** It used to parse to **zero
+  rules**: the official file nests four levels — event → matcher group →
+  `hooks[]` → handler — with a **string** matcher, and agentao read handlers
+  straight out of the event array with a dict matcher. A user copying a working
+  Claude Code hook setup got zero rules and one warning that pointed at the
+  wrong thing: `Unknown hook type '' under 'PreToolUse'` — naming a `type` key
+  the file had never written, because the outer entry it was reading is a
+  matcher group, not a handler (measured at `10b5fb8`).
+
+  Two contracts now live side by side and are resolved **per file by shape**,
+  because a copied file carries no marker to gate on. `agentao-v1` (the flat
+  shape) is **frozen** and behaves exactly as before; `claude-code@profile-1`
+  is the new one. A file whose entries disagree about which shape they are is
+  rejected whole; a single unrecognizable entry is not, so one typo cannot
+  disable a working file.
+
+  The profile is deliberately a *profile* and not "the Claude hook contract".
+  agentao implements **8** of the reference's events — `PreToolUse`,
+  `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`,
+  `SessionStart`, `SessionEnd`, `PreCompact` — and within them an
+  **enumerated** field list. A field the profile does not implement is
+  **ignored with a one-time diagnostic naming it**, never a schema error: a
+  hook written for a newer Claude Code keeps working, and its author is told
+  which key had no effect instead of guessing. The named-once bookkeeping is
+  session-scoped and keyed by rule content, so a plugin reload lets a corrected
+  hook speak up again.
+
+  Concretely, under the profile: `permissionDecision` (with `defer` degraded to
+  `deny`, the substituted value named in the reason), `updatedInput`,
+  `additionalContext`, `systemMessage`, `continue` / `stopReason`, `decision` /
+  `reason`, and exit code 2 — the last with **three** distinct outcomes rather
+  than one, depending on the event: block the call, feed the model, or notify
+  the user. Precedence when several arrive at once is a function, not a field
+  order: exit 2 → `continue` → the event's own decision.
+
+  The matcher is `re.fullmatch` with `*` and `""` special-cased as wildcards —
+  **measured against a real `claude` 2.1.251**, not inferred. The plan carried
+  an *unanchored* reading for its whole life and the binary refuted it: `ead`
+  does not match `Read`. An unanchored implementation would have fired hooks on
+  tools their author never named.
+
+- **Hook output is bounded, in two tiers.** A hook could return unbounded
+  stdout straight into the context window. Tier 1 caps the raw capture at
+  **8 MiB** per stream per invocation (over it the process tree is killed and
+  the hook fails — output cut mid-JSON has no decision to contribute); tier 2
+  caps each delivered channel at **10,000 characters**, the reference's own
+  number, counted in characters so the bound does not move with the model.
+  Overflow spills to `.agentao/hook-outputs/`, files `0600`, **redacted before
+  the bytes land**, pruned at 7 days / 200 files. A failed spill is reported,
+  which the tool-output sink it copies does not do.
+
+- **`${CLAUDE_PROJECT_DIR}`, `${CLAUDE_PLUGIN_ROOT}` and
+  `${CLAUDE_PLUGIN_DATA}`** are substituted in a hook command and exported to
+  the child, and handlers may use the exec form (`args`) instead of a shell
+  string. The export goes through `build_child_env`, so the provider-credential
+  scrub that has always applied to hook children still applies — writing it any
+  other way silently removes it.
+
+- **A hook can end a turn from inside a tool worker.** `PostToolUse` /
+  `PostToolUseFailure` hooks run three frames below anything that could act on
+  a decision, so a `continue: false` there was computed and dropped. The
+  verdict now rides home on the execution result and is arbitrated in **plan
+  order** — the model's own tool-call order, never completion order, which
+  would make the surfaced reason vary run to run for the same batch. Every
+  plan still yields a result and a `role:"tool"` message: ending a turn is not
+  a rollback, and a missing tool message is rejected by strict APIs.
+
 ### Changed
 
+- **`agentao run` gained an `error.type` / `error.reason` of `hook_stop`,
+  exiting 1.** A turn a hook ended is a turn without a complete answer, so it
+  joins the closed vocabulary rather than exiting 0. Branch on `reason`, not on
+  `message`.
+
+- **`SessionEnd` hooks now dispatch *before* `agentao run` emits its result**,
+  and their user-facing notices ride on `RunResult.warnings`. The old order
+  wrote the run's entire output first and detached observers well above, so a
+  `SessionEnd` hook's exit-2 stderr reached a headless user through **no path
+  at all**. Interactive sessions gained the same route: the CLI now consumes a
+  return value it used to discard inside a bare `except: pass`.
+
+- **`PLUGIN_HOOK_FIRED` carries `user_notices`.** Hosts that render hook output
+  read it there; the two first-party surfaces route directly and do not depend
+  on it.
+
+- **Supersedes 0.4.7's description of multi-hook `PreToolUse` merging** for
+  `claude-code@profile-1` rules. "First `deny` wins, then first `ask`" becomes
+  a lattice — `deny > ask > allow` — whose reason tie-break ranks **only inside
+  the winning class** and by declaration order, so an `ask`'s reason is never
+  surfaced for a `deny`. Contexts, rewrites and stops are orthogonal and
+  concatenate regardless of who won. `agentao-v1` rules are unaffected. In a
+  mixed file the two contracts are partitioned, run, and merged once; a v1
+  short-circuit ends only the v1 group, because the profile's "every handler
+  runs" rule exists for handlers with side effects.
+
+- **A `Stop` hook's reentry cap is contract-resolved** — 8 under the profile
+  (the reference's number), 3 under `agentao-v1` (agentao's, unchanged), so a
+  pure v1 setup keeps its limit and a mixed session is not silently loosened.
+
+- **Under the profile, `PreToolUse` fires on a call the permission engine has
+  already denied.** Observation and authority are separate: an audit or
+  notifier hook was blind to exactly the calls it exists to record. The verdict
+  stays `DENY`. `agentao-v1` keeps the skip.
+
 ### Fixed
+
+- **A `PreToolUse` hook's `continue: false` never ended the turn.**
+  `ToolRunner.execute()` reset the stop slot at the *bottom*, wiping the value
+  phase 1.5 had written. The test that covered it called the phase helper
+  directly, so it observed the write and never the wipe. The same misplacement
+  leaked a stale stop across the two early returns, and a `PreToolUse` stop now
+  outranks a later `PostToolUse*` one.
+
+- **An unusable `updatedInput` re-decision ran the original command.** A
+  `PreToolUse` hook that rewrites a call's input has already said the original
+  must not run; when the permission re-decision could not be computed, the
+  rewrite was dropped and the original executed under the verdict computed for
+  it. The call is now **denied** — neither the rewrite nor the original. The
+  arguments are also no longer swapped in before the re-decide, which could
+  leave a plan holding rewritten arguments under a verdict computed on the
+  originals.
+
+- **Hook-authored context reached the model without the Unicode-tag strip.**
+  It was appended to the tool message *after* `strip_unicode_tags`, leaving the
+  one model-bound string on that path that skipped the boundary — and hook text
+  is routinely a relay of something the hook read (a page, an MCP result, a
+  file), which is the carrier that defense exists for.
+
+- **One malformed hook could drop every other hook's verdict for a call.** A
+  non-string `permissionDecision` (a list, an object) hit a `in <dict>`
+  membership test, which hashes its operand; the `TypeError` propagated out of
+  dispatch and was swallowed by the caller, and the tool ran.
+
+- **Every `PostToolUse` / `PostToolUseFailure` user notice was dropped.** The
+  dispatch helper returned only the stop and the model-bound contexts, so
+  `systemMessage` and the one-time field diagnostics were computed inside a
+  worker with no user surface and discarded.
+
+- **The one-time field diagnostic was once per *process*, not per session** —
+  the session id never reached the registry, so every session shared one
+  bucket — and `/clear` did not drop the session's entries.
+
+- **A field was diagnosed by name alone rather than per event**, so
+  `hookSpecificOutput.reloadSkills` on `PostToolUse` was announced with
+  `SessionStart`'s reason, as though agentao had considered and declined it
+  there.
+
+- **An empty matcher (`""`) matched nothing**, where the reference treats it as
+  a wildcard — so a copied config that spells the wildcard that way parsed with
+  no warning and never fired. Confirmed by probe, with both controls present.
+
+- **Exit code 2 on `Stop` left the continuation contract unset**, handing the
+  profile's own idiom the `agentao-v1` reentry cap of 3 instead of 8.
+
+- **A second stopping rule with no `stopReason` erased the first rule's
+  reason**, so the user was told a turn had ended and not why.
+
+- **The `defer` → `deny` substitution notice lost to the hook's own reason**,
+  and a `defer` almost always ships one — so the message naming the swapped
+  verdict was the one that never survived.
+
+- **The `PreToolUse` payload omitted `cwd`**, reporting the process's directory
+  where the `Post*` events beside it sent the session's.
+
+- **Two pieces of host-visible text named one event where two apply.** The
+  aggregated notice event was labelled `PostToolUse` although a failing call in
+  the same batch routes through `PostToolUseFailure` (now `PostToolUse*`), and
+  `agentao run`'s `hook_stop` message said "a PostToolUse hook" although a
+  `PreToolUse` stop reaches the same path.
 
 ---
 

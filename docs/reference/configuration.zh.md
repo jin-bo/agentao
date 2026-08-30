@@ -25,6 +25,7 @@
 | 7 | 项目说明 | `AGENTAO.md`（cwd） | — | `agent.py::_build_system_prompt` | [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) |
 | 8 | 记忆库 | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
 | 9 | Run spec（`agentao run`） | `--spec` 传入的任意路径（或 stdin） | — | `cli/run_models.py::RunSpec`、`cli/run_template.py::render_spec` | [run-spec-parameters.zh.md](../design/run-spec-parameters.zh.md) |
+| 10 | 插件 hooks | `<plugin>/hooks/hooks.json`，或经插件 manifest 的 `hooks` 声明/内联 | — *（随插件走）* | `embedding/plugins/manager.py`（发现）→ `plugins/hooks/_parser.py`（解析） | 见下文 §11；Developer Guide §5.7 |
 
 **内部状态文件**（自动管理；列出仅为告知，请勿手动编辑）：
 
@@ -34,6 +35,7 @@
 | 回放事件 | `.agentao/replay/*.jsonl` | `replay/` | 见 [session-replay.md](../guides/session-replay.md)。 |
 | 会话 / 计划 | `.agentao/sessions/`、`.agentao/plan-history/` | 多模块 | 单次会话产物。**不做密钥扫描**——见下方注记。 |
 | 工具产物 | `.agentao/tool-outputs/` | `runtime/tool_result_formatter.py::_save_and_truncate` | 超长工具输出溢写到磁盘，由上下文中的摘录引用其路径。**落盘前会做密钥扫描。** |
+| `/goal` 续跑状态 | `.agentao/goal.json` | `cli/goal_state.py::GoalState` | 一个长任务目标（目标描述、状态、时间/轮次上限、已用量）。跨重启存活；损坏或缺失一律按「没有目标」处理。见 [goal.md](../guides/goal.md)。 |
 
 > **密钥扫描是有意不对称的。** `.agentao/tool-outputs/` 在落盘前会过一遍 `security/secret_scan.py::scan_and_redact`——形似凭据的字符串被替换成 `[REDACTED:<kind>]`。而 `.agentao/sessions/*.json`（`embedding/sessions.py::save_session`）与 `.agentao/background_tasks.json` **不扫描**，这是权衡而非疏漏：两者在恢复会话时都会原样回灌进 `agent.messages`，对它们做脱敏会静默污染一次被恢复的对话，正如对实时工具结果做脱敏会污染当前对话一样。**产物是终点就脱敏，产物会被回读就不脱敏。**
 >
@@ -64,6 +66,7 @@
 | `{PROVIDER}_MODEL` | **是** | — | 缺失则启动抛 `ValueError`。 |
 | `LLM_TEMPERATURE` | 否 | `0.2` | 范围 `0.0`–`2.0`。 |
 | `LLM_MAX_TOKENS` | 否 | — | 不设则使用 provider 缺省。 |
+| `LLM_EXTRA_BODY` | 否 | — | 一个 JSON **对象**，原样转发给 LLM 的 `.create()` 调用，作为 SDK 的 `extra_body` 请求选项 —— 这是那些封闭的请求构造没有暴露出来的参数（`reasoning_effort`、`top_p`、`seed`、`response_format` 以及各 provider 自有字段）的逃生口。示例：`LLM_EXTRA_BODY='{"reasoning_effort":"high"}'`。与上面两项不同，畸形的**或**合法但不是对象的取值都只**告警并跳过**（不是启动错误）。端点由宿主自己配置，取值由 SDK / provider 校验。日志中凭据形状的键会被脱敏。见 `docs/design/host-llm-extra-params.md`。 |
 | `BOCHA_API_KEY` | 否 | — | `web_search` 走一条有序回退链，某个后端**出错**（而非返回空结果）时退到下一个：`jina`（设了 `JINA_API_KEY`）→ `bocha`（设了 `BOCHA_API_KEY`）→ `duckduckgo`（无需 key，永远是兜底）。每次回退都会在结果里标注并记日志。用 `WebSearchTool(backend="bocha"\|"jina"\|"duckduckgo")` 显式钉死某个后端时，**只**用那一个，不做自动回退。 |
 | `AGENTAO_WEB_FETCH_FALLBACK` | 否 | `none` | `web_fetch` 的 JS 渲染回退。可选值：`none` / `jina` / `playwright`。默认 `none` —— 工具不会把用户给定的 URL 静默代理到第三方。`jina` 把 URL 发到 `https://r.jina.ai`（工具描述和结果首部的 `Fallback:` 行会显式说明）。`playwright` 在本地无头 Chromium 里渲染，URL 不出本机，需要 `pip install 'agentao[playwright]'` **外加** `playwright install chromium`（浏览器二进制是单独下载的；缺它会在渲染时而非 import 时报错）。仅在 `WebFetchTool` 构造时读一次；无效值会 warn 并降级到 `none`。**0.4.18 重命名** —— 退役值 `crawl4ai` 仍被接受、映射到 `playwright`，并打一条 warning；迁移说明见 `CHANGELOG.md`。 |
 | `AGENTAO_WEB_FETCH_ALLOW_CIDRS` | 否 | — | `web_fetch` 的 opt-in SSRF 白名单：逗号/空格分隔的 CIDR（或裸 IP），即便它们**不是公网可路由地址**也放行。给跑在 fake-IP 代理后面的 host 用的逃生口（Clash/V2Ray 把所有域名映射到保留段，通常是 `198.18.0.0/15`，否则会被 SSRF 防护拦掉），或放行可信的内网服务。对初始 URL **以及每一个重定向跳转**都生效；白名单是**有作用域的**——列了 `198.18.0.0/15` **不会**顺带放行 `169.254.169.254`。**这是放松一项安全控制** —— 启动时记一条日志、并在工具描述里透出；范围要尽量窄，绝不要写 `0.0.0.0/0`。默认空 = 完全严格。（更干净的做法：把代理 DNS 从 `fake-ip` 改成 `redir-host`/真实 IP。）见 `agentao/security/url_policy.py`。 |
@@ -98,6 +101,9 @@
 |---|---|---|---|---|
 | `mode` | string | `"workspace-write"`（键缺失时） | `"read-only"`、`"workspace-write"`、`"full-access"` | `"plan"` 是内部模式，由 `/plan` 流程设置，用户不应手写。`"full-access"` 关闭所有按工具的二次确认，请审慎使用。 |
 | `agents.enable_builtin` | bool | `false` | — | 启用内置子代理集合。兼容老的顶层别名 `enable_builtin_agents`（bool）。 |
+| `goal.enabled` | bool | `true`（键缺失时） | — | `/goal` 长任务续跑的总开关。设为 `false` 即禁用该命令。 |
+| `goal.default_max_turns` | int | `25` | 正整数，或 `0` 表示不限轮次 | `/goal` 没带 `--turns`（且不是 `--unbounded`）时套用的轮次上限。一个*轮次* = 一次外层续跑的 `chat()` —— **不是** `max_iterations`（那个约束的是内层工具循环）。这是主要的失控护栏。 |
+| `goal.default_time_budget` | string | `"120m"` | 时长 `90s` / `30m` / `2h` / `1h30m`；留空或缺失表示无时间上限默认值 | `/goal` 没带 `--for` 时套用的活动墙钟上限。它被刻意设得**高于**轮次上限，因此只兜住墙钟层面的异常，不会盖过轮次上限（见 `docs/design/codex-goal-mechanism-review.md` §11.1 C）。 |
 
 每个 `mode` 的具体放行/拦截语义详见 [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md)。
 
@@ -368,13 +374,13 @@ prompt 组成规则与约定见 [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md
 | Code | 含义 |
 |---|---|
 | 0 | OK |
-| 1 | 运行时错误，或 turn 没有产出答案（`runtime_error`、`empty_response`、`length_truncated`、`doom_loop`） |
+| 1 | 运行时错误，或 turn 没有产出答案（`runtime_error`、`empty_response`、`length_truncated`、`doom_loop`、`hook_stop`） |
 | 2 | 无效用法 / 无效 spec |
 | 3 | 权限拒绝或需要交互 |
 | 4 | 达到最大迭代次数 |
 | 130 | 被打断（SIGINT） |
 
-`error.type` 用于区分共用同一退出码的不同结果。每一个被运行时分类为无完整答案的 turn（下表五种 `reason`）退出码都为 1 而不是 0——这样流水线就不会把它们当成成功；这是一套单一封闭的词表，不存在未被分类的结束。`error.reason` 携带精确变体——请基于 `reason` 分支，而不是 `message`：
+`error.type` 用于区分共用同一退出码的不同结果。每一个被运行时分类为无完整答案的 turn（下表六种 `reason`）退出码都为 1 而不是 0——这样流水线就不会把它们当成成功；这是一套单一封闭的词表，不存在未被分类的结束。`error.reason` 携带精确变体——请基于 `reason` 分支，而不是 `message`：
 
 | `type` | `reason` | 含义 |
 |---|---|---|
@@ -382,13 +388,100 @@ prompt 组成规则与约定见 [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md
 | `empty_response` | `reasoning_only` | 只有推理，没有答案正文。 |
 | `length_truncated` | `length_truncated` | 输出在 token 上限处被截断——要么是工具调用的参数被截断（harness 随即中止该 turn），要么是最终答案在半句处被切断。 |
 | `doom_loop` | `doom_loop` | 模型重复同一个调用，直至检测器 halt 了该 turn。 |
+| `hook_stop` | `hook_stop` | 某个插件 hook 返回了 `continue: false`，把这个 turn 结束了。`PreToolUse` 与 `PostToolUse` / `PostToolUseFailure` 都会走到这里。 |
 | `runtime_error` | `llm_error` | LLM API 调用失败（provider 错误 / 限流 / 认证）且重试后仍失败；message 里带 provider 的真实报错。 |
 
-`empty_response` 表示模型什么都没说；`length_truncated` / `doom_loop` 表示 harness 停掉了一个不收敛的 turn；`llm_error` 表示 provider 调用失败。三者都在最后判定，因此权限拒绝、max-iterations、取消或抛出的错误都会保留各自更具体的退出码。
+`empty_response` 表示模型什么都没说；`length_truncated` / `doom_loop` 表示 harness 停掉了一个不收敛的 turn；`hook_stop` 表示是你自己的配置主动把它停了；`llm_error` 表示 provider 调用失败。它们都在最后判定，因此权限拒绝、max-iterations、取消或抛出的错误都会保留各自更具体的退出码。
+
+`max_iterations` 是 `agent.last_turn` 上的第七种 `reason`，但它永远不会出现在这张表里：它同时会翻起一个 sticky 的 transport 标志，而 `_classify_outcome` **先**判那个标志，所以 `agentao run` 对它的退出码是 **4**，不是 1。
 
 turn 可能在**执行过工具之后**以这种方式结束——模型可能已经完成工作，只是没有做总结。`tool_calls` 会报告实际执行了多少次，其副作用**已经落盘**，因此 `empty_response` 失败**不**意味着工作区未被改动。
 
 完整设计动机 → [run-spec-parameters.zh.md](../design/run-spec-parameters.zh.md)。
+
+---
+
+## 11. 插件 hooks —— `hooks/hooks.json`
+
+agentao 在一个 turn 的八个位置执行的 shell 命令。这个文件随插件走、不放在 `.agentao/` 下：manifest 没有
+声明 `hooks` 时，会在 `<plugin>/hooks/hooks.json` 自动发现；manifest 的 `hooks` 键也可以给一个路径、
+一组路径，或直接内联一个对象。
+
+**两套契约，按文件形状逐文件选定** —— 从 Claude Code 配置拷过来的文件不带任何可供门控的标记，所以解析器
+看的是条目本身。带 `hooks: []` 数组且没有 `type` 的条目属**官方**形状；带 `type` 且没有数组的属 agentao 的
+**扁平**形状。条目之间互相矛盾的文件整份作废（它同时自称两种形状）；两个键都没有的单个条目只是一个畸形
+handler，单独告警，所以一处笔误不会让一份能用的文件整体失效。显式的 `"contract"` 键可覆盖自动识别；取值
+不认识则禁用该文件。
+
+| 契约 | 形状 | 状态 |
+|---|---|---|
+| `agentao-v1` | 扁平：handler 直接挂在事件数组下 | **冻结。** 行为与 0.4.21 之前完全一致 |
+| `claude-code@profile-1` | 官方：事件 → matcher 组 → `hooks[]` → handler | Claude Code hook 契约的一个**列举式 profile** |
+
+### Schema —— 官方形状（`claude-code@profile-1`）
+
+```json
+{
+  "PreToolUse": [
+    {
+      "matcher": "Read|Write",
+      "hooks": [
+        { "type": "command", "command": "./guard.sh ${CLAUDE_PLUGIN_ROOT}", "timeout": 600 }
+      ]
+    }
+  ]
+}
+```
+
+| 键 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| *（事件名）* | 是 | — | 取 `PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`UserPromptSubmit`、`Stop`、`SessionStart`、`SessionEnd`、`PreCompact` 之一。其余事件不在 profile 内 |
+| `matcher` | 否 | 全匹配 | 一个**字符串**。`re.fullmatch` 语义，`*` 与 `""` 是通配符 —— `ead` **匹配不上** `Read`。工具事件上比工具名，`SessionStart` 比 `source`，`SessionEnd` 比 `reason`，`PreCompact` 比 `trigger` |
+| `hooks[].type` | 是 | — | 只支持 `command`。`prompt`、`agent`、`mcp_tool`、`http` 会被跳过并告警（agentao 的 `prompt` hook 是同名的另一个特性） |
+| `hooks[].command` | 是¹ | — | shell 字符串，在 `/bin/sh` 下执行 |
+| `hooks[].args` | 否 | — | exec 形式；用它代替 `command` 可绕过 shell |
+| `hooks[].timeout` | 否 | `600`（`UserPromptSubmit` 为 `30`） | 秒 |
+| `hooks[].shell` | 否 | — | **忽略并告警。** 实测：Claude Code 2.1.251 也在 `sh` 下执行命令 hook，同样不兑现该字段 |
+| `hooks[].async`、`asyncRewake`、`if` | 否 | — | **跳过该规则并告警** —— agentao 没有后台 hook runner，而 `if` 是权限子特性、不是一个字段 |
+| `hooks[].once`、`statusMessage` | 否 | — | 认识，但无效果 |
+
+¹ `command` 与 `args` 二选一；两者皆无的 handler 会被跳过。
+
+**不认识的键一律忽略，并出一条点名该键的一次性诊断，绝不作为 schema 错误。** 为更新版 Claude Code 写的
+hook 照样能跑，作者也会被告知哪个键没起作用。该诊断按会话作用域、按规则内容取键，所以插件重载后，改好的
+hook 会重新发声。
+
+### Schema —— 扁平形状（`agentao-v1`，冻结）
+
+```json
+{ "PreToolUse": [ { "type": "command", "command": "./guard.sh", "timeout": 60 } ] }
+```
+
+handler 直接挂在事件下；`matcher` 是一个**字典**（对 `toolName` 做 glob），timeout 默认 `60`，且支持
+`type: "prompt"`。0.4.21 没有改动这个形状的任何行为。
+
+### 占位符与子进程环境
+
+`${CLAUDE_PROJECT_DIR}`、`${CLAUDE_PLUGIN_ROOT}`、`${CLAUDE_PLUGIN_DATA}`（最后一个落在
+`~/.agentao/plugin-data/<plugin>`）会在命令中被替换，并导出给子进程。子进程环境由
+`capabilities/process.py::build_child_env` 构造，它会**剥掉 agentao 自己的 provider 凭据** —— 需要凭据的
+hook 必须由调用方显式给 `env=`，或在 `AGENTAO_SCRUB_CHILD_ENV=0` 下运行。
+
+### 输出限额
+
+| 层 | 上限 | 超限后 |
+|---|---|---|
+| 原始捕获 | 每次调用每条流 8 MiB | 杀掉整棵进程树，该 hook 失败 —— 在 JSON 中途被切断的输出提供不了任何决策 |
+| 投递通道 | 10,000 字符 | 截断，全文落盘到 `.agentao/hook-outputs/` |
+
+落盘文件权限 `0600`，**写盘前先过密钥扫描**，按 7 天 / 200 个文件裁剪。落盘失败会被报出来，而不是静默跳过。
+
+### 优先级
+
+两套契约可以在同一会话中共存（分处不同文件）。规则按契约分组、分别运行、再在该事件的决策格上合并一次
+—— `PreToolUse` 上是 `deny > ask > allow` —— 而被展示的理由**只在胜出类别之内**按声明顺序裁定。v1 的短路
+只结束 v1 那一组：profile 的「所有匹配 handler 都要跑」这条规则，正是为带副作用的 handler 存在的。`Stop`
+hook 的重入上限跟随产出该 continuation 的那条规则的契约 —— profile 下是 8，`agentao-v1` 下是 3。
 
 ---
 

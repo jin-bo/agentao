@@ -81,7 +81,7 @@ _INCOMPLETE_OUTCOMES: Dict[str, Tuple[str, str]] = {
     ),
     "hook_stop": (
         "hook_stop",
-        "a PostToolUse hook returned continue:false and ended the turn",
+        "a plugin hook returned continue:false and ended the turn",
     ),
     "llm_error": (
         "runtime_error",

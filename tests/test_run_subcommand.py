@@ -441,6 +441,12 @@ def test_empty_turn_text_mode_writes_stderr_diagnostic(
     [
         ("length_truncated", "length_truncated", "cut off at the token limit"),
         ("doom_loop", "doom_loop", "doom-loop detector"),
+        # A turn a plugin hook ended. Its own `type`, not `empty_response`:
+        # the run was stopped deliberately by the operator's own
+        # configuration, which a pipeline may want to treat differently from
+        # anything the model or the harness did. The phrase is event-agnostic
+        # because `PreToolUse` reaches this path too, not only `PostToolUse*`.
+        ("hook_stop", "hook_stop", "plugin hook returned continue:false"),
     ],
 )
 def test_harness_halted_turn_exits_non_zero_with_own_type(

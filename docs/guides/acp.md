@@ -186,7 +186,7 @@ Source: `agentao/acp/session_prompt.py`.
 
 | `stopReason` | Meaning |
 |---|---|
-| `end_turn` | The Agentao chat loop returned normally. Also covers a turn where the model produced no prose (`no_output` / `reasoning_only`) — the turn genuinely ended, it just said nothing — and a turn whose LLM call failed, because the ACP enum has no error member (the `[LLM API error: …]` notice is the turn's streamed content). |
+| `end_turn` | The Agentao chat loop returned normally. Also covers a turn where the model produced no prose (`no_output` / `reasoning_only`) — the turn genuinely ended, it just said nothing — a turn a plugin hook ended with `continue: false` (`hook_stop`), which is an operator decision rather than a budget the harness enforced, so no ACP member describes it — and a turn whose LLM call failed, because the ACP enum has no error member (the `[LLM API error: …]` notice is the turn's streamed content). |
 | `cancelled` | The session's `CancellationToken` was fired (via `session/cancel`, connection close, or session teardown) before the loop returned. Takes precedence over every other reason. |
 | `max_tokens` | The turn was halted after the model's response was cut off at the token limit (`TurnOutcome.incomplete_reason == "length_truncated"`). |
 | `max_turn_requests` | The harness capped requests within the turn — either the tool-iteration budget was exhausted, or a doom loop (repeated identical calls) was halted. |

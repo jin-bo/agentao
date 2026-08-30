@@ -25,6 +25,7 @@ User-facing configuration files (the surfaces you may hand-edit):
 | 7 | Project instructions | `AGENTAO.md` (cwd) | — | `agent.py::_build_system_prompt` | [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) |
 | 8 | Memory store | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
 | 9 | Run spec (`agentao run`) | any path passed to `--spec` (or stdin) | — | `cli/run_models.py::RunSpec`, `cli/run_template.py::render_spec` | [run-spec-parameters.md](../design/run-spec-parameters.md) |
+| 10 | Plugin hooks | `<plugin>/hooks/hooks.json`, or inline/declared via the plugin manifest's `hooks` | — *(travels with the plugin)* | `embedding/plugins/manager.py` (discovery) → `plugins/hooks/_parser.py` (parse) | §11 below; Developer Guide §5.7 |
 
 Internal state files (auto-managed; documented for awareness, not for editing):
 
@@ -399,14 +400,14 @@ Full schema, tables, and lifecycle → [memory-management.md](../guides/memory-m
 | Code | Meaning |
 |---|---|
 | 0 | OK |
-| 1 | Runtime error, or a turn that produced no answer (`runtime_error`, `empty_response`, `length_truncated`, `doom_loop`) |
+| 1 | Runtime error, or a turn that produced no answer (`runtime_error`, `empty_response`, `length_truncated`, `doom_loop`, `hook_stop`) |
 | 2 | Invalid usage / invalid spec |
 | 3 | Permission denied or interaction required |
 | 4 | Max iterations |
 | 130 | Interrupted (SIGINT) |
 
 `error.type` discriminates outcomes that share an exit code. Every turn the
-runtime classifies as having no complete answer (the five `reason` values
+runtime classifies as having no complete answer (the six `reason` values
 below) exits 1 rather than 0, so a pipeline cannot read those as success — this
 is a single closed vocabulary with no unclassified ending. `error.reason`
 carries the exact variant — branch on `reason`, not on `message`:
@@ -417,12 +418,19 @@ carries the exact variant — branch on `reason`, not on `message`:
 | `empty_response` | `reasoning_only` | Reasoning, but no answer text. |
 | `length_truncated` | `length_truncated` | Output cut off at the token limit — a tool call whose arguments were truncated (the harness then halts the turn), or a final answer cut off mid-sentence. |
 | `doom_loop` | `doom_loop` | The model repeated one call until the detector halted the turn. |
+| `hook_stop` | `hook_stop` | A plugin hook returned `continue: false` and ended the turn. `PreToolUse` and `PostToolUse` / `PostToolUseFailure` both reach this. |
 | `runtime_error` | `llm_error` | The LLM API call failed (provider error / rate limit / auth) after retries; the message carries the provider's actual error. |
 
 `empty_response` means the model said nothing; `length_truncated` / `doom_loop`
-mean the harness halted a non-converging turn; `llm_error` means the provider
-call failed. All are classified last, so a rejection, max-iterations,
-cancellation, or raised error keeps its own more specific code.
+mean the harness halted a non-converging turn; `hook_stop` means your own
+configuration stopped it deliberately; `llm_error` means the provider call
+failed. All are classified last, so a rejection, max-iterations, cancellation,
+or raised error keeps its own more specific code.
+
+`max_iterations` is a seventh `reason` value on `agent.last_turn`, but it never
+reaches this table: it also flips a sticky transport flag that
+`_classify_outcome` checks **first**, so `agentao run` exits **4** for it, not
+1.
 
 A turn can end this way *after* running tools — the model may do the work and
 then fail to summarize it. `tool_calls` reports how many ran and their side
@@ -430,6 +438,104 @@ effects have already landed, so an `empty_response` failure does **not** imply
 the workspace is untouched.
 
 Full design rationale → [run-spec-parameters.md](../design/run-spec-parameters.md).
+
+---
+
+## 11. Plugin hooks — `hooks/hooks.json`
+
+Shell commands agentao runs at eight points in a turn. The file travels with a
+plugin rather than living under `.agentao/`: it is discovered at
+`<plugin>/hooks/hooks.json` when the manifest does not declare `hooks`, and the
+manifest's `hooks` key may instead give a path, an array of paths, or an inline
+object.
+
+**Two contracts, chosen per file by its shape** — a file copied out of a Claude
+Code setup carries no marker to gate on, so the parser looks at the entries
+themselves. An entry with a `hooks: []` array and no `type` is the **official**
+shape; an entry with `type` and no array is agentao's **flat** shape. A file
+whose entries disagree is rejected whole (it claims to be both); a single entry
+with neither key is a malformed handler and is warned about individually, so one
+typo cannot disable a working file. An explicit `"contract"` key overrides the
+detection; an unknown value disables the file.
+
+| Contract | Shape | Status |
+|---|---|---|
+| `agentao-v1` | flat: handlers directly under the event array | **Frozen.** Behaves exactly as it did before 0.4.21 |
+| `claude-code@profile-1` | official: event → matcher group → `hooks[]` → handler | An enumerated *profile* of the Claude Code hook contract |
+
+### Schema — official shape (`claude-code@profile-1`)
+
+```json
+{
+  "PreToolUse": [
+    {
+      "matcher": "Read|Write",
+      "hooks": [
+        { "type": "command", "command": "./guard.sh ${CLAUDE_PLUGIN_ROOT}", "timeout": 600 }
+      ]
+    }
+  ]
+}
+```
+
+| Key | Required | Default | Notes |
+|---|---|---|---|
+| *(event name)* | yes | — | One of `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `SessionStart`, `SessionEnd`, `PreCompact`. Any other event is not in the profile |
+| `matcher` | no | match all | A **string**. `re.fullmatch` semantics, with `*` and `""` as wildcards — `ead` does **not** match `Read`. Compared against the tool name on the tool events, `source` on `SessionStart`, `reason` on `SessionEnd`, `trigger` on `PreCompact` |
+| `hooks[].type` | yes | — | `command` only. `prompt`, `agent`, `mcp_tool`, `http` are skipped with a warning (agentao's `prompt` hook is a different feature wearing the same name) |
+| `hooks[].command` | yes¹ | — | Shell string, run under `/bin/sh` |
+| `hooks[].args` | no | — | Exec form; use instead of `command` to skip the shell |
+| `hooks[].timeout` | no | `600` (`30` for `UserPromptSubmit`) | Seconds |
+| `hooks[].shell` | no | — | **Ignored with a warning.** Measured: Claude Code 2.1.251 runs command hooks under `sh` and does not honor it either |
+| `hooks[].async`, `asyncRewake`, `if` | no | — | **Rule skipped with a warning** — agentao has no background hook runner, and `if` is a permission sub-feature rather than a field |
+| `hooks[].once`, `statusMessage` | no | — | Recognized and inert |
+
+¹ `command` or `args`; a handler with neither is skipped.
+
+**Unknown keys are ignored with a one-time diagnostic naming them, never a
+schema error.** A hook written for a newer Claude Code keeps working and its
+author is told which key had no effect. The diagnostic is session-scoped and
+keyed by rule content, so a plugin reload lets a corrected hook speak again.
+
+### Schema — flat shape (`agentao-v1`, frozen)
+
+```json
+{ "PreToolUse": [ { "type": "command", "command": "./guard.sh", "timeout": 60 } ] }
+```
+
+Handlers sit directly under the event; `matcher` is a **dict** (glob on
+`toolName`), the timeout default is `60`, and `type: "prompt"` is supported.
+Nothing in 0.4.21 changed this shape's behaviour.
+
+### Placeholders and the child environment
+
+`${CLAUDE_PROJECT_DIR}`, `${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_PLUGIN_DATA}`
+(the last rooted at `~/.agentao/plugin-data/<plugin>`) are substituted in the
+command and exported to the child. The child environment is built by
+`capabilities/process.py::build_child_env`, which **strips agentao's own
+provider credentials** — a hook that needs them must be given an explicit
+`env=` by its caller or run with `AGENTAO_SCRUB_CHILD_ENV=0`.
+
+### Output limits
+
+| Tier | Limit | On overflow |
+|---|---|---|
+| Raw capture | 8 MiB per stream per invocation | Process tree killed, hook fails — output cut mid-JSON has no decision to contribute |
+| Delivered channel | 10,000 characters | Truncated, full text spilled to `.agentao/hook-outputs/` |
+
+Spill files are `0600` and **secret-scanned before the bytes land**, pruned at
+7 days / 200 files. A failed spill is reported rather than silently skipped.
+
+### Precedence
+
+Both contracts may appear in one session (in different files). Rules are
+partitioned by contract, run, and merged once over the event's decision
+lattice — `deny > ask > allow` on `PreToolUse` — with the surfaced reason
+ranked **inside the winning class** by declaration order. A v1 short-circuit
+ends only the v1 group: the profile's "every matching handler runs" rule exists
+for handlers with side effects. A `Stop` hook's reentry cap follows the
+contract of the rule that produced the continuation — 8 under the profile,
+3 under `agentao-v1`.
 
 ---
 

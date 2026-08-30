@@ -233,6 +233,13 @@ def _parse_prompt(raw: Any) -> Tuple[str, List[Dict[str, str]]]:
 #: that distinction reads the streamed content, which is empty.
 #:
 #: ``llm_error`` is also absent. See :func:`_stop_reason_for`.
+#:
+#: ``hook_stop`` is absent **deliberately**, and the rule above is why: a hook
+#: returning ``continue: false`` is an operator decision, not a budget the
+#: harness enforced, so no member of ACP's enum describes it — ``max_tokens``
+#: and ``max_turn_requests`` would both name a limit that was never reached.
+#: It falls through to ``end_turn``, which is honest: the turn did end, and the
+#: reason is in the streamed content rather than the enum.
 _INCOMPLETE_TO_STOP_REASON = {
     "length_truncated": "max_tokens",
     "doom_loop": "max_turn_requests",
