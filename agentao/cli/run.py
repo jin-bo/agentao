@@ -79,6 +79,10 @@ _INCOMPLETE_OUTCOMES: Dict[str, Tuple[str, str]] = {
         "max_iterations",
         "the tool call iteration budget ran out before the model answered",
     ),
+    "hook_stop": (
+        "hook_stop",
+        "a PostToolUse hook returned continue:false and ended the turn",
+    ),
     "llm_error": (
         "runtime_error",
         "the LLM API call failed (provider error / rate limit / auth) after "

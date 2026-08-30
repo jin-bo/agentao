@@ -81,6 +81,11 @@ class ToolRunner:
         )
         self._formatter = ToolResultFormatter(transport, logger)
         self.readonly_mode: bool = False
+        #: The ``continue: false`` a ``PostToolUse*`` hook returned for the
+        #: batch that just ran, in **plan order**, or ``None``. Read by the chat
+        #: loop immediately after ``execute()``; reset at the top of every call
+        #: so a stop can never leak into the next batch.
+        self.last_hook_stop: Optional[str] = None
         # Plugin hook rules — set by the agent after plugin loading.
         self._plugin_hook_rules: list = []
         # Session working directory for hook dispatchers (set by cli after plugin loading).
@@ -246,6 +251,25 @@ class ToolRunner:
 
         # --- Phase 4: Result formatting (delegated to ToolResultFormatter) ---
         result_messages.extend(self._formatter.format_batch(_plans, _exec_results))
+
+        # A ``PostToolUse*`` hook's ``continue: false`` is a **turn-level** stop
+        # computed inside a worker, three frames below anything that can act on
+        # it. It rides home on the result and is surfaced here, on the runner,
+        # rather than as a third tuple element: ``execute``'s 2-tuple has
+        # callers whose tests are not about hooks, and ``Agentao.last_turn`` is
+        # the codebase's own precedent for "read it off the object right after
+        # the call".
+        #
+        # Arbitration is **plan order** — the model's own tool-call order — and
+        # never completion order, which would make the surfaced reason vary run
+        # to run for the same batch.
+        self.last_hook_stop = None
+        for _plan in _plans:
+            _info = _exec_results.get(_plan.tool_call_id)
+            if _info is not None and _info.hook_stop_reason is not None:
+                self.last_hook_stop = _info.hook_stop_reason
+                break
+
         return False, result_messages
 
     # ------------------------------------------------------------------

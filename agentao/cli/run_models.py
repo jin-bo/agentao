@@ -247,6 +247,7 @@ class RunErrorEnvelope(BaseModel):
         "empty_response",
         "length_truncated",
         "doom_loop",
+        "hook_stop",
     ]
     message: str
     tool_name: Optional[str] = None

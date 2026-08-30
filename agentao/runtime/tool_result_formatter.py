@@ -124,7 +124,19 @@ class ToolResultFormatter:
         """
         messages: List[Dict[str, Any]] = []
         for plan in plans:
-            messages.append(self._format_one(plan, exec_results[plan.tool_call_id]))
+            info = exec_results[plan.tool_call_id]
+            message = self._format_one(plan, info)
+            # Hook feedback rides *beside* the result, never instead of it: the
+            # original output is preserved and the hook's text is appended, which
+            # is the shape Claude Code was measured to use
+            # (``<system-reminder>`` after the tool result — probe §C).
+            if info.hook_model_contexts:
+                extra = "\n".join(
+                    f"<system-reminder>\n{ctx}\n</system-reminder>"
+                    for ctx in info.hook_model_contexts
+                )
+                message["content"] = f"{message.get('content', '')}\n\n{extra}"
+            messages.append(message)
         return messages
 
     # ------------------------------------------------------------------

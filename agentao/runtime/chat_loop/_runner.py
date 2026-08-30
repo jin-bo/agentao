@@ -108,6 +108,11 @@ INCOMPLETE_LENGTH_TRUNCATED = "length_truncated"
 INCOMPLETE_DOOM_LOOP = "doom_loop"
 INCOMPLETE_MAX_ITERATIONS = "max_iterations"
 INCOMPLETE_LLM_ERROR = "llm_error"
+# A ``PostToolUse`` / ``PostToolUseFailure`` hook returned ``continue: false``.
+# The tools ran; what did not happen is the model's answer, so this is an
+# incomplete turn rather than an error — and a *deliberate* one, which is why
+# it also joins the halted family below: hook text must not clear it.
+INCOMPLETE_HOOK_STOP = "hook_stop"
 
 # The complete closed set — the ``incomplete_reason`` wire vocabulary. The CLI
 # maps each of these to an error envelope; a parity test binds the two so the
@@ -119,6 +124,7 @@ INCOMPLETE_ANSWER_REASONS = frozenset({
     INCOMPLETE_DOOM_LOOP,
     INCOMPLETE_MAX_ITERATIONS,
     INCOMPLETE_LLM_ERROR,
+    INCOMPLETE_HOOK_STOP,
 })
 
 # The "harness halted a non-converging turn" family. Hook text or a re-entry
@@ -129,6 +135,7 @@ INCOMPLETE_ANSWER_REASONS = frozenset({
 _HALTED_REASONS = frozenset({
     INCOMPLETE_LENGTH_TRUNCATED,
     INCOMPLETE_DOOM_LOOP,
+    INCOMPLETE_HOOK_STOP,
     INCOMPLETE_MAX_ITERATIONS,
 })
 
@@ -224,6 +231,14 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         "doom_loop": {
             "reentry_cap_log": "Stop hook reentry cap (%d) hit at doom-loop; ending turn.",
             "force_continue_log": "Stop hook force_continue at doom-loop",
+            "force_continue_outcome": "continue",
+            "echo_additional_contexts": False,
+        },
+        "hook_stop": {
+            "reentry_cap_log": (
+                "Stop hook reentry cap (%d) hit after a PostToolUse stop; ending turn."
+            ),
+            "force_continue_log": "Stop hook force_continue after a PostToolUse stop",
             "force_continue_outcome": "continue",
             "echo_additional_contexts": False,
         },
@@ -775,11 +790,40 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             cancellation_token=token,
         )
         agent.messages.extend(tool_results)
+        # The stop is read **after** the results are appended, never instead of
+        # them: ``format_batch`` emits exactly one message per plan, and an
+        # assistant ``tool_calls`` entry with no answering ``role:"tool"``
+        # message is rejected by strict APIs. Ending the turn is not a rollback.
+        _raw_hook_stop = getattr(agent.tool_runner, "last_hook_stop", None)
+        # A **string** or nothing. The runner may be a test double — this
+        # codebase substitutes ``MagicMock`` agents freely — and a mock attribute
+        # is neither ``None`` nor a string, so an ``is not None`` test here would
+        # let any stub end a turn it never meant to.
+        hook_stop = _raw_hook_stop if isinstance(_raw_hook_stop, str) else None
         # Turn-level telemetry: count tool calls the LLM made this
         # iteration; run_turn reset this to 0 and TURN_END reports the total.
         agent._turn_tool_count = (
             getattr(agent, "_turn_tool_count", 0) + len(clean_tool_calls)
         )
+        if hook_stop is not None:
+            # ``continue: false`` on a Post* event ends the **turn**, not the
+            # call: the tool already ran and its result is recorded above. The
+            # stop maps through the ordinary turn-outcome path, so `agentao run`
+            # needs no exit code of its own for it.
+            stop_content = hook_stop.strip() or "Turn stopped by a PostToolUse hook."
+            final_msg_hook: Dict[str, Any] = {
+                "role": "assistant",
+                "content": stop_content,
+            }
+            _attach_reasoning(final_msg_hook, reasoning_content)
+            sanitize_assistant_message(final_msg_hook)
+            return self._resolve_stop_hook(
+                turn_end_reason="hook_stop",
+                assistant_content=stop_content,
+                final_msg=final_msg_hook,
+                system_prompt=system_prompt,
+                incomplete_reason=INCOMPLETE_HOOK_STOP,
+            )
         if doom_triggered:
             doom_content = (assistant_msg.get("content") or "").strip()
             assistant_content_doom = (
