@@ -36,8 +36,10 @@ from ._alias import ToolAliasResolver
 from ._attachments import _make_attachment
 from ._budget import HOOK_RAW_OUTPUT_LIMIT_BYTES
 from ._paths import _placeholder_values, _substitute
+from ._resolve import diagnose_fields, parse_stdout
 from ._profile import (
     LEGACY_CONTRACT_ID,
+    PLAIN_TEXT_CONTEXT_EVENTS,
     PERMISSION_DECISION_DEGRADES,
     PROFILE_ID,
     exit2_outcome,
@@ -427,23 +429,29 @@ class PluginHookDispatcher(_OutputParsingMixin):
             elif outcome == "block" and stderr:
                 result.stop_reason = result.stop_reason or _cap(stderr, rule)
 
+        # One classifier for the whole package: the five-state machine of §4.2,
+        # which decides whether to attempt JSON from **both ends** of the string
+        # and treats a parse failure as an error rather than as text.
         stdout = (proc.stdout or "").strip()
-        data: dict[str, Any] | None = None
-        if stdout.startswith("{") and stdout.endswith("}"):
-            try:
-                loaded = json.loads(stdout)
-                data = loaded if isinstance(loaded, dict) else None
-            except json.JSONDecodeError:
-                data = None
+        data, state, failure = parse_stdout(stdout, event)
 
         if data is None:
-            if proc.returncode not in (0, 2) and stderr:
+            if state in ("parse_error", "schema_invalid") and proc.returncode != 2:
+                result.user_notices.append(f"{event} hook error: {failure}")
+            elif state == "plain" and proc.returncode == 0 and event in PLAIN_TEXT_CONTEXT_EVENTS:
+                result.model_contexts.append(_cap(stdout, rule))
+            elif proc.returncode not in (0, 2) and stderr:
                 first_line = stderr.splitlines()[0]
                 result.user_notices.append(
                     f"{event} hook error: Failed with non-blocking status code: "
                     f"{proc.returncode} {first_line}"
                 )
             return
+
+        # G10's producer. An ignored or unrecognized field is named **once** per
+        # (rule, field) per session, so the author learns it had no effect
+        # without a notice on every invocation.
+        result.user_notices.extend(diagnose_fields(data, event, rule))
 
         system_message = data.get("systemMessage")
         if isinstance(system_message, str) and honors_system_message(event):

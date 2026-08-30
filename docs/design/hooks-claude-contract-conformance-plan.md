@@ -3,7 +3,11 @@
 > **⚠️ Plan. Nothing here is implemented.** The deviations it closes are catalogued in
 > `hooks-three-way-claude-codex-agentao.md` (rev 5), which remains analysis-only. **No PR is open.**
 
-**Status:** plan, **rev 23** (2026-08-29), after twenty-one maintainer reviews. **Implementation
+**Status:** **implemented** (rev 24, 2026-08-30) — all seven steps of §8 and all ten design gates.
+See §0 for what each gate closed on. rev 23's text stands; this is the same document with the
+closures recorded and the steps ticked off.
+
+**Was:** plan, rev 23 (2026-08-29), after twenty-one maintainer reviews. **Implementation
 authorized.** rev 23 is the gate-closure revision: the maintainer took the four decisions the document
 reserved, and a probe of a real `claude` binary settled the rest — §0 records every closure and what
 it changed. Six table rows moved with it; the design they belong to is otherwise the one review
@@ -65,6 +69,7 @@ already written — and the round after it found nothing at all.
 | 20 | 1 P2 | rev 19's own seam list smuggled the hole back: it offered "an injectable executor**/cap**", and a bare configurable `max_workers` bounds concurrency without giving the test any control over the instant between the stop becoming observable and the tail being dequeued. A cap may ride along; it is never the seam | G2 |
 | 21 | 1 P3 | The self-violation tally had stopped counting itself: still "six rounds, unbroken since rev 13" while rev 18, 19 and 20 each recorded exactly that pattern. Nine now, with the broken rule named per round so the number is checkable — a statistic about a failure mode is not exempt from the failure mode | this section |
 | 23 | — | **Gates closed, implementation authorized.** Not a review round: the maintainer decided G2/G6 (weakened branch), G8 (no pre-execution validator) and G7's artifact question, and a probe of `claude` 2.1.251 settled both contested rows, G5's documented ambiguity and G8's flip. Six table rows changed; the two contested rows are now **measured**, one confirming the narrow reading and one reversing it | §0, §2.4, §5.1, §5.2, §5.4, §7 |
+| 24 | — | **Implemented.** All seven steps of §8 landed across nine commits, and the ten gates closed as §0 records — four by a maintainer decision, five by probing a real `claude` 2.1.251, one by taking the plan's own proposal. Three of the probes **corrected the plan**: the matcher is anchored, not unanchored (§2.3); `PostToolUseFailure` honors `decision` (§5.1); `SessionStart` / `SessionEnd` matchers compare against `source` / `reason` | all of §8 |
 | 22 | none | **Clean pass.** No P1, P2 or P3 — the first of the twenty-one rounds to find nothing. rev 22 is bookkeeping: the status line, this row, and the note that the self-violation run ended at 20. Nothing in §1–§12 moved, so what passed review is what is on disk | this section, §1 |
 
 Two process rules came out of these rounds and are followed here: every patch is re-grepped after
