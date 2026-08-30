@@ -38,6 +38,8 @@ from ._budget import HOOK_RAW_OUTPUT_LIMIT_BYTES
 from ._paths import _placeholder_values, _substitute
 from ._profile import (
     LEGACY_CONTRACT_ID,
+    PERMISSION_DECISION_DEGRADES,
+    PROFILE_ID,
     exit2_outcome,
     field_disposition,
     honors_continue,
@@ -606,14 +608,18 @@ class PluginHookDispatcher(_OutputParsingMixin):
         result: PreToolUseHookResult,
     ) -> None:
         """Run one PreToolUse command hook and fold its verdict into ``result``."""
-        proc, _timed_out = self._run_subprocess(rule, payload)
+        proc, _failure = self._run_subprocess(rule, payload)
         if proc is None:  # empty / timed out / failed to start — warning already logged
             return
 
-        if proc.returncode != 0:
-            # MVP scope: exit-code-2 "block" is not honored — surface a
-            # warning like other lifecycle hooks. Any JSON on stdout is
-            # still parsed below.
+        profile = rule.contract != LEGACY_CONTRACT_ID
+        if proc.returncode == 2 and profile:
+            # Exit 2 blocks on this event, and the JSON is still read: its
+            # blocking reason wins when it has one, stderr otherwise. `agentao-v1`
+            # keeps the old warning-only behavior, which is what its hooks expect.
+            result.decision = "deny"
+            result.reason = _cap((proc.stderr or "").strip() or "blocked by hook (exit 2)", rule)
+        elif proc.returncode != 0:
             logger.warning(
                 "PreToolUse hook exited %d: %s (stderr: %s)",
                 proc.returncode, rule.command, (proc.stderr or "")[:200],
@@ -639,6 +645,19 @@ class PluginHookDispatcher(_OutputParsingMixin):
             raw_decision = hook_specific.get("permissionDecision")
             if isinstance(raw_decision, str) and raw_decision in ("allow", "deny", "ask"):
                 decision = raw_decision
+            elif raw_decision in PERMISSION_DECISION_DEGRADES and profile:
+                # A value agentao cannot honor sits in exactly the position of a
+                # field it cannot honor: accept, ignore, or **degrade to a named
+                # alternative** — never "reject", which would discard every
+                # sibling field in the same object. The reason says which value
+                # was degraded, because silently substituting one permission
+                # verdict for another is the worst of the three outcomes.
+                decision = PERMISSION_DECISION_DEGRADES[raw_decision]
+                reason = (
+                    f"hook returned permissionDecision {raw_decision!r}, which "
+                    f"{PROFILE_ID} does not implement — degraded to "
+                    f"{decision!r}"
+                )
             for key in ("permissionDecisionReason", "reason"):
                 rv = hook_specific.get(key)
                 if isinstance(rv, str):
@@ -651,6 +670,16 @@ class PluginHookDispatcher(_OutputParsingMixin):
         if reason is None and isinstance(data.get("reason"), str):
             reason = data["reason"]
         self._harvest_additional_context(data.get("additionalContext"), result)
+
+        if profile:
+            updated = hook_specific.get("updatedInput") if isinstance(hook_specific, dict) else None
+            if isinstance(updated, dict) and result.updated_tool_input is None:
+                result.updated_tool_input = dict(updated)
+            if data.get("continue") is False:
+                stop_reason = data.get("stopReason")
+                result.stop_reason = (
+                    _cap(stop_reason, rule) if isinstance(stop_reason, str) else ""
+                )
 
         # ``deny`` always wins (and the caller stops forking further hooks);
         # ``ask`` only takes hold if nothing stronger has been seen.

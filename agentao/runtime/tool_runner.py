@@ -35,6 +35,15 @@ _DECISION_OUTCOME = {
 }
 
 
+#: Intersection order for the re-decide: stricter wins, never looser.
+_STRICTNESS = {
+    ToolCallDecision.ALLOW: 0,
+    ToolCallDecision.ASK: 1,
+    ToolCallDecision.DENY: 2,
+    ToolCallDecision.CANCELLED: 3,
+}
+
+
 class ToolRunner:
     """Encapsulates the 4-phase tool execution pipeline.
 
@@ -294,12 +303,26 @@ class ToolRunner:
             return
 
         from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
+        from ..plugins.hooks._profile import LEGACY_CONTRACT_ID
 
         adapter = ClaudeHookPayloadAdapter()
         dispatcher = PluginHookDispatcher(cwd=self._working_directory)
+        profile_rules = [r for r in pre_rules if r.contract != LEGACY_CONTRACT_ID]
+
         for plan in plans:
-            # An already-DENY plan can't be made "more denied"; skip the fork.
-            if plan.decision not in (ToolCallDecision.ALLOW, ToolCallDecision.ASK):
+            # The reference is explicit: **permission denials fire PreToolUse**.
+            # Skipping them is a sound optimization only while a hook can merely
+            # *tighten* a verdict — it stops being sound the moment the contract
+            # says the hook must observe the call. An audit, notifier or metrics
+            # hook registered here never saw denied calls, which is precisely the
+            # population such a hook exists for, and nothing told its author.
+            #
+            # `agentao-v1` keeps the skip (frozen); a profile rule sees the call.
+            already_denied = plan.decision not in (
+                ToolCallDecision.ALLOW, ToolCallDecision.ASK,
+            )
+            rules_for_plan = profile_rules if already_denied else pre_rules
+            if not rules_for_plan:
                 continue
             payload = adapter.build_pre_tool_use(
                 tool_name=plan.function_name,
@@ -311,7 +334,7 @@ class ToolRunner:
             )
             try:
                 hook_result = dispatcher.dispatch_pre_tool_use_decision(
-                    payload=payload, rules=pre_rules,
+                    payload=payload, rules=rules_for_plan,
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 self._logger.warning("PreToolUse hook dispatch error: %s", exc)
@@ -332,12 +355,18 @@ class ToolRunner:
                 pass
 
             if hook_result.additional_contexts:
-                # MVP: recorded, not injected into the model or tool path.
-                self._logger.info(
-                    "PreToolUse hook returned additionalContext for '%s' "
-                    "(not injected): %d block(s)",
-                    plan.function_name, len(hook_result.additional_contexts),
-                )
+                # Deviation 6: parsed and *logged* was not a route. It rides
+                # beside this call's result, where the model actually sees it.
+                plan.hook_tool_contexts.extend(hook_result.additional_contexts)
+
+            if hook_result.stop_reason is not None:
+                # `continue: false` ends the **turn**, not the call. Recording it
+                # as a `deny` because a verdict field is already there is the
+                # mis-implementation §5.2.2 names.
+                self.last_hook_stop = hook_result.stop_reason or "Hook stopped the turn"
+
+            if hook_result.updated_tool_input is not None and not already_denied:
+                self._apply_updated_input(plan, hook_result.updated_tool_input)
 
             reason = pre_tool_hook_reason(hook_result.reason)
             if hook_result.decision == "deny":
@@ -348,6 +377,39 @@ class ToolRunner:
                 plan.permission_detail = _synth(PermissionDecision.ASK, reason)
             # ``allow`` / no decision → no-op (must not downgrade an existing
             # engine deny/ask or a tool's own requires_confirmation ask).
+
+    def _apply_updated_input(self, plan, updated: dict) -> None:
+        """Replace the call's arguments and **re-decide** on what will run.
+
+        `updatedInput` "replaces the entire input object", so the verdict
+        computed in phase 1 describes arguments that no longer exist. Storing the
+        rewrite and executing it would hand the executor a command the permission
+        engine never saw — carrying an ALLOW computed on the original, with the
+        hardline shell scanner running *inside* that verdict rather than
+        downstream of it.
+
+        The re-decided verdict and whatever the hook asks for combine by taking
+        the **stricter**: a hook `allow` cannot lift a re-computed DENY, and a
+        pre-existing DENY stays DENY. Phase 2's confirmation then shows the
+        modified input, because it reads these same arguments — which is the
+        reference's own pairing of `updatedInput` with `"ask"`.
+
+        Not validated first: agentao has no pre-execution schema check (§1's
+        stated non-promise), so a rewrite the tool cannot accept fails inside the
+        tool instead of being refused here. The original never runs either way.
+        """
+        previous = plan.decision
+        plan.function_args = dict(updated)
+        try:
+            new_decision, new_detail = self._planner._decide(
+                plan.tool, plan.function_name, plan.function_args, self.readonly_mode,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            self._logger.warning("re-decide after updatedInput failed: %s", exc)
+            return
+        if _STRICTNESS.get(new_decision, 0) > _STRICTNESS.get(previous, 0):
+            plan.decision = new_decision
+            plan.permission_detail = new_detail
 
     # ------------------------------------------------------------------
     # Public-event helpers

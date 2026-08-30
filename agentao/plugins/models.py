@@ -373,6 +373,15 @@ class PreToolUseHookResult:
     reason: str | None = None
     additional_contexts: list[str] = field(default_factory=list)
     matched_rule_count: int = 0
+    #: ``hookSpecificOutput.updatedInput`` — **replaces the entire input
+    #: object**. It is not a field to store and forward: the permission verdict
+    #: was computed on the original arguments, so the call has to be re-decided
+    #: before it runs (§4.4).
+    updated_tool_input: dict[str, Any] | None = None
+    #: ``continue: false`` — ends the **turn**, which is not the same as denying
+    #: the call. Folding one into the other because a verdict field is already
+    #: there is exactly the semantic divergence the profile exists to prevent.
+    stop_reason: str | None = None
 
 
 @dataclass

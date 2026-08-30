@@ -130,10 +130,15 @@ class ToolResultFormatter:
             # original output is preserved and the hook's text is appended, which
             # is the shape Claude Code was measured to use
             # (``<system-reminder>`` after the tool result — probe §C).
-            if info.hook_model_contexts:
+            # ``PreToolUse`` context is attached to the plan (it is decided
+            # before the tool runs); ``PostToolUse*`` context rides on the
+            # result. Both land in the same place — beside this call's output.
+            hook_contexts = list(getattr(plan, "hook_tool_contexts", []) or [])
+            hook_contexts += list(info.hook_model_contexts or [])
+            if hook_contexts:
                 extra = "\n".join(
                     f"<system-reminder>\n{ctx}\n</system-reminder>"
-                    for ctx in info.hook_model_contexts
+                    for ctx in hook_contexts
                 )
                 message["content"] = f"{message.get('content', '')}\n\n{extra}"
             messages.append(message)
