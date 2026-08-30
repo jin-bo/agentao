@@ -86,7 +86,8 @@ changelog 头部为 **2.1.251**（`code.claude.com/docs/en/changelog.md`），�
 | **G7**（输入矩阵） | **探测**，部分 | 捕获了六份真实 stdin payload。它们**确认**了 §5.3 的形状 —— `permission_mode` 在四个事件上有、在 `SessionStart` / `SessionEnd` 上没有，`prompt_id` 在首次输入前缺席，`agent_id` / `agent_type` 处处缺席，`tool_response` 是结构化对象 —— 而把那些*决定*留着：`transcript_path` 由 agentao 从哪里取、`permission_mode` 怎么映射。两条是新事实：上游把 `background_tasks: []` / `session_crons: []` 发成「存在且为空」，以及 `permission_mode` 在同一会话内取值不同（`UserPromptSubmit` 上是 `auto`、工具事件上是 `default`）—— 记为观察，不作规则 | §5.3 |
 | **G4** | 实施时按计划的提案取定 | **Tier 1 = 每次调用每条流 8 MiB**，在共享 runner 上是 opt-in，所以其他调用方的失败模式一点不变；超限即杀进程树、该 hook 失败 —— 因为在 JSON 中途被切断的输出没有任何决定可贡献。**Tier 2 = 每个通道 10,000 字符** —— 上游自己的数字，按字符而不是 token，这样这条界限不随所配模型而变。溢出落 `.agentao/hook-outputs/`，文件 `0600`，字节落盘前先脱敏，按时龄（7 天）与数量（200）清理。落盘失败会**上报** —— 它抄的那个 tool-output sink 并不上报 | §6、第 1 步 |
 | **G10** | 实施时按计划的提案取定 | **会话级、加锁、以内容派生的 rule key 为键** —— 绝不用 `id(rule)`，它每次 reload 都变、会把一切静默重播一遍。陷阱在 dispatcher 作用域：它在六处被构造、其中两处**在池 worker 内**，所以挂在它身上的状态既去不了重、还会边去重边竞争。插件 reload 与 `/clear` 时调 `clear_session()`，这样改好的 hook 会重新出声、没改的继续闭嘴 | §4.2、第 2 步 |
-| **G1、G3、G9** | —— | **仍然开放**，未变。它们卡住第 1、3、4、5、6b 步，而且没有一个是靠探测别人的二进制能回答的 | §9 |
+| **G3** | **探测** | **`*` 是通配符；其余一切都是锚定全匹配。** 七个探测点与 `re.fullmatch` 完全一致，其中两个推翻了本计划一直带着的**非锚定**读法：`ead` 匹配不上 `Read`，`Rea|Wri` 也不行。所以修法是复用 agentao 已有的 `_regex_match_full` 外加 `*` 特判，而不是新写三路求值器 —— 而 §2.3 的头条依然成立，因为 `toolName` 走的是 `_glob_match` | §2.3、第 3 步 |
+| **G1、G9** | —— | **仍然开放**，未变。它们卡住第 1、3、4、5、6b 步，而且没有一个是靠探测别人的二进制能回答的 | §9 |
 
 ---
 
@@ -226,15 +227,19 @@ Claude Code 配置里拷出来的文件**没有 `contract` 键** —— 它是 C
 
 - agentao 对 `toolName` 走 glob（`_matchers.py:15`）：`*` 匹配一切，否则**精确相等**。
 - agentao 对 `trigger` 走锚定的 fullmatch 正则（`_matchers.py:30`）。
-- Claude 的 matcher 是字符串、三路求值，codex 实现的也是同样三路（对照文档 §2）：`*`、精确**并列**、
-  以及**非锚定**正则。
+- Claude 的 matcher 是一个字符串，而它的求值是**实测**出来的、不是推断的：`*` 是通配符，其余一切都是
+  **锚定全匹配**（`docs/reference/hooks-probe-2.1.251.zh.md` §G3）。
 
-于是 `"Edit|Write"` —— 公开示例里最常见的那个 matcher —— 在上游是并列，在 `_glob_match` 下则是一个不含
-`*` 的字面串、按相等比较。它什么都匹配不到。一个翻译层会把规则注册进去、然后永远不触发，这比拒绝它
-更糟。
+这次测量修正了本节。早先的版本依据 codex 的实现与参考文档的措辞，说上游用的是**非锚定**正则；七个探测点
+给出了相反结论，其中两个是决定性的：`ead` **匹配不上** `Read`，`Rea|Wri` 也匹配不上 —— 这两个非锚定搜索
+都会触发。七个点与 `re.fullmatch` 完全一致。
 
-因此 `claude-code` 模式需要的是 Claude 的 matcher 求值，而不是往 dict 上做映射。这是**设计门槛 G3**
-（§9）—— 三路语义必须在第 3 步之前钉死。
+头条在修正之后依然成立，值得把两件事分开：**字符串 matcher 仍然不是「换个写法的 dict matcher」**，因为
+agentao 把 `toolName` 送进的是 `_glob_match`、不是它那条锚定正则路径。`"Edit|Write"` 在那里是一个不含 `*`
+的字面串、按相等比较，什么都匹配不到。一个翻译层会把规则注册进去、然后永远不触发，这比拒绝它更糟。
+
+变的是**代价**：`claude-code` 模式不需要新写一个三路求值器，它需要的是 agentao 已经有的那个锚定全匹配
+（`_regex_match_full`）外加对 `*` 的特判 —— `*` 不是合法正则，不能直接透传。**G3** 据此结案（§0）。
 
 ### 2.4 handler 字段矩阵
 

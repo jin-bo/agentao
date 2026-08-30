@@ -21,7 +21,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from ...capabilities.process import OutputLimitExceeded, run_captured
+from ...capabilities.process import OutputLimitExceeded, build_child_env, run_captured
 from ..models import (
     CLAUDE_FLAT_EVENTS,
     HookAttachmentRecord,
@@ -34,7 +34,9 @@ from ..models import (
 from ._alias import ToolAliasResolver
 from ._attachments import _make_attachment
 from ._budget import HOOK_RAW_OUTPUT_LIMIT_BYTES
-from ._matchers import _glob_match, _regex_match_full
+from ._paths import _placeholder_values, _substitute
+from ._profile import LEGACY_CONTRACT_ID
+from ._matchers import _claude_matcher_match, _glob_match, _regex_match_full
 from ._output_parsing import _OutputParsingMixin
 
 logger = logging.getLogger(__name__)
@@ -290,6 +292,15 @@ class PluginHookDispatcher(_OutputParsingMixin):
 
     def _matches(self, rule: ParsedHookRule, payload: dict[str, Any]) -> bool:
         """Check if a rule's matcher applies to this payload."""
+        # A profile rule carries a *string* matcher, evaluated by Claude's own
+        # semantics — an anchored full match with ``*`` as a wildcard. It is
+        # deliberately not mapped onto the dict matcher below: that one globs, so
+        # ``Edit|Write`` would be compared literally and fire for nothing.
+        if rule.contract != LEGACY_CONTRACT_ID:
+            if rule.matcher_pattern is None:
+                return True
+            return _claude_matcher_match(rule.matcher_pattern, self._matched_name(rule, payload))
+
         if rule.matcher is None:
             return True
 
@@ -329,9 +340,25 @@ class PluginHookDispatcher(_OutputParsingMixin):
 
         return True
 
+    @staticmethod
+    def _matched_name(rule: ParsedHookRule, payload: dict[str, Any]) -> str:
+        """What a profile matcher is matched against, per event.
+
+        Tool events match on the tool name; ``PreCompact`` matches on its
+        trigger, the only other thing the reference gives a matcher. Events with
+        no documented matcher fall through to the empty string, where any
+        non-``*`` pattern simply fails — the conservative direction, since an
+        author who wrote a filter meant to narrow.
+        """
+        event = payload.get("hook_event_name") or rule.event
+        if event == "PreCompact":
+            return str(payload.get("trigger", ""))
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        return str(payload.get("tool_name") or data.get("toolName") or "")
+
     def _run_subprocess(
         self, rule: ParsedHookRule, payload: dict[str, Any],
-    ) -> tuple[subprocess.CompletedProcess[str] | None, bool]:
+    ) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
         """Run ``rule.command`` with the JSON payload on stdin.
 
         Returns ``(proc, failure)``: ``proc`` is the completed process, or
@@ -345,7 +372,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
         now reach the user distinguishably instead of both reading "timed
         out".
         """
-        if not rule.command:
+        if not rule.command and not rule.args:
             return None, None
         try:
             # Shared hardened runner: feeds the JSON payload on a stdin pipe
@@ -353,12 +380,30 @@ class PluginHookDispatcher(_OutputParsingMixin):
             # timeout, kills the whole process tree rather than just the
             # shell — a hook that backgrounds a child would otherwise keep
             # the captured pipe open and hang dispatch past ``rule.timeout``.
+            placeholders = _placeholder_values(rule, self._cwd)
+            if rule.args:
+                # Exec form: no shell, each element one argument. The reference
+                # tells authors to use it whenever a hook takes a path — which is
+                # exactly when a shell is the thing that breaks it.
+                cmd: Any = [_substitute(rule.command or "", placeholders)] + [
+                    _substitute(a, placeholders) for a in rule.args
+                ]
+                use_shell = False
+            else:
+                cmd = _substitute(rule.command or "", placeholders)
+                use_shell = True
             proc = run_captured(
-                rule.command,
+                cmd,
                 input=json.dumps(payload),
                 timeout=rule.timeout,
-                shell=True,
+                shell=use_shell,
                 cwd=str(self._cwd),
+                # The only correct spelling. ``env={...}`` or
+                # ``env=os.environ | {...}`` silently deletes the provider-key
+                # scrub ``run_captured`` applies when ``env`` is omitted — one of
+                # the five places agentao leads both peers. ``build_child_env``
+                # applies overrides *after* the scrub, by construction.
+                env=build_child_env(placeholders),
                 # Tier 1 (§6). ``communicate()`` reads to EOF, so without a
                 # ceiling here a hook that prints without stopping is bounded
                 # only by the host's memory — and it exhausts it long before

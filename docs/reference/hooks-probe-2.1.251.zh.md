@@ -26,6 +26,7 @@
 | C | `PostToolUseFailure` 上的顶层 `decision: "block"` 被认吗？ | G7 | **认**，且属*反馈*：reason 进模型、原始错误保留、turn 继续 |
 | D | 不符合工具 schema 的 `updatedInput` 会怎样？ | G8 | **该调用被拒**（`tool_use_error`）；**原输入从未执行** |
 | F | 每个事件的 stdin 上到底是什么？ | G7（§5.3） | 六份 payload 逐字节捕获 —— 见下 |
+| G3 | 字符串 `matcher` 如何求值？ | G3 | **`*` 是通配符；其余一切都是锚定全匹配。** 非锚定那种读法被推翻 |
 
 ---
 
@@ -191,3 +192,30 @@ D_RAN.txt            : 不存在   ← 原命令从未执行
    不了任何东西」是同一个形状。
 
 以上就是上面每条结论都附带「它不能证明什么」的原因。
+
+## G3 —— 字符串 matcher（G3）
+
+计划 §2.3 依据 codex 的实现与参考文档的措辞，说上游三路求值 matcher —— `*`、精确并列、以及**非锚定**
+正则。这是本次探测中唯一**被推翻**的断言。
+
+七个 `PreToolUse` matcher，各自对一次 `Read` 调用：
+
+| Matcher | hook 是否触发 | `re.fullmatch(p, "Read")` | `re.search(p, "Read")` |
+|---|---|---|---|
+| `*` | **是** | *非法正则* | *非法正则* |
+| `Read` | **是** | True | True |
+| `^Read$` | **是** | True | True |
+| `Read\|Write` | **是** | True | True |
+| `Rea.*` | **是** | True | True |
+| `ead` | **否** | False | True |
+| `Rea\|Wri` | **否** | False | True |
+
+**结论。** 七个点全部与 `re.fullmatch` 一致，最后两个否掉了 `re.search`：工具名的子串匹配不上，前缀并列也
+匹配不上。`*` 是特判 —— 它不是合法正则，所以根本没有走到正则引擎。
+
+**对 agentao 的后果。** 它需要的求值器早就有了：`_regex_match_full`（`_matchers.py:30`），外加一个 `*`
+分支。**不变**的是 §2.3 的头条 —— 字符串 matcher 仍然不是「换个写法的 dict matcher」，因为 `toolName` 走的
+是 `_glob_match`，那里 `Edit|Write` 是一个不含 `*` 的字面串，什么都匹配不到。
+
+**它不能证明什么。** 大小写敏感性、*非法*正则会怎样，以及 MCP 工具名（`mcp__server__tool`）是否走同一条
+匹配路径。

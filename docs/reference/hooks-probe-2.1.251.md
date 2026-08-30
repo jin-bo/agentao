@@ -30,6 +30,7 @@ version.
 | C | Is a top-level `decision: "block"` honored on `PostToolUseFailure`? | G7 | **Yes**, and it is *feedback*: reason → the model, original error preserved, turn continues |
 | D | What happens to an `updatedInput` that fails the tool's schema? | G8 | **The call is rejected** with a `tool_use_error`; the **original never runs** |
 | F | What is actually on stdin, per event? | G7 (§5.3) | Six payloads captured verbatim — see below |
+| G3 | How is the string `matcher` evaluated? | G3 | **`*` is a wildcard; everything else is an anchored full match.** The *unanchored* reading is refuted |
 
 ---
 
@@ -211,3 +212,33 @@ Recorded because both are cheap to repeat and neither announces itself.
    standing rule that a negative grep proves nothing unless it can find a known positive.
 
 Both are the reason every finding above is stated with what it does not prove.
+
+## G3 — the string matcher (G3)
+
+Plan §2.3 said upstream evaluates the matcher three ways — `*`, exact alternation, and an
+**unanchored** regex — on the strength of codex's implementation and the reference's prose. It is the
+one claim in this probe that came back **refuted**.
+
+Seven `PreToolUse` matchers, each against a single `Read` call:
+
+| Matcher | Hook fired? | `re.fullmatch(p, "Read")` | `re.search(p, "Read")` |
+|---|---|---|---|
+| `*` | **yes** | *invalid regex* | *invalid regex* |
+| `Read` | **yes** | True | True |
+| `^Read$` | **yes** | True | True |
+| `Read\|Write` | **yes** | True | True |
+| `Rea.*` | **yes** | True | True |
+| `ead` | **no** | False | True |
+| `Rea\|Wri` | **no** | False | True |
+
+**Finding.** Every one of the seven agrees with `re.fullmatch`, and the last two refute `re.search`:
+a substring of the tool name does not match, and neither does an alternation of prefixes. `*` is
+special-cased — it is not a valid regex, so it cannot be reaching the regex engine at all.
+
+**Consequence for agentao.** The evaluator it needs already exists: `_regex_match_full`
+(`_matchers.py:30`), plus a `*` case. What does **not** change is §2.3's headline — a string matcher
+is still not a dict matcher spelled differently, because `toolName` is routed through `_glob_match`,
+where `Edit|Write` is a literal with no `*` and matches nothing.
+
+**What this does not prove.** Case sensitivity, what an *invalid* regex does, and whether MCP tool
+names (`mcp__server__tool`) are matched by the same path.

@@ -98,7 +98,8 @@ controls that were not themselves reachability-checked.
 | **G7** (input matrix) | **probe**, partly | Six real stdin payloads were captured. They **confirm** §5.3's shape — `permission_mode` present on four events and absent on `SessionStart` / `SessionEnd`, `prompt_id` absent before first input, `agent_id` / `agent_type` absent everywhere, `tool_response` a structured object — and they leave the *decisions* open: what agentao sources for `transcript_path`, and how it maps `permission_mode`. Two facts are new: upstream emits `background_tasks: []` / `session_crons: []` present-and-empty, and `permission_mode` differed within one session (`auto` on `UserPromptSubmit`, `default` on the tool events), which is recorded as an observation and not as a rule | §5.3 |
 | **G4** | plan's proposal, taken at implementation | **Tier 1 = 8 MiB per stream per invocation**, opt-in on the shared runner so no other caller's failure mode changes; over it the tree is killed and the hook fails, because output cut mid-JSON has no decision to contribute. **Tier 2 = 10,000 characters per channel** — the reference's own number, characters rather than tokens so the bound does not depend on the configured model. Spill to `.agentao/hook-outputs/`, files `0600`, redacted before the bytes land, pruned by age (7d) and count (200). A failed spill is **reported**, which the tool-output sink it copies does not do | §6, step 1 |
 | **G10** | plan's proposal, taken at implementation | **Session-scoped, lock-guarded, keyed by a content-derived rule key** — never `id(rule)`, which changes on reload and would silently re-announce everything. Dispatcher scope was the trap: the dispatcher is constructed at six sites, two inside pool workers, so its state would dedup nothing and race while doing it. `clear_session()` on a plugin reload and on `/clear`, so a corrected hook speaks up again while an unchanged one stays quiet | §4.2, step 2 |
-| **G1, G3, G9** | — | **Still open**, unchanged. They gate steps 1, 3, 4, 5 and 6b and none of them is answerable by probing someone else's binary | §9 |
+| **G3** | **probe** | **`*` is a wildcard; every other pattern is an anchored full match.** Seven probe points agree with `re.fullmatch` exactly, and two refute the *unanchored* reading this plan carried for its whole life: `ead` does not match `Read`, nor does `Rea|Wri`. So the fix is agentao's existing `_regex_match_full` with `*` special-cased, not a new three-way evaluator — while §2.3's headline stands, because `toolName` goes through `_glob_match` | §2.3, step 3 |
+| **G1, G9** | — | **Still open**, unchanged. They gate steps 1, 3, 4, 5 and 6b and none of them is answerable by probing someone else's binary | §9 |
 
 ---
 
@@ -260,15 +261,24 @@ matchers — is wrong, and quietly so.
 
 - agentao globs `toolName` (`_matchers.py:15`): `*` matches anything, otherwise **exact**.
 - agentao full-matches `trigger` as an anchored regex (`_matchers.py:30`).
-- Claude's matcher is a string with three-way evaluation, and codex implements the same three
-  (comparison §2): `*`, exact **alternation**, and an **unanchored** regex.
+- Claude's matcher is a string, and its evaluation is **measured**, not inferred: `*` is a wildcard,
+  and every other pattern is an **anchored full match**
+  (`docs/reference/hooks-probe-2.1.251.md` §G3).
 
-So `"Edit|Write"` — the single most common published matcher — is an alternation upstream and, under
-`_glob_match`, a literal string with no `*` in it, compared for equality. It matches nothing. A
-translation layer would register the rule and then never fire it, which is worse than refusing it.
+The measurement corrected this section. Earlier revisions said upstream used an **unanchored** regex,
+on the strength of codex's implementation and the reference's prose; seven probe points say
+otherwise, and two of them are decisive: `ead` does **not** match `Read`, and `Rea|Wri` does not
+either — both of which an unanchored search would fire. All seven agree with `re.fullmatch` exactly.
 
-`claude-code` mode therefore needs Claude's matcher evaluation, not a mapping onto the dict. This is
-**design gate G3** (§9) — the exact three-way semantics must be pinned before step 3.
+The headline survives the correction, and it is worth separating the two: **a string matcher is
+still not a dict matcher spelled differently**, because agentao routes `toolName` through
+`_glob_match`, not through its anchored-regex path. `"Edit|Write"` — the most common published
+matcher — is a literal string with no `*` in it there, compared for equality, so it matches nothing.
+A translation layer would register the rule and never fire it, which is worse than refusing it.
+
+What changed is the *cost*: `claude-code` mode does not need a new three-way evaluator, it needs the
+anchored full match agentao already has (`_regex_match_full`) with `*` special-cased — `*` is not a
+valid regex, so it cannot simply be passed through. **G3** is closed on that basis (§0).
 
 ### 2.4 The handler-field matrix
 

@@ -235,7 +235,19 @@ KNOWN_UNSUPPORTED_HOOK_TYPES: set[str] = {"http", "agent"}
 
 @dataclass
 class ParsedHookRule:
-    """A single hook rule from a hooks.json file."""
+    """A single hook rule from a hooks.json file.
+
+    ``contract`` is **file-scoped, resolved onto every rule**: one file has one
+    contract, and the value is copied here so the dispatcher — which holds a
+    rule, never a file, at every decision point — can act on it without
+    re-deriving anything.
+
+    ``matcher`` (a dict) and ``matcher_pattern`` (a string) are the two
+    contracts' two matcher shapes, kept apart rather than translated. They
+    evaluate differently: the dict globs ``toolName``, the string is an anchored
+    full match with ``*`` as a wildcard, so mapping one onto the other would
+    register rules that never fire.
+    """
 
     event: str
     hook_type: str  # "command" | "prompt" | "http" | "agent"
@@ -244,6 +256,13 @@ class ParsedHookRule:
     timeout: int = 60
     matcher: dict[str, Any] | None = None
     plugin_name: str | None = None
+    contract: str = "agentao-v1"
+    matcher_pattern: str | None = None
+    #: Exec form: no shell, each element one argument.
+    args: list[str] | None = None
+    #: The plugin's root directory, for ``${CLAUDE_PLUGIN_ROOT}``. Carried on the
+    #: rule because it is known where rules are parsed and needed where they run.
+    plugin_root: str | None = None
 
     @property
     def is_supported(self) -> bool:
