@@ -3,7 +3,9 @@
 > **⚠️ 仅分析。本文任何内容都未被授权实施。** §1 是**发现的优先级排序**，不是排期表。引用该表时请连
 > 同本行一起引。
 
-**状态：** 分析，**rev 5**（2026-08-26）。未授权实施。
+**状态：** 分析，**rev 5**（2026-08-26）。*本文档本身*未授权实施 —— 它编目的九条偏离已由
+`hooks-claude-contract-conformance-plan.zh.md` 收口，2026-08-30 合入（PR #199、`18fb628`，尚未发布）。
+本文继续充当**证据**、不是工作项：§1 的排序与文中实测结论都是对 `main@10b5fb8` 得出的，修复之后没有重新推导。
 **锚点：** Claude Code hooks 参考 `<https://code.claude.com/docs/en/hooks>`，原始 markdown 抓取于
 2026-08-26（3532 行）；codex `openai/codex@0d9bb6c34c`（2026-08-24），并以 OpenAI 自己的 hooks 参考
 `<https://developers.openai.com/codex/hooks>`（抓取于 2026-08-26）作**次级**锚点；agentao
