@@ -688,7 +688,10 @@ def _run_pipeline(
         except Exception as exc:  # pragma: no cover - best-effort
             warnings.append(f"replay start: {exc}")
 
-    dispatch_plugin_session_start(agent, agent._session_id or "")
+    # SessionStart notices ride on the same channel SessionEnd's do. They are
+    # collected here rather than printed, because a headless run has one
+    # output and it is written at the end.
+    warnings.extend(dispatch_plugin_session_start(agent, agent._session_id or ""))
 
     prev_sigint, prev_sigterm = _install_signal_handlers(token)
 
@@ -811,8 +814,16 @@ def _run_pipeline(
         warnings=warnings,
     )
 
+    # SessionEnd runs BEFORE the emit, not after it. The old order made a
+    # `SessionEnd` hook's exit-2 stderr — which the reference routes to the
+    # user — reach a headless user through no path at all: observers are
+    # detached well above, and `_emit` writes the run's entire output. Moving
+    # the dispatch up and carrying its notices on `warnings`, which is already
+    # serialized, is the whole route.
+    for notice in dispatch_plugin_session_end(agent, agent._session_id or ""):
+        result.warnings.append(notice)
+
     _emit(result, output_format)
-    dispatch_plugin_session_end(agent, agent._session_id or "")
     try:
         agent.close()
     except Exception:

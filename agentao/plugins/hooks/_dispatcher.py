@@ -23,6 +23,7 @@ from typing import Any
 
 from ...capabilities.process import OutputLimitExceeded, build_child_env, run_captured
 from ..models import (
+    LifecycleHookResult,
     CLAUDE_FLAT_EVENTS,
     HookAttachmentRecord,
     ParsedHookRule,
@@ -35,7 +36,13 @@ from ._alias import ToolAliasResolver
 from ._attachments import _make_attachment
 from ._budget import HOOK_RAW_OUTPUT_LIMIT_BYTES
 from ._paths import _placeholder_values, _substitute
-from ._profile import LEGACY_CONTRACT_ID
+from ._profile import (
+    LEGACY_CONTRACT_ID,
+    exit2_outcome,
+    field_disposition,
+    honors_continue,
+    honors_system_message,
+)
 from ._profile_payload import to_profile_payload
 from ._matchers import _claude_matcher_match, _glob_match, _regex_match_full
 from ._output_parsing import _cap, _OutputParsingMixin
@@ -66,7 +73,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
         *,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         return self._dispatch_lifecycle("SessionStart", payload, rules)
 
     def dispatch_session_end(
@@ -74,7 +81,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
         *,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         return self._dispatch_lifecycle("SessionEnd", payload, rules)
 
     def dispatch_pre_tool_use(
@@ -126,7 +133,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
         *,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         return self._dispatch_lifecycle("PostToolUse", payload, rules)
 
     def dispatch_post_tool_use_failure(
@@ -134,7 +141,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
         *,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         return self._dispatch_lifecycle("PostToolUseFailure", payload, rules)
 
     def dispatch_stop(
@@ -165,7 +172,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
         *,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         return self._dispatch_lifecycle("PreCompact", payload, rules)
 
     def dispatch_pre_compact_decision(
@@ -273,23 +280,109 @@ class PluginHookDispatcher(_OutputParsingMixin):
         event: str,
         payload: dict[str, Any],
         rules: list[ParsedHookRule],
-    ) -> list[HookAttachmentRecord]:
+    ) -> LifecycleHookResult:
         """Run all matching command hooks for a lifecycle event.
 
-        These hooks are side-effect only — failures produce warnings, not
-        errors, and never change tool input/output.
+        Returns a result rather than a bare attachment list: these four events
+        have channels the reference defines — exit-2 stderr, `additionalContext`,
+        `systemMessage` — and a caller that receives only attachments cannot
+        route any of them.
         """
-        attachments: list[HookAttachmentRecord] = []
+        result = LifecycleHookResult()
         matched = [r for r in rules if r.event == event and r.hook_type == "command"]
 
         for rule in matched:
             if not self._matches(rule, payload):
                 continue
-            attachment = self._run_lifecycle_command(rule, payload)
-            if attachment is not None:
-                attachments.append(attachment)
+            result.matched_rule_count += 1
+            proc, failure = self._run_subprocess(rule, payload)
+            if failure:
+                result.attachments.append(self._timeout_attachment(rule, failure))
+                continue
+            if proc is None:
+                continue
+            self._route_lifecycle_output(event, rule, proc, result)
+            result.attachments.append(
+                _make_attachment(
+                    "hook_success",
+                    {"stdout": _cap(proc.stdout.strip(), rule),
+                     "returncode": proc.returncode},
+                    hook_name=rule.command,
+                    hook_event=rule.event,
+                )
+            )
 
-        return attachments
+        return result
+
+    def _route_lifecycle_output(
+        self,
+        event: str,
+        rule: ParsedHookRule,
+        proc: subprocess.CompletedProcess[str],
+        result: LifecycleHookResult,
+    ) -> None:
+        """Route one lifecycle hook's output per the profile's tables.
+
+        A **narrow** interpreter, deliberately: step 6 replaces it with the full
+        ``resolve()`` over five stdout states and three exit-code branches. What
+        it must not do meanwhile is contradict the tables, so every branch here
+        asks ``_profile`` rather than deciding for itself.
+        """
+        if rule.contract == LEGACY_CONTRACT_ID:
+            # `agentao-v1` is frozen: these events were side-effect only and stay
+            # that way. Only a profile rule gets the new channels.
+            if proc.returncode != 0:
+                logger.warning(
+                    "Lifecycle hook exited %s: %s (stderr: %s)",
+                    proc.returncode, rule.command, proc.stderr[:200],
+                )
+            return
+
+        stderr = (proc.stderr or "").strip()
+        if proc.returncode == 2:
+            # Exit 2 is not a boolean: three outcomes, and all three are live
+            # across the eight events.
+            outcome = exit2_outcome(event)
+            if outcome == "user_notice" and stderr:
+                result.user_notices.append(_cap(stderr, rule))
+            elif outcome == "model_feedback" and stderr:
+                result.model_contexts.append(_cap(stderr, rule))
+            elif outcome == "block" and stderr:
+                result.stop_reason = result.stop_reason or _cap(stderr, rule)
+
+        stdout = (proc.stdout or "").strip()
+        data: dict[str, Any] | None = None
+        if stdout.startswith("{") and stdout.endswith("}"):
+            try:
+                loaded = json.loads(stdout)
+                data = loaded if isinstance(loaded, dict) else None
+            except json.JSONDecodeError:
+                data = None
+
+        if data is None:
+            if proc.returncode not in (0, 2) and stderr:
+                first_line = stderr.splitlines()[0]
+                result.user_notices.append(
+                    f"{event} hook error: Failed with non-blocking status code: "
+                    f"{proc.returncode} {first_line}"
+                )
+            return
+
+        system_message = data.get("systemMessage")
+        if isinstance(system_message, str) and honors_system_message(event):
+            result.user_notices.append(_cap(system_message, rule))
+
+        if field_disposition("hookSpecificOutput.additionalContext", event) == "accept":
+            nested = data.get("hookSpecificOutput")
+            ctx = nested.get("additionalContext") if isinstance(nested, dict) else None
+            if isinstance(ctx, str):
+                result.model_contexts.append(_cap(ctx, rule))
+            elif isinstance(ctx, list):
+                result.model_contexts.extend(_cap(str(c), rule) for c in ctx)
+
+        if data.get("continue") is False and honors_continue(event):
+            reason = data.get("stopReason")
+            result.stop_reason = _cap(str(reason), rule) if isinstance(reason, str) else ""
 
     def _matches(self, rule: ParsedHookRule, payload: dict[str, Any]) -> bool:
         """Check if a rule's matcher applies to this payload."""

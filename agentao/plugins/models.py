@@ -291,6 +291,31 @@ class HookAttachmentRecord:
 
 
 @dataclass
+class LifecycleHookResult:
+    """What a lifecycle-event dispatch produces.
+
+    ``SessionStart``, ``SessionEnd``, ``PostToolUse`` and ``PostToolUseFailure``
+    used to return ``list[HookAttachmentRecord]`` and nothing else, so anything a
+    hook decided was dropped at the call site — a sink is not a route, and these
+    four had neither.
+
+    The channels are **orthogonal to each other and to any verdict**: a hook that
+    stops a turn and prints a user notice does both. ``stop_reason`` is set only
+    on events whose profile row honors ``continue: false``; on the others the
+    field stays ``None`` because the reference discards it, not because nothing
+    was sent.
+    """
+
+    attachments: list[HookAttachmentRecord] = field(default_factory=list)
+    #: → the human. Never the log: a log line is not a surface the user sees.
+    user_notices: list[str] = field(default_factory=list)
+    #: → the model's context channel.
+    model_contexts: list[str] = field(default_factory=list)
+    stop_reason: str | None = None
+    matched_rule_count: int = 0
+
+
+@dataclass
 class PreparedTurnMessage:
     """A message to inject into the conversation turn."""
 

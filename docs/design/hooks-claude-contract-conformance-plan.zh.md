@@ -88,7 +88,8 @@ changelog 头部为 **2.1.251**（`code.claude.com/docs/en/changelog.md`），�
 | **G10** | 实施时按计划的提案取定 | **会话级、加锁、以内容派生的 rule key 为键** —— 绝不用 `id(rule)`，它每次 reload 都变、会把一切静默重播一遍。陷阱在 dispatcher 作用域：它在六处被构造、其中两处**在池 worker 内**，所以挂在它身上的状态既去不了重、还会边去重边竞争。插件 reload 与 `/clear` 时调 `clear_session()`，这样改好的 hook 会重新出声、没改的继续闭嘴 | §4.2、第 2 步 |
 | **G3** | **探测** | **`*` 是通配符；其余一切都是锚定全匹配。** 七个探测点与 `re.fullmatch` 完全一致，其中两个推翻了本计划一直带着的**非锚定**读法：`ead` 匹配不上 `Read`，`Rea|Wri` 也不行。所以修法是复用 agentao 已有的 `_regex_match_full` 外加 `*` 特判，而不是新写三路求值器 —— 而 §2.3 的头条依然成立，因为 `toolName` 走的是 `_glob_match` | §2.3、第 3 步 |
 | **G7**（输入侧） | 实施时按计划的规则取定 | **`transcript_path` 发显式 `null`** —— agentao 没有持续写入的 transcript，而一个内容落后于会话的路径比一个 hook 能判断的 null 更糟；用 `null` 而非省略，是因为参考文档把它标为八个事件全required，省略会让取值直接抛异常。**`prompt_id` 省略** —— 逐 turn 的 id 不是 prompt id，挪用它等于编造一种不成立的关联。**`permission_mode` 能映射就映射、不能就省略** —— `plan`→`plan`、`full-access`→`bypassPermissions`；`workspace-write` 不是 `acceptEdits`、`read-only` 没有对应物，所以字段缺席，而不是把 agentao 自己的词表发出去。**`tool_response` 保持字符串**，作为写明的类型分歧。三个私有字段在 profile 模式**去掉**、v1 保留 | §5.3、第 3 步 |
-| **G1、G9** | —— | **仍然开放**，未变。它们卡住第 1、3、4、5、6b 步，而且没有一个是靠探测别人的二进制能回答的 | §9 |
+| **G1**（会话事件） | 实施时按计划的提案取定 | **一个结果类型，加上每个 surface 各自的路由。** `LifecycleHookResult` 把 `user_notices` / `model_contexts` / `stop_reason` 从那四个「只返回 attachment」的生命周期分派里带出来。交互式：CLI 消费它过去在裸 `except: pass` 里丢掉的那个返回值。Headless：`SessionEnd` 现在在 `_emit` **之前**分派，通知搭 `RunResult.warnings`（本来就会序列化）—— 旧顺序下 headless 用户根本没有路径。路由里 tool worker 那一半（`PostToolUse*` 的停止）属第 4b 步 | §5.2、§5.2.1、第 4 步 |
+| **G1**（传输面）、**G9** | —— | **仍然开放。** G1 余下那一半是面向宿主的传输面 —— 新事件类型或扩展 `PLUGIN_HOOK_FIRED` 载荷 —— 上面两个 surface 都不需要它它们卡住第 1、3、4、5、6b 步，而且没有一个是靠探测别人的二进制能回答的 | §9 |
 
 ---
 
