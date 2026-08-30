@@ -120,15 +120,80 @@ class PluginHookDispatcher(_OutputParsingMixin):
         is parsed and recorded on the result but not injected.
         """
         result = PreToolUseHookResult()
-        matched = self.select_matching_rules("PreToolUse", payload, rules)
+        matched = [
+            r for r in self.select_matching_rules("PreToolUse", payload, rules)
+            if r.hook_type == "command"
+        ]
         result.matched_rule_count = len(matched)
-        for rule in matched:
-            if rule.hook_type != "command":
-                continue
-            self._run_pre_tool_use_command(rule, payload, result)
-            if result.decision == "deny":
-                break
+        if not matched:
+            return result
+
+        # --- G9: partition by contract, run, merge once -------------------
+        # One event's rule list can hold both contracts, because the contract is
+        # file-scoped and ``resolve_all_hook_rules`` concatenates every plugin's
+        # every spec into one flat list. If dispatch walked that merged list, a
+        # v1 rule's short-circuit would stop the walk — and with it the
+        # *execution* of the profile rules behind it, breaking the one guarantee
+        # §2.5 exists to provide.
+        #
+        # So: two groups. The v1 group keeps its short-circuit and it ends
+        # **only** the v1 group. The profile group runs every handler.
+        #
+        # The groups run one after the other rather than concurrently: G6 took
+        # its documented fallback, so there is no hook pool to run them in, and
+        # sequential ordering only *delays* the profile group — it cannot
+        # suppress it, which is the property that matters.
+        per_rule: list[tuple[int, PreToolUseHookResult]] = []
+
+        v1_group = [(i, r) for i, r in enumerate(matched) if r.contract == LEGACY_CONTRACT_ID]
+        profile_group = [(i, r) for i, r in enumerate(matched) if r.contract != LEGACY_CONTRACT_ID]
+
+        for index, rule in v1_group:
+            one = PreToolUseHookResult()
+            self._run_pre_tool_use_command(rule, payload, one)
+            per_rule.append((index, one))
+            if one.decision == "deny":
+                break                      # ends this group only
+
+        for index, rule in profile_group:
+            one = PreToolUseHookResult()
+            self._run_pre_tool_use_command(rule, payload, one)
+            per_rule.append((index, one))
+
+        self._merge_pre_tool_use(per_rule, result)
         return result
+
+    @staticmethod
+    def _merge_pre_tool_use(
+        per_rule: list[tuple[int, PreToolUseHookResult]],
+        result: PreToolUseHookResult,
+    ) -> None:
+        """One merge, group-agnostic, over the event's lattice.
+
+        ``deny > ask > allow`` — ``defer`` never reaches here, having been
+        degraded inside the parser, so the merger needs no arm for it.
+
+        **The reason tie-break ranks only inside the winning class**, and by
+        *declaration* order rather than group order: surfacing an ``ask``'s
+        reason for a ``deny`` would attribute the verdict to a rule that did not
+        produce it. Contexts, rewrites and stops are orthogonal and concatenate
+        regardless of who won.
+        """
+        rank = {"deny": 2, "ask": 1, None: 0}
+        winner: tuple[int, PreToolUseHookResult] | None = None
+        for index, one in sorted(per_rule, key=lambda pair: pair[0]):
+            if one.additional_contexts:
+                result.additional_contexts.extend(one.additional_contexts)
+            if one.updated_tool_input is not None and result.updated_tool_input is None:
+                result.updated_tool_input = one.updated_tool_input
+            if one.stop_reason is not None and result.stop_reason is None:
+                result.stop_reason = one.stop_reason
+            if winner is None or rank[one.decision] > rank[winner[1].decision]:
+                if one.decision is not None:
+                    winner = (index, one)
+        if winner is not None:
+            result.decision = winner[1].decision
+            result.reason = winner[1].reason
 
     def dispatch_post_tool_use(
         self,
@@ -162,11 +227,18 @@ class PluginHookDispatcher(_OutputParsingMixin):
         result = StopHookResult()
         stop_rules = self.select_matching_rules("Stop", payload, rules)
         result.matched_rule_count = len(stop_rules)
-        for rule in stop_rules:
-            if rule.hook_type == "command":
-                self._run_stop_command_hook(rule, payload, result)
-            if result.blocking_error or result.force_continue:
-                break
+        # G9 partitioning. On `Stop` the two contracts mean **opposite** things —
+        # v1's `blockingError` ends the turn while the profile's
+        # `decision:"block"` continues it — so letting a v1 short-circuit stop
+        # the walk would decide the event by which file happened to be first.
+        for group_is_v1 in (True, False):
+            for rule in stop_rules:
+                if (rule.contract == LEGACY_CONTRACT_ID) is not group_is_v1:
+                    continue
+                if rule.hook_type == "command":
+                    self._run_stop_command_hook(rule, payload, result)
+                if group_is_v1 and (result.blocking_error or result.force_continue):
+                    break                  # ends the v1 group only
         return result
 
     def dispatch_pre_compact(
@@ -198,12 +270,15 @@ class PluginHookDispatcher(_OutputParsingMixin):
         result = PreCompactHookResult()
         matched = self.select_matching_rules("PreCompact", payload, rules)
         result.matched_rule_count = len(matched)
-        for rule in matched:
-            if rule.hook_type != "command":
-                continue
-            self._run_pre_compact_command(rule, payload, result)
-            if result.decision == "cancel":
-                break
+        for group_is_v1 in (True, False):
+            for rule in matched:
+                if rule.hook_type != "command":
+                    continue
+                if (rule.contract == LEGACY_CONTRACT_ID) is not group_is_v1:
+                    continue
+                self._run_pre_compact_command(rule, payload, result)
+                if group_is_v1 and result.decision == "cancel":
+                    break                  # ends the v1 group only
         return result
 
     def _run_pre_compact_command(
@@ -714,16 +789,48 @@ class PluginHookDispatcher(_OutputParsingMixin):
         result = UserPromptSubmitResult()
 
         ups_rules = [r for r in rules if r.event == "UserPromptSubmit" and r.is_supported]
+        if not ups_rules:
+            return result
 
-        for rule in ups_rules:
+        # G9, same shape as `PreToolUse`: a v1 rule's short-circuit must not
+        # stop a profile rule behind it from *running*. Its side effects — an
+        # audit line, a notification, a marker file — are the reason the
+        # all-handlers rule exists, and nothing tells their author when they
+        # silently stop happening.
+        def _run(rule) -> UserPromptSubmitResult:
+            one = UserPromptSubmitResult()
             if rule.hook_type == "command":
-                self._run_command_hook(rule, payload, result)
+                self._run_command_hook(rule, payload, one)
             elif rule.hook_type == "prompt":
-                self._run_prompt_hook(rule, payload, result)
+                self._run_prompt_hook(rule, payload, one)
+            return one
 
-            # Short-circuit on blocking error or prevent continuation.
-            if result.blocking_error or result.prevent_continuation:
-                break
+        per_rule: list[tuple[int, UserPromptSubmitResult]] = []
+        for index, rule in enumerate(ups_rules):
+            if rule.contract != LEGACY_CONTRACT_ID:
+                continue
+            one = _run(rule)
+            per_rule.append((index, one))
+            if one.blocking_error or one.prevent_continuation:
+                break                      # ends the v1 group only
+        for index, rule in enumerate(ups_rules):
+            if rule.contract == LEGACY_CONTRACT_ID:
+                continue
+            per_rule.append((index, _run(rule)))
+
+        # One merge over the event's lattice — `block > none`, one axis, so the
+        # flat "any block wins" rule happens to be right here. A **stop**
+        # outranks it: `continue:false` ends the turn, which the block cannot
+        # undo, and it is rank 1 of §5.4's cross-class order.
+        for index, one in sorted(per_rule, key=lambda pair: pair[0]):
+            result.messages.extend(one.messages)
+            result.additional_contexts.extend(one.additional_contexts)
+            result.user_notices.extend(one.user_notices)
+            if one.prevent_continuation and not result.prevent_continuation:
+                result.prevent_continuation = True
+                result.stop_reason = one.stop_reason
+            if one.blocking_error and not result.blocking_error:
+                result.blocking_error = one.blocking_error
 
         return result
 
