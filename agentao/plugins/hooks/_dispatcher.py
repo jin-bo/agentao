@@ -21,7 +21,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from ...capabilities.process import run_captured
+from ...capabilities.process import OutputLimitExceeded, run_captured
 from ..models import (
     CLAUDE_FLAT_EVENTS,
     HookAttachmentRecord,
@@ -33,6 +33,7 @@ from ..models import (
 )
 from ._alias import ToolAliasResolver
 from ._attachments import _make_attachment
+from ._budget import HOOK_RAW_OUTPUT_LIMIT_BYTES
 from ._matchers import _glob_match, _regex_match_full
 from ._output_parsing import _OutputParsingMixin
 
@@ -333,13 +334,19 @@ class PluginHookDispatcher(_OutputParsingMixin):
     ) -> tuple[subprocess.CompletedProcess[str] | None, bool]:
         """Run ``rule.command`` with the JSON payload on stdin.
 
-        Returns ``(proc, timed_out)``: ``proc`` is the completed process,
-        or ``None`` when the command timed out (``timed_out=True``), or
-        when it is empty / failed to start (``timed_out=False``). A
-        warning is logged on timeout and spawn failure.
+        Returns ``(proc, failure)``: ``proc`` is the completed process, or
+        ``None`` when the hook produced no usable result. ``failure`` names
+        why — ``"timeout"``, ``"output_budget"``, or ``None`` for an empty
+        command / spawn failure, which stay silent as they always did.
+
+        ``failure`` is a string where it used to be a bool. Every call site
+        tests it for truthiness, so the three-state value is compatible by
+        construction — and the two failures that *are* the hook's own doing
+        now reach the user distinguishably instead of both reading "timed
+        out".
         """
         if not rule.command:
-            return None, False
+            return None, None
         try:
             # Shared hardened runner: feeds the JSON payload on a stdin pipe
             # (so the user command can't read the host's real stdin) and, on
@@ -352,22 +359,50 @@ class PluginHookDispatcher(_OutputParsingMixin):
                 timeout=rule.timeout,
                 shell=True,
                 cwd=str(self._cwd),
+                # Tier 1 (§6). ``communicate()`` reads to EOF, so without a
+                # ceiling here a hook that prints without stopping is bounded
+                # only by the host's memory — and it exhausts it long before
+                # any parser exists to apply the semantic cap.
+                max_output_bytes=HOOK_RAW_OUTPUT_LIMIT_BYTES,
             )
         except subprocess.TimeoutExpired:
             logger.warning(
                 "%s hook timed out after %ds: %s", rule.event, rule.timeout, rule.command,
             )
-            return None, True
+            return None, "timeout"
+        except OutputLimitExceeded as exc:
+            # Not a truncation. A hook cut off mid-JSON has no decision left to
+            # contribute, and pretending otherwise turns a resource failure
+            # into a silent semantic one.
+            logger.warning(
+                "%s hook exceeded the raw output budget: %s (%s)",
+                rule.event, rule.command, exc,
+            )
+            return None, "output_budget"
         except OSError as exc:
             logger.warning("%s hook failed to run: %s (%s)", rule.event, rule.command, exc)
-            return None, False
-        return proc, False
+            return None, None
+        return proc, None
 
     @staticmethod
-    def _timeout_attachment(rule: ParsedHookRule) -> HookAttachmentRecord:
+    def _timeout_attachment(
+        rule: ParsedHookRule, failure: str = "timeout",
+    ) -> HookAttachmentRecord:
+        """Attachment for a hook that produced nothing usable.
+
+        Kept under its original name because every call site and the tests
+        reach it that way; ``failure`` distinguishes the two causes so the
+        user is not told a hook "timed out" when it was killed for flooding
+        its pipe.
+        """
+        warning = (
+            f"Hook timed out after {rule.timeout}s"
+            if failure == "timeout"
+            else f"Hook killed: output exceeded {HOOK_RAW_OUTPUT_LIMIT_BYTES:,} bytes"
+        )
         return _make_attachment(
             "hook_success",
-            {"warning": f"Hook timed out after {rule.timeout}s"},
+            {"warning": warning},
             hook_name=rule.command,
             hook_event=rule.event,
         )
@@ -376,9 +411,9 @@ class PluginHookDispatcher(_OutputParsingMixin):
         self, rule: ParsedHookRule, payload: dict[str, Any]
     ) -> HookAttachmentRecord | None:
         """Execute a single lifecycle command hook.  Returns attachment or None."""
-        proc, timed_out = self._run_subprocess(rule, payload)
-        if timed_out:
-            return self._timeout_attachment(rule)
+        proc, failure = self._run_subprocess(rule, payload)
+        if failure:
+            return self._timeout_attachment(rule, failure)
         if proc is None:
             return None
 
@@ -508,9 +543,9 @@ class PluginHookDispatcher(_OutputParsingMixin):
         payload: dict[str, Any],
         result: UserPromptSubmitResult,
     ) -> None:
-        proc, timed_out = self._run_subprocess(rule, payload)
-        if timed_out:
-            result.messages.append(self._timeout_attachment(rule))
+        proc, failure = self._run_subprocess(rule, payload)
+        if failure:
+            result.messages.append(self._timeout_attachment(rule, failure))
             return
         if proc is None:
             return
@@ -550,9 +585,9 @@ class PluginHookDispatcher(_OutputParsingMixin):
         benign warning, which would silently drop the most common Claude
         Stop control signal.
         """
-        proc, timed_out = self._run_subprocess(rule, payload)
-        if timed_out:
-            result.messages.append(self._timeout_attachment(rule))
+        proc, failure = self._run_subprocess(rule, payload)
+        if failure:
+            result.messages.append(self._timeout_attachment(rule, failure))
             return
         if proc is None:
             return

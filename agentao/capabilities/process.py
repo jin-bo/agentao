@@ -30,9 +30,17 @@ import os
 import signal
 import subprocess
 import sys
-from typing import Any, Dict, Optional, Sequence, Union
+import threading
+import time
+from typing import Any, Dict, List, Optional, Sequence, Union
 
-__all__ = ["run_captured", "kill_process_tree", "build_child_env", "HARNESS_ENV_KEYS"]
+__all__ = [
+    "run_captured",
+    "kill_process_tree",
+    "build_child_env",
+    "OutputLimitExceeded",
+    "HARNESS_ENV_KEYS",
+]
 
 
 # Environment variables that carry *agentao's own* provider credentials.
@@ -158,6 +166,171 @@ def kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
         pass
 
 
+class OutputLimitExceeded(subprocess.SubprocessError):
+    """A child wrote more than ``max_output_bytes`` on one stream.
+
+    Raised by :func:`run_captured` *only* when the caller opted in. The
+    process tree is already dead by the time it surfaces: the point of the
+    bound is that the bytes never accumulate, so there is no partial result
+    worth handing back. Callers that want the partial output should not set
+    the limit.
+    """
+
+    def __init__(self, limit: int, stream: str) -> None:
+        super().__init__(
+            f"child wrote more than {limit} bytes on {stream}; process tree killed"
+        )
+        self.limit = limit
+        self.stream = stream
+
+
+_READ_CHUNK = 65536
+
+
+def _drain_capped(
+    stream: Any,
+    limit: int,
+    chunks: List[bytes],
+    exceeded: Dict[str, str],
+    name: str,
+    on_exceed: Any,
+) -> None:
+    """Read ``stream`` into ``chunks`` until EOF or ``limit`` bytes.
+
+    On exceeding the limit this records the stream name and calls
+    ``on_exceed`` — which kills the process tree, so the *other* reader
+    unblocks too rather than waiting on a writer that will never stop.
+    """
+    total = 0
+    try:
+        while True:
+            chunk = stream.read(_READ_CHUNK)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                # Keep exactly ``limit`` bytes; they are only used for the
+                # diagnostic, never returned as a result.
+                keep = limit - (total - len(chunk))
+                if keep > 0:
+                    chunks.append(chunk[:keep])
+                exceeded.setdefault("stream", name)
+                on_exceed()
+                break
+            chunks.append(chunk)
+    except Exception:  # pragma: no cover - pipe torn down under us
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+
+def _feed_stdin(stream: Any, payload: bytes) -> None:
+    try:
+        if payload:
+            stream.write(payload)
+        stream.flush()
+    except Exception:
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+
+def _run_capped(
+    cmd: Union[Sequence[str], str],
+    popen_kwargs: Dict[str, Any],
+    *,
+    input: Optional[str],
+    timeout: Optional[float],
+    max_output_bytes: int,
+) -> "subprocess.CompletedProcess[str]":
+    """``run_captured``'s bounded path — reader threads instead of ``communicate()``.
+
+    ``communicate()`` cannot be bounded: it reads each pipe to EOF, so a
+    child that prints without stopping is only limited by RAM. Reading in
+    chunks against a ceiling is the whole difference; the process-group,
+    stdin and decoding guarantees are the same, which is why this is a
+    branch of the same function rather than a second runner.
+    """
+    popen_kwargs = dict(popen_kwargs)
+    popen_kwargs["text"] = False           # count bytes, not decoded characters
+    popen_kwargs.pop("errors", None)
+
+    proc = subprocess.Popen(cmd, **popen_kwargs)
+    out_chunks: List[bytes] = []
+    err_chunks: List[bytes] = []
+    exceeded: Dict[str, str] = {}
+    killed = threading.Event()
+
+    def _kill_once() -> None:
+        if not killed.is_set():
+            killed.set()
+            kill_process_tree(proc)
+
+    threads = [
+        threading.Thread(
+            target=_drain_capped,
+            args=(proc.stdout, max_output_bytes, out_chunks, exceeded, "stdout", _kill_once),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=_drain_capped,
+            args=(proc.stderr, max_output_bytes, err_chunks, exceeded, "stderr", _kill_once),
+            daemon=True,
+        ),
+    ]
+    if proc.stdin is not None:
+        threads.append(threading.Thread(
+            target=_feed_stdin,
+            args=(proc.stdin, (input or "").encode("utf-8", "replace")),
+            daemon=True,
+        ))
+    for th in threads:
+        th.start()
+
+    deadline = None if timeout is None else time.monotonic() + timeout
+    timed_out = False
+    for th in threads:
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            timed_out = True
+            break
+        th.join(remaining)
+        if th.is_alive():
+            timed_out = True
+            break
+
+    if timed_out:
+        _kill_once()
+        for th in threads:
+            th.join(5)
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        raise subprocess.TimeoutExpired(cmd, timeout or 0)
+
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        _kill_once()
+
+    if exceeded:
+        raise OutputLimitExceeded(max_output_bytes, exceeded["stream"])
+
+    return subprocess.CompletedProcess(
+        cmd,
+        proc.returncode,
+        b"".join(out_chunks).decode("utf-8", "replace"),
+        b"".join(err_chunks).decode("utf-8", "replace"),
+    )
+
+
 def run_captured(
     cmd: Union[Sequence[str], str],
     *,
@@ -166,6 +339,7 @@ def run_captured(
     input: Optional[str] = None,
     shell: bool = False,
     env: Optional[Dict[str, str]] = None,
+    max_output_bytes: Optional[int] = None,
 ) -> "subprocess.CompletedProcess[str]":
     """Run ``cmd`` capturing text stdout/stderr, hardened for timeouts.
 
@@ -183,6 +357,14 @@ def run_captured(
       can't raise ``UnicodeDecodeError`` (which is neither
       ``SubprocessError`` nor ``OSError``, and would escape callers'
       ``except`` clauses and abort the whole operation).
+
+    ``max_output_bytes`` is **opt-in and off by default**, because it changes
+    the failure mode: past the ceiling the tree is killed and
+    :class:`OutputLimitExceeded` is raised instead of a result being
+    returned. It exists because ``communicate()`` cannot be bounded — it
+    reads to EOF — so without it a child that prints without stopping is
+    limited only by the host's memory. Callers that want whatever the child
+    managed to print must leave it unset.
 
     On timeout the process tree is killed, the pipes drained, and the
     original :class:`subprocess.TimeoutExpired` re-raised. Spawn failures
@@ -210,6 +392,12 @@ def run_captured(
         popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         popen_kwargs["start_new_session"] = True
+
+    if max_output_bytes is not None:
+        return _run_capped(
+            cmd, popen_kwargs,
+            input=input, timeout=timeout, max_output_bytes=max_output_bytes,
+        )
 
     proc = subprocess.Popen(cmd, **popen_kwargs)
     try:
