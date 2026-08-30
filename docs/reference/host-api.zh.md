@@ -68,9 +68,12 @@ Harness API 是宿主应用嵌入 Agentao 时面向外部的兼容性边界。�
 
 `<reason>` 取自 `TurnOutcome.incomplete_reason` 的封闭词表
 （`no_output`、`reasoning_only`、`length_truncated`、`doom_loop`、
-`llm_error`），外加 `max_iterations`——turn 预算按设计是与
-`incomplete_reason` 正交的另一根轴，所以它单独占一个 key，而不是被塞进
-那个封闭集合。另有三个兜底值（`cancelled`、`error`、`unknown`）会在
+`max_iterations`、`hook_stop`、`llm_error`）。**`max_iterations` 是这个集合
+的成员，不是它之外的追加项**——本文早先一版论证过「turn 预算是与
+`incomplete_reason` 正交的另一根轴、所以单独占一个 key」，0.4.19 已把它并入
+词表，这一段就是那处更正。在*这个*面上仍然成立的是更窄的一句：子 agent 的
+分类器在**读 `incomplete_reason` 之前**就先单独判了 turn 预算，所以
+`max_iterations` 可以不经由 turn 的分类而直接出现在后缀里。另有三个兜底值（`cancelled`、`error`、`unknown`）会在
 turn 结果既没有答案、也没给出原因时出现；请把任何不认识的后缀一律当作
 "停在半路、原因未分类"处理，不要按列表做穷举匹配。
 
@@ -474,10 +477,13 @@ for ev in events:
 - **Turn 结果作为流式事件（push）。** 结果本身——模型到底答没答——已经
   可以同步拿到：`agent.last_turn` 返回一个 `TurnOutcome`（`text`、`status`、
   一套单一封闭词表的 `incomplete_reason`——`no_output`、`reasoning_only`、
-  `length_truncated`、`doom_loop`、`llm_error`，或 `None`；`tool_count`；
+  `length_truncated`、`doom_loop`、`max_iterations`、`hook_stop`、`llm_error`，
+  或 `None`；`tool_count`；
   `error`；`finish_reason_missing`），`.is_answer` 把它折成一个判断。
 
-  `finish_reason_missing` 是与 `max_iterations` 并列的第三根独立轴：这个
+  `finish_reason_missing` 是真正独立于那套词表的那一根轴（本文早先写它是
+  「与 `max_iterations` 并列的第三根」，而 `max_iterations` 如今是词表成员、
+  不再是一根轴）：这个
   turn 里至少有一次 LLM 调用结束时，provider 从未说明生成为何停止，所以
   "答案完整"这句话是 agentao 的 `"stop"` 兜底说的，不是 provider 说的。
   它**不影响** `.is_answer`——不发这个字段的服务端是每次都不发，否则每个

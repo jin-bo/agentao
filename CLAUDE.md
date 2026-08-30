@@ -63,7 +63,7 @@ Agentao is an **embedded agent harness**: the same runtime drives the interactiv
 | `agentao/host/` | **Public host contract.** `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `EventStream`, `ActivePermissions`. Stability boundary for embedded hosts. |
 | `agentao/harness/` | **Deprecated alias for `agentao.host`** (renamed in 0.4.2). Re-exports with old names + `DeprecationWarning`; scheduled for removal in 0.5.0. |
 | `agentao/embedding/` | Host-side construction: `build_from_environment()` (env / dotenv / `.agentao/*.json` reads routed through explicit kwargs), `permission_loader`, `sessions`, `plugins/` (manifest loader, validators, MCP merge, resolvers). |
-| `agentao/plugins/` | Plugin **runtime path** only — models, hooks, skill/agent validators. Loader lives in `embedding/plugins/`. |
+| `agentao/plugins/` | Plugin **runtime path** only — models, hooks, skill/agent validators. Loader lives in `embedding/plugins/`. `plugins/hooks/` is the hook subsystem: `_parser` (shape detection + contract), `_profile` (the capability tables, data), `_resolve` (five stdout states + the precedence function), `_dispatcher` (execute, partition, merge), plus `_budget` / `_paths` / `_diagnostics` / `_profile_payload`. |
 | `agentao/permissions.py` + `permissions_hardline/` | `PermissionEngine` + shell-pattern hardline scanner (heredoc, contexts, decoder). |
 | `agentao/cli/` | Interactive CLI **package** (was `cli.py` before 0.4.x). `app.py` (`AgentaoCLI`), `entrypoints.py` (argparse + `main`), `run.py` (`agentao run`), `commands/` (per-slash-command handlers), `subcommands.py`, `diagnostics_cli.py`. |
 | `agentao/prompts/`, `agentao/agents/`, `agentao/plan/`, `agentao/capabilities/`, `agentao/tooling/`, `agentao/security/`, `agentao/session.py`, `agentao/context_manager.py` | Supporting modules — prompt assembly (`SystemPromptBuilder`), sub-agent runners, plan-mode state, capability declarations (incl. `capabilities/process.py::run_captured` — the shared hardened subprocess runner; see Common gotchas), tool registration (`tooling/registry.py::register_builtin_tools` + agent/MCP tool wiring), security utilities (`security/secret_scan.py` — the shared credential-pattern scanner behind `agentao.log`, `.agentao/tool-outputs/`, `MemoryGuard`, and replay; plus `path_policy.py` / `url_policy.py` — the latter exports **paired sync/async** surfaces, `validate_outbound_url`/`guarded_get` and `validate_outbound_url_async`/`guarded_get_async`; the async validator delegates to the sync one on a bounded daemon thread rather than reimplementing the policy, so there is exactly one copy of it; and `unicode_tags.py` — invisible-character smuggling defense, see below), session save/load, context-window compaction. |
@@ -234,6 +234,83 @@ See `docs/guides/memory-management.md`.
 ### Replay
 
 `ReplayManager` (`agentao/replay/manager.py`) records every turn to `.agentao/replays/*.jsonl` when enabled. Replay state lives **outside** `Agentao` core — Transport emits `TURN_BEGIN` / `TURN_END` events that the manager subscribes to. Configure via `.agentao/settings.json :: replay.{enabled, max_instances}` or `/replay on|off`.
+
+### Plugin hooks
+
+Shell commands run at **eight** points in a turn — `PreToolUse`, `PostToolUse`,
+`PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `SessionStart`, `SessionEnd`,
+`PreCompact`. Runtime lives in `agentao/plugins/hooks/`; discovery and manifest
+resolution live in `embedding/plugins/` (a plugin's `hooks/hooks.json`, or its
+manifest's `hooks` key).
+
+**Two contracts, resolved per *file* by shape** (`_parser.py::_detect_entry_shape`,
+`::_resolve_contract`). A file copied out of a Claude Code setup carries no
+`contract` key to gate on, so the parser reads the entries: `hooks: []` and no
+`type` → official; `type` and no array → flat. Four shape values, not three —
+an entry with **both** keys is a contradiction and disables the file, one with
+**neither** is just a malformed handler and gets a per-rule warning, because
+otherwise a single typo disables every other hook in a working `agentao-v1`
+file.
+
+| Contract | Status |
+|---|---|
+| `agentao-v1` | **Frozen.** Every behaviour change is gated on contract, and both halves get a test |
+| `claude-code@profile-1` | An **enumerated capability profile**, not "the Claude hook contract" |
+
+**The profile is enumerated, and that is the load-bearing word.** `_profile.py`
+is data — which fields each event accepts, which it ignores, what exit 2 means
+there. A key the profile does not implement is **ignored with a one-time
+diagnostic naming it, never a schema error**: a hook written for a newer Claude
+Code must keep working. Claiming a surface obliges you to enumerate it; if you
+add a field, add its row.
+
+**Two axes, and they are not the same axis.** *Profile disposition*
+(`accept` / `ignore`) is reported once per (rule, field) per session.
+*Delivery* (`honored` / `discarded`) is **silent** — a discard means the hook is
+upstream-conformant and agentao simply does not route that field on that event,
+so a diagnostic there would misreport conformance as a capability gap.
+
+**Precedence is a function, not a field order** (`_resolve.py::resolve`, over
+the five `parse_stdout` states `empty | plain | parse_error | schema_invalid |
+valid`): **exit 2 → `continue` → the event's own decision**. Exit 2 is three
+outcomes, not a boolean — block, feed the model, notify the user — chosen per
+event.
+
+**A stop from a tool worker rides home on the result, and is arbitrated in plan
+order.** `PostToolUse*` hooks run inside the worker, three frames below anything
+that can end a turn, so the verdict travels on
+`ToolExecutionResult.hook_stop_reason` → `ToolRunner.last_hook_stop` →
+`INCOMPLETE_HOOK_STOP` (`chat_loop/_runner.py:116`). **Plan order, never
+completion order** — the model's own tool-call order — or the surfaced reason
+varies run to run for the same batch. Reset `last_hook_stop` at the *top* of
+`execute()` (`tool_runner.py:167`): a bottom reset wipes what phase 1.5 wrote
+and leaks a stale stop across the early returns. Both seams read a **string**,
+never a truthy value — a `MagicMock` runner answers any attribute.
+
+**Mixed-contract dispatch partitions, runs, merges once** (`_dispatcher.py::_merge_pre_tool_use`).
+A v1 short-circuit ends only the v1 group: the profile's "every matching handler
+runs" rule exists for handlers with side effects. The merge is over the event's
+lattice (`deny > ask > allow`), and the reason tie-break ranks **inside the
+winning class** by declaration order — surfacing an `ask`'s reason for a `deny`
+attributes the verdict to the wrong rule.
+
+**`env=build_child_env({...})` is the only correct spelling** for the three path
+placeholders (`_paths.py`, `_dispatcher.py:639`). `env={...}` or
+`env=os.environ | {...}` silently deletes the provider-credential scrub — see
+Common gotchas, `run_captured`.
+
+Two more that are easy to get subtly wrong: the profile matcher is
+`re.fullmatch` with `*` **and `""`** special-cased (`_matchers.py`), measured
+against a real `claude` 2.1.251 — `ead` does not match `Read`; and the
+diagnostic registry is **session**-scoped and keyed by rule *content*
+(`_diagnostics.py::rule_key`), never `id(rule)`, which changes on reload — the
+dispatcher is built fresh per dispatch (nine sites across six files, two of
+them inside pool workers), so dispatcher-scoped state would dedup nothing and
+race while doing it.
+
+Config reference: `docs/reference/configuration.md` §11. Design + the ten gate
+closures: `docs/design/hooks-claude-contract-conformance-plan.md`. Measured
+upstream behaviour: `docs/reference/hooks-probe-2.1.251.md`.
 
 ### MCP
 

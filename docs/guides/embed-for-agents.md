@@ -417,7 +417,8 @@ if not outcome.is_answer:
 
 `agent.last_turn` mirrors the `TURN_END` payload — `text`, `status`,
 `incomplete_reason` (a single closed vocabulary: `no_output` /
-`reasoning_only` / `length_truncated` / `doom_loop` / `llm_error`, or
+`reasoning_only` / `length_truncated` / `doom_loop` / `max_iterations` /
+`hook_stop` / `llm_error`, or
 `None` for a real answer), `tool_count`, `error`, `finish_reason_missing`
 — as a synchronous read-after, no subscription required.
 `outcome.is_answer` is the one check that folds all of it together:

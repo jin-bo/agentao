@@ -77,9 +77,14 @@ non-answers, which are common and usually not incidents. Branch on
 
 `<reason>` is the `TurnOutcome.incomplete_reason` closed vocabulary
 (`no_output`, `reasoning_only`, `length_truncated`, `doom_loop`,
-`llm_error`) plus `max_iterations` — the turn budget is a deliberately
-separate axis from `incomplete_reason`, so it gets its own key rather
-than being smuggled into that closed set. Three defensive values
+`max_iterations`, `hook_stop`, `llm_error`). **`max_iterations` is a member
+of that set, not an addition to it** — an earlier revision of this document
+argued the turn budget was a separate axis that got its own key; 0.4.19 folded
+it into the vocabulary and this paragraph is the correction. What is still
+true on *this* surface is narrower: the sub-agent classifier tests the turn
+budget in its own branch, **before** it reads `incomplete_reason`, so
+`max_iterations` can reach the suffix without the turn having been classified
+that way. Three defensive values
 (`cancelled`, `error`, `unknown`) can appear when a turn outcome reports
 neither an answer nor a reason; treat any unrecognized suffix as
 "stopped short, cause unclassified" rather than matching the list
@@ -568,12 +573,15 @@ meaning changed under a name consumers already read.
   whether the model actually answered — *is* available synchronously:
   `agent.last_turn` returns a `TurnOutcome` (`text`, `status`,
   `incomplete_reason` over a single closed vocabulary — `no_output`,
-  `reasoning_only`, `length_truncated`, `doom_loop`, `llm_error`, or
+  `reasoning_only`, `length_truncated`, `doom_loop`, `max_iterations`,
+  `hook_stop`, `llm_error`, or
   `None`; `tool_count`; `error`; `finish_reason_missing`), and
   `.is_answer` folds it into one check.
 
-  `finish_reason_missing` is a third separate axis, alongside
-  `max_iterations`: at least one LLM call in the turn ended without the
+  `finish_reason_missing` is the one axis genuinely separate from that
+  vocabulary (it used to be described as the *third*, alongside
+  `max_iterations`, which is now a member rather than an axis): at least one
+  LLM call in the turn ended without the
   provider reporting *why* generation stopped, so agentao's `"stop"`
   fallback — not the provider — is what says the answer is complete. It
   does **not** affect `.is_answer`, because the servers that omit the
