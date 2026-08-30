@@ -29,6 +29,7 @@ from ..sanitize import canonicalize_tool_arguments, sanitize_assistant_message
 from ..tool_planning import make_tool_result_message
 from ._compaction import _CompactionMixin
 from ._hook_dispatch import _HookDispatchMixin
+from ...plugins.hooks._profile import PROFILE_ID
 from ._outcomes import _HookOutcome
 from ._serialize import _attach_reasoning, _serialize_tool_call
 
@@ -113,6 +114,10 @@ INCOMPLETE_LLM_ERROR = "llm_error"
 # incomplete turn rather than an error — and a *deliberate* one, which is why
 # it also joins the halted family below: hook text must not clear it.
 INCOMPLETE_HOOK_STOP = "hook_stop"
+
+#: The reference's `Stop` reentry cap. agentao's own default is 3 and stays 3
+#: for `agentao-v1`; a continuation produced by a profile rule gets this one.
+PROFILE_STOP_REENTRY_CAP = 8
 
 # The complete closed set — the ``incomplete_reason`` wire vocabulary. The CLI
 # maps each of these to an error envelope; a parity test binds the two so the
@@ -1026,10 +1031,21 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             return ChatLoopRunner._Step("return", value=blocked)
 
         if stop_result.force_continue:
+            # The cap is **contract-resolved**: 8 under `claude-code@profile-1`,
+            # which is the reference's own number, and 3 under `agentao-v1`,
+            # which is what a v1 author's hooks were written against. Keeping 3
+            # under a `claude-code` label would make reentries 4 through 8 behave
+            # differently on the two tools — the exact class of divergence the
+            # profile exists to close. The contract is the one that produced
+            # *this* continuation, so a pure v1 setup keeps its number and a
+            # mixed session is not silently loosened for hooks that never asked.
+            effective_cap = self._stop_reentry_cap
+            if stop_result.continuation_contract == PROFILE_ID:
+                effective_cap = PROFILE_STOP_REENTRY_CAP
             # Cap check FIRST — without it a cap-hit would fall through to
             # allow and silently mask the pathological hook.
-            if self._stop_reentries >= self._stop_reentry_cap:
-                agent.llm.logger.warning(site["reentry_cap_log"], self._stop_reentry_cap)
+            if self._stop_reentries >= effective_cap:
+                agent.llm.logger.warning(site["reentry_cap_log"], effective_cap)
                 agent.messages.append(final_msg)
                 # Capped: the caller receives ``assistant_content`` unchanged
                 # (no hook text substituted), so the turn is exactly as

@@ -66,6 +66,11 @@ class _HookDispatchMixin:
                 "blocking_error": ups_result.blocking_error or None,
                 "stop_reason": ups_result.stop_reason or None,
                 "added_context_count": len(ups_result.additional_contexts or []),
+                # G1's transport half, taken as the cheaper of the two options
+                # the gate named: an extended payload rather than a new event
+                # type. A host that renders hook notices reads this; the two
+                # first-party surfaces route them directly (§5.2.1).
+                "user_notices": list(ups_result.user_notices or []),
             }))
         except Exception:
             pass
@@ -95,7 +100,7 @@ class _HookDispatchMixin:
         self,
         *,
         turn_end_reason: Literal[
-            "final_response", "max_iterations", "doom_loop",
+            "final_response", "max_iterations", "doom_loop", "hook_stop",
         ],
         last_assistant_message: str,
     ) -> StopHookResult:
@@ -138,7 +143,7 @@ class _HookDispatchMixin:
             "continue_at_max_iter", "reentry_capped",
         ],
         turn_end_reason: Literal[
-            "final_response", "max_iterations", "doom_loop",
+            "final_response", "max_iterations", "doom_loop", "hook_stop",
         ],
         stop_result: StopHookResult,
     ) -> None:

@@ -21,6 +21,7 @@ from typing import Any
 from ..models import ParsedHookRule, StopHookResult, UserPromptSubmitResult
 from ._attachments import _make_attachment
 from ._budget import cap_channel
+from ._profile import LEGACY_CONTRACT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,22 @@ class _OutputParsingMixin:
             result.additional_contexts.append(_cap(str(data), rule))
             return
 
+        # --- profile spellings, for a `claude-code` rule only -------------
+        # `agentao-v1` is frozen, so its four keys keep their meanings and its
+        # hooks never see these. Read before the v1 keys because the profile is
+        # what a copied Claude hook writes.
+        if rule.contract != LEGACY_CONTRACT_ID:
+            self._parse_profile_ups_output(data, rule, result)
+            if result.blocking_error or result.prevent_continuation or result.user_notices \
+                    or result.additional_contexts:
+                result.messages.append(
+                    _make_attachment(
+                        "hook_success", {"parsed": "claude-code"},
+                        hook_name=rule.command or "", hook_event=rule.event,
+                    )
+                )
+                return
+
         # Process structured fields.
         if "blockingError" in data:
             result.blocking_error = _cap(str(data["blockingError"]), rule)
@@ -152,6 +169,45 @@ class _OutputParsingMixin:
             )
         )
 
+    def _parse_profile_ups_output(
+        self,
+        data: dict,
+        rule: ParsedHookRule,
+        result: UserPromptSubmitResult,
+    ) -> None:
+        """The four channels ``UserPromptSubmit`` carries under the profile.
+
+        Four, not one: a blocking decision, context for the model, a turn-level
+        stop, and a notice for the **user**. agentao honored one of them, which
+        is deviation 2.
+        """
+        decision = data.get("decision")
+        reason = data.get("reason")
+        if decision == "block":
+            result.blocking_error = _cap(str(reason), rule) if isinstance(reason, str) else "blocked by hook"
+
+        if data.get("continue") is False:
+            result.prevent_continuation = True
+            stop_reason = data.get("stopReason")
+            result.stop_reason = (
+                _cap(stop_reason, rule) if isinstance(stop_reason, str)
+                else "Hook prevented continuation"
+            )
+
+        system_message = data.get("systemMessage")
+        if isinstance(system_message, str):
+            # → the user. Appending it to ``additional_contexts`` as well is the
+            # double-write §4.3 names: the same string would reach the model,
+            # which is the one reader the reference says it is not for.
+            result.user_notices.append(_cap(system_message, rule))
+
+        nested = data.get("hookSpecificOutput")
+        ctx = nested.get("additionalContext") if isinstance(nested, dict) else None
+        if isinstance(ctx, str):
+            result.additional_contexts.append(_cap(ctx, rule))
+        elif isinstance(ctx, list):
+            result.additional_contexts.extend(_cap(str(c), rule) for c in ctx)
+
     def _parse_stop_command_output(
         self,
         stdout: str,
@@ -209,6 +265,7 @@ class _OutputParsingMixin:
                 result.force_continue = True
                 result.follow_up_message = reason
                 result.stop_reason = reason
+                result.continuation_contract = rule.contract
 
         # Capped **once** and reused below. ``cap_channel`` writes a spill file
         # and logs a diagnostic every time it fires, so re-capping the same
@@ -226,15 +283,30 @@ class _OutputParsingMixin:
         if isinstance(system_message, str):
             system_message = _cap(system_message, rule)
             result.system_message = system_message
-            result.additional_contexts.append(system_message)
+            if rule.contract == LEGACY_CONTRACT_ID:
+                # The double-write §4.3 names. It stays under `agentao-v1`,
+                # which is frozen and whose hooks were written against it; under
+                # the profile the field goes to the user and **only** the user,
+                # which is what the reference says it is for.
+                result.additional_contexts.append(system_message)
 
         hook_specific = data.get("hookSpecificOutput")
         if isinstance(hook_specific, dict):
             ctx = hook_specific.get("additionalContext")
+            collected: list[str] = []
             if isinstance(ctx, str):
-                result.additional_contexts.append(_cap(ctx, rule))
+                collected = [_cap(ctx, rule)]
             elif isinstance(ctx, list):
-                result.additional_contexts.extend(_cap(str(c), rule) for c in ctx)
+                collected = [_cap(str(c), rule) for c in ctx]
+            result.additional_contexts.extend(collected)
+            # Deviation 4: on `Stop` this context is a **continuation**, not a
+            # note. Upstream feeds it back and the conversation goes on, through
+            # the same loop protections — the `stop_hook_active` input and the
+            # reentry cap — so it lands inside the cap rather than beside it.
+            if collected and rule.contract != LEGACY_CONTRACT_ID and not continue_false:
+                result.force_continue = True
+                result.follow_up_message = "\n".join(collected)
+                result.continuation_contract = rule.contract
 
         # Tolerated for hook scripts that use the top-level field.
         legacy_ctx = data.get("additionalContext")

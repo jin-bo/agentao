@@ -715,6 +715,18 @@ class PluginHookDispatcher(_OutputParsingMixin):
         if proc is None:
             return
 
+        if rule.contract != LEGACY_CONTRACT_ID and proc.returncode == 2:
+            # Exit 2 blocks on this event, and it blocks **whether or not** JSON
+            # was printed: "even a JSON permissionDecision of allow can't
+            # override it". The JSON's own reason wins when it has one; stderr
+            # is the fallback.
+            self._parse_command_output(proc.stdout, rule, result)
+            if not result.blocking_error:
+                result.blocking_error = _cap(
+                    (proc.stderr or "").strip() or "blocked by hook (exit 2)", rule,
+                )
+            return
+
         if proc.returncode != 0 and not proc.stdout.strip():
             logger.warning(
                 "Hook command exited %d: %s (stderr: %s)",

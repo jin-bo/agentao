@@ -345,6 +345,10 @@ class UserPromptSubmitResult:
     stop_reason: str | None = None
     additional_contexts: list[str] = field(default_factory=list)
     messages: list[HookAttachmentRecord] = field(default_factory=list)
+    #: ``systemMessage`` — a warning **to the user**, not to the model. Kept
+    #: apart from ``additional_contexts`` because the two go to different
+    #: readers, which is the whole of deviation 3.
+    user_notices: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -421,3 +425,8 @@ class StopHookResult:
     system_message: str | None = None
     messages: list[HookAttachmentRecord] = field(default_factory=list)
     matched_rule_count: int = 0
+    #: The contract of the rule that produced the surviving continuation. The
+    #: reentry cap is contract-resolved — 8 under the profile, 3 under
+    #: ``agentao-v1`` — so a pure v1 setup keeps its number and a mixed session
+    #: is not silently loosened for hooks that never asked for it.
+    continuation_contract: str | None = None
