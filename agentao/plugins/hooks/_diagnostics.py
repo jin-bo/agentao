@@ -30,22 +30,33 @@ if TYPE_CHECKING:  # pragma: no cover
     from ..models import ParsedHookRule
 
 
-def rule_key(rule: "ParsedHookRule", handler_index: int = 0) -> str:
+def rule_key(rule: "ParsedHookRule", handler_index: int | None = None) -> str:
     """A stable identity for one hook rule.
 
     Content-derived, so it survives the rule being re-parsed into a new object;
     ``handler_index`` disambiguates two identical handlers in one matcher group,
-    which are two rules the author can edit independently.
+    which are two rules the author can edit independently. It defaults to the
+    index the parser recorded on the rule — passing one explicitly overrides it.
+
+    **Every field that distinguishes two rules is in the material.** The profile
+    contract's matcher is ``matcher_pattern`` (a string), not ``matcher`` (a
+    dict), so leaving it out collapsed every profile rule that shared a command
+    onto one key — and a collision here is silence, not noise: the second rule's
+    diagnostic is suppressed as an already-announced duplicate.
     """
     material = json.dumps(
         [
             rule.plugin_name or "",
+            rule.plugin_root or "",
+            rule.contract,
             rule.event,
             rule.hook_type,
             rule.command or "",
             rule.prompt or "",
+            list(rule.args or []),
             sorted((rule.matcher or {}).items()) if isinstance(rule.matcher, dict) else str(rule.matcher),
-            handler_index,
+            rule.matcher_pattern,
+            rule.handler_index if handler_index is None else handler_index,
         ],
         sort_keys=True,
         default=str,

@@ -87,14 +87,47 @@ def test_a_mixed_file_is_disabled_whole():
     assert any("mixes" in w.message for w in warnings)
 
 
-@pytest.mark.parametrize("entry", [
-    {"type": "command", "command": "x", "hooks": [{"type": "command"}]},   # both
-    {"command": "x"},                                                       # neither
-])
-def test_an_ambiguous_entry_disables_the_file(entry):
-    rules, warnings = parse({"hooks": {"PreToolUse": [entry]}})
+def test_an_entry_claiming_both_shapes_disables_the_file():
+    """*Both* keys is a contradiction: the entry claims to be both contracts."""
+    rules, warnings = parse({"hooks": {"PreToolUse": [
+        {"type": "command", "command": "x", "hooks": [{"type": "command"}]}]}})
     assert rules == []
-    assert any("ambiguous" in w.message for w in warnings)
+    assert any("both shapes" in w.message for w in warnings)
+
+
+def test_an_entry_claiming_neither_shape_does_not_disable_a_v1_file():
+    """*Neither* key is a malformed handler, not a shape conflict — and
+    `agentao-v1` is frozen, so its siblings must keep working exactly as they did
+    before this parser was rewritten."""
+    rules, warnings = parse({"hooks": {"Stop": [
+        {"type": "command", "command": "echo ok"},
+        {"command": "echo forgot-type"},
+    ]}})
+    assert [r.command for r in rules] == ["echo ok"]
+    assert any("Unknown hook type" in w.message for w in warnings)
+    assert not any("disabled" in w.message for w in warnings)
+
+
+def test_a_matcher_group_with_no_handlers_is_reported():
+    rules, warnings = parse({"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": []},
+        {"matcher": "Read", "hooks": [{"type": "command", "command": "x"}]},
+    ]}})
+    assert [r.matcher_pattern for r in rules] == ["Read"]
+    assert any("no 'hooks' list" in w.message for w in warnings)
+
+
+def test_an_unsupported_event_does_not_get_a_vote_on_the_file_shape():
+    """A copied Claude config routinely carries events outside the profile — the
+    reference documents 56 — and one of them must not disable the eight that
+    work."""
+    rules, warnings = parse({"hooks": {
+        "Notification": [{"matcher": "*", "hooks": [{"type": "command", "command": "n"}]}],
+        "Stop": [{"type": "command", "command": "s"}],
+    }})
+    assert [r.command for r in rules] == ["s"]
+    assert any("Unsupported hook event" in w.message for w in warnings)
+    assert not any("mixes" in w.message for w in warnings)
 
 
 def test_an_unknown_contract_disables_the_file_rather_than_falling_back():
@@ -219,6 +252,25 @@ def test_a_profile_rule_with_no_matcher_fires_for_everything():
     rule = ParsedHookRule(event="PreToolUse", hook_type="command", command="x",
                           contract=PROFILE_ID)
     assert dispatcher._matches(rule, {"tool_name": "Anything"}) is True
+
+
+@pytest.mark.parametrize("event,field,value,pattern,fires", [
+    # Measured against claude 2.1.251 (probe §G6): a SessionStart matcher is
+    # compared against `source`, a SessionEnd matcher against `reason`.
+    ("SessionStart", "source", "startup", "startup", True),
+    ("SessionStart", "source", "startup", "resume", False),
+    ("SessionStart", "source", "startup", "*", True),
+    ("SessionEnd", "reason", "other", "other", True),
+    ("SessionEnd", "reason", "other", "clear", False),
+])
+def test_session_events_match_on_the_field_upstream_compares(event, field, value, pattern, fires):
+    """Returning "" for these events made every non-`*` matcher on them silently
+    dead — a rule the parser accepted and nothing ever fired."""
+    dispatcher = PluginHookDispatcher()
+    rule = ParsedHookRule(event=event, hook_type="command", command="x",
+                          contract=PROFILE_ID, matcher_pattern=pattern)
+    payload = {"hook_event_name": event, field: value}
+    assert dispatcher._matches(rule, payload) is fires
 
 
 def test_precompact_matches_on_its_trigger():

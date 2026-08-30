@@ -239,10 +239,18 @@ The two shapes are mutually exclusive per entry, so detect them:
 |---|---|---|
 | `hooks` (a list), no `type` | official matcher group | newest `claude-code@profile-N` agentao ships |
 | `type`, no `hooks` | agentao flat handler | `agentao-v1` |
-| both, or neither | ambiguous | **the file is disabled** |
+| **both** | ambiguous | **the file is disabled** |
+| **neither** | undetermined | no vote; parsed under the file's contract, which reports it **per rule** |
 
-**Every failure here is file-level.** One rule, no exceptions: an ambiguous entry, a file mixing both shapes, or a shape that disagrees with an explicit
-`contract` all disable the whole file with a warning. A silently half-parsed file is worse than a
+**Every *shape* failure here is file-level.** An ambiguous entry, a file mixing both shapes, or a
+shape that disagrees with an explicit `contract` all disable the whole file with a warning.
+
+**But "neither key" is not a shape failure**, and treating it as one broke a stronger promise than it
+kept. An entry with no `type` and no `hooks` claims nothing: it is a malformed *handler*, and
+`agentao-v1` — frozen by §3 — has always reported that per rule ("Unknown hook type ''") while its
+siblings kept working. Collapsing the two made one typo'd entry disable every other hook in an
+existing v1 file. So the table above has four values where it had three, and the rule is narrower
+than "ambiguous ⇒ fatal": **only a contradiction is fatal.** A silently half-parsed file is worse than a
 refused one — half a hook configuration is not a configuration, and per-entry rejection is exactly
 how you get one.
 
@@ -1074,16 +1082,16 @@ than the transcript. Each event's section says so."* Two of agentao's eight are 
 flat `accept` on these fields sends a `PreCompact` hook's `systemMessage` to a user the reference says
 never sees it. A predicate named in prose is not a mechanism — this is the table:
 
-| Event | `continue` / `stopReason` | `systemMessage` | `suppressOutput` | `terminalSequence` |
-|---|---|---|---|---|
-| `SessionStart` | **discarded — measured** (below) | honored | n/a — ignored | n/a — ignored |
-| `UserPromptSubmit` | honored | honored | n/a — ignored | n/a — ignored |
-| `PreToolUse` | honored | honored | n/a — ignored | n/a — ignored |
-| `PostToolUse` | honored | honored | n/a — ignored | n/a — ignored |
-| `PostToolUseFailure` | honored | honored | n/a — ignored | n/a — ignored |
-| `Stop` | honored | honored | n/a — ignored (live in `agentao-v1` — §11 q1) | n/a — ignored |
-| `PreCompact` | **discarded** | **discarded** | n/a — ignored | n/a — ignored |
-| `SessionEnd` | **discarded** | **discarded** | n/a — ignored | n/a — ignored |
+| Event | `continue` | `stopReason` | `systemMessage` | `suppressOutput` | `terminalSequence` |
+|---|---|---|---|---|---|
+| `SessionStart` | **discarded — measured** (below) | **discarded** | honored | n/a — ignored | n/a — ignored |
+| `UserPromptSubmit` | honored | honored | honored | n/a — ignored | n/a — ignored |
+| `PreToolUse` | honored | honored | honored | n/a — ignored | n/a — ignored |
+| `PostToolUse` | honored | honored | honored | n/a — ignored | n/a — ignored |
+| `PostToolUseFailure` | honored | honored | honored | n/a — ignored | n/a — ignored |
+| `Stop` | honored | honored | honored | n/a — ignored (live in `agentao-v1` — §11 q1) | n/a — ignored |
+| `PreCompact` | **discarded** | **discarded** | **discarded** | n/a — ignored | n/a — ignored |
+| `SessionEnd` | **discarded** | **discarded** | **discarded** | n/a — ignored | n/a — ignored |
 
 *"Claude Code discards a PreCompact hook's `systemMessage` and `continue` fields"*; `SessionEnd`
 *"hooks have no decision control … Claude Code discards their JSON output fields, such as
@@ -1150,6 +1158,12 @@ resolver. And `terminalSequence` is the one field whose upstream behavior *survi
 event (*"the field works on events that discard `systemMessage` and `continue`"*), which is worth
 recording even though profile-1 ignores it: if G7 ever accepts it, it does **not** inherit these two
 rows' exceptions.
+
+`stopReason` has its own column because it is **accepted**, and it mirrors `continue` by
+construction: it is the message a stop carries, so on an event that discards the stop there is
+nothing left for it to qualify. A column rather than a footnote is what lets `resolve()` call
+`honors_stop_reason(event)` instead of reaching for a literal — the same reason `systemMessage` has
+its own predicate.
 
 **Two axes, not four values.** The cells above carry four words (`honored`, `discarded`, and two
 kinds of `n/a`) for a model §1 and this section both describe as having **two**. They are not four

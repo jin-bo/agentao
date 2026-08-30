@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 from ..models import ParsedHookRule, StopHookResult, UserPromptSubmitResult
 from ._attachments import _make_attachment
@@ -70,12 +71,17 @@ class _OutputParsingMixin:
         try:
             data = json.loads(stdout)
         except json.JSONDecodeError:
-            # Non-JSON output treated as additional context.
-            result.additional_contexts.append(_cap(stdout, rule))
+            # Non-JSON output treated as additional context. The attachment
+            # carries the *capped* text too: ``_attachment_to_message`` renders
+            # every payload value into a model-visible user message, so handing
+            # it the raw string would put the whole flood back into the context
+            # the budget one line above exists to protect.
+            capped = _cap(stdout, rule)
+            result.additional_contexts.append(capped)
             result.messages.append(
                 _make_attachment(
                     "hook_additional_context",
-                    {"context": stdout},
+                    {"context": capped},
                     hook_name=rule.command or "",
                     hook_event=rule.event,
                 )
@@ -117,13 +123,19 @@ class _OutputParsingMixin:
         if "additionalContext" in data:
             ctx = data["additionalContext"]
             if isinstance(ctx, str):
-                result.additional_contexts.append(_cap(ctx, rule))
+                capped_ctx: Any = _cap(ctx, rule)
+                result.additional_contexts.append(capped_ctx)
             elif isinstance(ctx, list):
-                result.additional_contexts.extend(_cap(str(c), rule) for c in ctx)
+                capped_ctx = [_cap(str(c), rule) for c in ctx]
+                result.additional_contexts.extend(capped_ctx)
+            else:
+                capped_ctx = ctx
             result.messages.append(
                 _make_attachment(
                     "hook_additional_context",
-                    {"context": ctx},
+                    # Capped, for the same reason as the non-JSON branch: this
+                    # payload becomes a model-visible message.
+                    {"context": capped_ctx},
                     hook_name=rule.command or "",
                     hook_event=rule.event,
                 )
@@ -198,9 +210,14 @@ class _OutputParsingMixin:
                 result.follow_up_message = reason
                 result.stop_reason = reason
 
+        # Capped **once** and reused below. ``cap_channel`` writes a spill file
+        # and logs a diagnostic every time it fires, so re-capping the same
+        # string for the ``preventContinuation`` branch wrote three copies of
+        # one hook's output to disk and logged the budget three times.
         stop_reason = data.get("stopReason")
+        capped_stop_reason = _cap(str(stop_reason), rule) if stop_reason else None
         if isinstance(stop_reason, str):
-            result.stop_reason = _cap(stop_reason, rule)
+            result.stop_reason = capped_stop_reason
 
         if data.get("suppressOutput") is True:
             result.suppress_output = True
@@ -245,8 +262,8 @@ class _OutputParsingMixin:
         # tolerated for hook scripts authored against UserPromptSubmit.
         # Honors ``continue: false`` precedence.
         if data.get("preventContinuation") is True and not continue_false:
-            reason = _cap(str(data.get("stopReason") or "Hook prevented continuation"), rule)
-            follow_up = _cap(str(data.get("stopReason") or "Stop hook requested continuation"), rule)
+            reason = capped_stop_reason or "Hook prevented continuation"
+            follow_up = capped_stop_reason or "Stop hook requested continuation"
             result.force_continue = True
             result.stop_reason = reason
             result.follow_up_message = follow_up

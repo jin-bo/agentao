@@ -16,10 +16,13 @@ Two axes, not four values — the distinction §5.1 spent a revision getting rig
   upstream-conformant, the same output does nothing on Claude Code either, and a
   diagnostic here would flag correct code.
 
-That is why :data:`UNIVERSAL_DELIVERY` carries only the two *accepted* universal
-fields. ``suppressOutput`` and ``terminalSequence`` are ``ignore``, so the
-delivery axis never runs for them and they have no column — writing them in as
-"n/a" is what made an earlier revision read as a four-valued model.
+That is why :data:`UNIVERSAL_DELIVERY` carries the three *accepted* universal
+fields and not the ignored two. ``suppressOutput`` and ``terminalSequence`` are
+``ignore``, so the delivery axis never runs for them and they have no column —
+writing them in as "n/a" is what made an earlier revision read as a four-valued
+model. ``stopReason`` has a column because it is *accepted*, and it mirrors
+``continue`` by construction: it is the message a stop carries, so on an event
+that discards the stop there is nothing for it to qualify.
 
 Rows marked *measured* come from ``docs/reference/hooks-probe-2.1.251.md`` rather
 than from the reference's prose; both were contested rows the document could not
@@ -166,14 +169,14 @@ OUTPUT_FIELDS: dict[str, FieldSpec] = {
 #: three, once SessionStart's Decision-control row is read (hooks.md:1009,
 #: confirmed by probe).
 UNIVERSAL_DELIVERY: dict[str, dict[str, Delivery]] = {
-    "SessionStart":       {"continue": "discarded", "systemMessage": "honored"},
-    "UserPromptSubmit":   {"continue": "honored",   "systemMessage": "honored"},
-    "PreToolUse":         {"continue": "honored",   "systemMessage": "honored"},
-    "PostToolUse":        {"continue": "honored",   "systemMessage": "honored"},
-    "PostToolUseFailure": {"continue": "honored",   "systemMessage": "honored"},
-    "Stop":               {"continue": "honored",   "systemMessage": "honored"},
-    "PreCompact":         {"continue": "discarded", "systemMessage": "discarded"},
-    "SessionEnd":         {"continue": "discarded", "systemMessage": "discarded"},
+    "SessionStart":       {"continue": "discarded", "stopReason": "discarded", "systemMessage": "honored"},
+    "UserPromptSubmit":   {"continue": "honored",   "stopReason": "honored",   "systemMessage": "honored"},
+    "PreToolUse":         {"continue": "honored",   "stopReason": "honored",   "systemMessage": "honored"},
+    "PostToolUse":        {"continue": "honored",   "stopReason": "honored",   "systemMessage": "honored"},
+    "PostToolUseFailure": {"continue": "honored",   "stopReason": "honored",   "systemMessage": "honored"},
+    "Stop":               {"continue": "honored",   "stopReason": "honored",   "systemMessage": "honored"},
+    "PreCompact":         {"continue": "discarded", "stopReason": "discarded", "systemMessage": "discarded"},
+    "SessionEnd":         {"continue": "discarded", "stopReason": "discarded", "systemMessage": "discarded"},
 }
 
 #: §4.2's exit-2 table. Exit 2 is **not** a boolean: the reference gives it three
@@ -214,6 +217,16 @@ def honors_continue(event: str) -> bool:
     did — fires a stop on events where the reference discards the field.
     """
     return UNIVERSAL_DELIVERY.get(event, {}).get("continue") == "honored"
+
+
+def honors_stop_reason(event: str) -> bool:
+    """Does ``event`` deliver ``stopReason``?
+
+    Always the same answer as :func:`honors_continue` — a stop's message has
+    nothing to qualify where the stop is discarded — but it is its own predicate
+    so a resolver never has to reach for a literal or borrow the wrong one.
+    """
+    return UNIVERSAL_DELIVERY.get(event, {}).get("stopReason") == "honored"
 
 
 def honors_system_message(event: str) -> bool:

@@ -38,7 +38,7 @@ from ._paths import _placeholder_values, _substitute
 from ._profile import LEGACY_CONTRACT_ID
 from ._profile_payload import to_profile_payload
 from ._matchers import _claude_matcher_match, _glob_match, _regex_match_full
-from ._output_parsing import _OutputParsingMixin
+from ._output_parsing import _cap, _OutputParsingMixin
 
 logger = logging.getLogger(__name__)
 
@@ -352,9 +352,18 @@ class PluginHookDispatcher(_OutputParsingMixin):
         author who wrote a filter meant to narrow.
         """
         event = payload.get("hook_event_name") or rule.event
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         if event == "PreCompact":
             return str(payload.get("trigger", ""))
-        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        # Measured, not assumed (probe §G6): a `SessionStart` matcher is
+        # compared against `source` — "startup" fires, "resume" does not — and a
+        # `SessionEnd` matcher against `reason`. Returning "" for these events
+        # made every non-`*` matcher on them silently dead, which is the exact
+        # failure §2.3 gives as the reason not to translate matchers.
+        if event == "SessionStart":
+            return str(payload.get("source") or data.get("source") or "")
+        if event == "SessionEnd":
+            return str(payload.get("reason") or data.get("reason") or "")
         return str(payload.get("tool_name") or data.get("toolName") or "")
 
     def _run_subprocess(
@@ -390,16 +399,22 @@ class PluginHookDispatcher(_OutputParsingMixin):
                 else payload
             )
             placeholders = _placeholder_values(rule, self._cwd)
+            # Substitution is a *profile* feature (§2.4), and ``agentao-v1`` is
+            # frozen: a v1 command must still reach the shell byte-for-byte.
+            # Nothing is lost by it — the same three names are exported on the
+            # child's environment below, so ``${CLAUDE_PROJECT_DIR}`` in a v1
+            # command still resolves, expanded by the shell exactly as before.
+            subs = placeholders if rule.contract != LEGACY_CONTRACT_ID else {}
             if rule.args:
                 # Exec form: no shell, each element one argument. The reference
                 # tells authors to use it whenever a hook takes a path — which is
                 # exactly when a shell is the thing that breaks it.
-                cmd: Any = [_substitute(rule.command or "", placeholders)] + [
-                    _substitute(a, placeholders) for a in rule.args
+                cmd: Any = [_substitute(rule.command or "", subs)] + [
+                    _substitute(a, subs) for a in rule.args
                 ]
                 use_shell = False
             else:
-                cmd = _substitute(rule.command or "", placeholders)
+                cmd = _substitute(rule.command or "", subs)
                 use_shell = True
             proc = run_captured(
                 cmd,
@@ -479,7 +494,10 @@ class PluginHookDispatcher(_OutputParsingMixin):
 
         return _make_attachment(
             "hook_success",
-            {"stdout": proc.stdout.strip(), "returncode": proc.returncode},
+            # Capped: an attachment payload is rendered verbatim into a
+            # model-visible message by ``_attachment_to_message``, and tier 1
+            # lets a well-behaved hook print megabytes.
+            {"stdout": _cap(proc.stdout.strip(), rule), "returncode": proc.returncode},
             hook_name=rule.command,
             hook_event=rule.event,
         )

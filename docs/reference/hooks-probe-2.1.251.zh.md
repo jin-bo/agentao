@@ -27,6 +27,7 @@
 | D | 不符合工具 schema 的 `updatedInput` 会怎样？ | G8 | **该调用被拒**（`tool_use_error`）；**原输入从未执行** |
 | F | 每个事件的 stdin 上到底是什么？ | G7（§5.3） | 六份 payload 逐字节捕获 —— 见下 |
 | G3 | 字符串 `matcher` 如何求值？ | G3 | **`*` 是通配符；其余一切都是锚定全匹配。** 非锚定那种读法被推翻 |
+| G6 | `SessionStart` / `SessionEnd` 的 matcher 拿什么比？ | —— | **`source` 与 `reason`。** 不是空串 —— 那会让这两个事件上除 `*` 外的每个 matcher 都是死的 |
 
 ---
 
@@ -219,3 +220,24 @@ D_RAN.txt            : 不存在   ← 原命令从未执行
 
 **它不能证明什么。** 大小写敏感性、*非法*正则会怎样，以及 MCP 工具名（`mcp__server__tool`）是否走同一条
 匹配路径。
+
+## G6 —— 会话事件上的 matcher 拿什么比
+
+一次对 agentao 实现的评审提出：`SessionStart` 的 matcher 到底能匹配到什么，毕竟这个事件没有工具名。
+参考文档没写；二进制写了。
+
+| 事件 | Matcher | 会话的实际取值 | hook 是否触发 |
+|---|---|---|---|
+| `SessionStart` | `startup` | `source` = `startup` | **是** |
+| `SessionStart` | `resume` | `source` = `startup` | **否** |
+| `SessionStart` | `*` | —— | **是** |
+| `SessionEnd` | `other` | `reason` = `other` | **是** |
+| `SessionEnd` | `clear` | `reason` = `other` | **否** |
+
+**结论。** `SessionStart` 的 matcher 与 `source` 比，`SessionEnd` 的与 `reason` 比 —— 正是这两个事件在
+stdin 上带的那两个字段（§F）。两者都遵循 §G3 的全匹配规则。
+
+**对 agentao 的后果。** 第一版实现拿空串去比，于是这两个事件上除 `*` 以外的每一个 matcher 都能解析成功、
+然后永远不触发 —— 正是设计文档用来论证「不要在两种形状之间做 matcher 翻译」的那个失败。
+
+**它不能证明什么。** agentao 那八个事件之外的事件上，matcher 拿什么比。

@@ -263,6 +263,11 @@ class ParsedHookRule:
     #: The plugin's root directory, for ``${CLAUDE_PLUGIN_ROOT}``. Carried on the
     #: rule because it is known where rules are parsed and needed where they run.
     plugin_root: str | None = None
+    #: Position within its matcher group. Two byte-identical handlers in one
+    #: group are two rules the author edits independently, and nothing else on
+    #: this dataclass tells them apart — which is what the one-shot diagnostic
+    #: registry keys on (``_diagnostics.rule_key``).
+    handler_index: int = 0
 
     @property
     def is_supported(self) -> bool:

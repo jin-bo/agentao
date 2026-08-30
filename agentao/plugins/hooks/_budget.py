@@ -64,19 +64,22 @@ def _prune(directory: Path) -> None:
     """Best-effort age + count pruning. Never raises: a failed prune must not
     fail the spill it was making room for."""
     try:
-        files = sorted(
-            (f for f in directory.iterdir() if f.is_file()),
-            key=lambda f: f.stat().st_mtime,
-            reverse=True,
-        )
+        with os.scandir(directory) as entries:
+            # One stat per file, not two: ``iterdir()`` + ``is_file()`` +
+            # ``stat()`` in the sort key and again in the loop is four syscalls
+            # per file, on a path that runs on every spill.
+            files = sorted(
+                ((e.path, e.stat().st_mtime) for e in entries if e.is_file()),
+                key=lambda pair: pair[1],
+                reverse=True,
+            )
     except Exception:
         return
     now = time.time()
-    for index, path in enumerate(files):
+    for index, (path, mtime) in enumerate(files):
         try:
-            too_old = (now - path.stat().st_mtime) > _SPILL_MAX_AGE_S
-            if index >= _SPILL_MAX_FILES or too_old:
-                path.unlink()
+            if index >= _SPILL_MAX_FILES or (now - mtime) > _SPILL_MAX_AGE_S:
+                os.unlink(path)
         except Exception:
             continue
 

@@ -121,10 +121,12 @@ class ParsedHookOutput:
         JSON's blocking reason when it has one and stderr otherwise.
         """
         decision = self.decision
-        if isinstance(decision, PreToolUseDecision):
+        if isinstance(
+            decision,
+            (PreToolUseDecision, PostToolUseDecision, UserPromptSubmitDecision, BlockDecision),
+        ):
             return decision.reason
-        if isinstance(decision, (PostToolUseDecision, UserPromptSubmitDecision, BlockDecision)):
-            return decision.reason
+        # ``SessionStartDecision`` is the one member with no reason to carry.
         return None
 
 

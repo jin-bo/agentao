@@ -31,6 +31,7 @@ version.
 | D | What happens to an `updatedInput` that fails the tool's schema? | G8 | **The call is rejected** with a `tool_use_error`; the **original never runs** |
 | F | What is actually on stdin, per event? | G7 (§5.3) | Six payloads captured verbatim — see below |
 | G3 | How is the string `matcher` evaluated? | G3 | **`*` is a wildcard; everything else is an anchored full match.** The *unanchored* reading is refuted |
+| G6 | What do `SessionStart` / `SessionEnd` matchers compare against? | — | **`source` and `reason`.** Not the empty string, which would make every non-`*` matcher on them dead |
 
 ---
 
@@ -242,3 +243,26 @@ where `Edit|Write` is a literal with no `*` and matches nothing.
 
 **What this does not prove.** Case sensitivity, what an *invalid* regex does, and whether MCP tool
 names (`mcp__server__tool`) are matched by the same path.
+
+## G6 — what a matcher compares against on the session events
+
+A review of agentao's implementation asked whether a `SessionStart` matcher matches anything at all,
+since the event has no tool name. The reference does not say; the binary does.
+
+| Event | Matcher | Session's actual value | Hook fired? |
+|---|---|---|---|
+| `SessionStart` | `startup` | `source` = `startup` | **yes** |
+| `SessionStart` | `resume` | `source` = `startup` | **no** |
+| `SessionStart` | `*` | — | **yes** |
+| `SessionEnd` | `other` | `reason` = `other` | **yes** |
+| `SessionEnd` | `clear` | `reason` = `other` | **no** |
+
+**Finding.** A `SessionStart` matcher is compared against `source`, and a `SessionEnd` matcher
+against `reason` — the same fields those events carry on stdin (§F). Both follow the full-match rule
+of §G3.
+
+**Consequence for agentao.** Comparing against the empty string, as the first implementation did,
+made every non-`*` matcher on these two events parse successfully and then never fire — the exact
+failure the design doc names as its reason not to translate matchers between the two shapes.
+
+**What this does not prove.** What a matcher compares against on the events outside agentao's eight.

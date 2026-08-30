@@ -64,7 +64,14 @@ def _substitute(text: str, values: dict[str, str]) -> str:
     expand *arbitrary* names, so a command containing ``$HOME`` or a literal
     ``${SOMETHING}`` the author meant the shell to see would be rewritten here
     instead — silently, and differently from how the shell would have done it.
+
+    A non-string ``command`` (nothing validates the JSON's type) is returned
+    untouched rather than raising: it stays the ``run_captured`` failure it
+    always was, instead of an ``AttributeError`` escaping hook dispatch past
+    the ``OSError`` / ``TimeoutExpired`` handlers that guard it.
     """
+    if not isinstance(text, str):
+        return text
     for name, value in values.items():
         text = text.replace("${" + name + "}", value)
     return text

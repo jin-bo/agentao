@@ -24,6 +24,7 @@ exactly how you get one.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -72,16 +73,30 @@ _PROFILE_TIMEOUT_DEFAULTS: dict[str, int] = {"UserPromptSubmit": 30}
 _PROFILE_TIMEOUT_DEFAULT = 600
 _LEGACY_TIMEOUT_DEFAULT = 60
 
+logger = logging.getLogger(__name__)
+
 
 def _detect_entry_shape(entry: dict[str, Any]) -> str:
-    """``"official"`` | ``"flat"`` | ``"ambiguous"`` for one event-list entry."""
+    """``"official"`` | ``"flat"`` | ``"ambiguous"`` | ``"undetermined"``.
+
+    **Four values, where §2.2's table has three**, and the split is deliberate.
+    An entry carrying *both* keys is contradictory — it claims to be both
+    shapes — and disabling the file is right. An entry carrying *neither* claims
+    nothing: it is a malformed handler, not a shape conflict, and the frozen
+    ``agentao-v1`` contract has always handled that with a per-rule warning
+    ("Unknown hook type ''") while its siblings kept working. Treating the two
+    alike made one typo'd entry disable every other hook in an existing v1 file,
+    which §3's freeze forbids more strongly than §2.2's table demands.
+    """
     has_hooks = isinstance(entry.get("hooks"), list)
     has_type = "type" in entry
     if has_hooks and not has_type:
         return "official"
     if has_type and not has_hooks:
         return "flat"
-    return "ambiguous"
+    if has_hooks and has_type:
+        return "ambiguous"
+    return "undetermined"
 
 
 class ClaudeHooksParser:
@@ -165,6 +180,13 @@ class ClaudeHooksParser:
         """Return ``(contract, fatal)``; ``fatal`` disables the whole file."""
         shapes: set[str] = set()
         for event_name, hook_list in hooks_dict.items():
+            # Only entries this parser will actually read get a vote. An
+            # unsupported event is already skipped with its own warning, so
+            # letting its shape disable the *file* would kill every working
+            # rule over an entry that was never going to run — and a copied
+            # Claude config routinely carries events outside the profile.
+            if event_name not in SUPPORTED_HOOK_EVENTS:
+                continue
             entries = hook_list if isinstance(hook_list, list) else [hook_list]
             for entry in entries:
                 if isinstance(entry, dict):
@@ -172,11 +194,14 @@ class ClaudeHooksParser:
 
         if "ambiguous" in shapes:
             warn(
-                "Hook entry has both 'type' and 'hooks' (or neither), so its shape "
-                "is ambiguous — the whole file is disabled. Half a hook "
-                "configuration is not a configuration."
+                "Hook entry has both 'type' and 'hooks', so it claims both shapes "
+                "at once — the whole file is disabled. Half a hook configuration "
+                "is not a configuration."
             )
             return LEGACY_CONTRACT_ID, True
+        # ``undetermined`` casts no vote: it is a malformed handler, and the
+        # contract the file resolves to reports it per rule.
+        shapes.discard("undetermined")
         if {"official", "flat"} <= shapes:
             warn(
                 "Hooks file mixes the official nested shape with agentao's flat "
@@ -273,8 +298,16 @@ class ClaudeHooksParser:
             )
             return []
 
+        handlers = entry.get("hooks")
+        if not handlers:
+            warn(
+                f"Hook matcher group under '{event_name}' has no 'hooks' list — "
+                f"nothing to run, group skipped."
+            )
+            return []
+
         rules: list[ParsedHookRule] = []
-        for index, handler in enumerate(entry.get("hooks") or []):
+        for index, handler in enumerate(handlers):
             if not isinstance(handler, dict):
                 warn(f"Hook handler under '{event_name}' is not an object — skipped")
                 continue
@@ -313,6 +346,16 @@ class ClaudeHooksParser:
                     f"{PROFILE_ID} — rule skipped ({why})."
                 )
                 return None
+
+        for ignored in PROFILE_IGNORED_FIELDS & set(handler):
+            # Recognized and inert. Named here rather than left to fall through
+            # the unknown-key path, so the set is a declaration rather than a
+            # comment: ``statusMessage`` is spinner text and ``once`` is
+            # skill-frontmatter only, and agentao has neither surface.
+            logger.debug(
+                "Hook field %r under %r is recognized and has no effect in %s",
+                ignored, event_name, PROFILE_ID,
+            )
 
         if "shell" in handler:
             # Measured: Claude Code 2.1.251 runs command hooks under `sh` and does
@@ -355,4 +398,5 @@ class ClaudeHooksParser:
             plugin_name=plugin_name,
             contract=PROFILE_ID,
             plugin_root=plugin_root,
+            handler_index=index,
         )

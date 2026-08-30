@@ -43,6 +43,7 @@ from agentao.plugins.hooks._profile import (
     exit2_outcome,
     field_disposition,
     honors_continue,
+    honors_stop_reason,
     honors_system_message,
     ignore_reason,
 )
@@ -62,9 +63,11 @@ def test_the_profile_events_are_the_events_agentao_dispatches():
 def test_every_event_has_a_row_in_every_table(event):
     assert event in UNIVERSAL_DELIVERY
     assert event in EXIT2_OUTCOME
-    # Both accepted universal fields, and only those two: `suppressOutput` and
-    # `terminalSequence` are `ignore`, so the delivery axis never runs for them.
-    assert set(UNIVERSAL_DELIVERY[event]) == {"continue", "systemMessage"}
+    # The three *accepted* universal fields, and only those: `suppressOutput`
+    # and `terminalSequence` are `ignore`, so the delivery axis never runs for
+    # them. `stopReason` is accepted, so it owes a column — leaving it out left
+    # step 4's resolver with no predicate to call for it.
+    assert set(UNIVERSAL_DELIVERY[event]) == {"continue", "stopReason", "systemMessage"}
 
 
 def test_ignored_fields_all_carry_a_reason():
@@ -108,6 +111,14 @@ def test_honors_continue_per_event(event, expected):
 def test_honors_system_message_is_its_own_predicate(event, expected):
     """The two predicates differ on `SessionStart`, which is why there are two."""
     assert honors_system_message(event) is expected
+
+
+@pytest.mark.parametrize("event", sorted(PROFILE_EVENTS))
+def test_stop_reason_mirrors_continue_on_every_event(event):
+    """A stop's message has nothing to qualify where the stop is discarded, so
+    the two always agree — but `stopReason` gets its own predicate rather than
+    a resolver reaching for a literal or borrowing the wrong one."""
+    assert honors_stop_reason(event) == honors_continue(event)
 
 
 def test_session_start_separates_the_two_fields():

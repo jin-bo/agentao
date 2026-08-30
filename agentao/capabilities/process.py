@@ -209,11 +209,9 @@ def _drain_capped(
                 break
             total += len(chunk)
             if total > limit:
-                # Keep exactly ``limit`` bytes; they are only used for the
-                # diagnostic, never returned as a result.
-                keep = limit - (total - len(chunk))
-                if keep > 0:
-                    chunks.append(chunk[:keep])
+                # Nothing is kept past the ceiling: the caller gets
+                # ``OutputLimitExceeded``, never a result, so a partial tail
+                # would only be memory held for no reader.
                 exceeded.setdefault("stream", name)
                 on_exceed()
                 break
@@ -305,6 +303,30 @@ def _run_capped(
             timed_out = True
             break
 
+    if exceeded and not timed_out:
+        # The reader already killed the tree. Reap it and report *that*, rather
+        # than letting the process wait below turn a budget kill into a timeout.
+        for th in threads:
+            th.join(5)
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        raise OutputLimitExceeded(max_output_bytes, exceeded["stream"])
+
+    if not timed_out:
+        # EOF on the pipes is **not** process exit: a child that closes its
+        # stdio and keeps working (``exec >/dev/null 2>&1; …``) reaches here
+        # still running. ``communicate()`` waits for the process, so this path
+        # must too — otherwise the caller's timeout is silently replaced by
+        # "a few seconds after the pipes closed" and the result carries
+        # ``returncode=None``, which every ``!= 0`` check misreads.
+        remaining = None if deadline is None else deadline - time.monotonic()
+        try:
+            proc.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+
     if timed_out:
         _kill_once()
         for th in threads:
@@ -314,14 +336,6 @@ def _run_capped(
         except Exception:
             pass
         raise subprocess.TimeoutExpired(cmd, timeout or 0)
-
-    try:
-        proc.wait(timeout=5)
-    except Exception:
-        _kill_once()
-
-    if exceeded:
-        raise OutputLimitExceeded(max_output_bytes, exceeded["stream"])
 
     return subprocess.CompletedProcess(
         cmd,

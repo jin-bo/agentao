@@ -29,6 +29,15 @@ rows the document could only describe.
   near-exact; ``workspace-write`` is **not** ``acceptEdits`` and ``read-only``
   has no upstream analogue at all. Sending agentao's own vocabulary is what the
   old code did, and a hook branching on the documented values matched no arm.
+
+  **In practice the field is absent everywhere today**, and saying so is the
+  point of the rule: only ``build_stop`` takes a posture at all, and the live
+  posture lives on ``AgentaoCLI`` while the tool events dispatch from
+  ``tool_runner`` / ``tool_executor``, which never receive it. Plumbing it is a
+  later step; until then agentao omits a field it cannot source rather than
+  filling it, which is the same rule ``prompt_id`` and ``transcript_path``
+  follow. :data:`EVENTS_WITH_PERMISSION_MODE` describes where it *belongs*, not
+  where it currently appears.
 """
 
 from __future__ import annotations

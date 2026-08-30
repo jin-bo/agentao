@@ -209,11 +209,17 @@ Claude Code 配置里拷出来的文件**没有 `contract` 键** —— 它是 C
 |---|---|---|
 | `hooks`（列表）、无 `type` | 官方 matcher group | agentao 当前所带的最新 `claude-code@profile-N` |
 | `type`、无 `hooks` | agentao 扁平 handler | `agentao-v1` |
-| 两者都有，或都没有 | 歧义 | **禁用该文件** |
+| **两者都有** | 歧义 | **禁用该文件** |
+| **两者都没有** | 未定 | 不投票；按该文件的契约解析，由那套契约**逐规则**报告 |
 
-**这里的每一种失败都是文件级的。** 一条规则，没有例外：歧义条目、混用两种形状的文件、以及与显式 `contract` 冲突的形
-状，都**整份禁用**并告警。一份被静默解析了一半的文件比一份被拒绝的更糟 —— 半份 hook 配置不是配置，而
-逐条目拒绝恰恰就是制造出半份配置的那条路。
+**这里的每一种*形状*失败都是文件级的。** 歧义条目、混用两种形状的文件、以及与显式 `contract` 冲突的形状，
+都**整份禁用**并告警。一份被静默解析了一半的文件比一份被拒绝的更糟 —— 半份 hook 配置不是配置，而逐条目
+拒绝恰恰就是制造出半份配置的那条路。
+
+**但「两个键都没有」不是形状失败**，把它当成形状失败，破坏掉的承诺比守住的更重。一个既没有 `type` 也没有
+`hooks` 的条目什么主张都没提；它是一个**畸形 handler**，而被 §3 冻结的 `agentao-v1` 一直是逐规则报告它
+（"Unknown hook type ''"）、其兄弟照常工作。把两者并成一类，会让一个打错字的条目停掉同一份 v1 文件里其余
+所有 hook。所以上面那张表由三个取值变成四个，规则也比「有歧义即致命」更窄：**只有自相矛盾才致命。**
 
 **显式**的 `contract` 仍然优先，且与之不符的形状是拒绝、不是强行迁就。而两个失败方向并不对称：
 
@@ -931,16 +937,16 @@ so."* agentao 的八个事件里有两个是被点名的例外 —— 所以把�
 hook 的 `systemMessage` 送到参考文档说根本看不到它的用户那里。一个只出现在散文里的谓词不是机制，这张表才
 是：
 
-| 事件 | `continue` / `stopReason` | `systemMessage` | `suppressOutput` | `terminalSequence` |
-|---|---|---|---|---|
-| `SessionStart` | **discarded —— 实测**（见下） | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `UserPromptSubmit` | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `PreToolUse` | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `PostToolUse` | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `PostToolUseFailure` | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `Stop` | 认 | 认 | 不适用 —— 已 ignore（`agentao-v1` 里仍生效 —— §11 第 1 问） | 不适用 —— 已 ignore |
-| `PreCompact` | **丢弃** | **丢弃** | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
-| `SessionEnd` | **丢弃** | **丢弃** | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| 事件 | `continue` | `stopReason` | `systemMessage` | `suppressOutput` | `terminalSequence` |
+|---|---|---|---|---|---|
+| `SessionStart` | **discarded —— 实测**（见下） | **丢弃** | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `UserPromptSubmit` | 认 | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `PreToolUse` | 认 | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `PostToolUse` | 认 | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `PostToolUseFailure` | 认 | 认 | 认 | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `Stop` | 认 | 认 | 认 | 不适用 —— 已 ignore（`agentao-v1` 里仍生效 —— §11 第 1 问） | 不适用 —— 已 ignore |
+| `PreCompact` | **丢弃** | **丢弃** | **丢弃** | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
+| `SessionEnd` | **丢弃** | **丢弃** | **丢弃** | 不适用 —— 已 ignore | 不适用 —— 已 ignore |
 
 *"Claude Code discards a PreCompact hook's `systemMessage` and `continue` fields"*；`SessionEnd`
 *"hooks have no decision control … Claude Code discards their JSON output fields, such as
