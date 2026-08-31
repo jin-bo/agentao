@@ -7,9 +7,12 @@ sync / async forms (:func:`validate_outbound_url` / :func:`guarded_get` and
 :func:`strip_unicode_tags` (invisible-character smuggling defense; the
 boundaries that apply it are enumerated in ``CLAUDE.md`` — it is a transform,
 not an ambient guarantee about every string in the process).
+:func:`sanitize_terminal_text` builds on it to strip terminal control and
+bidi bytes from untrusted text bound for a TTY.
 """
 
 from .path_policy import PathPolicy, PathPolicyError
+from .terminal_text import sanitize_terminal_text
 from .unicode_tags import (
     count_unicode_tags,
     has_unicode_tags,
@@ -31,6 +34,7 @@ __all__ = [
     "guarded_get",
     "guarded_get_async",
     "has_unicode_tags",
+    "sanitize_terminal_text",
     "strip_unicode_tags",
     "validate_outbound_url",
     "validate_outbound_url_async",
