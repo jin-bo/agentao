@@ -6,12 +6,43 @@ import json
 from typing import TYPE_CHECKING
 
 import readchar
+from rich.markup import escape as markup_escape
 
+from ..security.terminal_text import sanitize_terminal_text
 from ..transport import AgentEvent, EventType
 from ._globals import console
 
 if TYPE_CHECKING:
     from .app import AgentaoCLI
+
+
+def _display(text: object) -> str:
+    """Render model-authored text as inert display text for a Rich console.
+
+    Every string in this module that the *model* wrote — tool-call arguments,
+    ``ask_user`` questions, reasoning — is echoed to the operator's terminal,
+    and two independent vectors let such a string make what the operator sees
+    differ from what it actually is:
+
+    - **Terminal control bytes.** A raw ``ESC`` survives JSON transport
+      (``\\u001b``) and Rich passes it through verbatim, so ``\\x1b[1A\\x1b[2K``
+      erases the line the prompt just printed and reprints whatever the model
+      chose. Handled by :func:`sanitize_terminal_text` (also bidi overrides and
+      smuggled tag characters).
+    - **Rich markup.** ``[black on black]`` needs no control byte at all — Rich
+      turns it into ``\\x1b[30;40m`` and the text renders invisible on a dark
+      terminal. Handled by :func:`rich.markup.escape`, which is why sanitizing
+      alone is not enough at a Rich boundary.
+
+    This matters most at the tool-confirmation prompt, where the operator is
+    deciding whether to run the very string being displayed: in
+    ``workspace-write`` (the default posture) every shell command outside the
+    read-only allowlist falls through to a catch-all ``ask`` rule
+    (``permissions.py:413``), so that prompt is where a human arbitrates. The
+    transform does **not** loosen any gate — the ``deny`` rules and the
+    hardline scanner match the real argument string, unchanged.
+    """
+    return markup_escape(sanitize_terminal_text(str(text)))
 
 
 def emit_event(cli: AgentaoCLI, event: AgentEvent) -> None:
@@ -25,7 +56,8 @@ def emit_event(cli: AgentaoCLI, event: AgentEvent) -> None:
             if cli.current_status:
                 tool_name = event.data.get("tool", "")
                 cli.current_status.update(
-                    f"[yellow]Waiting for confirmation…  [dim]{tool_name}[/dim][/yellow]"
+                    "[yellow]Waiting for confirmation…  "
+                    f"[dim]{_display(tool_name)}[/dim][/yellow]"
                 )
         elif t == EventType.THINKING:
             on_llm_thinking(cli, event.data.get("text", ""))
@@ -49,11 +81,15 @@ def confirm_tool_execution(cli: AgentaoCLI, tool_name: str, tool_description: st
 
     try:
         console.print(f"\n[yellow]⚠️  Tool Confirmation Required[/yellow]")
-        console.print(f"[info]Tool:[/info] [cyan]{tool_name}[/cyan]")
-        console.print(f"[info]Arguments:[/info]")
+        console.print(f"[info]Tool:[/info] [cyan]{_display(tool_name)}[/cyan]")
+        console.print("[info]Arguments:[/info]")
 
+        # Model-authored, and this is the prompt the operator answers — see
+        # ``_display``. Arguments are printed in full rather than shortened:
+        # a truncated rendering would reintroduce the same defect from the
+        # other side (bytes executed that were never displayed).
         for key, value in tool_args.items():
-            console.print(f"  • {key}: {value}")
+            console.print(f"  • {_display(key)}: {_display(value)}")
 
         console.print("\n[bold]Choose an option:[/bold]")
         console.print(" [green]1[/green]. Yes")
@@ -111,7 +147,7 @@ def on_llm_thinking(cli: AgentaoCLI, reasoning: str) -> None:
 
     console.rule("[dim]Thinking[/dim]", style="dim blue")
     for line in reasoning.strip().splitlines():
-        console.print(f"  [dim italic]{line}[/dim italic]")
+        console.print(f"  [dim italic]{_display(line)}[/dim italic]")
     console.print()
 
     if cli.current_status:
@@ -133,7 +169,9 @@ def on_max_iterations(cli: AgentaoCLI, max_iterations: int, pending_tools: list)
                     args_str = ", ".join(f"{k}={repr(v)}" for k, v in list(args.items())[:3])
                 except Exception:
                     args_str = str(tc["args"])[:80]
-                console.print(f"  • [cyan]{tc['name']}[/cyan]({args_str})")
+                console.print(
+                    f"  • [cyan]{_display(tc['name'])}[/cyan]({_display(args_str)})"
+                )
         else:
             console.print("[dim]无待执行的工具调用。[/dim]")
 
@@ -223,11 +261,11 @@ def ask_user(
         cli.current_status.stop()
     try:
         title = header.strip() if header and header.strip() else "Agent Question"
-        console.print(f"\n[bold yellow]🤔 {title}[/bold yellow]")
-        console.print(f"[yellow]{question}[/yellow]")
+        console.print(f"\n[bold yellow]🤔 {_display(title)}[/bold yellow]")
+        console.print(f"[yellow]{_display(question)}[/yellow]")
         if options:
             for i, opt in enumerate(options, 1):
-                console.print(f"  [green]{i}[/green]. {opt}")
+                console.print(f"  [green]{i}[/green]. {_display(opt)}")
             if multiple:
                 hint = "comma-separated numbers to select multiple"
             else:
