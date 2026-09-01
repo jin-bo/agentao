@@ -3,7 +3,7 @@
 > **⚠️ 仅分析。本文任何内容都未被授权实施。** §1 是**发现的优先级排序**，不是排期表。引用该表时请连
 > 同本行一起引。
 
-**状态：** 分析，**rev 14**（2026-09-01）。
+**状态：** 分析，**rev 15**（2026-09-01）。
 **锚点：** codex `openai/codex@b7cd519c76`（2026-08-31）；gemini-cli
 `google-gemini/gemini-cli@0bd1d4397`（2026-08-28）；pi-mono `@853a80d26`（2026-08-28）；agentao
 `main@afda2ea`（2026-08-31）。四方全部读钉住该 commit 的本地 worktree —— 任何一方都没有把厂商文档
@@ -22,6 +22,7 @@
 
 | rev | 发现 | 头条 |
 |---|---|---|
+| 15 | 3 条（P3） | **「在本仓内唯一」这条规则太弱，另有两条行段引用装不下它们自己引的话。** 对 §2、§7 做内容核对 —— 58 条引用，**每一条实质断言都站得住**，其中四条负向断言在锚点上以全仓 grep 证实（两个 agent 工具类全仓无实例化；`cli_help` 没有定义文件；两个 background 工具确实不在 `ALL_BUILTIN_TOOL_NAMES` 里；`MemoryTool` 这个标识符已**整体消失**，比 §7 说的更彻底）。三处缺陷：`tooling/registry.py:44-46` 所引的那句话结束于 `:47`，**所引行段装不下自己的引文**；`agentao/tools/__init__.py:10,32` 说「两者都被导出」，而两条 `__all__` 在 `:31` 与 `:32`；以及**13 条引用短于本仓的约定根**，其中十条是欠限定。十条全部归一。§10 那条规则现在是一条**下限**而非等式 —— 过度限定被允许，而对 `packages/coding-agent/src/extensions/index.ts` 是必需的。 |
 | 14 | 18 条（P3） | **§10 从 rev 2 起就在引用的那条规则，从未施加到本文自身。** rev 13 一条一条修掉了两处裸 basename；把被引用的不同文件名扫一遍，发现共 **23** 个，其中五个是有意保留的（§10 的三条反例、rev 13 的两条历史引文），**18 个是现役的**。这 18 条现在都带上了在本仓内唯一的路径，每份孪生共 37 处，并按各仓既有的书写根归一 —— codex 去 `codex-rs/`、gemini-cli 去 `packages/`、pi-mono 去 `packages/coding-agent/src/`、agentao 用包根（`agent.py` 与 `context_manager.py` 本身就是该路径，未动）。其中两条不只是文体问题：`scheduler.ts` 所在仓另有 `agents/agent-scheduler.ts`；`local-executor.ts` 只在 §8 已撤回的子 agent 那条里出现。**方法：** 一个在本仓内唯一的裸 basename 是**能解析的**，所以 rev 3–13 的任何一次机检都看不见它们 —— 这条规则需要它自己的查询，而不是更严的解析器。计数不变（188 条引用、184 条可解析、孪生序列相同）：给路径加限定既不增也不减引用。 |
 | 13 | 3 条（P3） | **第一次去读引用**指向的行**、而不只是解析它的地址，两处缺陷都是本文自己的规则反噬。**rev 12 只做了*机检* —— 地址存在 —— 那种检查看不见「解析得到、但指错了东西」。把 §3、§4 的 26 条引用逐条读回来：每一条实质断言都站得住，四处标称「原话」的全部逐字命中；另有两处精度缺陷：`agent-loop.ts:617-624` 是**裸 basename** —— §10 自己立的禁令，被一条**现役**引用违反，而不是被引来当反例的那三条 —— 且它跨越了 §2.4 明说「不可混为一谈」的 `packages/agent` ↔ `packages/coding-agent` 边界，而相邻那条却是带路径写的；它的行段还框住了**调用点**，真正确立「照常执行」的是 `:634` 与 `:653`。`model_info.rs:142` 指的是文档注释行，函数在 `:143`、被引的那句 warn 在 `:144`。**方法记录：**rev 10–12 用来数数的那个解析器，**比它所校验的断言更宽松** —— 跨四仓后缀匹配、取首个命中 —— 于是报出 **184/186**，高于声称的 182，靠的正是把 §10 自己的两条反例引用「解析」掉了。一个比断言更宽容的检查器只会同意；**数字比断言还好看**就是破绽。只有分级匹配（精确 → 限定仓 → 后缀，歧义计为未解析）才复现出 182/3/1。 **第三条发现，来自 rev 12 新增的那项单元格计数检查：** rev 7 那行在两份孪生里都渲染成**五**列 —— `` `/^gemini-2(\.\|$)/.test(model)` `` 里那个未转义的 `\|`，在表格中不受代码跨度保护。这正是 4d 那条缺陷活过了写下 4d 的那一版；而同一份文档在两百行后的正文里把同一个字符串渲染得完全正确 —— 那里转义反而是错的。只在表格行内转义。 |
 | 12 | 2 条（P3） | **同一处记账疏漏犯了两次：把一次更正写进了它所更正的那一行。** rev 11 的修复被写进 rev 10 的格子里、没有单开一行，于是修订表第二次少报了评审轮数 —— 本文给自己定的规则是每一轮评审都要有一行，而只改措辞的一轮同样是一轮。另有一处 rev 11 带来的单位错误：代码块里的引用是**两行上的三个 token**，不是「三行」—— 其中两个落在 §10 复核配方的同一行上。 |
@@ -29,11 +30,11 @@
 | 10 | 1 条（P3） | **一个自指的计数错了九版，因为产出它的检查器与它所校验的那句断言口径不一致。** README 写的是 180 条 `path:line` 引用，实际是 **186** 条。校验脚本的模式要求引用必须**占满整个**反引号片段，于是少数了。每一轮都报低，而每一轮都把这个数字原样抄下去、没有复核。修法是把**计数口径**与数字写在一起（文件内每一个 `path:line` token，无论有无反引号，含代码块），并把总数拆开：182 条解析到唯一非空行，余下 4 条是有意为之 —— rev 1 的三条*错误*引用被逐字引在 §10 的 basename 方法笔记里，外加 `<repo-root>/pyproject.toml` 占位符。这条教训不止于本文：**一个关于文档的指标，并不豁免于该文档自己的评审纪律**，而检查器的沉默只有它的模式那么宽。|
 | 9 | 1 条（P2），**核查它时又找出 1 个同行缺陷** | **rev 8 修好两格投影、却把第三格写反了。** 它称 gemini-cli「每次构建 schema 都重新过滤，所以 `registerTool` 在下一个请求组装时就落地」。并非如此：`GeminiChat` 缓存工具表，`registerTool` 只写 `allKnownTools`、不使任何缓存失效（`core/src/tools/tool-registry.ts:271`），而 `core/src/core/client.ts:801` 虽然每请求都调 `setTools(modelToUse)`，`setTools` 却在**模型未变时早返回**（`core/src/core/client.ts:311-313`）。刷新点是 `startChat`、显式**无参** `setTools()`（绕开该判断 —— 这正是 `PLAN`/`YOLO` 切换有效的原因）、以及换模型。核查这件事又带出**发现 6**：`reloadSkills()` 用新枚举重新注册 `ActivateSkillTool`，却只调 `updateSystemInstructionIfInitialized()`（`core/src/config/config.ts:3693-3699`）、从不调 `setTools()` —— 于是运行时重载技能后模型停在**过期 schema** 上。agentao 到不了这个状态；它在每次 `chat()` 开头重新投影。 |
 | 8 | 1 条（P2） | **四阶段表最后一列，对一半的行答错了问题。**「schema 投影」问的是*何时*，而 rev 7 给 pi-mono 和 agentao 填的是*什么* ——「就是激活集，不再过滤」「非 plan 轮次扣掉 plan 专属工具」。时点才是有意思的部分，而且差别很实在：gemini-cli **每次**构建 schema 都重新过滤，所以 `registerTool` 在下一个请求组装时就落地；pi-mono 推迟到**下一个 agent turn**（`setActiveToolsByName` 自己的契约，`core/agent-session.ts:965-971`）；agentao 最严 —— `to_openai_format(...)` 在 `runtime/chat_loop/_runner.py:348` 只跑一次，位于内层工具调用循环**之上**，所以轮中途 `add_tool` 加的工具，无论循环再跑多少次都不可见，这正是 `add_tool` docstring 写明的契约（`agent.py:906-914`）。这一列决定了构建后的注册表变更何时到达模型 —— 把它与变更那一列分开，图的就是这个。 |
-| 7 | 3 条（1 条 P1、2 条 P2） | **「代价必然是一张逐模型目录」本身就是给最高优先级发现加的一条无据约束。** rev 5–6 写两个同行维护的都是逐模型表；codex 是（且与 `provider.capabilities()` 混用，`view_image` 两者都不用），但 **gemini-cli 的是正则** —— `/^gemini-2(\.\|$)/.test(model)`（`config/models.ts:458`），它自己的注释称之为 *"legacy behavior"*。形态并不定死，所以发现 1 与 §9 现在写作代价是**拥有某条被持续维护的兼容性事实**，把正则、逐 provider 开关留在桌面上。另两条是传导失败：rev 6 把 §4 拆成四阶段，§0 却仍宣布**三个**「四家各在不同一格」，与 §4 自己那句「四列不构成划分」矛盾；§10 的入口三处写错 —— pi-mono 的 `allToolNames` 是名字集合不是构建步骤（入口是 `_buildRuntime`，而 `reload()` **会再跑一遍**，`core/agent-session.ts:2820`，所以表里的「一次」也错了），agentao 的完整入口是 `agent.py::_wire_tooling`（`:578`）而非它内部调用的 `register_builtin_tools`。最后，rev 6 说 `max_tokens`「每次请求都发出去」范围过宽：`chat()`/`chat_stream()` 默认 `None`（`llm/client.py:430,534`），kwarg 只在 `if max_tokens` 时才加（`:419`）—— **主 agent 路径**会转发（`runtime/llm_call.py:138`），压缩摘要不会（`context_manager.py:1573`），所以 65536 的隐患限定在该路径 + 会静默钳制的端点。 |
-| 6 | 3 条（1 条 P1、1 条 P2、1 条 P3） | **rev 5 为那个先例所作的辩护错在一处新地方，所以整条论断现在改为直接引源、不再靠推。** rev 5 说 agentao「没有对应物」于 pi-mono 的 `maxTokens`，并拿 `grep -r context_window agentao/` = 0 当证据 —— **搜错了字段**：`maxTokens` 是被请求的*输出*上限，而 agentao 有 `LLMClient.max_tokens`（`llm/client.py:139,188,419-421`），且由 ACP 映射（`acp/session_set_model.py:10`）。真正的差别在**默认值** —— pi 会落到逐模型注册表值（`ai/src/api/simple-options.ts:34`），agentao 落到一律 `65536` —— 所以该借鉴在宿主逐模型设置时可移植、在出厂默认下不安全，那是*默认值*问题不是目录问题。rev 5 还称 `supportsFinishReason` 与目录无关；它可在 **provider 与 model 两级**配置（`test/model-registry.test.ts:771-778`）—— 不属于目录的是 agentao 反向采纳它的*理由*。结论：**本仓没有任何先例裁定过目录问题**，§9 的「provider-neutral 下维护不了」作为无据之词撤回。另：三阶段表把注册表*变更*放进了激活集列，还与自己那句「没有两家在同一阶段变」矛盾 —— 现改为**四**列（初始构建／之后注册表变更／激活选择／schema 投影），四家里三家在构建后仍改注册表；§10 的「每家恰好一个入口」收窄为*初始*构建。 |
-| 5 | 4 条（1 条 P1、3 条 P2），**其中 1 条部分存疑** | **这条 P1 是引了一份不存在的文档**，而且它给结论承重：rev 4 用「`isRecoverableLength` 在 `pi-mono-pull-review-2026-08-09` 里被自我否掉」支撑 §4/§9 的目录结论。`docs/design/` 只有 `-2026-08` 和 `-2026-08-21`，**没有 `-08-09`** —— 那次评审是项目记录、不是设计文档，故引用撤回。**但实质结论没有被推翻**，评审的后半段存疑：`isRecoverableLength` 的*函数体*（`ai/src/utils/overflow.ts:171`）确实不含逐模型数据，可它的**调用点**传的是 `this.model?.maxTokens ?? 0`（`core/agent-session.ts:2156`），对应模型类型上的必填字段（`packages/ai/src/types.ts:836`），而 `grep -r context_window agentao/` 是 **0**。这个依赖是真的；只读签名就停下，正是 §10 第二条方法笔记换了个地方。该段现在改写为：确有一次借鉴以目录为由被否，但那针对的是单个谓词 —— 一般问题从未被提出。`supportsFinishReason` 是另一条，被反向采纳是因为 `INCOMPLETE_ANSWER_REASONS` 的取值会变成 CLI error envelope（`docs/design/pi-mono-pull-review-2026-08.md:58`）。其余三条：`enabled_tools` **接受不了** MCP 名字 —— 保留名守卫在活注册表校验之前就拒掉 `mcp_`（`agent.py:449-452`、`tests/test_host_tool_allowlist.py:138`）；§5 已把动机降为推测，§9 却仍写着 pi-mono/codex 的一致「讲的是 context 成本」；§4 的「每轮还是每会话一次」仍在压平**三个**阶段，而没有任何两家在同一阶段上变 —— 现改为一张按*注册表构建* / *激活集变化* / *schema 投影*分列的表，只有 codex 是逐轮重建。 |
+| 7 | 3 条（1 条 P1、2 条 P2） | **「代价必然是一张逐模型目录」本身就是给最高优先级发现加的一条无据约束。** rev 5–6 写两个同行维护的都是逐模型表；codex 是（且与 `provider.capabilities()` 混用，`view_image` 两者都不用），但 **gemini-cli 的是正则** —— `/^gemini-2(\.\|$)/.test(model)`（`core/src/config/models.ts:458`），它自己的注释称之为 *"legacy behavior"*。形态并不定死，所以发现 1 与 §9 现在写作代价是**拥有某条被持续维护的兼容性事实**，把正则、逐 provider 开关留在桌面上。另两条是传导失败：rev 6 把 §4 拆成四阶段，§0 却仍宣布**三个**「四家各在不同一格」，与 §4 自己那句「四列不构成划分」矛盾；§10 的入口三处写错 —— pi-mono 的 `allToolNames` 是名字集合不是构建步骤（入口是 `_buildRuntime`，而 `reload()` **会再跑一遍**，`core/agent-session.ts:2820`，所以表里的「一次」也错了），agentao 的完整入口是 `agent.py::_wire_tooling`（`:578`）而非它内部调用的 `register_builtin_tools`。最后，rev 6 说 `max_tokens`「每次请求都发出去」范围过宽：`chat()`/`chat_stream()` 默认 `None`（`llm/client.py:430,534`），kwarg 只在 `if max_tokens` 时才加（`:419`）—— **主 agent 路径**会转发（`runtime/llm_call.py:138`），压缩摘要不会（`context_manager.py:1573`），所以 65536 的隐患限定在该路径 + 会静默钳制的端点。 |
+| 6 | 3 条（1 条 P1、1 条 P2、1 条 P3） | **rev 5 为那个先例所作的辩护错在一处新地方，所以整条论断现在改为直接引源、不再靠推。** rev 5 说 agentao「没有对应物」于 pi-mono 的 `maxTokens`，并拿 `grep -r context_window agentao/` = 0 当证据 —— **搜错了字段**：`maxTokens` 是被请求的*输出*上限，而 agentao 有 `LLMClient.max_tokens`（`llm/client.py:139,188,419-421`），且由 ACP 映射（`acp/session_set_model.py:10`）。真正的差别在**默认值** —— pi 会落到逐模型注册表值（`packages/ai/src/api/simple-options.ts:34`），agentao 落到一律 `65536` —— 所以该借鉴在宿主逐模型设置时可移植、在出厂默认下不安全，那是*默认值*问题不是目录问题。rev 5 还称 `supportsFinishReason` 与目录无关；它可在 **provider 与 model 两级**配置（`packages/coding-agent/test/model-registry.test.ts:771-778`）—— 不属于目录的是 agentao 反向采纳它的*理由*。结论：**本仓没有任何先例裁定过目录问题**，§9 的「provider-neutral 下维护不了」作为无据之词撤回。另：三阶段表把注册表*变更*放进了激活集列，还与自己那句「没有两家在同一阶段变」矛盾 —— 现改为**四**列（初始构建／之后注册表变更／激活选择／schema 投影），四家里三家在构建后仍改注册表；§10 的「每家恰好一个入口」收窄为*初始*构建。 |
+| 5 | 4 条（1 条 P1、3 条 P2），**其中 1 条部分存疑** | **这条 P1 是引了一份不存在的文档**，而且它给结论承重：rev 4 用「`isRecoverableLength` 在 `pi-mono-pull-review-2026-08-09` 里被自我否掉」支撑 §4/§9 的目录结论。`docs/design/` 只有 `-2026-08` 和 `-2026-08-21`，**没有 `-08-09`** —— 那次评审是项目记录、不是设计文档，故引用撤回。**但实质结论没有被推翻**，评审的后半段存疑：`isRecoverableLength` 的*函数体*（`packages/ai/src/utils/overflow.ts:171`）确实不含逐模型数据，可它的**调用点**传的是 `this.model?.maxTokens ?? 0`（`core/agent-session.ts:2156`），对应模型类型上的必填字段（`packages/ai/src/types.ts:836`），而 `grep -r context_window agentao/` 是 **0**。这个依赖是真的；只读签名就停下，正是 §10 第二条方法笔记换了个地方。该段现在改写为：确有一次借鉴以目录为由被否，但那针对的是单个谓词 —— 一般问题从未被提出。`supportsFinishReason` 是另一条，被反向采纳是因为 `INCOMPLETE_ANSWER_REASONS` 的取值会变成 CLI error envelope（`docs/design/pi-mono-pull-review-2026-08.md:58`）。其余三条：`enabled_tools` **接受不了** MCP 名字 —— 保留名守卫在活注册表校验之前就拒掉 `mcp_`（`agent.py:449-452`、`tests/test_host_tool_allowlist.py:138`）；§5 已把动机降为推测，§9 却仍写着 pi-mono/codex 的一致「讲的是 context 成本」；§4 的「每轮还是每会话一次」仍在压平**三个**阶段，而没有任何两家在同一阶段上变 —— 现改为一张按*注册表构建* / *激活集变化* / *schema 投影*分列的表，只有 codex 是逐轮重建。 |
 | 4 | 5 条（2 条 P1、2 条 P2、1 条 P3） | **两个数字、一处出处判断错了，还有一条领先项把两套机制并成了一条。**（a）gemini-cli 的 19–20 是**注册**数；`getFunctionDeclarations()` 每次构建都重新过滤（`core/src/tools/tool-registry.ts:601-624`）—— 无 MCP 时藏掉两个资源工具，`enter_`/`exit_plan_mode` 按模式互斥 —— 所以裸会话给模型看到的是 **16–17**。这同时推翻 rev 3 的「整个会话是常量集」（模式切换会调 `setTools()`，`core/src/config/config.ts:2810-2819`）和 §8 的「始终可见、只在执行期管」。（b）codex 的 `ModelInfo` **不是模型自声明**：它是 harness／backend 维护的目录，按 **slug 前缀**匹配（`models-manager/src/manager.rs:617-631`），未命中则带告警回退（`models-manager/src/model_info.rs:143-144`），所以 §9 的反对意见是**要自己养一张逐模型目录**，不是「provider 不发送」。（c）「明确的 context 成本赌注」属动机归因 —— 源码只能证明 pi-mono 压住那三个工具并用 shell 提示词兜底（`core/system-prompt.ts:99-111`），现已标为**推测、未测量**。（d）`enabled_tools` 与 `disable_tools` 用的是**不同**守卫 —— 活注册表 ∪ 常量（`tooling/registry.py:195-205`）vs 只查静态常量（`agent.py:466-472`）。（e）§8 已减到两条，正文却还写着「下面三条保留」。 |
-| 3 | 5 条（2 条 P1、3 条 P2） | **rev 2 自己的更正也过宽了，三次。**（a）codex 的*读*工具同样不是 0 —— `view_image` 接收本地路径、按环境 cwd 解析、经沙箱文件系统读取（`handlers/view_image_spec.rs:19`、`handlers/view_image.rs:150-175`），Stable 且默认开（`features/src/lib.rs:889-893`）。该列现在明确限定为**通用文本／源码**读取，活下来的论断是「没有通用读取器」而非「没有读取器」。它还是 **§4 的反例**：`view_image` 注册时不看 `input_modalities`（`core/src/tools/spec_plan.rs:1259`），改在执行期拒（`handlers/view_image.rs:97-105`），所以 codex 是混合策略、不是干净的能力门控。（b）pi-mono 默认**根本没有按工具的权限边界** —— 没有处理器时 `beforeToolCall` 返回 `undefined`（`core/agent-session.ts:489-492`），调用照常执行（`packages/agent/src/agent-loop.ts:634,653`）；权限门是*示例*扩展。（c）`activate_skill` 上 rev 2 既说 gemini-cli「同意 agentao」又说 ask 是第三个位置 —— 自相矛盾；且该 ask 规则带 `interactive = true`（`core/src/policy/policies/plan.toml:110`），非交互时落到 catch-all DENY（`:76-80`）。另外：§8 的子 agent 绑定那条**撤回**（gemini-cli 同样继承父注册表并浅克隆，`core/src/agents/local-executor.ts:190-200` / `core/src/tools/tools.ts:480`），plan 模式那条**重述** —— §9 曾称 agentao 把 plan 模式挡在工具面外，与 §2.1 自己的 `plan_save` / `plan_finalize` 矛盾；真正的 1/4 是*模式进入/退出*做成模型工具。§8 现在是**两条**领先项。 |
+| 3 | 5 条（2 条 P1、3 条 P2） | **rev 2 自己的更正也过宽了，三次。**（a）codex 的*读*工具同样不是 0 —— `view_image` 接收本地路径、按环境 cwd 解析、经沙箱文件系统读取（`core/src/tools/handlers/view_image_spec.rs:19`、`core/src/tools/handlers/view_image.rs:150-175`），Stable 且默认开（`features/src/lib.rs:889-893`）。该列现在明确限定为**通用文本／源码**读取，活下来的论断是「没有通用读取器」而非「没有读取器」。它还是 **§4 的反例**：`view_image` 注册时不看 `input_modalities`（`core/src/tools/spec_plan.rs:1259`），改在执行期拒（`core/src/tools/handlers/view_image.rs:97-105`），所以 codex 是混合策略、不是干净的能力门控。（b）pi-mono 默认**根本没有按工具的权限边界** —— 没有处理器时 `beforeToolCall` 返回 `undefined`（`core/agent-session.ts:489-492`），调用照常执行（`packages/agent/src/agent-loop.ts:634,653`）；权限门是*示例*扩展。（c）`activate_skill` 上 rev 2 既说 gemini-cli「同意 agentao」又说 ask 是第三个位置 —— 自相矛盾；且该 ask 规则带 `interactive = true`（`core/src/policy/policies/plan.toml:110`），非交互时落到 catch-all DENY（`:76-80`）。另外：§8 的子 agent 绑定那条**撤回**（gemini-cli 同样继承父注册表并浅克隆，`core/src/agents/local-executor.ts:190-200` / `core/src/tools/tools.ts:480`），plan 模式那条**重述** —— §9 曾称 agentao 把 plan 模式挡在工具面外，与 §2.1 自己的 `plan_save` / `plan_finalize` 矛盾；真正的 1/4 是*模式进入/退出*做成模型工具。§8 现在是**两条**领先项。 |
 | 2 | 8 条（3 条 P1、4 条 P2、1 条 P3） | **三处表格单元格翻案。**（a）codex **不是**「0 个文件工具」—— `apply_patch` 就是模型可见的工作区写工具，其 handler 把 patch 应用到环境文件系统，并**按目标路径**推导写权限（`core/src/tools/handlers/apply_patch.rs:73,236-270`），因此「权限单位**不可能**是工具」与「3:1 多数派」两条推论**一并撤回**；真正的分歧在**读**那一半（§3）。（b）发现 3 引错了常量 —— `PLAN_MODE_TOOLS` **全仓没有运行时消费者**；真正生效的策略是 `read-only.toml` / `plan.toml`，而它对 `activate_skill` 给的是 **ask** 不是 allow。「三个都不碰工作区」对 `save_memory` 也不成立，它会写入 SQLite（§5）。（c）「每次调用都过引擎」在 read-only 路径上不成立（短路点在引擎**之上**），而 gemini-cli **确实**有统一策略通道（`core/src/scheduler/scheduler.ts:648-652`）—— §8 第一条领先项撤回，其余三条保留。另有：默认计数缺宿主限定（直接嵌入 11/13，走工厂 13/15）；`cli_help` 是公开导出、宿主可注册，「死类」说法过强；gemini-cli **确实**按模型名启发式门控（`isGemini2Model`），与 rev 1 自己的 §2.3 矛盾；`get_internal_docs` 对 `cli_help` 子 agent 的模型可达，既然 §6 把子 agent 作用域的 `complete_task` 纳入范围，§10 就不能把它列为模型不可达。 |
 
 ---
@@ -63,8 +64,8 @@
 
 | # | 发现 | 位置 | 类型 |
 |---|---|---|---|
-| 1 | agentao **只按宿主配置门控，从不看模型**。codex 是混合的：一部分看 harness 维护的 `ModelInfo` 目录，一部分看 `provider.capabilities()`，而 `view_image` 两者都不看 —— 先放行、执行期再拒。gemini-cli 唯一那道模型门是**模型名正则**（`isGemini2Model`，`config/models.ts:458`），不是目录。空白是真的；填上它的代价是**拥有某条被持续维护的兼容性事实**，形态并不定死 —— 正则、逐 provider 开关都在桌面上。 | §4 | 空白，需求未量化 |
-| 2 | **`cli_help` 在 agentao 树内没有任何实例化**，而那句「它们在别处注册」的注释（`tooling/registry.py:44-46`）点名了一个没有定义文件的工具。两个类都仍可经公开的 `extra_tools=` 注入点到达，所以这是**一句过时注释加两个从不默认注册的导出**，不是死代码。 | §7 | 文档/代码漂移，我方 |
+| 1 | agentao **只按宿主配置门控，从不看模型**。codex 是混合的：一部分看 harness 维护的 `ModelInfo` 目录，一部分看 `provider.capabilities()`，而 `view_image` 两者都不看 —— 先放行、执行期再拒。gemini-cli 唯一那道模型门是**模型名正则**（`isGemini2Model`，`core/src/config/models.ts:458`），不是目录。空白是真的；填上它的代价是**拥有某条被持续维护的兼容性事实**，形态并不定死 —— 正则、逐 provider 开关都在桌面上。 | §4 | 空白，需求未量化 |
+| 2 | **`cli_help` 在 agentao 树内没有任何实例化**，而那句「它们在别处注册」的注释（`tooling/registry.py:44-47`）点名了一个没有定义文件的工具。两个类都仍可经公开的 `extra_tools=` 注入点到达，所以这是**一句过时注释加两个从不默认注册的导出**，不是死代码。 | §7 | 文档/代码漂移，我方 |
 | 3 | **`/mode read-only` 拒掉 `activate_skill`、`todo_write`、`save_memory`。** 前两个只改会话状态，`save_memory` 会写 SQLite。这是既定规则的正确推论。对照点在于：gemini-cli **生效中**的只读策略显式放行那些只改内部状态的工具（`tracker_*`、`update_topic`、`complete_task`），注释也这么写；而它对 `activate_skill` 是**交互时 ask、非交互时 deny**（`core/src/policy/policies/plan.toml:105-110` 加 `:76-80` 的 catch-all）—— 这个中间位置在 agentao 的布尔 `is_read_only` 门上放不下。 | §5 | 策略问题，我方 |
 | 4 | gemini-cli 注册了两个模型可见的工具，却**不在它自己的 `ALL_BUILTIN_TOOL_NAMES` 里**；而它对那个常量唯一的测试，是拿清单跟自己比、方向上不可能失败。agentao 有同形状的常量，而且**有**反方向的那条测试。 | §7 | 同行缺陷；反证我方 |
 | 5 | **`complete_task` 在 agentao 和 gemini-cli 里都是子 agent 专属工具**，且是各自独立得出的。两个数据点指向：子 agent 的终态信号该放在 scoped registry，不该进主注册表。 | §6 | 趋同，无动作 |
@@ -129,7 +130,7 @@
 | 多 agent v1 | `multi_agent_v1.{spawn_agent,send_input,resume_agent,wait_agent,close_agent}` | `:1334` |
 | 多 agent v2 | `spawn_agent`、`send_message`、`followup_task`、`wait_agent`、`interrupt_agent`、`list_agents` | `:1291` |
 | 发现 / Code Mode | `tool_search`、`exec`、`wait` | `tools/src/tool_discovery.rs:6`、`code-mode-protocol/src/lib.rs:51-52` |
-| Hosted + 扩展 | `web_search`（服务端）、`web.run`、`image_gen.imagegen`、`skills.{list,read}`、`memories.{list,read,search,add_ad_hoc_note}`、`history.*`/`notes.*`（9 个）、`get_goal`/`create_goal`/`update_goal` | `tools/hosted_spec.rs:14`；`ext/` 下六个 `ToolContributor` 实现 |
+| Hosted + 扩展 | `web_search`（服务端）、`web.run`、`image_gen.imagegen`、`skills.{list,read}`、`memories.{list,read,search,add_ad_hoc_note}`、`history.*`/`notes.*`（9 个）、`get_goal`/`create_goal`/`update_goal` | `core/src/tools/hosted_spec.rs:14`；`ext/` 下六个 `ToolContributor` 实现 |
 
 默认值在 `features/src/lib.rs` 里以 `FeatureSpec { stage, default_enabled }` 形式给出。默认开：
 `shell_tool`、`unified_exec`、`view_image`、`sleep_tool`、`multi_agent`（v1）、`image_generation`、
@@ -177,7 +178,7 @@ plan 模式内藏 `enter_`，plan 模式外藏 `exit_`。所以一个没有 MCP 
 **16–17 个**，不是 19–20。
 
 `invoke_agent` 背后的内置子 agent：`codebase_investigator`、`cli_help`、`generalist`、`browser`
-（配置门控）—— `agents/registry.ts:286-313`。
+（配置门控）—— `core/src/agents/registry.ts:286-313`。
 
 ### 2.4 pi-mono —— 内置 8 个，**激活 4 个**
 
@@ -197,7 +198,7 @@ plan 模式内藏 `enter_`，plan 模式外藏 `exit_`。所以一个没有 MCP 
 
 **没有 MCP 客户端。** `@modelcontextprotocol/sdk` 只作为传递依赖出现在 lockfile 里，仓库内没有任何
 `package.json` 声明它。没有 web search、没有 web fetch、没有 todo、没有子 agent、没有 plan 模式工具。
-唯一的内置扩展是 `llama.cpp` —— 那是 provider 不是工具（`src/extensions/index.ts:4`）。`todo` 是
+唯一的内置扩展是 `llama.cpp` —— 那是 provider 不是工具（`packages/coding-agent/src/extensions/index.ts:4`）。`todo` 是
 `examples/extensions/todo.ts`，示例。
 
 ---
@@ -222,9 +223,9 @@ gemini-cli 的 `TOOLS_REQUIRING_NARROWING`。rev 1 从那个 0 推出的两条�
 能**是工具、以及三比一让 agentao 站在多数派 —— **一并撤回**。
 
 **rev 2 接着说 codex 有 0 个*读*工具。这一条同样错，而且这才是这条轴真正的形状。** `view_image` 的
-`path` 参数文档写的就是 *"Local filesystem path to an image file"*（`handlers/view_image_spec.rs:19`），它
+`path` 参数文档写的就是 *"Local filesystem path to an image file"*（`core/src/tools/handlers/view_image_spec.rs:19`），它
 按环境 cwd 解析该路径，并经沙箱文件系统读取 —— 先 `fs.get_metadata(...)` 再
-`fs.read_file(&path_uri, ReadFileOptions::default(), Some(&sandbox))`（`handlers/view_image.rs:150-175`）。
+`fs.read_file(&path_uri, ReadFileOptions::default(), Some(&sandbox))`（`core/src/tools/handlers/view_image.rs:150-175`）。
 它是 `Stage::Stable, default_enabled: true`（`features/src/lib.rs:889-893`），只要存在环境就注册
 （`core/src/tools/spec_plan.rs:1259`），因此默认会话里模型可见。所以 codex **确实**有一条经工具中介的工作区读取路径。
 
@@ -238,7 +239,7 @@ server 下的示例，以及 `notes.read_file`（history-notes 扩展**自己的
 **pi-mono 那一行也要改。** rev 2 写「按工具，`bash` 是逃生口」；根本没有可逃的按工具边界。在没有任何
 扩展注册 `tool_call` 处理器时，`beforeToolCall` 直接返回 `undefined`
 （`core/agent-session.ts:489-492`），调用随后照常执行（`packages/agent/src/agent-loop.ts:634,653`）。权限门是
-**示例**（`examples/extensions/permission-gate.ts:13`），不是策略。准确的一行是：**默认没有权限策
+**示例**（`packages/coding-agent/examples/extensions/permission-gate.ts:13`），不是策略。准确的一行是：**默认没有权限策
 略；只有一个统一的可选拦截钩子。**
 
 **对 agentao 的含义也相应变窄。** `runtime/tool_planning.py::_decide`（`:487-518`）是三层，而第一层
@@ -264,7 +265,7 @@ codex 每轮按三组互相独立的输入重算 —— feature flag、**逐模�
 **但并不统一，rev 2 说过头了。** `view_image` 的注册条件只有
 `environment_mode.has_environment() && features.enabled(Feature::ViewImage)`（`core/src/tools/spec_plan.rs:1259`）
 —— 注册期**根本不看** `input_modalities`。一个纯文本模型照样能在 schema 里看到 `view_image`，然后在
-*执行*期被 `FunctionCallError::RespondToModel` 拒掉（`handlers/view_image.rs:97-105`）。`model_info` 确实会
+*执行*期被 `FunctionCallError::RespondToModel` 拒掉（`core/src/tools/handlers/view_image.rs:97-105`）。`model_info` 确实会
 影响那个工具的 *schema*（`can_request_original_image_detail`），但影响不到它在不在。所以对 codex 的
 诚实描述是**「一部分工具按声明能力收窄，另一部分先放进来、执行期再拒」**—— 是混合策略，不是干净的能
 力门控。
@@ -320,7 +321,7 @@ agentao 在最远端；一个吃不下某工具的模型，没有任何途径让
 **卡点不在传输、在维护 —— 但「维护什么」不是定死的，而 rev 5 把它写得过于具体。** rev 3 论证说
 codex 的答案「需要 agentao 的 provider 并不发送的结构化能力声明」；那个说法在元数据被追到目录侧之后
 就作废了。rev 5 转而写「两个同行维护的都是逐模型表」—— 这对 codex 成立，对 gemini-cli **不成立**：
-`isGemini2Model` 就是 `/^gemini-2(\.|$)/.test(model)`（`config/models.ts:458`），其注释称之为
+`isGemini2Model` 就是 `/^gemini-2(\.|$)/.test(model)`（`core/src/config/models.ts:458`），其注释称之为
 *"legacy behavior"* —— 那是正则，不是目录。codex 本身也是混合的：一部分决策看 `ModelInfo`，一部分看
 `provider.capabilities()`，而 `view_image` 两者都不看。
 
@@ -342,7 +343,7 @@ codex 的答案「需要 agentao 的 provider 并不发送的结构化能力声�
 （`context_manager.py:1573`）—— 整个字段都不发。rev 6 那句「每次请求都发出去」范围过宽。
 
 真正的差别在**默认值，不在字段**。pi 解析这个数是 `options?.maxTokens ?? model.maxTokens` 再做钳制
-（`ai/src/api/simple-options.ts:34`），所以调用方不指定时会落到**逐模型注册表里的值**；agentao 的构
+（`packages/ai/src/api/simple-options.ts:34`），所以调用方不指定时会落到**逐模型注册表里的值**；agentao 的构
 造器默认是对所有模型一律 `65536`（`llm/client.py:139`）。`usage.output < desiredMaxOutput` 只有在这
 个数确实等于端点会放行的量时才成立 —— 向一个会**静默钳制**输出到 8192 的端点发 65536，每一次真实的
 满输出停止都会满足该谓词。所以这个隐患被两重限定：只在**主 agent 路径**（唯一转发该值的路径），且只
@@ -350,7 +351,7 @@ codex 的答案「需要 agentao 的 provider 并不发送的结构化能力声�
 可移植，在 agentao 出厂默认 + 这类端点上不安全** —— 那是个默认值问题，跟能力目录无关。
 
 **`supportsFinishReason` 也是逐模型的**，与 rev 5 所说相反：pi 允许它在 **provider 与 model 两级**
-配置（`test/model-registry.test.ts:771-778`）。不属于逐模型的是 agentao 反向采纳它的*理由* ——
+配置（`packages/coding-agent/test/model-registry.test.ts:771-778`）。不属于逐模型的是 agentao 反向采纳它的*理由* ——
 `INCOMPLETE_ANSWER_REASONS` 里每个取值都会变成 CLI 的 error envelope，加进去等于让每个不发该字段的
 provider 硬失败（`docs/design/pi-mono-pull-review-2026-08.md:58`）。
 
@@ -433,8 +434,8 @@ catch-all（`toolName = "*"`、`decision = "deny"`，`core/src/policy/policies/p
 
 **agentao —— 发现 2。** `agentao/tools/agents.py` 定义了 `CLIHelpAgentTool`（`:8`，名字
 `cli_help`）和 `CodebaseInvestigatorTool`（`:43`，名字 `codebase_investigator`）。两者都导出了
-（`agentao/tools/__init__.py:10,32`），而且**在 `agentao/` 和 `tests/` 里没有任何一处实例化**。
-`tooling/registry.py:44-46` 的注释说 agent-path 工具「(codebase_investigator / cli_help) register
+（`agentao/tools/__init__.py:10,31-32`），而且**在 `agentao/` 和 `tests/` 里没有任何一处实例化**。
+`tooling/registry.py:44-47` 的注释说 agent-path 工具「(codebase_investigator / cli_help) register
 elsewhere and are intentionally out of scope」—— 只对一半。`codebase_investigator` 确实作为 agent
 **定义**存在，注册为 `agent_codebase_investigator`（`agents/tools/_wrapper.py:224`），所以注释指的是一个换了名字
 的真实东西。`cli_help` 既没有定义文件（`agents/definitions/` 只有 `codebase-investigator.md` 和
@@ -502,7 +503,7 @@ elsewhere and are intentionally out of scope」—— 只对一半。`codebase_i
 
 | 候选 | 结论 | 理由 |
 |---|---|---|
-| codex 的逐轮模型能力门控 | **搁置**，需求门控 | 空白是真的（§4）。要填上它，agentao 就得拥有**某条**被持续维护的兼容性事实 —— rev 5 写的是「一张逐模型表」，那是把形态写死了：gemini-cli 的是正则（`config/models.ts:458`），codex 则是目录 + `provider.capabilities()` 混用。rev 5 还断言 agentao 在 provider-neutral 前提下**维护不了**；本次对照没有任何证据支持，而 §4 记录了这个问题从未被提出 —— 所以这一条按**需求未测量**搁置，既不是按已确立的不可行，也不预设实现形态。野外观测到具体的模型拒绝时再重开。 |
+| codex 的逐轮模型能力门控 | **搁置**，需求门控 | 空白是真的（§4）。要填上它，agentao 就得拥有**某条**被持续维护的兼容性事实 —— rev 5 写的是「一张逐模型表」，那是把形态写死了：gemini-cli 的是正则（`core/src/config/models.ts:458`），codex 则是目录 + `provider.capabilities()` 混用。rev 5 还断言 agentao 在 provider-neutral 前提下**维护不了**；本次对照没有任何证据支持，而 §4 记录了这个问题从未被提出 —— 所以这一条按**需求未测量**搁置，既不是按已确立的不可行，也不预设实现形态。野外观测到具体的模型拒绝时再重开。 |
 | codex 的 `get_context_remaining` / `new_context` | **不做** | `codex-compaction-vs-agentao.zh.md` 已分析过；token-budget 那一格的结论是「模式默认关闭」。本次对照为该结论再添一个数据点：gemini-cli 和 pi-mono 都没有等价物，所以 codex 在这条上是 1/4，不是常态。 |
 | gemini-cli 把**模式进入/退出**做成模型工具 | **不做** | rev 3 重述、rev 4 收窄：1/4 的差别是模型手里**终究有** `enter_plan_mode` / `exit_plan_mode` —— 一个能改自身权限姿态的工具。这**不是**「plan 模式挡在工具面之外」（agentao 的 `plan_save` / `plan_finalize` 在 plan 轮次里就是模型工具，§2.1），也**不是**「扣 schema vs 执行期拦」（gemini-cli 同样按模式扣这一对，`core/src/tools/tool-registry.ts:617-624`）。 |
 | pi-mono 的极小默认集 | **不做** | agentao 的 11–15 处于中位。§5 记的那次一致**只在形状上** —— 两个 harness 都给出很小的默认面，并把通用文件工作导向 shell。rev 4 已把共同*动机*降级为推测，而这一行还写着「讲的是 context 成本」，在此一并撤回。agentao 的小面旋钮是 `enabled_tools` / `disable_tools`，属宿主侧，不是出厂默认。不提议改动。 |
@@ -549,4 +550,9 @@ agentao     agentao/agent.py::_wire_tooling (:578) —— 完整入口；它依�
   错的是把 anchors 跑回源码，不是重读正文。**rev 14 才第一次把这条规则施加到全文**，而值得照抄的正是
   这一点：立下一条引用规则并不等于执行它，而执行它的手段不可能是那个解析器。一个恰好在本仓内唯一的
   裸 basename 是**能解析的**，所以 rev 3–13 每一次机检都报告干净；找出剩余那 18 条靠的是另一个查询 ——
-  把被引用的不同文件名列出来，再看哪些不带 `/`。
+  把被引用的不同文件名列出来，再看哪些不带 `/`。**rev 15 又发现「在本仓内唯一」这条规则太弱，把它改成
+  一条下限：** 任何引用都不得**短于**本仓的约定根，因为真正造成伤害的是同一个目录在同一份文档里出现两
+  种写法 —— `core/src/tools/handlers/apply_patch.rs` 与 `handlers/view_image.rs` 并列、
+  `core/src/config/config.ts` 与 `config/models.ts` 并列。两种短写法都能唯一解析，所以 rev 14 那次普查
+  （只找不带 `/` 的名字）看不见它们。**过度**限定则永远允许、有时必需 —— `extensions/index.ts` 在
+  pi-mono 里匹配到两个文件，而 §2.4 对比它那两个 package 时用全路径更清楚。
