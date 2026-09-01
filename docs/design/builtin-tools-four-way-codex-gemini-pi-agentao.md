@@ -3,7 +3,7 @@
 > **⚠️ Analysis only. Nothing here is authorized for implementation.** §1 is a **priority ordering
 > of findings**, not a work schedule. Quote this line whenever you quote the table.
 
-**Status:** analysis, **rev 13** (2026-09-01).
+**Status:** analysis, **rev 14** (2026-09-01).
 **Anchors:** codex `openai/codex@b7cd519c76` (2026-08-31); gemini-cli
 `google-gemini/gemini-cli@0bd1d4397` (2026-08-28); pi-mono `@853a80d26` (2026-08-28); agentao
 `main@afda2ea` (2026-08-31). All four read from a local worktree at the pinned commit — no vendor
@@ -25,6 +25,7 @@ transport, and permission-rule syntax — those have their own docs.
 
 | rev | Found | Headline |
 |---|---|---|
+| 14 | 18 (P3) | **The §10 rule the document has cited since rev 2, never applied to the document itself.** rev 13 fixed two bare-basename citations one at a time; a sweep of the distinct filenames cited found **23**, of which five are deliberate (§10's three counter-examples and rev 13's two historical quotes) and **18 were live**. All 18 now carry a path qualified far enough to be unique in its own repo, 37 occurrences per twin, normalised to each repo's existing root — `codex-rs/` for codex, `packages/` for gemini-cli, `packages/coding-agent/src/` for pi-mono, the package root for agentao (`agent.py` and `context_manager.py` are already that path and are unchanged). Two of the 18 were live risks rather than style: `scheduler.ts` in a repo that also has `agents/agent-scheduler.ts`, and `local-executor.ts` reached only through §8's withdrawn sub-agent lead. **Method:** a bare basename unique in its repo *resolves*, so no mechanical pass rev 3–13 ran could see these — the rule needs a query of its own, not a stricter resolver. Counts unchanged (188 citations, 184 resolving, identical sequence across twins): qualifying a path neither adds nor removes a citation. |
 | 13 | 3 (P3) | **The first pass to read the cited lines rather than resolve them, and both defects were the doc's own rule biting it.** rev 12 verified the 186 citations *mechanically* — the address exists — which cannot see a citation that resolves to the wrong thing. Reading the lines behind §3 and §4's 26 citations found every substantive claim substantiated and all four "quoted" strings verbatim, plus two precision defects: `agent-loop.ts:617-624` was a **bare basename** — §10's own prohibition, violated by a live citation rather than one of the three quoted as counter-examples — and it crosses the `packages/agent` ↔ `packages/coding-agent` boundary §2.4 says must not be conflated, while the adjacent citation uses a path; its range also brackets the *call site*, not `:634`/`:653` where "executes unchanged" is actually established. `model_info.rs:142` was the doc comment; the function is `:143` and the quoted warning `:144`. **Method note:** the resolver used for the rev-10–12 count was *looser* than the claim it checked — suffix-matching across all four repos, first hit wins — so it reported **184/186**, over the asserted 182, by "resolving" two of §10's own bad-citation examples. A checker that admits more inputs than the claim allows can only agree; a count coming out **better** than the claim is the tell. Only a tiered matcher (exact → repo-scoped → suffix, ambiguity counted as unresolved) reproduced 182/3/1. **Third finding, from the cell-count check rev 12 added:** rev 7's row rendered as **five** columns in both twins — `` `/^gemini-2(\.\|$)/.test(model)` `` carries an unescaped `\|`, and GFM code spans do not protect it inside a table. That is 4d's exact defect surviving the revision that wrote 4d, in a string the same document renders correctly in body prose two hundred lines later, where escaping would be wrong. Escaped in the table rows only. |
 | 12 | 2 (P3) | **The same book-keeping slip twice: a correction folded into the row it corrected.** rev 11's fix was written into rev 10's cell instead of getting its own row, so the revision table under-reported the review count for the second time — the rule this document set for itself is that every review round gets a row, and a round that only edits prose is still a round. Also a unit error carried by rev 11: the fenced-block citations are **three tokens on two lines**, not "three lines" — two sit on the same line of §10's re-derivation recipe. |
 | 11 | 1 (P3) | **The explanation of the miscount was itself miscounted.** rev 10 attributed the 180→186 gap to "three fenced plus one bare", which is four, not six. Re-derived **positionally** — mark every `path:line` token, subtract those fully covered by the old regex's matches — the six are: **three** citations written as `` `path:line :: symbol` `` (the closing backtick is not adjacent to the digits, so the old whole-span pattern skipped them) and **three** unbackticked tokens inside §10's fenced block. The failure was the same shape as the miscount it explained: the categories were **inferred from the gap size** rather than counted, and a missing fourth was invented to reach a number that was wrong anyway. Only the next review asking "where did the other two go" forced the arithmetic. |
@@ -33,10 +34,10 @@ transport, and permission-rule syntax — those have their own docs.
 | 8 | 1 (P2) | **The four-stage table's last column answered the wrong question for half the row set.** "schema projected" is a *when*, and rev 7 filled pi-mono's and agentao's cells with *what* — "the active set, unfiltered" and "plan-only tools withheld". The timings are the interesting part and they differ materially: gemini-cli re-filters on **every** schema build, so a `registerTool` lands as soon as the next request is assembled; pi-mono defers to the **next agent turn** (`setActiveToolsByName`'s own contract, `core/agent-session.ts:965-971`); and agentao is strictest — `to_openai_format(...)` runs once at `runtime/chat_loop/_runner.py:348`, **above** the inner tool-call loop, so a mid-turn `add_tool` stays invisible for the rest of the turn no matter how many iterations it runs, exactly as `add_tool`'s docstring states (`agent.py:906-914`). This column is what decides when a post-build registry mutation reaches the model, which is the whole point of separating it from the mutation column. |
 | 7 | 3 (1 P1, 2 P2) | **"The cost is a per-model catalogue" was itself an unproven constraint on the highest-priority finding.** rev 5–6 wrote that both peers maintain a per-model table; codex does (mixed with `provider.capabilities()`, and with `view_image` using neither), but **gemini-cli's is a regex** — `/^gemini-2(\.\|$)/.test(model)` (`config/models.ts:458`), its own comment calling it *"legacy behavior"*. The shape is not forced, so Finding 1 and §9 now say the cost is **an owned, continuously maintained compatibility fact of some shape**, leaving a regex or per-provider flag on the table. Then two propagation failures: rev 6 split §4 into four stages but §0 still announced **three** "each on a different one", contradicting §4's own "the columns are not a partition"; and §10's entry points were wrong in three places — pi-mono's `allToolNames` is a name set not a build step (the entry is `_buildRuntime`, which `reload()` **re-runs**, `core/agent-session.ts:2820`, so the table's "once" was wrong too), and agentao's full entry is `agent.py::_wire_tooling` (`:578`), not `register_builtin_tools`, which is one call inside it. Finally the rev-6 claim that `max_tokens` is "forwarded on every request" was too wide: `chat()`/`chat_stream()` default it to `None` (`llm/client.py:430,534`) and the kwarg is added only `if max_tokens` (`:419`) — the **main agent path** forwards it (`runtime/llm_call.py:138`), the compaction summariser does not (`context_manager.py:1573`), so the 65536 hazard is scoped to that path *and* to endpoints that clamp silently. |
 | 6 | 3 (1 P1, 1 P2, 1 P3) | **rev 5's defence of the precedent was wrong in a new way, so the whole claim is now sourced rather than argued.** rev 5 said agentao "has no equivalent" of pi-mono's `maxTokens` and offered `grep -r context_window agentao/` = 0 — **the wrong field**: `maxTokens` is a requested *output* cap and agentao has `LLMClient.max_tokens` (`llm/client.py:139,188,419-421`), ACP-mapped (`acp/session_set_model.py:10`). The real difference is the **default** — pi falls back to a per-model registry value (`ai/src/api/simple-options.ts:34`), agentao to a flat `65536` — so the borrow is portable when the host sets it per model and unsafe under the shipped default, which is a *defaulting* problem, not a catalogue one. rev 5 also called `supportsFinishReason` unrelated to catalogues; it is configurable at **provider and model levels** (`test/model-registry.test.ts:771-778`) — what was non-catalogue was agentao's *reason* for inverting it. Net: **no precedent here rules on the catalogue question**, and §9's "cannot maintain provider-neutrally" is withdrawn as unsupported. Also: the three-stage table put registry *mutation* in the active-set column and then contradicted its own "no two harnesses vary on the same stage" — now **four** columns (initial build / registry mutated after / active selection / schema projected), with three of four mutating the registry post-build; and §10's "exactly one entry point" narrowed to *initial* construction. |
-| 5 | 4 (1 P1, 3 P2), **1 partly disputed** | **The P1 is a citation to a document that does not exist**, and it was load-bearing: rev 4 justified §4/§9's catalogue verdict with "`isRecoverableLength` self-refuted in `pi-mono-pull-review-2026-08-09`". `docs/design/` has `-2026-08` and `-2026-08-21` and **no `-08-09`** — that review is a project record, not a design doc, so the citation is withdrawn. **The substance is not**, and the review's second half is disputed: `isRecoverableLength`'s *body* (`ai/src/utils/overflow.ts:171`) carries no per-model data, but its **call site** passes `this.model?.maxTokens ?? 0` (`core/agent-session.ts:2156`) against a required model-type field (`packages/ai/src/types.ts:836`), and `grep -r context_window agentao/` returns **0**. The dependency is real; reading the signature and stopping is §10's second method note in a new place. What the passage now says instead: one prior borrow *was* declined on catalogue grounds, but it was about a single predicate — the general question has never been put. `supportsFinishReason` is a separate item, inverted because `INCOMPLETE_ANSWER_REASONS` values become CLI error envelopes (`pi-mono-pull-review-2026-08.md:58`). Then: `enabled_tools` does **not** accept MCP names — the reserved-name guard rejects `mcp_` before the live-registry check (`agent.py:449-452`, `tests/test_host_tool_allowlist.py:138`); §9 still called the pi-mono/codex agreement "about context cost" after §5 had downgraded that to inference; and §4's "per turn or once per session" axis was still collapsing **three** stages that no two harnesses vary on together — it is now a table over *registry built* / *active set mutated* / *schema projected*, and only codex rebuilds per turn. |
+| 5 | 4 (1 P1, 3 P2), **1 partly disputed** | **The P1 is a citation to a document that does not exist**, and it was load-bearing: rev 4 justified §4/§9's catalogue verdict with "`isRecoverableLength` self-refuted in `pi-mono-pull-review-2026-08-09`". `docs/design/` has `-2026-08` and `-2026-08-21` and **no `-08-09`** — that review is a project record, not a design doc, so the citation is withdrawn. **The substance is not**, and the review's second half is disputed: `isRecoverableLength`'s *body* (`ai/src/utils/overflow.ts:171`) carries no per-model data, but its **call site** passes `this.model?.maxTokens ?? 0` (`core/agent-session.ts:2156`) against a required model-type field (`packages/ai/src/types.ts:836`), and `grep -r context_window agentao/` returns **0**. The dependency is real; reading the signature and stopping is §10's second method note in a new place. What the passage now says instead: one prior borrow *was* declined on catalogue grounds, but it was about a single predicate — the general question has never been put. `supportsFinishReason` is a separate item, inverted because `INCOMPLETE_ANSWER_REASONS` values become CLI error envelopes (`docs/design/pi-mono-pull-review-2026-08.md:58`). Then: `enabled_tools` does **not** accept MCP names — the reserved-name guard rejects `mcp_` before the live-registry check (`agent.py:449-452`, `tests/test_host_tool_allowlist.py:138`); §9 still called the pi-mono/codex agreement "about context cost" after §5 had downgraded that to inference; and §4's "per turn or once per session" axis was still collapsing **three** stages that no two harnesses vary on together — it is now a table over *registry built* / *active set mutated* / *schema projected*, and only codex rebuilds per turn. |
 | 4 | 5 (2 P1, 2 P2, 1 P3) | **Two numbers and one provenance claim were wrong, and one lead merged two mechanisms.** (a) gemini-cli's 19–20 was the **registration** count; `getFunctionDeclarations()` re-filters on every build (`core/src/tools/tool-registry.ts:601-624`) — no-MCP hides both resource tools, and `enter_`/`exit_plan_mode` are mutually exclusive by mode — so a bare session shows **16–17**. That also kills rev 3's "constant set for the session" (a mode transition calls `setTools()`, `core/src/config/config.ts:2810-2819`) and §8's "always-visible, policed at execution". (b) codex's `ModelInfo` is **not model-self-declared**: it is a harness/backend-maintained catalog matched by **slug prefix** (`models-manager/src/manager.rs:617-631`) with a warned fallback for unknown slugs (`models-manager/src/model_info.rs:143-144`), so the §9 objection is **owning a per-model catalogue**, not "providers don't send it" — *narrowed in rev 7 to "some maintained compatibility fact", since gemini-cli's is a regex*. (c) "explicit context-cost bet" was motive attribution — source shows only that pi-mono withholds the three tools and substitutes shell guidance (`core/system-prompt.ts:99-111`); now marked **inference, unmeasured**. (d) `enabled_tools` and `disable_tools` use **different** guards — live registry ∪ constant (`tooling/registry.py:195-205`) vs the static constant alone (`agent.py:466-472`). (e) §8 still said "the three below survive" after dropping to two. |
-| 3 | 5 (2 P1, 3 P2) | **rev 2's own corrections were themselves too wide, three times.** (a) codex does **not** have zero *read* tools either — `view_image` takes a local path, resolves it against the environment cwd and reads it through the sandbox filesystem (`handlers/view_image_spec.rs:19`, `handlers/view_image.rs:150-175`), Stable and default-on (`features/src/lib.rs:889-893`). The column is now explicitly *general text/source* reads, and the surviving claim is "no general reader", not "no reader". It is also a **counter-example to §4**: `view_image` is registered without consulting `input_modalities` (`spec_plan.rs:1259`) and refuses at execution instead (`handlers/view_image.rs:97-105`), so codex is a mixed strategy, not a clean capability gate. (b) pi-mono has **no per-tool permission boundary at all** by default — `beforeToolCall` returns `undefined` with no handler registered (`core/agent-session.ts:489-492`) and the call executes (`packages/agent/src/agent-loop.ts:634,653`); the gate is an *example* extension. (c) On `activate_skill`, rev 2 said gemini-cli "agrees with agentao" **and** that ask is a third position — contradictory, and the ask rule is `interactive = true` (`plan.toml:110`), so non-interactive falls to the catch-all DENY (`:76-80`). Plus: §8's sub-agent-binding lead **withdrawn** (gemini-cli inherits the parent registry and shallow-clones, `local-executor.ts:190-200` / `core/src/tools/tools.ts:480`), and its plan-mode lead **restated** — §9 claimed agentao keeps plan mode out of the tool surface, contradicting §2.1's own `plan_save` / `plan_finalize`; the real 1/4 is *mode entry/exit* as a model tool. §8 is now **two** leads. |
-| 2 | 8 (3 P1, 4 P2, 1 P3) | **Three reversals in table cells.** (a) codex does **not** have "0 file tools" — `apply_patch` is a model-visible workspace-write tool that derives write permission **per target path** (`core/src/tools/handlers/apply_patch.rs:73,236-270`), so the "permission unit *cannot* be the tool" inference and the "3:1 majority" framing are both withdrawn; the real divergence is the **read** half (§3). (b) Finding 3's peer evidence was the wrong constant — `PLAN_MODE_TOOLS` has **no runtime consumer**; the live policy is `read-only.toml` / `plan.toml`, and it makes `activate_skill` an **ask**, not an allow. "None of them touches the workspace" was also false for `save_memory`, which persists to SQLite (§5). (c) "the engine runs for every tool call" is false on the read-only path (it short-circuits *above* the engine), and gemini-cli **does** run a uniform policy pass (`scheduler.ts:648-652`) — §8's first lead withdrawn, the other three stand. Plus: default counts needed a host qualifier (11/13 embedded vs 13/15 via the factory); `cli_help` is exported and host-registerable, so "dead class" was too strong; gemini-cli **does** gate on a model-name heuristic (`isGemini2Model`), contradicting rev 1's own §2.3; and `get_internal_docs` is reachable by the `cli_help` subagent's model, so §10 could not list it as unreachable while §6 counted `complete_task` in scope. |
+| 3 | 5 (2 P1, 3 P2) | **rev 2's own corrections were themselves too wide, three times.** (a) codex does **not** have zero *read* tools either — `view_image` takes a local path, resolves it against the environment cwd and reads it through the sandbox filesystem (`handlers/view_image_spec.rs:19`, `handlers/view_image.rs:150-175`), Stable and default-on (`features/src/lib.rs:889-893`). The column is now explicitly *general text/source* reads, and the surviving claim is "no general reader", not "no reader". It is also a **counter-example to §4**: `view_image` is registered without consulting `input_modalities` (`core/src/tools/spec_plan.rs:1259`) and refuses at execution instead (`handlers/view_image.rs:97-105`), so codex is a mixed strategy, not a clean capability gate. (b) pi-mono has **no per-tool permission boundary at all** by default — `beforeToolCall` returns `undefined` with no handler registered (`core/agent-session.ts:489-492`) and the call executes (`packages/agent/src/agent-loop.ts:634,653`); the gate is an *example* extension. (c) On `activate_skill`, rev 2 said gemini-cli "agrees with agentao" **and** that ask is a third position — contradictory, and the ask rule is `interactive = true` (`core/src/policy/policies/plan.toml:110`), so non-interactive falls to the catch-all DENY (`:76-80`). Plus: §8's sub-agent-binding lead **withdrawn** (gemini-cli inherits the parent registry and shallow-clones, `core/src/agents/local-executor.ts:190-200` / `core/src/tools/tools.ts:480`), and its plan-mode lead **restated** — §9 claimed agentao keeps plan mode out of the tool surface, contradicting §2.1's own `plan_save` / `plan_finalize`; the real 1/4 is *mode entry/exit* as a model tool. §8 is now **two** leads. |
+| 2 | 8 (3 P1, 4 P2, 1 P3) | **Three reversals in table cells.** (a) codex does **not** have "0 file tools" — `apply_patch` is a model-visible workspace-write tool that derives write permission **per target path** (`core/src/tools/handlers/apply_patch.rs:73,236-270`), so the "permission unit *cannot* be the tool" inference and the "3:1 majority" framing are both withdrawn; the real divergence is the **read** half (§3). (b) Finding 3's peer evidence was the wrong constant — `PLAN_MODE_TOOLS` has **no runtime consumer**; the live policy is `read-only.toml` / `plan.toml`, and it makes `activate_skill` an **ask**, not an allow. "None of them touches the workspace" was also false for `save_memory`, which persists to SQLite (§5). (c) "the engine runs for every tool call" is false on the read-only path (it short-circuits *above* the engine), and gemini-cli **does** run a uniform policy pass (`core/src/scheduler/scheduler.ts:648-652`) — §8's first lead withdrawn, the other three stand. Plus: default counts needed a host qualifier (11/13 embedded vs 13/15 via the factory); `cli_help` is exported and host-registerable, so "dead class" was too strong; gemini-cli **does** gate on a model-name heuristic (`isGemini2Model`), contradicting rev 1's own §2.3; and `get_internal_docs` is reachable by the `cli_help` subagent's model, so §10 could not list it as unreachable while §6 counted `complete_task` in scope. |
 
 ---
 
@@ -72,7 +73,7 @@ Priority is *what would change an agentao decision*, not severity of the underly
 |---|---|---|---|
 | 1 | agentao gates on **host config only**, never on the model. codex mixes a harness-maintained `ModelInfo` catalog, `provider.capabilities()`, and (for `view_image`) neither — admitting the tool and refusing at execution. gemini-cli's one model gate is a **regex** on the model name (`isGemini2Model`, `config/models.ts:458`), not a catalog. The gap is real; the cost of closing it is **owning some continuously maintained compatibility fact** — its shape is not forced, and a regex or per-provider flag is on the table. | §4 | gap, unquantified demand |
 | 2 | **`cli_help` has no in-tree instantiation in agentao**, and the comment saying it "registers elsewhere" (`tooling/registry.py:44-46`) names a tool with no definition file. Both classes stay reachable through the public `extra_tools=` injection point, so this is a stale comment plus two never-defaulted exports — not dead code. | §7 | doc/code drift, ours |
-| 3 | **`/mode read-only` denies `activate_skill`, `todo_write` and `save_memory`.** The first two mutate only session state; `save_memory` writes SQLite. This follows correctly from a documented rule. The comparison point: gemini-cli's **live** read-only policy explicitly allows the internal-state-only tools (`tracker_*`, `update_topic`, `complete_task`) with a comment saying exactly that; on `activate_skill` it lands on **ask when interactive, deny when not** (`plan.toml:105-110` + the catch-all at `:76-80`) — a middle position agentao's boolean `is_read_only` gate has no room for. | §5 | policy question, ours |
+| 3 | **`/mode read-only` denies `activate_skill`, `todo_write` and `save_memory`.** The first two mutate only session state; `save_memory` writes SQLite. This follows correctly from a documented rule. The comparison point: gemini-cli's **live** read-only policy explicitly allows the internal-state-only tools (`tracker_*`, `update_topic`, `complete_task`) with a comment saying exactly that; on `activate_skill` it lands on **ask when interactive, deny when not** (`core/src/policy/policies/plan.toml:105-110` + the catch-all at `:76-80`) — a middle position agentao's boolean `is_read_only` gate has no room for. | §5 | policy question, ours |
 | 4 | gemini-cli registers two model-visible tools that are **absent from its own `ALL_BUILTIN_TOOL_NAMES`**, and its only test over that constant checks it against itself in the direction that cannot fail. agentao has the same constant and *does* have the reverse-direction test. | §7 | peer defect; validates ours |
 | 5 | **`complete_task` is a sub-agent-only tool in both agentao and gemini-cli**, arrived at independently. Two data points that the sub-agent terminal signal belongs in a scoped registry, not the main one. | §6 | convergence, no action |
 | 6 | **Second peer defect, and it validates agentao's per-`chat()` snapshot.** gemini-cli's `reloadSkills()` re-registers `ActivateSkillTool` with a fresh skill enum and then calls only `updateSystemInstructionIfInitialized()` — never `setTools()` — so the cached chat schema keeps the **stale** enum until a model switch or an explicit refresh. agentao cannot reach this state: it re-projects from the live registry at the top of every `chat()`. | §4 | peer defect; validates ours |
@@ -114,7 +115,7 @@ Registered outside `BUILTIN_TOOL_NAMES`:
   `agent_{definition}`; definitions in `agentao/agents/definitions/`. **Opt-in, default off**
   (`agent.py:151 :: enable_builtin_agents: bool = False`, `embedding/factory.py:62`).
 - `complete_task` — `agents/tools/_complete.py:33`, registered only into a sub-agent's *scoped*
-  registry (`_wrapper.py:466`). Never on the main registry.
+  registry (`agents/tools/_wrapper.py:466`). Never on the main registry.
 - `plan_save` / `plan_finalize` — `tools/plan.py:17,62`, registered by the CLI
   (`cli/app.py:336-337`) and withheld from the schema unless the turn is in plan mode
   (`tools/base.py:256,276`).
@@ -133,7 +134,7 @@ is explicit that its scope is *registration eligibility, not live availability* 
 
 | Source | Tools | Site |
 |---|---|---|
-| Shell | `exec_command`, `write_stdin`, `apply_patch` | `spec_plan.rs:1086`, `:1245` |
+| Shell | `exec_command`, `write_stdin`, `apply_patch` | `core/src/tools/spec_plan.rs:1086`, `:1245` |
 | MCP resources | `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource` | `:1134` (only when a server is configured) |
 | Core utility | `update_plan`, `view_image`, `clock.curr_time`, `clock.sleep`, `request_user_input`, `send_user_message_async`, `request_permissions`, `new_context`, `get_context_remaining`, `wait_for_environment`, `list_available_plugins_to_install`, `request_plugin_install`, `test_sync_tool` | `:1143` |
 | Multi-agent v1 | `multi_agent_v1.{spawn_agent,send_input,resume_agent,wait_agent,close_agent}` | `:1334` |
@@ -152,7 +153,7 @@ Defaults live in `features/src/lib.rs` as `FeatureSpec { stage, default_enabled 
 
 One restricted posture is worth recording: a guardian reviewer session gets exactly `exec_command`,
 `write_stdin`, `view_image`, and only under `PermissionProfile::Managed` — otherwise **none**
-(`spec_plan.rs:989-1037`).
+(`core/src/tools/spec_plan.rs:989-1037`).
 
 ### 2.3 gemini-cli — 26 registerable, 19–20 registered, **16–17 model-visible**
 
@@ -176,8 +177,8 @@ Conditional:
 
 Three names are in `ALL_BUILTIN_TOOL_NAMES` but never registered into the main registry —
 `read_many_files` (used by the `@`-command processor and the ACP session:
-`atCommandProcessor.ts:519`, `acpSession.ts:1012`), `get_internal_docs` (handed only to the
-`cli-help` subagent, `cli-help-agent.ts:89`), and `complete_task` (`local-executor.ts:272`).
+`cli/src/ui/hooks/atCommandProcessor.ts:519`, `cli/src/acp/acpSession.ts:1012`), `get_internal_docs` (handed only to the
+`cli-help` subagent, `core/src/agents/cli-help-agent.ts:89`), and `complete_task` (`core/src/agents/local-executor.ts:272`).
 
 **Registration is not visibility, and rev 3's "19–20" was the registration number.**
 `getFunctionDeclarations()` filters the registry every time it is **called** — which is not once per
@@ -241,7 +242,7 @@ shape.** `view_image` takes a `path` documented as *"Local filesystem path to an
 filesystem — `fs.get_metadata(...)` then `fs.read_file(&path_uri, ReadFileOptions::default(),
 Some(&sandbox))` (`handlers/view_image.rs:150-175`). It is `Stage::Stable, default_enabled: true`
 (`features/src/lib.rs:889-893`) and registered whenever an environment exists
-(`spec_plan.rs:1259`), so it is model-visible in a default session. codex therefore *does* have a
+(`core/src/tools/spec_plan.rs:1259`), so it is model-visible in a default session. codex therefore *does* have a
 tool-mediated workspace read path.
 
 What actually survives, stated at the right width: **codex has no *general* text or source read or
@@ -272,7 +273,7 @@ majority position, and §8 no longer claims a uniform-pass lead over gemini-cli 
 codex recomputes per turn from three independent inputs — feature flags, **per-model metadata**
 (`model_info.experimental_supported_tools`, `apply_patch_tool_type`, `supports_search_tool`,
 `shell_type`), and **provider capabilities** (`provider.capabilities().web_search`,
-`.namespace_tools`) — `spec_plan.rs:124-190`, `:1143-1272`.
+`.namespace_tools`) — `core/src/tools/spec_plan.rs:124-190`, `:1143-1272`.
 
 **Where that metadata comes from matters, and rev 3 got it wrong.** rev 3 called it "structured
 capabilities the model itself declares". It is not: `ModelInfo` comes from a **catalog the harness
@@ -285,7 +286,7 @@ by it.
 
 **But not uniformly, and rev 2 overstated it.** `view_image` is registered on
 `environment_mode.has_environment() && features.enabled(Feature::ViewImage)` alone
-(`spec_plan.rs:1259`) — `input_modalities` is **not** consulted at registration. A text-only model
+(`core/src/tools/spec_plan.rs:1259`) — `input_modalities` is **not** consulted at registration. A text-only model
 still sees `view_image` in its schema and is refused at *execution* with a
 `FunctionCallError::RespondToModel` (`handlers/view_image.rs:97-105`). `model_info` does shape that tool's
 *schema* (`can_request_original_image_detail`), just not its presence. So codex's honest description
@@ -300,7 +301,7 @@ selection over it. **Four** stages:
 
 | | initial build | registry mutated after that | active selection over the registry | schema projected to the model |
 |---|---|---|---|---|
-| codex | **every turn** (`build_tool_router`, `spec_plan.rs:124`) | n/a — the rebuild *is* the mutation | n/a | **per turn**, from that turn's freshly built registry |
+| codex | **every turn** (`build_tool_router`, `core/src/tools/spec_plan.rs:124`) | n/a — the rebuild *is* the mutation | n/a | **per turn**, from that turn's freshly built registry |
 | gemini-cli | once at startup (`createToolRegistry`) | **yes** — `registerTool` / `unregisterTool` on skill discovery and MCP connect | n/a | **only at `startChat`, on an explicit no-arg `setTools()`, or when the model changes** — `core/src/core/client.ts:801` calls `setTools(modelToUse)` per request but it **returns early** if the model is unchanged (`core/src/core/client.ts:311-313`); a `PLAN`/`YOLO` transition calls the no-arg form, which bypasses that guard (`core/src/config/config.ts:2810-2819`) |
 | pi-mono | at `_buildRuntime` (`core/agent-session.ts:2757`) — **not once**: `reload()` calls it again (`core/agent-session.ts:2820`) | **yes** — `_refreshToolRegistry` rebuilds `_toolRegistry` (`core/agent-session.ts:2664`) | **yes** — `setActiveToolsByName`, driven by extensions (`core/agent-session.ts:971`) | **at the next agent turn** — that method rebuilds the system prompt and its own contract says *"Changes take effect on the next agent turn"* (`core/agent-session.ts:965-971`); the active set is projected unfiltered |
 | agentao | once at construction (`register_builtin_tools` → MCP → agent → `extra_tools` → `apply_enabled_tools`) | **yes** — `add_tool` injection (e.g. `update_goal` while a `/goal` is live) | n/a — `enabled_tools` prunes once, at construction | **once per `chat()`, before the inner LLM loop** — `to_openai_format(plan_mode=…)` is called at `runtime/chat_loop/_runner.py:348`, snapshotting the schema for the whole turn; content-wise plan-only tools are withheld outside plan mode (`tools/base.py:276`) |
@@ -395,7 +396,7 @@ nothing about capability catalogues.
 model levels** (`test/model-registry.test.ts:771-778`). What was *not* per-model was agentao's
 reason for inverting it — every value in `INCOMPLETE_ANSWER_REASONS` becomes a CLI error envelope,
 so joining that set would hard-fail every provider that omits the field
-(`pi-mono-pull-review-2026-08.md:58`).
+(`docs/design/pi-mono-pull-review-2026-08.md:58`).
 
 **Net: this repo has no precedent on the catalogue question.** Two per-model borrows were declined,
 each for a reason of its own — a defaulting hazard and an error-envelope hazard — and neither was a
@@ -425,36 +426,36 @@ those tools is not a recorded judgment about anything. Treat the context-cost re
 default surface and route general file work through the shell), not a shared motive.
 
 **Finding 3.** agentao's `read-only` mode denies any tool whose `is_read_only` is `False`
-(`tool_planning.py:487`, reason `mode-preset:read-only`), and the base default is `False`
+(`runtime/tool_planning.py:487`, reason `mode-preset:read-only`), and the base default is `False`
 (`tools/base.py:117-126`). Three tools never override it and are therefore denied under
 `/mode read-only`: `save_memory`, `activate_skill`, `todo_write`. The mechanism is documented
 (`agentao/docs/reference/configuration.md:171` — "empty preset; `ToolRunner` short-circuits on
 `tool.is_read_only`"), so this is a correct consequence of a stated rule, not a defect.
 
-**rev 1 got the peer evidence wrong, twice.** It cited `PLAN_MODE_TOOLS` (`tool-names.ts:283`) as
+**rev 1 got the peer evidence wrong, twice.** It cited `PLAN_MODE_TOOLS` (`core/src/tools/tool-names.ts:283`) as
 gemini-cli's explicit read-only list — but that constant **has no runtime consumer anywhere in the
 repo**; its own comment says it is used to generate the plan-mode prompt, and nothing reads it. The
-live policy is TOML: `read-only.toml:30-55` and `plan.toml`. And on `activate_skill` that policy
-says **ask**, not allow (`plan.toml:105-110`, grouped with `ask_user` and `web_fetch`). rev 1 also
+live policy is TOML: `core/src/policy/policies/read-only.toml:30-55` and `plan.toml`. And on `activate_skill` that policy
+says **ask**, not allow (`core/src/policy/policies/plan.toml:105-110`, grouped with `ask_user` and `web_fetch`). rev 1 also
 wrote that none of the three "touches the workspace"; `save_memory` persists through
 `MemoryManager.upsert` (`memory/manager.py:80`) into the project or user SQLite store, so that was
 false for one of the three.
 
 **rev 2 then mis-stated the ask.** It said gemini-cli "agrees with agentao" on `activate_skill` and,
 two sentences later, that ask is "a third position" — those cannot both hold, and the first is
-wrong: ASK is not DENY. Worse, the ask rule carries `interactive = true` (`plan.toml:110`), so in a
+wrong: ASK is not DENY. Worse, the ask rule carries `interactive = true` (`core/src/policy/policies/plan.toml:110`), so in a
 **non-interactive** run it does not apply and the plan-mode catch-all
-(`toolName = "*"`, `decision = "deny"`, `plan.toml:76-80`) takes it. gemini-cli's actual behaviour is
+(`toolName = "*"`, `decision = "deny"`, `core/src/policy/policies/plan.toml:76-80`) takes it. gemini-cli's actual behaviour is
 **interactive → ASK, non-interactive → DENY**.
 
-**The observation survives on the corrected evidence, and is narrower.** `read-only.toml:30-55`
+**The observation survives on the corrected evidence, and is narrower.** `core/src/policy/policies/read-only.toml:30-55`
 allows `tracker_create_task`, `tracker_update_task`, `tracker_get_task`, `tracker_list_tasks`,
 `tracker_add_dependency`, `tracker_visualize`, `update_topic` and `complete_task` under a comment
 that reads *"safe as they only modify internal state"*. agentao's `todo_write` is the direct
 analogue of that class and is denied, as is `activate_skill` — where gemini-cli reaches DENY only in
 the non-interactive case and offers ASK otherwise. That middle position is unreachable **for this
 gate specifically**: the read-only preset branches on the boolean `tool.is_read_only`
-(`tool_planning.py:487`), which has two values. It is *not* a claim that agentao cannot express ASK
+(`runtime/tool_planning.py:487`), which has two values. It is *not* a claim that agentao cannot express ASK
 at all — the permission engine's `ASK` is tier 2 and works normally for every call the preset lets
 through. agentao reached its answer by
 inheriting a default rather than by deciding. Whether that is right is the maintainer's call; this
@@ -472,7 +473,7 @@ document only records that it was never made explicitly.
 Two convergences worth recording:
 
 - **`complete_task` is sub-agent-scoped in both agentao and gemini-cli**, independently:
-  `agents/tools/_wrapper.py:466` registers it into a scoped registry; `local-executor.ts:272` hands
+  `agents/tools/_wrapper.py:466` registers it into a scoped registry; `core/src/agents/local-executor.ts:272` hands
   it only to the local executor. Neither exposes it on the main registry. That is Finding 5 — no
   action, but it is the kind of two-repo agreement that should raise the bar for anyone proposing
   to promote it.
@@ -491,7 +492,7 @@ All four repos accumulate them; the interesting part is which direction each one
 (`agentao/tools/__init__.py:10,32`) and **neither is instantiated anywhere in `agentao/` or `tests/`**. The
 comment at `tooling/registry.py:44-46` says agent-path tools "(codebase_investigator / cli_help)
 register elsewhere and are intentionally out of scope" — half true. `codebase_investigator` exists
-as an agent *definition* and registers as `agent_codebase_investigator` (`_wrapper.py:224`), so the
+as an agent *definition* and registers as `agent_codebase_investigator` (`agents/tools/_wrapper.py:224`), so the
 comment points at something real under a different name. `cli_help` has no definition file
 (`agents/definitions/` holds only `codebase-investigator.md` and `generalist.md`) and no
 instantiation, so it is a name the comment invents.
@@ -506,15 +507,15 @@ the cheap fix is the comment. rev 1 called them "dead classes", which overstated
 **gemini-cli — Finding 4.** `save_memory` is gone the same way: `memoryTool.ts` retains only the
 GEMINI.md filename constants, and no `new MemoryTool` exists anywhere. More usefully, the reverse
 direction has already bitten: `list_background_processes` and `read_background_output` are
-registered as real model tools (`shellBackgroundTools.ts:75,253`, registered at
+registered as real model tools (`core/src/tools/shellBackgroundTools.ts:75,253`, registered at
 `core/src/config/config.ts:4028-4037`) but are **absent from `ALL_BUILTIN_TOOL_NAMES`**, so `isValidToolName()`
-returns `false` for both. `agentLoader.ts:103` gates a zod `.refine()` on that function, so a
+returns `false` for both. `core/src/agents/agentLoader.ts:103` gates a zod `.refine()` on that function, so a
 user-authored agent file listing either name is **rejected outright**. The policy loader
-(`toml-loader.ts:278`) only warns on near-typos and these are far from every built-in name, so it
+(`core/src/policy/toml-loader.ts:278`) only warns on near-typos and these are far from every built-in name, so it
 stays silent there.
 
 The reason this matters to agentao and not just as peer trivia: the only test over
-`ALL_BUILTIN_TOOL_NAMES` (`tool-names.test.ts:50`) iterates the constant and asserts each entry is
+`ALL_BUILTIN_TOOL_NAMES` (`core/src/tools/tool-names.test.ts:50`) iterates the constant and asserts each entry is
 valid — it checks the list against *itself*, in the direction that cannot fail. The direction that
 drifted, registry → constant, is untested. agentao's `BUILTIN_TOOL_NAMES` is the same shape of
 constant with the same job, and it **does** have the reverse-direction test
@@ -529,9 +530,9 @@ comparable, only that agentao's form of it is stricter:
 
 > **Withdrawn in rev 2.** rev 1 led with "a permission engine consulted on every tool call … no
 > equivalent uniform pass" elsewhere. Both halves are wrong: agentao's read-only preset returns
-> `DENY` *above* the engine (`tool_planning.py:487-495`), so the pass is not universal; and
+> `DENY` *above* the engine (`runtime/tool_planning.py:487-495`), so the pass is not universal; and
 > gemini-cli runs `checkPolicy` on every validated call from its scheduler
-> (`scheduler.ts:648-652`). On that axis agentao and gemini-cli are **level**, codex resolves before the
+> (`core/src/scheduler/scheduler.ts:648-652`). On that axis agentao and gemini-cli are **level**, codex resolves before the
 > tool layer, and pi-mono has no engine — parity, not a lead.
 
 1. **Both tool-selection knobs reject an unknown name instead of silently no-op'ing** — but by
@@ -554,10 +555,10 @@ comparable, only that agentao's form of it is stricter:
    transition re-sends the list (`core/src/config/config.ts:2810-2819`). gemini-cli withholds from
    the schema exactly as agentao does. The **only** surviving difference is that its model gets a
    tool that changes its own permission posture at all; codex and pi-mono have none either, so 3:1.
-   `plan.toml:68-72` is a second layer on top, not the mechanism.
+   `core/src/policy/policies/plan.toml:68-72` is a second layer on top, not the mechanism.
 
 > **Withdrawn in rev 3.** rev 2's second lead was "sub-agent tools inherit the parent's binding
-> explicitly". gemini-cli does the same thing: `local-executor.ts:190-200` builds the sub-agent
+> explicitly". gemini-cli does the same thing: `core/src/agents/local-executor.ts:190-200` builds the sub-agent
 > registry from `context.toolRegistry` — the parent's — and `core/src/tools/tools.ts:480`'s `clone(messageBus)` is a
 > shallow `Object.assign(Object.create(proto), this)` that replaces only the message bus, so
 > `config`, target directory and filesystem binding all carry over. agentao's `_bind_and_register`
@@ -612,7 +613,7 @@ Three method notes, all learned the hard way — the third one on rev 2, from th
   are, and for different reasons. `save_memory` (gemini-cli) is genuinely dead — no instantiation
   anywhere. `read_many_files` is instantiated but **host**-invoked (the `@`-command processor and the
   ACP session), so it never enters any model's tool list. `get_internal_docs` **is** model-reachable
-  — `cli-help-agent.ts:88` hands it to the `cli_help` subagent's own model, and since §6 counts the
+  — `core/src/agents/cli-help-agent.ts:88` hands it to the `cli_help` subagent's own model, and since §6 counts the
   sub-agent-scoped `complete_task` as in scope, this one cannot be excluded as unreachable.
   `cli_help` (agentao) has no in-tree instantiation but is a public export that `extra_tools=`
   can register. So: grep for the *instantiation*, then ask **which registry it lands in** — main,
@@ -624,4 +625,8 @@ Three method notes, all learned the hard way — the third one on rev 2, from th
   and the last one was also off by one (the typo guard starts at `:195`; `:194` is blank). Qualify
   every path far enough to be unique in its own repo, then **re-resolve every citation
   mechanically** — the check that catches this is running the anchors back against source, not
-  re-reading the prose.
+  re-reading the prose. **rev 14 applied that rule to the whole document for the first time**, which
+  is the part worth copying: stating a citation rule does not enforce it, and the enforcement cannot
+  be the resolver. A bare basename that happens to be unique in its repo *resolves*, so every
+  mechanical pass rev 3–13 ran reported it clean; the sweep that found the remaining 18 was a
+  separate query — list the distinct filenames cited, then look at which carry no `/`.
