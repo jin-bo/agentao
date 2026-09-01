@@ -3,7 +3,7 @@
 > **⚠️ Analysis only. Nothing here is authorized for implementation.** §1 is a **priority ordering
 > of findings**, not a work schedule. Quote this line whenever you quote the table.
 
-**Status:** analysis, **rev 16** (2026-09-01).
+**Status:** analysis, **rev 17** (2026-09-01).
 **Anchors:** codex `openai/codex@b7cd519c76` (2026-08-31); gemini-cli
 `google-gemini/gemini-cli@0bd1d4397` (2026-08-28); pi-mono `@853a80d26` (2026-08-28); agentao
 `main@afda2ea` (2026-08-31). All four read from a local worktree at the pinned commit — no vendor
@@ -25,6 +25,7 @@ transport, and permission-rule syntax — those have their own docs.
 
 | rev | Found | Headline |
 |---|---|---|
+| 17 | 1 (P3) | **The script §10 described did not exist, and repairing §10 turned up a paragraph splice.** rev 16 wrote *"rev 16 made it a script"* while the script lived in a session scratchpad — the document claiming an enforcement mechanism the repository does not carry. All five checks are now `scripts/check_citations.py`. Two design points: it parses the anchors from this file's `**Anchors:**` field, so it cannot check a tree the document does not name; and the revision-history table is exempt from the root floor, because every row recording a fixed citation quotes the **pre-fix** spelling as its evidence — exempting the table by position rather than listing each spelling stops that list growing an entry per revision, at the cost of not policing roots inside it, where resolve and quotes still run. Each check was falsified by injection before landing, and the root probe's first shot landed inside that exempt table and correctly reported nothing — the exemption working, not the check failing. **The finding:** rev 15's insertion had split rev 14's own explanation, stranding its last two sentences at the end of rev 16's bullet — in the English twin only, and invisible to every check, since the citation sequence is unchanged when a sentence moves between paragraphs. **Prose structure has no check; the cell-count check covers tables and nothing covers paragraphs.** Repaired against the Chinese twin, which was correct. |
 | 16 | 3 (P3) | **Quote containment, made mechanical — and it caught one I had passed by eye.** Content-checking §0, §1, §6, §9 and §10 closes the document: §0 cites nothing, and the rest reuse citations already verified, so the only new claim was `core/src/config/models.ts` — **verbatim**, regex at `core/src/config/models.ts:461` and the comment *"This is legacy behavior"* at `core/src/config/models.ts:459-460`. Which is the defect: three citations named a line that did not contain the text quoted beside it. `core/src/config/models.ts:458` → `:458-461` at the two sites that quote (the two that only name `isGemini2Model` correctly stay `:458`); `core/src/tools/handlers/apply_patch.rs:73` → `:73-74`, a doc comment running onto the second line — **rev 13 read this one by eye and passed it**, because the quote does start on the cited line; and `core/src/agents/cli-help-agent.ts:88` → `:89`, where §2 already cited `:89` for the same fact and §10 pointed one line up at the enclosing `toolConfig:` key. The rule is now in §10 with its script, and with its two known limits: strip leading comment markers before joining, and expect one standing false positive, since the document's own italic phrasing is shaped exactly like a source excerpt. |
 | 15 | 3 (P3) | **"Unique in its repo" was too weak, and two range citations did not contain the text they quoted.** Content-checking §2 and §7 — 58 citations, **every substantive claim substantiated**, including four negative claims verified by repo-wide grep at the anchors (neither agent-tool class is instantiated anywhere; `cli_help` has no definition file; both background tools are absent from `ALL_BUILTIN_TOOL_NAMES`; the `MemoryTool` identifier is gone entirely, which is stronger than §7 says). The three defects: `tooling/registry.py:44-46` quoted a sentence that ends on `:47`, so the cited range did not contain its own quotation; `agentao/tools/__init__.py:10,32` said "both are exported" while the two `__all__` entries are `:31` and `:32`; and **13 citations were shorter than their repo's conventional root**, ten of them under-qualified. All ten are normalised. The rule in §10 is now a **floor**, not an equality — over-qualifying is allowed, and for `packages/coding-agent/src/extensions/index.ts` it is required. |
 | 14 | 18 (P3) | **The §10 rule the document has cited since rev 2, never applied to the document itself.** rev 13 fixed two bare-basename citations one at a time; a sweep of the distinct filenames cited found **23**, of which five are deliberate (§10's three counter-examples and rev 13's two historical quotes) and **18 were live**. All 18 now carry a path qualified far enough to be unique in its own repo, 37 occurrences per twin, normalised to each repo's existing root — `codex-rs/` for codex, `packages/` for gemini-cli, `packages/coding-agent/src/` for pi-mono, the package root for agentao (`agent.py` and `context_manager.py` are already that path and are unchanged). Two of the 18 were live risks rather than style: `scheduler.ts` in a repo that also has `agents/agent-scheduler.ts`, and `local-executor.ts` reached only through §8's withdrawn sub-agent lead. **Method:** a bare basename unique in its repo *resolves*, so no mechanical pass rev 3–13 ran could see these — the rule needs a query of its own, not a stricter resolver. Counts unchanged (188 citations, 184 resolving, identical sequence across twins): qualifying a path neither adds nor removes a citation. |
@@ -629,7 +630,10 @@ Three method notes, all learned the hard way — the third one on rev 2, from th
   mechanically** — the check that catches this is running the anchors back against source, not
   re-reading the prose. **rev 14 applied that rule to the whole document for the first time**, which
   is the part worth copying: stating a citation rule does not enforce it, and the enforcement cannot
-  be the resolver. **rev 15 then found that "unique in its repo" is too weak a rule and made it a
+  be the resolver. A bare basename that happens to be unique in its repo *resolves*, so every
+  mechanical pass rev 3–13 ran reported it clean; the sweep that found the remaining 18 was a
+  separate query — list the distinct filenames cited, then look at which carry no `/`.
+  **rev 15 then found that "unique in its repo" is too weak a rule and made it a
   floor:** no citation may be *shorter* than its repo's conventional root, because the damage is
   done by two spellings of the same directory sitting in one document — `core/src/tools/handlers/apply_patch.rs`
   beside `handlers/view_image.rs`, `core/src/config/config.ts` beside `config/models.ts`. Both short
@@ -645,6 +649,10 @@ Three method notes, all learned the hard way — the third one on rev 2, from th
   "the quote starts on the cited line" had felt like enough. Two limits worth knowing before
   trusting it: without the comment-marker strip a two-line `///` quotation reports as a miss, and the
   document's own italic-quoted phrasing is indistinguishable from a source excerpt, so one standing
-  false positive (§4's "some tools narrowed by declared capability…") is expected. A bare basename that happens to be unique in its repo *resolves*, so every
-  mechanical pass rev 3–13 ran reported it clean; the sweep that found the remaining 18 was a
-  separate query — list the distinct filenames cited, then look at which carry no `/`.
+  false positive (§4's "some tools narrowed by declared capability…") is expected.
+  rev 17 checked it in as `scripts/check_citations.py`, together with the four other checks this
+  document accumulated — address resolution, the root floor, twin sequence equality, and table
+  cell counts. It reads the anchors out of this file's own `**Anchors:**` field rather than
+  carrying its own copy, so it cannot silently check a different tree than the one the document
+  claims. It is a **local** tool, not a CI gate: three of the five need the peer worktrees, and
+  when those are absent they report `SKIP`, never `ok`.
