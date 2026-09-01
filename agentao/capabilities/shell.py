@@ -14,17 +14,63 @@ byte-equivalent.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
 
 from .process import build_child_env, kill_process_tree
 
 IS_WINDOWS = sys.platform == "win32"
+
+
+@lru_cache(maxsize=1)
+def resolve_shell_executable() -> Optional[str]:
+    """Path to pass as ``Popen(shell=True, executable=...)``, or ``None``.
+
+    Python hardcodes ``/bin/sh`` for ``shell=True`` on POSIX, so without
+    this every ``run_shell_command`` ran under a POSIX shell — dash on most
+    Linux distributions — while the tool description promised the model
+    bash. Resolving bash explicitly makes the promise true rather than
+    walking it back: bashisms the model reaches for by default (process
+    substitution ``<(...)``, ``${var//x/y}``) now work everywhere instead
+    of only where ``/bin/sh`` happens to be bash.
+
+    ``None`` means "keep Python's default", and it is the whole reason this
+    returns an Optional instead of a constant: minimal images (Alpine,
+    distroless) ship ``/bin/sh`` and no bash at all, where a hardcoded
+    ``executable`` would turn every shell command into a
+    ``FileNotFoundError``. Degrading to ``/bin/sh`` is correct there — but
+    the *description* has to degrade with it, which is why
+    :class:`agentao.tools.shell.ShellTool` builds its text from this
+    function rather than from a literal.
+
+    ``/bin/bash`` wins over a PATH lookup so the choice does not shift when
+    a user installs a newer bash under ``/opt/homebrew`` or ``/usr/local``.
+    Windows is untouched: ``shell=True`` there means ``%COMSPEC% /c``, and
+    ``executable=`` would replace cmd.exe rather than select a dialect.
+    """
+    if IS_WINDOWS:
+        return None
+    if os.path.isfile("/bin/bash") and os.access("/bin/bash", os.X_OK):
+        return "/bin/bash"
+    return shutil.which("bash")
+
+
+def shell_display_name() -> str:
+    """The shell that will actually interpret a command, for display.
+
+    Never ``None`` — falls back to the POSIX default that
+    :func:`resolve_shell_executable` returning ``None`` selects.
+    """
+    if IS_WINDOWS:
+        return "cmd"
+    return resolve_shell_executable() or "/bin/sh"
 
 
 @dataclass(frozen=True)
@@ -94,6 +140,7 @@ class LocalShellExecutor:
     def run(self, request: ShellRequest) -> ShellResult:
         popen_kwargs: Dict[str, Any] = dict(
             shell=True,
+            executable=resolve_shell_executable(),
             cwd=request.cwd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -165,6 +212,7 @@ class LocalShellExecutor:
     def run_background(self, request: ShellRequest) -> BackgroundHandle:
         popen_kwargs: Dict[str, Any] = dict(
             shell=True,
+            executable=resolve_shell_executable(),
             cwd=request.cwd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,

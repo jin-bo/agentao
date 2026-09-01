@@ -11,7 +11,11 @@ IS_MACOS = sys.platform == "darwin"
 
 from .base import Tool
 from ..capabilities import BackgroundHandle, LocalShellExecutor, ShellRequest, ShellResult
-from ..capabilities.shell import _is_binary
+from ..capabilities.shell import (
+    _is_binary,
+    resolve_shell_executable,
+    shell_display_name,
+)
 from ..sandbox import SandboxProfile
 from ..security import PathPolicy, PathPolicyError
 
@@ -71,15 +75,22 @@ def _collapse_carriage_returns(text: str) -> str:
 def _wrap_with_sandbox(command: str, profile: SandboxProfile) -> str:
     """Prefix `command` with a sandbox-exec invocation.
 
-    The resulting string is a single POSIX shell expression that, when run
-    under `/bin/sh -c`, will exec `sandbox-exec` with the required -D /-f
-    flags and pass the original command to a fresh `/bin/sh -c` inside the
+    The resulting string is a single shell expression that, when run under
+    the outer shell, will exec `sandbox-exec` with the required -D /-f
+    flags and pass the original command to a fresh inner shell inside the
     sandbox. stdout / stderr / exit code propagate normally.
+
+    The inner shell is :func:`resolve_shell_executable`'s answer — the same
+    one the outer `Popen(shell=True, executable=...)` uses. Hardcoding
+    `/bin/sh` here would mean a sandboxed command silently got a different
+    dialect from an unsandboxed one, so the same command would parse on a
+    plain run and fail under `--sandbox`.
     """
     if not IS_MACOS:
         return command
+    inner = resolve_shell_executable() or "/bin/sh"
     prefix = " ".join(shlex.quote(a) for a in profile.as_args())
-    return f"{prefix} /bin/sh -c {shlex.quote(command)}"
+    return f"{prefix} {shlex.quote(inner)} -c {shlex.quote(command)}"
 
 
 _SANDBOX_DENIAL_MARKERS = (
@@ -142,7 +153,11 @@ class ShellTool(Tool):
             "- Signal: only included if the process was killed by a signal.\n"
             "- Background PGID: only included when is_background=true."
         )
-        shell_desc = "cmd /c <command>" if IS_WINDOWS else "bash -c <command>"
+        shell_desc = (
+            "cmd /c <command>"
+            if IS_WINDOWS
+            else f"{shell_display_name()} -c <command>"
+        )
         stop_desc = (
             "taskkill /F /PID <PID>" if IS_WINDOWS
             else "`kill -- -PGID` or signaled as `kill -s SIGNAL -- -PGID`"
@@ -164,10 +179,10 @@ class ShellTool(Tool):
                 "command": {
                     "type": "string",
                     "description": (
-                    "Exact command to execute. "
-                    "On Unix runs as `bash -c <command>`; "
-                    "on Windows runs as `cmd /c <command>`."
-                ),
+                        "Exact command to execute. On Unix runs as "
+                        f"`{shell_display_name()} -c <command>`; "
+                        "on Windows runs as `cmd /c <command>`."
+                    ),
                 },
                 "description": {
                     "type": "string",

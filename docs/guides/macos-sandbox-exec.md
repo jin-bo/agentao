@@ -30,7 +30,11 @@ ToolRunner._execute_one()  (tool_runner.py:252)
   ShellTool.execute(_sandbox_profile=..., command=..., ...)
      │
      ├─► _wrap_with_sandbox(command, profile, cwd)
-     │   → "sandbox-exec -D _RW1=<cwd> -f <abs.sb> /bin/sh -c '<quoted>'"
+     │   → "sandbox-exec -D _RW1=<cwd> -f <abs.sb> <shell> -c '<quoted>'"
+     │     (<shell> = capabilities/shell.py::resolve_shell_executable() —
+     │      /bin/bash 正常情况，无 bash 时退回 /bin/sh；必须与外层
+     │      Popen(executable=) 一致，否则同一条命令加不加 --sandbox
+     │      会走两种方言)
      │
      ▼
   subprocess.Popen(wrapped_command, shell=True, ...)
@@ -154,7 +158,7 @@ to run `/sandbox off` or switch profile via `/sandbox profile <name>`.
 
 - **`sandbox-exec` 被标 deprecated**（自 macOS 10.12）**但仍在 macOS 15 / Darwin 25 上正常工作**。Bazel、Claude Code 等均在用，短期不会被移除。
 - 必须用 `-D _RW1=$(pwd)` 传工作区绝对路径；profile 里用 `(subpath (param "_RW1"))` 引用。
-- 对子 shell (`/bin/sh -c '...'`) 完全友好：stdout、stderr、exit code 透明传播。
+- 对子 shell (`<shell> -c '...'`) 完全友好：stdout、stderr、exit code 透明传播。
 - **无法按域名限制网络**——只能 all-or-nothing。要域名级控制仍需靠 `web_fetch` 的 `PermissionEngine`。
 - 进入沙箱前打开的 fd 仍可在沙箱内使用（不要在外面预开文件再传给子进程）。
 - SIP / TCC 是独立层，不会被 sandbox-exec 绕过，也不会绕过它。

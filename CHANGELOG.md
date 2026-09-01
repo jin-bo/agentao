@@ -15,6 +15,44 @@ _Targeting 0.4.22. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`run_shell_command` promised the model `bash -c` and delivered `/bin/sh
+  -c`. It is bash now.** The tool executes through
+  `subprocess.Popen(command, shell=True)`, and Python hardcodes `/bin/sh` on
+  POSIX — there was no `executable=` anywhere. On most Linux distributions
+  that is dash, so bashisms the model reaches for by default died with a
+  syntax error; macOS hid most of it because `/bin/sh` there is bash 3.2 in
+  POSIX mode, which still rejects process substitution. `LocalShellExecutor`
+  now passes `executable=` at **both** `Popen` sites (foreground and
+  background — the background one is a separate call and would otherwise
+  have run a different shell than the tool advertises).
+
+  **bash is resolved, not assumed.** `capabilities/shell.py::
+  resolve_shell_executable()` prefers `/bin/bash`, then `bash` on PATH, then
+  returns `None` — Python's default — because Alpine and distroless images
+  ship `/bin/sh` and no bash, where a hardcoded `executable` would turn every
+  shell command into a `FileNotFoundError`. `/bin/bash` wins over the PATH
+  lookup so the choice does not shift when a newer bash is installed under
+  `/opt/homebrew`. The description is built from the resolver rather than a
+  literal, so it degrades with it; the regression test asks the live
+  interpreter what `$0` is and requires the description to name *that*.
+
+  macOS `--sandbox` re-enters a second shell inside `sandbox-exec`, and that
+  one moved too. Left on `/bin/sh` it would have meant the same command
+  parsing on a plain run and failing under `--sandbox`.
+
+  Windows is unchanged: `shell=True` there means `%COMSPEC% /c`, and
+  `executable=` would replace cmd.exe rather than select a dialect.
+  **Plugin hooks are also unchanged** and stay on `/bin/sh` deliberately —
+  Claude Code 2.1.251 was measured running command hooks under `sh`
+  (`docs/reference/hooks-probe-2.1.251.md` §A), so agentao's baseline there
+  is conformant and moving it would be a divergence, not a fix.
+
+  One consequence worth stating: the hardline scanner's known
+  variable-indirection blind spot (`D=rm; $D -rf /etc`, already reachable
+  under dash) gains one more bash-only member on Linux — `${D//X/}`. Same
+  class, not a new one; `$'...'` decoding and `<(...)` were already covered,
+  verified by probe.
+
 ---
 
 ## [0.4.21] — 2026-08-30

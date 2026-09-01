@@ -13,7 +13,19 @@ from agentao.sandbox import (
     SandboxProfile,
     load_sandbox_config,
 )
+from agentao.capabilities.shell import resolve_shell_executable
 from agentao.tools.shell import _wrap_with_sandbox, _annotate_sandbox_denial
+
+
+def _inner_shell() -> str:
+    """The shell `_wrap_with_sandbox` re-enters inside sandbox-exec.
+
+    Read from the resolver rather than written as a literal: neither
+    test below is about the dialect — they are about the sandbox-exec
+    argv shape and about quoting — so pinning `/bin/sh` here made them
+    fail when the dialect legitimately changed to bash.
+    """
+    return resolve_shell_executable() or "/bin/sh"
 
 
 MACOS_ONLY = pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec is macOS only")
@@ -500,7 +512,7 @@ def test_wrap_with_sandbox_produces_correct_shell_string(tmp_path):
     assert wrapped.startswith("sandbox-exec")
     assert f"-D _RW1={tmp_path.resolve()}" in wrapped
     assert str(profile.path) in wrapped
-    assert "/bin/sh -c" in wrapped
+    assert f"{_inner_shell()} -c" in wrapped
     # The original command must be shell-quoted so && doesn't leak out.
     assert "'echo hello && ls -la'" in wrapped
 
@@ -533,7 +545,7 @@ def test_wrap_with_sandbox_handles_single_quotes(tmp_path):
     # sh's own quoting: 'it'\''s' is the POSIX-portable way to embed a '
     wrapped = _wrap_with_sandbox("echo 'it's'", profile)
     # Whatever shlex does, it must not leave the outer quoting ambiguous
-    assert wrapped.count("/bin/sh -c") == 1
+    assert wrapped.count(f"{_inner_shell()} -c") == 1
 
 
 # ---------------------------------------------------------------------------
