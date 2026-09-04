@@ -32,7 +32,7 @@ D7 → `CMD`。
 
 | rev | 发现 | 错在哪一类 | 规则现在在 |
 |---|---|---|---|
-| 25 | —（拆分，无新发现） | 单体拆成六个文件；每条规则分配稳定 ID、只在规范里定义一次，其余文件只引用 ID；门槛改成追踪矩阵（新增 G14-02、G24-09 两行）；PR-0 按原文移出为独立计划；规则语义未变 | 规范 §2、门槛矩阵、实现文件、子代理计划 |
+| 25 | 4 P1（自伤）、1 P1（继承）、1 P1（收窄歧义）、9 P2 | **拆分本身的反向评审。** 单体拆成六个文件、规则分配稳定 ID、门槛改追踪矩阵、PR-0 移出之后，对着源码与 rev 24 复审规范：伪代码把 EFF-04 与效果污染放在 `policy_enabled` 闸之外，等于替 q4 作答；`trusted_image` 把 allowlist 写成全局必要条件、与 G23-05 矛盾；`select_rung` 一见用户级块就跳过阶梯；ENV-03 被收窄到 bash rung，而可信 `git` 在任何 rung 上都会再起 `sh`；继承自 rev 24 的一条 —— codex 接受清单不含 `command_name_expr`/`command_invokation_operator`，规则 4 的 4b/4c 在第 5 步之下不可达、G04-13 的理由拿不到；状态行「语义同 rev 24」是假话。**全部机检绿着，一条都抓不到。** 本行同时是 rev 25 相对 rev 24 的**偏离清单**（见下） | 规范 §2、§4、§5；门槛矩阵 |
 | 24 | 2 P0、2 P1、4 P2、2 小项 | 规则 7 仍把 `Start-Process`、`Invoke-Item` 与 cmd `start` 当放行重新进入，而它们经 ShellExecute 解析、不走 5g，光一个 `-UseNewEnvironment` 就能在被放行的 body 里把过滤前的用户 PATH 装回来；规则 11 自己那一轮的清扫只查了一个词、没查它改过的每一个词，于是谓词、`BASH_FUNC_*` 清除与签名在摘要、表格与 PR 行里全部留旧；阶梯现在会走空，而走空是什么没定义；启动请求表达不了已规定的两种启动形态，也不携带证明结果；MCP token 仍是工具实例上的可变属性；签名被当成了 content pin | D5、D2、D4、D6、§10 |
 | 23 | 2 P0、4 P1、2 P2、3 小项 | 可信根的谓词写成了「仅管理员可写」，而提权运行的 agentao 自己就满足它 —— 于是执行主体能写进这条规则本要把它挡在外面的那个根；规则改了之后，摘要仍把 allowlist 当作位置的替代项，而规则里又把它写得毫无功能；`-p` 只护一个进程、环境却贯穿整棵树，于是 `BASH_FUNC_*` 到达了被放行命令的子孙；规则 7 仍在重新进入一个会启动解释器的生成者；执行器契约被写成三个问题，而它是三段义务；一个正例没有任何门槛调度；task 集合只登记不移除。**早前轮次的六条曾被无记录丢弃，这一版全部处理** | D4、D5、D2、§6 |
 | 22 | 1 P0、2 P1、1 P2、另 4 条 | allowlist 里的哈希或签名可以**代替**可信位置，于是它按构造准入用户可写的映像，而 body 内一句 `Copy-Item` 不需要竞态就能赢它；一个 token 名下挂着多个 MCP task，且取消可能早于登记；`rung` 对未知取值与非法配对都没有裁定；嵌套的解释器启动一条 D4 的保证都不带；映像检查读的是地板的文件系统，而非本机执行器并不在那上面 | D5、D2、D4、§6 |
@@ -57,6 +57,28 @@ D7 → `CMD`。
 | 3 | 4 P1、3 P2 | 包装关上了，求值器敞着 | §3.7、D5 |
 | 2 | 1 P0、3 P1、2 P2 | 把不透明路由到 ASK，而三条传输路径会自动批准 | §2.6 |
 | 1 | — | 初版设计 | — |
+
+## 1.1 rev 25 相对 rev 24 的偏离清单
+
+规范状态行不再声称「语义相同」；每一处偏离都在这里，按「为什么偏离」分类。
+
+**收紧（更安全，零成本）：** ENV-03 在每一级清除 `BASH_ENV`/`ENV`/`BASH_FUNC_*`，rev 24 的 §1 表与 PR-4 行本就不带限定，
+D4 正文与命令行表把它放在 bash 段落里；可信 `git` 经 `sh -c` 导入函数的链（§3.16 实测）与启动它的 rung 无关。
+
+**把 rev 24 的隐含义写成规则：** WRAP-07（前缀运行者 `timeout`/`env`/`xargs`… 带 `executes_input`，是 EFF-01 惰性定义的直接推论）；
+WRAP-01 给「包装体」下了定义（今天 `_SHELL_SCRIPT_WRAPPER` 那一类）；WRAP-02 写明 `ex`/`w` 各消费一个值；WRAP-04 写明 4b/4c/4d 在
+LOWER-02 之下不可达、可达理由是第 5 步（G04-29），并记录未采纳的另一条路 —— 把两个 kind 加进接受清单。
+
+**拆分时作的决定（rev 24 未定）：** allowlist 放在用户级 `shell` 块与构造 spec 里（`ShellBlock.allowlist`，PR-3），因为 rev 24 只说
+「宿主配置」而 CFG-02 的两个宿主来源恰是这两个；reason 词表加 `hardline:<dialect>-opaque:<原因>` 后缀，因为门槛要求按理由区分而 rev 24
+没定字符串形状；`ShellSpec` 增加 `execution_subject`、`policy_enabled`、`closed_env_established`，`TrustedEntry` 增加 `rung_scope`、
+`predicate_positions`，`ResolvedImage` 增加 `filesystem_identity` —— 都是把 rev 24 正文里的量落成字段。
+
+**补回拆分时丢掉的三个决定：** `dialect: "posix"` 一条规则覆盖两个 POSIX rung（TOOL-02）；LAUNCH-02 不传 `-ExecutionPolicy Bypass`；
+非本机执行器的另一条出路记在 §3。
+
+**拆分时写错、本轮改回的：** §4 伪代码的 `policy_enabled` 闸位置、`trusted_image` 的 allowlist 子句、`select_rung` 的短路条件、
+TOOL-01 多出的「`remove_tool` 之后」。
 
 ## 2. 方法规则
 
@@ -106,3 +128,13 @@ D7 → `CMD`。
     门槛与索引都只写 ID。`scripts/check_design_set.py` 机械地核：每个 ID 恰好定义一次、每个被引用的
     ID 存在、每个 ID 至少有一条门槛与一个 PR、Windows 专属用例落在 Windows job 的 PR 上、编号列表项
     不出现在行中、相邻重复短语（rev 23 的 `task.cancel()` 残句）不出现。
+
+## 3. 已否决的备选
+
+- **非本机执行器：把「解析—证明—启动」三段义务写进 `ShellExecutor` 契约，配一道合规门槛。** rev 22 记录、未采用：它把义务摊给
+  每一个将来会发执行器的宿主。采用的是 LAUNCH-01 —— agentao 构造启动请求、请求携带它、执行器原样运行。两条都不成立时，每一个需要
+  映像的命令词不透明。
+- **让 WRAP-04 的 4b/4c 真正运行：把 `command_name_expr` 与 `command_invokation_operator` 加进 LOWER-02 的接受清单并限定字面形态。**
+  rev 25 记录、未采用：那是对 codex 清单的偏离，要付 §3.17 说的那份逐 kind 审查成本；现状是这两个 kind 在第 5 步就不透明，规则 4 的
+  三条分支是纵深（G04-29）。
+- **`_PLAN_ONLY_TOOLS` 模式替代名字守护（TOOL-01）。** 仍是 q6 的备选，未否决、未采用。

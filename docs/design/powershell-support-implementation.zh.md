@@ -11,8 +11,8 @@
 | PR | 交付 | 实现的规则 | 用户可见 | 依赖 |
 |---|---|---|---|---|
 | PR-0 | **已拆出为 `subagent-runtime-safety-plan.zh.md`。** 子代理工厂、registry `origin`、`ToolForkable`、MCP 所有者线程与作用域视图、引擎写者锁与携带快照的裁定 | SUB-01–05、MCP-01–06、ENG-01–05（那边定义） | 否 —— 关上一处活绕过 | — |
-| PR-1 | `ShellDialect`、spec 上的 `rung` 与 `filesystem_is_local`，构造时校验「方言 × rung」矩阵；`ShellRequest` 改为携带 agentao 构造好的启动请求（可判别体 + 环境 + 主体 + 证明映像），执行器原样运行 —— 今天它只带 `command: str` 与 `env`；执行器声明 spec；工具经 `ShellSpecProvider` 暴露；`_decide` 传递；替换时重跑名字守护 | TOOL-01、TOOL-04、SPEC-01、SPEC-02、SPEC-04、SPEC-06（字段）、LAUNCH-01 | **协议变更** | PR-0（SUB-01） |
-| PR-2 | **只交付与运行期状态无关的原语：** token IR、LOWER-01 的十步、codex 的 fixture 语料、危险表、cmd 内部表、每条可信条目上的效果标志、按 rung 生效的政策开关、不依赖运行期状态的每一条 WRAP/EFF/NAME/CMD 规则 | TOOL-03、SPEC-03、TOK-01、TOK-02、LOWER-01–04、WRAP-01–06、NAME-01、EFF-01–07、CMD-01 | 否 | PR-1 |
+| PR-1 | `ShellDialect`、spec 上的 `rung` 与 `filesystem_is_local`，构造时校验「方言 × rung」矩阵；`ShellRequest` 改为携带 agentao 构造好的启动请求（可判别体 + 环境 + 主体 + 证明映像），执行器原样运行 —— 今天它带 `command`、`cwd`、`timeout`、`on_chunk`、`env`，没有启动形态、主体或映像；执行器声明 spec；工具经 `ShellSpecProvider` 暴露；`_decide` 传递；替换时重跑名字守护 | TOOL-01、TOOL-04、SPEC-01、SPEC-02、SPEC-04、SPEC-06（字段）、LAUNCH-01 | **协议变更** | PR-0（SUB-01） |
+| PR-2 | **只交付与运行期状态无关的原语：** token IR、LOWER-01 的十步、codex 的 fixture 语料、危险表、cmd 内部表、每条可信条目上的效果标志、按 rung 生效的政策开关、不依赖运行期状态的每一条 WRAP/EFF/NAME/CMD 规则 | TOOL-03、SPEC-03、TOK-01、TOK-02、LOWER-01–04、WRAP-01–07、NAME-01、EFF-01–07、CMD-01 | 否 | PR-1 |
 | PR-3 | 预设；规则的 `dialect` 字段；`PermissionConfig`；用户级 `shell` 块（含 `allow_git_bash`、`allowlist`）；三个 composition root 的透传 | TOOL-02、CFG-01、CFG-02、CFG-03、LADDER-02 | 否 | PR-2 |
 | PR-4 | 可信解析：IMG-01 的谓词、宿主侧 identity oracle（可注入）、解释器发现两档、从映像读身份、从磁盘读三来源配置、预检；裸词解析器（NAME-02、NAME-03）与按身份分的 cmdlet/alias 表（**必须在本 PR 建立的启动状态里量**）；子进程环境；逐级命令行与前奏；阶梯与走空 | IMG-01–09、NAME-02、NAME-03、ENV-01–05、LAUNCH-02–07、LADDER-01、LADDER-03、SPEC-05 | 否 | PR-2、PR-3 |
 | PR-5 | 系统提示按方言渲染（`agentao/prompts/sections.py`） | —（渲染 SPEC-01 的方言，不定义规则） | 否 | PR-1 |

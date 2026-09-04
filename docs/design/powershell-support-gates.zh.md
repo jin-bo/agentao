@@ -12,9 +12,10 @@
 **列约定：** 「预期裁定」是地板的裁定（不透明 = DENY，放行 = 交给规则），或该行断言的事实；「预期
 reason」是规范 §3 词表里的 reason 或理由归属，`—` 表示只断言裁定；「平台」∈ `ubuntu` / `windows` /
 `both`；`xfail` 行是**刻画性探针**，不是发布门槛（预期结果写在行里，任一方向变化都让套件失败）。
-**rev 25 新增的三行：** G14-02（TOOL-02 此前没有门槛）、G05-02（EFF-06 此前没有门槛 —— 机检第一次跑就抓到）与
-G24-09（rev 24 的 D2 承诺「门槛 24 对 fake executor 逐字段断言」而门槛原文没有写进去）；其余每一行都拆自
-rev 24 的门槛原文。
+**rev 25 新增的六行：** G14-02（TOOL-02 此前没有门槛）、G05-02（EFF-06 此前没有门槛 —— 机检第一次跑就抓到）、
+G24-09（rev 24 的 D2 承诺「门槛 24 对 fake executor 逐字段断言」而门槛原文没有写进去）、G04-29（从 G04-13 拆出：
+`. ./evil.ps1` 与 `& ./evil.ps1` 的可达理由是第 5 步，不是 `executes_input`）、G07-08（WRAP-07 前缀运行者）与
+G18-06（ENV-03 在每一级）；其余每一行都拆自 rev 24 的门槛原文。
 
 ## 1. 矩阵
 
@@ -41,7 +42,7 @@ rev 24 的门槛原文。
 | G04-10 | EFF-05 | `Copy-Item Env:\A Env:\PATH; git`；`Rename-Item Env:\A PATH; git` | 不透明 | provider 驱动器规则 | ubuntu / PR-2 |
 | G04-11 | EFF-04 | 未识别的 cmdlet 后跟一条命令 | 不透明 | 解析不到条目 | ubuntu / PR-2 |
 | G04-12 | EFF-01 | `Get-Date; git status` | 放行 | — | ubuntu / PR-2 |
-| G04-13 | EFF-02、WRAP-04 | `Import-Module .\evil.psm1`、`. ./evil.ps1`、`& ./evil.ps1`：作为唯一命令、作为最后一条、后跟 `git status` | 不透明 | `executes_input`（自身，不是后继） | ubuntu / PR-2 |
+| G04-13 | EFF-02 | `Import-Module .\evil.psm1`：作为唯一命令、作为最后一条、后跟 `git status` | 不透明 | `executes_input`（自身，不是后继） | ubuntu / PR-2 |
 | G04-14 | EFF-02 | `Set-Content safe.ps1 evil; . .\safe.ps1`；被并发改写的 `safe.ps1` | 不透明 | `executes_input` 文件目标 | ubuntu / PR-2 |
 | G04-15 | EFF-07 | bash `. ./evil.sh`、`source ./evil.sh` 单独出现 | 不透明 | `executes_input` | ubuntu / PR-2 |
 | G04-16 | EFF-03 | `source ./safe.sh; git status`，`safe.sh` 只有一行 `hash -p ./evil git` | 不透明 | 传播上来的退出态，不是 `source` 本身 | ubuntu / PR-2 |
@@ -57,6 +58,7 @@ rev 24 的门槛原文。
 | G04-26 | LOWER-01 | `#Requires -Modules Evil` 后跟可信裸词，含前导空白与大小写混写的版本 | 不透明 | 第 4 步 | ubuntu / PR-2 |
 | G04-27 | LOWER-01 | 普通 `# comment` 后跟同一个词 | 放行 | — | ubuntu / PR-2 |
 | G04-28 | LOWER-04 | 24 条非 `null` 行，含 `a \| b`、`a; b` 与行尾注释 | 整个降级出的 argv 与 `expected` 相等 | — | ubuntu / PR-2 |
+| G04-29 | LOWER-02、WRAP-04 | `. ./evil.ps1`、`& ./evil.ps1`：作为唯一命令、作为最后一条、后跟 `git status` | 不透明 | 第 5 步，节点 kind（`command_invokation_operator` / `command_name_expr` 不在接受清单）—— **不是** `executes_input`，那条到不了 | ubuntu / PR-2 |
 | G05-01 | WRAP-02、TOK-01 | 每个词干的启动参数用例及越界用例 | 按 WRAP-02 的表：重新进入 / 解码后重新进入 / 不透明 / 消费 | — | ubuntu / PR-2 |
 | G05-02 | TOK-02、EFF-06 | `Remove-Item $flags C:\`；`Get-ChildItem $dir` —— 命令词在表内、谓词读取位置是 `Dynamic` | 不透明 | 谓词读取位置 `Dynamic` | ubuntu / PR-2 |
 | G06-01 | CMD-01、TOK-02、WRAP-03 | CMD 对抗性用例：控制流、分组、每种变量形式 | 不透明 | — | ubuntu / PR-2 |
@@ -69,6 +71,7 @@ rev 24 的门槛原文。
 | G07-05 | NAME-03 | 不在过滤 PATH 上的裸 `evil` | 不透明 | 找不到 | ubuntu / PR-4 |
 | G07-06 | IMG-02 | 在过滤 PATH 上、但不在 POSIX 表里的裸 `evil` | 不透明 | 名字半（有映像没名字） | ubuntu / PR-4 |
 | G07-07 | SPEC-03 | G07-01 至 G07-06 的每段 body 在 rung = `system_posix` 下 | 今天的裁定，成对断言 | — | ubuntu / PR-2 |
+| G07-08 | WRAP-07、EFF-01 | `timeout 5 git status`、`env X=1 git status`、`xargs git`、`nohup git status`（rung = `git_bash`） | 不透明 | `executes_input`（目标是一条命令）—— 断言失败于前缀运行者自身，不是于 `git` | ubuntu / PR-2 |
 | G08-01 | TOOL-03、SUB-01 | 不透明的 body，经 `NullTransport`；经一个 PowerShell 子代理 | DENY，两处都是 | — | ubuntu / PR-1 |
 | G09-01 | LADDER-04 | 三个桶的降级率；`uv run ruff check .` | 在 PR-7 之前经接受；ruff 绿 | — | ubuntu / PR-7 |
 | G10-01 | LAUNCH-02、LAUNCH-03、LAUNCH-04、ENV-02、ENV-05 | 逐级的 Windows 矩阵（规范 §5 的表，含每级的 `PATH`、`PATHEXT` 与 PowerShell 级的 `PSModulePath` 钉值） | 每一级按它那一行启动 | — | windows / PR-6 |
@@ -86,6 +89,7 @@ rev 24 的门槛原文。
 | G18-03 | ENV-01、ENV-02 | 子进程 `PATH` 与 `PATHEXT`；机器 PATH 上一个用户可写的目录 | 如钉；该目录不在子进程 `PATH` | — | windows / PR-6 |
 | G18-04 | ENV-02 | 同目录 `git.cmd` 与 `git.exe` | 跑 `.exe` | — | windows / PR-6 |
 | G18-05 | LAUNCH-03 | 含空格的 cmd 路径 | 按该解释器调用 | — | windows / PR-6 |
+| G18-06 | ENV-03 | `pwsh` 与 `cmd` rung 的子进程，父环境导出 `BASH_FUNC_git%%` 并设 `BASH_ENV`；一条可信 `git` 经 `!` 别名再起 `sh.exe` | 那个 `sh` 的环境里没有任何 `BASH_FUNC_*`、`BASH_ENV`、`ENV` —— 清除不限于 bash rung | — | windows / PR-6 |
 | G20-01 | ENV-03 | 父环境 `BASH_ENV` 指向工作树文件 | 子进程只跑 body | — | windows / PR-6 |
 | G20-02 | ENV-03、LAUNCH-04 | 父环境导出 `BASH_FUNC_git%%` | 裸 `git` 是 `/usr/bin/git`，不是那个函数 | — | windows / PR-6 |
 | G20-03 | ENV-03 | 一条可信命令自己再跑 `/bin/sh -c` | 那个环境里没有任何 `BASH_FUNC_*` —— `-p` 单独给不了 | — | windows / PR-6 |

@@ -473,7 +473,7 @@ launcher 的前提下改变「这个解释器是什么」（D4）。Group Policy
 | `agentao/tools/shell.py:248-252` | SPEC-01 | 今天 `ShellTool` 里的方言常量 |
 | `agentao/capabilities/shell.py:107-123` | SPEC-01、TOOL-04 | `ShellExecutor` Protocol 只有 `run` 与 `run_background`，没有声明方言的位置 |
 | `tests/test_shell_capability_swap.py:20-30` | SPEC-01 | 执行器注入的现有测试形状 —— G01 说的「唯一被迫改动的 fake」就是它 |
-| `agentao/capabilities/shell.py:77-84` | LAUNCH-01 | 今天的 `ShellRequest` 只带 `command: str` 与 `env`，别的什么都没有 |
+| `agentao/capabilities/shell.py:77-84` | LAUNCH-01 | 今天的 `ShellRequest` 带 `command: str`、`cwd`、`timeout`、`on_chunk`、`env` —— 没有启动形态、主体或映像 |
 | `codex-rs/shell-command/src/command_safety/powershell_tree_sitter.rs:13` | TOK-01 | codex 的降级返回 `Option<Vec<Vec<String>>>`，承载不了「这个词是动态的」 |
 | `codex-rs/shell-command/src/shell_detect.rs:257-262`、`codex-rs/core/src/exec_policy/executable_identity.rs:62-72` | IMG-05 | codex 的已知绝对安装位置（与 §3.3 引的 pi-mono `packages/coding-agent/src/utils/shell.ts:76-92` 同类） |
 | `codex-rs/shell-command/src/powershell.rs:98-101` | IMG-07 | *"pwsh.exe is the cross-platform PowerShell Core (v6+) executable"* 对 *"powershell.exe is the Windows PowerShell (v5.1 and earlier) executable"* —— 两个不同的程序，别名集不同 |
