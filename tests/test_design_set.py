@@ -136,6 +136,11 @@ def test_unknown_family_is_a_typo(tmp_path):
     assert any("unknown rule family in TOOOL-01" in f for f in out)
 
 
+def test_encoding_names_are_not_rule_ids(tmp_path):
+    spec = SPEC.replace("See G01 and PR-1.", "See G01 and PR-1; bodies are UTF-16LE, hashes SHA-256, dates ISO-8601.")
+    assert failures(tmp_path, spec=spec) == []
+
+
 def test_definition_outside_a_definer(tmp_path):
     impl = IMPL + "\n| ID | x |\n|---|---|\n| **TOOL-09** | y |\n"
     out = failures(tmp_path, impl=impl)
