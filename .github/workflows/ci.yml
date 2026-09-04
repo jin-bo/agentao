@@ -32,6 +32,9 @@ jobs:
       - name: Verify host schemas match agentao/host/models.py + agentao/acp/schema.py
         run: uv run --python 3.12 python scripts/write_host_schema.py --check
 
+      - name: Verify the split design-document sets hold together (rule IDs, gates, PRs, structure)
+        run: uv run --python 3.12 python scripts/check_design_set.py
+
   # ─────────────────────────────────────────────────────────────
   # Job 0b · P0.4 typing gate — mypy --strict on agentao.host
   # ─────────────────────────────────────────────────────────────
