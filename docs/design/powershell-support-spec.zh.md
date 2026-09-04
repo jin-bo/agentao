@@ -94,7 +94,7 @@ pi-mono `@853a80d26`（2026-08-28）。本文自身不含 `file:line` 引文；�
 | **LAUNCH-05** | 前奏逐字节固定：`$PSModuleAutoLoadingPreference='None'; if ($PSModuleAutoLoadingPreference -ne 'None' -or $PSVersionTable.PSEdition -ne '<E>' -or $PSVersionTable.PSVersion.ToString() -ne '<V>' -or (Get-Item -LiteralPath $PSHOME).FullName -ne '<H>' -or <C-check>) { exit 97 }`。`<E>`、`<V>`、`<H>`、`<C>` 是预检记录的 edition、version、`$PSHOME` 与生效控制台会话配置名，各以单引号 PowerShell 字面量代入、内嵌 `'` 双写；无法这样编码 ⇒ 拒绝该 rung，不换转义方式 | 守卫是同一个参数的后半截，没有任何 body 字节能抢在它前面运行 | §3.13、§3.20 |
 | **LAUNCH-06** | `<C>` 不得悄悄省略：找不到能在子进程内报出生效控制台会话配置的表达式时，除非预检在三个来源（IMG-08）都没发现配置，否则拒绝该 rung；`<C>` 不能用 `$PSHOME` 顶替 | 安装目录替一个 endpoint 名字作证是作不了的 | §3.20 |
 | **LAUNCH-07** | 前奏不改动 body、不扰动 body 的语义；地板的保证是它扫过了 body，前奏是地板从不改动的文本 | 一段第一条语句带副作用的 body 在前奏之后必须产生同样的副作用 | §3.13 |
-| **LAUNCH-08** | 组装出的命令行（含前奏、参数与 body）超过平台上限 —— Windows 为 32767 个 WCHAR，POSIX 为 `ARG_MAX` 减去环境 —— ⇒ 在任何分析之前拒绝，理由 `launch-oversize`；**绝不截断** | 截断落在 cmd `/s` 的「首尾引号」之间时，地板看到的结构与 cmd 执行的结构不同 | §3.12 |
+| **LAUNCH-08** | 组装出的命令行（含前奏、参数与 body）超过平台上限 —— Windows 为 32767 个 WCHAR，POSIX 为 `ARG_MAX` 减去环境 —— ⇒ 在任何分析之前拒绝，理由 `launch-oversize`；**绝不截断**。组装后的命令行含前奏与参数，PR-4 才存在，之前这道守卫退化为 body 长度 | 截断落在 cmd `/s` 的「首尾引号」之间时，地板看到的结构与 cmd 执行的结构不同 | §3.12 |
 
 ### 2.4 `ENV` —— 子进程环境
 
@@ -164,7 +164,7 @@ pi-mono `@853a80d26`（2026-08-28）。本文自身不含 `file:line` 引文；�
 | **WRAP-04** | `command_name_expr` 的四种形态：**4a** 求值器源码 —— 只有不含 `Dynamic` token 的字面字符串按本方言当作 body 重新进入（走 `Invoke-Expression` 一类条目的 `executes_input` 字面串分支）；**4b** 字面名字重组；**4c** 脚本块就地；**4d** 运算符之下的路径 ⇒ 不透明。**可达性：** LOWER-02 的接受清单不含 `command_name_expr` 与 `command_invokation_operator`，所以 PowerShell 的 `& …` 与 `. …` 形式在 LOWER-01 第 5 步就已不透明 —— 4b、4c、4d 是第 5 步之后的纵深，可达的理由是第 5 步，门槛按那个理由断言（G04-29）。要让 4b、4c 真正运行，须把这两个 kind 加进 LOWER-02 并限定字面形态，那是对 codex 清单的偏离，**未采纳** | 四种形态是四种不同的东西；走不到的分支不是防线 | §3.4、§3.8 |
 | **WRAP-05** | 生成进程的命令一律不透明（规则 7）：`Start-Process`/`saps`/`start`、`Invoke-Item`/`ii`、cmd `start`、`Start-Job`/`sajb`、`Invoke-Command`/`icm` 的每一个远端参数集（`-ComputerName` `-Session` `-ConnectionUri` `-VMId` `-VMName` `-ContainerId` `-HostName` `-SSHConnection`），以及尾置的 `&` 作业运算符。重新进入保留，用于按目标自己的理由拒绝；cmd `start` 的语法（可选带引号标题、开关、目标）为拒绝而保留 | 前三者经 ShellExecute 解析（当前目录、关联、PATH），不是 NAME-02 的解析器；`-UseNewEnvironment` 在被放行的 body 里装回过滤前的用户 PATH；`-Credential`/`-Verb RunAs` 改掉 IMG-01 所依据的主体；其余在另一个进程或机器上运行、不带前奏 | §3.6、§3.13 |
 | **WRAP-06** | 生成进程者的目标遵守 IMG-04 与其方言的裸词规则（5f）—— 用于拒绝的理由归属，不用于放行 | 门槛要逐个理由钉格 | §3.6 |
-| **WRAP-07** | 以参数为命令的**前缀运行者** —— `timeout`、`nice`、`env`、`nohup`、`sudo`、`command`、`exec`、`xargs`、`watch`、`find … -exec` —— 不是 WRAP-01 的包装体，也不重新进入：它们是可信表条目，按 EFF-01 的惰性定义不能标惰性（它们运行地板未降级的参数），所以带 `executes_input`（目标是一条命令），这条命令自身不透明 | 把 `timeout` 标成惰性就放过了 `timeout 5 ./evil`；这是 q9 的代价，明写 | §3.15 |
+| **WRAP-07** | 以参数为命令的**前缀运行者** —— `timeout`、`nice`、`env`、`nohup`、`sudo`、`command`、`exec`、`xargs`、`watch`、`find … -exec` —— 不是 WRAP-01 的包装体，也不重新进入：它们是可信表条目，其 `execution_triggers`（EFF-08）是「argv 尾部整个是一条命令」—— 于是永远带 `executes_input`，这条命令自身不透明；它们运行地板未降级的参数，按惰性定义（EFF-01）标不了惰性 | 把 `timeout` 标成惰性就放过了 `timeout 5 ./evil`；这是 q9 的代价，明写 | §3.15 |
 
 ### 2.11 `NAME` —— 裸词解析
 
@@ -184,7 +184,7 @@ pi-mono `@853a80d26`（2026-08-28）。本文自身不含 `file:line` 引文；�
 | **EFF-04** | 命令词根本解析不到任何条目 ⇒ **这一条**不透明，其后每条也不透明。没有任何东西隐含地带 `executes_input`；可信表之外的每一个程序都是 DENY，直到有人带着它的效果加一行 | 只污染后继是一行就能利用的洞：单命令脚本没有后继可污染 | §3.15 |
 | **EFF-05** | PowerShell：参数只要点名了非文件系统的 provider 驱动器 —— 匹配 `^[A-Za-z][A-Za-z0-9]*:` 且不是盘符路径 —— 不论 cmdlet 是什么，该命令即为非惰性 | 一条规则关掉 `Env:`、`Alias:`、`Function:`、`Variable:` 与注册表驱动器；往 `C:\` 的 `Copy-Item` 仍是惰性 | §3.15 |
 | **EFF-06** | 惰性断言所依赖的任何位置上出现 `Dynamic` token ⇒ 不透明（TOK-02） | | §3.9 |
-| **EFF-08** | 可信表是**数据，不是代码**：每条条目登记 `execution_triggers`（哪些参数形状让它把命令行供给的东西当代码运行 —— `git -c core.pager=`、`git --exec-path=`、`python -c`、`node -e`、`explorer <.lnk>`）、`rebind_triggers`、`caller_scope`、`predicate_positions`，每一项带来源；`flags(args)` 由这些字段推出，没有别的来源。没有登记触发参数的条目不得进表 | 一个函数形式的表无从评审，而 q9 的每一条都是一份需要有人核验的断言 | §3.15 |
+| **EFF-08** | 可信表是**数据，不是代码**：每条条目登记 `execution_triggers`（哪些参数形状让它把命令行供给的东西当代码运行 —— `git -c core.pager=`、`git --exec-path=`、`python -c`、`node -e`、`explorer <.lnk>`）、`rebind_triggers`、`caller_scope`、`predicate_positions`，每一项带来源；`flags(args)` 由这些字段推出，没有别的来源。每条条目都要登记它的触发集合，**空集是合法的登记 —— 那就是惰性**（`Get-Date`、`pwd`）；不能进表的是「触发集合从没被考虑过」的条目，不是触发集合为空的条目 | 一个函数形式的表无从评审，而 q9 的每一条都是一份需要有人核验的断言 | §3.15 |
 | **EFF-07** | 逐方言的 `executes_input` 集合（`+` 表示同时 `rebinds_caller`）：PowerShell `Import-Module`/`ipmo`+、`Invoke-Expression`/`iex`+、作用于路径的 `.`+、`Add-Type`+、作用于路径的 `&`、`-File`；cmd `call <file>`+、`start <file>`（两者在 CMD-01 与 WRAP-05 之下到不了本条，同 WRAP-04 的可达性，保留为纵深 —— q11 里 `call` 那一半因此是死问题）；bash `.`/`source`+、`eval`+；以及任何被喂了脚本路径的解释器。PowerShell 里「作用于路径的 `.` 与 `&`」两条在 LOWER-02 之下到不了本条（WRAP-04 的可达性），保留为纵深。枚举出来的修改形式（cmd `set`/`path`/`setx`/`call set`/`for /f … do set`；PowerShell `$env:`/`*-Item`/`Set-Content`/`[Environment]::SetEnvironmentVariable`/`Set-Alias`/`New-Alias`/`Set-Variable`/`New-Item -Path Function:`；bash `PATH=`/`export`/`declare -x`/`env PATH=`/`printf -v`/`read`/`hash -p`/`alias`/函数定义/`BASH_ENV=`/`ENV=`）是**门槛用例，不是规则** | 往清单里加一种形式不改变任何行为，只是加一条规则本就通过的测试 | §3.15 |
 
 ### 2.13 `BASH` —— git_bash 那一级的语法闸
@@ -335,7 +335,7 @@ floor(spec: ShellSpec, body: str) -> Verdict:
     if not spec.policy_enabled:                                           # SPEC-03：system_posix / legacy_cmd
         return todays_floor(body)            # 今天的 18 类 regex 地板，含 §2.7 记录的 fail-open 与 §2.4 的空转；
                                              # 不查表、不打标志、不检查映像 —— 直到 q4 定案 / PR-7 删除 legacy_cmd
-    if len(command_line_for(spec, body)) > platform_limit(spec):
+    if len(command_line_for(spec, body)) > platform_limit(spec):     # 组装后的命令行属 PR-4；PR-4 之前退化为 body 长度
         return DENY(opaque(LAUNCH-08, "launch-oversize"))                  # 分析之前，绝不截断
 
     commands = analyse(spec.dialect, body)
