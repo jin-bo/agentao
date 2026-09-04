@@ -1,5 +1,7 @@
 # PowerShell 支持 —— 让 shell 地板认方言
 
+> **冻结于 rev 24（2026-09-03，commit `e01293f`），已被拆分后的文件集取代 —— 从 `powershell-support-spec.zh.md`（规范）开始读，另有 `powershell-support-implementation.zh.md`、`powershell-support-gates.zh.md`、`../reference/powershell-support-evidence.zh.md`、`powershell-support-review-log.zh.md` 与 `subagent-runtime-safety-plan.zh.md`（原 PR-0）。本文件不再维护，只保留到拆分后的规范完成一次完整安全评审为止。**
+
 > ⚠️ **仅设计，未授权实施 —— 例外是 §2.12 记录了子代理路径上一处早于本计划、已实测的活缺陷，无论
 > PowerShell 是否会被建，它都应单独修掉（§5，PR-0）。** 这条例外只覆盖 PR-0 的**引擎**那一半，它可以
 > 独立发布；不覆盖 PR-0 的 **MCP** 那一半 —— rev 20 在那里发现一句有保证、没机制的话：没有任何东西

@@ -1,5 +1,7 @@
 # PowerShell support — making the shell floor dialect-aware
 
+> **Frozen at rev 24 (2026-09-03, commit `e01293f`) and superseded by the split file set — start from `powershell-support-spec.zh.md` (spec), `powershell-support-implementation.zh.md`, `powershell-support-gates.zh.md`, `../reference/powershell-support-evidence.zh.md`, `powershell-support-review-log.zh.md` and `subagent-runtime-safety-plan.zh.md` (the former PR-0). This file is not maintained; it stays only until the split spec has had its own full security review.**
+
 > ⚠️ **Design only. Nothing here is authorized for implementation — except that §2.12 records a
 > live defect in the sub-agent path that predates this plan, is measured, and should be fixed on
 > its own (§5, PR-0) whether or not PowerShell is ever built.** That exception covers PR-0's
