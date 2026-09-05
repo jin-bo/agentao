@@ -336,7 +336,8 @@ class PermissionConfig:  # CFG-03；不可变，穿过每个 composition root，
 class IdentityOracle(Protocol):  # IMG-06；宿主侧，可注入；非本机时是执行器的（SPEC-05）—— 缺任一方法 ⇒ 该 rung 未认证（G24-11 按本清单参数化）
     # 绑定一个执行主体（SPEC-05）：下面每一个收 subject 的方法，收到与绑定值不同的主体 ⇒ 拒绝作答（该 rung 未认证）
     def canonicalize(self, path: str) -> AbsPath | None: ...  # 8.3、大小写、尾随点空格、\\?\；ADS ⇒ None（拒绝）
-    def subject_can_replace(self, path: AbsPath, subject: Subject) -> bool: ...  # 访问掩码语义见 IMG-06；对一条路径求值，不含祖先
+    def subject_can_replace(self, path: AbsPath, subject: Subject) -> bool: ...  # IMG-06a 的**目标**掩码；对一条路径求值，不含祖先
+    def subject_can_replace_entries(self, path: AbsPath, subject: Subject) -> bool: ...  # IMG-06a 的**祖先**掩码：能不能删/改名该目录里的条目，或接管该目录本身
     def resolve_reparse(self, path: AbsPath) -> ReparseResult: ...  # IMG-06c：junction / symlink / app execution alias；三态，失败不等于「不是」
     def resolves_on_target(self, path: AbsPath) -> bool: ...  # 目标机上解不解析得到
     def publisher_trusted(self, path: AbsPath) -> bool: ...  # 宿主自己的信任存储说这个映像的签名可信
@@ -364,7 +365,7 @@ class IdentityOracle(Protocol):  # IMG-06；宿主侧，可注入；非本机时
 
 
 ORACLE_METHODS: tuple[str, ...] = (  # SPEC-05c：G24-11 按这份清单逐个缺一次；给 IdentityOracle 加方法就要同时加到这里
-    "canonicalize", "subject_can_replace", "resolve_reparse", "resolves_on_target", "publisher_trusted", "image_signer",
+    "canonicalize", "subject_can_replace", "subject_can_replace_entries", "resolve_reparse", "resolves_on_target", "publisher_trusted", "image_signer",
     "content_hash", "target_base_env", "target_path_entries", "target_project_root", "target_platform",
     "target_filesystem_is_local", "target_pinned_env", "resolve_image", "discover", "read_identity",
     "resolve_pshome", "read_config_sources", "preflight",
@@ -508,7 +509,20 @@ def path_within(path: AbsPath, root: AbsPath, target: Platform) -> bool:
 MAX_REPARSE_DEPTH = 32  # IMG-06c：reparse 链的深度上限；junction 成环时它与 following 一起兜底，绝不无限递归
 
 
+class ChainHead(Enum):  # IMG-06a
+    """链头是什么，决定它**父目录**用哪张掩码。
+
+    一个文件的所在目录是「在解释器旁边种一个 DLL」的落点，所以它同样吃目标掩码；一个被单独信任的目录
+    自己就是链头，它的父目录只是普通祖先。每个调用点必须显式写出来 —— 两个默认值各错一半调用者，
+    而 `mypy --strict` 拒掉旧的两参调用，正是「漏改一处」被发现而不是被读出来的方式。
+    """
+
+    image = "image"          # 一个文件：它自己，以及装着它的那个目录
+    directory = "directory"  # 一个被单独信任的目录
+
+
 def trusted_root_chain(path: AbsPath, subject: Subject, oracle: IdentityOracle, target: Platform,
+                       head: ChainHead,
                        following: frozenset[AbsPath] = frozenset(), depth: int = 0) -> bool:
     r"""IMG-01：映像与到卷根的每一个祖先，主体都不能修改 / 删除 / 替换 / 重命名；链上的 reparse 目标同样要过。
 
@@ -519,15 +533,28 @@ def trusted_root_chain(path: AbsPath, subject: Subject, oracle: IdentityOracle, 
     """
     if depth > MAX_REPARSE_DEPTH or path in following:
         return False  # IMG-06c：成环或过深 ⇒ 拒绝（fail closed），不是「查过了，通过」
-    chain = (path, *ancestors_to_volume_root(path, target))
-    if any(oracle.subject_can_replace(p, subject) for p in chain):
+    ancestors = ancestors_to_volume_root(path, target)
+    # IMG-06a 的两张掩码。目标掩码盖住这条路径本身，以及（当它是文件时）装着它的那个目录；
+    # 祖先掩码盖住其上的一切，并**刻意不含** FILE_ADD_FILE / FILE_ADD_SUBDIRECTORY ——
+    # 在旁边新建一个条目替换不了已经解析出来的下一环，而出厂卷根恰恰只给标准用户这一项权利，
+    # 于是一路用目标掩码往上问，IMG-01 在每一台机器上对每一条路径都为假（证据 §3.23）。
+    as_target: tuple[AbsPath, ...]
+    as_ancestor: tuple[AbsPath, ...]
+    if head is ChainHead.image and ancestors:
+        as_target, as_ancestor = (path, ancestors[0]), ancestors[1:]
+    else:
+        as_target, as_ancestor = (path,), ancestors
+    if any(oracle.subject_can_replace(p, subject) for p in as_target):
         return False
-    for p in chain:  # junction / symlink / app execution alias
+    if any(oracle.subject_can_replace_entries(p, subject) for p in as_ancestor):
+        return False
+    for p in (*as_target, *as_ancestor):  # junction / symlink / app execution alias
         result = oracle.resolve_reparse(p)  # IMG-06c：三态
         if result.state is ReparseState.error:
             return False  # 解析失败 ⇒ 拒绝；把它当成「不是 reparse」就是对一条没查过的链放行
         if result.state is ReparseState.resolved:
-            if result.target is None or not trusted_root_chain(result.target, subject, oracle, target, following | {path}, depth + 1):
+            sub_head = head if p == path else ChainHead.directory  # 解析结果顶替 p，继承 p 的角色
+            if result.target is None or not trusted_root_chain(result.target, subject, oracle, target, sub_head, following | {path}, depth + 1):
                 return False  # 只记这一趟的入口：A → B → A 在第三层撞上 A 而停，深度上限再兜一次底
     return True
 
@@ -537,7 +564,7 @@ def trusted_image(img: ResolvedImage, subject: Subject, allowlist: Allowlist, or
     """IMG-01 + IMG-02（映像半）+ IMG-03。收 allowlist 本身，不收「生效的块」—— 判定期的那一份冻在 spec 上（IMG-03a）。"""
     if not oracle.resolves_on_target(img.canonical_path):
         return False
-    if not trusted_root_chain(img.canonical_path, subject, oracle, target):
+    if not trusted_root_chain(img.canonical_path, subject, oracle, target, ChainHead.image):
         return False
     pin = allowlist_entry_for(allowlist, img.canonical_path)
     return pin is None or pin.matches(img)  # IMG-03：没点名的映像不因此不可信（G23-05），也不因此可信
@@ -883,7 +910,7 @@ def read_env_inputs(spec: ShellSpec, cwd: AbsPath) -> EnvInputs | Exhausted:
 def filtered_path_entries(subject: Subject, entries: Sequence[AbsPath], cwd: AbsPath, project_root: AbsPath,
                           target: Platform, oracle: IdentityOracle) -> tuple[AbsPath, ...]:
     raise Unspecified(
-        "ENV-01：只留主体写不了的目录 —— IMG-01 同一谓词，就是 trusted_root_chain(dir, subject, oracle)，"
+        "ENV-01：只留主体写不了的目录 —— IMG-01 同一谓词，就是 trusted_root_chain(dir, subject, oracle, target, ChainHead.directory)，"
         "所以这一步收 oracle 与目标平台：ACL 与 reparse 只有 oracle 答得出，非本机时更是（SPEC-05），"
         "而祖先链与包含判定按目标的路径规则算，不按宿主的；"
         "每个条目先过 oracle.canonicalize()（IMG-06），答不出就剔除 —— PATH 条目是环境里的原始字符串，"
@@ -1218,7 +1245,7 @@ def select_rung(config: ShellBlock, oracle: IdentityOracle, subject: Subject) ->
         if not oracle_complete(oracle):
             return Exhausted("SPEC-05c: incomplete oracle")  # 显式来源要先认证才知道它导出哪一级；被拒不落到 auto（LADDER-03）
         img = oracle.resolve_image(config.path, subject)  # 规范化在这里发生（IMG-06）
-        if img is None or not trusted_root_chain(img.canonical_path, subject, oracle, T):
+        if img is None or not trusted_root_chain(img.canonical_path, subject, oracle, T, ChainHead.image):
             return Exhausted("IMG-01: shell.path")  # IMG-05 (b)：免签名，不免位置
         root = oracle.target_project_root()  # IMG-05a 的第二半：「绝对且在项目根之外」；答不出 ⇒ 未认证（fail closed）
         if root is None or path_within(img.canonical_path, root, T):
@@ -1255,7 +1282,7 @@ def select_rung(config: ShellBlock, oracle: IdentityOracle, subject: Subject) ->
         img = oracle.discover(rung, subject)  # IMG-05 (a)：已知安装位置；PATH 命中不是候选
         if img is None:
             continue
-        if not trusted_root_chain(img.canonical_path, subject, oracle, T):  # IMG-01：映像与每一个祖先
+        if not trusted_root_chain(img.canonical_path, subject, oracle, T, ChainHead.image):  # IMG-01：映像与每一个祖先
             continue
         if not host_identity_ok(img, config.allowlist, oracle):  # IMG-05：签名 或 path+hash
             continue
@@ -1304,7 +1331,7 @@ def attested_spec(rung: Rung, img: ResolvedImage, identity: LauncherIdentity, co
     pinned = oracle.target_pinned_env(subject)  # ENV-06 (1)；本机 oracle 从 OS 求
     if pinned is None or pinned.has_unknown_keys or not pinned.shapes_ok(target):
         return Exhausted("ENV-06: pinned env")  # 封闭键集 + 逐字段形态（ENV-06）
-    if any(not trusted_root_chain(p, subject, oracle, target) for p in pinned.system_paths()):  # 系统那一类逐项过 IMG-01；profile 那一类不查
+    if any(not trusted_root_chain(p, subject, oracle, target, ChainHead.directory) for p in pinned.system_paths()):  # 系统那一类逐项过 IMG-01；profile 那一类不查
         return Exhausted("ENV-06: pinned system dir")
     established = False
     if rung in POWERSHELL_RUNGS:
