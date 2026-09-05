@@ -102,19 +102,51 @@ def _private_dir_or_mkdtemp(path: Path) -> Path:
 
 
 def _is_private_to_current_user(path: Path) -> bool:
-    """True if ``path`` is a non-symlink dir owned by us with no g/o access."""
+    """True if ``path`` is a non-symlink dir owned by us with no g/o access.
+
+    On Windows the mode bits are not a mode: ``mkdir(mode=0o700)`` does not set them and
+    ``lstat`` reports group and other access on every directory, so the POSIX test rejects
+    everything — and ``_private_dir_or_mkdtemp`` then falls through to ``mkdtemp`` on *every
+    call*, giving a different state directory each run. That is worse than the check it was
+    protecting: config and memory land somewhere new each time.
+
+    So Windows gets the guarantee it actually has. The fallback directory is created under
+    ``tempfile.gettempdir()``, which there is ``%LOCALAPPDATA%\Temp`` — per user by
+    construction — and what is checked is that the path is a real directory rather than a
+    symlink or a reparse point pointing elsewhere.
+
+    **The limit, stated rather than glossed:** if ``TEMP`` has been redirected to a shared
+    directory this is weaker than the POSIX test, because answering "can another account
+    write here" needs an ACL check. That question has an owner — the identity oracle in
+    ``permissions_hardline/_trust.py`` — and no implementation on Windows yet.
+    """
     try:
         info = path.lstat()
     except OSError:
         return False
     if not stat.S_ISDIR(info.st_mode):
         return False  # symlink or non-directory — do not trust
+    if os.name == "nt":
+        return not _is_reparse_point(path)
     if info.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
         return False  # group/other access — not private
     getuid = getattr(os, "getuid", None)
     if getuid is not None and info.st_uid != getuid():
         return False  # owned by another user
     return True
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """Whether ``path`` is a junction, symlink or other reparse point (Windows).
+
+    ``S_ISDIR`` is true for a directory junction, so without this a junction pointing at a
+    shared directory would pass the check above.
+    """
+    try:
+        attributes = path.lstat().st_file_attributes  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        return True  # cannot tell ⇒ do not trust it
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 def user_root() -> Path:

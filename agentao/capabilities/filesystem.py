@@ -168,12 +168,20 @@ class LocalFileSystem:
         ``os.replace`` could technically overwrite it: rename permission
         lives on the directory, so without an explicit check an atomic
         write would silently defeat ``chmod 444``.
+
+        ``newline=""`` on both paths, and it is not a detail. Without it Python
+        translates every ``\n`` to ``os.linesep`` on write, which on Windows is
+        ``\r\n`` — and the edit tool reads its file as *bytes* and decodes, so a
+        file that already used CRLF comes back holding ``\r\n`` and goes out
+        holding ``\r\r\n``. Every edit of a CRLF file doubled its carriage
+        returns. A tool that edits a file must not rewrite the bytes it was not
+        asked to change; the caller decides its own line endings.
         """
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if append or not path.exists():
             mode = "a" if append else "w"
-            with open(path, mode, encoding="utf-8") as f:
+            with open(path, mode, encoding="utf-8", newline="") as f:
                 f.write(data)
             return
 
@@ -210,7 +218,7 @@ class LocalFileSystem:
             # used to work (writable file in a read-only directory), fall
             # back to the in-place write — atomicity is best-effort, and
             # refusing the write outright would be the bigger harm.
-            with open(target, "w", encoding="utf-8") as f:
+            with open(target, "w", encoding="utf-8", newline="") as f:
                 f.write(data)
             return
         tmp_path = Path(tmp_name)

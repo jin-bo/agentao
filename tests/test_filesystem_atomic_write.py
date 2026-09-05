@@ -108,6 +108,10 @@ class TestNormalBehaviorPreserved:
         fs.write_text(existing, "REPLACED\n")
         assert existing.read_text() == "REPLACED\n"
 
+    @pytest.mark.skipif(
+        os.name == "nt",
+        reason="POSIX mode bits: Windows has no 0o755 to preserve, and chmod cannot set one",
+    )
     def test_permission_bits_survive_replacement(self, fs, tmp_path):
         """``os.replace`` would otherwise install the temp file's 0o600."""
         script = tmp_path / "run.sh"
@@ -273,3 +277,37 @@ class TestAtomicWriteDoesNotWidenPermissions:
         fs.write_text(existing, "written anyway\n")
 
         assert existing.read_text() == "written anyway\n"
+
+
+class TestLineEndings:
+    """A tool that edits a file must not rewrite bytes it was not asked to change."""
+
+    def test_crlf_content_round_trips_through_a_write(self, fs, tmp_path):
+        r"""Windows translated every ``\n`` on write, and the edit tool reads bytes.
+
+        A CRLF file therefore came back holding ``\r\n``, went out holding ``\r\r\n``, and
+        doubled its carriage returns on every single edit.
+
+        **This guard only bites on Windows.** ``os.linesep`` is ``\n`` on POSIX, so reverting
+        the fix leaves this test green here — measured, not assumed. A green run on this
+        machine says nothing about the defect; the Windows job is where the assertion lives.
+        """
+        target = tmp_path / "crlf.txt"
+        target.write_bytes(b"alpha\r\nbeta\r\n")
+
+        content = target.read_bytes().decode("utf-8")
+        fs.write_text(target, content.replace("alpha", "gamma"))
+
+        assert target.read_bytes() == b"gamma\r\nbeta\r\n"
+
+    def test_lf_content_stays_lf(self, fs, tmp_path):
+        target = tmp_path / "lf.txt"
+        target.write_bytes(b"alpha\nbeta\n")
+        fs.write_text(target, target.read_bytes().decode("utf-8").replace("alpha", "gamma"))
+        assert target.read_bytes() == b"gamma\nbeta\n"
+
+    def test_an_append_does_not_translate_either(self, fs, tmp_path):
+        target = tmp_path / "log.txt"
+        fs.write_text(target, "one\r\n")
+        fs.write_text(target, "two\r\n", append=True)
+        assert target.read_bytes() == b"one\r\ntwo\r\n"
