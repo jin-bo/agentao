@@ -71,9 +71,9 @@ and that instrument is not built yet. Saying so beats a flaky assertion that loo
 coverage."""
 
 
-def text(result) -> str:
+def text(launched) -> str:
     """A child's stdout as text. ``errors="replace"`` because the code page is the runner's."""
-    return result.stdout.decode("utf-8", errors="replace")
+    return launched.out()
 
 
 def real_image(path: str, subject) -> "ResolvedImage":
@@ -147,7 +147,40 @@ def rung_spec(rung, launcher_path: str, *, edition: str = "", version: str = "")
     return spec
 
 
-def launch(spec, body: str, cwd: Path):
+class Launched:
+    """A launch and everything needed to explain it when it goes wrong.
+
+    The first Windows run reported ``AssertionError: (98, '')`` and could say no more: the
+    assertion carried the exit code and stdout, and the reason a prelude refuses is on stderr.
+    A test for a platform its author cannot reproduce on has to carry its own diagnosis.
+    """
+
+    def __init__(self, result, request) -> None:
+        self.result = result
+        self.request = request
+
+    @property
+    def returncode(self) -> int:
+        return self.result.returncode
+
+    def out(self) -> str:
+        return self.result.stdout.decode("utf-8", errors="replace")
+
+    def __str__(self) -> str:
+        command = (
+            self.request.command_line if hasattr(self.request, "command_line")
+            else subprocess.list2cmdline(list(self.request.argv))
+        )
+        return (
+            f"\nexit={self.result.returncode}"
+            f"\nstdout={self.out()!r}"
+            f"\nstderr={self.result.stderr.decode('utf-8', errors='replace')!r}"
+            f"\ncommand={command!r}"
+            f"\ncwd={self.request.cwd!r} workdir={self.request.workdir!r}"
+        )
+
+
+def launch(spec, body: str, cwd: Path) -> Launched:
     """Decide the call, then run it through the executor exactly as the runtime would."""
     record = decided_call(spec, body, AbsPath(str(cwd)), None)
     from agentao.permissions_hardline._trust import encode_workdir
@@ -159,7 +192,7 @@ def launch(spec, body: str, cwd: Path):
         AbsPath(str(cwd)), record.attested_images,
     )
     assert request is not None
-    return LocalShellExecutor().run(ShellRequest(launch=request, timeout=60))
+    return Launched(LocalShellExecutor().run(ShellRequest(launch=request, timeout=60)), request)
 
 
 # ------------------------------------------------------------------ LADDER-05
@@ -188,7 +221,7 @@ def test_a_legacy_launch_still_runs_through_the_platform_shell(tmp_path):
         spec_fingerprint=default_spec().fingerprint,
     )
     result = LocalShellExecutor().run(ShellRequest(launch=request, timeout=60))
-    assert "agentao-legacy-ok" in text(result)
+    assert "agentao-legacy-ok" in result.stdout.decode("utf-8", errors="replace")
 
 
 # ------------------------------------------------------------------ LAUNCH-03
@@ -209,7 +242,7 @@ def test_the_cmd_rung_launches_and_its_body_arrives_intact(cmd_spec, tmp_path):
     ``/s``'s outer-quote stripping with a quoted working directory *inside* the same string.
     """
     result = launch(cmd_spec, f'echo "{SENTINEL}"', tmp_path)
-    assert SENTINEL in text(result), text(result)
+    assert SENTINEL in text(result), result
 
 
 def test_a_working_directory_that_does_not_exist_exits_98_without_running_the_body(
@@ -223,14 +256,14 @@ def test_a_working_directory_that_does_not_exist_exits_98_without_running_the_bo
     marker = tmp_path / "ran.txt"
     missing = tmp_path / "no-such-directory"
     result = launch(cmd_spec, f'echo x > "{marker}"', missing)
-    assert result.returncode == 98, (result.returncode, text(result))
+    assert result.returncode == 98, result
     assert not marker.exists()
 
 
 def test_the_cmd_rung_pins_the_current_directory_out_of_the_search_path(cmd_spec, tmp_path):
     """ENV-04 / G18-01: cmd resolves a bare word against the current directory first."""
     result = launch(cmd_spec, "echo %NoDefaultCurrentDirectoryInExePath%", tmp_path)
-    assert text(result).strip().endswith("1"), text(result)
+    assert text(result).strip().endswith("1"), result
 
 
 def test_the_child_environment_is_the_closed_set_and_not_the_inherited_one(
@@ -244,7 +277,7 @@ def test_the_child_environment_is_the_closed_set_and_not_the_inherited_one(
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "evil-config"))
     spec = rung_spec(Rung.cmd, os.environ["ComSpec"])
     result = launch(spec, "echo [%GIT_CONFIG_GLOBAL%]", tmp_path)
-    assert "[%GIT_CONFIG_GLOBAL%]" in text(result), text(result)
+    assert "[%GIT_CONFIG_GLOBAL%]" in text(result), result
 
 
 def test_a_launcher_path_containing_a_space_is_quoted_correctly(tmp_path):
@@ -256,7 +289,7 @@ def test_a_launcher_path_containing_a_space_is_quoted_correctly(tmp_path):
     copied.parent.mkdir(parents=True)
     shutil.copy(com_spec, copied)
     result = launch(rung_spec(Rung.cmd, str(copied)), "echo spaced-ok", tmp_path)
-    assert "spaced-ok" in text(result), text(result)
+    assert "spaced-ok" in text(result), result
 
 
 # ------------------------------------------------------------------ LAUNCH-02 / LAUNCH-05
@@ -303,8 +336,8 @@ def test_the_powershell_rung_launches_with_its_guard_and_its_body_in_one_argumen
 
     spec = replace(spec, launcher=replace(spec.launcher, pshome=AbsPath(pshome)))
     result = launch(spec, f"Write-Output '{SENTINEL}'", tmp_path)
-    assert result.returncode == 0, (result.returncode, text(result))
-    assert SENTINEL in text(result), text(result)
+    assert result.returncode == 0, result
+    assert SENTINEL in text(result), result
 
 
 def test_the_guard_refuses_when_the_recorded_identity_is_not_the_one_that_started(tmp_path):
@@ -320,5 +353,34 @@ def test_the_guard_refuses_when_the_recorded_identity_is_not_the_one_that_starte
     spec = replace(spec, launcher=replace(spec.launcher, pshome=AbsPath(pshome)))
     marker = tmp_path / "ran.txt"
     result = launch(spec, f"Set-Content -LiteralPath '{marker}' -Value x", tmp_path)
-    assert result.returncode == 97, (result.returncode, text(result))
+    assert result.returncode == 97, result
     assert not marker.exists()
+
+
+def test_the_pinned_startup_state_still_resolves_what_the_prelude_and_the_table_need():
+    """The state LAUNCH-05 pins has to be a state the design's own commands survive.
+
+    ``$PSModuleAutoLoadingPreference='None'`` stops PowerShell loading a module on first use.
+    The prelude then calls ``Get-Item`` and ``Set-Location``, and NAME-02's table is measured
+    in this state and asserts every entry resolves in it — so if that preference makes those
+    commands unavailable, the prelude cannot run and the table cannot be measured.
+
+    This runs the interpreter directly rather than through the ladder, so a failure here is
+    about PowerShell and not about the launch plumbing.
+    """
+    found = powershell_on_this_runner()
+    if found is None:
+        pytest.skip("neither pwsh nor powershell.exe answered on this runner")
+    path = found[0]
+    names = ("Set-Location", "Get-Item", "Write-Output", "Get-Date", "Get-ChildItem")
+    probe = subprocess.run(
+        [path, "-NoProfile", "-NonInteractive", "-Command",
+         "$PSModuleAutoLoadingPreference='None'; "
+         + "; ".join(
+             f"'{n}=' + [bool](Get-Command '{n}' -ErrorAction SilentlyContinue)" for n in names
+         )],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert probe.returncode == 0, (probe.returncode, probe.stdout, probe.stderr)
+    for name in names:
+        assert f"{name}=True" in probe.stdout, (name, probe.stdout, probe.stderr)
