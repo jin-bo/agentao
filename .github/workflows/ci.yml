@@ -183,6 +183,7 @@ jobs:
           tests/test_powershell_lowering.py tests/test_trusted_resolution.py
           tests/test_closed_set.py tests/test_windows_launch_matrix.py
           tests/test_attested_launch_smoke.py tests/test_powershell_contracts.py
+          tests/test_windows_identity_oracle.py
 
       - name: Run the full suite
         run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short

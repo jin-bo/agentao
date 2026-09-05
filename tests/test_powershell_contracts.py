@@ -94,6 +94,7 @@ def spec(**over):
 ORACLE_DEFAULTS = {
     "canonicalize": lambda self, path: c.AbsPath(path),
     "subject_can_replace": lambda self, path, subject: False,
+    "subject_can_replace_entries": lambda self, path, subject: False,
     "resolve_reparse": lambda self, path: c.ReparseResult(c.ReparseState.not_reparse, None),
     "resolves_on_target": lambda self, path: True,
     "publisher_trusted": lambda self, path: False,
@@ -194,7 +195,7 @@ def test_a_junction_to_its_own_parent_is_not_a_cycle(monkeypatch):
     o = oracle(resolve_reparse=lambda self, p: (
         c.ReparseResult(c.ReparseState.resolved, links[p]) if p in links
         else c.ReparseResult(c.ReparseState.not_reparse, None)))
-    assert c.trusted_root_chain(c.AbsPath(r"C:\Trusted\alias"), c.Subject("subj"), o, c.Platform.WINDOWS) is True
+    assert c.trusted_root_chain(c.AbsPath(r"C:\Trusted\alias"), c.Subject("subj"), o, c.Platform.WINDOWS, c.ChainHead.directory) is True
 
 
 def test_mutually_pointing_junctions_are_refused(monkeypatch):
@@ -203,20 +204,37 @@ def test_mutually_pointing_junctions_are_refused(monkeypatch):
     o = oracle(resolve_reparse=lambda self, p: (
         c.ReparseResult(c.ReparseState.resolved, links[p]) if p in links
         else c.ReparseResult(c.ReparseState.not_reparse, None)))
-    assert c.trusted_root_chain(c.AbsPath(r"C:\Loop\a"), c.Subject("subj"), o, c.Platform.WINDOWS) is False
+    assert c.trusted_root_chain(c.AbsPath(r"C:\Loop\a"), c.Subject("subj"), o, c.Platform.WINDOWS, c.ChainHead.directory) is False
 
 
 def test_an_unresolvable_reparse_point_is_refused(monkeypatch):
     """IMG-06c: `error` is the third state — treating it as 'not a reparse point' passes an unchecked chain."""
     monkeypatch.setattr(c, "ancestors_to_volume_root", _chain)
     o = oracle(resolve_reparse=lambda self, p: c.ReparseResult(c.ReparseState.error, None))
-    assert c.trusted_root_chain(c.AbsPath(r"C:\Prog\pwsh.exe"), c.Subject("subj"), o, c.Platform.WINDOWS) is False
+    assert c.trusted_root_chain(c.AbsPath(r"C:\Prog\pwsh.exe"), c.Subject("subj"), o, c.Platform.WINDOWS, c.ChainHead.image) is False
 
 
 def test_a_writable_ancestor_refuses_the_whole_chain(monkeypatch):
     monkeypatch.setattr(c, "ancestors_to_volume_root", _chain)
     o = oracle(subject_can_replace=lambda self, p, subject: p == r"C:\Prog")
-    assert c.trusted_root_chain(c.AbsPath(r"C:\Prog\pwsh.exe"), c.Subject("subj"), o, c.Platform.WINDOWS) is False
+    assert c.trusted_root_chain(c.AbsPath(r"C:\Prog\pwsh.exe"), c.Subject("subj"), o, c.Platform.WINDOWS, c.ChainHead.image) is False
+
+
+def test_a_volume_root_that_only_accepts_new_entries_does_not_refuse_the_chain(monkeypatch):
+    r"""IMG-06a's split. A stock `C:\` grants every standard user FILE_ADD_SUBDIRECTORY and
+    none of DELETE / FILE_DELETE_CHILD / WRITE_DAC / WRITE_OWNER (evidence §3.23), so asking
+    the *target* mask to the volume root made IMG-01 false everywhere, for everyone."""
+    monkeypatch.setattr(c, "ancestors_to_volume_root", _chain)
+    o = oracle(subject_can_replace=lambda self, p, subject: p == "C:",
+               subject_can_replace_entries=lambda self, p, subject: False)
+    assert c.trusted_root_chain(c.AbsPath(r"C:\Prog\pwsh.exe"), c.Subject("subj"), o, c.Platform.WINDOWS, c.ChainHead.image) is True
+
+
+def test_an_ancestor_whose_entries_the_subject_controls_still_refuses(monkeypatch):
+    monkeypatch.setattr(c, "ancestors_to_volume_root", _chain)
+    o = oracle(subject_can_replace=lambda self, p, subject: False,
+               subject_can_replace_entries=lambda self, p, subject: p == "C:")
+    assert c.trusted_root_chain(c.AbsPath(r"C:\Prog\pwsh.exe"), c.Subject("subj"), o, c.Platform.WINDOWS, c.ChainHead.image) is False
 
 
 @pytest.mark.parametrize(

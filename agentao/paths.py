@@ -102,7 +102,7 @@ def _private_dir_or_mkdtemp(path: Path) -> Path:
 
 
 def _is_private_to_current_user(path: Path) -> bool:
-    """True if ``path`` is a non-symlink dir owned by us with no g/o access.
+    r"""True if ``path`` is a non-symlink dir owned by us with no g/o access.
 
     On Windows the mode bits are not a mode: ``mkdir(mode=0o700)`` does not set them and
     ``lstat`` reports group and other access on every directory, so the POSIX test rejects

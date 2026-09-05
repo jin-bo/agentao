@@ -122,6 +122,7 @@ class IdentityOracle(Protocol):
 
     def canonicalize(self, path: str) -> Optional[AbsPath]: ...
     def subject_can_replace(self, path: AbsPath, subject: Subject) -> bool: ...
+    def subject_can_replace_entries(self, path: AbsPath, subject: Subject) -> bool: ...
     def resolve_reparse(self, path: AbsPath) -> ReparseResult: ...
     def resolves_on_target(self, path: AbsPath) -> bool: ...
     def publisher_trusted(self, path: AbsPath) -> bool: ...
@@ -144,7 +145,8 @@ class IdentityOracle(Protocol):
 
 
 ORACLE_METHODS: Tuple[str, ...] = (
-    "canonicalize", "subject_can_replace", "resolve_reparse", "resolves_on_target",
+    "canonicalize", "subject_can_replace", "subject_can_replace_entries",
+    "resolve_reparse", "resolves_on_target",
     "publisher_trusted", "image_signer", "content_hash", "target_base_env",
     "target_path_entries", "target_project_root", "target_platform",
     "target_filesystem_is_local", "target_pinned_env", "resolve_image", "discover",
@@ -265,11 +267,26 @@ MAX_REPARSE_DEPTH = 32
 this catches a chain that is merely absurd, and neither is allowed to recurse forever."""
 
 
+class ChainHead(Enum):
+    r"""IMG-06a: what sits at the head of an IMG-01 chain, because it decides one mask.
+
+    A file's *containing* directory is where a planted DLL would land, so it takes the target
+    mask; a directory trusted in its own right is already the head, and its parent is an
+    ordinary ancestor. Required at every call site rather than defaulted: either default is
+    wrong for half the callers, and ``mypy --strict`` refusing the old two-argument call is
+    how a missed site is found rather than by reading.
+    """
+
+    image = "image"          # a file: the path itself, and the directory holding it
+    directory = "directory"  # a directory trusted in its own right
+
+
 def trusted_root_chain(
     path: AbsPath,
     subject: Subject,
     oracle: IdentityOracle,
     target: Platform,
+    head: ChainHead,
     following: FrozenSet[AbsPath] = frozenset(),
     depth: int = 0,
 ) -> bool:
@@ -283,16 +300,33 @@ def trusted_root_chain(
     """
     if depth > MAX_REPARSE_DEPTH or path in following:
         return False  # a cycle or an absurd chain fails closed; it is not "already checked, fine"
-    chain = (path, *ancestors_to_volume_root(path, target))
-    if any(oracle.subject_can_replace(p, subject) for p in chain):
+    ancestors = ancestors_to_volume_root(path, target)
+    # IMG-06a's two masks. The target mask covers the path itself and, for a file, the
+    # directory holding it. The ancestor mask covers everything above, and deliberately
+    # excludes FILE_ADD_FILE / FILE_ADD_SUBDIRECTORY: creating a *sibling* cannot replace
+    # the already-resolved next link, and a stock volume root grants exactly that right to
+    # every standard user — so asking the target mask all the way up made IMG-01 false for
+    # every path on every machine (evidence §3.23).
+    as_target: Tuple[AbsPath, ...]
+    as_ancestor: Tuple[AbsPath, ...]
+    if head is ChainHead.image and ancestors:
+        as_target, as_ancestor = (path, ancestors[0]), ancestors[1:]
+    else:
+        as_target, as_ancestor = (path,), ancestors
+    if any(oracle.subject_can_replace(p, subject) for p in as_target):
         return False
-    for p in chain:
+    if any(oracle.subject_can_replace_entries(p, subject) for p in as_ancestor):
+        return False
+    for p in (*as_target, *as_ancestor):
         result = oracle.resolve_reparse(p)
         if result.state is ReparseState.error:
             return False  # unreadable is not "not a reparse point"
         if result.state is ReparseState.resolved:
+            # The resolved path stands in for ``p``, so it inherits ``p``'s role: only the
+            # head of an image chain is a file, every other element is a directory.
+            sub_head = head if p == path else ChainHead.directory
             if result.target is None or not trusted_root_chain(
-                result.target, subject, oracle, target, following | {path}, depth + 1
+                result.target, subject, oracle, target, sub_head, following | {path}, depth + 1
             ):
                 return False
     return True
@@ -334,7 +368,7 @@ def trusted_image(
     """
     if not oracle.resolves_on_target(img.canonical_path):
         return False
-    if not trusted_root_chain(img.canonical_path, subject, oracle, target):
+    if not trusted_root_chain(img.canonical_path, subject, oracle, target, ChainHead.image):
         return False
     pin = allowlist_entry_for(allowlist, img.canonical_path)
     return pin is None or pin.matches(img)
@@ -438,7 +472,7 @@ def filtered_path_entries(
         if any(same_path(canonical, s, target) for s in seen):
             continue
         seen.append(canonical)
-        if trusted_root_chain(canonical, subject, oracle, target):
+        if trusted_root_chain(canonical, subject, oracle, target, ChainHead.directory):
             kept.append(canonical)
     return tuple(kept)
 
@@ -477,7 +511,8 @@ def pinned_psmodulepath(spec: ShellSpec) -> str:
     if modules is None:
         return ""
     if not trusted_root_chain(
-        modules, spec.execution_subject, oracle, spec.target_platform  # type: ignore[arg-type]
+        modules, spec.execution_subject, oracle,
+        spec.target_platform, ChainHead.directory,  # type: ignore[arg-type]
     ):
         return ""
     return str(modules)
@@ -1044,7 +1079,8 @@ def attested_spec(
     if pinned is None or pinned.has_unknown_keys or not pinned.shapes_ok(target):
         return Exhausted("ENV-06: pinned env")
     if any(
-        not trusted_root_chain(p, subject, oracle, target) for p in pinned.system_paths()
+        not trusted_root_chain(p, subject, oracle, target, ChainHead.directory)
+        for p in pinned.system_paths()
     ):
         return Exhausted("ENV-06: pinned system dir")
     established = False
@@ -1118,7 +1154,8 @@ def select_rung(
         if not oracle_complete(oracle):
             return Exhausted("SPEC-05c: incomplete oracle")
         img = oracle.resolve_image(config.path, subject)  # canonicalisation happens here
-        if img is None or not trusted_root_chain(img.canonical_path, subject, oracle, target):
+        if img is None or not trusted_root_chain(
+            img.canonical_path, subject, oracle, target, ChainHead.image):
             return Exhausted("IMG-01: shell.path")  # IMG-05 (b): no signature, but position
         root = oracle.target_project_root()
         if root is None or path_within(img.canonical_path, root, target):
@@ -1165,7 +1202,7 @@ def select_rung(
         img = oracle.discover(rung, subject)  # IMG-05 (a); a PATH hit is not a candidate
         if img is None:
             continue
-        if not trusted_root_chain(img.canonical_path, subject, oracle, target):
+        if not trusted_root_chain(img.canonical_path, subject, oracle, target, ChainHead.image):
             continue
         if not host_identity_ok(img, config.allowlist, oracle):  # IMG-05
             continue

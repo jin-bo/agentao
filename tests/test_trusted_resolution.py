@@ -56,6 +56,7 @@ from agentao.permissions_hardline._trust import (
     request_for,
     select_rung,
     target_is_local,
+    ChainHead,
     trusted_root_chain,
 )
 
@@ -103,7 +104,7 @@ def test_the_chain_walks_every_ancestor_to_the_volume_root():
 def test_a_writable_ancestor_fails_the_chain_even_when_the_file_is_locked_down():
     oracle = FakeOracle(writable={"C:\\a"})
     assert trusted_root_chain(
-        AbsPath("C:\\a\\b\\c.exe"), SUBJECT, oracle, Platform.WINDOWS
+        AbsPath("C:\\a\\b\\c.exe"), SUBJECT, oracle, Platform.WINDOWS, ChainHead.image
     ) is False
 
 
@@ -126,6 +127,73 @@ def test_containment_compares_segments_and_not_string_prefixes():
     assert not path_within(AbsPath("/REPO/src"), AbsPath("/repo"), Platform.POSIX)
 
 
+# ---------------------------------------------------- IMG-06a: the two masks
+
+
+def test_a_volume_root_the_subject_may_add_to_does_not_break_the_chain():
+    r"""The measurement that forced the split (evidence §3.23).
+
+    A stock ``C:\`` grants every standard user FILE_ADD_SUBDIRECTORY — that is how anyone
+    creates ``C:\temp`` — and grants none of DELETE, FILE_DELETE_CHILD, WRITE_DAC or
+    WRITE_OWNER. Asking the *target* mask all the way up therefore made IMG-01 false for
+    every path on every stock Windows, so the trusted set was always empty and LADDER-03
+    turned that into a denial on every shell call.
+    """
+    oracle = FakeOracle(writable={"C:\\"}, relinkable=set())
+    assert trusted_root_chain(
+        AbsPath("C:\\Program Files\\PowerShell\\7\\pwsh.exe"),
+        SUBJECT, oracle, Platform.WINDOWS, ChainHead.image,
+    ) is True
+
+
+def test_an_ancestor_the_subject_can_relink_still_breaks_the_chain():
+    """The half the split must not drop: deleting or renaming the next link *is* replacing it."""
+    oracle = FakeOracle(writable=set(), relinkable={"C:\\Program Files"})
+    assert trusted_root_chain(
+        AbsPath("C:\\Program Files\\PowerShell\\7\\pwsh.exe"),
+        SUBJECT, oracle, Platform.WINDOWS, ChainHead.image,
+    ) is False
+
+
+def test_the_directory_holding_an_image_still_takes_the_target_mask():
+    """Adding a file *beside* an interpreter is DLL planting, so its own directory keeps
+    the wider mask even though every directory above it does not."""
+    oracle = FakeOracle(writable={"C:\\Program Files\\PowerShell\\7"}, relinkable=set())
+    assert trusted_root_chain(
+        AbsPath("C:\\Program Files\\PowerShell\\7\\pwsh.exe"),
+        SUBJECT, oracle, Platform.WINDOWS, ChainHead.image,
+    ) is False
+
+
+def test_a_directory_trusted_in_its_own_right_takes_the_target_mask():
+    oracle = FakeOracle(writable={"C:\\ProgramData"}, relinkable=set())
+    assert trusted_root_chain(
+        AbsPath("C:\\ProgramData"), SUBJECT, oracle, Platform.WINDOWS, ChainHead.directory,
+    ) is False
+
+
+def test_that_directorys_own_parent_is_only_an_ancestor():
+    r"""``C:\Windows`` must stay trusted even though ``C:\`` accepts new entries."""
+    oracle = FakeOracle(writable={"C:\\"}, relinkable=set())
+    assert trusted_root_chain(
+        AbsPath("C:\\Windows"), SUBJECT, oracle, Platform.WINDOWS, ChainHead.directory,
+    ) is True
+
+
+def test_an_incomplete_oracle_is_caught_because_the_split_added_a_method():
+    """A new *parameter* would have been invisible to SPEC-05c and raised inside launch();
+    a new method is enumerated, so a stale oracle is refused before anything runs."""
+    assert "subject_can_replace_entries" in ORACLE_METHODS
+
+    class _Stale:
+        pass
+
+    for name in ORACLE_METHODS:
+        if name != "subject_can_replace_entries":
+            setattr(_Stale, name, lambda self, *a, **k: False)
+    assert oracle_complete(_Stale()) is False   # type: ignore[arg-type]
+
+
 # ------------------------------------------------------------------ IMG-06c
 
 
@@ -133,7 +201,7 @@ def test_a_reparse_that_cannot_be_read_is_not_a_path_that_is_not_a_reparse():
     """G23-10: collapsing "failed" into "not one" walks an unexamined chain as examined."""
     oracle = FakeOracle(reparse={"C:\\a\\b": ReparseResult(ReparseState.error)})
     assert trusted_root_chain(
-        AbsPath("C:\\a\\b\\c.exe"), SUBJECT, oracle, Platform.WINDOWS
+        AbsPath("C:\\a\\b\\c.exe"), SUBJECT, oracle, Platform.WINDOWS, ChainHead.image
     ) is False
 
 
@@ -142,7 +210,8 @@ def test_a_junction_cycle_returns_rather_than_recursing_forever():
         "C:\\a": ReparseResult(ReparseState.resolved, AbsPath("C:\\b")),
         "C:\\b": ReparseResult(ReparseState.resolved, AbsPath("C:\\a")),
     })
-    assert trusted_root_chain(AbsPath("C:\\a"), SUBJECT, oracle, Platform.WINDOWS) is False
+    assert trusted_root_chain(
+        AbsPath("C:\\a"), SUBJECT, oracle, Platform.WINDOWS, ChainHead.directory) is False
 
 
 def test_a_chain_deeper_than_the_ceiling_is_refused():
@@ -152,7 +221,8 @@ def test_a_chain_deeper_than_the_ceiling_is_refused():
         for i in range(depth)
     }
     oracle = FakeOracle(reparse=reparse)
-    assert trusted_root_chain(AbsPath("C:\\d0"), SUBJECT, oracle, Platform.WINDOWS) is False
+    assert trusted_root_chain(
+        AbsPath("C:\\d0"), SUBJECT, oracle, Platform.WINDOWS, ChainHead.directory) is False
 
 
 def test_a_junction_pointing_at_its_own_parent_stays_trusted():
@@ -166,7 +236,7 @@ def test_a_junction_pointing_at_its_own_parent_stays_trusted():
         "C:\\Trusted\\alias": ReparseResult(ReparseState.resolved, AbsPath("C:\\Trusted")),
     })
     assert trusted_root_chain(
-        AbsPath("C:\\Trusted\\alias"), SUBJECT, oracle, Platform.WINDOWS
+        AbsPath("C:\\Trusted\\alias"), SUBJECT, oracle, Platform.WINDOWS, ChainHead.directory
     ) is True
 
 

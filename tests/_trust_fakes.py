@@ -99,6 +99,7 @@ class FakeOracle:
         subject: Subject = SUBJECT,
         local: Optional[bool] = True,
         writable: Optional[Set[str]] = None,
+        relinkable: Optional[Set[str]] = None,
         reparse: Optional[Dict[str, ReparseResult]] = None,
         resolvable: Optional[Set[str]] = None,
         signers: Optional[Dict[str, str]] = None,
@@ -118,6 +119,9 @@ class FakeOracle:
         self.subject = subject
         self._local = local
         self.writable = writable if writable is not None else set()
+        # Defaults to `writable` so every test written before the split keeps asserting
+        # what it asserted: one set, both masks, the old uniform behaviour.
+        self.relinkable = relinkable if relinkable is not None else set(self.writable)
         self.reparse = reparse or {}
         self.resolvable = resolvable
         self.signers = signers or {}
@@ -154,6 +158,17 @@ class FakeOracle:
         if not self._for(subject, "subject_can_replace"):
             return True  # refusing to answer is not "no" (fail closed)
         return str(path) in self.writable
+
+    def subject_can_replace_entries(self, path: AbsPath, subject: Subject) -> bool:
+        r"""IMG-06a's ancestor mask: narrower than ``subject_can_replace`` by construction.
+
+        ``writable`` stands for the target mask, ``relinkable`` for this one. A path in
+        ``relinkable`` alone is the case the split exists for — a stock ``C:\`` where a
+        standard user may create entries but may delete or rename none.
+        """
+        if not self._for(subject, "subject_can_replace_entries"):
+            return True  # refusing to answer is not "no" (fail closed)
+        return str(path) in self.relinkable
 
     def resolve_reparse(self, path: AbsPath) -> ReparseResult:
         return self.reparse.get(str(path), ReparseResult(ReparseState.not_reparse))
