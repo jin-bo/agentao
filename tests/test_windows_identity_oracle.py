@@ -72,21 +72,37 @@ def _icacls(path, *args: str) -> None:
     assert result.returncode == 0, f"icacls {args}: {result.stdout}{result.stderr}"
 
 
+def _acl_of(path) -> str:
+    """The effective ACL, for an assertion message that explains itself."""
+    result = subprocess.run(["icacls", str(path)], capture_output=True, text=True, timeout=60)
+    return result.stdout.strip() or result.stderr.strip()
+
+
+_ADMINISTRATORS = "S-1-5-32-544"
+
+
 def _disowned(path, subject: Subject, rights: str) -> None:
     r"""Give ``subject`` exactly ``rights`` on ``path``, and give ownership away.
 
-    **Ownership is the trap here, and it is the code being right rather than the test.** An
-    owner implicitly holds READ_CONTROL and WRITE_DAC, and WRITE_DAC is in both of IMG-06a's
-    masks — rewrite the DACL and you can grant yourself anything. So a directory the test
-    creates is one the test's own subject owns, and every mask question about it correctly
-    answers "can replace"; a refusal is unobservable until ownership moves. IMG-01 says as
-    much ("or ownership") and the first version of these tests read past it.
+    Two Windows facts make the obvious version of this silently do nothing.
 
-    Ownership goes last: handing it away costs WRITE_DAC, so the ACL is written first.
-    ``icacls`` can still do it because the runner holds SeTakeOwnershipPrivilege — which is
-    also why the oracle short-circuits on that privilege and why these tests turn that off.
+    **Ownership implies WRITE_DAC**, which is in both of IMG-06a's masks: rewrite the DACL
+    and you can grant yourself anything. A directory the test creates is owned by the very
+    subject it asks about, so "can replace" is the right answer and a refusal cannot be
+    observed until ownership moves. IMG-01 says this outright ("or ownership").
+
+    **``/inheritance:r`` removes inherited ACEs, and the one that matters is not inherited.**
+    A ``CREATOR OWNER`` ACE on the parent materialises as an *explicit* full-control ACE for
+    the creator at creation time, so it survives that flag untouched. The explicit ACEs have
+    to be removed by name, which is why this is four invocations and not one.
+
+    Ownership goes last, because handing it away costs the WRITE_DAC the earlier steps need.
+    ``icacls`` can still do it since the runner holds SeTakeOwnershipPrivilege — the same
+    privilege the oracle short-circuits on, and that these tests disable.
     """
-    _icacls(path, "/inheritance:r", "/grant", f"*{subject}:({rights})")
+    _icacls(path, "/inheritance:r")
+    _icacls(path, "/remove", f"*{subject}", f"*{_ADMINISTRATORS}")
+    _icacls(path, "/grant", f"*{subject}:({rights})")
     _icacls(path, "/setowner", "NT AUTHORITY\\SYSTEM")
 
 
@@ -131,8 +147,9 @@ def test_a_read_execute_directory_is_not_replaceable(oracle, subject, tmp_path):
     target.mkdir()
     _disowned(target, subject, "RX")
 
-    assert oracle.subject_can_replace(str(target), subject) is False
-    assert oracle.subject_can_replace_entries(str(target), subject) is False
+    acl = _acl_of(target)
+    assert oracle.subject_can_replace(str(target), subject) is False, acl
+    assert oracle.subject_can_replace_entries(str(target), subject) is False, acl
 
 
 @windows_only
@@ -141,8 +158,9 @@ def test_a_modifiable_directory_is_replaceable_under_both_masks(oracle, subject,
     target.mkdir()
     _disowned(target, subject, "M")
 
-    assert oracle.subject_can_replace(str(target), subject) is True
-    assert oracle.subject_can_replace_entries(str(target), subject) is True
+    acl = _acl_of(target)
+    assert oracle.subject_can_replace(str(target), subject) is True, acl
+    assert oracle.subject_can_replace_entries(str(target), subject) is True, acl
 
 
 @windows_only
@@ -158,8 +176,9 @@ def test_add_only_is_the_case_the_split_exists_for(oracle, subject, tmp_path):
     target.mkdir()
     _disowned(target, subject, "RX,AD,WD")
 
-    assert oracle.subject_can_replace(str(target), subject) is True
-    assert oracle.subject_can_replace_entries(str(target), subject) is False
+    acl = _acl_of(target)
+    assert oracle.subject_can_replace(str(target), subject) is True, acl
+    assert oracle.subject_can_replace_entries(str(target), subject) is False, acl
 
 
 @windows_only
@@ -169,7 +188,7 @@ def test_delete_child_is_dangerous_under_both_masks(oracle, subject, tmp_path):
     target.mkdir()
     _disowned(target, subject, "RX,DC")
 
-    assert oracle.subject_can_replace_entries(str(target), subject) is True
+    assert oracle.subject_can_replace_entries(str(target), subject) is True, _acl_of(target)
 
 
 @windows_only
