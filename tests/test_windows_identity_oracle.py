@@ -72,6 +72,24 @@ def _icacls(path, *args: str) -> None:
     assert result.returncode == 0, f"icacls {args}: {result.stdout}{result.stderr}"
 
 
+def _disowned(path, subject: Subject, rights: str) -> None:
+    r"""Give ``subject`` exactly ``rights`` on ``path``, and give ownership away.
+
+    **Ownership is the trap here, and it is the code being right rather than the test.** An
+    owner implicitly holds READ_CONTROL and WRITE_DAC, and WRITE_DAC is in both of IMG-06a's
+    masks — rewrite the DACL and you can grant yourself anything. So a directory the test
+    creates is one the test's own subject owns, and every mask question about it correctly
+    answers "can replace"; a refusal is unobservable until ownership moves. IMG-01 says as
+    much ("or ownership") and the first version of these tests read past it.
+
+    Ownership goes last: handing it away costs WRITE_DAC, so the ACL is written first.
+    ``icacls`` can still do it because the runner holds SeTakeOwnershipPrivilege — which is
+    also why the oracle short-circuits on that privilege and why these tests turn that off.
+    """
+    _icacls(path, "/inheritance:r", "/grant", f"*{subject}:({rights})")
+    _icacls(path, "/setowner", "NT AUTHORITY\\SYSTEM")
+
+
 @pytest.fixture
 def subject() -> Subject:
     sid = token_sid()
@@ -98,7 +116,7 @@ def test_a_privileged_token_can_replace_everything(subject, tmp_path):
     built = WindowsAccessOracle(subject)
     locked = tmp_path / "locked"
     locked.mkdir()
-    _icacls(locked, "/inheritance:r", "/grant", f"*{subject}:(RX)")
+    _disowned(locked, subject, "RX")
 
     if token_privileges() & REPLACE_PRIVILEGES:
         assert built.subject_can_replace(str(locked), subject) is True
@@ -111,7 +129,7 @@ def test_a_privileged_token_can_replace_everything(subject, tmp_path):
 def test_a_read_execute_directory_is_not_replaceable(oracle, subject, tmp_path):
     target = tmp_path / "readonly"
     target.mkdir()
-    _icacls(target, "/inheritance:r", "/grant", f"*{subject}:(RX)")
+    _disowned(target, subject, "RX")
 
     assert oracle.subject_can_replace(str(target), subject) is False
     assert oracle.subject_can_replace_entries(str(target), subject) is False
@@ -121,7 +139,7 @@ def test_a_read_execute_directory_is_not_replaceable(oracle, subject, tmp_path):
 def test_a_modifiable_directory_is_replaceable_under_both_masks(oracle, subject, tmp_path):
     target = tmp_path / "writable"
     target.mkdir()
-    _icacls(target, "/inheritance:r", "/grant", f"*{subject}:(M)")
+    _disowned(target, subject, "M")
 
     assert oracle.subject_can_replace(str(target), subject) is True
     assert oracle.subject_can_replace_entries(str(target), subject) is True
@@ -138,7 +156,7 @@ def test_add_only_is_the_case_the_split_exists_for(oracle, subject, tmp_path):
     """
     target = tmp_path / "addonly"
     target.mkdir()
-    _icacls(target, "/inheritance:r", "/grant", f"*{subject}:(RX,AD,WD)")
+    _disowned(target, subject, "RX,AD,WD")
 
     assert oracle.subject_can_replace(str(target), subject) is True
     assert oracle.subject_can_replace_entries(str(target), subject) is False
@@ -149,9 +167,26 @@ def test_delete_child_is_dangerous_under_both_masks(oracle, subject, tmp_path):
     """Deleting or renaming the next link *is* replacing it, so the narrow mask keeps this."""
     target = tmp_path / "deletechild"
     target.mkdir()
-    _icacls(target, "/inheritance:r", "/grant", f"*{subject}:(RX,DC)")
+    _disowned(target, subject, "RX,DC")
 
     assert oracle.subject_can_replace_entries(str(target), subject) is True
+
+
+@windows_only
+def test_ownership_alone_answers_can_replace(oracle, subject, tmp_path):
+    r"""IMG-01's "or ownership", and the reason every other case here gives ownership away.
+
+    An owner implicitly holds READ_CONTROL and WRITE_DAC whatever the DACL grants, so it can
+    rewrite that DACL and then hold anything. This directory is granted read-execute only and
+    keeps its owner, and both masks still answer "can replace" — which is the code being
+    right. Without this case the ``_disowned`` helper looks like ceremony.
+    """
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    _icacls(owned, "/inheritance:r", "/grant", f"*{subject}:(RX)")
+
+    assert oracle.subject_can_replace(str(owned), subject) is True
+    assert oracle.subject_can_replace_entries(str(owned), subject) is True
 
 
 @windows_only
@@ -173,7 +208,7 @@ def test_a_file_uses_the_file_mask_and_a_directory_the_directory_mask(oracle, su
     """Add-file on a *file* is write-data, which is replacing it; on a directory it is not."""
     image = tmp_path / "img.exe"
     image.write_bytes(b"MZ")
-    _icacls(image, "/inheritance:r", "/grant", f"*{subject}:(RX,WD)")
+    _disowned(image, subject, "RX,WD")
 
     assert oracle.subject_can_replace(str(image), subject) is True
 

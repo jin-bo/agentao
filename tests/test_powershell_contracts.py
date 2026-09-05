@@ -221,7 +221,7 @@ def test_a_writable_ancestor_refuses_the_whole_chain(monkeypatch):
 
 
 def test_a_volume_root_that_only_accepts_new_entries_does_not_refuse_the_chain(monkeypatch):
-    """IMG-06a's split. A stock `C:\` grants every standard user FILE_ADD_SUBDIRECTORY and
+    r"""IMG-06a's split. A stock `C:\` grants every standard user FILE_ADD_SUBDIRECTORY and
     none of DELETE / FILE_DELETE_CHILD / WRITE_DAC / WRITE_OWNER (evidence §3.23), so asking
     the *target* mask to the volume root made IMG-01 false everywhere, for everyone."""
     monkeypatch.setattr(c, "ancestors_to_volume_root", _chain)

@@ -160,7 +160,7 @@ class FakeOracle:
         return str(path) in self.writable
 
     def subject_can_replace_entries(self, path: AbsPath, subject: Subject) -> bool:
-        """IMG-06a's ancestor mask: narrower than ``subject_can_replace`` by construction.
+        r"""IMG-06a's ancestor mask: narrower than ``subject_can_replace`` by construction.
 
         ``writable`` stands for the target mask, ``relinkable`` for this one. A path in
         ``relinkable`` alone is the case the split exists for — a stock ``C:\`` where a
