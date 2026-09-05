@@ -164,6 +164,22 @@ class TestNormalBehaviorPreserved:
 
 
 class TestConcurrentReadersNeverSeeTornFiles:
+    """A reader never observes a partially written file — on both platforms.
+
+    **What differs on Windows is which side pays.** ``os.replace`` there is refused
+    while anyone holds the target open without ``FILE_SHARE_DELETE``, which Python's
+    ``open`` does not request. So the reader still never tears; the *writer* raises
+    instead. ``_replace_with_retry`` waits out the short-lived handles that real
+    readers take (an editor, an indexer, a virus scanner), and a reader looping as
+    hard as this one is not short-lived — no bounded retry can win against a handle
+    that is essentially always held, and raising is the correct answer when the swap
+    genuinely cannot be made.
+
+    So the assertion is split: the no-torn-read property is checked everywhere,
+    because it is the guarantee; the refusals are counted rather than ignored, and
+    asserted to be absent on POSIX, where they would mean a real regression.
+    """
+
     def test_reader_observes_only_whole_states(self, fs, tmp_path):
         import threading
 
@@ -171,6 +187,7 @@ class TestConcurrentReadersNeverSeeTornFiles:
         target.write_text("A" * 20000)
 
         observed = set()
+        refused = 0
         stop = threading.Event()
 
         def reader():
@@ -185,13 +202,18 @@ class TestConcurrentReadersNeverSeeTornFiles:
         thread.start()
         try:
             for _ in range(100):
-                fs.write_text(target, "B" * 20000)
-                fs.write_text(target, "A" * 20000)
+                for payload in ("B" * 20000, "A" * 20000):
+                    try:
+                        fs.write_text(target, payload)
+                    except PermissionError:
+                        refused += 1
         finally:
             stop.set()
             thread.join(timeout=5)
 
         assert observed <= {(20000, "A"), (20000, "B")}, f"torn read: {observed}"
+        if os.name != "nt":
+            assert refused == 0, "POSIX renames over an open file; a refusal is a regression"
 
 
 class TestDegradedEnvironments:
