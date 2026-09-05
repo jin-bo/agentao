@@ -19,6 +19,8 @@ from agentao.plugins.models import (
     PluginManifest,
 )
 
+from ._hook_commands import as_kwargs, emitting, shell_emits_json
+
 
 # ======================================================================
 # ClaudeHooksParser
@@ -309,7 +311,7 @@ class TestCommandHookDispatch:
         rule = ParsedHookRule(
             event="UserPromptSubmit",
             hook_type="command",
-            command="echo 'plain text output'",
+            **as_kwargs(emitting(stdout="plain text output\n")),
             plugin_name="test",
         )
         payload = {"event": "UserPromptSubmit", "data": {"userMessage": "hi"}}
@@ -481,7 +483,7 @@ class TestPrepareUserTurn:
             hook_specs=[{
                 "hooks": {
                     "UserPromptSubmit": [
-                        {"type": "command", "command": "echo '{\"additionalContext\": \"injected\"}'"},
+                        {"type": "command", "command": shell_emits_json('{"additionalContext": "injected"}')},
                     ],
                 },
             }],
@@ -499,7 +501,7 @@ class TestPrepareUserTurn:
             hook_specs=[{
                 "hooks": {
                     "UserPromptSubmit": [
-                        {"type": "command", "command": "echo '{\"blockingError\": \"denied\"}'"},
+                        {"type": "command", "command": shell_emits_json('{"blockingError": "denied"}')},
                     ],
                 },
             }],
@@ -517,7 +519,7 @@ class TestPrepareUserTurn:
             hook_specs=[{
                 "hooks": {
                     "UserPromptSubmit": [
-                        {"type": "command", "command": "echo '{\"preventContinuation\": true}'"},
+                        {"type": "command", "command": shell_emits_json('{"preventContinuation": true}')},
                     ],
                 },
             }],
@@ -550,7 +552,7 @@ class TestPrepareUserTurn:
         (hooks_dir / "hooks.json").write_text(json.dumps({
             "hooks": {
                 "UserPromptSubmit": [
-                    {"type": "command", "command": "echo '{\"additionalContext\": \"from-file\"}'"},
+                    {"type": "command", "command": shell_emits_json('{"additionalContext": "from-file"}')},
                 ],
             }
         }), encoding="utf-8")
@@ -599,7 +601,7 @@ class TestPrepareUserTurn:
             hook_specs=[{
                 "hooks": {
                     "UserPromptSubmit": [
-                        {"type": "command", "command": "echo '{\"blockingError\": \"nope\"}'"},
+                        {"type": "command", "command": shell_emits_json('{"blockingError": "nope"}')},
                     ],
                 },
             }],

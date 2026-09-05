@@ -25,6 +25,8 @@ from agentao.plugins.models import ParsedHookRule
 from agentao.runtime.tool_planning import ToolCallDecision
 from agentao.runtime.tool_runner import ToolRunner
 from agentao.tools.base import Tool, ToolRegistry
+
+from ._hook_commands import as_kwargs, emitting
 from tests.support.tool_calls import make_tool_call
 
 
@@ -106,7 +108,7 @@ def _runner(tmp_path, rules, transport=None):
 
 
 def _rule(command, event="PreToolUse", contract=PROFILE_ID, matcher=None):
-    return ParsedHookRule(event=event, hook_type="command", command=command,
+    return ParsedHookRule(event=event, hook_type="command", **as_kwargs(command),
                           contract=contract, plugin_name="p", timeout=30,
                           matcher_pattern=matcher)
 
@@ -319,7 +321,7 @@ def test_a_field_is_diagnosed_per_event_not_per_name():
     event, and that is what the author needs told.
     """
     clear_all()
-    rule = _rule("echo hi", event="PostToolUse")
+    rule = _rule(emitting(stdout="hi\n"), event="PostToolUse")
     body = {"hookSpecificOutput": {"hookEventName": "PostToolUse",
                                    "reloadSkills": True}}
 
@@ -371,7 +373,7 @@ def test_clearing_a_session_lets_the_same_rule_speak_again(tmp_path):
     from agentao.cli.commands.reset import _reset_session
 
     clear_all()
-    rule = _rule("echo hi", event="PostToolUse")
+    rule = _rule(emitting(stdout="hi\n"), event="PostToolUse")
     body = {"hookSpecificOutput": {"hookEventName": "PostToolUse",
                                    "reloadSkills": True}}
     assert len(diagnose_fields(body, "PostToolUse", rule, "s1")) == 1
@@ -398,8 +400,8 @@ def test_a_stop_via_exit_2_gets_the_profiles_reentry_cap(tmp_path):
     from agentao.plugins.hooks import PluginHookDispatcher
 
     rule = ParsedHookRule(event="Stop", hook_type="command",
-                          command="echo 'keep going' >&2; exit 2", timeout=30,
-                          contract=PROFILE_ID, plugin_name="p")
+                          **as_kwargs(emitting(stderr="keep going\n", exit_code=2)),
+                          timeout=30, contract=PROFILE_ID, plugin_name="p")
     result = PluginHookDispatcher(cwd=tmp_path).dispatch_stop(
         payload={"session_id": "s1", "hook_event_name": "Stop"}, rules=[rule],
     )

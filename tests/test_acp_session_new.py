@@ -19,6 +19,8 @@ import io
 import json
 from pathlib import Path
 
+import tempfile
+
 import pytest
 
 from agentao.acp import initialize as acp_initialize
@@ -258,10 +260,13 @@ def test_cwd_relative_path_raises(initialized_server):
 
 def test_cwd_nonexistent_raises(initialized_server):
     factory, _ = make_recording_factory()
+    # Absolute on this platform, because the handler checks absoluteness first: on Windows
+    # ``/definitely/...`` has no drive, so the call failed for the wrong reason.
+    missing = str(Path(tempfile.gettempdir()).resolve() / "definitely-not-a-real-path-xyz123")
     with pytest.raises(TypeError, match="does not exist"):
         acp_session_new.handle_session_new(
             initialized_server,
-            {"cwd": "/definitely/not/a/real/path/xyz123", "mcpServers": []},
+            {"cwd": missing, "mcpServers": []},
             agent_factory=factory,
         )
 

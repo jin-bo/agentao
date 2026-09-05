@@ -9,11 +9,26 @@ going straight into the model's window.
 
 from __future__ import annotations
 
+
+def _floods(stream: str) -> list:
+    """A child that writes without stopping, on any platform.
+
+    ``yes`` is a coreutils program; Windows has neither it nor a shell that would run the
+    redirect around it. What the limit is being measured against is an unbounded writer, and
+    a Python loop is one everywhere.
+    """
+    return [
+        sys.executable, "-c",
+        "import sys\nwhile True:\n    sys.%s.write('A' * 4096)" % stream,
+    ]
+
 import json
 import os
 import subprocess
 import time
 from pathlib import Path
+
+import sys
 
 import pytest
 
@@ -23,6 +38,8 @@ from agentao.plugins.hooks import _budget, _dispatcher as dispatcher_mod
 from agentao.plugins.hooks._budget import HOOK_CHANNEL_CHAR_LIMIT, cap_channel
 from agentao.plugins.models import ParsedHookRule, StopHookResult, UserPromptSubmitResult
 
+from ._hook_commands import as_kwargs
+
 
 # --------------------------------------------------------------------------
 # Tier 1 — the raw ceiling
@@ -31,14 +48,14 @@ from agentao.plugins.models import ParsedHookRule, StopHookResult, UserPromptSub
 def test_bounded_run_kills_a_flooding_child():
     """``yes`` never stops; the bound is what makes this test terminate."""
     with pytest.raises(OutputLimitExceeded) as excinfo:
-        run_captured("yes AAAA", shell=True, max_output_bytes=200_000)
+        run_captured(_floods("stdout"), max_output_bytes=200_000)
     assert excinfo.value.stream == "stdout"
     assert excinfo.value.limit == 200_000
 
 
 def test_bounded_run_catches_a_flood_on_stderr_too():
     with pytest.raises(OutputLimitExceeded) as excinfo:
-        run_captured("yes AAAA >&2", shell=True, max_output_bytes=200_000)
+        run_captured(_floods("stderr"), max_output_bytes=200_000)
     assert excinfo.value.stream == "stderr"
 
 
@@ -72,7 +89,8 @@ def test_a_budget_kill_is_reported_differently_from_a_timeout(monkeypatch, tmp_p
     monkeypatch.setattr(dispatcher_mod, "HOOK_RAW_OUTPUT_LIMIT_BYTES", 100_000)
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
     rule = ParsedHookRule(event="Stop", hook_type="command",
-                          command="yes AAAA", timeout=30, plugin_name="t")
+                          **as_kwargs((sys.executable, ["-c", "import sys\nwhile True:\n    sys.stdout.write('A' * 4096)"])),
+                          timeout=30, plugin_name="t")
 
     proc, failure = dispatcher._run_subprocess(rule, {"event": "Stop"})
 

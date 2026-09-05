@@ -32,6 +32,8 @@ from agentao.runtime.tool_planning import (
 from agentao.runtime.tool_runner import ToolRunner
 from agentao.tools import Tool, ToolRegistry
 
+from ._hook_commands import as_kwargs, emits_json, emitting
+
 
 # ---------------------------------------------------------------------------
 # Dispatcher-level: parsing + merge
@@ -40,13 +42,14 @@ from agentao.tools import Tool, ToolRegistry
 
 def _rule(command: str) -> ParsedHookRule:
     return ParsedHookRule(
-        event="PreToolUse", hook_type="command", command=command, plugin_name="t",
+        event="PreToolUse", hook_type="command", **as_kwargs(command), plugin_name="t",
     )
 
 
-def _echo_json(obj) -> str:
-    # ``shell=True`` — single-quote the JSON so braces/quotes survive.
-    return "echo '" + json.dumps(obj) + "'"
+def _echo_json(obj):
+    # The exec form: ``cmd.exe`` does not treat ``'`` as quoting, so the single-quoted
+    # spelling arrived at the parser with its quotes still attached and read as plain text.
+    return emits_json(json.dumps(obj))
 
 
 def test_dispatch_decision_deny(tmp_path):
@@ -91,7 +94,7 @@ def test_dispatch_decision_deny_wins_over_ask(tmp_path):
 
 
 def test_dispatch_decision_non_json_recorded_not_decided(tmp_path):
-    rule = _rule("echo just-some-text")
+    rule = _rule(emitting(stdout="just-some-text\n"))
     payload = ClaudeHookPayloadAdapter().build_pre_tool_use(tool_name="x")
     res = PluginHookDispatcher(cwd=tmp_path).dispatch_pre_tool_use_decision(
         payload=payload, rules=[rule],

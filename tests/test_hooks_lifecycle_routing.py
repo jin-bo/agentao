@@ -17,9 +17,15 @@ from agentao.plugins.hooks import PluginHookDispatcher
 from agentao.plugins.hooks._profile import LEGACY_CONTRACT_ID, PROFILE_ID
 from agentao.plugins.models import ParsedHookRule
 
+from ._hook_commands import emits_json, emitting
+
 
 def rule(event, command, contract=PROFILE_ID):
-    return ParsedHookRule(event=event, hook_type="command", command=command,
+    # ``command`` is either a shell string or the ``(command, args)`` pair the exec form
+    # takes. Fixtures use the pair: cmd.exe shares none of POSIX shell's syntax, and the
+    # exec form is the product's own way of not needing a shell at all.
+    cmd, args = command if isinstance(command, tuple) else (command, None)
+    return ParsedHookRule(event=event, hook_type="command", command=cmd, args=args,
                           contract=contract, plugin_name="p", timeout=30)
 
 
@@ -37,7 +43,7 @@ def run(event, command, tmp_path, contract=PROFILE_ID, payload=None):
 
 @pytest.mark.parametrize("event", ["SessionStart", "SessionEnd"])
 def test_exit_2_stderr_reaches_the_user_on_the_session_events(event, tmp_path):
-    result = run(event, "echo trouble >&2; exit 2", tmp_path)
+    result = run(event, emitting(stderr="trouble\n", exit_code=2), tmp_path)
     assert result.user_notices == ["trouble"]
     assert result.model_contexts == []          # and Claude does not see it
 
@@ -46,13 +52,13 @@ def test_exit_2_stderr_reaches_the_user_on_the_session_events(event, tmp_path):
 def test_exit_2_stderr_reaches_the_model_on_the_tool_events(event, tmp_path):
     """The tool already ran, so there is nothing left to block — the reference
     routes the stderr to the model instead."""
-    result = run(event, "echo feedback >&2; exit 2", tmp_path)
+    result = run(event, emitting(stderr="feedback\n", exit_code=2), tmp_path)
     assert result.model_contexts == ["feedback"]
     assert result.user_notices == []
 
 
 def test_a_non_zero_non_two_exit_is_a_user_notice_with_the_first_stderr_line(tmp_path):
-    result = run("SessionStart", "printf 'first\\nsecond\\n' >&2; exit 7", tmp_path)
+    result = run("SessionStart", emitting(stderr="first\nsecond\n", exit_code=7), tmp_path)
     assert len(result.user_notices) == 1
     notice = result.user_notices[0]
     assert "Failed with non-blocking status code: 7" in notice
@@ -66,14 +72,15 @@ def test_a_non_zero_non_two_exit_is_a_user_notice_with_the_first_stderr_line(tmp
 def test_additional_context_reaches_the_model_on_session_start(tmp_path):
     result = run(
         "SessionStart",
-        """echo '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "repo is a monorepo"}}'""",
+        emits_json('{"hookSpecificOutput": {"hookEventName": "SessionStart", '
+                   '"additionalContext": "repo is a monorepo"}}'),
         tmp_path,
     )
     assert result.model_contexts == ["repo is a monorepo"]
 
 
 def test_system_message_reaches_the_user_where_the_event_honors_it(tmp_path):
-    result = run("SessionStart", """echo '{"systemMessage": "watch out"}'""", tmp_path)
+    result = run("SessionStart", emits_json('{"systemMessage": "watch out"}'), tmp_path)
     assert result.user_notices == ["watch out"]
 
 
@@ -84,7 +91,7 @@ def test_a_discarding_event_delivers_neither_field_and_says_nothing_about_it(eve
     Claude Code either — so a diagnostic here would flag correct code."""
     result = run(
         event,
-        """echo '{"systemMessage": "notice", "continue": false, "stopReason": "halt"}'""",
+        emits_json('{"systemMessage": "notice", "continue": false, "stopReason": "halt"}'),
         tmp_path,
     )
     assert result.user_notices == []
@@ -92,20 +99,20 @@ def test_a_discarding_event_delivers_neither_field_and_says_nothing_about_it(eve
 
 
 def test_continue_false_is_honored_where_the_matrix_says_so(tmp_path):
-    result = run("PostToolUse", """echo '{"continue": false, "stopReason": "halt"}'""", tmp_path)
+    result = run("PostToolUse", emits_json('{"continue": false, "stopReason": "halt"}'), tmp_path)
     assert result.stop_reason == "halt"
 
 
 def test_continue_false_is_discarded_on_session_start(tmp_path):
     """Measured against claude 2.1.251 (probe §B): the session starts anyway."""
-    result = run("SessionStart", """echo '{"continue": false, "stopReason": "halt"}'""", tmp_path)
+    result = run("SessionStart", emits_json('{"continue": false, "stopReason": "halt"}'), tmp_path)
     assert result.stop_reason is None
 
 
 def test_a_v1_rule_gets_no_channels_because_v1_is_frozen(tmp_path):
     """These events were side-effect only under `agentao-v1`, and §3 freezes
     that. Only a profile rule gets the new routing."""
-    result = run("SessionStart", "echo trouble >&2; exit 2", tmp_path,
+    result = run("SessionStart", emitting(stderr="trouble\n", exit_code=2), tmp_path,
                  contract=LEGACY_CONTRACT_ID)
     assert result.user_notices == []
     assert result.model_contexts == []
@@ -130,7 +137,7 @@ def test_session_end_exit_2_reaches_the_user_end_to_end(tmp_path):
     """Not a resolver unit test: this path discarded the dispatcher's return
     value inside a bare `try/except: pass`, so a resolver-level test would pass
     while the feature did not exist."""
-    agent = _FakeAgent(tmp_path, [rule("SessionEnd", "echo goodbye-problem >&2; exit 2")])
+    agent = _FakeAgent(tmp_path, [rule("SessionEnd", emitting(stderr="goodbye-problem\n", exit_code=2))])
     notices = dispatch_plugin_session_end(agent, "s1")
     assert notices == ["goodbye-problem"]
 
@@ -138,7 +145,8 @@ def test_session_end_exit_2_reaches_the_user_end_to_end(tmp_path):
 def test_session_start_context_reaches_the_conversation_end_to_end(tmp_path):
     agent = _FakeAgent(tmp_path, [rule(
         "SessionStart",
-        """echo '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "house style: no comments"}}'""",
+        emits_json('{"hookSpecificOutput": {"hookEventName": "SessionStart", '
+                   '"additionalContext": "house style: no comments"}}'),
     )])
     dispatch_plugin_session_start(agent, "s1")
     assert len(agent.messages) == 1

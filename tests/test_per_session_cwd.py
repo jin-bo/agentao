@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -49,6 +50,22 @@ from agentao.tools.file_ops import (
 )
 from agentao.tools.search import FindFilesTool
 from agentao.tools.shell import ShellTool
+
+
+def _relocate_home(monkeypatch, home) -> None:
+    """Point every variable this platform's ``expanduser`` reads at ``home``.
+
+    ``Path.home()`` reads ``HOME`` on POSIX and ``USERPROFILE`` (then
+    ``HOMEDRIVE`` + ``HOMEPATH``) on Windows, so a test that sets only ``HOME``
+    relocates nothing there and quietly asserts against the real user's home.
+    """
+    home = str(home)
+    monkeypatch.setenv("HOME", home)
+    monkeypatch.setenv("USERPROFILE", home)
+    drive, tail = os.path.splitdrive(home)
+    if drive:
+        monkeypatch.setenv("HOMEDRIVE", drive)
+        monkeypatch.setenv("HOMEPATH", tail or "\\")
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +129,7 @@ def test_resolve_path_relative_without_wd_returns_relative_path():
 def test_resolve_path_tilde_expansion(tmp_path, monkeypatch):
     tool = _FakeTool()
     tool.working_directory = tmp_path
-    monkeypatch.setenv("HOME", str(tmp_path))
+    _relocate_home(monkeypatch, tmp_path)
     result = tool._resolve_path("~/foo.txt")
     assert result == tmp_path / "foo.txt"
 
@@ -219,7 +236,7 @@ def test_shell_tool_default_wd_resolves_to_session_cwd(tmp_path):
     # Echo pwd so we can assert what the subprocess saw.
     if sys.platform == "win32":
         pytest.skip("pwd is a POSIX concept")
-    output = tool.execute(command="pwd", working_directory=".")
+    output = tool.execute(command=f'"{sys.executable}" -c "import os;print(os.getcwd())"', working_directory=".")
 
     assert str(tmp_path.resolve()) in output
 
@@ -553,7 +570,7 @@ def test_llm_client_falls_back_when_primary_log_path_unwritable(
     ``OSError`` subclass). The fallback should redirect to ``~/.agentao``,
     which we relocate to ``tmp_path`` via HOME so the test stays hermetic.
     """
-    monkeypatch.setenv("HOME", str(tmp_path))
+    _relocate_home(monkeypatch, tmp_path)
 
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("regular file, not a directory", encoding="utf-8")
@@ -619,7 +636,7 @@ def test_agentao_survives_user_memory_db_sqlite_error(
     # factory hits the exact crash path reported by the user.
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
+    _relocate_home(monkeypatch, home)
     user_db = str(home / ".agentao" / "memory.db")
 
     real_init = SQLiteMemoryStore.__init__
@@ -662,7 +679,7 @@ def test_acp_session_new_survives_user_memory_db_sqlite_error(
 
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
+    _relocate_home(monkeypatch, home)
     user_db = str(home / ".agentao" / "memory.db")
 
     real_init = SQLiteMemoryStore.__init__

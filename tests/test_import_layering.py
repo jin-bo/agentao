@@ -178,7 +178,13 @@ def _imports_of(path: Path) -> List[Tuple[str, int, bool]]:
 
 
 def _rel(path: Path) -> str:
-    return str(path.relative_to(REPO_ROOT))
+    """Repo-relative, always with ``/``.
+
+    The exemption tables are written with forward slashes, so on Windows a native
+    ``agentao\\__main__.py`` matched none of them and every exemption silently stopped
+    applying — the rule reported violations it had been told about years ago.
+    """
+    return path.relative_to(REPO_ROOT).as_posix()
 
 
 def _under(path: Path, *names: str) -> bool:

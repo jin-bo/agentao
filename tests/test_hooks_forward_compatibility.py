@@ -23,6 +23,8 @@ from agentao.plugins.hooks._diagnostics import clear_all
 from agentao.plugins.hooks._profile import PROFILE_ID
 from agentao.plugins.models import ParsedHookRule
 
+from ._hook_commands import as_kwargs, emits_json
+
 
 @pytest.fixture(autouse=True)
 def _isolate():
@@ -35,7 +37,7 @@ def _run(tmp_path, event, payload, command=None):
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
     rule = ParsedHookRule(
         event=event, hook_type="command",
-        command=command or f"echo '{json.dumps(payload)}'",
+        **as_kwargs(command or emits_json(json.dumps(payload))),
         contract=PROFILE_ID, plugin_name="p", timeout=30,
     )
     return dispatcher._dispatch_lifecycle(
@@ -74,7 +76,9 @@ def test_the_diagnostic_does_not_repeat_on_a_second_invocation(tmp_path):
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
     rule = ParsedHookRule(
         event="SessionStart", hook_type="command",
-        command="""echo '{"hookSpecificOutput": {"hookEventName": "SessionStart", "watchPaths": ["src/"]}}'""",
+        **as_kwargs(emits_json(
+            '{"hookSpecificOutput": {"hookEventName": "SessionStart", "watchPaths": ["src/"]}}'
+        )),
         contract=PROFILE_ID, plugin_name="p", timeout=30,
     )
     payload = {"hook_event_name": "SessionStart", "session_id": "s"}

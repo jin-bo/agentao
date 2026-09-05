@@ -21,6 +21,8 @@ from agentao.plugins.hooks import PluginHookDispatcher
 from agentao.plugins.hooks._profile import LEGACY_CONTRACT_ID, PROFILE_ID
 from agentao.plugins.models import ParsedHookRule, StopHookResult, UserPromptSubmitResult
 
+from ._hook_commands import as_kwargs, emitting
+
 
 def _rule(event, contract=PROFILE_ID):
     return ParsedHookRule(event=event, hook_type="command", command="x",
@@ -107,7 +109,7 @@ def test_a_v1_rule_ignores_the_profile_spellings():
 def test_exit_2_blocks_the_prompt(tmp_path):
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
     rule = ParsedHookRule(event="UserPromptSubmit", hook_type="command",
-                          command="echo 'policy violation' >&2; exit 2",
+                          **as_kwargs(emitting(stderr="policy violation\n", exit_code=2)),
                           contract=PROFILE_ID, plugin_name="p", timeout=30)
     result = UserPromptSubmitResult()
 
@@ -122,7 +124,10 @@ def test_exit_2_prefers_the_json_reason_when_there_is_one(tmp_path):
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
     rule = ParsedHookRule(
         event="UserPromptSubmit", hook_type="command",
-        command="""echo 'from stderr' >&2; echo '{"decision":"block","reason":"from json"}'; exit 2""",
+        **as_kwargs(emitting(
+            stdout='{"decision":"block","reason":"from json"}\n',
+            stderr="from stderr\n", exit_code=2,
+        )),
         contract=PROFILE_ID, plugin_name="p", timeout=30,
     )
     result = UserPromptSubmitResult()

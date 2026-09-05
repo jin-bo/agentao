@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import tempfile
+
 import pytest
 
 from agentao.acp_client.config import load_acp_client_config
@@ -215,10 +217,14 @@ class TestCwdResolution:
         assert cfg.servers["srv"].cwd == expected
 
     def test_absolute_cwd_unchanged(self, tmp_path: Path) -> None:
-        server = {**VALID_SERVER, "cwd": "/absolute/path"}
+        # Absolute *on this platform*: ``/absolute/path`` has no drive on Windows, so the
+        # loader treats it as relative and resolves it — which is the branch above, not this
+        # one. The rule under test is "an absolute cwd is passed through untouched".
+        absolute = str(Path(tempfile.gettempdir()).resolve() / "absolute-path")
+        server = {**VALID_SERVER, "cwd": absolute}
         _write_acp_config(tmp_path, {"srv": server})
         cfg = load_acp_client_config(project_root=tmp_path)
-        assert cfg.servers["srv"].cwd == "/absolute/path"
+        assert cfg.servers["srv"].cwd == absolute
 
 
 # ---------------------------------------------------------------------------

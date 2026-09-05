@@ -184,6 +184,11 @@ class TestPermissionsJson:
         hasattr(os, "geteuid") and os.geteuid() == 0,
         reason="root ignores the mode bits, so chmod(0o000) is not unreadable",
     )
+    @pytest.mark.skipif(
+        os.name == "nt",
+        reason="chmod(0o000) does not remove read access on Windows; making a file "
+               "genuinely unreadable there needs an ACL, which is the identity oracle's job",
+    )
     def test_unreadable_file_raises(self, tmp_path, user_root):
         path = user_root / "permissions.json"
         path.write_bytes(utf8({"rules": []}))
@@ -458,4 +463,7 @@ class TestFatalHandlerSurvivesHostileMarkup:
         out = capsys.readouterr().out
         assert "Fatal error:" in out
         assert "[/oops]" in out
-        assert "/home/u/[wip]/permissions.json" in out
+        # The handler renders the ``Path`` it was given, so the expectation is that
+        # path's own string — ``\\home\\u\\[wip]\\...`` on Windows. What is under test is
+        # that the brackets survive Rich's markup, not which separator the OS uses.
+        assert str(Path("/home/u/[wip]/permissions.json")) in out

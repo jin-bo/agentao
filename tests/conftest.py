@@ -78,3 +78,28 @@ def capture_subprocess_run(monkeypatch) -> List[List[str]]:
 
     monkeypatch.setattr(search_mod, "_run_capture", fake_run)
     return captured
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _prompt_toolkit_without_a_console():
+    """Give prompt_toolkit somewhere to write when the machine has no console.
+
+    A Windows CI runner has no console screen buffer, so prompt_toolkit's default output
+    factory raises ``NoConsoleScreenBufferError`` the moment anything constructs a
+    ``PromptSession`` — which the CLI does at construction time. That is a fact about the
+    runner, not about agentao: a person running the CLI on Windows has a console.
+
+    Installed only when the real output cannot be created, so on a machine that has one
+    nothing changes and the tests keep exercising the same code they always did.
+    """
+    from prompt_toolkit.application import create_app_session
+    from prompt_toolkit.output import DummyOutput
+    from prompt_toolkit.output.defaults import create_output
+
+    try:
+        create_output()
+    except Exception:  # noqa: BLE001 - any failure to reach a terminal is the same answer
+        with create_app_session(output=DummyOutput()):
+            yield
+        return
+    yield

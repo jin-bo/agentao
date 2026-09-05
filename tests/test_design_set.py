@@ -610,13 +610,17 @@ def test_a_subrule_inherits_the_gate_its_parent_names_in_its_own_row(tmp_path):
     assert not any("TOOL-04 has no gate" in f for f in out), out
 
 
-def test_a_silent_nonzero_typecheck_is_a_failure_not_a_pass(tmp_path):
+def test_a_silent_nonzero_typecheck_is_a_failure_not_a_pass(tmp_path, monkeypatch):
     """mypy killed by the OOM reaper exits nonzero and says nothing; [] there reports a gate that never ran."""
-    fake = tmp_path / "silent.sh"
-    fake.write_text("#!/bin/sh\nexit 137\n", encoding="utf-8")
-    fake.chmod(0o755)
+    # The result is what is under test, not the plumbing that produced it. Faking the
+    # interpreter with a shell script needed a shebang and an executable bit, neither of
+    # which Windows has — it answered ``WinError 193`` instead of exiting 137.
+    def _silent(*args, **kwargs):
+        return subprocess.CompletedProcess(args=args[0], returncode=137, stdout="", stderr="")
+
+    monkeypatch.setattr(cds.subprocess, "run", _silent)
     ds = make_set(tmp_path, contract=CONTRACT)
-    out = cds.typecheck_contract(ds, python=str(fake))
+    out = cds.typecheck_contract(ds)
     assert out and "exited 137" in out[0], out
 
 

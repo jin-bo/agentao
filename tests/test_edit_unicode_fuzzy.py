@@ -49,7 +49,7 @@ def _bind(tool: EditTool, root: Path) -> EditTool:
 
 def test_smart_double_quotes_in_source_match_ascii_prompt(project_root):
     target = project_root / "doc.py"
-    target.write_text('name = “world”\n')  # source has smart quotes
+    target.write_text('name = “world”\n', encoding='utf-8')  # source has smart quotes
 
     tool = _bind(EditTool(), project_root)
     result = tool.execute(
@@ -61,12 +61,12 @@ def test_smart_double_quotes_in_source_match_ascii_prompt(project_root):
     assert "Replaced" in result
     assert _EDIT_SUFFIX_UNICODE in result
     # File now contains the replacement (ASCII quotes from new_text)
-    assert target.read_text() == 'name = "earth"\n'
+    assert target.read_text(encoding='utf-8') == 'name = "earth"\n'
 
 
 def test_em_dash_in_source_matches_ascii_hyphen(project_root):
     target = project_root / "log.txt"
-    target.write_text('a — b\n')  # em-dash
+    target.write_text('a — b\n', encoding='utf-8')  # em-dash
 
     tool = _bind(EditTool(), project_root)
     result = tool.execute(
@@ -76,12 +76,12 @@ def test_em_dash_in_source_matches_ascii_hyphen(project_root):
     )
 
     assert _EDIT_SUFFIX_UNICODE in result
-    assert target.read_text() == 'a - c\n'
+    assert target.read_text(encoding='utf-8') == 'a - c\n'
 
 
 def test_nbsp_in_source_matches_ascii_space(project_root):
     target = project_root / "x.txt"
-    target.write_text('foo bar\n')  # NBSP between words
+    target.write_text('foo bar\n', encoding='utf-8')  # NBSP between words
 
     tool = _bind(EditTool(), project_root)
     result = tool.execute(
@@ -91,13 +91,13 @@ def test_nbsp_in_source_matches_ascii_space(project_root):
     )
 
     assert _EDIT_SUFFIX_UNICODE in result
-    assert target.read_text() == 'foo qux\n'
+    assert target.read_text(encoding='utf-8') == 'foo qux\n'
 
 
 def test_mixed_typography_normalized(project_root):
     target = project_root / "mixed.md"
     # Source has: smart double quote + em-dash + NBSP + ideographic space
-    target.write_text('say “hi”—then pause　end\n')
+    target.write_text('say “hi”—then pause　end\n', encoding='utf-8')
 
     tool = _bind(EditTool(), project_root)
     result = tool.execute(
@@ -107,7 +107,7 @@ def test_mixed_typography_normalized(project_root):
     )
 
     assert _EDIT_SUFFIX_UNICODE in result
-    assert target.read_text() == 'say "hi" then continue\n'
+    assert target.read_text(encoding='utf-8') == 'say "hi" then continue\n'
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ class TestNfkcFolding:
     def test_fullwidth_punctuation_in_source_matches_ascii_prompt(self, project_root):
         """The CJK case: source written with 全角 punctuation, prompt in 半角."""
         target = project_root / "cjk.py"
-        target.write_text('print（"你好"）；\n')
+        target.write_text('print（"你好"）；\n', encoding='utf-8')
 
         tool = _bind(EditTool(), project_root)
         result = tool.execute(
@@ -136,11 +136,11 @@ class TestNfkcFolding:
         )
 
         assert _EDIT_SUFFIX_UNICODE in result
-        assert target.read_text() == 'print("世界")\n'
+        assert target.read_text(encoding='utf-8') == 'print("世界")\n'
 
     def test_fullwidth_alphanumerics_fold_to_ascii(self, project_root):
         target = project_root / "fw.txt"
-        target.write_text("ＴＯＴＡＬ＝４２\n")
+        target.write_text("ＴＯＴＡＬ＝４２\n", encoding='utf-8')
 
         tool = _bind(EditTool(), project_root)
         result = tool.execute(
@@ -150,13 +150,13 @@ class TestNfkcFolding:
         )
 
         assert _EDIT_SUFFIX_UNICODE in result
-        assert target.read_text() == "TOTAL=43\n"
+        assert target.read_text(encoding='utf-8') == "TOTAL=43\n"
 
     def test_prompt_is_fullwidth_and_source_is_ascii(self, project_root):
         """Reverse direction: the *model* emitted 全角. Both sides normalize,
         so tier 3 must still land."""
         target = project_root / "rev.txt"
-        target.write_text("total = 42\n")
+        target.write_text("total = 42\n", encoding='utf-8')
 
         tool = _bind(EditTool(), project_root)
         result = tool.execute(
@@ -166,7 +166,7 @@ class TestNfkcFolding:
         )
 
         assert _EDIT_SUFFIX_UNICODE in result
-        assert target.read_text() == "total = 43\n"
+        assert target.read_text(encoding='utf-8') == "total = 43\n"
 
     def test_nfkc_runs_before_the_codepoint_table(self, project_root):
         """Ordering regression.
@@ -176,7 +176,7 @@ class TestNfkcFolding:
         Table-first would strand it one step short and this falls to tier 4.
         """
         target = project_root / "order.txt"
-        target.write_text("a ﹘ b\n")
+        target.write_text("a ﹘ b\n", encoding='utf-8')
 
         tool = _bind(EditTool(), project_root)
         result = tool.execute(
@@ -186,14 +186,14 @@ class TestNfkcFolding:
         )
 
         assert _EDIT_SUFFIX_UNICODE in result
-        assert target.read_text() == "a + b\n"
+        assert target.read_text(encoding='utf-8') == "a + b\n"
 
     def test_fullwidth_on_both_sides_still_uses_tier_1(self, project_root):
         """NFKC must not steal a byte-exact match. A file and prompt that agree
         on 全角 punctuation is tier 1, and the file keeps whatever new_text says.
         """
         target = project_root / "both_fw.py"
-        target.write_text('print（"你好"）\n')
+        target.write_text('print（"你好"）\n', encoding='utf-8')
 
         tool = _bind(EditTool(), project_root)
         result = tool.execute(
@@ -205,7 +205,7 @@ class TestNfkcFolding:
         assert "Replaced" in result
         assert _EDIT_SUFFIX_UNICODE not in result
         assert _EDIT_SUFFIX_FLEXIBLE not in result
-        assert target.read_text() == 'print（"世界"）\n'
+        assert target.read_text(encoding='utf-8') == 'print（"世界"）\n'
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ def test_unicode_replace_all_replaces_all_normalized_variants(project_root):
     target = project_root / "mix.txt"
     # First occurrence uses em-dash (U+2014), second uses en-dash (U+2013).
     # Both normalize to ASCII '-'.
-    target.write_text("a — b\nmiddle\na – b\n")
+    target.write_text("a — b\nmiddle\na – b\n", encoding='utf-8')
 
     tool = _bind(EditTool(), project_root)
     result = tool.execute(
@@ -235,7 +235,7 @@ def test_unicode_replace_all_replaces_all_normalized_variants(project_root):
 
     assert _EDIT_SUFFIX_UNICODE in result
     assert "Replaced 2" in result
-    assert target.read_text() == "a + b\nmiddle\na + b\n"
+    assert target.read_text(encoding='utf-8') == "a + b\nmiddle\na + b\n"
 
 
 def test_unicode_replace_all_count_one_when_replace_all_false(project_root):
@@ -248,7 +248,7 @@ def test_unicode_replace_all_count_one_when_replace_all_false(project_root):
     wrong one.
     """
     target = project_root / "first_only.txt"
-    target.write_text("a — b\nmiddle\na – b\n")
+    target.write_text("a — b\nmiddle\na – b\n", encoding='utf-8')
 
     tool = _bind(EditTool(), project_root)
     result = tool.execute(
@@ -262,7 +262,7 @@ def test_unicode_replace_all_count_one_when_replace_all_false(project_root):
     assert "first of 2 occurrences" in result
     assert "replace_all=true" in result
     # First (em-dash) occurrence replaced, second (en-dash) untouched
-    assert target.read_text() == "a + b\nmiddle\na – b\n"
+    assert target.read_text(encoding='utf-8') == "a + b\nmiddle\na – b\n"
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +315,7 @@ def test_flexible_match_preserves_crlf_line_endings(project_root):
 
 def test_byte_identical_uses_tier_1_not_normalization(project_root):
     target = project_root / "exact.py"
-    target.write_text('x = "ascii"\n')
+    target.write_text('x = "ascii"\n', encoding='utf-8')
 
     tool = _bind(EditTool(), project_root)
     result = tool.execute(
@@ -328,14 +328,14 @@ def test_byte_identical_uses_tier_1_not_normalization(project_root):
     # Tier 1 returns plain "Replaced N occurrence(s) in <path>" with NO suffix
     assert _EDIT_SUFFIX_UNICODE not in result
     assert _EDIT_SUFFIX_FLEXIBLE not in result
-    assert target.read_text() == 'x = "changed"\n'
+    assert target.read_text(encoding='utf-8') == 'x = "changed"\n'
 
 
 def test_smart_quotes_on_both_sides_use_tier_1(project_root):
     """If user file has smart quotes and prompt also has smart quotes,
     tier 1 (byte-exact substring) must win. Tier 3 should never fire here."""
     target = project_root / "both.py"
-    target.write_text('name = “world”\n')
+    target.write_text('name = “world”\n', encoding='utf-8')
 
     tool = _bind(EditTool(), project_root)
     result = tool.execute(
@@ -346,14 +346,14 @@ def test_smart_quotes_on_both_sides_use_tier_1(project_root):
 
     assert "Replaced" in result
     assert _EDIT_SUFFIX_UNICODE not in result
-    assert target.read_text() == 'name = “earth”\n'
+    assert target.read_text(encoding='utf-8') == 'name = “earth”\n'
 
 
 def test_trailing_whitespace_uses_tier_2_flexible(project_root):
     """Source has trailing spaces, prompt does not — tier 2 (whitespace-flex)
     must hit first; tier 3 must not steal."""
     target = project_root / "ws.py"
-    target.write_text('def foo():   \n    pass\n')  # trailing spaces
+    target.write_text('def foo():   \n    pass\n', encoding='utf-8')  # trailing spaces
 
     tool = _bind(EditTool(), project_root)
     result = tool.execute(
@@ -373,7 +373,7 @@ def test_trailing_whitespace_uses_tier_2_flexible(project_root):
 
 def test_no_match_returns_hint(project_root):
     target = project_root / "nope.py"
-    target.write_text('alpha\nbeta\ngamma\n')
+    target.write_text('alpha\nbeta\ngamma\n', encoding='utf-8')
 
     tool = _bind(EditTool(), project_root)
     result = tool.execute(
@@ -385,7 +385,7 @@ def test_no_match_returns_hint(project_root):
     assert result.startswith("Error:")
     assert "not found" in result.lower()
     # File untouched
-    assert target.read_text() == 'alpha\nbeta\ngamma\n'
+    assert target.read_text(encoding='utf-8') == 'alpha\nbeta\ngamma\n'
 
 
 # ---------------------------------------------------------------------------
@@ -401,13 +401,13 @@ class TestAmbiguityMessageSafety:
         replace_all, which inserts new_text between every character.
         """
         target = project_root / "e.txt"
-        target.write_text("a foo b foo c")
+        target.write_text("a foo b foo c", encoding='utf-8')
 
         tool = _bind(EditTool(), project_root)
         result = tool.execute(file_path="e.txt", old_text="", new_text="Z")
 
         assert result.startswith("Error:")
-        assert target.read_text() == "a foo b foo c"
+        assert target.read_text(encoding='utf-8') == "a foo b foo c"
 
     def test_growing_replacement_counts_remaining_correctly(self, project_root):
         """``foo`` → ``foobar`` does not consume an occurrence.
@@ -415,18 +415,18 @@ class TestAmbiguityMessageSafety:
         ``total - 1`` would claim 1 remains when 2 literally do.
         """
         target = project_root / "g.txt"
-        target.write_text("a foo b foo c")
+        target.write_text("a foo b foo c", encoding='utf-8')
 
         tool = _bind(EditTool(), project_root)
         result = tool.execute(file_path="g.txt", old_text="foo", new_text="foobar")
 
-        assert target.read_text() == "a foobar b foo c"
+        assert target.read_text(encoding='utf-8') == "a foobar b foo c"
         assert "2 occurrence(s) of old_text remain" in result
 
     def test_growing_replacement_does_not_advise_replace_all(self, project_root):
         """replace_all here would re-edit the site just changed."""
         target = project_root / "g2.txt"
-        target.write_text("a foo b foo c")
+        target.write_text("a foo b foo c", encoding='utf-8')
 
         tool = _bind(EditTool(), project_root)
         result = tool.execute(file_path="g2.txt", old_text="foo", new_text="foobar")
@@ -436,11 +436,11 @@ class TestAmbiguityMessageSafety:
 
     def test_ordinary_ambiguity_still_advises_replace_all(self, project_root):
         target = project_root / "n.txt"
-        target.write_text("a foo b foo c")
+        target.write_text("a foo b foo c", encoding='utf-8')
 
         tool = _bind(EditTool(), project_root)
         result = tool.execute(file_path="n.txt", old_text="foo", new_text="bar")
 
-        assert target.read_text() == "a bar b foo c"
+        assert target.read_text(encoding='utf-8') == "a bar b foo c"
         assert "1 occurrence(s) of old_text remain" in result
         assert "replace_all=true to change all" in result

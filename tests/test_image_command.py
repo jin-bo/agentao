@@ -81,7 +81,10 @@ def test_zero_byte_image_is_rejected(tmp_path):
 def test_tilde_and_quotes_are_handled(tmp_path, monkeypatch):
     img = tmp_path / "home.png"
     img.write_bytes(_PNG_BYTES)
+    # ``expanduser`` reads ``HOME`` on POSIX and ``USERPROFILE`` on Windows, so setting one
+    # of them relocates the home directory on one platform and nothing on the other.
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     cli = _cli()
 
     # Quoted path with ~ should resolve and stage.

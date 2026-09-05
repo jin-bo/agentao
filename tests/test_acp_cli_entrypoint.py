@@ -281,6 +281,17 @@ class TestRunAcpMode:
                 captured_server["server"] = self
 
         monkeypatch.setattr(acp_main_module, "AcpServer", _CapturingServer)
+        # ACP exits 1 on non-UTF-8 stdio, and pytest's captured stdin reports the platform's
+        # locale codec — cp1252 on a Windows runner. Satisfying that guard keeps it in this
+        # test's path; monkeypatching it away would leave ``main`` untested from line one.
+        import io as _io
+        import sys as _sys
+
+        for _name in ("stdin", "stdout"):
+            monkeypatch.setattr(
+                _sys, _name,
+                _io.TextIOWrapper(_io.BytesIO(), encoding="utf-8", newline=""),
+            )
         acp_main_module.main()
 
         srv = captured_server["server"]

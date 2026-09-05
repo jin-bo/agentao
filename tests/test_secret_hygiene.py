@@ -33,6 +33,20 @@ from agentao.security.secret_scan import redact, scan_and_redact
 FAKE_KEY = "sk-proj-" + "A1b2C3d4E5f6G7h8J9k0" * 2
 
 
+def _reads_key() -> list:
+    """A child that prints the key it inherited, without asking a shell to expand anything.
+
+    The shell form (``echo "key=[${OPENAI_API_KEY}]"``) reads the variable through the
+    platform shell, and ``cmd.exe`` does not expand ``${...}`` — it prints the text back and
+    the test then measures its own quoting rather than the scrub. The exec form asks the
+    child directly, which is the thing under test on every platform.
+    """
+    return [
+        sys.executable, "-c",
+        "import os; print('key=[' + os.environ.get('OPENAI_API_KEY', '') + ']')",
+    ]
+
+
 class TestScanner:
     def test_finds_a_provider_key(self):
         cleaned, hits = scan_and_redact(f"OPENAI_API_KEY={FAKE_KEY}")
@@ -243,9 +257,7 @@ class TestScrubCoversEveryChildSpawner:
         from agentao.capabilities.process import run_captured
 
         monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
-        out = run_captured(
-            'echo "key=[${OPENAI_API_KEY}]"', shell=True, cwd=str(tmp_path),
-        )
+        out = run_captured(_reads_key(), cwd=str(tmp_path))
         assert "key=[]" in out.stdout
 
     def test_run_captured_honours_an_explicit_env(self, monkeypatch, tmp_path):
@@ -253,7 +265,7 @@ class TestScrubCoversEveryChildSpawner:
 
         monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
         out = run_captured(
-            'echo "key=[${OPENAI_API_KEY}]"', shell=True, cwd=str(tmp_path),
+            _reads_key(), cwd=str(tmp_path),
             env={"OPENAI_API_KEY": "caller-chose", "PATH": os.environ["PATH"]},
         )
         assert "key=[caller-chose]" in out.stdout

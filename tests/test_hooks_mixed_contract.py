@@ -30,18 +30,19 @@ from agentao.plugins.hooks._profile import LEGACY_CONTRACT_ID, PROFILE_ID
 from agentao.plugins.models import ParsedHookRule
 from agentao.runtime.tool_runner import ToolRunner
 from agentao.tools.base import Tool, ToolRegistry
+
+from ._hook_commands import as_kwargs, emits_json, emitting
 from tests.support.tool_calls import make_tool_call
 
 
 def rule(event, command, contract):
-    return ParsedHookRule(event=event, hook_type="command", command=command,
+    return ParsedHookRule(event=event, hook_type="command", **as_kwargs(command),
                           contract=contract, plugin_name="p", timeout=30)
 
 
 def marker(tmp_path, name):
-    """A hook that proves it ran, and a reader for the proof."""
-    path = tmp_path / name
-    return path, f"echo ran > {path}"
+    """A path the hook writes to prove it ran, for the fixture builder to take."""
+    return tmp_path / name
 
 
 # --------------------------------------------------------------------------
@@ -49,13 +50,14 @@ def marker(tmp_path, name):
 # --------------------------------------------------------------------------
 
 def test_pre_tool_use_a_v1_deny_does_not_suppress_the_profile_rule(tmp_path):
-    proof, side_effect = marker(tmp_path, "profile_ran.txt")
+    proof = marker(tmp_path, "profile_ran.txt")
     rules = [
         # v1 first in declaration order, and it denies.
-        rule("PreToolUse", """echo '{"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": "v1 says no"}}'""",
+        rule("PreToolUse", emits_json('{"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": "v1 says no"}}'),
              LEGACY_CONTRACT_ID),
-        rule("PreToolUse", f"""{side_effect}; echo '{{"hookSpecificOutput": {{"hookEventName": "PreToolUse", "permissionDecision": "ask"}}}}'""",
-             PROFILE_ID),
+        rule("PreToolUse", emits_json(
+            '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask"}}',
+            touch=(proof,)), PROFILE_ID),
     ]
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
 
@@ -69,10 +71,11 @@ def test_pre_tool_use_a_v1_deny_does_not_suppress_the_profile_rule(tmp_path):
 
 
 def test_user_prompt_submit_a_v1_block_does_not_suppress_the_profile_rule(tmp_path):
-    proof, side_effect = marker(tmp_path, "ups_profile_ran.txt")
+    proof = marker(tmp_path, "ups_profile_ran.txt")
     rules = [
-        rule("UserPromptSubmit", """echo '{"blockingError": "v1 blocked"}'""", LEGACY_CONTRACT_ID),
-        rule("UserPromptSubmit", f"""{side_effect}; echo '{{"systemMessage": "profile note"}}'""", PROFILE_ID),
+        rule("UserPromptSubmit", emits_json('{"blockingError": "v1 blocked"}'), LEGACY_CONTRACT_ID),
+        rule("UserPromptSubmit",
+             emits_json('{"systemMessage": "profile note"}', touch=(proof,)), PROFILE_ID),
     ]
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
 
@@ -88,11 +91,12 @@ def test_user_prompt_submit_a_v1_block_does_not_suppress_the_profile_rule(tmp_pa
 def test_stop_a_v1_blocking_error_does_not_suppress_the_profile_rule(tmp_path):
     """`Stop` is the one place the two contracts mean **opposite** things: v1's
     `blockingError` ends the turn, the profile's continuation keeps it going."""
-    proof, side_effect = marker(tmp_path, "stop_profile_ran.txt")
+    proof = marker(tmp_path, "stop_profile_ran.txt")
     rules = [
-        rule("Stop", """echo '{"blockingError": "v1 ends the turn"}'""", LEGACY_CONTRACT_ID),
-        rule("Stop", f"""{side_effect}; echo '{{"hookSpecificOutput": {{"hookEventName": "Stop", "additionalContext": "keep going"}}}}'""",
-             PROFILE_ID),
+        rule("Stop", emits_json('{"blockingError": "v1 ends the turn"}'), LEGACY_CONTRACT_ID),
+        rule("Stop", emits_json(
+            '{"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": "keep going"}}',
+            touch=(proof,)), PROFILE_ID),
     ]
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
 
@@ -103,9 +107,10 @@ def test_stop_a_v1_blocking_error_does_not_suppress_the_profile_rule(tmp_path):
 
 
 def test_pre_compact_a_v1_cancel_does_not_suppress_the_profile_rule(tmp_path):
-    proof, side_effect = marker(tmp_path, "precompact_profile_ran.txt")
+    proof = marker(tmp_path, "precompact_profile_ran.txt")
+    side_effect = emitting(touch=(proof,))
     rules = [
-        rule("PreCompact", """echo '{"hookSpecificOutput": {"compactionDecision": "cancel"}}'""",
+        rule("PreCompact", emits_json('{"hookSpecificOutput": {"compactionDecision": "cancel"}}'),
              LEGACY_CONTRACT_ID),
         rule("PreCompact", side_effect, PROFILE_ID),
     ]
@@ -163,11 +168,12 @@ def test_post_tool_use_block_preserves_the_output_and_continues(tmp_path):
     """`decision:"block"` on this event is **feedback**: the original output is
     preserved, the reason rides beside it, and the turn continues. Only
     `continue:false` stops — the word "block" is the trap."""
-    proof, side_effect = marker(tmp_path, "v1_side_effect.txt")
+    proof = marker(tmp_path, "v1_side_effect.txt")
+    side_effect = emitting(touch=(proof,))
     runner = _runner(tmp_path, [
         rule("PostToolUse", side_effect, LEGACY_CONTRACT_ID),
         rule("PostToolUse",
-             """echo '{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "annotated"}}'""",
+             emits_json('{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "annotated"}}'),
              PROFILE_ID),
     ])
 
@@ -182,10 +188,11 @@ def test_post_tool_use_block_preserves_the_output_and_continues(tmp_path):
 def test_post_tool_use_continue_false_ends_the_turn(tmp_path):
     """The second branch on the same event, because its two controls mean
     opposite things."""
-    proof, side_effect = marker(tmp_path, "v1_side_effect2.txt")
+    proof = marker(tmp_path, "v1_side_effect2.txt")
+    side_effect = emitting(touch=(proof,))
     runner = _runner(tmp_path, [
         rule("PostToolUse", side_effect, LEGACY_CONTRACT_ID),
-        rule("PostToolUse", """echo '{"continue": false, "stopReason": "enough"}'""", PROFILE_ID),
+        rule("PostToolUse", emits_json('{"continue": false, "stopReason": "enough"}'), PROFILE_ID),
     ])
 
     _, messages = runner.execute(_one_call())
@@ -199,7 +206,7 @@ def test_post_tool_use_failure_continue_false_is_unconditional(tmp_path):
     """`continue:false` reaches this event through the **universal** row, not
     through its contested event-level `decision`."""
     runner = _runner(tmp_path, [
-        rule("PostToolUseFailure", """echo '{"continue": false, "stopReason": "stop after failure"}'""",
+        rule("PostToolUseFailure", emits_json('{"continue": false, "stopReason": "stop after failure"}'),
              PROFILE_ID),
     ])
 
@@ -215,8 +222,8 @@ def test_post_tool_use_failure_continue_false_is_unconditional(tmp_path):
 def test_ask_survives_against_allow(tmp_path):
     """`deny > ask > allow`: a hook `allow` is a no-op and must not downgrade."""
     rules = [
-        rule("PreToolUse", """echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'""", PROFILE_ID),
-        rule("PreToolUse", """echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask"}}'""", PROFILE_ID),
+        rule("PreToolUse", emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'), PROFILE_ID),
+        rule("PreToolUse", emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask"}}'), PROFILE_ID),
     ]
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
 
@@ -231,8 +238,8 @@ def test_a_stop_and_a_deny_are_recorded_separately(tmp_path):
     """`continue:false` ends the turn; `deny` blocks one call. Two controls, two
     outcomes for the user — the merge must not collapse them."""
     rules = [
-        rule("PreToolUse", """echo '{"continue": false, "stopReason": "halt"}'""", PROFILE_ID),
-        rule("PreToolUse", """echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "nope"}}'""", PROFILE_ID),
+        rule("PreToolUse", emits_json('{"continue": false, "stopReason": "halt"}'), PROFILE_ID),
+        rule("PreToolUse", emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "nope"}}'), PROFILE_ID),
     ]
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
 
@@ -249,8 +256,8 @@ def test_the_reason_tie_break_ranks_only_inside_the_winning_class(tmp_path):
     control*. Surfacing an `ask`'s reason for a `deny` would attribute the
     verdict to a rule that did not produce it."""
     rules = [
-        rule("PreToolUse", """echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "the ask reason"}}'""", PROFILE_ID),
-        rule("PreToolUse", """echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "the deny reason"}}'""", PROFILE_ID),
+        rule("PreToolUse", emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "the ask reason"}}'), PROFILE_ID),
+        rule("PreToolUse", emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "the deny reason"}}'), PROFILE_ID),
     ]
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
 
@@ -265,9 +272,10 @@ def test_the_reason_tie_break_ranks_only_inside_the_winning_class(tmp_path):
 def test_a_pure_v1_setup_still_short_circuits(tmp_path):
     """The frozen behavior: with no profile rule in the list, the first deny
     still stops the walk and the second v1 hook does not run."""
-    proof, side_effect = marker(tmp_path, "second_v1.txt")
+    proof = marker(tmp_path, "second_v1.txt")
+    side_effect = emitting(touch=(proof,))
     rules = [
-        rule("PreToolUse", """echo '{"hookSpecificOutput": {"permissionDecision": "deny"}}'""", LEGACY_CONTRACT_ID),
+        rule("PreToolUse", emits_json('{"hookSpecificOutput": {"permissionDecision": "deny"}}'), LEGACY_CONTRACT_ID),
         rule("PreToolUse", side_effect, LEGACY_CONTRACT_ID),
     ]
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
