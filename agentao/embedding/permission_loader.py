@@ -37,9 +37,18 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+from ..capabilities.shell_spec import (
+    AbsPath,
+    Allowlist,
+    HashPin,
+    PublisherTrust,
+    Sha256,
+    ShellBlock,
+)
 from ..permissions import (
     RuleError,
     format_permission_rule_errors,
@@ -51,7 +60,7 @@ _logger = logging.getLogger(__name__)
 #: Closed top-level key set for ``permissions.json``. A missing ``rules``
 #: key is still legal (an empty policy file is a real, benign state); an
 #: *extra* key is not, because it is almost always ``rules`` misspelled.
-_LEGAL_DOCUMENT_FIELDS: Tuple[str, ...] = ("rules",)
+_LEGAL_DOCUMENT_FIELDS: Tuple[str, ...] = ("rules", "shell")
 
 _ENCODING_HINT = (
     "Re-save it as UTF-8. PowerShell 5.1 — still the default shell on stock "
@@ -89,6 +98,139 @@ class PermissionConfigError(ValueError):
         )
 
 
+@dataclass(frozen=True)
+class PermissionConfig:
+    """CFG-03: one immutable record threaded through every composition root.
+
+    Rules and their sources travelled together already; the shell block is new and had no
+    route through any root at all, which is why it is a record rather than a third return
+    value. A tuple that grows a member every time the policy learns something is a shape
+    every caller has to be edited to keep up with.
+    """
+
+    rules: List[Dict[str, Any]]
+    sources: List[str]
+    shell: Optional[ShellBlock] = None
+
+
+def _parse_allowlist(raw: Any, path: Path) -> Allowlist:
+    """IMG-03: the ordered additional-condition list, or ``()`` when the key is absent.
+
+    Read rather than accepted-and-dropped. ``allowlist`` was in the closed key set — so a
+    user who wrote one got no complaint — while never reaching :class:`ShellBlock`, which is
+    the silent fail-open the closed key set exists to prevent one level up: the configuration
+    reads back as honoured and pins nothing.
+
+    Two entry shapes, one per form IMG-03 names, and anything else refuses. A content pin is
+    ``{"path": …, "sha256": …}``; publisher trust is ``{"signer": …}``. Guessing which was
+    meant from a half-filled entry would mint a pin nobody wrote.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise PermissionConfigError(
+            path, f"'shell.allowlist' must be an array, got {type(raw).__name__}"
+        )
+    out: List[Union[HashPin, PublisherTrust]] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise PermissionConfigError(
+                path,
+                f"'shell.allowlist[{index}]' must be an object with either "
+                "'path' + 'sha256' (a content pin) or 'signer' (publisher trust)",
+            )
+        keys = set(entry)
+        if keys == {"path", "sha256"}:
+            out.append(HashPin(AbsPath(str(entry["path"])), Sha256(str(entry["sha256"]))))
+        elif keys == {"signer"}:
+            out.append(PublisherTrust(str(entry["signer"])))
+        else:
+            raise PermissionConfigError(
+                path,
+                f"'shell.allowlist[{index}]' has key(s) {', '.join(sorted(keys)) or '(none)'}; "
+                "an entry is exactly {'path', 'sha256'} (a content pin) or {'signer'} "
+                "(publisher trust). A half-filled entry pins nothing and is refused rather "
+                "than guessed.",
+            )
+    return tuple(out)
+
+
+def _parse_shell_block(raw: Any, path: Path) -> Optional[ShellBlock]:
+    """Read the ``shell`` key of a user-scope permissions file.
+
+    Refuses rather than repairs. A half-specified shell block is the case CFG-02 names by
+    hand: naming a path without a dialect leaves the syntax unknown, and naming a dialect
+    without a path leaves the interpreter unknown. Guessing either turns a configuration the
+    user can read back into one only this loader understands.
+    """
+    from ..capabilities.shell_spec import ShellDialect
+
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise PermissionConfigError(path, f"'shell' must be an object, got {type(raw).__name__}")
+    unknown = sorted(set(raw) - {"path", "dialect", "allow_git_bash", "allowlist", "env_passthrough"})
+    if unknown:
+        raise PermissionConfigError(
+            path,
+            f"unknown key(s) in 'shell': {', '.join(unknown)}. Note that 'rung' is not a "
+            "field — it is derived from the dialect, the target platform and the launcher's "
+            "own identity.",
+        )
+    dialect_name = raw.get("dialect")
+    dialect = None
+    if dialect_name is not None:
+        try:
+            dialect = ShellDialect(str(dialect_name).lower())
+        except ValueError:
+            raise PermissionConfigError(
+                path,
+                f"unknown shell dialect {dialect_name!r} (allowed: posix, cmd, powershell)",
+            ) from None
+        if dialect is ShellDialect.UNKNOWN:
+            raise PermissionConfigError(path, "'unknown' is not a selectable dialect")
+    path_value = raw.get("path")
+    block = ShellBlock(
+        path=AbsPath(str(path_value)) if path_value is not None else None,
+        dialect=dialect,
+        allow_git_bash=bool(raw.get("allow_git_bash", False)),
+        allowlist=_parse_allowlist(raw.get("allowlist"), path),
+        env_passthrough=tuple(raw.get("env_passthrough", ()) or ()),
+    )
+    missing = block.incomplete()
+    if missing is not None:
+        raise PermissionConfigError(
+            path,
+            f"'shell' gives only one of path / dialect — {missing!r} is missing. Give both "
+            "or neither: neither can be derived from the other.",
+        )
+    return block
+
+
+def load_permission_config(
+    *,
+    project_root: Path,
+    user_root: Optional[Path],
+) -> PermissionConfig:
+    """CFG-03: rules, their sources, and the shell block, from the user-scope file."""
+    rules: List[Dict[str, Any]] = []
+    sources: List[str] = []
+    shell = None
+    if user_root is not None:
+        user_path = user_root / "permissions.json"
+        # One read, one parse, one validation — the same document the rules came out of.
+        # Re-opening the file to fish out the `shell` key gave the block a second, quieter
+        # failure path: a read error there produced no rules-level complaint and no shell
+        # block, so a configured interpreter silently became "whatever the platform picks".
+        user_rules, user_loaded, document = _read_rule_file(user_path)
+        if user_loaded:
+            sources.append(f"user:{user_path}")
+            rules = user_rules
+            shell = _parse_shell_block((document or {}).get("shell"), user_path)
+    _warn_on_project_rule_file(project_root)
+    return PermissionConfig(rules=rules, sources=sources, shell=shell)
+
+
 def load_permission_rules(
     *,
     project_root: Path,
@@ -123,11 +265,18 @@ def load_permission_rules(
 
     if user_root is not None:
         user_path = user_root / "permissions.json"
-        user_rules, user_loaded = _read_rule_file(user_path)
+        user_rules, user_loaded, _ = _read_rule_file(user_path)
         if user_loaded:
             sources.append(f"user:{user_path}")
             rules = user_rules
 
+    _warn_on_project_rule_file(project_root)
+
+    return rules, sources
+
+
+def _warn_on_project_rule_file(project_root: Path) -> None:
+    """CFG-01: a workspace-scope rule file is never honored, and never silently."""
     project_path = project_root / ".agentao" / "permissions.json"
     if project_path.exists():
         _logger.warning(
@@ -138,11 +287,15 @@ def load_permission_rules(
             project_path,
         )
 
-    return rules, sources
 
+def _read_rule_file(path: Path) -> Tuple[List[Dict[str, Any]], bool, Optional[Dict[str, Any]]]:
+    """Return ``(rules, loaded, document)`` for an existing, valid policy file.
 
-def _read_rule_file(path: Path) -> Tuple[List[Dict[str, Any]], bool]:
-    """Return ``(rules, loaded)`` for an existing, valid policy file.
+    ``document`` is the whole parsed object, so a caller that needs another top-level
+    key reads it from the parse this function already did and already validated.
+    Re-opening the file is not free of consequence: the second read can fail (or see
+    different bytes) where the first succeeded, and a key that vanishes because of that
+    vanishes silently.
 
     ``loaded`` is ``True`` only when the file existed and parsed
     cleanly — even if the rule list inside is empty. A *missing* file is
@@ -156,7 +309,7 @@ def _read_rule_file(path: Path) -> Tuple[List[Dict[str, Any]], bool]:
             this path does not degrade quietly.
     """
     if not path.is_file():
-        return [], False
+        return [], False, None
     try:
         # ``utf-8-sig`` strips a leading BOM and is a byte-for-byte no-op
         # without one, so a BOM'd-but-otherwise-valid file loads instead
@@ -214,4 +367,4 @@ def _read_rule_file(path: Path) -> Tuple[List[Dict[str, Any]], bool]:
         raise PermissionConfigError(
             path, "one or more rules are invalid", errors=errors,
         )
-    return rules, True
+    return rules, True, data

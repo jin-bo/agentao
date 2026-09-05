@@ -164,7 +164,7 @@ def build_from_environment(
     from ..permissions import PermissionEngine
     from ..replay import ReplayManager, load_replay_config
     from ..sandbox import SandboxPolicy
-    from .permission_loader import load_permission_rules
+    from .permission_loader import load_permission_config
 
     wd = (working_directory or Path.cwd()).expanduser().resolve()
     settings = _load_settings(wd)
@@ -186,9 +186,11 @@ def build_from_environment(
     permission_engine = overrides.pop("permission_engine", None)
     if permission_engine is None:
         ur = user_root()
-        rules, loaded_sources = load_permission_rules(
-            project_root=wd, user_root=ur,
-        )
+        # CFG-03: one record through this root, so the shell block travels with the
+        # rules instead of having no route at all. Nothing reads it yet — trusted
+        # resolution does — but a value nobody can reach is a value nobody adds.
+        permission_config = load_permission_config(project_root=wd, user_root=ur)
+        rules, loaded_sources = permission_config.rules, permission_config.sources
         permission_engine = PermissionEngine(
             project_root=wd,
             user_root=ur,

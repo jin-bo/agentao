@@ -12,17 +12,24 @@ concern. ``ToolRunner.reset()`` delegates to ``ToolCallPlanner.reset()``.
 
 from __future__ import annotations
 
+import logging
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from ..capabilities.shell_spec import PASS, AbsPath, DecidedCall, Deny, Exhausted
 from ..permissions import PermissionDecision, PermissionDecisionDetail, PermissionEngine
 from ..tools import RegistrableTool, ToolRegistry
+from ..tools.base import SHELL_TOOL_NAME
 from . import identity as _identity
 from .arg_repair import parse_tool_arguments
 from .name_repair import repair_tool_name
+
+# Module-level, for the two module-level helpers below: the planner's own ``self._logger`` is
+# host-supplied and only exists once a planner has been constructed.
+_planning_logger = logging.getLogger(__name__)
 
 
 # Repeating identical (name, args_raw) this many times trips doom-loop.
@@ -267,6 +274,13 @@ class ToolCallPlan:
     # still fires (with ``matched_rule=None``), classified by the
     # decision the planner finally settled on.
     permission_detail: Optional[PermissionDecisionDetail] = None
+    #: SPEC-08a: what this shell call was decided on — the spec that was read, the body the
+    #: floor scanned, the working directory it judged against, and the verdict. Written once
+    #: by the planner and replaced whole when a hook rewrites the input; never edited field
+    #: by field. ``None`` for every tool that is not the shell, and for a call that never
+    #: reached the decision. Binding the spec but not the body would leave a channel that
+    #: decides one command and runs another through the same plan.
+    decided: Optional[DecidedCall] = None
 
     def __post_init__(self) -> None:
         # Direct construction sites (tests, custom planners that bypass
@@ -293,6 +307,91 @@ class ToolPlanningResult:
     # When True, the runner must add "not executed" placeholder messages
     # for every accepted plan in this batch and return without executing.
     doom_loop_triggered: bool = False
+
+
+def _shell_spec_of(tool: Any) -> Any:
+    """The spec this tool declares, or ``None`` for a tool that is not the shell.
+
+    Reading it can fail — a provider that walks a ladder touches the filesystem — and a
+    failure here must not take down the turn. It becomes ``Exhausted``, which is the honest
+    answer: no rung could be established, so the floor refuses the call rather than judging
+    it against a spec nobody produced.
+    """
+    if getattr(tool, "name", None) != SHELL_TOOL_NAME:
+        return None
+    try:
+        return tool.shell_spec
+    except Exception as exc:  # noqa: BLE001 - any provider failure is a refusal, not a crash
+        return Exhausted(f"shell spec provider raised: {exc}")
+
+
+def _decided_call(
+    tool: Any, shell_spec: Any, args: Dict[str, Any], floor_enabled: bool = True
+) -> Optional[DecidedCall]:
+    """SPEC-08a: freeze the spec, the body, the working directory and the verdict together.
+
+    Built **before** the permission decision, because the floor's verdict is an input to it:
+    TOOL-03 puts the floor ahead of every rule and forbids a rule from masking it. The record
+    is the single source — the engine reads this verdict rather than computing a second one,
+    and ``launch()`` reads the same record rather than the tool's arguments.
+
+    SPEC-08c is structural here rather than a statement: a plan is a fresh object per call,
+    so there is no previous record to void. What the rule guards against is an early return
+    leaving the *last* call's body and directory in place for this call's launch, and a
+    field that is only ever written at construction cannot do that.
+
+    A directory that PathPolicy refuses yields no record. ``execute`` refuses that call on
+    its own and reports the policy error, which is a better message than a launch refusal.
+    """
+    if shell_spec is None:
+        return None
+    resolve = getattr(tool, "resolve_cwd", None)
+    if resolve is None:
+        # TOOL-01 obliges a replacement shell tool to name its dialect, not to canonicalise a
+        # working directory, so this is reachable. Freezing a record without a canonical cwd
+        # would be worse than not freezing one — the tool would launch against a directory no
+        # decision was made about — so the tool keeps its own resolution and its own risk.
+        _planning_logger.warning(
+            "Shell tool %s exposes no resolve_cwd(); SPEC-08's decided record is not frozen "
+            "for its calls", type(tool).__name__,
+        )
+        return None
+    body = str(args.get("command", ""))
+    try:
+        cwd = resolve(str(args.get("working_directory", ".")))
+    except Exception as exc:  # noqa: BLE001 - execute() reports the policy error itself
+        _planning_logger.debug("no decided record for this shell call: %s", exc)
+        return None
+    from ..permissions_hardline._analysis import decided_call
+    from ..permissions_hardline import hardline_check
+
+    # The pre-existing floor first, whatever the rung: the dangerous classes are about what a
+    # command destroys, and the closed set is about whether it may run at all. A policy-on
+    # rung passes both or neither.
+    # A host that set ``enable_hardline=False`` has taken policy responsibility, and this
+    # record must not hand it a denial the engine would have skipped. What survives is the
+    # launch shape: the environment, the attested set and LAUNCH-08's measurements.
+    todays = (
+        hardline_check("run_shell_command", args, shell_spec=shell_spec)
+        if floor_enabled else None
+    )
+    return decided_call(
+        shell_spec, body, AbsPath(str(cwd)), todays, closed_set=floor_enabled,
+    )
+
+
+def _denied(decided: Optional[DecidedCall]) -> Optional[DecidedCall]:
+    """SPEC-08b: a call the permission layer refused must refuse at the launch too.
+
+    The floor's own refusal is already on the record; this is the other source. Overwriting
+    the verdict rather than adding a second field keeps ``launch()`` reading one value: it
+    asks "was this call decided to run", not "which of two layers objected".
+    """
+    from dataclasses import replace as _replace
+
+    if decided is None or isinstance(decided.verdict, Deny):
+        return decided
+    return _replace(decided, verdict=Deny("permission:denied"))
 
 
 class ToolCallPlanner:
@@ -454,8 +553,15 @@ class ToolCallPlanner:
                     ))
                     continue
 
+            # TOOL-04: read the provider once for this call. Once, because two reads can
+            # answer differently — re-resolution swaps the reference between them — and the
+            # whole point is that one spec governs the decision and the launch.
+            shell_spec = _shell_spec_of(tool)
+            decided = _decided_call(
+                tool, shell_spec, function_args, self._floor_enabled,
+            )
             decision, permission_detail = self._decide(
-                tool, function_name, function_args, readonly_mode,
+                tool, function_name, function_args, readonly_mode, shell_spec, decided,
             )
 
             result.plans.append(ToolCallPlan(
@@ -466,9 +572,20 @@ class ToolCallPlanner:
                 decision=decision,
                 tool_call_id=normalized_id,
                 permission_detail=permission_detail,
+                decided=_denied(decided) if decision is ToolCallDecision.DENY else decided,
             ))
 
         return result
+
+    @property
+    def _floor_enabled(self) -> bool:
+        """Whether the hardline floor is on, read from the one engine that owns the flag.
+
+        A planner with no engine keeps the floor: an embedder that supplied no permission
+        engine has not taken policy responsibility, it simply has no rules.
+        """
+        engine = self._permission_engine
+        return True if engine is None else bool(getattr(engine, "hardline_enabled", True))
 
     def _decide(
         self,
@@ -476,6 +593,8 @@ class ToolCallPlanner:
         function_name: str,
         function_args: Dict[str, Any],
         readonly_mode: bool,
+        shell_spec: Any = None,
+        decided: Any = None,
     ) -> tuple[ToolCallDecision, Optional[PermissionDecisionDetail]]:
         """Return both the routing decision and the public-event detail.
 
@@ -495,7 +614,9 @@ class ToolCallPlanner:
             )
 
         engine_detail = (
-            self._permission_engine.decide_detail(function_name, function_args)
+            self._permission_engine.decide_detail(
+                function_name, function_args, shell_spec=shell_spec, decided=decided,
+            )
             if self._permission_engine is not None
             else None
         )

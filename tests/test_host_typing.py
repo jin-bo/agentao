@@ -164,15 +164,32 @@ def test_protocols_module_all_matches_imports() -> None:
     from agentao.host import protocols
 
     expected = {
+        "AbsPath",
         "BackgroundHandle",
+        "Exhausted",
         "FileEntry",
         "FileStat",
         "FileSystem",
+        "IdentityOracle",
+        "LaunchRequest",
+        "LauncherIdentity",
+        "LegacyLaunch",
         "MCPRegistry",
         "MemoryStore",
+        "PinnedEnv",
+        "PosixLaunch",
+        "ReparseResult",
+        "ReparseState",
+        "ResolvedImage",
+        "SessionConfig",
+        "Sha256",
         "ShellExecutor",
         "ShellRequest",
         "ShellResult",
+        "ShellSpec",
+        "ShellSpecProvider",
+        "Subject",
+        "WindowsLaunch",
     }
     assert set(protocols.__all__) == expected
     for name in expected:

@@ -1,8 +1,10 @@
 """Tool execution pipeline for Agentao."""
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING, Tuple
 
+from ..capabilities.shell_spec import Deny
 from ..permissions import PermissionDecision, PermissionEngine
 from ..sandbox import SandboxPolicy
 from ..tools import ToolRegistry
@@ -13,6 +15,9 @@ from .tool_executor import ToolExecutor
 from .tool_planning import (
     ToolCallDecision,
     ToolCallPlanner,
+    _decided_call,
+    _denied,
+    _shell_spec_of,
     _synth,
     make_tool_result_message,
     pre_tool_hook_reason,
@@ -455,9 +460,24 @@ class ToolRunner:
         """
         previous = plan.decision
         candidate = dict(updated)
+        # TOOL-04/SPEC-08: the re-decision reads the *same* spec the first decision was
+        # frozen against, never a second read of the provider. Omitting it entirely was the
+        # real defect: with ``shell_spec=None`` the floor skips ``_spec_refusal`` (an
+        # ``Exhausted`` provider stops denying) and falls back to the POSIX regex patterns,
+        # so a hook's rewrite is judged in a grammar it may not be written in — precisely the
+        # re-judgement this method exists to perform.
+        shell_spec = (
+            plan.decided.spec if plan.decided is not None else _shell_spec_of(plan.tool)
+        )
         try:
+            # Same order as the first decision: the record is built from the *candidate*
+            # arguments and carries the floor's verdict, and the permission layer reads it.
+            # Deciding first and rebuilding after would judge the rewrite against a record
+            # computed for the original, which is the state this method exists to prevent.
+            candidate_record = _decided_call(plan.tool, shell_spec, candidate)
             new_decision, new_detail = self._planner._decide(
-                plan.tool, plan.function_name, candidate, self.readonly_mode,
+                plan.tool, plan.function_name, candidate, self.readonly_mode, shell_spec,
+                candidate_record,
             )
         except Exception as exc:  # pragma: no cover - defensive
             self._logger.warning(
@@ -474,11 +494,27 @@ class ToolRunner:
                 f"re-decision could not be computed ({exc}); denied rather than "
                 "running either the rewrite or the original",
             )
+            if plan.decided is not None:
+                # The record still holds the *original* body, and the shell tool launches
+                # what the record says. Marking it denied is what makes the paragraph above
+                # true on this path too: neither the rewrite nor the original runs.
+                plan.decided = replace(plan.decided, verdict=Deny(plan.permission_detail.reason))
             return
         plan.function_args = candidate
         if _STRICTNESS.get(new_decision, 0) > _STRICTNESS.get(previous, 0):
             plan.decision = new_decision
             plan.permission_detail = new_detail
+        if plan.decided is not None:
+            # SPEC-08a: replaced whole, never edited field by field, and it is the record the
+            # re-decision was actually made against — swapping the arguments and leaving the
+            # record alone would launch the body the hook was replacing, under the verdict
+            # computed for the one that replaced it. The spec is carried over rather than
+            # re-read: one spec object governs the decision and the launch (SPEC-08).
+            plan.decided = (
+                _denied(candidate_record)
+                if plan.decision is ToolCallDecision.DENY
+                else candidate_record
+            )
 
     # ------------------------------------------------------------------
     # Public-event helpers

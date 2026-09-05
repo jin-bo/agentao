@@ -89,7 +89,7 @@ class TestFields:
     def test_unknown_field_is_rejected(self):
         reasons = _reasons([{"tool": "x", "pattern": "^git ", "action": "allow"}])
         assert reasons == [
-            "unknown field 'pattern' (allowed: action, args, domain, tool)",
+            "unknown field 'pattern' (allowed: action, args, dialect, domain, tool)",
         ]
 
     def test_tools_plural_typo_is_rejected(self):
@@ -103,7 +103,7 @@ class TestFields:
         assert _reasons([{"tools": "write_file", "action": "deny"}]) == [
             "missing required field 'tool' "
             "(use {\"tool\": \"*\"} for a deliberate wildcard)",
-            "unknown field 'tools' (allowed: action, args, domain, tool)",
+            "unknown field 'tools' (allowed: action, args, dialect, domain, tool)",
         ]
 
     def test_unknown_domain_field_is_rejected(self):
@@ -127,7 +127,7 @@ class TestFields:
         assert _reasons([{1: "x", "action": "allow"}]) == [
             "missing required field 'tool' "
             "(use {\"tool\": \"*\"} for a deliberate wildcard)",
-            "unknown field 1 (allowed: action, args, domain, tool)",
+            "unknown field 1 (allowed: action, args, dialect, domain, tool)",
         ]
 
 

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 
 import pytest
 
@@ -190,31 +191,45 @@ class TestChildEnvironment:
 
 
 class TestShellChildEnvironment:
-    def test_shell_child_does_not_see_the_provider_key(self, monkeypatch, tmp_path):
-        """End-to-end: the executor the shell tool actually uses."""
-        from agentao.capabilities.shell import LocalShellExecutor, ShellRequest
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell expansion in the probe")
+    def test_shell_child_does_not_see_the_provider_key(self, monkeypatch):
+        """End-to-end through the tool, which is where the environment is now decided.
+
+        This used to hand the executor a request with no environment and rely on it calling
+        ``build_child_env()`` itself. The launch request now carries a complete environment
+        that the executor sets verbatim (LAUNCH-01a), so the scrub happens one layer up —
+        and the only way to keep proving the guarantee is to drive the layer that does it.
+        """
+        from agentao.tools.shell import ShellTool
 
         monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
-        result = LocalShellExecutor().run(
-            ShellRequest(
-                command="echo \"key=[${OPENAI_API_KEY}]\"",
-                cwd=str(tmp_path),
-                timeout=30,
-            )
+        # The project root, not tmp_path: PathPolicy refuses a working directory outside it,
+        # and this test is about the environment, not about where the child starts.
+        out = ShellTool().execute(
+            command='echo "key=[${OPENAI_API_KEY}]"', working_directory=".", timeout=30
         )
-        assert "key=[]" in result.stdout.decode("utf-8", errors="replace")
+        assert "key=[]" in out
 
-    def test_explicit_env_is_passed_through_verbatim(self, monkeypatch, tmp_path):
-        """An explicit ``request.env`` is the host's decision, not ours."""
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell expansion in the probe")
+    def test_the_executor_sets_the_launch_environment_verbatim(self, monkeypatch, tmp_path):
+        """LAUNCH-01a: the executor sets the environment it was given, and computes none."""
+        from types import MappingProxyType
+
         from agentao.capabilities.shell import LocalShellExecutor, ShellRequest
+        from agentao.capabilities.shell_spec import AbsPath, LegacyLaunch, Sha256
 
         monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
         result = LocalShellExecutor().run(
             ShellRequest(
-                command="echo \"key=[${OPENAI_API_KEY}]\"",
-                cwd=str(tmp_path),
+                launch=LegacyLaunch(
+                    command='echo "key=[${OPENAI_API_KEY}]"',
+                    cwd=AbsPath(str(tmp_path)),
+                    env=MappingProxyType(
+                        {"OPENAI_API_KEY": "host-chose-this", "PATH": os.environ["PATH"]}
+                    ),
+                    spec_fingerprint=Sha256(""),
+                ),
                 timeout=30,
-                env={"OPENAI_API_KEY": "host-chose-this", "PATH": os.environ["PATH"]},
             )
         )
         assert "key=[host-chose-this]" in result.stdout.decode("utf-8", errors="replace")

@@ -120,7 +120,9 @@ def test_a_rewrite_is_re_decided_and_can_only_get_stricter(tmp_path, monkeypatch
     plans = _plan(runner, {"text": "benign"})
 
     # The engine denies whatever the rewrite produced.
-    def _deny(tool, name, args, readonly):
+    # The 5th parameter is the shell spec the first decision was frozen against; the
+    # re-decision is required to be made against the same one (TOOL-04/SPEC-08).
+    def _deny(tool, name, args, readonly, shell_spec=None, decided=None):
         from agentao.runtime.tool_planning import ToolCallDecision as D
         return (D.DENY, None) if args.get("text") == "dangerous" else (D.ALLOW, None)
 

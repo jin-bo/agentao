@@ -73,7 +73,14 @@ _REASON_INJECTED = "injected"
 
 # Both key sets are closed: the engine ignores anything else in silence,
 # which is exactly the failure mode above.
-_LEGAL_RULE_FIELDS: Tuple[str, ...] = ("action", "args", "domain", "tool")
+_LEGAL_RULE_FIELDS: Tuple[str, ...] = ("action", "args", "dialect", "domain", "tool")
+
+# TOOL-02. The label names a *dialect*, never a rung: `posix` covers both the Git Bash rung
+# and the system shell, because what a regular expression can read is decided by the syntax,
+# not by which interpreter was selected. A rule written for bash, applied to PowerShell text,
+# neither allows nor denies the right thing — it simply fails to match, and a floor that
+# fails to match reports clean.
+_LEGAL_DIALECTS: Tuple[str, ...] = ("posix", "cmd", "powershell", "*")
 _LEGAL_DOMAIN_FIELDS: Tuple[str, ...] = ("allowlist", "blocklist", "url_arg")
 
 # Absence is as dangerous as a typo here: the engine's fallbacks for these
@@ -190,7 +197,62 @@ def _rule_errors(rule: Any) -> List[str]:
         reasons.extend(_args_errors(rule["args"]))
     if "domain" in rule:
         reasons.extend(_domain_errors(rule["domain"]))
+    if "dialect" in rule:
+        reasons.extend(_dialect_errors(rule["dialect"]))
     return reasons
+
+
+def _dialect_errors(dialect: Any) -> List[str]:
+    if not isinstance(dialect, str):
+        return [f"'dialect' must be a string, got {_typename(dialect)}"]
+    if dialect.lower() not in _LEGAL_DIALECTS:
+        return [
+            f"unknown dialect {dialect!r} (allowed: {', '.join(_LEGAL_DIALECTS)})"
+        ]
+    return []
+
+
+def rule_matches_dialect(rule: Dict[str, Any], dialect: Optional[str]) -> bool:
+    """TOOL-02: whether a rule applies to the dialect this call will run in.
+
+    An unlabelled rule matches everything, which keeps every rule written before the label
+    existed working exactly as it did. That permissiveness is the reason for the other half
+    of TOOL-02: an unlabelled rule carrying an ``args.command`` condition is *unspecified*
+    rather than universal, and a PowerShell rung refuses to be built while one exists.
+
+    A *labelled* rule against an **unknown** dialect does not match. The label is its author
+    saying "this pattern is written for that language"; when nothing has said which language
+    this call runs in, applying it anyway is the same guess in the other direction — and an
+    ``allow`` labelled ``powershell`` would then grant every call on a POSIX host, which is
+    the failure the label exists to prevent. ``dialect`` is ``None`` for every tool that is
+    not the shell and for a spec that could not be resolved.
+    """
+    label = rule.get("dialect")
+    if not isinstance(label, str) or label == "*":
+        return True
+    return dialect is not None and label.lower() == dialect.lower()
+
+
+def unspecified_shell_rules(rules: Any) -> List[Tuple[int, Dict[str, Any]]]:
+    """TOOL-02: the rules a PowerShell rung cannot be built alongside.
+
+    A rule that matches on ``args.command`` was written against *some* shell's syntax, and
+    which one is not recorded anywhere. On POSIX and cmd it keeps working, because that is
+    what it has always done and this design does not break configurations that predate it.
+    On PowerShell there is no safe reading: applying it is applying a pattern to a language
+    it was not written for, and skipping it silently drops a rule its author is relying on.
+    So the rung refuses to exist, naming every such rule and all four labels.
+    """
+    offenders: List[Tuple[int, Dict[str, Any]]] = []
+    if not isinstance(rules, list):
+        return offenders
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict) or "dialect" in rule:
+            continue
+        args = rule.get("args")
+        if isinstance(args, dict) and "command" in args:
+            offenders.append((index, rule))
+    return offenders
 
 
 def _action_errors(action: Any) -> List[str]:
@@ -664,10 +726,23 @@ class PermissionEngine:
         detail = self.decide_detail(tool_name, tool_args)
         return detail.decision if detail is not None else None
 
+    @property
+    def hardline_enabled(self) -> bool:
+        """Whether the floor is consulted at all.
+
+        Read by the planner, which computes this call's frozen record before the engine sees
+        it: a host that disabled the floor must not get shell denials through the record
+        instead. Exposed rather than reached for, so the two readers are reading one flag.
+        """
+        return self._enable_hardline
+
     def decide_detail(
         self,
         tool_name: str,
         tool_args: Dict[str, Any],
+        *,
+        shell_spec: Any = None,
+        decided: Any = None,
     ) -> Optional[PermissionDecisionDetail]:
         """Same evaluation as :meth:`decide`, plus the matched rule.
 
@@ -686,7 +761,9 @@ class PermissionEngine:
         # it. When the host has disabled the floor the caller has
         # accepted policy responsibility — fall through.
         if self._enable_hardline:
-            reason = hardline_check(tool_name, tool_args)
+            reason = hardline_check(
+                tool_name, tool_args, shell_spec=shell_spec, decided=decided,
+            )
             if reason is not None:
                 return PermissionDecisionDetail(
                     PermissionDecision.DENY,
@@ -711,8 +788,15 @@ class PermissionEngine:
                 (self.rules, _REASON_USER_RULE),
                 (self._mode_rules, _REASON_MODE_PRESET),
             ]
+        dialect = getattr(getattr(shell_spec, "dialect", None), "value", None)
         for rules, source in sources:
             for rule in rules:
+                # TOOL-02 before anything else about the rule: a label that does not name
+                # this call's dialect means the rule was written for a different language,
+                # and a pattern from another language does not fail loudly here — it fails
+                # to match, which reads as "no rule applied".
+                if not rule_matches_dialect(rule, dialect):
+                    continue
                 if not self._matches(rule, tool_name, tool_args):
                     continue
                 action = rule.get("action", "ask").lower()

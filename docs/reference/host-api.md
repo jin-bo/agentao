@@ -266,6 +266,10 @@ move).
 from agentao.host.protocols import (
     FileSystem, ShellExecutor, MCPRegistry, MemoryStore,
     FileEntry, FileStat, ShellRequest, ShellResult, BackgroundHandle,
+    LaunchRequest, LegacyLaunch, PosixLaunch, WindowsLaunch,
+    ShellSpec, ShellSpecProvider, Exhausted, AbsPath, Sha256,
+    IdentityOracle, ReparseResult, ReparseState, SessionConfig,
+    PinnedEnv, ResolvedImage, LauncherIdentity, Subject,
 )
 ```
 
@@ -277,6 +281,76 @@ from agentao.host.protocols import (
 | `MemoryStore` | Protocol for persistent memory storage backends. |
 | `FileEntry`, `FileStat` | Value shapes returned by `FileSystem` implementations. |
 | `ShellRequest`, `ShellResult`, `BackgroundHandle` | Value shapes for `ShellExecutor` implementations. |
+| `LaunchRequest` and its members `LegacyLaunch` / `PosixLaunch` / `WindowsLaunch` | What `ShellRequest.launch` carries — see below. |
+| `ShellSpec`, `Exhausted`, `ShellSpecProvider` | The optional interpreter declaration an executor may expose — see below. |
+| `IdentityOracle` | The host-side answers trusted resolution is built from, for an executor that runs commands somewhere other than this machine — see below. |
+| `ReparseResult`, `ReparseState`, `SessionConfig`, `PinnedEnv`, `ResolvedImage`, `LauncherIdentity` | The shapes an `IdentityOracle` returns. |
+| `AbsPath`, `Sha256`, `Subject` | The `NewType` aliases those shapes are spelled with. |
+
+### `ShellRequest` carries a launch, not a command string
+
+**Breaking change.** `ShellRequest` no longer has `command`, `cwd` and `env`
+fields; it has a single discriminated `launch: LaunchRequest` (plus the
+unchanged transport fields `timeout` and `on_chunk`). Read `request.launch`.
+`request.command` and `request.cwd` survive as read-only projections for
+display and logging; **`request.env` is gone** — the environment is
+`launch.env`, a complete mapping the executor sets verbatim rather than
+computing.
+
+For every rung that exists today the payload is a `LegacyLaunch`, which
+carries exactly the three fields that used to be on the request:
+
+```python
+def run(self, request: ShellRequest) -> ShellResult:
+    launch = request.launch
+    if isinstance(launch, LegacyLaunch):
+        return self._spawn(launch.command, cwd=launch.cwd, env=dict(launch.env))
+    ...
+```
+
+`PosixLaunch` (`executable` + `argv`) and `WindowsLaunch`
+(`application_name` + `command_line`) are the attested variants. Nothing
+constructs one yet; an executor that receives one **must** re-check every
+image in `launch.attested_images` immediately before spawning
+(`agentao.capabilities.shell.verify_attested_launch` is the reference).
+
+### Declaring the interpreter (optional)
+
+An executor may additionally implement `ShellSpecProvider` — a `shell_spec`
+property answering `ShellSpec | Exhausted` — because it is the only party
+that knows which interpreter a Docker or remote target actually starts. It is
+deliberately **not** a member of `ShellExecutor` (a non-method member makes
+`issubclass()` against a `runtime_checkable` Protocol raise). An executor that
+declares nothing is read as reporting today's platform default, so existing
+hosts keep working unchanged.
+
+A host replacing the **shell tool itself** (`extra_tools` with a tool named
+`run_shell_command`) must expose `shell_spec` on the tool: the command floor
+gates on that tool's name, and registration refuses a replacement that cannot
+name its dialect, because a floor scanning one shell's syntax with another's
+patterns reports a clean result.
+
+### Answering for a machine that is not this one (optional)
+
+Trusted resolution asks four kinds of question about the interpreter it is
+about to start: can the token this child runs as replace this file or any
+directory above it, does this path resolve, is this image signed, and what is
+its content hash. It also needs the target's own base environment, `PATH`
+entries, project root and pinned system directories. Every one of those is a
+fact about **the machine the command will run on**. An executor that runs
+commands in a container, over SSH or on another host supplies its own
+`IdentityOracle`; a floor answering from this machine would be attesting the
+wrong filesystem.
+
+The oracle is bound to one execution subject. Every method that takes a
+`Subject` must refuse to answer for a different one — an answer about some
+other token attests the wrong process. An oracle missing **any** method leaves
+the rung unattested rather than partially trusted, because a `Protocol` is a
+static shape and a missing method would otherwise surface as an
+`AttributeError` after the call had already been approved.
+
+None of this is reachable yet: every rung agentao can construct today is
+policy-off, and a policy-off rung asks the oracle nothing.
 
 The `Local*` defaults (e.g. `LocalFileSystem`, `LocalShellExecutor`)
 remain in `agentao.capabilities` because they are reference
