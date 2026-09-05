@@ -166,7 +166,10 @@ class Launched:
     def out(self) -> str:
         return self.result.stdout.decode("utf-8", errors="replace")
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
+        # ``__repr__`` and not ``__str__``: ``assert x, obj`` reaches the report through
+        # ``repr``, which is how the first run's message read
+        # ``<Launched object at 0x...>`` and said nothing at all.
         command = (
             self.request.command_line if hasattr(self.request, "command_line")
             else subprocess.list2cmdline(list(self.request.argv))
@@ -295,6 +298,31 @@ def test_a_launcher_path_containing_a_space_is_quoted_correctly(tmp_path):
 # ------------------------------------------------------------------ LAUNCH-02 / LAUNCH-05
 
 
+def every_powershell_on_this_runner():
+    """All of them, because the two editions are two different measurements.
+
+    Reporting only the first found makes a 5.1-specific fact invisible on a runner that also
+    has 7.x, which is every GitHub Windows runner.
+    """
+    found = []
+    for name, edition in (("pwsh", "Core"), ("powershell", "Desktop")):
+        path = shutil.which(name)
+        if path is None:
+            continue
+        probe = subprocess.run(
+            [path, "-NoProfile", "-NonInteractive", "-Command",
+             "$PSVersionTable.PSEdition + ' ' + $PSVersionTable.PSVersion.ToString()"
+             " + ' ' + [System.IO.Path]::GetFullPath($PSHOME)"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if probe.returncode != 0:
+            continue
+        parts = probe.stdout.strip().split(" ", 2)
+        if len(parts) == 3 and parts[0] == edition:
+            found.append((path, parts[0], parts[1], parts[2]))
+    return found
+
+
 def powershell_on_this_runner():
     """The real interpreter and its own report of the two identity fields.
 
@@ -357,30 +385,62 @@ def test_the_guard_refuses_when_the_recorded_identity_is_not_the_one_that_starte
     assert not marker.exists()
 
 
-def test_the_pinned_startup_state_still_resolves_what_the_prelude_and_the_table_need():
-    """The state LAUNCH-05 pins has to be a state the design's own commands survive.
+TABLE_CMDLETS = ("Set-Location", "Get-Item", "Write-Output", "Get-Date", "Get-ChildItem")
+"""Five entries of the PowerShell trusted table, spread across both modules the prelude loads."""
 
-    ``$PSModuleAutoLoadingPreference='None'`` stops PowerShell loading a module on first use.
-    The prelude then calls ``Get-Item`` and ``Set-Location``, and NAME-02's table is measured
-    in this state and asserts every entry resolves in it — so if that preference makes those
-    commands unavailable, the prelude cannot run and the table cannot be measured.
 
-    This runs the interpreter directly rather than through the ladder, so a failure here is
-    about PowerShell and not about the launch plumbing.
-    """
-    found = powershell_on_this_runner()
-    if found is None:
-        pytest.skip("neither pwsh nor powershell.exe answered on this runner")
-    path = found[0]
-    names = ("Set-Location", "Get-Item", "Write-Output", "Get-Date", "Get-ChildItem")
+def resolvable_under(path: str, script_prefix: str) -> str:
+    """Which of ``TABLE_CMDLETS`` resolve after ``script_prefix`` has run."""
     probe = subprocess.run(
         [path, "-NoProfile", "-NonInteractive", "-Command",
-         "$PSModuleAutoLoadingPreference='None'; "
-         + "; ".join(
-             f"'{n}=' + [bool](Get-Command '{n}' -ErrorAction SilentlyContinue)" for n in names
+         script_prefix + "; " + "; ".join(
+             f"'{n}=' + [bool](Get-Command '{n}' -ErrorAction SilentlyContinue)"
+             for n in TABLE_CMDLETS
          )],
         capture_output=True, text=True, timeout=120,
     )
-    assert probe.returncode == 0, (probe.returncode, probe.stdout, probe.stderr)
-    for name in names:
-        assert f"{name}=True" in probe.stdout, (name, probe.stdout, probe.stderr)
+    return probe.stdout + probe.stderr
+
+
+def test_at_least_one_edition_needs_the_preludes_explicit_import():
+    """The measurement that sent LAUNCH-05 back for a rewrite, stated as what it justifies.
+
+    ``$PSModuleAutoLoadingPreference='None'`` is how ENV-05 adds depth on top of the pinned
+    ``PSModulePath``. What it also does — measured on windows-latest for ``pwsh`` 7 — is make
+    every cmdlet outside ``Microsoft.PowerShell.Core`` unavailable, including the two the
+    prelude itself calls and most of the trusted table. A rung that can run nothing is not a
+    hardened rung.
+
+    It asserts the *consequence* and not the mechanism per edition, because only Core has been
+    measured: Windows PowerShell 5.1 may well preload those modules, and asserting that it
+    does not would be pinning a guess. What has to stay true is that some edition needs the
+    import step, or that step is carrying nothing. The per-edition results are in the message.
+    """
+    measured = {
+        edition: resolvable_under(path, "$PSModuleAutoLoadingPreference='None'")
+        for path, edition, _version, _pshome in every_powershell_on_this_runner()
+    }
+    if not measured:
+        pytest.skip("no PowerShell answered on this runner")
+    assert any("Set-Location=False" in out for out in measured.values()), measured
+
+
+@pytest.mark.parametrize("index", range(2))
+def test_the_prelude_loads_what_the_table_needs_before_it_closes_the_door(index):
+    """LAUNCH-05 step 2, measured: import first, then the door closes, and the table resolves.
+
+    Driven directly rather than through the ladder, so a failure here is about PowerShell and
+    not about the launch plumbing. Parametrised over both editions because they are two
+    different measurements, and a runner that has both would otherwise report only the first.
+    """
+    found = every_powershell_on_this_runner()
+    if index >= len(found):
+        pytest.skip("this runner has fewer interpreters than that")
+    path, edition, _version, _pshome = found[index]
+    out = resolvable_under(
+        path,
+        "Import-Module -Name Microsoft.PowerShell.Management, Microsoft.PowerShell.Utility"
+        " -ErrorAction Stop; $PSModuleAutoLoadingPreference='None'",
+    )
+    for name in TABLE_CMDLETS:
+        assert f"{name}=True" in out, (edition, name, out)

@@ -836,19 +836,39 @@ def prelude_for(identity: InterpreterIdentity, workdir_literal: str) -> Optional
     pshome = _ps_literal(str(identity.pshome))
     if edition is None or version is None or pshome is None or not identity.pshome:
         return None  # LAUNCH-05: unencodable identity fields refuse the rung, never re-escape
+    # 1. Identity, using only what ``Microsoft.PowerShell.Core`` and .NET provide. The first
+    #    version of this line read ``$PSHOME`` through ``Get-Item``, which is a
+    #    ``Microsoft.PowerShell.Management`` cmdlet — and step 3 below is what makes that
+    #    module unavailable. Measured on windows-latest: under
+    #    ``$PSModuleAutoLoadingPreference='None'`` in ``pwsh -NoProfile -Command``, none of
+    #    ``Get-Item``, ``Set-Location``, ``Write-Output``, ``Get-Date`` or ``Get-ChildItem``
+    #    resolves. A ``[System.IO.Path]`` static always does.
     guard = (
-        "$PSModuleAutoLoadingPreference='None'; "
-        "if ($PSModuleAutoLoadingPreference -ne 'None'"
-        f" -or $PSVersionTable.PSEdition -ne '{edition}'"
+        f"if ($PSVersionTable.PSEdition -ne '{edition}'"
         f" -or $PSVersionTable.PSVersion.ToString() -ne '{version}'"
-        f" -or (Get-Item -LiteralPath $PSHOME).FullName -ne '{pshome}'"
+        f" -or [System.IO.Path]::GetFullPath($PSHOME) -ne '{pshome}'"
         ") { exit 97 }"
+    )
+    # 2. Load the two modules the trusted table is written against, **after** the identity
+    #    check and before the door closes. ENV-05 calls the pinned ``PSModulePath`` the
+    #    mechanism and auto-loading-off the depth; this is what makes both true at once —
+    #    these two come from the install root just verified, and nothing else can arrive
+    #    implicitly afterwards. Failing to load them is an unattested startup state, not a
+    #    working directory problem, so it exits 97 with the rest of the guard.
+    load = (
+        "try { Import-Module -Name Microsoft.PowerShell.Management, "
+        "Microsoft.PowerShell.Utility -ErrorAction Stop } catch { exit 97 }"
+    )
+    # 3. Close the door, then check it closed — a session configuration can set it back.
+    pin = (
+        "$PSModuleAutoLoadingPreference='None'; "
+        "if ($PSModuleAutoLoadingPreference -ne 'None') { exit 97 }"
     )
     move = (
         f"try {{ Set-Location -LiteralPath '{workdir_literal}' -ErrorAction Stop }} "
         "catch { exit 98 }"
     )
-    return f"{guard}; {move}"
+    return f"{guard}; {load}; {pin}; {move}"
 
 
 def _parent_dir(path: AbsPath, target: Platform) -> Optional[AbsPath]:

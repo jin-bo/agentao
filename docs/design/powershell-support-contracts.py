@@ -687,7 +687,12 @@ def request_for(spec: ShellSpec, launcher: LauncherIdentity, body: str, workdir_
 
 def prelude_for(identity: InterpreterIdentity, workdir_literal: str) -> str | None:
     raise Unspecified(
-        "LAUNCH-05 的前奏，<E> <V> <H> <C-check> 取自 identity，<W> 由调用方按 encode_workdir 编码后传进来 —— "
+        "LAUNCH-05 的前奏，四段：**(1) 身份守卫**（只用 Core 与 .NET 静态方法 —— `Get-Item` 属 Management，"
+        "而第 3 段正是让它不可用的那一步；windows-latest 实测：`$PSModuleAutoLoadingPreference='None'` 下 "
+        "`pwsh -NoProfile -Command` 里 `Get-Item`/`Set-Location`/`Write-Output`/`Get-Date`/`Get-ChildItem` 一个都解析不到）；"
+        "**(2) 显式导入** `Microsoft.PowerShell.Management` 与 `Microsoft.PowerShell.Utility`（在身份验过之后、关门之前，"
+        "从刚验过的安装根来；导不进 = 启动状态未认证，同样 exit 97）；**(3) 关自动加载并复查**；**(4) 切到 <W>**。"
+        "<E> <V> <H> 取自 identity，<W> 由调用方按 encode_workdir 编码后传进来 —— "
         "**它是逐次调用的，identity 是逐 rung 的**，只收 identity 的签名没有地方放它（LAUNCH-05、LAUNCH-09a）；"
         "<C> 不得省略（LAUNCH-06），身份四项或 <W> 编码不出来 ⇒ None（拒绝该 rung / 该次调用，绝不换转义方式）；"
         "预检（IMG-09）用同一段；次序按 LAUNCH-09a —— 守卫在前、切到 <W> 紧接在 body 之前；"

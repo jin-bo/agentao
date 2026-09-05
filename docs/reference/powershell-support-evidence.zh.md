@@ -458,6 +458,44 @@ shim、符号链接或一份拷贝时，那是另一个目录 —— 而且正�
 launcher 的前提下改变「这个解释器是什么」（D4）。Group Policy 优先于这两个文件，是上游自己的陈述，
 不是从两个文件作用域推出来的。
 
+### 3.20a 关掉模块自动加载，`Microsoft.PowerShell.Core` 之外一个命令都不剩 —— 实测
+
+**这一条不是抓自文档，是量出来的**，而且是 PR-6 的 Windows job 第一次运行时量到的。
+
+**方法。** `windows-latest` runner，`pwsh` 为 `C:\Program Files\PowerShell\7\pwsh.EXE`，
+直接驱动解释器、不经 agentao 的启动路径：
+
+```
+pwsh -NoProfile -NonInteractive -Command "$PSModuleAutoLoadingPreference='None'; 'Set-Location=' + [bool](Get-Command 'Set-Location' -ErrorAction SilentlyContinue); …"
+```
+
+**结果**（退出码 0，stderr 为空）：
+
+```
+Set-Location=False
+Get-Item=False
+Write-Output=False
+Get-Date=False
+Get-ChildItem=False
+```
+
+**含义。** `pwsh -NoProfile -Command` 的默认会话里 `Microsoft.PowerShell.Management` 与
+`Microsoft.PowerShell.Utility` **不是预加载的**，它们平时靠自动加载到场。把
+`$PSModuleAutoLoadingPreference` 设成 `None` 之后，这两个模块里的每一个命令都解析不到 ——
+包括前奏自己要用的 `Get-Item` 与 `Set-Location`，也包括可信表里 18 条 PowerShell 条目的绝大多数。
+
+**它改了什么。** rev 45 之前的 LAUNCH-05 先设这个偏好、再调 `Get-Item` 与 `Set-Location`：
+守卫的 `if` 里 `Get-Item` 报 command-not-found（非终止错误，脚本继续），`Set-Location` 在 `try` 里
+同样报错、被 `catch` 接住 ⇒ **退出码 98**。这就是 Windows job 首跑唯一的那条失败。
+LAUNCH-05a 因此改成四段：身份守卫只用 Core 与 .NET 静态方法，随后**显式导入**那两个模块，
+再关自动加载并复查，最后才切目录。ENV-05 的分工也因此说得更准了：钉住 `PSModulePath` 是机制，
+关自动加载是纵深 —— 而两者要同时成立，就必须在关门之前把表依赖的模块从已验过的安装根装进来。
+
+**回归。** `tests/test_windows_launch_matrix.py::test_at_least_one_edition_needs_the_preludes_explicit_import`
+钉住这个事实所**证成的那件事**（不是逐 edition 钉机制 —— 只量过 Core，5.1 会不会预加载那两个模块没量过，断言它不预加载就是把猜测钉成事实）；它若开始失败，说明前奏的显式导入已无必要，应当删掉而不是留着；
+`::test_the_prelude_loads_what_the_table_needs_before_it_closes_the_door` 按 edition 参数化，
+钉住修好之后的状态。
+
 ### 3.21 PowerShell 的命令优先级、Windows 的 DLL 搜索顺序、`CreateProcessW` 的上限、git 与 node 的环境注入面 —— 抓自上游文档
 
 第二轮完整安全评审（评审记录 rev 27）点到的五个事实，每一个都从上游按钉住的 commit 抓取，不从二手页面转述。

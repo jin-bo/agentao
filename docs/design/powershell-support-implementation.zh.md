@@ -252,7 +252,7 @@ planner 先建 `DecidedCall`（今天的 regex 地板 → 方言地板 → 封�
 | 13 | 包装体识别放进各方言的地板（用它自己的分词器），`classify_body` 删除 | 它从**抹掉引号的视图**里取命令词。找边界这样做是安全的，读文本就不是：一个带引号的参数在那个视图里变成空白，于是它恢复出来的嵌套 body 不是子进程会跑的那个 —— 而 WRAP-06 要的正是逐字节的那一份。换成各自的分词器之后，`"cmd"` 与 `c^md` 会被**解析成** `cmd`，比原先报「读不出这个命令词」更准 |
 | 10 | 可信表里的**外部程序**条目定义一次、按方言实例化三份 | IMG-02 的名字半问的是「**该方言**的可信表」，所以每个方言都要有条目；而 `git` 是同一个程序、同一套参数形状、同一组效果，分词差异在查表之前就发生完了。三份手维护的副本会漂移，且漂移无声 —— 给 POSIX 的 `git` 加一条触发而忘了 PowerShell 的那条，就是一个没人看得见的 Windows 绕过 |
 
-### 5.4.2 实施中发现的十五条
+### 5.4.2 实施中发现的十七条
 
 1. **契约为错的那张表拒掉了整级。** `attested_spec` 在 `identity_measured` 为假时返回 `Exhausted`，
    而 IMG-07 说的是「该 rung 的**裸词**全部不透明」，NAME-02 早就为它的同族条件（封闭环境未确立）写下
@@ -307,7 +307,21 @@ planner 先建 `DecidedCall`（今天的 regex 地板 → 方言地板 → 封�
     于是这道检查报出一个干净的结果、什么都没证明。`local_filesystem_identity` 自己的 docstring 明写
     「每一个调用者都把答不出当拒绝」，那句话在这一处是假的；而 `st_ino == 0` 恰恰在这条阶梯瞄准的那个平台上
     可达（网络卷与可移动卷）。改为：现场答不出即拒（`launch-attest:unidentifiable`），不看条目那一侧。
-15. **我自己引入又被测试抓回的一条：** `allowlist_entry_for` 一度按目标平台的路径规则宽松查找，
+15. **Windows job 首跑的唯一失败，是规范自己写不通的前奏。** LAUNCH-05 先把
+    `$PSModuleAutoLoadingPreference` 设成 `None`，再调 `Get-Item` 与 `Set-Location` —— 而实测
+    （证据 §3.20a）：这个偏好一开，`Microsoft.PowerShell.Management` 与 `Microsoft.PowerShell.Utility`
+    里**一个命令都解析不到**，因为 `pwsh -NoProfile -Command` 的默认会话根本没有预加载它们。
+    于是守卫里的 `Get-Item` 报 command-not-found、脚本继续、`Set-Location` 被 `catch` 接住 ⇒ 退出 98。
+    连带后果比那条测试大得多：**可信表里 18 条 PowerShell 条目在这个「钉住的启动状态」里绝大多数不可解析**，
+    而 NAME-02 要求每一条在该状态下验证可解析 —— 整个 rung 会变成什么都跑不了。
+    改法：LAUNCH-05a 四段，身份守卫只用 Core 与 .NET 静态方法，随后显式导入那两个模块（从刚验过的安装根），
+    再关自动加载并复查，最后切目录。**这是十七轮文档评审谁都没看出来、只有真机能答的一条。**
+16. **我的 Windows 测试说不出失败原因。** 它带的是退出码与 stdout，而 PowerShell 拒绝的理由在 stderr 上；
+    首跑只报出 `AssertionError: (98, '')`。给一个自己复现不了的平台写测试，就得让它自带诊断。
+    补 `Launched` 记录（退出码、stdout、stderr、组装好的命令行、两个目录），**并且要写 `__repr__` 不是 `__str__`** ——
+    `assert x, obj` 走的是 `repr`，第一版只定义了 `__str__`，于是消息印出来是 `<Launched object at 0x…>`，
+    还是什么都没说。
+17. **我自己引入又被测试抓回的一条：** `allowlist_entry_for` 一度按目标平台的路径规则宽松查找，
    而 `HashPin.matches` 仍按逐字相等确认 —— 同一对路径两种比法，于是一条大小写不同的 pin 会**被找到**
    然后匹配失败，把「这个映像没被 pin」变成「这个映像不可信」。改回逐字相等，两处同一条规则。
    **代价明说、不掩盖：** 没有任何东西把用户写的 allowlist 路径规范化（读配置的加载器没有 oracle），
