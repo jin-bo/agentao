@@ -121,10 +121,70 @@ def _hardline_match(
     return None
 
 
+def _spec_refusal(shell_spec: Any) -> Optional[str]:
+    """TOOL-04, SPEC-01/02, LADDER-03: refuse before a single pattern is matched.
+
+    What will interpret this text is asked first, because every pattern below is written for
+    one grammar. Scanning cmd syntax with POSIX patterns does not fail loudly; it returns a
+    clean result, which is the worst answer a floor can give.
+
+    ``None`` means the caller named no spec — every call site outside the shell tool's own
+    planner, which is why it is not itself a refusal.
+    """
+    if shell_spec is None:
+        return None
+    from ..capabilities.shell_spec import Exhausted, ShellSpec, validate
+
+    if isinstance(shell_spec, Exhausted):
+        # Not "no rung was chosen yet" but "every rung was refused" — the tool stays
+        # registered so the model is told this call is denied, not that shells do not exist.
+        return f"hardline:no-trusted-rung-opaque:{shell_spec.reason}"
+    if isinstance(shell_spec, ShellSpec):
+        return validate(shell_spec)  # a spec built elsewhere is re-checked here, not trusted
+    return None
+
+
+def _policy_dialect(shell_spec: Any) -> Optional[str]:
+    """The dialect whose floor should run, or ``None`` to run today's.
+
+    Gated on ``policy_enabled``, and that gate is the whole promise of the pre-flip stages:
+    the two policy-off rungs are documented as verdict-for-verdict identical to what shipped
+    before, so they keep running the POSIX regex floor even on Windows, where it matches
+    almost nothing. Turning that on is a release decision, not a side effect of this module
+    learning a second grammar.
+    """
+    if shell_spec is None:
+        return None
+    from ..capabilities.shell_spec import ShellSpec
+
+    if not isinstance(shell_spec, ShellSpec) or not shell_spec.policy_enabled:
+        return None
+    return shell_spec.dialect.value
+
+
+def _decided_reason(decided: Any) -> Optional[str]:
+    """The reason on a frozen record, or ``None`` when it allows the call.
+
+    SPEC-08b: a record whose verdict is a refusal refuses at the launch too, so reading it
+    here and reading it there give the same answer by construction rather than by agreement.
+    """
+    from ..capabilities.shell_spec import Deny
+
+    verdict = getattr(decided, "verdict", None)
+    return verdict.reason if isinstance(verdict, Deny) else None
+
+
 def hardline_check(
-    tool_name: str, tool_args: Dict[str, Any],
+    tool_name: str, tool_args: Dict[str, Any], *, shell_spec: Any = None, decided: Any = None,
 ) -> Optional[str]:
     """Return a ``"hardline:<desc>"`` reason when ``tool_args`` is unrecoverable.
+
+    ``decided`` is this call's frozen record when the caller has one (SPEC-08a). The planner
+    builds it, because it is the only place that has the tool's own working-directory
+    resolution, the spec and the arguments at once — everything the closed-set analysis needs.
+    Given one, this function reports *its* verdict rather than computing a second: one value,
+    one source. Without one, only the checks that need no working directory run, which is
+    every check that exists for a policy-off rung.
 
     Only inspects shell commands today: the floor is about preventing
     unrecoverable operations, and ``run_shell_command`` is the single
@@ -154,9 +214,41 @@ def hardline_check(
     """
     if tool_name != "run_shell_command":
         return None
+    if decided is not None:
+        return _decided_reason(decided)
+    spec_reason = _spec_refusal(shell_spec)
+    if spec_reason is not None:
+        return spec_reason
     cmd = str(tool_args.get("command", ""))
     if not cmd:
         return None
+    dialect = _policy_dialect(shell_spec)
+    if dialect == "cmd":
+        from ._cmd import scan_cmd
+
+        return scan_cmd(cmd)
+    if dialect == "powershell":
+        from ._powershell import scan_powershell
+
+        refusal = scan_powershell(cmd)
+        if refusal is not None:
+            return refusal
+        # A script that lowered cleanly and refuses no dangerous class is where the closed set
+        # takes over, and that half needs a working directory and a child environment this
+        # function is not given. A caller with a decided record returned above; one without
+        # gets a refusal rather than a pass, because "I could not run the second half" is not
+        # the same answer as "the second half found nothing".
+        return "hardline:powershell-opaque:EFF-04:closed-set analysis needs the decided record"
+    if dialect == "posix":
+        # The Git Bash rung. BASH-01 runs *before* any command-level rule, because every one
+        # of those reads a command word and the constructs it refuses decide what the command
+        # words are. Passing it does not end the check: the dangerous table below still runs,
+        # so this adds a gate rather than replacing one.
+        from ._bash import scan_bash
+
+        gate = scan_bash(cmd)
+        if gate is not None:
+            return gate
 
     # BFS through the original command and all reachable sh -c bodies.
     # Each iteration runs the same matcher on a separate piece of

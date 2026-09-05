@@ -10,6 +10,7 @@ names in ``directory`` or ``file_pattern``.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,15 @@ from agentao.tools.search import (
     _effective_skip_dirs,
     _path_in_skip_dirs,
 )
+
+
+def _p(relative: str) -> str:
+    """A repo-relative path as the tool prints it — with this platform's separator.
+
+    The tool renders real paths, so on Windows a match reads ``src\\main.py``. Comparing
+    against a hard-coded ``/`` asserts the separator rather than the match.
+    """
+    return relative.replace("/", os.sep)
 
 
 def _make_tree(root: Path) -> None:
@@ -59,11 +69,11 @@ def test_skip_dirs_are_excluded_by_default(tmp_path: Path) -> None:
 
     out = _run(tool, directory=str(tmp_path))
 
-    assert "src/main.py" in out
+    assert _p("src/main.py") in out
     assert "node_modules" not in out
-    assert ".git/config" not in out
+    assert _p(".git/config") not in out
     assert "__pycache__" not in out
-    assert "build/out.txt" not in out
+    assert _p("build/out.txt") not in out
 
 
 def test_explicit_directory_opts_back_in(tmp_path: Path) -> None:
@@ -74,7 +84,7 @@ def test_explicit_directory_opts_back_in(tmp_path: Path) -> None:
 
     out = _run(tool, directory=str(tmp_path / "node_modules"))
 
-    assert "lodash/index.js" in out
+    assert _p("lodash/index.js") in out
 
 
 def test_explicit_file_pattern_opts_back_in(tmp_path: Path) -> None:
@@ -92,9 +102,9 @@ def test_explicit_file_pattern_opts_back_in(tmp_path: Path) -> None:
         file_pattern="node_modules/lodash/**/*.js",
     )
 
-    assert "node_modules/lodash/index.js" in out
+    assert _p("node_modules/lodash/index.js") in out
     # Other skipped dirs remain skipped — we only opted in to node_modules.
-    assert ".git/config" not in out
+    assert _p(".git/config") not in out
 
 
 def test_effective_skip_dirs_strips_referenced_names() -> None:

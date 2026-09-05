@@ -71,7 +71,7 @@
 | `AGENTAO_WEB_FETCH_FALLBACK` | 否 | `none` | `web_fetch` 的 JS 渲染回退。可选值：`none` / `jina` / `playwright`。默认 `none` —— 工具不会把用户给定的 URL 静默代理到第三方。`jina` 把 URL 发到 `https://r.jina.ai`（工具描述和结果首部的 `Fallback:` 行会显式说明）。`playwright` 在本地无头 Chromium 里渲染，URL 不出本机，需要 `pip install 'agentao[playwright]'` **外加** `playwright install chromium`（浏览器二进制是单独下载的；缺它会在渲染时而非 import 时报错）。仅在 `WebFetchTool` 构造时读一次；无效值会 warn 并降级到 `none`。**0.4.18 重命名** —— 退役值 `crawl4ai` 仍被接受、映射到 `playwright`，并打一条 warning；迁移说明见 `CHANGELOG.md`。 |
 | `AGENTAO_WEB_FETCH_ALLOW_CIDRS` | 否 | — | `web_fetch` 的 opt-in SSRF 白名单：逗号/空格分隔的 CIDR（或裸 IP），即便它们**不是公网可路由地址**也放行。给跑在 fake-IP 代理后面的 host 用的逃生口（Clash/V2Ray 把所有域名映射到保留段，通常是 `198.18.0.0/15`，否则会被 SSRF 防护拦掉），或放行可信的内网服务。对初始 URL **以及每一个重定向跳转**都生效；白名单是**有作用域的**——列了 `198.18.0.0/15` **不会**顺带放行 `169.254.169.254`。**这是放松一项安全控制** —— 启动时记一条日志、并在工具描述里透出；范围要尽量窄，绝不要写 `0.0.0.0/0`。默认空 = 完全严格。（更干净的做法：把代理 DNS 从 `fake-ip` 改成 `redir-host`/真实 IP。）见 `agentao/security/url_policy.py`。 |
 | `JINA_API_KEY` | 否 | — | 可选的 Jina key，作为 `Authorization: Bearer <key>` 发出以获取更高速率上限。被 **`web_search`**（`jina` 后端，走 `s.jina.ai` —— 无 key 也能用，key 只是抬高速率上限；设了 key 还会把 `jina` 加进自动回退链）**和** `web_fetch`（`AGENTAO_WEB_FETCH_FALLBACK=jina` 时走 `r.jina.ai`）共用。 |
-| `AGENTAO_SCRUB_CHILD_ENV` | 否 | 开启 | shell 与 MCP 子进程是否继承 agentao **自己的** provider 凭据。默认（除 `0`/`false`/`no`/`off` 之外的任何值）会把 `HARNESS_ENV_KEYS` —— `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`LLM_EXTRA_BODY`…… —— 从子进程环境里剔除，这样被 prompt 注入的 `run_shell_command("env")` 捞不到任何值钱的东西。agent 与运行它的人是**两个不同的主体**，LLM 决定要跑的东西没有一个需要那把给 LLM 付费的 key。**设为 `0` 可恢复完整继承** —— 如果你要在 agent 自己的 shell 里跑 `agentao run`、或任何会调用 provider 的脚本，就需要这么做。只有 agentao 自己的 key 会被剔除；用户的其他密钥（AWS、GitHub、`DATABASE_URL`）原样保留 —— 要不要连它们一起扫是 host 的决定，想要更严格环境的 host 可以通过 `ShellRequest` 显式传 `env`。这是纵深防御，不是密封：`cat .env` 依然有效。见 `agentao/capabilities/process.py::build_child_env`。 |
+| `AGENTAO_SCRUB_CHILD_ENV` | 否 | 开启 | shell 与 MCP 子进程是否继承 agentao **自己的** provider 凭据。默认（除 `0`/`false`/`no`/`off` 之外的任何值）会把 `HARNESS_ENV_KEYS` —— `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`LLM_EXTRA_BODY`…… —— 从子进程环境里剔除，这样被 prompt 注入的 `run_shell_command("env")` 捞不到任何值钱的东西。agent 与运行它的人是**两个不同的主体**，LLM 决定要跑的东西没有一个需要那把给 LLM 付费的 key。**设为 `0` 可恢复完整继承** —— 如果你要在 agent 自己的 shell 里跑 `agentao run`、或任何会调用 provider 的脚本，就需要这么做。只有 agentao 自己的 key 会被剔除；用户的其他密钥（AWS、GitHub、`DATABASE_URL`）原样保留 —— 要不要连它们一起扫是 host 的决定，想要更严格环境的 host 在自己的 `ShellExecutor` 里决定（请求携带完整的 `launch.env`，宿主执行器决定真正传给 `Popen` 的是什么）。这是纵深防御，不是密封：`cat .env` 依然有效。见 `agentao/capabilities/process.py::build_child_env`。 |
 
 > 标准范例：仓库根目录的 `.env.example`。
 
@@ -159,6 +159,23 @@
 - `plan` —— 拒绝所有写入与记忆改动；放行只读 shell allowlist；web 规则与 `workspace-write` 相同。
 
 完整的规则分类、示例、运行期语义 → [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md)。
+
+### `shell` 块（今天已接受，今天不改变任何东西）
+
+`permissions.json` 另接受一个顶层 `shell` 对象，**只**从用户级文件（`<home>/.agentao/permissions.json`）读，
+永不从工作区那份读 —— 一份签进仓库的块等于让仓库来选 agent 跑哪个解释器。它现在会被校验，而现在不改变任何东西：
+agentao 今天构造得出的每一级政策都关着，shell 的启动方式与以前逐字段相同。
+
+| 键 | 类型 | 说明 |
+|---|---|---|
+| `path` | string | 解释器的绝对路径。**与 `dialect` 成对** —— 只给其一是错误，因为两者谁都推不出另一个。 |
+| `dialect` | `"posix"` / `"cmd"` / `"powershell"` | 该解释器读的语法。没有 `rung` 键：rung 由方言、目标平台与映像身份导出。 |
+| `allow_git_bash` | bool | 默认 `false`。Windows 上 Git Bash 能否排在 `cmd` 之前被选中。 |
+| `allowlist` | array | content pin（`{"path": …, "sha256": …}`）与受信发布者（`{"signer": …}`）。pin 是压在**位置之上**的附加条件，永不替代位置。它的 `path` 逐字比较，所以要写规范化的那种写法。 |
+| `env_passthrough` | array | 政策开启的一级上要透传给子进程的**字面键名**。含 `*` 的条目一律丢弃，保留键（`PATH`、`BASH_ENV`、`SHELLOPTS`…）任何来源都加不回来。 |
+
+设计：`docs/design/powershell-support-spec.zh.md`（`CFG-01`、`CFG-02`、`IMG-03`、`ENV-06`）。
+
 
 ---
 

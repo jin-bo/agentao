@@ -10,6 +10,7 @@ injected.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Dict, List
 
@@ -77,19 +78,21 @@ class FakeFS:
         return FileStat(size=size, mtime=0.0, is_dir=False, is_file=True)
 
     def exists(self, path: Path) -> bool:
+        # ``os.sep`` and not ``"/"``: the tools hand this a real path, which on Windows is
+        # separated by ``\``. Keyed on ``/`` the fake reported that nothing was a directory.
         s = str(path)
-        if s in self._files or s.endswith("/dir"):
+        if s in self._files or s.endswith(os.sep + "dir"):
             return True
         # Treat any prefix path of a known file as an existing directory.
-        return any(f.startswith(s + "/") or f == s for f in self._files)
+        return any(f.startswith(s + os.sep) or f == s for f in self._files)
 
     def is_dir(self, path: Path) -> bool:
         s = str(path)
-        if s.endswith("/dir"):
+        if s.endswith(os.sep + "dir"):
             return True
         if s in self._files:
             return False
-        return any(f.startswith(s + "/") for f in self._files)
+        return any(f.startswith(s + os.sep) for f in self._files)
 
     def is_file(self, path: Path) -> bool:
         return str(path) in self._files
@@ -152,7 +155,7 @@ def test_list_directory_routes_through_fake_fs(tmp_path):
     tool.filesystem = fs
     tool.working_directory = tmp_path
     # Use a directory that FakeFS reports as existing:
-    out = tool.execute(directory_path=str(tmp_path) + "/dir")
+    out = tool.execute(directory_path=str(tmp_path / "dir"))
     assert "a.txt" in out
     assert "sub" in out
     assert any(c.startswith("list_dir:") for c in fs.calls)

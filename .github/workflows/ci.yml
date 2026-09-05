@@ -130,6 +130,64 @@ jobs:
         run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short
 
   # ─────────────────────────────────────────────────────────────
+  # Job 1a · Windows
+  # ─────────────────────────────────────────────────────────────
+  # The first Windows coverage this repository has ever had. Everything above
+  # runs on ubuntu, so every Windows-only path — path separators, `%COMSPEC%`,
+  # `list2cmdline`, the console encoding, `NoDefaultCurrentDirectoryInExePath`
+  # — has been shipped unmeasured. That is the finding this job closes, and it
+  # is also PR-6 of the PowerShell ladder: the rungs are designed for Windows
+  # and the flip (PR-7) is gated on this job being green (LADDER-04).
+  #
+  # It installs the same extras as the ubuntu `test` job **plus** the two
+  # tree-sitter packages, which `pyproject.toml` marks `sys_platform == 'win32'`
+  # — so this is the only job where the PowerShell lowering tests actually
+  # execute rather than skip.
+  windows:
+    name: Test · Windows · Python ${{ matrix.python-version }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies (same extras as the ubuntu test job)
+        run: uv sync --python ${{ matrix.python-version }} --extra cli --extra web --extra i18n --extra playwright
+
+      - name: Report the interpreters this runner has
+        # The launch-matrix tests measure real interpreters. Printing what is
+        # present makes a skip legible: a green run that quietly skipped every
+        # measurement looks identical to one that made them.
+        run: |
+          uv run --python ${{ matrix.python-version }} python -c "import shutil; print('pwsh:', shutil.which('pwsh')); print('powershell:', shutil.which('powershell')); print('cmd:', shutil.which('cmd')); print('bash:', shutil.which('bash'))"
+
+      # Two steps, so a red run is readable. The ladder's own modules are written
+      # for Windows and are expected to pass; the full suite has never run here
+      # at all, and its first result is a measurement rather than a regression.
+      # Failing the first step means the ladder is broken; failing only the
+      # second means the pre-existing suite has met Windows for the first time.
+      - name: Run the ladder's own tests
+        run: >
+          uv run --python ${{ matrix.python-version }} python -m pytest -v --tb=short
+          tests/test_shell_spec.py tests/test_shell_config.py tests/test_cmd_floor.py
+          tests/test_bash_gate.py tests/test_wrappers.py tests/test_effect_table.py
+          tests/test_powershell_lowering.py tests/test_trusted_resolution.py
+          tests/test_closed_set.py tests/test_windows_launch_matrix.py
+          tests/test_attested_launch_smoke.py tests/test_powershell_contracts.py
+
+      - name: Run the full suite
+        run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short
+
+  # ─────────────────────────────────────────────────────────────
   # Job 1b · MCP SDK compatibility across both supported majors
   # ─────────────────────────────────────────────────────────────
   # The lockfile pins one mcp version, so the `test` job above can only ever

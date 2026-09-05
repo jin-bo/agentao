@@ -22,6 +22,8 @@ from agentao.plugins.models import ParsedHookRule
 from agentao.runtime.tool_planning import ToolCallDecision
 from agentao.runtime.tool_runner import ToolRunner
 from agentao.tools.base import Tool, ToolRegistry
+
+from ._hook_commands import as_kwargs, emits_json, emitting
 from tests.support.tool_calls import make_tool_call
 
 
@@ -58,7 +60,7 @@ def _runner(tmp_path, rules):
 
 
 def _rule(command, contract=PROFILE_ID):
-    return ParsedHookRule(event="PreToolUse", hook_type="command", command=command,
+    return ParsedHookRule(event="PreToolUse", hook_type="command", **as_kwargs(command),
                           contract=contract, plugin_name="p", timeout=30)
 
 
@@ -102,7 +104,7 @@ def test_a_denied_call_does_not_fire_a_v1_hook(tmp_path):
 
 def test_updated_input_replaces_the_arguments(tmp_path):
     runner = _runner(tmp_path, [_rule(
-        """echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": {"text": "rewritten"}}}'"""
+        emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": {"text": "rewritten"}}}')
     )])
     plans = _plan(runner, {"text": "original"})
 
@@ -115,12 +117,14 @@ def test_a_rewrite_is_re_decided_and_can_only_get_stricter(tmp_path, monkeypatch
     """The point of the gate: the verdict must describe what will actually run.
     A hook `allow` cannot lift the re-computed verdict."""
     runner = _runner(tmp_path, [_rule(
-        """echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": {"text": "dangerous"}}}'"""
+        emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": {"text": "dangerous"}}}')
     )])
     plans = _plan(runner, {"text": "benign"})
 
     # The engine denies whatever the rewrite produced.
-    def _deny(tool, name, args, readonly):
+    # The 5th parameter is the shell spec the first decision was frozen against; the
+    # re-decision is required to be made against the same one (TOOL-04/SPEC-08).
+    def _deny(tool, name, args, readonly, shell_spec=None, decided=None):
         from agentao.runtime.tool_planning import ToolCallDecision as D
         return (D.DENY, None) if args.get("text") == "dangerous" else (D.ALLOW, None)
 
@@ -134,7 +138,7 @@ def test_a_rewrite_is_re_decided_and_can_only_get_stricter(tmp_path, monkeypatch
 
 def test_the_re_decide_never_loosens_an_existing_verdict(tmp_path, monkeypatch):
     runner = _runner(tmp_path, [_rule(
-        """echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": {"text": "harmless"}}}'"""
+        emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": {"text": "harmless"}}}')
     )])
     plans = _plan(runner)
     plans[0].decision = ToolCallDecision.ASK
@@ -149,7 +153,7 @@ def test_the_re_decide_never_loosens_an_existing_verdict(tmp_path, monkeypatch):
 
 def test_a_v1_hook_cannot_rewrite_the_input(tmp_path):
     runner = _runner(tmp_path, [_rule(
-        """echo '{"hookSpecificOutput": {"updatedInput": {"text": "rewritten"}}}'""",
+        emits_json('{"hookSpecificOutput": {"updatedInput": {"text": "rewritten"}}}'),
         contract=LEGACY_CONTRACT_ID,
     )])
     plans = _plan(runner, {"text": "original"})
@@ -166,7 +170,7 @@ def test_a_v1_hook_cannot_rewrite_the_input(tmp_path):
 def test_additional_context_is_injected_beside_the_result(tmp_path):
     """Deviation 6: it used to be parsed and *logged*, which is not a route."""
     runner = _runner(tmp_path, [_rule(
-        """echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "mind the policy"}}'"""
+        emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "mind the policy"}}')
     )])
 
     _, messages = runner.execute([make_tool_call("c1", "echo_tool", json.dumps({"text": "hi"}))])
@@ -178,7 +182,7 @@ def test_additional_context_is_injected_beside_the_result(tmp_path):
 def test_continue_false_ends_the_turn_and_is_not_recorded_as_a_deny(tmp_path):
     """A stop and a deny are different outcomes for the user: one ends the turn,
     the other blocks a call and lets the model try something else."""
-    runner = _runner(tmp_path, [_rule("""echo '{"continue": false, "stopReason": "halt"}'""")])
+    runner = _runner(tmp_path, [_rule(emits_json('{"continue": false, "stopReason": "halt"}'))])
     plans = _plan(runner)
 
     runner._apply_pre_tool_use_hooks(plans)
@@ -188,7 +192,7 @@ def test_continue_false_ends_the_turn_and_is_not_recorded_as_a_deny(tmp_path):
 
 
 def test_exit_2_denies_the_call(tmp_path):
-    runner = _runner(tmp_path, [_rule("echo 'not allowed' >&2; exit 2")])
+    runner = _runner(tmp_path, [_rule(emitting(stderr="not allowed\n", exit_code=2))])
     plans = _plan(runner)
 
     runner._apply_pre_tool_use_hooks(plans)
@@ -201,7 +205,7 @@ def test_defer_degrades_to_deny_with_the_value_named(tmp_path):
     """§1's third rule reaches values: accept, ignore, or degrade to a **named**
     alternative — never a silent substitution of one verdict for another."""
     runner = _runner(tmp_path, [_rule(
-        """echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "defer"}}'"""
+        emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "defer"}}')
     )])
     plans = _plan(runner)
 
@@ -214,7 +218,7 @@ def test_defer_degrades_to_deny_with_the_value_named(tmp_path):
 
 def test_a_v1_hook_emitting_defer_is_ignored(tmp_path):
     runner = _runner(tmp_path, [_rule(
-        """echo '{"hookSpecificOutput": {"permissionDecision": "defer"}}'""",
+        emits_json('{"hookSpecificOutput": {"permissionDecision": "defer"}}'),
         contract=LEGACY_CONTRACT_ID,
     )])
     plans = _plan(runner)
@@ -226,9 +230,11 @@ def test_a_v1_hook_emitting_defer_is_ignored(tmp_path):
 
 def test_the_hook_fires_once_and_is_not_re_dispatched(tmp_path):
     counter = tmp_path / "count.txt"
-    runner = _runner(tmp_path, [_rule(
-        f"""echo x >> {counter}; echo '{{"hookSpecificOutput": {{"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": {{"text": "new"}}}}}}'"""
-    )])
+    runner = _runner(tmp_path, [_rule(emits_json(
+        '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": '
+        '"allow", "updatedInput": {"text": "new"}}}',
+        touch=(counter,), touch_text="x",
+    ))])
     plans = _plan(runner)
 
     runner._apply_pre_tool_use_hooks(plans)

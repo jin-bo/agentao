@@ -153,7 +153,9 @@ def test_tool_start_coerces_path_args_to_string(transport):
         )
     )
     upd = _last_update(server)
-    assert upd["rawInput"] == {"file_path": "/tmp/a"}
+    # ``str(Path("/tmp/a"))`` is ``\tmp\a`` on Windows: the transport coerces a Path with
+    # ``str``, so the expectation has to be the same coercion, not a POSIX spelling.
+    assert upd["rawInput"] == {"file_path": str(Path("/tmp/a"))}
 
 
 # ---------------------------------------------------------------------------
@@ -510,7 +512,7 @@ def test_json_safe_passes_native_values_through():
 
 
 def test_json_safe_coerces_path():
-    assert _json_safe(Path("/tmp/a")) == "/tmp/a"
+    assert _json_safe(Path("/tmp/a")) == str(Path("/tmp/a"))
 
 
 def test_json_safe_recurses_into_dicts_and_lists():
@@ -519,8 +521,8 @@ def test_json_safe_recurses_into_dicts_and_lists():
         "nested": {"p": Path("/c")},
     }
     assert _json_safe(value) == {
-        "files": ["/a", "/b"],
-        "nested": {"p": "/c"},
+        "files": [str(Path("/a")), str(Path("/b"))],
+        "nested": {"p": str(Path("/c"))},
     }
 
 

@@ -28,6 +28,7 @@ that assumption against the installed SDK so the drift is caught at the source
 rather than here.
 """
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -284,7 +285,11 @@ class TestTurnOutcomeFlag:
             _plain(
                 "let me look",
                 finish_reason=None,  # unreported
-                tool_calls=[_tool_call("call_1", "read_file", f'{{"file_path": "{target}"}}')],
+                # ``json.dumps`` rather than an f-string: a Windows path is full of
+                # backslashes, and interpolating one straight into JSON produces
+                # invalid escapes, so the call arrives unparseable and never runs.
+                tool_calls=[_tool_call("call_1", "read_file",
+                                       json.dumps({"file_path": str(target)}))],
             ),
             _plain("the file says hello", finish_reason="stop"),  # clean, and last
         ])

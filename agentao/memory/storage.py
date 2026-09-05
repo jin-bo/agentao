@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Iterator, List, Optional, Union
 
 from .models import MemoryRecord, MemoryReviewItem, SessionSummaryRecord
 
@@ -136,18 +137,57 @@ class SQLiteMemoryStore:
     # Connection
     # ------------------------------------------------------------------
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> "Iterator[sqlite3.Connection]":
+        """Yield a connection, commit or roll back, and — for a file store — close it.
+
+        This used to hand back a bare ``sqlite3.Connection``, and every call site
+        spells ``with self._connect() as conn``. That reads like a resource scope
+        and is not one: ``sqlite3.Connection.__exit__`` commits or rolls back the
+        transaction and **leaves the connection open**. So every memory read and
+        every write leaked a connection and its file handles until the garbage
+        collector happened to run.
+
+        On POSIX that is invisible — an unlinked open file just goes away — which
+        is why it survived. On Windows the file stays locked, so a host that
+        finished with an agent could not delete its own workspace: ``WinError 32``
+        naming ``memory.db``. WAL adds ``-wal`` and ``-shm`` to the same problem.
+
+        The in-memory backing keeps its single connection deliberately: closing it
+        would discard the database.
+        """
         if self._is_memory:
             # For in-memory DBs, reuse a single connection to preserve data
             if self._persistent_conn is None:
                 self._persistent_conn = sqlite3.connect(":memory:")
                 self._persistent_conn.row_factory = sqlite3.Row
-            return self._persistent_conn
+            with self._persistent_conn as conn:
+                yield conn
+            return
         conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            # ``with conn`` for the commit/rollback the call sites already relied on.
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    def close(self) -> None:
+        """Release the in-memory backing, if this store has one.
+
+        File-backed connections close at the end of each ``_connect`` scope, so
+        there is nothing to release for them; this exists so a host can drop the
+        transient store without waiting for the collector.
+        """
+        if self._persistent_conn is not None:
+            try:
+                self._persistent_conn.close()
+            except sqlite3.Error:
+                pass
+            self._persistent_conn = None
 
     def _init_db(self) -> None:
         with self._connect() as conn:

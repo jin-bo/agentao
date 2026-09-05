@@ -121,7 +121,10 @@ def test_both_popen_sites_pass_the_resolved_executable(monkeypatch, tmp_path, ba
     test above only reaches the foreground one, so a background path left on
     Python's default would run a different shell than the tool advertises."""
     monkeypatch.setattr(subprocess, "Popen", _PopenSpy)
-    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    # ``os.getpgid`` is POSIX-only; on Windows the executor never calls it, so there is
+    # nothing to stub and ``setattr`` would invent an attribute the platform lacks.
+    if hasattr(os, "getpgid"):
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
     tool = _make_tool(tmp_path)
     tool.execute(
         command="echo hi",

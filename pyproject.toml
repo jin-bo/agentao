@@ -43,6 +43,12 @@ dependencies = [
     # ``agentao run`` spec templating — render_spec uses Jinja2 with
     # StrictUndefined for ``prompt`` / ``instructions`` substitution.
     "jinja2>=3.0.0",
+    # The PowerShell floor parses before it judges, and it is only reachable on Windows, so
+    # the parser is a Windows-only runtime dependency. It is unconditional in the dev group
+    # below: the lowering and its 68-case corpus have to be testable on every platform CI
+    # runs, or the one grammar nobody can exercise locally is the one shipping untested.
+    "tree-sitter>=0.25,<0.27; sys_platform == 'win32'",
+    "tree-sitter-powershell>=0.26,<0.27; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -122,6 +128,8 @@ dev = [
     "mypy>=1.13.0",
     "packaging>=25.0",
     "ruff>=0.14.0",
+    "tree-sitter>=0.25,<0.27",
+    "tree-sitter-powershell>=0.26,<0.27",
 ]
 
 [tool.ruff]

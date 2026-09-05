@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 
 import pytest
 
@@ -30,6 +31,20 @@ from agentao.security.secret_scan import redact, scan_and_redact
 
 # A syntactically valid, obviously fake OpenAI-shaped key.
 FAKE_KEY = "sk-proj-" + "A1b2C3d4E5f6G7h8J9k0" * 2
+
+
+def _reads_key() -> list:
+    """A child that prints the key it inherited, without asking a shell to expand anything.
+
+    The shell form (``echo "key=[${OPENAI_API_KEY}]"``) reads the variable through the
+    platform shell, and ``cmd.exe`` does not expand ``${...}`` — it prints the text back and
+    the test then measures its own quoting rather than the scrub. The exec form asks the
+    child directly, which is the thing under test on every platform.
+    """
+    return [
+        sys.executable, "-c",
+        "import os; print('key=[' + os.environ.get('OPENAI_API_KEY', '') + ']')",
+    ]
 
 
 class TestScanner:
@@ -190,31 +205,45 @@ class TestChildEnvironment:
 
 
 class TestShellChildEnvironment:
-    def test_shell_child_does_not_see_the_provider_key(self, monkeypatch, tmp_path):
-        """End-to-end: the executor the shell tool actually uses."""
-        from agentao.capabilities.shell import LocalShellExecutor, ShellRequest
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell expansion in the probe")
+    def test_shell_child_does_not_see_the_provider_key(self, monkeypatch):
+        """End-to-end through the tool, which is where the environment is now decided.
+
+        This used to hand the executor a request with no environment and rely on it calling
+        ``build_child_env()`` itself. The launch request now carries a complete environment
+        that the executor sets verbatim (LAUNCH-01a), so the scrub happens one layer up —
+        and the only way to keep proving the guarantee is to drive the layer that does it.
+        """
+        from agentao.tools.shell import ShellTool
 
         monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
-        result = LocalShellExecutor().run(
-            ShellRequest(
-                command="echo \"key=[${OPENAI_API_KEY}]\"",
-                cwd=str(tmp_path),
-                timeout=30,
-            )
+        # The project root, not tmp_path: PathPolicy refuses a working directory outside it,
+        # and this test is about the environment, not about where the child starts.
+        out = ShellTool().execute(
+            command='echo "key=[${OPENAI_API_KEY}]"', working_directory=".", timeout=30
         )
-        assert "key=[]" in result.stdout.decode("utf-8", errors="replace")
+        assert "key=[]" in out
 
-    def test_explicit_env_is_passed_through_verbatim(self, monkeypatch, tmp_path):
-        """An explicit ``request.env`` is the host's decision, not ours."""
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell expansion in the probe")
+    def test_the_executor_sets_the_launch_environment_verbatim(self, monkeypatch, tmp_path):
+        """LAUNCH-01a: the executor sets the environment it was given, and computes none."""
+        from types import MappingProxyType
+
         from agentao.capabilities.shell import LocalShellExecutor, ShellRequest
+        from agentao.capabilities.shell_spec import AbsPath, LegacyLaunch, Sha256
 
         monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
         result = LocalShellExecutor().run(
             ShellRequest(
-                command="echo \"key=[${OPENAI_API_KEY}]\"",
-                cwd=str(tmp_path),
+                launch=LegacyLaunch(
+                    command='echo "key=[${OPENAI_API_KEY}]"',
+                    cwd=AbsPath(str(tmp_path)),
+                    env=MappingProxyType(
+                        {"OPENAI_API_KEY": "host-chose-this", "PATH": os.environ["PATH"]}
+                    ),
+                    spec_fingerprint=Sha256(""),
+                ),
                 timeout=30,
-                env={"OPENAI_API_KEY": "host-chose-this", "PATH": os.environ["PATH"]},
             )
         )
         assert "key=[host-chose-this]" in result.stdout.decode("utf-8", errors="replace")
@@ -228,19 +257,22 @@ class TestScrubCoversEveryChildSpawner:
         from agentao.capabilities.process import run_captured
 
         monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
-        out = run_captured(
-            'echo "key=[${OPENAI_API_KEY}]"', shell=True, cwd=str(tmp_path),
-        )
+        out = run_captured(_reads_key(), cwd=str(tmp_path))
         assert "key=[]" in out.stdout
 
     def test_run_captured_honours_an_explicit_env(self, monkeypatch, tmp_path):
         from agentao.capabilities.process import run_captured
 
         monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
-        out = run_captured(
-            'echo "key=[${OPENAI_API_KEY}]"', shell=True, cwd=str(tmp_path),
-            env={"OPENAI_API_KEY": "caller-chose", "PATH": os.environ["PATH"]},
-        )
+        env = {"OPENAI_API_KEY": "caller-chose", "PATH": os.environ["PATH"]}
+        # Windows cannot start a Python child without SystemRoot — it fails before
+        # `main`, so the assertion below would read an empty stdout and blame the
+        # scrub. These are the interpreter's launch prerequisites, not the subject.
+        for name in ("SystemRoot", "SYSTEMROOT", "COMSPEC", "PATHEXT"):
+            if name in os.environ:
+                env[name] = os.environ[name]
+
+        out = run_captured(_reads_key(), cwd=str(tmp_path), env=env)
         assert "key=[caller-chose]" in out.stdout
 
 

@@ -71,7 +71,7 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 | `AGENTAO_WEB_FETCH_FALLBACK` | no | `none` | JS-rendering fallback for `web_fetch`. Allowed: `none` / `jina` / `playwright`. Default `none` — the tool never silently proxies user-supplied URLs through a third party. `jina` sends the URL to `https://r.jina.ai` (disclosed in tool description + result `Fallback:` line). `playwright` renders locally in a headless Chromium — nothing leaves the machine — and requires `pip install 'agentao[playwright]'` **plus** `playwright install chromium` (the browser binary is a separate download; missing it surfaces at render time, not import time). Read once at `WebFetchTool` construction; invalid values warn and degrade to `none`. **Renamed in 0.4.18** — the retired value `crawl4ai` is still accepted, maps to `playwright`, and logs a warning; see the migration note in `CHANGELOG.md`. |
 | `AGENTAO_WEB_FETCH_ALLOW_CIDRS` | no | — | Opt-in SSRF allowlist for `web_fetch`: comma/space-separated CIDRs (or bare IPs) that the URL policy permits **even though they are not globally routable**. The escape hatch for hosts behind a fake-IP proxy (Clash/V2Ray map every domain to a reserved range, typically `198.18.0.0/15`, which the guard otherwise blocks) or a trusted internal service. Applied to the initial URL **and every redirect hop**; the allowlist is *scoped* — listing `198.18.0.0/15` does **not** also permit `169.254.169.254`. **Relaxes a security control** — logged once at startup, surfaced in the tool description; keep it narrow, never `0.0.0.0/0`. Default empty = fully strict. (Cleaner fix: switch the proxy DNS from `fake-ip` to `redir-host`/real-IP.) See `agentao/security/url_policy.py`. |
 | `JINA_API_KEY` | no | — | Jina key, sent as `Authorization: Bearer <key>`. The two Jina endpoints differ: **`web_search`** (the `jina` backend via `s.jina.ai`) **requires** it — measured 2026-07-22 the endpoint answers `401 AuthenticationRequiredError` without one, so a keyless `jina` pin fails every query and a keyless auto chain simply omits `jina`. **`web_fetch`** with `AGENTAO_WEB_FETCH_FALLBACK=jina` (`r.jina.ai`) still works keyless; there the key only lifts the rate limit. |
-| `AGENTAO_SCRUB_CHILD_ENV` | no | on | Whether shell and MCP child processes inherit agentao's **own** provider credentials. Default (any value other than `0`/`false`/`no`/`off`) drops `HARNESS_ENV_KEYS` — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LLM_EXTRA_BODY`, … — from the child environment, so a prompt-injected `run_shell_command("env")` finds nothing worth stealing. The agent is a distinct principal from the user, and nothing the LLM decides to run needs the key that pays for the LLM. **Set to `0` to restore full inheritance** — required if you run `agentao run`, or any script that calls the provider, from inside the agent's own shell. Only agentao's keys are dropped; the user's other secrets (AWS, GitHub, `DATABASE_URL`) are untouched — scrubbing those is the host's call, and a host wanting a tighter environment can pass an explicit `env` via `ShellRequest`. Defense in depth, not a seal: `cat .env` still works. See `agentao/capabilities/process.py::build_child_env`. |
+| `AGENTAO_SCRUB_CHILD_ENV` | no | on | Whether shell and MCP child processes inherit agentao's **own** provider credentials. Default (any value other than `0`/`false`/`no`/`off`) drops `HARNESS_ENV_KEYS` — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LLM_EXTRA_BODY`, … — from the child environment, so a prompt-injected `run_shell_command("env")` finds nothing worth stealing. The agent is a distinct principal from the user, and nothing the LLM decides to run needs the key that pays for the LLM. **Set to `0` to restore full inheritance** — required if you run `agentao run`, or any script that calls the provider, from inside the agent's own shell. Only agentao's keys are dropped; the user's other secrets (AWS, GitHub, `DATABASE_URL`) are untouched — scrubbing those is the host's call, and a host wanting a tighter environment supplies it from its own `ShellExecutor` (the request carries a complete `launch.env`, so a host executor decides what it actually passes to `Popen`). Defense in depth, not a seal: `cat .env` still works. See `agentao/capabilities/process.py::build_child_env`. |
 
 > Canonical example: `.env.example` in the repo root.
 
@@ -173,6 +173,24 @@ See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each
 - `plan` — denies all writes / memory mutations; allows the read-only shell allowlist; web rules identical to `workspace-write`.
 
 Full rule taxonomy, examples, and runtime semantics → [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md).
+
+### The `shell` block (accepted today, inert today)
+
+`permissions.json` also accepts a top-level `shell` object, read **only** from the user-level file
+(`<home>/.agentao/permissions.json`) and never from the workspace copy — a block checked into a repository
+would let the repository choose the interpreter the agent runs. It is validated now and changes nothing
+now: every rung agentao can construct is policy-off, so the shell still launches exactly as it did.
+
+| Key | Type | Notes |
+|---|---|---|
+| `path` | string | Absolute path to an interpreter. **Paired with `dialect`** — supplying one without the other is an error, because neither can be derived from the other. |
+| `dialect` | `"posix"` / `"cmd"` / `"powershell"` | The syntax that interpreter reads. There is no `rung` key: the rung is derived from the dialect, the target platform and the image's identity. |
+| `allow_git_bash` | bool | Default `false`. Whether Git Bash may be selected ahead of `cmd` on Windows. |
+| `allowlist` | array | Content pins (`{"path": …, "sha256": …}`) and trusted publishers (`{"signer": …}`). A pin is an **additional** condition on an image, never a replacement for its location. Its `path` is compared verbatim, so write the canonical spelling. |
+| `env_passthrough` | array | Literal environment key names to pass through to the child on a policy-on rung. Entries containing `*` are dropped, and the reserved keys (`PATH`, `BASH_ENV`, `SHELLOPTS`, …) cannot be granted back. |
+
+Design: `docs/design/powershell-support-spec.zh.md` (`CFG-01`, `CFG-02`, `IMG-03`, `ENV-06`).
+
 
 ---
 

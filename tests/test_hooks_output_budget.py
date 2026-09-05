@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -23,6 +24,21 @@ from agentao.plugins.hooks import _budget, _dispatcher as dispatcher_mod
 from agentao.plugins.hooks._budget import HOOK_CHANNEL_CHAR_LIMIT, cap_channel
 from agentao.plugins.models import ParsedHookRule, StopHookResult, UserPromptSubmitResult
 
+from ._hook_commands import as_kwargs
+
+
+def _floods(stream: str) -> list:
+    """A child that writes without stopping, on any platform.
+
+    ``yes`` is a coreutils program; Windows has neither it nor a shell that would run the
+    redirect around it. What the limit is being measured against is an unbounded writer, and
+    a Python loop is one everywhere.
+    """
+    return [
+        sys.executable, "-c",
+        "import sys\nwhile True:\n    sys.%s.write('A' * 4096)" % stream,
+    ]
+
 
 # --------------------------------------------------------------------------
 # Tier 1 — the raw ceiling
@@ -31,14 +47,14 @@ from agentao.plugins.models import ParsedHookRule, StopHookResult, UserPromptSub
 def test_bounded_run_kills_a_flooding_child():
     """``yes`` never stops; the bound is what makes this test terminate."""
     with pytest.raises(OutputLimitExceeded) as excinfo:
-        run_captured("yes AAAA", shell=True, max_output_bytes=200_000)
+        run_captured(_floods("stdout"), max_output_bytes=200_000)
     assert excinfo.value.stream == "stdout"
     assert excinfo.value.limit == 200_000
 
 
 def test_bounded_run_catches_a_flood_on_stderr_too():
     with pytest.raises(OutputLimitExceeded) as excinfo:
-        run_captured("yes AAAA >&2", shell=True, max_output_bytes=200_000)
+        run_captured(_floods("stderr"), max_output_bytes=200_000)
     assert excinfo.value.stream == "stderr"
 
 
@@ -54,9 +70,17 @@ def test_the_limit_is_opt_in_so_other_callers_are_unchanged():
 
 
 def test_bounded_run_preserves_the_ordinary_contract():
-    """Same result shape, stdin still fed, exit code still reported."""
-    proc = run_captured("cat; exit 3", shell=True, input="fed on stdin",
-                        max_output_bytes=1_000_000)
+    """Same result shape, stdin still fed, exit code still reported.
+
+    The child echoes stdin and exits 3. It used to be ``cat; exit 3`` under a shell,
+    which is two things Windows does not have; what is under test is ``run_captured``,
+    not the shell, so the child is a Python one on both platforms.
+    """
+    proc = run_captured(
+        [sys.executable, "-c",
+         "import sys; sys.stdout.write(sys.stdin.read()); sys.exit(3)"],
+        input="fed on stdin", max_output_bytes=1_000_000,
+    )
     assert proc.stdout == "fed on stdin"
     assert proc.returncode == 3
 
@@ -72,7 +96,8 @@ def test_a_budget_kill_is_reported_differently_from_a_timeout(monkeypatch, tmp_p
     monkeypatch.setattr(dispatcher_mod, "HOOK_RAW_OUTPUT_LIMIT_BYTES", 100_000)
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
     rule = ParsedHookRule(event="Stop", hook_type="command",
-                          command="yes AAAA", timeout=30, plugin_name="t")
+                          **as_kwargs((sys.executable, ["-c", "import sys\nwhile True:\n    sys.stdout.write('A' * 4096)"])),
+                          timeout=30, plugin_name="t")
 
     proc, failure = dispatcher._run_subprocess(rule, {"event": "Stop"})
 
@@ -113,9 +138,23 @@ def test_an_over_budget_channel_is_excerpted_and_spilled(monkeypatch, tmp_path):
     assert spilled[0].read_text() == payload
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="0600 is unenforceable on Windows — see the docstring; the gap is real, not skipped away",
+)
 def test_the_spill_file_is_0600(monkeypatch, tmp_path):
     """Hook output is a user script's output — likelier to carry a credential
-    than a tool result, which is why this sink tightens what tool-outputs does."""
+    than a tool result, which is why this sink tightens what tool-outputs does.
+
+    **The guarantee does not exist on Windows, and this skip records that rather
+    than papering over it.** ``os.open(..., 0o600)`` there sets only the read-only
+    bit; access is decided by the file's ACL, which NTFS inherits from the parent
+    directory. The spill lands in the *project* tree (``.agentao/hook-outputs``),
+    so on a machine where the repository is readable by more than one account, hook
+    output that may carry a credential is readable with it. Closing that needs a
+    real ACL, which is the same unimplemented Windows identity work that
+    ``agentao/paths.py`` and ``permissions_hardline/_trust.py`` both defer to.
+    """
     monkeypatch.chdir(tmp_path)
     cap_channel("S" * 30_000, hook_event="Stop")
     spilled = next((tmp_path / ".agentao" / "hook-outputs").iterdir())

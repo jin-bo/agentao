@@ -12,6 +12,7 @@ from __future__ import annotations
 import getpass
 import os
 import stat
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from agentao.paths import (
 _POSIX_ONLY = pytest.mark.skipif(
     not hasattr(os, "getuid"), reason="POSIX ownership semantics"
 )
+_WINDOWS_ONLY = pytest.mark.skipif(os.name != "nt", reason="Windows reparse-point semantics")
 
 
 def _raise(*_a, **_k):
@@ -159,3 +161,35 @@ class TestUserRoot:
         # the fallback applies to user_root too.
         monkeypatch.setattr(paths, "user_home", lambda: Path("/sentinel"))
         assert user_root() == Path("/sentinel") / USER_DIR_NAME
+
+
+@_WINDOWS_ONLY
+class TestIsPrivateToCurrentUserOnWindows:
+    """The Windows branch, which the POSIX class above cannot reach.
+
+    Mode bits are not a mode there: ``mkdir(mode=0o700)`` does not set them and
+    ``lstat`` reports group and other access on every directory, so the POSIX test
+    rejected *everything* — and ``user_home()`` then re-ran ``mkdtemp`` on every call,
+    handing out a different state directory each time. Config and memory moved on
+    every run.
+    """
+
+    def test_a_plain_directory_is_private(self, tmp_path) -> None:
+        d = tmp_path / "priv"
+        d.mkdir()
+        assert _is_private_to_current_user(d) is True
+
+    def test_a_directory_junction_is_rejected(self, tmp_path) -> None:
+        """``S_ISDIR`` is true for a junction, so the reparse attribute is the
+        only thing standing between the check and a link to a shared directory."""
+        target = tmp_path / "elsewhere"
+        target.mkdir()
+        link = tmp_path / "junction"
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                       check=True, capture_output=True)
+        assert _is_private_to_current_user(link) is False
+
+    def test_a_file_is_still_rejected(self, tmp_path) -> None:
+        f = tmp_path / "file"
+        f.write_text("x")
+        assert _is_private_to_current_user(f) is False

@@ -195,6 +195,21 @@ class AsyncToolBase(_BaseTool):
 RegistrableTool = Union[Tool, AsyncToolBase]
 
 
+SHELL_TOOL_NAME = "run_shell_command"  # TOOL-01: one shell tool, and the floor gates on this name
+
+
+def _declares_shell_spec(tool: object) -> bool:
+    """Whether ``tool`` answers TOOL-01's question, without asking it.
+
+    Deliberately never evaluates it. ``hasattr`` on the instance would call the property,
+    which runs host code during registration — a provider that walks a ladder can be slow,
+    and one that raises would read here as "does not declare" rather than as a failure to
+    resolve. Both spellings a tool can use are checked without touching the value: defined
+    on the class (a property or class attribute), or assigned in ``__init__``.
+    """
+    return hasattr(type(tool), "shell_spec") or "shell_spec" in vars(tool)
+
+
 class ToolRegistry:
     """Registry for managing tools."""
 
@@ -216,6 +231,14 @@ class ToolRegistry:
         ``extra_tools`` entry deliberately replacing a built-in / agent
         tool) and is performed silently. Either way the last write wins.
         """
+        if tool.name == SHELL_TOOL_NAME and not _declares_shell_spec(tool):
+            raise ValueError(
+                f"TOOL-01: {type(tool).__name__} registered as '{SHELL_TOOL_NAME}' does not "
+                "expose `shell_spec`. The command floor gates on this tool's name — that name "
+                "is its only hook — so a replacement that cannot name its dialect leaves the "
+                "floor scanning one shell's syntax with another's patterns and reporting a "
+                "clean result. Implement `agentao.capabilities.shell_spec.ShellSpecProvider`."
+            )
         if tool.name in self.tools and not replace:
             _logger.warning(
                 "Tool '%s' is already registered; overwriting with %s",

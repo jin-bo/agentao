@@ -76,8 +76,10 @@ def test_foreground_popen_uses_devnull_stdin(monkeypatch, tmp_path):
 def test_background_popen_uses_devnull_stdin(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "Popen", _PopenSpy)
     # POSIX background path calls os.getpgid(proc.pid); _PopenSpy's pid
-    # isn't a real process, so stub getpgid to a no-op.
-    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    # isn't a real process, so stub getpgid to a no-op. ``raising=False`` because
+    # Windows has no ``os.getpgid`` to replace — and no code path that calls it, so
+    # there is nothing to stub there and the assertion below is the same either way.
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid, raising=False)
     tool = _make_tool(tmp_path)
     tool.execute(
         command="sleep 0.01",

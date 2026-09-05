@@ -4,13 +4,26 @@ import re
 import shlex
 import sys
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Dict, Optional
 
 IS_WINDOWS = sys.platform == "win32"
 IS_MACOS = sys.platform == "darwin"
 
-from .base import Tool
+from .base import Tool, _declares_shell_spec
 from ..capabilities import BackgroundHandle, LocalShellExecutor, ShellRequest, ShellResult
+from ..capabilities.process import build_child_env
+from ..capabilities.shell_spec import (
+    AbsPath,
+    DecidedCall,
+    Deny,
+    Exhausted,
+    LaunchRefused,
+    LegacyLaunch,
+    Sha256,
+    ShellSpec,
+    default_spec,
+)
 from ..capabilities.shell import (
     _is_binary,
     resolve_shell_executable,
@@ -234,6 +247,7 @@ class ShellTool(Tool):
         timeout: float = 120,
         is_background: bool = False,
         _sandbox_profile: Optional[SandboxProfile] = None,
+        _decided: Optional[DecidedCall] = None,
     ) -> str:
         """Execute shell command.
 
@@ -241,10 +255,24 @@ class ShellTool(Tool):
         that ToolRunner injects when a macOS sandbox policy is active. When
         set, the command is wrapped in `sandbox-exec` before spawning.
         """
-        try:
-            cwd = PathPolicy.for_tool(self).contain_directory(working_directory)
-        except PathPolicyError as e:
-            return f"Error: {e}"
+        decided_spec: "ShellSpec | Exhausted | None" = None
+        if _decided is not None:
+            # SPEC-08b: what was judged is what runs. Re-reading ``command`` here would be a
+            # second source for the text, which is a channel that decides one command and
+            # launches another through the same plan.
+            if isinstance(_decided.verdict, Deny):
+                return f"Error: {_decided.verdict.reason}"
+            command, cwd = _decided.body, Path(_decided.cwd)
+            # TOOL-04/SPEC-08: the spec too. Re-reading the provider down in
+            # ``_legacy_launch`` would be that same second source one field over — the launch
+            # would carry the fingerprint of whatever re-resolution had swapped in since,
+            # while the floor's verdict was computed against the frozen one.
+            decided_spec = _decided.spec
+        else:
+            try:
+                cwd = self.resolve_cwd(working_directory)
+            except PathPolicyError as e:
+                return f"Error: {e}"
         # Only validate cwd against the local filesystem when using the default
         # local executor. An injected ShellExecutor (Docker, remote host, …)
         # may accept a container/remote path that does not exist locally; let
@@ -261,29 +289,118 @@ class ShellTool(Tool):
             wrapped = command
 
         if is_background:
-            result = self._run_background(wrapped, cwd)
+            result = self._run_background(wrapped, cwd, decided_spec)
         else:
-            result = self._run_foreground(wrapped, cwd, timeout)
+            result = self._run_foreground(wrapped, cwd, timeout, decided_spec)
 
         if _sandbox_profile is not None:
             result = _annotate_sandbox_denial(result, _sandbox_profile)
         return result
 
     # ------------------------------------------------------------------
+    # The shell spec, and the launch built from it
+    # ------------------------------------------------------------------
+
+    def resolve_cwd(self, working_directory: str) -> Path:
+        """This call's working directory, canonical. One spelling, two readers.
+
+        The planner freezes this into the decided record and ``execute`` starts the child in
+        it. Resolving it twice by two routes is how the directory a decision was made against
+        stops being the directory the child actually runs in.
+        """
+        return PathPolicy.for_tool(self).contain_directory(working_directory)
+
+    # Set on the instance the first time an undeclaring executor is seen. Class attributes
+    # rather than ``__init__`` state so a host that builds the tool the old way still works.
+    _fallback_spec: "ShellSpec | None" = None
+    _fallback_for: object = None
+
+    @property
+    def shell_spec(self) -> "ShellSpec | Exhausted":
+        """TOOL-01 / TOOL-04: which interpreter this call will reach, read once per call.
+
+        Delegated to the executor, which is the party that knows. An executor predating this
+        member is read as today's platform default rather than as a refusal — the ladder is
+        not running yet, so a refusal here would deny every shell call on hosts that have
+        changed nothing, which is the opposite of what this stage promises.
+
+        The declaration is probed without evaluating it, then read directly: ``getattr`` with
+        a default swallows an ``AttributeError`` raised *inside* a host's property, which
+        would read here as "declares nothing" and quietly report the platform default for an
+        executor whose resolution actually failed. A raising provider must reach the planner,
+        which turns it into ``Exhausted``.
+
+        The fallback is memoised per executor. SPEC-07b says a call holds one spec object
+        until re-resolution swaps it; minting a fresh one on every read (and paying a
+        ``geteuid`` plus a sha256 each time) is not that.
+        """
+        executor = self._get_shell()
+        if _declares_shell_spec(executor):
+            declared = executor.shell_spec
+            if isinstance(declared, (ShellSpec, Exhausted)):
+                return declared
+            # An executor that declares the member and answers with something else has not
+            # said "I am the platform default" — it has failed to answer. Falling back here
+            # would report a dialect nobody stands behind, which is the same misread the
+            # ``getattr``-with-a-default spelling above is avoided for.
+            return Exhausted(
+                f"{type(executor).__name__}.shell_spec returned "
+                f"{type(declared).__name__}, not a ShellSpec or Exhausted"
+            )
+        if self._fallback_spec is None or self._fallback_for is not executor:
+            self._fallback_for = executor
+            self._fallback_spec = default_spec(local=isinstance(executor, LocalShellExecutor))
+        return self._fallback_spec
+
+    def _legacy_launch(
+        self, command: str, cwd: Path, spec: "ShellSpec | Exhausted | None" = None,
+    ) -> LegacyLaunch:
+        """LAUNCH-01c: the policy-off launch — field for field what the request carried before.
+
+        The environment is still ``build_child_env()``: inherited minus agentao's own provider
+        credentials, so a command the model wrote cannot read the key back out. Nothing here
+        is new behaviour; what is new is that the fields now travel as a named launch shape
+        instead of being re-derived inside the executor.
+
+        ``spec`` is the one the decision was frozen against (SPEC-08a). It is a parameter
+        rather than a second read of the provider because a second read is a second answer:
+        one spec governs the decision *and* the launch, and the fingerprint below is the
+        thing that would otherwise silently describe the wrong one.
+        """
+        if spec is None:
+            spec = self.shell_spec
+        fingerprint = spec.fingerprint if isinstance(spec, ShellSpec) else Sha256("")
+        return LegacyLaunch(
+            command=command,
+            cwd=AbsPath(str(cwd)),
+            env=MappingProxyType(build_child_env()),
+            spec_fingerprint=fingerprint,
+        )
+
+    # ------------------------------------------------------------------
     # Background execution
     # ------------------------------------------------------------------
 
-    def _run_background(self, command: str, cwd: Path) -> str:
+    def _run_background(
+        self, command: str, cwd: Path, spec: "ShellSpec | Exhausted | None" = None,
+    ) -> str:
         """Start command detached; return PID (and PGID on Unix) immediately."""
         try:
             handle: BackgroundHandle = self._get_shell().run_background(
-                ShellRequest(command=command, cwd=cwd)
+                ShellRequest(launch=self._legacy_launch(command, cwd, spec))
             )
         except NotImplementedError:
             return (
                 "Error: shell executor does not support background execution. "
                 "Run this command with is_background=false."
             )
+        except LaunchRefused as refusal:
+            # LAUNCH-01b: this is a denial in the floor's own reason vocabulary, and it must
+            # not read as a transient start failure. The broad handler below would wrap it in
+            # "Error starting background command: …", which is the shape of something a model
+            # retries — so it is caught first and reported exactly like the frozen record's
+            # own DENY (`Error: hardline:…`).
+            return f"Error: {refusal.deny.reason}"
         except Exception as e:
             return f"Error starting background command: {e}"
 
@@ -308,17 +425,23 @@ class ShellTool(Tool):
     # Foreground execution with inactivity timeout
     # ------------------------------------------------------------------
 
-    def _run_foreground(self, command: str, cwd: Path, timeout: float) -> str:
+    def _run_foreground(
+        self, command: str, cwd: Path, timeout: float,
+        spec: "ShellSpec | Exhausted | None" = None,
+    ) -> str:
         """Run command, killing it after `timeout` seconds without any output."""
         try:
             result: ShellResult = self._get_shell().run(
                 ShellRequest(
-                    command=command,
-                    cwd=cwd,
+                    launch=self._legacy_launch(command, cwd, spec),
                     timeout=timeout,
                     on_chunk=self.output_callback,
                 )
             )
+        except LaunchRefused as refusal:
+            # LAUNCH-01b, same as the background face: a launch-stage refusal surfaces in the
+            # floor's vocabulary, never as "Error starting command: …".
+            return f"Error: {refusal.deny.reason}"
         except Exception as e:
             return f"Error starting command: {e}"
 

@@ -16,6 +16,22 @@ starting blank. These tests cover:
 
 from __future__ import annotations
 
+
+def _utf8_stdio(monkeypatch) -> None:
+    """Point ``sys.stdin``/``sys.stdout`` at UTF-8 streams for ``main``'s own guard.
+
+    ACP exits 1 on non-UTF-8 stdio, and pytest's captured stdin reports the platform's
+    locale codec — cp1252 on a Windows runner. Satisfying the guard keeps it in the test's
+    path; monkeypatching it away would leave ``main`` untested from its first line.
+    """
+    import io
+    import sys
+
+    for name in ("stdin", "stdout"):
+        monkeypatch.setattr(
+            sys, name, io.TextIOWrapper(io.BytesIO(), encoding="utf-8", newline=""),
+        )
+
 import threading
 from pathlib import Path
 from typing import Any, Dict, List
@@ -301,6 +317,7 @@ class TestMainBuildsDirective:
                 captured["directive"] = self.resume_directive
 
         monkeypatch.setattr(acp_main_module, "AcpServer", _CapturingServer)
+        _utf8_stdio(monkeypatch)
         acp_main_module.main(resume=resume_arg)
         return captured["directive"]
 

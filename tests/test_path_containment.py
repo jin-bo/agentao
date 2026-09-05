@@ -16,6 +16,7 @@ other's fixtures.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -162,7 +163,7 @@ def test_edit_symlink_escape_rejected(project_root, outside):
 def test_shell_cwd_relative_inside_succeeds(project_root):
     (project_root / "sub").mkdir()
     tool = _bind(ShellTool(), project_root)
-    result = tool.execute(command="pwd", working_directory="sub")
+    result = tool.execute(command=f'"{sys.executable}" -c "import os;print(os.getcwd())"', working_directory="sub")
     assert "Error:" not in result.splitlines()[0]
     assert str((project_root / "sub").resolve()) in result
 
@@ -186,7 +187,7 @@ def test_shell_cwd_symlinked_to_outside_rejected(project_root, outside):
     os.symlink(outside, link)
 
     tool = _bind(ShellTool(), project_root)
-    result = tool.execute(command="pwd", working_directory="linkdir")
+    result = tool.execute(command=f'"{sys.executable}" -c "import os;print(os.getcwd())"', working_directory="linkdir")
     assert result.startswith("Error:")
     assert "PathPolicy" in result
 

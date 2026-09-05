@@ -1018,6 +1018,15 @@ class Agentao:
             except Exception as e:
                 self.llm.logger.warning(f"Error disconnecting MCP: {e}")
             self.mcp_manager = None
+        # The memory stores hold no connection between calls on a file backing,
+        # but a transient ``:memory:`` store does, and a host that is done with an
+        # agent should not have to wait for the collector to get it back.
+        memory_manager = getattr(self, "memory_manager", None)
+        if memory_manager is not None:
+            try:
+                memory_manager.close()
+            except Exception as e:
+                self.llm.logger.warning(f"Error closing memory stores: {e}")
 
     # ------------------------------------------------------------------
     # Session Replay lifecycle — supported delegation surface.

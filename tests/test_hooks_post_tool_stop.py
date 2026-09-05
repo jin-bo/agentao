@@ -23,6 +23,8 @@ from agentao.runtime.tool_runner import ToolRunner
 from agentao.plugins.hooks._profile import PROFILE_ID
 from agentao.plugins.models import ParsedHookRule
 from agentao.tools.base import Tool, ToolRegistry
+
+from ._hook_commands import as_kwargs, emits_json, emitting
 from tests.support.tool_calls import make_tool_call
 
 
@@ -87,7 +89,7 @@ def _runner(hook_rules, tmp_path):
 
 def _hook(command, event="PostToolUse", matcher=None):
     return ParsedHookRule(
-        event=event, hook_type="command", command=command, timeout=30,
+        event=event, hook_type="command", **as_kwargs(command), timeout=30,
         contract=PROFILE_ID, plugin_name="p", matcher_pattern=matcher,
     )
 
@@ -101,7 +103,7 @@ def _call(cid, tag):
 # --------------------------------------------------------------------------
 
 def test_a_post_tool_use_stop_reaches_the_runner(tmp_path):
-    runner = _runner(tmp_path=tmp_path, hook_rules=[_hook("""echo '{"continue": false, "stopReason": "halt now"}'""")])
+    runner = _runner(tmp_path=tmp_path, hook_rules=[_hook(emits_json('{"continue": false, "stopReason": "halt now"}'))])
 
     doom, messages = runner.execute([_call("c1", "a")])
 
@@ -111,7 +113,7 @@ def test_a_post_tool_use_stop_reaches_the_runner(tmp_path):
 
 def test_every_plan_still_gets_a_tool_message_when_a_hook_stops(tmp_path):
     """The invariant a mid-flight abort breaks."""
-    runner = _runner(tmp_path=tmp_path, hook_rules=[_hook("""echo '{"continue": false, "stopReason": "halt"}'""")])
+    runner = _runner(tmp_path=tmp_path, hook_rules=[_hook(emits_json('{"continue": false, "stopReason": "halt"}'))])
 
     _, messages = runner.execute([_call("c1", "a"), _call("c2", "b"), _call("c3", "c")])
 
@@ -126,7 +128,7 @@ def test_no_hook_means_no_stop(tmp_path):
 
 
 def test_a_stop_does_not_leak_into_the_next_batch(tmp_path):
-    runner = _runner(tmp_path=tmp_path, hook_rules=[_hook("""echo '{"continue": false, "stopReason": "halt"}'""")])
+    runner = _runner(tmp_path=tmp_path, hook_rules=[_hook(emits_json('{"continue": false, "stopReason": "halt"}'))])
     runner.execute([_call("c1", "a")])
     assert runner.last_hook_stop == "halt"
 
@@ -169,7 +171,7 @@ def test_the_surfaced_reason_is_the_plan_order_winner_not_the_completion_order(t
 # --------------------------------------------------------------------------
 
 def test_exit_2_stderr_is_spliced_beside_the_preserved_tool_result(tmp_path):
-    runner = _runner(tmp_path=tmp_path, hook_rules=[_hook("echo 'look at this' >&2; exit 2")])
+    runner = _runner(tmp_path=tmp_path, hook_rules=[_hook(emitting(stderr="look at this\n", exit_code=2))])
 
     _, messages = runner.execute([_call("c1", "a")])
 
@@ -182,7 +184,7 @@ def test_exit_2_stderr_is_spliced_beside_the_preserved_tool_result(tmp_path):
 
 def test_additional_context_is_spliced_the_same_way(tmp_path):
     runner = _runner(tmp_path=tmp_path, hook_rules=[_hook(
-        """echo '{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "note this"}}'"""
+        emits_json('{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "note this"}}')
     )])
 
     _, messages = runner.execute([_call("c1", "a")])
@@ -194,7 +196,7 @@ def test_additional_context_is_spliced_the_same_way(tmp_path):
 def test_a_failing_tool_routes_through_the_failure_event(tmp_path):
     """`PostToolUseFailure` fires instead of `PostToolUse`, and its exit-2
     stderr also reaches the model."""
-    runner = _runner(tmp_path=tmp_path, hook_rules=[_hook("echo 'failure feedback' >&2; exit 2",
+    runner = _runner(tmp_path=tmp_path, hook_rules=[_hook(emitting(stderr="failure feedback\n", exit_code=2),
                             event="PostToolUseFailure")])
 
     _, messages = runner.execute([make_tool_call("c1", "sleepy", "{}")])  # missing `tag`

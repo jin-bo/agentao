@@ -144,7 +144,30 @@ def build_untrusted_input_section() -> str:
     )
 
 
-def build_operational_guidelines(plan_mode: bool = False) -> str:
+# PR-5: the three places the guidelines name a shell's own syntax. Every other line is
+# dialect-neutral, so only these move. Telling a model to redirect to `/tmp/out.log` on a
+# Windows cmd rung is not merely useless — it teaches a command that fails, and the model
+# spends the next turn recovering from advice this prompt gave it.
+_SHELL_IDIOMS = {
+    "posix": {
+        "write": "`echo >` or heredoc",
+        "capture": "redirect to `/tmp/out.log` and inspect with grep/head/tail",
+        "destructive": "`rm -rf`",
+    },
+    "cmd": {
+        "write": "`echo >` redirection",
+        "capture": "redirect to `%TEMP%\\out.log` and inspect with findstr/more",
+        "destructive": "`del /f /s /q`, `rd /s /q`, `format`",
+    },
+    "powershell": {
+        "write": "`Set-Content` or `>` redirection",
+        "capture": "redirect to `$env:TEMP\\out.log` and inspect with Select-String/Get-Content -Head",
+        "destructive": "`Remove-Item -Recurse -Force`",
+    },
+}
+
+
+def build_operational_guidelines(plan_mode: bool = False, dialect: str = "posix") -> str:
     """Return operational guidelines injected into every system prompt."""
     task_completion_section = (
         "## Task Completion\n"
@@ -160,6 +183,7 @@ def build_operational_guidelines(plan_mode: bool = False) -> str:
         "you cannot discover with tools.\n\n"
     )
 
+    idioms = _SHELL_IDIOMS.get(dialect, _SHELL_IDIOMS["posix"])
     mode_tool_note = (
         "- In plan mode, use tools only to research, inspect, and verify "
         "facts needed for the proposal. Do not use tools to execute changes "
@@ -197,15 +221,15 @@ def build_operational_guidelines(plan_mode: bool = False) -> str:
         "## Tool Usage\n"
         f"{mode_tool_note}"
         "- Prefer the dedicated tool over run_shell_command: read_file "
-        "(not cat/head/tail), replace (not sed/awk), write_file (not `echo >` "
-        "or heredoc), list_directory (not ls), glob (not find), "
+        "(not cat/head/tail), replace (not sed/awk), write_file (not "
+        f"{idioms['write']}), list_directory (not ls), glob (not find), "
         "search_file_content (not grep/rg via shell).\n"
         "- Call independent tools in parallel in a single response; chain "
         "them serially only when later calls depend on earlier results.\n"
         "- Prefer non-interactive flags (`--yes`, `--ci`, `--non-interactive`, "
         "`--no-pager`, `PAGER=cat`) so commands do not stall on a prompt.\n"
         "- Quiet noisy commands (`--silent`, `-q`). For long or unpredictable "
-        "output, redirect to `/tmp/out.log` and inspect with grep/head/tail; "
+        f"output, {idioms['capture']}; "
         "clean up afterwards.\n"
         "- Set `is_background=true` for commands that will not stop on their "
         "own (servers, file watchers).\n"
@@ -219,7 +243,7 @@ def build_operational_guidelines(plan_mode: bool = False) -> str:
         "Consider the reversibility and blast radius of each action. Local, "
         "reversible work (reading files, running tests, editing a working "
         "copy) is free. Four categories require explicit user confirmation:\n"
-        "- Destructive: `rm -rf`, dropping database tables, killing processes, "
+        f"- Destructive: {idioms['destructive']}, dropping database tables, killing processes, "
         "overwriting uncommitted changes.\n"
         "- Hard to reverse: force push, `git reset --hard`, amending published "
         "commits, downgrading dependencies, editing CI/CD pipelines.\n"

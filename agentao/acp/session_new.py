@@ -360,13 +360,15 @@ def handle_session_new(
     # Passing ``project_root=cwd`` (Issue 05) isolates the engine from
     # the process cwd so two sessions running in different directories
     # see independent rules.
-    from agentao.embedding.permission_loader import load_permission_rules
+    from agentao.embedding.permission_loader import load_permission_config
     from agentao.paths import user_root
     from agentao.permissions import PermissionEngine
     ur = user_root()
-    rules, loaded_sources = load_permission_rules(
-        project_root=cwd, user_root=ur,
-    )
+    # CFG-03: the same record through this root as through the embedding factory. Three
+    # roots reading three different shapes is how a policy key ends up honoured on one
+    # entry path and silently absent on the other two.
+    permission_config = load_permission_config(project_root=cwd, user_root=ur)
+    rules, loaded_sources = permission_config.rules, permission_config.sources
     permission_engine = PermissionEngine(
         project_root=cwd,
         user_root=ur,

@@ -48,6 +48,28 @@ if TYPE_CHECKING:  # pragma: no cover - import-time only
 _logger = logging.getLogger("agentao.prompt_diag")
 
 
+def _prompt_dialect(agent) -> str:
+    """Which shell syntax the guidelines should speak, read from the tool that will run it.
+
+    Read here rather than derived from the host platform: a Docker or remote executor runs a
+    different shell than the machine agentao is on, and it is the executor that declares
+    which. Anything unanswerable falls back to POSIX, which is what the text said before this
+    existed — a prompt is advice, and advice from the wrong dialect is worse than generic
+    advice, but neither is worth failing a turn over.
+
+    This sits in the cached stable prefix, so it must not vary within a session. It does not:
+    the spec object changes only on re-resolution.
+    """
+    try:
+        from ..capabilities.shell_spec import ShellSpec
+        from ..tools.base import SHELL_TOOL_NAME
+
+        spec = agent.tools.tools[SHELL_TOOL_NAME].shell_spec
+        return spec.dialect.value if isinstance(spec, ShellSpec) else "posix"
+    except Exception:  # noqa: BLE001 - a prompt never fails a turn
+        return "posix"
+
+
 class SystemPromptBuilder:
     """Assemble the system prompt by reading state from an ``Agentao``.
 
@@ -99,7 +121,8 @@ class SystemPromptBuilder:
         sections["completion_standard"] = build_completion_standard_section()
         sections["untrusted_input"] = build_untrusted_input_section()
         sections["operational_guidelines"] = build_operational_guidelines(
-            plan_mode=agent._plan_mode
+            plan_mode=agent._plan_mode,
+            dialect=_prompt_dialect(agent),
         )
 
         if agent._has_thinking_handler:

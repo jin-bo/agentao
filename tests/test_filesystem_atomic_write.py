@@ -18,6 +18,7 @@ import os
 import pytest
 
 from agentao.capabilities import filesystem as fsmod
+from agentao.capabilities import filesystem as fs_mod
 from agentao.capabilities.filesystem import LocalFileSystem
 
 
@@ -108,6 +109,10 @@ class TestNormalBehaviorPreserved:
         fs.write_text(existing, "REPLACED\n")
         assert existing.read_text() == "REPLACED\n"
 
+    @pytest.mark.skipif(
+        os.name == "nt",
+        reason="POSIX mode bits: Windows has no 0o755 to preserve, and chmod cannot set one",
+    )
     def test_permission_bits_survive_replacement(self, fs, tmp_path):
         """``os.replace`` would otherwise install the temp file's 0o600."""
         script = tmp_path / "run.sh"
@@ -159,6 +164,22 @@ class TestNormalBehaviorPreserved:
 
 
 class TestConcurrentReadersNeverSeeTornFiles:
+    """A reader never observes a partially written file — on both platforms.
+
+    **What differs on Windows is which side pays.** ``os.replace`` there is refused
+    while anyone holds the target open without ``FILE_SHARE_DELETE``, which Python's
+    ``open`` does not request. So the reader still never tears; the *writer* raises
+    instead. ``_replace_with_retry`` waits out the short-lived handles that real
+    readers take (an editor, an indexer, a virus scanner), and a reader looping as
+    hard as this one is not short-lived — no bounded retry can win against a handle
+    that is essentially always held, and raising is the correct answer when the swap
+    genuinely cannot be made.
+
+    So the assertion is split: the no-torn-read property is checked everywhere,
+    because it is the guarantee; the refusals are counted rather than ignored, and
+    asserted to be absent on POSIX, where they would mean a real regression.
+    """
+
     def test_reader_observes_only_whole_states(self, fs, tmp_path):
         import threading
 
@@ -166,6 +187,7 @@ class TestConcurrentReadersNeverSeeTornFiles:
         target.write_text("A" * 20000)
 
         observed = set()
+        refused = 0
         stop = threading.Event()
 
         def reader():
@@ -180,13 +202,18 @@ class TestConcurrentReadersNeverSeeTornFiles:
         thread.start()
         try:
             for _ in range(100):
-                fs.write_text(target, "B" * 20000)
-                fs.write_text(target, "A" * 20000)
+                for payload in ("B" * 20000, "A" * 20000):
+                    try:
+                        fs.write_text(target, payload)
+                    except PermissionError:
+                        refused += 1
         finally:
             stop.set()
             thread.join(timeout=5)
 
         assert observed <= {(20000, "A"), (20000, "B")}, f"torn read: {observed}"
+        if os.name != "nt":
+            assert refused == 0, "POSIX renames over an open file; a refusal is a regression"
 
 
 class TestDegradedEnvironments:
@@ -273,3 +300,102 @@ class TestAtomicWriteDoesNotWidenPermissions:
         fs.write_text(existing, "written anyway\n")
 
         assert existing.read_text() == "written anyway\n"
+
+
+class TestLineEndings:
+    """A tool that edits a file must not rewrite bytes it was not asked to change."""
+
+    def test_crlf_content_round_trips_through_a_write(self, fs, tmp_path):
+        r"""Windows translated every ``\n`` on write, and the edit tool reads bytes.
+
+        A CRLF file therefore came back holding ``\r\n``, went out holding ``\r\r\n``, and
+        doubled its carriage returns on every single edit.
+
+        **This guard only bites on Windows.** ``os.linesep`` is ``\n`` on POSIX, so reverting
+        the fix leaves this test green here — measured, not assumed. A green run on this
+        machine says nothing about the defect; the Windows job is where the assertion lives.
+        """
+        target = tmp_path / "crlf.txt"
+        target.write_bytes(b"alpha\r\nbeta\r\n")
+
+        content = target.read_bytes().decode("utf-8")
+        fs.write_text(target, content.replace("alpha", "gamma"))
+
+        assert target.read_bytes() == b"gamma\r\nbeta\r\n"
+
+    def test_lf_content_stays_lf(self, fs, tmp_path):
+        target = tmp_path / "lf.txt"
+        target.write_bytes(b"alpha\nbeta\n")
+        fs.write_text(target, target.read_bytes().decode("utf-8").replace("alpha", "gamma"))
+        assert target.read_bytes() == b"gamma\nbeta\n"
+
+    def test_an_append_does_not_translate_either(self, fs, tmp_path):
+        target = tmp_path / "log.txt"
+        fs.write_text(target, "one\r\n")
+        fs.write_text(target, "two\r\n", append=True)
+        assert target.read_bytes() == b"one\r\ntwo\r\n"
+
+
+class TestReplaceRetriesWhileTheTargetIsHeld:
+    """On Windows an open handle makes ``os.replace`` fail rather than wait.
+
+    Python's ``open`` does not request ``FILE_SHARE_DELETE``, so any concurrent
+    reader — an editor, an indexer, a virus scanner opening every file it sees —
+    turns a write into ``WinError 5``/``32``. Those handles are short-lived, so the
+    write waits them out instead of giving up on atomicity.
+
+    The failure is simulated rather than raced: that states the retry property on
+    every platform, where a real concurrent reader only reproduces it on one.
+    """
+
+    def test_a_transient_permission_error_is_retried(self, fs, tmp_path, monkeypatch):
+        monkeypatch.setattr(fs_mod, "_REPLACE_RETRY_ON_BUSY", True)
+        monkeypatch.setattr(fs_mod.time, "sleep", lambda _s: None)
+        target = tmp_path / "held.txt"
+        target.write_text("old", encoding="utf-8")
+
+        real_replace = fs_mod.os.replace
+        calls = {"n": 0}
+
+        def flaky(src, dst):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise PermissionError(13, "Access is denied")
+            real_replace(src, dst)
+
+        monkeypatch.setattr(fs_mod.os, "replace", flaky)
+        fs.write_text(target, "new")
+
+        assert calls["n"] == 3
+        assert target.read_text(encoding="utf-8") == "new"
+
+    def test_a_permanent_permission_error_still_raises(self, fs, tmp_path, monkeypatch):
+        """Waiting must not turn a real failure into a hang or a silent success."""
+        monkeypatch.setattr(fs_mod, "_REPLACE_RETRY_ON_BUSY", True)
+        monkeypatch.setattr(fs_mod.time, "sleep", lambda _s: None)
+        target = tmp_path / "held.txt"
+        target.write_text("old", encoding="utf-8")
+
+        def always_denied(src, dst):
+            raise PermissionError(13, "Access is denied")
+
+        monkeypatch.setattr(fs_mod.os, "replace", always_denied)
+        with pytest.raises(PermissionError):
+            fs.write_text(target, "new")
+
+    def test_posix_does_not_retry(self, fs, tmp_path, monkeypatch):
+        """The rule does not exist there, so a PermissionError is the real answer."""
+        monkeypatch.setattr(fs_mod, "_REPLACE_RETRY_ON_BUSY", False)
+        target = tmp_path / "held.txt"
+        target.write_text("old", encoding="utf-8")
+        calls = {"n": 0}
+
+        def denied(src, dst):
+            calls["n"] += 1
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(fs_mod.os, "replace", denied)
+        with pytest.raises(PermissionError):
+            fs.write_text(target, "new")
+
+        assert calls["n"] == 1

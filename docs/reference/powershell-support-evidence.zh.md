@@ -5,12 +5,12 @@
 > 别的文件写「§2.12」「§3.16」时，指的都是本文的同号小节。小节编号沿用拆分前
 > `powershell-support-plan.zh.md`（冻结于 rev 24，commit `e01293f`）的编号，所以旧的引用不必改。
 
-**日期：** 2026-09-03
+**日期：** 2026-09-04
 **Anchors:** agentao `main@3537753`（2026-09-01）；codex `openai/codex@b7cd519c76`（2026-08-31）；
 pi-mono `@853a80d26`（2026-08-28）。三者均从锚定 commit 的本地 worktree 读取。§3.10 另读了
 `PowerShell/PowerShell` 的一个上游文件，它的 commit、blob 与 sha256 记在那一节。
 **方法：** 每条前提都带本仓锚点上的行内 `file:line`。§2.7、§2.12、§3.4、§3.8–§3.12 与 §3.14–§3.16 是
-**实测，不是推理**；§3.10 与 §3.20 是**按钉住的 commit 从上游抓取**的，带哈希与重抓。
+**实测，不是推理**；§3.10、§3.20、§3.21 与 §3.22 是**按钉住的 commit 从上游抓取**的，带哈希与重抓。
 **文件集：** `docs/design/powershell-support-spec.zh.md`（规范）·
 `docs/design/powershell-support-implementation.zh.md`（PR 阶梯）·
 `docs/design/powershell-support-gates.zh.md`（门槛矩阵）·
@@ -458,6 +458,226 @@ shim、符号链接或一份拷贝时，那是另一个目录 —— 而且正�
 launcher 的前提下改变「这个解释器是什么」（D4）。Group Policy 优先于这两个文件，是上游自己的陈述，
 不是从两个文件作用域推出来的。
 
+### 3.20a 关掉模块自动加载，`Microsoft.PowerShell.Core` 之外一个命令都不剩 —— 实测
+
+**这一条不是抓自文档，是量出来的**，而且是 PR-6 的 Windows job 第一次运行时量到的。
+
+**方法。** `windows-latest` runner，`pwsh` 为 `C:\Program Files\PowerShell\7\pwsh.EXE`，
+直接驱动解释器、不经 agentao 的启动路径：
+
+```
+pwsh -NoProfile -NonInteractive -Command "$PSModuleAutoLoadingPreference='None'; 'Set-Location=' + [bool](Get-Command 'Set-Location' -ErrorAction SilentlyContinue); …"
+```
+
+**结果**（退出码 0，stderr 为空）：
+
+```
+Set-Location=False
+Get-Item=False
+Write-Output=False
+Get-Date=False
+Get-ChildItem=False
+```
+
+**含义。** `pwsh -NoProfile -Command` 的默认会话里 `Microsoft.PowerShell.Management` 与
+`Microsoft.PowerShell.Utility` **不是预加载的**，它们平时靠自动加载到场。把
+`$PSModuleAutoLoadingPreference` 设成 `None` 之后，这两个模块里的每一个命令都解析不到 ——
+包括前奏自己要用的 `Get-Item` 与 `Set-Location`，也包括可信表里 18 条 PowerShell 条目的绝大多数。
+
+**它改了什么。** rev 45 之前的 LAUNCH-05 先设这个偏好、再调 `Get-Item` 与 `Set-Location`：
+守卫的 `if` 里 `Get-Item` 报 command-not-found（非终止错误，脚本继续），`Set-Location` 在 `try` 里
+同样报错、被 `catch` 接住 ⇒ **退出码 98**。这就是 Windows job 首跑唯一的那条失败。
+LAUNCH-05a 因此改成四段：身份守卫只用 Core 与 .NET 静态方法，随后**显式导入**那两个模块，
+再关自动加载并复查，最后才切目录。ENV-05 的分工也因此说得更准了：钉住 `PSModulePath` 是机制，
+关自动加载是纵深 —— 而两者要同时成立，就必须在关门之前把表依赖的模块从已验过的安装根装进来。
+
+**回归。** `tests/test_windows_launch_matrix.py::test_at_least_one_edition_needs_the_preludes_explicit_import`
+钉住这个事实所**证成的那件事**（不是逐 edition 钉机制 —— 只量过 Core，5.1 会不会预加载那两个模块没量过，断言它不预加载就是把猜测钉成事实）；它若开始失败，说明前奏的显式导入已无必要，应当删掉而不是留着；
+`::test_the_prelude_loads_what_the_table_needs_before_it_closes_the_door` 按 edition 参数化，
+钉住修好之后的状态。
+
+### 3.21 PowerShell 的命令优先级、Windows 的 DLL 搜索顺序、`CreateProcessW` 的上限、git 与 node 的环境注入面 —— 抓自上游文档
+
+第二轮完整安全评审（评审记录 rev 27）点到的五个事实，每一个都从上游按钉住的 commit 抓取，不从二手页面转述。
+
+**(a) 命令优先级：function 排在 cmdlet 之前。** `MicrosoftDocs/PowerShell-Docs`，commit `918194e64e55e8ff165d23a3712b6c446ea5344f`（最后一次触及该文件的提交，2026-01-18T21:57:26Z；抓取时刻 2026-09-04T14:41Z 的默认分支为 `c45d5b16110f0ba7888178405acda987104eae53`），blob `reference/7.5/Microsoft.PowerShell.Core/About/about_Command_Precedence.md`，sha256 `9592d251d7c5749b644c1e6d9360a1db8c194f5f8df8e5478e75413fbcf8c552` —— 按该 commit 重抓，逐字节一致。
+
+```
+52| If you don't specify a path, PowerShell uses the following precedence order
+53| when it runs commands.
+55| 1. Alias
+56| 1. Function
+57| 1. Cmdlet (see [Cmdlet name resolution][05])
+58| 1. External executable files (including PowerShell script files)
+```
+
+所以 NAME-02 那张只有 cmdlet 与 alias 的表分类的词，子进程可以解析成同名的 function；表要用 `Get-Command -All` 在钉住的启动状态里量出
+全部三种 kind，并按这个顺序取第一个匹配。哪些名字在 `-NoProfile` 下是 function 本机没有量（无 Windows），G21-16 量。
+
+**(b) DLL 搜索顺序：当前目录在 `PATH` 之前、系统目录之后。** `MicrosoftDocs/win32`，commit `129846d6c4f059b97adb840af9d5fca1c35b2c1e`（最后一次触及该文件的提交，2025-04-11T22:26:20Z；抓取时刻 2026-09-04T14:41Z 的默认分支为 `79eaaa46b30bd0efef0d0f5a65fd7d11fdd8e2de`），blob `desktop-src/Dlls/dynamic-link-library-search-order.md`，sha256 `584b19fee748f2758e339fb9b5a457c9e5acc1d6bf42f616f41af0b4ca35b03c` —— 按该 commit 重抓，逐字节一致。
+
+```
+64| Safe DLL search mode (which is enabled by default) moves the user's current folder later in the search order. To disable safe DLL search mode, create the `HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Session Manager\SafeDllSearchMode` registry value, and set it to 0. Calling the [**SetDllDirectory**](/windows/win32/api/winbase/nf-winbase-setdlldirectorya) function effectively disables safe DLL search mode (while the specified folder is in the search path), and changes the search order as described in this topic.
+66| If safe DLL search mode is enabled, then the search order is as follows:
+74| 7. The folder from which the application loaded.
+75| 8. The system folder. Use the [**GetSystemDirectory**](/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemdirectorya) function to retrieve the path of this folder.
+76| 9. The 16-bit system folder. There's no function that obtains the path of this folder, but it is searched.
+77| 10. The Windows folder. Use the [**GetWindowsDirectory**](/windows/win32/api/sysinfoapi/nf-sysinfoapi-getwindowsdirectorya) function to get the path of this folder.
+78| 11. The current folder.
+79| 12. The directories that are listed in the `PATH` environment variable. This doesn't include the per-application path specified by the **App Paths** registry key. The **App Paths** key isn't used when computing the DLL search path.
+```
+
+「应用目录」是 launcher 所在目录（IMG-01 加签名护住的那一半），第 12 条是 `PATH`（ENV-01 护住的那一半）；第 11 条**当前目录**在两者之间，
+而当前目录就是工作树。一个不在应用目录、也不在系统目录里的依赖 —— 缺失的，或按需探测的 —— 会从工作树被顶上，代码在前奏之前运行。
+这就是 LAUNCH-09 让解释器以 launcher 目录启动、再由前奏切到工作目录的原因；解释器启动的可信工具链各自以工作目录为当前目录，本条对它们
+仍然成立，是规范 §1 明写的残留。
+
+**(c) `CreateProcessW` 的命令行上限含结尾 NUL。** `MicrosoftDocs/sdk-api`，commit `d43984d7c322f7d7d35704d6d1ad36dc3539703b`（最后一次触及该文件的提交，2025-06-30T18:27:25Z；抓取时刻 2026-09-04T14:41Z 的默认分支为 `4502fff176b3b56beddb6a63c9f980377b11ba9b`），blob `sdk-api-src/content/processthreadsapi/nf-processthreadsapi-createprocessw.md`，sha256 `60555cae9cc82460c8cb238c2b0bb936fd1f87d92d5dd40985be64b0b49dd9f7` —— 按该 commit 重抓，逐字节一致。
+
+```
+100| The maximum length of this string is 32,767 characters, including the Unicode terminating null character. If <i>lpApplicationName</i> is <b>NULL</b>, the module name portion of <i>lpCommandLine</i> is limited to <b>MAX_PATH</b> characters.
+```
+
+单位是 UTF-16 code unit（"characters" 在 W 系 API 里指 `WCHAR`），非 BMP 字符占两个；Python 的 `len()` 数的是 code point。所以 LAUNCH-08
+的 Windows 上限是「序列化后 ≤ 32766 个 code unit」，G18-07 在 32766 / 32767 与非 BMP 三处断言。
+
+**(d) git 从环境拿配置，配置里可以有要执行的路径。** `GIT_CONFIG_GLOBAL` 与 `GIT_CONFIG_SYSTEM`：`git/git`，commit `d4b2a7908de36697d56e79eecc50d1d92a091041`（最后一次触及该文件的提交，2026-03-16T17:48:14Z；抓取时刻 2026-09-04T14:41Z 的默认分支为 `3cb9185f65410273787f74333cc027d2ea5daada`），blob `Documentation/git.adoc`，sha256 `36e6b4d8a44c244672e1bf8729e1a731f31542b40397174e1433356c921c8afa` —— 按该 commit 重抓，逐字节一致。
+
+```
+762| `GIT_CONFIG_GLOBAL`::
+763| `GIT_CONFIG_SYSTEM`::
+764| 	Take the configuration from the given files instead from global or
+765| 	system-level configuration files. If `GIT_CONFIG_SYSTEM` is set, the
+766| 	system config file defined at build time (usually `/etc/gitconfig`)
+767| 	will not be read. Likewise, if `GIT_CONFIG_GLOBAL` is set, neither
+768| 	`$HOME/.gitconfig` nor `$XDG_CONFIG_HOME/git/config` will be read. Can
+```
+
+`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>`：`git/git`，commit `4fa2c6e0457c5d00742f0cebded4f122f1dcd81a`（最后一次触及该文件的提交，2026-06-11T19:08:17Z；抓取时刻 2026-09-04T14:41Z 的默认分支为 `3cb9185f65410273787f74333cc027d2ea5daada`），blob `Documentation/git-config.adoc`，sha256 `655541c20fe58e30c2e45803df422a5a1ed3658bf025ceaed6c1764089edcd27` —— 按该 commit 重抓，逐字节一致。
+
+```
+484| GIT_CONFIG_COUNT::
+485| GIT_CONFIG_KEY_<n>::
+486| GIT_CONFIG_VALUE_<n>::
+487| 	If GIT_CONFIG_COUNT is set to a positive number, all environment pairs
+488| 	GIT_CONFIG_KEY_<n> and GIT_CONFIG_VALUE_<n> up to that number will be
+```
+
+`core.fsmonitor` 的取值是一条会被运行的 hook 路径：`git/git`，commit `df67d73ca3268eec5c924d6fe9d2c050ce23f3b1`（最后一次触及该文件的提交，2026-05-18T00:30:29Z；抓取时刻 2026-09-04T14:41Z 的默认分支为 `3cb9185f65410273787f74333cc027d2ea5daada`），blob `Documentation/config/core.adoc`，sha256 `aa6015220b25a284408fa5e03bba40b70fcc69fe1a03a60859e019a84a2c9f5d` —— 按该 commit 重抓，逐字节一致。
+
+```
+64| core.fsmonitor::
+78| Otherwise, this variable contains the pathname of the "fsmonitor"
+79| hook command.
+```
+
+于是 `GIT_CONFIG_GLOBAL=<工作树里的文件>` 或 `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=<路径>` 之下，一条按
+EFF-01 惰性的 `git status` 运行工作树里的程序，而效果表（EFF-08 的 `execution_triggers`）量的是参数、不是环境。这是 ENV-06 从「移除清单」
+改成「封闭透传集」的直接原因。
+
+**(e) node 从环境拿启动参数，含 `--require`。** `nodejs/node`，commit `ddc0a0aa2848d19da7a893b17d5c424bf335c021`（最后一次触及该文件的提交，2026-09-04T13:28:27Z；抓取时刻 2026-09-04T14:41Z 的默认分支为 `791e2d2015c95ad7e70e7264482615ae52a86239`），blob `doc/api/cli.md`，sha256 `8897398feb80cb46c9114bb64995b1c8646092419e11280ec4751bd45a6cbc9b` —— 按该 commit 重抓，逐字节一致。
+
+```
+3978| ### `NODE_OPTIONS=options...`
+3984| A space-separated list of command-line options. `options...` are interpreted
+3985| before command-line options, so command-line options will override or
+3986| compound after anything in `options...`. Node.js will exit with an error if
+4014| Node.js options that are allowed are in the following list. If an option
+4138| * `--require`, `-r`
+```
+
+第 4138 行在「Node.js options that are allowed」清单之内。`NODE_OPTIONS=--require <工作树文件>` 让一条 `node --version` 之外的任何 node
+调用先执行那个文件。同一类里还有 `PYTHONPATH`（`sitecustomize`）、`LD_PRELOAD`、`PERL5OPT`、`RUBYOPT`、`JAVA_TOOL_OPTIONS`，规范不逐个列举
+—— ENV-06 的封闭集让「没列到」的答案是「不透传」。
+
+### 3.22 环境键的折叠、cmd 自己的长度上限、加载器何时用当前目录、配置根来自环境 —— 抓自上游
+
+第三轮完整安全评审（评审记录 rev 28）点到的四个事实。
+
+**(a) Windows 上环境变量名不区分大小写，agentao 交给子进程的那个映射按大写折叠。** `python/cpython`，commit `fcfa919d9c1b3a65c78e99e8ed6615dd4d583404`（最后一次触及该文件的提交，2026-08-11T13:08:15Z；抓取时刻 2026-09-04T15:24Z 的默认分支为 `1a2e3a034df6074a900bd9f2cf23c5b164f5320b`），blob `Lib/os.py`，sha256 `e783c179adf19ef9c9cd1ed5265da2e800075b15a0142a26df3a70d469820322` —— 按该 commit 重抓，逐字节一致。
+
+```
+803|     if name == 'nt':
+804|         # Where Env Var Names Must Be UPPERCASE
+811|         def encodekey(key):
+812|             return encode(key).upper()
+814|         for key, value in environ.items():
+815|             data[encodekey(key)] = value
+```
+
+这正是 `Popen(env=)` 收的那种映射：`Path` 与 `PATH` 折叠成同一个键，谁覆盖谁由插入顺序决定。所以 ENV-06 的集合运算
+（透传集 ∪ 用户扩展 − 保留键）必须**先按目标平台归一键**，并把折叠后取值不同的碰撞判成移除 —— 否则 `Path=<工作树>` 与
+钉住的 `PATH` 谁生效，是实现顺序的偶然。
+
+**(b) `cmd.exe` 自己的上限是 8191 字符，与 `CreateProcessW` 的 32767 无关。** `MicrosoftDocs/SupportArticles-docs`，commit `e6b0736569161660d31a5bfe1bb420ee438a67de`（最后一次触及该文件的提交，2026-02-19T01:04:20Z；抓取时刻 2026-09-04T15:24Z 的默认分支为 `d22f5c731c5f6ec1ace78a4646dad9cf1ac4f0aa`），blob `support/windows-client/shell-experience/command-line-string-limitation.md`，sha256 `8ea407503a20936513cb7f9267ad12838ec39df12e8ff7140844e92833bfd0e6` —— 按该 commit 重抓，逐字节一致。
+
+```
+24| The maximum length of the string that you can use at the command prompt is 8191 characters.
+64| - Even though the Win32 limitation for environment variables is 32,767 characters, Command Prompt ignores any environment variables that are inherited from the parent process and are longer than its own limitations of 8191 characters (as appropriate to the operating system). For more information about the `SetEnvironmentVariable` function, see [SetEnvironmentVariableA function](/windows/win32/api/processenv/nf-processenv-setenvironmentvariablea).
+```
+
+第 64 行是第二半，而且它的量词要照抄：cmd **逐条**丢弃继承来的、超过它自己上限的环境变量 —— 一份超长的钉住 `PATH`
+因此会被丢掉、回到 cmd 自己的搜索路径。**超长命令行会怎样，这两行没说** —— 上游只给了上限与这条丢弃规则，所以规范不
+声称「cmd 会截断它」，只说超过上限就不发（LAUNCH-08）。逐条这一点也是 G18-11 断言「每一条各自过闸、不是整块比」的出处。
+
+**(c) Linux 的单参数上限不是常数。** `torvalds/linux`，commit `b0f09c07966b05a5d46830b4c2581a266c4a2baa`（最后一次触及该文件的提交，2026-08-03T08:08:45Z；抓取时刻 2026-09-04T15:24Z 的默认分支为 `bc35965f6940a9bf834d54187b6088b8eb09206d`），blob `include/uapi/linux/binfmts.h`，sha256 `449fe5dcf1b223582955ec9d10a33c66592a67b0a79b37d9012122e2106f6a68` —— 按该 commit 重抓，逐字节一致。
+
+```
+10|  * These are the maximum length and maximum number of strings passed to the
+11|  * execve() system call.  MAX_ARG_STRLEN is essentially random but serves to
+15| #define MAX_ARG_STRLEN (PAGE_SIZE * 32)
+```
+
+`PAGE_SIZE * 32` 在 4 KiB 页上是 131072，在 16 KiB 页（Apple silicon 上的 Linux、若干 arm64 发行版）上是 524288。
+写死 131072 在前者是对的、在后者会拒掉合法的命令行，所以 LAUNCH-08 要求运行期查。
+
+**(d) 加载器在 `LoadLibrary` **发生时**才用当前目录，而启动级缓解只能由进程自己做。** `MicrosoftDocs/win32`，commit `129846d6c4f059b97adb840af9d5fca1c35b2c1e`（最后一次触及该文件的提交，2025-04-11T22:26:20Z；抓取时刻 2026-09-04T15:24Z 的默认分支为 `79eaaa46b30bd0efef0d0f5a65fd7d11fdd8e2de`），blob `desktop-src/Dlls/dynamic-link-library-security.md`，sha256 `41a5297f0f3b2d5c67f156303667a384dc9d237481c7b13950618db77fb7355d` —— 按该 commit 重抓，逐字节一致。
+
+```
+13| For example, suppose an application is designed to load a DLL from the user's current directory and fail gracefully if the DLL is not found. The application calls [**LoadLibrary**](/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya) with just the name of the DLL, which causes the system to search for the DLL. Assuming safe DLL search mode is enabled and the application is not using an alternate search order, the system searches directories in the following order:
+19| 5.  The current directory.
+22| Continuing the example, an attacker with knowledge of the application gains control of the current directory and places a malicious copy of the DLL in that directory. When the application issues the **LoadLibrary** call, the system searches for the DLL, finds the malicious copy of the DLL in the current directory, and loads it. The malicious copy of the DLL then runs within the application and gains the privileges of the user.
+34| -   Consider removing the current directory from the standard search path by calling [**SetDllDirectory**](/windows/desktop/api/Winbase/nf-winbase-setdlldirectorya) with an empty string (""). This should be done once early in process initialization, not before and after calls to [**LoadLibrary**](/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya). Be aware that **SetDllDirectory** affects the entire process and that multiple threads calling **SetDllDirectory** with different values can cause undefined behavior. If your application loads third-party DLLs, test carefully to identify any incompatibilities.
+```
+
+第 13、19、22 行说明这条链发生在 `LoadLibrary` 调用的那一刻，不是进程创建的那一刻 —— 所以 LAUNCH-09 让子进程**以
+launcher 目录启动**只关掉「进程创建到前奏切目录」这一段。第 34 行说明为什么没有更强的启动级缓解可用：
+`SetDllDirectory("")` 要由进程**自己**在初始化早期调用、且作用于整个进程，父进程替不了子进程调。**前奏之后还剩多少，
+按 rung 不一样，本机测不了** —— 见下面 (f)：G21-17 与 G21-18 是逐 rung 的刻画性探针，记录实测值，不预置答案。
+
+**(e) git 的用户配置根来自 `XDG_CONFIG_HOME`。** `git/git`，commit `4fa2c6e0457c5d00742f0cebded4f122f1dcd81a`（最后一次触及该文件的提交，2026-06-11T19:08:17Z；抓取时刻 2026-09-04T15:24Z 的默认分支为 `3cb9185f65410273787f74333cc027d2ea5daada`），blob `Documentation/git-config.adoc`，sha256 `655541c20fe58e30c2e45803df422a5a1ed3658bf025ceaed6c1764089edcd27` —— 按该 commit 重抓，逐字节一致。
+
+```
+380| $XDG_CONFIG_HOME/git/config::
+381| ~/.gitconfig::
+382| 	User-specific configuration files. When the XDG_CONFIG_HOME environment
+383| 	variable is not set or empty, $HOME/.config/ is used as
+384| 	$XDG_CONFIG_HOME.
+```
+
+配上 §3.21(d) 的 `core.fsmonitor`，这就是 rev 28 那条 P0 的完整链：环境把配置根指到主体可写的目录，`git status` 从那里
+读到一条会被执行的路径 —— 而那条路径**在工作树之外**，rev 27 的「取值落在工作树内就移除」看不见它。ENV-06 因此改成
+「路径值的键一律钉值、配置根与信任根一律移除」。
+
+**(f) PowerShell 的当前位置不是进程的当前目录。** `MicrosoftDocs/PowerShell-Docs`，commit
+`f09ce0b678c2da1ae0fa70f0b4789a607183cc63`（最后一次触及该文件的提交，2025-09-28T16:15:03Z；抓取时刻 2026-09-04T21:05Z 的
+默认分支为 `c45d5b16110f0ba7888178405acda987104eae53`），blob
+`reference/7.5/Microsoft.PowerShell.Core/About/about_Locations.md`，sha256
+`dec71909f48f1220f43cb82c74d719830da92db27eed1da70ce738913e22e391` —— 按该 commit 重抓，逐字节一致。
+
+```
+21| > [!NOTE]
+22| > PowerShell supports multiple runspaces per process. Each runspace has its own
+23| > _current directory_. This isn't the same as the current directory of the
+24| > PowerShell process: `[System.Environment]::CurrentDirectory`.
+```
+
+于是 LAUNCH-09 的残留**按 rung 不一样**：`Set-Location` 改的是运行空间的当前位置，加载器用的是进程的
+`[System.Environment]::CurrentDirectory` —— 一个以 launcher 目录创建的 PowerShell 进程，很可能整个生命期原生当前目录都停在
+那里，那么「前奏之后的延迟加载」在 `pwsh`/`powershell` 级根本不成立；而 `cmd` 的 `cd /d` 与 bash 的 `cd` 改的就是原生当前
+目录，那两级成立。这两句都是**推理，本机无 Windows 测不了**，所以 G21-17 逐 rung 记录三样实测值（`Get-Location` / 原生当前
+目录 / 延迟加载的 DLL 从哪来），G21-18 记录被放行的可信工具链以什么当前目录启动 —— 探针问问题，不预置答案。
+
 ## 4. 决策节引用的其它来源
 
 拆分前的决策节（rev 24 的 D1–D7）里有二十一处引用不落在 §2、§3 的任何小节里；规范文件不带引文，
@@ -474,6 +694,7 @@ launcher 的前提下改变「这个解释器是什么」（D4）。Group Policy
 | `agentao/capabilities/shell.py:107-123` | SPEC-01、TOOL-04 | `ShellExecutor` Protocol 只有 `run` 与 `run_background`，没有声明方言的位置 |
 | `tests/test_shell_capability_swap.py:20-30` | SPEC-01 | 执行器注入的现有测试形状 —— G01 说的「唯一被迫改动的 fake」就是它 |
 | `agentao/capabilities/shell.py:77-84` | LAUNCH-01 | 今天的 `ShellRequest` 带 `command: str`、`cwd`、`timeout`、`on_chunk`、`env` —— 没有启动形态、主体或映像 |
+| `agentao/capabilities/shell.py:212-217`、`agentao/tools/shell.py:263` | LAUNCH-01 | 后台是**另一条**启动路径：`run_background` 自己拼 `Popen(shell=True, executable=resolve_shell_executable(), …)`，而模型经 `is_background=true` 直接选它 |
 | `codex-rs/shell-command/src/command_safety/powershell_tree_sitter.rs:13` | TOK-01 | codex 的降级返回 `Option<Vec<Vec<String>>>`，承载不了「这个词是动态的」 |
 | `codex-rs/shell-command/src/shell_detect.rs:257-262`、`codex-rs/core/src/exec_policy/executable_identity.rs:62-72` | IMG-05 | codex 的已知绝对安装位置（与 §3.3 引的 pi-mono `packages/coding-agent/src/utils/shell.ts:76-92` 同类） |
 | `codex-rs/shell-command/src/powershell.rs:98-101` | IMG-07 | *"pwsh.exe is the cross-platform PowerShell Core (v6+) executable"* 对 *"powershell.exe is the Windows PowerShell (v5.1 and earlier) executable"* —— 两个不同的程序，别名集不同 |
@@ -487,7 +708,7 @@ launcher 的前提下改变「这个解释器是什么」（D4）。Group Policy
 ## 引文方法
 
 上文每一条 `file:line` 都在 `scripts/check_citations.py` 下于锚点解析（`uv run python
-scripts/check_citations.py docs/reference/powershell-support-evidence.zh.md`）。§3.10 与 §3.20 各带
+scripts/check_citations.py docs/reference/powershell-support-evidence.zh.md`）。§3.10、§3.20、§3.21 与 §3.22 各带
 commit、完整哈希与一次重抓；§3.11、§3.12 与 §3.14–§3.16 读并跑了本地软件。没有任何测量拿早期版本来
 陈述自己；本文出现版本号的地方，标的都是一次*更正* —— 改了什么、在什么时候 —— 绝不是某条规则所依赖的
 条件。

@@ -19,6 +19,8 @@ from agentao.plugins.models import (
     PluginManifest,
 )
 
+from ._hook_commands import as_kwargs, emitting, shell_emits_json
+
 
 # ======================================================================
 # ClaudeHooksParser
@@ -213,7 +215,9 @@ class TestPayloadAdapter:
         assert payload["event"] == "UserPromptSubmit"
         assert payload["data"]["userMessage"] == "fix the bug"
         assert payload["data"]["sessionId"] == "sess-123"
-        assert payload["data"]["cwd"] == "/project"
+        # The adapter stringifies the path it was handed, so the expected value has to
+        # be spelled the same way: `str(Path("/project"))` is `\project` on Windows.
+        assert payload["data"]["cwd"] == str(Path("/project"))
 
     def test_pre_tool_use_payload(self):
         adapter = ClaudeHookPayloadAdapter()
@@ -262,7 +266,7 @@ class TestCommandHookDispatch:
         rule = ParsedHookRule(
             event="UserPromptSubmit",
             hook_type="command",
-            command='echo \'{"additionalContext": "extra info"}\'',
+            command=shell_emits_json('{"additionalContext": "extra info"}'),
             plugin_name="test",
         )
         payload = {"event": "UserPromptSubmit", "data": {"userMessage": "hi"}}
@@ -278,7 +282,7 @@ class TestCommandHookDispatch:
         rule = ParsedHookRule(
             event="UserPromptSubmit",
             hook_type="command",
-            command='echo \'{"blockingError": "not allowed"}\'',
+            command=shell_emits_json('{"blockingError": "not allowed"}'),
             plugin_name="test",
         )
         payload = {"event": "UserPromptSubmit", "data": {"userMessage": "bad"}}
@@ -293,7 +297,7 @@ class TestCommandHookDispatch:
         rule = ParsedHookRule(
             event="UserPromptSubmit",
             hook_type="command",
-            command='echo \'{"preventContinuation": true, "stopReason": "paused"}\'',
+            command=shell_emits_json('{"preventContinuation": true, "stopReason": "paused"}'),
             plugin_name="test",
         )
         payload = {"event": "UserPromptSubmit", "data": {"userMessage": "x"}}
@@ -309,7 +313,7 @@ class TestCommandHookDispatch:
         rule = ParsedHookRule(
             event="UserPromptSubmit",
             hook_type="command",
-            command="echo 'plain text output'",
+            **as_kwargs(emitting(stdout="plain text output\n")),
             plugin_name="test",
         )
         payload = {"event": "UserPromptSubmit", "data": {"userMessage": "hi"}}
@@ -391,11 +395,11 @@ class TestCommandHookDispatch:
         """Non-UserPromptSubmit rules are filtered out."""
         ups_rule = ParsedHookRule(
             event="UserPromptSubmit", hook_type="command",
-            command='echo \'{"additionalContext": "yes"}\'', plugin_name="t",
+            command=shell_emits_json('{"additionalContext": "yes"}'), plugin_name="t",
         )
         other_rule = ParsedHookRule(
             event="PreToolUse", hook_type="command",
-            command='echo \'{"additionalContext": "no"}\'', plugin_name="t",
+            command=shell_emits_json('{"additionalContext": "no"}'), plugin_name="t",
         )
         payload = {"event": "UserPromptSubmit", "data": {"userMessage": ""}}
 
@@ -481,7 +485,7 @@ class TestPrepareUserTurn:
             hook_specs=[{
                 "hooks": {
                     "UserPromptSubmit": [
-                        {"type": "command", "command": "echo '{\"additionalContext\": \"injected\"}'"},
+                        {"type": "command", "command": shell_emits_json('{"additionalContext": "injected"}')},
                     ],
                 },
             }],
@@ -499,7 +503,7 @@ class TestPrepareUserTurn:
             hook_specs=[{
                 "hooks": {
                     "UserPromptSubmit": [
-                        {"type": "command", "command": "echo '{\"blockingError\": \"denied\"}'"},
+                        {"type": "command", "command": shell_emits_json('{"blockingError": "denied"}')},
                     ],
                 },
             }],
@@ -517,7 +521,7 @@ class TestPrepareUserTurn:
             hook_specs=[{
                 "hooks": {
                     "UserPromptSubmit": [
-                        {"type": "command", "command": "echo '{\"preventContinuation\": true}'"},
+                        {"type": "command", "command": shell_emits_json('{"preventContinuation": true}')},
                     ],
                 },
             }],
@@ -550,7 +554,7 @@ class TestPrepareUserTurn:
         (hooks_dir / "hooks.json").write_text(json.dumps({
             "hooks": {
                 "UserPromptSubmit": [
-                    {"type": "command", "command": "echo '{\"additionalContext\": \"from-file\"}'"},
+                    {"type": "command", "command": shell_emits_json('{"additionalContext": "from-file"}')},
                 ],
             }
         }), encoding="utf-8")
@@ -599,7 +603,7 @@ class TestPrepareUserTurn:
             hook_specs=[{
                 "hooks": {
                     "UserPromptSubmit": [
-                        {"type": "command", "command": "echo '{\"blockingError\": \"nope\"}'"},
+                        {"type": "command", "command": shell_emits_json('{"blockingError": "nope"}')},
                     ],
                 },
             }],

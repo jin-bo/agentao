@@ -57,10 +57,13 @@ def test_project_config_overrides_home(tmp_path):
     )
 
     def _fake_load(path: Path):
+        # The project branch first: on Windows ``tmp_path`` lives *under* the user's home,
+        # so a ``startswith(home)`` test claims the project file too and the home config wins
+        # every comparison this test exists to make.
+        if path == proj_dir / ".agentao" / "sandbox.json":
+            return json.loads(path.read_text(encoding="utf-8")), None
         if str(path).startswith(str(Path.home())):
             return home_cfg, None
-        if path == proj_dir / ".agentao" / "sandbox.json":
-            return json.loads(path.read_text()), None
         return {}, None
 
     with patch("agentao.sandbox.policy._load_json", side_effect=_fake_load):

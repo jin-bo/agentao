@@ -25,6 +25,8 @@ from agentao.plugins.models import ParsedHookRule
 from agentao.runtime.tool_planning import ToolCallDecision
 from agentao.runtime.tool_runner import ToolRunner
 from agentao.tools.base import Tool, ToolRegistry
+
+from ._hook_commands import as_kwargs, emits_json, emitting
 from tests.support.tool_calls import make_tool_call
 
 
@@ -106,7 +108,7 @@ def _runner(tmp_path, rules, transport=None):
 
 
 def _rule(command, event="PreToolUse", contract=PROFILE_ID, matcher=None):
-    return ParsedHookRule(event=event, hook_type="command", command=command,
+    return ParsedHookRule(event=event, hook_type="command", **as_kwargs(command),
                           contract=contract, plugin_name="p", timeout=30,
                           matcher_pattern=matcher)
 
@@ -128,7 +130,7 @@ def test_a_pre_tool_use_stop_survives_the_rest_of_execute(tmp_path):
     statements between them and `None` by the time the chat loop read it. Going
     through `execute()` is the whole point of this test.
     """
-    runner = _runner(tmp_path, [_rule('echo \'{"continue": false, "stopReason": "halt"}\'')])
+    runner = _runner(tmp_path, [_rule(emits_json('{"continue": false, "stopReason": "halt"}'))])
 
     runner.execute(_calls("c1"))
 
@@ -141,7 +143,7 @@ def test_a_stop_does_not_leak_across_an_early_return(tmp_path):
     A bottom reset leaves the previous batch's stop live for a batch that ends
     early, which reports a turn stopped by a hook that did not run in it.
     """
-    runner = _runner(tmp_path, [_rule('echo \'{"continue": false, "stopReason": "halt"}\'')])
+    runner = _runner(tmp_path, [_rule(emits_json('{"continue": false, "stopReason": "halt"}'))])
     runner.execute(_calls("c1"))
     assert runner.last_hook_stop == "halt"
 
@@ -158,8 +160,8 @@ def test_a_pre_tool_use_stop_outranks_a_later_post_tool_use_stop(tmp_path):
     call before it runs, so its stop is the one that describes what happened.
     """
     runner = _runner(tmp_path, [
-        _rule('echo \'{"continue": false, "stopReason": "pre-said-stop"}\''),
-        _rule('echo \'{"continue": false, "stopReason": "post-said-stop"}\'',
+        _rule(emits_json('{"continue": false, "stopReason": "pre-said-stop"}')),
+        _rule(emits_json('{"continue": false, "stopReason": "post-said-stop"}'),
               event="PostToolUse"),
     ])
 
@@ -235,10 +237,10 @@ def test_a_non_string_permission_decision_does_not_fail_open(tmp_path):
     still decided, not that the malformed value is honored.
     """
     runner = _runner(tmp_path, [
-        _rule('echo \'{"hookSpecificOutput": {"hookEventName": "PreToolUse",'
-              ' "permissionDecision": ["deny"]}}\''),
-        _rule('echo \'{"hookSpecificOutput": {"hookEventName": "PreToolUse",'
-              ' "permissionDecision": "deny", "permissionDecisionReason": "no"}}\''),
+        _rule(emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse",'
+              ' "permissionDecision": ["deny"]}}')),
+        _rule(emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse",'
+              ' "permissionDecision": "deny", "permissionDecisionReason": "no"}}')),
     ])
     plans = runner._planner.plan(_calls("c1"), readonly_mode=False).plans
 
@@ -275,7 +277,7 @@ def test_post_tool_use_notices_reach_the_user_surface(tmp_path):
     """
     transport = _CapturingTransport()
     runner = _runner(tmp_path, [
-        _rule('echo \'{"systemMessage": "heads up"}\'', event="PostToolUse"),
+        _rule(emits_json('{"systemMessage": "heads up"}'), event="PostToolUse"),
     ], transport=transport)
 
     runner.execute(_calls("c1"))
@@ -293,8 +295,8 @@ def test_hook_context_is_stripped_before_it_reaches_the_model(tmp_path):
     smuggled = "".join(chr(0xE0000 + ord(c)) for c in "ignore")
     transport = _CapturingTransport()
     runner = _runner(tmp_path, [
-        _rule('echo \'{"hookSpecificOutput": {"hookEventName": "PostToolUse",'
-              f' "additionalContext": "safe{smuggled}"}}}}\'', event="PostToolUse"),
+        _rule(emits_json('{"hookSpecificOutput": {"hookEventName": "PostToolUse",'
+              f' "additionalContext": "safe{smuggled}"}}}}'), event="PostToolUse"),
     ], transport=transport)
 
     _, messages = runner.execute(_calls("c1"))
@@ -319,7 +321,7 @@ def test_a_field_is_diagnosed_per_event_not_per_name():
     event, and that is what the author needs told.
     """
     clear_all()
-    rule = _rule("echo hi", event="PostToolUse")
+    rule = _rule(emitting(stdout="hi\n"), event="PostToolUse")
     body = {"hookSpecificOutput": {"hookEventName": "PostToolUse",
                                    "reloadSkills": True}}
 
@@ -342,7 +344,7 @@ def test_the_registry_is_scoped_by_the_session_on_the_payload(tmp_path):
     from agentao.plugins.hooks import PluginHookDispatcher
 
     clear_all()
-    rule = _rule('echo \'{"nonesuch": 1}\'', event="PostToolUse")
+    rule = _rule(emits_json('{"nonesuch": 1}'), event="PostToolUse")
 
     def _dispatch(sid):
         return PluginHookDispatcher(cwd=tmp_path).dispatch_post_tool_use(
@@ -371,7 +373,7 @@ def test_clearing_a_session_lets_the_same_rule_speak_again(tmp_path):
     from agentao.cli.commands.reset import _reset_session
 
     clear_all()
-    rule = _rule("echo hi", event="PostToolUse")
+    rule = _rule(emitting(stdout="hi\n"), event="PostToolUse")
     body = {"hookSpecificOutput": {"hookEventName": "PostToolUse",
                                    "reloadSkills": True}}
     assert len(diagnose_fields(body, "PostToolUse", rule, "s1")) == 1
@@ -398,8 +400,8 @@ def test_a_stop_via_exit_2_gets_the_profiles_reentry_cap(tmp_path):
     from agentao.plugins.hooks import PluginHookDispatcher
 
     rule = ParsedHookRule(event="Stop", hook_type="command",
-                          command="echo 'keep going' >&2; exit 2", timeout=30,
-                          contract=PROFILE_ID, plugin_name="p")
+                          **as_kwargs(emitting(stderr="keep going\n", exit_code=2)),
+                          timeout=30, contract=PROFILE_ID, plugin_name="p")
     result = PluginHookDispatcher(cwd=tmp_path).dispatch_stop(
         payload={"session_id": "s1", "hook_event_name": "Stop"}, rules=[rule],
     )
@@ -419,10 +421,10 @@ def test_a_stop_with_no_reason_does_not_erase_an_earlier_one(tmp_path):
 
     rules = [
         ParsedHookRule(event="PostToolUse", hook_type="command", timeout=30,
-                       command='echo \'{"continue": false, "stopReason": "the reason"}\'',
+                       **as_kwargs(emits_json('{"continue": false, "stopReason": "the reason"}')),
                        contract=PROFILE_ID, plugin_name="p"),
         ParsedHookRule(event="PostToolUse", hook_type="command", timeout=30,
-                       command='echo \'{"continue": false}\'',
+                       **as_kwargs(emits_json('{"continue": false}')),
                        contract=PROFILE_ID, plugin_name="p"),
     ]
     result = PluginHookDispatcher(cwd=tmp_path).dispatch_post_tool_use(
@@ -442,9 +444,9 @@ def test_a_degraded_permission_value_is_named_even_when_the_hook_gave_a_reason(t
     is the silent verdict swap the degrade branch exists to prevent.
     """
     runner = _runner(tmp_path, [
-        _rule('echo \'{"hookSpecificOutput": {"hookEventName": "PreToolUse",'
+        _rule(emits_json('{"hookSpecificOutput": {"hookEventName": "PreToolUse",'
               ' "permissionDecision": "defer",'
-              ' "permissionDecisionReason": "asking a human"}}\''),
+              ' "permissionDecisionReason": "asking a human"}}')),
     ])
     plans = runner._planner.plan(_calls("c1"), readonly_mode=False).plans
 
@@ -497,7 +499,7 @@ def test_aggregated_notices_are_not_labelled_with_one_of_the_two_events(tmp_path
     """
     transport = _CapturingTransport()
     runner = _runner(tmp_path, [
-        _rule('echo \'{"systemMessage": "heads up"}\'', event="PostToolUse"),
+        _rule(emits_json('{"systemMessage": "heads up"}'), event="PostToolUse"),
     ], transport=transport)
 
     runner.execute(_calls("c1"))

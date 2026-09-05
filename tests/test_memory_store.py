@@ -1,5 +1,6 @@
 """Tests for SQLiteMemoryStore: CRUD, session summaries, soft delete."""
 
+import sqlite3
 import uuid
 from pathlib import Path
 
@@ -723,3 +724,91 @@ class TestPathConstructors:
         )
 
 
+
+
+class TestConnectionsDoNotLeak:
+    """``with self._connect() as conn`` reads like a resource scope. It was not one.
+
+    ``sqlite3.Connection.__exit__`` commits or rolls back and leaves the connection
+    **open**, so every read and every write leaked one until the collector ran. POSIX
+    hides that completely — an unlinked open file just goes away — so the bill landed
+    on Windows, where the lock survives and a host cannot delete its own workspace:
+    ``WinError 32`` naming ``memory.db``, plus the WAL sidecars.
+
+    These assertions are platform-independent on purpose. Counting opens against
+    closes states the actual claim, where "can I delete the file" would be vacuous on
+    the platform this suite usually runs on.
+    """
+
+    def _counting_sqlite(self, monkeypatch):
+        """Count opens against closes.
+
+        ``close`` is read-only on a ``sqlite3.Connection``, so the count has to come
+        from a connection *subclass* handed to ``connect(factory=...)`` rather than
+        from patching the instance.
+        """
+        opened: list = []
+        closed: list = []
+        real_connect = sqlite3.connect
+
+        class _Counting(sqlite3.Connection):
+            def close(self):
+                closed.append(self)
+                super().close()
+
+        def tracking_connect(*args, **kwargs):
+            kwargs.setdefault("factory", _Counting)
+            conn = real_connect(*args, **kwargs)
+            opened.append(conn)
+            return conn
+
+        monkeypatch.setattr(sqlite3, "connect", tracking_connect)
+        return opened, closed
+
+    def test_a_file_store_closes_every_connection_it_opens(self, tmp_path, monkeypatch):
+        opened, closed = self._counting_sqlite(monkeypatch)
+        store = SQLiteMemoryStore.open(tmp_path / "memory.db")
+
+        store.upsert_memory(_make_record(key="k1", title="v1"))
+        store.list_memories()
+        store.search_memories("v1")
+
+        assert opened, "the test would pass vacuously if nothing connected"
+        assert len(closed) == len(opened)
+
+    def test_a_write_still_commits(self, tmp_path):
+        """The close must not cost the commit the call sites relied on."""
+        path = tmp_path / "memory.db"
+        SQLiteMemoryStore.open(path).upsert_memory(_make_record(key="k1", title="v1"))
+
+        reopened = SQLiteMemoryStore.open(path)
+        assert [m.title for m in reopened.list_memories()] == ["v1"]
+
+    def test_a_failed_write_rolls_back(self, tmp_path):
+        store = SQLiteMemoryStore.open(tmp_path / "memory.db")
+        with pytest.raises(RuntimeError):
+            with store._connect() as conn:
+                conn.execute(
+                    "INSERT INTO schema_meta(key, value) VALUES (?, ?)", ("probe", "1"),
+                )
+                raise RuntimeError("boom")
+
+        with store._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM schema_meta WHERE key = ?", ("probe",),
+            ).fetchone()
+        assert row is None
+
+    def test_the_in_memory_backing_is_not_closed_between_calls(self, tmp_path, monkeypatch):
+        """Closing it would discard the database, so this one is deliberately held."""
+        opened, closed = self._counting_sqlite(monkeypatch)
+        store = SQLiteMemoryStore(":memory:")
+
+        store.upsert_memory(_make_record(key="k1", title="v1"))
+        store.list_memories()
+
+        assert [m.title for m in store.list_memories()] == ["v1"]
+        assert not closed
+
+        store.close()
+        assert len(closed) == len(opened)

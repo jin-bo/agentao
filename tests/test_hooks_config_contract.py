@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import pytest
 
@@ -324,16 +325,27 @@ def test_placeholders_reach_the_child_and_the_credential_scrub_survives(tmp_path
     monkeypatch.setenv("OPENAI_API_KEY", "sk-should-not-reach-the-hook")
     out = tmp_path / "env.txt"
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
+    # The child reads its own environment rather than asking a shell to expand it: the
+    # claim is that the placeholders arrive and the provider key does not, and ``cmd.exe``
+    # expands neither ``$VAR`` nor ``${VAR:-default}``. The exec form still goes through
+    # agentao's own substitution, one argument at a time.
     rule = ParsedHookRule(
         event="Stop", hook_type="command",
-        command=f'echo "root=$CLAUDE_PLUGIN_ROOT key=[${{OPENAI_API_KEY:-ABSENT}}]" > {out}',
+        command=sys.executable,
+        args=[
+            "-c",
+            "import os, sys; open(sys.argv[1], 'w', encoding='utf-8').write("
+            "'root=' + os.environ.get('CLAUDE_PLUGIN_ROOT', '') + "
+            "' key=[' + os.environ.get('OPENAI_API_KEY', 'ABSENT') + ']')",
+            str(out),
+        ],
         contract=PROFILE_ID, plugin_name="p", plugin_root=str(tmp_path / "plug"), timeout=30,
     )
 
     proc, failure = dispatcher._run_subprocess(rule, {"hook_event_name": "Stop"})
 
     assert failure is None and proc is not None and proc.returncode == 0
-    written = out.read_text()
+    written = out.read_text(encoding="utf-8")
     assert f"root={tmp_path / 'plug'}" in written
     assert "key=[ABSENT]" in written
 
@@ -341,22 +353,31 @@ def test_placeholders_reach_the_child_and_the_credential_scrub_survives(tmp_path
 def test_placeholders_are_substituted_into_the_command_text(tmp_path):
     out = tmp_path / "sub.txt"
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
+    # ``${CLAUDE_PROJECT_DIR}`` is substituted by agentao into the command *text*, which is
+    # what this pins. Reading it back through ``echo`` measured the shell's quoting instead:
+    # cmd writes the quotes it was given.
     rule = ParsedHookRule(
         event="Stop", hook_type="command",
-        command=f'echo "${{CLAUDE_PROJECT_DIR}}" > {out}',
+        command=sys.executable,
+        args=["-c", "import sys; open(sys.argv[2], 'w', encoding='utf-8').write(sys.argv[1])",
+              "${CLAUDE_PROJECT_DIR}", str(out)],
         contract=PROFILE_ID, plugin_name="p", timeout=30,
     )
     dispatcher._run_subprocess(rule, {"hook_event_name": "Stop"})
-    assert out.read_text().strip() == str(tmp_path)
+    assert out.read_text(encoding="utf-8").strip() == str(tmp_path)
 
 
 def test_exec_form_runs_without_a_shell(tmp_path):
     """`args` present means no shell, so shell metacharacters stay literal —
     which is the reason the reference tells authors to use it with paths."""
     dispatcher = PluginHookDispatcher(cwd=tmp_path)
+    # ``echo`` is a shell builtin, not a program, so the exec form cannot run it on Windows.
+    # The interpreter running this test is a program everywhere, and printing its arguments
+    # is the same measurement: the metacharacters have to arrive literal.
     rule = ParsedHookRule(
-        event="Stop", hook_type="command", command="echo",
-        args=["a b; echo injected", "${CLAUDE_PLUGIN_ROOT}"],
+        event="Stop", hook_type="command", command=sys.executable,
+        args=["-c", "import sys; print(' '.join(sys.argv[1:]))",
+              "a b; echo injected", "${CLAUDE_PLUGIN_ROOT}"],
         contract=PROFILE_ID, plugin_name="p", plugin_root="/root/of/plugin", timeout=30,
     )
 
