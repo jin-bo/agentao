@@ -362,6 +362,53 @@ Windows job 就不必第一个发现它。**
 （一个把 `GetCommandLineW()` 打出来的程序），没有它就只能靠子进程 stdout，而那量的是控制台代码页
 不是传输。**明说这一半还欠着，好过一个看起来像覆盖的脆弱断言。**
 
+## 5.6 Windows job 首跑：155 条失败的分诊
+
+首跑 155 条失败（3.10）／162 条（3.12），5017 通过 —— 97% 绿。它们不是散的，聚成四类，
+**其中两条是真的产品缺陷**，其余是测试侧对 POSIX 的假设。用户批准了「全部修到绿」。
+
+### 5.6.1 两条真缺陷
+
+**(1) 每一次编辑都会把 CRLF 文件的回车翻倍。** `LocalFileSystem.write_text` 用
+`open(..., "w", encoding="utf-8")` 而没有 `newline=""`，于是 Python 把每个 `\n` 翻译成
+`os.linesep`；而编辑工具读的是**字节**再解码（`file_ops.py:454`），一个本来就用 CRLF 的文件
+读进来带着 `\r\n`、写回去变成 `\r\r\n`。**一个编辑文件的工具不许改写没被要求改的字节。**
+修法是两处 `open` 都加 `newline=""`。
+**这条回归守卫只在 Windows 上咬得动** —— POSIX 上 `os.linesep` 就是 `\n`，把修复改回去测试照样绿
+（实测过，不是推测）。这也正是它能活到今天的原因。
+
+**(2) 没有家目录时，Windows 上的状态目录每次运行都不一样。** `_is_private_to_current_user` 查的是
+POSIX 权限位，而 `mkdir(mode=0o700)` 在 Windows 上不设它们，于是这个判据恒假、
+`_private_dir_or_mkdtemp` 每次都落到 `mkdtemp` —— 配置与记忆每跑一次换一个地方。
+修法：Windows 上改查「是不是一个真目录、而不是 reparse point」，保证来自
+`%LOCALAPPDATA%\Temp` 本身就是逐用户的这一事实。**限制明写**：`TEMP` 若被指到共享目录，这比
+POSIX 那版弱 —— 「另一个账户能不能写这里」要 ACL 才答得出，而那正是本阶梯里那个还没实现的 identity oracle 的活。
+
+### 5.6.2 一条没修的产品问题
+
+**为上游契约写的 `hooks.json` 在 Windows 上跑不起来。** 命令 hook 走 `shell=True`，
+POSIX 上是 `/bin/sh`、Windows 上是 `cmd.exe`，而 cmd 不认 `'` 作引号、`printf` 不存在、
+重定向前的空格会留在 echo 出来的文本里。约六十条测试栽在这上面。
+**agentao 是否应当在 Windows 上用 `sh` 跑 hook（上游就是 `sh -c`）是一个产品决定，本轮没有做**：
+从 PATH 上挑一个 `sh.exe` 恰恰是本设计的 ENV-01 说不能干的事。
+hooks 契约文档 §G5 自己那句「agentao has no Windows CI job」正是这块没被量到的原因，现在量到了。
+测试改用**产品自己的 exec 形式**（`args`，无 shell），v1 契约那些改用 `cat`／`type` 打印文件 ——
+两种拼法都不让 payload 经过任何 shell 的解析器。
+
+### 5.6.3 测试侧的类别
+
+| 类别 | 条数 | 修法 |
+|---|---|---|
+| prompt_toolkit 要真实控制台 | ~54 | conftest 里在拿不到输出时装一个 `DummyOutput` 的 app session |
+| hook fixture 用 POSIX shell 拼写 | ~60 | 改 exec 形式；v1 那些改 `cat`／`type` |
+| 文件编码留给平台 | ~20 | 读写一律显式 `encoding="utf-8"` |
+| 断言里写死 `/` | ~10 | 按 `os.sep` 拼，或直接比 `str(Path(...))` |
+| `HOME` 改了但 Windows 读 `USERPROFILE` | ~6 | 两个都设，另加 `HOMEDRIVE`／`HOMEPATH` |
+| POSIX 专属 API（`getpgid`、权限位、`chmod 000`） | ~6 | 有则打桩，无则按平台跳过并写明理由 |
+| `Path("/abs")` 在 Windows 上不是绝对路径 | 2 | 用本平台的绝对路径造 |
+| ACP 的 UTF-8 stdio 闸对上 pytest 的捕获 stdin | 4 | 给它一对真的 UTF-8 流，而不是把闸拆掉 |
+| `startswith(home)` 把 tmp_path 也算成 home | 1 | 先判项目路径 |
+
 ## 6. 英文版
 
 本文件集当前**只有中文版**。英文版在进入实现之前一次性生成，并从那时起由 `check_design_set.py` 的孪生检查
