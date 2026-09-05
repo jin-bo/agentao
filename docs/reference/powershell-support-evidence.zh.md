@@ -678,6 +678,58 @@ launcher 目录启动**只关掉「进程创建到前奏切目录」这一段。
 目录，那两级成立。这两句都是**推理，本机无 Windows 测不了**，所以 G21-17 逐 rung 记录三样实测值（`Get-Location` / 原生当前
 目录 / 延迟加载的 DLL 从哪来），G21-18 记录被放行的可信工具链以什么当前目录启动 —— 探针问问题，不预置答案。
 
+### 3.23 IMG-01 按现在的写法，在出厂 Windows 上对**任何**主体都不成立 —— 实测
+
+**这一条是量出来的**，来自 `scripts/windows_oracle_probe.py` 与
+`.github/workflows/windows-oracle-probe.yml`（手动触发；首跑 run 33977368667）。
+它就是 §7 q14 与「runner 是不是管理员」两问的答案，而它给出的第三件事比这两问都重。
+
+**方法。** `windows-latest` runner，纯 `ctypes`：`OpenProcessToken` →
+`DuplicateToken(SecurityImpersonation)` → 逐路径 `GetNamedSecurityInfoW` +
+`AccessCheck(MAXIMUM_ALLOWED)`，把授予掩码按 IMG-06a 的位逐条拆开，并沿 IMG-01 要求的
+祖先链一直走到卷根。**跑两个身份**：runner 默认的那个，以及 job 现场用 `New-LocalUser`
+建出来、只属于 `Users` 的 `probeuser`。
+
+**答案一（runner 的身份）。** `runneradmin` 在 `BUILTIN\Administrators` 内、已提权，
+并持有六项等同「能替换」的特权：`SeBackupPrivilege`、`SeDebugPrivilege`、
+`SeImpersonatePrivilege`、`SeLoadDriverPrivilege`、`SeRestorePrivilege`、
+`SeTakeOwnershipPrivilege`。于是它对每一条候选路径都答「能替换」，可信集为空 ——
+**与规范一致，不是缺陷**（提权的 agentao 就是自己的攻击者）。推论是操作性的：
+**Windows job 用默认身份只测得到拒绝路径**，接受路径必须换一个非管理员 token，
+而本次证明那条路走得通（`Start-Process -Credential`，`probeuser` 只在 `Users` 组）。
+
+**答案二（q14）。** `C:\ProgramData` 对标准用户授予 `FILE_ADD_FILE` 与
+`FILE_ADD_SUBDIRECTORY`（掩码 `0x001201BF`，`DELETE` 与 `FILE_DELETE_CHILD` 都没有），
+**过不了 IMG-01**。q14 的三个备选据此可以定了。`C:\Users\Public` 同样如此
+（`0x001201BF`），而 ENV-06g 早已把它归到只查形态的那一类 —— rev 40 那次归类由此得到实测印证。
+
+**第三件事，也是最重的一件：卷根自己就让 IMG-01 恒假。** `C:\` 对标准用户授予
+`FILE_APPEND_DATA / FILE_ADD_SUBDIRECTORY`（掩码 `0x001200AD`；`DELETE`、
+`FILE_DELETE_CHILD`、`WRITE_DAC`、`WRITE_OWNER` **一个都没有**，属主是
+`NT SERVICE\TrustedInstaller`）。这是出厂默认 —— 普通用户能建 `C:\temp` 靠的就是它。
+而 IMG-01 要求**从映像到卷根的每一个祖先**都求值，`C:\` 在每一条链上，IMG-06a 的目录掩码
+又含 `FILE_ADD_FILE`：于是**每一条路径、对每一个主体、在每一台出厂 Windows 上都不成立**，
+可信集永远为空，LADDER-03 把它变成翻转后每次 shell 调用 DENY。实测的两个身份都是全灭。
+
+**根因不是 ProgramData，是一个目录在链上扮演的两种角色被套了同一张掩码。** 对**目标**而言，
+`FILE_ADD_FILE` 是实打实的威胁；对一个**祖先**而言，能在旁边新建一个条目**替换不了**已经解析出来的
+下一环 —— 能替换下一环的是祖先上的 `FILE_DELETE_CHILD`（无需对子项有 `DELETE` 即可删/改名）、
+祖先自身的 `DELETE`／`WRITE_DAC`／`WRITE_OWNER`，或所有权。按这一区分重算同一份实测数据：
+
+| 主体 | `C:\Windows` | `System32\…\powershell.exe` | `PowerShell\7\pwsh.exe` | `Git\bin\bash.exe` | `cmd.exe` | `C:\ProgramData` |
+|---|---|---|---|---|---|---|
+| `probeuser`（标准用户） | 成立 | 成立 | 成立 | 成立 | 成立 | **不成立** |
+| `runneradmin`（管理员） | 不成立 | 不成立 | 不成立 | 不成立 | 不成立 | 不成立 |
+
+即：区分开之后，阶梯对标准用户**完全按设计工作**，管理员照旧全拒，而 `ProgramData` 与 `Public`
+仍按各自作为**目标**的权限被拒 —— 三种结果各自都是规范想要的那一个。
+
+**本文只记录测量，不改规则。** IMG-06a 要不要按上表区分「目标」与「祖先」两张掩码，是一个语义决定，
+连同 q14 的归类一起走 §7。**没有这个决定，PR-7 翻转之后 Windows 上每一次 shell 调用都是 DENY。**
+另一处待定的读法歧义：IMG-06a 写的是「`FILE_ADD_FILE` 与 `FILE_DELETE_CHILD`、`DELETE`、…… 任一」——
+探针取「任一」这一读法；若本意是「前两者须同时具备」，`C:\` 本就通得过，那这条规则的文字要写清，
+而不是靠读者选对。
+
 ## 4. 决策节引用的其它来源
 
 拆分前的决策节（rev 24 的 D1–D7）里有二十一处引用不落在 §2、§3 的任何小节里；规范文件不带引文，
