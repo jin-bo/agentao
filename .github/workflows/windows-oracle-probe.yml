@@ -17,8 +17,15 @@
 # The answers are artifacts, and the reading happens in review. Nothing here asserts.
 name: Windows oracle probe
 
+# `workflow_dispatch` alone cannot start this until the file is on the default branch,
+# which is a chicken-and-egg for the very first measurement. The `probe/**` push trigger
+# closes that: it runs on a probe branch and on no other, so ordinary CI is untouched and
+# merging this to `main` leaves manual dispatch as the only way to start it.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'probe/**'
 
 jobs:
   probe:
