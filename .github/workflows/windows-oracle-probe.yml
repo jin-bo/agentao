@@ -1,0 +1,120 @@
+# A measurement, not a test. Manually triggered, never on a push or a pull request.
+#
+# The PowerShell ladder cannot be flipped (PR-7) without a native Windows identity oracle,
+# and its hard method is `subject_can_replace`: IMG-01 asks whether *the token the child
+# will run as* can replace a path or any ancestor up to the volume root. Two questions have
+# to be answered on a real Windows before that code is written, and the design refuses to
+# guess either of them (method rule 9):
+#
+#   q14  Does C:\ProgramData pass IMG-01 on a stock install? ENV-06g keeps it in the class
+#        that must, and IMG-06a's directory mask includes FILE_ADD_FILE.
+#
+#   new  Is the runner's own token an administrator? If it is, the trusted set there is
+#        empty *by design* — an elevated agentao is its own attacker — so this job could
+#        only ever exercise the oracle's refusal path. That is why the probe runs twice,
+#        under two identities: the acceptance path needs a token that is not an admin.
+#
+# The answers are artifacts, and the reading happens in review. Nothing here asserts.
+name: Windows oracle probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    name: Measure IMG-01 under two identities
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Stdlib only — the probe measures what `ctypes` can reach, because that is the
+      # budget the oracle itself has. An optional dependency cannot gate it: an incomplete
+      # oracle does not degrade to "unattested", it empties the ladder, and LADDER-03 turns
+      # an empty ladder into a denial on every shell call.
+      - name: Stage the probe somewhere both identities can read
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\probe\out | Out-Null
+          Copy-Item scripts\windows_oracle_probe.py C:\probe\
+          icacls C:\probe /grant "*S-1-5-32-545:(OI)(CI)(RX)" | Out-Null
+          icacls C:\probe\out /grant "*S-1-5-32-545:(OI)(CI)(M)" | Out-Null
+          (Get-Command python).Source | Set-Content C:\probe\python-path.txt
+          Get-Content C:\probe\python-path.txt
+
+      - name: Probe as the default runner identity
+        shell: pwsh
+        run: |
+          python C:\probe\windows_oracle_probe.py --out C:\probe\out\default-identity.json
+          $r = Get-Content C:\probe\out\default-identity.json | ConvertFrom-Json
+          Write-Host "user               : $($r.token.user_name)"
+          Write-Host "in Administrators  : $($r.token.is_administrators_member)"
+          Write-Host "admins enabled     : $($r.token.administrators_enabled)"
+          Write-Host "elevated           : $($r.token.is_elevated)"
+          Write-Host "replace privileges : $($r.token.replace_privileges_held -join ', ')"
+          Write-Host "IMG-01 holds for   : $($r.summary.img01_holds_for -join '; ')"
+          Write-Host "IMG-01 fails for   : $($r.summary.img01_fails_for -join '; ')"
+
+      # The acceptance path. If the step above reports an administrator, the trusted set is
+      # empty for that token no matter what the ACLs say, so a second identity is the only
+      # way this job can measure a non-empty one.
+      - name: Probe as a freshly created standard user
+        id: standard
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pw = ConvertTo-SecureString 'Pr0be!Passw0rd#2026' -AsPlainText -Force
+          New-LocalUser -Name probeuser -Password $pw -AccountNeverExpires `
+            -PasswordNeverExpires -UserMayNotChangePassword | Out-Null
+          Add-LocalGroupMember -Group 'Users' -Member probeuser -ErrorAction SilentlyContinue
+          Write-Host "probeuser groups:"
+          Get-LocalGroup | Where-Object {
+            (Get-LocalGroupMember $_ -ErrorAction SilentlyContinue).Name -contains "$env:COMPUTERNAME\probeuser"
+          } | ForEach-Object { Write-Host "  $($_.Name)" }
+
+          $python = Get-Content C:\probe\python-path.txt
+          $cred = New-Object System.Management.Automation.PSCredential('probeuser', $pw)
+          Start-Process -FilePath $python `
+            -ArgumentList 'C:\probe\windows_oracle_probe.py', '--out', 'C:\probe\out\standard-identity.json' `
+            -Credential $cred -WorkingDirectory 'C:\probe' -Wait `
+            -RedirectStandardOutput C:\probe\out\standard-stdout.txt `
+            -RedirectStandardError C:\probe\out\standard-stderr.txt
+
+          $r = Get-Content C:\probe\out\standard-identity.json | ConvertFrom-Json
+          Write-Host "user               : $($r.token.user_name)"
+          Write-Host "in Administrators  : $($r.token.is_administrators_member)"
+          Write-Host "elevated           : $($r.token.is_elevated)"
+          Write-Host "replace privileges : $($r.token.replace_privileges_held -join ', ')"
+          Write-Host "IMG-01 holds for   : $($r.summary.img01_holds_for -join '; ')"
+          Write-Host "IMG-01 fails for   : $($r.summary.img01_fails_for -join '; ')"
+
+      # A failure to launch as another user is itself a result: it says the acceptance path
+      # cannot be measured this way, and the oracle's tests need an injectable subject.
+      - name: Report whether the second identity ran
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "standard-user step outcome: ${{ steps.standard.outcome }}"
+          foreach ($f in 'standard-stdout.txt', 'standard-stderr.txt') {
+            $p = "C:\probe\out\$f"
+            if (Test-Path $p) { Write-Host "--- $f"; Get-Content $p }
+          }
+
+      - name: What the runner actually is
+        if: always()
+        shell: pwsh
+        run: |
+          Get-ComputerInfo -Property WindowsProductName, OsVersion, OsBuildNumber |
+            Format-List | Out-String | Write-Host
+          Write-Host "powershell: $($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition)"
+          Write-Host "pwsh      : $((Get-Command pwsh -ErrorAction SilentlyContinue).Source)"
+          Write-Host "--- icacls C:\ProgramData"
+          icacls C:\ProgramData
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-oracle-probe
+          path: C:\probe\out\
+          if-no-files-found: warn
