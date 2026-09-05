@@ -18,6 +18,7 @@ import os
 import pytest
 
 from agentao.capabilities import filesystem as fsmod
+from agentao.capabilities import filesystem as fs_mod
 from agentao.capabilities.filesystem import LocalFileSystem
 
 
@@ -311,3 +312,68 @@ class TestLineEndings:
         fs.write_text(target, "one\r\n")
         fs.write_text(target, "two\r\n", append=True)
         assert target.read_bytes() == b"one\r\ntwo\r\n"
+
+
+class TestReplaceRetriesWhileTheTargetIsHeld:
+    """On Windows an open handle makes ``os.replace`` fail rather than wait.
+
+    Python's ``open`` does not request ``FILE_SHARE_DELETE``, so any concurrent
+    reader — an editor, an indexer, a virus scanner opening every file it sees —
+    turns a write into ``WinError 5``/``32``. Those handles are short-lived, so the
+    write waits them out instead of giving up on atomicity.
+
+    The failure is simulated rather than raced: that states the retry property on
+    every platform, where a real concurrent reader only reproduces it on one.
+    """
+
+    def test_a_transient_permission_error_is_retried(self, fs, tmp_path, monkeypatch):
+        monkeypatch.setattr(fs_mod, "_REPLACE_RETRY_ON_BUSY", True)
+        monkeypatch.setattr(fs_mod.time, "sleep", lambda _s: None)
+        target = tmp_path / "held.txt"
+        target.write_text("old", encoding="utf-8")
+
+        real_replace = fs_mod.os.replace
+        calls = {"n": 0}
+
+        def flaky(src, dst):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise PermissionError(13, "Access is denied")
+            real_replace(src, dst)
+
+        monkeypatch.setattr(fs_mod.os, "replace", flaky)
+        fs.write_text(target, "new")
+
+        assert calls["n"] == 3
+        assert target.read_text(encoding="utf-8") == "new"
+
+    def test_a_permanent_permission_error_still_raises(self, fs, tmp_path, monkeypatch):
+        """Waiting must not turn a real failure into a hang or a silent success."""
+        monkeypatch.setattr(fs_mod, "_REPLACE_RETRY_ON_BUSY", True)
+        monkeypatch.setattr(fs_mod.time, "sleep", lambda _s: None)
+        target = tmp_path / "held.txt"
+        target.write_text("old", encoding="utf-8")
+
+        def always_denied(src, dst):
+            raise PermissionError(13, "Access is denied")
+
+        monkeypatch.setattr(fs_mod.os, "replace", always_denied)
+        with pytest.raises(PermissionError):
+            fs.write_text(target, "new")
+
+    def test_posix_does_not_retry(self, fs, tmp_path, monkeypatch):
+        """The rule does not exist there, so a PermissionError is the real answer."""
+        monkeypatch.setattr(fs_mod, "_REPLACE_RETRY_ON_BUSY", False)
+        target = tmp_path / "held.txt"
+        target.write_text("old", encoding="utf-8")
+        calls = {"n": 0}
+
+        def denied(src, dst):
+            calls["n"] += 1
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(fs_mod.os, "replace", denied)
+        with pytest.raises(PermissionError):
+            fs.write_text(target, "new")
+
+        assert calls["n"] == 1

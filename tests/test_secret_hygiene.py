@@ -264,10 +264,15 @@ class TestScrubCoversEveryChildSpawner:
         from agentao.capabilities.process import run_captured
 
         monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
-        out = run_captured(
-            _reads_key(), cwd=str(tmp_path),
-            env={"OPENAI_API_KEY": "caller-chose", "PATH": os.environ["PATH"]},
-        )
+        env = {"OPENAI_API_KEY": "caller-chose", "PATH": os.environ["PATH"]}
+        # Windows cannot start a Python child without SystemRoot — it fails before
+        # `main`, so the assertion below would read an empty stdout and blame the
+        # scrub. These are the interpreter's launch prerequisites, not the subject.
+        for name in ("SystemRoot", "SYSTEMROOT", "COMSPEC", "PATHEXT"):
+            if name in os.environ:
+                env[name] = os.environ[name]
+
+        out = run_captured(_reads_key(), cwd=str(tmp_path), env=env)
         assert "key=[caller-chose]" in out.stdout
 
 

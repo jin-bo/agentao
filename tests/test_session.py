@@ -10,6 +10,7 @@ internal-helper monkeypatching across module boundaries, since
 own lexical scope.
 """
 
+import datetime
 import json
 import os
 import time
@@ -298,3 +299,53 @@ def test_load_with_bad_id_raises_file_not_found():
     save_session(_MESSAGES, _MODEL, [])
     with pytest.raises(FileNotFoundError):
         load_session(session_id="no_such_id")
+
+
+class TestTheFilenameIsNotAUniquenessGuarantee:
+    """Two saves in one clock tick used to leave one session on disk.
+
+    The file is named from ``datetime.now()`` down to microseconds, and nothing
+    checked whether that name was taken. Windows reports the clock far more coarsely
+    than six digits suggest, so two saves in quick succession collided and the second
+    silently destroyed the first — a session still resumable by id simply gone. POSIX
+    makes the same race narrow rather than impossible.
+
+    The clock is frozen rather than raced, so the assertion states the property on
+    every platform instead of depending on one platform's granularity.
+    """
+
+    def _freeze_clock(self, monkeypatch, tmp_path):
+        from agentao.embedding import sessions as sessions_mod
+
+        fixed = datetime.datetime(2026, 9, 5, 12, 0, 0, 123456).astimezone()
+
+        class _FrozenDatetime(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed
+
+        monkeypatch.setattr(sessions_mod, "datetime", _FrozenDatetime)
+        monkeypatch.setattr(sessions_mod, "_session_dir",
+                            lambda project_root=None: tmp_path / "sessions")
+
+    def test_two_saves_in_one_tick_both_survive(self, monkeypatch, tmp_path):
+        self._freeze_clock(monkeypatch, tmp_path)
+
+        first, _ = save_session(messages=[{"role": "user", "content": "alpha"}],
+                                model="m", session_id="sess_alpha")
+        second, _ = save_session(messages=[{"role": "user", "content": "beta"}],
+                                 model="m", session_id="sess_beta")
+
+        assert first != second
+        assert first.exists() and second.exists()
+
+    def test_the_older_session_is_still_resolvable_by_id(self, monkeypatch, tmp_path):
+        self._freeze_clock(monkeypatch, tmp_path)
+
+        save_session(messages=[{"role": "user", "content": "alpha"}],
+                     model="m", session_id="sess_alpha")
+        save_session(messages=[{"role": "user", "content": "beta"}],
+                     model="m", session_id="sess_beta")
+
+        messages, _model, _skills = load_session(session_id="sess_alpha")
+        assert messages == [{"role": "user", "content": "alpha"}]

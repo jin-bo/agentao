@@ -139,8 +139,18 @@ def save_session(
     created_at = _find_created_at(session_dir, sid) or now.isoformat()
     updated_at = now.isoformat()
 
+    # The name is the clock, and the clock is not a guarantee of uniqueness. Windows
+    # reports `datetime.now()` at a much coarser granularity than its six microsecond
+    # digits suggest, so two saves in quick succession land on the *same* name and the
+    # second silently destroys the first — a session the user could still resume by id
+    # is simply gone. POSIX makes that race narrow rather than impossible. Stepping to
+    # a free name costs one `exists()` and removes the whole class.
     timestamp = now.strftime("%Y%m%d_%H%M%S") + f"_{now.microsecond:06d}"
     session_file = session_dir / f"{timestamp}.json"
+    collision = 0
+    while session_file.exists():
+        collision += 1
+        session_file = session_dir / f"{timestamp}_{collision}.json"
 
     data = {
         "session_id": sid,

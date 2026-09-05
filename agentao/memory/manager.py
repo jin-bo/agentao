@@ -73,6 +73,22 @@ class MemoryManager:
         """Increments on every save/delete/clear -- use for dirty-flag detection."""
         return self._write_version
 
+    def close(self) -> None:
+        """Release both stores' resources. Safe to call more than once.
+
+        Only the transient ``:memory:`` backing actually holds a connection between
+        calls; this exists so a host can let go of it deterministically rather than
+        waiting for the collector.
+        """
+        for store in (self.project_store, self.user_store):
+            closer = getattr(store, "close", None)
+            if closer is None:
+                continue
+            try:
+                closer()
+            except Exception:   # a store that cannot close must not fail a shutdown
+                logger.debug("memory store close failed", exc_info=True)
+
     # =========================================================================
     # High-level upsert (used by save_from_tool and future guard pipeline)
     # =========================================================================

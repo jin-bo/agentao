@@ -9,6 +9,23 @@ going straight into the model's window.
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+from agentao.capabilities.process import OutputLimitExceeded, run_captured
+from agentao.plugins.hooks import PluginHookDispatcher
+from agentao.plugins.hooks import _budget, _dispatcher as dispatcher_mod
+from agentao.plugins.hooks._budget import HOOK_CHANNEL_CHAR_LIMIT, cap_channel
+from agentao.plugins.models import ParsedHookRule, StopHookResult, UserPromptSubmitResult
+
+from ._hook_commands import as_kwargs
+
 
 def _floods(stream: str) -> list:
     """A child that writes without stopping, on any platform.
@@ -21,24 +38,6 @@ def _floods(stream: str) -> list:
         sys.executable, "-c",
         "import sys\nwhile True:\n    sys.%s.write('A' * 4096)" % stream,
     ]
-
-import json
-import os
-import subprocess
-import time
-from pathlib import Path
-
-import sys
-
-import pytest
-
-from agentao.capabilities.process import OutputLimitExceeded, run_captured
-from agentao.plugins.hooks import PluginHookDispatcher
-from agentao.plugins.hooks import _budget, _dispatcher as dispatcher_mod
-from agentao.plugins.hooks._budget import HOOK_CHANNEL_CHAR_LIMIT, cap_channel
-from agentao.plugins.models import ParsedHookRule, StopHookResult, UserPromptSubmitResult
-
-from ._hook_commands import as_kwargs
 
 
 # --------------------------------------------------------------------------
@@ -71,9 +70,17 @@ def test_the_limit_is_opt_in_so_other_callers_are_unchanged():
 
 
 def test_bounded_run_preserves_the_ordinary_contract():
-    """Same result shape, stdin still fed, exit code still reported."""
-    proc = run_captured("cat; exit 3", shell=True, input="fed on stdin",
-                        max_output_bytes=1_000_000)
+    """Same result shape, stdin still fed, exit code still reported.
+
+    The child echoes stdin and exits 3. It used to be ``cat; exit 3`` under a shell,
+    which is two things Windows does not have; what is under test is ``run_captured``,
+    not the shell, so the child is a Python one on both platforms.
+    """
+    proc = run_captured(
+        [sys.executable, "-c",
+         "import sys; sys.stdout.write(sys.stdin.read()); sys.exit(3)"],
+        input="fed on stdin", max_output_bytes=1_000_000,
+    )
     assert proc.stdout == "fed on stdin"
     assert proc.returncode == 3
 
@@ -131,9 +138,23 @@ def test_an_over_budget_channel_is_excerpted_and_spilled(monkeypatch, tmp_path):
     assert spilled[0].read_text() == payload
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="0600 is unenforceable on Windows — see the docstring; the gap is real, not skipped away",
+)
 def test_the_spill_file_is_0600(monkeypatch, tmp_path):
     """Hook output is a user script's output — likelier to carry a credential
-    than a tool result, which is why this sink tightens what tool-outputs does."""
+    than a tool result, which is why this sink tightens what tool-outputs does.
+
+    **The guarantee does not exist on Windows, and this skip records that rather
+    than papering over it.** ``os.open(..., 0o600)`` there sets only the read-only
+    bit; access is decided by the file's ACL, which NTFS inherits from the parent
+    directory. The spill lands in the *project* tree (``.agentao/hook-outputs``),
+    so on a machine where the repository is readable by more than one account, hook
+    output that may carry a credential is readable with it. Closing that needs a
+    real ACL, which is the same unimplemented Windows identity work that
+    ``agentao/paths.py`` and ``permissions_hardline/_trust.py`` both defer to.
+    """
     monkeypatch.chdir(tmp_path)
     cap_channel("S" * 30_000, hook_event="Stop")
     spilled = next((tmp_path / ".agentao" / "hook-outputs").iterdir())

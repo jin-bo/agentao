@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import errno
 import os
+import time
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -101,6 +102,39 @@ class FileSystem(Protocol):
         ...
 
 
+
+_REPLACE_RETRY_ATTEMPTS = 10
+_REPLACE_RETRY_DELAY_S = 0.02
+#: Whether a ``PermissionError`` from ``os.replace`` is worth waiting out. A module-level
+#: name rather than an inline ``os.name`` test so a test can exercise both answers without
+#: patching ``os.name`` itself, which would change path handling for the whole process.
+_REPLACE_RETRY_ON_BUSY = os.name == "nt"
+
+
+def _replace_with_retry(tmp_path: Path, target: Path) -> None:
+    """``os.replace``, retried briefly while Windows says the target is in use.
+
+    ``os.replace`` is atomic on both platforms, but on Windows it *fails* — WinError 5
+    or 32 — while any handle to the target is open without ``FILE_SHARE_DELETE``, and
+    Python's ``open`` does not request that. So an ordinary concurrent reader, an editor
+    with the file loaded, an indexer, or a virus scanner (which opens every file it sees,
+    briefly, at unpredictable times) turns a write into an exception. POSIX has no such
+    rule: the rename succeeds and readers keep their old inode.
+
+    The handles that cause this are short-lived, so the answer is to wait a moment rather
+    than to abandon atomicity. Roughly 200 ms in total, then the error is raised as
+    before — a permission problem that is genuinely permanent still reports as one, just
+    a fifth of a second later.
+    """
+    for attempt in range(_REPLACE_RETRY_ATTEMPTS):
+        try:
+            os.replace(tmp_path, target)
+            return
+        except PermissionError:
+            if not _REPLACE_RETRY_ON_BUSY or attempt == _REPLACE_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(_REPLACE_RETRY_DELAY_S)
+
 class LocalFileSystem:
     """Default :class:`FileSystem` backed by ``pathlib`` / ``os``.
 
@@ -169,7 +203,9 @@ class LocalFileSystem:
         lives on the directory, so without an explicit check an atomic
         write would silently defeat ``chmod 444``.
 
-        ``newline=""`` on both paths, and it is not a detail. Without it Python
+        ``newline=""`` on **all three** writers, and it is not a detail — the one
+        that matters most is the ``os.fdopen`` on the staging path, because that
+        is the writer every *existing* file goes through. Without it Python
         translates every ``\n`` to ``os.linesep`` on write, which on Windows is
         ``\r\n`` — and the edit tool reads its file as *bytes* and decodes, so a
         file that already used CRLF comes back holding ``\r\n`` and goes out
@@ -223,7 +259,7 @@ class LocalFileSystem:
             return
         tmp_path = Path(tmp_name)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
                 f.write(data)
             # mkstemp creates 0o600; carry over the original permission
             # bits so an executable script stays executable. If the target
@@ -234,7 +270,7 @@ class LocalFileSystem:
                 os.chmod(tmp_path, os.stat(target).st_mode & 0o7777)
             except FileNotFoundError:
                 pass
-            os.replace(tmp_path, target)
+            _replace_with_retry(tmp_path, target)
         except BaseException:
             # Includes KeyboardInterrupt — the whole point is that an
             # interrupt must not leave debris or a damaged target.

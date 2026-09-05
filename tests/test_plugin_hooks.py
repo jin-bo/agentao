@@ -215,7 +215,9 @@ class TestPayloadAdapter:
         assert payload["event"] == "UserPromptSubmit"
         assert payload["data"]["userMessage"] == "fix the bug"
         assert payload["data"]["sessionId"] == "sess-123"
-        assert payload["data"]["cwd"] == "/project"
+        # The adapter stringifies the path it was handed, so the expected value has to
+        # be spelled the same way: `str(Path("/project"))` is `\project` on Windows.
+        assert payload["data"]["cwd"] == str(Path("/project"))
 
     def test_pre_tool_use_payload(self):
         adapter = ClaudeHookPayloadAdapter()
@@ -264,7 +266,7 @@ class TestCommandHookDispatch:
         rule = ParsedHookRule(
             event="UserPromptSubmit",
             hook_type="command",
-            command='echo \'{"additionalContext": "extra info"}\'',
+            command=shell_emits_json('{"additionalContext": "extra info"}'),
             plugin_name="test",
         )
         payload = {"event": "UserPromptSubmit", "data": {"userMessage": "hi"}}
@@ -280,7 +282,7 @@ class TestCommandHookDispatch:
         rule = ParsedHookRule(
             event="UserPromptSubmit",
             hook_type="command",
-            command='echo \'{"blockingError": "not allowed"}\'',
+            command=shell_emits_json('{"blockingError": "not allowed"}'),
             plugin_name="test",
         )
         payload = {"event": "UserPromptSubmit", "data": {"userMessage": "bad"}}
@@ -295,7 +297,7 @@ class TestCommandHookDispatch:
         rule = ParsedHookRule(
             event="UserPromptSubmit",
             hook_type="command",
-            command='echo \'{"preventContinuation": true, "stopReason": "paused"}\'',
+            command=shell_emits_json('{"preventContinuation": true, "stopReason": "paused"}'),
             plugin_name="test",
         )
         payload = {"event": "UserPromptSubmit", "data": {"userMessage": "x"}}
@@ -393,11 +395,11 @@ class TestCommandHookDispatch:
         """Non-UserPromptSubmit rules are filtered out."""
         ups_rule = ParsedHookRule(
             event="UserPromptSubmit", hook_type="command",
-            command='echo \'{"additionalContext": "yes"}\'', plugin_name="t",
+            command=shell_emits_json('{"additionalContext": "yes"}'), plugin_name="t",
         )
         other_rule = ParsedHookRule(
             event="PreToolUse", hook_type="command",
-            command='echo \'{"additionalContext": "no"}\'', plugin_name="t",
+            command=shell_emits_json('{"additionalContext": "no"}'), plugin_name="t",
         )
         payload = {"event": "UserPromptSubmit", "data": {"userMessage": ""}}
 
