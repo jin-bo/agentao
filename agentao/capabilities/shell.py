@@ -294,9 +294,14 @@ def _popen_target(launch: LaunchRequest) -> Tuple[Any, Dict[str, Any]]:
     resolved which interpreter to run.
     """
     if isinstance(launch, LegacyLaunch):
+        # ``launch.executable`` is the interpreter the user named, and it wins over the
+        # platform's answer on both platforms: POSIX ``shell=True`` runs ``/bin/sh -c`` with
+        # ``args[0]`` replaced by ``executable``, and Windows ``shell=True`` builds
+        # ``{ComSpec} /c …`` with ``executable`` substituted for ``ComSpec``. Falling back to
+        # ``resolve_shell_executable()`` is what an unconfigured host has always got.
         return launch.command, dict(
             shell=True,
-            executable=resolve_shell_executable(),
+            executable=launch.executable or resolve_shell_executable(),
             cwd=str(launch.cwd),
             env=dict(launch.env),
         )

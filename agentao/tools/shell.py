@@ -375,6 +375,10 @@ class ShellTool(Tool):
             cwd=AbsPath(str(cwd)),
             env=MappingProxyType(build_child_env()),
             spec_fingerprint=fingerprint,
+            # CFG-02c: the interpreter the user named travels all the way to the spawn. It
+            # used to stop at the spec — frozen into the fingerprint, then dropped, so
+            # ``shell.path`` chose an interpreter that never ran.
+            executable=spec.explicit_shell if isinstance(spec, ShellSpec) else None,
         )
 
     # ------------------------------------------------------------------

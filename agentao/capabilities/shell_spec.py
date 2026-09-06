@@ -721,6 +721,11 @@ class LegacyLaunch:
     cwd: AbsPath  # this call's working directory — there is no launcher directory to use
     env: FrozenEnv  # today's environment: build_child_env(), inherited minus credentials
     spec_fingerprint: Sha256
+    # CFG-02c's other half. The user-named interpreter travelled as far as the spec and then
+    # stopped: the executor re-derived the shell from the platform, so ``shell.path`` was
+    # frozen into a fingerprint and silently discarded at the spawn. ``None`` means "keep the
+    # platform's answer", which is every launch nobody configured.
+    executable: Optional[AbsPath] = None
 
 
 LaunchRequest = Union[PosixLaunch, WindowsLaunch, LegacyLaunch]

@@ -260,7 +260,9 @@ def test_a_legacy_launch_carries_none_of_the_attested_fields():
     Evidence it never produced and an obligation it is exempt from would both be lies.
     """
     names = {f.name for f in dataclasses.fields(LegacyLaunch)}
-    assert names == {"command", "cwd", "env", "spec_fingerprint"}
+    # ``executable`` is CFG-02c's delivery half, not attestation: it is the interpreter the
+    # user named, which is exactly the thing a policy-off rung is allowed to carry.
+    assert names == {"command", "cwd", "env", "spec_fingerprint", "executable"}
     assert not names & {"attested_images", "execution_subject", "workdir"}
 
 
