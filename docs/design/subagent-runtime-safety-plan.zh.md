@@ -1,7 +1,8 @@
 # 子代理运行期安全计划 —— 引擎按身份继承、registry 按来源重建、MCP 所有权与取消
 
-> ⚠️ **状态：** 本计划原是 `powershell-support-plan` 的 **PR-0**，2026-09-03 按原文拆出（rev 25），与
-> PowerShell 无关，也不等 PowerShell。**引擎那一半是一处已实测、早于该计划的活缺陷（证据 §2.12：子代理
+> ⚠️ **状态：** 本计划原是当年那份 PowerShell 计划的 **PR-0**，2026-09-03 按原文拆出（rev 25），与
+> PowerShell 无关，也不等 PowerShell。**那份 PowerShell 设计已于 2026-09-06 退役**（轻量方案见
+> `powershell-support-lightweight.zh.md`，历史在 Git 里），本计划不随之作废。**引擎那一半是一处已实测、早于该计划的活缺陷（证据 §2.12：子代理
 > 没有权限引擎，`rm -rf /` 判 ASK 而三条 transport 自动批准），应立即修。MCP 那一半（所有者线程、租约、
 > token → task 集合、调用上下文）未授权实施** —— rev 20 在那里发现一句有保证、没机制的话（§3 第 4 件）。
 > 这两半在同一个 PR 里，因为工厂重建 registry 时必须决定 MCP 工具以什么形式进入子代理；先发引擎那一半、
@@ -9,12 +10,12 @@
 
 **日期：** 2026-09-03
 **Anchors:** agentao `main@3537753`（2026-09-01）。
-**证据：** 本文写「§2.x」时，指 `docs/reference/powershell-support-evidence.zh.md` 的同号小节 ——
-§2.6、§2.8、§2.9、§2.12–§2.19 是本计划的全部实测依据。
-**评审记录：** `docs/design/powershell-support-review-log.zh.md`；本计划的历史与 PowerShell 计划共用那张
-修订表（rev 2、4、5、7–11、20、22–24 的行都点到 PR-0）。
-**PowerShell 计划对本计划的依赖：** `docs/design/powershell-support-implementation.zh.md` 的 PR-1 依赖
-本计划（子代理必须按身份持有父级的 shell spec），见规范 `powershell-support-spec.zh.md` §6。
+**证据：** 本文写「§2.x」时，指当年 `docs/reference/powershell-support-evidence.zh.md` 的同号小节 ——
+§2.6、§2.8、§2.9、§2.12–§2.19 是本计划的全部实测依据。**该证据文件已随设计集退役**，
+用 `git show HEAD~1:docs/reference/powershell-support-evidence.zh.md` 取回。
+**评审记录：** 同样在 Git 历史里（`powershell-support-review-log.zh.md`，rev 2、4、5、7–11、20、22–24 的行都点到 PR-0）；
+那套评审产出的三十二条方法规则留在 `docs/design/review-method-rules.zh.md`。
+**旧 PowerShell 计划对本计划的依赖已随它退役：** 轻量方案不要求子代理按身份持有父级 shell spec。
 
 ## 0. 不变量索引
 

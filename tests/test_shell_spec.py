@@ -1,226 +1,97 @@
-"""The shell spec, the launch request, and the two guards that come with them.
+"""The shell spec, the launch it produces, and the record that binds them to a decision.
 
-PR-1 of the PowerShell ladder (``docs/design/powershell-support-implementation.zh.md``).
-Every test names the rule ID it holds; the rules are defined once each in
-``docs/design/powershell-support-spec.zh.md`` §2.
+The property under test throughout is that **one answer governs the whole call**. Which
+interpreter will read the command is decided once, at planning time, and everything after
+that — the floor's grammar, the permission rule's dialect label, the process that is
+actually started, the description the model was given — reads that one answer rather than
+re-deriving its own from ``sys.platform``.
 
-The thing worth stating up front: at this stage **nothing changes what runs**. Every rung
-that can be constructed is policy-off, and a policy-off rung launches through the same three
-fields the request carried before. These tests are here so that stays true, and so the
-shapes the later stages fill are already refusing what they must refuse.
+Each of those used to be a separate derivation, which is why the shapes here are so
+insistent: a spec the executor declares, a launch that names its target completely, and a
+frozen record the tool cannot bypass.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import os
 import sys
 from types import MappingProxyType
 
 import pytest
 
-from agentao.capabilities.process import build_child_env
-from agentao.capabilities.shell import (
-    LocalShellExecutor,
-    ShellRequest,
-    local_content_hash,
-    local_filesystem_identity,
-    verify_attested_launch,
-)
+from agentao.capabilities.shell import LocalShellExecutor, ShellRequest, ShellResult
 from agentao.capabilities.shell_spec import (
+    PASS,
     AbsPath,
+    DecidedCall,
+    Deny,
     Exhausted,
-    HashPin,
-    InterpreterIdentity,
-    LauncherIdentity,
     LaunchRefused,
     LegacyLaunch,
-    Platform,
-    PosixLaunch,
-    PinnedEnv,
-    PublisherTrust,
-    ResolvedImage,
-    Rung,
-    Sha256,
+    ShellBlock,
     ShellDialect,
     ShellSpec,
-    SpecConstructionError,
-    Subject,
     default_spec,
-    dialect_of,
-    fingerprint_of,
-    fingerprint_projection,
-    legacy_spec,
+    display_name,
     validate,
 )
 from agentao.tools.base import ToolRegistry
 from agentao.tools.shell import ShellTool
 
-SUBJ = Subject("subject")
-
 
 def posix_spec(**over) -> ShellSpec:
-    return legacy_spec(ShellDialect.POSIX, Rung.system_posix, Platform.POSIX, SUBJ, **over)
+    return ShellSpec(dialect=ShellDialect.POSIX, **over)
 
 
-def image(path: str, *, fs: str = "1:2", pin: object = None) -> ResolvedImage:
-    return ResolvedImage(
-        canonical_path=AbsPath(path),
-        filesystem_identity=fs,  # type: ignore[arg-type]
-        execution_subject=SUBJ,
-        content_identity=pin,  # type: ignore[arg-type]
-    )
-
-
-# ------------------------------------------------------------------ SPEC-01/02/03
-
-
-def test_the_dialect_rung_matrix_is_enumerated_not_inferred():
-    """SPEC-02: only the pairs in the table are legal, and the failure names the pair."""
-    assert dialect_of(Rung.legacy_cmd) is ShellDialect.CMD
-    assert dialect_of(Rung.git_bash) is ShellDialect.POSIX
-    with pytest.raises(SpecConstructionError) as exc:
-        legacy_spec(ShellDialect.POSIX, Rung.legacy_cmd, Platform.POSIX, SUBJ)
-    assert "posix x legacy_cmd" in str(exc.value)
+# ------------------------------------------------------------------- the spec
 
 
 def test_an_unknown_dialect_is_refused_before_any_rule_matches():
-    """SPEC-01: UNKNOWN is what a host executor naming no dialect arrives with."""
-    spec = dataclasses.replace(posix_spec(), dialect=ShellDialect.UNKNOWN)
-    assert validate(spec) == "hardline:unknown-dialect-opaque"
+    """``UNKNOWN`` is what a host executor naming no dialect arrives with.
 
-
-def test_policy_enabled_cannot_disagree_with_the_rung():
-    """SPEC-03, first cross-invariant: `policy_enabled` must equal `rung not in POLICY_OFF`.
-
-    The launcher and pinned environment are supplied on purpose. Leaving them out makes the
-    spec violate the *second* invariant as well, which returns the same reason string — so
-    the test would have passed with this invariant deleted, holding nothing.
+    Refusing on it is the whole point of having the value: the alternative is scanning one
+    shell's syntax with another's patterns, which returns a clean result rather than failing.
     """
-    lying = dataclasses.replace(
-        posix_spec(),
-        policy_enabled=True,
-        launcher=LauncherIdentity(image=image("/bin/sh"), launcher_hash=Sha256("h")),
-        pinned_env=PinnedEnv(),
+    assert validate(dataclasses.replace(posix_spec(), dialect=ShellDialect.UNKNOWN)) == (
+        "hardline:unknown-dialect-opaque"
     )
-    assert validate(lying) == "hardline:unknown-rung-opaque"
-
-
-def test_policy_off_must_carry_no_launcher_and_no_pinned_environment():
-    """SPEC-03, the other direction: a policy-off rung with a launcher is not a stricter rung.
-
-    It is a rung that would be launched through the attested path while promising to be
-    byte-identical to today, which is two different launches under one name.
-    """
-    launcher = LauncherIdentity(image=image("/bin/sh"), launcher_hash=Sha256("h"))
-    assert validate(dataclasses.replace(posix_spec(), launcher=launcher)) == "hardline:unknown-rung-opaque"
-    assert validate(dataclasses.replace(posix_spec(), pinned_env=PinnedEnv())) == "hardline:unknown-rung-opaque"
-
-
-def test_a_powershell_rung_needs_an_interpreter_identity_not_a_bare_launcher():
-    """IMG-07: the edition decides the rung, so a launcher that cannot report one is wrong."""
-    plain = LauncherIdentity(image=image("/x/pwsh"), launcher_hash=Sha256("h"))
-    spec = dataclasses.replace(
-        posix_spec(),
-        dialect=ShellDialect.POWERSHELL,
-        rung=Rung.pwsh,
-        policy_enabled=True,
-        launcher=plain,
-        pinned_env=PinnedEnv(),
-    )
-    assert validate(spec) == "hardline:unknown-rung-opaque"
-    ok = dataclasses.replace(
-        spec, launcher=InterpreterIdentity(image=image("/x/pwsh"), launcher_hash=Sha256("h"), edition="Core")
-    )
-    assert validate(ok) is None
-
-
-def test_an_explicit_shell_is_refused_once_policy_is_on():
-    """CFG-02c: with policy on the launcher decides, so a second answer is a contradiction."""
-    spec = dataclasses.replace(
-        posix_spec(),
-        rung=Rung.git_bash,
-        policy_enabled=True,
-        launcher=LauncherIdentity(image=image("/g/bash"), launcher_hash=Sha256("h")),
-        pinned_env=PinnedEnv(),
-        explicit_shell=AbsPath("/bin/zsh"),
-    )
-    assert validate(spec) == "hardline:unknown-rung-opaque"
-
-
-# ------------------------------------------------------------------ SPEC-07/08
+    assert validate(posix_spec()) is None
 
 
 def test_a_spec_cannot_be_assigned_to_after_construction():
-    """SPEC-07: re-resolution builds a new object; it never edits the one a call is holding."""
+    """Re-resolution builds a new object; it never edits the one a call is holding."""
     with pytest.raises(dataclasses.FrozenInstanceError):
-        posix_spec().rung = Rung.cmd  # type: ignore[misc]
+        posix_spec().dialect = ShellDialect.CMD  # type: ignore[misc]
 
 
-def test_two_specs_differing_only_in_the_allowlist_have_different_fingerprints():
-    """IMG-03a: the allowlist in force is part of what was decided, so it is in the projection.
+def test_the_default_is_todays_shell_on_both_platforms():
+    """Nothing configured means nothing changes: cmd on Windows, the POSIX shell elsewhere.
 
-    Leaving it out would let two configurations that differ by one pin produce one
-    fingerprint, and the fingerprint is what notices that the configuration moved between
-    the decision and the launch.
-    """
-    a = posix_spec()
-    b = dataclasses.replace(a, allowlist=(PublisherTrust(signer="Acme"),))
-    b = dataclasses.replace(b, fingerprint=fingerprint_of(fingerprint_projection(b)))
-    assert a.fingerprint != b.fingerprint
-
-
-def test_two_specs_differing_only_in_the_named_interpreter_have_different_fingerprints():
-    """CFG-02c: /bin/bash and /bin/zsh must not produce one spec and one fingerprint."""
-    bash = posix_spec(explicit_shell=AbsPath("/bin/bash"))
-    zsh = posix_spec(explicit_shell=AbsPath("/bin/zsh"))
-    assert bash.fingerprint != zsh.fingerprint
-
-
-def test_an_absent_field_and_a_field_holding_its_name_do_not_collide():
-    """The encoding is type-tagged: `None` and the string "None" are different projections."""
-    absent = posix_spec()
-    present = posix_spec(explicit_shell=AbsPath("None"))
-    assert absent.fingerprint != present.fingerprint
-
-
-def test_the_fingerprint_covers_the_spec_that_is_returned():
-    """SPEC-08: stamped from the same object, so the hash cannot describe a different draft."""
-    spec = posix_spec()
-    assert spec.fingerprint == fingerprint_of(fingerprint_projection(spec))
-
-
-# ------------------------------------------------------------------ LADDER-05
-
-
-def test_the_default_rung_is_policy_off_on_both_platforms():
-    """LADDER-05: until the flip, Windows reports legacy_cmd and everywhere else system_posix.
-
-    Neither is a rung of the ladder. Without them the ladder is empty on a POSIX host and on
-    a pre-flip Windows host, and an empty ladder denies every shell call.
+    ``interpreter`` is ``None`` on both, and that ``None`` is load-bearing — it is what makes
+    the launch fall through to ``%COMSPEC%`` / ``resolve_shell_executable()``, which is the
+    launch that shipped.
     """
     win = default_spec(windows=True)
-    assert (win.dialect, win.rung, win.policy_enabled) == (ShellDialect.CMD, Rung.legacy_cmd, False)
+    assert (win.dialect, win.interpreter) == (ShellDialect.CMD, None)
     other = default_spec(windows=False)
-    assert (other.dialect, other.rung, other.policy_enabled) == (
-        ShellDialect.POSIX,
-        Rung.system_posix,
-        False,
-    )
+    assert (other.dialect, other.interpreter) == (ShellDialect.POSIX, None)
 
 
-def test_the_local_executor_declares_locality_and_a_stable_spec_object():
-    """SPEC-04a: the executor declares it. SPEC-07b: the same object until re-resolution."""
+def test_the_local_executor_answers_one_spec_object_per_call():
+    """A call holds one spec until re-resolution swaps it.
+
+    Minting a fresh one on every read would put PowerShell discovery — a filesystem walk —
+    on the permission path of every shell command.
+    """
     ex = LocalShellExecutor()
-    assert ex.shell_spec.filesystem_is_local is True
     assert ex.shell_spec is ex.shell_spec
 
 
 def test_a_tool_reads_the_executors_spec_not_its_own_guess():
-    """TOOL-04: the spec comes from the executor, which is the party that knows."""
+    """The executor is the party that knows: a Docker or remote one starts a different shell."""
 
     class RemoteExecutor:
-        shell_spec = Exhausted("every rung refused")
+        shell_spec = Exhausted("nothing usable here")
 
         def run(self, request):  # pragma: no cover - never reached
             raise AssertionError
@@ -230,11 +101,11 @@ def test_a_tool_reads_the_executors_spec_not_its_own_guess():
 
     tool = ShellTool()
     tool.shell = RemoteExecutor()
-    assert tool.shell_spec == Exhausted("every rung refused")
+    assert tool.shell_spec == Exhausted("nothing usable here")
 
 
 def test_an_executor_predating_this_member_still_gets_todays_default():
-    """This stage is invisible to users, so a host that changed nothing must keep working."""
+    """A host that changed nothing must keep working, so an absent declaration is not a refusal."""
 
     class OldExecutor:
         def run(self, request):  # pragma: no cover - never reached
@@ -246,128 +117,71 @@ def test_an_executor_predating_this_member_still_gets_todays_default():
     tool = ShellTool()
     tool.shell = OldExecutor()
     spec = tool.shell_spec
-    assert isinstance(spec, ShellSpec) and spec.policy_enabled is False
-    # ...and locality is not claimed for an executor that never declared it (SPEC-04a).
-    assert spec.filesystem_is_local is False
+    assert isinstance(spec, ShellSpec) and spec.interpreter is None
 
 
-# ------------------------------------------------------------------ LAUNCH-01
+def test_an_executor_predating_the_spec_member_still_satisfies_the_protocol():
+    """``ShellExecutor`` is ``@runtime_checkable``, and a non-method member breaks that.
 
-
-def test_a_legacy_launch_carries_none_of_the_attested_fields():
-    """LAUNCH-01c: adding a variant to a union is not the same as splitting the fields.
-
-    Evidence it never produced and an obligation it is exempt from would both be lies.
+    It would make ``issubclass()`` raise ``TypeError`` for everyone and flip ``isinstance()``
+    to ``False`` for every executor written before the member existed — which is why the
+    declaration is an optional companion protocol instead.
     """
-    names = {f.name for f in dataclasses.fields(LegacyLaunch)}
-    # ``executable`` is CFG-02c's delivery half, not attestation: it is the interpreter the
-    # user named, which is exactly the thing a policy-off rung is allowed to carry.
-    assert names == {"command", "cwd", "env", "spec_fingerprint", "executable"}
-    assert not names & {"attested_images", "execution_subject", "workdir"}
+    from agentao.capabilities.shell import ShellExecutor
+
+    class OldExecutor:
+        def run(self, request):  # pragma: no cover - never reached
+            raise AssertionError
+
+        def run_background(self, request):  # pragma: no cover - never reached
+            raise AssertionError
+
+    assert issubclass(OldExecutor, ShellExecutor)
+    assert isinstance(OldExecutor(), ShellExecutor)
+    assert isinstance(LocalShellExecutor(), ShellExecutor)
 
 
-def _attested(tmp_path, *, images, argv=()):
-    exe = tmp_path / "interp"
-    exe.write_bytes(b"#!/bin/sh\nexit 0\n")
-    return exe, PosixLaunch(
-        executable=AbsPath(str(exe)),
-        argv=(str(exe),) + tuple(argv),
-        cwd=AbsPath(str(tmp_path)),
-        workdir=AbsPath(str(tmp_path)),
-        env=MappingProxyType({}),
-        execution_subject=SUBJ,
-        attested_images=images,
-        spec_fingerprint=Sha256("fp"),
-    )
-
-
-def test_a_target_with_no_entry_in_the_evidence_is_refused(tmp_path):
-    """LAUNCH-01d: no entry is a refusal, not a pass. Absence of evidence is not evidence."""
-    _, launch = _attested(tmp_path, images=())
-    deny = verify_attested_launch(launch)
-    assert deny is not None and "no-entry" in deny.reason
-
-
-def test_a_target_whose_file_was_swapped_since_the_decision_is_refused(tmp_path):
-    """LAUNCH-01d: the executor is the last place that can still notice the swap."""
-    exe, launch = _attested(
-        tmp_path, images=(image(str(tmp_path / "interp"), fs="0:0", pin=HashPin(path=AbsPath(str(tmp_path / "interp")), sha256=Sha256("x"))),)
-    )
-    deny = verify_attested_launch(launch)
-    assert deny is not None and "filesystem-identity" in deny.reason
-
-
-def test_a_target_whose_bytes_changed_is_refused(tmp_path):
-    """LAUNCH-01d: same path, same inode, different content — a rewrite in place."""
-    exe = tmp_path / "interp"
-    exe.write_bytes(b"#!/bin/sh\nexit 0\n")
-    pin = HashPin(path=AbsPath(str(exe)), sha256=Sha256("not-the-hash"))
-    _, launch = _attested(
-        tmp_path, images=(image(str(exe), fs=local_filesystem_identity(str(exe)), pin=pin),)
-    )
-    deny = verify_attested_launch(launch)
-    assert deny is not None and "content-identity" in deny.reason
-
-
-def test_an_entry_with_no_content_identity_is_refused(tmp_path):
-    """LAUNCH-01d: an image nothing binds to its bytes has not been attested, only named."""
-    exe = tmp_path / "interp"
-    exe.write_bytes(b"#!/bin/sh\nexit 0\n")
-    _, launch = _attested(tmp_path, images=(image(str(exe), fs=local_filesystem_identity(str(exe))),))
-    deny = verify_attested_launch(launch)
-    assert deny is not None and "no-content-identity" in deny.reason
-
-
-def test_a_fully_attested_target_passes(tmp_path):
-    """The check has to be passable, or it is only a disguised refusal of the whole path."""
-    exe = tmp_path / "interp"
-    exe.write_bytes(b"#!/bin/sh\nexit 0\n")
-    pin = HashPin(path=AbsPath(str(exe)), sha256=local_content_hash(str(exe)))
-    _, launch = _attested(
-        tmp_path, images=(image(str(exe), fs=local_filesystem_identity(str(exe)), pin=pin),)
-    )
-    assert verify_attested_launch(launch) is None
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX argv shape")
-@pytest.mark.parametrize("background", [False, True])
-def test_both_delivery_faces_refuse_the_same_unattested_launch(tmp_path, background):
-    """LAUNCH-01e: `is_background` picks which method delivers, and nothing else.
-
-    It used to pick a second spawn path with its own ``shell=True`` and its own environment,
-    which meant a property proved about one face said nothing at all about the other.
+def test_a_raising_provider_is_a_failure_not_an_absent_declaration():
+    """``getattr(x, "shell_spec", None)`` swallows an ``AttributeError`` raised *inside* the
+    property, which reads as "declares nothing" and quietly reports the platform default for
+    an executor whose resolution actually failed. The planner turns a raise into ``Exhausted``.
     """
-    _, launch = _attested(tmp_path, images=())
-    request = ShellRequest(launch=launch)
-    ex = LocalShellExecutor()
-    with pytest.raises(LaunchRefused) as exc:
-        ex.run_background(request) if background else ex.run(request)
-    assert "launch-attest" in exc.value.deny.reason
+    from agentao.runtime.tool_planning import _shell_spec_of
+
+    class Broken:
+        name = "run_shell_command"
+
+        @property
+        def shell_spec(self):
+            raise RuntimeError("resolution failed")
+
+    answer = _shell_spec_of(Broken())
+    assert isinstance(answer, Exhausted) and "resolution failed" in answer.reason
 
 
-def test_a_legacy_launch_runs_without_any_attestation_check(tmp_path):
-    """LAUNCH-01c: the obligation binds policy-enabled rungs only.
+def test_the_fallback_spec_is_one_object_per_executor():
+    """Memoised per executor, and re-minted when the executor is swapped underneath it."""
+    tool = ShellTool()
 
-    Applying it here would refuse every call on both of today's rungs, which is the exact
-    opposite of the promise that this stage is byte-for-byte what shipped before.
-    """
-    # ``build_child_env()``, not ``dict(os.environ)``. The executor no longer computes the
-    # environment — the launch carries it — so this is the shape a host reads and copies, and
-    # the raw process environment carries agentao's own provider credentials into the child.
-    launch = LegacyLaunch(
-        command="exit 7",
-        cwd=AbsPath(str(tmp_path)),
-        env=MappingProxyType(build_child_env()),
-        spec_fingerprint=Sha256("fp"),
-    )
-    assert LocalShellExecutor().run(ShellRequest(launch=launch, timeout=30)).returncode == 7
+    class Old:
+        def run(self, request):  # pragma: no cover - never reached
+            raise AssertionError
+
+        def run_background(self, request):  # pragma: no cover - never reached
+            raise AssertionError
+
+    tool.shell = Old()
+    first = tool.shell_spec
+    assert tool.shell_spec is first
+    tool.shell = Old()
+    assert tool.shell_spec is not first
 
 
-# ------------------------------------------------------------------ TOOL-01
+# --------------------------------------------------------- the registration guard
 
 
 def test_a_replacement_shell_tool_without_a_spec_is_refused_by_name():
-    """TOOL-01: the floor gates on this name, so the name is where the guard belongs."""
+    """The floor gates on this tool's name, so the name is where the guard belongs."""
 
     class BareTool:
         name = "run_shell_command"
@@ -377,7 +191,7 @@ def test_a_replacement_shell_tool_without_a_spec_is_refused_by_name():
 
 
 def test_the_guard_does_not_evaluate_the_provider_while_registering():
-    """A provider that walks a ladder can be slow, and one that raises is not "absent"."""
+    """A provider that walks the filesystem can be slow, and one that raises is not "absent"."""
 
     class Exploding:
         name = "run_shell_command"
@@ -394,14 +208,12 @@ def test_the_real_shell_tool_satisfies_its_own_guard():
     ToolRegistry().register(ShellTool())
 
 
-# ------------------------------------------------------------------ SPEC-08, TOOL-04
+# ----------------------------------------------------------- the decided record
 
 
-def decided(body: str, cwd: str, verdict=None):
-    from agentao.capabilities.shell_spec import DecidedCall, PASS
-
+def decided(body: str, cwd: str, verdict=None, spec=None) -> DecidedCall:
     return DecidedCall(
-        spec=default_spec(local=True),
+        spec=default_spec() if spec is None else spec,
         body=body,
         cwd=AbsPath(cwd),
         verdict=verdict or PASS,
@@ -410,7 +222,7 @@ def decided(body: str, cwd: str, verdict=None):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX exit code in the probe")
 def test_the_launch_runs_the_body_that_was_judged_not_the_argument():
-    """SPEC-08b: re-reading `command` at the launch would be a second source for the text.
+    """Re-reading ``command`` at the launch would be a second source for the text.
 
     The two disagree here on purpose. A tool that prefers its own argument is a channel that
     gets one command approved and runs another under the same verdict.
@@ -425,9 +237,7 @@ def test_the_launch_runs_the_body_that_was_judged_not_the_argument():
 
 
 def test_a_record_carrying_a_deny_refuses_at_the_launch():
-    """SPEC-08b: a record being present is not the same as this call having been allowed."""
-    from agentao.capabilities.shell_spec import Deny
-
+    """A record being present is not the same as this call having been allowed."""
     out = ShellTool().execute(
         command="echo hi",
         working_directory=".",
@@ -437,37 +247,37 @@ def test_a_record_carrying_a_deny_refuses_at_the_launch():
     assert out.startswith("Error: permission:denied")
 
 
-def test_an_exhausted_provider_denies_before_any_pattern_is_matched():
-    """LADDER-03: the reason names why no rung was established, not what the text contained."""
-    from agentao.permissions_hardline import hardline_check
+def test_the_launch_carries_the_spec_the_decision_froze_not_a_second_read():
+    """One spec governs the decision *and* the launch.
 
-    reason = hardline_check(
-        "run_shell_command", {"command": "echo hi"}, shell_spec=Exhausted("every rung refused")
+    Re-reading the provider inside the launch builder is the same second source the body is
+    protected from, one field over: the process would start under whatever re-resolution had
+    swapped in, while the verdict was computed against the frozen spec.
+    """
+    frozen = posix_spec(interpreter=AbsPath("/bin/decided"))
+    seen = []
+
+    class Recording:
+        shell_spec = posix_spec(interpreter=AbsPath("/bin/current"))
+
+        def run(self, request):
+            seen.append(request.launch)
+            return ShellResult(returncode=0, stdout=b"", stderr=b"", timed_out=False)
+
+        def run_background(self, request):  # pragma: no cover - never reached
+            raise AssertionError
+
+    tool = ShellTool()
+    tool.shell = Recording()
+    tool.execute(
+        command="echo hi", working_directory=".", timeout=5,
+        _decided=decided("echo hi", ".", spec=frozen),
     )
-    assert reason == "hardline:no-trusted-rung-opaque:every rung refused"
-
-
-def test_an_illegal_spec_reaching_the_floor_is_refused_there_too():
-    """SPEC-02: construction checks the specs agentao builds; this catches the others."""
-    from agentao.permissions_hardline import hardline_check
-
-    smuggled = dataclasses.replace(posix_spec(), rung=Rung.cmd)
-    assert hardline_check("run_shell_command", {"command": "echo hi"}, shell_spec=smuggled) == (
-        "hardline:unknown-rung-opaque"
-    )
-
-
-def test_a_legal_spec_does_not_change_what_the_floor_says_about_the_text():
-    """The floor still reads the body — naming the dialect must not become a bypass."""
-    from agentao.permissions_hardline import hardline_check
-
-    args = {"command": "rm -rf /"}
-    assert hardline_check("run_shell_command", args) is not None
-    assert hardline_check("run_shell_command", args, shell_spec=posix_spec()) is not None
+    assert seen[0].executable == "/bin/decided"
 
 
 def test_a_hook_rewrite_moves_the_record_with_the_arguments():
-    """SPEC-08a: replaced whole. Swapping the arguments alone would launch the original.
+    """Replaced whole. Swapping the arguments alone would launch the original.
 
     That is the one outcome the rewrite path names as the thing it must never do: a hook
     that replaces a command has already said the original must not run.
@@ -488,7 +298,9 @@ def test_a_hook_rewrite_moves_the_record_with_the_arguments():
     runner._planner = _PlannerStub()
     runner.readonly_mode = False
     runner._logger = _LoggerStub()
-    ToolRunner._apply_updated_input(runner, plan, {"command": "echo safe", "working_directory": "."})
+    ToolRunner._apply_updated_input(
+        runner, plan, {"command": "echo safe", "working_directory": "."}
+    )
 
     assert plan.function_args["command"] == "echo safe"
     assert plan.decided.body == "echo safe"
@@ -506,7 +318,43 @@ class _LoggerStub:
         pass
 
 
-# ------------------------------------------------------------------ PR-5
+# ------------------------------------------------------------- what the floor sees
+
+
+def test_an_unresolvable_shell_denies_before_any_pattern_is_matched():
+    """The reason names why no interpreter was established, not what the text contained.
+
+    The tool stays registered through this, deliberately: telling the model the call was
+    refused is a different and better answer than telling it shells do not exist.
+    """
+    from agentao.permissions_hardline import hardline_check
+
+    reason = hardline_check(
+        "run_shell_command", {"command": "echo hi"}, shell_spec=Exhausted("no powershell here")
+    )
+    assert reason == "hardline:no-shell-opaque:no powershell here"
+
+
+def test_an_illegal_spec_reaching_the_floor_is_refused_there_too():
+    """Construction checks the specs agentao builds; this catches the ones it does not."""
+    from agentao.permissions_hardline import hardline_check
+
+    smuggled = dataclasses.replace(posix_spec(), dialect=ShellDialect.UNKNOWN)
+    assert hardline_check("run_shell_command", {"command": "echo hi"}, shell_spec=smuggled) == (
+        "hardline:unknown-dialect-opaque"
+    )
+
+
+def test_a_legal_spec_does_not_change_what_the_floor_says_about_the_text():
+    """The floor still reads the body — naming the dialect must not become a bypass."""
+    from agentao.permissions_hardline import hardline_check
+
+    args = {"command": "rm -rf /"}
+    assert hardline_check("run_shell_command", args) is not None
+    assert hardline_check("run_shell_command", args, shell_spec=posix_spec()) is not None
+
+
+# -------------------------------------------------------------- the prompt's dialect
 
 
 @pytest.mark.parametrize(
@@ -518,7 +366,7 @@ class _LoggerStub:
     ],
 )
 def test_the_guidelines_speak_the_dialect_that_will_run_them(dialect, present, absent):
-    """PR-5: advice in the wrong shell's syntax teaches a command that fails.
+    """Advice in the wrong shell's syntax teaches a command that fails.
 
     The model then spends its next turn recovering from what this prompt told it, which is
     worse than saying nothing shell-specific at all.
@@ -539,228 +387,101 @@ def test_an_unknown_dialect_falls_back_to_what_the_text_said_before():
     )
 
 
-# ------------------------------------------------- the guards these fixes restored
+# ----------------------------------------------------------------- the description
 
 
-def test_an_executor_predating_the_spec_member_still_satisfies_the_protocol():
-    """The promise is "hosts written before this member existed keep working unchanged".
+def test_the_description_names_the_interpreter_the_spec_resolved(monkeypatch):
+    """The description is the model's only statement of which syntax to write.
 
-    ``ShellExecutor`` is ``@runtime_checkable``, and a non-method member is not a smaller
-    version of that promise — it makes ``issubclass()`` raise ``TypeError`` for everyone and
-    flips ``isinstance()`` to ``False`` for every executor that predates it. The declaration
-    is an optional companion protocol (``ShellSpecProvider``) for exactly that reason.
+    Saying ``cmd /c`` while PowerShell reads the text is not a cosmetic mismatch: cmd and
+    PowerShell disagree about quoting, redirection and the name of every builtin, so the
+    model writes the wrong thing on every call.
     """
-    from agentao.capabilities.shell import ShellExecutor
+    tool = ShellTool()
 
-    class OldExecutor:
+    class Powershell:
+        shell_spec = ShellSpec(
+            dialect=ShellDialect.POWERSHELL,
+            interpreter=AbsPath(r"C:\Program Files\PowerShell\7\pwsh.exe"),
+        )
+
         def run(self, request):  # pragma: no cover - never reached
             raise AssertionError
 
         def run_background(self, request):  # pragma: no cover - never reached
             raise AssertionError
 
-    assert issubclass(OldExecutor, ShellExecutor)
-    assert isinstance(OldExecutor(), ShellExecutor)
-    assert isinstance(LocalShellExecutor(), ShellExecutor)
+    tool.shell = Powershell()
+    assert "pwsh.exe" in tool.description
+    assert "cmd /c" not in tool.description
+    assert "pwsh.exe" in tool.parameters["properties"]["command"]["description"]
+
+
+def test_the_display_name_never_invents_an_interpreter():
+    """An unresolved shell still has to be described, and the platform default is the honest
+    answer — not a blank, and not the name of something nobody found."""
+    assert display_name(Exhausted("nope"), windows=True) == "cmd"
+    assert display_name(None, windows=False) == "sh"
+    assert display_name(ShellSpec(dialect=ShellDialect.POWERSHELL), windows=True) == "powershell"
+
+
+# ------------------------------------------------------------- launch refusals
 
 
 def test_a_launch_refusal_is_not_reported_as_a_failed_start(tmp_path):
-    """LAUNCH-01b: a launch-stage denial is "never a tool error the model would retry".
+    """A launch-stage denial must never read as a transient failure.
 
     Both faces used to catch it in their broad ``except Exception`` and hand back
-    ``Error starting command: …`` — the shape of a transient failure, which invites exactly
-    the retry the rule forbids.
+    ``Error starting command: …`` — the shape of something the model retries, which is the
+    one response a denial must not invite.
     """
-    _, launch = _attested(tmp_path, images=())
 
-    class Attesting(LocalShellExecutor):
+    class Refusing(LocalShellExecutor):
         def run(self, request):
-            return LocalShellExecutor.run(self, ShellRequest(launch=launch))
+            raise LaunchRefused(Deny("command not launchable: too long"))
 
         def run_background(self, request):
-            return LocalShellExecutor.run_background(self, ShellRequest(launch=launch))
+            raise LaunchRefused(Deny("command not launchable: too long"))
 
     tool = ShellTool()
-    tool.shell = Attesting()
-    for out in (tool._run_foreground("echo hi", tmp_path, 5), tool._run_background("echo hi", tmp_path)):
-        assert out.startswith("Error: hardline:launch-attest:")
+    tool.shell = Refusing()
+    for out in (
+        tool._run_foreground("echo hi", tmp_path, 5),
+        tool._run_background("echo hi", tmp_path),
+    ):
+        assert out.startswith("Error: command not launchable")
         assert "starting" not in out
 
 
-def test_a_publisher_trust_entry_is_refused_while_nothing_can_verify_a_signer(tmp_path):
-    """LAUNCH-01d: "a check that cannot be performed" refuses.
+def test_a_legacy_launch_carries_exactly_what_it_needs_and_nothing_else():
+    """Four fields, and ``executable`` is the one that changed: the interpreter the user
+    named used to stop at the spec and never reach the spawn."""
+    names = {f.name for f in dataclasses.fields(LegacyLaunch)}
+    assert names == {"command", "cwd", "env", "executable"}
+    launch = LegacyLaunch(command="x", cwd=AbsPath("/"), env=MappingProxyType({}))
+    assert launch.executable is None
 
-    Publisher trust attests the signer, and nothing in tree verifies one — so accepting the
-    entry is a pass with no check behind it, for an image whose bytes may have changed.
-    """
-    exe = tmp_path / "interp"
-    exe.write_bytes(b"#!/bin/sh\nexit 0\n")
-    _, launch = _attested(
-        tmp_path,
-        images=(image(str(exe), fs=local_filesystem_identity(str(exe)), pin=PublisherTrust(signer="Acme")),),
+
+def test_a_shell_request_shows_the_command_for_either_launch_shape():
+    """Displays and the background handle read one projection, so the two cannot drift."""
+    from agentao.capabilities.shell_spec import WindowsLaunch
+
+    legacy = ShellRequest(
+        launch=LegacyLaunch(command="echo hi", cwd=AbsPath("/"), env=MappingProxyType({}))
     )
-    deny = verify_attested_launch(launch)
-    assert deny is not None and "unverifiable-content-identity" in deny.reason
-
-
-def test_a_hash_pin_minted_for_another_path_does_not_answer_for_this_one(tmp_path):
-    """IMG-03: a pin names the path it was taken for; comparing bytes across paths proves nothing."""
-    exe = tmp_path / "interp"
-    exe.write_bytes(b"#!/bin/sh\nexit 0\n")
-    stray = HashPin(path=AbsPath(str(tmp_path / "somewhere-else")), sha256=local_content_hash(str(exe)))
-    _, launch = _attested(
-        tmp_path, images=(image(str(exe), fs=local_filesystem_identity(str(exe)), pin=stray),)
+    named = ShellRequest(
+        launch=WindowsLaunch(
+            application_name=AbsPath("pwsh.exe"),
+            command_line="pwsh.exe -EncodedCommand AAA=",
+            cwd=AbsPath("/"),
+            env=MappingProxyType({}),
+        )
     )
-    deny = verify_attested_launch(launch)
-    assert deny is not None and "content-identity" in deny.reason
+    assert legacy.command == "echo hi"
+    assert named.command == "pwsh.exe -EncodedCommand AAA="
 
 
-def test_an_unidentifiable_file_is_not_given_an_identity(monkeypatch, tmp_path):
-    """SPEC-04: ``st_ino`` identifies a file only when non-zero, and Windows reports zero.
-
-    Passing it through hands every such file the identity ``<dev>:0``, so a swap between two
-    of them compares equal — a check reporting clean while proving nothing.
-    """
-    exe = tmp_path / "interp"
-    exe.write_bytes(b"x")
-    real = os.stat
-
-    class _Zero:
-        st_dev = 7
-        st_ino = 0
-
-    monkeypatch.setattr(os, "stat", lambda p, *a, **k: _Zero() if str(p) == str(exe) else real(p, *a, **k))
-    assert local_filesystem_identity(str(exe)) is None
-
-
-def test_the_launch_carries_the_spec_the_decision_froze_not_a_second_read():
-    """TOOL-04 / SPEC-08: one spec governs the decision *and* the launch.
-
-    Re-reading the provider inside the launch builder is the same second source SPEC-08b
-    closes for the body, one field over: the fingerprint would describe whatever
-    re-resolution had swapped in, while the verdict was computed against the frozen spec.
-    """
-    frozen = posix_spec(explicit_shell=AbsPath("/bin/decided"))
-    seen = []
-
-    class Recording:
-        shell_spec = posix_spec(explicit_shell=AbsPath("/bin/current"))
-
-        def run(self, request):
-            seen.append(request.launch)
-            from agentao.capabilities.shell import ShellResult
-
-            return ShellResult(returncode=0, stdout=b"", stderr=b"", timed_out=False)
-
-        def run_background(self, request):  # pragma: no cover - never reached
-            raise AssertionError
-
-    tool = ShellTool()
-    tool.shell = Recording()
-    tool.execute(command="echo hi", working_directory=".", timeout=5,
-                 _decided=dataclasses.replace(decided("echo hi", "."), spec=frozen))
-    assert seen[0].spec_fingerprint == frozen.fingerprint
-    assert seen[0].spec_fingerprint != Recording.shell_spec.fingerprint
-
-
-def test_a_raising_provider_is_a_failure_not_an_absent_declaration():
-    """``getattr(x, "shell_spec", None)`` swallows an ``AttributeError`` raised *inside* the
-    property, which reads as "declares nothing" and quietly reports the platform default for
-    an executor whose resolution actually failed. The planner turns a raise into ``Exhausted``.
-    """
-    from agentao.runtime.tool_planning import _shell_spec_of
-
-    class Broken:
-        @property
-        def shell_spec(self):
-            raise AttributeError("resolution failed")
-
-        def run(self, request):  # pragma: no cover - never reached
-            raise AssertionError
-
-        def run_background(self, request):  # pragma: no cover - never reached
-            raise AssertionError
-
-    tool = ShellTool()
-    tool.shell = Broken()
-    with pytest.raises(AttributeError):
-        tool.shell_spec
-    assert isinstance(_shell_spec_of(tool), Exhausted)
-
-
-def test_the_fallback_spec_is_one_object_per_executor():
-    """SPEC-07b: a call holds one spec object until re-resolution swaps it.
-
-    Minting a fresh one on every read — and paying a ``geteuid`` plus a sha256 each time —
-    is not that; the local executor is already tested for the same property.
-    """
-
-    class OldExecutor:
-        def run(self, request):  # pragma: no cover - never reached
-            raise AssertionError
-
-        def run_background(self, request):  # pragma: no cover - never reached
-            raise AssertionError
-
-    tool = ShellTool()
-    tool.shell = OldExecutor()
-    first = tool.shell_spec
-    assert first is tool.shell_spec
-    tool.shell = OldExecutor()  # a different executor re-answers rather than reusing the cache
-    assert tool.shell_spec is not first
-
-
-def test_turning_the_ladder_on_selects_a_rung_instead_of_raising(monkeypatch):
-    """PR-7a: the ladder is reachable now, so this function selects rather than refuses.
-
-    It used to raise ``NotImplementedError`` — deliberately, because a constant that changes
-    nothing when flipped is worse than no constant. That answer stopped being honest once the
-    ladder could actually run, and the replacement has to be a *verdict*: an exception inside
-    the floor carries no reason and is not on the DENY channel at all (method rule 22).
-
-    Off this host the verdict is `Exhausted`, because a Windows target needs the native
-    oracle and there is not one here. That is the same shape a real Windows host produces
-    when the ladder runs empty, which is what LADDER-03 turns into a refusal.
-    """
-    import os
-
-    import agentao.capabilities.shell_spec as ss
-
-    monkeypatch.setattr(ss, "LADDER_FLIPPED", True)
-    out = ss.default_spec(windows=True)
-
-    # The claim is about the *channel*: a verdict, not an exception. The reason legitimately
-    # differs by host and the first version of this test asserted the one it happened to run
-    # on — off Windows there is no native oracle to build, while on Windows the ladder really
-    # runs and then refuses, because the CI token is an elevated administrator whose trusted
-    # set is empty by design (evidence §3.23). Both are this function working.
-    assert isinstance(out, ss.Exhausted), out
-    if os.name == "nt":
-        assert "rung" in out.reason, out.reason
-    else:
-        assert "oracle" in out.reason, out.reason
-
-
-@pytest.mark.skipif(os.name == "nt", reason="the guard under test is the non-Windows branch")
-def test_a_windows_target_on_a_posix_host_refuses_before_it_touches_ctypes():
-    """The guard is on the *host*, and it has to sit before both calls rather than between.
-
-    ``native_oracle`` answers ``None`` off Windows by contract, but ``token_sid`` is bare
-    ``ctypes`` with no such guard and raises ``AttributeError`` on its first ``WinDLL``. An
-    exception is not a verdict, so the order of these two matters.
-
-    Skipped on Windows rather than generalised: there is no POSIX host there to test.
-    """
-    from agentao.capabilities.shell_spec import Exhausted, ShellBlock, default_spec
-
-    out = default_spec(ShellBlock(ladder=True), windows=True)
-    assert isinstance(out, Exhausted) and "oracle" in out.reason
-
-
-def test_the_posix_target_says_so_rather_than_reporting_an_empty_ladder():
-    """LADDER-01 is a Windows ladder. Answering `Exhausted` with a Windows reason on Linux
-    would send a reader looking for an interpreter that was never in question."""
-    from agentao.capabilities.shell_spec import Exhausted, ShellBlock, default_spec
-
-    out = default_spec(ShellBlock(ladder=True), windows=False)
-    assert isinstance(out, Exhausted) and "Windows-only" in out.reason
+def test_an_unconfigured_block_is_the_same_answer_as_no_block():
+    """A ``shell`` key that names nothing must not change what runs."""
+    assert default_spec(ShellBlock(), windows=True) == default_spec(windows=True)
+    assert default_spec(ShellBlock(), windows=False) == default_spec(windows=False)

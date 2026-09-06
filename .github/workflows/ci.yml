@@ -32,9 +32,6 @@ jobs:
       - name: Verify host schemas match agentao/host/models.py + agentao/acp/schema.py
         run: uv run --python 3.12 python scripts/write_host_schema.py --check
 
-      - name: Verify the split design-document sets hold together (rule IDs, gates, PRs, structure)
-        run: uv run --python 3.12 python scripts/check_design_set.py
-
   # ─────────────────────────────────────────────────────────────
   # Job 0b · P0.4 typing gate — mypy --strict on agentao.host
   # ─────────────────────────────────────────────────────────────
@@ -134,15 +131,12 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   # The first Windows coverage this repository has ever had. Everything above
   # runs on ubuntu, so every Windows-only path — path separators, `%COMSPEC%`,
-  # `list2cmdline`, the console encoding, `NoDefaultCurrentDirectoryInExePath`
-  # — has been shipped unmeasured. That is the finding this job closes, and it
-  # is also PR-6 of the PowerShell ladder: the rungs are designed for Windows
-  # and the flip (PR-7) is gated on this job being green (LADDER-04).
+  # `list2cmdline`, the console encoding — had been shipped unmeasured.
   #
-  # It installs the same extras as the ubuntu `test` job **plus** the two
-  # tree-sitter packages, which `pyproject.toml` marks `sys_platform == 'win32'`
-  # — so this is the only job where the PowerShell lowering tests actually
-  # execute rather than skip.
+  # It is also where PowerShell support is actually exercised: discovery, the
+  # `-EncodedCommand` launch, the exit-code trailer, the console encoding and
+  # the CLIXML unwrapping are all Windows facts, and everywhere else they can
+  # only be asserted as shapes.
   windows:
     name: Test · Windows · Python ${{ matrix.python-version }}
     runs-on: windows-latest
@@ -170,20 +164,18 @@ jobs:
         run: |
           uv run --python ${{ matrix.python-version }} python -c "import shutil; print('pwsh:', shutil.which('pwsh')); print('powershell:', shutil.which('powershell')); print('cmd:', shutil.which('cmd')); print('bash:', shutil.which('bash'))"
 
-      # Two steps, so a red run is readable. The ladder's own modules are written
-      # for Windows and are expected to pass; the full suite has never run here
-      # at all, and its first result is a measurement rather than a regression.
-      # Failing the first step means the ladder is broken; failing only the
-      # second means the pre-existing suite has met Windows for the first time.
-      - name: Run the ladder's own tests
+      # Two steps, so a red run is readable. The shell modules are written for
+      # Windows and are expected to pass; failing the first step means the
+      # shell support is broken, and failing only the second means something
+      # else in the suite met Windows.
+      - name: Run the shell and PowerShell tests
         run: >
           uv run --python ${{ matrix.python-version }} python -m pytest -v --tb=short
-          tests/test_shell_spec.py tests/test_shell_config.py tests/test_cmd_floor.py
-          tests/test_bash_gate.py tests/test_wrappers.py tests/test_effect_table.py
-          tests/test_powershell_lowering.py tests/test_trusted_resolution.py
-          tests/test_closed_set.py tests/test_windows_launch_matrix.py
-          tests/test_attested_launch_smoke.py tests/test_powershell_contracts.py
-          tests/test_windows_identity_oracle.py
+          tests/test_shell_spec.py tests/test_shell_config.py
+          tests/test_shell_tool_shell_dialect.py tests/test_explicit_shell_path.py
+          tests/test_powershell_discovery.py tests/test_powershell_launch.py
+          tests/test_powershell_floor.py tests/test_powershell_output.py
+          tests/test_powershell_lowering.py tests/test_windows_launch_matrix.py
 
       - name: Run the full suite
         run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short

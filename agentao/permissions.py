@@ -75,7 +75,7 @@ _REASON_INJECTED = "injected"
 # which is exactly the failure mode above.
 _LEGAL_RULE_FIELDS: Tuple[str, ...] = ("action", "args", "dialect", "domain", "tool")
 
-# TOOL-02. The label names a *dialect*, never a rung: `posix` covers both the Git Bash rung
+# The label names a *dialect*, never an interpreter: `posix` covers Git Bash
 # and the system shell, because what a regular expression can read is decided by the syntax,
 # not by which interpreter was selected. A rule written for bash, applied to PowerShell text,
 # neither allows nor denies the right thing — it simply fails to match, and a floor that
@@ -213,11 +213,11 @@ def _dialect_errors(dialect: Any) -> List[str]:
 
 
 def rule_matches_dialect(rule: Dict[str, Any], dialect: Optional[str]) -> bool:
-    """TOOL-02: whether a rule applies to the dialect this call will run in.
+    """Whether a rule applies to the dialect this call will run in.
 
     An unlabelled rule matches everything, which keeps every rule written before the label
     existed working exactly as it did. That permissiveness is the reason for the other half
-    of TOOL-02: an unlabelled rule carrying an ``args.command`` condition is *unspecified*
+    of the label: an unlabelled rule carrying an ``args.command`` condition is *unspecified*
     rather than universal, and a PowerShell rung refuses to be built while one exists.
 
     A *labelled* rule against an **unknown** dialect does not match. The label is its author
@@ -234,14 +234,18 @@ def rule_matches_dialect(rule: Dict[str, Any], dialect: Optional[str]) -> bool:
 
 
 def unspecified_shell_rules(rules: Any) -> List[Tuple[int, Dict[str, Any]]]:
-    """TOOL-02: the rules a PowerShell rung cannot be built alongside.
+    """The rules whose syntax is unknown, which selecting PowerShell makes ambiguous.
 
     A rule that matches on ``args.command`` was written against *some* shell's syntax, and
     which one is not recorded anywhere. On POSIX and cmd it keeps working, because that is
-    what it has always done and this design does not break configurations that predate it.
+    what it has always done and nothing here breaks configurations that predate the label.
     On PowerShell there is no safe reading: applying it is applying a pattern to a language
     it was not written for, and skipping it silently drops a rule its author is relying on.
-    So the rung refuses to exist, naming every such rule and all four labels.
+
+    So they are named and reported — see
+    ``agentao.embedding.permission_loader._warn_on_unlabelled_shell_rules``, the one caller.
+    Refusing the interpreter over them would make PowerShell unreachable for almost everyone,
+    since an unlabelled command rule is the ordinary kind.
     """
     offenders: List[Tuple[int, Dict[str, Any]]] = []
     if not isinstance(rules, list):
@@ -791,7 +795,7 @@ class PermissionEngine:
         dialect = getattr(getattr(shell_spec, "dialect", None), "value", None)
         for rules, source in sources:
             for rule in rules:
-                # TOOL-02 before anything else about the rule: a label that does not name
+                # The dialect label before anything else about the rule: a label that does not name
                 # this call's dialect means the rule was written for a different language,
                 # and a pattern from another language does not fail loudly here — it fails
                 # to match, which reads as "no rule applied".

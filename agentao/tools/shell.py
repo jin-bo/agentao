@@ -12,17 +12,21 @@ IS_MACOS = sys.platform == "darwin"
 
 from .base import Tool, _declares_shell_spec
 from ..capabilities import BackgroundHandle, LocalShellExecutor, ShellRequest, ShellResult
+from ..capabilities import powershell as ps
 from ..capabilities.process import build_child_env
 from ..capabilities.shell_spec import (
     AbsPath,
     DecidedCall,
     Deny,
     Exhausted,
+    LaunchRequest,
     LaunchRefused,
     LegacyLaunch,
-    Sha256,
+    ShellDialect,
     ShellSpec,
+    WindowsLaunch,
     default_spec,
+    display_name,
 )
 from ..capabilities.shell import (
     _is_binary,
@@ -166,11 +170,7 @@ class ShellTool(Tool):
             "- Signal: only included if the process was killed by a signal.\n"
             "- Background PGID: only included when is_background=true."
         )
-        shell_desc = (
-            "cmd /c <command>"
-            if IS_WINDOWS
-            else f"{shell_display_name()} -c <command>"
-        )
+        shell_desc = self._invocation()
         stop_desc = (
             "taskkill /F /PID <PID>" if IS_WINDOWS
             else "`kill -- -PGID` or signaled as `kill -s SIGNAL -- -PGID`"
@@ -192,9 +192,7 @@ class ShellTool(Tool):
                 "command": {
                     "type": "string",
                     "description": (
-                        "Exact command to execute. On Unix runs as "
-                        f"`{shell_display_name()} -c <command>`; "
-                        "on Windows runs as `cmd /c <command>`."
+                        f"Exact command to execute. Runs as `{self._invocation()}`."
                     ),
                 },
                 "description": {
@@ -235,6 +233,28 @@ class ShellTool(Tool):
             "required": ["command"],
         }
 
+    def _invocation(self) -> str:
+        """How this tool's command will actually be invoked, in one phrase.
+
+        Built from the resolved spec rather than from ``sys.platform``, because
+        the description is the model's only statement of which syntax to write.
+        Telling it ``cmd /c`` while PowerShell reads the text is not a cosmetic
+        mismatch — it is the model choosing the wrong syntax on every call, and
+        cmd and PowerShell disagree about quoting, redirection and every
+        builtin's name.
+        """
+        spec = self.shell_spec
+        if isinstance(spec, ShellSpec) and spec.dialect is ShellDialect.POWERSHELL:
+            return f"{display_name(spec, IS_WINDOWS)} -NoProfile -Command <command>"
+        if isinstance(spec, ShellSpec) and spec.interpreter:
+            return f"{spec.interpreter} -c <command>"
+        if IS_WINDOWS:
+            return "cmd /c <command>"
+        # ``shell_display_name()`` and not the imported resolver: the platform default has one
+        # definition point, in the module that also decides it, so the description cannot say
+        # bash while the executor starts ``/bin/sh``.
+        return f"{shell_display_name()} -c <command>"
+
     @property
     def requires_confirmation(self) -> bool:
         return True
@@ -257,13 +277,13 @@ class ShellTool(Tool):
         """
         decided_spec: "ShellSpec | Exhausted | None" = None
         if _decided is not None:
-            # SPEC-08b: what was judged is what runs. Re-reading ``command`` here would be a
+            # What was judged is what runs. Re-reading ``command`` here would be a
             # second source for the text, which is a channel that decides one command and
             # launches another through the same plan.
             if isinstance(_decided.verdict, Deny):
                 return f"Error: {_decided.verdict.reason}"
             command, cwd = _decided.body, Path(_decided.cwd)
-            # TOOL-04/SPEC-08: the spec too. Re-reading the provider down in
+            # The spec too. Re-reading the provider down in
             # ``_legacy_launch`` would be that same second source one field over — the launch
             # would carry the fingerprint of whatever re-resolution had swapped in since,
             # while the floor's verdict was computed against the frozen one.
@@ -317,12 +337,12 @@ class ShellTool(Tool):
 
     @property
     def shell_spec(self) -> "ShellSpec | Exhausted":
-        """TOOL-01 / TOOL-04: which interpreter this call will reach, read once per call.
+        """Which interpreter this call will reach, read once per call.
 
-        Delegated to the executor, which is the party that knows. An executor predating this
-        member is read as today's platform default rather than as a refusal — the ladder is
-        not running yet, so a refusal here would deny every shell call on hosts that have
-        changed nothing, which is the opposite of what this stage promises.
+        Delegated to the executor, which is the party that knows: a Docker or remote executor
+        starts a different interpreter on a different filesystem. An executor predating this
+        member is read as today's platform default rather than as a refusal — a refusal here
+        would deny every shell call on hosts that have changed nothing.
 
         The declaration is probed without evaluating it, then read directly: ``getattr`` with
         a default swallows an ``AttributeError`` raised *inside* a host's property, which
@@ -330,9 +350,9 @@ class ShellTool(Tool):
         executor whose resolution actually failed. A raising provider must reach the planner,
         which turns it into ``Exhausted``.
 
-        The fallback is memoised per executor. SPEC-07b says a call holds one spec object
-        until re-resolution swaps it; minting a fresh one on every read (and paying a
-        ``geteuid`` plus a sha256 each time) is not that.
+        The fallback is memoised per executor. A call holds one spec object until
+        re-resolution swaps it, and minting a fresh one on every read would put PowerShell
+        discovery — a filesystem walk — on the permission path of every shell command.
         """
         executor = self._get_shell()
         if _declares_shell_spec(executor):
@@ -349,37 +369,57 @@ class ShellTool(Tool):
             )
         if self._fallback_spec is None or self._fallback_for is not executor:
             self._fallback_for = executor
-            self._fallback_spec = default_spec(local=isinstance(executor, LocalShellExecutor))
+            self._fallback_spec = default_spec()
         return self._fallback_spec
 
-    def _legacy_launch(
+    def _launch(
         self, command: str, cwd: Path, spec: "ShellSpec | Exhausted | None" = None,
-    ) -> LegacyLaunch:
-        """LAUNCH-01c: the policy-off launch — field for field what the request carried before.
+    ) -> LaunchRequest:
+        """The launch this call runs: PowerShell if that is what was resolved, else today's.
 
-        The environment is still ``build_child_env()``: inherited minus agentao's own provider
-        credentials, so a command the model wrote cannot read the key back out. Nothing here
-        is new behaviour; what is new is that the fields now travel as a named launch shape
-        instead of being re-derived inside the executor.
+        The environment is ``build_child_env()`` on both paths — inherited minus agentao's own
+        provider credentials, so a command the model wrote cannot read the key back out — and
+        it is rebuilt per call, because an installer that edits ``PATH`` does not reach a
+        process that is already running.
 
-        ``spec`` is the one the decision was frozen against (SPEC-08a). It is a parameter
-        rather than a second read of the provider because a second read is a second answer:
-        one spec governs the decision *and* the launch, and the fingerprint below is the
-        thing that would otherwise silently describe the wrong one.
+        ``spec`` is the one the decision was frozen against. It is a parameter rather than a
+        second read of the provider because a second read is a second answer: one spec governs
+        the decision *and* the launch, and re-resolving here is how a body judged as
+        PowerShell ends up in cmd.
         """
         if spec is None:
             spec = self.shell_spec
-        fingerprint = spec.fingerprint if isinstance(spec, ShellSpec) else Sha256("")
+        env = MappingProxyType(build_child_env())
+        if (
+            isinstance(spec, ShellSpec)
+            and spec.dialect is ShellDialect.POWERSHELL
+            and spec.interpreter
+        ):
+            line = ps.command_line(spec.interpreter, command)
+            oversize = ps.oversize(line)
+            if oversize is not None:
+                # Refused rather than truncated or spilled to a temporary script: a cut inside
+                # the base64 changes what runs, and writing a file would run something the
+                # floor never scanned under a name nobody chose.
+                raise LaunchRefused(Deny(f"command not launchable: {oversize}"))
+            return WindowsLaunch(
+                application_name=AbsPath(spec.interpreter),
+                command_line=line,
+                cwd=AbsPath(str(cwd)),
+                env=env,
+            )
         return LegacyLaunch(
             command=command,
             cwd=AbsPath(str(cwd)),
-            env=MappingProxyType(build_child_env()),
-            spec_fingerprint=fingerprint,
-            # CFG-02c: the interpreter the user named travels all the way to the spawn. It
-            # used to stop at the spec — frozen into the fingerprint, then dropped, so
-            # ``shell.path`` chose an interpreter that never ran.
-            executable=spec.explicit_shell if isinstance(spec, ShellSpec) else None,
+            env=env,
+            # The interpreter the user named travels all the way to the spawn. It used to stop
+            # at the spec, so ``shell.path`` chose an interpreter that never ran.
+            executable=spec.interpreter if isinstance(spec, ShellSpec) else None,
         )
+
+    @staticmethod
+    def _is_powershell(spec: "ShellSpec | Exhausted | None") -> bool:
+        return isinstance(spec, ShellSpec) and spec.dialect is ShellDialect.POWERSHELL
 
     # ------------------------------------------------------------------
     # Background execution
@@ -388,10 +428,14 @@ class ShellTool(Tool):
     def _run_background(
         self, command: str, cwd: Path, spec: "ShellSpec | Exhausted | None" = None,
     ) -> str:
-        """Start command detached; return PID (and PGID on Unix) immediately."""
+        """Start command detached; return PID (and PGID on Unix) immediately.
+
+        Everything reported back names ``command`` — the body the model wrote — never the
+        launch's own command line, which for PowerShell is base64 and tells a reader nothing.
+        """
         try:
             handle: BackgroundHandle = self._get_shell().run_background(
-                ShellRequest(launch=self._legacy_launch(command, cwd, spec))
+                ShellRequest(launch=self._launch(command, cwd, spec))
             )
         except NotImplementedError:
             return (
@@ -399,7 +443,7 @@ class ShellTool(Tool):
                 "Run this command with is_background=false."
             )
         except LaunchRefused as refusal:
-            # LAUNCH-01b: this is a denial in the floor's own reason vocabulary, and it must
+            # This is a denial, and it must
             # not read as a transient start failure. The broad handler below would wrap it in
             # "Error starting background command: …", which is the shape of something a model
             # retries — so it is caught first and reported exactly like the frozen record's
@@ -437,36 +481,56 @@ class ShellTool(Tool):
         try:
             result: ShellResult = self._get_shell().run(
                 ShellRequest(
-                    launch=self._legacy_launch(command, cwd, spec),
+                    launch=self._launch(command, cwd, spec),
                     timeout=timeout,
                     on_chunk=self.output_callback,
                 )
             )
         except LaunchRefused as refusal:
-            # LAUNCH-01b, same as the background face: a launch-stage refusal surfaces in the
+            # Same as the background face: a launch-stage refusal surfaces in the
             # floor's vocabulary, never as "Error starting command: …".
             return f"Error: {refusal.deny.reason}"
         except Exception as e:
             return f"Error starting command: {e}"
 
         if result.timed_out:
-            partial = _decode(result.stdout + result.stderr)
+            # The two streams are decoded apart and only then joined: a CLIXML wrapper appears
+            # on whichever one it appears on, and merging first would leave the extraction
+            # looking for a structure that no longer starts where it starts. Partial output is
+            # exactly where the wrapper is unterminated, so this usually reports the truncation
+            # rather than unwrapping — which is the honest answer and better than raw XML.
+            parts = [_decode(result.stdout), _decode(result.stderr)]
+            if self._is_powershell(spec):
+                parts = [ps.extract(p, _MAX_OUTPUT_CHARS) for p in parts]
+            partial = "".join(p for p in parts if p)
             msg = f"Command timed out after {timeout:.0f}s of inactivity.\nCommand: {command}"
             if partial:
                 msg += f"\n\nPartial output before timeout:\n{partial}"
             return msg
 
-        return self._format_result(result.returncode, result.stdout, result.stderr)
+        return self._format_result(
+            result.returncode, result.stdout, result.stderr, powershell=self._is_powershell(spec),
+        )
 
     # ------------------------------------------------------------------
     # Output formatting
     # ------------------------------------------------------------------
 
     def _format_result(
-        self, returncode: int, stdout_raw: bytes, stderr_raw: bytes
+        self, returncode: int, stdout_raw: bytes, stderr_raw: bytes,
+        powershell: bool = False,
     ) -> str:
         stdout_str = _decode(stdout_raw)
         stderr_str = _decode(stderr_raw)
+
+        if powershell:
+            # Windows PowerShell 5.1 serialises a *redirected* error stream as CLIXML, and
+            # agentao always redirects — so without this the model reads an XML envelope
+            # instead of the error. The two streams stay separate: the wrapper appears on
+            # whichever one it appears on, and merging them to find it would lose which was
+            # which.
+            stdout_str = ps.extract(stdout_str, _MAX_OUTPUT_CHARS)
+            stderr_str = ps.extract(stderr_str, _MAX_OUTPUT_CHARS)
 
         # Clean up carriage-return sequences and ANSI codes before sending to LLM.
         # Progress bars use \r to overwrite lines in a terminal; without this,

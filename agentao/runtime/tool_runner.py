@@ -460,7 +460,7 @@ class ToolRunner:
         """
         previous = plan.decision
         candidate = dict(updated)
-        # TOOL-04/SPEC-08: the re-decision reads the *same* spec the first decision was
+        # The re-decision reads the *same* spec the first decision was
         # frozen against, never a second read of the provider. Omitting it entirely was the
         # real defect: with ``shell_spec=None`` the floor skips ``_spec_refusal`` (an
         # ``Exhausted`` provider stops denying) and falls back to the POSIX regex patterns,
@@ -505,11 +505,11 @@ class ToolRunner:
             plan.decision = new_decision
             plan.permission_detail = new_detail
         if plan.decided is not None:
-            # SPEC-08a: replaced whole, never edited field by field, and it is the record the
+            # Replaced whole, never edited field by field, and it is the record the
             # re-decision was actually made against — swapping the arguments and leaving the
             # record alone would launch the body the hook was replacing, under the verdict
             # computed for the one that replaced it. The spec is carried over rather than
-            # re-read: one spec object governs the decision and the launch (SPEC-08).
+            # re-read: one spec object governs the decision and the launch.
             plan.decided = (
                 _denied(candidate_record)
                 if plan.decision is ToolCallDecision.DENY

@@ -160,9 +160,8 @@ def test_bash_only_syntax_now_runs(tmp_path):
 
 
 def test_windows_description_names_cmd(monkeypatch, tmp_path):
-    """The Windows wording is unconditional, so it can be checked anywhere:
-    ``shell=True`` there means ``%COMSPEC% /c`` and is deliberately left
-    alone — ``executable=`` would replace cmd.exe, not pick a dialect."""
+    """With nothing configured, Windows still says cmd: ``shell=True`` there means
+    ``%COMSPEC% /c``, and that default is deliberately unchanged."""
     monkeypatch.setattr("agentao.tools.shell.IS_WINDOWS", True)
     tool = _make_tool(tmp_path)
     for label, text in _descriptions(tool):
@@ -171,8 +170,10 @@ def test_windows_description_names_cmd(monkeypatch, tmp_path):
 
 @pytest.mark.skipif(IS_WINDOWS, reason="POSIX-only")
 def test_windows_resolver_returns_none(monkeypatch):
-    """``executable=`` on Windows replaces cmd.exe rather than selecting a
-    dialect, so the resolver must decline there."""
+    """The resolver probes for a better POSIX shell, which is meaningless on Windows.
+
+    The interpreter is chosen there by configuration — ``LegacyLaunch.executable``, which
+    ``shell=True`` substitutes for ``ComSpec`` — not by probing."""
     monkeypatch.setattr(shell_cap, "IS_WINDOWS", True)
     shell_cap.resolve_shell_executable.cache_clear()
     try:

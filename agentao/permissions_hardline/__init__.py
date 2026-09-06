@@ -30,25 +30,22 @@ Public API:
   contract.
 
 Layout (each row only depends on rows above):
-    _decode    ← _decode_ansi_c
-    _patterns  ← regex constants + REASON_HARDLINE + compiled table
-    _contexts  ← _position_contexts / _shell_word_normalize / etc.
-    _heredoc   ← here-doc masking
-    _scanner   ← _hardline_match + hardline_check (entry)
+    _decode      ← _decode_ansi_c
+    _patterns    ← regex constants + REASON_HARDLINE + compiled table
+    _contexts    ← _position_contexts / _shell_word_normalize / etc.
+    _heredoc     ← here-doc masking
+    _windows     ← the Windows dangerous table + PowerShell alias resolution
+    _powershell  ← tree-sitter lowering + the PowerShell floor
+    _scanner     ← generic_floor + hardline_check (entry)
 """
 
 from __future__ import annotations
 
 from ._patterns import REASON_HARDLINE
-from ._refusals import Refusal, RefusalFamily, classify_refusal, tally
-from ._scanner import hardline_check
+from ._scanner import generic_floor, hardline_check
 
 __all__ = [
     "hardline_check",
+    "generic_floor",
     "REASON_HARDLINE",
-    # G09-03: reading a distribution off the refusals the floor already emits.
-    "Refusal",
-    "RefusalFamily",
-    "classify_refusal",
-    "tally",
 ]

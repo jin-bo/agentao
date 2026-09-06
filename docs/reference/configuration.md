@@ -174,24 +174,72 @@ See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each
 
 Full rule taxonomy, examples, and runtime semantics → [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md).
 
-### The `shell` block (`ladder` is live; the rest is accepted and inert)
+### The `shell` block — choosing the interpreter
 
 `permissions.json` also accepts a top-level `shell` object, read **only** from the user-level file
-(`<home>/.agentao/permissions.json`) and never from the workspace copy — a block checked into a repository
-would let the repository choose the interpreter the agent runs. Every key here is validated. All but one are inert today: the rungs agentao constructs by default are
-policy-off, so the shell launches exactly as it did. **`ladder` is the exception** — setting it to `true`
-opts this host into the trusted-resolution ladder now, ahead of any change to the default.
+(`<home>/.agentao/permissions.json`) and never from the workspace copy — a block checked into a
+repository would let the repository choose the interpreter the agent runs.
 
 | Key | Type | Notes |
 |---|---|---|
-| `path` | string | Absolute path to an interpreter. **Paired with `dialect`** — supplying one without the other is an error, because neither can be derived from the other. |
-| `dialect` | `"posix"` / `"cmd"` / `"powershell"` | The syntax that interpreter reads. There is no `rung` key: the rung is derived from the dialect, the target platform and the image's identity. |
-| `allow_git_bash` | bool | Default `false`. Whether Git Bash may be selected ahead of `cmd` on Windows. |
-| `ladder` | bool | **Unset by default, and unset is not `false`.** Whether the trusted-resolution ladder runs at all. Absent means follow the built-in answer, so a later release that turns the ladder on reaches hosts that never configured it; an explicit value outranks the built-in in both directions. **Setting it to `true` opts in now**, and on Windows that is a real change: an interpreter that cannot be attested is refused rather than launched. **If agentao runs as an administrator there, the trusted set is empty by design and every shell call is denied** — measured, not predicted. The same key is the way back, which is why it is a key and not a release. |
-| `allowlist` | array | Content pins (`{"path": …, "sha256": …}`) and trusted publishers (`{"signer": …}`). A pin is an **additional** condition on an image, never a replacement for its location. Its `path` is compared verbatim, so write the canonical spelling. |
-| `env_passthrough` | array | Literal environment key names to pass through to the child on a policy-on rung. Entries containing `*` are dropped, and the reserved keys (`PATH`, `BASH_ENV`, `SHELLOPTS`, …) cannot be granted back. |
+| `dialect` | `"posix"` / `"cmd"` / `"powershell"` | The syntax the interpreter reads. This is what the command floor scans with and what the prompt's shell guidelines speak. On its own it is enough: `{"dialect": "powershell"}` is the ordinary way to turn PowerShell on. |
+| `path` | string | Absolute path to a specific interpreter. **Requires `dialect`** — a renamed launcher says nothing about the syntax it reads, so a path alone is an error rather than a guess. `dialect` without `path` is fine. |
 
-Design: `docs/design/powershell-support-spec.zh.md` (`CFG-01`, `CFG-02`, `IMG-03`, `ENV-06`).
+The key set is closed: anything else is a named error at startup, not a silently ignored field.
+
+**What each configuration does**
+
+| Configuration | Windows | macOS / Linux |
+|---|---|---|
+| absent, or `{"dialect": "cmd"}` | `%COMSPEC% /c <command>` — the default, unchanged | error: `cmd` is Windows-only |
+| `{"dialect": "powershell"}` | finds `pwsh.exe`, else `powershell.exe`; **an error if neither is installed**, never a fall back to cmd | error: `powershell` is Windows-only |
+| `{"dialect": "posix"}` | error — give an explicit `path`; agentao does not go looking for Git Bash, WSL or MSYS, which differ in path translation and in what they can reach | `/bin/bash -c <command>`, or `/bin/sh` where there is no bash |
+| `{"path": …, "dialect": …}` | exactly that interpreter, read as that syntax | same |
+
+A configuration this platform cannot run is refused rather than quietly replaced, and every shell
+call then reports that refusal. Falling back would be the interesting bug: cmd reading a body
+written for PowerShell does not fail, it means something else.
+
+Changes take effect on a new session — rebuild or restart.
+
+**How PowerShell is launched.** `<interpreter> -NoLogo -NoProfile -NonInteractive -OutputFormat Text
+-EncodedCommand <base64>`, started directly with no shell in between. The command is wrapped in a
+fixed prelude and a fixed exit line, encoded as UTF-16LE and base64'd, which is what removes every
+quoting question — backslashes, percent signs, quotes and newlines all survive untouched. Three
+consequences worth knowing:
+
+- **`-NoProfile`** means your PowerShell profile is not loaded, so functions and aliases defined
+  there do not exist for the agent.
+- **The exit code follows the last statement.** A native command's own non-zero code is preserved; a
+  cmdlet that only wrote an error gives 1; an explicit `exit N` and a terminating error are
+  PowerShell's own. A failure earlier in the body followed by a success is a success — the body is
+  not rewritten into fail-fast.
+- **Length.** Base64 of UTF-16LE costs about 8 characters of command line per 3 characters of
+  command, and Windows caps a command line at 32,767 units, so a command over roughly 12,000
+  characters is refused with a message saying so. It is never truncated and never spilled to a
+  temporary file.
+
+**Encoding.** The prelude sets `$OutputEncoding` and `[Console]::OutputEncoding` to UTF-8, so
+non-ASCII output and non-ASCII piped into a native program both survive. A native program that
+writes some *other* encoding is still not transcoded — that is the program's own choice and nothing
+here can know it.
+
+**Discovery** checks known install locations (the PowerShell 7 directories under `Program Files` and
+`%LOCALAPPDATA%`, the Store alias directory, and `System32`/`SysWOW64` for Windows PowerShell 5.1)
+and then the absolute directories on `PATH`. It never searches the working directory, and it never
+picks Git Bash. A newly installed interpreter is not visible to an agentao that was already running:
+restart it, or give an absolute `path`.
+
+**The command floor.** The dialect-independent floor — the one that refuses `rm -rf /`, `mkfs`, `dd`
+to a device and the rest — runs on every dialect, always. On PowerShell a table of Windows-specific
+irrecoverable classes runs in addition to it: formatting a volume, wiping a disk, deleting shadow
+copies, disabling BitLocker, and a recursive `Remove-Item` on a drive root, recognised through
+PowerShell's built-in aliases (`rm`, `ri`, `del`, `rd`, …) and abbreviated parameters (`-r` for
+`-Recurse`). Windows' **default** cmd path deliberately keeps running only the dialect-independent
+floor, so `format C:` typed into cmd is not stopped there; that is the status quo being preserved,
+not a claim that the command is safe, and the permission rules still apply.
+
+Design: `docs/design/powershell-support-lightweight.zh.md`.
 
 
 ---
