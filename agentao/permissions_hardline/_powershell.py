@@ -19,10 +19,13 @@ of it. Where the two differ, that corpus is the arbiter.
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from typing import List, Optional, Sequence, Tuple
 
 from ._windows import dangerous_reason
+
+_logger = logging.getLogger(__name__)
 
 # Exactly these named kinds are understood; every other one refuses the body.
 # `comment` is here only because the `#requires` step has already run — a comment that could
@@ -83,13 +86,30 @@ def _parser():
     Built once. Loading the grammar and constructing a ``Parser`` on every call put a
     dynamic-library load on the permission path of every shell command on a PowerShell rung,
     and the object is stateless across ``parse`` calls.
+
+    Every failure is caught, not only ``ImportError``: an ABI mismatch between ``tree_sitter``
+    and the grammar wheel raises ``ValueError`` out of ``Language(...)``, and that would
+    otherwise travel up through ``hardline_check`` and end the turn. It is logged, because a
+    parser that is not there disables the whole Windows table silently otherwise.
     """
     try:
         import tree_sitter_powershell
         from tree_sitter import Language, Parser
     except ImportError:  # pragma: no cover - exercised by the platform without the wheel
+        _logger.info(
+            "tree-sitter-powershell is not installed; the PowerShell dangerous-class table "
+            "cannot run. The dialect-independent command floor is unaffected."
+        )
         return None
-    return Parser(Language(tree_sitter_powershell.language()))
+    try:
+        return Parser(Language(tree_sitter_powershell.language()))
+    except Exception:  # noqa: BLE001 - an unusable grammar must not end a turn
+        _logger.warning(
+            "tree-sitter-powershell could not be loaded; the PowerShell dangerous-class "
+            "table cannot run. The dialect-independent command floor is unaffected.",
+            exc_info=True,
+        )
+        return None
 
 
 def parser_available() -> bool:
@@ -444,11 +464,6 @@ def _first_unrecognized_kind(root) -> Optional[str]:
     return None
 
 
-def commands_of(body: str) -> List[List[str]]:
-    """The lowered commands, one literal argv each. Raises :class:`LoweringError`."""
-    return lower_powershell(body)
-
-
 def scan_powershell(body: str) -> Optional[str]:
     """The dangerous classes this script reaches, or ``None``.
 
@@ -471,6 +486,13 @@ def scan_powershell(body: str) -> Optional[str]:
     try:
         commands = lower_powershell(body)
     except LoweringError:
+        return None
+    except Exception:  # noqa: BLE001 - the parser reads model-written text
+        # Anything the grammar itself raises lands here. It is the same answer as a lowering
+        # refusal — this parser could not read the script — and the alternative is an
+        # exception escaping ``hardline_check`` into the planner, which has no handler and
+        # would end the turn for every shell call.
+        _logger.warning("the PowerShell parser raised on this body", exc_info=True)
         return None
     for argv in commands:
         reason = dangerous_reason(argv)

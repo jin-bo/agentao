@@ -78,8 +78,13 @@ def _install_dirs(env: Mapping[str, str]) -> Iterator[str]:
 
 
 def _major_key(name: str) -> tuple:
-    """Sort ``7`` above ``6`` above ``preview``, without failing on a stray name."""
-    return (1, int(name)) if name.isdigit() else (0, 0)
+    """Sort ``7`` above ``6`` above ``preview``, without failing on a stray name.
+
+    ``isascii()`` as well as ``isdigit()``: the latter is true of characters ``int()``
+    rejects — ``"²"`` is one — and the ``ValueError`` that raises is not the ``OSError``
+    the caller guards, so it would leave the whole spec unresolvable.
+    """
+    return (1, int(name)) if name.isascii() and name.isdigit() else (0, 0)
 
 
 def _path_dirs(env: Mapping[str, str]) -> Iterator[str]:
@@ -261,7 +266,10 @@ def _decode_encoded_chars(text: str) -> str:
 
 
 def _bounded(text: str, limit: int, note: Optional[str] = None) -> str:
-    """Never longer than ``limit``, and honest about it when it had to cut.
+    """The text itself never longer than ``limit``, and honest about it when it had to cut.
+
+    The notes are appended after the cut, so the returned string can be a little longer than
+    ``limit`` — a cap that swallowed its own explanation would be the wrong trade.
 
     The head is kept rather than the tail, which is the opposite of the tool's
     own output truncation: what is being cut here is a wrapper whose shape is

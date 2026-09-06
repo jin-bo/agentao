@@ -184,25 +184,26 @@ def build_from_environment(
     )
 
     permission_engine = overrides.pop("permission_engine", None)
-    if permission_engine is None:
-        ur = user_root()
-        # One record through this root, so the shell block travels with the
-        # rules instead of having no route at all. Nothing reads it yet — trusted
-        # resolution does — but a value nobody can reach is a value nobody adds.
-        permission_config = load_permission_config(project_root=wd, user_root=ur)
-        rules, loaded_sources = permission_config.rules, permission_config.sources
-        # The shell block's consumer. Without this the
-        # ``shell.ladder`` key parses, validates and reaches nothing — the escape hatch
-        # would exist in configuration and not in the process.
-        if permission_config.shell is not None and overrides.get("shell") is None:
-            from ..capabilities import LocalShellExecutor
+    ur = user_root()
+    # One record through this root, so the shell block travels with the rules instead of
+    # having no route at all.
+    permission_config = load_permission_config(project_root=wd, user_root=ur)
+    # The shell block's consumer, and it sits **outside** the engine branch on purpose. It
+    # used to be nested inside it, so a caller supplying its own ``permission_engine`` — which
+    # is every ACP session, ``session/new`` and ``session/load`` alike — got the block parsed,
+    # validated and then dropped: ``shell.dialect`` was honoured through this factory and
+    # silently absent on the other two entry paths. Supplying an engine is taking over the
+    # *rules*; it says nothing about which interpreter the user configured.
+    if permission_config.shell is not None and overrides.get("shell") is None:
+        from ..capabilities import LocalShellExecutor
 
-            overrides["shell"] = LocalShellExecutor(shell_block=permission_config.shell)
+        overrides["shell"] = LocalShellExecutor(shell_block=permission_config.shell)
+    if permission_engine is None:
         permission_engine = PermissionEngine(
             project_root=wd,
             user_root=ur,
-            rules=rules,
-            loaded_sources=loaded_sources,
+            rules=permission_config.rules,
+            loaded_sources=permission_config.sources,
         )
 
     memory_manager = overrides.pop("memory_manager", None)

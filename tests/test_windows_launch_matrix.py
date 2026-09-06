@@ -215,14 +215,23 @@ def test_a_long_body_that_fits_is_not_refused(interpreter, tmp_path):
 
 @needs_powershell
 def test_an_oversized_body_is_refused_before_createprocess(tmp_path):
-    """A clear refusal rather than an opaque ``CreateProcess`` failure, and no truncation."""
-    out = ShellTool().execute(
+    """A clear refusal rather than an opaque ``CreateProcess`` failure, and no truncation.
+
+    The tool has to be given a PowerShell executor. A bare ``ShellTool()`` resolves to
+    Windows' default ``cmd`` spec, where the length check does not run at all and the
+    assertion passes on ``[WinError 206] The filename or extension is too long`` — the
+    ``CreateProcess`` failure this test exists to say does not happen.
+    """
+    tool = ShellTool()
+    tool.shell = LocalShellExecutor(shell_block=ShellBlock(dialect=ShellDialect.POWERSHELL))
+    out = tool.execute(
         command="Write-Output 'x'; " + "#" + "y" * 40_000,
         working_directory=str(tmp_path),
         timeout=30,
         _decided=None,
     )
-    assert "too long" in out or "not launchable" in out
+    assert "not launchable" in out
+    assert "UTF-16 units" in out
 
 
 # ------------------------------------------------------------------ exit codes

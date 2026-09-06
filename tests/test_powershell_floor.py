@@ -87,6 +87,10 @@ def test_a_benign_command_stays_benign_on_every_dialect():
         r"Remove-Item -Recurse C:",
         r"del -Recurse C:/",
         r"Remove-Item -Path C:\ -Recurse",
+        # PowerShell command names are case-insensitive, and the alias half of the resolution
+        # already was — so the canonical spelling was the one that had to be typed exactly.
+        r"remove-item -Recurse -Force C:\ ",
+        r"REMOVE-ITEM -r C:\ ",
     ],
 )
 def test_a_recursive_delete_of_a_drive_root_is_refused_in_every_spelling(command):
@@ -213,3 +217,13 @@ def test_the_recurse_switch_accepts_prefixes_and_nothing_else():
     assert dangerous_reason(["Remove-Item", "-RECU", "C:"])
     assert dangerous_reason(["Remove-Item", "-rf", "C:"]) is None
     assert dangerous_reason(["Remove-Item", "-Force", "C:"]) is None
+
+
+def test_the_command_word_is_matched_case_insensitively():
+    """PowerShell does not care about the case of a command name, so neither can this.
+
+    The alias half already folded case (``RM`` resolved), which made the canonical spelling
+    the single form that had to be typed exactly — coverage that reads as complete and is not.
+    """
+    for word in ("Remove-Item", "remove-item", "REMOVE-ITEM", "ReMoVe-ItEm"):
+        assert dangerous_reason([word, "-Recurse", "C:"]) == "hardline:delete-drive-root"

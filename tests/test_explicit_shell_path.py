@@ -113,6 +113,42 @@ def test_both_delivery_faces_spawn_the_named_interpreter(monkeypatch, tmp_path, 
     assert seen["executable"] == "/bin/zsh"
 
 
+def test_a_posix_interpreter_on_windows_is_not_handed_cmds_switch(monkeypatch, tmp_path):
+    r"""``{"path": "…/bash.exe", "dialect": "posix"}`` is a documented configuration.
+
+    Windows ``shell=True`` composes ``{executable} /c "<command>"`` — CPython substitutes
+    ``executable`` for ``ComSpec`` — and ``/c`` is cmd's switch. Git Bash reads it as the name
+    of a script to run, so the whole configuration produced a child that ran nothing. The
+    named-interpreter shape carries ``-c``, which is the flag that interpreter takes.
+    """
+    from agentao.capabilities.shell_spec import WindowsLaunch
+
+    monkeypatch.setattr("agentao.tools.shell.IS_WINDOWS", True)
+    spec = ShellSpec(
+        dialect=ShellDialect.POSIX,
+        interpreter=AbsPath(r"C:\Program Files\Git\bin\bash.exe"),
+    )
+    launch = ShellTool()._launch("echo hi", tmp_path, spec)
+    assert isinstance(launch, WindowsLaunch)
+    assert launch.application_name == r"C:\Program Files\Git\bin\bash.exe"
+    assert " -c " in launch.command_line and "/c" not in launch.command_line
+    assert _popen_target(launch)[1]["shell"] is False
+
+
+def test_a_powershell_spec_with_no_interpreter_refuses_rather_than_reaching_cmd(tmp_path):
+    """``LegacyLaunch`` means "the platform's own shell", which on Windows is cmd.
+
+    Falling through to it for a spec that named PowerShell is the one failure the whole
+    dialect design is about: cmd reading a PowerShell body does not fail, it means something
+    else — and the floor judged that body as PowerShell.
+    """
+    from agentao.capabilities.shell_spec import LaunchRefused
+
+    with pytest.raises(LaunchRefused) as exc:
+        ShellTool()._launch("Get-Date", tmp_path, ShellSpec(dialect=ShellDialect.POWERSHELL))
+    assert "powershell" in exc.value.deny.reason
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shells in the probe")
 def test_the_named_shell_is_the_one_that_answers(tmp_path):
     """A real child, reporting its own path.

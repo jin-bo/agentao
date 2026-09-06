@@ -167,3 +167,37 @@ def test_the_timeout_path_unwraps_too(tmp_path):
     assert "timed out" in out
     assert "slow failure" in out
     assert CLIXML_MARKER not in out
+
+
+def test_a_call_with_no_decided_record_still_unwraps(tmp_path):
+    """``execute`` used to pass the *frozen* spec on and ``None`` when there was none.
+
+    ``_launch`` then re-read the provider and built the PowerShell launch anyway, so the
+    interpreter was right and every reader downstream held ``None`` — the model got the raw
+    envelope for exactly the calls that did not come through the planner.
+    """
+    from agentao.capabilities.shell import ShellResult
+    from agentao.capabilities.shell_spec import AbsPath, ShellDialect, ShellSpec
+    from agentao.tools.shell import ShellTool
+
+    envelope = wrapped('<S S="Error">real error text</S>').encode("utf-8")
+
+    class Fake:
+        @property
+        def shell_spec(self):
+            return ShellSpec(
+                dialect=ShellDialect.POWERSHELL, interpreter=AbsPath("pwsh.exe")
+            )
+
+        def run(self, request):
+            return ShellResult(returncode=1, stdout=b"", stderr=envelope)
+
+        def run_background(self, request):  # pragma: no cover - never reached
+            raise AssertionError
+
+    tool = ShellTool()
+    tool.shell = Fake()
+    tool.working_directory = str(tmp_path)
+    out = tool.execute(command="Write-Error 'x'", working_directory=str(tmp_path))
+    assert "real error text" in out
+    assert CLIXML_MARKER not in out

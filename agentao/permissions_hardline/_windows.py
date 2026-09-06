@@ -125,7 +125,10 @@ def _recursive_drive_root(argv: Sequence[str]) -> bool:
     or either side of it. Quoting is already gone — the caller hands over a
     lowered argv, where ``"C:\"`` and ``C:\`` are the same word.
     """
-    if canonical_command(argv[0]) != "Remove-Item":
+    # Case-folded, because PowerShell command names are case-insensitive and the alias half
+    # of ``canonical_command`` already is: ``rm`` resolved but ``remove-item`` did not, so the
+    # canonical spelling was the one spelling of the seven this class did not cover.
+    if canonical_command(argv[0]).lower() != "remove-item":
         return False
     if not any(_is_recurse_switch(word) for word in argv[1:]):
         return False
@@ -153,7 +156,3 @@ def dangerous_reason(argv: Sequence[str]) -> str | None:
             return reason
     return None
 
-
-def danger_reasons() -> frozenset:
-    """Every reason this table can emit, read from the table itself."""
-    return frozenset({reason for _, reason in WINDOWS_DANGEROUS} | {DELETE_DRIVE_ROOT})

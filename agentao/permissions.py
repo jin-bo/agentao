@@ -218,7 +218,8 @@ def rule_matches_dialect(rule: Dict[str, Any], dialect: Optional[str]) -> bool:
     An unlabelled rule matches everything, which keeps every rule written before the label
     existed working exactly as it did. That permissiveness is the reason for the other half
     of the label: an unlabelled rule carrying an ``args.command`` condition is *unspecified*
-    rather than universal, and a PowerShell rung refuses to be built while one exists.
+    rather than universal, and :func:`unspecified_shell_rules` names every one of them so
+    selecting PowerShell reports them instead of applying them silently.
 
     A *labelled* rule against an **unknown** dialect does not match. The label is its author
     saying "this pattern is written for that language"; when nothing has said which language

@@ -2,6 +2,7 @@
 
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 from types import MappingProxyType
@@ -247,7 +248,11 @@ class ShellTool(Tool):
         if isinstance(spec, ShellSpec) and spec.dialect is ShellDialect.POWERSHELL:
             return f"{display_name(spec, IS_WINDOWS)} -NoProfile -Command <command>"
         if isinstance(spec, ShellSpec) and spec.interpreter:
-            return f"{spec.interpreter} -c <command>"
+            # ``/c`` for a configured cmd on Windows: that is the switch ``shell=True``
+            # composes there, and the description is the model's only statement of how its
+            # text is handed over.
+            switch = "/c" if IS_WINDOWS and spec.dialect is ShellDialect.CMD else "-c"
+            return f"{spec.interpreter} {switch} <command>"
         if IS_WINDOWS:
             return "cmd /c <command>"
         # ``shell_display_name()`` and not the imported resolver: the platform default has one
@@ -275,7 +280,7 @@ class ShellTool(Tool):
         that ToolRunner injects when a macOS sandbox policy is active. When
         set, the command is wrapped in `sandbox-exec` before spawning.
         """
-        decided_spec: "ShellSpec | Exhausted | None" = None
+        spec: "ShellSpec | Exhausted | None" = None
         if _decided is not None:
             # What was judged is what runs. Re-reading ``command`` here would be a
             # second source for the text, which is a channel that decides one command and
@@ -287,12 +292,24 @@ class ShellTool(Tool):
             # ``_legacy_launch`` would be that same second source one field over — the launch
             # would carry the fingerprint of whatever re-resolution had swapped in since,
             # while the floor's verdict was computed against the frozen one.
-            decided_spec = _decided.spec
+            spec = _decided.spec
         else:
             try:
                 cwd = self.resolve_cwd(working_directory)
             except PathPolicyError as e:
                 return f"Error: {e}"
+            # No frozen record — a host calling ``execute`` directly. Read the provider
+            # *here*, once, rather than leaving it to ``_launch``: leaving it there resolved
+            # the interpreter for the spawn and left every reader of ``spec`` below holding
+            # ``None``, so a PowerShell launch was built and then formatted as if it were not
+            # one — the model read the raw CLIXML envelope instead of the error in it.
+            # Guarded, because moving the read up here also moved it out from behind the
+            # spawn's own ``except Exception``: a host provider that raises is a refusal, the
+            # same answer the planner gives it, not an exception out of a tool.
+            try:
+                spec = self.shell_spec
+            except Exception as e:  # noqa: BLE001 - a provider failure refuses the call
+                return f"Error: shell spec provider raised: {e}"
         # Only validate cwd against the local filesystem when using the default
         # local executor. An injected ShellExecutor (Docker, remote host, …)
         # may accept a container/remote path that does not exist locally; let
@@ -309,9 +326,9 @@ class ShellTool(Tool):
             wrapped = command
 
         if is_background:
-            result = self._run_background(wrapped, cwd, decided_spec)
+            result = self._run_background(wrapped, cwd, spec)
         else:
-            result = self._run_foreground(wrapped, cwd, timeout, decided_spec)
+            result = self._run_foreground(wrapped, cwd, timeout, spec)
 
         if _sandbox_profile is not None:
             result = _annotate_sandbox_denial(result, _sandbox_profile)
@@ -375,7 +392,12 @@ class ShellTool(Tool):
     def _launch(
         self, command: str, cwd: Path, spec: "ShellSpec | Exhausted | None" = None,
     ) -> LaunchRequest:
-        """The launch this call runs: PowerShell if that is what was resolved, else today's.
+        """The launch this call runs: a named interpreter if one was resolved, else today's.
+
+        Named means ``WindowsLaunch`` — the image fixed by path, the command line built here.
+        PowerShell takes it because the body has to be encoded; a POSIX interpreter on Windows
+        takes it because ``LegacyLaunch`` there is ``shell=True``, which composes cmd's
+        ``/c``. Everything else is ``LegacyLaunch``, which is exactly what shipped.
 
         The environment is ``build_child_env()`` on both paths — inherited minus agentao's own
         provider credentials, so a command the model wrote cannot read the key back out — and
@@ -390,11 +412,18 @@ class ShellTool(Tool):
         if spec is None:
             spec = self.shell_spec
         env = MappingProxyType(build_child_env())
-        if (
-            isinstance(spec, ShellSpec)
-            and spec.dialect is ShellDialect.POWERSHELL
-            and spec.interpreter
-        ):
+        if isinstance(spec, ShellSpec) and spec.dialect is ShellDialect.POWERSHELL:
+            if not spec.interpreter:
+                # Refused rather than fallen back on. ``LegacyLaunch`` below means "the
+                # platform's own shell", which on Windows is ``%COMSPEC% /c`` — and cmd
+                # reading a body written for PowerShell does not fail, it means something
+                # else. Reachable only from a host executor that declares the dialect
+                # without naming the image; ``default_spec`` answers ``Exhausted`` instead.
+                raise LaunchRefused(Deny(
+                    "hardline:no-shell-opaque: the resolved spec names the powershell "
+                    "dialect but no interpreter path, and there is no shell to fall back to "
+                    "that reads PowerShell"
+                ))
             line = ps.command_line(spec.interpreter, command)
             oversize = ps.oversize(line)
             if oversize is not None:
@@ -405,6 +434,23 @@ class ShellTool(Tool):
             return WindowsLaunch(
                 application_name=AbsPath(spec.interpreter),
                 command_line=line,
+                cwd=AbsPath(str(cwd)),
+                env=env,
+            )
+        if (
+            IS_WINDOWS
+            and isinstance(spec, ShellSpec)
+            and spec.dialect is ShellDialect.POSIX
+            and spec.interpreter
+        ):
+            # A POSIX interpreter on Windows cannot go through ``LegacyLaunch``. Windows
+            # ``shell=True`` composes ``{executable} /c "<command>"`` (CPython substitutes
+            # ``executable`` for ``ComSpec``), and ``/c`` is cmd's switch — Git Bash reads it
+            # as the name of a script to run. The named-interpreter shape says ``-c``, which
+            # is the flag the configured shell actually takes.
+            return WindowsLaunch(
+                application_name=AbsPath(spec.interpreter),
+                command_line=subprocess.list2cmdline([spec.interpreter, "-c", command]),
                 cwd=AbsPath(str(cwd)),
                 env=env,
             )
@@ -502,7 +548,10 @@ class ShellTool(Tool):
             parts = [_decode(result.stdout), _decode(result.stderr)]
             if self._is_powershell(spec):
                 parts = [ps.extract(p, _MAX_OUTPUT_CHARS) for p in parts]
-            partial = "".join(p for p in parts if p)
+            # Capped like every other output path. A command that emits megabytes and then
+            # stalls is the ordinary shape of a timeout, and this branch used to be the one
+            # place the tool handed all of it straight to the model.
+            partial = _truncate_tail("".join(p for p in parts if p), _MAX_OUTPUT_CHARS)
             msg = f"Command timed out after {timeout:.0f}s of inactivity.\nCommand: {command}"
             if partial:
                 msg += f"\n\nPartial output before timeout:\n{partial}"

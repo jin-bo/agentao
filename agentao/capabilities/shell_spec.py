@@ -231,8 +231,10 @@ class WindowsLaunch:
 
     ``application_name`` is ``CreateProcessW``'s ``lpApplicationName``, so the
     image is fixed by path rather than resolved from a name at spawn time, and
-    ``command_line`` is what the interpreter parses. PowerShell is the only
-    thing that builds one today.
+    ``command_line`` is what the interpreter parses. Two things build one:
+    PowerShell, and any *non-cmd* interpreter a ``shell.path`` names on Windows —
+    ``LegacyLaunch`` there means ``shell=True``, which composes
+    ``{executable} /c "…"``, and ``/c`` is cmd's switch and nobody else's.
     """
 
     application_name: AbsPath
