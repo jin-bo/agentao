@@ -245,6 +245,23 @@ jobs:
       - name: Check dist metadata with twine
         run: uvx twine check dist/*
 
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (dev group for pytest)
+        run: uv sync --python 3.12 --group dev
+
+      # The `slow` marker is excluded from every other pytest run in this file,
+      # so until now nothing ran these at all — the P0.7 roadmap always meant
+      # them to run in the job that builds the wheel, which is this one. They
+      # need dist/*.whl, so they cannot move to the `test` job.
+      #
+      # Pinned to 3.12 deliberately: tests/data/full_extras_baseline.txt is a
+      # dependency closure for one interpreter, and a version-gated backport
+      # would make 3.10's closure legitimately different.
+      - name: Clean-install suite against the built wheel (-m slow)
+        run: uv run --python 3.12 python -m pytest -m slow -v --tb=short
+
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v7
         with:

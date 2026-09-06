@@ -35,7 +35,7 @@ uv run python -m pytest -m slow      # Clean-install smoke tests
 uv run ruff check .                  # Lint gate — required CI check
 ```
 
-The `slow` marker is excluded by default (`pyproject.toml :: tool.pytest.ini_options.addopts = "--tb=short -m 'not slow'"`).
+The `slow` marker is excluded by default (`pyproject.toml :: tool.pytest.ini_options.addopts = "--tb=short -m 'not slow'"`). CI runs it in the **build** job on Python 3.12, right after `uv build` — the only job with a `dist/*.whl` to install — so `-m slow` is a required check too, and it needs `uv build` locally first.
 
 **`ruff check .` is a required CI check, so a green pytest run is not enough before pushing.** The gate is deliberately narrow — defect rules only (`E9`, `F401`, `F402`, `F405`, `F811`, `F821`), no style — and the rules *and* scope both live in `pyproject.toml`, so the command above is character-for-character what CI runs. Two non-obvious parts: `F405` is selected because `F821` is silently inert in the 8 star-import modules without it, and `F401` is exempted for `agentao/` because a name re-exported for downstream embedders is indistinguishable from dead code to a single-file linter. Suppress with a reason (`# noqa: F401 — pytest fixture injection`), never bare. See [docs/design/lint-gate.md](docs/design/lint-gate.md).
 

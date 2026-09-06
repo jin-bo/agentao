@@ -53,6 +53,17 @@ _Targeting 0.4.22. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **The `[full]` dependency baseline is compared by name, not by version.**
+  `tests/data/full_extras_baseline.txt` was a `pip freeze` — 59 pinned versions
+  — and `pyproject.toml` declares floors, so every upstream release of anything
+  in the closure failed the test with nothing wrong in-tree. The churn was not
+  harmless: this refresh found 26 version bumps and, buried among them, the one
+  thing the test exists to catch — `distro` and `tqdm` left the closure when
+  `openai` went 2.x to 3.x and dropped them. The file now holds PEP 503 names,
+  and the failure message says what appeared or disappeared. A supported
+  version *range* is still asserted where it belongs: in the metadata
+  (`mcp>=1.26.0,<3`) and in the mcp-compat job that installs both majors.
+
 - **The shell-resolution design shipped in this cycle was replaced before
   release.** An earlier unreleased iteration resolved the interpreter by
   identity: attested images, a trusted-root chain over every ancestor
@@ -88,6 +99,27 @@ _Targeting 0.4.22. Add entries under the relevant heading as work lands._
   executor.
 
 ### Fixed
+
+- **The `slow` clean-install tests ran nowhere, and one of them was red.**
+  Nine tests build a wheel, install it into fresh venvs and check what a user
+  actually gets. Every pytest invocation in CI inherits
+  `addopts = -m 'not slow'`, and no job passed `-m slow`, so the whole tier was
+  dead — which is how `test_full_extras_freeze_matches_baseline` came to sit
+  failing since the first upstream release after its 2026-06-19 baseline
+  refresh, without anyone hearing about it. They now run in
+  the **build** job, on Python 3.12, immediately after `uv build`: that is the
+  only job with a `dist/*.whl` for them to install, which is what the P0.7
+  roadmap intended in the first place. The interpreter is pinned because the
+  baseline is a closure for one interpreter, and a version-gated backport makes
+  another's legitimately different.
+
+- **A `dist/` holding two builds handed the install tests the older wheel.**
+  `find_wheel` took `sorted(glob(...))[-1]`, and `0.4.9` sorts *after* `0.4.10`
+  as text. `uv build` adds to `dist/` rather than replacing it, so any local
+  tree built twice across that boundary would have installed, measured and
+  passed the wrong wheel. It now picks the highest parsed version, skipping a
+  filename that is not one rather than raising. CI builds into an empty
+  directory and would never have shown this.
 
 - **A configured `shell.path` named an interpreter that never ran.** The value
   reached the resolved spec and stopped there: both spawn paths built the child

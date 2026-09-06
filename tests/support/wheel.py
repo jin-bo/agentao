@@ -22,17 +22,36 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from packaging.version import InvalidVersion, Version
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DIST_DIR = REPO_ROOT / "dist"
 
 
+def _wheel_version(wheel: Path) -> Version | None:
+    """The version segment of a wheel filename, or None if it does not parse."""
+    try:
+        return Version(wheel.name.split("-")[1])
+    except (IndexError, InvalidVersion):
+        return None
+
+
 def find_wheel() -> Path | None:
+    """The newest built wheel in ``dist/`` **by version**, not by filename.
+
+    ``sorted()`` on the name puts ``0.4.10`` *before* ``0.4.9``, so a ``dist/``
+    holding both — which is what an unclean local tree looks like, since
+    ``uv build`` adds rather than replaces — hands every install test the older
+    wheel and then reports a pass for it. CI builds into an empty directory and
+    would never have shown this.
+    """
     if not DIST_DIR.is_dir():
         return None
-    wheels = sorted(DIST_DIR.glob("agentao-*.whl"))
-    return wheels[-1] if wheels else None
+    versioned = [(v, w) for w in DIST_DIR.glob("agentao-*.whl") if (v := _wheel_version(w))]
+    if not versioned:
+        return None
+    return max(versioned, key=lambda pair: pair[0])[1]
 
 
 def require_wheel() -> Path:
