@@ -27,7 +27,7 @@
 > the PRs are what is on `main`.
 
 **Date:** 2026-08-23
-**Status:** **Implemented** (2026-08-24, unreleased — targeting 0.4.20) — rev 14, twelve maintainer
+**Status:** **Implemented** (2026-08-24) and **shipped in 0.4.20** — rev 14, twelve maintainer
 reviews folded into the body (§9 is the record, not an override; the body is authoritative on its own).
 **Anchors:** agentao `main@a996395`, plus two uncommitted working-tree changes that this plan
 already accounts for: `COMPRESSION_THRESHOLD` 0.65 → 0.80 (`agentao/context_manager.py:69`) and the

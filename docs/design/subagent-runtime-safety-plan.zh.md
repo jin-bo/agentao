@@ -8,6 +8,8 @@
 > 这两半在同一个 PR 里，因为工厂重建 registry 时必须决定 MCP 工具以什么形式进入子代理；先发引擎那一半、
 > 把 MCP 视图留到后一个 PR 是允许的，§5 写明了切法。
 
+**对照件：** `subagent-runtime-safety-plan.md`。
+
 **日期：** 2026-09-03
 **Anchors:** agentao `main@3537753`（2026-09-01）。
 **证据：** 本文写「§2.x」时，指当年 `docs/reference/powershell-support-evidence.zh.md` 的同号小节 ——

@@ -2,7 +2,7 @@
 
 > **⚠️ Implemented and merged** — PR #199, `18fb628` (2026-08-30). The deviations it closes are
 > catalogued in `hooks-three-way-claude-codex-agentao.md` (rev 5), which remains analysis-only.
-> **Unreleased**: it ships inside the 0.4.21 dev cycle, not in any published version.
+> **Shipped in 0.4.21** (2026-08-30), the release it was the headline of.
 
 **Status:** **implemented** (rev 24, 2026-08-30) — all seven steps of §8 and all ten design gates.
 See §0 for what each gate closed on. rev 23's text stands; this is the same document with the
