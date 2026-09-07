@@ -14,6 +14,7 @@ text PowerShell parses could differ.
 from __future__ import annotations
 
 import base64
+import os
 import subprocess
 from pathlib import Path
 from types import MappingProxyType
@@ -183,12 +184,20 @@ def test_a_named_interpreter_reaches_popen_without_a_shell(tmp_path):
     assert target == launch.command_line
 
 
-def test_a_configured_interpreter_reaches_popen_on_the_legacy_path(tmp_path):
-    """``shell=True`` with ``executable`` replaces ``argv[0]`` on POSIX and ``ComSpec`` on
-    Windows, so one field covers both platforms."""
+def test_a_configured_interpreter_reaches_popen(tmp_path):
+    """The interpreter is the same on both platforms; the route to it is not.
+
+    POSIX ``shell=True`` runs ``/bin/sh -c`` with ``argv[0]`` replaced by ``executable``, so
+    one field is enough there. Windows ``shell=True`` composes ``{executable} /c "<command>"``
+    instead, and an interpreter that is not cmd reads ``/c`` as a script name and runs
+    nothing — so a POSIX interpreter configured there is launched directly with its own
+    ``-c``. The assertion is written as one expression rather than two branches so that a
+    platform silently losing the interpreter cannot pass.
+    """
     spec = ShellSpec(dialect=ShellDialect.POSIX, interpreter=AbsPath("/bin/zsh"))
     _, kwargs = _popen_target(ShellTool()._launch("echo hi", tmp_path, spec))
-    assert kwargs["shell"] is True and kwargs["executable"] == "/bin/zsh"
+    assert kwargs["executable"] == "/bin/zsh"
+    assert kwargs["shell"] is (os.name != "nt")
 
 
 def test_an_unnamed_interpreter_keeps_the_platform_answer(tmp_path):

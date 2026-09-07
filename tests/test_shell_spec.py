@@ -37,6 +37,7 @@ from agentao.capabilities.shell_spec import (
 )
 from agentao.tools.base import ToolRegistry
 from agentao.tools.shell import ShellTool
+from tests.support.launch import interpreter_of
 
 
 def posix_spec(**over) -> ShellSpec:
@@ -273,7 +274,10 @@ def test_the_launch_carries_the_spec_the_decision_froze_not_a_second_read():
         command="echo hi", working_directory=".", timeout=5,
         _decided=decided("echo hi", ".", spec=frozen),
     )
-    assert seen[0].executable == "/bin/decided"
+    # Read through the helper rather than a field: on Windows a POSIX interpreter is a
+    # ``WindowsLaunch``, which names the image somewhere else. The claim under test is the
+    # interpreter, not the shape.
+    assert interpreter_of(seen[0]) == "/bin/decided"
 
 
 def test_a_hook_rewrite_moves_the_record_with_the_arguments():

@@ -164,6 +164,14 @@ jobs:
         run: |
           uv run --python ${{ matrix.python-version }} python -c "import shutil; print('pwsh:', shutil.which('pwsh')); print('powershell:', shutil.which('powershell')); print('cmd:', shutil.which('cmd')); print('bash:', shutil.which('bash'))"
 
+      # A probe, not a gate: it fails on purpose to print what it measured, so
+      # it runs first and cannot fail the job. Delete the step with the file.
+      - name: Probe · the detached launch and the 5.1 native pipe
+        continue-on-error: true
+        env:
+          AGENTAO_PROBE: "1"
+        run: uv run --python ${{ matrix.python-version }} python -m pytest -v --tb=long tests/test_windows_probe.py
+
       # Two steps, so a red run is readable. The shell modules are written for
       # Windows and are expected to pass; failing the first step means the
       # shell support is broken, and failing only the second means something
@@ -248,8 +256,12 @@ jobs:
       - name: Install Python 3.12
         run: uv python install 3.12
 
-      - name: Install dependencies (dev group for pytest)
-        run: uv sync --python 3.12 --group dev
+      # The same extras as the ubuntu test job: `-m slow` still *collects* the
+      # whole suite before deselecting, and 13 modules import readchar / rich
+      # at module scope. A core-only sync fails collection with exit 2 and
+      # never reaches a single slow test.
+      - name: Install dependencies (dev group for pytest, extras for collection)
+        run: uv sync --python 3.12 --extra cli --extra web --extra i18n --extra playwright --group dev
 
       # The `slow` marker is excluded from every other pytest run in this file,
       # so until now nothing ran these at all — the P0.7 roadmap always meant

@@ -224,6 +224,11 @@ def test_an_oversized_body_is_refused_before_createprocess(tmp_path):
     """
     tool = ShellTool()
     tool.shell = LocalShellExecutor(shell_block=ShellBlock(dialect=ShellDialect.POWERSHELL))
+    # The tool's own working directory is the project root the path policy measures against,
+    # and on a CI runner the repository and the temporary directory are on different drives.
+    # Without this the call is refused for the cwd and never reaches the length check — a
+    # green-looking assertion about a refusal that is not the one under test.
+    tool.working_directory = str(tmp_path)
     out = tool.execute(
         command="Write-Output 'x'; " + "#" + "y" * 40_000,
         working_directory=str(tmp_path),
