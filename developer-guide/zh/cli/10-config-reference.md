@@ -26,6 +26,7 @@
 | 新会话默认权限模式 | `.agentao/settings.json` → `mode`*（"上次记住的模式"，[§3](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#3-agentaosettingsjson--运行时模式--内置子代理)）* |
 | 加放行 / 拒绝的 shell 命令 | `~/.agentao/permissions.json` |
 | 加放行 / 拒绝的 web 域名 | `~/.agentao/permissions.json` |
+| Windows 上改用 PowerShell 而不是 cmd | `~/.agentao/permissions.json` → `shell` |
 | 默认沙箱 profile（macOS） | `.agentao/sandbox.json` 或 `~/.agentao/sandbox.json` → `default_profile` |
 | 默认上下文窗口大小 | 环境变量 `AGENTAO_CONTEXT_TOKENS` |
 | 默认是否录 replay | `.agentao/settings.json` → `replay.enabled` |

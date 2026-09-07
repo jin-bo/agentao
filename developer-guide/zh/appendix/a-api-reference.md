@@ -241,7 +241,16 @@ class ShellExecutor(Protocol):
     def run_background(self, request: ShellRequest) -> BackgroundHandle: ...
 ```
 
-冻结的 dataclass：`FileEntry(name, is_dir, is_file, size)`、`FileStat(size, mtime, is_dir, is_file)`、`ShellRequest(command, cwd, timeout, on_chunk, env)`、`ShellResult(returncode, stdout, stderr, timed_out)`、`BackgroundHandle(pid, pgid, command, cwd)`。
+冻结的 dataclass：`FileEntry(name, is_dir, is_file, size)`、`FileStat(size, mtime, is_dir, is_file)`、`ShellRequest(launch, timeout, on_chunk)`、`ShellResult(returncode, stdout, stderr, timed_out)`、`BackgroundHandle(pid, pgid, command, cwd)`。
+
+**`ShellRequest` 带的是一个 launch，不是一条命令**（0.4.22 改动；以前 `command`、`cwd`、`env` 直接挂在它上面）。`request.launch` 是两种形状之一，执行器用 `isinstance` 分开：
+
+| 形状 | 字段 | 怎么跑 |
+|---|---|---|
+| `LegacyLaunch` | `command`、`cwd`、`env`、`executable` | `subprocess.Popen(command, shell=True, executable=executable or None, cwd=cwd, env=env)` —— 这就是过去每个宿主拿到的东西，没配置解释器时仍然是它 |
+| `WindowsLaunch` | `application_name`、`command_line`、`cwd`、`env` | 用 `command_line` 启动 `application_name`，**中间不经过 shell**；`shell` 块点名解释器时产出这种 |
+
+`request.command` 与 `request.cwd` 作为只读属性保留，所以只是记录 / 审计它们的执行器无需改动；**`request.env` 没有了** —— 去 launch 上读。执行器还可以额外实现 `ShellSpecProvider`，即一个回答 `ShellSpec | Exhausted` 的 `shell_spec` 属性，来声明它将运行哪个解释器；命令地板扫描用的语法和提示词里的 shell 指引都读这个答案。完整契约见 `docs/reference/host-api.zh.md`。
 
 宿主无法支持真正的后台执行时，可以在 `run_background` 抛 `NotImplementedError`——`ShellTool` 会把它呈现为普通的工具错误字符串。
 

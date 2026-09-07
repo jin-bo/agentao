@@ -245,7 +245,16 @@ class ShellExecutor(Protocol):
     def run_background(self, request: ShellRequest) -> BackgroundHandle: ...
 ```
 
-Frozen dataclasses: `FileEntry(name, is_dir, is_file, size)`, `FileStat(size, mtime, is_dir, is_file)`, `ShellRequest(command, cwd, timeout, on_chunk, env)`, `ShellResult(returncode, stdout, stderr, timed_out)`, `BackgroundHandle(pid, pgid, command, cwd)`.
+Frozen dataclasses: `FileEntry(name, is_dir, is_file, size)`, `FileStat(size, mtime, is_dir, is_file)`, `ShellRequest(launch, timeout, on_chunk)`, `ShellResult(returncode, stdout, stderr, timed_out)`, `BackgroundHandle(pid, pgid, command, cwd)`.
+
+**A `ShellRequest` carries a launch, not a command** (changed in 0.4.22; it used to hold `command`, `cwd` and `env` directly). `request.launch` is one of two shapes, and an executor picks them apart with `isinstance`:
+
+| Shape | Fields | How to run it |
+|---|---|---|
+| `LegacyLaunch` | `command`, `cwd`, `env`, `executable` | `subprocess.Popen(command, shell=True, executable=executable or None, cwd=cwd, env=env)` — what every host got before, and still gets unless an interpreter is configured |
+| `WindowsLaunch` | `application_name`, `command_line`, `cwd`, `env` | start `application_name` with `command_line` and **no shell in between**; produced when a `shell` block names an interpreter |
+
+`request.command` and `request.cwd` survive as read-only properties, so an executor that only logs or audits them needs no change; **`request.env` is gone** — read it from the launch. An executor may additionally implement `ShellSpecProvider`, a `shell_spec` property answering `ShellSpec | Exhausted`, to declare which interpreter it will run; the command floor and the prompt's shell guidance both read that answer. Full contract: `docs/reference/host-api.md`.
 
 Hosts that cannot support real backgrounding may raise `NotImplementedError` from `run_background` — `ShellTool` surfaces that as a normal tool error string.
 

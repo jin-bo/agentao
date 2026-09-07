@@ -115,9 +115,12 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
       "domain": { "allowlist": [".github.com"], "url_arg": "url" },
       "action": "allow"
     }
-  ]
+  ],
+  "shell": { "dialect": "powershell" }
 }
 ```
+
+两个顶层键：`rules` 与 `shell`。其余键会报出点名的错误，而不是被忽略。
 
 **规则字段**：
 
@@ -127,6 +130,18 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
 | `args` | object | 否 | `<arg_name>` → 正则的映射；**全部**条目都要 `re.search` 命中规则才生效 |
 | `domain` | object | 否 | 仅 URL 类工具（`web_fetch`）；键：`url_arg`（默认 `"url"`）、`allowlist`、`blocklist`。`.` 开头的模式做后缀匹配（如 `.github.com` 命中 `api.github.com`），否则精确匹配 |
 | `action` | string | 是 | `"allow"` \| `"deny"` \| `"ask"`（大小写不敏感） |
+
+**`shell` 块**（0.4.22 新增，用户级，仅 Windows）：
+
+| 键 | 类型 | 必填 | 说明 |
+|-----|------|------|------|
+| `dialect` | string | 否 | `"posix"` \| `"cmd"` \| `"powershell"` —— 该解释器读的语法。命令地板按它扫描，提示词里的 shell 指引也按它写。单独给它就够了：`{"dialect": "powershell"}` 就是打开 PowerShell 的常规写法 |
+| `path` | string | 否 | 指定解释器的绝对路径。**必须与 `dialect` 成对出现** —— 单独给 `path` 报错，因为没有谁能从文件名推出语法 |
+
+`{"dialect": "powershell"}` 会自动发现 `pwsh.exe`，其次 `powershell.exe`；**两者都没有则报错**，绝不静默回落到
+cmd。什么都不配置时，Windows 仍旧是 `%COMSPEC% /c`，与过去完全一致。在 macOS / Linux 上显式选择
+`powershell` 或 `cmd` 报不支持的平台配置错误。完整行为（含启动与编码）见
+`docs/reference/configuration.zh.md` §4。
 
 `mode` 字段**不**写在 `permissions.json` 里 — 它属于 `settings.json`（B.3.5），运行时通过 `/permissions` 切换。模式取值：`read-only`、`workspace-write`、`full-access`、`plan`（小写连字符；`plan` 为内部模式）。
 

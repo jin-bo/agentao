@@ -115,9 +115,13 @@ All three MCP transports are supported: stdio, Streamable HTTP, and SSE. A bare 
       "domain": { "allowlist": [".github.com"], "url_arg": "url" },
       "action": "allow"
     }
-  ]
+  ],
+  "shell": { "dialect": "powershell" }
 }
 ```
+
+Two top-level keys, `rules` and `shell`. Anything else is a named error rather
+than an ignored key.
 
 **Rule fields**:
 
@@ -127,6 +131,19 @@ All three MCP transports are supported: stdio, Streamable HTTP, and SSE. A bare 
 | `args` | object | no | Map of `<arg_name>` → regex; **all** entries must `re.search`-match for the rule to fire |
 | `domain` | object | no | URL-tools only (`web_fetch`); keys `url_arg` (default `"url"`), `allowlist`, `blocklist`. Patterns starting with `.` do suffix matching (e.g. `.github.com` matches `api.github.com`); otherwise exact match |
 | `action` | string | yes | `"allow"` \| `"deny"` \| `"ask"` (case-insensitive) |
+
+**Shell block** (new in 0.4.22, user scope, Windows only):
+
+| Key | Type | Required | Notes |
+|-----|------|----------|-------|
+| `dialect` | string | no | `"posix"` \| `"cmd"` \| `"powershell"` — the syntax the interpreter reads. This is what the command floor scans with and what the prompt's shell guidance speaks. On its own it is enough: `{"dialect": "powershell"}` is the ordinary way to turn PowerShell on |
+| `path` | string | no | absolute path to a specific interpreter. **Requires `dialect`** — `path` alone is an error, because nothing can infer the syntax from a filename |
+
+`{"dialect": "powershell"}` discovers `pwsh.exe`, else `powershell.exe`, and is
+an **error if neither is installed** — never a silent fall back to cmd. Nothing
+configured leaves Windows on `%COMSPEC% /c` exactly as before. On macOS and
+Linux, asking for `powershell` or `cmd` is an unsupported-platform error. Full
+behaviour, including the launch and the encoding: `docs/reference/configuration.md` §4.
 
 The `mode` field is **not** stored in `permissions.json` — it lives in `settings.json` (B.3.5) and is changed at runtime via `/permissions`. Modes: `read-only`, `workspace-write`, `full-access`, `plan` (lowercase-hyphen; `plan` is internal).
 
