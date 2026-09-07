@@ -199,9 +199,15 @@
 **编码。** 前缀把 `$OutputEncoding` 与 `[Console]::OutputEncoding` 都设为 UTF-8，于是非 ASCII 输出、以及管道写给原生
 程序的非 ASCII 都能正常通过。原生程序若自己用**别的**编码写，仍然不会被转码 —— 那是那个程序自己的选择，这里无从得知。
 
-**Windows PowerShell 5.1 的一个实测怪癖：** 它管道写给原生命令的内容开头带一个 UTF-8 BOM，读这段 stdin 的程序会先看到
-`\ufeff` 再看到第一个字符。PowerShell 7 没有这个行为，前缀也改变不了它 —— 在 Windows runner 上实测了五种前缀写法，
-包括**完全不加前缀**，5.1 五种都带。如果你管道写入的程序不认这个标记，自己去掉开头的 `\ufeff`。
+**Windows PowerShell 5.1 有两个实测怪癖**，都是解释器自身的行为，前缀都够不着：
+
+- **它管道写给原生命令的内容开头带一个 UTF-8 BOM**，读这段 stdin 的程序会先看到 `\ufeff` 再看到第一个字符。
+  PowerShell 7 没有这个行为，前缀也改变不了它 —— 在 Windows runner 上实测了五种前缀写法，包括**完全不加前缀**，
+  5.1 五种都带。如果你管道写入的程序不认这个标记，自己去掉开头的 `\ufeff`。
+- **写文件的 cmdlet 默认用系统 ANSI 代码页。** 5.1 下 `Set-Content -Value '中文'` 会静默写成 `??`；
+  PowerShell 7 默认 UTF-8，写出来是对的。前缀只设两个**流**的编码，到此为止 —— 改 cmdlet 的默认值就是改
+  你命令本身的含义，而且 5.1 的 `utf8` 是**带 BOM** 的 UTF-8。要紧的地方就把编码写出来：
+  `Set-Content -Encoding utf8`，或者用 `[System.IO.File]::WriteAllText(...)` 自己指定编码器。
 
 **后台命令**（`is_background: true`）启动解释器时给它一个从不显示的自有控制台窗口，并置于新的进程组。输出不落地：模型
 拿到的是进程号，不是输出。

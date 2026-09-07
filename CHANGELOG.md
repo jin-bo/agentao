@@ -53,6 +53,14 @@ _Targeting 0.4.22. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **Two Windows PowerShell 5.1 encoding defaults are documented rather than
+  overridden.** Cmdlets that write files default to the system ANSI code page
+  there, so `Set-Content -Value '中文'` writes `??` while PowerShell 7 writes
+  the characters. The prelude sets the two *stream* encodings and stops:
+  changing a cmdlet's default would change what a user's command means, and
+  5.1's own `utf8` is UTF-8 *with* a BOM. The reference now says to name the
+  encoding when it matters.
+
 - **Windows PowerShell 5.1 puts a UTF-8 BOM into a native command's stdin, and
   nothing here can stop it.** Five prelude variants were measured on a Windows
   runner — the shipped one, `$OutputEncoding` alone, the console assignment

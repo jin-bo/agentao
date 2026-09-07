@@ -128,12 +128,12 @@ Windows CI 通过实际工具、规划器和权限引擎验证，依赖固定版
 通用地板先跑、总是跑，PowerShell 再叠危险表。这样 `_powershell.py` 不必反向 import `_scanner`，
 包内的依赖方向仍是单向的。行为与方案一致。
 
-### 6.4 Windows 首跑测出的两件事
+### 6.4 Windows 首跑测出的三件事
 
 §5 列出的 Windows 实测项由 CI 的 windows job 执行，本轮是它们第一次真正运行。前台一侧
 （发现、启动、正文完整性、双向中文编码、退出码七种情形、CLIXML、超长拒绝、真实规划链到达启动、
-危险正文只判定不执行）两个 Python 版本各 316 条全绿。后台一侧和 5.1 的管道各测出一件事，
-两件都是**实测结论**，不是推理：
+危险正文只判定不执行）两个 Python 版本各 316 条全绿。后台一侧与 5.1 各测出几件事，
+全部是**实测结论**，不是推理：
 
 **后台启动用 `CREATE_NO_WINDOW`，不能用 `DETACHED_PROCESS`。** 原实现按 §2 写的
 `DETACHED_PROCESS`，实测下 `pwsh` 与 `powershell` **都以退出码 0、stdout 与 stderr 全空的方式结束，
@@ -142,6 +142,12 @@ PowerShell 要有控制台才能自宿主，`DETACHED_PROCESS` 下没有。改�
 不显示的自有控制台）后正文正常执行。cmd 在两种 flag 下都正常 —— 这正是默认路径一直没暴露它的原因。
 两个 flag 互斥，所以是替换而非叠加。`tests/test_powershell_launch.py` 里有一条跨平台的形状用例
 把这个选择钉住，因为会把它改回去的那次编辑发生在非 Windows 机器上。
+
+**Windows PowerShell 5.1 的 `Set-Content` 默认写 ANSI，中文变 `??`。** 后台用例原本用
+`Set-Content` 写完成标记来验证正文跑完；换掉 `DETACHED_PROCESS` 之后正文确实跑了，但 5.1 写出来是
+`?? finished`，pwsh 是对的。这是那个 cmdlet 的默认编码，与启动无关：前缀只负责 agentao 与子进程之间
+两个**流**的编码，不改用户命令的语义 —— 何况 5.1 的 `utf8` 是带 BOM 的。用例改成用
+`[System.IO.File]::WriteAllText` 指定编码器，量的才是它要量的那件事；文档里写明了这个坑。
 
 **Windows PowerShell 5.1 管道给原生命令的内容开头带 UTF-8 BOM，这件事改不掉。** 在 runner 上实测
 五种前缀写法（当前写法、只设 `$OutputEncoding`、先设控制台再设管道、用 `[Text.Encoding]::UTF8`、

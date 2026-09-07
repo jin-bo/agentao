@@ -334,8 +334,16 @@ def test_a_background_launch_runs_its_body_to_completion(interpreter, tmp_path):
     """
     done = tmp_path / "done.txt"
     spec = ShellSpec(dialect=ShellDialect.POWERSHELL, interpreter=AbsPath(interpreter))
+    # The file is written through .NET with an encoder named outright, not through
+    # ``Set-Content``. Measured: Windows PowerShell 5.1 defaults that cmdlet to the system
+    # ANSI code page, so the same body wrote `?? finished` there while pwsh wrote the
+    # characters. That is the cmdlet's documented default and has nothing to do with the
+    # launch — leaving it in would have made this test fail for a reason it does not name.
     launch = ShellTool()._launch(
-        f"Set-Content -LiteralPath '{done}' -Value '中文 finished'", tmp_path, spec
+        f"[System.IO.File]::WriteAllText('{done}', '中文 finished', "
+        "[System.Text.UTF8Encoding]::new($false))",
+        tmp_path,
+        spec,
     )
     handle = LocalShellExecutor().run_background(ShellRequest(launch=launch))
     assert handle.pid

@@ -224,11 +224,20 @@ non-ASCII output and non-ASCII piped into a native program both survive. A nativ
 writes some *other* encoding is still not transcoded — that is the program's own choice and nothing
 here can know it.
 
-One measured quirk of **Windows PowerShell 5.1**: what it pipes into a native command begins with a
-UTF-8 byte order mark. A program reading that stdin sees `\ufeff` before the first character.
-PowerShell 7 does not do this, and nothing in the prelude changes it — five variants were measured on
-a Windows runner, including no prelude at all, and 5.1 emitted the mark in every one. Strip a leading
-`\ufeff` if the program you are piping into does not.
+Two measured quirks of **Windows PowerShell 5.1**, both of which are the interpreter's own and
+neither of which the prelude can reach:
+
+- **What it pipes into a native command begins with a UTF-8 byte order mark.** A program reading that
+  stdin sees `\ufeff` before the first character. PowerShell 7 does not do this, and nothing in the
+  prelude changes it — five variants were measured on a Windows runner, including no prelude at all,
+  and 5.1 emitted the mark in every one. Strip a leading `\ufeff` if the program you are piping into
+  does not.
+- **Cmdlets that write files default to the system ANSI code page.** `Set-Content -Value '中文'`
+  under 5.1 writes `??`, silently; PowerShell 7 defaults to UTF-8 and writes the characters. The
+  prelude sets the two *stream* encodings and deliberately stops there — changing a cmdlet's default
+  would change what your commands mean, and 5.1's `utf8` is UTF-8 *with* a BOM. Name the encoding
+  when it matters: `Set-Content -Encoding utf8`, or `[System.IO.File]::WriteAllText(...)` with an
+  encoder you chose.
 
 **Background commands** (`is_background: true`) start the interpreter with its own console window
 that is never displayed, and a new process group. Output goes nowhere: the model gets a process id,
