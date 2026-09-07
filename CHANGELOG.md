@@ -5,9 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.4.22. Add entries under the relevant heading as work lands._
+## [0.4.22] — 2026-09-07
 
 ### Added
 
@@ -47,9 +45,14 @@ _Targeting 0.4.22. Add entries under the relevant heading as work lands._
   deliberately keeps running only the dialect-independent half.
 
 - **A Windows CI job** — Python 3.10 and 3.12, the full suite. This repository
-  had never run its tests on Windows; the first run failed 155 of them. Six
-  were product defects, listed under Fixed, and none of them is a "Windows
-  bug": each is something POSIX absorbs quietly and Windows bills for.
+  had never run its tests on Windows; the first run to reach the whole suite
+  failed 155 of them on 3.10 and 162 on 3.12, with 13 collection errors on top.
+  Six were product defects, and none of them is a "Windows bug": each is
+  something
+  POSIX absorbs quietly and Windows bills for. A later run over the PowerShell
+  work found a seventh — a background command that returned a process id and
+  ran nothing — and two Windows PowerShell 5.1 behaviours that are documented
+  rather than worked around. All of them are listed under Fixed and Changed.
 
 ### Changed
 
@@ -116,6 +119,36 @@ _Targeting 0.4.22. Add entries under the relevant heading as work lands._
   executor.
 
 ### Fixed
+
+- **The tool-confirmation prompt showed the operator a string the model
+  controlled the rendering of.** The reference CLI printed model-authored text
+  straight into `console.print(f"…")`. Two vectors made what a human approved
+  differ from what would run: a raw escape survives JSON transport as
+  `\u001b` and Rich passes it through, so `ESC[1A ESC[2K` erases the line just
+  printed and reprints something else; and Rich markup needs no control byte at
+  all — `[black on black]` becomes `ESC[30;40m` and the tail of a command
+  renders invisible. Measured under a PTY on the real console object, because
+  Rich resolves its colour system at construction and a non-tty probe reports a
+  false negative. This is the prompt where a human arbitrates: in
+  `workspace-write`, the default posture, every shell command outside the
+  read-only allowlist falls through to the catch-all `ask` rule.
+
+  Six display sites are covered — tool name, argument key and argument value at
+  the confirmation prompt, the reasoning display, the max-iterations pending
+  list, `ask_user`'s title/question/options, and the confirmation status line.
+  The strip already existed for *server*-authored text in the ACP client; it
+  moved to `security/terminal_text.py` so both consumers share one
+  implementation, and stays free of `rich` because `security/` is a leaf that
+  core must be able to import — which is why the markup half lives in the
+  CLI-side helper. **No gate is loosened**: the `deny` rules and the command
+  floor match the real argument string, unchanged. The same change fixes a
+  fidelity defect where `[notastyle]` inside an argument was eaten as a markup
+  tag, so the prompt could silently drop characters from a benign command.
+
+  Out of scope and not claimed safe: streamed `on_llm_text` chunks still reach
+  stdout unfiltered. That is answer text rather than a representation of an
+  action being authorised, and the tag-block pass is a structural window a
+  per-chunk transform would break.
 
 - **A background PowerShell command reported a process id and never ran.**
   `run_background` passed `DETACHED_PROCESS` on Windows. Measured on a runner:
