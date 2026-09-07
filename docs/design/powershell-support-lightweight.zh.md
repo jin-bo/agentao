@@ -157,5 +157,6 @@ BOM 并把测量写在旁边，配置文档也写明了，让管道下游自己�
 
 ### 6.5 验收状态
 
-本机（macOS）全套通过，`ruff check .` 通过。CI：ubuntu 三个版本、build（含首次接上的 `-m slow`
-净装层）、smoke、examples、mcp-compat 全绿；Windows 两个版本的最终状态以本节修订后的那次运行为准。
+本机（macOS）全套通过，`ruff check .` 通过。CI 21 个 job 全绿：Windows 两个版本的 shell 用例各
+326 passed / 6 skipped，其后的全量套件各 4929 passed / 48 skipped；build 上首次接上的 `-m slow`
+净装层 9 条全过。§5 的验收条件到此满足。
