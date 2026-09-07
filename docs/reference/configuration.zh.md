@@ -199,6 +199,13 @@
 **编码。** 前缀把 `$OutputEncoding` 与 `[Console]::OutputEncoding` 都设为 UTF-8，于是非 ASCII 输出、以及管道写给原生
 程序的非 ASCII 都能正常通过。原生程序若自己用**别的**编码写，仍然不会被转码 —— 那是那个程序自己的选择，这里无从得知。
 
+**Windows PowerShell 5.1 的一个实测怪癖：** 它管道写给原生命令的内容开头带一个 UTF-8 BOM，读这段 stdin 的程序会先看到
+`\ufeff` 再看到第一个字符。PowerShell 7 没有这个行为，前缀也改变不了它 —— 在 Windows runner 上实测了五种前缀写法，
+包括**完全不加前缀**，5.1 五种都带。如果你管道写入的程序不认这个标记，自己去掉开头的 `\ufeff`。
+
+**后台命令**（`is_background: true`）启动解释器时给它一个从不显示的自有控制台窗口，并置于新的进程组。输出不落地：模型
+拿到的是进程号，不是输出。
+
 **自动发现**按已知安装位置（`Program Files` 与 `%LOCALAPPDATA%` 下的 PowerShell 7 目录、Store 别名目录，以及
 Windows PowerShell 5.1 的 `System32` / `SysWOW64`）再加 `PATH` 中的绝对目录逐个查找。它**不**搜索当前工作目录，也
 **不**会选中 Git Bash。新装的解释器对已经在跑的 agentao 不可见：重启它，或者给一个绝对 `path`。

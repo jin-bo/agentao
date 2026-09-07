@@ -128,9 +128,28 @@ Windows CI 通过实际工具、规划器和权限引擎验证，依赖固定版
 通用地板先跑、总是跑，PowerShell 再叠危险表。这样 `_powershell.py` 不必反向 import `_scanner`，
 包内的依赖方向仍是单向的。行为与方案一致。
 
-### 6.4 验收状态
+### 6.4 Windows 首跑测出的两件事
 
-本机（macOS）全套通过，`ruff check .` 通过。§5 列出的 Windows 实测项由 CI 的 windows job 执行：
-`tests/test_windows_launch_matrix.py` 覆盖发现、启动、正文完整性、双向中文编码、退出码七种情形、
-CLIXML、后台 `DETACHED_PROCESS` 下写完成标记、超长拒绝，以及「干净正文经真实规划链到达启动」与
-「危险正文只判定不执行」。**这些用例在 Windows 之外全部 skip，本轮尚未在 Windows 上跑过。**
+§5 列出的 Windows 实测项由 CI 的 windows job 执行，本轮是它们第一次真正运行。前台一侧
+（发现、启动、正文完整性、双向中文编码、退出码七种情形、CLIXML、超长拒绝、真实规划链到达启动、
+危险正文只判定不执行）两个 Python 版本各 316 条全绿。后台一侧和 5.1 的管道各测出一件事，
+两件都是**实测结论**，不是推理：
+
+**后台启动用 `CREATE_NO_WINDOW`，不能用 `DETACHED_PROCESS`。** 原实现按 §2 写的
+`DETACHED_PROCESS`，实测下 `pwsh` 与 `powershell` **都以退出码 0、stdout 与 stderr 全空的方式结束，
+正文一条都没跑**（把两个流指向真实文件确认过是空，不是被丢弃；去掉前缀与尾缀的裸正文同样不跑）。
+PowerShell 要有控制台才能自宿主，`DETACHED_PROCESS` 下没有。改成 `CREATE_NO_WINDOW`（给它一个
+不显示的自有控制台）后正文正常执行。cmd 在两种 flag 下都正常 —— 这正是默认路径一直没暴露它的原因。
+两个 flag 互斥，所以是替换而非叠加。`tests/test_powershell_launch.py` 里有一条跨平台的形状用例
+把这个选择钉住，因为会把它改回去的那次编辑发生在非 Windows 机器上。
+
+**Windows PowerShell 5.1 管道给原生命令的内容开头带 UTF-8 BOM，这件事改不掉。** 在 runner 上实测
+五种前缀写法（当前写法、只设 `$OutputEncoding`、先设控制台再设管道、用 `[Text.Encoding]::UTF8`、
+以及**完全不加前缀**），5.1 五种全带 BOM，pwsh 五种全不带。所以它是 5.1 的行为，不是包装的问题。
+顺带证明了前缀本身是有用的：不加前缀那一种是 `GOT:\ufeff??`，中文被打成问号。用例改为容忍开头的
+BOM 并把测量写在旁边，配置文档也写明了，让管道下游自己去掉。
+
+### 6.5 验收状态
+
+本机（macOS）全套通过，`ruff check .` 通过。CI：ubuntu 三个版本、build（含首次接上的 `-m slow`
+净装层）、smoke、examples、mcp-compat 全绿；Windows 两个版本的最终状态以本节修订后的那次运行为准。

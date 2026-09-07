@@ -164,14 +164,6 @@ jobs:
         run: |
           uv run --python ${{ matrix.python-version }} python -c "import shutil; print('pwsh:', shutil.which('pwsh')); print('powershell:', shutil.which('powershell')); print('cmd:', shutil.which('cmd')); print('bash:', shutil.which('bash'))"
 
-      # A probe, not a gate: it fails on purpose to print what it measured, so
-      # it runs first and cannot fail the job. Delete the step with the file.
-      - name: Probe · the detached launch and the 5.1 native pipe
-        continue-on-error: true
-        env:
-          AGENTAO_PROBE: "1"
-        run: uv run --python ${{ matrix.python-version }} python -m pytest -v --tb=long tests/test_windows_probe.py
-
       # Two steps, so a red run is readable. The shell modules are written for
       # Windows and are expected to pass; failing the first step means the
       # shell support is broken, and failing only the second means something

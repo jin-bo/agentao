@@ -172,7 +172,13 @@ def test_non_ascii_survives_the_pipe_to_a_native_command(interpreter, tmp_path):
     body = f"'中文' | & '{sys.executable}' '{reader}'"
     result = run(interpreter, body, tmp_path)
     assert result.returncode == 0, result.stderr
-    assert "GOT:中文" in text(result)
+    # Windows PowerShell 5.1 puts a UTF-8 BOM at the head of a native command's stdin, and
+    # measurement says nothing agentao writes can stop it: five prelude variants were tried on
+    # a runner, including **no prelude at all**, and all five produced it. pwsh produced it in
+    # none of them. So the BOM is 5.1's, not the wrapper's, and it is tolerated here rather
+    # than chased. The `?` assertion below is the one that fails without the prelude: with no
+    # `$OutputEncoding`, 5.1 sent `GOT:\ufeff??`, BOM and all.
+    assert "GOT:中文" in text(result).replace("\ufeff", "")
     assert "?" not in text(result)
 
 
@@ -317,11 +323,14 @@ def _tool_output(interpreter: str, body: str, cwd: Path) -> str:
 
 @pytest.mark.parametrize("interpreter", PARAMS)
 def test_a_background_launch_runs_its_body_to_completion(interpreter, tmp_path):
-    """The one path with no console at all — ``DETACHED_PROCESS``, all three streams DEVNULL.
+    """The path with a console nobody is looking at, and all three streams at DEVNULL.
 
-    That is where ``[Console]::OutputEncoding`` throws, so this is what proves the ``catch``
-    is load-bearing rather than decorative. Asserting only that a PID came back would pass
-    with a child that died on its first statement.
+    Asserting only that a PID came back would pass with a child that never ran a statement —
+    which is exactly what happened. Under ``DETACHED_PROCESS``, the flag this used to pass,
+    both interpreters exit **0 with empty stdout and stderr without running the script**;
+    measured on a runner, with the streams pointed at real files to be sure they were empty
+    rather than discarded. PowerShell hosts itself in a console and there was none. cmd is
+    unaffected, which is why the default Windows path never showed it.
     """
     done = tmp_path / "done.txt"
     spec = ShellSpec(dialect=ShellDialect.POWERSHELL, interpreter=AbsPath(interpreter))
@@ -361,6 +370,25 @@ def test_a_background_pipe_to_a_native_command_keeps_its_encoding(interpreter, t
         time.sleep(0.2)
     assert out.exists(), "the background pipe never reached the native command"
     assert "中文" in out.read_text(encoding="utf-8")
+
+
+@needs_powershell
+def test_the_default_cmd_shell_also_runs_a_background_body(tmp_path):
+    """The default Windows path, measured for the first time — and the reason it must be.
+
+    The creation flags are one line shared by every dialect. Changing them because PowerShell
+    needed a console is only safe if cmd still works under the new one, and cmd's background
+    launch had never been measured on Windows at all.
+    """
+    done = tmp_path / "cmd-done.txt"
+    launch = ShellTool()._launch(f"echo ok> {done}", tmp_path, default_spec())
+    handle = LocalShellExecutor().run_background(ShellRequest(launch=launch))
+    assert handle.pid
+
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not done.exists():
+        time.sleep(0.2)
+    assert done.exists(), "the default cmd background body never wrote its marker"
 
 
 # ------------------------------------------------------- the floor reaches a launch

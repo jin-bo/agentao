@@ -282,3 +282,51 @@ def test_the_child_environment_still_drops_agentaos_own_credentials(tmp_path, mo
 def test_a_launch_env_is_not_writable_by_its_holder(tmp_path):
     launch = ShellTool()._launch("Get-Date", tmp_path, _spec())
     assert isinstance(launch.env, MappingProxyType)
+
+
+def test_a_windows_background_launch_asks_for_no_window_never_a_detached_process(
+    monkeypatch, tmp_path
+):
+    r"""``DETACHED_PROCESS`` starts a PowerShell that never runs its script.
+
+    Measured on a Windows runner, both interpreters, both wrapped and bare: the child exits
+    **0 with empty stdout and stderr** and the body's first statement never happens. Only the
+    pid comes back, so a background command reads as started and silently does nothing.
+    ``CREATE_NO_WINDOW`` gives the child a console nobody looks at, and the body runs; the two
+    flags are mutually exclusive, so it is a swap.
+
+    This runs on every platform on purpose. The Windows measurement lives in
+    ``tests/test_windows_launch_matrix.py``, but the edit that would undo it — "these two
+    flags mean the same thing" — gets made on a machine that is not Windows, where those
+    ``subprocess`` constants do not even exist. The Win32 values are written out here for
+    that reason.
+    """
+    DETACHED_PROCESS = 0x00000008
+    CREATE_NEW_PROCESS_GROUP = 0x00000200
+    CREATE_NO_WINDOW = 0x08000000
+
+    import agentao.capabilities.shell as shell_module
+
+    monkeypatch.setattr(shell_module, "IS_WINDOWS", True)
+    for name, value in (
+        ("CREATE_NEW_PROCESS_GROUP", CREATE_NEW_PROCESS_GROUP),
+        ("CREATE_NO_WINDOW", CREATE_NO_WINDOW),
+        ("DETACHED_PROCESS", DETACHED_PROCESS),
+    ):
+        monkeypatch.setattr(shell_module.subprocess, name, value, raising=False)
+
+    seen = {}
+
+    def _fake_popen(target, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("spawn suppressed")
+
+    monkeypatch.setattr(shell_module.subprocess, "Popen", _fake_popen)
+    with pytest.raises(RuntimeError):
+        shell_module.LocalShellExecutor().run_background(
+            ShellRequest(launch=ShellTool()._launch("Get-Date", tmp_path, _spec()))
+        )
+
+    assert seen["creationflags"] & CREATE_NO_WINDOW
+    assert not seen["creationflags"] & DETACHED_PROCESS
+    assert seen["creationflags"] & CREATE_NEW_PROCESS_GROUP

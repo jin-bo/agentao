@@ -224,6 +224,16 @@ non-ASCII output and non-ASCII piped into a native program both survive. A nativ
 writes some *other* encoding is still not transcoded — that is the program's own choice and nothing
 here can know it.
 
+One measured quirk of **Windows PowerShell 5.1**: what it pipes into a native command begins with a
+UTF-8 byte order mark. A program reading that stdin sees `\ufeff` before the first character.
+PowerShell 7 does not do this, and nothing in the prelude changes it — five variants were measured on
+a Windows runner, including no prelude at all, and 5.1 emitted the mark in every one. Strip a leading
+`\ufeff` if the program you are piping into does not.
+
+**Background commands** (`is_background: true`) start the interpreter with its own console window
+that is never displayed, and a new process group. Output goes nowhere: the model gets a process id,
+not a transcript.
+
 **Discovery** checks known install locations (the PowerShell 7 directories under `Program Files` and
 `%LOCALAPPDATA%`, the Store alias directory, and `System32`/`SysWOW64` for Windows PowerShell 5.1)
 and then the absolute directories on `PATH`. It never searches the working directory, and it never

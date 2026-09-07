@@ -53,6 +53,15 @@ _Targeting 0.4.22. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **Windows PowerShell 5.1 puts a UTF-8 BOM into a native command's stdin, and
+  nothing here can stop it.** Five prelude variants were measured on a Windows
+  runner — the shipped one, `$OutputEncoding` alone, the console assignment
+  first, the static `[Text.Encoding]::UTF8`, and no prelude at all. Windows
+  PowerShell 5.1 emitted the mark in all five; PowerShell 7 in none. So it is
+  5.1's behaviour rather than the wrapper's, and it is documented rather than
+  chased. The same measurement confirms the prelude is load-bearing: without
+  it, 5.1 sent `GOT:\ufeff??` and the Chinese characters were gone.
+
 - **The `[full]` dependency baseline is compared by name, not by version.**
   `tests/data/full_extras_baseline.txt` was a `pip freeze` — 59 pinned versions
   — and `pyproject.toml` declares floors, so every upstream release of anything
@@ -99,6 +108,20 @@ _Targeting 0.4.22. Add entries under the relevant heading as work lands._
   executor.
 
 ### Fixed
+
+- **A background PowerShell command reported a process id and never ran.**
+  `run_background` passed `DETACHED_PROCESS` on Windows. Measured on a runner:
+  under that flag both `pwsh` and `powershell` exit **0, with empty stdout and
+  empty stderr, without executing a single statement of the script** — with the
+  streams pointed at real files to confirm the output was absent rather than
+  discarded, and with the prelude removed to confirm the wrapper was not the
+  cause. PowerShell hosts itself in a console and `DETACHED_PROCESS` leaves it
+  none. It is `CREATE_NO_WINDOW` now, which gives the child a console nobody
+  looks at; the two flags are mutually exclusive, so it is a swap. cmd works
+  under either, which is why the default Windows path never showed this. The
+  default path now has a background measurement of its own, and a
+  cross-platform shape test pins the flag — the edit that would undo it gets
+  made on a machine where those constants do not exist.
 
 - **The `slow` clean-install tests ran nowhere, and one of them was red.**
   Nine tests build a wheel, install it into fresh venvs and check what a user

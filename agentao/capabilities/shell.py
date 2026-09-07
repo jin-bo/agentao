@@ -315,8 +315,19 @@ class LocalShellExecutor:
         )
 
         if IS_WINDOWS:
+            # ``CREATE_NO_WINDOW``, not ``DETACHED_PROCESS``. Measured on a Windows runner:
+            # under ``DETACHED_PROCESS`` both ``pwsh`` and ``powershell`` exit **0 with empty
+            # stdout and stderr without running the script at all** — a background command
+            # reported as started, and silently never run. PowerShell hosts itself in a
+            # console and there is none to host it in; ``CREATE_NO_WINDOW`` gives the child
+            # its own console that is never shown, and the body runs. The two flags are
+            # mutually exclusive, so this is a swap rather than an addition.
+            #
+            # cmd is unaffected either way, which is why nothing saw this until a dialect
+            # arrived that is not cmd. Both are covered by
+            # ``tests/test_windows_launch_matrix.py``.
             popen_kwargs["creationflags"] = (
-                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS  # type: ignore[attr-defined]
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
             )
             proc = subprocess.Popen(target, **popen_kwargs)
             return BackgroundHandle(

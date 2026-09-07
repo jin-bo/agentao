@@ -126,11 +126,12 @@ PRELUDE = (
     # ASCII, so every non-ASCII byte piped into a native program becomes `?`.
     # It is a plain variable assignment and cannot fail.
     "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
-    # ``[Console]::OutputEncoding`` needs a console, and a background launch has
-    # none (``DETACHED_PROCESS``, all three streams at DEVNULL), where the
-    # assignment throws. Catching it here is what keeps one launch shape usable
-    # for both delivery faces — and the catch is around this clause only, never
-    # around the body, so a failure here cannot swallow the user's own errors.
+    # ``[Console]::OutputEncoding`` needs a console, and a background launch's is
+    # one nobody is looking at (``CREATE_NO_WINDOW``, all three streams at
+    # DEVNULL), where the assignment can throw. Catching it here is what keeps
+    # one launch shape usable for both delivery faces — and the catch is around
+    # this clause only, never around the body, so a failure here cannot swallow
+    # the user's own errors.
     "try { [Console]::OutputEncoding = $OutputEncoding } catch {}\n"
     # Read by the trailer below. Without the initialisation the trailer would
     # consult whatever an earlier session left, or nothing at all.
