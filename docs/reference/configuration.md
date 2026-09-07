@@ -258,7 +258,7 @@ PowerShell's built-in aliases (`rm`, `ri`, `del`, `rd`, …) and abbreviated par
 floor, so `format C:` typed into cmd is not stopped there; that is the status quo being preserved,
 not a claim that the command is safe, and the permission rules still apply.
 
-Design: `docs/design/powershell-support-lightweight.zh.md`.
+Design: `docs/design/powershell-support-lightweight.md` (Chinese: `…-lightweight.zh.md`).
 
 
 ---
