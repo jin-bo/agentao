@@ -78,7 +78,7 @@
 ```
 ⚠️  Tool Confirmation Required
 Tool: run_shell_command
-Description: Execute a shell command and return its output. Use with caution as it can execute any command.
+Description: This tool executes a given shell command as `/bin/bash -c <command>`. …
 Arguments:
   • command: ls -la
   • working_directory: .
