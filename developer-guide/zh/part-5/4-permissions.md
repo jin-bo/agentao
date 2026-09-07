@@ -75,9 +75,14 @@ agent.permission_engine.set_mode(PermissionMode.READ_ONLY)
     {"tool": "write_file", "action": "ask"},
     {"tool": "run_shell_command", "args": {"command": "rm\\s+-rf"}, "action": "deny"},
     {"tool": "*", "action": "ask"}
-  ]
+  ],
+  "shell": { "dialect": "powershell" }
 }
 ```
+
+文件有两个顶层键。`rules` 是下文的全部内容；`shell`（0.4.22 新增，仅 Windows）决定
+`run_shell_command` 用哪个解释器、以及命令地板按哪种语法扫描 —— 见附录 B.3.2，启动与编码见
+`docs/reference/configuration.zh.md` §4。未知的顶层键会报出点名的错误，不会被忽略。
 
 **评估顺序**（最先匹配者胜）：
 

@@ -26,6 +26,7 @@ This is a CLI-centric **index** to every config file the CLI reads. The schema r
 | Default permission mode for fresh sessions | `.agentao/settings.json` → `mode` *(persisted-last-known, see [§3](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#3-agentaosettingsjson--runtime-mode--builtin-agents))* |
 | Allow / deny extra shell commands | `~/.agentao/permissions.json` |
 | Allow / deny extra web domains | `~/.agentao/permissions.json` |
+| Use PowerShell instead of cmd (Windows) | `~/.agentao/permissions.json` → `shell` |
 | Default sandbox profile (macOS) | `.agentao/sandbox.json` or `~/.agentao/sandbox.json` → `default_profile` |
 | Default context window | `AGENTAO_CONTEXT_TOKENS` environment variable |
 | Default replay recording state | `.agentao/settings.json` → `replay.enabled` |

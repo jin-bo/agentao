@@ -75,9 +75,16 @@ A `<cwd>/.agentao/permissions.json` is **not** loaded — the engine logs a warn
     {"tool": "write_file", "action": "ask"},
     {"tool": "run_shell_command", "args": {"command": "rm\\s+-rf"}, "action": "deny"},
     {"tool": "*", "action": "ask"}
-  ]
+  ],
+  "shell": { "dialect": "powershell" }
 }
 ```
+
+The file has two top-level keys. `rules` is everything below; `shell` (new in
+0.4.22, Windows only) chooses the interpreter `run_shell_command` uses and the
+syntax the command floor scans with — see appendix B.3.2, or
+`docs/reference/configuration.md` §4 for the launch and the encoding. An
+unknown top-level key is a named error, not an ignored one.
 
 **Evaluation order** (first match wins):
 
