@@ -1,12 +1,10 @@
 """PowerShell lowering: parse first, and refuse everything the grammar does not close over.
 
-PR-2 of the PowerShell ladder. ``LOWER-01`` through ``LOWER-04`` are defined once each in
-``docs/design/powershell-support-spec.zh.md`` §2.
-
-**What this does and does not do.** It lowers a script to literal argv, or refuses. It makes
-no judgement about whether a command is safe — that is the trusted table's job, and it can
-only do that job if the argv it is handed is the argv PowerShell will actually see. Every
-refusal here is a case where those two could differ.
+**What this does and does not do.** It lowers a script to literal argv, or refuses. Lowering
+is what lets the dangerous table read a *command* instead of searching raw text — the
+difference between refusing ``Remove-Item -Recurse C:\\`` and refusing a comment that mentions
+it. A refusal here says only that the script could not be read that way; it is never a
+judgement that the script is dangerous, and on its own it denies nothing.
 
 **Why an allowlist of node kinds rather than a denylist of dangerous ones.** ``$Function:git
 = { … }`` forms no command node and passes no arguments, so a command-level rule never sees
@@ -21,13 +19,15 @@ of it. Where the two differ, that corpus is the arbiter.
 
 from __future__ import annotations
 
-import re
+import logging
 from functools import lru_cache
 from typing import List, Optional, Sequence, Tuple
 
-from ._windows import WINDOWS_DANGEROUS
+from ._windows import dangerous_reason
 
-# LOWER-02: exactly these named kinds are understood; every other one refuses the body.
+_logger = logging.getLogger(__name__)
+
+# Exactly these named kinds are understood; every other one refuses the body.
 # `comment` is here only because the `#requires` step has already run — a comment that could
 # execute has been refused before this list is consulted.
 ALLOWED_KINDS = frozenset(
@@ -57,7 +57,7 @@ ALLOWED_KINDS = frozenset(
     }
 )
 
-# LOWER-01 step 1. PowerShell treats these as syntax even where tree-sitter leaves them inside
+# Step 1. PowerShell treats these as syntax even where tree-sitter leaves them inside
 # a generic token, so the whole spelling family stays opaque rather than being guessed at
 # position by position.
 UNICODE_SYNTAX_ALIASES = "‘’“”–—―"
@@ -70,7 +70,7 @@ class LoweringError(Exception):
     """A refusal, carrying which of the ten steps produced it."""
 
     def __init__(self, step: int, detail: str) -> None:
-        super().__init__(f"LOWER-01:{step}:{detail}")
+        super().__init__(f"lowering step {step}: {detail}")
         self.step = step
         self.detail = detail
 
@@ -86,13 +86,30 @@ def _parser():
     Built once. Loading the grammar and constructing a ``Parser`` on every call put a
     dynamic-library load on the permission path of every shell command on a PowerShell rung,
     and the object is stateless across ``parse`` calls.
+
+    Every failure is caught, not only ``ImportError``: an ABI mismatch between ``tree_sitter``
+    and the grammar wheel raises ``ValueError`` out of ``Language(...)``, and that would
+    otherwise travel up through ``hardline_check`` and end the turn. It is logged, because a
+    parser that is not there disables the whole Windows table silently otherwise.
     """
     try:
         import tree_sitter_powershell
         from tree_sitter import Language, Parser
     except ImportError:  # pragma: no cover - exercised by the platform without the wheel
+        _logger.info(
+            "tree-sitter-powershell is not installed; the PowerShell dangerous-class table "
+            "cannot run. The dialect-independent command floor is unaffected."
+        )
         return None
-    return Parser(Language(tree_sitter_powershell.language()))
+    try:
+        return Parser(Language(tree_sitter_powershell.language()))
+    except Exception:  # noqa: BLE001 - an unusable grammar must not end a turn
+        _logger.warning(
+            "tree-sitter-powershell could not be loaded; the PowerShell dangerous-class "
+            "table cannot run. The dialect-independent command floor is unaffected.",
+            exc_info=True,
+        )
+        return None
 
 
 def parser_available() -> bool:
@@ -262,7 +279,7 @@ def _char_at(script: str, index: int) -> str:
 
 
 def _source_is_covered(script: str, ranges: Sequence[Tuple[int, int]]) -> bool:
-    """LOWER-03: a stateful walk proving every byte is either a command or an understood joiner.
+    """A stateful walk proving every byte is either a command or an understood joiner.
 
     The command nodes alone are not enough. Anything the tree dropped — a construct the
     grammar recovered from, a separator in a position that means something else — lives in
@@ -340,7 +357,7 @@ def _source_is_covered(script: str, ranges: Sequence[Tuple[int, int]]) -> bool:
     return range_index == len(ranges) and not needs_command and paren_depth == 0
 
 
-# ------------------------------------------------------------------ LOWER-01
+# ------------------------------------------------------------- the ten steps
 
 
 def lower_powershell(script: str) -> List[List[str]]:
@@ -447,43 +464,38 @@ def _first_unrecognized_kind(root) -> Optional[str]:
     return None
 
 
-_WINDOWS_DANGEROUS_COMPILED = [
-    (re.compile(p, re.IGNORECASE), d) for p, d in WINDOWS_DANGEROUS
-]
-
-
-def commands_of(body: str) -> List[List[str]]:
-    """The lowered commands, one literal argv each. Raises :class:`LoweringError` like the
-    pipeline it delegates to — this dialect's split failure has a step number, unlike the
-    other two, and flattening that into ``None`` would throw away which step refused."""
-    return lower_powershell(body)
-
-
 def scan_powershell(body: str) -> Optional[str]:
-    """The PowerShell floor: lower, then the dangerous table over each lowered command.
+    """The dangerous classes this script reaches, or ``None``.
 
-    Returning ``None`` means the script lowered cleanly and refuses no class, which is the
-    point at which the trusted table takes over. It is not a verdict that the script is safe.
+    ``None`` covers two different situations on purpose, because neither is an
+    allow: the script lowered cleanly and matched no class, or it could not be
+    lowered at all. **A script this cannot read is not thereby refused.** The
+    general floor has already run against the same body at the call site and
+    still denies what it denies, and everything below that is the permission
+    rules' decision, not the floor's — a lowering failure is a statement about
+    this parser, and it would deny ordinary PowerShell that happens to use a
+    construct the grammar allowlist does not cover.
 
-    The dangerous table runs against each command's own reconstructed line rather than the
-    body text, so it needs no command-position anchor: lowering has already separated the
-    commands, and a class matched inside one of them is matched in command position by
-    construction. That is also why the table is shared with cmd rather than duplicated —
-    ``Format-Volume`` destroys the same bytes whichever interpreter typed it (``_windows``).
+    What lowering buys is the opposite of a denylist over raw text: each command
+    is separated out with its quoting resolved, so the table matches a command
+    word rather than a substring that might be sitting inside a string or a
+    comment.
     """
     if not body.strip():
         return None
     try:
         commands = lower_powershell(body)
-    except LoweringError as exc:
-        return f"hardline:powershell-opaque:{exc.step}:{exc.detail}"
+    except LoweringError:
+        return None
+    except Exception:  # noqa: BLE001 - the parser reads model-written text
+        # Anything the grammar itself raises lands here. It is the same answer as a lowering
+        # refusal — this parser could not read the script — and the alternative is an
+        # exception escaping ``hardline_check`` into the planner, which has no handler and
+        # would end the turn for every shell call.
+        _logger.warning("the PowerShell parser raised on this body", exc_info=True)
+        return None
     for argv in commands:
-        line = " ".join(argv)
-        for pattern, description in _WINDOWS_DANGEROUS_COMPILED:
-            # ``match``, not ``search``: the class has to *start* the command. Searching the
-            # whole line reads `Write-Output Format-Volume` as a format, which is the same
-            # false positive cmd's command-position anchor exists to prevent — here the
-            # anchor is free, because lowering has already cut the body into commands.
-            if pattern.match(line) is not None:
-                return description
+        reason = dangerous_reason(argv)
+        if reason is not None:
+            return reason
     return None

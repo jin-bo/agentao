@@ -211,7 +211,7 @@ class TestShellChildEnvironment:
 
         This used to hand the executor a request with no environment and rely on it calling
         ``build_child_env()`` itself. The launch request now carries a complete environment
-        that the executor sets verbatim (LAUNCH-01a), so the scrub happens one layer up —
+        that the executor sets verbatim, so the scrub happens one layer up —
         and the only way to keep proving the guarantee is to drive the layer that does it.
         """
         from agentao.tools.shell import ShellTool
@@ -226,11 +226,11 @@ class TestShellChildEnvironment:
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell expansion in the probe")
     def test_the_executor_sets_the_launch_environment_verbatim(self, monkeypatch, tmp_path):
-        """LAUNCH-01a: the executor sets the environment it was given, and computes none."""
+        """The executor sets the environment it was given, and computes none."""
         from types import MappingProxyType
 
         from agentao.capabilities.shell import LocalShellExecutor, ShellRequest
-        from agentao.capabilities.shell_spec import AbsPath, LegacyLaunch, Sha256
+        from agentao.capabilities.shell_spec import AbsPath, LegacyLaunch
 
         monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
         result = LocalShellExecutor().run(
@@ -241,7 +241,6 @@ class TestShellChildEnvironment:
                     env=MappingProxyType(
                         {"OPENAI_API_KEY": "host-chose-this", "PATH": os.environ["PATH"]}
                     ),
-                    spec_fingerprint=Sha256(""),
                 ),
                 timeout=30,
             )

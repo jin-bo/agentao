@@ -1,7 +1,8 @@
 """The PowerShell lowering, graded against codex's own corpus.
 
-PR-2 of the PowerShell ladder. ``LOWER-01`` through ``LOWER-04`` are defined once each in
-``docs/design/powershell-support-spec.zh.md`` §2.
+Lowering turns a PowerShell script into literal argv, or refuses. It is what lets the
+dangerous table read a *command* rather than search raw text, and a refusal from it denies
+nothing on its own.
 
 ``tests/fixtures/powershell_lowering.json`` is codex's file, copied verbatim. It is the point
 of the exercise: a lowering graded only by tests its own author wrote is graded against the
@@ -45,7 +46,7 @@ def _refusal(script: str):
     return None
 
 
-# ------------------------------------------------------------------ LOWER-04
+# ------------------------------------------------------------------- the corpus
 
 
 def test_the_corpus_is_the_one_that_was_promised():
@@ -58,7 +59,7 @@ def test_the_corpus_is_the_one_that_was_promised():
 
 @pytest.mark.parametrize("case", LOWERS, ids=[c["name"] for c in LOWERS])
 def test_every_accepted_script_lowers_to_exactly_the_expected_argv(case):
-    """LOWER-04: the whole argv, not merely "it lowered".
+    """The whole argv, not merely "it lowered".
 
     Asking only whether lowering succeeded would pass on wrong quoting, a wrong escape, or an
     argument boundary cut in the wrong place — and each of those hands the trusted table a
@@ -73,7 +74,7 @@ def test_every_refused_script_is_refused(case):
 
 
 def test_the_refusals_are_spread_across_the_steps():
-    """LOWER-04's real requirement: refusing for the right reason, not merely refusing.
+    """The real requirement: refusing for the right reason, not merely refusing.
 
     An implementation that failed every script at step 1 would pass the previous test
     completely. The distribution is pinned so that collapse is visible, and so is any drift
@@ -84,11 +85,11 @@ def test_the_refusals_are_spread_across_the_steps():
     assert sum(distribution.values()) == 44
 
 
-# ------------------------------------------------------------------ LOWER-02
+# -------------------------------------------------------------- the kind list
 
 
 def test_the_accepted_kind_list_is_exactly_the_twenty_one():
-    """LOWER-02: the list is pinned to a grammar version, so a rename fails closed.
+    """The list is pinned to a grammar version, so a rename fails closed.
 
     A grammar upgrade that renames a node makes that node unrecognised, which refuses the
     body. The alternative — matching loosely so renames keep working — silently widens what
@@ -110,7 +111,7 @@ def test_an_assignment_forms_no_command_and_is_refused_by_kind():
     assert exc is not None and exc.step == 5
 
 
-# ------------------------------------------------------------------ LOWER-01 steps
+# ------------------------------------------------------------------- the steps
 
 
 def test_a_unicode_syntax_alias_refuses_before_parsing():
@@ -151,7 +152,7 @@ def test_a_using_declaration_is_refused():
     assert exc is not None and exc.step in (5, 9)
 
 
-# ------------------------------------------------------------------ LOWER-03
+# ------------------------------------------------------------- the coverage walk
 
 
 def test_the_flag_equals_mask_is_one_byte_so_the_ranges_still_line_up():
@@ -164,7 +165,7 @@ def test_the_flag_equals_mask_is_one_byte_so_the_ranges_still_line_up():
 
 
 def test_text_between_commands_must_be_a_joiner_the_walk_understands():
-    """LOWER-03: anything the tree dropped lives in the gaps, and this refuses to ignore them."""
+    """Anything the tree dropped lives in the gaps, and this refuses to ignore them."""
     assert lower_powershell("Get-Date; Get-Location") == [["Get-Date"], ["Get-Location"]]
     assert lower_powershell("Get-Date | Select-Object") == [["Get-Date"], ["Select-Object"]]
 
@@ -175,7 +176,7 @@ def test_a_pipe_with_nothing_after_it_is_refused():
 
 
 def test_a_comment_only_opens_at_a_token_boundary():
-    """LOWER-03: tree-sitter can split an embedded `#` out of a bare token.
+    """tree-sitter can split an embedded `#` out of a bare token.
 
     Accepting that would silently drop the rest of the line, which is the whole line that
     matters when what follows the `#` is a second command.
@@ -183,95 +184,33 @@ def test_a_comment_only_opens_at_a_token_boundary():
     assert lower_powershell("Get-Date # trailing note") == [["Get-Date"]]
 
 
-# ------------------------------------------------------------------ the floor's entry point
+# ------------------------------------------------------------ the floor's entry point
 
 
-def test_the_scanner_reports_the_step_that_refused():
-    """A refusal nobody can locate cannot be acted on, by a user or by the next reviewer."""
-    reason = scan_powershell("$x = 1")
-    assert reason is not None and reason.startswith("hardline:powershell-opaque:5:")
+def test_a_script_that_cannot_be_lowered_is_not_thereby_refused():
+    """A parse failure is a statement about this parser, not about the script.
+
+    ``$x = 1`` forms no command node, and there is nothing dishonest about that — most real
+    PowerShell does something the grammar allowlist does not cover. Denying here would refuse
+    ordinary work, and the general floor has already had its say on the same body.
+    """
+    assert scan_powershell("$x = 1") is None
 
 
 def test_a_script_that_lowers_cleanly_is_not_thereby_approved():
-    """Lowering is where the trusted table starts, not a verdict that the script is safe."""
+    """Lowering is where the dangerous table starts, not a verdict that the script is safe."""
     assert scan_powershell("Start-Process calc.exe") is None
-
-
-# ------------------------------------------------------------------ the dispatch
-
-
-def _ps_spec(policy: bool):
-    import dataclasses
-
-    from agentao.capabilities.shell_spec import (
-        InterpreterIdentity,
-        PinnedEnv,
-        Platform,
-        ResolvedImage,
-        Rung,
-        Sha256,
-        ShellDialect,
-        Subject,
-        legacy_spec,
-    )
-
-    subject = Subject("subject")
-    base = legacy_spec(ShellDialect.CMD, Rung.legacy_cmd, Platform.WINDOWS, subject)
-    if not policy:
-        return base
-    launcher = InterpreterIdentity(
-        image=ResolvedImage(
-            canonical_path="C:\\pwsh\\pwsh.exe",  # type: ignore[arg-type]
-            filesystem_identity="1:2",  # type: ignore[arg-type]
-            execution_subject=subject,
-        ),
-        launcher_hash=Sha256("h"),
-        edition="Core",
-    )
-    return dataclasses.replace(
-        base,
-        dialect=ShellDialect.POWERSHELL,
-        rung=Rung.pwsh,
-        policy_enabled=True,
-        launcher=launcher,
-        pinned_env=PinnedEnv(),
-    )
-
-
-def test_a_lowered_script_needs_the_decided_record_before_the_closed_set_can_run():
-    """Fail closed at the seam, for a reason that outlives the stage that put it there.
-
-    The closed set needs this call's working directory and child environment, and this
-    function is given neither — the planner builds a frozen record that carries both. A caller
-    without one gets a refusal rather than a pass, because "I could not run the second half"
-    is a different answer from "the second half found nothing".
-    """
-    from agentao.permissions_hardline import hardline_check
-
-    reason = hardline_check(
-        "run_shell_command", {"command": "Get-Date"}, shell_spec=_ps_spec(True)
-    )
-    assert reason is not None and "decided record" in reason
-
-
-def test_the_powershell_floor_does_not_reach_the_policy_off_rung():
-    """LADDER-05 again: today's rungs keep today's floor, whatever grammar this module learns."""
-    from agentao.permissions_hardline import hardline_check
-
-    assert hardline_check(
-        "run_shell_command", {"command": "Get-Date"}, shell_spec=_ps_spec(False)
-    ) is None
 
 
 # ------------------------------------------------------------------ the Windows classes
 
 
 def test_the_powershell_floor_refuses_the_windows_dangerous_classes():
-    """q2's classes are about the platform, not the syntax that reached them.
+    """These classes are about the platform, not the syntax that reached them.
 
     The table lived in the cmd module and was read only by the cmd floor, so every class in it
-    was unreachable from a PowerShell rung — although two of its entries were already spelled
-    as PowerShell. Formatting a volume destroys the same bytes whichever interpreter typed it.
+    was unreachable from PowerShell — although two of its entries were already spelled as
+    PowerShell. Formatting a volume destroys the same bytes whichever interpreter typed it.
     """
     assert scan_powershell("Format-Volume -DriveLetter D") == "hardline:format-volume"
     assert scan_powershell("Clear-Disk -Number 1") == "hardline:diskpart-clean"
@@ -283,10 +222,9 @@ def test_the_powershell_floor_refuses_the_windows_dangerous_classes():
 def test_a_dangerous_word_that_is_only_an_argument_is_not_a_dangerous_command():
     """The class has to *start* the command.
 
-    Searching the whole line reads `Write-Output Format-Volume` as a format — the same false
-    positive cmd's command-position anchor exists to prevent. Here the anchor is free: the
-    lowering has already cut the body into commands, so matching at position zero is exactly
-    "in command position".
+    Searching the whole line reads `Write-Output Format-Volume` as a format. Here the anchor
+    is free: lowering has already cut the body into commands, so matching at position zero is
+    exactly "in command position".
     """
     assert scan_powershell("Write-Output Format-Volume") is None
     assert scan_powershell("Write-Output 'format C:'") is None

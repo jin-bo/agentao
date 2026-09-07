@@ -14,22 +14,13 @@ The value types (``FileEntry``, ``FileStat``, ``ShellRequest``,
 ``ShellResult``, ``BackgroundHandle``) are part of the public contract too:
 hosts implementing a ``Protocol`` must produce these shapes.
 
-``ShellRequest`` now carries a discriminated ``LaunchRequest`` rather than a
-command string, so the launch shapes (``LegacyLaunch`` for the policy-off
-rungs, ``PosixLaunch`` / ``WindowsLaunch`` for the attested ones) and the two
-answers a ``ShellSpecProvider`` can give (``ShellSpec``, ``Exhausted``) are
-part of the same contract — a host cannot build a request or declare its
-interpreter without them. They are re-exported here for the same reason as
-everything else in this module: so host code never has to reach into
-``agentao.capabilities.*``.
-
-A host whose executor runs commands somewhere other than this machine also
-supplies its own ``IdentityOracle``: access masks, reparse points, signatures
-and the target's own environment are facts about the machine the command will
-run on, and a floor answering them from *this* machine would be attesting the
-wrong filesystem. ``ReparseResult`` / ``ReparseState``, ``SessionConfig``,
-``PinnedEnv``, ``ResolvedImage`` and ``LauncherIdentity`` are the shapes that
-oracle returns.
+``ShellRequest`` carries a discriminated ``LaunchRequest`` rather than a
+command string, so the launch shapes (``LegacyLaunch`` for the platform's own
+shell, ``WindowsLaunch`` for a named interpreter) and the two answers a
+``ShellSpecProvider`` can give (``ShellSpec``, ``Exhausted``) are part of the
+same contract — a host cannot build a request or declare its interpreter
+without them. They are re-exported here for the same reason as everything else
+in this module: so host code never has to reach into ``agentao.capabilities.*``.
 
 See ``docs/reference/host-api.md`` for the host-injection walkthrough.
 """
@@ -48,23 +39,13 @@ from ..capabilities.shell import (
 from ..capabilities.shell_spec import (
     AbsPath,
     Exhausted,
-    LauncherIdentity,
     LaunchRequest,
     LegacyLaunch,
-    PinnedEnv,
-    PosixLaunch,
-    ResolvedImage,
-    Sha256,
+    ShellBlock,
+    ShellDialect,
     ShellSpec,
     ShellSpecProvider,
-    Subject,
     WindowsLaunch,
-)
-from ..permissions_hardline._trust import (
-    IdentityOracle,
-    ReparseResult,
-    ReparseState,
-    SessionConfig,
 )
 
 __all__ = [
@@ -74,24 +55,16 @@ __all__ = [
     "FileEntry",
     "FileStat",
     "FileSystem",
-    "IdentityOracle",
     "LaunchRequest",
-    "LauncherIdentity",
     "LegacyLaunch",
     "MCPRegistry",
     "MemoryStore",
-    "PinnedEnv",
-    "PosixLaunch",
-    "ReparseResult",
-    "ReparseState",
-    "ResolvedImage",
-    "SessionConfig",
-    "Sha256",
+    "ShellBlock",
+    "ShellDialect",
     "ShellExecutor",
     "ShellRequest",
     "ShellResult",
     "ShellSpec",
     "ShellSpecProvider",
-    "Subject",
     "WindowsLaunch",
 ]

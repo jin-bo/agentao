@@ -39,16 +39,9 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
-from ..capabilities.shell_spec import (
-    AbsPath,
-    Allowlist,
-    HashPin,
-    PublisherTrust,
-    Sha256,
-    ShellBlock,
-)
+from ..capabilities.shell_spec import AbsPath, ShellBlock
 from ..permissions import (
     RuleError,
     format_permission_rule_errors,
@@ -100,7 +93,7 @@ class PermissionConfigError(ValueError):
 
 @dataclass(frozen=True)
 class PermissionConfig:
-    """CFG-03: one immutable record threaded through every composition root.
+    """One immutable record threaded through every composition root.
 
     Rules and their sources travelled together already; the shell block is new and had no
     route through any root at all, which is why it is a record rather than a third return
@@ -113,55 +106,15 @@ class PermissionConfig:
     shell: Optional[ShellBlock] = None
 
 
-def _parse_allowlist(raw: Any, path: Path) -> Allowlist:
-    """IMG-03: the ordered additional-condition list, or ``()`` when the key is absent.
-
-    Read rather than accepted-and-dropped. ``allowlist`` was in the closed key set — so a
-    user who wrote one got no complaint — while never reaching :class:`ShellBlock`, which is
-    the silent fail-open the closed key set exists to prevent one level up: the configuration
-    reads back as honoured and pins nothing.
-
-    Two entry shapes, one per form IMG-03 names, and anything else refuses. A content pin is
-    ``{"path": …, "sha256": …}``; publisher trust is ``{"signer": …}``. Guessing which was
-    meant from a half-filled entry would mint a pin nobody wrote.
-    """
-    if raw is None:
-        return ()
-    if not isinstance(raw, list):
-        raise PermissionConfigError(
-            path, f"'shell.allowlist' must be an array, got {type(raw).__name__}"
-        )
-    out: List[Union[HashPin, PublisherTrust]] = []
-    for index, entry in enumerate(raw):
-        if not isinstance(entry, dict):
-            raise PermissionConfigError(
-                path,
-                f"'shell.allowlist[{index}]' must be an object with either "
-                "'path' + 'sha256' (a content pin) or 'signer' (publisher trust)",
-            )
-        keys = set(entry)
-        if keys == {"path", "sha256"}:
-            out.append(HashPin(AbsPath(str(entry["path"])), Sha256(str(entry["sha256"]))))
-        elif keys == {"signer"}:
-            out.append(PublisherTrust(str(entry["signer"])))
-        else:
-            raise PermissionConfigError(
-                path,
-                f"'shell.allowlist[{index}]' has key(s) {', '.join(sorted(keys)) or '(none)'}; "
-                "an entry is exactly {'path', 'sha256'} (a content pin) or {'signer'} "
-                "(publisher trust). A half-filled entry pins nothing and is refused rather "
-                "than guessed.",
-            )
-    return tuple(out)
-
-
 def _parse_shell_block(raw: Any, path: Path) -> Optional[ShellBlock]:
     """Read the ``shell`` key of a user-scope permissions file.
 
-    Refuses rather than repairs. A half-specified shell block is the case CFG-02 names by
-    hand: naming a path without a dialect leaves the syntax unknown, and naming a dialect
-    without a path leaves the interpreter unknown. Guessing either turns a configuration the
-    user can read back into one only this loader understands.
+    Refuses rather than repairs. The key set is closed, so a typo is a named error rather than
+    a silently ignored field — a shell block that reads back as honoured while configuring
+    nothing is the failure this exists to prevent.
+
+    ``dialect`` alone is the ordinary way to ask for PowerShell. ``path`` alone is refused:
+    a renamed launcher says nothing about the syntax it reads.
     """
     from ..capabilities.shell_spec import ShellDialect
 
@@ -169,15 +122,12 @@ def _parse_shell_block(raw: Any, path: Path) -> Optional[ShellBlock]:
         return None
     if not isinstance(raw, dict):
         raise PermissionConfigError(path, f"'shell' must be an object, got {type(raw).__name__}")
-    unknown = sorted(
-        set(raw) - {"path", "dialect", "allow_git_bash", "allowlist", "env_passthrough", "ladder"}
-    )
+    unknown = sorted(set(raw) - {"path", "dialect"})
     if unknown:
         raise PermissionConfigError(
             path,
-            f"unknown key(s) in 'shell': {', '.join(unknown)}. Note that 'rung' is not a "
-            "field — it is derived from the dialect, the target platform and the launcher's "
-            "own identity.",
+            f"unknown key(s) in 'shell': {', '.join(unknown)}. The block takes exactly "
+            "'path' and 'dialect'.",
         )
     dialect_name = raw.get("dialect")
     dialect = None
@@ -195,19 +145,14 @@ def _parse_shell_block(raw: Any, path: Path) -> Optional[ShellBlock]:
     block = ShellBlock(
         path=AbsPath(str(path_value)) if path_value is not None else None,
         dialect=dialect,
-        allow_git_bash=bool(raw.get("allow_git_bash", False)),
-        # G09-02: absent stays ``None``. Reading it as ``False`` would make every
-        # unconfigured host opt *out* of the flip on the day it ships.
-        ladder=None if raw.get("ladder") is None else bool(raw["ladder"]),
-        allowlist=_parse_allowlist(raw.get("allowlist"), path),
-        env_passthrough=tuple(raw.get("env_passthrough", ()) or ()),
     )
     missing = block.incomplete()
     if missing is not None:
         raise PermissionConfigError(
             path,
-            f"'shell' gives only one of path / dialect — {missing!r} is missing. Give both "
-            "or neither: neither can be derived from the other.",
+            f"'shell' gives a path with no {missing!r}. A path alone does not say which "
+            "syntax the interpreter reads, and that decides how the command floor reads the "
+            "command.",
         )
     return block
 
@@ -217,7 +162,7 @@ def load_permission_config(
     project_root: Path,
     user_root: Optional[Path],
 ) -> PermissionConfig:
-    """CFG-03: rules, their sources, and the shell block, from the user-scope file."""
+    """Rules, their sources, and the shell block, from the user-scope file."""
     rules: List[Dict[str, Any]] = []
     sources: List[str] = []
     shell = None
@@ -233,7 +178,41 @@ def load_permission_config(
             rules = user_rules
             shell = _parse_shell_block((document or {}).get("shell"), user_path)
     _warn_on_project_rule_file(project_root)
+    _warn_on_unlabelled_shell_rules(rules, shell, user_root)
     return PermissionConfig(rules=rules, sources=sources, shell=shell)
+
+
+def _warn_on_unlabelled_shell_rules(
+    rules: List[Dict[str, Any]], shell: Optional[ShellBlock], user_root: Optional[Path]
+) -> None:
+    """Selecting PowerShell changes what a shell rule's pattern is being applied to.
+
+    A rule matching on ``args.command`` was written against *some* shell's syntax and does not
+    record which. On POSIX and cmd it keeps working, because that is what it has always done.
+    On PowerShell there is no safe reading: applying it applies a pattern to a language it was
+    not written for, and skipping it silently drops a rule its author relies on.
+
+    So it is reported, not resolved. Refusing the interpreter over it would make PowerShell
+    unreachable for almost everyone — an unlabelled command rule is the ordinary kind — and
+    silently applying it is what this warning exists to stop being silent. Add
+    ``"dialect": "posix"`` (or ``"*"``) to say which the pattern was written for.
+    """
+    from ..capabilities.shell_spec import ShellDialect
+    from ..permissions import unspecified_shell_rules
+
+    if shell is None or shell.dialect is not ShellDialect.POWERSHELL:
+        return
+    offenders = unspecified_shell_rules(rules)
+    if not offenders:
+        return
+    _logger.warning(
+        "shell.dialect is 'powershell', but %d rule(s) in %s match on args.command with no "
+        "'dialect' label: %s. Those patterns were written for some shell's syntax and will be "
+        "applied to PowerShell's. Label each one with the dialect it was written for.",
+        len(offenders),
+        (user_root or Path()) / "permissions.json",
+        ", ".join(f"rules[{index}]" for index, _ in offenders),
+    )
 
 
 def load_permission_rules(
@@ -281,7 +260,7 @@ def load_permission_rules(
 
 
 def _warn_on_project_rule_file(project_root: Path) -> None:
-    """CFG-01: a workspace-scope rule file is never honored, and never silently."""
+    """A workspace-scope rule file is never honored, and never silently."""
     project_path = project_root / ".agentao" / "permissions.json"
     if project_path.exists():
         _logger.warning(

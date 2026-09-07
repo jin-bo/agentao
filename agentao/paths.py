@@ -117,8 +117,7 @@ def _is_private_to_current_user(path: Path) -> bool:
 
     **The limit, stated rather than glossed:** if ``TEMP`` has been redirected to a shared
     directory this is weaker than the POSIX test, because answering "can another account
-    write here" needs an ACL check. That question has an owner — the identity oracle in
-    ``permissions_hardline/_trust.py`` — and no implementation on Windows yet.
+    write here" needs an ACL check, and nothing in agentao reads Windows ACLs.
     """
     try:
         info = path.lstat()

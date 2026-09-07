@@ -13,7 +13,6 @@ byte-equivalent.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import shutil
 import subprocess
@@ -27,18 +26,9 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, runtime
 
 from .process import build_child_env, kill_process_tree
 from .shell_spec import (
-    AttestedLaunch,
-    Deny,
     Exhausted,
-    FsId,
-    HashPin,
-    LaunchRefused,
     LaunchRequest,
     LegacyLaunch,
-    PosixLaunch,
-    PublisherTrust,
-    ResolvedImage,
-    Sha256,
     ShellBlock,
     ShellSpec,
     WindowsLaunch,
@@ -71,8 +61,9 @@ def resolve_shell_executable() -> Optional[str]:
 
     ``/bin/bash`` wins over a PATH lookup so the choice does not shift when
     a user installs a newer bash under ``/opt/homebrew`` or ``/usr/local``.
-    Windows is untouched: ``shell=True`` there means ``%COMSPEC% /c``, and
-    ``executable=`` would replace cmd.exe rather than select a dialect.
+    Windows answers ``None`` and keeps ``%COMSPEC% /c``: the interpreter is
+    chosen there by configuration (``LegacyLaunch.executable``), not by probing
+    for a better one.
     """
     if IS_WINDOWS:
         return None
@@ -82,10 +73,13 @@ def resolve_shell_executable() -> Optional[str]:
 
 
 def shell_display_name() -> str:
-    """The shell that will actually interpret a command, for display.
+    """The *platform's* shell, for display when no spec has been resolved.
 
     Never ``None`` — falls back to the POSIX default that
-    :func:`resolve_shell_executable` returning ``None`` selects.
+    :func:`resolve_shell_executable` returning ``None`` selects. A caller that
+    holds a spec should use
+    :func:`agentao.capabilities.shell_spec.display_name` instead: a configured
+    interpreter is invisible from here.
     """
     if IS_WINDOWS:
         return "cmd"
@@ -94,21 +88,20 @@ def shell_display_name() -> str:
 
 @dataclass(frozen=True, kw_only=True)
 class ShellRequest:
-    """A shell run, carrying the launch agentao already decided on (LAUNCH-01).
+    """A shell run, carrying the launch agentao already decided on.
 
-    This is the one protocol change in the PowerShell ladder, and it is deliberate: the
-    request used to be a command string plus a working directory, which meant the executor
-    re-derived *what* would interpret that string, at spawn time, from the platform. The
-    decision and the launch could therefore disagree — the floor judged one dialect and the
-    process ran another — and nothing in the shape made that visible.
+    The request used to be a command string plus a working directory, which meant the
+    executor re-derived *what* would interpret that string, at spawn time, from the platform.
+    The decision and the launch could therefore disagree — the floor judged one dialect and
+    the process ran another — and nothing in the shape made that visible.
 
-    Now the request carries a discriminated :data:`~agentao.capabilities.shell_spec.LaunchRequest`
+    It now carries a discriminated :data:`~agentao.capabilities.shell_spec.LaunchRequest`
     that names the launch completely. ``timeout`` and ``on_chunk`` stay outside it because
     they are transport concerns, unrelated to what gets started.
 
     Hosts with a custom ``ShellExecutor`` read ``request.launch`` instead of
-    ``request.command`` / ``request.cwd`` / ``request.env``. For today's rungs the payload is
-    a :class:`~agentao.capabilities.shell_spec.LegacyLaunch` carrying exactly the three
+    ``request.command`` / ``request.cwd`` / ``request.env``. An unconfigured host always sees
+    a :class:`~agentao.capabilities.shell_spec.LegacyLaunch`, carrying exactly the three
     fields that were there before.
     """
 
@@ -118,7 +111,7 @@ class ShellRequest:
 
     @property
     def command(self) -> str:
-        """The command string, for the policy-off rungs that have one.
+        """The text a display or a background handle shows for this launch.
 
         Kept as a read-only projection rather than a field: display paths and the background
         handle want the text, and re-deriving it at each of those call sites is how two
@@ -126,9 +119,7 @@ class ShellRequest:
         """
         if isinstance(self.launch, LegacyLaunch):
             return self.launch.command
-        if isinstance(self.launch, WindowsLaunch):
-            return self.launch.command_line
-        return subprocess.list2cmdline(self.launch.argv)
+        return self.launch.command_line
 
     @property
     def cwd(self) -> Path:
@@ -191,128 +182,30 @@ def _is_binary(data: bytes) -> bool:
     return b"\x00" in data[:8192]
 
 
-def local_filesystem_identity(path: str) -> Optional[FsId]:
-    """The identity of the file behind a name, on this machine (SPEC-04's "the same path").
-
-    Device plus inode, which ``os.stat`` reports on Windows too. ``None`` means the question
-    could not be answered, and every caller here treats that as a refusal rather than as a
-    pass: an image that cannot be identified has not been shown to be the attested one.
-
-    ``st_ino == 0`` is one of those unanswerable cases, not an identity. Python documents
-    the field as identifying a file *only when non-zero*, and Windows — the platform this
-    whole ladder targets — reports zero whenever the file index is unavailable (some network
-    and removable volumes). Passing it through would hand every such file the identity
-    ``<dev>:0``, so a swap between two of them would compare equal and the check would report
-    a clean result while proving nothing.
-    """
-    try:
-        st = os.stat(path)
-    except OSError:
-        return None
-    if not st.st_ino:
-        return None
-    return FsId(f"{st.st_dev}:{st.st_ino}")
-
-
-def local_content_hash(path: str) -> Optional[Sha256]:
-    """The sha256 of the file's bytes, or ``None`` if it cannot be read."""
-    h = hashlib.sha256()
-    try:
-        with open(path, "rb") as fh:
-            for block in iter(lambda: fh.read(1 << 16), b""):
-                h.update(block)
-    except OSError:
-        return None
-    return Sha256(h.hexdigest())
-
-
-def _attested_entry(launch: AttestedLaunch, path: str) -> Optional[ResolvedImage]:
-    return next((img for img in launch.attested_images if img.canonical_path == path), None)
-
-
-def verify_attested_launch(launch: AttestedLaunch) -> Optional[Deny]:
-    """LAUNCH-01d: re-check the images this launch names, immediately before spawning.
-
-    The obligation is a MUST, not a courtesy. ``attested_images`` is evidence produced when
-    the decision was made; between then and now the file behind a path can be replaced, and
-    the executor is the last place that can still notice. A target with no entry in the
-    evidence, an entry that no longer matches, or a check that cannot be performed all refuse.
-
-    Two halves. The **direct target** — ``executable`` or ``application_name`` — is fully
-    specified and checked here. The second half, every image argv names by path, needs to
-    know which argv elements are image names, and that follows from how each dialect's argv
-    is assembled, which is the trusted-resolution PR's work. Until then the conservative
-    reading applies: an absolute path that resolves to an existing file must have an entry.
-    Nothing constructs an attested launch yet, so this is strict by choice rather than by
-    accident — the alternative is a lenient default arriving with the code.
-    """
-    direct = (
-        launch.application_name if isinstance(launch, WindowsLaunch) else launch.executable
-    )
-    candidates = [str(direct)]
-    if isinstance(launch, PosixLaunch):
-        candidates += [a for a in launch.argv[1:] if os.path.isabs(a) and os.path.isfile(a)]
-    for path in candidates:
-        entry = _attested_entry(launch, path)
-        if entry is None:
-            return Deny(f"hardline:launch-attest:no-entry:{path}")
-        live = local_filesystem_identity(path)
-        if live is None:
-            # "A check that cannot be performed refuses." Comparing two unanswerable
-            # identities finds them equal, which reports a clean result while proving
-            # nothing — and ``st_ino == 0`` is reachable on exactly the platform this ladder
-            # targets, on network and removable volumes.
-            return Deny(f"hardline:launch-attest:unidentifiable:{path}")
-        if live != entry.filesystem_identity:
-            return Deny(f"hardline:launch-attest:filesystem-identity:{path}")
-        pin = entry.content_identity
-        if pin is None:
-            return Deny(f"hardline:launch-attest:no-content-identity:{path}")
-        if isinstance(pin, HashPin):
-            # ``pin.matches`` is the binding half: a pin names the path it was taken for, and
-            # comparing this file's bytes against a pin minted for a *different* path proves
-            # nothing about either. The live hash is the other half.
-            if not pin.matches(entry) or local_content_hash(path) != pin.sha256:
-                return Deny(f"hardline:launch-attest:content-identity:{path}")
-            continue
-        if isinstance(pin, PublisherTrust):
-            # "A check that cannot be performed refuses." Nothing here verifies a signature,
-            # so accepting a publisher-trust entry would be a pass with no check behind it —
-            # the one outcome this function exists to make impossible. The trusted-resolution
-            # PR that can verify a signer replaces this branch with the verification.
-            return Deny(f"hardline:launch-attest:unverifiable-content-identity:{path}")
-        return Deny(f"hardline:launch-attest:unknown-content-identity:{path}")
-    return None
-
-
 def _popen_target(launch: LaunchRequest) -> Tuple[Any, Dict[str, Any]]:
     """The ``Popen`` first argument and the launch-shaped keyword arguments.
 
-    A policy-off rung keeps ``shell=True`` because it *is* today's launch and LADDER-05
-    promises it stays field-for-field identical. The attested variants never use it: naming
-    the interpreter and passing the body as one argument is the whole point of having
-    resolved which interpreter to run.
+    One helper, both delivery faces. ``is_background`` used to choose a second
+    spawn path with its own ``shell=True`` and its own environment, which meant
+    a property proved about one face said nothing about the other.
     """
     if isinstance(launch, LegacyLaunch):
+        # ``launch.executable`` is the interpreter the user named, and it wins over the
+        # platform's answer on both platforms: POSIX ``shell=True`` runs ``/bin/sh -c`` with
+        # ``args[0]`` replaced by ``executable``, and Windows ``shell=True`` builds
+        # ``{ComSpec} /c …`` with ``executable`` substituted for ``ComSpec``. Falling back to
+        # ``resolve_shell_executable()`` is what an unconfigured host has always got.
         return launch.command, dict(
             shell=True,
-            executable=resolve_shell_executable(),
+            executable=launch.executable or resolve_shell_executable(),
             cwd=str(launch.cwd),
             env=dict(launch.env),
         )
-    refusal = verify_attested_launch(launch)
-    if refusal is not None:
-        raise LaunchRefused(refusal)
-    if isinstance(launch, WindowsLaunch):
-        return launch.command_line, dict(
-            shell=False,
-            executable=str(launch.application_name),
-            cwd=str(launch.cwd),
-            env=dict(launch.env),
-        )
-    return list(launch.argv), dict(
+    # A named interpreter: no shell in between, the image fixed by path rather than resolved
+    # from a name at spawn time, and the command line passed through verbatim.
+    return launch.command_line, dict(
         shell=False,
-        executable=str(launch.executable),
+        executable=str(launch.application_name),
         cwd=str(launch.cwd),
         env=dict(launch.env),
     )
@@ -321,36 +214,32 @@ def _popen_target(launch: LaunchRequest) -> Tuple[Any, Dict[str, Any]]:
 class LocalShellExecutor:
     """Default :class:`ShellExecutor` using ``subprocess.Popen``.
 
-    Mirrors :func:`agentao.tools.shell.ShellTool._run_foreground` /
-    ``_run_background`` exactly: shell=True wrapping, stdin detach
-    (so children never inherit the ACP JSON-RPC channel), process
-    group leadership for clean kill, inactivity-based timeout, and
-    ``taskkill`` / ``killpg`` teardown by platform.
+    Everything around the spawn is unchanged from the pre-capability tool: stdin detach (so
+    children never inherit the ACP JSON-RPC channel), process-group leadership for a clean
+    kill, an inactivity-based timeout, and ``taskkill`` / ``killpg`` teardown by platform.
+    What varies is only the spawn itself, and that comes entirely from the launch — see
+    :func:`_popen_target`.
     """
 
     def __init__(self, shell_block: "ShellBlock | None" = None) -> None:
-        # CFG-01 / G09-02: the user-level shell block, or ``None`` when nothing supplied one.
-        # Held rather than read here, because the block decides *which* rung this executor
-        # reports and that answer has to be the same one every call sees (SPEC-07b).
+        # The user-level shell block, or ``None`` when nothing supplied one. Held rather than
+        # resolved here, because resolving it touches the filesystem and the answer has to be
+        # the same one every call sees.
         self._shell_block = shell_block
         self._spec: "ShellSpec | Exhausted | None" = None
 
     @property
     def shell_spec(self) -> "ShellSpec | Exhausted":
-        """The policy-off rung for this platform, with locality declared true.
+        """What will interpret this executor's commands, resolved once.
 
-        Local means one thing only: the path the child opens is the path the floor stat'd.
-        This executor is the one case where that is true by construction — a container, a
-        chroot or a mount namespace on the same host is not local, which is why every other
-        executor has to answer for itself rather than inherit this.
+        Held rather than recomputed: discovery touches the filesystem, and a
+        call that read one answer must not find a different one at the launch.
         """
         if self._spec is None:
-            self._spec = default_spec(self._shell_block, local=True)
+            self._spec = default_spec(self._shell_block)
         return self._spec
 
     def run(self, request: ShellRequest) -> ShellResult:
-        # LAUNCH-01e: both delivery faces build their child from ``request.launch`` through
-        # the same helper, so the re-check cannot be skipped by picking the other one.
         target, popen_kwargs = _popen_target(request.launch)
         popen_kwargs.update(
             stdin=subprocess.DEVNULL,
@@ -414,10 +303,10 @@ class LocalShellExecutor:
         )
 
     def run_background(self, request: ShellRequest) -> BackgroundHandle:
-        # LAUNCH-01e again: ``is_background`` chooses which method delivers the request, and
-        # nothing else. It used to choose a second spawn path with its own ``shell=True`` and
-        # its own environment, which meant a rule proved about one face said nothing about
-        # the other.
+        # ``is_background`` chooses which method delivers the request, and nothing else. It
+        # used to choose a second spawn path with its own ``shell=True`` and its own
+        # environment, which meant a property proved about one face said nothing about the
+        # other.
         target, popen_kwargs = _popen_target(request.launch)
         popen_kwargs.update(
             stdin=subprocess.DEVNULL,
@@ -426,8 +315,19 @@ class LocalShellExecutor:
         )
 
         if IS_WINDOWS:
+            # ``CREATE_NO_WINDOW``, not ``DETACHED_PROCESS``. Measured on a Windows runner:
+            # under ``DETACHED_PROCESS`` both ``pwsh`` and ``powershell`` exit **0 with empty
+            # stdout and stderr without running the script at all** — a background command
+            # reported as started, and silently never run. PowerShell hosts itself in a
+            # console and there is none to host it in; ``CREATE_NO_WINDOW`` gives the child
+            # its own console that is never shown, and the body runs. The two flags are
+            # mutually exclusive, so this is a swap rather than an addition.
+            #
+            # cmd is unaffected either way, which is why nothing saw this until a dialect
+            # arrived that is not cmd. Both are covered by
+            # ``tests/test_windows_launch_matrix.py``.
             popen_kwargs["creationflags"] = (
-                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS  # type: ignore[attr-defined]
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
             )
             proc = subprocess.Popen(target, **popen_kwargs)
             return BackgroundHandle(

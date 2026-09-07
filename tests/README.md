@@ -1,6 +1,6 @@
 # Agentao Tests
 
-~3800 tests across `tests/`. This file documents **layout and conventions**;
+~4900 tests across `tests/`. This file documents **layout and conventions**;
 it deliberately does not enumerate test files — an earlier version listed 14
 of them by hand and rotted into naming files that no longer exist.
 
@@ -18,6 +18,10 @@ It marks the three modules that build wheels or boot subprocess venvs
 (`test_clean_install_smoke.py`, `test_dependency_split.py`,
 `test_cli_missing_dep_message.py`) and needs `uv build` to have run first.
 
+CI runs them in the **build** job, on Python 3.12, right after `uv build` —
+that is the only job with a `dist/*.whl` for them to install. They ran nowhere
+before, which is how the dependency baseline drifted unnoticed since June.
+
 ## Layout
 
 | Path | Contents |
@@ -25,7 +29,7 @@ It marks the three modules that build wheels or boot subprocess venvs
 | `tests/*.py` | The bulk of the suite — one module per contract, named after the thing under test. |
 | `tests/cli/` | Slash-command and `agentao run` argument handling. |
 | `tests/support/` | Shared scaffolding — fake servers, agent doubles, param builders. See its own README. |
-| `tests/data/` | Static fixtures (e.g. `full_extras_baseline.txt`, the dependency-split baseline). |
+| `tests/data/` | Static fixtures (e.g. `full_extras_baseline.txt` — the `[full]` closure as PEP 503 *names*; versions float by design and are not compared). |
 | `tests/conftest.py` | Two autouse credential fixtures plus `search_tool` / `capture_subprocess_run`. |
 
 ## Conventions

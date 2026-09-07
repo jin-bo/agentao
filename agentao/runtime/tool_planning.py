@@ -274,7 +274,7 @@ class ToolCallPlan:
     # still fires (with ``matched_rule=None``), classified by the
     # decision the planner finally settled on.
     permission_detail: Optional[PermissionDecisionDetail] = None
-    #: SPEC-08a: what this shell call was decided on — the spec that was read, the body the
+    #: What this shell call was decided on — the spec that was read, the body the
     #: floor scanned, the working directory it judged against, and the verdict. Written once
     #: by the planner and replaced whole when a hook rewrites the input; never edited field
     #: by field. ``None`` for every tool that is not the shell, and for a call that never
@@ -328,31 +328,34 @@ def _shell_spec_of(tool: Any) -> Any:
 def _decided_call(
     tool: Any, shell_spec: Any, args: Dict[str, Any], floor_enabled: bool = True
 ) -> Optional[DecidedCall]:
-    """SPEC-08a: freeze the spec, the body, the working directory and the verdict together.
+    """Freeze the spec, the body, the working directory and the verdict together.
 
     Built **before** the permission decision, because the floor's verdict is an input to it:
-    TOOL-03 puts the floor ahead of every rule and forbids a rule from masking it. The record
-    is the single source — the engine reads this verdict rather than computing a second one,
-    and ``launch()`` reads the same record rather than the tool's arguments.
+    the floor runs ahead of every rule and no rule may mask it. The record is the single
+    source — the engine reads this verdict rather than computing a second one, and the shell
+    tool launches from the same record rather than from its own arguments.
 
-    SPEC-08c is structural here rather than a statement: a plan is a fresh object per call,
-    so there is no previous record to void. What the rule guards against is an early return
-    leaving the *last* call's body and directory in place for this call's launch, and a
-    field that is only ever written at construction cannot do that.
+    A plan is a fresh object per call, so there is no previous record to void. What that
+    guards against is an early return leaving the *last* call's body and directory in place
+    for this call's launch, and a field only ever written at construction cannot do that.
 
     A directory that PathPolicy refuses yields no record. ``execute`` refuses that call on
     its own and reports the policy error, which is a better message than a launch refusal.
+
+    ``floor_enabled=False`` is a host that set ``enable_hardline=False`` and taken policy
+    responsibility itself; this record must not hand it a denial the engine would have
+    skipped.
     """
     if shell_spec is None:
         return None
     resolve = getattr(tool, "resolve_cwd", None)
     if resolve is None:
-        # TOOL-01 obliges a replacement shell tool to name its dialect, not to canonicalise a
+        # A replacement shell tool is obliged to name its dialect, not to canonicalise a
         # working directory, so this is reachable. Freezing a record without a canonical cwd
         # would be worse than not freezing one — the tool would launch against a directory no
         # decision was made about — so the tool keeps its own resolution and its own risk.
         _planning_logger.warning(
-            "Shell tool %s exposes no resolve_cwd(); SPEC-08's decided record is not frozen "
+            "Shell tool %s exposes no resolve_cwd(); the decided record is not frozen "
             "for its calls", type(tool).__name__,
         )
         return None
@@ -362,26 +365,22 @@ def _decided_call(
     except Exception as exc:  # noqa: BLE001 - execute() reports the policy error itself
         _planning_logger.debug("no decided record for this shell call: %s", exc)
         return None
-    from ..permissions_hardline._analysis import decided_call
     from ..permissions_hardline import hardline_check
 
-    # The pre-existing floor first, whatever the rung: the dangerous classes are about what a
-    # command destroys, and the closed set is about whether it may run at all. A policy-on
-    # rung passes both or neither.
-    # A host that set ``enable_hardline=False`` has taken policy responsibility, and this
-    # record must not hand it a denial the engine would have skipped. What survives is the
-    # launch shape: the environment, the attested set and LAUNCH-08's measurements.
-    todays = (
+    reason = (
         hardline_check("run_shell_command", args, shell_spec=shell_spec)
         if floor_enabled else None
     )
-    return decided_call(
-        shell_spec, body, AbsPath(str(cwd)), todays, closed_set=floor_enabled,
+    return DecidedCall(
+        spec=shell_spec,
+        body=body,
+        cwd=AbsPath(str(cwd)),
+        verdict=Deny(reason) if reason is not None else PASS,
     )
 
 
 def _denied(decided: Optional[DecidedCall]) -> Optional[DecidedCall]:
-    """SPEC-08b: a call the permission layer refused must refuse at the launch too.
+    """A call the permission layer refused must refuse at the launch too.
 
     The floor's own refusal is already on the record; this is the other source. Overwriting
     the verdict rather than adding a second field keeps ``launch()`` reading one value: it
@@ -553,7 +552,7 @@ class ToolCallPlanner:
                     ))
                     continue
 
-            # TOOL-04: read the provider once for this call. Once, because two reads can
+            # Read the provider once for this call. Once, because two reads can
             # answer differently — re-resolution swaps the reference between them — and the
             # whole point is that one spec governs the decision and the launch.
             shell_spec = _shell_spec_of(tool)

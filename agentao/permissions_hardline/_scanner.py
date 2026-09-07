@@ -1,10 +1,16 @@
-"""Hardline pattern execution + the ``hardline_check`` BFS entry point.
+"""The command floor: pattern execution, and the ``hardline_check`` entry point.
 
-This is the layer the rest of agentao actually calls into. Everything
-below here is plumbing — patterns, shell-context analysis, ANSI-C
-decoding, and here-doc masking — composed by :func:`hardline_check` to
-decide whether a single ``run_shell_command`` invocation is on the
-unrecoverable-ops floor.
+This is the layer the rest of agentao actually calls into. Everything below
+here is plumbing — patterns, shell-context analysis, ANSI-C decoding, here-doc
+masking — composed to decide whether a single ``run_shell_command`` invocation
+is on the unrecoverable-ops floor.
+
+Two functions, and the split is the point. :func:`generic_floor` is what has
+always run: a BFS over the command and every nested interpreter body it
+reaches, matching a table written for POSIX shell syntax. :func:`hardline_check`
+is the entry, and it runs that on **every** dialect before adding whatever the
+dialect contributes — so a body refused today is refused on the PowerShell path
+too, by construction rather than by two tables agreeing.
 """
 
 from __future__ import annotations
@@ -122,7 +128,7 @@ def _hardline_match(
 
 
 def _spec_refusal(shell_spec: Any) -> Optional[str]:
-    """TOOL-04, SPEC-01/02, LADDER-03: refuse before a single pattern is matched.
+    """Refuse before a single pattern is matched, when the spec itself cannot be used.
 
     What will interpret this text is asked first, because every pattern below is written for
     one grammar. Scanning cmd syntax with POSIX patterns does not fail loudly; it returns a
@@ -136,28 +142,21 @@ def _spec_refusal(shell_spec: Any) -> Optional[str]:
     from ..capabilities.shell_spec import Exhausted, ShellSpec, validate
 
     if isinstance(shell_spec, Exhausted):
-        # Not "no rung was chosen yet" but "every rung was refused" — the tool stays
-        # registered so the model is told this call is denied, not that shells do not exist.
-        return f"hardline:no-trusted-rung-opaque:{shell_spec.reason}"
+        # Not "no interpreter has been chosen yet" but "none could be established" — a
+        # configured dialect this platform cannot run, or a PowerShell nobody installed. The
+        # tool stays registered so the model is told this call is denied, not that shells do
+        # not exist.
+        return f"hardline:no-shell-opaque:{shell_spec.reason}"
     if isinstance(shell_spec, ShellSpec):
         return validate(shell_spec)  # a spec built elsewhere is re-checked here, not trusted
     return None
 
 
-def _policy_dialect(shell_spec: Any) -> Optional[str]:
-    """The dialect whose floor should run, or ``None`` to run today's.
-
-    Gated on ``policy_enabled``, and that gate is the whole promise of the pre-flip stages:
-    the two policy-off rungs are documented as verdict-for-verdict identical to what shipped
-    before, so they keep running the POSIX regex floor even on Windows, where it matches
-    almost nothing. Turning that on is a release decision, not a side effect of this module
-    learning a second grammar.
-    """
-    if shell_spec is None:
-        return None
+def _dialect(shell_spec: Any) -> Optional[str]:
+    """Which dialect's own floor to add, or ``None`` when there is only the general one."""
     from ..capabilities.shell_spec import ShellSpec
 
-    if not isinstance(shell_spec, ShellSpec) or not shell_spec.policy_enabled:
+    if not isinstance(shell_spec, ShellSpec):
         return None
     return shell_spec.dialect.value
 
@@ -165,8 +164,8 @@ def _policy_dialect(shell_spec: Any) -> Optional[str]:
 def _decided_reason(decided: Any) -> Optional[str]:
     """The reason on a frozen record, or ``None`` when it allows the call.
 
-    SPEC-08b: a record whose verdict is a refusal refuses at the launch too, so reading it
-    here and reading it there give the same answer by construction rather than by agreement.
+    A record whose verdict is a refusal refuses at the launch too, so reading it here and
+    reading it there give the same answer by construction rather than by agreement.
     """
     from ..capabilities.shell_spec import Deny
 
@@ -174,82 +173,31 @@ def _decided_reason(decided: Any) -> Optional[str]:
     return verdict.reason if isinstance(verdict, Deny) else None
 
 
-def hardline_check(
-    tool_name: str, tool_args: Dict[str, Any], *, shell_spec: Any = None, decided: Any = None,
-) -> Optional[str]:
-    """Return a ``"hardline:<desc>"`` reason when ``tool_args`` is unrecoverable.
+def generic_floor(cmd: str) -> Optional[str]:
+    """The dialect-independent floor: today's patterns over today's shell grammar.
 
-    ``decided`` is this call's frozen record when the caller has one (SPEC-08a). The planner
-    builds it, because it is the only place that has the tool's own working-directory
-    resolution, the spec and the arguments at once — everything the closed-set analysis needs.
-    Given one, this function reports *its* verdict rather than computing a second: one value,
-    one source. Without one, only the checks that need no working directory run, which is
-    every check that exists for a policy-off rung.
+    This is what has always run, extracted so it can have two callers instead of
+    one. It is written for POSIX shell syntax, and it keeps running on every
+    dialect — including PowerShell, where it is by construction an imperfect
+    reader of the grammar. That is deliberate and it is the compatibility
+    property the PowerShell path rests on: **a body this refuses today is a body
+    the PowerShell path refuses too.** Its false positives come along with that,
+    and a pass from it is not evidence about PowerShell semantics.
 
-    Only inspects shell commands today: the floor is about preventing
-    unrecoverable operations, and ``run_shell_command`` is the single
-    surface that can express them. File-write tools have their own
-    PathPolicy; other tools have narrow, named effects.
+    Each pattern is searched with ``finditer``; matches whose start position is
+    in a *literal* shell context are suppressed — that protects benign commands
+    like ``echo "(reboot required)"`` or ``printf "backup > /dev/disk0"`` from
+    being denied. The shell context is computed by :func:`_position_contexts`,
+    which handles nested ``$(...)`` and `` `...` `` correctly: a destructive
+    command inside command substitution is real shell, even when the outer layer
+    is a double-quoted string (``echo "$(echo ok; rm -rf /)"``).
 
-    Each pattern is searched with ``finditer``; matches whose start
-    position is in a *literal* shell context are suppressed — that
-    protects benign commands like ``echo "(reboot required)"`` or
-    ``printf "backup > /dev/disk0"`` from being denied. The shell
-    context is computed by :func:`_position_contexts`, which handles
-    nested ``$(...)`` and `` `...` `` correctly: a destructive command
-    inside command substitution is real shell, even when the outer
-    layer is a double-quoted string (``echo "$(echo ok; rm -rf /)"``).
-
-    After the direct check, the function recursively descends into
-    ``sh -c '...'`` / ``bash -c "..."`` / similar shell-interpreter
-    bodies and reruns the floor against each. The body is *literal* to
-    the outer shell but *executed as shell* by the nested interpreter,
-    so a destructive command anywhere inside it counts —
-    ``sh -c 'echo ok; rm -rf /'`` is denied even though the ``;`` and
-    ``rm`` sit inside an outer single-quoted region.
-
-    Returns ``None`` when no surviving match remains. The caller
-    (typically :class:`PermissionEngine`) wraps a non-``None`` return
-    into a deny decision.
+    After the direct check it descends into ``sh -c '...'`` / ``bash -c "..."``
+    bodies and reruns itself against each. The body is *literal* to the outer
+    shell but *executed as shell* by the nested interpreter, so a destructive
+    command anywhere inside it counts — ``sh -c 'echo ok; rm -rf /'`` is denied
+    even though the ``;`` and ``rm`` sit inside an outer single-quoted region.
     """
-    if tool_name != "run_shell_command":
-        return None
-    if decided is not None:
-        return _decided_reason(decided)
-    spec_reason = _spec_refusal(shell_spec)
-    if spec_reason is not None:
-        return spec_reason
-    cmd = str(tool_args.get("command", ""))
-    if not cmd:
-        return None
-    dialect = _policy_dialect(shell_spec)
-    if dialect == "cmd":
-        from ._cmd import scan_cmd
-
-        return scan_cmd(cmd)
-    if dialect == "powershell":
-        from ._powershell import scan_powershell
-
-        refusal = scan_powershell(cmd)
-        if refusal is not None:
-            return refusal
-        # A script that lowered cleanly and refuses no dangerous class is where the closed set
-        # takes over, and that half needs a working directory and a child environment this
-        # function is not given. A caller with a decided record returned above; one without
-        # gets a refusal rather than a pass, because "I could not run the second half" is not
-        # the same answer as "the second half found nothing".
-        return "hardline:powershell-opaque:EFF-04:closed-set analysis needs the decided record"
-    if dialect == "posix":
-        # The Git Bash rung. BASH-01 runs *before* any command-level rule, because every one
-        # of those reads a command word and the constructs it refuses decide what the command
-        # words are. Passing it does not end the check: the dangerous table below still runs,
-        # so this adds a gate rather than replacing one.
-        from ._bash import scan_bash
-
-        gate = scan_bash(cmd)
-        if gate is not None:
-            return gate
-
     # BFS through the original command and all reachable sh -c bodies.
     # Each iteration runs the same matcher on a separate piece of
     # text. Bodies are bounded by the outer command's length, so the
@@ -365,4 +313,53 @@ def hardline_check(
             args = m.group(1)
             if args:
                 queue.append(_normalize_indirect_body(args))
+    return None
+
+
+def hardline_check(
+    tool_name: str, tool_args: Dict[str, Any], *, shell_spec: Any = None, decided: Any = None,
+) -> Optional[str]:
+    """Return a ``"hardline:<desc>"`` reason when ``tool_args`` is unrecoverable.
+
+    ``decided`` is this call's frozen record when the caller has one. The planner builds it,
+    because it is the only place that has the tool's own working-directory resolution, the
+    spec and the arguments at once. Given one, this function reports *its* verdict rather
+    than computing a second: one value, one source.
+
+    Only inspects shell commands: the floor is about preventing unrecoverable operations, and
+    ``run_shell_command`` is the single surface that can express them. File-write tools have
+    their own PathPolicy; other tools have narrow, named effects.
+
+    **The general floor runs first and runs always.** That is the compatibility property, and
+    it is what makes it safe to state without qualification: a body refused today is refused
+    on the PowerShell path, same input, same settings. Short-circuiting on its refusal costs
+    nothing — the call is already denied, and a second table could only change which reason
+    is reported.
+
+    The dialect's own table then covers what the general one lets through, which on Windows
+    is most of what matters. Two shapes it deliberately is *not*: running the PowerShell
+    table **instead** would trade one set of blind spots for another, and running it **only
+    when lowering failed** — tempting, because a parse failure feels like the risky case —
+    would make the added coverage vanish on exactly the bodies it can actually read.
+
+    Returns ``None`` when nothing matched. That is the floor declining to refuse, not an
+    allow: the caller (typically :class:`PermissionEngine`) goes on to the permission rules.
+    """
+    if tool_name != "run_shell_command":
+        return None
+    if decided is not None:
+        return _decided_reason(decided)
+    spec_reason = _spec_refusal(shell_spec)
+    if spec_reason is not None:
+        return spec_reason
+    cmd = str(tool_args.get("command", ""))
+    if not cmd:
+        return None
+    general = generic_floor(cmd)
+    if general is not None:
+        return general
+    if _dialect(shell_spec) == "powershell":
+        from ._powershell import scan_powershell
+
+        return scan_powershell(cmd)
     return None

@@ -205,6 +205,8 @@ re-export；**请始终从 `agentao.host.protocols` 导入，不要伸手到内�
 from agentao.host.protocols import (
     FileSystem, ShellExecutor, MCPRegistry, MemoryStore,
     FileEntry, FileStat, ShellRequest, ShellResult, BackgroundHandle,
+    LaunchRequest, LegacyLaunch, WindowsLaunch,
+    ShellSpec, ShellSpecProvider, ShellBlock, ShellDialect, Exhausted, AbsPath,
 )
 ```
 
@@ -216,6 +218,53 @@ from agentao.host.protocols import (
 | `MemoryStore` | 持久化记忆存储后端的协议。 |
 | `FileEntry`、`FileStat` | `FileSystem` 实现返回的值类型。 |
 | `ShellRequest`、`ShellResult`、`BackgroundHandle` | `ShellExecutor` 实现的值类型。 |
+| `LaunchRequest` 及其成员 `LegacyLaunch` / `WindowsLaunch` | `ShellRequest.launch` 携带的内容——见下文。 |
+| `ShellSpec`、`Exhausted`、`ShellSpecProvider` | 执行器可选声明的解释器——见下文。 |
+| `ShellBlock`、`ShellDialect` | 用户级 shell 配置与语法词汇，供自行解析 spec 的宿主使用。 |
+| `AbsPath` | 上述类型书写路径用的 `NewType` 别名。 |
+
+### `ShellRequest` 携带的是一次启动，不是一个命令串
+
+**破坏性变更。** `ShellRequest` 不再有 `command`、`cwd`、`env` 三个字段，而是一个可判别的
+`launch: LaunchRequest`（外加不变的传输字段 `timeout` 与 `on_chunk`）。请读 `request.launch`。
+`request.command` 与 `request.cwd` 作为只读投影保留，仅供显示与日志；**`request.env` 已删除** ——
+环境是 `launch.env`，一份执行器**原样设置**而不是自行计算的完整映射。
+
+除非宿主配置了指定解释器，载荷都是 `LegacyLaunch`，它逐字段就是过去请求上的那三个，外加一个可选的
+`executable`：
+
+```python
+def run(self, request: ShellRequest) -> ShellResult:
+    launch = request.launch
+    if isinstance(launch, LegacyLaunch):
+        return self._spawn(
+            launch.command, cwd=launch.cwd, env=dict(launch.env),
+            shell=True, executable=launch.executable,   # None 表示保留你自己的默认
+        )
+    # WindowsLaunch：用 launch.command_line 启动 launch.application_name，中间不经过 shell。
+    ...
+```
+
+`launch.executable` 是用户在 `shell` 块里点名的解释器，它必须压过执行器本来会选的那个 ——
+这条设置的全部内容就是这个。`None` 表示「保留你自己的默认」。
+
+`WindowsLaunch`（`application_name` + `command_line`）是 PowerShell 启动产出的形状：映像按路径固定，
+而不是在启动时按名字解析；命令行原样传入。
+
+### 声明解释器（可选）
+
+执行器可以额外实现 `ShellSpecProvider` —— 一个回答 `ShellSpec | Exhausted` 的 `shell_spec` 属性 ——
+因为只有它知道 Docker 或远端目标真正启动的是哪个解释器。它刻意**不是** `ShellExecutor` 的成员
+（`runtime_checkable` 的 Protocol 上放非方法成员会让 `issubclass()` 直接抛错）。什么都不声明的执行器
+被读作报告今天的平台默认，因此既有宿主原样可用。
+
+声明了 `ShellSpec` 的执行器同时定下两半：`dialect` 是命令地板扫描时用的语法、也是提示词里 shell 指引
+所说的语法；`interpreter` 是启动的绝对路径（`None` 表示用平台自己的答案）。`Exhausted` 是拒绝的那一支 ——
+本平台跑不了的方言，或者没人安装的 PowerShell —— 之后每次 shell 调用都以该理由被拒，而不是回落到别的解释器。
+
+替换**shell 工具本身**（用 `extra_tools` 注册一个名为 `run_shell_command` 的工具）的宿主必须在工具上
+暴露 `shell_spec`：命令地板正是按这个名字挂钩的，注册会拒绝一个说不出自己方言的替代品 ——
+用一种 shell 的模式去扫另一种 shell 的语法，返回的是一个干净的结果。
 
 `Local*` 默认实现（如 `LocalFileSystem`、`LocalShellExecutor`）保留在
 `agentao.capabilities` 中，因为它们是参考实现而非对外注入面的一部分。

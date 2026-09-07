@@ -395,7 +395,7 @@ class ToolExecutor:
             else:
                 if profile is not None:
                     call_args = {**args, "_sandbox_profile": profile}
-        # SPEC-08b: the text and the directory the launch uses come from the record the
+        # The text and the directory the launch uses come from the record the
         # decision froze, never from the arguments a second time. Same private-kwarg channel
         # as the sandbox profile — never exposed to the model, never serialized into a hook.
         if plan.decided is not None:

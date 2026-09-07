@@ -364,7 +364,7 @@ def handle_session_new(
     from agentao.paths import user_root
     from agentao.permissions import PermissionEngine
     ur = user_root()
-    # CFG-03: the same record through this root as through the embedding factory. Three
+    # The same record through this root as through the embedding factory. Three
     # roots reading three different shapes is how a policy key ends up honoured on one
     # entry path and silently absent on the other two.
     permission_config = load_permission_config(project_root=cwd, user_root=ur)

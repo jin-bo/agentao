@@ -160,21 +160,69 @@
 
 完整的规则分类、示例、运行期语义 → [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md)。
 
-### `shell` 块（今天已接受，今天不改变任何东西）
+### `shell` 块 —— 选择解释器
 
 `permissions.json` 另接受一个顶层 `shell` 对象，**只**从用户级文件（`<home>/.agentao/permissions.json`）读，
-永不从工作区那份读 —— 一份签进仓库的块等于让仓库来选 agent 跑哪个解释器。它现在会被校验，而现在不改变任何东西：
-agentao 今天构造得出的每一级政策都关着，shell 的启动方式与以前逐字段相同。
+永不从工作区那份读 —— 一份签进仓库的块等于让仓库来选 agent 跑哪个解释器。
 
 | 键 | 类型 | 说明 |
 |---|---|---|
-| `path` | string | 解释器的绝对路径。**与 `dialect` 成对** —— 只给其一是错误，因为两者谁都推不出另一个。 |
-| `dialect` | `"posix"` / `"cmd"` / `"powershell"` | 该解释器读的语法。没有 `rung` 键：rung 由方言、目标平台与映像身份导出。 |
-| `allow_git_bash` | bool | 默认 `false`。Windows 上 Git Bash 能否排在 `cmd` 之前被选中。 |
-| `allowlist` | array | content pin（`{"path": …, "sha256": …}`）与受信发布者（`{"signer": …}`）。pin 是压在**位置之上**的附加条件，永不替代位置。它的 `path` 逐字比较，所以要写规范化的那种写法。 |
-| `env_passthrough` | array | 政策开启的一级上要透传给子进程的**字面键名**。含 `*` 的条目一律丢弃，保留键（`PATH`、`BASH_ENV`、`SHELLOPTS`…）任何来源都加不回来。 |
+| `dialect` | `"posix"` / `"cmd"` / `"powershell"` | 该解释器读的语法。命令地板按它扫描，提示词里的 shell 指引也按它写。单独给它就够了：`{"dialect": "powershell"}` 就是打开 PowerShell 的常规写法。 |
+| `path` | string | 某个解释器的绝对路径。**必须同时给 `dialect`** —— 一个改过名的启动器说明不了它读的是什么语法，所以只给路径是报错而不是猜测。反过来只给 `dialect` 是允许的。 |
 
-设计：`docs/design/powershell-support-spec.zh.md`（`CFG-01`、`CFG-02`、`IMG-03`、`ENV-06`）。
+键集合是封闭的：其余任何键都会在启动时点名报错，而不是被静默忽略。
+
+**每种配置的行为**
+
+| 配置 | Windows | macOS / Linux |
+|---|---|---|
+| 不配置，或 `{"dialect": "cmd"}` | `%COMSPEC% /c <command>` —— 默认，未改变 | 报错：`cmd` 只在 Windows 上存在 |
+| `{"dialect": "powershell"}` | 自动发现 `pwsh.exe`，其次 `powershell.exe`；**两者都没有则报错**，绝不回落到 cmd | 报错：`powershell` 只在 Windows 上存在 |
+| `{"dialect": "posix"}` | 报错 —— 请显式给 `path`；agentao 不会去找 Git Bash / WSL / MSYS，它们在路径翻译和可达范围上并不一致 | `/bin/bash -c <command>`，没有 bash 的镜像上是 `/bin/sh` |
+| `{"path": …, "dialect": …}` | 就用这个解释器，按这种语法读 | 同左 |
+
+本平台跑不了的配置会**报错**，不会被悄悄换成别的，随后每次 shell 调用都会返回这条拒绝。回落才是真正有意思的
+缺陷：cmd 读一段按 PowerShell 写的正文不会失败，它会变成别的意思。
+
+改配置后需要重建会话或重启才生效。
+
+**PowerShell 怎么启动。** `<解释器> -NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand <base64>`，
+直接启动、中间不经过任何 shell。正文夹在固定前缀与固定退出尾行之间，按 UTF-16LE 编码后转 Base64 —— 引用问题就此消失，
+反斜杠、百分号、引号、换行全都原样通过。三条值得知道的后果：
+
+- **`-NoProfile`** 意味着不加载你的 PowerShell profile，写在那里的函数和 alias 对 agent 不存在。
+- **退出码跟随最后一条语句。** 原生命令自己的非零码会保留；只报了错的 cmdlet 返回 1；显式 `exit N` 与终止错误由
+  PowerShell 自己决定。正文中途失败、末条成功则整体是成功 —— 不会把正文改写成 fail-fast。
+- **长度。** Base64 of UTF-16LE 大约是每 3 个字符的命令换 8 个字符的命令行，而 Windows 的命令行上限是 32,767 个单位，
+  所以超过大约 12,000 字符的命令会被明确拒绝。既不截断，也不自动改写成临时脚本。
+
+**编码。** 前缀把 `$OutputEncoding` 与 `[Console]::OutputEncoding` 都设为 UTF-8，于是非 ASCII 输出、以及管道写给原生
+程序的非 ASCII 都能正常通过。原生程序若自己用**别的**编码写，仍然不会被转码 —— 那是那个程序自己的选择，这里无从得知。
+
+**Windows PowerShell 5.1 有两个实测怪癖**，都是解释器自身的行为，前缀都够不着：
+
+- **它管道写给原生命令的内容开头带一个 UTF-8 BOM**，读这段 stdin 的程序会先看到 `\ufeff` 再看到第一个字符。
+  PowerShell 7 没有这个行为，前缀也改变不了它 —— 在 Windows runner 上实测了五种前缀写法，包括**完全不加前缀**，
+  5.1 五种都带。如果你管道写入的程序不认这个标记，自己去掉开头的 `\ufeff`。
+- **写文件的 cmdlet 默认用系统 ANSI 代码页。** 5.1 下 `Set-Content -Value '中文'` 会静默写成 `??`；
+  PowerShell 7 默认 UTF-8，写出来是对的。前缀只设两个**流**的编码，到此为止 —— 改 cmdlet 的默认值就是改
+  你命令本身的含义，而且 5.1 的 `utf8` 是**带 BOM** 的 UTF-8。要紧的地方就把编码写出来：
+  `Set-Content -Encoding utf8`，或者用 `[System.IO.File]::WriteAllText(...)` 自己指定编码器。
+
+**后台命令**（`is_background: true`）启动解释器时给它一个从不显示的自有控制台窗口，并置于新的进程组。输出不落地：模型
+拿到的是进程号，不是输出。
+
+**自动发现**按已知安装位置（`Program Files` 与 `%LOCALAPPDATA%` 下的 PowerShell 7 目录、Store 别名目录，以及
+Windows PowerShell 5.1 的 `System32` / `SysWOW64`）再加 `PATH` 中的绝对目录逐个查找。它**不**搜索当前工作目录，也
+**不**会选中 Git Bash。新装的解释器对已经在跑的 agentao 不可见：重启它，或者给一个绝对 `path`。
+
+**命令地板。** 与方言无关的那道地板 —— 拒绝 `rm -rf /`、`mkfs`、写块设备的 `dd` 等等 —— 在**每种方言上始终执行**。
+PowerShell 上会在它之上再叠一张 Windows 专属的不可恢复类别表：格式化卷、清空磁盘、删除卷影副本、关闭 BitLocker，以及
+对盘符根的递归 `Remove-Item` —— 后者按 PowerShell 的内置别名（`rm`、`ri`、`del`、`rd`…）与合法参数缩写（`-r` 即
+`-Recurse`）识别。Windows 的**默认** cmd 路径刻意仍然只跑与方言无关的那道地板，所以在 cmd 里敲 `format C:` 不会被它拦住；
+这是维持现状，不代表该命令安全，权限规则照常执行。
+
+设计：`docs/design/powershell-support-lightweight.zh.md`。
 
 
 ---

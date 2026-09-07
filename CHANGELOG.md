@@ -11,30 +11,40 @@ _Targeting 0.4.22. Add entries under the relevant heading as work lands._
 
 ### Added
 
-- **A Windows shell ladder, opt-in.** On Windows, `run_shell_command` has
-  always gone straight to `%COMSPEC% /c` with a regex floor written for POSIX
-  syntax. There is now a ladder that resolves an interpreter by identity —
-  `pwsh` → `powershell.exe` → `cmd` — attests the image it is about to launch,
-  hands the child a closed environment, and reads the command with that
-  dialect's own grammar rather than someone else's. Turn it on per host with
-  `"shell": {"ladder": true}` in the **user-level** `permissions.json`.
+- **PowerShell on Windows, opt-in.** On Windows, `run_shell_command` has
+  always gone straight to `%COMSPEC% /c` with a command floor written for POSIX
+  syntax. Put `"shell": {"dialect": "powershell"}` in the **user-level**
+  `permissions.json` and agentao finds `pwsh.exe` (else `powershell.exe`),
+  launches it directly, and reads the command with PowerShell's own grammar.
+  `{"path": …, "dialect": …}` pins a specific interpreter instead. **The
+  Windows default is unchanged** — nothing configured still means
+  `%COMSPEC% /c`, the same environment and the same floor.
 
-  **The default has not changed, and turning this on is a real change.** An
-  interpreter that cannot be attested is refused rather than launched, and the
-  trust predicate asks whether *the token the child will run as* could replace
-  the image or any directory above it. **If agentao runs as an administrator
-  on Windows, that is true of everything, so the trusted set is empty and every
-  shell call is denied.** That is the rule working — an elevated agentao is its
-  own attacker — and it is measured rather than predicted
-  (`docs/reference/powershell-support-evidence.zh.md` §3.23). The same key
-  turns it back off, which is why it is a configuration key and not a release.
+  Four things worth knowing. The interpreter is found by walking known install
+  locations and the absolute directories of `PATH`, never `shutil.which`: on
+  Windows that function prepends the *current directory* to the search and
+  cannot be told not to, so a checkout containing a file named `pwsh.exe`
+  would be what agentao starts. The command travels as `-EncodedCommand`
+  base64 of UTF-16LE, so quotes, backslashes, percent signs and newlines
+  survive with no layer in between having to agree about escaping. A fixed
+  trailer turns the last statement's outcome into an exit code — a native
+  command's own non-zero code is preserved, a cmdlet that only wrote an error
+  gives 1 — because a bare `exit $LASTEXITCODE` reports a stale 0 for the
+  second case, which is a failing command reported as success. And Windows
+  PowerShell 5.1 wraps a redirected error stream in CLIXML, which is unwrapped
+  by bounded text extraction rather than by an XML parser: the stream comes
+  from a subprocess running model-written code, and the standard library's
+  parser expands internal entities.
 
-- **`agentao.permissions_hardline.classify_refusal` / `tally`.** A refusal
-  reason parses into a family, a dialect and a rule, and a sequence of them
-  tallies into a distribution. Hosts that want to know *why* the floor is
-  refusing things now have something better than substring matching: the
-  reason space is six families, not one, and 23 of the shipped reasons are
-  English sentences where colons carry no structure.
+  **The command floor.** Its dialect-independent half runs on every dialect,
+  always, so nothing it refuses today is allowed on the PowerShell path. A
+  table of Windows irrecoverable classes runs in addition — formatting a
+  volume, clearing a disk, deleting shadow copies, disabling BitLocker, a
+  recursive `Remove-Item` on a drive root — reading PowerShell's built-in
+  aliases (`rm`, `ri`, `del`, `rd`, …) and abbreviated parameters (`-r` for
+  `-Recurse`), because a table written in canonical names alone refuses one
+  spelling of six while reading as coverage. Windows' default cmd path
+  deliberately keeps running only the dialect-independent half.
 
 - **A Windows CI job** — Python 3.10 and 3.12, the full suite. This repository
   had never run its tests on Windows; the first run failed 155 of them. Six
@@ -42,6 +52,60 @@ _Targeting 0.4.22. Add entries under the relevant heading as work lands._
   bug": each is something POSIX absorbs quietly and Windows bills for.
 
 ### Changed
+
+- **Two Windows PowerShell 5.1 encoding defaults are documented rather than
+  overridden.** Cmdlets that write files default to the system ANSI code page
+  there, so `Set-Content -Value '中文'` writes `??` while PowerShell 7 writes
+  the characters. The prelude sets the two *stream* encodings and stops:
+  changing a cmdlet's default would change what a user's command means, and
+  5.1's own `utf8` is UTF-8 *with* a BOM. The reference now says to name the
+  encoding when it matters.
+
+- **Windows PowerShell 5.1 puts a UTF-8 BOM into a native command's stdin, and
+  nothing here can stop it.** Five prelude variants were measured on a Windows
+  runner — the shipped one, `$OutputEncoding` alone, the console assignment
+  first, the static `[Text.Encoding]::UTF8`, and no prelude at all. Windows
+  PowerShell 5.1 emitted the mark in all five; PowerShell 7 in none. So it is
+  5.1's behaviour rather than the wrapper's, and it is documented rather than
+  chased. The same measurement confirms the prelude is load-bearing: without
+  it, 5.1 sent `GOT:\ufeff??` and the Chinese characters were gone.
+
+- **The `[full]` dependency baseline is compared by name, not by version.**
+  `tests/data/full_extras_baseline.txt` was a `pip freeze` — 59 pinned versions
+  — and `pyproject.toml` declares floors, so every upstream release of anything
+  in the closure failed the test with nothing wrong in-tree. The churn was not
+  harmless: this refresh found 26 version bumps and, buried among them, the one
+  thing the test exists to catch — `distro` and `tqdm` left the closure when
+  `openai` went 2.x to 3.x and dropped them. The file now holds PEP 503 names,
+  and the failure message says what appeared or disappeared. A supported
+  version *range* is still asserted where it belongs: in the metadata
+  (`mcp>=1.26.0,<3`) and in the mcp-compat job that installs both majors.
+
+- **The shell-resolution design shipped in this cycle was replaced before
+  release.** An earlier unreleased iteration resolved the interpreter by
+  identity: attested images, a trusted-root chain over every ancestor
+  directory, a closed child environment, a per-command effect analysis. It was
+  never released, and it is gone. The measurement that ended it: on an elevated
+  Windows token the trust predicate — can the token the child runs as replace
+  this image, or any directory above it — is true of everything, so the trusted
+  set is empty, the ladder runs empty, and every shell call is denied. Running
+  elevated is common on Windows. What replaces it is the opt-in above.
+
+  Nothing here was in a release, so there is no migration. If you were tracking
+  `main`: the `shell` block now takes exactly `path` and `dialect` (`ladder`,
+  `allowlist`, `env_passthrough` and `allow_git_bash` are removed and are named
+  errors, not ignored keys); `dialect` alone is now legal and is the ordinary
+  spelling; `agentao.permissions_hardline.classify_refusal` / `tally` are
+  removed; `agentao.host.protocols` no longer re-exports `IdentityOracle`,
+  `PinnedEnv`, `ResolvedImage`, `LauncherIdentity`, `PosixLaunch`, `Subject`,
+  `Sha256`, `ReparseResult`, `ReparseState` or `SessionConfig`, and gained
+  `ShellBlock` and `ShellDialect`; and `ShellSpec` is now two fields, a
+  `dialect` and an optional `interpreter` path.
+
+- **The shell tool's description names the interpreter that will read the
+  command.** It used to say `cmd /c` on Windows unconditionally. That is the
+  model's only statement of which syntax to write, and cmd and PowerShell
+  disagree about quoting, redirection and the name of every builtin.
 
 - **`default_spec()` takes the shell block and can answer `Exhausted`.** It
   used to take no configuration and always return a `ShellSpec`. Embedders
@@ -52,6 +116,49 @@ _Targeting 0.4.22. Add entries under the relevant heading as work lands._
   executor.
 
 ### Fixed
+
+- **A background PowerShell command reported a process id and never ran.**
+  `run_background` passed `DETACHED_PROCESS` on Windows. Measured on a runner:
+  under that flag both `pwsh` and `powershell` exit **0, with empty stdout and
+  empty stderr, without executing a single statement of the script** — with the
+  streams pointed at real files to confirm the output was absent rather than
+  discarded, and with the prelude removed to confirm the wrapper was not the
+  cause. PowerShell hosts itself in a console and `DETACHED_PROCESS` leaves it
+  none. It is `CREATE_NO_WINDOW` now, which gives the child a console nobody
+  looks at; the two flags are mutually exclusive, so it is a swap. cmd works
+  under either, which is why the default Windows path never showed this. The
+  default path now has a background measurement of its own, and a
+  cross-platform shape test pins the flag — the edit that would undo it gets
+  made on a machine where those constants do not exist.
+
+- **The `slow` clean-install tests ran nowhere, and one of them was red.**
+  Nine tests build a wheel, install it into fresh venvs and check what a user
+  actually gets. Every pytest invocation in CI inherits
+  `addopts = -m 'not slow'`, and no job passed `-m slow`, so the whole tier was
+  dead — which is how `test_full_extras_freeze_matches_baseline` came to sit
+  failing since the first upstream release after its 2026-06-19 baseline
+  refresh, without anyone hearing about it. They now run in
+  the **build** job, on Python 3.12, immediately after `uv build`: that is the
+  only job with a `dist/*.whl` for them to install, which is what the P0.7
+  roadmap intended in the first place. The interpreter is pinned because the
+  baseline is a closure for one interpreter, and a version-gated backport makes
+  another's legitimately different.
+
+- **A `dist/` holding two builds handed the install tests the older wheel.**
+  `find_wheel` took `sorted(glob(...))[-1]`, and `0.4.9` sorts *after* `0.4.10`
+  as text. `uv build` adds to `dist/` rather than replacing it, so any local
+  tree built twice across that boundary would have installed, measured and
+  passed the wrong wheel. It now picks the highest parsed version, skipping a
+  filename that is not one rather than raising. CI builds into an empty
+  directory and would never have shown this.
+
+- **A configured `shell.path` named an interpreter that never ran.** The value
+  reached the resolved spec and stopped there: both spawn paths built the child
+  with the platform's own answer — bash on POSIX, `%COMSPEC%` on Windows — so
+  naming `/bin/zsh` produced a configuration that read back as honoured and a
+  child running bash, with nothing reporting the substitution. Fixed at the
+  single helper both delivery faces build through, so foreground and background
+  are covered by one change.
 
 - **Every edit of a CRLF file doubled its carriage returns, on Windows.**
   `LocalFileSystem.write_text` did not pass `newline=""`, so Python translated

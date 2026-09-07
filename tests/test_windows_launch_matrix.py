@@ -1,28 +1,21 @@
-"""What actually happens when a rung is launched on Windows.
-
-PR-6 of the PowerShell ladder. ``LAUNCH-02``..``LAUNCH-09a``, ``ENV-02``, ``ENV-04``,
-``ENV-06`` and ``LADDER-05`` are defined once each in
-``docs/design/powershell-support-spec.zh.md`` §2; the cases here are the gate matrix's
-``windows / PR-6`` rows that need no identity oracle.
+r"""What actually happens when a shell is launched on Windows.
 
 **These are measurements, not re-assertions.** Every other test in this repository runs on
-ubuntu, so the command lines LAUNCH-03 and LAUNCH-02 specify have been written, reviewed
-eleven times and never once executed. What is measured here is what the child process
-actually receives: whether the ``/s`` quoting survives, whether the pinned environment
-arrives, whether a bad working directory really exits 98 without running a byte of the body.
+ubuntu, so the PowerShell launch is written, reviewed and never once executed there. What is
+measured here is what a real child process does: whether the encoded body arrives intact,
+whether the exit code comes back, whether non-ASCII survives both directions, and whether a
+background launch with no console still runs its body to completion.
 
-**The oracle is a stub and the launch is real.** Identity answers — access masks,
-Authenticode — are about a machine's security state and belong to the native oracle that
-does not exist yet. Everything downstream of the spec is genuine: a real ``cmd.exe``, a real
-``ResolvedImage`` built from the real file's identity and hash, a real ``Popen``.
+The interpreters are whatever the runner has. A skip is legible — it says which one was
+missing — and a silent pass on a runner with no PowerShell would be worse than a red one.
 """
 
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -31,416 +24,416 @@ pytestmark = pytest.mark.skipif(
     sys.platform != "win32", reason="the launch matrix is about Windows"
 )
 
-if sys.platform == "win32":  # pragma: no cover - the module is skipped elsewhere
-    from agentao.capabilities.shell import (
-        LocalShellExecutor,
-        ShellRequest,
-        local_content_hash,
-        local_filesystem_identity,
-    )
-    from agentao.capabilities.shell_spec import (
-        AbsDir,
-        AbsFile,
-        AbsPath,
-        DriveSpec,
-        HashPin,
-        Platform,
-        ResolvedImage,
-        RootRelPath,
-        Rung,
-        ShellBlock,
-        ShellDialect,
-        ShellSpec,
-        default_spec,
-        local_subject,
-    )
-    from agentao.permissions_hardline._analysis import decided_call
-    from agentao.permissions_hardline._trust import attested_spec, request_for
-
-    from ._trust_fakes import FakeOracle, interpreter
+from agentao.capabilities import powershell as ps  # noqa: E402
+from agentao.capabilities.shell import LocalShellExecutor, ShellRequest  # noqa: E402
+from agentao.capabilities.shell_spec import (  # noqa: E402
+    AbsPath,
+    ShellBlock,
+    ShellDialect,
+    ShellSpec,
+    default_spec,
+)
+from agentao.tools.shell import ShellTool  # noqa: E402
 
 
-SENTINEL = "agentao-caret^ok"
-"""ASCII on purpose, and the rest of G18-02 is still owed.
-
-Reading a sentinel back through a child's stdout measures the console code page as much as
-the transport: cmd writes in the OEM page, and whether a runner has been switched to UTF-8 is
-not something this test should depend on. The non-ASCII, ``%``, ``"`` and newline half of
-G18-02 needs a body that reports its own bytes — a program printing ``GetCommandLineW()`` —
-and that instrument is not built yet. Saying so beats a flaky assertion that looks like
-coverage."""
-
-
-def text(launched) -> str:
-    """A child's stdout as text. ``errors="replace"`` because the code page is the runner's."""
-    return launched.out()
-
-
-def real_image(path: str, subject) -> "ResolvedImage":
-    """A ``ResolvedImage`` for a file that exists, built from its real identity and hash.
-
-    The executor re-checks both immediately before spawning (LAUNCH-01d), so a fabricated
-    one would be refused — which is the point: this is the launch path, not a bypass of it.
-    """
-    return ResolvedImage(
-        canonical_path=AbsPath(path),
-        filesystem_identity=local_filesystem_identity(path),
-        execution_subject=subject,
-        content_identity=HashPin(path=AbsPath(path), sha256=local_content_hash(path)),
-    )
-
-
-def pinned_from_environment() -> "PinnedEnv":  # noqa: F821 - Windows-only import above
-    """ENV-06 (1) filled from this machine, so the child gets roots that actually exist."""
-    from agentao.capabilities.shell_spec import PinnedEnv
-
-    system_root = os.environ["SystemRoot"]
-    profile = os.environ["USERPROFILE"]
-    return PinnedEnv(
-        system_root=AbsDir(system_root),
-        windir=AbsDir(os.environ.get("windir", system_root)),
-        system_drive=DriveSpec(os.environ.get("SystemDrive", "C:")),
-        program_data=AbsDir(os.environ.get("ProgramData", "C:\\ProgramData")),
-        program_files=AbsDir(os.environ.get("ProgramFiles", "C:\\Program Files")),
-        common_program_files=AbsDir(
-            os.environ.get("CommonProgramFiles", "C:\\Program Files\\Common Files")
-        ),
-        all_users_profile=AbsDir(os.environ.get("ALLUSERSPROFILE", "C:\\ProgramData")),
-        public=AbsDir(os.environ.get("PUBLIC", "C:\\Users\\Public")),
-        com_spec=AbsFile(os.environ.get("ComSpec", system_root + "\\System32\\cmd.exe")),
-        home=AbsDir(profile),
-        user_profile=AbsDir(profile),
-        home_drive=DriveSpec(os.environ.get("HOMEDRIVE", profile[:2])),
-        home_path=RootRelPath(os.environ.get("HOMEPATH", profile[2:])),
-        appdata=AbsDir(os.environ["APPDATA"]),
-        local_appdata=AbsDir(os.environ["LOCALAPPDATA"]),
-        temp=AbsDir(os.environ["TEMP"]),
-        tmp=AbsDir(os.environ.get("TMP", os.environ["TEMP"])),
-    )
-
-
-def rung_spec(rung, launcher_path: str, *, edition: str = "", version: str = "") -> "ShellSpec":
-    """A policy-on spec for a real interpreter, with the identity answers stubbed."""
-    subject = local_subject()
-    image = real_image(launcher_path, subject)
-    identity = interpreter(
-        launcher_path, edition=edition, version=version, img=image,
-        pshome=str(Path(launcher_path).parent),
-    )
-    oracle = FakeOracle(
-        target=Platform.WINDOWS,
-        subject=subject,
-        local=True,
-        writable=set(),  # the native oracle's job; this test measures the launch
-        pinned=pinned_from_environment(),
-        project_root=AbsPath(str(Path.cwd())),
-        path_entries=(),
-        base_env=dict(os.environ),
-        identities={launcher_path: identity},
-        trusted_publishers={launcher_path},
-        pshome=AbsPath(str(Path(launcher_path).parent)),
-    )
-    spec = attested_spec(
-        rung, image, identity, ShellBlock(), oracle, Platform.WINDOWS, subject, True
-    )
-    assert isinstance(spec, ShellSpec), spec
-    return spec
-
-
-class Launched:
-    """A launch and everything needed to explain it when it goes wrong.
-
-    The first Windows run reported ``AssertionError: (98, '')`` and could say no more: the
-    assertion carried the exit code and stdout, and the reason a prelude refuses is on stderr.
-    A test for a platform its author cannot reproduce on has to carry its own diagnosis.
-    """
-
-    def __init__(self, result, request) -> None:
-        self.result = result
-        self.request = request
-
-    @property
-    def returncode(self) -> int:
-        return self.result.returncode
-
-    def out(self) -> str:
-        return self.result.stdout.decode("utf-8", errors="replace")
-
-    def __repr__(self) -> str:
-        # ``__repr__`` and not ``__str__``: ``assert x, obj`` reaches the report through
-        # ``repr``, which is how the first run's message read
-        # ``<Launched object at 0x...>`` and said nothing at all.
-        command = (
-            self.request.command_line if hasattr(self.request, "command_line")
-            else subprocess.list2cmdline(list(self.request.argv))
-        )
-        return (
-            f"\nexit={self.result.returncode}"
-            f"\nstdout={self.out()!r}"
-            f"\nstderr={self.result.stderr.decode('utf-8', errors='replace')!r}"
-            f"\ncommand={command!r}"
-            f"\ncwd={self.request.cwd!r} workdir={self.request.workdir!r}"
-        )
-
-
-def launch(spec, body: str, cwd: Path) -> Launched:
-    """Decide the call, then run it through the executor exactly as the runtime would."""
-    record = decided_call(spec, body, AbsPath(str(cwd)), None)
-    from agentao.permissions_hardline._trust import encode_workdir
-
-    literal = encode_workdir(AbsPath(str(cwd)), spec.dialect)
-    assert literal is not None, cwd
-    request = request_for(
-        spec, spec.launcher, body, literal, record.child_env or {},
-        AbsPath(str(cwd)), record.attested_images,
-    )
-    assert request is not None
-    return Launched(LocalShellExecutor().run(ShellRequest(launch=request, timeout=60)), request)
-
-
-# ------------------------------------------------------------------ LADDER-05
-
-
-def test_the_pre_flip_default_is_todays_rung_and_todays_launch():
-    """G10-02: before the flip Windows reports ``CMD x legacy_cmd`` and launches as it always did.
-
-    This is the promise every stage before PR-7 rests on, and until this job existed it was
-    only ever checked on a platform where the rung it names cannot occur.
-    """
-    spec = default_spec()
-    assert spec.rung is Rung.legacy_cmd and spec.dialect is ShellDialect.CMD
-    assert spec.policy_enabled is False
-    assert spec.launcher is None and spec.pinned_env is None
-
-
-def test_a_legacy_launch_still_runs_through_the_platform_shell(tmp_path):
-    from agentao.capabilities.shell_spec import LegacyLaunch
-    from agentao.capabilities.process import build_child_env
-
-    request = LegacyLaunch(
-        command="echo agentao-legacy-ok",
-        cwd=AbsPath(str(tmp_path)),
-        env=build_child_env(),
-        spec_fingerprint=default_spec().fingerprint,
-    )
-    result = LocalShellExecutor().run(ShellRequest(launch=request, timeout=60))
-    assert "agentao-legacy-ok" in result.stdout.decode("utf-8", errors="replace")
-
-
-# ------------------------------------------------------------------ LAUNCH-03
-
-
-@pytest.fixture
-def cmd_spec():
-    com_spec = os.environ.get("ComSpec")
-    if not com_spec or not Path(com_spec).is_file():
-        pytest.skip("no cmd.exe on this runner")
-    return rung_spec(Rung.cmd, com_spec)
-
-
-def test_the_cmd_rung_launches_and_its_body_arrives_intact(cmd_spec, tmp_path):
-    """LAUNCH-03: ``/d /e:on /v:off /s /c "cd /d "<W>" || exit 98 & <body>"``.
-
-    Eleven review rounds wrote that line and none of them ran it. What it has to survive is
-    ``/s``'s outer-quote stripping with a quoted working directory *inside* the same string.
-    """
-    result = launch(cmd_spec, f'echo "{SENTINEL}"', tmp_path)
-    assert SENTINEL in text(result), result
-
-
-def test_a_working_directory_that_does_not_exist_exits_98_without_running_the_body(
-    cmd_spec, tmp_path
-):
-    """LAUNCH-09a: ``cd … || exit 98 & <body>``, and the ``||`` is load-bearing.
-
-    With ``&&`` the body's second command runs anyway, which is how a UNC working directory
-    used to have cmd silently relocate the call to the system directory.
-    """
-    marker = tmp_path / "ran.txt"
-    missing = tmp_path / "no-such-directory"
-    result = launch(cmd_spec, f'echo x > "{marker}"', missing)
-    assert result.returncode == 98, result
-    assert not marker.exists()
-
-
-def test_the_cmd_rung_pins_the_current_directory_out_of_the_search_path(cmd_spec, tmp_path):
-    """ENV-04 / G18-01: cmd resolves a bare word against the current directory first."""
-    result = launch(cmd_spec, "echo %NoDefaultCurrentDirectoryInExePath%", tmp_path)
-    assert text(result).strip().endswith("1"), result
-
-
-def test_the_child_environment_is_the_closed_set_and_not_the_inherited_one(
-    cmd_spec, tmp_path, monkeypatch
-):
-    """ENV-06 / G18-08: a config-root key in the parent must not reach the child.
-
-    ``%VAR%`` expands to itself when the variable is unset, which is how this reads back as a
-    fact about the child's environment rather than about the test's own quoting.
-    """
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "evil-config"))
-    spec = rung_spec(Rung.cmd, os.environ["ComSpec"])
-    result = launch(spec, "echo [%GIT_CONFIG_GLOBAL%]", tmp_path)
-    assert "[%GIT_CONFIG_GLOBAL%]" in text(result), result
-
-
-def test_a_launcher_path_containing_a_space_is_quoted_correctly(tmp_path):
-    """G18-05: the path is quoted in the command line *and* passed as the application name."""
-    com_spec = os.environ.get("ComSpec")
-    if not com_spec:
-        pytest.skip("no cmd.exe on this runner")
-    copied = tmp_path / "a directory with spaces" / "cmd.exe"
-    copied.parent.mkdir(parents=True)
-    shutil.copy(com_spec, copied)
-    result = launch(rung_spec(Rung.cmd, str(copied)), "echo spaced-ok", tmp_path)
-    assert "spaced-ok" in text(result), result
-
-
-# ------------------------------------------------------------------ LAUNCH-02 / LAUNCH-05
-
-
-def every_powershell_on_this_runner():
-    """All of them, because the two editions are two different measurements.
-
-    Reporting only the first found makes a 5.1-specific fact invisible on a runner that also
-    has 7.x, which is every GitHub Windows runner.
-    """
+def _interpreters():
+    """Every PowerShell on this runner, as ``(label, path)``."""
     found = []
-    for name, edition in (("pwsh", "Core"), ("powershell", "Desktop")):
-        path = shutil.which(name)
-        if path is None:
-            continue
-        probe = subprocess.run(
-            [path, "-NoProfile", "-NonInteractive", "-Command",
-             "$PSVersionTable.PSEdition + ' ' + $PSVersionTable.PSVersion.ToString()"
-             " + ' ' + [System.IO.Path]::GetFullPath($PSHOME)"],
-            capture_output=True, text=True, timeout=120,
-        )
-        if probe.returncode != 0:
-            continue
-        parts = probe.stdout.strip().split(" ", 2)
-        if len(parts) == 3 and parts[0] == edition:
-            found.append((path, parts[0], parts[1], parts[2]))
+    env = dict(os.environ)
+    system_root = env.get("SystemRoot", r"C:\Windows")
+    seven = ps.discover(env)
+    if seven and os.path.basename(seven).lower() == "pwsh.exe":
+        found.append(("pwsh", seven))
+    five = os.path.join(system_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    if os.path.isfile(five):
+        found.append(("powershell", five))
     return found
 
 
-def powershell_on_this_runner():
-    """The real interpreter and its own report of the two identity fields.
+INTERPRETERS = _interpreters()
+PARAMS = [pytest.param(path, id=label) for label, path in INTERPRETERS]
+needs_powershell = pytest.mark.skipif(not INTERPRETERS, reason="no PowerShell on this runner")
 
-    Reading them by running it is fine *here* and not in the floor: this test measures the
-    launch, and IMG-07's objection is to trusting a program's self-report as its identity.
+
+def run(interpreter: str, body: str, cwd: Path, timeout: float = 60):
+    spec = ShellSpec(dialect=ShellDialect.POWERSHELL, interpreter=AbsPath(interpreter))
+    launch = ShellTool()._launch(body, cwd, spec)
+    return LocalShellExecutor().run(ShellRequest(launch=launch, timeout=timeout))
+
+
+def text(result) -> str:
+    return result.stdout.decode("utf-8", errors="replace")
+
+
+# --------------------------------------------------------------- the default path
+
+
+def test_the_default_windows_shell_is_still_cmd():
+    """Nothing configured means nothing changes. This is the compatibility claim, measured."""
+    spec = default_spec()
+    assert isinstance(spec, ShellSpec)
+    assert spec.dialect is ShellDialect.CMD and spec.interpreter is None
+
+
+def test_todays_launch_still_runs_through_comspec(tmp_path):
+    result = LocalShellExecutor().run(
+        ShellRequest(launch=ShellTool()._launch("echo hi", tmp_path, default_spec()))
+    )
+    assert result.returncode == 0
+    assert b"hi" in result.stdout
+
+
+def test_a_configured_cmd_path_is_the_cmd_that_runs(tmp_path):
+    """The independent defect: ``shell.path`` reached the spec and never the spawn.
+
+    ``shell=True`` on Windows substitutes ``executable`` for ``ComSpec``, so naming cmd
+    explicitly has to produce a child that reports that same image.
     """
-    for name, edition in (("pwsh", "Core"), ("powershell", "Desktop")):
-        path = shutil.which(name)
-        if path is None:
-            continue
-        probe = subprocess.run(
-            [path, "-NoProfile", "-NonInteractive", "-Command",
-             "$PSVersionTable.PSEdition + ' ' + $PSVersionTable.PSVersion.ToString()"
-             " + ' ' + (Get-Item -LiteralPath $PSHOME).FullName"],
-            capture_output=True, text=True, timeout=120,
-        )
-        if probe.returncode != 0:
-            continue
-        parts = probe.stdout.strip().split(" ", 2)
-        if len(parts) == 3 and parts[0] == edition:
-            return path, parts[0], parts[1], parts[2]
-    return None
+    comspec = os.environ.get("ComSpec", r"C:\Windows\System32\cmd.exe")
+    spec = default_spec(ShellBlock(path=AbsPath(comspec), dialect=ShellDialect.CMD))
+    result = LocalShellExecutor().run(
+        ShellRequest(launch=ShellTool()._launch("echo %COMSPEC%", tmp_path, spec))
+    )
+    assert result.returncode == 0
+    assert b"cmd.exe" in result.stdout.lower()
 
 
-def test_the_powershell_rung_launches_with_its_guard_and_its_body_in_one_argument(tmp_path):
-    """LAUNCH-02 / LAUNCH-05: the prelude and the body are one ``-Command`` argument.
-
-    Splitting them hands PowerShell two arguments it rejoins by its own rules rather than by
-    the floor's, and the guard has to pass before a byte of the body runs — so a launch that
-    exits 97 here means the identity the spec was built from is not the one that started.
-    """
-    found = powershell_on_this_runner()
-    if found is None:
-        pytest.skip("neither pwsh nor powershell.exe answered on this runner")
-    path, edition, version, pshome = found
-    rung = Rung.pwsh if edition == "Core" else Rung.powershell
-    spec = rung_spec(rung, path, edition=edition, version=version)
-    from dataclasses import replace
-
-    spec = replace(spec, launcher=replace(spec.launcher, pshome=AbsPath(pshome)))
-    result = launch(spec, f"Write-Output '{SENTINEL}'", tmp_path)
-    assert result.returncode == 0, result
-    assert SENTINEL in text(result), result
+# ---------------------------------------------------------------- discovery
 
 
-def test_the_guard_refuses_when_the_recorded_identity_is_not_the_one_that_started(tmp_path):
-    """LAUNCH-05: exit 97, and the working tree is untouched because the guard runs first."""
-    found = powershell_on_this_runner()
-    if found is None:
-        pytest.skip("neither pwsh nor powershell.exe answered on this runner")
-    path, edition, version, pshome = found
-    rung = Rung.pwsh if edition == "Core" else Rung.powershell
-    spec = rung_spec(rung, path, edition=edition, version="0.0.0-not-this-one")
-    from dataclasses import replace
-
-    spec = replace(spec, launcher=replace(spec.launcher, pshome=AbsPath(pshome)))
-    marker = tmp_path / "ran.txt"
-    result = launch(spec, f"Set-Content -LiteralPath '{marker}' -Value x", tmp_path)
-    assert result.returncode == 97, result
-    assert not marker.exists()
-
-
-TABLE_CMDLETS = ("Set-Location", "Get-Item", "Write-Output", "Get-Date", "Get-ChildItem")
-"""Five entries of the PowerShell trusted table, spread across both modules the prelude loads."""
-
-
-def resolvable_under(path: str, script_prefix: str) -> str:
-    """Which of ``TABLE_CMDLETS`` resolve after ``script_prefix`` has run."""
+@needs_powershell
+def test_discovery_finds_an_interpreter_that_actually_starts():
+    """The candidate list is written from documentation; this is the part that measures it."""
+    found = ps.discover()
+    assert found is not None and os.path.isfile(found)
     probe = subprocess.run(
-        [path, "-NoProfile", "-NonInteractive", "-Command",
-         script_prefix + "; " + "; ".join(
-             f"'{n}=' + [bool](Get-Command '{n}' -ErrorAction SilentlyContinue)"
-             for n in TABLE_CMDLETS
-         )],
+        [found, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSEdition"],
         capture_output=True, text=True, timeout=120,
     )
-    return probe.stdout + probe.stderr
+    assert probe.returncode == 0
+    assert probe.stdout.strip() in {"Core", "Desktop"}
 
 
-def test_at_least_one_edition_needs_the_preludes_explicit_import():
-    """The measurement that sent LAUNCH-05 back for a rewrite, stated as what it justifies.
+@needs_powershell
+def test_the_configured_dialect_resolves_to_a_real_interpreter():
+    spec = default_spec(ShellBlock(dialect=ShellDialect.POWERSHELL))
+    assert isinstance(spec, ShellSpec)
+    assert spec.interpreter and os.path.isfile(spec.interpreter)
 
-    ``$PSModuleAutoLoadingPreference='None'`` is how ENV-05 adds depth on top of the pinned
-    ``PSModulePath``. What it also does — measured on windows-latest for ``pwsh`` 7 — is make
-    every cmdlet outside ``Microsoft.PowerShell.Core`` unavailable, including the two the
-    prelude itself calls and most of the trusted table. A rung that can run nothing is not a
-    hardened rung.
 
-    It asserts the *consequence* and not the mechanism per edition, because only Core has been
-    measured: Windows PowerShell 5.1 may well preload those modules, and asserting that it
-    does not would be pinning a guess. What has to stay true is that some edition needs the
-    import step, or that step is carrying nothing. The per-edition results are in the message.
+# ------------------------------------------------------------------- the body
+
+
+@pytest.mark.parametrize("interpreter", PARAMS)
+def test_the_body_arrives_intact(interpreter, tmp_path):
+    r"""Every character that any quoting layer would have mangled, in one body.
+
+    Spaces, both quote characters, a percent sign, a caret, an ampersand, a pipe, redirection
+    characters, a backslash and a newline. Under ``-Command`` most of these need escaping by
+    a rule that differs between cmd and PowerShell; under ``-EncodedCommand`` none of them
+    does, and that is the property being measured.
     """
-    measured = {
-        edition: resolvable_under(path, "$PSModuleAutoLoadingPreference='None'")
-        for path, edition, _version, _pshome in every_powershell_on_this_runner()
-    }
-    if not measured:
-        pytest.skip("no PowerShell answered on this runner")
-    assert any("Set-Location=False" in out for out in measured.values()), measured
+    body = "Write-Output 'a b \"q\" % ^ & | < > \\'\nWrite-Output 'second line'"
+    result = run(interpreter, body, tmp_path)
+    assert result.returncode == 0, result.stderr
+    out = text(result)
+    assert 'a b "q" % ^ & | < > \\' in out
+    assert "second line" in out
 
 
-@pytest.mark.parametrize("index", range(2))
-def test_the_prelude_loads_what_the_table_needs_before_it_closes_the_door(index):
-    """LAUNCH-05 step 2, measured: import first, then the door closes, and the table resolves.
+@pytest.mark.parametrize("interpreter", PARAMS)
+def test_non_ascii_survives_stdout(interpreter, tmp_path):
+    """The prelude's console assignment is what makes this true on 5.1.
 
-    Driven directly rather than through the ladder, so a failure here is about PowerShell and
-    not about the launch plumbing. Parametrised over both editions because they are two
-    different measurements, and a runner that has both would otherwise report only the first.
+    Without it PowerShell writes in the console code page and agentao decodes UTF-8, so every
+    Chinese character comes back as replacement characters.
     """
-    found = every_powershell_on_this_runner()
-    if index >= len(found):
-        pytest.skip("this runner has fewer interpreters than that")
-    path, edition, _version, _pshome = found[index]
-    out = resolvable_under(
-        path,
-        "Import-Module -Name Microsoft.PowerShell.Management, Microsoft.PowerShell.Utility"
-        " -ErrorAction Stop; $PSModuleAutoLoadingPreference='None'",
+    result = run(interpreter, "Write-Output '中文 ünïcode ✓'", tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "中文 ünïcode ✓" in text(result)
+
+
+@pytest.mark.parametrize("interpreter", PARAMS)
+def test_non_ascii_survives_the_pipe_to_a_native_command(interpreter, tmp_path):
+    r"""``$OutputEncoding`` governs what PowerShell writes to a native command's stdin.
+
+    5.1 defaults it to ASCII, so without the prelude's first line every non-ASCII byte piped
+    into a native program becomes a question mark. Measured against a real native program —
+    ``python`` reading UTF-8 stdin — because the claim is about the pipe, not about
+    PowerShell talking to itself.
+    """
+    reader = tmp_path / "reader.py"
+    reader.write_text(
+        "import sys, io\n"
+        "data = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8').read()\n"
+        "sys.stdout.buffer.write(('GOT:' + data.strip()).encode('utf-8'))\n",
+        encoding="utf-8",
     )
-    for name in TABLE_CMDLETS:
-        assert f"{name}=True" in out, (edition, name, out)
+    body = f"'中文' | & '{sys.executable}' '{reader}'"
+    result = run(interpreter, body, tmp_path)
+    assert result.returncode == 0, result.stderr
+    # Windows PowerShell 5.1 puts a UTF-8 BOM at the head of a native command's stdin, and
+    # measurement says nothing agentao writes can stop it: five prelude variants were tried on
+    # a runner, including **no prelude at all**, and all five produced it. pwsh produced it in
+    # none of them. So the BOM is 5.1's, not the wrapper's, and it is tolerated here rather
+    # than chased. The `?` assertion below is the one that fails without the prelude: with no
+    # `$OutputEncoding`, 5.1 sent `GOT:\ufeff??`, BOM and all.
+    assert "GOT:中文" in text(result).replace("\ufeff", "")
+    assert "?" not in text(result)
+
+
+@pytest.mark.parametrize("interpreter", PARAMS)
+def test_a_captured_native_output_is_decoded_as_utf8(interpreter, tmp_path):
+    """The console assignment also decides how PowerShell decodes what it captures.
+
+    A native program that writes its own UTF-8 is the case that works; one writing some other
+    encoding is not promised, which is why the docs say so rather than claiming a universal
+    transcode.
+    """
+    writer = tmp_path / "writer.py"
+    writer.write_text(
+        "import sys\nsys.stdout.buffer.write('中文'.encode('utf-8'))\n", encoding="utf-8"
+    )
+    body = f"$out = & '{sys.executable}' '{writer}'; Write-Output \"CAP:$out\""
+    result = run(interpreter, body, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "CAP:中文" in text(result)
+
+
+@pytest.mark.parametrize("interpreter", PARAMS)
+def test_the_working_directory_is_the_one_that_was_asked_for(interpreter, tmp_path):
+    work = tmp_path / "work dir"
+    work.mkdir()
+    result = run(interpreter, "Write-Output (Get-Location).Path", work)
+    assert result.returncode == 0, result.stderr
+    assert str(work) in text(result)
+
+
+@pytest.mark.parametrize("interpreter", PARAMS)
+def test_a_long_body_that_fits_is_not_refused(interpreter, tmp_path):
+    """Just under the ceiling: the measurement has to be of the encoded line, and a body this
+    size proves the arithmetic is not being applied to the raw text."""
+    body = "Write-Output 'x'  " + "#" + "y" * 11_000
+    result = run(interpreter, body, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "x" in text(result)
+
+
+@needs_powershell
+def test_an_oversized_body_is_refused_before_createprocess(tmp_path):
+    """A clear refusal rather than an opaque ``CreateProcess`` failure, and no truncation.
+
+    The tool has to be given a PowerShell executor. A bare ``ShellTool()`` resolves to
+    Windows' default ``cmd`` spec, where the length check does not run at all and the
+    assertion passes on ``[WinError 206] The filename or extension is too long`` — the
+    ``CreateProcess`` failure this test exists to say does not happen.
+    """
+    tool = ShellTool()
+    tool.shell = LocalShellExecutor(shell_block=ShellBlock(dialect=ShellDialect.POWERSHELL))
+    # The tool's own working directory is the project root the path policy measures against,
+    # and on a CI runner the repository and the temporary directory are on different drives.
+    # Without this the call is refused for the cwd and never reaches the length check — a
+    # green-looking assertion about a refusal that is not the one under test.
+    tool.working_directory = str(tmp_path)
+    out = tool.execute(
+        command="Write-Output 'x'; " + "#" + "y" * 40_000,
+        working_directory=str(tmp_path),
+        timeout=30,
+        _decided=None,
+    )
+    assert "not launchable" in out
+    assert "UTF-16 units" in out
+
+
+# ------------------------------------------------------------------ exit codes
+
+
+@pytest.mark.parametrize("interpreter", PARAMS)
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("cmd.exe /c exit 7", 7),
+        ("Write-Output 'ok'", 0),
+        ("exit 9", 9),
+        # A cmdlet error leaves ``$LASTEXITCODE`` alone, so the generic failure code stands
+        # in. Appending a bare ``exit $LASTEXITCODE`` would report the stale 0 here.
+        ("Get-Item 'C:\\definitely\\not\\here' -ErrorAction Continue", 1),
+        # A terminating error: PowerShell exits on its own.
+        ("throw 'boom'", 1),
+        # The last statement decides. An earlier failure followed by a success is a success,
+        # deliberately: the body is not rewritten into fail-fast.
+        ("cmd.exe /c exit 3; Write-Output 'recovered'", 0),
+        # A native failure after a success still reports the native code.
+        ("Write-Output 'ok'; cmd.exe /c exit 5", 5),
+    ],
+)
+def test_the_exit_code_follows_the_last_statement(interpreter, body, expected, tmp_path):
+    result = run(interpreter, body, tmp_path)
+    assert result.returncode == expected, (body, result.returncode, result.stderr)
+
+
+@pytest.mark.parametrize("interpreter", PARAMS)
+def test_a_trailing_continuation_backtick_is_recorded_rather_than_assumed(interpreter, tmp_path):
+    """The trailer is parsed together with the body, so a trailing backtick can absorb it.
+
+    This does not assert a particular outcome — it records that the launch survives it and
+    reports *something*, because the exit-code guarantee is stated only for a body that ends
+    on its own.
+    """
+    result = run(interpreter, "Write-Output 'x' `", tmp_path)
+    assert isinstance(result.returncode, int)
+
+
+# ------------------------------------------------------------------ CLIXML
+
+
+@pytest.mark.parametrize("interpreter", PARAMS)
+def test_a_redirected_error_stream_comes_back_as_readable_text(interpreter, tmp_path):
+    """5.1 wraps a redirected error stream in CLIXML; 7 does not.
+
+    Both are asserted the same way on purpose — the extraction has to be a no-op on the
+    stream that is already text, and the model must read a message either way.
+    """
+    marker = "agentao-clixml-probe"
+    out = _tool_output(interpreter, f"Write-Error '{marker}'", tmp_path)
+    assert marker in out
+    assert "#< CLIXML" not in out
+    assert "_x000D_" not in out
+
+
+def _tool_output(interpreter: str, body: str, cwd: Path) -> str:
+    from agentao.capabilities.shell_spec import DecidedCall, PASS
+
+    tool = ShellTool()
+    tool.shell = LocalShellExecutor(
+        shell_block=ShellBlock(path=AbsPath(interpreter), dialect=ShellDialect.POWERSHELL)
+    )
+    return tool.execute(
+        command=body,
+        working_directory=str(cwd),
+        timeout=60,
+        _decided=DecidedCall(
+            spec=tool.shell_spec, body=body, cwd=AbsPath(str(cwd)), verdict=PASS
+        ),
+    )
+
+
+# ------------------------------------------------------------------ background
+
+
+@pytest.mark.parametrize("interpreter", PARAMS)
+def test_a_background_launch_runs_its_body_to_completion(interpreter, tmp_path):
+    """The path with a console nobody is looking at, and all three streams at DEVNULL.
+
+    Asserting only that a PID came back would pass with a child that never ran a statement —
+    which is exactly what happened. Under ``DETACHED_PROCESS``, the flag this used to pass,
+    both interpreters exit **0 with empty stdout and stderr without running the script**;
+    measured on a runner, with the streams pointed at real files to be sure they were empty
+    rather than discarded. PowerShell hosts itself in a console and there was none. cmd is
+    unaffected, which is why the default Windows path never showed it.
+    """
+    done = tmp_path / "done.txt"
+    spec = ShellSpec(dialect=ShellDialect.POWERSHELL, interpreter=AbsPath(interpreter))
+    # The file is written through .NET with an encoder named outright, not through
+    # ``Set-Content``. Measured: Windows PowerShell 5.1 defaults that cmdlet to the system
+    # ANSI code page, so the same body wrote `?? finished` there while pwsh wrote the
+    # characters. That is the cmdlet's documented default and has nothing to do with the
+    # launch — leaving it in would have made this test fail for a reason it does not name.
+    launch = ShellTool()._launch(
+        f"[System.IO.File]::WriteAllText('{done}', '中文 finished', "
+        "[System.Text.UTF8Encoding]::new($false))",
+        tmp_path,
+        spec,
+    )
+    handle = LocalShellExecutor().run_background(ShellRequest(launch=launch))
+    assert handle.pid
+
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline and not done.exists():
+        time.sleep(0.2)
+    assert done.exists(), "the background body never wrote its completion marker"
+    assert "中文 finished" in done.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("interpreter", PARAMS)
+def test_a_background_pipe_to_a_native_command_keeps_its_encoding(interpreter, tmp_path):
+    """``$OutputEncoding`` is set before the console assignment precisely so that it survives
+    the path where that assignment throws."""
+    reader = tmp_path / "reader.py"
+    out = tmp_path / "piped.txt"
+    reader.write_text(
+        "import sys, io\n"
+        "data = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8').read()\n"
+        f"open(r'{out}', 'w', encoding='utf-8').write(data)\n",
+        encoding="utf-8",
+    )
+    spec = ShellSpec(dialect=ShellDialect.POWERSHELL, interpreter=AbsPath(interpreter))
+    launch = ShellTool()._launch(
+        f"'中文' | & '{sys.executable}' '{reader}'", tmp_path, spec
+    )
+    LocalShellExecutor().run_background(ShellRequest(launch=launch))
+
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline and not out.exists():
+        time.sleep(0.2)
+    assert out.exists(), "the background pipe never reached the native command"
+    assert "中文" in out.read_text(encoding="utf-8")
+
+
+@needs_powershell
+def test_the_default_cmd_shell_also_runs_a_background_body(tmp_path):
+    """The default Windows path, measured for the first time — and the reason it must be.
+
+    The creation flags are one line shared by every dialect. Changing them because PowerShell
+    needed a console is only safe if cmd still works under the new one, and cmd's background
+    launch had never been measured on Windows at all.
+    """
+    done = tmp_path / "cmd-done.txt"
+    launch = ShellTool()._launch(f"echo ok> {done}", tmp_path, default_spec())
+    handle = LocalShellExecutor().run_background(ShellRequest(launch=launch))
+    assert handle.pid
+
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not done.exists():
+        time.sleep(0.2)
+    assert done.exists(), "the default cmd background body never wrote its marker"
+
+
+# ------------------------------------------------------- the floor reaches a launch
+
+
+@needs_powershell
+def test_a_clean_body_travels_the_real_planning_chain_to_a_launch(tmp_path):
+    """End to end through the planner, not through a hand-built record.
+
+    Each half had tests and the combination had none, which is how the previous design
+    shipped a PowerShell path that refused every clean body: the planner never passed the
+    decided record the floor demanded, so the refusal was frozen in as the verdict.
+    """
+    from agentao.runtime.tool_planning import _decided_call
+
+    tool = ShellTool()
+    tool.shell = LocalShellExecutor(shell_block=ShellBlock(dialect=ShellDialect.POWERSHELL))
+    tool.working_directory = str(tmp_path)
+    args = {"command": "Write-Output 'planned'", "working_directory": str(tmp_path)}
+
+    record = _decided_call(tool, tool.shell_spec, args)
+    assert record is not None
+    assert not hasattr(record.verdict, "reason"), record.verdict
+
+    out = tool.execute(**args, timeout=60, _decided=record)
+    assert "planned" in out
+
+
+@needs_powershell
+def test_a_dangerous_body_is_refused_and_never_launched(tmp_path):
+    r"""The verdict, not the effect. Nothing here runs ``Remove-Item -Recurse C:\``."""
+    from agentao.runtime.tool_planning import _decided_call
+
+    tool = ShellTool()
+    tool.shell = LocalShellExecutor(shell_block=ShellBlock(dialect=ShellDialect.POWERSHELL))
+    tool.working_directory = str(tmp_path)
+    for command in (r"Remove-Item -Recurse -Force C:\ ", r"ri -r -fo C:\ ", "rm -rf /"):
+        args = {"command": command, "working_directory": str(tmp_path)}
+        record = _decided_call(tool, tool.shell_spec, args)
+        assert record is not None and hasattr(record.verdict, "reason"), command
