@@ -1278,17 +1278,27 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                         messages_with_system=messages_with_system,
                         measure_system_tokens=False,
                     )
-                    if run.outcome.status == "cancelled":
+                    if run.outcome.status != "success":
                         # A separate dispatch site from the rung above, and
                         # reachable only once that one was allowed, compacted
                         # successfully, and the request *still* overflowed —
                         # so it gets its own answer, with the same semantics:
                         # honoured and reported, never a quiet fall-through to
-                        # ``messages[-2:]``.
+                        # an unchanged history.
+                        #
+                        # Not just ``cancelled``: this rung also stands down
+                        # when the smallest *valid* window is the whole
+                        # history or none of it (``no_valid_minimal_cut``),
+                        # and retrying then means spending the turn's last
+                        # attempt on the request the provider just refused.
+                        # Every non-success here means history did not shrink,
+                        # so the provider's own error is the honest answer.
                         err_msg = f"[LLM API error: {e2}]"
                         agent.llm.logger.warning(
-                            "Minimal-history compaction cancelled by the host; "
-                            "returning the context-length error"
+                            "Minimal-history compaction did not shrink history "
+                            f"({run.outcome.status}"
+                            + (f": {run.outcome.detail}" if run.outcome.detail else "")
+                            + "); returning the context-length error"
                         )
                         agent.messages.append(
                             {"role": "assistant", "content": err_msg}

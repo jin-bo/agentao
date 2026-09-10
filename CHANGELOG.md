@@ -15,6 +15,39 @@ _Targeting 0.4.23. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **The overflow ladder's last rung no longer hands the provider an orphaned
+  tool result.** Rung 2 (`minimal_history`) kept the newest two messages by a
+  blind tail slice. Overflow is normally detected on the request *after* a
+  batch of tool results was appended, so that tail is routinely two results
+  whose `tool_calls` sat one message further back — a shape strict APIs reject
+  outright. The rung runs only after the provider has already refused the
+  request twice, so the malformed retry spent the turn's last attempt on a 400
+  that was no longer even a context-length error, and the ladder built to save
+  the turn ended it instead. The boundary is now repaired the way the
+  summarizing path has always repaired its own (`_find_split_index`): leading
+  results are dropped when a valid window survives without them, and otherwise
+  the window steps back to the assistant message that made the calls, which
+  re-admits that exchange's results for free. `messages_to_keep` on the
+  `CompactionDecisionContext` — the count a `compaction_controller` approves
+  or cancels against — now reports what the cut will actually keep rather than
+  the nominal `keep_tail`, so a host approving the cut is shown the cut. (The
+  `PreCompact` hook payload carries no such field, and is dispatched before
+  the transform besides.)
+
+- **The last rung now stands down instead of reporting a compaction it did not
+  perform.** A flat tail slice always shed something, so `success` used to
+  imply history changed. A repaired boundary does not: the smallest *valid*
+  window can be the whole history, which is what one assistant message and a
+  large batch of its results produces — the likeliest shape at this rung. It
+  can also be nothing at all, and it can be unfixable, when a call's result
+  was never appended and no window answers its own calls. All three now gate
+  to `skipped` alongside the existing no-target microcompact gate, so no
+  `CONTEXT_COMPRESSED` fires with `pre == post` and the token anchor is not
+  dropped for a rewrite that did not happen. The runner treats every
+  non-success at this rung the way it already treated a cancel: it returns the
+  provider's own context-length error rather than spending the turn's last
+  attempt on the request that just failed.
+
 ---
 
 ## [0.4.22] — 2026-09-07

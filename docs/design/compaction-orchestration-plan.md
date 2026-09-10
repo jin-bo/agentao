@@ -327,6 +327,7 @@ missed.
 | Breaker already open (`:507`) | returns unchanged | `skipped` | no |
 | `len(messages) < 5` (`:517`) | returns unchanged | `skipped` | no |
 | Microcompaction has no targets (`microcompact_would_mutate` false) | stands down (`_compaction.py:32`) | `skipped` | no |
+| Last rung has no valid cut (`minimal_history_would_help` false) | added after this plan shipped — see §4.4.3's per-kind note | `skipped` | no |
 | Cancelled by host / hook | new | `cancelled` | no |
 | No safe split point (`:528`) | returns unchanged + increments (already `is_auto`-gated, `:540`) | `failed` | per PR-2's rule |
 | Summarization returned nothing (`:589`) | returns unchanged + increments **unconditionally** (`:590`) | `failed` | per PR-2's rule |
@@ -964,7 +965,7 @@ either. The three plans:
 |---|---|---|---|---|
 | `microcompact` | 1 | `prepare_microcompact()` → `PreparedMicrocompact`: `tool_results_to_clip`, `pre_tokens = None` (see below) | `allow` / `cancel` | Skip this pass; not re-dispatched for the rest of the turn; history byte-identical |
 | `full` | 2 / 3 / 5 | `PreparedCompaction` (above) | `allow` / `cancel` / `provide_summary` | See "Cancellation semantics" below |
-| `minimal_history` | 4 | `PreparedMinimalHistory`: `keep_tail = 2`, `pre_tokens = None` (this path makes no token estimate at all today — §4.2) | `allow` / `cancel` | Return the context-length error; no cut to `messages[-2:]` |
+| `minimal_history` | 4 | `PreparedMinimalHistory`: `keep_tail` = the **effective** kept count (planned as a flat `2`; see the note under the field table), `pre_tokens = None` (this path makes no token estimate at all today — §4.2) | `allow` / `cancel` | Return the context-length error; no cut to `messages[-2:]` |
 
 - **All three kinds share one request type**, `CompactionRequest(trigger, kind, reason)`. The
   difference lives entirely in what prepare produces and in `can_provide_summary`; the coordinator has
@@ -980,7 +981,7 @@ either. The three plans:
 |---|---|---|---|
 | `pre_tokens` | **`None`** (see below) | the value from `:587` | `None` (this path makes no estimate, §4.2) |
 | `messages_to_summarize` | `0` (nothing is summarized) | `len(to_summarize)` | `0` |
-| `messages_to_keep` | `len(messages)` (nothing dropped, only shortened) | `len(to_keep)` | `2` (`keep_tail`) |
+| `messages_to_keep` | `len(messages)` (nothing dropped, only shortened) | `len(to_keep)` | the **effective** kept count — see the note below |
 | `recently_read_files` | `()` | the result from `:574` | `()` |
 | `summary_input_budget` | `None` | `_summary_input_budget()` | `None` |
 | `max_summary_tokens` | `None` | half the budget | `None` |
@@ -990,6 +991,17 @@ either. The three plans:
   That last field exists for microcompaction specifically: `messages_to_summarize = 0` and
   `messages_to_keep = len(messages)` carry no information there, and a host deciding whether this pass
   is worth cancelling needs to know how many tool results are about to be clipped.
+
+- **`minimal_history`'s `messages_to_keep` was `2` (`keep_tail`) as planned, and is no longer.**
+  Shipped later: the rung's boundary is repaired so the kept window cannot *open on* a `role: "tool"`
+  message, which strict APIs reject — and this rung retries a request the provider has already
+  refused twice, so a malformed cut spends the turn's last attempt. The repair can move the boundary
+  either way, so `prepare_minimal_history` reports what the cut will actually keep. Both halves read
+  one boundary function (`ContextManager._minimal_history_start`), so the count a host approves and
+  the cut it approves cannot disagree. The same change cost this kind its exemption from a
+  would-mutate gate — a flat tail slice always shed something, a repaired boundary need not — so
+  `minimal_history` now has one next to microcompaction's (`minimal_history_would_help` →
+  `no_valid_minimal_cut`); see the row added to §2's status mapping.
 
 - **Microcompaction's `pre_tokens` is `None`, not `estimate_tokens(messages)` — the previous revision
   had this fighting §4.2.** §4.2 pins "this plan adds no new `estimate_tokens` call", and the **only**

@@ -136,7 +136,7 @@ class CompactionCoordinator:
         agent = self._agent
         cm = agent.context_manager
 
-        gate = self._gate(request)
+        gate = self._gate(request, keep_tail=keep_tail)
         if gate is not None:
             # ``skipped`` is silent by construction: three of the four
             # skipped cases re-trigger on *every* loop iteration, so emitting
@@ -248,7 +248,9 @@ class CompactionCoordinator:
     # Policy
     # ------------------------------------------------------------------
 
-    def _gate(self, request: CompactionRequest) -> Optional[CompactionOutcome]:
+    def _gate(
+        self, request: CompactionRequest, *, keep_tail: int,
+    ) -> Optional[CompactionOutcome]:
         """Return a ``skipped`` outcome when this attempt must not run.
 
         Nothing here counts against the circuit breaker: ``skipped`` means
@@ -302,6 +304,20 @@ class CompactionCoordinator:
             # left to shorten: once every old tool result is at or under the
             # limit, every further iteration in the band is a no-op.
             return self._skipped(request, "no_microcompact_targets")
+
+        if request.kind == "minimal_history" and not cm.minimal_history_would_help(
+            agent.messages, keep_tail=keep_tail
+        ):
+            # Same shape as the line above, and it became necessary for the
+            # same reason: the cut is no longer a flat tail slice that always
+            # sheds something. Once the boundary is repaired so it cannot
+            # orphan a tool result, the smallest *valid* window can be the
+            # whole history — one assistant message and a big batch of its
+            # results, which is the likeliest shape at this rung. Reporting
+            # ``success`` there would emit a compaction whose pre and post
+            # are equal and hand the retry the request the provider just
+            # refused. See ``ContextManager.minimal_history_would_help``.
+            return self._skipped(request, "no_valid_minimal_cut")
 
         return None
 
@@ -357,7 +373,14 @@ class CompactionCoordinator:
                 post_tokens=None,
             )
 
-        prep = cm.prepare_minimal_history(agent.messages, keep_tail=keep_tail)
+        # Bound once, and both halves read the same list object. ``_ask``
+        # runs arbitrary host code — the controller — between the count and
+        # the cut, so re-reading ``agent.messages`` afterwards would let a
+        # host that rebinds it be shown a count for one history and handed a
+        # cut of another. Boundary repair means the two are no longer
+        # trivially equal, which is what makes the gap worth closing.
+        msgs = agent.messages
+        prep = cm.prepare_minimal_history(msgs, keep_tail=keep_tail)
         cancelled = self._ask(
             request, decide, messages_to_keep=prep.keep_tail,
         )
@@ -368,7 +391,7 @@ class CompactionCoordinator:
             trigger=request.trigger,
             kind=request.kind,
             reason=request.reason,
-            messages=cm.apply_minimal_history(agent.messages, keep_tail=keep_tail),
+            messages=cm.apply_minimal_history(msgs, keep_tail=keep_tail),
             # This path makes no token estimate at all, and it is reached
             # only after the API has rejected the request twice.
             pre_tokens=None,

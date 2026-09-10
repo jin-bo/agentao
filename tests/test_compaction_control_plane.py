@@ -16,6 +16,7 @@ history to the last two messages.
 
 from __future__ import annotations
 
+import copy
 import json
 import stat
 from types import SimpleNamespace
@@ -163,7 +164,7 @@ def test_first_cancel_wins_and_stops_the_remaining_forks(tmp_path):
 def test_a_cancelled_compaction_leaves_history_byte_identical(tmp_path):
     cm = _make_cm()
     msgs = _history()
-    before = [dict(m) for m in msgs]
+    before = copy.deepcopy(msgs)
     rule = _hook(tmp_path, _emits({
         "hookSpecificOutput": {"compactionDecision": "cancel", "reason": "busy"}
     }))
@@ -277,11 +278,30 @@ def test_the_latch_is_cleared_at_the_start_of_the_next_turn(tmp_path):
 def test_the_other_two_kinds_are_cancellable_too(tmp_path, kind, reason):
     cm = _make_cm()
     # An oversized tool result, so microcompaction has something to clip and
-    # the "no targets" gate does not fire before the decision step.
+    # the "no targets" gate does not fire before the decision step. The
+    # results carry the assistant message that requested them because a
+    # result with no call in front of it is a history no provider accepts,
+    # and ``minimal_history`` now refuses to hand one back (see
+    # ``ContextManager._minimal_history_start``) — a fixture that skipped it
+    # was measuring the repair's give-up branch, not this test's subject.
+    _ids = [f"c{i}" for i in range(7)]
     msgs = _history() + [
-        {"role": "tool", "name": "read_file", "content": "z" * 50_000},
-    ] + [{"role": "tool", "name": "read_file", "content": "s"} for _ in range(6)]
-    before = [dict(m) for m in msgs]
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": i, "type": "function",
+                 "function": {"name": "read_file", "arguments": "{}"}}
+                for i in _ids
+            ],
+        },
+        {"role": "tool", "tool_call_id": _ids[0], "name": "read_file",
+         "content": "z" * 50_000},
+    ] + [
+        {"role": "tool", "tool_call_id": i, "name": "read_file", "content": "s"}
+        for i in _ids[1:]
+    ]
+    before = copy.deepcopy(msgs)
     seen = []
 
     def _controller(ctx):
@@ -301,7 +321,12 @@ def test_the_other_two_kinds_are_cancellable_too(tmp_path, kind, reason):
     if kind == "microcompact":
         assert ctx.tool_results_to_clip is not None
     else:
-        assert ctx.messages_to_keep == 2
+        # Not the nominal ``keep_tail`` of 2: this tail is all tool results,
+        # so the boundary steps back to the one assistant message that
+        # requested them and the window is that call plus its seven results.
+        # The host is shown the cut it is being asked to approve.
+        assert ctx.messages_to_keep == 8
+        assert ctx.messages_to_keep == len(cm.apply_minimal_history(msgs))
 
 
 # ---------------------------------------------------------------------------
