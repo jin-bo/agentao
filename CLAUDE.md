@@ -164,7 +164,33 @@ the turn it exists to save. A cancelled threshold compaction enters a
 coordinator-owned latch keyed `(kind, reason)`, cleared per turn in
 `runtime/turn.py`; `manual_cli` and both overflow reasons never enter it. A
 cancelled **overflow** returns the provider's context-length error rather than
-falling through to `messages[-2:]`.
+falling through to the last rung.
+
+**The last rung is not a plain tail slice, and must not be simplified back
+into one.** `apply_minimal_history` keeps the newest `keep_tail` messages, but
+`_minimal_history_start` first repairs the boundary so the window cannot *open
+on* a `role: "tool"` message — the same rule `_find_split_index` enforces for
+the summarizing path, and it bites harder here: overflow is normally detected
+on the request *after* a batch of results was appended, so a two-message tail
+is routinely two results whose `tool_calls` sit one message back, and this rung
+gets the turn's last attempt. Repair order is **drop the leading results, and
+only if that empties a window that had content, step back to the assistant that
+made the calls** (the window is a suffix, so admitting the call admits its
+results). `prepare_minimal_history` reports the **effective** count, so
+`messages_to_keep` on the decision context is the cut the host is being asked
+to approve.
+
+**And the rung stands down when there is no cut worth making.** Because the
+boundary is repaired, `success` no longer implies history changed:
+`minimal_history_would_help` gates the attempt to `skipped` in three cases —
+the smallest valid window is the whole history (one assistant message plus a
+large batch of its results, the likeliest shape here), it is empty, or it
+cannot answer its own calls (a call whose result was never appended; the
+repair closes result→call, never call→result). The gate sits next to the
+no-target microcompact gate for the same reason. The runner returns the
+provider's context-length error on **any** non-success at this rung, not only
+on a cancel: nothing shrank, so retrying spends the turn's last attempt on the
+request that just failed.
 
 **Two token units, deliberately named apart.** `CONTEXT_COMPRESSED`'s
 `pre_est_tokens` / `post_est_tokens` **include** the system prompt;

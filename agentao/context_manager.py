@@ -133,12 +133,31 @@ class PreparedMicrocompact:
 
 @dataclass(frozen=True)
 class PreparedMinimalHistory:
-    """The ladder's last rung, in counts. Nothing is estimated here."""
+    """The ladder's last rung, in counts. Nothing is estimated here.
+
+    ``keep_tail`` is what the cut will actually keep, which is not always
+    what was asked for: the boundary is repaired so the window cannot open
+    on an orphaned tool result (``ContextManager._minimal_history_start``).
+    """
 
     keep_tail: int
 
 
 PrepareResult = Union[PreparedCompaction, PrepareRejected]
+
+
+def _is_tool_result(msg: Any) -> bool:
+    """True for a ``role: "tool"`` message — one half of the pairing rule."""
+    return isinstance(msg, dict) and msg.get("role") == "tool"
+
+
+def _made_tool_calls(msg: Any) -> bool:
+    """True for an assistant message that requested at least one tool call."""
+    return (
+        isinstance(msg, dict)
+        and msg.get("role") == "assistant"
+        and bool(msg.get("tool_calls"))
+    )
 
 
 def _is_pinned(msg: Any) -> bool:
@@ -1114,14 +1133,148 @@ class ContextManager:
             tool_results_to_clip=len(self._microcompactable_indices(messages)),
         )
 
+    @staticmethod
+    def _minimal_history_start(
+        messages: List[Dict[str, Any]], keep_tail: int
+    ) -> int:
+        """Index where the last rung's kept window opens.
+
+        The nominal boundary is ``len(messages) - keep_tail``, sliced from
+        the front rather than as ``messages[-keep_tail:]``: at
+        ``keep_tail == 0`` the negative form is ``messages[-0:]``, which is
+        the **whole list** — so the ladder's most destructive rung would
+        silently become a no-op and the turn would loop on the same overflow.
+
+        That boundary is then repaired so the window never *opens on* a
+        ``role: "tool"`` message. :meth:`_find_split_index` states the rule
+        for the summarizing path — a result cut from the ``tool_calls`` that
+        requested it is rejected by strict APIs — and this is the same rule
+        applied to the destructive one, where it costs more: this rung runs
+        only after the provider has already refused the request twice, so an
+        invalid retry spends the turn's last attempt on a 400 that is no
+        longer even a context-length error, and the ladder built to save the
+        turn ends it instead. The shape is not exotic: overflow is normally
+        detected on the call *after* a batch of tool results was appended, so
+        a two-message tail is routinely two results.
+
+        The repair is not symmetric with the summarizing path's, because the
+        two want opposite things from a boundary:
+
+        * **Drop the leading results.** The smallest window that is valid,
+          and shrinking is this rung's whole purpose. ``[tool, tool, user]``
+          keeps ``[user]``.
+        * **Unless that empties a window that had content.** Then step
+          *back* to the assistant that made the calls, which re-admits every
+          result of that one exchange for free — the window is a suffix, so
+          admitting the call admits everything after it. Returning nothing
+          would hand the model a system prompt and no conversation.
+
+        A window that was already empty stays empty: ``keep_tail == 0`` asks
+        for one, and that answer has to stay reachable.
+        """
+        start = max(0, len(messages) - max(0, keep_tail))
+        if start >= len(messages) or not _is_tool_result(messages[start]):
+            return start
+
+        ahead = start
+        while ahead < len(messages) and _is_tool_result(messages[ahead]):
+            ahead += 1
+        if ahead < len(messages):
+            return ahead
+
+        # Results all the way to the end. Walk back over the run they belong
+        # to and take the assistant that opened it.
+        first = start
+        while first > 0 and _is_tool_result(messages[first - 1]):
+            first -= 1
+        if first > 0 and _made_tool_calls(messages[first - 1]):
+            return first - 1
+
+        # No call in front of them anywhere: the history was already
+        # malformed, and keeping nothing is the only valid answer left.
+        return len(messages)
+
+    @staticmethod
+    def _window_answers_its_own_calls(window: List[Dict[str, Any]]) -> bool:
+        """True when every call in ``window`` is answered inside it, and vice versa.
+
+        :meth:`_minimal_history_start` closes the result → call direction:
+        the window cannot open on an orphaned result. It cannot close the
+        other one, and the docstring's "the window is a suffix, so admitting
+        the call admits everything after it" is only an argument about
+        *this* history — it says nothing about a call whose result was never
+        appended in the first place. A restored or truncated session can
+        hold an assistant message with three calls and one result, and
+        strict APIs reject that for the mirror reason.
+
+        Set equality rather than a positional walk: results follow their
+        call by construction everywhere agentao writes history, so a window
+        that holds both ends of every pair holds them in the right order.
+        """
+        declared: set = set()
+        answered: set = set()
+        for msg in window:
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("role") == "tool":
+                answered.add(msg.get("tool_call_id"))
+            for call in msg.get("tool_calls") or ():
+                if isinstance(call, dict):
+                    declared.add(call.get("id"))
+        return declared == answered
+
+    def minimal_history_would_help(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        keep_tail: int = 2,
+    ) -> bool:
+        """True when the last rung's cut is worth applying.
+
+        The dual of :meth:`microcompact_would_mutate`, and it exists for the
+        same reason: being *at* a rung says nothing about that rung having
+        anything to do. Three ways the repaired cut is not worth making, all
+        of them reachable and none of them visible before the repair
+        existed, because a flat tail slice always shed something:
+
+        * **It sheds nothing.** One assistant message and a large batch of
+          its results is the single most likely shape at this rung, and the
+          smallest valid window over it is the whole history. Applying that
+          reports ``success``, invalidates the token anchor, emits a
+          compaction event with ``pre == post``, and hands the retry the
+          request the provider just refused.
+        * **It keeps nothing.** Valid, and useless: the turn's own request
+          is gone and the model is asked to answer a system prompt.
+        * **It cannot be made valid.** The window holds a call whose result
+          was never appended (:meth:`_window_answers_its_own_calls`).
+
+        In all three the honest answer is to change nothing and let the
+        provider's own context-length error reach the caller — which is
+        already what a *cancelled* overflow does.
+        """
+        start = self._minimal_history_start(messages, keep_tail)
+        if start <= 0 or start >= len(messages):
+            return False
+        return self._window_answers_its_own_calls(messages[start:])
+
     def prepare_minimal_history(
         self,
         messages: List[Dict[str, Any]],
         *,
         keep_tail: int = 2,
     ) -> "PreparedMinimalHistory":
-        """Describe the last rung. It makes no token estimate — nor does this."""
-        return PreparedMinimalHistory(keep_tail=keep_tail)
+        """Describe the last rung. It makes no token estimate — nor does this.
+
+        ``keep_tail`` on the result is the **effective** count, not the
+        requested one, because the boundary repair in
+        :meth:`_minimal_history_start` can move it either way. Both halves
+        read that one function, so the number a host sees in
+        ``messages_to_keep`` and the cut it is being asked to approve can
+        never disagree — the same reason :meth:`prepare_microcompact` wraps
+        the index set its transform rewrites.
+        """
+        start = self._minimal_history_start(messages, keep_tail)
+        return PreparedMinimalHistory(keep_tail=len(messages) - start)
 
     def apply_minimal_history(
         self,
@@ -1129,7 +1282,11 @@ class ContextManager:
         *,
         keep_tail: int = 2,
     ) -> List[Dict[str, Any]]:
-        """The overflow ladder's last rung: keep only the newest ``keep_tail``.
+        """The overflow ladder's last rung: cut history back to a short tail.
+
+        It is not simply the newest ``keep_tail`` messages in either
+        direction — the boundary repair below can shed more than was asked
+        for, or step back and keep more.
 
         One line, and it lived inline in the runner. It belongs here because
         rewriting history is this class's job and the coordinator's explicit
@@ -1137,12 +1294,10 @@ class ContextManager:
         named, unit-testable seam rather than a slice buried in an
         exception handler.
 
-        Sliced from the front rather than as ``messages[-keep_tail:]``: at
-        ``keep_tail == 0`` the negative form is ``messages[-0:]``, which is
-        the **whole list** — so the ladder's most destructive rung would
-        silently become a no-op and the turn would loop on the same overflow.
+        The boundary itself, and why it is not simply ``keep_tail`` messages
+        from the end, is :meth:`_minimal_history_start`.
         """
-        return messages[len(messages) - max(0, keep_tail):]
+        return messages[self._minimal_history_start(messages, keep_tail):]
 
     def _validate_host_summary(
         self,

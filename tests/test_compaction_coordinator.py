@@ -293,6 +293,178 @@ def test_apply_minimal_history_is_a_named_seam():
 
 
 # ---------------------------------------------------------------------------
+# minimal_history: the boundary may not orphan a tool result
+#
+# The rung runs only after the provider refused the request twice, so an
+# invalid retry spends the turn's last attempt on a 400 that is no longer a
+# context-length error. ``_find_split_index`` has always enforced this rule
+# on the summarizing path; these pin it on the destructive one.
+# ---------------------------------------------------------------------------
+
+def _call(*ids):
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {"id": i, "type": "function",
+             "function": {"name": "read_file", "arguments": "{}"}}
+            for i in ids
+        ],
+    }
+
+
+def _result(call_id):
+    return {"role": "tool", "tool_call_id": call_id, "content": "x" * 50}
+
+
+def test_minimal_history_admits_the_call_when_the_tail_is_all_results():
+    """The routine shape: overflow is detected on the request *after* a batch
+    of results was appended, so ``messages[-2:]`` is two results whose
+    ``tool_calls`` sit one message further back."""
+    cm = _make_cm()
+    msgs = [
+        {"role": "user", "content": "do it"},
+        _call("c1", "c2"),
+        _result("c1"),
+        _result("c2"),
+    ]
+
+    kept = cm.apply_minimal_history(msgs, keep_tail=2)
+
+    assert [m["role"] for m in kept] == ["assistant", "tool", "tool"]
+    # Every call in the admitted assistant message is answered inside the
+    # window — the property the provider actually checks.
+    answered = {m["tool_call_id"] for m in kept if m["role"] == "tool"}
+    assert {tc["id"] for tc in kept[0]["tool_calls"]} == answered
+
+
+def test_minimal_history_drops_leading_results_when_something_follows():
+    """Shrinking wins whenever a valid window survives the drop: stepping
+    back to the call would re-admit the very results this rung is shedding."""
+    cm = _make_cm()
+    msgs = [_call("c1"), _result("c1"), {"role": "user", "content": "next"}]
+
+    assert cm.apply_minimal_history(msgs, keep_tail=2) == [msgs[-1]]
+
+
+def test_minimal_history_keeps_nothing_rather_than_orphan_a_stray_result():
+    """A history that opens on a result was already malformed. There is no
+    call to admit, so the only valid answer left is the empty one."""
+    cm = _make_cm()
+
+    assert cm.apply_minimal_history([_result("c1"), _result("c2")]) == []
+
+
+def test_minimal_history_repair_never_resurrects_a_zero_window():
+    """``keep_tail=0`` asks for nothing, and the ladder needs that answer to
+    stay reachable — the repair may not read it as a window to widen."""
+    cm = _make_cm()
+    msgs = [{"role": "user", "content": "do it"}, _call("c1"), _result("c1")]
+
+    assert cm.apply_minimal_history(msgs, keep_tail=0) == []
+
+
+def test_prepared_count_is_what_the_rung_actually_keeps():
+    """``messages_to_keep`` reaches the host control plane, which approves or
+    cancels this cut. Both halves read one boundary function so the number
+    and the cut cannot disagree."""
+    cm = _make_cm()
+    msgs = [
+        {"role": "user", "content": "do it"},
+        _call("c1", "c2"),
+        _result("c1"),
+        _result("c2"),
+    ]
+
+    prepared = cm.prepare_minimal_history(msgs, keep_tail=2)
+
+    assert prepared.keep_tail == 3
+    assert prepared.keep_tail == len(cm.apply_minimal_history(msgs, keep_tail=2))
+
+
+def test_minimal_history_stands_down_when_the_valid_window_is_everything():
+    """The likeliest shape at this rung: one assistant message and a big batch
+    of its results. The smallest window that is not orphaned is the whole
+    history, so there is no cut to make — and reporting ``success`` for it
+    would emit a compaction whose pre and post are equal, then hand the retry
+    the request the provider just refused."""
+    cm = _make_cm()
+    ids = [f"c{i}" for i in range(20)]
+    msgs = [_call(*ids)] + [_result(i) for i in ids]
+    before = list(msgs)
+    agent, events = _make_agent(cm, msgs)
+
+    run = agent.compaction_coordinator.run(
+        CompactionRequest("auto", "minimal_history", "api_overflow_after_compression"),
+        system_prompt="sys",
+    )
+
+    assert run.outcome.status == "skipped"
+    assert run.outcome.detail == "no_valid_minimal_cut"
+    assert agent.messages == before
+    # ``skipped`` is silent, and the compaction event would have lied anyway.
+    assert _settled(events) == []
+    assert not [e for e in events if _kinds([e])[0] == "context_compressed"]
+
+
+def test_minimal_history_stands_down_rather_than_keep_nothing():
+    """Valid and useless: the turn's own request is gone and the model would
+    be asked to answer a system prompt."""
+    cm = _make_cm()
+    msgs = [{"role": "user", "content": "do it"}, _result("c1"), _result("c2")]
+    agent, _events = _make_agent(cm, msgs)
+
+    run = agent.compaction_coordinator.run(
+        CompactionRequest("auto", "minimal_history", "api_overflow_after_compression"),
+        system_prompt="sys",
+    )
+
+    assert run.outcome.status == "skipped"
+    assert agent.messages == msgs
+
+
+def test_minimal_history_stands_down_on_a_call_whose_result_never_arrived():
+    """The mirror orphan. The boundary repair closes result -> call; it cannot
+    close call -> result, because a result that was never appended is not in
+    the history to admit. Strict APIs reject that window too."""
+    cm = _make_cm()
+    msgs = [{"role": "user", "content": "u"}, _call("c1", "c2", "c3"), _result("c1")]
+    agent, _events = _make_agent(cm, msgs)
+
+    run = agent.compaction_coordinator.run(
+        CompactionRequest("auto", "minimal_history", "api_overflow_after_compression"),
+        system_prompt="sys",
+    )
+
+    assert run.outcome.status == "skipped"
+    assert agent.messages == msgs
+    # The predicate, directly: the window is the assistant plus one of three.
+    assert cm._window_answers_its_own_calls(msgs[1:]) is False
+    assert cm._window_answers_its_own_calls(msgs[1:] + [_result("c2"), _result("c3")])
+
+
+def test_minimal_history_run_leaves_no_orphan_in_agent_messages():
+    """End to end through the coordinator, which is what the runner retries."""
+    cm = _make_cm()
+    msgs = [
+        {"role": "user", "content": "do it"},
+        _call("c1", "c2"),
+        _result("c1"),
+        _result("c2"),
+    ]
+    agent, _events = _make_agent(cm, msgs)
+
+    run = agent.compaction_coordinator.run(
+        CompactionRequest("auto", "minimal_history", "api_overflow_after_compression"),
+        system_prompt="sys",
+    )
+
+    assert run.outcome.status == "success"
+    assert agent.messages[0]["role"] == "assistant"
+    assert run.messages_with_system[1]["role"] == "assistant"
+
+
+# ---------------------------------------------------------------------------
 # prepare / commit
 # ---------------------------------------------------------------------------
 

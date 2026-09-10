@@ -282,6 +282,7 @@ PreCompact 子进程——并发一条 pre == post 的 `CONTEXT_COMPRESSED`"）�
 | 熔断器已开（`:507`） | 原样返回 | `skipped` | 否 |
 | `len(messages) < 5`（`:517`） | 原样返回 | `skipped` | 否 |
 | 微压缩无可缩目标（`microcompact_would_mutate` 为假） | 退让（`_compaction.py:32`） | `skipped` | 否 |
+| 最后一级切不出有效窗口（`minimal_history_would_help` 为假） | 本计划落地之后才加——见 §4.4.3 的分 kind 说明 | `skipped` | 否 |
 | 宿主/hook 取消 | 新增 | `cancelled` | 否 |
 | 找不到安全切点（`:528`） | 原样返回 + 计数（已按 `is_auto` 门控，`:540`） | `failed` | 按 PR-2 规则 |
 | 摘要返回空（`:589`） | 原样返回 + **无条件**计数（`:590`） | `failed` | 按 PR-2 规则 |
@@ -819,7 +820,7 @@ class CompactionDecision:
 |---|---|---|---|---|
 | `microcompact` | 1 | `prepare_microcompact()` → `PreparedMicrocompact`：`tool_results_to_clip`、`pre_tokens = None`（见下） | `allow` / `cancel` | 跳过这一趟；本回合内不再派发；历史逐字节不变 |
 | `full` | 2 / 3 / 5 | `PreparedCompaction`（上文） | `allow` / `cancel` / `provide_summary` | 见下面的"取消语义" |
-| `minimal_history` | 4 | `PreparedMinimalHistory`：`keep_tail = 2`、`pre_tokens = None`（这条路径今天不做任何 token 估算，见 §4.2） | `allow` / `cancel` | 返回 context-length 错误，不裁 `messages[-2:]` |
+| `minimal_history` | 4 | `PreparedMinimalHistory`：`keep_tail` = **实际**保留条数（计划里是死的 `2`，见字段表下方说明）、`pre_tokens = None`（这条路径今天不做任何 token 估算，见 §4.2） | `allow` / `cancel` | 返回 context-length 错误，不裁 `messages[-2:]` |
 
 - **三种 kind 共用一个请求类型** `CompactionRequest(trigger, kind, reason)`。差异全落在 prepare 的产出
   与 `can_provide_summary` 上，coordinator 的骨架只有一份。
@@ -833,7 +834,7 @@ class CompactionDecision:
 |---|---|---|---|
 | `pre_tokens` | **`None`**（见下） | `:587` 的值 | `None`（该路径不做估算，§4.2） |
 | `messages_to_summarize` | `0`（不摘要） | `len(to_summarize)` | `0` |
-| `messages_to_keep` | `len(messages)`（一条不删，只缩内容） | `len(to_keep)` | `2`（`keep_tail`） |
+| `messages_to_keep` | `len(messages)`（一条不删，只缩内容） | `len(to_keep)` | **实际**保留条数——见下方说明 |
 | `recently_read_files` | `()` | `:574` 的结果 | `()` |
 | `summary_input_budget` | `None` | `_summary_input_budget()` | `None` |
 | `max_summary_tokens` | `None` | 预算的一半 | `None` |
@@ -842,6 +843,15 @@ class CompactionDecision:
 
   最后一个字段是为微压缩专门加的：`messages_to_summarize = 0` / `messages_to_keep = len(messages)` 对它
   没有任何信息量，宿主要判断"这一趟值不值得取消"，需要知道会裁掉几条工具结果。
+
+- **`minimal_history` 的 `messages_to_keep` 计划里是 `2`（`keep_tail`），现在不是了。** 这是后来才上的：
+  该级的边界会被修复，使保留窗口不会**开在**一条 `role: "tool"` 消息上——严格 API 会直接拒绝这种历史，
+  而这一级重试的是模型已经拒过两次的请求，切坏了就把这一轮最后一次机会花在报错上。修复可能把边界往两个
+  方向挪，所以 `prepare_minimal_history` 报的是这一刀实际会保留多少条。两半读的是同一个边界函数
+  （`ContextManager._minimal_history_start`），因此宿主批准的数字和它批准的那一刀不会对不上。同一个改动
+  也让这种 kind 失去了"不需要 would-mutate 闸门"的豁免——平切尾巴必然削掉点什么，修复过的边界不一定——
+  所以 `minimal_history` 现在有了自己的闸门，就挨着微压缩那道（`minimal_history_would_help` →
+  `no_valid_minimal_cut`）；见 §2 状态映射表里新增的那一行。
 
 - **微压缩的 `pre_tokens` 是 `None`，不是 `estimate_tokens(messages)`——上一版这里与 §4.2 打架。**
   §4.2 定死"本计划不新增任何一次 `estimate_tokens` 调用"，而微压缩今天**唯一**存在的那次估算算的是
