@@ -45,6 +45,49 @@ def _display(text: object) -> str:
     return markup_escape(sanitize_terminal_text(str(text)))
 
 
+def print_hook_notice(notice: object) -> None:
+    """Render one hook user-notice as inert display text.
+
+    A notice is a hook's **stderr** or its ``systemMessage`` — an arbitrary
+    user command's output — so it needs the same pairing :func:`_display` does,
+    and for the same two reasons. It lives here rather than beside its first
+    caller because there are now two: the lifecycle dispatches in
+    ``cli/session.py`` return their notices, and every other event carries them
+    on ``PLUGIN_HOOK_FIRED``.
+
+    Interpolating a notice raw had two failure modes, neither needing a control
+    byte: ``[black on black]`` renders it invisible, and an unmatched closing
+    tag such as ``[/oops]`` raises ``rich.markup.MarkupError`` out of the
+    dispatch — which at ``SessionStart`` escapes ``run_loop``'s first statement
+    into ``entrypoints.main``'s fatal handler (the CLI refuses to start), and at
+    ``/exit`` is swallowed by the loop's generic handler so the command silently
+    stops exiting.
+    """
+    console.print(f"[yellow]\u26a0 {_display(notice)}[/yellow]")
+
+
+def on_hook_notices(notices: object) -> None:
+    """Print the user-bound half of a ``PLUGIN_HOOK_FIRED`` payload.
+
+    The four lifecycle dispatches hand their notices back to the caller, which
+    prints them; every other hook event is dispatched somewhere with no user
+    surface — inside a tool worker, inside the chat loop, inside the compaction
+    coordinator — and reaches one only through this event. Without a reader
+    here those notices are computed and dropped, which is the defect the
+    payload field was added to close — see §5.2.1 of
+    ``docs/design/hooks-claude-contract-conformance-plan.md``, "a sink is not
+    a route".
+
+    Printing is safe from a worker thread: ``console`` is the one the spinner's
+    ``Status`` also drives, so Rich renders the line above the live region.
+    """
+    if not isinstance(notices, list):
+        return
+    for notice in notices:
+        if isinstance(notice, str) and notice:
+            print_hook_notice(notice)
+
+
 def emit_event(cli: AgentaoCLI, event: AgentEvent) -> None:
     """Dispatch a runtime event to the appropriate handler."""
     try:
@@ -63,6 +106,8 @@ def emit_event(cli: AgentaoCLI, event: AgentEvent) -> None:
             on_llm_thinking(cli, event.data.get("text", ""))
         elif t == EventType.LLM_TEXT:
             on_llm_text(cli, event.data.get("chunk", ""))
+        elif t == EventType.PLUGIN_HOOK_FIRED:
+            on_hook_notices(event.data.get("user_notices"))
         else:
             cli.display.on_event(event)
     except Exception:

@@ -307,7 +307,18 @@ has already been rewritten when it runs, and two of its three callers are the ov
 ladder, so a hook fault must never be able to end the turn the compaction exists to save. User
 notices ride `PLUGIN_HOOK_FIRED`, the same host channel `UserPromptSubmit` and `PreCompact` use.
 
-Tests: `tests/test_compaction_session_start_hook.py`.
+**And that channel now has a reader on each of the three surfaces**, which it did not when this
+section was written. The payload field existed — it was added with the conformance plan's G1 — but
+nothing consumed it, so a notice from any hook dispatched mid-turn was computed, capped, stored and
+dropped. That is the same "a sink is not a route" defect the plan's §5.2.1 names for the lifecycle
+events, one layer along: the CLI prints the notice through the same escaped renderer the lifecycle
+dispatches use, `agentao run` folds it into `RunResult.warnings` beside the lifecycle notices it
+already carried, and ACP maps it onto the `agent_message_chunk` that `write_user_notice` produces, so
+a client cannot tell the two paths apart. `Stop`'s `systemMessage` joined the same field, gated on
+contract: under the profile it goes to the user and only the user, while `agentao-v1` keeps its
+documented double-write into the model's context and shows the user nothing.
+
+Tests: `tests/test_compaction_session_start_hook.py`, `tests/test_hook_notice_routes.py`.
 
 ### 6.4 Explicit non-goals
 

@@ -159,6 +159,29 @@ def write_session_update(server: Any, session_id: str, update: Dict[str, Any]) -
     )
 
 
+def hook_notice_update(notices: Any) -> Dict[str, Any] | None:
+    """The ``session/update`` that carries hook user-notices, or ``None``.
+
+    One definition of the wire shape for both notice paths — the lifecycle
+    dispatches, which hand their notices straight to
+    :func:`write_user_notice`, and every other hook event, whose notices arrive
+    on ``PLUGIN_HOOK_FIRED`` and are mapped in
+    :meth:`AcpTransport._build_update`. A client has to be able to recognise a
+    notice by its shape, so the two must not drift apart.
+    """
+    if isinstance(notices, str):
+        notices = [notices]
+    if not isinstance(notices, list):
+        return None
+    texts = [n for n in notices if isinstance(n, str) and n]
+    if not texts:
+        return None
+    return {
+        "sessionUpdate": "agent_message_chunk",
+        "content": _text_block("\n".join(f"\u26a0 {t}" for t in texts)),
+    }
+
+
 def write_user_notice(server: Any, session_id: str, text: str) -> None:
     """Deliver one hook user-notice to the client. Best-effort.
 
@@ -173,15 +196,11 @@ def write_user_notice(server: Any, session_id: str, text: str) -> None:
     may be failed by a diagnostic — on the close path the stream may already be
     gone, which is exactly the best-effort case.
     """
+    update = hook_notice_update(text)
+    if update is None:
+        return
     try:
-        write_session_update(
-            server,
-            session_id,
-            {
-                "sessionUpdate": "agent_message_chunk",
-                "content": _text_block(f"\u26a0 {text}"),
-            },
-        )
+        write_session_update(server, session_id, update)
     except Exception:
         logger.debug(
             "acp: could not deliver hook notice for session %s", session_id,

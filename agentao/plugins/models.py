@@ -432,6 +432,12 @@ class StopHookResult:
     stop_reason: str | None = None
     suppress_output: bool = False
     system_message: str | None = None
+    #: → the human, and under the profile **only** the human. Kept apart from
+    #: ``system_message`` (which records the last value for replay fidelity)
+    #: because this is the list a surface renders, and because a v1 rule's
+    #: ``systemMessage`` must stay out of it: v1 double-writes the field into
+    #: ``additional_contexts``, where its hooks' authors have always read it.
+    user_notices: list[str] = field(default_factory=list)
     messages: list[HookAttachmentRecord] = field(default_factory=list)
     matched_rule_count: int = 0
     #: The contract of the rule that produced the surviving continuation. The

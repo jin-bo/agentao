@@ -32,6 +32,24 @@ _Targeting 0.4.23. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A hook's notice now actually reaches the user.** Four of the eight hook
+  events are dispatched by a caller that owns an output and consumed its return
+  value; the other notice-producing events are dispatched inside the chat loop
+  (`UserPromptSubmit`, `Stop`), inside a tool worker (`PostToolUse*`) and inside
+  the compaction coordinator (`SessionStart(source="compact")`), none of which
+  owns a surface. Their notices rode `PLUGIN_HOOK_FIRED.user_notices`, a field
+  no first-party surface read — so a `systemMessage`, an exit-2 stderr line or a
+  profile field diagnostic from any of them was computed, capped, stored and
+  dropped. All three surfaces now consume it: the interactive CLI prints it
+  through the same escaped renderer the lifecycle notices use, `agentao run`
+  folds it into `RunResult.warnings` beside the lifecycle notices it already
+  carried, and ACP maps it onto the same `agent_message_chunk` the direct
+  notice writer produces, so a client cannot tell the two paths apart. `Stop`'s
+  `systemMessage` joins that field gated on contract — under
+  `claude-code@profile-1` it goes to the user and only the user, as the
+  reference says it is for, while `agentao-v1` keeps its documented double-write
+  into the model's context and surfaces nothing.
+
 - **A hook's user-notice can no longer break the CLI through Rich markup.**
   `SessionStart` / `SessionEnd` notices are a hook's stderr — arbitrary command
   output — and were interpolated raw into a Rich markup string. Neither failure

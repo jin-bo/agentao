@@ -265,7 +265,15 @@ matcher；`CLAUDE_FLAT_EVENTS` 只有 `{Stop, PreCompact}`（`agentao/plugins/mo
 是溢出恢复阶梯，一个 hook 故障绝不能反过来终结它本来要拯救的那一轮。用户提示走
 `PLUGIN_HOOK_FIRED`，和 `UserPromptSubmit` / `PreCompact` 同一个宿主通道。
 
-测试见 `tests/test_compaction_session_start_hook.py`。
+**而这个通道现在三个界面各有一个读者了** —— 写下本节时并没有。字段本身早就存在（随合规计划的 G1
+一起加的），但没有任何一方消费它，于是任何在一轮之内派发的 hook 所产生的提示，都是算出来、截断、
+存下来，然后丢掉。这就是该计划 §5.2.1 为生命周期事件命名的那个「有落点不等于有去路」，只是往下挪了
+一层：CLI 用生命周期派发同一个转义渲染器打印，`agentao run` 把它并进 `RunResult.warnings`，和它本来
+就带的生命周期提示放在一起，ACP 则映射成 `write_user_notice` 产出的同一个 `agent_message_chunk`，
+客户端分不出两条路径。`Stop` 的 `systemMessage` 也并入同一字段，并按契约分流：profile 下它只给用户，
+`agentao-v1` 保持既有的双写（进模型上下文），对用户不显示。
+
+测试见 `tests/test_compaction_session_start_hook.py`、`tests/test_hook_notice_routes.py`。
 
 ### 6.4 明确不做
 

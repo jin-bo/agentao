@@ -112,6 +112,7 @@ from agentao.transport.events import AgentEvent, EventType
 from ._transport_helpers import (
     _json_safe,
     _text_block,
+    hook_notice_update,
     _todo_write_plan,
     _tool_content_text,
     _tool_kind,
@@ -337,6 +338,16 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
                 "sessionUpdate": "agent_thought_chunk",
                 "content": _text_block(marker),
             }
+
+        if etype == EventType.PLUGIN_HOOK_FIRED:
+            # The user-bound half of a hook's output. The lifecycle events
+            # deliver theirs directly (``_lifecycle.py``) because they fire
+            # outside any turn; every other hook event is dispatched where
+            # there is no client to write to — a chat loop, a tool worker, the
+            # compaction coordinator — and this is its only route out.
+            # ``None`` for the rest of the payload: counts and verdicts are
+            # replay's business, not the client's.
+            return hook_notice_update(data.get("user_notices"))
 
         if etype == EventType.ERROR:
             message = str(data.get("message", ""))
