@@ -390,3 +390,167 @@ def test_resume_accepts_active_paused_blocked(tmp_path, monkeypatch, make_status
     assert bool(launched) is should_launch
     if should_launch:
         assert goal.status == GoalStatus.ACTIVE  # ends active and is re-driven
+
+
+# ── no-progress guard ─────────────────────────────────────────────────────
+#
+# The budget caps bound how much a goal may *do*. This guard bounds how long it
+# may do *nothing* — the orthogonal runaway, and the only one that survives
+# `--unbounded` / `default_max_turns: 0`.
+
+
+class _OutcomeAgent(_FakeAgent):
+    """A fake agent whose ``last_turn`` the test drives, turn by turn."""
+
+    def __init__(self, working_directory, outcomes):
+        super().__init__(working_directory)
+        self._outcomes = list(outcomes)
+        self.last_turn = None
+
+    def advance(self):
+        self.last_turn = self._outcomes.pop(0) if self._outcomes else None
+
+
+class _Outcome:
+    def __init__(self, incomplete_reason=None, tool_count=0):
+        self.incomplete_reason = incomplete_reason
+        self.tool_count = tool_count
+
+
+def _run_with_outcomes(goal, tmp_path, outcomes):
+    from agentao.cli.input_loop import run_goal_continuation
+
+    cli = _FakeCLI(tmp_path)
+    cli.agent = _OutcomeAgent(tmp_path, outcomes)
+
+    def fake_turn(_msg):
+        cli.agent.advance()
+        # Never an empty string: the chat loop substitutes a placeholder for an
+        # empty answer, which is precisely why the guard cannot read the text.
+        return "[no response generated]"
+
+    run_goal_continuation(cli, goal, _run_turn=fake_turn)
+    return cli
+
+
+def test_a_goal_with_no_caps_has_nothing_else_to_stop_it(tmp_path):
+    # Why the guard exists: `--unbounded` (and the documented
+    # `default_max_turns: 0`) leave the loop with no budget to trip.
+    assert GoalState(objective="obj").budget_tripped() is False
+
+
+def test_no_progress_blocks_the_goal(tmp_path):
+    # A turn cap well above the threshold, deliberately: a regression then fails
+    # on the status instead of hanging the suite, which an uncapped goal would.
+    goal = GoalState(objective="obj", max_turns=10)
+    _run_with_outcomes(goal, tmp_path, [_Outcome("no_output")] * 10)
+    assert goal.status == GoalStatus.BLOCKED
+    assert goal.turns_used == 3                # stopped at the threshold, not 10
+
+
+def test_no_progress_streak_resets_on_an_answered_turn(tmp_path):
+    goal = GoalState(objective="obj", max_turns=6)
+    _run_with_outcomes(goal, tmp_path, [
+        _Outcome("no_output"),
+        _Outcome("no_output"),
+        _Outcome(None),                        # a real answer resets the streak
+        _Outcome("no_output"),
+        _Outcome("no_output"),
+    ])
+    # Never reached three in a row, so the turn cap is what ends it.
+    assert goal.status == GoalStatus.LIMIT_REACHED
+
+
+def test_a_turn_that_called_tools_counts_as_progress(tmp_path):
+    goal = GoalState(objective="obj", max_turns=4)
+    _run_with_outcomes(goal, tmp_path, [_Outcome("no_output", tool_count=2)] * 4)
+    assert goal.status == GoalStatus.LIMIT_REACHED
+
+
+def test_repeated_llm_errors_block_the_goal(tmp_path):
+    goal = GoalState(objective="obj", max_turns=10)
+    _run_with_outcomes(goal, tmp_path, [_Outcome("llm_error")] * 10)
+    assert goal.status == GoalStatus.BLOCKED
+    assert goal.turns_used == 3
+
+
+def test_no_progress_reason_reads_a_closed_set(tmp_path):
+    from agentao.cli.input_loop import _no_progress_reason
+
+    class _CLI:
+        def __init__(self, outcome):
+            self.agent = type("A", (), {"last_turn": outcome})()
+
+    assert _no_progress_reason(_CLI(_Outcome("no_output"))) == "no_output"
+    assert _no_progress_reason(_CLI(_Outcome("reasoning_only"))) == "reasoning_only"
+    assert _no_progress_reason(_CLI(_Outcome(None))) is None
+    assert _no_progress_reason(_CLI(_Outcome("max_iterations"))) is None
+    assert _no_progress_reason(_CLI(_Outcome("no_output", tool_count=1))) is None
+    assert _no_progress_reason(_CLI(None)) is None
+
+
+def test_a_capped_turn_is_not_no_progress(tmp_path):
+    # max_iterations / doom_loop / length_truncated turns did work and hit a
+    # ceiling. Counting them here would block a busy goal.
+    goal = GoalState(objective="obj", max_turns=4)
+    _run_with_outcomes(goal, tmp_path, [
+        _Outcome("max_iterations"), _Outcome("doom_loop"),
+        _Outcome("length_truncated"), _Outcome("hook_stop"),
+    ])
+    assert goal.status == GoalStatus.LIMIT_REACHED
+
+
+def test_an_agent_without_last_turn_never_blocks(tmp_path):
+    # The pre-existing fake has no ``last_turn`` at all. A host that never
+    # populates it must degrade to "made progress", not to a blocked goal.
+    goal = GoalState(objective="obj", max_turns=3)
+    _run(goal, tmp_path, lambda m: None)
+    assert goal.status == GoalStatus.LIMIT_REACHED
+
+
+def test_a_magicmock_agent_never_blocks(tmp_path):
+    # A MagicMock answers every attribute, so a truthiness test on
+    # ``incomplete_reason`` would block on turn three. The closed-set string
+    # check is what keeps this honest.
+    from unittest.mock import MagicMock
+
+    from agentao.cli.input_loop import run_goal_continuation
+
+    goal = GoalState(objective="obj", max_turns=3)
+    cli = _FakeCLI(tmp_path)
+    cli.agent = MagicMock()
+    cli.agent.working_directory = tmp_path
+    run_goal_continuation(cli, goal, _run_turn=lambda m: "text")
+    assert goal.status == GoalStatus.LIMIT_REACHED
+
+
+def test_a_provider_failure_is_no_progress_even_when_tools_ran(tmp_path):
+    """The one member of the set for which tool calls are not a reset.
+
+    ``tool_count`` accumulates across a turn's *iterations*, so a turn whose
+    first iteration called a tool and whose second died at the provider carries
+    both ``llm_error`` and a non-zero count. Treating that as progress would
+    reset the streak on every turn of an outage and let the goal spin on a dead
+    provider forever — the runaway ``llm_error`` is in the set to bound.
+    """
+    goal = GoalState(objective="obj", max_turns=10)
+    _run_with_outcomes(goal, tmp_path, [_Outcome("llm_error", tool_count=1)] * 10)
+    assert goal.status == GoalStatus.BLOCKED
+    assert goal.turns_used == 3
+
+
+def test_no_progress_reasons_are_runtime_vocabulary():
+    """The literals must name real ``INCOMPLETE_*`` values.
+
+    ``_NO_PROGRESS_REASONS`` hand-copies them rather than importing runtime
+    internals at module scope, matching ``cli/run.py::_INCOMPLETE_OUTCOMES``.
+    That duplication is safe only while it stays a subset of the runtime's own
+    closed vocabulary: a renamed constant would otherwise turn this guard off
+    silently, and a goal would go back to burning its whole budget on nothing.
+    """
+    from agentao.cli.input_loop import _LLM_ERROR_REASON, _NO_PROGRESS_REASONS
+    from agentao.runtime.chat_loop import INCOMPLETE_ANSWER_REASONS, INCOMPLETE_LLM_ERROR
+
+    assert _NO_PROGRESS_REASONS < INCOMPLETE_ANSWER_REASONS   # strict subset
+    assert _LLM_ERROR_REASON == INCOMPLETE_LLM_ERROR
+    assert _LLM_ERROR_REASON in _NO_PROGRESS_REASONS

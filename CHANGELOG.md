@@ -11,6 +11,23 @@ _Targeting 0.4.23. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **A `/goal` run now stops when it stops making progress.** The time and turn
+  budgets bound how much a goal may *do*; nothing bounded how long it could do
+  *nothing*, and `--unbounded` (or the documented `default_max_turns: 0`) left
+  it with no bound at all. Three consecutive continuation turns that produce no
+  answer (`no_output` / `reasoning_only`) and call no tools, or that fail at the
+  provider (`llm_error`), now mark the goal `blocked`; any answer or tool call
+  resets the streak, as does a turn the harness halted at a ceiling
+  (`max_iterations`, `doom_loop`, `length_truncated`, `hook_stop`), which did
+  work and is not idle. The guard reads `agent.last_turn.incomplete_reason`,
+  which the runtime already computed — an emptiness check on the returned text
+  could never have worked, because an empty answer is replaced by a placeholder
+  before it reaches the caller. `llm_error` deliberately ignores the turn's tool
+  count: that count accumulates across a turn's *iterations*, so one tool call
+  made before a provider started failing would otherwise reset the streak on
+  every later turn and the loop would spin on a dead provider forever. Purely
+  host-side; the harness is untouched.
+
 ### Changed
 
 ### Fixed

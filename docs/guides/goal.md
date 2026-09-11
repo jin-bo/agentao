@@ -25,7 +25,18 @@ re-prompts the agent to keep going. The loop stops when:
 - the agent calls `update_goal(status="blocked")` — it needs you (missing
   credentials, an ambiguous decision);
 - a budget cap trips — one final **wrap-up** turn summarizes progress and
-  remaining work, then the loop stops.
+  remaining work, then the loop stops;
+- **three consecutive turns make no progress** — the goal is marked `blocked`.
+  A turn counts as no-progress when it produced no answer (`no_output`,
+  `reasoning_only`) and called no tools, or when it failed at the provider
+  (`llm_error`) **whether or not** tools ran first — a tool call earlier in the
+  turn does not make a dead provider a working one. Everything else resets the
+  streak: an answered turn, a turn that called a tool, and a turn the harness
+  halted at a ceiling (`max_iterations`, `doom_loop`, `length_truncated`,
+  `hook_stop`), which did work and is not idle. This is the orthogonal runaway a
+  turn cap cannot see: budgets bound how much a goal may *do*, this bounds how
+  long it may do *nothing*, and it is the only stop condition that survives
+  `--unbounded`.
 
 ## Budgets — two axes
 
@@ -81,9 +92,12 @@ below). `--unbounded` opts out of both.
 | `complete` | objective achieved (terminal) | `/goal clear` to start fresh |
 | `limit_reached` | a budget cap tripped | `/goal budget …` to continue, or `/goal clear` |
 
-Only the agent sets `complete` / `blocked` (via the injected `update_goal`
-tool, and only while the goal is active); only you set
-pause/resume/clear/edit/budget; only the host loop sets `limit_reached`.
+The agent sets `complete` / `blocked` (via the injected `update_goal` tool, and
+only while the goal is active); only you set pause/resume/clear/edit/budget;
+only the host loop sets `limit_reached`. The host loop also sets `blocked`, in
+the one case the agent cannot report itself: three consecutive turns that
+produced nothing, where a model that answers nothing cannot call `update_goal`
+either.
 
 ## Settings
 
