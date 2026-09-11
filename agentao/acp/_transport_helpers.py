@@ -179,7 +179,7 @@ def write_user_notice(server: Any, session_id: str, text: str) -> None:
             session_id,
             {
                 "sessionUpdate": "agent_message_chunk",
-                "content": {"type": "text", "text": f"\u26a0 {text}"},
+                "content": _text_block(f"\u26a0 {text}"),
             },
         )
     except Exception:

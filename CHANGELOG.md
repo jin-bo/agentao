@@ -32,6 +32,25 @@ _Targeting 0.4.23. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A hook's user-notice can no longer break the CLI through Rich markup.**
+  `SessionStart` / `SessionEnd` notices are a hook's stderr — arbitrary command
+  output — and were interpolated raw into a Rich markup string. Neither failure
+  needed a control byte: `[black on black]` rendered the notice invisible, and
+  an unmatched closing tag such as `[/oops]` raised `MarkupError` out of the
+  dispatch, which at `SessionStart` escaped into the fatal-error handler so the
+  CLI refused to start, and at `/exit` was swallowed so the command stopped
+  exiting. Notices now go through the same strip-plus-escape pairing
+  `cli/transport.py::_display` uses for model-authored text.
+
+- **A corrupt session file no longer takes down `/sessions list` or
+  `agentao --resume`.** A file that is valid JSON but not an object (`[]`,
+  `null`, a bare string) parsed fine and then raised `AttributeError` on
+  `data.get`, which every corrupt-file handler in the session store was written
+  to miss. `load_session_record` now raises `ValueError` for that case — the
+  same type `json.JSONDecodeError` already raised, so existing handlers cover
+  it — and `list_sessions`, `_resolve_session_file` and `delete_session` skip
+  documents of the wrong shape instead of raising out of the scan.
+
 - **`SessionStart` now fires with `source: "compact"` after a full
   compaction.** Scope is deliberately narrow and is agentao's own choice: a
   **successful** **full** compaction only — manual `/compact`, the automatic

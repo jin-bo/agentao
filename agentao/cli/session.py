@@ -5,7 +5,10 @@ from __future__ import annotations
 import uuid as _uuid_mod
 from typing import TYPE_CHECKING
 
+from rich.markup import escape as _markup_escape
+
 from ..plugins.hooks.lifecycle import fire_session_end, fire_session_start
+from ..security.terminal_text import sanitize_terminal_text
 from ._globals import console
 
 if TYPE_CHECKING:
@@ -103,15 +106,32 @@ def dispatch_plugin_session_end(
     return fire_session_end(agent, session_id, reason=reason)
 
 
+def _print_notice(notice: str) -> None:
+    """Render one hook user-notice as inert display text.
+
+    A notice is a hook's **stderr** — an arbitrary user command's output — and
+    this is a Rich boundary, where the strip is only half the job
+    (``cli/transport.py::_display`` is the same pairing for model-authored
+    text). Interpolating it raw had two failure modes, neither needing a
+    control byte: ``[black on black]`` renders the notice invisible, and an
+    unmatched closing tag such as ``[/oops]`` raises ``rich.markup.MarkupError``
+    out of the dispatch — which at ``SessionStart`` escapes ``run_loop``'s first
+    statement into ``entrypoints.main``'s fatal handler (the CLI refuses to
+    start), and at ``/exit`` is swallowed by the loop's generic handler so the
+    command silently stops exiting.
+    """
+    console.print(f"[yellow]⚠ {_markup_escape(sanitize_terminal_text(str(notice)))}[/yellow]")
+
+
 def _dispatch_session_start_hooks(cli: AgentaoCLI, *, source: str = "startup") -> None:
     for notice in dispatch_plugin_session_start(
         cli.agent, cli.current_session_id, source=source,
     ):
-        console.print(f"[yellow]⚠ {notice}[/yellow]")
+        _print_notice(notice)
 
 
 def _dispatch_session_end_hooks(cli: AgentaoCLI, *, reason: str = "other") -> None:
     for notice in dispatch_plugin_session_end(
         cli.agent, cli.current_session_id, reason=reason,
     ):
-        console.print(f"[yellow]⚠ {notice}[/yellow]")
+        _print_notice(notice)

@@ -799,6 +799,7 @@ def run_goal_continuation(cli: "AgentaoCLI", goal, *, _run_turn=None) -> None:
     cli.agent.add_tool(UpdateGoalTool(goal, persist), replace=True)
     interrupted = False
     empty_streak = 0
+    no_progress_reason = None
     try:
         while goal.is_active:
             # Budget pre-check: a tripped cap ends with exactly one wrap-up turn.
@@ -846,10 +847,12 @@ def run_goal_continuation(cli: "AgentaoCLI", goal, *, _run_turn=None) -> None:
             if empty_streak >= _MAX_EMPTY_CONTINUATIONS:
                 goal.mark_blocked()
                 persist()
-                console.print(
-                    f"\n[warning]{empty_streak} consecutive turns produced no "
-                    f"progress ({reason}); stopping the goal.[/warning]"
-                )
+                # Carried to the outcome report rather than printed here: the
+                # generic `blocked` line would otherwise follow it and say "it
+                # needs your input", misattributing a host-set block to the
+                # agent — which is the one thing this guard exists to tell
+                # apart from a model that answered nothing.
+                no_progress_reason = reason
                 break
     except KeyboardInterrupt:
         # Belt-and-suspenders: a Ctrl-C that escapes chat() (between turns, in
@@ -876,10 +879,10 @@ def run_goal_continuation(cli: "AgentaoCLI", goal, *, _run_turn=None) -> None:
             "\n[warning]Goal paused. Resume with /goal resume.[/warning]\n"
         )
     else:
-        _report_goal_outcome(goal)
+        _report_goal_outcome(goal, no_progress_reason=no_progress_reason)
 
 
-def _report_goal_outcome(goal) -> None:
+def _report_goal_outcome(goal, *, no_progress_reason: Optional[str] = None) -> None:
     from .goal_state import GoalStatus, budget_summary
 
     if goal.status == GoalStatus.COMPLETE:
@@ -887,10 +890,21 @@ def _report_goal_outcome(goal) -> None:
             f"\n[success]✓ Goal complete.[/success] [dim]({budget_summary(goal)})[/dim]\n"
         )
     elif goal.status == GoalStatus.BLOCKED:
-        console.print(
-            "\n[warning]⊘ Goal blocked — it needs your input. Address it, then "
-            "/goal resume.[/warning]\n"
-        )
+        if no_progress_reason is not None:
+            # The *host loop* blocked this goal, not the agent. "It needs your
+            # input" would name the wrong actor and send the user looking for a
+            # question that was never asked — the model answered nothing, or
+            # the provider is down. One message, naming the actual cause.
+            console.print(
+                f"\n[warning]⊘ Goal stopped after {_MAX_EMPTY_CONTINUATIONS} "
+                f"consecutive turns with no progress ({no_progress_reason}). "
+                "Check the model or provider, then /goal resume.[/warning]\n"
+            )
+        else:
+            console.print(
+                "\n[warning]⊘ Goal blocked — it needs your input. Address it, then "
+                "/goal resume.[/warning]\n"
+            )
     elif goal.status == GoalStatus.LIMIT_REACHED:
         console.print(
             f"\n[warning]■ Goal budget reached ({budget_summary(goal)}). Re-budget "

@@ -554,3 +554,38 @@ def test_no_progress_reasons_are_runtime_vocabulary():
     assert _NO_PROGRESS_REASONS < INCOMPLETE_ANSWER_REASONS   # strict subset
     assert _LLM_ERROR_REASON == INCOMPLETE_LLM_ERROR
     assert _LLM_ERROR_REASON in _NO_PROGRESS_REASONS
+
+
+def test_a_no_progress_stop_does_not_claim_the_agent_asked_for_input(tmp_path, capsys):
+    """The generic `blocked` line names the wrong actor for a host-set block.
+
+    `blocked` is normally the agent saying "I need you" through `update_goal`.
+    The no-progress guard sets the same status from the host loop, where
+    nothing asked the user anything — so the outcome report has to say which
+    one happened, or it sends the user looking for a question that was never
+    asked.
+    """
+    goal = GoalState(objective="obj", max_turns=10)
+    _run_with_outcomes(goal, tmp_path, [_Outcome("llm_error")] * 10)
+    assert goal.status == GoalStatus.BLOCKED
+
+    out = capsys.readouterr().out
+    assert "no progress" in out
+    assert "llm_error" in out
+    assert "needs your input" not in out
+
+
+def test_an_agent_set_block_still_says_it_needs_your_input(tmp_path, capsys):
+    from agentao.cli.input_loop import run_goal_continuation
+
+    goal = GoalState(objective="obj", max_turns=10)
+    cli = _FakeCLI(tmp_path)
+
+    def fake_turn(_msg):
+        goal.mark_blocked()
+        return "text"
+
+    run_goal_continuation(cli, goal, _run_turn=fake_turn)
+    out = capsys.readouterr().out
+    assert "needs your input" in out
+    assert "no progress" not in out

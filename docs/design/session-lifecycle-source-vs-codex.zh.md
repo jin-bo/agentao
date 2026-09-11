@@ -253,6 +253,10 @@ matcher；`CLAUDE_FLAT_EVENTS` 只有 `{Stop, PreCompact}`（`agentao/plugins/mo
 （否则那次重试拿到的请求里根本没有 hook 的上下文）。注入内容因此自然计入
 `post_est_tokens`；若仍然溢出，走现有的 `minimal_history` 回退，不为 hook 另设重试或保留机制。
 
+有一个后果是接受而非修正的：`CONTEXT_COMPRESSED` 的 `post_msgs` 与 `post_est_tokens` 都在注入之后测量，
+所以用它统计压缩效果的宿主会把注入的那条消息算进这次变换。改成在注入前测量，报的就不是下一次请求
+实际携带的那份历史了，那更糟；而这个事件本来就自述为描述压缩后的窗口。
+
 **不调用 `on_session_start`。** 压缩保留原 session id，不发 `SessionEnd`，不重启 replay，
 不做记忆会话归档 —— 只有插件派发适用，所以直接调 §4 抽出的
 `plugins/hooks/lifecycle.py::fire_session_start`。

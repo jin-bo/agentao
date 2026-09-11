@@ -123,11 +123,18 @@ class AcpSessionManager:
           would be rejected rather than queued, so "publish then fire" would
           turn a hook into a spurious error.
 
-        The cost is explicit: other sessions' lookups block for the callback's
-        duration, because they share this lock. That is bounded by the hook
-        timeout and paid only at session creation, which is the cheaper side of
-        the trade against a session that can take a turn before its
-        ``SessionStart`` context has been injected.
+        The cost is explicit, and it is not small: other sessions' lookups
+        block for the callback's whole duration, because ``get`` / ``require``
+        / ``__contains__`` / ``__len__`` all take this lock. Lifecycle rules
+        run **serially**, so the bound is *number of matching rules* times
+        ``ParsedHookRule.timeout`` (default 60s) — not one timeout. A
+        deployment with slow ``SessionStart`` hooks therefore stalls every
+        other session's routing for as long as one session takes to create.
+        That is accepted rather than hidden: the alternative is a session that
+        can take a turn before its ``SessionStart`` context has been injected,
+        or a racing prompt rejected outright by the non-blocking ``turn_lock``.
+        If it ever needs bounding, bound it here — a per-callback deadline is a
+        change to this method, not to its callers.
 
         A callback that raises propagates and the session is **not** published;
         the caller's existing failure path owns the cleanup.

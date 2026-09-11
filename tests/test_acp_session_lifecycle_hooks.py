@@ -297,3 +297,34 @@ def test_a_session_without_hook_rules_dispatches_nothing(tmp_path):
     state.close()
     assert isinstance(state, AcpSessionState)
     assert state.closed
+
+
+def test_close_cancels_the_live_turn_before_running_end_hooks(monkeypatch, tmp_path):
+    """Order inside ``close()``: save, cancel, hooks, tear down the agent.
+
+    ``SessionEnd`` hooks are user commands with their own timeouts, run
+    serially. Firing them before the cancel would hold an in-flight turn's LLM
+    call and tools open for the whole hook budget, and at shutdown that budget
+    is paid on the thread that has to finish teardown. Nothing a hook can
+    observe changes at the cancel — the token is not in its payload — so the
+    old order bought only a slower teardown.
+    """
+    order: List[str] = []
+
+    class _Token:
+        def cancel(self, _reason):
+            order.append("cancel")
+
+    class _Agent(_HookedAgent):
+        def close(self):
+            order.append("agent-close")
+
+    monkeypatch.setattr(
+        "agentao.acp._lifecycle.fire_end_for_state",
+        lambda state: order.append("hooks"),
+    )
+    state = AcpSessionState(
+        session_id="s", agent=_Agent(), cwd=tmp_path, cancel_token=_Token(),
+    )
+    state.close()
+    assert order == ["cancel", "hooks", "agent-close"]

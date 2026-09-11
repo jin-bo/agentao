@@ -291,15 +291,6 @@ class AcpSessionState:
             return
         self.closed = True
 
-        # ``SessionEnd`` first, behind the idempotence guard above so a double
-        # close dispatches once, and before anything is released so the hook
-        # still sees a live session. It follows the *real* close path
-        # deliberately: creating or loading another session ends nothing (ACP
-        # holds several at once), and cancelling one turn is not a session
-        # ending either.
-        from ._lifecycle import fire_end_for_state
-        fire_end_for_state(self)
-
         self._save_session()
 
         if self.cancel_token is not None:
@@ -307,6 +298,23 @@ class AcpSessionState:
                 self.cancel_token.cancel("session-closed")
             except Exception:
                 logger.exception("acp: error cancelling token for session %s", self.session_id)
+
+        # ``SessionEnd`` after the cancel, before the agent is torn down.
+        # Behind the idempotence guard above, so a double close dispatches
+        # once. It follows the *real* close path deliberately: creating or
+        # loading another session ends nothing (ACP holds several at once),
+        # and cancelling one turn is not a session ending either.
+        #
+        # **After** the cancel because hooks are user commands with their own
+        # timeouts, run serially: firing them first would hold an in-flight
+        # turn's LLM call and tools open for the whole hook budget, and at
+        # shutdown that budget is paid on the thread that has to finish
+        # teardown. Nothing a ``SessionEnd`` hook can observe changes at the
+        # cancel — the token is not in its payload — so the only thing the old
+        # order bought was a slower teardown. **Before** ``agent.close()``,
+        # which is the actual resource release.
+        from ._lifecycle import fire_end_for_state
+        fire_end_for_state(self)
 
         if self.agent is not None:
             try:

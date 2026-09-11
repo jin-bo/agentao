@@ -74,11 +74,11 @@ def fire_end_for_state(state: Any) -> None:
     agent = getattr(state, "agent", None)
     if agent is None:
         return
-    try:
-        notices = fire_session_end(agent, state.session_id, reason="other")
-    except Exception:
-        logger.exception("acp: SessionEnd dispatch failed for %s", state.session_id)
-        return
+    # No try/except around this call: ``fire_session_end`` already traps
+    # everything and returns ``[]``, so a handler here would be unreachable and
+    # would advertise a failure mode that does not exist. Dispatch failures are
+    # logged by ``plugins/hooks/lifecycle.py``, which is where they happen.
+    notices = fire_session_end(agent, state.session_id, reason="other")
     notify = getattr(state, "notify_user", None)
     if not callable(notify):
         return

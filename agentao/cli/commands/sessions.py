@@ -133,10 +133,15 @@ def resume_session(
 
     try:
         messages, model, active_skills = load_session(match["id"], project_root=project_root)
-    except (FileNotFoundError, ValueError) as e:
-        # ``ValueError`` covers ``json.JSONDecodeError`` — a truncated or
-        # hand-edited session file. It has to be caught *here* rather than left
-        # to the caller, because the launch path has no caller that survives it:
+    except (OSError, ValueError) as e:
+        # ``OSError`` (``FileNotFoundError`` is one) and ``ValueError`` — the
+        # same pair ``acp/session_load.py::resume_session_on_new`` catches, and
+        # for the same reason. ``ValueError`` covers ``json.JSONDecodeError``
+        # (a truncated or hand-edited file) *and* the not-an-object shape
+        # ``load_session_record`` now normalizes into one; ``OSError`` covers
+        # the unreadable file ``FileNotFoundError`` alone missed. It has to be
+        # caught *here* rather than left to the caller, because the launch path
+        # has no caller that survives it:
         # ``entrypoints.main`` wraps this in the fatal-error handler and exits 1,
         # which would turn one corrupt file into "``--resume`` cannot start the
         # CLI at all". The documented contract is that a failed startup resume
@@ -160,8 +165,20 @@ def resume_session(
     if not at_launch:
         from ..session import _dispatch_session_end_hooks
         _dispatch_session_end_hooks(cli, reason="resume")
+        # Same reason ``_reset_session`` does it: the hook one-shot diagnostic
+        # registry is keyed by session id, and the outgoing id is about to go
+        # out of scope for good. Without this, every ``/sessions resume``
+        # strands a bucket under a key nothing can reach for the life of the
+        # process — the leak the reset path exists to avoid, on a boundary that
+        # only became one when this command started reporting it.
+        try:
+            from ...plugins.hooks._diagnostics import clear_session
+            clear_session(cli.current_session_id)
+        except Exception:  # pragma: no cover - never block a resume
+            pass
 
     cli.agent.messages = messages
+    loaded_count = len(messages)
     # History was replaced wholesale; the Tier-1 token anchor describes the
     # prior conversation's prefix and must not survive into the resumed one.
     cli.agent.context_manager.invalidate_token_anchor()
@@ -218,9 +235,12 @@ def resume_session(
 
     sid_display = cli.current_session_id[:8]
     title_display = f": {match['title']}" if match.get("title") else ""
-    msg_count = len(messages)
     console.print(f"\n[success]↩ Resuming session {sid_display}{title_display}[/success]")
-    console.print(f"[dim]{msg_count} messages loaded.[/dim]")
+    # ``loaded_count`` is snapshotted above the hook dispatch, not measured
+    # here: ``cli.agent.messages`` is this very list object (assigned, not
+    # copied), so a ``SessionStart`` hook's ``additionalContext`` lands in it
+    # and would otherwise be reported as a loaded message.
+    console.print(f"[dim]{loaded_count} messages loaded.[/dim]")
     current_model = cli.agent.get_current_model()
     console.print(f"[dim]Model: {current_model}[/dim]")
     if model and model != current_model:

@@ -549,8 +549,12 @@ class CompactionCoordinator:
                 "rule_count": len(rules),
                 "user_notices": list(notices),
             }))
-        except Exception:
-            pass
+        except Exception as exc:
+            # Swallowed by contract (see above) — but not silently. Every other
+            # dispatch site in this family logs, and a hook subsystem that is
+            # failing on the recovery ladder is exactly what a triager needs to
+            # see in ``agentao.log``.
+            self._warn(f"SessionStart(compact) dispatch failed: {exc}")
 
     # ------------------------------------------------------------------
     # The control plane

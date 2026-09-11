@@ -292,6 +292,12 @@ snapshot, or that retry carries a request the hook's context never reached. The 
 lands in `post_est_tokens` for free. If the request still overflows, the existing `minimal_history`
 rung handles it; no hook-specific retry or carry-over was added.
 
+One consequence is accepted rather than corrected: `CONTEXT_COMPRESSED`'s `post_msgs` and
+`post_est_tokens` are measured after the injection, so a host charting compaction effectiveness sees
+the injected message counted against the transform. Measuring before the injection would report a
+history that is not the one the next request carries, which is the worse of the two, and the event
+already documents itself as describing the post-compaction window.
+
 **`on_session_start` is not called.** A compaction keeps the session id, emits no `SessionEnd`,
 restarts no replay, and archives no memory session. Only the plugin dispatch applies, so the shared
 `plugins/hooks/lifecycle.py::fire_session_start` extracted in §4 is called directly.
