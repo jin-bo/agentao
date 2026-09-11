@@ -4,7 +4,7 @@
 > catalogued in `hooks-three-way-claude-codex-agentao.md` (rev 5), which remains analysis-only.
 > **Shipped in 0.4.21** (2026-08-30), the release it was the headline of.
 
-**Status:** **implemented** (rev 24, 2026-08-30) — all seven steps of §8 and all ten design gates.
+**Status:** **implemented** (rev 24, 2026-08-30) and **shipped in 0.4.21** — all seven steps of §8 and all ten design gates.
 See §0 for what each gate closed on. rev 23's text stands; this is the same document with the
 closures recorded and the steps ticked off. Every `file.py:line` citation below still resolves
 against the **pre-implementation** anchor `main@10b5fb8`: they are the evidence for the gap, not a

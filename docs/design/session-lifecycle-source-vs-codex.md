@@ -5,9 +5,10 @@
 > ACP question); the rest of the implemented scope was wiring, not deciding. Quote this line whenever
 > you quote the table.
 
-**Status:** **fully implemented** (2026-09-10, working tree; suite green at 4991) — §6.1 and §6.2
-(the CLI values and the resume path), §4 (ACP), and §6.3 (compaction), each cleared by its own
-maintainer review. This document is now the **rationale for landed behaviour**, not a proposal. The emitted values are documented in
+**Status:** **shipped in 0.4.23** (2026-09-11) — §6.1 and §6.2 (the CLI values and the resume
+path), §4 (ACP), and §6.3 (compaction), each cleared by its own maintainer review, plus a fourth
+batch for the user-notice route those three exposed. This document is now the **rationale for
+landed behaviour**, not a proposal. The emitted values are documented in
 `docs/reference/configuration.md` §11. The body below is the **rev 4** analysis. **rev 4 closed rev 3's two remaining P2s and one stale
 scope line**: load failure splits into the startup and interactive cases (§6.2's last two rows); §5's
 "unchanged" for v1 is limited to matching and execution count, since a v1 rule receives the envelope
