@@ -1,12 +1,11 @@
 # 会话生命周期 hook 的取值：codex #44349 对照与 agentao 的三个 surface
 
-> **⚠️ 本文一部分已实施、其余仅为分析记录 —— 引用 §1 之前先看下面的「状态」行。**
-> **§6.1 / §6.2 已实施；本文其余内容仅为分析记录，未获实施授权。** §1 是**结论的优先级排序**，
-> 不是工单，其最后两行（ACP、压缩）仍是仅记录的缺口。其中只有一条需要维护者拍板
-> （§4 的 ACP 取舍），已实施的那部分是接线、不是决策。引用本文时请一并引用这一行。
+> **⚠️ 本文大部分已实施 —— 引用 §1 之前先看下面的「状态」行。**
+> **§6.1 / §6.2 / §4 已实施；只剩 §6.3（压缩）还是分析，且未获实施授权。**
+> §1 是**结论的优先级排序**，不是工单。引用本文时请一并引用这一行。
 
-**状态：** **§6.1 / §6.2 已实施**（2026-09-10，工作树；套件 4963 通过）——
-即「CLI 取值 + 恢复路径」。**§4（ACP）与 §6.3（压缩）仍是仅记录的缺口，未实施。**
+**状态：** **§6.1 / §6.2 / §4（ACP）已实施**（2026-09-10，工作树；套件 4977 通过）。
+**只剩 §6.3（压缩）是仅记录的缺口，未实施。** ACP 经维护者单独评审后放行，见 §4 的三条约束。
 发出的取值已写入 `docs/reference/configuration.md` §11。以下正文为 **rev 4** 的分析。**rev 4 补清了 rev 3 遗留的两条 P2 与一处范围表述残留**：
 加载失败要分启动恢复与交互恢复（§6.2 最后两行）；§5 对 v1 的「无变化」限定为匹配与执行次数，
 输入字段仍然变（v1 拿的是原样 envelope）；§1 不再把压缩列进「接线」。
@@ -33,7 +32,7 @@ rev 2 的 §6 有两条 P1 错误，都是「按方案实施会产生重复派�
 | **接线（无需决策）** | `SessionEnd.reason` 恒为 `other`，五个上游取值只有一个可达 | §2 |
 | **接线（无需决策）** | `/clear` **两个事件都误报**，上游两处都该是 `clear` | §2 |
 | **接线（无需决策）** | `/resume` 两个事件**都不派发** | §2 |
-| **本轮只记录** | ACP 三个 surface 中唯一一个两个事件都不派发 —— 但**不能按 new/load 各派发一对**，见 §4 | §4 |
+| **已实施** | ACP 两个事件都不派发 —— 修法**不是**按 new/load 各派发一对，见 §4 | §4 |
 | **本轮只记录** | 压缩后不派发 `SessionStart` —— 但先要定「哪些压缩算生命周期重建」，见 §6.3 | §6.3 |
 | **不采纳** | codex 新增的 `fork` source | §3 |
 
@@ -109,30 +108,50 @@ source、在 hook 输入 schema 里暴露它，并按「有 fork parent → `for
 
 ---
 
-## 4. ACP：本轮只记录缺口，不在本文实施
+## 4. ACP：已实施，但不是「加三个派发调用」
 
-**事实。** `agentao/acp/` 下对 `SessionStart` / `SessionEnd` / `dispatch_plugin_session_*` **零引用**。
-交互式 CLI（`cli/session.py`）和 `agentao run`（`run.py:698`、`:827`）两个事件都派发。
-配置参考 §11 里没有任何「hook 仅限 CLI」的范围声明，代码里也没有相应注释或测试。
+**原缺口。** `agentao/acp/` 下对 `SessionStart` / `SessionEnd` **零引用**，而交互式 CLI 和
+`agentao run` 两个事件都派发，且这个分歧没有文档、注释或测试支撑。
 
-> `agentao/acp/models.py:269` 提到「CLI 在它的 session-end hook 里持久化」，指的是 CLI 内部的
-> `on_session_end` 步骤，**不是**插件 `SessionEnd` 事件。不要把它读成一条范围声明。
+**rev 2 在这里提过一个错误方案**（「`session/new` 与 `session/load` 各派发一对」），已撤回。
+实施时按维护者评审定下的三条约束落地：
 
-**rev 2 在这里提过一个错误方案**（「`session/new` 与 `session/load` 各派发一对」），已撤回。两个原因：
+**1. Start 必须先于首轮 prompt，且在恢复历史之后。** 注入的 context 是 append 到
+`agent.messages` 的：先发 Start 再恢复历史，内容会被整体覆盖；先注册会话再发 Start，
+流水线跟上来的 `session/prompt` 可能抢在前面开turn。所以派发口放在
+`AcpSessionManager.create` 新增的 `before_publish` 回调里 —— **在重复检查之后、发布之前**，
+两半都吃紧：
 
-1. **ACP 支持多会话并存。** `agentao/acp/session_manager.py:108` 把会话存进一个 dict，
-   `session/new` 或 `session/load` 只是多了一个会话，**不意味着另一个会话结束**。
-   `SessionEnd` 必须跟实际的关闭路径走（`acp/models.py::close`），不能挂在创建/加载上。
-2. **不能按方法名选取值。** `agentao/acp/session_new.py:329-348` 是「启动恢复接缝」：
-   服务器带 `--resume` 启动时，**首次 `session/new` 实际执行的是恢复**（hydrate + replay）。
-   照方法名给 `session/new` 发 `startup` 就是错的。
+- *在重复检查之后*：`SessionStart` hook 是任意用户命令，为一个随后因 id 重复而失败的
+  `session/load` 跑一遍副作用是不可接受的。
+- *在发布之前*：`session/load` 的 id 由客户端提供，它可以把 prompt 流水线跟在 load 后面；
+  而 `turn_lock` 是**非阻塞**获取的 —— 抢到的 prompt 会被直接拒绝而不是排队，所以
+  「先发布再派发」会把一个 hook 变成一次伪错误。
 
-**所以 ACP 侧的正确做法需要先回答两个问题**：`SessionEnd` 挂在哪个关闭路径上，以及
-`session/new` 如何区分「真新建」与「启动恢复」。这超出本文范围。
+代价是明确的：回调期间其他会话的查找会阻塞（共用同一把注册锁），上界是 hook 超时，
+且只在会话创建时付一次。复用现有注册锁，没有新状态机。
 
-**仍然成立的结论：** 三个 surface 里 ACP 是唯一两个事件都不派发的，而这个分歧没有文档、
-注释或测试支撑。是接上还是写进文档（`docs/reference/configuration.md` §11 一句范围声明），
-仍需维护者拍板 —— 只是这个板要在 ACP 自己的工单里拍，不在本文。
+**2. End 跟真正的关闭走。** 放在 `AcpSessionState.close()` 的幂等守卫之后、释放任何资源之前，
+`reason="other"`（ACP 没有对应的上游具名原因，`other` 正是上游给「不属于任何具名原因」的取值）。
+**不跟 new/load 走**——ACP 同时持有多个会话，新建或加载一个不意味着另一个结束；
+**也不跟取消单轮走**——取消一个 turn 不是会话结束。构建失败时只清理 agent，不补发 End；
+强杀进程不承诺派发。
+
+**3. 复用派发逻辑，但不导入 CLI。** 与终端无关的派发和上下文注入移到
+`agentao/plugins/hooks/lifecycle.py`（`fire_session_start` / `fire_session_end`），
+CLI 的两个 `dispatch_plugin_session_*` 变成它的薄别名并保留打印，ACP 通过
+`agentao/acp/_lifecycle.py` 接入。用户提示走新增的
+`_transport_helpers.write_user_notice`，以 `session/update` 分片送达 —— ACP 没有普通
+hook notice 通道，而 exit 2 在这两个事件上**就是**用户通道。
+
+**已知弱点（接受而非绕开）：** `session/new` 上提示先于那条告知客户端新 sessionId 的响应写出，
+严格的客户端可能丢弃它。事件的实质通道是注入历史的 context，不受影响；把一条诊断缓存到
+可能永远不来的首轮，是拿「可能被丢」换「肯定不到」。
+
+**落地取值：** `session/new` → `startup`；`session/load` 与启动恢复成功 → `resume`；
+启动恢复回退到新建 → `startup`（取值跟实际发生的事走，不跟方法名走）；真正关闭 → `other`；
+加载失败 / 重复加载 / 取消单轮 → 不派发。测试见
+`tests/test_acp_session_lifecycle_hooks.py`。
 
 ---
 

@@ -32,6 +32,29 @@ _Targeting 0.4.23. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`SessionStart` and `SessionEnd` hooks now fire over ACP.** ACP was the one
+  surface of three that dispatched neither, with no doc, comment, or test
+  behind the divergence. It is not three more dispatch calls: ACP holds several
+  sessions at once, a client supplies its own id on `session/load` and can
+  pipeline a prompt behind it, and a startup `--resume` turns the first
+  `session/new` into a resume. So `SessionStart` runs in a `before_publish`
+  callback on session registration — **after** the duplicate check, so a load
+  about to be rejected runs no user commands, and **before** the session is
+  published, so no prompt can start a turn in front of the context a hook
+  injected; it fires after history is restored, or the restore would discard
+  that context. `SessionEnd` follows the real close path with `reason: "other"`,
+  behind the idempotence guard so a double close dispatches once: creating or
+  loading a session ends nothing, and a cancelled turn is not a session ending.
+  `session/new` reports `startup`, `session/load` and a successful startup
+  resume report `resume`, and a startup resume that finds nothing and falls back
+  to a new session reports `startup` — the value follows what happened, not
+  which method was called. A failed load, a duplicate load, and a cancelled turn
+  dispatch nothing. Hook user notices (exit 2, which on these two events is the
+  only user channel) arrive as a `session/update` chunk, best-effort. The
+  terminal-independent dispatch moved to `agentao/plugins/hooks/lifecycle.py`,
+  which is how ACP reaches it without importing the CLI; the CLI's two helpers
+  are now thin aliases and keep their printing.
+
 - **`SessionStart` and `SessionEnd` hooks now report why the session started or
   ended.** Both payloads shipped a constant — always `source: "startup"` and
   always `reason: "other"` — even though the adapter had taken the value as an

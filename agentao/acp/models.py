@@ -14,7 +14,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agentao.cancellation import CancellationToken
 
@@ -253,6 +253,11 @@ class AcpSessionState:
     #: UI mode that has no permission meaning (e.g. DeepChat's ``code`` /
     #: ``ask``) round-trips instead of being rejected. ``None`` until first set.
     mode_id: Optional[str] = None
+    #: Best-effort one-argument sender for hook user-notices, bound to this
+    #: session's id and the live server. Set when the session is published
+    #: (``_lifecycle.session_start_publisher``) so :meth:`close` can deliver
+    #: ``SessionEnd`` notices without this module importing the server.
+    notify_user: Optional[Callable[[str], None]] = None
     closed: bool = False
 
     def close(self) -> None:
@@ -285,6 +290,15 @@ class AcpSessionState:
         if self.closed:
             return
         self.closed = True
+
+        # ``SessionEnd`` first, behind the idempotence guard above so a double
+        # close dispatches once, and before anything is released so the hook
+        # still sees a live session. It follows the *real* close path
+        # deliberately: creating or loading another session ends nothing (ACP
+        # holds several at once), and cancelling one turn is not a session
+        # ending either.
+        from ._lifecycle import fire_end_for_state
+        fire_end_for_state(self)
 
         self._save_session()
 

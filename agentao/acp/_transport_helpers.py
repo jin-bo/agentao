@@ -7,10 +7,13 @@ interactions (:mod:`agentao.acp._transport_interaction`).
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict
 
 from .protocol import METHOD_SESSION_UPDATE
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -154,3 +157,33 @@ def write_session_update(server: Any, session_id: str, update: Dict[str, Any]) -
         METHOD_SESSION_UPDATE,
         {"sessionId": session_id, "update": update},
     )
+
+
+def write_user_notice(server: Any, session_id: str, text: str) -> None:
+    """Deliver one hook user-notice to the client. Best-effort.
+
+    ``SessionStart`` / ``SessionEnd`` hooks reach the user through exit 2,
+    which the CLI prints and ``agentao run`` folds into its warnings. ACP has
+    no notice channel of its own, so the notice rides the one stream a client
+    is guaranteed to render: an ``agent_message_chunk``, marked so it cannot be
+    mistaken for model output.
+
+    Swallows every failure, unlike :func:`write_session_update`. Its callers
+    are a session being created and a connection being torn down, and neither
+    may be failed by a diagnostic — on the close path the stream may already be
+    gone, which is exactly the best-effort case.
+    """
+    try:
+        write_session_update(
+            server,
+            session_id,
+            {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": f"\u26a0 {text}"},
+            },
+        )
+    except Exception:
+        logger.debug(
+            "acp: could not deliver hook notice for session %s", session_id,
+            exc_info=True,
+        )

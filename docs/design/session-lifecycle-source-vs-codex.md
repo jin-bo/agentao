@@ -1,15 +1,14 @@
 # Session-lifecycle hook values — codex #44349 against agentao's three surfaces
 
-> **⚠️ Partly implemented, partly analysis only — read the Status line below before quoting §1.**
-> **§6.1 and §6.2 are implemented; everything else here is analysis only and is not authorized for
-> implementation.** §1 is a **priority ordering of findings**, not a work schedule, and its last two
-> rows (ACP, compaction) remain recorded gaps. Exactly one item needs a maintainer decision (§4, the
+> **⚠️ Mostly implemented — read the Status line below before quoting §1.**
+> **§6.1, §6.2 and §4 are implemented; only §6.3 (compaction) is still analysis, and it is not
+> authorized for implementation.** §1 is a **priority ordering of findings**, not a work schedule. Exactly one item needs a maintainer decision (§4, the
 > ACP question); the rest of the implemented scope was wiring, not deciding. Quote this line whenever
 > you quote the table.
 
-**Status:** **§6.1 and §6.2 are implemented** (2026-09-10, working tree; suite green at 4963) —
-that is, the CLI values plus the resume path. **§4 (ACP) and §6.3 (compaction) remain recorded gaps
-and are not implemented.** The emitted values are documented in
+**Status:** **§6.1, §6.2 and §4 (ACP) are implemented** (2026-09-10, working tree; suite green at
+4977). **Only §6.3 (compaction) remains a recorded gap.** ACP was cleared by a separate maintainer
+review, whose three constraints are §4. The emitted values are documented in
 `docs/reference/configuration.md` §11. The body below is the **rev 4** analysis. **rev 4 closed rev 3's two remaining P2s and one stale
 scope line**: load failure splits into the startup and interactive cases (§6.2's last two rows); §5's
 "unchanged" for v1 is limited to matching and execution count, since a v1 rule receives the envelope
@@ -42,7 +41,7 @@ report. What it adds is that they are the **last two unwired required fields in 
 | **Wiring (no decision needed)** | `SessionEnd.reason` is always `other`, so one of five upstream values is reachable | §2 |
 | **Wiring (no decision needed)** | `/clear` **misreports on both events**, where upstream says `clear` for each | §2 |
 | **Wiring (no decision needed)** | `/resume` dispatches **neither** event | §2 |
-| **Recorded only this round** | ACP is the one surface of three that dispatches neither event, but it **must not** dispatch a pair each on new/load, see §4 | §4 |
+| **Implemented** | ACP dispatched neither event; the fix is **not** a pair each on new/load, see §4 | §4 |
 | **Recorded only this round** | Post-compaction dispatches no `SessionStart`, but "which compactions count as a lifecycle rebuild" has to be settled first, see §6.3 | §6.3 |
 | **Do not adopt** | codex's new `fork` source | §3 |
 
@@ -127,35 +126,56 @@ value that can never be emitted makes the profile's enumeration longer without m
 
 ---
 
-## 4. ACP: recorded as a gap this round, not implemented here
+## 4. ACP: implemented, and not by adding three dispatch calls
 
-**The fact.** `agentao/acp/` contains **zero** references to `SessionStart`, `SessionEnd`, or
-`dispatch_plugin_session_*`. The interactive CLI (`cli/session.py`) and `agentao run`
-(`run.py:698`, `:827`) dispatch both. There is no scope statement in the configuration reference §11
-saying hooks are CLI-only, and no comment or test in the code saying so either.
-
-> `agentao/acp/models.py:269` mentions "the CLI, which persists in its session-end hook". That refers
-> to the CLI's internal `on_session_end` step, **not** the plugin `SessionEnd` event. Do not read it
-> as a scope statement.
+**The original gap.** `agentao/acp/` contained **zero** references to `SessionStart` or
+`SessionEnd`, while the interactive CLI and `agentao run` dispatched both, with no doc, comment, or
+test behind the divergence.
 
 **rev 2 proposed a wrong shape here** ("a pair each for `session/new` and `session/load`") and it is
-withdrawn. Two reasons:
+withdrawn. What landed follows the three constraints a separate maintainer review set:
 
-1. **ACP holds several sessions at once.** `agentao/acp/session_manager.py:108` stores sessions in a
-   dict, so `session/new` or `session/load` adds one and **does not mean another one ended**.
-   `SessionEnd` has to follow the real close path (`acp/models.py::close`), not creation or loading.
-2. **The value cannot be chosen by method name.** `agentao/acp/session_new.py:329-348` is the
-   startup-resume seam: when the server is launched with `--resume`, the **first `session/new`
-   actually performs a resume** (hydrate and replay). Emitting `startup` because the method was
-   called `session/new` would be wrong.
+**1. Start must precede the first prompt and follow the history restore.** Injected context is
+appended to `agent.messages`, so firing before the restore discards it and publishing the session
+before firing lets a pipelined `session/prompt` start a turn in front of it. The dispatch therefore
+runs in a `before_publish` callback added to `AcpSessionManager.create` — **after the duplicate check
+and before publication**, both halves load-bearing:
 
-**So the ACP side needs two questions answered first:** which close path carries `SessionEnd`, and how
-`session/new` distinguishes a genuine new session from a startup resume. Both are out of scope here.
+- *After the duplicate check*, because `SessionStart` hooks are arbitrary user commands and running
+  them for a `session/load` that then fails on a duplicate id runs side effects for a session that
+  never existed.
+- *Before publication*, because a client supplies its own id on `session/load` and can pipeline a
+  prompt behind it, and `turn_lock` is acquired **non-blocking** — a racing prompt is rejected rather
+  than queued, so "publish then fire" would turn a hook into a spurious error.
 
-**What still stands:** ACP is the one surface of three dispatching neither event, and the divergence
-has no doc, comment, or test behind it. Whether to wire it or write it down (one scope sentence in
-`docs/reference/configuration.md` §11) still needs a maintainer decision — but that decision belongs
-in ACP's own work item, not this one.
+The cost is explicit: other sessions' lookups block for the callback's duration, since they share the
+registration lock. It is bounded by the hook timeout and paid once per session creation. One existing
+lock, no state machine.
+
+**2. End follows the real close path.** It sits in `AcpSessionState.close()`, behind the idempotence
+guard and before any resource is released, with `reason="other"` — ACP has no named upstream cause,
+and `other` is upstream's own value for exactly that. It does **not** follow new/load, because ACP
+holds several sessions at once and creating or loading one ends nothing, and it does not follow a
+cancelled turn, which is not a session ending. A construction failure cleans up the agent and emits
+no End; a killed process promises nothing.
+
+**3. The dispatch is shared, but the CLI is not imported.** The terminal-independent dispatch and
+context injection moved to `agentao/plugins/hooks/lifecycle.py` (`fire_session_start` /
+`fire_session_end`). The CLI's two `dispatch_plugin_session_*` helpers are now thin aliases that keep
+the printing, and ACP reaches the same behaviour through `agentao/acp/_lifecycle.py`. User notices go
+out through a new `_transport_helpers.write_user_notice` as a `session/update` chunk, because ACP has
+no notice channel of its own and exit 2 on these two events **is** the user channel.
+
+**One accepted weakness.** On `session/new` the notice is written before the response that tells the
+client which sessionId it just created, so a strict client may drop it. The event's substantive
+channel is the context injected into history, which is unaffected, and buffering a diagnostic until a
+turn that may never come trades a dropped message for one that never arrives.
+
+**The values as landed:** `session/new` gives `startup`; `session/load` and a successful startup
+resume give `resume`; a startup resume that falls back to a new session gives `startup`, because the
+value follows what happened rather than which method was called; a real close gives `other`; a failed
+load, a duplicate load, and a cancelled turn dispatch nothing. Tests:
+`tests/test_acp_session_lifecycle_hooks.py`.
 
 ---
 

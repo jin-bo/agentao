@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid as _uuid_mod
 from typing import TYPE_CHECKING
 
+from ..plugins.hooks.lifecycle import fire_session_end, fire_session_start
 from ._globals import console
 
 if TYPE_CHECKING:
@@ -75,51 +76,18 @@ def on_session_end(cli: AgentaoCLI, *, reason: str = "other") -> None:
         pass  # Non-critical
 
 
-def _apply_lifecycle_result(agent, result, *, print_notices: bool) -> list[str]:
-    """Route a lifecycle result's channels. Returns the user notices.
-
-    Two channels, two destinations, and neither is the log. ``model_contexts``
-    is rendered exactly as the ``UserPromptSubmit`` attachment path renders it,
-    so a hook's context reads the same wherever it came from.
-    """
-    notices = list(getattr(result, "user_notices", []) or [])
-    for ctx in getattr(result, "model_contexts", []) or []:
-        try:
-            agent.add_message("user", f"[hook_additional_context] context: {ctx}")
-        except Exception:
-            pass
-    if print_notices:
-        for notice in notices:
-            console.print(f"[yellow]⚠ {notice}[/yellow]")
-    return notices
-
-
 def dispatch_plugin_session_start(
     agent, session_id: str, *, source: str = "startup",
 ) -> list[str]:
     """Fire SessionStart plugin hooks for ``agent``. Best-effort.
 
-    Both the interactive CLI and the ``agentao run`` pipeline use this
-    so plugin hooks remain consistent across surfaces.
+    A thin CLI-facing alias for the surface-independent dispatch in
+    ``plugins/hooks/lifecycle.py``, kept because the interactive CLI and
+    ``agentao run`` both already call it by this name. The shared function is
+    where ACP reaches the same behaviour without importing the CLI
+    (``tests/test_import_layering.py`` rule 1).
     """
-    if not agent._plugin_hook_rules:
-        return []
-    try:
-        from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
-        cwd = agent.working_directory
-        payload = ClaudeHookPayloadAdapter().build_session_start(
-            session_id=session_id, cwd=cwd, source=source,
-        )
-        result = PluginHookDispatcher(cwd=cwd).dispatch_session_start(
-            payload=payload, rules=agent._plugin_hook_rules,
-        )
-        # Consuming the return value is the whole fix: it existed and was
-        # discarded inside a bare ``except: pass``, so nothing downstream could
-        # have routed a notice even if the dispatcher had produced one.
-        return _apply_lifecycle_result(agent, result, print_notices=False)
-    except Exception:
-        pass
-    return []
+    return fire_session_start(agent, session_id, source=source)
 
 
 def dispatch_plugin_session_end(
@@ -127,29 +95,12 @@ def dispatch_plugin_session_end(
 ) -> list[str]:
     """Fire SessionEnd plugin hooks for ``agent``. Returns the user notices.
 
-    The JSON half of this event is genuinely conformant — the reference gives it
-    no decision control and discards its output — but **exit 2 is a separate
-    channel**, and on ``SessionEnd`` it means *stderr shown to the user*. That
-    had no sink at all: the return value was thrown away here, and `agentao run`
-    emitted its whole output before the dispatch even ran.
+    See :func:`dispatch_plugin_session_start` for why this is an alias. The
+    returned notices are this event's **only** output channel — exit 2 on
+    ``SessionEnd`` means stderr shown to the user — so a caller that drops the
+    list removes the event's whole effect.
     """
-    if not agent._plugin_hook_rules:
-        return []
-    try:
-        from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
-        cwd = agent.working_directory
-        payload = ClaudeHookPayloadAdapter().build_session_end(
-            session_id=session_id, cwd=cwd, reason=reason,
-        )
-        result = PluginHookDispatcher(cwd=cwd).dispatch_session_end(
-            payload=payload, rules=agent._plugin_hook_rules,
-        )
-        # No model channel here: the event's JSON output is discarded, so only
-        # the exit-2 user notice survives.
-        return list(result.user_notices)
-    except Exception:
-        pass
-    return []
+    return fire_session_end(agent, session_id, reason=reason)
 
 
 def _dispatch_session_start_hooks(cli: AgentaoCLI, *, source: str = "startup") -> None:

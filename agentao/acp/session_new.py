@@ -35,6 +35,7 @@ from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 from agentao.permissions import PermissionMode
 
 from .mcp_translate import translate_acp_mcp_servers
+from ._lifecycle import session_start_publisher
 from .models import AcpSessionState
 from .protocol import METHOD_SESSION_NEW, SERVER_NOT_INITIALIZED
 from .server import JsonRpcHandlerError
@@ -427,7 +428,16 @@ def handle_session_new(
         )
 
         try:
-            server.sessions.create(state)
+            # `startup`: this is the fresh-session path. The startup `--resume`
+            # seam above returns before reaching here when it has something to
+            # restore, so a resume that falls back to a new session correctly
+            # reports `startup` rather than `resume`.
+            server.sessions.create(
+                state,
+                before_publish=session_start_publisher(
+                    server, agent, session_id, source="startup",
+                ),
+            )
         except DuplicateSessionError:
             # Essentially impossible with 122-bit uuids, but if it ever
             # fires we must surface it as INTERNAL_ERROR and clean up.
