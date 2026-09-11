@@ -203,6 +203,15 @@ class CompactionCoordinator:
                 # precisely when it is most expensive.
                 cm.invalidate_token_anchor()
             if request.kind == "full":
+                # A full compaction replaced the window the model sees, which
+                # is a session start in the one sense the profile names for it.
+                # Fired **here** — after history is replaced and before the
+                # snapshot below is assembled — because that snapshot is what
+                # the caller sends next, and the two API-overflow rungs retry
+                # with it immediately. Injecting any later (on the
+                # ``CONTEXT_COMPRESSED`` emit, say) would hand that retry a
+                # request the hook's context never reached.
+                self._dispatch_compact_session_start()
                 system_prompt = agent._build_system_prompt()
             messages_with_system = self._with_system(system_prompt)
 
@@ -497,6 +506,51 @@ class CompactionCoordinator:
             return (result.reason or "") if cancelled else None
         except Exception:
             return None
+
+    def _dispatch_compact_session_start(self) -> None:
+        """Fire ``SessionStart(source="compact")`` after a successful full compaction.
+
+        **Scope is agentao's own choice, and it is narrow: a *successful*
+        *full* compaction only.** ``microcompact`` is a trim that runs on most
+        iterations inside its band, so firing startup hooks there would
+        re-inject the same context over and over; ``minimal_history`` is the
+        overflow ladder's last rung, which exists to shrink a request that has
+        already been refused twice, not to re-seed one. Neither is a lifecycle
+        rebuild. That distinction is why this does **not** subscribe to
+        ``CONTEXT_COMPRESSED``, which is not gated by kind.
+
+        Not ``on_session_start``: a compaction keeps the session id, ends no
+        session, restarts no replay, and archives no memory session. Only the
+        plugin dispatch applies, which is why the shared helper is called
+        directly.
+
+        **Never raises.** History has already been rewritten by the time this
+        runs, and two of the three callers are the overflow recovery ladder —
+        a hook failure must not be able to undo a compaction that succeeded,
+        or to end the turn the compaction exists to save. Notices ride
+        ``PLUGIN_HOOK_FIRED``, the same host channel ``UserPromptSubmit`` and
+        ``PreCompact`` use.
+        """
+        agent = self._agent
+        rules = getattr(agent, "_plugin_hook_rules", None)
+        if not rules:
+            return
+        try:
+            from ..plugins.hooks.lifecycle import fire_session_start
+            from ..transport import AgentEvent, EventType
+
+            notices = fire_session_start(
+                agent, agent._session_id or "", source="compact",
+            )
+            agent.transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
+                "hook_name": "SessionStart",
+                "source": "compact",
+                "outcome": "allow",
+                "rule_count": len(rules),
+                "user_notices": list(notices),
+            }))
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # The control plane

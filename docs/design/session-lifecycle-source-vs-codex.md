@@ -1,14 +1,13 @@
 # Session-lifecycle hook values — codex #44349 against agentao's three surfaces
 
-> **⚠️ Mostly implemented — read the Status line below before quoting §1.**
-> **§6.1, §6.2 and §4 are implemented; only §6.3 (compaction) is still analysis, and it is not
-> authorized for implementation.** §1 is a **priority ordering of findings**, not a work schedule. Exactly one item needs a maintainer decision (§4, the
+> **⚠️ Everything described here is implemented.** §1 was a priority ordering of findings; it is now
+> a summary table. `docs/reference/configuration.md` §11 is the authority on the values themselves. Exactly one item needs a maintainer decision (§4, the
 > ACP question); the rest of the implemented scope was wiring, not deciding. Quote this line whenever
 > you quote the table.
 
-**Status:** **§6.1, §6.2 and §4 (ACP) are implemented** (2026-09-10, working tree; suite green at
-4977). **Only §6.3 (compaction) remains a recorded gap.** ACP was cleared by a separate maintainer
-review, whose three constraints are §4. The emitted values are documented in
+**Status:** **fully implemented** (2026-09-10, working tree; suite green at 4991) — §6.1 and §6.2
+(the CLI values and the resume path), §4 (ACP), and §6.3 (compaction), each cleared by its own
+maintainer review. This document is now the **rationale for landed behaviour**, not a proposal. The emitted values are documented in
 `docs/reference/configuration.md` §11. The body below is the **rev 4** analysis. **rev 4 closed rev 3's two remaining P2s and one stale
 scope line**: load failure splits into the startup and interactive cases (§6.2's last two rows); §5's
 "unchanged" for v1 is limited to matching and execution count, since a v1 rule receives the envelope
@@ -42,11 +41,12 @@ report. What it adds is that they are the **last two unwired required fields in 
 | **Wiring (no decision needed)** | `/clear` **misreports on both events**, where upstream says `clear` for each | §2 |
 | **Wiring (no decision needed)** | `/resume` dispatches **neither** event | §2 |
 | **Implemented** | ACP dispatched neither event; the fix is **not** a pair each on new/load, see §4 | §4 |
-| **Recorded only this round** | Post-compaction dispatches no `SessionStart`, but "which compactions count as a lifecycle rebuild" has to be settled first, see §6.3 | §6.3 |
+| **Implemented** | Post-compaction dispatched no `SessionStart`; scoped to a **successful full** compaction, see §6.3 | §6.3 |
 | **Do not adopt** | codex's new `fork` source | §3 |
 
-**Implementable scope (after rev 3's narrowing):** the first four rows only, which is **the CLI
-values plus the resume path**. The last two are recorded gaps, each with a prerequisite of its own.
+**Landed in three batches**, each with its own maintainer review: the first four rows (the CLI values
+and the resume path), then §4 (ACP), then §6.3 (compaction). The prerequisites the last two carried
+are answered in their own sections.
 
 **In one line:** this is not an open policy row, it is two stragglers. The §5.3 table now sorts into
 three classes:
@@ -264,20 +264,44 @@ resume fails there was never a prior session, so no `SessionEnd` is owed, but a 
 begin and is owed a `SessionStart` — one that is not a resume, hence `startup` rather than `resume`.
 Writing "load failure dispatches neither" as one rule would silence a session that really started.
 
-### 6.3 Compaction: not this round, and the scope question comes first
+### 6.3 Compaction: implemented, scoped to a successful full compaction
 
-The prerequisite for `source="compact"` is not layering, it is **scope: which compactions count as a
-lifecycle rebuild?**
+The prerequisite was never layering, it was **scope: which compactions count as a lifecycle
+rebuild?** The answer is full ones, and only when they succeed:
 
-`CONTEXT_COMPRESSED` is **not gated by kind**. The emit site in `coordinator.py` filters only
-`outcome.status == "skipped"`, so a successful microcompaction emits it too. Subscribing to it as-is
-would fire startup hooks on every lightweight trim and re-inject context repeatedly. That is the more
-immediate problem with rev 2's suggestion, ahead of the layering one it named.
+| Case | Dispatches `SessionStart(source="compact")` |
+|---|---|
+| manual `/compact` succeeds | once |
+| automatic threshold full compaction succeeds | once |
+| full compaction after an API overflow succeeds | once |
+| `microcompact`, `minimal_history` | never |
+| failed, cancelled, skipped | never |
 
-The layering problem does remain: `dispatch_plugin_session_start` lives in `cli/session.py` and
-runtime may not import cli (`tests/test_import_layering.py`). But scope is decided first and the
-dispatch point chosen after. Most likely only `kind == "full"` qualifies, with `microcompact` and
-`minimal_history` excluded.
+`microcompact` runs on most iterations inside its band, so hanging startup hooks on it would
+re-inject the same context over and over; `minimal_history` is the overflow ladder's last rung, whose
+purpose is to **shrink** a request the provider has already refused twice, not to re-seed one.
+Neither rebuilds the session. **That is also why this does not subscribe to `CONTEXT_COMPRESSED`**,
+which is not gated by kind — its emit site filters only `status == "skipped"`, so subscribing would
+fire startup hooks on every lightweight trim.
+
+**Placement is the one delicate part.** The success branch in `coordinator.py` replaces history and
+then assembles `messages_with_system`, and that snapshot is what the caller sends next — **the two
+API-overflow rungs retry with it immediately**. The dispatch therefore sits between those two steps:
+after the history replacement, or the injected context is discarded wholesale, and before the
+snapshot, or that retry carries a request the hook's context never reached. The injected content
+lands in `post_est_tokens` for free. If the request still overflows, the existing `minimal_history`
+rung handles it; no hook-specific retry or carry-over was added.
+
+**`on_session_start` is not called.** A compaction keeps the session id, emits no `SessionEnd`,
+restarts no replay, and archives no memory session. Only the plugin dispatch applies, so the shared
+`plugins/hooks/lifecycle.py::fire_session_start` extracted in §4 is called directly.
+
+**A hook failure cannot undo a compaction that succeeded.** The dispatch swallows everything: history
+has already been rewritten when it runs, and two of its three callers are the overflow recovery
+ladder, so a hook fault must never be able to end the turn the compaction exists to save. User
+notices ride `PLUGIN_HOOK_FIRED`, the same host channel `UserPromptSubmit` and `PreCompact` use.
+
+Tests: `tests/test_compaction_session_start_hook.py`.
 
 ### 6.4 Explicit non-goals
 

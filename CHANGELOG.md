@@ -32,6 +32,24 @@ _Targeting 0.4.23. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`SessionStart` now fires with `source: "compact"` after a full
+  compaction.** Scope is deliberately narrow and is agentao's own choice: a
+  **successful** **full** compaction only — manual `/compact`, the automatic
+  threshold tier, and the first API-overflow rung, once each. `microcompact`
+  runs on most iterations inside its band and `minimal_history` is the overflow
+  ladder's last rung; neither rebuilds the session, and firing there would
+  re-inject the same context repeatedly on the one path where the request is
+  already too large. That is also why this is not wired to
+  `CONTEXT_COMPRESSED`, which is not gated by compaction kind. A cancelled,
+  failed, or skipped compaction fires nothing. The dispatch sits between the
+  history replacement and the assembly of the next request's message snapshot,
+  because that snapshot is what the caller sends next and the overflow rungs
+  retry with it immediately — so a hook's `additionalContext` is in the very
+  request the compaction was performed for, and is counted in its token
+  estimate. The session id does not change, no `SessionEnd` is emitted, and no
+  replay or memory-session boundary is crossed. A hook failure cannot undo a
+  compaction that already succeeded.
+
 - **`SessionStart` and `SessionEnd` hooks now fire over ACP.** ACP was the one
   surface of three that dispatched neither, with no doc, comment, or test
   behind the divergence. It is not three more dispatch calls: ACP holds several

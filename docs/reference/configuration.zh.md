@@ -544,8 +544,13 @@ handler，单独告警，所以一处笔误不会让一份能用的文件整体�
 排在首轮 prompt 前面。它的用户提示（exit 2）以 `session/update` 分片送达，尽力而为：`session/new`
 上提示先于告知客户端新 sessionId 的响应，关闭时流可能已经没了。
 
-`compact` 与 `fork` **永远不会**出现：agentao 在压缩之后不派发 `SessionStart`，也没有线程 fork。
-参见 `docs/design/session-lifecycle-source-vs-codex.md`。
+**成功的 full 压缩**之后 `SessionStart` 也会以 `source: "compact"` 派发 —— 手动 `/compact`、
+自动阈值层、以及 API 溢出的第一级。`microcompact` 与 `minimal_history` **不派发**（它们是裁剪而非重建），
+被取消、失败、跳过的压缩同样不派发。session id 不变，不发 `SessionEnd`，不跨越 replay 或记忆会话边界：
+只跑 hook。hook 注入的上下文在下一次模型请求组装之前就位，包括溢出层立刻发起的那次重试。
+
+`fork` **永远不会**出现：agentao 没有线程 fork。参见
+`docs/design/session-lifecycle-source-vs-codex.md`。
 
 **不认识的键一律忽略，并出一条点名该键的一次性诊断，绝不作为 schema 错误。** 为更新版 Claude Code 写的
 hook 照样能跑，作者也会被告知哪个键没起作用。该诊断按会话作用域、按规则内容取键，所以插件重载后，改好的

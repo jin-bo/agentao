@@ -613,8 +613,15 @@ prompt. Its user notices (exit 2) arrive as a `session/update` chunk, best-effor
 the notice precedes the response that tells the client the new sessionId, and on close the stream may
 already be gone.
 
-`compact` and `fork` are **never** emitted: agentao dispatches no `SessionStart` after a compaction,
-and has no thread fork. See `docs/design/session-lifecycle-source-vs-codex.md`.
+`SessionStart` also fires with `source: "compact"` after a **successful full** compaction — manual
+`/compact`, the automatic threshold tier, and the first API-overflow rung. It does **not** fire for
+`microcompact` or `minimal_history`, which trim rather than rebuild, nor for a compaction that was
+cancelled, failed, or skipped. The session id does not change, no `SessionEnd` is emitted, and no
+replay or memory-session boundary is crossed: only the hooks run. Context a hook injects is in place
+before the next model request is assembled, including the immediate retry the overflow rungs make.
+
+`fork` is **never** emitted: agentao has no thread fork. See
+`docs/design/session-lifecycle-source-vs-codex.md`.
 
 **Unknown keys are ignored with a one-time diagnostic naming them, never a
 schema error.** A hook written for a newer Claude Code keeps working and its
