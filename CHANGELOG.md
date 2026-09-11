@@ -32,6 +32,33 @@ _Targeting 0.4.23. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`SessionStart` and `SessionEnd` hooks now report why the session started or
+  ended.** Both payloads shipped a constant — always `source: "startup"` and
+  always `reason: "other"` — even though the adapter had taken the value as an
+  argument since the profile landed and no call site ever passed one. A profile
+  hook matcher on these two events is compared against exactly those fields
+  (measured against a real `claude` 2.1.251, `docs/reference/hooks-probe-2.1.251.md`
+  §G6), so every rule written `matcher: "resume"` / `"clear"` / `"logout"` was
+  silently dead, and the one rule written `matcher: "startup"` fired on `/clear`
+  too. `/clear` and `/new` now report `clear` on both events,
+  interactive exit reports `prompt_input_exit`, `agentao run` keeps `other` as
+  upstream's own value for an unnamed cause, and both resume paths report
+  `resume`. `/sessions resume` previously dispatched **neither** event; it now
+  dispatches both, hooks only, carrying the outgoing session id on the end event
+  and the incoming one on the start. A startup `agentao --resume` leaves a
+  one-shot marker for the single dispatch `run_loop` already makes rather than
+  adding its own, which is what keeps that path at one `SessionStart` instead of
+  `resume` followed by `startup`; the marker is set only on a successful load,
+  so a failed startup resume still reports `startup` for the real new session
+  that begins anyway. A corrupt session file no longer escapes as a fatal error
+  that prevents `--resume` from starting the CLI at all, and an interactive
+  resume no longer skips the memory-session archive, which had left the
+  abandoned conversation's summaries bound to the resumed session. The values
+  agentao emits are now enumerated in `docs/reference/configuration.md` §11;
+  `compact` and `fork` are never emitted, and ACP dispatches neither event on
+  any path. Design and the two recorded gaps:
+  `docs/design/session-lifecycle-source-vs-codex.md`.
+
 - **The overflow ladder's last rung no longer hands the provider an orphaned
   tool result.** Rung 2 (`minimal_history`) kept the newest two messages by a
   blind tail slice. Overflow is normally detected on the request *after* a

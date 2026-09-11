@@ -579,6 +579,27 @@ detection; an unknown value disables the file.
 
 ¹ `command` or `args`; a handler with neither is skipped.
 
+**What `SessionStart` / `SessionEnd` actually report.** These are the values a `matcher` on those
+two events is compared against, so a rule matching anything else never fires:
+
+| Entry point | `SessionStart.source` | `SessionEnd.reason` |
+|---|---|---|
+| Interactive launch | `startup` | — |
+| Interactive exit (`/exit`, `/quit`) | — | `prompt_input_exit` |
+| `agentao --resume` (successful load) | `resume` | — |
+| `agentao --resume` (failed load, CLI starts anyway) | `startup` | — |
+| `/sessions resume` (successful load) | `resume` | `resume` |¹
+| `/sessions resume` (failed load) | — | — |
+| `/clear` and `/new` | `clear` | `clear` |
+| `agentao run` | `startup` | `other` |
+
+¹ Hook dispatch only. `/sessions resume` does not persist the outgoing conversation, which it never
+has; the event reports the boundary without changing what the command saves.
+
+`compact` and `fork` are **never** emitted: agentao dispatches no `SessionStart` after a compaction,
+and has no thread fork. ACP dispatches neither event on any path. See
+`docs/design/session-lifecycle-source-vs-codex.md`.
+
 **Unknown keys are ignored with a one-time diagnostic naming them, never a
 schema error.** A hook written for a newer Claude Code keeps working and its
 author is told which key had no effect. The diagnostic is session-scoped and

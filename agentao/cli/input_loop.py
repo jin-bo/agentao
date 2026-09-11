@@ -264,7 +264,13 @@ def run_loop(cli: "AgentaoCLI") -> None:
     """Main input loop — slash-command dispatch + agent turn handling."""
     commands = _build_command_table()
 
-    cli.on_session_start()
+    # A *successful* startup ``--resume`` leaves a one-shot marker; this single
+    # dispatch is the session start it belongs to. Consuming it here (rather
+    # than dispatching inside ``resume_session``) is what keeps the launch path
+    # at one ``SessionStart`` instead of ``resume`` followed by ``startup``.
+    _start_source = getattr(cli, "_pending_session_start_source", None) or "startup"
+    cli._pending_session_start_source = None
+    cli.on_session_start(source=_start_source)
     while True:
         try:
             cli._flush_acp_inbox()

@@ -1058,7 +1058,7 @@ def test_session_end_hook_notices_reach_the_emitted_result(
     # ``build_from_environment`` patch above targets ``agentao.embedding``.
     monkeypatch.setattr(
         "agentao.cli.session.dispatch_plugin_session_end",
-        lambda agent, sid: ["goodbye-problem"],
+        lambda agent, sid, *, reason="other": ["goodbye-problem"],
     )
 
     rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
@@ -1076,7 +1076,7 @@ def test_session_start_hook_notices_reach_the_emitted_result(
 
     monkeypatch.setattr(
         "agentao.cli.session.dispatch_plugin_session_start",
-        lambda agent, sid: ["startup-problem"],
+        lambda agent, sid, *, source="startup": ["startup-problem"],
     )
 
     rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))

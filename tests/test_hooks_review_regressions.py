@@ -87,11 +87,11 @@ class _StubCli:
         self.last_response = None
         self._cached_ctx_pct = 0.0
 
-    def on_session_end(self):
-        pass
+    def on_session_end(self, *, reason="other"):
+        self.ended_with = reason
 
-    def on_session_start(self):
-        pass
+    def on_session_start(self, *, source="startup"):
+        self.started_with = source
 
     def _apply_mode(self, mode):
         self.permission_mode = mode

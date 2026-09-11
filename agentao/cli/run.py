@@ -695,7 +695,9 @@ def _run_pipeline(
     # SessionStart notices ride on the same channel SessionEnd's do. They are
     # collected here rather than printed, because a headless run has one
     # output and it is written at the end.
-    warnings.extend(dispatch_plugin_session_start(agent, agent._session_id or ""))
+    warnings.extend(dispatch_plugin_session_start(
+        agent, agent._session_id or "", source="startup",
+    ))
 
     prev_sigint, prev_sigterm = _install_signal_handlers(token)
 
@@ -824,7 +826,13 @@ def _run_pipeline(
     # detached well above, and `_emit` writes the run's entire output. Moving
     # the dispatch up and carrying its notices on `warnings`, which is already
     # serialized, is the whole route.
-    for notice in dispatch_plugin_session_end(agent, agent._session_id or ""):
+    # ``other`` is upstream's own value for "none of the named causes", and a
+    # non-interactive run genuinely ends with none of them — `prompt_input_exit`
+    # means leaving an interactive prompt, which this surface has none of. Passed
+    # explicitly so the value reads as a decision rather than a default.
+    for notice in dispatch_plugin_session_end(
+        agent, agent._session_id or "", reason="other",
+    ):
         result.warnings.append(notice)
 
     _emit(result, output_format)

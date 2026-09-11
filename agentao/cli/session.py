@@ -11,8 +11,15 @@ if TYPE_CHECKING:
     from .app import AgentaoCLI
 
 
-def on_session_start(cli: AgentaoCLI) -> None:
-    """Hook called at the start of every session."""
+def on_session_start(cli: AgentaoCLI, *, source: str = "startup") -> None:
+    """Hook called at the start of every session.
+
+    ``source`` is the profile's ``SessionStart`` value and is **compared
+    against a hook matcher** (`plugins/hooks/_dispatcher.py`), so it is not
+    cosmetic: reporting ``startup`` for a `/clear` makes a ``clear`` rule dead
+    and fires a ``startup`` rule that should not have run. See
+    ``docs/design/session-lifecycle-source-vs-codex.md`` §6.1.
+    """
     if cli.current_session_id is None:
         cli.current_session_id = str(_uuid_mod.uuid4())
     cli.agent._session_id = cli.current_session_id
@@ -31,12 +38,18 @@ def on_session_start(cli: AgentaoCLI) -> None:
     except Exception:
         pass
 
-    _dispatch_session_start_hooks(cli)
+    _dispatch_session_start_hooks(cli, source=source)
 
 
-def on_session_end(cli: AgentaoCLI) -> None:
-    """Hook called at the end of every session (before /clear, /new, or exit)."""
-    _dispatch_session_end_hooks(cli)
+def on_session_end(cli: AgentaoCLI, *, reason: str = "other") -> None:
+    """Hook called at the end of every session (before /clear, /new, or exit).
+
+    ``reason`` is the profile's ``SessionEnd`` value and is matched the same way
+    ``source`` is (see :func:`on_session_start`). ``other`` stays the default
+    because it is upstream's own value for "none of the named causes", which is
+    what a non-interactive `agentao run` genuinely ends with.
+    """
+    _dispatch_session_end_hooks(cli, reason=reason)
 
     # Close the current replay instance before persisting the session.
     # The SESSION_REPLAY_PLAN reserves ``session_saved`` for an explicit
@@ -81,7 +94,9 @@ def _apply_lifecycle_result(agent, result, *, print_notices: bool) -> list[str]:
     return notices
 
 
-def dispatch_plugin_session_start(agent, session_id: str) -> list[str]:
+def dispatch_plugin_session_start(
+    agent, session_id: str, *, source: str = "startup",
+) -> list[str]:
     """Fire SessionStart plugin hooks for ``agent``. Best-effort.
 
     Both the interactive CLI and the ``agentao run`` pipeline use this
@@ -93,7 +108,7 @@ def dispatch_plugin_session_start(agent, session_id: str) -> list[str]:
         from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
         cwd = agent.working_directory
         payload = ClaudeHookPayloadAdapter().build_session_start(
-            session_id=session_id, cwd=cwd,
+            session_id=session_id, cwd=cwd, source=source,
         )
         result = PluginHookDispatcher(cwd=cwd).dispatch_session_start(
             payload=payload, rules=agent._plugin_hook_rules,
@@ -107,7 +122,9 @@ def dispatch_plugin_session_start(agent, session_id: str) -> list[str]:
     return []
 
 
-def dispatch_plugin_session_end(agent, session_id: str) -> list[str]:
+def dispatch_plugin_session_end(
+    agent, session_id: str, *, reason: str = "other",
+) -> list[str]:
     """Fire SessionEnd plugin hooks for ``agent``. Returns the user notices.
 
     The JSON half of this event is genuinely conformant — the reference gives it
@@ -122,7 +139,7 @@ def dispatch_plugin_session_end(agent, session_id: str) -> list[str]:
         from ..plugins.hooks import ClaudeHookPayloadAdapter, PluginHookDispatcher
         cwd = agent.working_directory
         payload = ClaudeHookPayloadAdapter().build_session_end(
-            session_id=session_id, cwd=cwd,
+            session_id=session_id, cwd=cwd, reason=reason,
         )
         result = PluginHookDispatcher(cwd=cwd).dispatch_session_end(
             payload=payload, rules=agent._plugin_hook_rules,
@@ -135,16 +152,15 @@ def dispatch_plugin_session_end(agent, session_id: str) -> list[str]:
     return []
 
 
-def _dispatch_session_start_hooks(cli: AgentaoCLI) -> None:
-    for notice in dispatch_plugin_session_start(cli.agent, cli.current_session_id):
+def _dispatch_session_start_hooks(cli: AgentaoCLI, *, source: str = "startup") -> None:
+    for notice in dispatch_plugin_session_start(
+        cli.agent, cli.current_session_id, source=source,
+    ):
         console.print(f"[yellow]⚠ {notice}[/yellow]")
 
 
-def _dispatch_session_end_hooks(cli: AgentaoCLI) -> None:
-    for notice in dispatch_plugin_session_end(cli.agent, cli.current_session_id):
+def _dispatch_session_end_hooks(cli: AgentaoCLI, *, reason: str = "other") -> None:
+    for notice in dispatch_plugin_session_end(
+        cli.agent, cli.current_session_id, reason=reason,
+    ):
         console.print(f"[yellow]⚠ {notice}[/yellow]")
-
-
-def save_session_on_exit(cli: AgentaoCLI) -> None:
-    """Internal helper; delegates to on_session_end()."""
-    on_session_end(cli)

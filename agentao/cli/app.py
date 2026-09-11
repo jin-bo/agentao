@@ -269,6 +269,15 @@ class AgentaoCLI:
         # Images staged via /image, attached to (and consumed by) the next
         # chat turn. Each entry is {"data": <base64>, "mimeType": ...}.
         self._staged_images: list = []
+        # One-shot ``SessionStart`` source, set by a *successful* startup
+        # ``--resume`` and consumed by ``run_loop``'s single dispatch. The
+        # resume path deliberately does not dispatch its own: the launch path
+        # runs ``resume_session()`` and then ``run_loop()`` unconditionally, so
+        # a dispatch there would emit ``resume`` and then ``startup`` for one
+        # session. Set only on success, which is why a *failed* startup resume
+        # still reports ``startup`` — a real new session did begin. See
+        # ``docs/design/session-lifecycle-source-vs-codex.md`` §6.2.
+        self._pending_session_start_source: Optional[str] = None
         from ..plan import PlanSession
         self._plan_session = PlanSession()
         self._plan_controller: Optional[object] = None
@@ -513,16 +522,16 @@ class AgentaoCLI:
 
     # ── Session lifecycle delegation ────────────────────────────────────
 
-    def on_session_start(self) -> None:
+    def on_session_start(self, *, source: str = "startup") -> None:
         from .session import on_session_start
-        on_session_start(self)
+        on_session_start(self, source=source)
 
-    def on_session_end(self) -> None:
+    def on_session_end(self, *, reason: str = "other") -> None:
         from .session import on_session_end
-        on_session_end(self)
+        on_session_end(self, reason=reason)
 
     def _save_session_on_exit(self):
-        self.on_session_end()
+        self.on_session_end(reason="prompt_input_exit")
 
     # ── Display (delegated) ─────────────────────────────────────────────
 

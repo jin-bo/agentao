@@ -27,7 +27,12 @@ def _reset_session(cli: AgentaoCLI, *, clear_memories: bool) -> None:
     permission mode is reset so the new session records the mode it
     actually starts in.
     """
-    cli.on_session_end()
+    # Both `/clear` and `/new` reach this one path, and upstream's vocabulary
+    # has no value of its own for `/new` — `clear` is the nearest true one for
+    # each, on both events. Stated here rather than left to the reader: the
+    # default (`other` / `startup`) would report a *named* cause as an unnamed
+    # one. See ``docs/design/session-lifecycle-source-vs-codex.md`` §6.1.
+    cli.on_session_end(reason="clear")
     # The hook one-shot diagnostic registry is keyed by session id, and the old
     # id is about to go out of scope for good. Dropping its bucket here is what
     # keeps ``_diagnostics``'s stated lifetime honest — without it the entries
@@ -50,7 +55,7 @@ def _reset_session(cli: AgentaoCLI, *, clear_memories: bool) -> None:
     cli.last_response = None
     cli._cached_ctx_pct = 0.0
     cli._apply_mode(PermissionMode.WORKSPACE_WRITE)
-    cli.on_session_start()
+    cli.on_session_start(source="clear")
 
 
 def handle_clear_command(cli: AgentaoCLI, args: str = "") -> None:

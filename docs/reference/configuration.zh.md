@@ -512,6 +512,27 @@ handler，单独告警，所以一处笔误不会让一份能用的文件整体�
 
 ¹ `command` 与 `args` 二选一；两者皆无的 handler 会被跳过。
 
+**`SessionStart` / `SessionEnd`实际上报什么。** 这两个事件的 `matcher` 就是拿这两个字段来比的，
+所以匹配其他取值的规则永远不会触发：
+
+| 入口 | `SessionStart.source` | `SessionEnd.reason` |
+|---|---|---|
+| 交互式启动 | `startup` | —— |
+| 交互式退出（`/exit`、`/quit`） | —— | `prompt_input_exit` |
+| `agentao --resume`（加载成功） | `resume` | —— |
+| `agentao --resume`（加载失败，CLI 照常启动） | `startup` | —— |
+| `/sessions resume`（加载成功） | `resume` | `resume` |¹
+| `/sessions resume`（加载失败） | —— | —— |
+| `/clear` 与 `/new` | `clear` | `clear` |
+| `agentao run` | `startup` | `other` |
+
+¹ 仅派发 hook。`/sessions resume` 不会持久化被切走的会话（它一直如此）；事件只报告这个边界，
+不改变该命令保存什么。
+
+`compact` 与 `fork` **永远不会**出现：agentao 在压缩之后不派发 `SessionStart`，也没有线程 fork。
+ACP 在任何路径上都不派发这两个事件。参见
+`docs/design/session-lifecycle-source-vs-codex.md`。
+
 **不认识的键一律忽略，并出一条点名该键的一次性诊断，绝不作为 schema 错误。** 为更新版 Claude Code 写的
 hook 照样能跑，作者也会被告知哪个键没起作用。该诊断按会话作用域、按规则内容取键，所以插件重载后，改好的
 hook 会重新发声。
