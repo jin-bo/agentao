@@ -403,3 +403,70 @@ def test_audit_events_land_in_their_turn_through_the_real_wiring(tmp_path):
     assert "deny" in out
     assert "PermissionDenied" in out
     assert "bg-7" in out
+
+
+# ---------------------------------------------------------------------------
+# `plugin_hook_fired` — the two rule-count fields and the outcome vocabulary
+# ---------------------------------------------------------------------------
+
+
+def test_the_summary_reports_a_rule_count_the_producer_actually_emits(tmp_path):
+    """Bind the summarizer to a real `Stop` emit, not to a hand-written dict.
+
+    The renderer read `rule_count` only. Three of the six emit sites send
+    `matched_rule_count` instead — there is no matched count in hand at the
+    other three — so `Stop`, `PreToolUse` and `PreCompact` all rendered
+    `rules=None` while the event carried the number the whole time.
+    """
+    from agentao.plugins.models import ParsedHookRule
+
+    from .support.stop_precompact import make_runner_with_rules
+
+    rule = ParsedHookRule(
+        event="Stop", hook_type="command", command="echo '{}'", plugin_name="t",
+    )
+    runner, transport = make_runner_with_rules(tmp_path, rules=[rule])
+    stop_result = runner._dispatch_stop(
+        turn_end_reason="final_response", last_assistant_message="answer",
+    )
+    runner._emit_stop_hook_fired(
+        outcome="allow", turn_end_reason="final_response", stop_result=stop_result,
+    )
+    fired = transport.hook_fired_events("Stop")
+    assert len(fired) == 1
+    assert "rule_count" not in fired[0].data, (
+        "Stop started sending rule_count — re-read the summarizer's two-field read"
+    )
+
+    summary = _summarize_replay_event(
+        {"kind": "plugin_hook_fired", "payload": dict(fired[0].data)}
+    )
+    assert "rules=1" in summary
+    assert "rules=None" not in summary
+
+
+def test_a_hook_event_with_no_count_at_all_omits_the_segment():
+    summary = _summarize_replay_event(
+        {"kind": "plugin_hook_fired", "payload": {"hook_name": "Stop", "outcome": "allow"}}
+    )
+    assert "rules" not in summary
+
+
+@pytest.mark.parametrize(
+    "outcome,color",
+    [
+        ("deny", "error"),           # PreToolUse refused the call
+        ("cancel", "warning"),       # PreCompact refused the compaction
+        ("notice", "yellow"),        # PostToolUse* has something to say
+        ("block", "error"),
+        ("allow", "green"),
+        ("continue", "green"),
+        ("some_future_verdict", "green"),
+    ],
+)
+def test_every_outcome_in_the_vocabulary_is_coloured_for_what_it_means(outcome, color):
+    """A refused tool call and a refused compaction used to render green,
+    because the map covered only the three outcomes the first hook events had."""
+    from agentao.cli.replay_render._summary import _hook_outcome_color
+
+    assert _hook_outcome_color(outcome) == color

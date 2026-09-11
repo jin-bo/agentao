@@ -5,9 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.4.23. Add entries under the relevant heading as work lands._
+## [0.4.23] — 2026-09-11
 
 ### Added
 
@@ -28,9 +26,17 @@ _Targeting 0.4.23. Add entries under the relevant heading as work lands._
   every later turn and the loop would spin on a dead provider forever. Purely
   host-side; the harness is untouched.
 
-### Changed
-
 ### Fixed
+
+- **`/replays show` reported no rule count for half the hook events, and
+  coloured a refusal as if it had succeeded.** The summary line read
+  `rule_count`, but `PreToolUse`, `Stop` and `PreCompact` send
+  `matched_rule_count` — there is no matched count in hand where the other
+  three emit — so those three rendered `rules=None` while the event carried
+  the number all along. The outcome colour map covered three of the ten
+  outcomes the six emit sites actually produce, so a `PreToolUse` `deny` and a
+  `PreCompact` `cancel` both rendered green, which is the colour the renderer
+  uses for "nothing happened". Both renderers now share one definition of each.
 
 - **A hook's notice now actually reaches the user.** Four of the eight hook
   events are dispatched by a caller that owns an output and consumed its return
@@ -132,9 +138,12 @@ _Targeting 0.4.23. Add entries under the relevant heading as work lands._
   that prevents `--resume` from starting the CLI at all, and an interactive
   resume no longer skips the memory-session archive, which had left the
   abandoned conversation's summaries bound to the resumed session. The values
-  agentao emits are now enumerated in `docs/reference/configuration.md` §11;
-  `compact` and `fork` are never emitted, and ACP dispatches neither event on
-  any path. Design and the two recorded gaps:
+  agentao emits are now enumerated in `docs/reference/configuration.md` §11.
+  This entry originally closed by saying that `compact` is never emitted and
+  that ACP dispatches neither event; both were true of this change and are
+  **superseded by the two entries above**, which were reviewed and landed
+  separately in the same cycle. `fork` is still never emitted — agentao has no
+  thread fork. Design and the recorded gaps:
   `docs/design/session-lifecycle-source-vs-codex.md`.
 
 - **The overflow ladder's last rung no longer hands the provider an orphaned

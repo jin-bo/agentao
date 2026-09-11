@@ -5,6 +5,50 @@ from __future__ import annotations
 from rich.markup import escape as markup_escape
 
 
+# ``plugin_hook_fired`` outcome → colour. The vocabulary is per ``hook_name``
+# and this has to cover the union of all six emit sites, not the three the
+# renderer was first written against: a ``PreToolUse`` ``deny``, a
+# ``PreCompact`` ``cancel`` and a ``PostToolUse*`` ``notice`` all fell through
+# to the default and rendered green, i.e. a refused tool call read as fine.
+_HOOK_OUTCOME_COLORS = {
+    "block": "error",
+    "deny": "error",
+    "stop": "warning",
+    "ask": "warning",
+    "cancel": "warning",
+    "reentry_capped": "warning",
+    "modify": "yellow",
+    "notice": "yellow",
+}
+
+
+def _hook_outcome_color(outcome: str) -> str:
+    """Colour for one ``plugin_hook_fired`` outcome. Unknown → green.
+
+    Green is the right default: a value this table does not know is either
+    ``allow`` or one of the ``continue`` family, and an unrecognised future
+    verdict should not be coloured as a failure on a guess.
+    """
+    return _HOOK_OUTCOME_COLORS.get(outcome, "green")
+
+
+def _hook_rule_count(payload: dict) -> object:
+    """The event's rule count, whichever of the two fields carries it.
+
+    ``PreToolUse`` / ``Stop`` / ``PreCompact`` send ``matched_rule_count``
+    (rules selected for dispatch); ``UserPromptSubmit`` / ``PostToolUse*`` /
+    the post-compaction ``SessionStart`` send ``rule_count`` (rules
+    configured), because at the point they emit there is no matched count in
+    hand. Reading only one of the two rendered ``rules=None`` for half the
+    hook events.
+    """
+    for key in ("matched_rule_count", "rule_count"):
+        value = payload.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def _summarize_replay_event(event: dict) -> str:
     """Return a short one-line summary for a replay event in /replays show.
 
@@ -213,11 +257,12 @@ def _summarize_replay_event(event: dict) -> str:
         )
     if kind == "plugin_hook_fired":
         outcome = str(payload.get("outcome", "allow"))
-        color = {"block": "error", "stop": "warning", "modify": "yellow"}.get(outcome, "green")
+        color = _hook_outcome_color(outcome)
+        count = _hook_rule_count(payload)
+        rules = f" rules={count}" if count is not None else ""
         return (
             f"[{color}]{outcome}[/{color}] "
-            f"[dim]{markup_escape(str(payload.get('hook_name', '')))} "
-            f"rules={payload.get('rule_count')}[/dim]"
+            f"[dim]{markup_escape(str(payload.get('hook_name', '')))}{rules}[/dim]"
         )
     # ── v1.2 host-projected audit kinds ─────────────────────────────
     # These mirror the public models in ``agentao.host.models``. They

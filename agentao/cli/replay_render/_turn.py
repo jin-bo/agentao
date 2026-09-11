@@ -13,7 +13,7 @@ from ._fmt import (
     _preview,
 )
 from ._grouping import _collect_tool_rows
-from ._summary import _summarize_replay_event
+from ._summary import _hook_outcome_color, _summarize_replay_event
 
 
 def _print_turn(turn: dict, console_) -> None:
@@ -278,8 +278,8 @@ def _print_turn(turn: dict, console_) -> None:
                 console_.print(f"  [dim]perm[/dim]    {_summarize_replay_event(e)}")
         elif kind == "plugin_hook_fired":
             p = e.get("payload") or {}
-            outcome = p.get("outcome", "allow")
-            color = {"block": "error", "stop": "warning", "modify": "yellow"}.get(outcome, "green")
+            outcome = str(p.get("outcome", "allow"))
+            color = _hook_outcome_color(outcome)
             console_.print(
                 f"  [dim]hook[/dim]    "
                 f"[{color}]{outcome}[/{color}] "
