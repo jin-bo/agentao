@@ -166,6 +166,13 @@ class _HookDispatchMixin:
                 "matched_rule_count": stop_result.matched_rule_count,
                 "added_context_count": len(stop_result.additional_contexts),
                 "suppress_output": stop_result.suppress_output,
+                # `systemMessage` on `Stop` goes to the user and, under the
+                # profile, *only* to the user — so without this field it was
+                # parsed, capped, stored and read by nobody. The list is
+                # contract-gated at the parser (`_output_parsing.py`); this is
+                # the same payload key the other notice-producing events use,
+                # because a host renders them all the same way.
+                "user_notices": list(stop_result.user_notices),
             }))
         except Exception:
             pass

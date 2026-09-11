@@ -96,7 +96,9 @@ def main(
         cli = AgentaoCLI(agent_factory=agent_factory)
         if resume_session is not None:
             from .commands import resume_session as _resume
-            _resume(cli, resume_session if resume_session else None)
+            # ``at_launch``: no session has started yet, and ``cli.run()``
+            # below dispatches the only ``SessionStart`` this launch gets.
+            _resume(cli, resume_session if resume_session else None, at_launch=True)
         cli.run()
     except KeyboardInterrupt:
         console.print("\n\n[success]Goodbye![/success]\n")

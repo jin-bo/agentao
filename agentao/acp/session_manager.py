@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Dict, Iterator, List, Optional
+from typing import Callable, Dict, Iterator, List, Optional
 
 from .models import AcpSessionState
 
@@ -94,17 +94,56 @@ class AcpSessionManager:
     # Create / lookup / delete
     # ------------------------------------------------------------------
 
-    def create(self, state: AcpSessionState) -> None:
+    def create(
+        self,
+        state: AcpSessionState,
+        *,
+        before_publish: Optional[Callable[[AcpSessionState], None]] = None,
+    ) -> None:
         """Register a new session.
 
         Raises :class:`DuplicateSessionError` if ``state.session_id`` is
         already registered. Callers are expected to generate collision-free
         ids (Issue 04 will use UUIDs), so a duplicate is a protocol/bug
         signal worth surfacing.
+
+        ``before_publish`` runs **inside the registration lock, after the
+        duplicate check and before the session becomes reachable**. That
+        ordering is the whole reason the hook exists, and both halves are
+        load-bearing:
+
+        - *After the duplicate check*, so a registration that is about to be
+          rejected runs no side effects. ``SessionStart`` hooks are arbitrary
+          user commands; firing them for a `session/load` that then fails on a
+          duplicate id would run them for a session that never existed.
+        - *Before publication*, so no concurrent request can reach the session
+          between registration and the callback. A client that supplies its own
+          id (``session/load``) can pipeline a ``session/prompt`` behind the
+          load, and ``turn_lock`` is acquired **non-blocking** — a racing prompt
+          would be rejected rather than queued, so "publish then fire" would
+          turn a hook into a spurious error.
+
+        The cost is explicit, and it is not small: other sessions' lookups
+        block for the callback's whole duration, because ``get`` / ``require``
+        / ``__contains__`` / ``__len__`` all take this lock. Lifecycle rules
+        run **serially**, so the bound is *number of matching rules* times
+        ``ParsedHookRule.timeout`` (default 60s) — not one timeout. A
+        deployment with slow ``SessionStart`` hooks therefore stalls every
+        other session's routing for as long as one session takes to create.
+        That is accepted rather than hidden: the alternative is a session that
+        can take a turn before its ``SessionStart`` context has been injected,
+        or a racing prompt rejected outright by the non-blocking ``turn_lock``.
+        If it ever needs bounding, bound it here — a per-callback deadline is a
+        change to this method, not to its callers.
+
+        A callback that raises propagates and the session is **not** published;
+        the caller's existing failure path owns the cleanup.
         """
         with self._lock:
             if state.session_id in self._sessions:
                 raise DuplicateSessionError(state.session_id)
+            if before_publish is not None:
+                before_publish(state)
             self._sessions[state.session_id] = state
 
     def get(self, session_id: str) -> Optional[AcpSessionState]:

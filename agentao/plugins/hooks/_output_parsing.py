@@ -289,6 +289,13 @@ class _OutputParsingMixin:
                 # the profile the field goes to the user and **only** the user,
                 # which is what the reference says it is for.
                 result.additional_contexts.append(system_message)
+            else:
+                # …and "the user" needs somewhere to read it. The list rides
+                # `PLUGIN_HOOK_FIRED.user_notices`, the same key every other
+                # notice-producing event uses. Gated on contract because
+                # surfacing a v1 hook's `systemMessage` to the terminal would
+                # be a behaviour change to a frozen contract.
+                result.user_notices.append(system_message)
 
         hook_specific = data.get("hookSpecificOutput")
         if isinstance(hook_specific, dict):

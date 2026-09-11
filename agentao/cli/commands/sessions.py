@@ -84,8 +84,29 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
         console.print("[info]Available: /sessions list | /sessions resume <id> | /sessions delete <id> | /sessions delete all[/info]\n")
 
 
-def resume_session(cli: AgentaoCLI, session_id: Optional[str] = None) -> None:
-    """Load a previously saved session into the current agent."""
+def resume_session(
+    cli: AgentaoCLI,
+    session_id: Optional[str] = None,
+    *,
+    at_launch: bool = False,
+) -> None:
+    """Load a previously saved session into the current agent.
+
+    ``at_launch`` distinguishes the two callers, which owe **different**
+    lifecycle events (``docs/design/session-lifecycle-source-vs-codex.md`` §6.2):
+
+    - ``agentao --resume`` (``at_launch=True``): no session has begun, so there
+      is no ``SessionEnd`` to fire, and ``run_loop`` is about to dispatch the
+      one ``SessionStart``. This path only leaves the one-shot marker that tells
+      it to report ``resume`` instead of ``startup`` — and leaves it **only on
+      success**, so a failed startup resume still reports ``startup`` for the
+      real new session that begins anyway.
+    - interactive ``/sessions resume`` (the default): the current session ends
+      and a different one starts, so both events fire, in that order, carrying
+      the **old** and **new** session ids respectively.
+
+    Every early return below is a failed load, and dispatches nothing.
+    """
     import uuid as _uuid_mod
 
     from ...embedding.sessions import list_sessions, load_session
@@ -112,11 +133,52 @@ def resume_session(cli: AgentaoCLI, session_id: Optional[str] = None) -> None:
 
     try:
         messages, model, active_skills = load_session(match["id"], project_root=project_root)
-    except FileNotFoundError as e:
+    except (OSError, ValueError) as e:
+        # ``OSError`` (``FileNotFoundError`` is one) and ``ValueError`` — the
+        # same pair ``acp/session_load.py::resume_session_on_new`` catches, and
+        # for the same reason. ``ValueError`` covers ``json.JSONDecodeError``
+        # (a truncated or hand-edited file) *and* the not-an-object shape
+        # ``load_session_record`` now normalizes into one; ``OSError`` covers
+        # the unreadable file ``FileNotFoundError`` alone missed. It has to be
+        # caught *here* rather than left to the caller, because the launch path
+        # has no caller that survives it:
+        # ``entrypoints.main`` wraps this in the fatal-error handler and exits 1,
+        # which would turn one corrupt file into "``--resume`` cannot start the
+        # CLI at all". The documented contract is that a failed startup resume
+        # starts a normal session and reports ``startup``
+        # (``docs/reference/configuration.md`` §11).
         console.print(f"\n[error]Could not resume session: {e}[/error]\n")
         return
 
+    # The load succeeded, so the outgoing session is really ending. Fired here,
+    # before any state is replaced, so the event still describes the session
+    # being left. ``at_launch`` has no outgoing session, so it fires nothing.
+    #
+    # **Hooks only, symmetrically with the incoming side below.** The full
+    # ``on_session_end`` would also persist the outgoing conversation, which
+    # this command has never done and which is not free: ``save_session`` never
+    # reuses a file for an existing session id, so every resume would write a
+    # new one and ``_rotate_sessions`` would evict the oldest. Saving on resume
+    # may well be the better product behaviour, but it is a separate decision
+    # from reporting the event, and bundling it here would smuggle an eviction
+    # site in behind a conformance fix.
+    if not at_launch:
+        from ..session import _dispatch_session_end_hooks
+        _dispatch_session_end_hooks(cli, reason="resume")
+        # Same reason ``_reset_session`` does it: the hook one-shot diagnostic
+        # registry is keyed by session id, and the outgoing id is about to go
+        # out of scope for good. Without this, every ``/sessions resume``
+        # strands a bucket under a key nothing can reach for the life of the
+        # process — the leak the reset path exists to avoid, on a boundary that
+        # only became one when this command started reporting it.
+        try:
+            from ...plugins.hooks._diagnostics import clear_session
+            clear_session(cli.current_session_id)
+        except Exception:  # pragma: no cover - never block a resume
+            pass
+
     cli.agent.messages = messages
+    loaded_count = len(messages)
     # History was replaced wholesale; the Tier-1 token anchor describes the
     # prior conversation's prefix and must not survive into the resumed one.
     cli.agent.context_manager.invalidate_token_anchor()
@@ -152,11 +214,33 @@ def resume_session(cli: AgentaoCLI, session_id: Optional[str] = None) -> None:
     except Exception:
         pass
 
+    if at_launch:
+        # ``run_loop`` dispatches; see the docstring.
+        cli._pending_session_start_source = "resume"
+    else:
+        # The incoming session begins here, but ``on_session_start`` is not
+        # reused: it would re-derive the session id this function has already
+        # resolved out of the loaded file. Its remaining steps are therefore
+        # owed explicitly — the ids and the replay restart above, the memory
+        # archive here, the hook dispatch last. **The archive is not optional
+        # bookkeeping**: it advances ``MemoryManager._session_id``, and without
+        # it the abandoned conversation's session summaries stay bound to the
+        # resumed one and keep being injected into its prompts.
+        try:
+            cli.agent.memory_manager.archive_session()
+        except Exception:
+            pass
+        from ..session import _dispatch_session_start_hooks
+        _dispatch_session_start_hooks(cli, source="resume")
+
     sid_display = cli.current_session_id[:8]
     title_display = f": {match['title']}" if match.get("title") else ""
-    msg_count = len(messages)
     console.print(f"\n[success]↩ Resuming session {sid_display}{title_display}[/success]")
-    console.print(f"[dim]{msg_count} messages loaded.[/dim]")
+    # ``loaded_count`` is snapshotted above the hook dispatch, not measured
+    # here: ``cli.agent.messages`` is this very list object (assigned, not
+    # copied), so a ``SessionStart`` hook's ``additionalContext`` lands in it
+    # and would otherwise be reported as a loaded message.
+    console.print(f"[dim]{loaded_count} messages loaded.[/dim]")
     current_model = cli.agent.get_current_model()
     console.print(f"[dim]Model: {current_model}[/dim]")
     if model and model != current_model:

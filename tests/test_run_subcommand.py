@@ -1058,7 +1058,7 @@ def test_session_end_hook_notices_reach_the_emitted_result(
     # ``build_from_environment`` patch above targets ``agentao.embedding``.
     monkeypatch.setattr(
         "agentao.cli.session.dispatch_plugin_session_end",
-        lambda agent, sid: ["goodbye-problem"],
+        lambda agent, sid, *, reason="other": ["goodbye-problem"],
     )
 
     rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
@@ -1076,10 +1076,43 @@ def test_session_start_hook_notices_reach_the_emitted_result(
 
     monkeypatch.setattr(
         "agentao.cli.session.dispatch_plugin_session_start",
-        lambda agent, sid: ["startup-problem"],
+        lambda agent, sid, *, source="startup": ["startup-problem"],
     )
 
     rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
 
     assert rc == 0
     assert "startup-problem" in json.loads(capsys.readouterr().out)["warnings"]
+
+
+def test_mid_turn_hook_notices_reach_the_emitted_result(
+    monkeypatch, stub_pipeline, capsys,
+):
+    """The other four notice-producing events have no return value to consume.
+
+    ``UserPromptSubmit``, ``Stop``, ``PostToolUse*`` and the post-compaction
+    ``SessionStart`` are dispatched mid-turn, in a chat loop, a tool worker and
+    the compaction coordinator — none of which owns this surface's single
+    output. They reach it on ``PLUGIN_HOOK_FIRED`` and nowhere else, so a run
+    that drops the event drops the notice (conformance plan §5.2.1).
+    """
+    captured, StubAgent = stub_pipeline
+    from agentao.transport import AgentEvent, EventType
+
+    def chat(self, prompt, max_iterations=100, cancellation_token=None):
+        self.transport.emit(AgentEvent(EventType.PLUGIN_HOOK_FIRED, {
+            "hook_name": "SessionStart",
+            "source": "compact",
+            "outcome": "allow",
+            "user_notices": ["context reload failed"],
+        }))
+        return "done"
+
+    monkeypatch.setattr(StubAgent, "chat", chat)
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == 0
+    assert "context reload failed" in json.loads(capsys.readouterr().out)["warnings"]

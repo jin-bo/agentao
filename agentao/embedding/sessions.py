@@ -218,9 +218,16 @@ def _resolve_session_file(
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                if data.get("session_id", "").startswith(session_id):
+                if not isinstance(data, dict):
+                    continue
+                persisted = data.get("session_id") or ""
+                if isinstance(persisted, str) and persisted.startswith(session_id):
                     uuid_matches.append(path)
             except (IOError, json.JSONDecodeError):
+                # One unreadable neighbour must never stop the scan — it is
+                # not the file being asked for. ``isinstance`` above covers
+                # the shapes that parse and then fail on ``.get`` /
+                # ``.startswith``, which this clause does not catch.
                 continue
         if uuid_matches:
             return sorted(uuid_matches)[-1]
@@ -258,12 +265,23 @@ def load_session_record(
     Raises:
         FileNotFoundError: If no sessions exist or the given ID is not found.
         ValueError: If the resolved file is not valid JSON
-            (``json.JSONDecodeError`` subclasses ``ValueError``).
+            (``json.JSONDecodeError`` subclasses ``ValueError``), or is valid
+            JSON that is not an object. The second case has to raise the *same*
+            type as the first: a file holding ``[]`` or ``null`` parses fine and
+            then dies on ``data.get`` with an ``AttributeError``, which every
+            caller's corrupt-file handler is written to miss — including the one
+            standing between a bad file and ``agentao --resume`` starting the
+            CLI at all.
     """
     session_file = _resolve_session_file(session_id, project_root)
 
     with open(session_file, "r", encoding="utf-8") as f:
         data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"session file {session_file.name} is not a JSON object"
+        )
 
     return (
         data.get("session_id") or session_file.stem,
@@ -308,6 +326,16 @@ def list_sessions(project_root: Optional[Path] = None) -> List[Dict[str, Any]]:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            # A file that parses but is not an object (``[]``, ``null``, a bare
+            # string) is corrupt in the only sense this loop cares about, and
+            # ``data.get`` would raise ``AttributeError`` — which the skip below
+            # does not catch, so one such file took the whole listing down and
+            # with it ``/sessions list`` and every ``resume`` that starts here.
+            # Same for a ``messages`` value that is not a list of objects.
+            if not isinstance(data, dict) or not isinstance(
+                data.get("messages", []), list
+            ):
+                continue
             messages = data.get("messages", [])
             first_user_msg = next(
                 (m.get("content", "") for m in messages if m.get("role") == "user"),
@@ -335,7 +363,11 @@ def list_sessions(project_root: Optional[Path] = None) -> List[Dict[str, Any]]:
                 "path": str(path),
                 "first_user_msg": first_user_msg,
             })
-        except (IOError, json.JSONDecodeError):
+        except (IOError, json.JSONDecodeError, AttributeError, TypeError):
+            # ``AttributeError`` / ``TypeError``: a session file that parses
+            # into the right *shape* but the wrong *types* one level down (a
+            # message that is a string, say). Skipping one unreadable file has
+            # always been this loop's contract; raising out of it is not.
             continue
     return result
 
@@ -355,7 +387,10 @@ def delete_session(session_id: str, project_root: Optional[Path] = None) -> bool
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if data.get("session_id", "").startswith(session_id):
+            if not isinstance(data, dict):
+                continue
+            persisted = data.get("session_id") or ""
+            if isinstance(persisted, str) and persisted.startswith(session_id):
                 path.unlink()
                 uuid_deleted += 1
         except (IOError, json.JSONDecodeError):

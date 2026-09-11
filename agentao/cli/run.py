@@ -695,7 +695,9 @@ def _run_pipeline(
     # SessionStart notices ride on the same channel SessionEnd's do. They are
     # collected here rather than printed, because a headless run has one
     # output and it is written at the end.
-    warnings.extend(dispatch_plugin_session_start(agent, agent._session_id or ""))
+    warnings.extend(dispatch_plugin_session_start(
+        agent, agent._session_id or "", source="startup",
+    ))
 
     prev_sigint, prev_sigterm = _install_signal_handlers(token)
 
@@ -725,10 +727,24 @@ def _run_pipeline(
     incomplete_reason: Optional[str] = None
     finish_reason_missing = False
 
-    def _on_tool_event(event: Any) -> None:
+    def _on_transport_event(event: Any) -> None:
         nonlocal tool_calls_count, captured_turn_id, incomplete_reason
         nonlocal finish_reason_missing
         ev_type = getattr(event, "type", None)
+        # A hook notice computed mid-turn — ``UserPromptSubmit``,
+        # ``PostToolUse*``, ``SessionStart(source="compact")`` — has no other
+        # way out on this surface: the dispatch sites are a chat loop, a tool
+        # worker and the compaction coordinator, none of which owns an output.
+        # ``warnings`` is the channel the two lifecycle dispatches already use
+        # and is already serialized, so the notice lands in the same document
+        # as the result it belongs to.
+        if ev_type == EventType.PLUGIN_HOOK_FIRED:
+            for _notice in (getattr(event, "data", None) or {}).get(
+                "user_notices"
+            ) or []:
+                if isinstance(_notice, str) and _notice:
+                    warnings.append(_notice)
+            return
         # ``run_turn`` clears ``agent._current_turn_id`` in its finally
         # block, so by the time we serialize RunResult the field is
         # always None. Snapshot it on TURN_BEGIN so the JSON envelope
@@ -761,7 +777,7 @@ def _run_pipeline(
             return
         tool_calls_count += 1
 
-    transport_unsubscribe = transport.subscribe(_on_tool_event)
+    transport_unsubscribe = transport.subscribe(_on_transport_event)
 
     final_text = ""
     runtime_error: Optional[BaseException] = None
@@ -824,7 +840,13 @@ def _run_pipeline(
     # detached well above, and `_emit` writes the run's entire output. Moving
     # the dispatch up and carrying its notices on `warnings`, which is already
     # serialized, is the whole route.
-    for notice in dispatch_plugin_session_end(agent, agent._session_id or ""):
+    # ``other`` is upstream's own value for "none of the named causes", and a
+    # non-interactive run genuinely ends with none of them — `prompt_input_exit`
+    # means leaving an interactive prompt, which this surface has none of. Passed
+    # explicitly so the value reads as a decision rather than a default.
+    for notice in dispatch_plugin_session_end(
+        agent, agent._session_id or "", reason="other",
+    ):
         result.warnings.append(notice)
 
     _emit(result, output_format)

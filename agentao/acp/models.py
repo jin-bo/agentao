@@ -14,7 +14,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agentao.cancellation import CancellationToken
 
@@ -253,6 +253,11 @@ class AcpSessionState:
     #: UI mode that has no permission meaning (e.g. DeepChat's ``code`` /
     #: ``ask``) round-trips instead of being rejected. ``None`` until first set.
     mode_id: Optional[str] = None
+    #: Best-effort one-argument sender for hook user-notices, bound to this
+    #: session's id and the live server. Set when the session is published
+    #: (``_lifecycle.session_start_publisher``) so :meth:`close` can deliver
+    #: ``SessionEnd`` notices without this module importing the server.
+    notify_user: Optional[Callable[[str], None]] = None
     closed: bool = False
 
     def close(self) -> None:
@@ -293,6 +298,23 @@ class AcpSessionState:
                 self.cancel_token.cancel("session-closed")
             except Exception:
                 logger.exception("acp: error cancelling token for session %s", self.session_id)
+
+        # ``SessionEnd`` after the cancel, before the agent is torn down.
+        # Behind the idempotence guard above, so a double close dispatches
+        # once. It follows the *real* close path deliberately: creating or
+        # loading another session ends nothing (ACP holds several at once),
+        # and cancelling one turn is not a session ending either.
+        #
+        # **After** the cancel because hooks are user commands with their own
+        # timeouts, run serially: firing them first would hold an in-flight
+        # turn's LLM call and tools open for the whole hook budget, and at
+        # shutdown that budget is paid on the thread that has to finish
+        # teardown. Nothing a ``SessionEnd`` hook can observe changes at the
+        # cancel — the token is not in its payload — so the only thing the old
+        # order bought was a slower teardown. **Before** ``agent.close()``,
+        # which is the actual resource release.
+        from ._lifecycle import fire_end_for_state
+        fire_end_for_state(self)
 
         if self.agent is not None:
             try:

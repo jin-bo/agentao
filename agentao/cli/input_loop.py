@@ -264,7 +264,13 @@ def run_loop(cli: "AgentaoCLI") -> None:
     """Main input loop — slash-command dispatch + agent turn handling."""
     commands = _build_command_table()
 
-    cli.on_session_start()
+    # A *successful* startup ``--resume`` leaves a one-shot marker; this single
+    # dispatch is the session start it belongs to. Consuming it here (rather
+    # than dispatching inside ``resume_session``) is what keeps the launch path
+    # at one ``SessionStart`` instead of ``resume`` followed by ``startup``.
+    _start_source = getattr(cli, "_pending_session_start_source", None) or "startup"
+    cli._pending_session_start_source = None
+    cli.on_session_start(source=_start_source)
     while True:
         try:
             cli._flush_acp_inbox()
@@ -665,6 +671,69 @@ def _run_agent_turn(cli: "AgentaoCLI", message: str, images=None) -> str:
     return response
 
 
+#: Consecutive automatic continuations that produced nothing before the loop
+#: stops the goal. The budget caps (``--turns`` / ``--for``) bound how much a
+#: goal may *do*; this bounds how long it may do *nothing*, which is the
+#: orthogonal runaway a turn cap cannot see — and which `--unbounded` (or the
+#: documented ``default_max_turns: 0``) leaves with no bound at all.
+_MAX_EMPTY_CONTINUATIONS = 3
+
+#: The classifications that mean "this turn produced nothing to act on".
+#: Deliberately **not** the whole answerless family: a ``max_iterations`` /
+#: ``doom_loop`` / ``length_truncated`` turn did work and hit a ceiling, so
+#: counting it here would turn a busy goal into a blocked one. ``hook_stop`` is
+#: out for the same reason plus one more — the tools ran, and the stop was
+#: somebody's deliberate decision. ``llm_error`` is in: three consecutive ones
+#: are already twelve-plus failed attempts behind the retry layer, which is a
+#: provider problem the user has to see rather than one to spend a budget on.
+#:
+#: Values are the runtime's ``INCOMPLETE_*`` constants
+#: (agentao/runtime/chat_loop/_runner.py), kept as **literals** for the reason
+#: ``cli/run.py::_INCOMPLETE_OUTCOMES`` gives: the CLI does not import runtime
+#: internals at module scope. A parity test binds this set to the runtime's, so
+#: the duplication cannot drift.
+_NO_PROGRESS_REASONS = frozenset({"no_output", "reasoning_only", "llm_error"})
+
+#: The one member of that set for which tool calls are **not** a reset. See
+#: :func:`_no_progress_reason`.
+_LLM_ERROR_REASON = "llm_error"
+
+
+def _no_progress_reason(cli: "AgentaoCLI") -> Optional[str]:
+    """The last turn's classification when the turn produced nothing, else None.
+
+    **Do not replace this with an emptiness check on the returned text.** An
+    empty final answer never reaches the caller as an empty string: the chat
+    loop substitutes a placeholder to keep history valid
+    (``runtime/chat_loop/_runner.py``), so ``not response.strip()`` is
+    permanently false and the streak would never advance.
+
+    Reads a **string from a closed set**, never a truthy value, and requires
+    ``tool_count`` to be a real ``int``: a ``MagicMock`` agent answers every
+    attribute, and a host (or test double) that never populates ``last_turn``
+    has to degrade to "made progress" rather than to a blocked goal.
+
+    A turn that called tools counts as progress even when it ended without an
+    answer — it acted on the world, which is the same reset condition the
+    budget caps already respect. **That excuse does not extend to
+    ``llm_error``**: ``tool_count`` accumulates across a turn's iterations
+    (``runtime/turn.py`` resets it per *turn*, not per iteration), so one
+    successful tool call before the provider started failing would reset the
+    streak on every later turn too, and the goal would spin on a dead provider
+    forever — the exact runaway ``llm_error`` is in the set to bound.
+    """
+    outcome = getattr(cli.agent, "last_turn", None)
+    reason = getattr(outcome, "incomplete_reason", None)
+    if not (isinstance(reason, str) and reason in _NO_PROGRESS_REASONS):
+        return None
+    if reason == _LLM_ERROR_REASON:
+        return reason
+    tool_count = getattr(outcome, "tool_count", 0)
+    if isinstance(tool_count, int) and tool_count > 0:
+        return None
+    return reason
+
+
 def run_goal_continuation(cli: "AgentaoCLI", goal, *, _run_turn=None) -> None:
     """Host-owned outer continuation loop for an active ``/goal``.
 
@@ -729,6 +798,8 @@ def run_goal_continuation(cli: "AgentaoCLI", goal, *, _run_turn=None) -> None:
 
     cli.agent.add_tool(UpdateGoalTool(goal, persist), replace=True)
     interrupted = False
+    empty_streak = 0
+    no_progress_reason = None
     try:
         while goal.is_active:
             # Budget pre-check: a tripped cap ends with exactly one wrap-up turn.
@@ -764,6 +835,25 @@ def run_goal_continuation(cli: "AgentaoCLI", goal, *, _run_turn=None) -> None:
             # The agent may have called update_goal this turn (sets goal.status).
             if goal.status in (GoalStatus.COMPLETE, GoalStatus.BLOCKED):
                 break
+
+            # No-progress guard. Checked *after* the status break so a turn that
+            # both produced nothing and called update_goal is settled by the
+            # agent's own verdict, not by this one.
+            reason = _no_progress_reason(cli)
+            if reason is None:
+                empty_streak = 0
+                continue
+            empty_streak += 1
+            if empty_streak >= _MAX_EMPTY_CONTINUATIONS:
+                goal.mark_blocked()
+                persist()
+                # Carried to the outcome report rather than printed here: the
+                # generic `blocked` line would otherwise follow it and say "it
+                # needs your input", misattributing a host-set block to the
+                # agent — which is the one thing this guard exists to tell
+                # apart from a model that answered nothing.
+                no_progress_reason = reason
+                break
     except KeyboardInterrupt:
         # Belt-and-suspenders: a Ctrl-C that escapes chat() (between turns, in
         # rendering, or a test stub) pauses rather than stranding the goal.
@@ -789,10 +879,10 @@ def run_goal_continuation(cli: "AgentaoCLI", goal, *, _run_turn=None) -> None:
             "\n[warning]Goal paused. Resume with /goal resume.[/warning]\n"
         )
     else:
-        _report_goal_outcome(goal)
+        _report_goal_outcome(goal, no_progress_reason=no_progress_reason)
 
 
-def _report_goal_outcome(goal) -> None:
+def _report_goal_outcome(goal, *, no_progress_reason: Optional[str] = None) -> None:
     from .goal_state import GoalStatus, budget_summary
 
     if goal.status == GoalStatus.COMPLETE:
@@ -800,10 +890,21 @@ def _report_goal_outcome(goal) -> None:
             f"\n[success]✓ Goal complete.[/success] [dim]({budget_summary(goal)})[/dim]\n"
         )
     elif goal.status == GoalStatus.BLOCKED:
-        console.print(
-            "\n[warning]⊘ Goal blocked — it needs your input. Address it, then "
-            "/goal resume.[/warning]\n"
-        )
+        if no_progress_reason is not None:
+            # The *host loop* blocked this goal, not the agent. "It needs your
+            # input" would name the wrong actor and send the user looking for a
+            # question that was never asked — the model answered nothing, or
+            # the provider is down. One message, naming the actual cause.
+            console.print(
+                f"\n[warning]⊘ Goal stopped after {_MAX_EMPTY_CONTINUATIONS} "
+                f"consecutive turns with no progress ({no_progress_reason}). "
+                "Check the model or provider, then /goal resume.[/warning]\n"
+            )
+        else:
+            console.print(
+                "\n[warning]⊘ Goal blocked — it needs your input. Address it, then "
+                "/goal resume.[/warning]\n"
+            )
     elif goal.status == GoalStatus.LIMIT_REACHED:
         console.print(
             f"\n[warning]■ Goal budget reached ({budget_summary(goal)}). Re-budget "

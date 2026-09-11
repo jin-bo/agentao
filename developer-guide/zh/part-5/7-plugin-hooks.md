@@ -187,6 +187,8 @@ class StopHookResult:
 ::: warning 为什么有时收不到任何 hook 事件
 `matched_rule_count` 是**被选派的**规则数（不是执行成功数）。它是 0 时——也就是这次事件没有任何 hook 规则需要跑——运行时**根本不发** `PLUGIN_HOOK_FIRED` 事件。
 
+这条规则对报 `matched_rule_count` 的三个事件成立（`PreToolUse`、`Stop`、`PreCompact`）。报 `rule_count` 的那三个门不一样：`UserPromptSubmit` 和压缩后的 `SessionStart` 只要配了 hook 规则就发，`PostToolUse*` 则只在这一批至少产生了一条提示时才发。
+
 为什么这么设计：让事件流的音量和实际发生的事情对齐。没人挂 hook 的 session 不应该被 `PLUGIN_HOOK_FIRED` 噪音淹没。
 
 副作用要心里有数：你**不能**把"是否收到 `PLUGIN_HOOK_FIRED`"当作"运行时是否到达过这个生命周期点"——后者要看 `EventType` 的其他成员。
@@ -267,10 +269,28 @@ async for ev in agent.events_async():
 
 | `hook_name` | 必带字段 | hook 特有字段 |
 |-------------|---------|--------------|
-| `UserPromptSubmit` | `outcome` / `matched_rule_count` | `blocking_error` / `stop_reason` / `added_context_count` |
-| `Stop` | `outcome` / `matched_rule_count` | `turn_end_reason` / `at_max_iter` / `added_context_count` / `suppress_output` |
+| `UserPromptSubmit` | `outcome` / `rule_count` | `blocking_error` / `stop_reason` / `added_context_count` / `user_notices` |
+| `Stop` | `outcome` / `matched_rule_count` | `turn_end_reason` / `at_max_iter` / `added_context_count` / `suppress_output` / `user_notices` |
+| `PreToolUse` | `outcome` / `matched_rule_count` | `tool` / `added_context_count` |
+| `PostToolUse*` | `outcome="notice"` / `rule_count` | `user_notices` |
 | `PreCompact` | `outcome="allow"` / `matched_rule_count` | `compaction_type` / `trigger="auto"` |
-| 其他生命周期事件 | `outcome` / `matched_rule_count` | （以最小字段集为主） |
+| `SessionStart`（full 压缩之后） | `outcome="allow"` / `rule_count` | `source="compact"` / `user_notices` |
+
+其中两处要读第二遍。**`PostToolUse*` 是两个事件共用的一个名字**：一批调用里会同时
+出现 `PostToolUse` 和 `PostToolUseFailure` 的结果，提示是跨整批聚合的，所以线上根本
+不会单独出现其中任何一个名字，按单名分支永远匹配不上。还有 **规则数是两个不同的字段**：
+`matched_rule_count` 是**被选派**的规则数，`rule_count` 是**已配置**的规则数 ——
+有三个发出点在发的那一刻并没有匹配数可报。
+
+`user_notices` 是宿主要渲染的那个字段。它是一串字符串，是 hook 讲给**用户**而不是模型
+听的 —— `systemMessage`、exit 2 的 stderr，以及一次性的 profile 字段诊断。
+`SessionStart` / `SessionEnd` / `PostToolUse` / `PostToolUseFailure` 把提示交回给派发
+它们的调用方，CLI 和 `agentao run` 就是这么显示的；除此之外的每一个事件，这个字段是
+**唯一**去路，宿主不读它，用户就什么都看不到。
+
+表里没有「压缩之外的 `SessionStart` / `SessionEnd`」这一行，因为那两个派发在本事件上
+**什么都不发** —— 它们把结果返回给调用它们的界面（`agentao/plugins/hooks/lifecycle.py`）。
+自己起停会话的嵌入宿主，要从那个返回值里拿提示，而不是从事件流里。
 
 完整字段表：[4.2 AgentEvent · Replay 可观测性事件](/zh/part-4/2-agent-events#replay-可观测性事件)。
 

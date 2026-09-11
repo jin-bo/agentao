@@ -579,6 +579,50 @@ detection; an unknown value disables the file.
 
 ¹ `command` or `args`; a handler with neither is skipped.
 
+**What `SessionStart` / `SessionEnd` actually report.** These are the values a `matcher` on those
+two events is compared against, so a rule matching anything else never fires:
+
+| Entry point | `SessionStart.source` | `SessionEnd.reason` |
+|---|---|---|
+| Interactive launch | `startup` | — |
+| Interactive exit (`/exit`, `/quit`) | — | `prompt_input_exit` |
+| `agentao --resume` (successful load) | `resume` | — |
+| `agentao --resume` (failed load, CLI starts anyway) | `startup` | — |
+| `/sessions resume` (successful load) | `resume` | `resume` |¹
+| `/sessions resume` (failed load) | — | — |
+| `/clear` and `/new` | `clear` | `clear` |
+| `agentao run` | `startup` | `other` |
+
+¹ Hook dispatch only. `/sessions resume` does not persist the outgoing conversation, which it never
+has; the event reports the boundary without changing what the command saves.
+
+Over **ACP** the same two events fire, on their own paths:
+
+| ACP path | `SessionStart.source` | `SessionEnd.reason` |
+|---|---|---|
+| `session/new` | `startup` | — |
+| `session/load`, and a startup `--resume` consumed by the first `session/new` | `resume` | — |
+| a startup `--resume` that finds nothing and falls back to a new session | `startup` | — |
+| a session actually closing (client disconnect, server shutdown) | — | `other` |
+| a failed load, a duplicate load, a cancelled turn | — | — |
+
+Creating or loading a session does **not** end another one — ACP holds several at once — and
+cancelling a turn is not a session ending. `SessionStart` fires after history is restored and before
+the session can take a turn, so an `additionalContext` a hook injects is in front of the first
+prompt. Its user notices (exit 2) arrive as a `session/update` chunk, best-effort: on `session/new`
+the notice precedes the response that tells the client the new sessionId, and on close the stream may
+already be gone.
+
+`SessionStart` also fires with `source: "compact"` after a **successful full** compaction — manual
+`/compact`, the automatic threshold tier, and the first API-overflow rung. It does **not** fire for
+`microcompact` or `minimal_history`, which trim rather than rebuild, nor for a compaction that was
+cancelled, failed, or skipped. The session id does not change, no `SessionEnd` is emitted, and no
+replay or memory-session boundary is crossed: only the hooks run. Context a hook injects is in place
+before the next model request is assembled, including the immediate retry the overflow rungs make.
+
+`fork` is **never** emitted: agentao has no thread fork. See
+`docs/design/session-lifecycle-source-vs-codex.md`.
+
 **Unknown keys are ignored with a one-time diagnostic naming them, never a
 schema error.** A hook written for a newer Claude Code keeps working and its
 author is told which key had no effect. The diagnostic is session-scoped and

@@ -187,6 +187,12 @@ When `force_continue=True`, the chat loop appends `follow_up_message` as the nex
 ::: warning Why you may not see any hook event at all
 `matched_rule_count` is the number of rules **selected for dispatch** (not the number that ran successfully). When it's 0 — i.e. no hook rule needed to run for this event — the runtime **emits no `PLUGIN_HOOK_FIRED` event at all**.
 
+The rule holds on the three events that report `matched_rule_count` (`PreToolUse`,
+`Stop`, `PreCompact`). The three that report `rule_count` gate on something else:
+`UserPromptSubmit` and the post-compaction `SessionStart` emit whenever any hook
+rule is configured, and `PostToolUse*` emits only when the batch produced at least
+one notice.
+
 Design intent: keep the event stream's volume aligned with what actually happened. A session with no hooks installed shouldn't be drowned in `PLUGIN_HOOK_FIRED` noise.
 
 Be aware of the side effect: you **cannot** treat "did I receive a `PLUGIN_HOOK_FIRED`?" as "did the runtime reach this lifecycle point?" — for the latter, look at other `EventType` members.
@@ -267,10 +273,34 @@ Different `hook_name`s carry different fields (emit shapes are fixed in the chat
 
 | `hook_name` | Always present | Hook-specific |
 |-------------|----------------|---------------|
-| `UserPromptSubmit` | `outcome` / `matched_rule_count` | `blocking_error` / `stop_reason` / `added_context_count` |
-| `Stop` | `outcome` / `matched_rule_count` | `turn_end_reason` / `at_max_iter` / `added_context_count` / `suppress_output` |
+| `UserPromptSubmit` | `outcome` / `rule_count` | `blocking_error` / `stop_reason` / `added_context_count` / `user_notices` |
+| `Stop` | `outcome` / `matched_rule_count` | `turn_end_reason` / `at_max_iter` / `added_context_count` / `suppress_output` / `user_notices` |
+| `PreToolUse` | `outcome` / `matched_rule_count` | `tool` / `added_context_count` |
+| `PostToolUse*` | `outcome="notice"` / `rule_count` | `user_notices` |
 | `PreCompact` | `outcome="allow"` / `matched_rule_count` | `compaction_type` / `trigger="auto"` |
-| Other lifecycle events | `outcome` / `matched_rule_count` | (minimal field set) |
+| `SessionStart` (after a full compaction) | `outcome="allow"` / `rule_count` | `source="compact"` / `user_notices` |
+
+Two of those need reading twice. **`PostToolUse*` is one name for both events**: a
+batch mixes `PostToolUse` and `PostToolUseFailure` results and the notices are
+aggregated across it, so neither name alone appears on the wire and branching on
+one of them never matches. And **the rule count is two different fields**:
+`matched_rule_count` is the number of rules *selected for dispatch*, while
+`rule_count` is the number *configured* — three sites have no matched count to
+report at the point they emit.
+
+`user_notices` is the field a host renders. It is a list of strings a hook
+addressed to the **user** rather than the model — `systemMessage`, exit-2 stderr,
+and the one-time profile field diagnostics. `SessionStart` / `SessionEnd` /
+`PostToolUse` / `PostToolUseFailure` hand their notices back to the caller that
+dispatched them, which is how the CLI and `agentao run` surface them; for every
+other event this field is the **only** route, so a host that ignores it shows the
+user nothing.
+
+The table has no row for a `SessionStart` / `SessionEnd` outside compaction
+because those dispatches emit **nothing** on this event — they return their
+result to the surface that called them (`agentao/plugins/hooks/lifecycle.py`).
+An embedded host that starts or ends a session itself gets the notices from that
+return value, not from the event stream.
 
 Full field table: [4.2 AgentEvent · Replay observability events](/en/part-4/2-agent-events#replay-observability-events).
 

@@ -11,9 +11,131 @@ _Targeting 0.4.23. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **A `/goal` run now stops when it stops making progress.** The time and turn
+  budgets bound how much a goal may *do*; nothing bounded how long it could do
+  *nothing*, and `--unbounded` (or the documented `default_max_turns: 0`) left
+  it with no bound at all. Three consecutive continuation turns that produce no
+  answer (`no_output` / `reasoning_only`) and call no tools, or that fail at the
+  provider (`llm_error`), now mark the goal `blocked`; any answer or tool call
+  resets the streak, as does a turn the harness halted at a ceiling
+  (`max_iterations`, `doom_loop`, `length_truncated`, `hook_stop`), which did
+  work and is not idle. The guard reads `agent.last_turn.incomplete_reason`,
+  which the runtime already computed — an emptiness check on the returned text
+  could never have worked, because an empty answer is replaced by a placeholder
+  before it reaches the caller. `llm_error` deliberately ignores the turn's tool
+  count: that count accumulates across a turn's *iterations*, so one tool call
+  made before a provider started failing would otherwise reset the streak on
+  every later turn and the loop would spin on a dead provider forever. Purely
+  host-side; the harness is untouched.
+
 ### Changed
 
 ### Fixed
+
+- **A hook's notice now actually reaches the user.** Four of the eight hook
+  events are dispatched by a caller that owns an output and consumed its return
+  value; the other notice-producing events are dispatched inside the chat loop
+  (`UserPromptSubmit`, `Stop`), inside a tool worker (`PostToolUse*`) and inside
+  the compaction coordinator (`SessionStart(source="compact")`), none of which
+  owns a surface. Their notices rode `PLUGIN_HOOK_FIRED.user_notices`, a field
+  no first-party surface read — so a `systemMessage`, an exit-2 stderr line or a
+  profile field diagnostic from any of them was computed, capped, stored and
+  dropped. All three surfaces now consume it: the interactive CLI prints it
+  through the same escaped renderer the lifecycle notices use, `agentao run`
+  folds it into `RunResult.warnings` beside the lifecycle notices it already
+  carried, and ACP maps it onto the same `agent_message_chunk` the direct
+  notice writer produces, so a client cannot tell the two paths apart. `Stop`'s
+  `systemMessage` joins that field gated on contract — under
+  `claude-code@profile-1` it goes to the user and only the user, as the
+  reference says it is for, while `agentao-v1` keeps its documented double-write
+  into the model's context and surfaces nothing.
+
+- **A hook's user-notice can no longer break the CLI through Rich markup.**
+  `SessionStart` / `SessionEnd` notices are a hook's stderr — arbitrary command
+  output — and were interpolated raw into a Rich markup string. Neither failure
+  needed a control byte: `[black on black]` rendered the notice invisible, and
+  an unmatched closing tag such as `[/oops]` raised `MarkupError` out of the
+  dispatch, which at `SessionStart` escaped into the fatal-error handler so the
+  CLI refused to start, and at `/exit` was swallowed so the command stopped
+  exiting. Notices now go through the same strip-plus-escape pairing
+  `cli/transport.py::_display` uses for model-authored text.
+
+- **A corrupt session file no longer takes down `/sessions list` or
+  `agentao --resume`.** A file that is valid JSON but not an object (`[]`,
+  `null`, a bare string) parsed fine and then raised `AttributeError` on
+  `data.get`, which every corrupt-file handler in the session store was written
+  to miss. `load_session_record` now raises `ValueError` for that case — the
+  same type `json.JSONDecodeError` already raised, so existing handlers cover
+  it — and `list_sessions`, `_resolve_session_file` and `delete_session` skip
+  documents of the wrong shape instead of raising out of the scan.
+
+- **`SessionStart` now fires with `source: "compact"` after a full
+  compaction.** Scope is deliberately narrow and is agentao's own choice: a
+  **successful** **full** compaction only — manual `/compact`, the automatic
+  threshold tier, and the first API-overflow rung, once each. `microcompact`
+  runs on most iterations inside its band and `minimal_history` is the overflow
+  ladder's last rung; neither rebuilds the session, and firing there would
+  re-inject the same context repeatedly on the one path where the request is
+  already too large. That is also why this is not wired to
+  `CONTEXT_COMPRESSED`, which is not gated by compaction kind. A cancelled,
+  failed, or skipped compaction fires nothing. The dispatch sits between the
+  history replacement and the assembly of the next request's message snapshot,
+  because that snapshot is what the caller sends next and the overflow rungs
+  retry with it immediately — so a hook's `additionalContext` is in the very
+  request the compaction was performed for, and is counted in its token
+  estimate. The session id does not change, no `SessionEnd` is emitted, and no
+  replay or memory-session boundary is crossed. A hook failure cannot undo a
+  compaction that already succeeded.
+
+- **`SessionStart` and `SessionEnd` hooks now fire over ACP.** ACP was the one
+  surface of three that dispatched neither, with no doc, comment, or test
+  behind the divergence. It is not three more dispatch calls: ACP holds several
+  sessions at once, a client supplies its own id on `session/load` and can
+  pipeline a prompt behind it, and a startup `--resume` turns the first
+  `session/new` into a resume. So `SessionStart` runs in a `before_publish`
+  callback on session registration — **after** the duplicate check, so a load
+  about to be rejected runs no user commands, and **before** the session is
+  published, so no prompt can start a turn in front of the context a hook
+  injected; it fires after history is restored, or the restore would discard
+  that context. `SessionEnd` follows the real close path with `reason: "other"`,
+  behind the idempotence guard so a double close dispatches once: creating or
+  loading a session ends nothing, and a cancelled turn is not a session ending.
+  `session/new` reports `startup`, `session/load` and a successful startup
+  resume report `resume`, and a startup resume that finds nothing and falls back
+  to a new session reports `startup` — the value follows what happened, not
+  which method was called. A failed load, a duplicate load, and a cancelled turn
+  dispatch nothing. Hook user notices (exit 2, which on these two events is the
+  only user channel) arrive as a `session/update` chunk, best-effort. The
+  terminal-independent dispatch moved to `agentao/plugins/hooks/lifecycle.py`,
+  which is how ACP reaches it without importing the CLI; the CLI's two helpers
+  are now thin aliases and keep their printing.
+
+- **`SessionStart` and `SessionEnd` hooks now report why the session started or
+  ended.** Both payloads shipped a constant — always `source: "startup"` and
+  always `reason: "other"` — even though the adapter had taken the value as an
+  argument since the profile landed and no call site ever passed one. A profile
+  hook matcher on these two events is compared against exactly those fields
+  (measured against a real `claude` 2.1.251, `docs/reference/hooks-probe-2.1.251.md`
+  §G6), so every rule written `matcher: "resume"` / `"clear"` / `"logout"` was
+  silently dead, and the one rule written `matcher: "startup"` fired on `/clear`
+  too. `/clear` and `/new` now report `clear` on both events,
+  interactive exit reports `prompt_input_exit`, `agentao run` keeps `other` as
+  upstream's own value for an unnamed cause, and both resume paths report
+  `resume`. `/sessions resume` previously dispatched **neither** event; it now
+  dispatches both, hooks only, carrying the outgoing session id on the end event
+  and the incoming one on the start. A startup `agentao --resume` leaves a
+  one-shot marker for the single dispatch `run_loop` already makes rather than
+  adding its own, which is what keeps that path at one `SessionStart` instead of
+  `resume` followed by `startup`; the marker is set only on a successful load,
+  so a failed startup resume still reports `startup` for the real new session
+  that begins anyway. A corrupt session file no longer escapes as a fatal error
+  that prevents `--resume` from starting the CLI at all, and an interactive
+  resume no longer skips the memory-session archive, which had left the
+  abandoned conversation's summaries bound to the resumed session. The values
+  agentao emits are now enumerated in `docs/reference/configuration.md` §11;
+  `compact` and `fork` are never emitted, and ACP dispatches neither event on
+  any path. Design and the two recorded gaps:
+  `docs/design/session-lifecycle-source-vs-codex.md`.
 
 - **The overflow ladder's last rung no longer hands the provider an orphaned
   tool result.** Rung 2 (`minimal_history`) kept the newest two messages by a

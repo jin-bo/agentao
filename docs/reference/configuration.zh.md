@@ -512,6 +512,46 @@ handler，单独告警，所以一处笔误不会让一份能用的文件整体�
 
 ¹ `command` 与 `args` 二选一；两者皆无的 handler 会被跳过。
 
+**`SessionStart` / `SessionEnd`实际上报什么。** 这两个事件的 `matcher` 就是拿这两个字段来比的，
+所以匹配其他取值的规则永远不会触发：
+
+| 入口 | `SessionStart.source` | `SessionEnd.reason` |
+|---|---|---|
+| 交互式启动 | `startup` | —— |
+| 交互式退出（`/exit`、`/quit`） | —— | `prompt_input_exit` |
+| `agentao --resume`（加载成功） | `resume` | —— |
+| `agentao --resume`（加载失败，CLI 照常启动） | `startup` | —— |
+| `/sessions resume`（加载成功） | `resume` | `resume` |¹
+| `/sessions resume`（加载失败） | —— | —— |
+| `/clear` 与 `/new` | `clear` | `clear` |
+| `agentao run` | `startup` | `other` |
+
+¹ 仅派发 hook。`/sessions resume` 不会持久化被切走的会话（它一直如此）；事件只报告这个边界，
+不改变该命令保存什么。
+
+**ACP** 上这两个事件同样会发，走它自己的路径：
+
+| ACP 路径 | `SessionStart.source` | `SessionEnd.reason` |
+|---|---|---|
+| `session/new` | `startup` | —— |
+| `session/load`，以及被首次 `session/new` 消费的启动 `--resume` | `resume` | —— |
+| 启动 `--resume` 没找到可恢复的、回退成新建 | `startup` | —— |
+| 会话真正关闭（客户端断连、服务器关停） | —— | `other` |
+| 加载失败、重复加载、取消单轮 | —— | —— |
+
+新建或加载一个会话**不意味着**另一个会话结束 —— ACP 同时持有多个会话；取消单轮也不是会话结束。
+`SessionStart` 在历史恢复之后、会话可以跑 turn 之前派发，所以 hook 注入的 `additionalContext`
+排在首轮 prompt 前面。它的用户提示（exit 2）以 `session/update` 分片送达，尽力而为：`session/new`
+上提示先于告知客户端新 sessionId 的响应，关闭时流可能已经没了。
+
+**成功的 full 压缩**之后 `SessionStart` 也会以 `source: "compact"` 派发 —— 手动 `/compact`、
+自动阈值层、以及 API 溢出的第一级。`microcompact` 与 `minimal_history` **不派发**（它们是裁剪而非重建），
+被取消、失败、跳过的压缩同样不派发。session id 不变，不发 `SessionEnd`，不跨越 replay 或记忆会话边界：
+只跑 hook。hook 注入的上下文在下一次模型请求组装之前就位，包括溢出层立刻发起的那次重试。
+
+`fork` **永远不会**出现：agentao 没有线程 fork。参见
+`docs/design/session-lifecycle-source-vs-codex.md`。
+
 **不认识的键一律忽略，并出一条点名该键的一次性诊断，绝不作为 schema 错误。** 为更新版 Claude Code 写的
 hook 照样能跑，作者也会被告知哪个键没起作用。该诊断按会话作用域、按规则内容取键，所以插件重载后，改好的
 hook 会重新发声。

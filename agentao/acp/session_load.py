@@ -73,6 +73,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 from agentao.embedding.sessions import load_session, load_session_record
 from agentao.runtime.model import purge_thinking_artifacts
 
+from ._lifecycle import session_start_publisher
 from .mcp_translate import translate_acp_mcp_servers
 from .models import AcpSessionState, ResumeDirective
 from .protocol import (
@@ -363,7 +364,17 @@ def _instantiate_loaded_session(
             cancel_token=None,
         )
         try:
-            server.sessions.create(state)
+            server.sessions.create(
+                state,
+                # Both callers of this function restored history, so both are
+                # resumes: `session/load`, and the startup `--resume` seam
+                # consumed by the first `session/new`. A startup resume that
+                # finds nothing to restore never reaches here — it falls
+                # through to a fresh `session/new`, which reports `startup`.
+                before_publish=session_start_publisher(
+                    server, agent, session_id, source="resume",
+                ),
+            )
         except DuplicateSessionError:
             raise JsonRpcHandlerError(
                 code=INVALID_REQUEST,
