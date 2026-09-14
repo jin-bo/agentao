@@ -15,6 +15,16 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A sub-agent now disconnects the MCP servers it connected.** Every
+  sub-agent is a fresh runtime, and building one reads `mcp.json` and connects
+  every configured server again. Nothing ever closed it, so each spawn,
+  foreground or background, left its stdio server processes running until the
+  agentao process exited. The parent's `close()` does not reach a sub-agent,
+  and garbage collection does not end the processes. The sub-agent is now
+  closed on every exit path: a finished run, an exception, a cancellation, and
+  a failure during its setup (a malformed user-scope `permissions.json`).
+  Each spawn still pays the connect cost. Having sub-agents use the parent's
+  connection instead depends on #238 and #241. (#239)
 - **A sub-agent no longer takes the notifications of background agents
   addressed to the top-level conversation.** Sub-agents are built with their
   parent's `BackgroundTaskStore` so `check_background_agent` and
