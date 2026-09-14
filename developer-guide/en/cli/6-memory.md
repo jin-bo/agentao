@@ -1,6 +1,6 @@
 # 6. Memory
 
-The agent has a persistent memory layer. It writes facts about you and the project as it works (`save_memory` tool), recalls them on later turns, and survives across sessions and across `/clear`. This page is about inspecting, searching, and clearing what's in there.
+The agent has a persistent memory layer. It writes facts about you and the project as it works (`save_memory` tool), recalls them on later turns, and survives across sessions and across `/new` (`/clear` wipes it). This page is about inspecting, searching, and clearing what's in there.
 
 ## What memory is, what it isn't
 
@@ -108,7 +108,7 @@ Are you sure you want to delete ALL memories? This cannot be undone. [y/N]: y
 Successfully cleared 47 memory(ies)
 ```
 
-Confirmation required. Wipes both `memories` and `session_summaries` (soft-delete + summary table truncation respectively). Only the **active** scope and current project are affected — your user-global memories survive unless you're in the user scope.
+Confirmation required. Wipes both `memories` and `session_summaries` (soft-delete + summary table truncation respectively). Both scopes are affected — the current project's memories *and* your user-global ones — plus every session summary in this project. Other projects' own `.agentao/memory.db` files are untouched. If part of the wipe fails, the command names what survived instead of reporting success.
 
 ::: warning "Cannot be undone" is from the agent's perspective
 The DB rows are soft-deleted, so a determined operator with a SQLite browser can recover them. But the agent will never see them again, and the CLI offers no undo button.

@@ -8,7 +8,7 @@ from rich.markup import escape as markup_escape
 from rich.prompt import Confirm
 
 from .._globals import console, unknown_subcommand
-from .._utils import _display_layered_entries
+from .._utils import _display_layered_entries, wipe_all_memories
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -108,18 +108,26 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
 
     elif subcommand == "clear":
         if Confirm.ask("\n[warning]Are you sure you want to delete ALL memories? This cannot be undone.[/warning]", default=False):
-            count = mgr.clear()
-            summary_count = mgr.clear_all_session_summaries()
+            count, summary_count, not_cleared = wipe_all_memories(mgr)
             try:
                 from agentao.transport import AgentEvent, EventType
                 cli.agent.transport.emit(AgentEvent(EventType.MEMORY_CLEARED, {
                     "memories_cleared": count,
                     "session_summaries_cleared": summary_count,
+                    # Without it the audit record reads as a clean wipe even
+                    # when the command told the user part of it failed.
+                    "not_cleared": list(not_cleared),
                     "cause": "cli",
                 }))
             except Exception:
                 pass
-            console.print(f"\n[success]Successfully cleared {count} memory(ies)[/success]\n")
+            if not_cleared:
+                console.print(
+                    f"\n[error]Could not clear: {', '.join(not_cleared)}. They will "
+                    f"still reach the next prompt. See agentao.log.[/error]\n"
+                )
+            else:
+                console.print(f"\n[success]Successfully cleared {count} memory(ies)[/success]\n")
         else:
             console.print("\n[info]Cancelled.[/info]\n")
 

@@ -15,6 +15,33 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`/clear` and `/new` no longer let a background agent report into the
+  conversation they start.** The chat loop drains the background-agent
+  notification queue into whatever history exists at the next turn, and
+  nothing on the reset path touched that queue — so a task launched before the
+  reset appended its result preview, as a `<system-reminder>`, to the first
+  turn after it. A notification now belongs to the conversation that launched
+  its task: `Agentao.clear_history()` calls the new
+  `BackgroundTaskStore.start_new_conversation()`, which drops the queue and
+  silences tasks registered before the call. The tasks keep running and their
+  records still settle, so `/agents` reports them; both commands now say how
+  many are still in flight. Because the cutoff is in `clear_history()`, an
+  embedding host that resets through it gets the same behaviour.
+  `/sessions resume`, which replaces the history without going through
+  `clear_history()`, applies the same cutoff.
+- **`/clear` and `/memory clear` no longer report a failed wipe as success.**
+  `clear_all_session_summaries()` answers 0 both for "nothing to delete" and
+  for a swallowed storage error, and both commands printed success either way.
+  A surviving summary is not inert: the cross-session tail puts it back in the
+  next prompt. The commands now read the store back
+  (`MemoryManager.session_summaries_remain()`) and name what survived. A raise
+  from `MemoryManager.clear()` is caught too: it used to abandon `/clear`
+  after the history was gone but before the permission mode was restored to
+  `workspace-write` and `SessionStart` fired.
+- **The docs said `/clear` keeps session summaries.** It deletes all of them;
+  `docs/guides/memory-management.md` is corrected, and the quickstart and skills
+  guide now list `/new` and say that `/clear` removes every memory.
+
 ---
 
 ## [0.4.23] — 2026-09-11

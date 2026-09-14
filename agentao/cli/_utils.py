@@ -5,7 +5,42 @@ from __future__ import annotations
 from prompt_toolkit.completion import Completer, Completion
 from rich.markup import escape as markup_escape
 
-from ._globals import _TOOL_SUMMARY_KEYS, console
+from ._globals import _TOOL_SUMMARY_KEYS, console, logger
+
+
+def wipe_all_memories(mgr) -> tuple[int, int, list[str]]:
+    """The hard memory reset that ``/clear`` and ``/memory clear`` share.
+
+    Returns ``(memories_cleared, summaries_cleared, not_cleared)``, where
+    ``not_cleared`` names each part still in place. Neither return count can
+    say that on its own: ``clear_all_session_summaries`` answers 0 both for
+    "nothing to delete" and "the delete failed", so the summaries are
+    checked by reading the store back.
+
+    Never raises, and runs the second half even when the first fails.
+    ``/clear`` calls this mid-reset; a raise there abandons the reset after
+    the history is gone but before the permission mode is restored.
+    """
+    not_cleared: list[str] = []
+    memories = 0
+    try:
+        memories = mgr.clear()
+    except Exception:
+        logger.warning("clearing memories failed", exc_info=True)
+        not_cleared.append("memories")
+    summaries = 0
+    try:
+        summaries = mgr.clear_all_session_summaries()
+        remain = mgr.session_summaries_remain()
+    except Exception:
+        # ``MemoryManager`` swallows its own errors, but the CLI factory
+        # contract only requires *a* ``memory_manager``; a raise here would
+        # break the "never raises" promise above at exactly the wrong moment.
+        logger.warning("clearing session summaries failed", exc_info=True)
+        remain = True
+    if remain:
+        not_cleared.append("session summaries")
+    return memories, summaries, not_cleared
 
 
 def _tool_args_summary(tool_name: str, args: dict) -> str:

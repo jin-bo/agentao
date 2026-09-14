@@ -10,16 +10,27 @@ One implementation, one flag.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ...permissions import PermissionMode
 from .._globals import console
+from .._utils import wipe_all_memories
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
 
 
-def _reset_session(cli: AgentaoCLI, *, clear_memories: bool) -> None:
+@dataclass(frozen=True)
+class _ResetOutcome:
+    # Parts of the memory wipe still in place (``/clear`` only).
+    not_cleared: list[str]
+    # Background agents still pending or running, now detached from the
+    # conversation: they finish, but report only through ``/agents``.
+    detached_agents: int
+
+
+def _reset_session(cli: AgentaoCLI, *, clear_memories: bool) -> _ResetOutcome:
     """Close the current session and open a new one.
 
     Order matters: ``on_session_end`` must run against the *old* session id
@@ -47,28 +58,57 @@ def _reset_session(cli: AgentaoCLI, *, clear_memories: bool) -> None:
         cli._plan_controller.exit_plan_mode()
 
     cli.agent.clear_history()
+    # Counted at the cutoff itself: every task in flight *now* finishes
+    # silently, including one that settles while SessionStart hooks run below.
+    # ``getattr`` because ``bg_store`` is not in the agent-factory contract
+    # (``app.py::_REQUIRED_AGENT_ATTRS``) — a runtime without it must not fail
+    # here, after the session has already been reset.
+    bg_store = getattr(cli.agent, "bg_store", None)
+    detached_agents = 0 if bg_store is None else bg_store.count_in_flight()
+    not_cleared: list[str] = []
     if clear_memories:
-        cli.agent.memory_manager.clear()
-        cli.agent.memory_manager.clear_all_session_summaries()
+        _, _, not_cleared = wipe_all_memories(cli.agent.memory_manager)
 
     cli._staged_images = []
     cli.last_response = None
     cli._cached_ctx_pct = 0.0
     cli._apply_mode(PermissionMode.WORKSPACE_WRITE)
     cli.on_session_start(source="clear")
+    return _ResetOutcome(
+        not_cleared=not_cleared,
+        detached_agents=detached_agents,
+    )
+
+
+def _print_detached(count: int) -> None:
+    if count:
+        console.print(
+            f"[warning]{count} background agent(s) still running from the previous "
+            f"session. They will not report into this one — check /agents.[/warning]"
+        )
 
 
 def handle_clear_command(cli: AgentaoCLI, args: str = "") -> None:
     """Handle /clear — reset the session *and* drop all memories."""
-    _reset_session(cli, clear_memories=True)
-    console.print("\n[success]Session and all memories cleared.[/success]")
+    outcome = _reset_session(cli, clear_memories=True)
+    if outcome.not_cleared:
+        console.print(
+            f"\n[error]Session reset, but these could not be cleared: "
+            f"{', '.join(outcome.not_cleared)}. They will still reach the next "
+            f"prompt. See agentao.log.[/error]"
+        )
+    else:
+        console.print("\n[success]Session and all memories cleared.[/success]")
+    _print_detached(outcome.detached_agents)
     console.print("[info]Permission mode reset to workspace-write.[/info]\n")
 
 
 def handle_new_command(cli: AgentaoCLI, args: str = "") -> None:
     """Handle /new — reset the session, keep long-term memories."""
-    _reset_session(cli, clear_memories=False)
+    outcome = _reset_session(cli, clear_memories=False)
     console.print(
-        "\n[success]New session started. Long-term memories preserved.[/success]"
+        "\n[success]New session started. Long-term memories and earlier "
+        "session summaries preserved.[/success]"
     )
+    _print_detached(outcome.detached_agents)
     console.print("[info]Permission mode reset to workspace-write.[/info]\n")

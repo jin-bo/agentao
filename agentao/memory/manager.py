@@ -249,12 +249,18 @@ class MemoryManager:
     def clear(self, scope: Optional[str] = None) -> int:
         """Soft-delete all entries in given scope (None = both). Returns count deleted."""
         count = 0
-        if scope is None or scope == "project":
-            count += self.project_store.clear_memories(scope="project")
-        if (scope is None or scope == "user") and self.user_store:
-            count += self.user_store.clear_memories(scope="user")
-        if count:
-            self._write_version += 1
+        try:
+            if scope is None or scope == "project":
+                count += self.project_store.clear_memories(scope="project")
+            if (scope is None or scope == "user") and self.user_store:
+                count += self.user_store.clear_memories(scope="user")
+        finally:
+            # Bumped even when the user store raises after the project store
+            # committed: ``MemoryRetriever`` rebuilds its index only on a
+            # version change, so skipping the bump would keep recalling the
+            # project rows that are already gone.
+            if count:
+                self._write_version += 1
         return count
 
     # =========================================================================
@@ -336,12 +342,28 @@ class MemoryManager:
         sessions would silently resurface in the next prompt via
         ``get_cross_session_tail()``.
 
-        Returns the number of rows deleted (0 on failure).
+        Returns the number of rows deleted (0 on failure). A caller that must
+        report the outcome cannot tell those two zeros apart — ask
+        :meth:`session_summaries_remain` instead.
         """
         try:
             return self.project_store.clear_session_summaries(session_id=None)
         except Exception:
+            logger.warning("clearing all session summaries failed", exc_info=True)
             return 0
+
+    def session_summaries_remain(self) -> bool:
+        """Whether any session summary, from any session, is still stored.
+
+        The check behind a hard reset's success message: a surviving row is
+        not inert, it resurfaces in the next prompt through
+        :meth:`get_cross_session_tail`. A store that cannot be read answers
+        ``True`` — it cannot confirm the summaries are gone.
+        """
+        try:
+            return bool(self.project_store.list_session_summaries(session_id=None, limit=1))
+        except Exception:
+            return True
 
     # =========================================================================
     # Private helpers

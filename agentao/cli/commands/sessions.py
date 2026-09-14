@@ -182,6 +182,16 @@ def resume_session(
     # History was replaced wholesale; the Tier-1 token anchor describes the
     # prior conversation's prefix and must not survive into the resumed one.
     cli.agent.context_manager.invalidate_token_anchor()
+    # Same cutoff ``clear_history()`` applies for ``/clear`` and ``/new``: a
+    # background agent launched in the conversation being left must not
+    # report into the one being resumed. The chat loop drains the queue into
+    # whatever history exists at the next turn, and resume replaces that
+    # history without going through ``clear_history()``.
+    detached_agents = 0
+    bg_store = getattr(cli.agent, "bg_store", None)
+    if bg_store is not None:
+        bg_store.start_new_conversation()
+        detached_agents = bg_store.count_in_flight()
     # Same reasoning applies to the saved conversation's thinking artifacts.
     # Because the persisted model is deliberately not restored (see below),
     # a resumed session is a model switch in everything but name — the
@@ -249,4 +259,9 @@ def resume_session(
         )
     if active_skills:
         console.print(f"[dim]Active skills: {', '.join(active_skills)}[/dim]")
+    if detached_agents:
+        console.print(
+            f"[warning]{detached_agents} background agent(s) still running from the "
+            f"previous session. They will not report into this one — check /agents.[/warning]"
+        )
     console.print()
