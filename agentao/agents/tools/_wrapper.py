@@ -455,7 +455,6 @@ class AgentToolWrapper(Tool):
                 not interleave output with the foreground session.
         """
         from ...agent import Agentao
-        from ...skills import SkillManager
 
         # Build scoped ToolRegistry
         scoped_registry = ToolRegistry()
@@ -539,135 +538,164 @@ class AgentToolWrapper(Tool):
         # disconnects them: it is a local, the parent's ``close()`` does not
         # reach it, and garbage collection does not end a stdio server's
         # process. The ``try`` opens here rather than around ``chat()`` because
-        # the setup below can raise too (a malformed user-scope
-        # ``permissions.json`` fails closed).
+        # the setup in ``_drive_sub_agent`` can raise too (a malformed
+        # user-scope ``permissions.json`` fails closed).
         try:
-            sub_agent.llm.omit_temperature = omit_temperature
-            sub_agent.tools = scoped_registry
-            # The store is shared (above) for querying and cancelling, not for
-            # consuming: a sub-agent's loop draining it would take notifications
-            # addressed to the top-level conversation into its own history. Every
-            # runtime this wrapper builds is a non-consumer, so a task launched at
-            # any depth reports to the top level; a sub-agent whose tool list
-            # includes ``check_background_agent`` can poll for its result.
-            sub_agent._drains_background_notifications = False
-            sub_agent.project_instructions = self._definition.get("system_instructions")
-            sub_agent.skill_manager = SkillManager(skills_dir="/nonexistent")
-            sub_agent.agent_manager = None  # prevent recursive spawning
-            if self._readonly_mode_getter():
-                sub_agent.tool_runner.set_readonly_mode(True)
-            if self._permission_mode_getter:
-                mode = self._permission_mode_getter()
-                if mode is not None:
-                    from ...embedding.permission_loader import load_permission_rules
-                    from ...permissions import PermissionEngine
-                    # Anchor the sub-agent's permission engine to the parent's
-                    # working directory so the same project rules apply, and
-                    # pass through the parent's ``user_root`` so user-scope
-                    # rules in ``~/.agentao/permissions.json`` aren't silently
-                    # dropped — losing them was a permission bypass.
-                    user_root = (
-                        self._permission_user_root_getter()
-                        if self._permission_user_root_getter is not None
-                        else None
-                    )
-                    rules, loaded_sources = load_permission_rules(
-                        project_root=sub_agent.working_directory,
-                        user_root=user_root,
-                    )
-                    engine = PermissionEngine(
-                        project_root=sub_agent.working_directory,
-                        user_root=user_root,
-                        rules=rules,
-                        loaded_sources=loaded_sources,
-                    )
-                    engine.set_mode(mode)
-                    sub_agent.tool_runner._permission_engine = engine
-
-            # Prepend parent context to the task
-            if parent_context:
-                full_task = f"{parent_context}\n[Your Task]\n{task}"
-            else:
-                full_task = task
-
-            # ``max_iterations`` exhaustion is a deliberately separate axis from
-            # ``incomplete_reason`` (see runtime/chat_loop/_runner.py:85) and rides
-            # a transport flag that only ``NonInteractiveTransport`` carries — the
-            # sub-agent has no such transport. Since sub-agents are handed a
-            # *smaller* budget than the parent, cap exhaustion is their most likely
-            # way to stop short, so record it here rather than let it read as
-            # success. The prior handler's decision is preserved verbatim.
-            max_iter_hit = {"hit": False}
-            _prior_on_max_iter = getattr(sub_agent.transport, "on_max_iterations", None)
-
-            def _note_max_iterations(max_iterations, pending):
-                max_iter_hit["hit"] = True
-                if callable(_prior_on_max_iter):
-                    return _prior_on_max_iter(max_iterations, pending)
-                return {"action": "stop"}
-
-            try:
-                sub_agent.transport.on_max_iterations = _note_max_iterations
-            except Exception:
-                # Read-only / slotted transport: lose the signal rather than the run.
-                pass
-
-            t0 = time.monotonic()
-            task_complete = False
-            try:
-                # Foreground sub-agents share the parent's cancellation token so
-                # Ctrl+C propagates into nested chat() loops (Gemini CLI pattern).
-                # Background agents always receive None (fire-and-forget).
-                result = sub_agent.chat(
-                    full_task,
-                    max_iterations=max_turns,
-                    cancellation_token=cancellation_token,
-                )
-            except TaskComplete as tc:
-                # Defensive only: ``ToolExecutor`` converts ``TaskComplete`` into
-                # a tool result, so it does not reach here from the normal path.
-                # The real detection is the history scan below.
-                result = tc.result
-                task_complete = True
-
-            elapsed_ms = int((time.monotonic() - t0) * 1000)
-
-            # An explicit completion signal from the sub-agent: it called
-            # ``complete_task``. That is the agent declaring it is done, so the
-            # turn-level classification does not apply — do not second-guess it.
-            completed_payload = _find_task_complete_result(sub_agent)
-            if completed_payload is not None:
-                task_complete = True
-                # ``complete_task`` is documented as *the* way a sub-agent
-                # returns its answer, but the loop keeps running after the tool
-                # call and the child often has nothing left to say — leaving
-                # ``chat()`` to return the empty-turn placeholder. Prefer the
-                # payload the agent explicitly handed back over that placeholder,
-                # otherwise the real answer is dropped on the floor.
-                if _is_harness_notice(result) and completed_payload.strip():
-                    result = completed_payload
-
-            # Collect stats from executed sub-agent
-            turns = sum(1 for m in sub_agent.messages if m.get("role") == "assistant")
-            tool_calls = sum(1 for m in sub_agent.messages if m.get("role") == "tool")
-            approx_tokens = sub_agent.context_manager.estimate_tokens(sub_agent.messages)
-
-            stats = {
-                "agent_name": self._definition["name"],
-                "turns": turns,
-                "tool_calls": tool_calls,
-                "tokens": approx_tokens,
-                "duration_ms": elapsed_ms,
-                "incomplete": _classify_subagent_outcome(
-                    outcome=getattr(sub_agent, "last_turn", None),
-                    task_complete=task_complete,
-                    max_iterations_hit=max_iter_hit["hit"],
-                    max_turns=max_turns,
-                ),
-            }
-            return result, stats
+            return self._drive_sub_agent(
+                sub_agent,
+                task=task,
+                parent_context=parent_context,
+                scoped_registry=scoped_registry,
+                omit_temperature=omit_temperature,
+                max_turns=max_turns,
+                cancellation_token=cancellation_token,
+            )
         finally:
             sub_agent.close()
+
+    def _drive_sub_agent(
+        self,
+        sub_agent: Any,
+        *,
+        task: str,
+        parent_context: str,
+        scoped_registry: ToolRegistry,
+        omit_temperature: bool,
+        max_turns: int,
+        cancellation_token: Optional[Any],
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Configure a constructed sub-agent, run it, and collect its stats.
+
+        The caller owns the sub-agent's lifetime and closes it whatever this
+        raises; stats read the sub-agent's history, so they are taken here,
+        before that close.
+        """
+        from ...skills import SkillManager
+
+        sub_agent.llm.omit_temperature = omit_temperature
+        sub_agent.tools = scoped_registry
+        # The store is shared (``_run_sync``) for querying and cancelling, not for
+        # consuming: a sub-agent's loop draining it would take notifications
+        # addressed to the top-level conversation into its own history. Every
+        # runtime this wrapper builds is a non-consumer, so a task launched at
+        # any depth reports to the top level; a sub-agent whose tool list
+        # includes ``check_background_agent`` can poll for its result.
+        sub_agent._drains_background_notifications = False
+        sub_agent.project_instructions = self._definition.get("system_instructions")
+        sub_agent.skill_manager = SkillManager(skills_dir="/nonexistent")
+        sub_agent.agent_manager = None  # prevent recursive spawning
+        if self._readonly_mode_getter():
+            sub_agent.tool_runner.set_readonly_mode(True)
+        if self._permission_mode_getter:
+            mode = self._permission_mode_getter()
+            if mode is not None:
+                from ...embedding.permission_loader import load_permission_rules
+                from ...permissions import PermissionEngine
+                # Anchor the sub-agent's permission engine to the parent's
+                # working directory so the same project rules apply, and
+                # pass through the parent's ``user_root`` so user-scope
+                # rules in ``~/.agentao/permissions.json`` aren't silently
+                # dropped — losing them was a permission bypass.
+                user_root = (
+                    self._permission_user_root_getter()
+                    if self._permission_user_root_getter is not None
+                    else None
+                )
+                rules, loaded_sources = load_permission_rules(
+                    project_root=sub_agent.working_directory,
+                    user_root=user_root,
+                )
+                engine = PermissionEngine(
+                    project_root=sub_agent.working_directory,
+                    user_root=user_root,
+                    rules=rules,
+                    loaded_sources=loaded_sources,
+                )
+                engine.set_mode(mode)
+                sub_agent.tool_runner._permission_engine = engine
+
+        # Prepend parent context to the task
+        if parent_context:
+            full_task = f"{parent_context}\n[Your Task]\n{task}"
+        else:
+            full_task = task
+
+        # ``max_iterations`` exhaustion is a deliberately separate axis from
+        # ``incomplete_reason`` (see runtime/chat_loop/_runner.py:85) and rides
+        # a transport flag that only ``NonInteractiveTransport`` carries — the
+        # sub-agent has no such transport. Since sub-agents are handed a
+        # *smaller* budget than the parent, cap exhaustion is their most likely
+        # way to stop short, so record it here rather than let it read as
+        # success. The prior handler's decision is preserved verbatim.
+        max_iter_hit = {"hit": False}
+        _prior_on_max_iter = getattr(sub_agent.transport, "on_max_iterations", None)
+
+        def _note_max_iterations(max_iterations, pending):
+            max_iter_hit["hit"] = True
+            if callable(_prior_on_max_iter):
+                return _prior_on_max_iter(max_iterations, pending)
+            return {"action": "stop"}
+
+        try:
+            sub_agent.transport.on_max_iterations = _note_max_iterations
+        except Exception:
+            # Read-only / slotted transport: lose the signal rather than the run.
+            pass
+
+        t0 = time.monotonic()
+        task_complete = False
+        try:
+            # Foreground sub-agents share the parent's cancellation token so
+            # Ctrl+C propagates into nested chat() loops (Gemini CLI pattern).
+            # Background agents always receive None (fire-and-forget).
+            result = sub_agent.chat(
+                full_task,
+                max_iterations=max_turns,
+                cancellation_token=cancellation_token,
+            )
+        except TaskComplete as tc:
+            # Defensive only: ``ToolExecutor`` converts ``TaskComplete`` into
+            # a tool result, so it does not reach here from the normal path.
+            # The real detection is the history scan below.
+            result = tc.result
+            task_complete = True
+
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+        # An explicit completion signal from the sub-agent: it called
+        # ``complete_task``. That is the agent declaring it is done, so the
+        # turn-level classification does not apply — do not second-guess it.
+        completed_payload = _find_task_complete_result(sub_agent)
+        if completed_payload is not None:
+            task_complete = True
+            # ``complete_task`` is documented as *the* way a sub-agent
+            # returns its answer, but the loop keeps running after the tool
+            # call and the child often has nothing left to say — leaving
+            # ``chat()`` to return the empty-turn placeholder. Prefer the
+            # payload the agent explicitly handed back over that placeholder,
+            # otherwise the real answer is dropped on the floor.
+            if _is_harness_notice(result) and completed_payload.strip():
+                result = completed_payload
+
+        # Collect stats from executed sub-agent
+        turns = sum(1 for m in sub_agent.messages if m.get("role") == "assistant")
+        tool_calls = sum(1 for m in sub_agent.messages if m.get("role") == "tool")
+        approx_tokens = sub_agent.context_manager.estimate_tokens(sub_agent.messages)
+
+        stats = {
+            "agent_name": self._definition["name"],
+            "turns": turns,
+            "tool_calls": tool_calls,
+            "tokens": approx_tokens,
+            "duration_ms": elapsed_ms,
+            "incomplete": _classify_subagent_outcome(
+                outcome=getattr(sub_agent, "last_turn", None),
+                task_complete=task_complete,
+                max_iterations_hit=max_iter_hit["hit"],
+                max_turns=max_turns,
+            ),
+        }
+        return result, stats
 
     @staticmethod
     def _format_result(result: str, stats: Dict[str, Any]) -> str:

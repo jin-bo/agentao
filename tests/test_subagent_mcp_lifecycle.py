@@ -24,7 +24,8 @@ import time
 import pytest
 
 from agentao.agent import Agentao
-from agentao.cancellation import AgentCancelledError
+from agentao.agents.bg_store import BackgroundTaskStore
+from agentao.cancellation import CancellationToken
 from agentao.embedding.permission_loader import PermissionConfigError
 from agentao.permissions import PermissionEngine
 
@@ -96,6 +97,27 @@ def _eof_within(marks, pids, timeout=10.0):
         time.sleep(0.05)
 
 
+def _eventually(predicate, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    while not predicate() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return predicate()
+
+
+def _assert_only_the_child_let_go(marks, parent, parents):
+    # The premise: the sub-agent connected servers of its own. If a later
+    # change stops it from connecting at all, rewrite this test around
+    # that, do not just drop the check below.
+    children = _pids(marks, "started") - parents
+    assert len(children) == 1
+
+    assert _eof_within(marks, children) == children
+    # A wrongly closed parent server writes its marker a moment later, not at
+    # once, so a single look right after the child's would miss it.
+    assert not _eof_within(marks, parents, timeout=0.5)
+    assert [s["status"] for s in parent.mcp_manager.get_server_status()] == ["connected"]
+
+
 def _replace_chat(monkeypatch, body):
     def chat(self, user_message, max_iterations=100, cancellation_token=None, images=None):
         return body(self)
@@ -107,9 +129,14 @@ class _Boom(Exception):
     pass
 
 
+# Each exit path arranges its case and returns ``(raises, kwargs, result)``: the
+# exception ``_run_sync`` must raise (``None`` when it returns), the keyword
+# arguments to call it with, and the result it must return.
+
+
 def _finishes(monkeypatch, tmp_path):
     _replace_chat(monkeypatch, lambda agent: "done")
-    return None
+    return None, {}, "done"
 
 
 def _raises(monkeypatch, tmp_path):
@@ -117,15 +144,17 @@ def _raises(monkeypatch, tmp_path):
         raise _Boom
 
     _replace_chat(monkeypatch, boom)
-    return _Boom
+    return _Boom, {}, None
 
 
 def _is_cancelled(monkeypatch, tmp_path):
-    def cancelled(agent):
-        raise AgentCancelledError()
-
-    _replace_chat(monkeypatch, cancelled)
-    return AgentCancelledError
+    # The real ``chat()`` runs here, because it does not raise on cancellation:
+    # ``runtime/turn.py`` absorbs ``AgentCancelledError`` and returns a marker,
+    # so a cancelled sub-agent leaves ``_run_sync`` through its ordinary return.
+    # The token is cancelled before the first LLM call, so nothing is sent.
+    token = CancellationToken()
+    token.cancel("user-cancel")
+    return None, {"cancellation_token": token}, "[Cancelled: user-cancel]"
 
 
 def _fails_in_setup(monkeypatch, tmp_path):
@@ -135,7 +164,7 @@ def _fails_in_setup(monkeypatch, tmp_path):
     # the parent is unaffected.
     (tmp_path / "user" / "permissions.json").write_text("{not json")
     _replace_chat(monkeypatch, lambda agent: pytest.fail("chat() ran past a failed setup"))
-    return PermissionConfigError
+    return PermissionConfigError, {}, None
 
 
 @pytest.mark.parametrize(
@@ -156,26 +185,44 @@ def test_a_sub_agent_disconnects_its_mcp_servers_on_every_exit_path(
         parents = _pids(marks, "started")
         assert len(parents) == 1
 
-        expected = exit_path(monkeypatch, tmp_path)
+        raises, kwargs, expected = exit_path(monkeypatch, tmp_path)
         run = parent.tools.tools["agent_generalist"]._run_sync
-        if expected is None:
-            result, stats = run("x")
+        if raises is None:
+            result, stats = run("x", **kwargs)
             # Stats read the sub-agent's history, so they have to be taken
             # before it is closed.
-            assert result == "done"
+            assert result == expected
             assert stats["agent_name"] == "generalist"
         else:
-            with pytest.raises(expected):
-                run("x")
+            with pytest.raises(raises):
+                run("x", **kwargs)
 
-        # The premise: the sub-agent connected servers of its own. If a later
-        # change stops it from connecting at all, rewrite this test around
-        # that, do not just drop the check below.
-        children = _pids(marks, "started") - parents
-        assert len(children) == 1
+        _assert_only_the_child_let_go(marks, parent, parents)
+    finally:
+        parent.close()
 
-        assert _eof_within(marks, children) == children
-        assert not _pids(marks, "eof") & parents
-        assert [s["status"] for s in parent.mcp_manager.get_server_status()] == ["connected"]
+
+def test_a_background_sub_agent_disconnects_its_mcp_servers(tmp_path, marks, monkeypatch):
+    """The same close, on the daemon thread ``_launch_background`` runs it on:
+    the sub-agent's MCP event loop is created, run and closed off the main
+    thread, and a long session spawns these without ever waiting on one."""
+    store = BackgroundTaskStore(persistence_dir=None)
+    parent = Agentao(
+        working_directory=tmp_path, api_key="k",
+        base_url="https://test.local/v1", model="m",
+        enable_builtin_agents=True, bg_store=store,
+    )
+    try:
+        parents = _pids(marks, "started")
+        assert len(parents) == 1
+
+        _replace_chat(monkeypatch, lambda agent: "done")
+        parent.tools.tools["agent_generalist"].execute(task="x", run_in_background=True)
+
+        assert _eventually(lambda: store.count_in_flight() == 0)
+        (record,) = store.list()
+        assert record["status"] == "completed"
+
+        _assert_only_the_child_let_go(marks, parent, parents)
     finally:
         parent.close()
