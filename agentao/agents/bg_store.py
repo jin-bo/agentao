@@ -596,6 +596,17 @@ class BackgroundTaskStore:
         ``_tasks`` but skip reclassification. Loading is required: a
         flush from this store would otherwise overwrite the file with
         an empty snapshot and drop tasks owned by the first store.
+
+        Records this store already owns are never replaced from disk, on
+        either path: its in-memory copy is authoritative (as in
+        ``_refresh_sibling_tasks``), and a task it registered is by
+        construction alive in this process. This matters because the same
+        store is recovered more than once — every sub-agent is built with its
+        parent's store, and ``Agentao`` recovers the store it is handed. A
+        snapshot read just before a background thread settles a task would
+        otherwise put the stale ``running`` record back over the settled
+        one, where it stays for good: in memory, and on disk at the next
+        flush.
         """
         self._check_persistence_rebind()
         persistence_path = self._resolve_persistence_path()
@@ -619,11 +630,14 @@ class BackgroundTaskStore:
             # or to whichever store registered them in this process.
             with self._lock:
                 for agent_id, rec in loaded.items():
-                    self._tasks[agent_id] = rec
+                    if agent_id not in self._owned_ids:
+                        self._tasks[agent_id] = rec
             return False
 
         with self._lock:
             for agent_id, rec in loaded.items():
+                if agent_id in self._owned_ids:
+                    continue
                 if rec.get("status") in ("pending", "running"):
                     rec["status"] = "failed"
                     rec["error"] = "process exited before task finished"

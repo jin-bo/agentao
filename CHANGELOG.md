@@ -15,6 +15,28 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A sub-agent no longer takes the notifications of background agents
+  addressed to the top-level conversation.** Sub-agents are built with their
+  parent's `BackgroundTaskStore` so `check_background_agent` and
+  `cancel_background_agent` work inside them, but the store's notification
+  queue is drained, not read, and every chat loop with a store drained it. A
+  background agent that finished while a sub-agent was mid-run reported into
+  that sub-agent's history (completed, failed and cancelled alike), and the
+  conversation that launched it never heard. Sharing and consuming are now
+  separate: the sub-agent wrapper marks every runtime it builds as a
+  non-consumer, so only the top-level runtime drains the queue. The store stays
+  shared, so both tools keep working, and a sub-agent whose tool list includes
+  `check_background_agent` can still poll for a result. The rule holds at any
+  depth. Nested spawning is not intended (`agent_manager = None` is meant to
+  prevent it), but a project-defined agent is still reachable from inside a
+  sub-agent through the tool registry built at construction; wherever it
+  happens, the task reports to the top level. Embedding hosts are unaffected:
+  a runtime they construct still drains its own store. Building a sub-agent
+  also re-ran the shared store's recovery, which replaced records the store
+  already owned with the on-disk snapshot: a background agent that settled
+  while that snapshot was being read went back to `running` for good, so
+  `/agents` could not delete it and `/clear` counted it as still in flight.
+  Recovery now leaves a store's own records alone. (#233)
 - **`/clear` and `/new` no longer let a background agent report into the
   conversation they start.** The chat loop drains the background-agent
   notification queue into whatever history exists at the next turn, and

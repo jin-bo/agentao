@@ -536,6 +536,13 @@ class AgentToolWrapper(Tool):
 
         sub_agent.llm.omit_temperature = omit_temperature
         sub_agent.tools = scoped_registry
+        # The store is shared (above) for querying and cancelling, not for
+        # consuming: a sub-agent's loop draining it would take notifications
+        # addressed to the top-level conversation into its own history. Every
+        # runtime this wrapper builds is a non-consumer, so a task launched at
+        # any depth reports to the top level; a sub-agent whose tool list
+        # includes ``check_background_agent`` can poll for its result.
+        sub_agent._drains_background_notifications = False
         sub_agent.project_instructions = self._definition.get("system_instructions")
         sub_agent.skill_manager = SkillManager(skills_dir="/nonexistent")
         sub_agent.agent_manager = None  # prevent recursive spawning

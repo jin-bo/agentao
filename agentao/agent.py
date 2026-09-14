@@ -593,6 +593,13 @@ class Agentao:
         ``None``.
         """
         self.bg_store: Optional["BackgroundTaskStore"] = bg_store
+        # Whether this runtime's chat loop consumes the store's notification
+        # queue. A sub-agent shares its parent's store so the check / cancel
+        # tools resolve, but the queue is drained, not read: whichever loop
+        # reaches it first takes every notification. The wrapper turns this
+        # off on the sub-agents it builds, so results reach the top-level
+        # conversation only.
+        self._drains_background_notifications = True
         # Must be set before _register_agent_tools(): the sub-agent wrapper
         # captures this via getattr(agent, "sandbox_policy", ...) at
         # registration time, so a late assignment leaves sub-agents
