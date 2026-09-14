@@ -1134,6 +1134,11 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         agent = self._agent
         if agent.bg_store is None:
             return messages_with_system
+        # ``is False``, not falsiness: only a runtime explicitly marked as a
+        # non-consumer (a sub-agent) skips the drain. See
+        # ``Agentao._wire_tooling``.
+        if getattr(agent, "_drains_background_notifications", True) is False:
+            return messages_with_system
         bg_notes = agent.bg_store.drain_notifications()
         if not bg_notes:
             return messages_with_system

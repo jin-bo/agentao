@@ -329,6 +329,36 @@ def test_second_store_flush_does_not_drop_first_stores_tasks(tmp_path):
     assert "second-task" in on_disk
 
 
+@pytest.mark.parametrize("path_already_recovered", [True, False])
+def test_recovering_a_store_again_keeps_its_owned_records(
+    tmp_path, path_already_recovered,
+):
+    """A sub-agent is built with its parent's store, and ``Agentao`` recovers
+    the store it is handed — so one store is recovered once per spawn. A
+    snapshot that is behind memory (read just before a background thread
+    settled the task) must not replace a record the store owns, or the
+    settled task reads ``running`` for good, in memory and at the next flush.
+    Parametrized over both branches: the path already recovered in this
+    process (the parent's construction claimed it), and not (the orphan
+    reclassification branch, which would call the live task dead)."""
+    path = tmp_path / ".agentao" / "background_tasks.json"
+    store = BackgroundTaskStore(persistence_dir=tmp_path)
+    if path_already_recovered:
+        store.recover()  # the parent's construction
+    store.register("A", "worker", "task")
+    store.mark_running("A")
+    stale = load_bg_task_store(path)
+    store.update("A", status="completed", result="done")
+    save_bg_task_store(path, stale)  # disk is behind memory
+
+    store.recover()  # a sub-agent's construction
+
+    assert store.get("A")["status"] == "completed"
+    assert store.count_in_flight() == 0
+    store._flush_to_disk()
+    assert load_bg_task_store(path)["A"]["status"] == "completed"
+
+
 def test_two_agentao_instances_each_own_their_store(tmp_path, monkeypatch):
     """Two Agentao instances pointed at different project roots must have
     independent stores."""
