@@ -1,6 +1,6 @@
 # 6. 记忆
 
-Agent 有一层持久化记忆。它在工作过程中把关于你和项目的事实写下来（`save_memory` 工具），后续轮次召回，跨会话保留，`/clear` 也带不走。本页讲怎么查、搜、清这些条目。
+Agent 有一层持久化记忆。它在工作过程中把关于你和项目的事实写下来（`save_memory` 工具），后续轮次召回，跨会话保留，`/new` 也带不走（`/clear` 会清掉）。本页讲怎么查、搜、清这些条目。
 
 ## 记忆是什么 / 不是什么
 
@@ -108,7 +108,7 @@ Are you sure you want to delete ALL memories? This cannot be undone. [y/N]: y
 Successfully cleared 47 memory(ies)
 ```
 
-需要确认。`memories` 和 `session_summaries` 一起清（前者软删除，后者表清空）。只影响**当前**作用域和当前项目 — 用户全局记忆除非你在 user 作用域下，否则保留。
+需要确认。`memories` 和 `session_summaries` 一起清（前者软删除，后者表清空）。两个作用域都会清——当前项目的记忆*和*用户全局记忆——外加本项目所有会话摘要；其他项目自己的 `.agentao/memory.db` 不受影响。清除有一部分失败时，命令会列出没清掉的部分，不再照常提示成功。
 
 ::: warning "Cannot be undone" 是从 agent 视角说的
 DB 行是软删，懂行的人开 SQLite 浏览器还能找回。但 agent 永远不会再看到，CLI 也没"撤销"按钮。

@@ -71,6 +71,8 @@ class _StubPlanSession:
 
 
 class _StubAgent:
+    bg_store = None
+
     def clear_history(self):
         pass
 

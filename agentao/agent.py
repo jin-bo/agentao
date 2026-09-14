@@ -1222,8 +1222,17 @@ class Agentao:
         self.messages.append({"role": role, "content": content})
 
     def clear_history(self):
-        """Clear conversation history, deactivate all skills, and reset todos."""
+        """Clear conversation history, deactivate all skills, and reset todos.
+
+        Background sub-agents keep running, but stop reporting here: their
+        completion notifications are addressed to the conversation that
+        launched them, and the chat loop drains the queue into whatever
+        history exists at the next turn. See
+        ``BackgroundTaskStore.start_new_conversation``.
+        """
         self.messages = []
+        if self.bg_store is not None:
+            self.bg_store.start_new_conversation()
         self.skill_manager.clear_active_skills()
         self.todo_tool.clear()
         # Reset context and session token counters for the fresh session

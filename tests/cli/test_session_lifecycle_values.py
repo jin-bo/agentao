@@ -89,10 +89,15 @@ class _StubMemory:
         pass
 
     def clear_all_session_summaries(self):
-        pass
+        return 0
+
+    def session_summaries_remain(self):
+        return False
 
 
 class _StubAgent:
+    bg_store = None
+
     def __init__(self):
         self.memory_manager = _StubMemory()
 

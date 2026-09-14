@@ -89,6 +89,19 @@ class BackgroundTaskStore:
         self._notifications: Deque[str] = deque(maxlen=_NOTIFICATION_CAPACITY)
         self._notify_lock = threading.Lock()
 
+        # Conversation generation, advanced by ``start_new_conversation()``.
+        # A notification is only deliverable into the conversation that
+        # launched its task: the parent drains the queue into whatever
+        # history it holds *now*, so a task from before a ``/clear`` or
+        # ``/new`` would otherwise report into a conversation that never
+        # asked for it. Process-local on purpose — never persisted, since a
+        # generation means nothing to a sibling store. Both guarded by
+        # ``_notify_lock``, so the check and the append are one step.
+        self._generation = 0
+        self._task_generation: Dict[str, int] = {}
+        # A task's entry is dropped once it settles and is deleted or
+        # rebound away, so pushers snapshot it first — see ``_generation_of``.
+
         # Task IDs this store is responsible for on disk. A store mutates
         # only the keys it owns when flushing; everything else in the
         # on-disk snapshot is preserved. A key with no entry in _tasks but
@@ -204,12 +217,7 @@ class BackgroundTaskStore:
             self._last_known_path_key = new_key
 
             with self._lock:
-                in_flight_owned = {
-                    agent_id
-                    for agent_id in self._owned_ids
-                    if (rec := self._tasks.get(agent_id)) is not None
-                    and rec.get("status") in ("pending", "running")
-                }
+                in_flight_owned = self._in_flight_owned_ids_locked()
                 self._tasks = {aid: self._tasks[aid] for aid in in_flight_owned}
                 self._owned_ids = set(in_flight_owned)
                 self._known_persisted_ids &= in_flight_owned
@@ -222,6 +230,12 @@ class BackgroundTaskStore:
                 self._tokens = {
                     aid: tok
                     for aid, tok in self._tokens.items()
+                    if aid in in_flight_owned
+                }
+            with self._notify_lock:
+                self._task_generation = {
+                    aid: gen
+                    for aid, gen in self._task_generation.items()
                     if aid in in_flight_owned
                 }
 
@@ -248,6 +262,62 @@ class BackgroundTaskStore:
             msgs = list(self._notifications)
             self._notifications.clear()
             return msgs
+
+    def start_new_conversation(self) -> None:
+        """Detach every existing task from the conversation being replaced.
+
+        Drops the queued notifications and silences the future ones of tasks
+        registered before this call. The tasks themselves are untouched: they
+        keep running, and their records still settle and persist, so
+        ``/agents`` and ``check_background_agent`` report them as before. Only
+        the push into the next conversation's history is withheld —
+        :meth:`count_in_flight` says how many will now finish silently.
+        """
+        with self._notify_lock:
+            self._notifications.clear()
+            self._generation += 1
+
+    def count_in_flight(self) -> int:
+        """How many tasks this store owns that are still pending or running.
+
+        Owned only: a sibling store's tasks never notify this store's
+        conversation, so they are not this caller's to report.
+        """
+        with self._lock:
+            return len(self._in_flight_owned_ids_locked())
+
+    def _in_flight_owned_ids_locked(self) -> set:
+        """Owned task ids still pending or running. Caller holds ``_lock``."""
+        return {
+            agent_id
+            for agent_id in self._owned_ids
+            if (rec := self._tasks.get(agent_id)) is not None
+            and rec.get("status") in ("pending", "running")
+        }
+
+    def _generation_of(self, agent_id: str) -> Optional[int]:
+        """The conversation generation ``agent_id`` was registered in.
+
+        Callers snapshot this *before* settling the task, while it is still
+        in flight: only then is the entry guaranteed to exist. Once the status
+        is terminal, ``delete()`` and a persistence rebind may both drop the
+        entry, and ``update()`` still has a flush to get through before it
+        pushes — a lookup at push time can find nothing.
+        """
+        with self._notify_lock:
+            return self._task_generation.get(agent_id)
+
+    def _push_task_notification(self, generation: Optional[int], msg: str) -> None:
+        """Queue ``msg`` only if its task belongs to the current conversation.
+
+        Fails closed: ``None`` means the store never learned which
+        conversation launched the task, and delivering into the current one is
+        the leak this check exists to prevent.
+        """
+        with self._notify_lock:
+            if generation != self._generation:
+                return
+            self._notifications.append(msg)
 
     # ------------------------------------------------------------------
     # Task lifecycle
@@ -282,6 +352,8 @@ class BackgroundTaskStore:
             self._owned_ids.add(agent_id)
             if persistence_path is not None:
                 self._owner_path[agent_id] = persistence_path
+        with self._notify_lock:
+            self._task_generation[agent_id] = self._generation
         self._flush_to_disk()
 
     def mark_running(self, agent_id: str) -> bool:
@@ -313,6 +385,7 @@ class BackgroundTaskStore:
     ) -> None:
         assert status in _VALID_BG_STATUSES, f"Invalid bg task status: {status!r}"
         self._check_persistence_rebind()
+        generation = self._generation_of(agent_id)
         agent_name: Optional[str] = None
         with self._lock:
             rec = self._tasks.get(agent_id)
@@ -334,18 +407,24 @@ class BackgroundTaskStore:
         self._flush_to_disk()
 
         # Push notification outside the lock to avoid lock-ordering issues.
+        # ``generation`` was snapshotted above, before the status went
+        # terminal: the flush just above is a window in which ``delete()`` or
+        # a rebind can drop this task's entry.
         if status == "completed" and result is not None:
             preview = result[:300] + "…" if len(result) > 300 else result
-            self.push_notification(
-                f"Background agent '{agent_name}' (ID: {agent_id}) completed.\n{preview}"
+            self._push_task_notification(
+                generation,
+                f"Background agent '{agent_name}' (ID: {agent_id}) completed.\n{preview}",
             )
         elif status == "failed":
-            self.push_notification(
-                f"Background agent '{agent_name}' (ID: {agent_id}) failed: {error}"
+            self._push_task_notification(
+                generation,
+                f"Background agent '{agent_name}' (ID: {agent_id}) failed: {error}",
             )
         elif status == "cancelled":
-            self.push_notification(
-                f"Background agent '{agent_name}' (ID: {agent_id}) was cancelled."
+            self._push_task_notification(
+                generation,
+                f"Background agent '{agent_name}' (ID: {agent_id}) was cancelled.",
             )
 
     def get(self, agent_id: str) -> Optional[Dict[str, Any]]:
@@ -388,6 +467,7 @@ class BackgroundTaskStore:
         success.
         """
         self._check_persistence_rebind()
+        generation = self._generation_of(agent_id)
         cancelled_before_start = False
         agent_name: Optional[str] = None
 
@@ -420,8 +500,9 @@ class BackgroundTaskStore:
 
         if cancelled_before_start:
             self._flush_to_disk()
-            self.push_notification(
-                f"Background agent '{agent_name}' (ID: {agent_id}) was cancelled."
+            self._push_task_notification(
+                generation,
+                f"Background agent '{agent_name}' (ID: {agent_id}) was cancelled.",
             )
             with self._token_lock:
                 self._tokens.pop(agent_id, None)
@@ -479,6 +560,8 @@ class BackgroundTaskStore:
 
         with self._token_lock:
             self._tokens.pop(agent_id, None)
+        with self._notify_lock:
+            self._task_generation.pop(agent_id, None)
 
         self._flush_to_disk()
         return f"Deleted background agent '{agent_name}' ({agent_id}) from history."

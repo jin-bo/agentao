@@ -96,7 +96,7 @@ CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars
 |--------|-----------|---------|
 | `chat` | `chat(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | Run one turn. Returns final assistant text. `images` (0.4.8+): inline image attachments — see [Image input and vision degradation](#image-input-and-vision-degradation). |
 | `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | Async surface — bridges `chat()` through `loop.run_in_executor`. Same semantics for cancellation, replay, max_iterations, images. |
-| `clear_history` | `clear_history() -> None` | Reset `self.messages`; does not touch memory DB. |
+| `clear_history` | `clear_history() -> None` | Reset `self.messages`, active skills, todos and token counters; does not touch memory DB. Background agents keep running, but their completion notifications no longer reach the history (read them via `check_background_agent`). |
 | `close` | `close() -> None` | Release MCP subprocesses, close DB handles. Call in `finally:`. |
 | `set_provider` | `set_provider(api_key: str, base_url: str | None = None, model: str | None = None) -> None` | Runtime LLM swap. |
 | `set_model` | `set_model(model: str) -> str` | Swap model only; returns the previous id. |

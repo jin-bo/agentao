@@ -403,7 +403,8 @@ All commands start with `/`:
 | `/skill <name> "<task>"` | Activate a skill explicitly |
 | `/help` | Show general help including skills info |
 | `/memory` | Show saved memories |
-| `/clear` | Clear conversation history |
+| `/clear` | Clear conversation history and all memories (active skills are deactivated) |
+| `/new` | Start a fresh conversation, keeping memories (active skills are deactivated) |
 | `/exit` or `/quit` | Exit the program |
 
 ## API Integration

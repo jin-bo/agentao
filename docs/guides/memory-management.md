@@ -233,4 +233,4 @@ AI: [调用 save_memory，key 相同时自动覆盖]
   `{"hookSpecificOutput": {"compactionDecision": "cancel"}}`,或宿主传入的
   `compaction_controller=` 返回 `cancel`。这种情况不计入熔断器,`/context` 的
   breaker 那行也不会出现——查 `agentao.log` 里的 `Compaction cancelled:`
-- `/memory clear` 会同时清空会话摘要；`/clear` 仅清空对话历史，不清空摘要
+- `/memory clear` 和 `/clear` 都会清空**所有**会话的摘要；`/new` 不清，之前会话的摘要仍会经跨会话尾部（`get_cross_session_tail()`）进入 `<memory-stable>`。清除失败时两个命令都会报错，不再照常提示成功

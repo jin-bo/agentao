@@ -13,11 +13,12 @@ All commands start with `/`:
 - `/provider` - List or switch API providers
   - `/provider` - Show current provider and available providers
   - `/provider <NAME>` - Switch to provider (reads XXXX_API_KEY, XXXX_BASE_URL, XXXX_MODEL from env)
-- `/clear` - Save current session, clear conversation + all memories, and start a new one
+- `/clear` - Save current session, clear conversation + all memories + all session summaries, and start a new one
   - Resets permission mode to workspace-write
   - `/clear all` - Alias for `/clear` (backward compatible)
 - `/new` - Save current session and start a fresh conversation
-  - Preserves long-term memories; resets permission mode to workspace-write
+  - Preserves long-term memories and earlier session summaries (both still reach the prompt); resets permission mode to workspace-write
+- Both: background agents keep running but no longer report into the conversation — check `/agents`
 - `/status` - Show conversation status
 - `/sessions [subcommand]` - Manage saved sessions
   - `/sessions` or `/sessions list` - List saved sessions

@@ -81,7 +81,8 @@ All commands start with `/`:
   - `/model` - Show current and available models
   - `/model gpt-5.4` - Switch to GPT-4o
   - `/model claude-sonnet-4-6` - Switch to Claude Sonnet
-- `/clear` - Clear conversation history
+- `/clear` - Clear conversation history **and all memories** (including cross-project user memories and every session summary)
+- `/new` - Start a fresh conversation, keeping long-term memories and earlier session summaries
 - `/status` - Show conversation status (includes current model)
 - `/context` - Show context-window token usage (`/context limit <n>` to change it)
 - `/compact` - Summarize older history now into a compact block (manual compaction)
@@ -119,7 +120,8 @@ You: /model gpt-5.4       (switch to GPT-4o)
 You: /skills             (list all skills)
 You: /memory             (show memories)
 You: /status             (show status and current model)
-You: /clear              (clear history)
+You: /new                (fresh conversation, memories kept)
+You: /clear              (clear history and all memories)
 ```
 
 ### Code Analysis
