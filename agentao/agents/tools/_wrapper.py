@@ -455,7 +455,6 @@ class AgentToolWrapper(Tool):
                 not interleave output with the foreground session.
         """
         from ...agent import Agentao
-        from ...skills import SkillManager
 
         # Build scoped ToolRegistry
         scoped_registry = ToolRegistry()
@@ -534,9 +533,48 @@ class AgentToolWrapper(Tool):
             # thinking_callback intentionally omitted for sub-agents
         )
 
+        # Everything after construction runs under ``finally: close()``. Building
+        # the sub-agent connected its own MCP servers (#239), and nothing else
+        # disconnects them: it is a local, the parent's ``close()`` does not
+        # reach it, and garbage collection does not end a stdio server's
+        # process. The ``try`` opens here rather than around ``chat()`` because
+        # the setup in ``_drive_sub_agent`` can raise too (a malformed
+        # user-scope ``permissions.json`` fails closed).
+        try:
+            return self._drive_sub_agent(
+                sub_agent,
+                task=task,
+                parent_context=parent_context,
+                scoped_registry=scoped_registry,
+                omit_temperature=omit_temperature,
+                max_turns=max_turns,
+                cancellation_token=cancellation_token,
+            )
+        finally:
+            sub_agent.close()
+
+    def _drive_sub_agent(
+        self,
+        sub_agent: Any,
+        *,
+        task: str,
+        parent_context: str,
+        scoped_registry: ToolRegistry,
+        omit_temperature: bool,
+        max_turns: int,
+        cancellation_token: Optional[Any],
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Configure a constructed sub-agent, run it, and collect its stats.
+
+        The caller owns the sub-agent's lifetime and closes it whatever this
+        raises; stats read the sub-agent's history, so they are taken here,
+        before that close.
+        """
+        from ...skills import SkillManager
+
         sub_agent.llm.omit_temperature = omit_temperature
         sub_agent.tools = scoped_registry
-        # The store is shared (above) for querying and cancelling, not for
+        # The store is shared (``_run_sync``) for querying and cancelling, not for
         # consuming: a sub-agent's loop draining it would take notifications
         # addressed to the top-level conversation into its own history. Every
         # runtime this wrapper builds is a non-consumer, so a task launched at
