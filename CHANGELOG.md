@@ -24,9 +24,20 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   built, it is now closed however its run ends: a finished run, an exception,
   a cancellation, or a failure while it is being configured (a malformed
   user-scope `permissions.json`). One case is not covered: a failure inside
-  the sub-agent's constructor after its servers have connected. Each spawn
-  still pays the connect cost. Having sub-agents use the parent's connection
-  instead depends on #238 and #241. (#239)
+  the sub-agent's constructor after its servers have connected. A background
+  sub-agent is closed only after its outcome is published: the task record,
+  the notification, the host's terminal `SubagentLifecycleEvent` and the
+  release of its cancellation token all come first, so a host that acts on
+  that event can find the sub-agent's MCP servers still attached for a
+  moment.
+  Closing disconnects servers one at a time, and a server that ignores EOF
+  holds the close for seconds. If the close came first, the task would read
+  `running` for that whole window, and a cancel sent then would be
+  acknowledged for a run that had already finished. A foreground sub-agent is
+  still closed before its result is returned. An error while closing is
+  logged and never replaces the run's outcome. Each spawn still pays the
+  connect cost. Having sub-agents use the parent's connection instead depends
+  on #238 and #241. (#239)
 - **A sub-agent no longer takes the notifications of background agents
   addressed to the top-level conversation.** Sub-agents are built with their
   parent's `BackgroundTaskStore` so `check_background_agent` and

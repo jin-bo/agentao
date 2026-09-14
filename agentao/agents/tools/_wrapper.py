@@ -17,6 +17,7 @@ extracted.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -29,6 +30,8 @@ from ...tools.base import RegistrableTool, Tool, ToolRegistry
 from ..bg_store import BackgroundTaskStore
 from ._complete import CompleteTaskTool, TaskComplete
 from ._progress import SubagentProgress
+
+logger = logging.getLogger(__name__)
 
 
 # Human-readable renderings of the ``TurnOutcome.incomplete_reason`` closed
@@ -447,12 +450,42 @@ class AgentToolWrapper(Tool):
         self, task: str, parent_context: str = "", suppress_output: bool = False,
         cancellation_token: Optional[Any] = None,
     ) -> Tuple[str, Dict[str, Any]]:
-        """Create and run a sub-agent. Returns (result, stats).
+        """Create, run and close a sub-agent. Returns (result, stats).
+
+        The foreground path. A background run composes the same three steps
+        in a different order — see ``_launch_background``.
 
         Args:
-            suppress_output: When True (used for background agents), all live
-                display callbacks are suppressed so the background thread does
-                not interleave output with the foreground session.
+            suppress_output: When True, all live display callbacks are
+                suppressed so a background thread does not interleave output
+                with the foreground session.
+        """
+        sub_agent, setup = self._build_sub_agent(suppress_output)
+        # Everything after construction runs under ``finally``. Building the
+        # sub-agent connected its own MCP servers (#239), and nothing else
+        # disconnects them: it is a local, the parent's ``close()`` does not
+        # reach it, and garbage collection does not end a stdio server's
+        # process. The ``try`` opens here rather than around ``chat()`` because
+        # the setup in ``_drive_sub_agent`` can raise too (a malformed
+        # user-scope ``permissions.json`` fails closed).
+        try:
+            return self._drive_sub_agent(
+                sub_agent,
+                task=task,
+                parent_context=parent_context,
+                cancellation_token=cancellation_token,
+                **setup,
+            )
+        finally:
+            self._close_sub_agent(sub_agent)
+
+    def _build_sub_agent(self, suppress_output: bool) -> Tuple[Any, Dict[str, Any]]:
+        """Construct a sub-agent. Returns it with the keyword arguments
+        ``_drive_sub_agent`` needs from the same config read.
+
+        The caller owns the returned sub-agent and must pass it to
+        ``_close_sub_agent``: construction has already connected its MCP
+        servers.
         """
         from ...agent import Agentao
 
@@ -533,25 +566,26 @@ class AgentToolWrapper(Tool):
             # thinking_callback intentionally omitted for sub-agents
         )
 
-        # Everything after construction runs under ``finally: close()``. Building
-        # the sub-agent connected its own MCP servers (#239), and nothing else
-        # disconnects them: it is a local, the parent's ``close()`` does not
-        # reach it, and garbage collection does not end a stdio server's
-        # process. The ``try`` opens here rather than around ``chat()`` because
-        # the setup in ``_drive_sub_agent`` can raise too (a malformed
-        # user-scope ``permissions.json`` fails closed).
+        return sub_agent, {
+            "scoped_registry": scoped_registry,
+            "omit_temperature": omit_temperature,
+            "max_turns": max_turns,
+        }
+
+    def _close_sub_agent(self, sub_agent: Any) -> None:
+        """Release a sub-agent's resources.
+
+        By the time this runs the run's outcome is decided, and on the
+        background path already published, so a failure here is logged and
+        never replaces that outcome.
+        """
         try:
-            return self._drive_sub_agent(
-                sub_agent,
-                task=task,
-                parent_context=parent_context,
-                scoped_registry=scoped_registry,
-                omit_temperature=omit_temperature,
-                max_turns=max_turns,
-                cancellation_token=cancellation_token,
-            )
-        finally:
             sub_agent.close()
+        except Exception:
+            logger.warning(
+                "Closing a sub-agent failed (%s)", self._definition["name"],
+                exc_info=True,
+            )
 
     def _drive_sub_agent(
         self,
@@ -574,12 +608,13 @@ class AgentToolWrapper(Tool):
 
         sub_agent.llm.omit_temperature = omit_temperature
         sub_agent.tools = scoped_registry
-        # The store is shared (``_run_sync``) for querying and cancelling, not for
-        # consuming: a sub-agent's loop draining it would take notifications
-        # addressed to the top-level conversation into its own history. Every
-        # runtime this wrapper builds is a non-consumer, so a task launched at
-        # any depth reports to the top level; a sub-agent whose tool list
-        # includes ``check_background_agent`` can poll for its result.
+        # The store is shared (``_build_sub_agent``) for querying and
+        # cancelling, not for consuming: a sub-agent's loop draining it would
+        # take notifications addressed to the top-level conversation into its
+        # own history. Every runtime this wrapper builds is a non-consumer, so
+        # a task launched at any depth reports to the top level; a sub-agent
+        # whose tool list includes ``check_background_agent`` can poll for its
+        # result.
         sub_agent._drains_background_notifications = False
         sub_agent.project_instructions = self._definition.get("system_instructions")
         sub_agent.skill_manager = SkillManager(skills_dir="/nonexistent")
@@ -647,7 +682,8 @@ class AgentToolWrapper(Tool):
         try:
             # Foreground sub-agents share the parent's cancellation token so
             # Ctrl+C propagates into nested chat() loops (Gemini CLI pattern).
-            # Background agents always receive None (fire-and-forget).
+            # Background agents receive their own task token, which
+            # ``BackgroundTaskStore.cancel`` signals.
             result = sub_agent.chat(
                 full_task,
                 max_iterations=max_turns,
@@ -754,11 +790,22 @@ class AgentToolWrapper(Tool):
                 # pair is closed.
                 self._terminal_subagent_event(subagent_ctx, "cancelled", task_summary)
                 return
+            # The same build / drive / close as ``_run_sync``, but the close
+            # comes last, after the outcome is published. Closing disconnects
+            # the sub-agent's MCP servers one at a time, and a server that
+            # ignores EOF holds it for seconds in SDK timeouts. Closing first
+            # kept the record ``running`` for that whole window:
+            # ``check_background_agent`` had no result yet, and a cancel sent
+            # then was acknowledged for a run that had already finished.
+            sub_agent = None
             try:
-                result, stats = self._run_sync(
-                    task, parent_context,
-                    suppress_output=True,
+                sub_agent, setup = self._build_sub_agent(suppress_output=True)
+                result, stats = self._drive_sub_agent(
+                    sub_agent,
+                    task=task,
+                    parent_context=parent_context,
                     cancellation_token=token,
+                    **setup,
                 )
                 formatted = self._format_result(result, stats)
                 # Not raising is not the same as finishing. The result text
@@ -800,6 +847,8 @@ class AgentToolWrapper(Tool):
                 )
             finally:
                 self._bg_store.unregister_token(agent_id)
+                if sub_agent is not None:
+                    self._close_sub_agent(sub_agent)
 
         # Background agents run silently: suppress_output=True ensures no callbacks
         # fire on the background thread, preventing interleaving with foreground output.

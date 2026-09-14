@@ -197,8 +197,8 @@ def test_sub_agent_construction_inherits_working_directory(tmp_path, monkeypatch
     #    ``generalist`` → tool name ``agent_generalist``).
     sub_tool = parent.tools.tools["agent_generalist"]
 
-    # 3) Patch the symbol _run_sync imports locally (`from ...agent import
-    #    Agentao`). Record kwargs, then abort the turn before it runs.
+    # 3) Patch the symbol _build_sub_agent imports locally (`from ...agent
+    #    import Agentao`). Record kwargs, then abort the turn before it runs.
     captured: dict = {}
 
     def _recorder(*args, **kwargs):
