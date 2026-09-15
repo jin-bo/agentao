@@ -49,6 +49,9 @@ from agentao.acp_client.models import ServerState
 
 from .support.acp_client import make_interaction_mock_manager as _make_mgr
 
+# Fakes that never crash on launch: see ``acp_short_startup_window`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("acp_short_startup_window")
+
 
 class TestStatusSnapshotShape:
     def test_get_status_returns_typed_list(self, tmp_path: Path) -> None:

@@ -80,6 +80,24 @@ def capture_subprocess_run(monkeypatch) -> List[List[str]]:
     return captured
 
 
+@pytest.fixture
+def acp_short_startup_window(monkeypatch):
+    """Give ``ACPProcessHandle.start()`` the POSIX startup window on every platform.
+
+    ``start()`` waits ``_IMMEDIATE_EXIT_WINDOW_S`` for a server that crashes on launch, and
+    a healthy server pays the whole window. On Windows that is 1 s, deliberately, because
+    process creation outlasts 50 ms. The suites that opt in with ``pytestmark`` test the
+    layers above the handle against fakes that never crash on launch, so there the wait
+    checks nothing, and they start about 90 servers.
+
+    ``test_acp_client_process.py`` does not opt in. It tests the check itself, and its
+    Windows run is the one that has to see the real window.
+    """
+    from agentao.acp_client import process as process_mod
+
+    monkeypatch.setattr(process_mod, "_IMMEDIATE_EXIT_WINDOW_S", 0.05)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _prompt_toolkit_without_a_console():
     """Give prompt_toolkit somewhere to write when the machine has no console.
