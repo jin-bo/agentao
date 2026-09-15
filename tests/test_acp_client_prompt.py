@@ -18,6 +18,9 @@ from agentao.acp_client.manager import ACPManager
 from agentao.acp_client.models import AcpClientConfig, AcpServerConfig, ServerState
 from agentao.acp_client.process import ACPProcessHandle
 
+# Fakes that never crash on launch: see ``acp_short_startup_window`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("acp_short_startup_window")
+
 # ---------------------------------------------------------------------------
 # Mock server script with prompt/cancel support
 # ---------------------------------------------------------------------------
