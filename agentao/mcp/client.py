@@ -241,6 +241,9 @@ class McpClient:
         # to close (see ``connect``).
         self._owner: Optional["asyncio.Task[None]"] = None
         self._stop: Optional[asyncio.Event] = None
+        # Set once the live connection starts to close, for any reason. Calls
+        # wait on it alongside their request (see ``_call_on``).
+        self._gone = asyncio.Event()
         # Serialises connection *switches* in ``call_tool``, never ordinary
         # requests: concurrent calls share one session. The attempt counter
         # lets a call that waited out someone else's reconnect use its result
@@ -299,14 +302,15 @@ class McpClient:
             await self._stop_owner()
         ready: "asyncio.Future[None]" = asyncio.get_running_loop().create_future()
         self._stop = asyncio.Event()
+        self._gone = asyncio.Event()
         self._owner = asyncio.create_task(
-            self._own_connection(ready, self._stop),
+            self._own_connection(ready, self._stop, self._gone),
             name=f"agentao-mcp-owner-{self.name}",
         )
         await ready
 
     async def _own_connection(
-        self, ready: "asyncio.Future[None]", stop: asyncio.Event
+        self, ready: "asyncio.Future[None]", stop: asyncio.Event, gone: asyncio.Event
     ) -> None:
         """Open the connection, hold it until ``stop`` is set, then close it."""
         try:
@@ -316,6 +320,9 @@ class McpClient:
             if self.status is ServerStatus.CONNECTED:
                 await stop.wait()
         finally:
+            # First, because the close below can take seconds: calls waiting on
+            # this connection give up on it now.
+            gone.set()
             if not ready.done():
                 ready.set_result(None)
             if self.status is ServerStatus.CONNECTING:
@@ -936,14 +943,11 @@ class McpClient:
 
             # The session this attempt runs on. If it drops, only this session
             # is torn down: a concurrent call may already have replaced it.
-            session = self._session
+            session, gone = self._session, self._gone
             seen = self._connect_attempts
             try:
-                result = await session.call_tool(
-                    tool_name, arguments, read_timeout_seconds=read_timeout,
-                    # Take delivery of an ``InputRequiredResult`` instead of
-                    # letting the SDK raise on it — see _explain_input_required.
-                    **({"allow_input_required": True} if SUPPORTS_INPUT_REQUIRED else {}),
+                result = await self._call_on(
+                    session, gone, tool_name, arguments, read_timeout
                 )
             except Exception as e:
                 if UnexpectedClaimedResult is not None and isinstance(
@@ -1021,6 +1025,50 @@ class McpClient:
             return text
 
         return "MCP tool error: failed after reconnect attempt"
+
+    async def _call_on(
+        self,
+        session: Any,
+        gone: asyncio.Event,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        read_timeout: Any,
+    ) -> Any:
+        """``session.call_tool``, given up once its connection starts to close.
+
+        The SDK is meant to fail every request pending on a connection that
+        closes, and mcp 1.x does not always. When a write to a dead server
+        fails, its task group cancels the receive loop that would answer them
+        (still so in 1.30). Before 1.30 that loop also raises partway through
+        three or more. A request left that way waits forever, since
+        ``timeout.request`` is unbounded by default, and concurrent calls
+        (#241) made both reachable. The connection's owner does see it close,
+        so a call waits on that as well. mcp 2.0 answers them in both cases.
+        """
+        request = asyncio.ensure_future(
+            session.call_tool(
+                tool_name, arguments, read_timeout_seconds=read_timeout,
+                # Take delivery of an ``InputRequiredResult`` instead of
+                # letting the SDK raise on it — see _explain_input_required.
+                **({"allow_input_required": True} if SUPPORTS_INPUT_REQUIRED else {}),
+            )
+        )
+        closing = asyncio.ensure_future(gone.wait())
+        try:
+            await asyncio.wait({request, closing}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            closing.cancel()
+            abandoned = not request.done()
+            if abandoned:
+                request.cancel()
+                # Unwinds on its own; whatever it raises doing so is moot.
+                request.add_done_callback(
+                    lambda task: task.cancelled() or task.exception()
+                )
+        if abandoned:
+            # Classified as a dropped transport: reconnect and retry once.
+            raise ConnectionError(f"MCP server '{self.name}': connection closed")
+        return request.result()
 
     #: What the modern era's three input requests are asking agentao to be.
     _INPUT_REQUEST_LABELS = {

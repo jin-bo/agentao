@@ -13,7 +13,9 @@ without the SDK so it works on both SDK majors. It records what these tests
 need on disk: a ``started-<pid>`` per launch, ``called-<tool>`` when a call
 arrives, ``overlap`` when two calls are in flight at once, and ``eof-<pid>``
 when its stdin closes. A ``refuse`` file makes it exit at launch; a ``mute``
-file makes it read stdin and never answer.
+file makes it read stdin and never answer; a ``hang`` file makes it leave tool
+calls unanswered; a ``deafen`` file makes it close its stdin after a tool call
+and stay alive.
 """
 
 from __future__ import annotations
@@ -62,7 +64,7 @@ _SERVER = textwrap.dedent('''
     out = sys.stdout.buffer
     write_lock = threading.Lock()
     active = [0]
-    tools = [{"name": n, "inputSchema": {"type": "object"}} for n in ("slow_a", "slow_b")]
+    tools = [{"name": n, "inputSchema": {"type": "object"}} for n in ("slow_a", "slow_b", "slow_c")]
 
     def reply(msg_id, **body):
         with write_lock:
@@ -76,6 +78,8 @@ _SERVER = textwrap.dedent('''
             if active[0] >= 2:
                 (marks / "overlap").touch()
         (marks / f"called-{name}").touch()
+        if (marks / "hang").exists():
+            return  # never answered
         time.sleep(delay)
         with write_lock:
             active[0] -= 1
@@ -96,6 +100,12 @@ _SERVER = textwrap.dedent('''
             reply(msg["id"], result={"tools": tools})
         elif method == "tools/call":
             threading.Thread(target=call, args=(msg,), daemon=True).start()
+            if (marks / "deafen").exists():
+                # Stop reading but stay alive with stdout open: the client's
+                # next write fails, and it never sees end-of-file.
+                os.close(0)  # ``sys.stdin.close()`` leaves the descriptor open
+                time.sleep(30)
+                sys.exit(0)
         else:
             reply(msg["id"], error={"code": -32601, "message": method})
 
@@ -245,7 +255,70 @@ def test_two_calls_that_fail_on_one_dropped_connection_reconnect_once(server, ca
         # second caller that tore down the first one's new connection would
         # have launched a third.
         assert len(_started(marks)) == 2
-        assert _teardown_warnings(caplog) == []
+        # Only #243's warning: closing a transport whose server was killed can
+        # rightly report the broken pipe (seen on Linux with mcp 1.30).
+        assert [w for w in _teardown_warnings(caplog) if "cancel scope" in w] == []
+    finally:
+        manager.disconnect_all()
+
+
+_CALLS = ("slow_a", "slow_b", "slow_c")
+
+
+def _call_each(manager, names, outcome):
+    return [
+        _in_thread(lambda n=name: manager.call_tool("probe", n, {}), outcome, name)
+        for name in names
+    ]
+
+
+def test_calls_waiting_on_a_server_that_dies_all_retry(server):
+    """Three calls are waiting for their answers when the server dies. Before
+    mcp 1.30, the session fails pending requests from a loop over a dict that
+    each answer shrinks, so it raises after the second and never answers the
+    third. A call must not rely on the session to learn that its connection is
+    gone. All three retry, over one reconnect."""
+    config, marks = server(delay=0.1)
+    manager = _connected(config)
+    outcome = {}
+    try:
+        (first,) = _started(marks)
+        (marks / "hang").touch()
+        threads = _call_each(manager, _CALLS, outcome)
+        assert _eventually(lambda: all((marks / f"called-{n}").exists() for n in _CALLS))
+        (marks / "hang").unlink()
+        _kill(int(first.name.split("-", 1)[1]))
+        for thread in threads:
+            thread.join(20)
+
+        assert outcome == {n: n for n in _CALLS}
+        assert len(_started(marks)) == 2
+    finally:
+        manager.disconnect_all()
+
+
+def test_calls_waiting_when_the_transport_fails_all_retry(server):
+    """The server stops reading but stays alive, so the next write to it fails
+    and no end-of-file ever arrives. mcp 1.x's task group then cancels its own
+    receive loop, which leaves every pending request unanswered. This is what
+    a server dying mid-call can look like on Linux, where the write can fail
+    before the read sees end-of-file (seen in CI on 1.26)."""
+    config, marks = server(delay=0.1)
+    manager = _connected(config)
+    outcome = {}
+    try:
+        (marks / "hang").touch()
+        (marks / "deafen").touch()
+        threads = _call_each(manager, ["slow_a"], outcome)
+        assert _eventually(lambda: (marks / "called-slow_a").exists())
+        (marks / "hang").unlink()
+        (marks / "deafen").unlink()
+        threads += _call_each(manager, ["slow_b"], outcome)
+        for thread in threads:
+            thread.join(20)
+
+        assert outcome == {"slow_a": "slow_a", "slow_b": "slow_b"}
+        assert len(_started(marks)) == 2
     finally:
         manager.disconnect_all()
 
@@ -550,7 +623,7 @@ def test_a_stop_after_an_abandoned_stop_still_waits_for_the_close():
     client = McpClient("svr", {"command": "unused"})
     closed = asyncio.Event()
 
-    async def slow_close(ready, stop):
+    async def slow_close(ready, stop, gone):
         ready.set_result(None)
         await stop.wait()
         try:

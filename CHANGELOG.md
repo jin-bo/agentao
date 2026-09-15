@@ -31,7 +31,10 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   interrupted, and a second `disconnect_all()` waits for that same close. A
   call whose caller is interrupted (Ctrl+C) is cancelled instead of being left
   running, and a call the close could not stop raises `McpManagerClosedError`
-  rather than leaving its caller waiting forever. (#241)
+  rather than leaving its caller waiting forever. A call waiting on a
+  connection that closes under it reconnects and retries even when the SDK
+  never answers it, which mcp 1.x can fail to do when a write to a dead server
+  fails, and before 1.30 when three or more requests are pending. (#241)
 - **Disconnecting from an MCP server no longer logs "Attempted to exit cancel
   scope in a different task".** The SDK's transports and sessions must be
   closed by the task that opened them, but agentao opened a connection in one
