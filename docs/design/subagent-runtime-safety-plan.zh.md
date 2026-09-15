@@ -27,8 +27,8 @@
 | ID | 不变量 | 定义所在 | 门槛 |
 |---|---|---|---|
 | **SUB-01** | 子代理由内部工厂 `Agentao._for_subagent(parent, definition)` 构建，不经公开构造参数；`permission_engine`、父级那一个有效的 `filesystem` 与 `shell`、`working_directory` **按身份**共享 | §2 第 1 项 | G00、G13b |
-| **SUB-02** | registry 针对子代理重跑 `register_builtin_tools`，逐来源、从父级**活** registry 与定义白名单求交重建；`ToolRegistry.register` 增加仅关键字 `origin`（默认 `host`），替换记下顶掉了什么 | §2 第 2 项与表 | G00、G17 |
-| **SUB-03** | 未实现 `ToolForkable` 的宿主工具在子代理中缺席，**且它占的名字也缺席**；`mcp_*` 仅经作用域视图、绝不经 `enabled_tools`/`remove_tool` | §2 第 2 项的表 | G00 |
+| **SUB-02** | registry 针对子代理重跑 `register_builtin_tools`，逐来源、从父级**活** registry 与定义白名单求交重建；`ToolRegistry.register` 增加仅关键字 `origin`（默认 `host`），替换时覆盖该名字的来源 | §2 第 2 项与表 | G00、G17 |
+| **SUB-03** | 宿主工具只有在工具对象上**声明**可以下放时才进入子代理，形式是启动时做一次的浅拷贝；未声明的宿主工具、或拷贝失败的宿主工具在子代理中缺席，**且它占的名字也缺席**；`mcp_*` 仅经作用域视图、绝不经 `enabled_tools`/`remove_tool` | §2 第 2 项的表及其下的说明 | G00 |
 | **SUB-04** | agent 工具仅当定义**显式点名**时注册；`None` 白名单蕴含每一个非 agent 来源、不蕴含任何 agent 来源；`agent_manager = None` 删除 | §2 第 2 项的表 | G22 |
 | **SUB-05** | 工厂跳过 `__init__` 的注册过程，删除四处事后赋值（`sub_agent.tools =`、`tool_runner._permission_engine =`、读文件、`engine.set_mode`）；保留 `set_readonly_mode(True)` | §2 第 3、4 项 | G00 |
 | **MCP-01** | `McpClientManager` 持有一个**所有者线程**运行 loop，每处同步桥接改为 `run_coroutine_threadsafe(...).result(timeout)`；`scoped(names) -> McpToolView` 是非所有的只读视图。自 #241/#243（所有者线程与桥接）与 #238/#239（子代理直接调用父级的 MCP 工具；没有视图）起**部分落地**，见 §3 开头的注记 | §3 首段 | G00 |
@@ -62,8 +62,9 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
 >   的这一部分）。
 > - **`mcp_*` 是父级的实例**，走父级的连接。子代理以空的 `InMemoryMCPRegistry()` 构建，自己不连接任何
 >   服务器。
-> - **SUB-03 的结果，但不靠 `ToolForkable` 或 `origin`。**宿主工具缺席，它占的名字也缺席。只有子代理在同名
->   下注册了类型完全相同的实例时，父级的这个工具才算内置工具。
+> - **SUB-03 的结果，但不靠声明或 `origin`。**宿主工具缺席，它占的名字也缺席。只有子代理在同名
+>   下注册了类型完全相同的实例时，父级的这个工具才算内置工具。这个替代判据会把宿主用内置工具自己的类
+>   构造的替换误认成内置工具，并把它换回去（#256，由 §5.1 的 PR-a 修复）。
 > - **子代理永远拿不到 agent 工具**，定义点名了也一样（SUB-04 去掉了例外）。`agent_manager = None` 保留，
 >   现在只是为了让系统提示词不列出子代理调不了的代理。
 > - **§1 的缺陷已修，但没有共享引擎。**子代理用启动时父引擎的 `PermissionEngine.snapshot()` 做决策，
@@ -74,7 +75,9 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
 > **尚未实现：**
 > - `_for_subagent` 工厂，以及跳过 `__init__` 的注册过程（SUB-05）；
 > - 按身份共享权限引擎（子代理持有快照，所以父级切换模式不会影响已在运行的子代理）；
-> - `ToolRegistry.register` 的 `origin`，以及 `ToolForkable`。
+> - `ToolRegistry.register` 的 `origin`（PR-a，§5.1）；
+> - 宿主工具的下放声明及每个子代理一份的拷贝（2026-09-15 修订后的 SUB-03，PR-b，§5.1），取代早先的
+>   `ToolForkable`。
 
 **PR-0 —— 子代理由内部工厂 `Agentao._for_subagent(parent, definition)` 构建，不经公开构造参数。**
 §2.16 表明 `enabled_tools=` / `extra_tools=` / `remove_tool` 每一个都有一道守卫或一种语义，会把
@@ -88,27 +91,55 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
    白名单之外的每一个内置名，而这正是该通道本就认的那一道过滤
    （`agentao/tooling/registry.py:135-136`）。于是每一项依赖都是子代理自己的：它的 transport 撑起
    `AskUserTool`，它的 `todo_tool` 是它自己的列表。同时 `ToolRegistry.register` 增加 `origin`
-   —— `builtin | host | mcp | agent | plan` —— 与实例并存（`agentao/tools/base.py:209`）；替换还要
-   记下它顶掉了什么，下表第四行才可判定。**它是仅关键字参数，默认 `host`，不是必填。** 在仓的注册点
+   —— `builtin | host | mcp | agent | plan` —— 与实例并存（`agentao/tools/base.py:209`）；替换时覆盖该名字的
+   来源。替换顶掉了什么不记录：下表只读名字当前的来源，来源为 `host` 的名字不论顶掉了什么都按同一行判定
+   （早先的修订要求记下被顶掉的来源，但没有任何读者）。**它是仅关键字参数，默认 `host`，不是必填。** 在仓的注册点
    都显式传它 —— `_bind_and_register`（`agentao/tooling/registry.py:80`）、MCP
    （`agentao/tooling/mcp_tools.py:144`）、agent 工具（`agentao/tooling/agent_tools.py:104`）、plan
    工具（`agentao/cli/app.py:336`），以及子代理自己的 registry 与 `CompleteTaskTool`
    （`agentao/agents/tools/_wrapper.py:465-466`）—— 但 `agent.tools.register(...)` 是宿主已经在用、
    本仓示例也在调的一条路（`examples/ticket-automation/src/triage.py:199-202`），改成必填就会在那个
    唯一声称「无用户可见变化」的 PR 里造成用户可见的破坏。`host` 同时也是 fail-closed 的默认值：未归类
-   的工具就是宿主工具，而不能 fork 的宿主工具在每个子代理里都缺席。逐来源，读自父级*活* registry 并与定义白名单求交：
+   的工具就是宿主工具，而什么都没声明的宿主工具在每个子代理里都缺席。逐来源，读自父级*活* registry 并与定义白名单求交：
 
    | 父级中的来源 | 子代理中 |
    |---|---|
    | 内置，存在且在白名单内 | 由 `register_builtin_tools(sub_agent)`（`agentao/tooling/registry.py:83`）以子代理自己的依赖构造 |
    | 内置，被父级禁用或移除，或不在白名单内 | **缺席** —— 它的名字加入子代理的 `_disable_tools` |
-   | 实现了 `ToolForkable` 的宿主工具（`extra_tools` 或 `add_tool`） | `fork_for_agent()` 的新实例，以 `_bind_and_register`（`agentao/tooling/registry.py:77-80`）绑定 |
-   | 未实现 `ToolForkable` 的宿主工具 | **缺席，且它占的名字也缺席** —— 替换了 `read_file` 却不能 fork 的宿主，不会在底下拿回内置 `read_file`；一次点名警告 |
+   | 工具对象声明了可以下放的宿主工具（经 `extra_tools=`、`add_tool` 或裸 `register` 注册） | **一份浅拷贝**（`copy.copy`），启动时做一次，以 `_bind_and_register`（`agentao/tooling/registry.py:77-80`）绑定，按来源 `host` 注册；定义白名单与权限检查照常作用于它 |
+   | 什么都没声明、或拷贝抛异常的宿主工具 | **缺席，且它占的名字也缺席** —— 替换了 `read_file` 的宿主，哪怕用的就是 `ReadFileTool` 的实例，也不会在底下拿回内置 `read_file`；一次点名警告，拷贝失败时附上异常。拷贝失败绝不退回共享原实例，也不退回内置工具 |
    | agent 工具 | 仅当定义**显式点名**时，经 `_register_agent_tools` 针对*子代理*重新注册，使 wrapper 捕获子代理的 getter（§2.17）；否则**一个都不注册** —— 工厂跳过 `_register_agent_tools()`，`agent_manager = None`（`agentao/agents/tools/_wrapper.py:541`）删除。**「在白名单内」在这里不够：** `tools:` 键缺席意为*全部工具*（`agentao/agents/manager.py:57`），而内置 generalist 恰好省略了它（`agentao/agents/definitions/generalist.md:1-4`），把 `None` 白名单读成「全部」就会把 `agent_generalist` 交给它自己，恰好恢复那句赋值本要防的递归。`None` 白名单蕴含每一个**非 agent** 来源，不蕴含任何 agent 来源 |
    | `mcp_*` | 仅当白名单点名时，经下述作用域 MCP 视图；绝不经 `enabled_tools` 或 `remove_tool`，它们的守卫（`agentao/agent.py:489`、`agentao/agent.py:953`）原样保留 |
    | 仅限 plan | 永不 |
 
    最后加入 `CompleteTaskTool()`。结果是 runner 与 planner 同样持有的那一份 registry（门槛 17）。
+
+   > **SUB-03 于 2026-09-15 修订：一个声明加一份浅拷贝，而不是 `ToolForkable`。**
+   >
+   > - **声明承诺什么。**声明是宿主的承诺，运行时无法检验。它说明三件事：工具适合子任务；工具能承受
+   >   浅拷贝；拷贝仍与原实例共享的每一项依赖都允许父级与子代理并发使用，包括闭包、客户端和容器。
+   >   `copy.copy` 只隔离实例自身的属性。自定义的 `__copy__`、`__reduce_ex__` 或 property 可能改变
+   >   隔离的范围，这也由同一个承诺覆盖。
+   > - **为什么要拷贝。**执行器每次调用都在实例上重绑 `output_callback`
+   >   （`agentao/runtime/tool_executor.py:413-420`），结束后置回 `None`（`:459-460`）。保护它的锁
+   >   只作用于一批调用（`:204-209`），子代理那一批持有另一把锁。共享实例时，一个代理的流式输出可能
+   >   发到另一个代理的 transport，或被另一个代理的置空截断。每个代理一份拷贝，就各有各的属性。
+   > - **为什么在启动时做一次，而不是每次调用都做。**工具可能在一个子任务的多次调用之间保留状态，
+   >   每次调用都拷贝会把它丢掉。
+   > - **为什么声明放在工具对象上。**宿主有三条注册入口：`extra_tools=`、`add_tool`，以及裸
+   >   `agent.tools.register`（`examples/ticket-automation/src/triage.py:199-202`、
+   >   `examples/saas-assistant/app/main.py:64-65`）。`extra_tools=` 没有针对单个工具的参数。声明的
+   >   名字由 PR-b 确定。
+   > - **为什么不用 `ToolForkable.fork_for_agent()`。**按工具提供的工厂控制的是构造，不是隔离：它照样
+   >   可以返回与原实例共用同一个客户端、或持有父级 goal 的对象。工具若要定制自己的拷贝，
+   >   `__copy__` 已经够用。
+   > - **语义风险仍由宿主承担。**`update_goal`（`agentao/cli/input_loop.py:799`）持有父会话的 goal
+   >   （`agentao/tools/goal.py:29`）。它没有声明，所以保持缺席。任何拷贝规则都无法让下放它变得安全。
+   > - **同类项目，2026-09-15 核实。**gemini-cli 默认把父级工具下放，经浅 `clone()`，只重绑消息总线，
+   >   闭包与客户端照旧共享。codex 由宿主定义的 dynamic tools 是交给客户端执行的描述，进程里没有可
+   >   共享的实例。两者都不是跨线程共享同一实例的先例。
+   >
+   > 不需要工厂体系，也不需要全局锁。
 3. **跳过** `__init__` 的内置、MCP 与 agent 注册过程；事后不向 `sub_agent.tools` 赋值
    （`agentao/agents/tools/_wrapper.py:538` 删除）、不向 `tool_runner._permission_engine` 赋值
    （`agentao/agents/tools/_wrapper.py:570` 删除）、不读文件（`agentao/agents/tools/_wrapper.py:559-562`
@@ -252,29 +283,53 @@ manager 认定收工之后再申请一份新租约。`McpClientManager` 先进�
 
 | PR | 内容 | 用户可见 | 依赖 |
 |---|---|---|---|
-| **PR-0** | （门槛 0、19、22）**`Agentao._for_subagent`：父级引擎、一个有效 fs/shell、每次注册都记 `origin`、以针对子代理重跑 `register_builtin_tools` 的方式重建 registry、`ToolForkable`、MCP 所有者线程 + 非所有的作用域视图、不注册 agent 工具；引擎状态在一把写者锁后面不可变、裁定携带其快照；投射报告裁定的快照**（§2.12–§2.19） | 否 —— 关上一处活绕过 | — |
+| **PR-0** | （门槛 0、19、22）**`Agentao._for_subagent`：父级引擎、一个有效 fs/shell、每次注册都记 `origin`、以针对子代理重跑 `register_builtin_tools` 的方式重建 registry、宿主工具声明及每个子代理一份浅拷贝、MCP 所有者线程 + 非所有的作用域视图、不注册 agent 工具；引擎状态在一把写者锁后面不可变、裁定携带其快照；投射报告裁定的快照**（§2.12–§2.19） | 否 —— 关上一处活绕过 | — |
 
-**PR-0 不需要 PowerShell 计划的任何东西** —— 一个内部工厂、registry 上的一个来源字段、一个协议、一个视图、
+**PR-0 不需要 PowerShell 计划的任何东西** —— 一个内部工厂、registry 上的一个来源字段、一个声明、一个视图、
 一个所有者线程、一把锁、一份「token → task **集合**」登记表连同喂给它的调用上下文，以及裁定详情上的一个
 字段。反向依赖只有一条：PowerShell 计划的 PR-1 要求子代理按身份持有父级的 shell spec（SUB-01），所以那边
 的阶梯把 PR-0 列为前置。
 
 **允许的切法：** 引擎那一半（SUB-01–SUB-05、ENG-01–ENG-05；门槛 G00 里不涉及 MCP 的断言、G13b、G17、
 G19、G22）可先发；MCP 那一半（MCP-01–MCP-06；G00 里的 MCP 断言）后发。切开发时，工厂在第一段里对
-`mcp_*` 的处理是**缺席**（与不可 fork 的宿主工具同一行），而不是共享父级实例 —— 共享实例正是 §2.15/§2.18
+`mcp_*` 的处理是**缺席**（与什么都没声明的宿主工具同一行），而不是共享父级实例 —— 共享实例正是 §2.15/§2.18
 说不能做的事。
+
+### 5.1 子代理中的宿主工具：PR-a 与 PR-b（2026-09-15）
+
+SUB-02、SUB-03 中与宿主工具有关的部分先于 PR-0 的工厂发布，建立在 #255 的机制（`_narrow_tools`）上。
+它们与 #254 分开：#254 只修技能。
+
+| PR | 内容 | 用户可见 | 依赖 |
+|---|---|---|---|
+| **PR-a**（#256） | `ToolRegistry.register` 增加 SUB-02 的仅关键字 `origin`，默认 `host`，这是对公开方法的兼容扩展。仓内每个注册点都显式传入来源，替换时覆盖来源。`_narrow_tools` 按来源判定，删除同类型判断。**不引入任何让宿主工具进入子代理的途径**：宿主工具仍然缺席 | 是 —— 宿主用内置工具自己的类构造的替换（`extra_tools=[WebSearchTool(backend="bocha", …)]`）不再被换回子代理的默认实例 | — |
+| **PR-b** | 工具对象上的声明；每个子代理一份浅拷贝，启动时做，按来源 `host` 注册；拷贝失败则缺席并说明原因（§2 第 2 项的表） | 是 —— 按工具选择启用 | PR-a |
+
+**PR-a 的验收：**
+- 经 `extra_tools=`、`add_tool(replace=True)` 或裸 `agent.tools.register(replace=True)`，用内置工具
+  自己的类构造的替换，都让子代理在该名字下**没有工具**：既不是宿主的实例，也不是子代理自己的默认实例；
+- 宿主没有替换的内置工具仍以子代理自己的实例进入子代理，MCP 工具不变；
+- 没有替换任何东西的宿主工具（`update_goal`）仍然缺席；
+- 定义白名单与权限检查的行为不变。
+
+**PR-b 的验收：**
+- 未声明的宿主工具（包括 `update_goal`）缺席；
+- 声明了的流式工具在父级与子代理中同时运行时，各自的输出只发到各自的 transport；
+- 同名替换内置工具时，子代理保留宿主的实现，且仍受声明与白名单约束；
+- 三条入口 `extra_tools=`、`add_tool`、裸 `register` 都成立；
+- 声明了但拷贝抛异常的工具缺席，警告点名异常；绝不共享原实例，也不换成内置工具。
 
 ## 6. 门槛
 
 - **G00 · PR-0 的探针**（§2.12）经 `NullTransport` 返回 DENY，前台与后台都如此；带内存 deny、run-scope
    deny 与 `enable_hardline=False` 的父级产出的子代理三者都遵守；readonly 父级产出 readonly 子代理；
    子代理的引擎、filesystem 与 shell 按身份是父级的，工具不是父级的实例；后台子代理跑过工具后，父级的
-   `output_callback` 与 todo 列表未变；父级禁用的内置工具在子代理中缺席；白名单外的可 fork 宿主工具
-   缺席；替换了 `read_file` 的不可 fork 宿主工具让子代理没有 `read_file`；定义未点名任何 agent 工具的
+   `output_callback` 与 todo 列表未变；父级禁用的内置工具在子代理中缺席；白名单外的已声明宿主工具
+   缺席；替换了 `read_file` 的未声明宿主工具（包括 `ReadFileTool` 自己的实例）让子代理没有 `read_file`；定义未点名任何 agent 工具的
    子代理有零个 `agent_*` 工具；父级与后台子代理并发调用同一 MCP 服务器都正确完成。**子代理的
    `ask_user` 抵达子代理的 transport、它的 `todo_write` 写它自己的列表 —— 那六个由 agent 提供依赖的
-   内置工具是从子代理构造的（§2.19）；每个注册的工具都带 `origin`，替换了内置的宿主工具记下它顶掉了
-   什么；子代理的 `close()` 之后父级的 MCP 连接与 loop 仍活着，**且仍在运行的兄弟子代理毫发无损 ——
+   内置工具是从子代理构造的（§2.19）；每个注册的工具都带 `origin`，替换了内置的宿主工具来源为
+   `host`；子代理的 `close()` 之后父级的 MCP 连接与 loop 仍活着，**且仍在运行的兄弟子代理毫发无损 ——
    它一个 token 都不取消（除了自己的），一条线程都不 join，尤其不 join 它自己正跑在上面的那条**；
    在飞行中的那次调用发生在**前台 turn 或宿主自己的线程**（它不在任何线程集合里）时同样成立：
    `close()` 等租约排空，那次调用跑完；

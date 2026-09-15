@@ -35,8 +35,8 @@ table is an index, not a second definition.
 | ID | Invariant | Defined in | Gates |
 |---|---|---|---|
 | **SUB-01** | A sub-agent is built by the internal factory `Agentao._for_subagent(parent, definition)`, never through public constructor arguments; `permission_engine`, the parent's one effective `filesystem` and `shell`, and `working_directory` are shared **by identity** | §2 item 1 | G00, G13b |
-| **SUB-02** | The registry re-runs `register_builtin_tools` for the sub-agent, rebuilt origin by origin as the intersection of the parent's **live** registry and the definition's allowlist; `ToolRegistry.register` gains a keyword-only `origin` (default `host`), and a replacement records what it displaced | §2 item 2 and its table | G00, G17 |
-| **SUB-03** | A host tool that does not implement `ToolForkable` is absent from the sub-agent, **and so is the name it occupied**; `mcp_*` arrives only through a scoped view, never through `enabled_tools` / `remove_tool` | the table in §2 item 2 | G00 |
+| **SUB-02** | The registry re-runs `register_builtin_tools` for the sub-agent, rebuilt origin by origin as the intersection of the parent's **live** registry and the definition's allowlist; `ToolRegistry.register` gains a keyword-only `origin` (default `host`), and a replacement overwrites the name's origin | §2 item 2 and its table | G00, G17 |
+| **SUB-03** | A host tool reaches a sub-agent only when the tool object **declares** it may be passed down, and then as one shallow copy made at spawn; an undeclared host tool, or one whose copy fails, is absent from the sub-agent, **and so is the name it occupied**; `mcp_*` arrives only through a scoped view, never through `enabled_tools` / `remove_tool` | the table in §2 item 2 and the note under it | G00 |
 | **SUB-04** | Agent tools are registered only when the definition **names them explicitly**; a `None` allowlist implies every non-agent origin and implies no agent origin; `agent_manager = None` is deleted | the table in §2 item 2 | G22 |
 | **SUB-05** | The factory skips `__init__`'s registration passes and deletes the four after-the-fact assignments (`sub_agent.tools =`, `tool_runner._permission_engine =`, the file read, `engine.set_mode`); `set_readonly_mode(True)` is kept | §2 items 3 and 4 | G00 |
 | **MCP-01** | `McpClientManager` holds one **owner thread** running the loop, and every synchronous bridge becomes `run_coroutine_threadsafe(...).result(timeout)`; `scoped(names) -> McpToolView` is a non-owning read-only view. **Partly in place** since #241/#243 (the owner thread and the bridge) and #238/#239 (sub-agents call the parent's MCP tools directly; no view) — see the note at the head of §3 | §3 opening paragraph | G00 |
@@ -72,9 +72,11 @@ instance" and "share the MCP loop" are each not the fix.
 >   `shell`, which are shared by identity (that part of SUB-01).
 > - **`mcp_*` are the parent's instances**, over the parent's connections. The sub-agent is
 >   built with an empty `InMemoryMCPRegistry()` and connects nothing.
-> - **SUB-03's outcome, without `ToolForkable` or `origin`.** Host tools are absent, and so is
+> - **SUB-03's outcome, without a declaration or `origin`.** Host tools are absent, and so is
 >   the name they occupied. A parent tool counts as a built-in only when the sub-agent registered
->   an instance of exactly its class under that name.
+>   an instance of exactly its class under that name. That stand-in misreads a host's replacement
+>   built from the built-in's own class as the built-in, and swaps it back (#256, fixed by PR-a in
+>   §5.1).
 > - **Agent tools are never given to a sub-agent**, not even when the definition names one
 >   (SUB-04 without its exception). `agent_manager = None` stays, now only so the system prompt
 >   does not list agents the sub-agent cannot call.
@@ -90,7 +92,9 @@ instance" and "share the MCP loop" are each not the fix.
 > - the `_for_subagent` factory, and skipping `__init__`'s registration passes (SUB-05);
 > - sharing the permission engine by identity (a sub-agent holds a snapshot, so a mode switch
 >   on the parent does not reach a sub-agent already running);
-> - `origin` on `ToolRegistry.register`, and `ToolForkable`.
+> - `origin` on `ToolRegistry.register` (PR-a, §5.1);
+> - the host-tool declaration and its per-sub-agent copy (SUB-03 as revised 2026-09-15, PR-b,
+>   §5.1), which replaces the earlier `ToolForkable`.
 
 **PR-0 — a sub-agent is built by the internal factory `Agentao._for_subagent(parent,
 definition)`, never through public constructor arguments.** §2.16 shows that `enabled_tools=`,
@@ -108,8 +112,10 @@ factory:
    (`agentao/tooling/registry.py:135-136`). Every dependency is then the sub-agent's own: its
    transport backs `AskUserTool`, and its `todo_tool` is its own list. At the same time
    `ToolRegistry.register` gains `origin` — `builtin | host | mcp | agent | plan` — stored
-   alongside the instance (`agentao/tools/base.py:209`); a replacement must also record what it
-   displaced, which is what makes the fourth row of the table below decidable. **It is a
+   alongside the instance (`agentao/tools/base.py:209`); a replacement overwrites the name's
+   origin. What the replacement displaced is not recorded: the table below reads only a name's
+   current origin, and a name whose origin is `host` is decided the same way whatever it replaced
+   (an earlier revision required the displaced origin; nothing reads it). **It is a
    keyword-only argument defaulting to `host`, not a required one.** Every registration site in
    the repository passes it explicitly — `_bind_and_register`
    (`agentao/tooling/registry.py:80`), MCP (`agentao/tooling/mcp_tools.py:144`), agent tools
@@ -119,22 +125,55 @@ factory:
    already use and this repository's own example calls
    (`examples/ticket-automation/src/triage.py:199-202`), so making it required would cause a
    user-visible break inside the one PR that claims no user-visible change. `host` is also the
-   fail-closed default: an unclassified tool is a host tool, and a host tool that cannot fork is
-   absent from every sub-agent. Origin by origin, read from the parent's *live* registry and
+   fail-closed default: an unclassified tool is a host tool, and a host tool that declares nothing
+   is absent from every sub-agent. Origin by origin, read from the parent's *live* registry and
    intersected with the definition's allowlist:
 
    | Origin in the parent | In the sub-agent |
    |---|---|
    | builtin, present and in the allowlist | constructed by `register_builtin_tools(sub_agent)` (`agentao/tooling/registry.py:83`) from the sub-agent's own dependencies |
    | builtin, disabled or removed by the parent, or outside the allowlist | **absent** — its name joins the sub-agent's `_disable_tools` |
-   | a host tool implementing `ToolForkable` (`extra_tools` or `add_tool`) | a fresh instance from `fork_for_agent()`, bound through `_bind_and_register` (`agentao/tooling/registry.py:77-80`) |
-   | a host tool not implementing `ToolForkable` | **absent, and so is the name it occupied** — a host that replaced `read_file` and cannot fork does not get the builtin `read_file` back underneath it; one warning that names it |
+   | a host tool whose object declares it may be passed down (registered through `extra_tools=`, `add_tool` or a bare `register`) | **one shallow copy** (`copy.copy`), made once at spawn, bound through `_bind_and_register` (`agentao/tooling/registry.py:77-80`) and registered with origin `host`; the definition's allowlist and the permission checks apply to it as to any tool |
+   | a host tool that declares nothing, or whose copy raises | **absent, and so is the name it occupied** — a host that replaced `read_file`, even with an instance of `ReadFileTool` itself, does not get the builtin `read_file` back underneath it; one warning that names it and, for a failed copy, the exception. A failed copy never falls back to sharing the original or to the builtin |
    | an agent tool | only when the definition **names it explicitly**, re-registered for the *sub-agent* through `_register_agent_tools` so the wrapper captures the sub-agent's getter (§2.17); otherwise **none at all** — the factory skips `_register_agent_tools()` and `agent_manager = None` (`agentao/agents/tools/_wrapper.py:541`) is deleted. **"In the allowlist" is not enough here:** an absent `tools:` key means *all tools* (`agentao/agents/manager.py:57`), and the builtin generalist happens to omit it (`agentao/agents/definitions/generalist.md:1-4`), so reading a `None` allowlist as "all" would hand `agent_generalist` to itself — restoring exactly the recursion that assignment was there to prevent. A `None` allowlist implies every **non-agent** origin and implies no agent origin |
    | `mcp_*` | only when the allowlist names it, through the scoped MCP view described below; never through `enabled_tools` or `remove_tool`, whose guards (`agentao/agent.py:489`, `agentao/agent.py:953`) stay as they are |
    | plan-only | never |
 
    Finally `CompleteTaskTool()` is added. The result is the one registry the runner and the
    planner both hold (gate 17).
+
+   > **SUB-03 revised 2026-09-15: a declaration and one shallow copy, not `ToolForkable`.**
+   >
+   > - **What the declaration promises.** The declaration is the host's promise, and the runtime
+   >   cannot check it. It says three things: the tool suits a sub-task; it tolerates a shallow
+   >   copy; and every dependency the copy still shares with the original tolerates concurrent use
+   >   from the parent and the sub-agent. That covers closures, clients and containers.
+   >   `copy.copy` separates only the instance's own attributes. A custom `__copy__`,
+   >   `__reduce_ex__` or property can change what it separates, and the same promise covers that.
+   > - **Why a copy.** The executor rebinds `output_callback` on the instance for every call
+   >   (`agentao/runtime/tool_executor.py:413-420`) and resets it to `None` afterwards (`:459-460`).
+   >   The lock around that is scoped to one batch (`:204-209`), and a sub-agent's batch holds a
+   >   different one. On a shared instance, one agent's streamed output could reach the other's
+   >   transport, or be cut off by the other's reset. A copy per agent gives each agent its own
+   >   attribute.
+   > - **Why once at spawn, not per call.** A tool may keep state across the calls of one sub-task,
+   >   and a per-call copy would drop it.
+   > - **Why on the tool object.** A host registers through three entries: `extra_tools=`,
+   >   `add_tool`, and a bare `agent.tools.register` (`examples/ticket-automation/src/triage.py:199-202`,
+   >   `examples/saas-assistant/app/main.py:64-65`). `extra_tools=` has no per-tool argument. PR-b
+   >   chooses the declaration's name.
+   > - **Why not `ToolForkable.fork_for_agent()`.** A per-tool factory controls construction, not
+   >   isolation: it can return an object that holds the same client, or the parent's goal, as the
+   >   original. A tool that needs to customise its copy already has `__copy__` for that.
+   > - **The semantic hazard stays with the host.** `update_goal` (`agentao/cli/input_loop.py:799`)
+   >   holds the parent session's goal (`agentao/tools/goal.py:29`). It declares nothing, so it
+   >   stays absent. No copy rule could make passing it down safe.
+   > - **Peers, checked 2026-09-15.** gemini-cli passes parent tools down by default through a
+   >   shallow `clone()` that rebinds only the message bus; its closures and clients stay shared.
+   >   codex's host-defined dynamic tools are specs the client executes, so no instance exists to
+   >   share. Neither is a precedent for sharing one instance across threads.
+   >
+   > No factory system and no global lock are needed.
 3. **Skips** `__init__`'s builtin, MCP and agent registration passes; assigns nothing afterwards
    to `sub_agent.tools` (`agentao/agents/tools/_wrapper.py:538` deleted) or to
    `tool_runner._permission_engine` (`agentao/agents/tools/_wrapper.py:570` deleted), reads no
@@ -318,10 +357,10 @@ inside tool execution. The two families never nest.
 
 | PR | Content | User-visible | Depends on |
 |---|---|---|---|
-| **PR-0** | (gates 0, 19, 22) **`Agentao._for_subagent`: the parent's engine, one effective fs/shell, an `origin` recorded on every registration, the registry rebuilt by re-running `register_builtin_tools` for the sub-agent, `ToolForkable`, an MCP owner thread plus a non-owning scoped view, no agent tools registered; engine state immutable behind one writer lock, verdicts carrying their snapshot; the projection reporting the verdict's snapshot** (§2.12–§2.19) | no — it closes a live bypass | — |
+| **PR-0** | (gates 0, 19, 22) **`Agentao._for_subagent`: the parent's engine, one effective fs/shell, an `origin` recorded on every registration, the registry rebuilt by re-running `register_builtin_tools` for the sub-agent, the host-tool declaration with one shallow copy per sub-agent, an MCP owner thread plus a non-owning scoped view, no agent tools registered; engine state immutable behind one writer lock, verdicts carrying their snapshot; the projection reporting the verdict's snapshot** (§2.12–§2.19) | no — it closes a live bypass | — |
 
 **PR-0 needs nothing from the PowerShell plan** — an internal factory, an origin field on the
-registry, a protocol, a view, an owner thread, a lock, a "token → task **set**" registry along
+registry, a declaration, a view, an owner thread, a lock, a "token → task **set**" registry along
 with the call context that feeds it, and one field on the decision detail. There was exactly one
 dependency in the other direction: the PowerShell plan's PR-1 required a sub-agent to hold the
 parent's shell spec by identity (SUB-01), so that plan's ladder listed PR-0 as a prerequisite.
@@ -329,8 +368,37 @@ parent's shell spec by identity (SUB-01), so that plan's ladder listed PR-0 as a
 **The permitted cut:** the engine half (SUB-01–SUB-05, ENG-01–ENG-05; the non-MCP assertions in
 gate G00, plus G13b, G17, G19 and G22) may ship first, and the MCP half (MCP-01–MCP-06; the MCP
 assertions in G00) after. When cut that way, the factory's treatment of `mcp_*` in the first
-segment is **absent** (the same row as a host tool that cannot fork) rather than a shared parent
+segment is **absent** (the same row as a host tool that declares nothing) rather than a shared parent
 instance — sharing the instance is precisely what §2.15 and §2.18 say cannot be done.
+
+### 5.1 Host tools in sub-agents: PR-a and PR-b (2026-09-15)
+
+The host-tool parts of SUB-02 and SUB-03 ship ahead of PR-0's factory, on the #255 mechanism
+(`_narrow_tools`). They are kept separate from #254, which stays about skills.
+
+| PR | Content | User-visible | Depends on |
+|---|---|---|---|
+| **PR-a** (#256) | `ToolRegistry.register` gains the keyword-only `origin` of SUB-02, defaulting to `host`. That is a compatible extension of a public method. Every in-repo registration site passes its origin, and a replacement overwrites it. `_narrow_tools` decides by origin, and the class check is removed. **It introduces no way for a host tool to reach a sub-agent**: host tools stay absent | yes — a host's replacement of a built-in made from the built-in's own class (`extra_tools=[WebSearchTool(backend="bocha", …)]`) is no longer swapped back to the sub-agent's default instance | — |
+| **PR-b** | the declaration on the tool object; one shallow copy per sub-agent, made at spawn and registered with origin `host`; a failed copy leaves the tool absent and says why (the table in §2 item 2) | yes — opt-in per tool | PR-a |
+
+**PR-a is accepted when:**
+- a replacement of a built-in made from the built-in's own class, through `extra_tools=`, `add_tool(replace=True)` or a bare
+  `agent.tools.register(replace=True)`, leaves the sub-agent with **no tool under that name**:
+  neither the host's instance nor the sub-agent's own default;
+- a built-in the host did not replace still reaches the sub-agent as the sub-agent's own
+  instance, and MCP tools are unchanged;
+- a host tool that replaced nothing (`update_goal`) stays absent;
+- the definition's allowlist and the permission checks behave as before.
+
+**PR-b is accepted when:**
+- an undeclared host tool, `update_goal` included, is absent;
+- a declared tool that streams, running in a parent and a sub-agent at the same time, sends each
+  agent's output to that agent's own transport;
+- a same-name replacement of a built-in keeps the host's implementation in the sub-agent, and
+  stays subject to the declaration and the allowlist;
+- this holds for all three entries: `extra_tools=`, `add_tool` and a bare `register`;
+- a declared tool whose copy raises is absent, with a warning that names the exception. It is
+  never shared and never replaced by the built-in.
 
 ## 6. Gates
 
@@ -340,13 +408,14 @@ instance — sharing the instance is precisely what §2.15 and §2.18 say cannot
    sub-agent's engine, filesystem and shell are the parent's by identity while its tools are not
    the parent's instances; after a background sub-agent has run a tool, the parent's
    `output_callback` and todo list are unchanged; a builtin the parent disabled is absent from the
-   sub-agent; a forkable host tool outside the allowlist is absent; a non-forkable host tool that
-   replaced `read_file` leaves the sub-agent without `read_file`; a sub-agent whose definition
+   sub-agent; a declared host tool outside the allowlist is absent; an undeclared host tool that
+   replaced `read_file`, including an instance of `ReadFileTool` itself, leaves the sub-agent
+   without `read_file`; a sub-agent whose definition
    names no agent tool has zero `agent_*` tools; a parent and a background sub-agent calling the
    same MCP server concurrently both complete correctly. **The sub-agent's `ask_user` reaches the
    sub-agent's transport and its `todo_write` writes its own list — the six builtins whose
    dependencies come from the agent are constructed from the sub-agent (§2.19); every registered
-   tool carries an `origin`, and a host tool that replaced a builtin records what it displaced;
+   tool carries an `origin`, and a host tool that replaced a builtin carries origin `host`;
    after a sub-agent's `close()` the parent's MCP connections and loop are still alive, **and
    still-running sibling sub-agents are untouched — it cancels not one token (beyond its own),
    joins not one thread, and above all does not join the one it is itself running on**; the same
