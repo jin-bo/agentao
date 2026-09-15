@@ -62,9 +62,12 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
 >   的这一部分）。
 > - **`mcp_*` 是父级的实例**，走父级的连接。子代理以空的 `InMemoryMCPRegistry()` 构建，自己不连接任何
 >   服务器。
-> - **SUB-03 的结果，但不靠声明或 `origin`。**宿主工具缺席，它占的名字也缺席。只有子代理在同名
->   下注册了类型完全相同的实例时，父级的这个工具才算内置工具。这个替代判据会把宿主用内置工具自己的类
->   构造的替换误认成内置工具，并把它换回去（#256，由 §5.1 的 PR-a 修复）。
+> - **`origin`（SUB-02，PR-a，#256）。**`ToolRegistry.register` 接受仅关键字的 `origin`，默认
+>   `host`，由 `ToolRegistry.origin(name)` 读回。仓内每个注册点都显式传入来源。不经 `register`
+>   直接放进注册表字典的工具读作 `host`。
+> - **SUB-03 的结果，但不靠声明。**宿主工具缺席，它占的名字也缺席。只有来源为 `builtin`、且子代理
+>   同名工具的来源也是 `builtin` 时，父级的这个工具才算内置工具。判定不看类型，所以宿主用内置工具
+>   自己的类构造的替换就是宿主工具。PR-a 之前以类型相同作替代判据，这种替换会被换回内置工具。
 > - **子代理永远拿不到 agent 工具**，定义点名了也一样（SUB-04 去掉了例外）。`agent_manager = None` 保留，
 >   现在只是为了让系统提示词不列出子代理调不了的代理。
 > - **§1 的缺陷已修，但没有共享引擎。**子代理用启动时父引擎的 `PermissionEngine.snapshot()` 做决策，
@@ -75,7 +78,6 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
 > **尚未实现：**
 > - `_for_subagent` 工厂，以及跳过 `__init__` 的注册过程（SUB-05）；
 > - 按身份共享权限引擎（子代理持有快照，所以父级切换模式不会影响已在运行的子代理）；
-> - `ToolRegistry.register` 的 `origin`（PR-a，§5.1）；
 > - 宿主工具的下放声明及每个子代理一份的拷贝（2026-09-15 修订后的 SUB-03，PR-b，§5.1），取代早先的
 >   `ToolForkable`。
 

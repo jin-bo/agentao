@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ..agents.tools import AgentToolWrapper
 from ..transport import AgentEvent, EventType
 
 if TYPE_CHECKING:
@@ -81,6 +82,9 @@ def register_agent_tools(agent: "Agentao") -> None:
 
     agent_tools = agent.agent_manager.create_agent_tools(
         all_tools=agent.tools.tools,
+        # How a sub-agent tells the parent's built-ins from host tools that
+        # replaced them, including one of the built-in's own class (#256).
+        tool_origin_getter=lambda name: agent.tools.origin(name),
         # Live getter — sub-agents launched after a runtime
         # ``session/set_model`` / maxTokens change pick up the new
         # values rather than the snapshot frozen at registration time.
@@ -104,13 +108,18 @@ def register_agent_tools(agent: "Agentao") -> None:
         shell=getattr(agent, "shell", None),
     )
     for agent_tool in agent_tools:
-        # ``create_agent_tools`` appends its own ``check_background_agent``
-        # whenever a ``bg_store`` exists, which is exactly when
-        # ``register_builtin_tools`` has already registered an equivalent one.
-        # Without ``replace=`` that guaranteed collision logged an
-        # "already registered; overwriting" warning on every construction —
-        # once per sub-agent spawn too — which is how a warning that exists to
-        # surface *accidental* collisions became noise nobody reads.
+        # ``create_agent_tools`` also returns ``check_background_agent`` when a
+        # ``bg_store`` is set. That one is a built-in (``register_builtin_tools``
+        # already registered it), and sub-agents get their own — so it is tagged
+        # ``builtin``, and its collision with that earlier registration is the
+        # expected one, not an accident. Without ``replace=`` the guaranteed
+        # collision logged an "already registered; overwriting" warning on every
+        # construction — once per sub-agent spawn too — which is how a warning
+        # that exists to surface *accidental* collisions became noise nobody
+        # reads. Only ``AgentToolWrapper``s get ``agent``.
+        origin = "agent" if isinstance(agent_tool, AgentToolWrapper) else "builtin"
         agent.tools.register(
-            agent_tool, replace=agent_tool.name in agent.tools.tools,
+            agent_tool,
+            origin=origin,
+            replace=agent_tool.name in agent.tools.tools,
         )
