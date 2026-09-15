@@ -1,12 +1,15 @@
 [project]
 name = "agentao"
 dynamic = ["version"]
-description = "A governed agent runtime for local-first, private-first, embeddable AI agents."
+description = "Local-first, governed AI agent runtime for Python — embed it in your app, or run it as a CLI or ACP server. Permissions, MCP, memory and audit replay built in."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Bo Jin"}]
-keywords = ["agent", "cli", "llm", "openai", "mcp", "tools"]
+keywords = [
+    "ai-agent", "agent-framework", "llm", "python", "mcp",
+    "model-context-protocol", "acp", "cli", "local-first", "openai-compatible",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
