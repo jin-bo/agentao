@@ -98,6 +98,63 @@ def acp_short_startup_window(monkeypatch):
     monkeypatch.setattr(process_mod, "_IMMEDIATE_EXIT_WINDOW_S", 0.05)
 
 
+@pytest.fixture
+def isolated_cwd(tmp_path, monkeypatch):
+    """Run the test from ``tmp_path``, so what agentao writes to its cwd lands there.
+
+    ``Agentao(working_directory=Path.cwd())`` and ``AgentaoCLI()`` open the project memory
+    store at ``<cwd>/.agentao/memory.db``, and ``LLMClient``'s default ``log_file`` opens
+    ``<cwd>/agentao.log``. From the repository root that is the developer's own project
+    store: a suite run left ``test_key``, ``order_probe`` and ``suffix_probe`` there as live
+    project memories, which agentao then injects into ``<memory-stable>``. Modules that
+    build an agent that way opt in with ``pytestmark``; ``pytest_sessionfinish`` below
+    fails the run when a test writes there anyway.
+    """
+    monkeypatch.chdir(tmp_path)
+
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+#: What agentao writes to its cwd unless told otherwise.
+_CWD_ARTIFACTS = (".agentao", "agentao.log")
+_preexisting_cwd_artifacts = pytest.StashKey[frozenset]()
+_leaked_cwd_artifacts = pytest.StashKey[list]()
+
+
+def pytest_sessionstart(session):
+    session.config.stash[_preexisting_cwd_artifacts] = frozenset(
+        name for name in _CWD_ARTIFACTS if (_REPO_ROOT / name).exists()
+    )
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the run when tests created agentao's cwd artifacts in the repository root.
+
+    Only what did not exist at session start counts. On CI neither ever does, so a leak
+    fails there; in a checkout where someone has run agentao they may already exist, and
+    the guard stays out of the way rather than mistake that person's own files for a leak.
+    """
+    if hasattr(session.config, "workerinput"):  # an xdist worker; the controller checks
+        return
+    before = session.config.stash.get(_preexisting_cwd_artifacts, frozenset())
+    leaked = [
+        name for name in _CWD_ARTIFACTS
+        if name not in before and (_REPO_ROOT / name).exists()
+    ]
+    if leaked:
+        session.config.stash[_leaked_cwd_artifacts] = leaked
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    leaked = config.stash.get(_leaked_cwd_artifacts, None)
+    if leaked:
+        terminalreporter.write_sep("=", "tests wrote agentao's cwd artifacts", red=True)
+        terminalreporter.write_line(
+            f"created in {_REPO_ROOT}: {', '.join(leaked)}. A test built an agent against "
+            "the process cwd; give it tmp_path, or opt its module into ``isolated_cwd``."
+        )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _prompt_toolkit_without_a_console():
     """Give prompt_toolkit somewhere to write when the machine has no console.

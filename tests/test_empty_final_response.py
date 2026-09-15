@@ -13,8 +13,13 @@ run`` exit non-zero instead of handing a pipeline the placeholder as a result.
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from agentao import Agentao
 from agentao.transport import EventType
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 
 def _fake_response(content, *, reasoning=None):

@@ -3,6 +3,11 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
+
 
 def _make_agent(thinking_callback=None):
     with patch('agentao.agent.LLMClient') as mock_llm_client:

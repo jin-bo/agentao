@@ -97,10 +97,14 @@ def test_wheel_install_and_embed_construct(tmp_path: Path) -> None:
         "finally:\n"
         "    agent.close()\n"
     )
+    # ``cwd``: ``python -c`` puts the cwd first on sys.path, so run from the repository
+    # root this imported the source tree rather than the wheel, and logged to agentao.log
+    # there.
     proc = subprocess.run(
         [str(py), "-c", snippet],
         capture_output=True,
         text=True,
+        cwd=tmp_path,
     )
     assert proc.returncode == 0, (
         "Embedded construct failed against the installed wheel:\n"
@@ -144,6 +148,8 @@ def test_wheel_ships_py_typed_marker(tmp_path: Path) -> None:
         ],
         capture_output=True,
         text=True,
+        # From the repository root, ``files('agentao')`` found the source tree's marker.
+        cwd=tmp_path,
     )
     assert proc.returncode == 0, (
         f"py.typed missing from installed wheel:\nstderr:\n{proc.stderr}"

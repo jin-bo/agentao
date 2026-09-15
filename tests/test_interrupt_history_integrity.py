@@ -24,6 +24,9 @@ from agentao import Agentao
 from agentao.runtime.sanitize import backfill_orphaned_tool_calls
 from agentao.tools.base import Tool
 
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
+
 
 # ---------------------------------------------------------------------------
 # helpers

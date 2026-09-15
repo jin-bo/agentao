@@ -5,6 +5,11 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
+import pytest
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
+
 
 def _make_agent():
     with patch('agentao.agent.LLMClient') as mock_llm_class:

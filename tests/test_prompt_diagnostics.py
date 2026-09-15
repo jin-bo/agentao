@@ -11,7 +11,12 @@ import logging
 from unittest.mock import Mock, patch
 
 
+import pytest
+
 from agentao.prompts.builder import SystemPromptBuilder
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 
 def _make_agent(**kwargs):

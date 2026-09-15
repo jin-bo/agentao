@@ -32,6 +32,9 @@ from rich.console import Console
 
 from agentao.cli.transport import _display
 
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
+
 ESC = "\x1b"
 
 #: Cursor-up + erase-line: rewrites the line the approval prompt just printed.

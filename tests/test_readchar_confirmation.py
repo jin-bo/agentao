@@ -1,7 +1,11 @@
 """Test single-key confirmation with readchar."""
 
 from unittest.mock import patch
+import pytest
 import readchar
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 
 def test_single_key_confirmation_1():

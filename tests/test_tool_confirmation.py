@@ -2,7 +2,12 @@
 
 from pathlib import Path
 from unittest.mock import Mock, patch
+import pytest
+
 from agentao.tools import ShellTool, WebFetchTool, WebSearchTool, ReadFileTool
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 
 def test_requires_confirmation_property():

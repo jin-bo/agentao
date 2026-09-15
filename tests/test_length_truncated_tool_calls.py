@@ -14,11 +14,16 @@ Ported from the pi-mono #6285 lesson (strict-parse alone is insufficient; the
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from agentao import Agentao
 from agentao.runtime.chat_loop._runner import (
     LENGTH_TRUNCATED_TOOL_CALL_MESSAGE,
     LENGTH_TRUNCATION_ABORT_THRESHOLD,
 )
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 
 def _fake_tool_call(call_id, name, arguments):
