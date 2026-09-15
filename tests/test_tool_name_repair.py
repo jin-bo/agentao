@@ -426,3 +426,33 @@ class TestRunnerNormalizeToolCalls:
         result = runner_with_browser_click._planner.plan(cleaned)
         assert len(result.plans) == 1
         assert result.plans[0].function_name == "browser_click"
+
+
+class TestNamesOfRealToolsAreNotRepairedIntoOthers:
+    """A cutoff cannot tell a misspelling from a different tool: ``read_file``
+    and ``write_file`` are as close as a typo. A name that spells a real tool
+    the runtime does not offer (a built-in it withheld, any ``mcp_`` or
+    ``agent_`` name) is not found, rather than run as its nearest neighbour."""
+
+    @pytest.mark.parametrize(
+        "name, offered",
+        [
+            ("write_file", {"read_file", "glob"}),
+            ("read_file", {"write_file"}),
+            ("Write_File", {"read_file"}),
+            ("check_background_agent", {"cancel_background_agent"}),
+            ("web_fetch", {"web_search"}),
+            ("mcp_srv_a", {"mcp_srv_b"}),
+            ("agent_helper", {"agent_helpers"}),
+        ],
+    )
+    def test_a_withheld_tool_is_not_found(self, name, offered):
+        assert repair_tool_name(name, offered) is None
+
+    def test_a_misspelling_is_still_repaired(self):
+        assert repair_tool_name("read_fil", {"read_file"}) == "read_file"
+        assert repair_tool_name("read_file_tool", {"read_file"}) == "read_file"
+
+    def test_known_can_be_given(self):
+        assert repair_tool_name("host_lookup", {"host_lookups"}) == "host_lookups"
+        assert repair_tool_name("host_lookup", {"host_lookups"}, known={"host_lookup"}) is None

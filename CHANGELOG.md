@@ -42,29 +42,82 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   every reconnect, and cleanup still completed only because the SDK happened
   to clean up before raising. Each connection now lives in one owner task that
   opens it, waits, and closes it. (#243)
-- **A sub-agent now disconnects the MCP servers it connected.** Every
-  sub-agent is a fresh runtime, and building one reads `mcp.json` and connects
-  every configured server again. Nothing ever closed it, so each spawn,
-  foreground or background, left its stdio server processes running until the
-  agentao process exited. The parent's `close()` does not reach a sub-agent,
-  and garbage collection does not end the processes. Once a sub-agent is
-  built, it is now closed however its run ends: a finished run, an exception,
-  a cancellation, or a failure while it is being configured (a malformed
-  user-scope `permissions.json`). One case is not covered: a failure inside
-  the sub-agent's constructor after its servers have connected. A background
-  sub-agent is closed only after its outcome is published: the task record,
-  the notification, the host's terminal `SubagentLifecycleEvent` and the
-  release of its cancellation token all come first, so a host that acts on
-  that event can find the sub-agent's MCP servers still attached for a
-  moment.
-  Closing disconnects servers one at a time, and a server that ignores EOF
-  holds the close for seconds. If the close came first, the task would read
-  `running` for that whole window, and a cancel sent then would be
-  acknowledged for a run that had already finished. A foreground sub-agent is
-  still closed before its result is returned. An error while closing is
-  logged and never replaces the run's outcome. Each spawn still pays the
-  connect cost. Having sub-agents use the parent's connection instead depends
-  on #238 and #241. (#239)
+- **A sub-agent executes only the tools its model is shown.** A sub-agent was
+  shown its definition's `tools:` list but executed calls against every tool
+  its construction had registered. So `complete_task` always failed with "Tool
+  not found", and that error text came back to the parent as the sub-agent's
+  finished answer. A tool outside the list still ran: a background
+  `codebase-investigator`, described as read-only, could write files. A
+  project-defined agent could spawn further sub-agents, and a host tool that
+  replaced a built-in fell back to the built-in's default implementation. A
+  sub-agent now has one registry for both, holding the tools its parent has
+  when it is launched, narrowed to the `tools:` list:
+  - built-in tools, as the sub-agent's own instances;
+  - MCP tools, as the parent's;
+  - `complete_task`.
+  It never gets host tools (`extra_tools`, `add_tool`), including one that
+  replaced a built-in, nor agent tools or plan tools. A definition whose list
+  names one of them logs a warning. A tool the parent disabled, pruned or
+  removed is absent from its sub-agents too. (#238)
+- **A sub-agent no longer launches MCP servers of its own.** Building a
+  sub-agent read `mcp.json` and connected every configured server again. Until
+  #242 nothing closed it, so each spawn left its stdio servers running until
+  agentao exited. It also ignored the servers a host had given the parent in
+  code (`mcp_manager=`, `mcp_registry=`, ACP's `extra_mcp_servers`): a
+  sub-agent was shown those tools but could not run them, and launched the
+  project's `mcp.json` servers instead. A sub-agent now calls the parent's MCP
+  tools over the parent's connections, at the same time as the parent, and
+  launches nothing. When the parent closes, a background sub-agent that is
+  still running gets `MCP client manager is closed` from its MCP calls.
+  A sub-agent is still closed however its run ends, since it holds resources
+  of its own: a finished run, an exception, a cancellation, or a failure while
+  it is being configured (a malformed user-scope `permissions.json`). A
+  background sub-agent is closed only after its outcome is published, and an
+  error while closing is logged and never replaces the outcome. (#239)
+- **A sub-agent's file and shell tools run where its parent's do.** A
+  sub-agent was built without the parent's `filesystem=` and `shell=`, so a
+  host that sent file access and commands into a container or a virtual
+  filesystem found its sub-agents reading, writing and running commands on the
+  local machine. A sub-agent's built-in tools are now bound to the parent's
+  backends.
+- **A background sub-agent refuses the calls that need confirmation.** It was
+  built with no callbacks, which gave it a transport that approves every
+  confirmation. So a call its parent would have put to the user ran
+  unattended: a web fetch, a shell command outside the safe set, an untrusted
+  MCP tool. In one `agentao run` process a foreground sub-agent's confirmation
+  came back refused and a background one's approved. It now refuses, and the
+  model is told the call was declined. What the permission rules or mode allow
+  outright still runs (in `workspace-write`, file writes and safe shell
+  commands), and a denial still denies. A foreground sub-agent still asks
+  through its parent. For a host with no permission engine this is a
+  tightening: its background sub-agents no longer write files, run commands or
+  call untrusted MCP tools unless a rule or mode allows it.
+- **A sub-agent applies its parent's permission rules and mode.** The
+  sub-agent wrapper rebuilt an engine by re-reading `permissions.json` with the
+  parent's mode, and handed it only to the tool runner, while the planner that
+  makes the decision kept deciding with none. So no sub-agent applied a rule. A
+  call the user's rules deny asked the parent instead, and a headless parent
+  approved it. Modes did not apply either: in `workspace-write`, a foreground
+  sub-agent asked before each file write its parent would have made without
+  asking. A sub-agent now decides with a snapshot of its parent's engine, taken
+  when it is launched (`PermissionEngine.snapshot()`), so it also carries the
+  rules that are in no file: those a host passed to `PermissionEngine(rules=...)`
+  and an `agentao run` spec's allow and deny rules. A sub-agent no longer
+  re-reads `permissions.json`, which its parent does not re-read either.
+- **A call for a tool the runtime does not offer is no longer run as a
+  similarly named tool.** Tool-name repair fell back to fuzzy matching, which
+  cannot tell a typo from a different tool: `read_file` and `write_file` are as
+  close as a misspelling. A sub-agent not given `read_file` ran `write_file`
+  instead, one whose host had replaced `check_background_agent` cancelled the
+  task it meant to check, and a parent that disabled `web_fetch` ran
+  `web_search`. A name that spells a built-in tool, or any `mcp_` or `agent_`
+  name, is now reported as not found when it is not offered. Case, separator
+  and `_tool` suffix repairs are unchanged.
+- **A declined tool call no longer says the user declined it.** The result the
+  model reads was "Tool execution cancelled by user. The user declined to
+  execute …", including when a background sub-agent refused the call itself, so
+  the parent could tell the user they had refused something they never saw. It
+  is now "Tool execution declined: '…' needed approval and was not approved."
 - **A sub-agent no longer takes the notifications of background agents
   addressed to the top-level conversation.** Sub-agents are built with their
   parent's `BackgroundTaskStore` so `check_background_agent` and
@@ -77,15 +130,12 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   non-consumer, so only the top-level runtime drains the queue. The store stays
   shared, so both tools keep working, and a sub-agent whose tool list includes
   `check_background_agent` can still poll for a result. The rule holds at any
-  depth. Nested spawning is not intended (`agent_manager = None` is meant to
-  prevent it), but a project-defined agent is still reachable from inside a
-  sub-agent through the tool registry built at construction; wherever it
-  happens, the task reports to the top level. Embedding hosts are unaffected:
-  a runtime they construct still drains its own store. Building a sub-agent
-  also re-ran the shared store's recovery, which replaced records the store
-  already owned with the on-disk snapshot: a background agent that settled
-  while that snapshot was being read went back to `running` for good, so
-  `/agents` could not delete it and `/clear` counted it as still in flight.
+  depth, although since #238 a sub-agent cannot spawn another. Embedding hosts
+  are unaffected: a runtime they construct still drains its own store. Building
+  a sub-agent also re-ran the shared store's recovery, which replaced records
+  the store already owned with the on-disk snapshot: a background agent that
+  settled while that snapshot was being read went back to `running` for good,
+  so `/agents` could not delete it and `/clear` counted it as still in flight.
   Recovery now leaves a store's own records alone. (#233)
 - **`/clear` and `/new` no longer let a background agent report into the
   conversation they start.** The chat loop drains the background-agent

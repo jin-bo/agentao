@@ -95,10 +95,13 @@ def register_agent_tools(agent: "Agentao") -> None:
         parent_messages_getter=lambda: agent.messages,
         cancellation_token_getter=lambda: agent._current_token,
         readonly_mode_getter=lambda: getattr(agent, 'tool_runner', None) is not None and agent.tool_runner.readonly_mode,
-        permission_mode_getter=lambda: getattr(agent.tool_runner, '_permission_engine', None) and agent.tool_runner._permission_engine.active_mode,
-        permission_user_root_getter=lambda: getattr(getattr(agent.tool_runner, '_permission_engine', None), '_user_root', None),
+        permission_engine_getter=lambda: getattr(agent.tool_runner, '_permission_engine', None),
         sandbox_policy=getattr(agent, "sandbox_policy", None),
         subagent_emitter=getattr(agent, "_host_subagent_emitter", None),
+        # The backends the parent's built-ins were bound to, so a sub-agent's
+        # file and shell calls run where the parent's do.
+        filesystem=getattr(agent, "filesystem", None),
+        shell=getattr(agent, "shell", None),
     )
     for agent_tool in agent_tools:
         agent.tools.register(agent_tool)

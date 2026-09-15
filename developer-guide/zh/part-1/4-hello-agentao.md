@@ -88,7 +88,7 @@ agent.close()
 |------|------|
 | `ImportError: cannot import name 'Agentao'` | 没装包，或从 `agentao.agent`（非公开路径）导入 |
 | `ValueError: OPENAI_API_KEY is not set` | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` 三者都必需 |
-| Agent 一直回复 `Tool execution cancelled by user` | 默认权限拒绝了写操作，见 [5.4 权限引擎](/zh/part-5/4-permissions) |
+| Agent 一直回复 `Tool execution declined` | 默认权限拒绝了写操作，见 [5.4 权限引擎](/zh/part-5/4-permissions) |
 | `chat()` 永不返回 | 多半是工具死循环或缺 `ask_user` 回调，见 [附录 F.2](/zh/appendix/f-faq#f-2-runtime-behavior) |
 
 完整排错：[附录 F](/zh/appendix/f-faq)。

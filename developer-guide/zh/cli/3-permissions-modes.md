@@ -108,7 +108,7 @@ Press 1, 2, or 3 (single key, no Enter needed) · Esc to cancel
 |---|---|
 | `1` | 跑**这一次**调用，下一次危险调用还会再问。 |
 | `2` | 整个会话切到 `full-access`。**之后所有工具调用一律不再问**，直到你 `/mode workspace-write` 或重启。 |
-| `3` | 取消本次调用。Agent 收到 `Tool execution cancelled by user` 的结果继续，通常会调整方向。 |
+| `3` | 取消本次调用。Agent 收到 `Tool execution declined` 的结果继续，通常会调整方向。 |
 | `Esc` / `Ctrl+C` | 同 `3`。 |
 | 其他键 | 静默忽略。 |
 

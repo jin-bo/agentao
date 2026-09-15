@@ -704,6 +704,29 @@ class PermissionEngine:
             self.add_loaded_source(f"injected:{source}")
             self._active_cache = None
 
+    def snapshot(self, *, project_root: Path) -> "PermissionEngine":
+        """A separate engine that decides as this one does right now.
+
+        It holds copies of the same rules (those read from files, those passed
+        as ``rules=``, and a run spec's allow and deny rules), the same mode,
+        sources and floor setting, and reads nothing from disk. A sub-agent
+        decides with one: re-reading the files instead missed every rule that
+        lives only on the engine, so a sub-agent allowed what its parent
+        denied. Being separate, it is not changed by a later mode switch on
+        this engine.
+        """
+        engine = PermissionEngine(
+            project_root=project_root,
+            user_root=self._user_root,
+            rules=copy.deepcopy(self.rules),
+            loaded_sources=list(self._file_sources),
+            enable_hardline=self._enable_hardline,
+        )
+        engine.set_mode(self.active_mode)
+        engine._run_scope_rules = copy.deepcopy(self._run_scope_rules)
+        engine._injected_sources = list(self._injected_sources)
+        return engine
+
     def add_loaded_source(self, label: str) -> None:
         """Record an injected policy source label (``injected:<name>``).
 

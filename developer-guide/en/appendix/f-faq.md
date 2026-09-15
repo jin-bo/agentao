@@ -34,7 +34,7 @@ The default model id is `gpt-5.4`. If your endpoint offers different models, pas
 
 ## F.2 Runtime behavior
 
-### Agent says "Tool execution cancelled by user" on every write
+### Agent says "Tool execution declined" on every write
 
 You set `PermissionMode.READ_ONLY` (explicitly or by accident). Either:
 

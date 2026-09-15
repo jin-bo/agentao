@@ -8,14 +8,8 @@ event loop is already running" and its call was lost. It also entered each
 connection in one task and exited it from another, which logged "Attempted to
 exit cancel scope in a different task" on every disconnect.
 
-The server is a real subprocess speaking just enough MCP over stdio, written
-without the SDK so it works on both SDK majors. It records what these tests
-need on disk: a ``started-<pid>`` per launch, ``called-<tool>`` when a call
-arrives, ``overlap`` when two calls are in flight at once, and ``eof-<pid>``
-when its stdin closes. A ``refuse`` file makes it exit at launch; a ``mute``
-file makes it read stdin and never answer; a ``hang`` file makes it leave tool
-calls unanswered; a ``deafen`` file makes it close its stdin after a tool call
-and stay alive.
+The server is ``tests/support/stdio_mcp_server.py``: a real subprocess that
+speaks just enough MCP over stdio and records what it sees in marker files.
 """
 
 from __future__ import annotations
@@ -26,8 +20,6 @@ import json
 import logging
 import os
 import signal
-import sys
-import textwrap
 import threading
 import time
 
@@ -42,75 +34,7 @@ from agentao.mcp.client import (
     ServerStatus,
 )
 
-# Echoing the client's protocol version is fine: this suite tests call
-# scheduling and connection lifetime, not negotiation (``tests/support/mcp.py``
-# explains why a negotiation test must not echo).
-_SERVER = textwrap.dedent('''
-    import json, os, sys, threading, time
-    from pathlib import Path
-
-    marks = Path(sys.argv[1])
-    delay = float(sys.argv[2])
-    marks.mkdir(parents=True, exist_ok=True)
-    (marks / f"started-{os.getpid()}").touch()
-    if (marks / "refuse").exists():
-        sys.exit(1)
-    if (marks / "mute").exists():
-        for _ in iter(sys.stdin.buffer.readline, b""):
-            pass
-        (marks / f"eof-{os.getpid()}").touch()
-        sys.exit(0)
-
-    out = sys.stdout.buffer
-    write_lock = threading.Lock()
-    active = [0]
-    tools = [{"name": n, "inputSchema": {"type": "object"}} for n in ("slow_a", "slow_b", "slow_c")]
-
-    def reply(msg_id, **body):
-        with write_lock:
-            out.write(json.dumps({"jsonrpc": "2.0", "id": msg_id, **body}).encode() + b"\\n")
-            out.flush()
-
-    def call(msg):
-        name = msg["params"]["name"]
-        with write_lock:
-            active[0] += 1
-            if active[0] >= 2:
-                (marks / "overlap").touch()
-        (marks / f"called-{name}").touch()
-        if (marks / "hang").exists():
-            return  # never answered
-        time.sleep(delay)
-        with write_lock:
-            active[0] -= 1
-        reply(msg["id"], result={"content": [{"type": "text", "text": name}], "isError": False})
-
-    for line in iter(sys.stdin.buffer.readline, b""):
-        msg = json.loads(line)
-        if "id" not in msg:
-            continue
-        method = msg["method"]
-        if method == "initialize":
-            reply(msg["id"], result={
-                "protocolVersion": msg["params"]["protocolVersion"],
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "concurrency-probe", "version": "0"},
-            })
-        elif method == "tools/list":
-            reply(msg["id"], result={"tools": tools})
-        elif method == "tools/call":
-            threading.Thread(target=call, args=(msg,), daemon=True).start()
-            if (marks / "deafen").exists():
-                # Stop reading but stay alive with stdout open: the client's
-                # next write fails, and it never sees end-of-file.
-                os.close(0)  # ``sys.stdin.close()`` leaves the descriptor open
-                time.sleep(30)
-                sys.exit(0)
-        else:
-            reply(msg["id"], error={"code": -32601, "message": method})
-
-    (marks / f"eof-{os.getpid()}").touch()
-''')
+from tests.support.stdio_mcp_server import started as _started, stdio_server
 
 _TEARDOWN_WARNINGS = ("cancel scope", "Error disconnecting")
 
@@ -126,13 +50,8 @@ def _isolated_home(tmp_path, monkeypatch):
 @pytest.fixture
 def server(tmp_path):
     """Build ``(config, marks)`` for a stdio server whose calls take ``delay`` seconds."""
-    script = tmp_path / "concurrency_probe_server.py"
-    script.write_text(_SERVER)
-    marks = tmp_path / "marks"
-
     def make(delay=0.5):
-        config = {"command": sys.executable, "args": [str(script), str(marks), str(delay)], "trust": True}
-        return config, marks
+        return stdio_server(tmp_path, delay=delay)
 
     return make
 
@@ -142,10 +61,6 @@ def _eventually(predicate, timeout=10.0):
     while not predicate() and time.monotonic() < deadline:
         time.sleep(0.02)
     return predicate()
-
-
-def _started(marks):
-    return sorted(marks.glob("started-*"))
 
 
 def _connected(config):
