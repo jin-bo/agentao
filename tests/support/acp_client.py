@@ -87,9 +87,11 @@ JSONRPC_MOCK_SCRIPT = textwrap.dedent("""\
             send_notification("session/update", {"status": "hello"})
             respond(rid, {"ok": True})
         elif method == "slow":
-            import time
-            time.sleep(5)
-            respond(rid, {"ok": True})
+            # Never answered: callers only need a request that outlives their
+            # timeout. This used to ``time.sleep(5)`` on the read loop, so the
+            # server could not see stdin EOF and every ``stop()`` waited the
+            # sleep out.
+            pass
         else:
             respond_error(rid, -32601, f"method not found: {method}")
 """)
