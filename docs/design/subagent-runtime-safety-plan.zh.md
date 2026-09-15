@@ -31,7 +31,7 @@
 | **SUB-03** | 未实现 `ToolForkable` 的宿主工具在子代理中缺席，**且它占的名字也缺席**；`mcp_*` 仅经作用域视图、绝不经 `enabled_tools`/`remove_tool` | §2 第 2 项的表 | G00 |
 | **SUB-04** | agent 工具仅当定义**显式点名**时注册；`None` 白名单蕴含每一个非 agent 来源、不蕴含任何 agent 来源；`agent_manager = None` 删除 | §2 第 2 项的表 | G22 |
 | **SUB-05** | 工厂跳过 `__init__` 的注册过程，删除四处事后赋值（`sub_agent.tools =`、`tool_runner._permission_engine =`、读文件、`engine.set_mode`）；保留 `set_readonly_mode(True)` | §2 第 3、4 项 | G00 |
-| **MCP-01** | `McpClientManager` 持有一个**所有者线程**运行 loop，每处同步桥接改为 `run_coroutine_threadsafe(...).result(timeout)`；`scoped(names) -> McpToolView` 是非所有的只读视图。自 #241/#243 起**部分落地**（所有者线程与桥接；没有视图），见 §3 开头的注记 | §3 首段 | G00 |
+| **MCP-01** | `McpClientManager` 持有一个**所有者线程**运行 loop，每处同步桥接改为 `run_coroutine_threadsafe(...).result(timeout)`；`scoped(names) -> McpToolView` 是非所有的只读视图。自 #241/#243（所有者线程与桥接）与 #238/#239（子代理直接调用父级的 MCP 工具；没有视图）起**部分落地**，见 §3 开头的注记 | §3 首段 | G00 |
 | **MCP-02** | `bg_store` 在 token 旁记**线程**；子代理执行体包进 `try/finally`，`finally` 关掉子代理并注销其视图 | §3 第 1、2 件 | G00 |
 | **MCP-03** | 租约只是一次在飞行中的调用，逐调用取得、`finally` 释放，不论调用方是谁；agent 生命期是视图的注册，不是租约 | §3 第 3 件 | G00 |
 | **MCP-04** | 取消经**调用上下文**（显式参数或 `contextvar`）抵达那次调用，绝不经工具实例上的可变属性；manager 以 token 为键登记 **task 集合**；订阅与登记原子（`add_done_callback` 在已取消时立即回调）；`finally` 按「注销回调 → discard → 删空键 → 释放租约」清登记 | §3 第 4 件 | G00 |
@@ -52,6 +52,29 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
 为什么都不是修法。
 
 ## 2. 决策 —— 子代理由内部工厂按父级活状态构建
+
+> **部分落地，2026-09-15（#238、#239），机制比本节所述更窄。**
+>
+> **已有**（`agentao/agents/tools/_wrapper.py::_narrow_tools`）：
+> - **一份 registry。**runner、planner 和模型都用它。它是子代理启动时父级的活 registry 与定义白名单的
+>   交集，再加上 `complete_task`。
+> - **内置工具**是子代理自己的实例，绑定到父级的 `filesystem` 和 `shell`；这两者按身份共享（SUB-01
+>   的这一部分）。
+> - **`mcp_*` 是父级的实例**，走父级的连接。子代理以空的 `InMemoryMCPRegistry()` 构建，自己不连接任何
+>   服务器。
+> - **SUB-03 的结果，但不靠 `ToolForkable` 或 `origin`。**宿主工具缺席，它占的名字也缺席。只有子代理在同名
+>   下注册了类型完全相同的实例时，父级的这个工具才算内置工具。
+> - **子代理永远拿不到 agent 工具**，定义点名了也一样（SUB-04 去掉了例外）。`agent_manager = None` 保留，
+>   现在只是为了让系统提示词不列出子代理调不了的代理。
+> - **§1 的缺陷已修，但没有共享引擎。**子代理用启动时父引擎的 `PermissionEngine.snapshot()` 做决策，
+>   不再从磁盘重读文件：重读会漏掉宿主在代码里传入的 `rules=` 和 run spec 的规则。快照经
+>   `ToolRunner.set_permission_engine` 交给 planner；此前引擎只赋给了 runner 上一个没人读的属性。后台子代理通过自己的 transport 拒绝一切需要确认的
+>   调用（`openworker-borrow-review.zh.md` §1），所以不再有 transport 能批准后台的 `ASK`。
+>
+> **尚未实现：**
+> - `_for_subagent` 工厂，以及跳过 `__init__` 的注册过程（SUB-05）；
+> - 按身份共享权限引擎（子代理持有快照，所以父级切换模式不会影响已在运行的子代理）；
+> - `ToolRegistry.register` 的 `origin`，以及 `ToolForkable`。
 
 **PR-0 —— 子代理由内部工厂 `Agentao._for_subagent(parent, definition)` 构建，不经公开构造参数。**
 §2.16 表明 `enabled_tools=` / `extra_tools=` / `remove_tool` 每一个都有一道守卫或一种语义，会把
@@ -96,7 +119,7 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
 
 ## 3. 决策 —— MCP 所有权：一个所有者线程，一个非所有的视图
 
-> **部分落地，2026-09-14（#241、#243）。**
+> **部分落地，2026-09-14（#241、#243）与 2026-09-15（#238、#239）。**
 >
 > **已有：**
 > - **所有者线程与桥接。**`McpClientManager` 在一个所有者线程上运行 loop，桥接为
@@ -109,11 +132,13 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
 >
 > 桥接的等待不带超时：单次调用只受服务器的 `timeout.request` 约束，而它不配置时不设上限。
 >
+> - **共享（#238、#239）。**子代理直接调用父级的 `McpTool` 实例，也就直接用父级的 manager，而不是经过
+>   视图（见 §2 开头的注记）。
+>
 > **尚未实现：**
 > - `McpToolView`；
 > - lease、token → task 集合与 call context（第 4 件）；
-> - 记录 `bg_store` 线程（第 1 件）；
-> - 子代理共享父级 manager（#238、#239）。
+> - 记录 `bg_store` 线程（第 1 件）。
 >
 > **曾先尝试在桥接处加锁，后放弃。**它会失去同一个 manager 内的并发，可能让 `close()` 被一个挂起的
 > 调用卡住，而且被中断的调用会继续留在 loop 上运行。

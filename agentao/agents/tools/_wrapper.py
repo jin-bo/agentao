@@ -189,12 +189,15 @@ class AgentToolWrapper(Tool):
         parent_messages_getter: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         cancellation_token_getter: Optional[Callable] = None,
         readonly_mode_getter: Callable[[], bool] = lambda: False,
-        permission_mode_getter: Optional[Callable] = None,
-        permission_user_root_getter: Optional[Callable] = None,
         sandbox_policy: Optional[Any] = None,
         subagent_emitter: Optional[Any] = None,
+        filesystem: Optional[Any] = None,
+        shell: Optional[Any] = None,
+        permission_engine_getter: Optional[Callable] = None,
     ):
         self._definition = definition
+        # The parent's live registry: tools it adds or removes between turns
+        # count for sub-agents launched afterwards (see ``_narrow_tools``).
         self._all_tools = all_tools
         # Live getter so a runtime ``session/set_model`` (model /
         # maxTokens) is reflected in sub-agents launched afterwards.
@@ -212,9 +215,16 @@ class AgentToolWrapper(Tool):
         self._parent_messages_getter = parent_messages_getter
         self._cancellation_token_getter = cancellation_token_getter
         self._readonly_mode_getter = readonly_mode_getter
-        self._permission_mode_getter = permission_mode_getter
-        self._permission_user_root_getter = permission_user_root_getter
+        # The parent's permission engine, read at spawn: a sub-agent decides
+        # with a snapshot of it (see ``_drive_sub_agent``).
+        self._permission_engine_getter = permission_engine_getter
         self._sandbox_policy = sandbox_policy
+        # Where the parent's file and shell tools run (a host may redirect them
+        # into a container or a virtual filesystem). A sub-agent's built-ins
+        # are its own instances, bound to these same backends; ``None`` means
+        # the local machine, for the parent and the sub-agent alike.
+        self._filesystem = filesystem
+        self._shell = shell
         # Public host emitter for sub-agent lineage events. ``None``
         # for hosts that haven't wired the emitter; the call sites
         # short-circuit when the emitter is missing.
@@ -461,13 +471,11 @@ class AgentToolWrapper(Tool):
                 with the foreground session.
         """
         sub_agent, setup = self._build_sub_agent(suppress_output)
-        # Everything after construction runs under ``finally``. Building the
-        # sub-agent connected its own MCP servers (#239), and nothing else
-        # disconnects them: it is a local, the parent's ``close()`` does not
-        # reach it, and garbage collection does not end a stdio server's
-        # process. The ``try`` opens here rather than around ``chat()`` because
-        # the setup in ``_drive_sub_agent`` can raise too (a malformed
-        # user-scope ``permissions.json`` fails closed).
+        # Everything after construction runs under ``finally``: the sub-agent
+        # holds resources of its own (its memory stores), and nothing else
+        # releases them, since it is a local the parent's ``close()`` does not
+        # reach. The ``try`` opens here rather than around ``chat()`` because
+        # the setup in ``_drive_sub_agent`` can raise too.
         try:
             return self._drive_sub_agent(
                 sub_agent,
@@ -484,18 +492,10 @@ class AgentToolWrapper(Tool):
         ``_drive_sub_agent`` needs from the same config read.
 
         The caller owns the returned sub-agent and must pass it to
-        ``_close_sub_agent``: construction has already connected its MCP
-        servers.
+        ``_close_sub_agent``.
         """
         from ...agent import Agentao
-
-        # Build scoped ToolRegistry
-        scoped_registry = ToolRegistry()
-        tool_whitelist = self._definition.get("tools")
-        for tname, tool in self._all_tools.items():
-            if tool_whitelist is None or tname in tool_whitelist:
-                scoped_registry.register(tool)
-        scoped_registry.register(CompleteTaskTool())
+        from ...mcp.registry import InMemoryMCPRegistry
 
         defn_model: Optional[str] = self._definition.get("model")
         defn_temperature: Optional[float] = self._definition.get("temperature")
@@ -531,11 +531,23 @@ class AgentToolWrapper(Tool):
         agent_name = self._definition["name"]
         step_cb = None if suppress_output else self._make_prefixed_step_callback(max_turns)
 
-        # Background agents: pass None so tool_runner auto-approves (no stdin reads
-        # from background threads, which would corrupt the terminal raw mode).
-        # Foreground agents: wrap the callback to prepend "[agent_name]" to the
-        # tool_name so the user knows which sub-agent is requesting permission.
-        if suppress_output or not self._confirmation_callback:
+        # A foreground sub-agent asks through the parent: the callback prepends
+        # "[agent_name]" to the tool name so the user knows which one is asking.
+        #
+        # A background sub-agent has nobody to ask, and must not read stdin from
+        # its thread (that corrupts the terminal's raw mode). So it refuses every
+        # call that needs confirmation, through a transport of its own: with no
+        # callbacks at all it would get a ``NullTransport``, which approves them
+        # all. It can still run whatever permission rules allow outright, and a
+        # denial still denies. ``NullTransport`` itself keeps approving, since
+        # that is the documented default for a host with no callbacks.
+        transport = None
+        if suppress_output:
+            from ...transport import SdkTransport
+
+            transport = SdkTransport(confirm_tool=lambda *_: False)
+            confirm_cb = None
+        elif not self._confirmation_callback:
             confirm_cb = None
         else:
             _parent_cb = self._confirmation_callback
@@ -551,12 +563,19 @@ class AgentToolWrapper(Tool):
             extra_body=extra_body,
             working_directory=self._working_directory,
             sandbox_policy=self._sandbox_policy,
-            # Inherit the parent's background-task store so the
-            # sub-agent's ``ToolRunner`` registry actually contains
-            # ``check_background_agent`` / ``cancel_background_agent``;
-            # otherwise scoped_registry exposes them to the LLM but
-            # execution fails with "Tool not found".
+            filesystem=self._filesystem,
+            shell=self._shell,
+            # No MCP source of its own: a sub-agent calls the parent's MCP
+            # tools over the parent's connections (``_narrow_tools``). Left to
+            # the default it read ``mcp.json`` again and launched every server
+            # a second time for each spawn (#239), and it missed the servers a
+            # host had passed to the parent in code.
+            mcp_registry=InMemoryMCPRegistry(),
+            # The parent's background-task store, so the sub-agent's own
+            # ``check_background_agent`` / ``cancel_background_agent`` query
+            # and cancel the same tasks the parent's do.
             bg_store=self._bg_store,
+            transport=transport,
             confirmation_callback=confirm_cb,
             step_callback=step_cb,
             output_callback=None if suppress_output else self._output_callback,
@@ -567,10 +586,80 @@ class AgentToolWrapper(Tool):
         )
 
         return sub_agent, {
-            "scoped_registry": scoped_registry,
             "omit_temperature": omit_temperature,
             "max_turns": max_turns,
         }
+
+    def _narrow_tools(self, sub_agent: Any) -> None:
+        """Give the sub-agent one registry, for its model and its runner (#238).
+
+        The runner and its planner hold the registry the sub-agent was built
+        with, so its contents are replaced in place. Assigning a new registry to
+        ``sub_agent.tools`` changed only what the model was shown: calls still
+        resolved against everything construction had registered, so
+        ``complete_task`` was never found, a tool outside the definition's
+        ``tools:`` list still ran, and so did the sub-agent's own agent tools.
+
+        The contents are the parent's tools at spawn time, narrowed to the
+        definition's ``tools:`` list (all of them when it has none). So a tool
+        the parent disabled, pruned or removed is not a candidate at all. Of
+        the rest:
+
+        - **a built-in**: the sub-agent's own instance, bound to its own
+          transport, todo list and memory;
+        - **an MCP tool**: the parent's instance, which calls through the
+          parent's connection, so the sub-agent opens none;
+        - **an agent tool**: left out, so a sub-agent cannot spawn another;
+        - **a plan-only tool**: left out;
+        - **anything else is the host's**, including a tool that replaced a
+          built-in, and is left out by name. Sharing the host's instance
+          would share whatever state it holds with another thread, and
+          falling back to the built-in under that name would run the very
+          implementation the host replaced.
+
+        A parent tool counts as a built-in when the sub-agent registered an
+        instance of exactly its class under the same name. ``complete_task``
+        is always added.
+        """
+        own = sub_agent.tools.tools
+        requested = self._definition.get("tools")
+        tools: Dict[str, RegistrableTool] = {}
+        left_out: List[str] = []
+        for name, tool in list(self._all_tools.items()):
+            if requested is not None and name not in requested:
+                continue
+            if name.startswith("mcp_"):
+                tools[name] = tool
+            elif isinstance(tool, AgentToolWrapper) or name in ToolRegistry._PLAN_ONLY_TOOLS:
+                left_out.append(name)
+            elif name in own and type(own[name]) is type(tool):
+                tools[name] = own[name]
+            else:
+                left_out.append(name)
+        complete = CompleteTaskTool()
+        tools[complete.name] = complete
+        sub_agent.tools.tools = tools
+
+        agent_name = self._definition["name"]
+        if requested is None:
+            if left_out:
+                logger.debug(
+                    "Sub-agent '%s' does not get the parent's %s",
+                    agent_name, ", ".join(sorted(left_out)),
+                )
+            return
+        if left_out:
+            logger.warning(
+                "Sub-agent '%s' lists tools it does not get: %s. A sub-agent gets "
+                "built-in and MCP tools only; host, agent and plan tools are left out.",
+                agent_name, ", ".join(sorted(left_out)),
+            )
+        unavailable = sorted(set(requested) - set(self._all_tools) - {complete.name})
+        if unavailable:
+            logger.debug(
+                "Sub-agent '%s' lists tools the parent does not have: %s",
+                agent_name, ", ".join(unavailable),
+            )
 
     def _close_sub_agent(self, sub_agent: Any) -> None:
         """Release a sub-agent's resources.
@@ -593,7 +682,6 @@ class AgentToolWrapper(Tool):
         *,
         task: str,
         parent_context: str,
-        scoped_registry: ToolRegistry,
         omit_temperature: bool,
         max_turns: int,
         cancellation_token: Optional[Any],
@@ -607,7 +695,7 @@ class AgentToolWrapper(Tool):
         from ...skills import SkillManager
 
         sub_agent.llm.omit_temperature = omit_temperature
-        sub_agent.tools = scoped_registry
+        self._narrow_tools(sub_agent)
         # The store is shared (``_build_sub_agent``) for querying and
         # cancelling, not for consuming: a sub-agent's loop draining it would
         # take notifications addressed to the top-level conversation into its
@@ -618,36 +706,27 @@ class AgentToolWrapper(Tool):
         sub_agent._drains_background_notifications = False
         sub_agent.project_instructions = self._definition.get("system_instructions")
         sub_agent.skill_manager = SkillManager(skills_dir="/nonexistent")
-        sub_agent.agent_manager = None  # prevent recursive spawning
+        # ``_narrow_tools`` already left the agent tools out; without this the
+        # system prompt would still list agents the sub-agent cannot call.
+        sub_agent.agent_manager = None
         if self._readonly_mode_getter():
             sub_agent.tool_runner.set_readonly_mode(True)
-        if self._permission_mode_getter:
-            mode = self._permission_mode_getter()
-            if mode is not None:
-                from ...embedding.permission_loader import load_permission_rules
-                from ...permissions import PermissionEngine
-                # Anchor the sub-agent's permission engine to the parent's
-                # working directory so the same project rules apply, and
-                # pass through the parent's ``user_root`` so user-scope
-                # rules in ``~/.agentao/permissions.json`` aren't silently
-                # dropped — losing them was a permission bypass.
-                user_root = (
-                    self._permission_user_root_getter()
-                    if self._permission_user_root_getter is not None
-                    else None
-                )
-                rules, loaded_sources = load_permission_rules(
-                    project_root=sub_agent.working_directory,
-                    user_root=user_root,
-                )
-                engine = PermissionEngine(
-                    project_root=sub_agent.working_directory,
-                    user_root=user_root,
-                    rules=rules,
-                    loaded_sources=loaded_sources,
-                )
-                engine.set_mode(mode)
-                sub_agent.tool_runner._permission_engine = engine
+        parent_engine = (
+            self._permission_engine_getter()
+            if self._permission_engine_getter is not None
+            else None
+        )
+        if parent_engine is not None:
+            # A snapshot of the parent's policy, not a re-read of the files.
+            # Rules can live only on the engine (a host's ``rules=``, an
+            # ``agentao run`` spec), and a re-read missed them, so the mode
+            # preset allowed what the parent denied. Set on the agent and
+            # through the runner's setter: the planner holds the engine it
+            # decides with, and assigning the runner's attribute alone left it
+            # deciding with none.
+            engine = parent_engine.snapshot(project_root=sub_agent.working_directory)
+            sub_agent.permission_engine = engine
+            sub_agent.tool_runner.set_permission_engine(engine)
 
         # Prepend parent context to the task
         if parent_context:
@@ -791,12 +870,12 @@ class AgentToolWrapper(Tool):
                 self._terminal_subagent_event(subagent_ctx, "cancelled", task_summary)
                 return
             # The same build / drive / close as ``_run_sync``, but the close
-            # comes last, after the outcome is published. Closing disconnects
-            # the sub-agent's MCP servers one at a time, and a server that
-            # ignores EOF holds it for seconds in SDK timeouts. Closing first
-            # kept the record ``running`` for that whole window:
-            # ``check_background_agent`` had no result yet, and a cancel sent
-            # then was acknowledged for a run that had already finished.
+            # comes last, after the outcome is published. A close that took
+            # time (it once disconnected the sub-agent's own MCP servers, which
+            # could take seconds) kept the record ``running`` for that whole
+            # window: ``check_background_agent`` had no result yet, and a
+            # cancel sent then was acknowledged for a run that had already
+            # finished.
             sub_agent = None
             try:
                 sub_agent, setup = self._build_sub_agent(suppress_output=True)

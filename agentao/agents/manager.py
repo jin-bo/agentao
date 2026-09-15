@@ -148,10 +148,11 @@ class AgentManager:
         parent_messages_getter: Optional[Callable] = None,
         cancellation_token_getter: Optional[Callable] = None,
         readonly_mode_getter: Optional[Callable[[], bool]] = None,
-        permission_mode_getter: Optional[Callable] = None,
-        permission_user_root_getter: Optional[Callable] = None,
         sandbox_policy: Optional[Any] = None,
         subagent_emitter: Optional[Any] = None,
+        filesystem: Optional[Any] = None,
+        shell: Optional[Any] = None,
+        permission_engine_getter: Optional[Callable] = None,
     ) -> List[RegistrableTool]:
         """Create an :class:`AgentToolWrapper` per agent definition.
 
@@ -177,10 +178,11 @@ class AgentManager:
                 parent_messages_getter=parent_messages_getter,
                 cancellation_token_getter=cancellation_token_getter,
                 readonly_mode_getter=_readonly_getter,
-                permission_mode_getter=permission_mode_getter,
-                permission_user_root_getter=permission_user_root_getter,
                 sandbox_policy=sandbox_policy,
                 subagent_emitter=subagent_emitter,
+                filesystem=filesystem,
+                shell=shell,
+                permission_engine_getter=permission_engine_getter,
             )
             for defn in self.definitions.values()
         ]

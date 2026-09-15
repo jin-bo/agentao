@@ -116,51 +116,6 @@ def test_a_sub_agent_does_not_take_the_parents_notification(tmp_path, store, mon
     assert len(_notes(parent, "result of A")) == 1  # exactly once
 
 
-def test_a_nested_sub_agent_reports_to_the_top_level_too(tmp_path, store, monkeypatch):
-    """Where notifications go *if* a sub-agent spawns another.
-
-    Nested spawning is not intended — the wrapper sets ``agent_manager = None``
-    to prevent it — but it is reachable today: a project-defined agent is
-    registered into the sub-agent at construction, before that line runs, and
-    execution resolves from the construction-time registry rather than the
-    scoped one the model sees. That is a defect of its own, not a feature this
-    test endorses; while the path exists, a task finishing two levels down must
-    still report to the top level only. Once the path is closed there is
-    nothing to pin, so the test skips rather than fails."""
-    agents_dir = tmp_path / ".agentao" / "agents"
-    agents_dir.mkdir(parents=True)
-    (agents_dir / "helper.md").write_text(
-        "---\nname: helper\ndescription: project helper\nmax_turns: 5\n---\nHelp.\n"
-    )
-    parent = _parent(tmp_path, store)
-    seen = []
-
-    def run(agent):
-        seen.append(agent)
-        if len(seen) == 1:
-            # B spawns C through its *own* construction-time wrapper.
-            nested = agent.tool_runner._tools.get("agent_helper")
-            if nested is None:
-                pytest.skip("nested spawning is no longer reachable")
-            nested._run_sync("y")
-            _drain_into(agent)
-        else:
-            _finish(store, "C-task", "result from two levels down")
-            _drain_into(agent)
-
-    _replace_chat(monkeypatch, run)
-    parent.tools.tools["agent_helper"]._run_sync("x")
-
-    b, c = seen
-    assert _notes(b, "two levels down") == []
-    assert _notes(c, "two levels down") == []
-
-    _drain_into(parent)
-    assert len(_notes(parent, "two levels down")) == 1
-    assert b._drains_background_notifications is False
-    assert c._drains_background_notifications is False
-
-
 def test_a_sub_agent_can_still_check_and_cancel_through_the_shared_store(
     tmp_path, store, monkeypatch,
 ):

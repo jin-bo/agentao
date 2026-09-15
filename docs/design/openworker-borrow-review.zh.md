@@ -76,6 +76,17 @@ https://github.com/andrewyng/openworker）。agentao `main`@`50d55a2`（2026-07-
 
 ## 1. 【P1】后台子代理的审批 fail-open —— 唯一的行动项
 
+> **已实施，2026-09-15（随 #238/#239 的 PR）。**
+> - **后台子代理改用自己的 transport。**它是 `SdkTransport(confirm_tool=lambda *_: False)`；前台不变，
+>   `NullTransport` 的全局语义也不变。
+> - **落地时发现一个前置缺陷，一并修了。**子代理的权限引擎从未生效：wrapper 从磁盘重建引擎后只赋给了
+>   runner，而做决策的 planner 仍持有构造时的 `None`。不修这一点，§1.3 的「显式 `ALLOW` 照常执行」就
+>   不成立：后台子代理会连用户已允许的调用也一并拒绝。现在引擎经 `ToolRunner.set_permission_engine`
+>   同时交给 runner 和 planner。评审又发现从磁盘重建会漏掉只存在于引擎上的规则（宿主的 `rules=`、
+>   `agentao run` spec 的规则），所以子代理改用父引擎的 `PermissionEngine.snapshot()`。
+> - **§1.4 的三类测试**在 `tests/test_background_subagent_approval.py`，另加前台 `DENY` 与
+>   `full-access` 模式两例。
+
 **判定：现存缺陷，需单独修复。这不是 OpenWorker 借鉴项，是复核过程中撞见的。**
 
 ### 1.1 链路（**2026-08-21 评审更正：中段选错了 Transport**）

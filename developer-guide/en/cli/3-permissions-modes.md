@@ -108,7 +108,7 @@ Single-key input. No Enter needed. Behavior:
 |-----|--------|
 | `1` | Run **this** tool call. Next risky call asks again. |
 | `2` | Switch session to `full-access`. **Every subsequent tool call runs without asking** until you `/mode workspace-write` or restart. |
-| `3` | Cancel this tool call. The agent gets `Tool execution cancelled by user` as the result and continues — usually it adapts. |
+| `3` | Cancel this tool call. The agent gets `Tool execution declined` as the result and continues — usually it adapts. |
 | `Esc` / `Ctrl+C` | Same as `3`. |
 | Other keys | Silently ignored. |
 

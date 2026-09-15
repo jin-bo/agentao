@@ -108,6 +108,16 @@ class ToolRunner:
         # Session ID for hook payloads (set by cli after session start).
         self._session_id: Optional[str] = None
 
+    def set_permission_engine(self, engine: Optional[PermissionEngine]) -> None:
+        """Decide tool calls with ``engine`` from the next batch on.
+
+        The planner makes the decision and holds its own reference. Assigning
+        only ``_permission_engine`` on the runner changed nothing, which is how
+        a sub-agent ran without any of its permission rules.
+        """
+        self._permission_engine = engine
+        self._planner._permission_engine = engine
+
     def set_readonly_mode(self, enabled: bool) -> None:
         """Enable or disable readonly mode. When enabled, all non-read-only tools are denied."""
         previous = self.readonly_mode

@@ -61,7 +61,7 @@ def emit(self, event: AgentEvent) -> None:
 def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
     """询问是否允许这个工具执行。
     True  → 允许
-    False → 取消（Agent 收到 "Tool execution cancelled by user" 字符串，继续推理）
+    False → 取消（Agent 收到 "Tool execution declined" 字符串，继续推理）
     """
 ```
 

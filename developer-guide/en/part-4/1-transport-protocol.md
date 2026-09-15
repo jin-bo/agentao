@@ -62,7 +62,7 @@ Full event catalog: [4.2 AgentEvent Reference](./2-agent-events).
 def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
     """Ask whether the tool may execute.
     True  → allow
-    False → cancel (agent receives "Tool execution cancelled by user" and keeps reasoning)
+    False → cancel (agent receives "Tool execution declined" and keeps reasoning)
     """
 ```
 

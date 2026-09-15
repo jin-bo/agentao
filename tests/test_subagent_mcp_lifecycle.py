@@ -1,30 +1,27 @@
-"""A sub-agent lets go of the MCP servers it connected (#239).
+"""A sub-agent is closed on every exit path and launches no MCP server (#239).
 
 Every sub-agent is a fresh ``Agentao`` built by
-``AgentToolWrapper._build_sub_agent`` (``agents/tools/_wrapper.py``), and building one
-reads ``mcp.json`` and connects every server again. Nothing closed it, so each
-spawn left a stdio server process running until the parent process exited:
-the parent's ``close()`` does not reach a local, and collecting the sub-agent
-does not end the process.
+``AgentToolWrapper._build_sub_agent`` (``agents/tools/_wrapper.py``). Building one
+used to read ``mcp.json`` and launch every server again, and nothing closed it,
+so each spawn left a stdio server running until the parent process exited. A
+sub-agent now has no MCP source of its own: it calls the parent's MCP tools over
+the parent's connection (``tests/test_subagent_tool_registry.py``). It is still
+closed on every exit path, because it holds resources of its own.
 
-The server here is a real subprocess that speaks just enough MCP over stdio to
-complete a handshake, and it writes a marker when its stdin reaches EOF. That
-marker is the signal under test, because EOF is the client letting go. A
-counter on ``connect_all`` / ``disconnect_all`` would only show that a call was
-made, and there is no portable liveness check for a PID.
+The parent's server is a real subprocess (``tests/support/stdio_mcp_server.py``)
+configured in the project ``mcp.json``, which the parent reads. A launch by the
+sub-agent would leave a second ``started-*`` marker, and a close that reached
+the parent's connection would leave an ``eof-*`` marker.
 
-A background run closes the sub-agent only after its outcome is published,
-because the close can block for seconds on a server that ignores EOF. Those
-tests hold the sub-agent's close open and check that the outcome is already
-visible and the child's server still attached, then release it.
+A background run closes the sub-agent only after its outcome is published.
+Those tests hold the sub-agent's close open, check that the outcome is already
+visible, then release it.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import sys
-import textwrap
 import threading
 import time
 
@@ -33,42 +30,9 @@ import pytest
 from agentao.agent import Agentao
 from agentao.agents.bg_store import BackgroundTaskStore
 from agentao.cancellation import CancellationToken
-from agentao.embedding.permission_loader import PermissionConfigError
 from agentao.permissions import PermissionEngine
 
-# Echoing the client's protocol version is fine here: this suite tests
-# lifecycle, not negotiation (``tests/support/mcp.py`` explains why a
-# negotiation test must not echo).
-_SERVER = textwrap.dedent('''
-    import json, os, sys
-    from pathlib import Path
-
-    marks = Path(sys.argv[1])
-    marks.mkdir(parents=True, exist_ok=True)
-    (marks / f"started-{os.getpid()}").touch()
-    out = sys.stdout.buffer
-
-    def reply(msg_id, **body):
-        out.write(json.dumps({"jsonrpc": "2.0", "id": msg_id, **body}).encode() + b"\\n")
-        out.flush()
-
-    for line in iter(sys.stdin.buffer.readline, b""):
-        msg = json.loads(line)
-        if "id" not in msg:
-            continue
-        if msg["method"] == "initialize":
-            reply(msg["id"], result={
-                "protocolVersion": msg["params"]["protocolVersion"],
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "lifecycle-probe", "version": "0"},
-            })
-        elif msg["method"] == "tools/list":
-            reply(msg["id"], result={"tools": []})
-        else:
-            reply(msg["id"], error={"code": -32601, "message": msg["method"]})
-
-    (marks / f"eof-{os.getpid()}").touch()
-''')
+from tests.support.stdio_mcp_server import started, stdio_server
 
 
 @pytest.fixture(autouse=True)
@@ -81,27 +45,12 @@ def _isolated_home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def marks(tmp_path):
-    script = tmp_path / "lifecycle_probe_server.py"
-    script.write_text(_SERVER)
+    config, marks = stdio_server(tmp_path)
     (tmp_path / ".agentao").mkdir()
-    (tmp_path / ".agentao" / "mcp.json").write_text(json.dumps({"mcpServers": {
-        "probe": {"command": sys.executable, "args": [str(script), str(tmp_path / "marks")]},
-    }}))
-    return tmp_path / "marks"
-
-
-def _pids(marks, kind):
-    return {p.name.split("-", 1)[1] for p in marks.glob(f"{kind}-*")}
-
-
-def _eof_within(marks, pids, timeout=10.0):
-    """The subset of ``pids`` whose server has seen EOF, waiting up to ``timeout``."""
-    deadline = time.monotonic() + timeout
-    while True:
-        seen = _pids(marks, "eof") & pids
-        if seen == pids or time.monotonic() > deadline:
-            return seen
-        time.sleep(0.05)
+    (tmp_path / ".agentao" / "mcp.json").write_text(
+        json.dumps({"mcpServers": {"probe": config}})
+    )
+    return marks
 
 
 def _eventually(predicate, timeout=10.0):
@@ -111,18 +60,29 @@ def _eventually(predicate, timeout=10.0):
     return predicate()
 
 
-def _assert_only_the_child_let_go(marks, parent, parents):
-    # The premise: the sub-agent connected servers of its own. If a later
-    # change stops it from connecting at all, rewrite this test around
-    # that, do not just drop the check below.
-    children = _pids(marks, "started") - parents
-    assert len(children) == 1
-
-    assert _eof_within(marks, children) == children
+def _assert_only_the_parents_server_ran(marks, parent):
+    assert len(started(marks)) == 1, "the sub-agent launched an MCP server of its own"
     # A wrongly closed parent server writes its marker a moment later, not at
-    # once, so a single look right after the child's would miss it.
-    assert not _eof_within(marks, parents, timeout=0.5)
+    # once, so a single look straight after the run would miss it.
+    assert not _eventually(lambda: any(marks.glob("eof-*")), timeout=0.5)
     assert [s["status"] for s in parent.mcp_manager.get_server_status()] == ["connected"]
+
+
+def _is_sub_agent(agent):
+    return agent._drains_background_notifications is False
+
+
+def _count_sub_agent_closes(monkeypatch):
+    closed = []
+    real_close = Agentao.close
+
+    def close(self):
+        if _is_sub_agent(self):
+            closed.append(self)
+        real_close(self)
+
+    monkeypatch.setattr(Agentao, "close", close)
+    return closed
 
 
 def _replace_chat(monkeypatch, body):
@@ -164,21 +124,32 @@ def _is_cancelled(monkeypatch, tmp_path):
     return None, {"cancellation_token": token}, "[Cancelled: user-cancel]"
 
 
-def _fails_in_setup(monkeypatch, tmp_path):
-    # The sub-agent's permission rules are loaded after construction, and a
-    # malformed user-scope file fails closed (the project-scope file is ignored,
-    # so it cannot trigger this). Written only after the parent is built, so
-    # the parent is unaffected.
-    (tmp_path / "user" / "permissions.json").write_text("{not json")
+class _SetupFailed(Exception):
+    pass
+
+
+def _fail_setup(monkeypatch):
+    """Make the sub-agent's setup, which runs after it is constructed
+    (``_drive_sub_agent``), raise where it copies the parent's permission
+    policy. Later than its first step on purpose: by then the sub-agent is
+    marked as one, which is how the close hooks here tell it from the parent."""
+    def snapshot(self, *, project_root):
+        raise _SetupFailed("setup failed")
+
+    monkeypatch.setattr(PermissionEngine, "snapshot", snapshot)
     _replace_chat(monkeypatch, lambda agent: pytest.fail("chat() ran past a failed setup"))
-    return PermissionConfigError, {}, None
+
+
+def _fails_in_setup(monkeypatch, tmp_path):
+    _fail_setup(monkeypatch)
+    return _SetupFailed, {}, None
 
 
 @pytest.mark.parametrize(
     "exit_path", [_finishes, _raises, _is_cancelled, _fails_in_setup],
     ids=["finishes", "raises", "cancelled", "setup-fails"],
 )
-def test_a_sub_agent_disconnects_its_mcp_servers_on_every_exit_path(
+def test_a_sub_agent_is_closed_on_every_exit_path_and_launches_no_mcp_server(
     tmp_path, marks, monkeypatch, exit_path,
 ):
     (tmp_path / "user").mkdir()
@@ -188,9 +159,9 @@ def test_a_sub_agent_disconnects_its_mcp_servers_on_every_exit_path(
         enable_builtin_agents=True,
         permission_engine=PermissionEngine(project_root=tmp_path, user_root=tmp_path / "user"),
     )
+    closed = _count_sub_agent_closes(monkeypatch)
     try:
-        parents = _pids(marks, "started")
-        assert len(parents) == 1
+        assert len(started(marks)) == 1
 
         raises, kwargs, expected = exit_path(monkeypatch, tmp_path)
         run = parent.tools.tools["agent_generalist"]._run_sync
@@ -204,7 +175,8 @@ def test_a_sub_agent_disconnects_its_mcp_servers_on_every_exit_path(
             with pytest.raises(raises):
                 run("x", **kwargs)
 
-        _assert_only_the_child_let_go(marks, parent, parents)
+        assert len(closed) == 1
+        _assert_only_the_parents_server_ran(marks, parent)
     finally:
         parent.close()
 
@@ -264,25 +236,27 @@ def _bg_is_cancelled(monkeypatch, store, tmp_path):
 def _bg_fails_in_setup(monkeypatch, store, tmp_path):
     # As ``_fails_in_setup``: the background path composes build / drive /
     # close itself, so its setup failure needs its own case.
-    (tmp_path / "user" / "permissions.json").write_text("{not json")
-    _replace_chat(monkeypatch, lambda agent: pytest.fail("chat() ran past a failed setup"))
+    _fail_setup(monkeypatch)
     return (lambda agent_id: None), {"status": "failed", "incomplete_reason": None}, None
 
 
 def _hold_sub_agent_close(monkeypatch):
     """Make every sub-agent's ``close()`` wait until released, then run the
     real one. The parent's close runs straight through."""
-    closing, release = threading.Event(), threading.Event()
+    closing, release, closed = threading.Event(), threading.Event(), threading.Event()
     real_close = Agentao.close
 
     def close(self):
-        if self._drains_background_notifications is False:
+        if _is_sub_agent(self):
             closing.set()
             release.wait(10)
-        real_close(self)
+            real_close(self)
+            closed.set()
+        else:
+            real_close(self)
 
     monkeypatch.setattr(Agentao, "close", close)
-    return closing, release
+    return closing, release, closed
 
 
 @pytest.mark.parametrize(
@@ -300,10 +274,9 @@ def test_a_background_sub_agent_publishes_its_outcome_before_it_closes(
         enable_builtin_agents=True, bg_store=store,
         permission_engine=PermissionEngine(project_root=tmp_path, user_root=tmp_path / "user"),
     )
-    closing, release = _hold_sub_agent_close(monkeypatch)
+    closing, release, closed = _hold_sub_agent_close(monkeypatch)
     try:
-        parents = _pids(marks, "started")
-        assert len(parents) == 1
+        assert len(started(marks)) == 1
 
         during, expected, answer = exit_path(monkeypatch, store, tmp_path)
         parent.tools.tools["agent_generalist"].execute(task="x", run_in_background=True)
@@ -324,13 +297,11 @@ def test_a_background_sub_agent_publishes_its_outcome_before_it_closes(
         assert len(notes) == 1 and f"(ID: {agent_id})" in notes[0]
         assert store.get_token(agent_id) is None
         assert "nothing to cancel" in store.cancel(agent_id)
-        # And the close really is still pending: the child's server is attached.
-        children = _pids(marks, "started") - parents
-        assert len(children) == 1
-        assert not _eof_within(marks, children, timeout=0.5)
+        assert not closed.is_set()
 
         release.set()
-        _assert_only_the_child_let_go(marks, parent, parents)
+        assert closed.wait(10)
+        _assert_only_the_parents_server_ran(marks, parent)
     finally:
         # A failed assertion above can leave the worker blocked in a stub;
         # cancelling what is still in flight lets it finish without an LLM call.

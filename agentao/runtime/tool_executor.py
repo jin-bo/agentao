@@ -332,9 +332,12 @@ class ToolExecutor:
             )
 
         if decision == ToolCallDecision.CANCELLED:
+            # Says nothing about who declined: a background sub-agent refuses
+            # these itself, and "the user declined" there made the model tell
+            # the user they had refused something they never saw.
             result_text = (
-                f"Tool execution cancelled by user. "
-                f"The user declined to execute {fn}. " + _DO_NOT_RETRY_CLOSE
+                f"Tool execution declined: '{fn}' needed approval and was not "
+                f"approved. " + _DO_NOT_RETRY_CLOSE
             )
             self._emit_complete(fn, call_id, "cancelled", 0, "cancelled by user")
             self._emit_host_terminal_cancelled(

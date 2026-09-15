@@ -120,6 +120,15 @@ See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each
 > - `extra_tools=[...]` — inject pre-built `Tool` / `AsyncToolBase` instances.
 >
 > These are pure data (names) or instances, not JSON surfaces — wiring them through `settings.json` is deliberately deferred (demand-gated; see `host-tool-allowlist.md` §8). Schema + semantics: [`docs/reference/host-api.md`](host-api.md), [`host-tool-allowlist.md`](../design/host-tool-allowlist.md), [`host-tool-injection.md`](../design/host-tool-injection.md).
+>
+> **Sub-agents** get the tools their parent has when they are launched, narrowed to the agent definition's `tools:` list (all of them when it has none). Whatever these three options removed from the parent is therefore absent from its sub-agents too. Of the rest, a sub-agent keeps only:
+> - **built-in tools**, as its own instances bound to the parent's `filesystem` and `shell`;
+> - **MCP tools**, which run over the parent's connections, so a sub-agent reads no `mcp.json` and launches no server of its own;
+> - `complete_task`, which it always gets.
+>
+> It never gets `extra_tools` or other host tools, **including a host tool that replaced a built-in** (the built-in is not put back under that name), agent tools, or plan tools. A definition whose `tools:` list names one of these logs a warning. See `agents/tools/_wrapper.py::_narrow_tools`.
+>
+> A sub-agent decides tool calls with a snapshot of the parent's permission engine, taken when it is launched: the same rules (including a host's `rules=` and an `agentao run` spec's) and the same mode. A **background** sub-agent has nobody to ask, so it refuses every call that would need confirmation; what the rules or mode allow outright still runs.
 
 ---
 

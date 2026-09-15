@@ -88,7 +88,7 @@ That's the whole pattern. Tool confirmations, custom tools, permissions, memory 
 |---------|--------------|
 | `ImportError: cannot import name 'Agentao'` | Forgot `pip install agentao`, or imported from `agentao.agent` (not the public path) |
 | `ValueError: OPENAI_API_KEY is not set` | All three of `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` are required |
-| Agent says `Tool execution cancelled by user` | Default permissions denied a write — see [5.4](/en/part-5/4-permissions) |
+| Agent says `Tool execution declined` | Default permissions denied a write — see [5.4](/en/part-5/4-permissions) |
 | `chat()` never returns | Likely tool loop or no `ask_user` callback — see [Appendix F.2](/en/appendix/f-faq#f-2-runtime-behavior) |
 
 Full FAQ: [Appendix F](/en/appendix/f-faq).

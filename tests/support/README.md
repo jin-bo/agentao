@@ -26,6 +26,7 @@ classes**, not pytest fixtures — construction is explicit at the call site.
 | `acp_server.py` | In-memory `AcpServer` builders, plus the `BlockingStdin` / `CapturingStdout` / `RecordingServer` stream doubles. |
 | `host_events.py` | Host event-stream capture. |
 | `mcp.py` | MCP client/tool doubles. |
+| `stdio_mcp_server.py` | A real SDK-free stdio MCP server that records launches, calls, overlapping calls and stdin EOF as marker files, plus `stdio_server()` to write it and build its config. |
 | `memory.py` | Memory-store builders. |
 | `permissions.py` | Permission-rule builders. |
 | `stop_precompact.py` | Runner + capture-script setup for the Stop / PreCompact hook suites. |

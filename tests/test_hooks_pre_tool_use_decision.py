@@ -427,7 +427,7 @@ def test_runner_hook_ask_then_user_declines(tmp_path):
     )
     doom, messages = runner.execute([_tool_call()])
     assert tool.executed is False
-    assert "cancelled" in messages[0]["content"].lower()
+    assert "declined" in messages[0]["content"].lower()
     perm_events = [e for e in stream.events if isinstance(e, PermissionDecisionEvent)]
     # ASK projects to the "prompt" outcome on the public event.
     assert perm_events[0].outcome == "prompt"
