@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ..agents.tools import AgentToolWrapper
 from ..transport import AgentEvent, EventType
 
 if TYPE_CHECKING:
@@ -81,6 +82,9 @@ def register_agent_tools(agent: "Agentao") -> None:
 
     agent_tools = agent.agent_manager.create_agent_tools(
         all_tools=agent.tools.tools,
+        # How a sub-agent tells the parent's built-ins from host tools that
+        # replaced them, including one of the built-in's own class (#256).
+        tool_origin_getter=lambda name: agent.tools.origin(name),
         # Live getter — sub-agents launched after a runtime
         # ``session/set_model`` / maxTokens change pick up the new
         # values rather than the snapshot frozen at registration time.
@@ -104,4 +108,8 @@ def register_agent_tools(agent: "Agentao") -> None:
         shell=getattr(agent, "shell", None),
     )
     for agent_tool in agent_tools:
-        agent.tools.register(agent_tool)
+        # ``create_agent_tools`` also returns ``check_background_agent`` when a
+        # ``bg_store`` is set. That one is a built-in (``register_builtin_tools``
+        # already registered it), and sub-agents get their own.
+        origin = "agent" if isinstance(agent_tool, AgentToolWrapper) else "builtin"
+        agent.tools.register(agent_tool, origin=origin)

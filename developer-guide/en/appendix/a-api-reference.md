@@ -215,7 +215,8 @@ Custom tool subclasses that need to read/write files should call `self._get_fs()
 
 | Method | Purpose |
 |--------|---------|
-| `register(tool: Tool, *, replace: bool = False)` | Add a tool. `replace=False` collision warns and overwrites; `replace=True` overwrites silently (INFO audit). Low-level — no capability binding; prefer `Agentao(extra_tools=)` / `add_tool` (see [5.1](/en/part-5/1-custom-tools)) |
+| `register(tool: Tool, *, replace: bool = False, origin: str = "host")` | Add a tool. `replace=False` collision warns and overwrites; `replace=True` overwrites silently (INFO audit). Low-level — no capability binding; prefer `Agentao(extra_tools=)` / `add_tool` (see [5.1](/en/part-5/1-custom-tools)). `origin` records where the tool came from (`builtin` / `host` / `mcp` / `agent` / `plan`); hosts leave it at `host`. A replacement overwrites it |
+| `origin(name: str) -> str` | The recorded origin. Sub-agents decide by it and give host tools to no sub-agent, including a host tool that replaced a built-in with an instance of the built-in's own class. A tool put in `tools` without `register` reads as `host`. Raises `KeyError` for an unknown name |
 | `unregister(name: str) -> bool` | Remove `name`; returns whether it existed. Pure dict op |
 | `get(name: str) -> Tool` | Raises `KeyError` with available-tools list |
 | `list_tools() -> list[Tool]` | |

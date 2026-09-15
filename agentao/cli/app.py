@@ -342,8 +342,8 @@ class AgentaoCLI:
             load_settings_fn=self._load_settings,
         )
         from ..tools.plan import PlanSaveTool, PlanFinalizeTool
-        self.agent.tools.register(PlanSaveTool(self._plan_controller))
-        self.agent.tools.register(PlanFinalizeTool(self._plan_controller))
+        self.agent.tools.register(PlanSaveTool(self._plan_controller), origin="plan")
+        self.agent.tools.register(PlanFinalizeTool(self._plan_controller), origin="plan")
 
         self.agent._session_id = self.current_session_id
         self.agent.tool_runner._session_id = self.current_session_id

@@ -35,6 +35,7 @@ from agentao.capabilities import (
 )
 from agentao.mcp import InMemoryMCPRegistry
 from agentao.mcp.client import McpClientManager
+from agentao.tools import ReadFileTool
 
 from tests.support.stdio_mcp_server import started, stdio_server
 from tests.support.tools import NamedTool
@@ -232,6 +233,74 @@ def test_a_host_tool_is_left_out_even_where_it_replaced_a_built_in(tmp_path, mon
     assert _not_found(results["host_lookup"])
     assert host_read.calls == host_only.calls == 0
     assert {"read_file", "host_lookup"}.isdisjoint(sub_agent.tools.tools)
+
+
+@pytest.mark.parametrize("entry", ["extra_tools", "add_tool", "register"])
+def test_a_replacement_made_from_the_built_ins_own_class_is_left_out(
+    tmp_path, monkeypatch, entry,
+):
+    """#256: the replacement is an instance of ``ReadFileTool`` itself. It used
+    to be taken for the built-in, so the sub-agent read with its own default
+    ``read_file`` instead of the host's."""
+    (tmp_path / "a.txt").write_text("from disk")
+    host_read = ReadFileTool()
+    if entry == "extra_tools":
+        parent = _parent(tmp_path, extra_tools=[host_read])
+    else:
+        parent = _parent(tmp_path)
+        if entry == "add_tool":
+            parent.add_tool(host_read, replace=True)
+        else:
+            parent.tools.register(host_read, replace=True)
+    results, sub_agents = _sub_agents_call(
+        monkeypatch, _call("read_file", file_path=str(tmp_path / "a.txt")),
+    )
+    try:
+        assert parent.tools.tools["read_file"] is host_read
+        _run(parent)
+    finally:
+        parent.close()
+    (sub_agent,) = sub_agents
+
+    assert _not_found(results["read_file"])
+    assert "read_file" not in sub_agent.tools.tools
+
+
+def test_a_configured_web_search_is_not_swapped_for_the_default(tmp_path, monkeypatch):
+    """The example in ``docs/design/host-tool-injection.md``. The sub-agent's own
+    ``WebSearchTool()`` has none of the host's configuration and, with no keys
+    set, searches DuckDuckGo."""
+    pytest.importorskip("bs4")
+    from agentao.tools import WebSearchTool
+
+    parent = _parent(tmp_path, extra_tools=[WebSearchTool(backend="bocha", api_key="host-key")])
+    _, sub_agents = _sub_agents_call(monkeypatch)
+    try:
+        _run(parent)
+    finally:
+        parent.close()
+    (sub_agent,) = sub_agents
+
+    assert "web_search" not in sub_agent.tools.tools
+
+
+def test_the_built_ins_a_sub_agent_gets_are_its_own_instances(tmp_path, monkeypatch):
+    """Including ``check_background_agent``, which the agent-tool pass registers
+    a second time on the parent."""
+    store = BackgroundTaskStore(persistence_dir=None)
+    parent = _parent(tmp_path, bg_store=store)
+    _, sub_agents = _sub_agents_call(monkeypatch)
+    try:
+        _run(parent)
+    finally:
+        parent.close()
+    (sub_agent,) = sub_agents
+
+    for name in ("read_file", "check_background_agent", "cancel_background_agent"):
+        assert name in sub_agent.tools.tools
+        assert sub_agent.tools.tools[name] is not parent.tools.tools[name]
+        assert sub_agent.tools.origin(name) == "builtin"
+    assert sub_agent.tools.origin("complete_task") == "builtin"
 
 
 def test_a_left_out_tool_is_not_found_rather_than_run_as_a_similar_one(tmp_path, monkeypatch):

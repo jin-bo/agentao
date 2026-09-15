@@ -65,19 +65,21 @@ BUILTIN_TOOL_NAMES: frozenset = frozenset({
 
 
 def _bind_and_register(
-    agent: "Agentao", tool: "RegistrableTool", *, replace: bool = False
+    agent: "Agentao", tool: "RegistrableTool", *, replace: bool = False, origin: str,
 ) -> None:
     """Bind session capabilities onto ``tool`` and register it.
 
     Shared by built-in and ``extra_tools`` registration so injected tools
     inherit the exact same working-directory / filesystem / shell binding
     as built-ins (ACP session cwd isolation, host FS/shell redirection) —
-    they never become "bare" tools.
+    they never become "bare" tools. ``origin`` is required here, unlike on
+    ``ToolRegistry.register``, because the binding is identical for a
+    built-in and a host tool and only the caller knows which one it holds.
     """
     tool.working_directory = agent._working_directory
     tool.filesystem = agent.filesystem
     tool.shell = agent.shell
-    agent.tools.register(tool, replace=replace)
+    agent.tools.register(tool, replace=replace, origin=origin)
 
 
 def register_builtin_tools(agent: "Agentao") -> None:
@@ -136,7 +138,7 @@ def register_builtin_tools(agent: "Agentao") -> None:
     tools_to_register = [t for t in tools_to_register if t.name not in disabled]
 
     for tool in tools_to_register:
-        _bind_and_register(agent, tool)
+        _bind_and_register(agent, tool, origin="builtin")
 
 
 def register_extra_tools(agent: "Agentao") -> None:
@@ -164,7 +166,7 @@ def register_extra_tools(agent: "Agentao") -> None:
                 tool.name,
                 type(tool).__name__,
             )
-        _bind_and_register(agent, tool, replace=replace)
+        _bind_and_register(agent, tool, replace=replace, origin="host")
 
 
 def apply_enabled_tools(agent: "Agentao") -> None:

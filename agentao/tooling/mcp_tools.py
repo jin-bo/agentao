@@ -141,7 +141,7 @@ def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
             call_fn=manager.call_tool,
             trusted=trusted,
         )
-        agent.tools.register(tool)
+        agent.tools.register(tool, origin="mcp")
         agent.llm.logger.info(f"Registered MCP tool: {tool.name}")
 
     count = sum(1 for _ in manager.get_all_tools())
