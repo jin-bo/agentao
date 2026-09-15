@@ -9,8 +9,13 @@ placeholder / canned notice / LLM-error string. It must mirror the gated
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from agentao import Agentao, TurnOutcome
 from agentao.cancellation import CancellationToken
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 
 def _make_agent() -> Agentao:

@@ -2,6 +2,11 @@
 
 from unittest.mock import patch
 
+import pytest
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
+
 
 def test_menu_confirmation_yes():
     """Test selecting 'Yes' (option 1) in confirmation menu."""

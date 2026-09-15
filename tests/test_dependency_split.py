@@ -119,9 +119,12 @@ def test_core_install_constructs_agentao(tmp_path: Path) -> None:
         "finally:\n"
         "    agent.close()\n"
     )
+    # ``cwd``: ``python -c`` puts the cwd first on sys.path, so run from the repository
+    # root this imported the source tree rather than the wheel, and logged to agentao.log
+    # there.
     proc = subprocess.run(
         [str(venv.python), "-c", snippet],
-        capture_output=True, text=True,
+        capture_output=True, text=True, cwd=tmp_path,
     )
     assert proc.returncode == 0, (
         f"Core-only construct failed:\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"

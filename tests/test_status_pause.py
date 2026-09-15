@@ -2,6 +2,11 @@
 
 from unittest.mock import Mock, patch, MagicMock
 
+import pytest
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
+
 
 def test_status_paused_during_confirmation():
     """Test that status.stop() is called during confirmation."""

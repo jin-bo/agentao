@@ -14,6 +14,9 @@ import pytest
 
 from agentao.agent import Agentao
 
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
+
 
 _FAKE_KEY = "test-key"
 

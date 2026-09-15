@@ -68,9 +68,11 @@ def test_core_only_can_import_agentao_cli_entrypoint(tmp_path: Path) -> None:
     venv = make_venv(tmp_path)
     venv.pip_install(str(wheel))
 
+    # ``cwd``: ``python -c`` puts the cwd first on sys.path, so run from the repository
+    # root this imported the source tree's ``agentao.cli`` rather than the wheel's.
     proc = subprocess.run(
         [str(venv.python), "-c", "from agentao.cli import entrypoint; print('import OK')"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, cwd=tmp_path,
     )
     assert proc.returncode == 0, (
         f"`from agentao.cli import entrypoint` failed in core-only venv:\n"

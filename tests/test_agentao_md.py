@@ -1,7 +1,15 @@
 """Test that AGENTAO.md is loaded correctly."""
 
+import shutil
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+import pytest
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
+
+_REPO_AGENTAO_MD = Path(__file__).resolve().parent.parent / "AGENTAO.md"
 
 
 def test_agentao_md_loading():
@@ -15,6 +23,11 @@ def test_agentao_md_loading():
 
         # Import and create agent
         from agentao.agent import Agentao
+
+        # The cwd is a scratch directory under pytest (``isolated_cwd``); bring the
+        # repository's AGENTAO.md along so this still loads the real file.
+        if not (Path.cwd() / "AGENTAO.md").exists():
+            shutil.copyfile(_REPO_AGENTAO_MD, Path.cwd() / "AGENTAO.md")
 
         agent = Agentao(working_directory=Path.cwd())
 

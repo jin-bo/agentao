@@ -39,6 +39,9 @@ from agentao import Agentao
 from agentao.cancellation import CancellationToken
 from agentao.llm._stream_response import _StreamAccumulator
 
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
+
 
 # ---------------------------------------------------------------------------
 # Fixtures — chunk shapes as the OpenAI SDK yields them

@@ -10,6 +10,11 @@ output is not silently dropped on streaming providers.
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
+
 
 def _chunk(content=None, reasoning=None, finish=None, tool_calls=None):
     """Build a single SSE chunk with the fields chat_stream actually reads."""

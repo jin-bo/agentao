@@ -3,9 +3,13 @@
 import os
 from pathlib import Path
 
+import pytest
 from dotenv import load_dotenv
 
 from agentao import Agentao
+
+# Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 
 def test_skills_in_system_prompt():
