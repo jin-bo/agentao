@@ -177,8 +177,15 @@ jobs:
           tests/test_powershell_floor.py tests/test_powershell_output.py
           tests/test_powershell_lowering.py tests/test_windows_launch_matrix.py
 
+      # In parallel (pytest-xdist), because this job is the one the whole run
+      # waits for: the suite spends most of its time waiting on subprocesses
+      # and timers, and Windows process creation makes each of those slower.
+      # `logical` rather than `auto`: `auto` switches to physical cores
+      # whenever psutil is importable, which is half the runner's vCPUs.
+      # The ubuntu test jobs stay serial, so the suite still has a
+      # fixed-order run.
       - name: Run the full suite
-        run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short
+        run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short -n logical
 
   # ─────────────────────────────────────────────────────────────
   # Job 1b · MCP SDK compatibility across both supported majors

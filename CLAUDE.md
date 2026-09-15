@@ -31,6 +31,7 @@ uv run agentao --acp --stdio          # ACP server (Issue 12)
 
 ```bash
 uv run python -m pytest tests/       # Default suite
+uv run python -m pytest tests/ -n logical  # Same, in parallel (pytest-xdist) — how CI's Windows job runs it
 uv run python -m pytest -m slow      # Clean-install smoke tests
 uv run ruff check .                  # Lint gate — required CI check
 ```

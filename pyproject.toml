@@ -124,6 +124,7 @@ markers = [
 dev = [
     "build>=1.2.2",
     "pytest>=9.0.2",
+    "pytest-xdist>=3.8.0",
     "twine>=6.1.0",
     "mypy>=1.13.0",
     "packaging>=25.0",
