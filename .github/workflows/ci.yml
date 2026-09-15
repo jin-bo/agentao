@@ -157,12 +157,12 @@ jobs:
       - name: Install dependencies (same extras as the ubuntu test job)
         run: uv sync --python ${{ matrix.python-version }} --extra cli --extra web --extra i18n --extra playwright
 
-      # The tests' temp files go on the D: drive, where the checkout already is;
-      # %TEMP% is on C:. Under xdist, the modules that write SQLite files into
-      # tmp_path ran 5-6x slower than in the serial run while a CPU-bound one
-      # barely moved (test_memory_store.py 5.8 s -> 34.1 s, test_host_typing.py
-      # 14.4 s -> 17.9 s), which reads as disk contention rather than CPU. Not
-      # Defender: the runner image turns real-time scanning off.
+      # The tests' temp files go on the D: drive, where the checkout already is,
+      # instead of %TEMP% on C:. Under xdist, the modules that write SQLite files
+      # into tmp_path had run 5-6x slower than serially, while a CPU-bound one
+      # barely moved: disk contention on C:. Measured on both interpreters, the
+      # full suite went 142 s -> 82 s, and test_memory_manager.py 40 s -> 1.4 s.
+      # Not Defender: the runner image turns real-time scanning off.
       #
       # GITHUB_ENV rather than a job-level `env:`, which cannot read `runner.temp`.
       - name: Put the temp directory on the D drive
