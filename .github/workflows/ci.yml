@@ -157,12 +157,26 @@ jobs:
       - name: Install dependencies (same extras as the ubuntu test job)
         run: uv sync --python ${{ matrix.python-version }} --extra cli --extra web --extra i18n --extra playwright
 
-      - name: Report the interpreters this runner has
+      # The tests' temp files go on the D: drive, where the checkout already is;
+      # %TEMP% is on C:. Under xdist, the modules that write SQLite files into
+      # tmp_path ran 5-6x slower than in the serial run while a CPU-bound one
+      # barely moved (test_memory_store.py 5.8 s -> 34.1 s, test_host_typing.py
+      # 14.4 s -> 17.9 s), which reads as disk contention rather than CPU. Not
+      # Defender: the runner image turns real-time scanning off.
+      #
+      # GITHUB_ENV rather than a job-level `env:`, which cannot read `runner.temp`.
+      - name: Put the temp directory on the D drive
+        run: |
+          Write-Host "TEMP was $env:TEMP"
+          Add-Content -Path $env:GITHUB_ENV -Value "TEMP=$env:RUNNER_TEMP"
+          Add-Content -Path $env:GITHUB_ENV -Value "TMP=$env:RUNNER_TEMP"
+
+      - name: Report the interpreters and temp directory this runner has
         # The launch-matrix tests measure real interpreters. Printing what is
         # present makes a skip legible: a green run that quietly skipped every
         # measurement looks identical to one that made them.
         run: |
-          uv run --python ${{ matrix.python-version }} python -c "import shutil; print('pwsh:', shutil.which('pwsh')); print('powershell:', shutil.which('powershell')); print('cmd:', shutil.which('cmd')); print('bash:', shutil.which('bash'))"
+          uv run --python ${{ matrix.python-version }} python -c "import shutil, tempfile; print('pwsh:', shutil.which('pwsh')); print('powershell:', shutil.which('powershell')); print('cmd:', shutil.which('cmd')); print('bash:', shutil.which('bash')); print('tempdir:', tempfile.gettempdir())"
 
       # Two steps, so a red run is readable. The shell modules are written for
       # Windows and are expected to pass; failing the first step means the
