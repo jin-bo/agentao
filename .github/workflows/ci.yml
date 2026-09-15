@@ -229,9 +229,13 @@ jobs:
   build:
     name: Build distribution
     runs-on: ubuntu-latest
-    # Gate on mcp-compat too: a wheel whose MCP path is broken on one of the
-    # two majors the metadata claims to support should not be publishable.
-    needs: [test, mcp-compat]
+    # No `needs`, deliberately. This job used to wait for `test` and
+    # `mcp-compat` so that a wheel broken on one MCP major "should not be
+    # publishable" — but nothing publishes this job's wheel. publish.yml and
+    # publish-testpypi.yml each build and test their own from the checkout,
+    # and the `dist` artifact below has one consumer, `smoke`. The wait gated
+    # nothing; it only ran build + smoke in series behind the test jobs. A
+    # failing test still fails the run.
 
     steps:
       - uses: actions/checkout@v5
