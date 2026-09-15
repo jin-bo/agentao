@@ -2,6 +2,7 @@
 
 import io
 import json
+import logging
 import os
 import queue
 import signal
@@ -27,6 +28,13 @@ from agentao.acp_client.process import ACPProcessHandle
 # Helpers
 # ---------------------------------------------------------------------------
 
+# A long-running server that exits when its stdin closes, as a real ACP server
+# does. It used to be ``time.sleep(60)``, which never reads stdin, so every
+# ``stop()`` waited out the whole ``_GRACEFUL_STOP_TIMEOUT`` (5 s) before
+# escalating — 12 tests, 75 of this file's 78 seconds. Escalation is tested
+# on purpose below, with the windows shortened.
+_IDLE_UNTIL_EOF_ARGS = ["-c", "import sys; sys.stdin.read()"]
+
 
 def _make_config(
     *,
@@ -38,16 +46,16 @@ def _make_config(
     """Build a minimal AcpServerConfig for tests."""
     return AcpServerConfig(
         command=command,
-        args=args or ["-c", "import time; time.sleep(60)"],
+        args=args or list(_IDLE_UNTIL_EOF_ARGS),
         env={},
         cwd=cwd or str(Path.cwd()),
         auto_start=auto_start,
     )
 
 
-def _sleeper_config(seconds: float = 60) -> AcpServerConfig:
-    """Config that spawns a long-running Python process."""
-    return _make_config(args=["-c", f"import time; time.sleep({seconds})"])
+def _sleeper_config() -> AcpServerConfig:
+    """Config that spawns a long-running Python process that exits on stdin EOF."""
+    return _make_config(args=list(_IDLE_UNTIL_EOF_ARGS))
 
 
 def _instant_exit_config(code: int = 0) -> AcpServerConfig:
@@ -209,6 +217,31 @@ class TestACPProcessHandle:
 
         assert handle.state == ServerState.STOPPED
         assert sentinel.exists(), "child should exit gracefully on stdin EOF"
+
+    def test_stop_escalates_when_the_server_ignores_stdin_eof(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A server that never reads stdin is still stopped, by escalation.
+
+        The two whole-tree tests below cover escalation on POSIX only. This
+        one runs everywhere, so Windows keeps a test of ``terminate()`` and
+        ``kill_process_tree`` now that the servers the lifecycle tests spawn
+        exit on EOF instead of reaching that path.
+        """
+        monkeypatch.setattr(acp_process, "_GRACEFUL_STOP_TIMEOUT", 0.3)
+        handle = ACPProcessHandle(
+            "deaf", _make_config(args=["-c", "import time; time.sleep(60)"])
+        )
+        handle.start()
+        proc = handle._proc
+        assert proc is not None
+
+        with caplog.at_level(logging.WARNING, logger="agentao.acp_client"):
+            handle.stop()
+
+        assert handle.state == ServerState.STOPPED
+        assert proc.poll() is not None, "server outlived stop()"
+        assert any("terminating" in r.getMessage() for r in caplog.records)
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
     def test_start_makes_child_process_group_leader(self) -> None:
