@@ -1,9 +1,12 @@
 """MCP client and client manager for connecting to MCP servers."""
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
+import threading
+import time
 from contextlib import AsyncExitStack
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -234,6 +237,16 @@ class McpClient:
         self._exit_stack: Optional[AsyncExitStack] = None
         self._tools: List[McpToolDef] = []
         self._protocol_version: Optional[str] = None
+        # The task that owns the live connection and the event that tells it
+        # to close (see ``connect``).
+        self._owner: Optional["asyncio.Task[None]"] = None
+        self._stop: Optional[asyncio.Event] = None
+        # Serialises connection *switches* in ``call_tool``, never ordinary
+        # requests: concurrent calls share one session. The attempt counter
+        # lets a call that waited out someone else's reconnect use its result
+        # instead of starting another.
+        self._reconnect_lock = asyncio.Lock()
+        self._connect_attempts = 0
 
     @property
     def transport_type(self) -> str:
@@ -268,7 +281,96 @@ class McpClient:
         return bool(self.config.get("trust", False))
 
     async def connect(self) -> None:
-        """Connect to the MCP server and discover tools."""
+        """Connect to the MCP server and discover tools.
+
+        Returns once the handshake has settled, connected or not; a failure
+        reports through ``status`` / ``error_message`` rather than raising.
+
+        The connection lives in its own **owner task** (#243). The SDK's
+        transports and ``ClientSession`` hold anyio task groups, whose cancel
+        scopes must be exited by the task that entered them. Entering them here
+        and exiting them from ``disconnect()`` — a later call, so a different
+        task — raised "Attempted to exit cancel scope in a different task" on
+        every disconnect, and cleanup finished only because the SDK happened to
+        order its ``finally`` first. The owner opens the connection, waits to be
+        told to stop, and closes it, all in one task.
+        """
+        if self._owner is not None and not self._owner.done():
+            await self._stop_owner()
+        ready: "asyncio.Future[None]" = asyncio.get_running_loop().create_future()
+        self._stop = asyncio.Event()
+        self._owner = asyncio.create_task(
+            self._own_connection(ready, self._stop),
+            name=f"agentao-mcp-owner-{self.name}",
+        )
+        await ready
+
+    async def _own_connection(
+        self, ready: "asyncio.Future[None]", stop: asyncio.Event
+    ) -> None:
+        """Open the connection, hold it until ``stop`` is set, then close it."""
+        try:
+            await self._open()
+            if not ready.done():
+                ready.set_result(None)
+            if self.status is ServerStatus.CONNECTED:
+                await stop.wait()
+        finally:
+            if not ready.done():
+                ready.set_result(None)
+            if self.status is ServerStatus.CONNECTING:
+                # The open was cancelled before it settled, which ``_open``'s
+                # ``except Exception`` does not see. Left as is, the client
+                # would report a connect in progress over a half-open session,
+                # and the next ``_stop_owner`` would read that stale status as
+                # a reason to cancel whichever owner comes next.
+                self.status = ServerStatus.DISCONNECTED
+                self._session = None
+                self._protocol_version = None
+            stack, self._exit_stack = self._exit_stack, None
+            if stack is not None:
+                try:
+                    await stack.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.warning(f"Error disconnecting from MCP server '{self.name}': {e}")
+
+    async def _stop_owner(self) -> None:
+        owner, stop = self._owner, self._stop
+        if owner is None or stop is None:
+            return
+        first_request = not stop.is_set()
+        stop.set()
+        if first_request and self.status is ServerStatus.CONNECTING:
+            # Still opening. The owner looks at ``stop`` only once the handshake
+            # settles, which can take the whole ``startup`` budget, so a close
+            # racing a connect would otherwise wait that long. Abort the open;
+            # the owner's ``finally`` still closes whatever it had entered.
+            # Only on the first request: a later one would land in that
+            # ``finally`` and interrupt the transport shutdown itself.
+            owner.cancel()
+        # ``wait``, not ``await owner``: a caller that is itself cancelled must
+        # not cancel the owner halfway through closing the transport, and an
+        # owner that was cancelled (its loop shutting down) must not read as
+        # this caller being cancelled.
+        await asyncio.wait({owner})
+        # Forgotten only once it has finished. A caller cancelled during the
+        # wait leaves it recorded, so the next stop (``disconnect_all``'s, say)
+        # waits for the close still running instead of returning at once and
+        # letting the loop stop under it.
+        if self._owner is not owner:
+            return  # a concurrent stop already finished this owner
+        self._owner = self._stop = None
+        if not owner.cancelled() and owner.exception() is not None:
+            logger.warning(
+                f"MCP server '{self.name}' connection owner failed: {owner.exception()}"
+            )
+
+    async def _open(self) -> None:
+        """The connect itself: transport, handshake, and cleanup on failure.
+
+        Runs inside the owner task, so the failure cleanup below exits the exit
+        stack in the task that entered it.
+        """
         self.status = ServerStatus.CONNECTING
         self.error_message = None
         # Stale on a reconnect: the version belongs to the session about to be
@@ -810,11 +912,14 @@ class McpClient:
         # mcp 1.x wants a timedelta here, 2.x plain float seconds — the shim
         # asks the installed SDK's own signature which one to hand over.
         read_timeout = _sdk_read_timeout(request_timeout)
+        # The connect attempts this call has already seen the outcome of. Taken
+        # when the call picks up a session, not when it later finds that session
+        # gone: another call may have started reconnecting in between.
+        seen = self._connect_attempts
         for attempt in range(2):
             if not self._session or self.status != ServerStatus.CONNECTED:
                 try:
-                    logger.info(f"MCP '{self.name}': reconnecting (attempt {attempt + 1})...")
-                    await self.connect()
+                    await self._ensure_connected(attempt, seen)
                 except Exception as e:
                     # Only reachable for a failure ``connect()`` does not handle
                     # itself (e.g. a malformed ``timeout`` block, parsed before
@@ -829,8 +934,12 @@ class McpClient:
                         f"{self.error_message or 'reconnect failed'}"
                     )
 
+            # The session this attempt runs on. If it drops, only this session
+            # is torn down: a concurrent call may already have replaced it.
+            session = self._session
+            seen = self._connect_attempts
             try:
-                result = await self._session.call_tool(
+                result = await session.call_tool(
                     tool_name, arguments, read_timeout_seconds=read_timeout,
                     # Take delivery of an ``InputRequiredResult`` instead of
                     # letting the SDK raise on it — see _explain_input_required.
@@ -860,11 +969,10 @@ class McpClient:
                         f"MCP '{self.name}' transient {type(e).__name__}, "
                         f"retrying after reconnect: {e}"
                     )
-                    # Tear down the live transport before reconnecting;
-                    # otherwise connect() overwrites _exit_stack and the
-                    # old subprocess / SSE stream leaks for the lifetime
-                    # of this manager.
-                    await self.disconnect()
+                    # Tear down the failed transport before reconnecting;
+                    # otherwise the old subprocess / stream leaks for the
+                    # lifetime of this manager.
+                    await self._drop_session(session)
                     continue
                 return f"MCP tool error: {e}"
 
@@ -921,6 +1029,44 @@ class McpClient:
         "roots/list": "the client's roots",
     }
 
+    async def _ensure_connected(self, attempt: int, seen: int) -> None:
+        """Connect, unless another call has tried since this one saw ``seen``.
+
+        Several calls can find the connection gone at once. The first to take
+        the lock connects; the rest use whatever it got, connected or not,
+        rather than each paying for another connect (and, against a dead
+        server, another full ``startup`` budget).
+        """
+        async with self._reconnect_lock:
+            if self._connect_attempts != seen:
+                return
+            if self._session and self.status == ServerStatus.CONNECTED:
+                return
+            logger.info(f"MCP '{self.name}': reconnecting (attempt {attempt + 1})...")
+            # Counted once the attempt has settled, not when it starts: a call
+            # that arrives mid-attempt reads the old count, so after waiting it
+            # sees the count move and takes the outcome instead of reconnecting
+            # again. A cancelled attempt settled nothing and is not counted, so
+            # a waiter makes its own rather than reporting a connect still in
+            # progress as failed.
+            try:
+                await self.connect()
+            except Exception:
+                self._connect_attempts += 1
+                raise
+            self._connect_attempts += 1
+
+    async def _drop_session(self, failed: Any) -> None:
+        """Disconnect ``failed``, unless it has already been replaced.
+
+        Two calls that fail on the same session both land here. Without the
+        identity check the second would tear down the connection the first
+        had just rebuilt.
+        """
+        async with self._reconnect_lock:
+            if self._session is failed:
+                await self.disconnect()
+
     def _explain_input_required(self, tool_name: str, result: Any) -> str:
         """Turn a modern-era ``InputRequiredResult`` into something the model can use.
 
@@ -966,37 +1112,140 @@ class McpClient:
         )
 
     async def disconnect(self) -> None:
-        """Disconnect from the server."""
-        if self._exit_stack:
-            try:
-                await self._exit_stack.__aexit__(None, None, None)
-            except Exception as e:
-                logger.warning(f"Error disconnecting from MCP server '{self.name}': {e}")
-            self._exit_stack = None
+        """Disconnect from the server.
+
+        Stops the owner task, which closes the transport in the task that
+        opened it (see ``connect``).
+        """
+        # Retire the session before waiting out its close, which can take
+        # seconds. Calls run concurrently, and one arriving meanwhile would
+        # otherwise send its request down a transport being torn down, then
+        # retry it on the next connection — running the tool twice when the
+        # first request did reach the server. Cleared again below, once the
+        # owner has stopped, in case an open being aborted still set it.
+        self._session = None
+        await self._stop_owner()
         self._session = None
         self._tools = []
         self._protocol_version = None
         self.status = ServerStatus.DISCONNECTED
 
 
+# ``disconnect_all`` budgets. The first is the caller's (calls in flight get
+# this long to finish); the rest bound the steps after it, so a close always
+# ends.
+_CLOSE_WAIT_S = 5.0
+_CANCEL_WAIT_S = 2.0   # a cancelled call unwinding its own ``finally``
+_OWNER_STOP_S = 10.0   # every client's transport shutdown, run concurrently
+_THREAD_JOIN_S = 2.0
+# How often a waiting caller checks that the loop thread is still there.
+_CALL_POLL_S = 0.5
+
+
+class McpManagerClosedError(RuntimeError):
+    """A call reached an ``McpClientManager`` after ``disconnect_all``."""
+
+
 class McpClientManager:
-    """Manages multiple MCP server connections with sync-async bridge."""
+    """Manages multiple MCP server connections with a sync-async bridge.
+
+    The connections live on one event loop that runs on the manager's own
+    thread for as long as the manager is open (#241). Synchronous callers hand
+    it coroutines with ``run_coroutine_threadsafe`` and wait on the result, so
+    calls from different threads run concurrently on one loop, and one
+    ``ClientSession`` multiplexes them. The loop used to run only inside a
+    caller's ``run_until_complete``: a second caller while it ran got "This
+    event loop is already running", and the tool executor runs a batch's calls
+    on parallel threads.
+    """
 
     def __init__(self, server_configs: Dict[str, McpServerConfig]):
         self._configs = server_configs
         self._clients: Dict[str, McpClient] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+        # Guards ``_closed`` and starting the loop, so a call either gets onto
+        # the loop before ``disconnect_all`` starts or is refused.
+        self._state_lock = threading.Lock()
+        self._closed = False
+        # Calls on the loop. Read and written on the loop thread only.
+        self._calls: set = set()
+        self._closing: Optional[concurrent.futures.Future] = None
+        # When the close must be over, set by the first ``disconnect_all``.
+        self._close_deadline = 0.0
 
-    def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """Get or create a dedicated event loop for MCP operations."""
-        if self._loop is None or self._loop.is_closed():
-            self._loop = asyncio.new_event_loop()
+    def _start_loop(self) -> asyncio.AbstractEventLoop:
+        """Start the loop thread on first use. Caller holds ``_state_lock``."""
+        if self._loop is None:
+            loop = asyncio.new_event_loop()
+            thread = threading.Thread(
+                target=self._run_loop, args=(loop,),
+                name="agentao-mcp-loop", daemon=True,
+            )
+            thread.start()
+            self._loop, self._thread = loop, thread
         return self._loop
 
+    @staticmethod
+    def _run_loop(loop: asyncio.AbstractEventLoop) -> None:
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_forever()
+        finally:
+            loop.close()
+
     def _run(self, coro):
-        """Run an async coroutine synchronously."""
-        loop = self._get_loop()
-        return loop.run_until_complete(coro)
+        """Run ``coro`` on the loop thread and wait for its result."""
+        with self._state_lock:
+            if self._closed:
+                coro.close()
+                raise McpManagerClosedError("MCP client manager is closed")
+            if threading.current_thread() is self._thread:
+                coro.close()
+                raise RuntimeError(
+                    "McpClientManager was called from its own event loop "
+                    "thread, which would wait on itself forever"
+                )
+            future = asyncio.run_coroutine_threadsafe(
+                self._tracked(coro), self._start_loop()
+            )
+            thread = self._thread
+        try:
+            settled = self._wait(future, thread)
+        except BaseException:
+            # The caller stopped waiting (Ctrl+C, or anything else raised into
+            # it). Cancel the call rather than leave it running unobserved on
+            # the loop.
+            future.cancel()
+            raise
+        if not settled:
+            raise McpManagerClosedError(
+                "MCP client manager closed before the call finished"
+            )
+        return future.result()
+
+    @staticmethod
+    def _wait(future: concurrent.futures.Future, thread: threading.Thread) -> bool:
+        """Wait for ``future``; False when the loop thread is gone without it.
+
+        Polled rather than waited on outright: a call still pending when the
+        loop stops (it ignored its cancellation during a close, say) is never
+        resolved, and its caller would wait forever.
+        """
+        while True:
+            done, _ = concurrent.futures.wait((future,), timeout=_CALL_POLL_S)
+            if done:
+                return True
+            if not thread.is_alive():
+                return future.done()
+
+    async def _tracked(self, coro):
+        task = asyncio.current_task()
+        self._calls.add(task)
+        try:
+            return await coro
+        finally:
+            self._calls.discard(task)
 
     @property
     def clients(self) -> Dict[str, McpClient]:
@@ -1037,7 +1286,8 @@ class McpClientManager:
             List of (server_name, tool_definition) tuples.
         """
         tools = []
-        for name, client in self._clients.items():
+        # A copy: the loop thread clears ``_clients`` during ``disconnect_all``.
+        for name, client in list(self._clients.items()):
             if client.status == ServerStatus.CONNECTED:
                 for tool in client.tools:
                     tools.append((name, tool))
@@ -1045,28 +1295,106 @@ class McpClientManager:
 
     def call_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Call a tool on a specific server (sync wrapper)."""
+        return self._run(self._call_tool_async(server_name, tool_name, arguments))
+
+    async def _call_tool_async(
+        self, server_name: str, tool_name: str, arguments: Dict[str, Any]
+    ) -> str:
         client = self._clients.get(server_name)
         if not client:
             raise RuntimeError(f"MCP server '{server_name}' not found")
-        return self._run(client.call_tool(tool_name, arguments))
+        return await client.call_tool(tool_name, arguments)
 
-    def disconnect_all(self) -> None:
-        """Disconnect from all servers."""
-        if self._clients:
-            self._run(self._disconnect_all_async())
-        if self._loop and not self._loop.is_closed():
-            self._loop.close()
-            self._loop = None
+    def disconnect_all(self, timeout: float = _CLOSE_WAIT_S) -> None:
+        """Close the manager. Idempotent; every later call raises
+        :class:`McpManagerClosedError`.
 
-    async def _disconnect_all_async(self) -> None:
-        for client in self._clients.values():
-            await client.disconnect()
-        self._clients.clear()
+        In order: stop accepting calls; give calls in flight ``timeout``
+        seconds; cancel the rest and wait for them to unwind; stop every
+        client's connection; stop and join the loop thread. Each step after the
+        first has its own bound, so a hung server cannot hold the close open.
+        A cancelled future is only a request, which is why the loop is not
+        stopped straight after cancelling.
+
+        The close runs on the loop, which stops itself at the end of it, and
+        the loop's thread then closes the loop. So a caller interrupted while
+        waiting here (Ctrl+C) does not leave the thread running, and a later
+        call waits for the same close, to the first call's deadline, instead
+        of returning at once or stopping the loop under it.
+        """
+        with self._state_lock:
+            if threading.current_thread() is self._thread:
+                if self._closed:
+                    return
+                raise RuntimeError(
+                    "McpClientManager.disconnect_all was called from its own "
+                    "event loop thread, which would wait on itself forever"
+                )
+            loop, thread = self._loop, self._thread
+            if not self._closed:
+                self._closed = True
+                self._close_deadline = (
+                    time.monotonic() + timeout + _CANCEL_WAIT_S + _OWNER_STOP_S + 1.0
+                )
+                if loop is not None:
+                    # Held so the task is referenced while nobody waits on it.
+                    self._closing = asyncio.run_coroutine_threadsafe(
+                        self._shutdown(timeout), loop
+                    )
+            deadline = self._close_deadline
+        if loop is None or thread is None:
+            self._clients.clear()
+            return
+        thread.join(max(0.0, deadline - time.monotonic()))
+        if not thread.is_alive():
+            return
+        logger.warning("MCP disconnect did not finish in time; stopping its loop anyway")
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except RuntimeError:
+            pass  # the close finished just now and its thread closed the loop
+        thread.join(_THREAD_JOIN_S)
+        if thread.is_alive():
+            logger.warning("MCP event loop thread did not stop; leaving it to exit with the process")
+
+    async def _shutdown(self, timeout: float) -> None:
+        try:
+            # Every call accepted before the close is registered by now: it
+            # was scheduled on this loop before this coroutine was.
+            calls = {task for task in self._calls if not task.done()}
+            if calls:
+                _, pending = await asyncio.wait(calls, timeout=timeout)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    _, stuck = await asyncio.wait(pending, timeout=_CANCEL_WAIT_S)
+                    if stuck:
+                        logger.warning(
+                            f"{len(stuck)} MCP call(s) did not stop when cancelled; "
+                            "closing without them"
+                        )
+            clients = list(self._clients.values())
+            if clients:
+                stops = [asyncio.ensure_future(client.disconnect()) for client in clients]
+                _, pending = await asyncio.wait(stops, timeout=_OWNER_STOP_S)
+                if pending:
+                    logger.warning(
+                        f"{len(pending)} MCP server(s) did not finish disconnecting in time"
+                    )
+            self._clients.clear()
+        except Exception as e:
+            logger.warning(f"Error disconnecting MCP servers: {e}")
+        finally:
+            # Scheduled, not immediate, so callbacks queued by this step (a
+            # cancelled call handing its result to its waiting thread) run first.
+            loop = asyncio.get_running_loop()
+            loop.call_soon(loop.stop)
 
     def get_server_status(self) -> List[Dict[str, Any]]:
         """Get status summary of all servers."""
         result = []
-        for name, client in self._clients.items():
+        # A copy: the loop thread clears ``_clients`` during ``disconnect_all``.
+        for name, client in list(self._clients.items()):
             result.append({
                 "name": name,
                 "status": client.status.value,

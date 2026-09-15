@@ -291,8 +291,8 @@ def test_a_bounds_violation_fails_only_that_server():
             assert good.status is ServerStatus.CONNECTED
             assert [t.name for t in good.tools] == [f"ok-{name}"]
     finally:
-        # ``connect_all`` spins up a dedicated event loop via ``_get_loop`` and
-        # only ``disconnect_all`` closes it. This is the repo's only test on the
+        # ``connect_all`` starts the manager's loop thread and only
+        # ``disconnect_all`` stops it. This is the repo's only test on the
         # real ``connect_all`` path, so without this the loop and its selector
         # self-pipe descriptors leak for the rest of the session.
         manager.disconnect_all()
