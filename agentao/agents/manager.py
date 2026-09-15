@@ -153,6 +153,7 @@ class AgentManager:
         filesystem: Optional[Any] = None,
         shell: Optional[Any] = None,
         permission_engine_getter: Optional[Callable] = None,
+        tool_origin_getter: Optional[Callable[[str], str]] = None,
     ) -> List[RegistrableTool]:
         """Create an :class:`AgentToolWrapper` per agent definition.
 
@@ -160,6 +161,10 @@ class AgentManager:
         disabled: each wrapper drops ``run_in_background`` from its
         parameter schema and the trailing
         :class:`CheckBackgroundAgentTool` is not appended.
+
+        ``tool_origin_getter`` maps a name in ``all_tools`` to its registry
+        origin (``ToolRegistry.origin``). Without it every parent tool reads
+        as a host tool, so sub-agents get only ``complete_task``.
         """
         _readonly_getter = readonly_mode_getter or (lambda: False)
         wrappers = [
@@ -183,6 +188,7 @@ class AgentManager:
                 filesystem=filesystem,
                 shell=shell,
                 permission_engine_getter=permission_engine_getter,
+                tool_origin_getter=tool_origin_getter,
             )
             for defn in self.definitions.values()
         ]

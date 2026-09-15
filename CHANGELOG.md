@@ -11,6 +11,12 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`ToolRegistry` records where each tool came from.** `register()` takes a
+  keyword-only `origin` (`builtin`, `host`, `mcp`, `agent` or `plan`), which
+  defaults to `host`, and `origin(name)` reads it back. A replacement
+  overwrites the origin. Sub-agents use it, not the tool's class, to tell the
+  parent's built-ins from host tools. A host has no reason to pass it. (#256)
+
 ### Changed
 
 ### Fixed
@@ -55,10 +61,15 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   - built-in tools, as the sub-agent's own instances;
   - MCP tools, as the parent's;
   - `complete_task`.
-  It never gets host tools (`extra_tools`, `add_tool`), including one that
-  replaced a built-in, nor agent tools or plan tools. A definition whose list
-  names one of them logs a warning. A tool the parent disabled, pruned or
-  removed is absent from its sub-agents too. (#238)
+  It never gets host tools (`extra_tools`, `add_tool`, a bare
+  `agent.tools.register`), including one that replaced a built-in, nor agent
+  tools or plan tools. That includes a replacement that is an instance of the
+  built-in's own class, such as `WebSearchTool(backend="bocha", ...)` under
+  `web_search`: the first version of this fix took such a tool for the
+  built-in and gave the sub-agent its own default instance, whose searches
+  went to DuckDuckGo. A definition whose list names one of them logs a
+  warning. A tool the parent disabled, pruned or removed is absent from its
+  sub-agents too. (#238, #256)
 - **A sub-agent no longer launches MCP servers of its own.** Building a
   sub-agent read `mcp.json` and connected every configured server again. Until
   #242 nothing closed it, so each spawn left its stdio servers running until

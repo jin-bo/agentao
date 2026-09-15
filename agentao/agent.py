@@ -947,7 +947,7 @@ class Agentao:
                 tool.name,
                 type(tool).__name__,
             )
-        _bind_and_register(self, tool, replace=already)
+        _bind_and_register(self, tool, replace=already, origin="host")
 
     def remove_tool(self, name: str) -> bool:
         """Unregister a tool after construction. Returns whether it existed.

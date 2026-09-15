@@ -212,7 +212,8 @@ class Tool(ABC):
 
 | 方法 | 作用 |
 |------|------|
-| `register(tool: Tool, *, replace: bool = False)` | 注册。`replace=False` 冲突会 warn 后覆盖；`replace=True` 静默覆盖（打 INFO 审计）。底层 API——不绑定能力；优先用 `Agentao(extra_tools=)` / `add_tool`（见 [5.1](/zh/part-5/1-custom-tools)） |
+| `register(tool: Tool, *, replace: bool = False, origin: str = "host")` | 注册。`replace=False` 冲突会 warn 后覆盖；`replace=True` 静默覆盖（打 INFO 审计）。底层 API——不绑定能力；优先用 `Agentao(extra_tools=)` / `add_tool`（见 [5.1](/zh/part-5/1-custom-tools)）。`origin` 记录工具来源（`builtin` / `host` / `mcp` / `agent` / `plan`），宿主保持默认 `host`；替换时覆盖 |
+| `origin(name: str) -> str` | 读回记录的来源。子代理据此判定，宿主工具不会交给任何子代理，包括用内置工具自己的类构造、替换了内置工具的宿主工具。不经 `register` 放进 `tools` 的工具读作 `host`。名字不存在时抛 `KeyError` |
 | `unregister(name: str) -> bool` | 移除 `name`；返回是否存在过。纯 dict 操作 |
 | `get(name: str) -> Tool` | 不存在时抛 `KeyError`，带可用工具列表 |
 | `list_tools() -> list[Tool]` | |
