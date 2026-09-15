@@ -15,6 +15,33 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **Two MCP tool calls in one model response no longer lose one of them.**
+  The tool executor runs a batch's calls on parallel threads, and every MCP
+  tool of an agent goes through its `McpClientManager`. The manager ran its
+  event loop inside whichever caller got there first, so a call arriving
+  meanwhile failed with `This event loop is already running` and never reached
+  the server. The loop now runs on the manager's own thread and callers submit
+  to it, so concurrent MCP calls run at the same time over one session. Two
+  calls that fail on the same dropped connection reconnect it once, and when
+  that reconnect fails the other call takes its result instead of trying
+  again. `disconnect_all()` is now final and bounded. It refuses new calls,
+  which raise `McpManagerClosedError`, gives calls in flight 5 seconds by
+  default, cancels the rest, then closes every connection and stops the
+  thread. The close runs to the end even when the caller waiting on it is
+  interrupted, and a second `disconnect_all()` waits for that same close. A
+  call whose caller is interrupted (Ctrl+C) is cancelled instead of being left
+  running, and a call the close could not stop raises `McpManagerClosedError`
+  rather than leaving its caller waiting forever. A call waiting on a
+  connection that closes under it reconnects and retries even when the SDK
+  never answers it, which mcp 1.x can fail to do when a write to a dead server
+  fails, and before 1.30 when three or more requests are pending. (#241)
+- **Disconnecting from an MCP server no longer logs "Attempted to exit cancel
+  scope in a different task".** The SDK's transports and sessions must be
+  closed by the task that opened them, but agentao opened a connection in one
+  call and closed it from another. The warning appeared on every close and
+  every reconnect, and cleanup still completed only because the SDK happened
+  to clean up before raising. Each connection now lives in one owner task that
+  opens it, waits, and closes it. (#243)
 - **A sub-agent now disconnects the MCP servers it connected.** Every
   sub-agent is a fresh runtime, and building one reads `mcp.json` and connects
   every configured server again. Nothing ever closed it, so each spawn,

@@ -31,7 +31,7 @@
 | **SUB-03** | 未实现 `ToolForkable` 的宿主工具在子代理中缺席，**且它占的名字也缺席**；`mcp_*` 仅经作用域视图、绝不经 `enabled_tools`/`remove_tool` | §2 第 2 项的表 | G00 |
 | **SUB-04** | agent 工具仅当定义**显式点名**时注册；`None` 白名单蕴含每一个非 agent 来源、不蕴含任何 agent 来源；`agent_manager = None` 删除 | §2 第 2 项的表 | G22 |
 | **SUB-05** | 工厂跳过 `__init__` 的注册过程，删除四处事后赋值（`sub_agent.tools =`、`tool_runner._permission_engine =`、读文件、`engine.set_mode`）；保留 `set_readonly_mode(True)` | §2 第 3、4 项 | G00 |
-| **MCP-01** | `McpClientManager` 持有一个**所有者线程**运行 loop，每处同步桥接改为 `run_coroutine_threadsafe(...).result(timeout)`；`scoped(names) -> McpToolView` 是非所有的只读视图 | §3 首段 | G00 |
+| **MCP-01** | `McpClientManager` 持有一个**所有者线程**运行 loop，每处同步桥接改为 `run_coroutine_threadsafe(...).result(timeout)`；`scoped(names) -> McpToolView` 是非所有的只读视图。自 #241/#243 起**部分落地**（所有者线程与桥接；没有视图），见 §3 开头的注记 | §3 首段 | G00 |
 | **MCP-02** | `bg_store` 在 token 旁记**线程**；子代理执行体包进 `try/finally`，`finally` 关掉子代理并注销其视图 | §3 第 1、2 件 | G00 |
 | **MCP-03** | 租约只是一次在飞行中的调用，逐调用取得、`finally` 释放，不论调用方是谁；agent 生命期是视图的注册，不是租约 | §3 第 3 件 | G00 |
 | **MCP-04** | 取消经**调用上下文**（显式参数或 `contextvar`）抵达那次调用，绝不经工具实例上的可变属性；manager 以 token 为键登记 **task 集合**；订阅与登记原子（`add_done_callback` 在已取消时立即回调）；`finally` 按「注销回调 → discard → 删空键 → 释放租约」清登记 | §3 第 4 件 | G00 |
@@ -95,6 +95,28 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
    （`agentao/embedding/factory.py:146-148`）；保留 `llm.omit_temperature` 并注释点名其读者。
 
 ## 3. 决策 —— MCP 所有权：一个所有者线程，一个非所有的视图
+
+> **部分落地，2026-09-14（#241、#243）。**
+>
+> **已有：**
+> - **所有者线程与桥接。**`McpClientManager` 在一个所有者线程上运行 loop，桥接为
+>   `run_coroutine_threadsafe(...)`。调用方等待这个 future，并每 0.5 秒确认线程仍然存活，所以 loop
+>   在调用未完成时停止，调用会报错，而不是一直挂着。
+> - **每个连接一个所有者 task。**每个 `McpClient` 把连接放在一个所有者 task 里，在同一个 task 内进入
+>   并退出传输层。
+> - **关闭。**`disconnect_all` 拒绝新调用，在预算内等待进行中的调用，取消剩余调用并等它们退出，停止
+>   每个所有者，再 join 线程。关闭结束时 loop 自行停止，所以 `disconnect_all` 被中断后关闭仍会完成。
+>
+> 桥接的等待不带超时：单次调用只受服务器的 `timeout.request` 约束，而它不配置时不设上限。
+>
+> **尚未实现：**
+> - `McpToolView`；
+> - lease、token → task 集合与 call context（第 4 件）；
+> - 记录 `bg_store` 线程（第 1 件）；
+> - 子代理共享父级 manager（#238、#239）。
+>
+> **曾先尝试在桥接处加锁，后放弃。**它会失去同一个 manager 内的并发，可能让 `close()` 被一个挂起的
+> 调用卡住，而且被中断的调用会继续留在 loop 上运行。
 
 **MCP 所有权：一个所有者线程，一个非所有的视图。** 在桥接处加锁是选错了器械 —— 它只把调用者串行
 化，每次拿到锁的仍可能是另一个 OS 线程在驱动 loop（§2.18）。`McpClientManager` 改为持有一个**所有者

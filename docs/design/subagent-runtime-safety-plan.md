@@ -39,7 +39,7 @@ table is an index, not a second definition.
 | **SUB-03** | A host tool that does not implement `ToolForkable` is absent from the sub-agent, **and so is the name it occupied**; `mcp_*` arrives only through a scoped view, never through `enabled_tools` / `remove_tool` | the table in §2 item 2 | G00 |
 | **SUB-04** | Agent tools are registered only when the definition **names them explicitly**; a `None` allowlist implies every non-agent origin and implies no agent origin; `agent_manager = None` is deleted | the table in §2 item 2 | G22 |
 | **SUB-05** | The factory skips `__init__`'s registration passes and deletes the four after-the-fact assignments (`sub_agent.tools =`, `tool_runner._permission_engine =`, the file read, `engine.set_mode`); `set_readonly_mode(True)` is kept | §2 items 3 and 4 | G00 |
-| **MCP-01** | `McpClientManager` holds one **owner thread** running the loop, and every synchronous bridge becomes `run_coroutine_threadsafe(...).result(timeout)`; `scoped(names) -> McpToolView` is a non-owning read-only view | §3 opening paragraph | G00 |
+| **MCP-01** | `McpClientManager` holds one **owner thread** running the loop, and every synchronous bridge becomes `run_coroutine_threadsafe(...).result(timeout)`; `scoped(names) -> McpToolView` is a non-owning read-only view. **Partly in place** since #241/#243 (the owner thread and the bridge; no view) — see the note at the head of §3 | §3 opening paragraph | G00 |
 | **MCP-02** | `bg_store` records the **thread** alongside the token; the sub-agent's body is wrapped in `try/finally`, and the `finally` closes the sub-agent and deregisters its view | §3 items 1 and 2 | G00 |
 | **MCP-03** | A lease is one in-flight call and nothing else — taken per call and released in `finally`, whoever the caller is; an agent's lifetime is the registration of its view, not a lease | §3 item 3 | G00 |
 | **MCP-04** | Cancellation reaches the call through a **call context** (an explicit argument or a `contextvar`), never through a mutable attribute on the tool instance; the manager registers a **set of tasks** keyed by token; subscription and registration are atomic (`add_done_callback` fires immediately on an already-cancelled token); the `finally` clears the registry in the order "unsubscribe → discard → delete the empty key → release the lease" | §3 item 4 | G00 |
@@ -118,6 +118,30 @@ factory:
    naming its reader.
 
 ## 3. Decision — MCP ownership: one owner thread, one non-owning view
+
+> **Partly in place, 2026-09-14 (#241, #243).**
+>
+> **What exists:**
+> - **Owner thread and bridge.** `McpClientManager` runs its loop on an owner thread, and its
+>   bridge is `run_coroutine_threadsafe(...)`. The caller waits on that future and checks every
+>   0.5 s that the thread is still alive, so a call the loop stopped under raises instead of hanging.
+> - **Owner task per connection.** Each `McpClient` keeps its connection in an owner task that
+>   enters and exits the transport in one task.
+> - **Close.** `disconnect_all` refuses new calls, waits for calls in flight under a budget,
+>   cancels the rest and waits for them to unwind, stops every owner, and joins the thread. The
+>   loop stops itself at the end of the close, so an interrupted `disconnect_all` still finishes.
+>
+> The bridge's wait has no timeout: a call is bounded only by the server's `timeout.request`,
+> which is unbounded unless configured.
+>
+> **Not built:**
+> - `McpToolView`;
+> - leases, the token → task set and the call context (item 4);
+> - recording `bg_store` threads (item 1);
+> - a sub-agent sharing the parent's manager (#238, #239).
+>
+> **A lock around the bridge was tried first and dropped.** It lost concurrency inside a manager,
+> could hold `close()` behind a hung call, and left an interrupted call running.
 
 **MCP ownership: one owner thread, one non-owning view.** Locking at the bridge is the wrong
 instrument — it serialises callers only, and whoever holds the lock may still be a different OS
