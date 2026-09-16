@@ -843,6 +843,15 @@ class Agentao:
             # sub-agent's raw-config build simply omits it. ``or None`` maps an
             # empty dict to "unset".
             "extra_body": getattr(self.llm, "extra_body", None) or None,
+            # Not provider config, but read from the same place and for the
+            # same reason: a sub-agent built without it constructs an
+            # ``LLMClient`` with ``logger=None``, and that path *evicts and
+            # closes* the ``agentao.log`` handler already on the package
+            # logger before installing its own. From a background sub-agent's
+            # thread that closes a file the parent is still logging to.
+            # Handing the logger over skips the package-root mutation entirely
+            # and lands the child's LLM traffic in the parent's log.
+            "logger": self.llm.logger,
         }
 
     def add_host_event_observer(self, callback):

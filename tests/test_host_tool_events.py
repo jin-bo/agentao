@@ -238,6 +238,23 @@ def test_user_cancelled_emits_cancelled_terminal_only():
     assert h.events[0].outcome == "cancelled"
 
 
+def test_an_unapproved_call_does_not_blame_the_user_on_the_event():
+    """A background sub-agent refuses its own ``ASK`` calls, so nothing here
+    knows a user was involved. The model-facing text says only that approval
+    was not given; the event summary and the result's ``error`` have to agree,
+    or a host reads a refusal the user never saw as one they made."""
+    h = _Harness()
+    executor = _make_executor(h.emitter)
+    tool = _SyncEcho()
+    results = executor.execute_batch(
+        [make_plan(tool, decision=ToolCallDecision.CANCELLED)]
+    )
+    (result,) = results.values()
+    assert "user" not in (h.events[0].summary or "").lower()
+    assert "user" not in (result.error or "").lower()
+    assert "user" not in result.result.lower()
+
+
 # ---------------------------------------------------------------------------
 # AsyncTool: success and cancellation
 # ---------------------------------------------------------------------------

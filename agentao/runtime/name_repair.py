@@ -8,8 +8,9 @@ before falling back to fuzzy match (``difflib`` at cutoff 0.7 — the
 safety rail that prevents guessing across unrelated names).
 
 A cutoff cannot tell a misspelling from a different tool, though: ``read_file``
-and ``write_file`` are as close as a typo. So a name that already spells a real
-tool is never repaired into another one (see ``repair_tool_name``).
+and ``write_file`` are as close as a typo. So a name that spells — or merely
+comes closest to — a real tool this runtime does not offer is never repaired
+into another one (see ``repair_tool_name``).
 """
 
 from __future__ import annotations
@@ -51,7 +52,10 @@ def repair_tool_name(
     """Return a name from ``valid_names`` that the LLM probably meant, or None.
 
     ``valid_names`` is iterated multiple times — pass a set/frozenset for O(1)
-    membership, or a list/tuple if order matters for fuzzy ranking.
+    membership. Order never decides a fuzzy tie: the pool is ranked in sorted
+    order, so the same call answers the same way in every process (a set's
+    iteration order varies with ``PYTHONHASHSEED``, and ``get_close_matches``
+    breaks a tie by the order it is given).
 
     ``known`` names tools that exist whether or not this runtime offers them
     (default: the built-ins). A name that spells one of them, or any ``mcp_`` /
@@ -60,6 +64,12 @@ def repair_tool_name(
     runtime withheld ran a different one. A sub-agent not given ``read_file``
     wrote with ``write_file``, and one whose host had replaced
     ``check_background_agent`` cancelled the task it meant to check.
+
+    An exact spelling is not the only way to name a withheld tool, so the
+    fuzzy pass ranks over the offered names **and** the known ones and answers
+    None when a known-but-unoffered name wins: ``read_files`` is one character
+    from ``read_file`` and nowhere near ``write_file``, yet matching it against
+    the offered names alone returned ``write_file`` — the very case above.
     """
     if not name:
         return None
@@ -98,7 +108,12 @@ def repair_tool_name(
     if any(c and (c in known_set or c.startswith(_TOOL_NAMESPACES)) for c in candidates):
         return None
 
-    matches = get_close_matches(lowered, valid, n=1, cutoff=_FUZZY_CUTOFF)
-    if matches:
+    # Rank over the offered names *and* the known ones, then accept the winner
+    # only if it is offered. Ranking over the offered names alone repairs a
+    # near-miss of a withheld tool into whatever is closest among the rest.
+    matches = get_close_matches(
+        lowered, sorted(valid | known_set), n=1, cutoff=_FUZZY_CUTOFF,
+    )
+    if matches and matches[0] in valid:
         return matches[0]
     return None
