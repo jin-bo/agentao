@@ -383,6 +383,38 @@ assertions in G00) after. When cut that way, the factory's treatment of `mcp_*` 
 segment is **absent** (the same row as a host tool that declares nothing) rather than a shared parent
 instance — sharing the instance is precisely what §2.15 and §2.18 say cannot be done.
 
+### 5.2 Skills in sub-agents: #254 (2026-09-16)
+
+Resolved outside the factory, on the same `_narrow_tools`-era mechanism, and it settles the
+"skills-dir scan per spawn" cost SUB-05 was going to reclaim: there is no scan. A sub-agent is
+built with `parent.skill_manager.child_view()` — the catalogue and disabled set copied,
+`active_skills` empty — read through a **live** getter at spawn, because the CLI registers a
+plugin's skills onto the parent's manager after the agent is constructed.
+
+Deriving, not re-scanning, is the load-bearing part. A re-scan of the three skill directories
+reproduces neither a plugin's in-memory entries (an inline one has no file at all) nor a
+catalogue a host injected through `skill_manager=`, which suppresses the scan by construction;
+it would also re-run `_bootstrap_bundled_skills`' `copytree`, which is under no lock, once per
+spawn from background sub-agent threads. And it keeps the two halves apart that #254 found
+fused: the catalogue is shared, the activation state is not.
+
+Every way the derivation can fail — no getter, a getter or a `child_view()` that answers
+with `None`, either one raising, an injected manager with no `child_view` — lands on an
+explicit empty `SkillManager`, never on `skill_manager=None`. That spelling means "scan for
+your own", so falling open there would reinstate exactly the per-spawn discovery and
+`copytree` the previous paragraph rules out, and hand the child a catalogue the parent does
+not advertise. `child_view()` also refuses a `copy.copy` that answers with the parent (the
+`__copy__`-returns-`self` shape `_copy_declared_host_tool` already guards): emptying
+`active_skills` on it would clear the parent's mid-session. And a derived view never
+persists — it forked `disabled_skills` but shares the parent's `_config_file`.
+
+Peers agree on the shape, and neither builds a per-sub-agent manager: codex's role config
+carries **only overrides** over an inherited skills config (`codex-rs/core/src/agent/role.rs`,
+`skills.config.retain(|s| !s.enabled)`), and gemini-cli reads the host's shared manager and
+gates the catalogue on the agent holding the tool (`packages/core/src/agents/local-executor.ts`,
+`getTool(ACTIVATE_SKILL_TOOL_NAME)`). agentao gates the same block the same way, in the shared
+prompt builder — so `disable_tools` and an `enabled_tools` allowlist get it too.
+
 ### 5.1 Host tools in sub-agents: PR-a and PR-b (2026-09-15)
 
 The host-tool parts of SUB-02 and SUB-03 ship ahead of PR-0's factory, on the #255 mechanism

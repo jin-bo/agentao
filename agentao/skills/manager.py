@@ -1,5 +1,6 @@
 """Skills manager for Agentao."""
 
+import copy
 import json
 import logging
 import re
@@ -96,6 +97,9 @@ class SkillManager:
         self.active_skills: Dict[str, dict] = {}
         self.available_skills: Dict[str, dict] = {}
         self.disabled_skills: Set[str] = set()
+        # True only on a manager produced by :meth:`child_view`, which shares
+        # this one's config path but owns a forked ``disabled_skills``.
+        self._derived = False
         self._explicit_dir = Path(skills_dir) if skills_dir is not None else None
 
         # Resolve project-scoped paths once at construction time:
@@ -121,6 +125,66 @@ class SkillManager:
             self._bootstrap_bundled_skills()
         self._load_config()
         self._load_skills()
+
+    # ------------------------------------------------------------------
+    # Derivation
+    # ------------------------------------------------------------------
+
+    def child_view(self) -> "SkillManager":
+        """This manager's catalogue, with activation state of its own.
+
+        What a sub-agent is built with (#254). The catalogue is derived from
+        the parent's live manager rather than re-scanned, because a re-scan
+        does not reproduce it:
+
+        - plugin skills are registered **in memory**
+          (:meth:`register_plugin_skills`, called from the CLI's plugin load
+          pass) and some carry inline content with no file at all, so a scan
+          of the three skill directories finds none of them;
+        - a host that injected its own ``SkillManager`` suppressed the scan
+          entirely (``Agentao._init_skill_and_memory``), so re-running it
+          substitutes a different catalogue for the one the host built.
+
+        Either way the parent would advertise skills its sub-agents cannot
+        see — the shape #254 was filed for, minus the lie. Deriving also
+        skips :meth:`_bootstrap_bundled_skills`, whose ``copytree`` is under
+        no lock and would otherwise run once per spawn, from background
+        sub-agent threads.
+
+        ``active_skills`` starts **empty and stays the child's own**: the
+        child activates for itself, and an activation of its own must not
+        reach the parent's prompt (or a sibling's). The catalogue and the
+        disabled set are copied, so a ``/skills`` change on the parent does
+        not reach a sub-agent already running; the per-skill dicts inside
+        the catalogue are shared, and every reader treats them as read-only.
+
+        Raises:
+            TypeError: when ``copy.copy`` answers with this very instance — a
+                subclass whose ``__copy__`` returns ``self``. Checked before
+                anything is assigned, because the next three lines would then
+                be writing to the *parent*: ``active_skills = {}`` would clear
+                the skills the parent has active mid-session, and every later
+                activation by the child would land in the parent's prompt.
+                Raising leaves the caller to fall back to an empty manager
+                (``_child_skill_manager``), which loses the catalogue but
+                damages nothing.
+        """
+        child = copy.copy(self)
+        if child is self:
+            raise TypeError(
+                f"{type(self).__name__}.child_view(): copy.copy() returned the "
+                "same instance, so there is no child to derive — deriving one "
+                "would clear the parent's active skills and fuse the two "
+                "managers' state. Remove the __copy__ that answers with self."
+            )
+        child.available_skills = dict(self.available_skills)
+        child.disabled_skills = set(self.disabled_skills)
+        child.active_skills = {}
+        # A derived view forked ``disabled_skills`` but shares the parent's
+        # ``_config_file``. Persisting from it would write an ephemeral
+        # sub-agent's set over the user's ``skills_config.json``.
+        child._derived = True
+        return child
 
     # ------------------------------------------------------------------
     # Bootstrap
@@ -183,7 +247,18 @@ class SkillManager:
                 self.disabled_skills = set()
 
     def _save_config(self):
-        """Save disabled skills list to config file."""
+        """Save disabled skills list to config file.
+
+        A no-op on a :meth:`child_view`: it shares the parent's
+        ``_config_file`` but owns a forked ``disabled_skills``, so writing
+        would persist a sub-agent's ephemeral set over the user's
+        ``skills_config.json``.
+        """
+        if getattr(self, "_derived", False):
+            logger.debug(
+                "Not persisting skills config from a derived child view."
+            )
+            return
         self._config_dir.mkdir(parents=True, exist_ok=True)
         config = {"disabled_skills": sorted(self.disabled_skills)}
         with open(self._config_file, "w", encoding="utf-8") as f:
@@ -477,11 +552,18 @@ class SkillManager:
 
         return []
 
-    def reload_skills(self):
+    def reload_skills(self) -> int:
         """Reload skill definitions from disk.
 
         Plugin-provided skills are preserved across reloads since they
         are not backed by on-disk skill directories.
+
+        Returns how many skills are available afterwards — the same count
+        ``/skills reload`` prints. ``/crystallize`` already reads the return
+        value (``cli/commands_ext/crystallize/_handler.py``: ``count =
+        ...reload_skills()``, then ``if count is not None``), so returning
+        nothing made its success line unreachable and reported a skill that
+        had just been written as one it could not confirm.
         """
         # Snapshot plugin entries so they survive the clear+reload cycle.
         plugin_entries = {
@@ -497,6 +579,7 @@ class SkillManager:
                 self.available_skills[name] = info
         self.disabled_skills &= set(self.available_skills.keys())
         self._save_config()
+        return len(self.list_available_skills())
 
     def get_skill_content(self, skill_name: str) -> Optional[str]:
         skill_info = self.get_skill_info(skill_name)

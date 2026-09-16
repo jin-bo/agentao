@@ -52,6 +52,95 @@ _INCOMPLETE_DETAILS: Dict[str, str] = {
 _MAX_ITERATIONS_REASON = "max_iterations"
 
 
+# Handed to ``SkillManager`` to mean "no skills at all" — the documented
+# spelling (``skills/manager.py``: "Pass a non-existent path to suppress all
+# skills"), and what a sub-agent falls back to when the parent's catalogue
+# cannot be derived.
+_NO_SKILLS_DIR = "/nonexistent"
+
+
+def _child_skill_manager(
+    getter: Optional[Callable[[], Any]], agent_name: str,
+) -> Any:
+    """The sub-agent's ``SkillManager``: the parent's catalogue, its own
+    activations (#254, via :meth:`SkillManager.child_view`).
+
+    Read at spawn, not at registration: in the CLI a plugin's skills are
+    registered onto the parent's manager *after* the agent is constructed,
+    so a snapshot taken when this wrapper was built would miss them.
+
+    Falls back to a manager with no skills — today's behaviour, and the
+    fail-closed direction — when there is no getter, when the getter answers
+    with nothing, when reading or deriving raises, when the object the host
+    injected has no ``child_view``, and when ``child_view`` answers with
+    nothing. A sub-agent with no skills is coherent: its ``activate_skill``
+    is built from this same manager, so the enum is empty and an activation
+    answers that the skill is unknown.
+
+    Every one of those is an explicit ``_no_skills()``, never a ``None``
+    handed on to the constructor: ``Agentao(skill_manager=None)`` means "scan
+    for your own", which re-runs the three-directory discovery *and* the
+    unlocked ``_bootstrap_bundled_skills`` ``copytree`` once per spawn, from
+    background sub-agent threads — and hands the child a catalogue that is
+    not the one the parent advertises. That is the whole failure this
+    function exists to avoid, so it must not be reachable by falling open.
+    """
+    from ...skills import SkillManager
+
+    def _no_skills() -> Any:
+        return SkillManager(skills_dir=_NO_SKILLS_DIR)
+
+    if getter is None:
+        return _no_skills()
+    try:
+        parent = getter()
+    except Exception as exc:
+        logger.warning(
+            "Sub-agent '%s' gets no skills: reading the parent's skill "
+            "manager raised %s: %s",
+            agent_name, type(exc).__name__, exc,
+        )
+        return _no_skills()
+    if parent is None:
+        # A getter was supplied and answered with nothing — the runtime has
+        # no skill manager to derive from. Said out loud rather than assumed:
+        # every other way to reach ``_no_skills()`` from here reports itself,
+        # and a silently empty catalogue is indistinguishable from a sub-agent
+        # whose host never wired skills up at all.
+        logger.warning(
+            "Sub-agent '%s' gets no skills: the parent has no skill manager.",
+            agent_name,
+        )
+        return _no_skills()
+    derive = getattr(parent, "child_view", None)
+    if not callable(derive):
+        logger.warning(
+            "Sub-agent '%s' gets no skills: the parent's skill manager is a "
+            "%s, which has no child_view().",
+            agent_name, type(parent).__name__,
+        )
+        return _no_skills()
+    try:
+        child = derive()
+    except Exception as exc:
+        logger.warning(
+            "Sub-agent '%s' gets no skills: deriving the parent's catalogue "
+            "raised %s: %s",
+            agent_name, type(exc).__name__, exc,
+        )
+        return _no_skills()
+    if child is None:
+        logger.warning(
+            "Sub-agent '%s' gets no skills: %s.child_view() returned None. A "
+            "sub-agent is never built with `skill_manager=None`, which would "
+            "re-scan the skill directories per spawn and give it a catalogue "
+            "the parent does not advertise.",
+            agent_name, type(parent).__name__,
+        )
+        return _no_skills()
+    return child
+
+
 def _copy_declared_host_tool(
     tool: RegistrableTool, name: str, agent_name: str,
 ) -> Optional[RegistrableTool]:
@@ -379,6 +468,7 @@ class AgentToolWrapper(Tool):
         shell: Optional[Any] = None,
         permission_engine_getter: Optional[Callable] = None,
         tool_origin_getter: Optional[Callable[[str], str]] = None,
+        skill_manager_getter: Optional[Callable[[], Any]] = None,
     ):
         self._definition = definition
         # The parent's live registry: tools it adds or removes between turns
@@ -406,6 +496,10 @@ class AgentToolWrapper(Tool):
         # The parent's permission engine, read at spawn: a sub-agent decides
         # with a snapshot of it (see ``_drive_sub_agent``).
         self._permission_engine_getter = permission_engine_getter
+        # The parent's skill manager, read at spawn: a sub-agent is built with
+        # a child view of it (``_child_skill_manager``). Live, because the
+        # CLI registers plugin skills onto it after construction.
+        self._skill_manager_getter = skill_manager_getter
         self._sandbox_policy = sandbox_policy
         # Where the parent's file and shell tools run (a host may redirect them
         # into a container or a virtual filesystem). A sub-agent's built-ins
@@ -684,7 +778,6 @@ class AgentToolWrapper(Tool):
         """
         from ...agent import Agentao
         from ...mcp.registry import InMemoryMCPRegistry
-        from ...skills import SkillManager
 
         defn_model: Optional[str] = self._definition.get("model")
         defn_temperature: Optional[float] = self._definition.get("temperature")
@@ -766,13 +859,15 @@ class AgentToolWrapper(Tool):
             # a second time for each spawn (#239), and it missed the servers a
             # host had passed to the parent in code.
             mcp_registry=InMemoryMCPRegistry(),
-            # No skills, and said at construction rather than assigned after
-            # it: ``activate_skill`` is built from whatever manager the agent
+            # The parent's skills, with activation state of its own (#254) —
+            # and said at construction rather than assigned after it:
+            # ``activate_skill`` is built from whatever manager the agent
             # holds, so replacing the attribute afterwards left the tool
             # activating skills out of a manager the system prompt is no
-            # longer built from. Saying it here also skips the disk scan whose
-            # result was only going to be thrown away.
-            skill_manager=SkillManager(skills_dir="/nonexistent"),
+            # longer built from.
+            skill_manager=_child_skill_manager(
+                self._skill_manager_getter, agent_name,
+            ),
             # The parent's background-task store, so the sub-agent's own
             # ``check_background_agent`` / ``cancel_background_agent`` query
             # and cancel the same tasks the parent's do.

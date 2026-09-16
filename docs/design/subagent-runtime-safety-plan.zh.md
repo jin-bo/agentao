@@ -304,6 +304,33 @@ G19、G22）可先发；MCP 那一半（MCP-01–MCP-06；G00 里的 MCP 断言�
 `mcp_*` 的处理是**缺席**（与什么都没声明的宿主工具同一行），而不是共享父级实例 —— 共享实例正是 §2.15/§2.18
 说不能做的事。
 
+### 5.2 子代理中的技能：#254（2026-09-16）
+
+在工厂之外解决，建立在同一套 `_narrow_tools` 时期的机制上；顺带了结了 SUB-05 本打算省下的
+「每次 spawn 扫一遍技能目录」这笔开销 —— 现在根本不扫。子代理以
+`parent.skill_manager.child_view()` 构造：目录与禁用集合复制一份，`active_skills` 置空；
+经**活取器**在 spawn 时读取，因为 CLI 是在 agent 构造完成之后才把插件技能注册到父级 manager 上的。
+
+「派生而非重扫」是承重的一步。重扫那三个技能目录既拿不到插件的内存条目（内联条目根本没有文件），
+也拿不到宿主经 `skill_manager=` 注入的目录（注入本身就会跳过扫描）；而且会把
+`_bootstrap_bundled_skills` 里那个不受锁保护的 `copytree` 变成每次 spawn 都跑一遍，还是在后台
+子代理线程上。同时它把 #254 发现被粘在一起的两半分开：目录共享，激活状态不共享。
+
+派生失败的每一种走法 —— 没有取器、取器或 `child_view()` 返回 `None`、二者抛异常、宿主注入的
+manager 没有 `child_view` —— 都落到一个显式的空 `SkillManager`，绝不落到 `skill_manager=None`。
+后者的含义是「自己去扫」，在这里放行就等于把上一段排除掉的每次 spawn 扫描与 `copytree` 原样请
+回来，还会给子代理一份父级并未对外声明的目录。`child_view()` 另外拒绝「`copy.copy` 返回父级本身」
+（即 `_copy_declared_host_tool` 已经防过的 `__copy__` 返回 `self` 那种形状）：在父级上把
+`active_skills` 清空，会在会话中途抹掉父级已激活的技能。派生视图也一律不落盘 —— 它复制了
+`disabled_skills`，却共用父级的 `_config_file`。
+
+同行的形状一致，而且两家都不为子代理单建 manager：codex 的角色配置只携带**覆盖项**，叠在继承来的
+技能配置上（`codex-rs/core/src/agent/role.rs`，`skills.config.retain(|s| !s.enabled)`）；
+gemini-cli 读宿主共享的 manager，并按该 agent 是否持有该工具来决定是否注入目录
+（`packages/core/src/agents/local-executor.ts`，`getTool(ACTIVATE_SKILL_TOOL_NAME)`）。
+agentao 用同样的方式给同一个块加门，但做在公共提示词构建器里 —— 于是 `disable_tools` 与
+`enabled_tools` 白名单也一并受用。
+
 ### 5.1 子代理中的宿主工具：PR-a 与 PR-b（2026-09-15）
 
 SUB-02、SUB-03 中与宿主工具有关的部分先于 PR-0 的工厂发布，建立在 #255 的机制（`_narrow_tools`）上。

@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 
 import agentao.skills.manager as _mod
 from agentao.skills.manager import SkillManager
@@ -557,3 +559,75 @@ def test_skills_context_includes_active_skill(tmp_path):
     assert "Alpha Content" in ctx
     assert f"Skill directory: {g / 'alpha'}" in ctx
     assert "NOT your current working directory" in ctx
+
+
+# ---------------------------------------------------------------------------
+# child_view — the catalogue a sub-agent is built with (#254)
+# ---------------------------------------------------------------------------
+
+def _manager_with_alpha(tmp_path):
+    g = tmp_path / "global"
+    _write_skill(g, "alpha")
+    cfg_file = tmp_path / "cfg.json"
+    patches = dict(
+        _GLOBAL_SKILLS_DIR=g,
+        _PROJECT_SKILLS_DIR=tmp_path / "p",
+        _BUNDLED_SKILLS_DIR=tmp_path / "b",
+        _CONFIG_FILE=cfg_file,
+        _CONFIG_DIR=tmp_path,
+    )
+    return patches, cfg_file
+
+
+def test_child_view_refuses_a_copy_that_answers_with_the_parent(tmp_path):
+    """A ``__copy__`` returning ``self`` would make the next three lines write
+    to the *parent*: ``active_skills = {}`` clears what the parent has active
+    mid-session, and every later child activation lands in the parent's prompt.
+    Raising instead leaves the caller to fall back to an empty manager."""
+    patches, _ = _manager_with_alpha(tmp_path)
+
+    class _SelfCopying(SkillManager):
+        def __copy__(self):
+            return self
+
+    with patch.multiple(_mod, **patches):
+        m = _SelfCopying()
+    m.activate_skill("alpha", "parent task")
+
+    with pytest.raises(TypeError, match="same instance"):
+        m.child_view()
+    assert "alpha" in m.get_active_skills()
+
+
+def test_reload_skills_answers_with_the_available_count(tmp_path):
+    """Both callers read the return value: ``/skills reload`` prints it, and
+    ``/crystallize`` gates its "Skills reloaded (N available)" line on it not
+    being ``None`` — so a method that answered with nothing reported a skill
+    it had just written as one it could not confirm."""
+    patches, _ = _manager_with_alpha(tmp_path)
+    with patch.multiple(_mod, **patches):
+        m = SkillManager()
+        # Relative to what the manager already holds: the repo-root
+        # ``skills/`` directory is resolved from the process cwd, which these
+        # module-constant patches do not move.
+        before = len(m.list_available_skills())
+        assert m.reload_skills() == before
+        _write_skill(tmp_path / "global", "beta")
+        assert m.reload_skills() == before + 1
+        m.disable_skill("beta")
+        assert m.reload_skills() == before
+
+
+def test_a_child_views_disabled_set_is_never_persisted(tmp_path):
+    """The child forks ``disabled_skills`` but shares the parent's config
+    path, so a write from it would put an ephemeral sub-agent's set over the
+    user's ``skills_config.json``."""
+    patches, cfg_file = _manager_with_alpha(tmp_path)
+    with patch.multiple(_mod, **patches):
+        parent = SkillManager()
+        child = parent.child_view()
+        assert child.disable_skill("alpha").endswith("has been disabled.")
+
+    assert not cfg_file.exists()
+    assert "alpha" in child.disabled_skills
+    assert parent.disabled_skills == set()

@@ -143,7 +143,11 @@ class _Skills:
         return f"enabled {name}"
 
     def reload_skills(self):
+        # Answers with a count, as the real ``SkillManager.reload_skills``
+        # does — a fake that returned None is how the caller's
+        # ``if count is not None`` branch went unnoticed.
         self.reloaded = True
+        return len(self.list_available_skills())
 
 
 class _Agent:
