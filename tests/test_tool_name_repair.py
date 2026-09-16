@@ -528,6 +528,74 @@ class TestNamesOfRealToolsAreNotRepairedIntoOthers:
             assert repair_tool_name("read_file", offered) is None
 
 
+class TestSpellingsTheSimilarityPassHadBeenCovering:
+    """Removing the cutoff removed the only thing that resolved these, so they
+    are normalisations now rather than near-misses. Each is the *same* spelling
+    as an offered name — which is why handling them does not reintroduce
+    guessing."""
+
+    @pytest.mark.parametrize(
+        "asked",
+        [" read_file ", "read_file\n", "\tread_file", "read_file_", "-read_file",
+         " Read-File\n"],
+    )
+    def test_padding_is_not_part_of_a_spelling(self, asked):
+        """``_normalise_separators`` maps a space to ``_``, so a padded name
+        used to normalise to ``_read_file_`` and only the cutoff caught it."""
+        assert repair_tool_name(asked, {"read_file"}) == "read_file"
+
+    @pytest.mark.parametrize(
+        "asked",
+        ["get_file_contents", "getfilecontents", "GetFileContents",
+         "get-file-contents", "getFileContentsTool"],
+    )
+    def test_an_offered_name_that_is_not_snake_case_is_reachable(self, asked):
+        """Every normalisation lowercases, so normalising only the *asked* name
+        left a camelCase registry entry (MCP servers routinely use them)
+        reachable by exact spelling alone. Both sides are normalised."""
+        assert repair_tool_name(asked, {"getFileContents", "createIssue"}) == (
+            "getFileContents"
+        )
+
+    def test_the_offered_side_index_is_fail_closed_on_a_shared_spelling(self):
+        """Two offered names that share a normalised spelling resolve to
+        neither — picking whichever was iterated last would put the answer back
+        at the mercy of ``PYTHONHASHSEED``."""
+        offered = {"doIt", "do-it"}  # both normalise to ``do_it``
+        assert repair_tool_name("do_it", offered) is None
+        assert repair_tool_name("do_it", list(reversed(sorted(offered)))) is None
+
+    def test_a_truncation_is_still_not_reachable_from_either_side(self):
+        assert repair_tool_name("get_file_content", {"getFileContents"}) is None
+        assert repair_tool_name("getFileContent", {"getFileContents"}) is None
+
+
+class TestCandidateOrderIsByFidelityNotAlphabetical:
+    """The claim the previous round's ``sorted()`` was making. Sorting made the
+    answer deterministic but lexicographic, which preferred the *over-stripped*
+    candidate: ``PatchTool`` resolved to ``patch``, dispatching a tool the model
+    had not named — the failure class #261 exists to close."""
+
+    def test_the_whole_name_beats_a_discarded_word(self):
+        offered = {"patch", "patch_tool"}
+        assert repair_tool_name("PatchTool", offered) == "patch_tool"
+        assert repair_tool_name("Patch_Tool", offered) == "patch_tool"
+        assert repair_tool_name("PatchTool_tool", offered) == "patch_tool"
+        # And with only the stripped form offered, the strip still answers.
+        assert repair_tool_name("PatchTool", {"patch"}) == "patch"
+
+    def test_one_strip_beats_two(self):
+        assert repair_tool_name("TodoTool_tool", {"todo", "todo_tool"}) == "todo_tool"
+        assert repair_tool_name("TodoTool_tool", {"todo"}) == "todo"
+
+    def test_a_tie_inside_a_tier_does_not_depend_on_iteration_order(self):
+        first = repair_tool_name("PatchTool", {"patch", "patch_tool"})
+        assert all(
+            repair_tool_name("PatchTool", {"patch", "patch_tool"}) == first
+            for _ in range(20)
+        )
+
+
 # ---------------------------------------------------------------------------
 # #261 end to end: both entries, with the host-tool pair that defeated the
 # `known=` guard. One is the runner's pre-execution normalisation, the other
@@ -538,7 +606,10 @@ class TestNamesOfRealToolsAreNotRepairedIntoOthers:
 
 @pytest.fixture
 def two_host_tools(tmp_path):
-    """A sub-agent granted `deploy_docs` and denied `deploy_site`."""
+    """The registry shape #261 reduces to: `deploy_docs` offered, `deploy_site`
+    not. The narrowing that produces it is covered in
+    `test_subagent_tool_narrowing.py`; what is pinned here is that neither
+    entry point repairs across the pair."""
     registry = ToolRegistry()
     registry.register(FakeNamedTool("deploy_docs", requires_confirm=False))
     engine = PermissionEngine(project_root=tmp_path)

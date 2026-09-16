@@ -42,8 +42,9 @@ DOOM_LOOP_THRESHOLD = 3
 PARSE_FAILURE_THRESHOLD = 3
 
 # Model-facing reply for a tool call whose name is blank/whitespace-only.
-# Such a name is never a typo the planner can fuzzy-repair toward a real
-# tool (``repair_tool_name`` returns None for it) — it is almost always a
+# Such a name spells no real tool (``repair_tool_name`` returns None for it,
+# and since #261 it answers by spelling only — there is no similarity pass
+# left that could land it anywhere) — it is almost always a
 # weak open model echoing tool-call XML/JSON it saw as *data* in file
 # contents or tool output, which primes it to emit a structured call with
 # an empty name. The full tool catalog is deliberately omitted here: dumping
@@ -449,14 +450,14 @@ class ToolCallPlanner:
             normalized_id = _ensure_tool_call_id(tool_call)
 
             # Blank/whitespace tool name: handle FIRST, before the doom-loop
-            # and parse-failure guards below. A blank name is never a typo the
-            # planner can fuzzy-repair toward a real tool — it is almost always
-            # a weak model echoing tool-call XML/JSON it saw as *data* in file
-            # contents or tool output (priming). Routing it through the lower
-            # guards would (a) let the identical-args doom-loop abort the whole
-            # batch instead of de-priming, (b) let a malformed-args echo get a
-            # "retry with valid JSON" reply that invites re-emission, and (c)
-            # pay a difflib fuzzy scan that can never match. The catalog is
+            # and parse-failure guards below. A blank name spells no real tool,
+            # so ``repair_tool_name`` can never answer for it — it is almost
+            # always a weak model echoing tool-call XML/JSON it saw as *data* in
+            # file contents or tool output (priming). Routing it through the
+            # lower guards would (a) let the identical-args doom-loop abort the
+            # whole batch instead of de-priming, (b) let a malformed-args echo
+            # get a "retry with valid JSON" reply that invites re-emission, and
+            # (c) pay a name-normalisation pass that cannot match. The catalog is
             # withheld (anti-priming); the model still has its tool schemas in
             # the request. ``name`` is a synthetic placeholder so strict
             # providers that reject empty tool-message names still accept the
