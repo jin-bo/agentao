@@ -334,18 +334,20 @@ class ToolExecutor:
         if decision == ToolCallDecision.CANCELLED:
             # Says nothing about who declined: a background sub-agent refuses
             # these itself, and "the user declined" there made the model tell
-            # the user they had refused something they never saw.
+            # the user they had refused something they never saw. The same
+            # goes for the event and the result's ``error`` — a host reading
+            # either would attribute the refusal to the user just as wrongly,
+            # so one summary serves all three (as on the DENY path above).
+            summary = "not approved"
             result_text = (
                 f"Tool execution declined: '{fn}' needed approval and was not "
                 f"approved. " + _DO_NOT_RETRY_CLOSE
             )
-            self._emit_complete(fn, call_id, "cancelled", 0, "cancelled by user")
-            self._emit_host_terminal_cancelled(
-                fn, call_id, summary="cancelled by user",
-            )
+            self._emit_complete(fn, call_id, "cancelled", 0, summary)
+            self._emit_host_terminal_cancelled(fn, call_id, summary=summary)
             return call_id, ToolExecutionResult(
                 fn_name=fn, result=result_text, status="cancelled",
-                duration_ms=0, error="cancelled by user",
+                duration_ms=0, error=summary,
             )
 
         # ALLOW path

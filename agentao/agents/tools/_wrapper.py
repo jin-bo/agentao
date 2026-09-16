@@ -496,6 +496,7 @@ class AgentToolWrapper(Tool):
         """
         from ...agent import Agentao
         from ...mcp.registry import InMemoryMCPRegistry
+        from ...skills import SkillManager
 
         defn_model: Optional[str] = self._definition.get("model")
         defn_temperature: Optional[float] = self._definition.get("temperature")
@@ -565,12 +566,25 @@ class AgentToolWrapper(Tool):
             sandbox_policy=self._sandbox_policy,
             filesystem=self._filesystem,
             shell=self._shell,
+            # The parent's logger. Left out, the sub-agent's ``LLMClient``
+            # evicts and closes the ``agentao.log`` handler the parent
+            # installed on the package logger and installs its own — from a
+            # background sub-agent's thread, while the parent is still logging
+            # through it. ``None`` for a parent that has no logger yet.
+            logger=live_cfg.get("logger"),
             # No MCP source of its own: a sub-agent calls the parent's MCP
             # tools over the parent's connections (``_narrow_tools``). Left to
             # the default it read ``mcp.json`` again and launched every server
             # a second time for each spawn (#239), and it missed the servers a
             # host had passed to the parent in code.
             mcp_registry=InMemoryMCPRegistry(),
+            # No skills, and said at construction rather than assigned after
+            # it: ``activate_skill`` is built from whatever manager the agent
+            # holds, so replacing the attribute afterwards left the tool
+            # activating skills out of a manager the system prompt is no
+            # longer built from. Saying it here also skips the disk scan whose
+            # result was only going to be thrown away.
+            skill_manager=SkillManager(skills_dir="/nonexistent"),
             # The parent's background-task store, so the sub-agent's own
             # ``check_background_agent`` / ``cancel_background_agent`` query
             # and cancel the same tasks the parent's do.
@@ -692,8 +706,6 @@ class AgentToolWrapper(Tool):
         raises; stats read the sub-agent's history, so they are taken here,
         before that close.
         """
-        from ...skills import SkillManager
-
         sub_agent.llm.omit_temperature = omit_temperature
         self._narrow_tools(sub_agent)
         # The store is shared (``_build_sub_agent``) for querying and
@@ -705,7 +717,10 @@ class AgentToolWrapper(Tool):
         # result.
         sub_agent._drains_background_notifications = False
         sub_agent.project_instructions = self._definition.get("system_instructions")
-        sub_agent.skill_manager = SkillManager(skills_dir="/nonexistent")
+        # ``skill_manager`` is set at construction (``_build_sub_agent``), not
+        # here: ``activate_skill`` binds to whatever manager the agent held
+        # when it was built, so assigning the attribute afterwards left that
+        # tool operating on a manager the system prompt no longer reads.
         # ``_narrow_tools`` already left the agent tools out; without this the
         # system prompt would still list agents the sub-agent cannot call.
         sub_agent.agent_manager = None

@@ -278,6 +278,29 @@ def test_a_left_out_tool_warns_only_when_the_definition_lists_it(
         assert "read_file" in warnings[0]
 
 
+def test_activate_skill_operates_on_the_manager_the_prompt_is_built_from(
+    tmp_path, monkeypatch,
+):
+    """A sub-agent gets no skills, and its ``activate_skill`` has to agree.
+
+    The tool binds to whatever manager the agent held when it was built, so
+    replacing ``sub_agent.skill_manager`` after construction left it activating
+    out of the discovery-scanned manager the prompt no longer reads: the model
+    could turn on a skill the prompt never listed, and the activation landed
+    where nothing would look for it."""
+    parent = _parent(tmp_path)
+    _, sub_agents = _sub_agents_call(monkeypatch)
+    try:
+        _run(parent)
+        (sub_agent,) = sub_agents
+    finally:
+        parent.close()
+
+    tool = sub_agent.tools.tools["activate_skill"]
+    assert tool.skill_manager is sub_agent.skill_manager
+    assert sub_agent.skill_manager.available_skills == {}
+
+
 # ── MCP: the parent's connection ────────────────────────────────────────────
 
 
