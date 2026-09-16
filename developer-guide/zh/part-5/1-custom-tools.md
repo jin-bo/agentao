@@ -1,7 +1,7 @@
 # 5.1 自定义工具与宿主注入
 
 > **本节你会学到**
-> - `Tool` 子类的 6 大要素：name / description / parameters / execute / requires_confirmation / is_read_only
+> - `Tool` 子类的 7 大要素：name / description / parameters / execute / requires_confirmation / is_read_only / copies_to_subagents
 > - 怎样写一个 LLM 真用得上的 description（这件事比代码本身更重要）
 > - 宿主如何注入、替换、移除或白名单化工具
 > - Tool / Skill / MCP 三选一的判断标准
@@ -87,12 +87,16 @@ class DeployTool(Tool):
 第 3 条最容易出问题，因为浅拷贝只分离实例自身的属性。如果你的工具需要更深的分离，
 实现 `__copy__`；同一个承诺覆盖它所做的一切。
 
-机制还有两点：
+机制还有三点：
 
 - **每次 spawn 一个副本，而不是每次调用一个**，所以工具可以在一个子任务的多次调用之间
   保留状态。
-- **拷贝抛异常则该工具缺席**，并打一条点名异常的 warning。绝不会退回共享原实例，也绝不会
-  用它可能覆盖掉的那个内置工具顶上。
+- **拷贝或声明本身抛异常，则该工具缺席**，并打一条点名异常的 warning。绝不会退回共享原实例，
+  也绝不会用它可能覆盖掉的那个内置工具顶上。`__copy__` 返回 `self`、或返回名字不同的工具，
+  同样按缺席处理。
+- **必须写成 `@property`**（或直接用一个布尔类属性）。只写 `def copies_to_subagents(self)`
+  会被读作**没有**声明并打日志——绑定方法无论返回什么都是真值，若按真值处理，你写
+  `return False` 反而会把工具放进子代理。
 
 这个声明**并不**盖过 agent 定义里的 `tools:` 白名单：定义没列出的工具，即使声明了也仍然
 缺席。它也不对语义作任何保证——持有*当前这个*会话状态的工具，比如 CLI 自己的

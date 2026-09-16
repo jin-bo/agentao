@@ -1,7 +1,7 @@
 # 5.1 Custom Tools & Host Injection
 
 > **What you'll learn**
-> - The 6 essentials of a `Tool` subclass: name / description / parameters / execute / requires_confirmation / is_read_only
+> - The 7 essentials of a `Tool` subclass: name / description / parameters / execute / requires_confirmation / is_read_only / copies_to_subagents
 > - How to write a description the LLM actually uses (this matters more than the code)
 > - How the host injects, replaces, removes, or allowlists tools
 > - When to pick Tool vs. Skill vs. MCP for a given need
@@ -92,13 +92,18 @@ things:
 own attributes. If your tool needs a deeper split, implement `__copy__`; the
 same promise covers whatever it does.
 
-Two more properties of the mechanism:
+Three more properties of the mechanism:
 
 - **One copy per spawn, not per call**, so a tool may keep state across the calls
   of one sub-task.
-- **A copy that raises leaves the tool absent**, with a warning naming the
-  exception. It is never shared instead, and never replaced by the built-in it
-  may have overridden.
+- **A copy, or a declaration, that raises leaves the tool absent**, with a
+  warning naming the exception. It is never shared instead, and never replaced
+  by the built-in it may have overridden. The same goes for a `__copy__` that
+  returns `self` or a differently-named tool.
+- **Declare it as a `@property`** (or a plain class attribute holding a bool). A
+  bare `def copies_to_subagents(self)` is read as *no* declaration and logged —
+  a bound method is truthy whatever it returns, so treating it as a yes would
+  opt your tool in when you wrote `return False`.
 
 The declaration does **not** outrank an agent definition's `tools:` allowlist: a
 declared tool the definition does not list is still absent. And it says nothing

@@ -195,6 +195,8 @@ class Tool(ABC):
     def requires_confirmation(self) -> bool: return False
     @property
     def is_read_only(self) -> bool: return False
+    @property
+    def copies_to_subagents(self) -> bool: return False   # opt in per tool; see 5.1
 
     @abstractmethod
     def execute(self, **kwargs) -> str: ...

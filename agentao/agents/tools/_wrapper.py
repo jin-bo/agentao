@@ -59,24 +59,35 @@ def _copy_declared_host_tool(
 
     ``None`` means the tool is absent from the sub-agent, and so is the name
     it occupied — the caller never falls back to sharing ``tool`` or to the
-    built-in it may have replaced. Three ways to get there, and the two
-    failures each log once, naming the tool and the exception:
+    built-in it may have replaced. Five ways to get there, and every failure
+    logs once, naming the tool and what was wrong with it:
 
     - the tool does not declare ``copies_to_subagents`` (the default, and
       silent: an undeclared host tool being absent is the contract, not a
       fault);
     - reading the declaration raises. Fail closed: a property that cannot say
       yes has not said yes;
+    - the declaration is **callable** — a host wrote the override as a plain
+      method instead of a property. A bound method is truthy, so this is the
+      one misreading of the mechanism that would otherwise fail *open*:
+      ``def copies_to_subagents(self): return False`` would read as a yes;
     - ``copy.copy`` raises. A tool that declared it tolerates a copy and then
       cannot be copied is a host bug, and the exception is the only useful
-      thing to report about it.
+      thing to report about it;
+    - ``copy.copy`` answers with the original instance, or with a tool under
+      another name. A ``__copy__`` returning ``self`` shares the very instance
+      the copy exists to separate, and one returning a differently-named tool
+      would be registered under that other name — where it can displace a
+      built-in this sub-agent *is* keeping. Both are checked rather than
+      trusted, because the promise the two carry ("never shared", "left out by
+      name") is one the caller states unconditionally.
 
     The declaration is read here rather than at registration because a host
     may set it per instance, and because a property is free to answer from
     state that only exists once the tool is wired up.
     """
     try:
-        declared = bool(tool.copies_to_subagents)
+        declared = tool.copies_to_subagents
     except Exception as exc:
         logger.warning(
             "Sub-agent '%s' does not get host tool '%s': reading "
@@ -84,18 +95,59 @@ def _copy_declared_host_tool(
             agent_name, name, type(exc).__name__, exc,
         )
         return None
+    if callable(declared):
+        logger.warning(
+            "Sub-agent '%s' does not get host tool '%s': its "
+            "`copies_to_subagents` is a %s rather than a bool — it looks like "
+            "a method that is missing `@property`. A bound method is truthy "
+            "whatever it returns, so it is read as no declaration.",
+            agent_name, name, type(declared).__name__,
+        )
+        return None
     if not declared:
         return None
     try:
-        return copy.copy(tool)
+        copied = copy.copy(tool)
+        copied_name = copied.name
     except Exception as exc:
         logger.warning(
             "Sub-agent '%s' does not get host tool '%s': it declares "
-            "`copies_to_subagents` but copying it raised %s: %s. The parent's "
-            "instance is never shared instead.",
+            "`copies_to_subagents` but copying it (or reading the copy's "
+            "name) raised %s: %s. The parent's instance is never shared "
+            "instead.",
             agent_name, name, type(exc).__name__, exc,
         )
         return None
+    if copied is tool or copied_name != name:
+        logger.warning(
+            "Sub-agent '%s' does not get host tool '%s': copying it returned "
+            "%s. The parent's instance is never shared, and a copy is never "
+            "registered under a name other than the one it was taken from.",
+            agent_name, name,
+            "the original instance"
+            if copied is tool else f"a tool named '{copied_name}'",
+        )
+        return None
+    # The copy must not carry the parent's live ``output_callback``. At spawn
+    # the parent may be inside a call on this same instance — a background
+    # spawn takes its copy on the background thread while the parent's turn
+    # carries on — and that closure emits ``TOOL_OUTPUT`` to the *parent's*
+    # transport under the parent's call id. The sub-agent's executor rebinds
+    # it per call; clearing it here makes the window before that first call
+    # point at nothing, and drops the sub-agent's hold on the parent's
+    # transport.
+    # Written only when there is something to clear, so a tool that never had
+    # the attribute does not acquire one (the executor keys its own binding on
+    # ``hasattr``).
+    try:
+        if getattr(copied, "output_callback", None) is not None:
+            copied.output_callback = None
+    except Exception:  # a read-only or slotted attribute is not worth failing for
+        logger.debug(
+            "Could not clear `output_callback` on the sub-agent's copy of '%s'",
+            name, exc_info=True,
+        )
+    return copied
 
 
 @dataclass(frozen=True)

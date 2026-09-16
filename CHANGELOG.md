@@ -23,7 +23,10 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   (closures, clients, pools) tolerates concurrent use; implement `__copy__` for
   a deeper split. One copy per spawn, not per call, so a tool keeps state across
   a sub-task. A copy or a declaration that raises leaves the tool absent with a
-  warning naming the exception, never shared and never replaced by the built-in.
+  warning naming the exception, never shared and never replaced by the built-in
+  — and so do the two ways to declare it wrong: a bare `def` in place of the
+  `@property` (a bound method is truthy whatever it returns) and a `__copy__`
+  that answers with `self` or with a differently-named tool.
   The declaration does not outrank an agent definition's `tools:` list. See
   `developer-guide/*/part-5/1-custom-tools.md`.
 

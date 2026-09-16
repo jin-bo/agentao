@@ -158,6 +158,12 @@ class _BaseTool(ABC):
         the name it occupied**: a host tool that replaced ``read_file`` does
         not leave the built-in ``read_file`` visible underneath it. The
         declaration does not bypass the definition's ``tools:`` allowlist.
+
+        Override it as a ``@property`` or a plain class attribute holding a
+        bool. A bare ``def copies_to_subagents(self)`` is read as **no**
+        declaration and logged, because a bound method is truthy whatever it
+        returns — that is the one way to get this wrong that would otherwise
+        opt a tool in silently.
         """
         return False
 

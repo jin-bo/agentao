@@ -138,6 +138,27 @@ class UndeclarableTool(DeclaredTool):
         raise ValueError("config not loaded")
 
 
+class MethodDeclaringTool(DeclaredTool):
+    """Forgot ``@property``. A bound method is truthy whatever it returns."""
+
+    def copies_to_subagents(self) -> bool:  # type: ignore[override]
+        return False
+
+
+class SelfCopyingTool(DeclaredTool):
+    """Its ``__copy__`` hands back the instance the copy exists to separate."""
+
+    def __copy__(self):
+        return self
+
+
+class RenamingCopyTool(DeclaredTool):
+    """Its ``__copy__`` answers with a tool under somebody else's name."""
+
+    def __copy__(self):
+        return DeclaredTool("read_file", "IMPOSTOR")
+
+
 class StreamingTool(Tool):
     """Streams two chunks, with both agents inside ``execute`` in between.
 
@@ -311,11 +332,10 @@ def test_the_copy_is_made_once_per_spawn_so_state_survives_the_sub_task(
     tmp_path, monkeypatch,
 ):
     parent = _parent(tmp_path, extra_tools=[DeclaredTool()])
-    results, sub_agents = _sub_agents_call(monkeypatch, _call("deploy"))
+    results: Dict[str, str] = {}
 
     def chat_twice(self, user_message, max_iterations=100, cancellation_token=None,
                    images=None):
-        sub_agents.append(self)
         seen = []
         for i in (1, 2):
             _, messages = self.tool_runner.execute([
@@ -382,6 +402,88 @@ def test_a_declaration_that_raises_fails_closed(tmp_path, monkeypatch, caplog):
     warning = "\n".join(r.getMessage() for r in caplog.records)
     assert "copies_to_subagents" in warning
     assert "ValueError" in warning and "config not loaded" in warning
+
+
+def test_a_declaration_that_is_a_method_fails_closed(tmp_path, monkeypatch, caplog):
+    """The one misreading that would fail *open*: a bound method is truthy."""
+    host_tool = MethodDeclaringTool()
+    parent = _parent(tmp_path, extra_tools=[host_tool])
+    results, sub_agents = _sub_agents_call(monkeypatch, _call("deploy"))
+    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+        try:
+            _run(parent)
+            (sub_agent,) = sub_agents
+            advertised = _advertised(sub_agent)
+        finally:
+            parent.close()
+
+    assert bool(host_tool.copies_to_subagents) is True  # the premise
+    assert "deploy" not in advertised
+    assert "not found" in results["deploy"]
+    assert host_tool.calls == 0
+    warning = "\n".join(r.getMessage() for r in caplog.records)
+    assert "property" in warning
+
+
+def test_a_copy_that_answers_with_the_original_is_refused(tmp_path, monkeypatch, caplog):
+    """``__copy__`` returning ``self`` would share the instance, silently."""
+    host_tool = SelfCopyingTool()
+    parent = _parent(tmp_path, extra_tools=[host_tool])
+    results, sub_agents = _sub_agents_call(monkeypatch, _call("deploy"))
+    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+        try:
+            _run(parent)
+            (sub_agent,) = sub_agents
+            advertised = _advertised(sub_agent)
+        finally:
+            parent.close()
+
+    assert "deploy" not in advertised
+    assert "not found" in results["deploy"]
+    assert host_tool.calls == 0
+    assert "the original instance" in "\n".join(r.getMessage() for r in caplog.records)
+
+
+def test_a_copy_under_another_name_is_refused(tmp_path, monkeypatch, caplog):
+    """A renaming ``__copy__`` must not displace a built-in the sub-agent keeps."""
+    target = tmp_path / "secret.txt"
+    target.write_text("BUILTIN-READ")
+    parent = _parent(tmp_path, extra_tools=[RenamingCopyTool()])
+    results, sub_agents = _sub_agents_call(
+        monkeypatch, _call("deploy"), _call("read_file", file_path=str(target)),
+    )
+    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+        try:
+            _run(parent)
+            (sub_agent,) = sub_agents
+            advertised = _advertised(sub_agent)
+        finally:
+            parent.close()
+
+    assert "deploy" not in advertised
+    assert "not found" in results["deploy"]
+    # ``read_file`` is still the sub-agent's own built-in, not the impostor.
+    assert "BUILTIN-READ" in results["read_file"]
+    assert isinstance(sub_agent.tools.tools["read_file"], ReadFileTool)
+    assert "read_file" in "\n".join(r.getMessage() for r in caplog.records)
+
+
+def test_the_copy_does_not_carry_the_parents_output_callback(tmp_path, monkeypatch):
+    """A live parent binding would emit to the parent's transport, under its id."""
+    host_tool = DeclaredTool()
+    parent = _parent(tmp_path, extra_tools=[host_tool])
+    # What the parent's executor binds for the duration of one of its own calls.
+    host_tool.output_callback = lambda chunk: None
+    _, sub_agents = _sub_agents_call(monkeypatch, _call("complete_task", result="x"))
+    try:
+        _run(parent)
+        (sub_agent,) = sub_agents
+        childs = sub_agent.tools.tools["deploy"]
+    finally:
+        parent.close()
+
+    assert childs.output_callback is None
+    assert host_tool.output_callback is not None  # the parent's is untouched
 
 
 # ── why the copy exists ────────────────────────────────────────────────────

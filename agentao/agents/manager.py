@@ -164,7 +164,9 @@ class AgentManager:
 
         ``tool_origin_getter`` maps a name in ``all_tools`` to its registry
         origin (``ToolRegistry.origin``). Without it every parent tool reads
-        as a host tool, so sub-agents get only ``complete_task``.
+        as a host tool, so a sub-agent gets only ``complete_task`` plus
+        whatever declares ``copies_to_subagents`` — not the built-ins and MCP
+        tools it should have.
         """
         _readonly_getter = readonly_mode_getter or (lambda: False)
         wrappers = [

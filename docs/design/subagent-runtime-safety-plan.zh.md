@@ -309,7 +309,7 @@ SUB-02、SUB-03 中与宿主工具有关的部分先于 PR-0 的工厂发布，�
 | PR | 内容 | 用户可见 | 依赖 |
 |---|---|---|---|
 | **PR-a**（#256） | `ToolRegistry.register` 增加 SUB-02 的仅关键字 `origin`，默认 `host`，这是对公开方法的兼容扩展。仓内每个注册点都显式传入来源，替换时覆盖来源。`_narrow_tools` 按来源判定，删除同类型判断。**不引入任何让宿主工具进入子代理的途径**：宿主工具仍然缺席 | 是 —— 宿主用内置工具自己的类构造的替换（`extra_tools=[WebSearchTool(backend="bocha", …)]`）不再被换回子代理的默认实例 | — |
-| **PR-b**（已实施） | 工具对象上的声明；每个子代理一份浅拷贝，启动时做，按来源 `host` 注册；拷贝失败则缺席并说明原因（§2 第 2 项的表）。**实现为 `copies_to_subagents`**，`_BaseTool` 上的属性，默认 `False`，由 `_narrow_tools` 经 `_copy_declared_host_tool` 读取。声明本身*抛异常*同样按 fail-closed 处理为缺席，这一条验收清单里没写 | 是 —— 按工具选择启用 | PR-a |
+| **PR-b**（已实施） | 工具对象上的声明；每个子代理一份浅拷贝，启动时做，按来源 `host` 注册；拷贝失败则缺席并说明原因（§2 第 2 项的表）。**实现为 `copies_to_subagents`**，`_BaseTool` 上的属性，默认 `False`，由 `_narrow_tools` 经 `_copy_declared_host_tool` 读取。声明本身*抛异常*同样按 fail-closed 处理为缺席，这一条验收清单里没写；另外两种写错声明的方式也一样：该写 `@property` 的地方只写了 `def`（绑定方法无论返回什么都是真值，这是唯一会 fail-*open* 的误读），以及 `__copy__` 返回 `self` 或返回名字不同的工具 | 是 —— 按工具选择启用 | PR-a |
 
 **PR-a 的验收：**
 - 经 `extra_tools=`、`add_tool(replace=True)` 或裸 `agent.tools.register(replace=True)`，用内置工具
