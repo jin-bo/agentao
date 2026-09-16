@@ -1,7 +1,7 @@
 # 5.1 Custom Tools & Host Injection
 
 > **What you'll learn**
-> - The 6 essentials of a `Tool` subclass: name / description / parameters / execute / requires_confirmation / is_read_only
+> - The 7 essentials of a `Tool` subclass: name / description / parameters / execute / requires_confirmation / is_read_only / copies_to_subagents
 > - How to write a description the LLM actually uses (this matters more than the code)
 > - How the host injects, replaces, removes, or allowlists tools
 > - When to pick Tool vs. Skill vs. MCP for a given need
@@ -52,7 +52,7 @@ class MyTool(Tool):
         return f"Found {len(results)} items: {results}"
 ```
 
-**Six essentials**:
+**Seven essentials**:
 
 | Attribute/method | Required | Purpose |
 |------------------|----------|---------|
@@ -62,6 +62,53 @@ class MyTool(Tool):
 | `execute(**kwargs) -> str` | ✅ | Returns a plain string; no dicts, no bytes |
 | `requires_confirmation` | ❌ | True for side-effecting tools → routes through `confirm_tool` |
 | `is_read_only` | ❌ | True for pure reads; permission engine / Plan mode can optimize |
+| `copies_to_subagents` | ❌ | True lets sub-agents use the tool, as a copy — see below. Default False: your tool reaches no sub-agent |
+
+## Letting a sub-agent use your tool
+
+By default a host tool is **absent from every sub-agent**, and so is the name it
+occupied: a tool you registered as `read_file` does not leave the built-in
+`read_file` visible underneath it. Opt in by declaring it:
+
+```python
+class DeployTool(Tool):
+    @property
+    def copies_to_subagents(self) -> bool:
+        return True
+```
+
+Then each spawn registers **one `copy.copy` of your instance**, not the instance
+itself. Returning True is a promise the runtime cannot check, and it says three
+things:
+
+1. the tool suits a sub-task at all;
+2. it tolerates `copy.copy` — a shallow copy, so the sub-agent's call cannot
+   rebind an attribute on your instance;
+3. every dependency the copy still **shares** with the original — a closure, an
+   HTTP client, a connection pool, a container handle — tolerates concurrent use
+   from the parent and the sub-agent, which run on **different threads**.
+
+(3) is the one that bites, because a shallow copy separates only the instance's
+own attributes. If your tool needs a deeper split, implement `__copy__`; the
+same promise covers whatever it does.
+
+Three more properties of the mechanism:
+
+- **One copy per spawn, not per call**, so a tool may keep state across the calls
+  of one sub-task.
+- **A copy, or a declaration, that raises leaves the tool absent**, with a
+  warning naming the exception. It is never shared instead, and never replaced
+  by the built-in it may have overridden. The same goes for a `__copy__` that
+  returns `self` or a differently-named tool.
+- **Declare it as a `@property`** (or a plain class attribute holding a bool). A
+  bare `def copies_to_subagents(self)` is read as *no* declaration and logged —
+  a bound method is truthy whatever it returns, so treating it as a yes would
+  opt your tool in when you wrote `return False`.
+
+The declaration does **not** outrank an agent definition's `tools:` allowlist: a
+declared tool the definition does not list is still absent. And it says nothing
+about semantics — a tool holding *this* session's state, like the CLI's own
+`update_goal`, should not declare it at any copy depth.
 
 ## Why must `execute` return a string?
 

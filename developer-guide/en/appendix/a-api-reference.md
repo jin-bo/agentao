@@ -195,6 +195,8 @@ class Tool(ABC):
     def requires_confirmation(self) -> bool: return False
     @property
     def is_read_only(self) -> bool: return False
+    @property
+    def copies_to_subagents(self) -> bool: return False   # opt in per tool; see 5.1
 
     @abstractmethod
     def execute(self, **kwargs) -> str: ...
@@ -216,7 +218,7 @@ Custom tool subclasses that need to read/write files should call `self._get_fs()
 | Method | Purpose |
 |--------|---------|
 | `register(tool: Tool, *, replace: bool = False, origin: str = "host")` | Add a tool. `replace=False` collision warns and overwrites; `replace=True` overwrites silently (INFO audit). Low-level — no capability binding; prefer `Agentao(extra_tools=)` / `add_tool` (see [5.1](/en/part-5/1-custom-tools)). `origin` records where the tool came from (`builtin` / `host` / `mcp` / `agent` / `plan`); hosts leave it at `host`. A replacement overwrites it |
-| `origin(name: str) -> str` | The recorded origin. Sub-agents decide by it and give host tools to no sub-agent, including a host tool that replaced a built-in with an instance of the built-in's own class. A tool put in `tools` without `register` reads as `host`. Raises `KeyError` for an unknown name |
+| `origin(name: str) -> str` | The recorded origin. Sub-agents decide by it: a `host` tool reaches a sub-agent only when the tool declares `copies_to_subagents`, and then as a copy — including a host tool that replaced a built-in with an instance of the built-in's own class, which is why class identity is not the test. A tool put in `tools` without `register` reads as `host`. Raises `KeyError` for an unknown name |
 | `unregister(name: str) -> bool` | Remove `name`; returns whether it existed. Pure dict op |
 | `get(name: str) -> Tool` | Raises `KeyError` with available-tools list |
 | `list_tools() -> list[Tool]` | |

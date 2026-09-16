@@ -11,6 +11,25 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **A host tool can opt in to reaching sub-agents.** Declare
+  `copies_to_subagents` on the tool object — a property on the `Tool` /
+  `AsyncToolBase` base, defaulting to `False` — and each spawn registers one
+  `copy.copy` of the instance with origin `host`. Undeclared tools stay absent,
+  as before, **and so does the name they occupied**: a host tool that replaced
+  `read_file` does not leave the built-in visible underneath it. The copy is
+  what makes this safe to use from two threads — the executor rebinds
+  `output_callback` on the instance per call, under a lock scoped to one batch —
+  so returning `True` promises that whatever the shallow copy still *shares*
+  (closures, clients, pools) tolerates concurrent use; implement `__copy__` for
+  a deeper split. One copy per spawn, not per call, so a tool keeps state across
+  a sub-task. A copy or a declaration that raises leaves the tool absent with a
+  warning naming the exception, never shared and never replaced by the built-in
+  — and so do the two ways to declare it wrong: a bare `def` in place of the
+  `@property` (a bound method is truthy whatever it returns) and a `__copy__`
+  that answers with `self` or with a differently-named tool.
+  The declaration does not outrank an agent definition's `tools:` list. See
+  `developer-guide/*/part-5/1-custom-tools.md`.
+
 - **`ToolRegistry` records where each tool came from.** `register()` takes a
   keyword-only `origin` (`builtin`, `host`, `mcp`, `agent` or `plan`), which
   defaults to `host`, and `origin(name)` reads it back. A replacement

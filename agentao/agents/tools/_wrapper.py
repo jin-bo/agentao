@@ -17,6 +17,7 @@ extracted.
 
 from __future__ import annotations
 
+import copy
 import logging
 import threading
 import time
@@ -49,6 +50,104 @@ _INCOMPLETE_DETAILS: Dict[str, str] = {
 # vocabulary — ``max_iterations`` is a separate axis by design — so it gets its
 # own key rather than being smuggled into that closed set.
 _MAX_ITERATIONS_REASON = "max_iterations"
+
+
+def _copy_declared_host_tool(
+    tool: RegistrableTool, name: str, agent_name: str,
+) -> Optional[RegistrableTool]:
+    """The copy a host tool contributes to a sub-agent, or ``None`` (SUB-03).
+
+    ``None`` means the tool is absent from the sub-agent, and so is the name
+    it occupied — the caller never falls back to sharing ``tool`` or to the
+    built-in it may have replaced. Five ways to get there, and every failure
+    logs once, naming the tool and what was wrong with it:
+
+    - the tool does not declare ``copies_to_subagents`` (the default, and
+      silent: an undeclared host tool being absent is the contract, not a
+      fault);
+    - reading the declaration raises. Fail closed: a property that cannot say
+      yes has not said yes;
+    - the declaration is **callable** — a host wrote the override as a plain
+      method instead of a property. A bound method is truthy, so this is the
+      one misreading of the mechanism that would otherwise fail *open*:
+      ``def copies_to_subagents(self): return False`` would read as a yes;
+    - ``copy.copy`` raises. A tool that declared it tolerates a copy and then
+      cannot be copied is a host bug, and the exception is the only useful
+      thing to report about it;
+    - ``copy.copy`` answers with the original instance, or with a tool under
+      another name. A ``__copy__`` returning ``self`` shares the very instance
+      the copy exists to separate, and one returning a differently-named tool
+      would be registered under that other name — where it can displace a
+      built-in this sub-agent *is* keeping. Both are checked rather than
+      trusted, because the promise the two carry ("never shared", "left out by
+      name") is one the caller states unconditionally.
+
+    The declaration is read here rather than at registration because a host
+    may set it per instance, and because a property is free to answer from
+    state that only exists once the tool is wired up.
+    """
+    try:
+        declared = tool.copies_to_subagents
+    except Exception as exc:
+        logger.warning(
+            "Sub-agent '%s' does not get host tool '%s': reading "
+            "`copies_to_subagents` raised %s: %s",
+            agent_name, name, type(exc).__name__, exc,
+        )
+        return None
+    if callable(declared):
+        logger.warning(
+            "Sub-agent '%s' does not get host tool '%s': its "
+            "`copies_to_subagents` is a %s rather than a bool — it looks like "
+            "a method that is missing `@property`. A bound method is truthy "
+            "whatever it returns, so it is read as no declaration.",
+            agent_name, name, type(declared).__name__,
+        )
+        return None
+    if not declared:
+        return None
+    try:
+        copied = copy.copy(tool)
+        copied_name = copied.name
+    except Exception as exc:
+        logger.warning(
+            "Sub-agent '%s' does not get host tool '%s': it declares "
+            "`copies_to_subagents` but copying it (or reading the copy's "
+            "name) raised %s: %s. The parent's instance is never shared "
+            "instead.",
+            agent_name, name, type(exc).__name__, exc,
+        )
+        return None
+    if copied is tool or copied_name != name:
+        logger.warning(
+            "Sub-agent '%s' does not get host tool '%s': copying it returned "
+            "%s. The parent's instance is never shared, and a copy is never "
+            "registered under a name other than the one it was taken from.",
+            agent_name, name,
+            "the original instance"
+            if copied is tool else f"a tool named '{copied_name}'",
+        )
+        return None
+    # The copy must not carry the parent's live ``output_callback``. At spawn
+    # the parent may be inside a call on this same instance — a background
+    # spawn takes its copy on the background thread while the parent's turn
+    # carries on — and that closure emits ``TOOL_OUTPUT`` to the *parent's*
+    # transport under the parent's call id. The sub-agent's executor rebinds
+    # it per call; clearing it here makes the window before that first call
+    # point at nothing, and drops the sub-agent's hold on the parent's
+    # transport.
+    # Written only when there is something to clear, so a tool that never had
+    # the attribute does not acquire one (the executor keys its own binding on
+    # ``hasattr``).
+    try:
+        if getattr(copied, "output_callback", None) is not None:
+            copied.output_callback = None
+    except Exception:  # a read-only or slotted attribute is not worth failing for
+        logger.debug(
+            "Could not clear `output_callback` on the sub-agent's copy of '%s'",
+            name, exc_info=True,
+        )
+    return copied
 
 
 @dataclass(frozen=True)
@@ -629,10 +728,14 @@ class AgentToolWrapper(Tool):
           parent's connection, so the sub-agent opens none;
         - **an agent tool**: left out, so a sub-agent cannot spawn another;
         - **a plan-only tool**: left out;
-        - **a host tool** is left out by name, including one that replaced a
-          built-in. Sharing the host's instance would share whatever state it
-          holds with another thread, and falling back to the built-in under
-          that name would run the very implementation the host replaced.
+        - **a host tool** reaches the sub-agent only when the tool object
+          declares ``copies_to_subagents``, and then as one ``copy.copy`` made
+          here, registered with origin ``host`` (SUB-03 / PR-b). A tool that
+          declares nothing is left out **by name**: falling back to the
+          built-in under that name would run the very implementation the host
+          replaced. Sharing the instance is what the copy exists to avoid —
+          the executor rebinds ``output_callback`` on it per call under a lock
+          scoped to one batch, and a sub-agent's batch holds a different one.
 
         Which of these a parent tool is comes from the origin the parent's
         registry recorded when it was registered (``ToolRegistry.origin``),
@@ -643,6 +746,7 @@ class AgentToolWrapper(Tool):
         """
         own = sub_agent.tools
         requested = self._definition.get("tools")
+        agent_name = self._definition["name"]
         kept: List[Tuple[RegistrableTool, str]] = []
         left_out: List[str] = []
         for name, tool in list(self._all_tools.items()):
@@ -656,6 +760,12 @@ class AgentToolWrapper(Tool):
                 kept.append((tool, "mcp"))
             elif origin == "builtin" and name in own.tools and own.origin(name) == "builtin":
                 kept.append((own.tools[name], "builtin"))
+            elif origin == "host":
+                copied = _copy_declared_host_tool(tool, name, agent_name)
+                if copied is None:
+                    left_out.append(name)
+                else:
+                    kept.append((copied, "host"))
             else:
                 left_out.append(name)
         complete = CompleteTaskTool()
@@ -665,7 +775,6 @@ class AgentToolWrapper(Tool):
         for tool, origin in kept:
             own.register(tool, origin=origin)
 
-        agent_name = self._definition["name"]
         if requested is None:
             if left_out:
                 logger.debug(
@@ -676,7 +785,8 @@ class AgentToolWrapper(Tool):
         if left_out:
             logger.warning(
                 "Sub-agent '%s' lists tools it does not get: %s. A sub-agent gets "
-                "built-in and MCP tools only; host, agent and plan tools are left out.",
+                "built-in and MCP tools, plus host tools that declare "
+                "`copies_to_subagents`; agent and plan tools are left out.",
                 agent_name, ", ".join(sorted(left_out)),
             )
         unavailable = sorted(set(requested) - set(self._all_tools) - {complete.name})

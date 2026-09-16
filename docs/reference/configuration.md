@@ -126,7 +126,7 @@ See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each
 > - **MCP tools**, which run over the parent's connections, so a sub-agent reads no `mcp.json` and launches no server of its own;
 > - `complete_task`, which it always gets.
 >
-> It never gets `extra_tools` or other host tools, **including a host tool that replaced a built-in** (the built-in is not put back under that name), agent tools, or plan tools. A definition whose `tools:` list names one of these logs a warning. See `agents/tools/_wrapper.py::_narrow_tools`.
+> It gets a host tool (`extra_tools=`, `add_tool`, a bare `register`) only when the tool object declares `copies_to_subagents`, and then as one shallow copy made at spawn. An undeclared host tool is absent **and so is the name it occupied** — a host tool that replaced a built-in does not leave the built-in under that name — as is one whose copy — or whose declaration — raises, which logs a warning naming the exception. Agent tools and plan tools are never included. A definition whose `tools:` list names something it does not get logs a warning; the list still applies to a declared host tool. See `agents/tools/_wrapper.py::_narrow_tools`.
 >
 > A sub-agent decides tool calls with a snapshot of the parent's permission engine, taken when it is launched: the same rules (including a host's `rules=` and an `agentao run` spec's) and the same mode. A **background** sub-agent has nobody to ask, so it refuses every call that would need confirmation; what the rules or mode allow outright still runs.
 

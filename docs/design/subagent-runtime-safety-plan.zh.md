@@ -65,9 +65,13 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
 > - **`origin`（SUB-02，PR-a，#256）。**`ToolRegistry.register` 接受仅关键字的 `origin`，默认
 >   `host`，由 `ToolRegistry.origin(name)` 读回。仓内每个注册点都显式传入来源。不经 `register`
 >   直接放进注册表字典的工具读作 `host`。
-> - **SUB-03 的结果，但不靠声明。**宿主工具缺席，它占的名字也缺席。只有来源为 `builtin`、且子代理
->   同名工具的来源也是 `builtin` 时，父级的这个工具才算内置工具。判定不看类型，所以宿主用内置工具
->   自己的类构造的替换就是宿主工具。PR-a 之前以类型相同作替代判据，这种替换会被换回内置工具。
+> - **SUB-03 的结果。**只有来源为 `builtin`、且子代理同名工具的来源也是 `builtin` 时，父级的这个
+>   工具才算内置工具。判定不看类型，所以宿主用内置工具自己的类构造的替换就是宿主工具。PR-a 之前以
+>   类型相同作替代判据，这种替换会被换回内置工具。
+> - **声明（SUB-03，PR-b）。**工具对象上的 `copies_to_subagents`，默认 `False`，在 spawn 时读取。
+>   声明了：每次 spawn 一个 `copy.copy`，按来源 `host` 注册。未声明，或声明本身、拷贝**抛异常**：
+>   缺席，它占的名字也缺席，两类失败各打一条点名异常的 warning。绝不共享原实例，也绝不用内置工具
+>   顶上。声明不盖过定义里的白名单。
 > - **子代理永远拿不到 agent 工具**，定义点名了也一样（SUB-04 去掉了例外）。`agent_manager = None` 保留，
 >   现在只是为了让系统提示词不列出子代理调不了的代理。
 > - **§1 的缺陷已修，但没有共享引擎。**子代理用启动时父引擎的 `PermissionEngine.snapshot()` 做决策，
@@ -131,7 +135,7 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
    > - **为什么声明放在工具对象上。**宿主有三条注册入口：`extra_tools=`、`add_tool`，以及裸
    >   `agent.tools.register`（`examples/ticket-automation/src/triage.py:199-202`、
    >   `examples/saas-assistant/app/main.py:64-65`）。`extra_tools=` 没有针对单个工具的参数。声明的
-   >   名字由 PR-b 确定。
+   >   名字由 PR-b 确定，最终定为 `copies_to_subagents`。
    > - **为什么不用 `ToolForkable.fork_for_agent()`。**按工具提供的工厂控制的是构造，不是隔离：它照样
    >   可以返回与原实例共用同一个客户端、或持有父级 goal 的对象。工具若要定制自己的拷贝，
    >   `__copy__` 已经够用。
@@ -305,7 +309,7 @@ SUB-02、SUB-03 中与宿主工具有关的部分先于 PR-0 的工厂发布，�
 | PR | 内容 | 用户可见 | 依赖 |
 |---|---|---|---|
 | **PR-a**（#256） | `ToolRegistry.register` 增加 SUB-02 的仅关键字 `origin`，默认 `host`，这是对公开方法的兼容扩展。仓内每个注册点都显式传入来源，替换时覆盖来源。`_narrow_tools` 按来源判定，删除同类型判断。**不引入任何让宿主工具进入子代理的途径**：宿主工具仍然缺席 | 是 —— 宿主用内置工具自己的类构造的替换（`extra_tools=[WebSearchTool(backend="bocha", …)]`）不再被换回子代理的默认实例 | — |
-| **PR-b** | 工具对象上的声明；每个子代理一份浅拷贝，启动时做，按来源 `host` 注册；拷贝失败则缺席并说明原因（§2 第 2 项的表） | 是 —— 按工具选择启用 | PR-a |
+| **PR-b**（已实施） | 工具对象上的声明；每个子代理一份浅拷贝，启动时做，按来源 `host` 注册；拷贝失败则缺席并说明原因（§2 第 2 项的表）。**实现为 `copies_to_subagents`**，`_BaseTool` 上的属性，默认 `False`，由 `_narrow_tools` 经 `_copy_declared_host_tool` 读取。声明本身*抛异常*同样按 fail-closed 处理为缺席，这一条验收清单里没写；另外两种写错声明的方式也一样：该写 `@property` 的地方只写了 `def`（绑定方法无论返回什么都是真值，这是唯一会 fail-*open* 的误读），以及 `__copy__` 返回 `self` 或返回名字不同的工具 | 是 —— 按工具选择启用 | PR-a |
 
 **PR-a 的验收：**
 - 经 `extra_tools=`、`add_tool(replace=True)` 或裸 `agent.tools.register(replace=True)`，用内置工具

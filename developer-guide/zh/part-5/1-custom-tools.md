@@ -1,7 +1,7 @@
 # 5.1 自定义工具与宿主注入
 
 > **本节你会学到**
-> - `Tool` 子类的 6 大要素：name / description / parameters / execute / requires_confirmation / is_read_only
+> - `Tool` 子类的 7 大要素：name / description / parameters / execute / requires_confirmation / is_read_only / copies_to_subagents
 > - 怎样写一个 LLM 真用得上的 description（这件事比代码本身更重要）
 > - 宿主如何注入、替换、移除或白名单化工具
 > - Tool / Skill / MCP 三选一的判断标准
@@ -52,7 +52,7 @@ class MyTool(Tool):
         return f"Found {len(results)} items: {results}"
 ```
 
-**6 个必须掌握的要点**：
+**7 个必须掌握的要点**：
 
 | 属性/方法 | 必填 | 说明 |
 |---------|------|------|
@@ -62,6 +62,45 @@ class MyTool(Tool):
 | `execute(**kwargs) -> str` | ✅ | 返回纯字符串；不能返回 dict/bytes |
 | `requires_confirmation` | ❌ | 写/网络/危险操作应 True，走 confirm_tool 流程 |
 | `is_read_only` | ❌ | 纯读时 True；权限引擎/Plan 模式据此优化 |
+| `copies_to_subagents` | ❌ | True 表示允许子代理使用该工具，且以副本形式——见下文。默认 False：你的工具不会进入任何子代理 |
+
+## 让子代理能用你的工具
+
+默认情况下，宿主工具**不会出现在任何子代理里**，它占用的那个名字也一起消失：你注册为
+`read_file` 的工具，不会让内置的 `read_file` 从它底下露出来。要开启，需显式声明：
+
+```python
+class DeployTool(Tool):
+    @property
+    def copies_to_subagents(self) -> bool:
+        return True
+```
+
+之后每次 spawn 会注册**你这个实例的一个 `copy.copy`**，而不是实例本身。返回 True
+是一个运行时无法校验的承诺，它同时声明三件事：
+
+1. 这个工具适合交给子任务；
+2. 它能承受 `copy.copy` ——浅拷贝，所以子代理的调用无法改写你实例上的属性；
+3. 副本与原对象**仍然共享**的每一个依赖——闭包、HTTP 客户端、连接池、容器句柄——都能
+   承受父代理与子代理的并发使用，而两者跑在**不同线程**上。
+
+第 3 条最容易出问题，因为浅拷贝只分离实例自身的属性。如果你的工具需要更深的分离，
+实现 `__copy__`；同一个承诺覆盖它所做的一切。
+
+机制还有三点：
+
+- **每次 spawn 一个副本，而不是每次调用一个**，所以工具可以在一个子任务的多次调用之间
+  保留状态。
+- **拷贝或声明本身抛异常，则该工具缺席**，并打一条点名异常的 warning。绝不会退回共享原实例，
+  也绝不会用它可能覆盖掉的那个内置工具顶上。`__copy__` 返回 `self`、或返回名字不同的工具，
+  同样按缺席处理。
+- **必须写成 `@property`**（或直接用一个布尔类属性）。只写 `def copies_to_subagents(self)`
+  会被读作**没有**声明并打日志——绑定方法无论返回什么都是真值，若按真值处理，你写
+  `return False` 反而会把工具放进子代理。
+
+这个声明**并不**盖过 agent 定义里的 `tools:` 白名单：定义没列出的工具，即使声明了也仍然
+缺席。它也不对语义作任何保证——持有*当前这个*会话状态的工具，比如 CLI 自己的
+`update_goal`，无论拷贝多深都不该声明它。
 
 ## 为什么 `execute` 只能返回字符串？
 
