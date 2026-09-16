@@ -78,8 +78,7 @@ def handle_skills_command(cli: AgentaoCLI, args: str) -> None:
         return
 
     if sub_cmd == "reload":
-        manager.reload_skills()
-        count = len(manager.list_available_skills())
+        count = manager.reload_skills()
         console.print(f"\n[success]Skills reloaded. {count} available.[/success]\n")
         return
 

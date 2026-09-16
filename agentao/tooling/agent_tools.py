@@ -100,6 +100,10 @@ def register_agent_tools(agent: "Agentao") -> None:
         cancellation_token_getter=lambda: agent._current_token,
         readonly_mode_getter=lambda: getattr(agent, 'tool_runner', None) is not None and agent.tool_runner.readonly_mode,
         permission_engine_getter=lambda: getattr(agent.tool_runner, '_permission_engine', None),
+        # Live getter: in the CLI a plugin's skills are registered onto this
+        # manager *after* the agent is built, so a sub-agent spawned later
+        # has to read it at spawn to see them (#254).
+        skill_manager_getter=lambda: getattr(agent, "skill_manager", None),
         sandbox_policy=getattr(agent, "sandbox_policy", None),
         subagent_emitter=getattr(agent, "_host_subagent_emitter", None),
         # The backends the parent's built-ins were bound to, so a sub-agent's

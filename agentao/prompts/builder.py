@@ -47,6 +47,11 @@ if TYPE_CHECKING:  # pragma: no cover - import-time only
 
 _logger = logging.getLogger("agentao.prompt_diag")
 
+# The tool the available-skills catalogue tells the model to call.
+# Spelled here rather than imported: ``agentao.tools`` pulls the whole
+# tool package in, and the prompt builder only needs the name.
+_ACTIVATE_SKILL_TOOL = "activate_skill"
+
 
 def _prompt_dialect(agent) -> str:
     """Which shell syntax the guidelines should speak, read from the tool that will run it.
@@ -248,6 +253,21 @@ class SystemPromptBuilder:
         return out
 
     def _available_skills_block(self) -> str:
+        # The catalogue is an instruction to call ``activate_skill``, so it is
+        # only true for an agent that has that tool. It can be absent three
+        # ways: ``disable_tools``, an ``enabled_tools`` allowlist that omits
+        # it, or a sub-agent whose definition lists other tools (#254). Gated
+        # on the registry rather than on who the agent is; gemini-cli gates
+        # the same block the same way
+        # (``agents/local-executor.ts``: ``getTool(ACTIVATE_SKILL_TOOL_NAME)``).
+        #
+        # Only the catalogue. The *active* block stays unconditional: a CLI
+        # ``/skills activate`` calls the manager directly, so a skill can be
+        # active for an agent that never had the tool.
+        registry = getattr(self._agent, "tools", None)
+        registered = getattr(registry, "tools", None)
+        if registered is not None and _ACTIVATE_SKILL_TOOL not in registered:
+            return ""
         skill_manager = self._agent.skill_manager
         available_skills = skill_manager.list_available_skills()
         active_names = set(skill_manager.get_active_skills().keys())

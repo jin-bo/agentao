@@ -163,6 +163,6 @@ codex V2 的 actor / 邮箱 / 路径注册表 / residency 逐出，前提是**�
 | 等待 | V2 `wait_agent` 只收 `timeout_ms`、park 在邮箱上；V1 才是点名 join 回状态表（`multi_agents/wait.rs:274-284`） | 无等待原语 |
 | 打断 | `interrupt_agent`，**agent 仍存活可再接任务** | `cancel_background_agent` + `CancellationToken`（`_bg_tools.py:116`） |
 | 完成信号 | 子方正常结束一个 turn | 子方**必须**调 `complete_task(result)`（`_complete.py`，控制流走异常） |
-| 技能 | role 可携带 `skills` | `SkillManager(skills_dir="/nonexistent")`，一律不继承（`_wrapper.py:540`） |
+| 技能 | role 可携带 `skills` | `parent.skill_manager.child_view()`：父级目录与禁用集合复制一份，`active_skills` 置空（#254，2026-09-16；`skills/manager.py::child_view`、`agents/tools/_wrapper.py::_child_skill_manager`）。此前是 `SkillManager(skills_dir="/nonexistent")`，一律不继承 |
 | 崩溃恢复 | thread-store + rollout，可 `resume_agent` | `bg_store.recover()` 把孤儿重分类为 failed，带跨进程「仅首个 store 重分类」保护（`bg_store.py:29-35,506`） |
 | agent 间通信 | `send_message` / `followup_task` 入队 | 无（`grep -rn "send_message\|mailbox\|inbox" agentao/agents/` → 零命中） |

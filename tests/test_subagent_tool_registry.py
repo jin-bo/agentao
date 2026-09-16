@@ -64,12 +64,16 @@ def _call(name, **arguments):
     )
 
 
-def _sub_agents_call(monkeypatch, *calls):
+def _sub_agents_call(monkeypatch, *calls, prompts=None):
     """Make every sub-agent run ``calls`` through its own ``ToolRunner``.
 
     Returns ``(results, sub_agents)``: each result keyed by the name the call
     was made with, and the sub-agents that ran. Keyed by call, not by the name
-    on the result message, which the planner's name repair can change."""
+    on the result message, which the planner's name repair can change.
+
+    ``prompts``, when given a list, also collects the system prompt each
+    sub-agent would send on its *next* turn — built while it is still alive,
+    which is the only place the effect of an activation is visible."""
     results, sub_agents = {}, []
 
     def chat(self, user_message, max_iterations=100, cancellation_token=None, images=None):
@@ -80,6 +84,8 @@ def _sub_agents_call(monkeypatch, *calls):
         self.messages.extend(messages)
         by_id = {m["tool_call_id"]: m["content"] for m in messages}
         results.update({c.function.name: by_id[c.id] for c in calls})
+        if prompts is not None:
+            prompts.append(self._build_system_prompt())
         return ""
 
     monkeypatch.setattr(Agentao, "chat", chat)
@@ -347,27 +353,159 @@ def test_a_left_out_tool_warns_only_when_the_definition_lists_it(
         assert "read_file" in warnings[0]
 
 
-def test_activate_skill_operates_on_the_manager_the_prompt_is_built_from(
-    tmp_path, monkeypatch,
-):
-    """A sub-agent gets no skills, and its ``activate_skill`` has to agree.
+# ── skills: the parent's catalogue, the child's activations (#254) ──────────
 
-    The tool binds to whatever manager the agent held when it was built, so
-    replacing ``sub_agent.skill_manager`` after construction left it activating
-    out of the discovery-scanned manager the prompt no longer reads: the model
-    could turn on a skill the prompt never listed, and the activation landed
-    where nothing would look for it."""
+
+def _project_skill(tmp_path, name, *, description="A demo skill", body="BODY"):
+    d = tmp_path / ".agentao" / "skills" / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n\n{body}\n",
+        encoding="utf-8",
+    )
+
+
+def _sub_agent_turn(monkeypatch, *calls):
+    """``_sub_agents_call`` with the system prompts collected too."""
+    prompts: list = []
+    results, sub_agents = _sub_agents_call(monkeypatch, *calls, prompts=prompts)
+    return results, prompts, sub_agents
+
+
+def test_a_sub_agent_activates_out_of_the_parents_catalogue(tmp_path, monkeypatch):
+    """The parent's skills reach a sub-agent, and activating one works end to end.
+
+    A sub-agent used to be built with an empty manager, so the catalogue was
+    the parent's alone. Three things have to agree for an activation to mean
+    anything: the tool advertises the skill, the tool and the prompt read the
+    same manager (#259), and the body lands in the next turn's prompt — which
+    is what #254 measured and found missing."""
+    _project_skill(tmp_path, "demo-skill", body="MARKER-DEMO-BODY")
     parent = _parent(tmp_path)
-    _, sub_agents = _sub_agents_call(monkeypatch)
+    results, prompts, sub_agents = _sub_agent_turn(
+        monkeypatch,
+        _call("activate_skill", skill_name="demo-skill", task_description="t"),
+    )
+    try:
+        _run(parent)
+        (sub_agent,) = sub_agents
+        advertised = {t["function"]["name"] for t in sub_agent.tools.to_openai_format()}
+        enum = [
+            t["function"]["parameters"]["properties"]["skill_name"].get("enum")
+            for t in sub_agent.tools.to_openai_format()
+            if t["function"]["name"] == "activate_skill"
+        ][0]
+    finally:
+        parent.close()
+
+    tool = sub_agent.tools.tools["activate_skill"]
+    assert tool.skill_manager is sub_agent.skill_manager
+    assert "activate_skill" in advertised
+    assert "demo-skill" in enum
+    assert "Skill Activated: demo-skill" in results["activate_skill"]
+    assert "MARKER-DEMO-BODY" in prompts[0]
+
+
+def test_a_plugin_skill_reaches_a_sub_agent(tmp_path, monkeypatch):
+    """Plugin skills are registered onto the parent's manager *after* it is
+    built, and an inline one is backed by no file at all — so a sub-agent that
+    re-scanned the skill directories would find neither."""
+    from agentao.plugins.models import PluginSkillEntry
+
+    parent = _parent(tmp_path)
+    assert parent.skill_manager.register_plugin_skills([
+        PluginSkillEntry(
+            runtime_name="demo:linter",
+            plugin_name="demo",
+            source_kind="plugin-skill",
+            description="Runs the linter",
+            content="# Linter\n\nMARKER-PLUGIN-BODY",
+        ),
+    ]) == []
+    results, prompts, sub_agents = _sub_agent_turn(
+        monkeypatch,
+        _call("activate_skill", skill_name="demo:linter", task_description="t"),
+    )
     try:
         _run(parent)
         (sub_agent,) = sub_agents
     finally:
         parent.close()
 
-    tool = sub_agent.tools.tools["activate_skill"]
-    assert tool.skill_manager is sub_agent.skill_manager
+    assert "demo:linter" in sub_agent.skill_manager.available_skills
+    assert "Skill Activated: demo:linter" in results["activate_skill"]
+    assert "MARKER-PLUGIN-BODY" in prompts[0]
+
+
+def test_an_activation_stays_inside_the_sub_agent_that_made_it(tmp_path, monkeypatch):
+    """The catalogue is shared; the activation state is not. A skill a
+    sub-agent turned on must not reach the parent's prompt — a background one
+    runs while the parent is mid-session — nor a sibling's."""
+    _project_skill(tmp_path, "demo-skill", body="MARKER-DEMO-BODY")
+    parent = _parent(tmp_path)
+    _, _, activating = _sub_agent_turn(
+        monkeypatch,
+        _call("activate_skill", skill_name="demo-skill", task_description="t"),
+    )
+    try:
+        _run(parent)
+        (first,) = activating
+        assert "demo-skill" in first.skill_manager.get_active_skills()
+
+        _, _, other = _sub_agent_turn(monkeypatch)
+        _run(parent)
+        (second,) = other
+        parent_prompt = parent._build_system_prompt()
+    finally:
+        parent.close()
+
+    assert first.skill_manager is not parent.skill_manager
+    assert second.skill_manager is not first.skill_manager
+    assert parent.skill_manager.get_active_skills() == {}
+    assert second.skill_manager.get_active_skills() == {}
+    assert "MARKER-DEMO-BODY" not in parent_prompt
+
+
+def test_a_sub_agent_without_activate_skill_gets_no_catalogue(tmp_path, monkeypatch):
+    """``codebase-investigator`` lists its tools and ``activate_skill`` is not
+    among them. Advertising skills it cannot activate is the same lie #254
+    reported, one layer up."""
+    _project_skill(tmp_path, "demo-skill")
+    parent = _parent(tmp_path)
+    _, prompts, sub_agents = _sub_agent_turn(monkeypatch)
+    try:
+        _run(parent, "agent_codebase_investigator")
+        (sub_agent,) = sub_agents
+        advertised = {t["function"]["name"] for t in sub_agent.tools.to_openai_format()}
+    finally:
+        parent.close()
+
+    assert "activate_skill" not in advertised
+    assert "demo-skill" in sub_agent.skill_manager.available_skills
+    assert "=== Available Skills ===" not in prompts[0]
+
+
+def test_a_child_view_that_answers_with_nothing_leaves_the_sub_agent_skill_less(
+    tmp_path, monkeypatch, caplog,
+):
+    """Never ``skill_manager=None``: that means "scan for your own", which
+    re-runs the three-directory discovery and the unlocked bundled-skill
+    ``copytree`` once per spawn, and hands the child a catalogue the parent
+    does not advertise. Every failure lands on an explicit empty manager."""
+    _project_skill(tmp_path, "demo-skill")
+    parent = _parent(tmp_path)
+    parent.skill_manager.child_view = lambda: None
+    _, _, sub_agents = _sub_agent_turn(monkeypatch)
+    try:
+        with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+            _run(parent)
+        (sub_agent,) = sub_agents
+    finally:
+        parent.close()
+
+    assert sub_agent.skill_manager is not None
     assert sub_agent.skill_manager.available_skills == {}
+    assert any("returned None" in r.getMessage() for r in caplog.records)
 
 
 # ── MCP: the parent's connection ────────────────────────────────────────────

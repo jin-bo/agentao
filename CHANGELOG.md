@@ -75,6 +75,37 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A sub-agent gets the parent's skills, with activation state of its own.** It
+  was built with an empty `SkillManager`, so a skill the parent had discovered —
+  or that a plugin registered onto it — was invisible to every sub-agent, and
+  `activate_skill` was a tool that could only answer that the skill is unknown.
+  Each spawn now builds a `child_view()` of the parent's live manager: the same
+  catalogue and disabled set, an empty `active_skills`. Derived rather than
+  re-scanned, because a re-scan reproduces neither a plugin's in-memory entries
+  (some have no file at all) nor a catalogue a host injected, and would re-run
+  the bundled-skill `copytree` once per spawn from background threads. The
+  activation stays the child's: a skill a sub-agent turns on does not reach the
+  parent's prompt or a sibling's, and the parent's active skills are not
+  inherited — the child activates what its own task needs. A sub-agent whose
+  definition does not list `activate_skill` (`codebase-investigator`) gets no
+  skills block at all, and neither does any agent without that tool: the
+  catalogue is an instruction to call it, so `disable_tools` and an
+  `enabled_tools` allowlist now drop it too. Active skills still render without
+  the tool — `/skills activate` calls the manager directly. Every way the
+  derivation can fail lands on an explicit empty manager, never on
+  `skill_manager=None`: that spelling means "scan for your own", which is the
+  per-spawn discovery and `copytree` this change exists to avoid. `child_view()`
+  itself refuses a `copy.copy` that answers with the parent — emptying
+  `active_skills` on it would clear the parent's mid-session — and a derived
+  view never persists its forked disabled set over the user's
+  `skills_config.json`. (#254)
+
+- **`/crystallize` confirms the skill it just wrote.** `SkillManager.reload_skills()`
+  returned nothing while its caller read the return value (`count = ...` then
+  `if count is not None`), so the success line was unreachable and a skill that
+  had been written fine was reported as one agentao could not confirm. It now
+  returns the available count, the same number `/skills reload` prints.
+
 - **A sub-agent's `save_memory` now writes where the parent's writes.** Built-ins
   reach a sub-agent as the child's own instances, which is right for the
   filesystem and the shell — both bound to the parent's backends — and took the

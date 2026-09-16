@@ -154,6 +154,7 @@ class AgentManager:
         shell: Optional[Any] = None,
         permission_engine_getter: Optional[Callable] = None,
         tool_origin_getter: Optional[Callable[[str], str]] = None,
+        skill_manager_getter: Optional[Callable[[], Any]] = None,
     ) -> List[RegistrableTool]:
         """Create an :class:`AgentToolWrapper` per agent definition.
 
@@ -167,6 +168,11 @@ class AgentManager:
         as a host tool, so a sub-agent gets only ``complete_task`` plus
         whatever declares ``copies_to_subagents`` — not the built-ins and MCP
         tools it should have.
+
+        ``skill_manager_getter`` returns the parent's live ``SkillManager``;
+        each sub-agent is built with a ``child_view()`` of it. Without it a
+        sub-agent has no skills, which is coherent but silently drops the
+        parent's catalogue (#254).
         """
         _readonly_getter = readonly_mode_getter or (lambda: False)
         wrappers = [
@@ -191,6 +197,7 @@ class AgentManager:
                 shell=shell,
                 permission_engine_getter=permission_engine_getter,
                 tool_origin_getter=tool_origin_getter,
+                skill_manager_getter=skill_manager_getter,
             )
             for defn in self.definitions.values()
         ]
