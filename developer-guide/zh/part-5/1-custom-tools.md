@@ -124,7 +124,8 @@ def execute(self, **kwargs) -> str:
 在工具调用写回对话历史或真正执行之前，Agentao 会规范化模型产出的 function-call payload：
 
 - 参数字符串在能安全修复时会被解析并重新输出为紧凑 JSON
-- 近似但不完全匹配的工具名可修复为已注册工具名
+- 工具名只有在规范化（大小写、分隔符、camelCase、结尾的 `Tool` 后缀）后**精确等于**某个已注册名时
+  才会被修复；仅仅是**相似**的名字会报告为未找到，由模型重新发起调用
 - lone UTF-16 surrogate 字符会在 assistant/tool 消息发回严格 provider API 前被清洗
 - 每个 assistant `tool_call_id` 都会得到对应的 `role:tool` 消息，包括参数解析错误和循环保护中止
 

@@ -1,30 +1,40 @@
 """Conservative repair for malformed tool-call *names*.
 
 Claude-style models occasionally emit class-like names (``TodoTool_tool``,
-``BrowserClick_tool``, ``PatchTool``) instead of the snake_case names
-they were given. Without repair the planner returns "Unknown tool" and
-the model burns a turn re-asking. This module tries cheap normalisations
-before falling back to fuzzy match (``difflib`` at cutoff 0.7 — the
-safety rail that prevents guessing across unrelated names).
+``BrowserClick_tool``, ``PatchTool``) instead of the snake_case names they were
+given. Without repair the planner returns "Unknown tool" and the model burns a
+turn re-asking. This module normalises spelling — case, separators, camelCase,
+a trailing ``Tool`` suffix — and answers only when a normalisation lands on a
+name the runtime is actually offering.
 
-A cutoff cannot tell a misspelling from a different tool, though: ``read_file``
-and ``write_file`` are as close as a typo. So a name that spells — or merely
-comes closest to — a real tool this runtime does not offer is never repaired
-into another one (see ``repair_tool_name``).
+**It does not guess by similarity** (#261). Until 0.4.24 an unresolved name
+fell through to ``difflib.get_close_matches`` at cutoff 0.7 and the winner was
+*dispatched*, which is a different thing from suggesting it: a cutoff cannot
+tell a misspelling from a different tool, because ``read_file`` and
+``write_file`` are as close as a typo. Two rounds of patching that — first
+refusing names that spell a known-but-unoffered tool, then ranking the pool
+over the known names too — each closed the case in front of it and left the
+shape intact, because the premise was wrong. Both peers agentao is measured
+against reject the name instead: codex returns an "unsupported call"
+(`core/src/tools/registry.rs`), and gemini-cli errors with a "did you mean"
+built from edit distance but *never runs the suggestion*
+(`core/src/scheduler/scheduler.ts`).
+
+So an unresolved name is now unresolved. The model is told the tool was not
+found and which tools exist, and re-issues the call — one extra turn on a
+genuine typo, in exchange for never running a tool nobody asked for. Adding a
+"did you mean" to that error would be a strict improvement and is deliberately
+not done here; the error already lists the available tools.
 """
 
 from __future__ import annotations
 
 import re
-from difflib import get_close_matches
 from typing import Iterable, Optional, Set
 
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")
 _TOOL_SUFFIXES = ("_tool", "-tool", "tool")
-_FUZZY_CUTOFF = 0.7
-# Namespaces whose every name is a tool of its own: an MCP tool, an agent tool.
-_TOOL_NAMESPACES = ("mcp_", "agent_")
 
 
 def _normalise_separators(s: str) -> str:
@@ -43,33 +53,23 @@ def _strip_tool_suffix(s: str) -> Optional[str]:
     return None
 
 
-def repair_tool_name(
-    name: str,
-    valid_names: Iterable[str],
-    *,
-    known: Optional[Iterable[str]] = None,
-) -> Optional[str]:
-    """Return a name from ``valid_names`` that the LLM probably meant, or None.
+def repair_tool_name(name: str, valid_names: Iterable[str]) -> Optional[str]:
+    """Return the name in ``valid_names`` that ``name`` *spells*, or None.
 
-    ``valid_names`` is iterated multiple times — pass a set/frozenset for O(1)
-    membership. Order never decides a fuzzy tie: the pool is ranked in sorted
-    order, so the same call answers the same way in every process (a set's
-    iteration order varies with ``PYTHONHASHSEED``, and ``get_close_matches``
-    breaks a tie by the order it is given).
+    Every answer is a name from ``valid_names`` that one of the normalisations
+    reproduces exactly, so the result is decided by spelling alone: no
+    similarity threshold, no ranking, and therefore nothing that can depend on
+    iteration order or on which tools happen to be offered alongside.
 
-    ``known`` names tools that exist whether or not this runtime offers them
-    (default: the built-ins). A name that spells one of them, or any ``mcp_`` /
-    ``agent_`` name, means that tool: when it is not offered, the answer is
-    None, not the closest tool that is. Otherwise a call for a tool the
-    runtime withheld ran a different one. A sub-agent not given ``read_file``
-    wrote with ``write_file``, and one whose host had replaced
-    ``check_background_agent`` cancelled the task it meant to check.
+    That is the whole guarantee, and it is what makes the withheld-tool class
+    unreachable rather than guarded. A sub-agent not given ``read_file`` cannot
+    have the call repaired into ``write_file``; a host tool the sub-agent was
+    denied cannot be repaired into a different host tool it was granted
+    (``deploy_site`` → ``deploy_docs``, #261). None of those spellings
+    normalises to an offered name, so there is no candidate to return.
 
-    An exact spelling is not the only way to name a withheld tool, so the
-    fuzzy pass ranks over the offered names **and** the known ones and answers
-    None when a known-but-unoffered name wins: ``read_files`` is one character
-    from ``read_file`` and nowhere near ``write_file``, yet matching it against
-    the offered names alone returned ``write_file`` — the very case above.
+    ``valid_names`` may be any iterable; it is materialised into a set for
+    membership, and order is never consulted.
     """
     if not name:
         return None
@@ -97,23 +97,10 @@ def repair_tool_name(
                 extra.add(_camel_to_snake(stripped))
         candidates |= extra
 
-    for c in candidates:
+    # Sorted so that a name whose normalisations produce two *different*
+    # offered names — possible in principle, e.g. a registry holding both
+    # ``patch`` and ``patch_tool`` — always resolves to the same one.
+    for c in sorted(candidates):
         if c and c in valid:
             return c
-
-    if known is None:
-        # Deferred: ``tooling`` registers tools, which is above ``runtime``.
-        from ..tooling.registry import BUILTIN_TOOL_NAMES as known
-    known_set = known if isinstance(known, (set, frozenset)) else set(known)
-    if any(c and (c in known_set or c.startswith(_TOOL_NAMESPACES)) for c in candidates):
-        return None
-
-    # Rank over the offered names *and* the known ones, then accept the winner
-    # only if it is offered. Ranking over the offered names alone repairs a
-    # near-miss of a withheld tool into whatever is closest among the rest.
-    matches = get_close_matches(
-        lowered, sorted(valid | known_set), n=1, cutoff=_FUZZY_CUTOFF,
-    )
-    if matches and matches[0] in valid:
-        return matches[0]
     return None

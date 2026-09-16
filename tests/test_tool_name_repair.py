@@ -49,8 +49,12 @@ class TestExistingBehaviorStillWorks:
     def test_space_to_underscore(self):
         assert repair_tool_name("write file", VALID) == "write_file"
 
-    def test_fuzzy_near_miss(self):
-        assert repair_tool_name("terminall", VALID) == "terminal"
+    def test_a_near_miss_is_not_guessed(self):
+        """``terminall`` is one character from ``terminal`` and is still not
+        dispatched to it (#261). Similarity cannot tell a typo from a different
+        tool, so the model is told the name was not found and re-issues the
+        call — one extra turn, no wrong tool."""
+        assert repair_tool_name("terminall", VALID) is None
 
     def test_unknown_returns_none(self):
         assert repair_tool_name("xyz_no_such_tool", VALID) is None
@@ -430,9 +434,16 @@ class TestRunnerNormalizeToolCalls:
 
 class TestNamesOfRealToolsAreNotRepairedIntoOthers:
     """A cutoff cannot tell a misspelling from a different tool: ``read_file``
-    and ``write_file`` are as close as a typo. A name that spells a real tool
-    the runtime does not offer (a built-in it withheld, any ``mcp_`` or
-    ``agent_`` name) is not found, rather than run as its nearest neighbour."""
+    and ``write_file`` are as close as a typo. So no name is repaired by
+    similarity at all (#261) — a name resolves only when a normalisation
+    reproduces an offered name exactly.
+
+    These cases were guarded twice before they were made unreachable: first by
+    refusing names that *spell* a known-but-unoffered tool, then by ranking the
+    similarity pool over the known names too. Both patches held for the inputs
+    in front of them and left the mechanism that produced them in place. They
+    are kept here as behaviour pins, and every one of them now passes because
+    there is no pass left to cross."""
 
     @pytest.mark.parametrize(
         "name, offered",
@@ -449,13 +460,24 @@ class TestNamesOfRealToolsAreNotRepairedIntoOthers:
     def test_a_withheld_tool_is_not_found(self, name, offered):
         assert repair_tool_name(name, offered) is None
 
-    def test_a_misspelling_is_still_repaired(self):
-        assert repair_tool_name("read_fil", {"read_file"}) == "read_file"
+    def test_a_normalisation_is_still_repaired(self):
+        """What survives is spelling, not similarity: the suffix strip is an
+        exact reproduction of an offered name."""
         assert repair_tool_name("read_file_tool", {"read_file"}) == "read_file"
+        assert repair_tool_name("ReadFile", {"read_file"}) == "read_file"
+        assert repair_tool_name("read-file", {"read_file"}) == "read_file"
 
-    def test_known_can_be_given(self):
-        assert repair_tool_name("host_lookup", {"host_lookups"}) == "host_lookups"
-        assert repair_tool_name("host_lookup", {"host_lookups"}, known={"host_lookup"}) is None
+    def test_a_truncation_is_not_repaired(self):
+        """``read_fil`` normalises to nothing offered, so it is not found."""
+        assert repair_tool_name("read_fil", {"read_file"}) is None
+
+    def test_a_host_tool_one_character_off_is_not_found(self):
+        """This used to need the ``known=`` parameter to stop, and ``known``
+        was passed by neither production caller — which is what made #261
+        reachable for host tool names. With no similarity pass there is
+        nothing to tell apart, so the parameter is gone."""
+        assert repair_tool_name("host_lookup", {"host_lookups"}) is None
+        assert repair_tool_name("deploy_site", {"deploy_docs"}) is None
 
     @pytest.mark.parametrize(
         "name, offered, meant",
@@ -475,22 +497,106 @@ class TestNamesOfRealToolsAreNotRepairedIntoOthers:
     ):
         """An exact spelling is not the only way to name a withheld tool.
 
-        Ranking the fuzzy pass over the offered names alone let a one-character
-        variation land on whatever was closest among them — ``read_files``
-        became ``write_file``, the very case the guard was added for. The pool
-        has to contain the known names too, so the winner can be recognised as
-        one the runtime does not offer."""
+        These were the cases that defeated the first guard: a one-character
+        variation landed on whatever was closest among the offered names, so
+        ``read_files`` became ``write_file`` — the very failure the guard had
+        been added for. The second round widened the ranking pool; this one
+        removes the ranking, which is what makes the class unreachable instead
+        of merely covered."""
         assert meant not in offered  # the premise: it was withheld
         assert repair_tool_name(name, offered) is None
 
-    def test_a_fuzzy_tie_does_not_depend_on_iteration_order(self):
-        """``get_close_matches`` breaks a tie by the order it is handed, and a
-        set's order varies with ``PYTHONHASHSEED``. The pool is sorted, so two
-        equally-close names always resolve to the same one."""
+    def test_two_equally_close_names_resolve_to_neither(self):
+        """The old pass ranked candidates and dispatched the winner, so a tie
+        was broken by ``get_close_matches``'s argument order — and a set's
+        order varies with ``PYTHONHASHSEED``, making the *same* model output
+        dispatch differently in the next process. Nothing is ranked now, so
+        both names are simply not what was asked for."""
         offered = {"aa_tool_x", "aa_tool_y"}
-        first = repair_tool_name("aa_tool_z", offered)
-        assert first is not None
-        assert all(
-            repair_tool_name("aa_tool_z", set(offered)) == first for _ in range(20)
+        assert repair_tool_name("aa_tool_z", offered) is None
+        assert repair_tool_name("aa_tool_z", list(reversed(sorted(offered)))) is None
+
+    def test_the_result_never_depends_on_what_else_is_offered(self):
+        """The property the two previous rounds of patching were reaching for.
+        A spelling that resolves, resolves to the same name whatever company
+        it keeps; one that does not resolve is never rescued by a neighbour."""
+        assert repair_tool_name("ReadFile_tool", {"read_file"}) == "read_file"
+        assert repair_tool_name(
+            "ReadFile_tool", {"read_file", "write_file", "read_files"},
+        ) == "read_file"
+        for offered in ({"write_file"}, {"write_file", "glob"}, {"read_files"}):
+            assert repair_tool_name("read_file", offered) is None
+
+
+# ---------------------------------------------------------------------------
+# #261 end to end: both entries, with the host-tool pair that defeated the
+# `known=` guard. One is the runner's pre-execution normalisation, the other
+# the planner's dispatch decision, and the fix has to hold at both — the
+# `known=` parameter was passed by neither.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def two_host_tools(tmp_path):
+    """A sub-agent granted `deploy_docs` and denied `deploy_site`."""
+    registry = ToolRegistry()
+    registry.register(FakeNamedTool("deploy_docs", requires_confirm=False))
+    engine = PermissionEngine(project_root=tmp_path)
+    return registry, engine
+
+
+class TestDeniedHostToolIsNotRepairedIntoAGrantedOne:
+    @pytest.mark.parametrize(
+        "asked", ["deploy_site", "deploy_sites", "DeploySite_tool", "deploy-site"],
+    )
+    def test_the_planner_does_not_dispatch_it(self, two_host_tools, asked):
+        registry, engine = two_host_tools
+        planner = ToolCallPlanner(
+            registry, engine, logging.getLogger("test.name_261_planner"),
         )
-        assert repair_tool_name("aa_tool_z", list(reversed(sorted(offered)))) == first
+
+        result = planner.plan([make_tool_call("c-1", asked)])
+
+        assert result.plans == []
+        assert len(result.early_messages) == 1
+        content = result.early_messages[0]["content"]
+        assert "not found" in content
+        assert "deploy_docs" in content  # offered, as a listing — not as the answer
+
+    @pytest.mark.parametrize(
+        "asked", ["deploy_site", "deploy_sites", "DeploySite_tool", "deploy-site"],
+    )
+    def test_the_runner_does_not_rewrite_it(self, two_host_tools, asked):
+        from agentao.runtime.tool_runner import ToolRunner
+        from agentao.transport import NullTransport
+
+        registry, engine = two_host_tools
+        runner = ToolRunner(
+            registry, engine, NullTransport(),
+            logging.getLogger("test.name_261_runner"),
+        )
+
+        cleaned, changed = runner.normalize_tool_calls([make_tool_call("c-1", asked)])
+
+        assert cleaned[0].function.name == asked
+        assert changed is False
+
+    def test_a_real_normalisation_still_works_at_both_entries(self, two_host_tools):
+        """The kept half: `DeployDocs_tool` *spells* the granted tool."""
+        from agentao.runtime.tool_runner import ToolRunner
+        from agentao.transport import NullTransport
+
+        registry, engine = two_host_tools
+        logger = logging.getLogger("test.name_261_both")
+
+        cleaned, changed = ToolRunner(
+            registry, engine, NullTransport(), logger,
+        ).normalize_tool_calls([make_tool_call("c-1", "DeployDocs_tool")])
+        assert cleaned[0].function.name == "deploy_docs"
+        assert changed is True
+
+        result = ToolCallPlanner(registry, engine, logger).plan(
+            [make_tool_call("c-2", "deploy-docs")],
+        )
+        assert len(result.plans) == 1
+        assert result.plans[0].function_name == "deploy_docs"

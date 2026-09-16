@@ -38,6 +38,23 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **A tool name is no longer repaired by similarity.** `repair_tool_name` still
+  normalises case, separators, camelCase and a trailing `Tool` suffix, and now
+  answers only when one of those reproduces an offered name **exactly**. The
+  `difflib` pass that dispatched the closest match above cutoff 0.7 is gone,
+  along with its `known=` parameter. A cutoff cannot tell a misspelling from a
+  different tool — `read_file` and `write_file` are as close as a typo — so
+  guarding it closed one input class at a time while leaving the mechanism that
+  produced them: a sub-agent denied `read_file` wrote with `write_file`, and
+  after that was patched, one denied a host tool could still be repaired into a
+  different host tool it was granted (`deploy_site` → `deploy_docs`, #261). An
+  unresolved name now returns the existing tool-not-found error, which already
+  lists the available tools, and the model re-issues the call. The cost is one
+  extra turn on a genuine typo. Both peers agentao is measured against do the
+  same: codex answers "unsupported call", gemini-cli errors with a "did you
+  mean" built from edit distance that it never runs. (#261)
+
+
 ### Fixed
 
 - **Two MCP tool calls in one model response no longer lose one of them.**
