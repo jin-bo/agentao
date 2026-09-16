@@ -456,3 +456,41 @@ class TestNamesOfRealToolsAreNotRepairedIntoOthers:
     def test_known_can_be_given(self):
         assert repair_tool_name("host_lookup", {"host_lookups"}) == "host_lookups"
         assert repair_tool_name("host_lookup", {"host_lookups"}, known={"host_lookup"}) is None
+
+    @pytest.mark.parametrize(
+        "name, offered, meant",
+        [
+            # The docstring's own case, one character off the withheld name.
+            ("read_files", {"write_file", "glob"}, "read_file"),
+            ("read_file2", {"write_file"}, "read_file"),
+            # A read-only sub-agent: nothing it is offered is what was meant.
+            ("write_files", {"read_file", "glob", "search_file_content"}, "write_file"),
+            ("replacefile", {"read_file", "glob"}, "replace"),
+            # A host tool that only *looks* like the withheld built-in.
+            ("shell_command", {"run_shell_commands_x", "read_file"}, "run_shell_command"),
+        ],
+    )
+    def test_a_near_miss_of_a_withheld_tool_is_not_found_either(
+        self, name, offered, meant,
+    ):
+        """An exact spelling is not the only way to name a withheld tool.
+
+        Ranking the fuzzy pass over the offered names alone let a one-character
+        variation land on whatever was closest among them — ``read_files``
+        became ``write_file``, the very case the guard was added for. The pool
+        has to contain the known names too, so the winner can be recognised as
+        one the runtime does not offer."""
+        assert meant not in offered  # the premise: it was withheld
+        assert repair_tool_name(name, offered) is None
+
+    def test_a_fuzzy_tie_does_not_depend_on_iteration_order(self):
+        """``get_close_matches`` breaks a tie by the order it is handed, and a
+        set's order varies with ``PYTHONHASHSEED``. The pool is sorted, so two
+        equally-close names always resolve to the same one."""
+        offered = {"aa_tool_x", "aa_tool_y"}
+        first = repair_tool_name("aa_tool_z", offered)
+        assert first is not None
+        assert all(
+            repair_tool_name("aa_tool_z", set(offered)) == first for _ in range(20)
+        )
+        assert repair_tool_name("aa_tool_z", list(reversed(sorted(offered)))) == first

@@ -104,4 +104,13 @@ def register_agent_tools(agent: "Agentao") -> None:
         shell=getattr(agent, "shell", None),
     )
     for agent_tool in agent_tools:
-        agent.tools.register(agent_tool)
+        # ``create_agent_tools`` appends its own ``check_background_agent``
+        # whenever a ``bg_store`` exists, which is exactly when
+        # ``register_builtin_tools`` has already registered an equivalent one.
+        # Without ``replace=`` that guaranteed collision logged an
+        # "already registered; overwriting" warning on every construction —
+        # once per sub-agent spawn too — which is how a warning that exists to
+        # surface *accidental* collisions became noise nobody reads.
+        agent.tools.register(
+            agent_tool, replace=agent_tool.name in agent.tools.tools,
+        )

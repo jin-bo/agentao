@@ -129,3 +129,36 @@ def test_log_file_writes_only_once_per_message(_reset_pkg_logger, tmp_path):
     assert occurrences == 4, (
         f"expected 4 init log lines, got {occurrences} — duplicate handlers regression?"
     )
+
+
+def test_spawning_a_sub_agent_does_not_swap_the_parents_log_handler(
+    _reset_pkg_logger, tmp_path, monkeypatch,
+):
+    """A sub-agent inherits the parent's logger instead of building its own.
+
+    Building an ``LLMClient`` with ``logger=None`` removes the marker-tagged
+    handler already on the package logger *and closes it*. A sub-agent that
+    did that took the parent's ``agentao.log`` out from under it — from a
+    background sub-agent's own thread, while the parent was still logging
+    through it, which surfaces as "I/O operation on closed file" on stderr and
+    as parent log lines that were never written.
+    """
+    from agentao.agent import Agentao
+
+    pkg = _reset_pkg_logger
+    parent = Agentao(
+        working_directory=tmp_path, api_key="k",
+        base_url="https://test.local/v1", model="m",
+        enable_builtin_agents=True,
+    )
+    try:
+        (handler,) = _marker_handlers(pkg)
+        monkeypatch.setattr(Agentao, "chat", lambda self, *a, **kw: "")
+        wrapper = parent.tools.tools["agent_generalist"]
+        wrapper._run_sync("x")
+
+        assert _marker_handlers(pkg) == [handler]
+        assert getattr(handler, "stream", None) is not None
+        assert not handler.stream.closed
+    finally:
+        parent.close()
