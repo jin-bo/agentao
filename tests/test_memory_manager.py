@@ -415,3 +415,36 @@ def test_stable_entries_empty_when_no_entries(tmp_path):
 # - The factory-level "user-store sqlite3 error disables user scope" is
 #   tested in ``tests/test_per_session_cwd.py`` alongside the other
 #   factory-fallback regressions.
+
+
+# ---------------------------------------------------------------------------
+# write_version under concurrency
+# ---------------------------------------------------------------------------
+
+def test_the_write_version_bump_is_serialised(tmp_path):
+    """One manager is now written from more than one thread (#260).
+
+    Asserted through the lock rather than by racing the counter, because under
+    the GIL a lost ``+= 1`` is not something a test can reliably provoke — a
+    test that raced N threads and compared the total would pass with the lock
+    removed, which is no test at all. Holding the lock and watching a save
+    block on it is the observable that actually discriminates.
+    """
+    import threading
+
+    mgr = _make_manager(tmp_path)
+    done = threading.Event()
+
+    def save():
+        mgr.save_from_tool("k", "v", [])
+        done.set()
+
+    with mgr._write_version_lock:
+        worker = threading.Thread(target=save)
+        worker.start()
+        blocked = not done.wait(timeout=0.5)
+
+    worker.join(timeout=10)
+    assert blocked, "the bump did not take the lock"
+    assert done.is_set(), "the save never completed once the lock was released"
+    assert mgr.write_version == 1

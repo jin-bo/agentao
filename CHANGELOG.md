@@ -75,6 +75,57 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A sub-agent's `save_memory` now writes where the parent's writes.** Built-ins
+  reach a sub-agent as the child's own instances, which is right for the
+  filesystem and the shell — both bound to the parent's backends — and took the
+  memory manager with it as a side effect. A child's manager is built bare:
+  project store only, and never the one a host injected. So a long-term memory a
+  sub-agent was asked to save went into a store nothing reads, a `scope="user"`
+  request was downgraded to project even when the parent had a user store, and a
+  host that injected a `MemoryManager` was not in the loop for anything any
+  sub-agent saved. The sub-agent's `save_memory` instance is now pointed at the
+  parent's manager at spawn. **Only the write target moves**: the child keeps its
+  own manager for its session id, the session summaries its own compaction
+  writes, and the stores its `close()` releases — sharing the manager outright
+  would mix the child's session into the parent's and close the parent's stores
+  the moment the sub-task ended. A rebind that cannot be made leaves
+  `save_memory` out of the sub-agent **by name**, like an undeclared host tool;
+  absent, the model is told the tool does not exist, which is true, where present
+  and unrebound it answers "Saved memory: x" for a write nothing will read. The
+  definition's `tools:` list, `disable_tools` and the host-replacement rule all
+  still decide who gets the tool at all. (#260)
+
+- **A transient memory store survives being written from another thread.** The
+  `:memory:` backing keeps one connection between calls, deliberately — closing
+  it would discard the database — and sqlite3 refused to use it from any thread
+  but the one that opened it, so the write came back to the model as `Error
+  saving memory: SQLite objects created in a thread…`. It now connects with
+  `check_same_thread=False` and serialises each `_connect` scope with a lock:
+  the statements were always safe (sqlite3 is serialized), but two threads
+  inside one connection's implicit transaction are not — whichever leaves first
+  commits the other's half-written work. Reachable before this release when a
+  batch held more than one tool call, and unconditionally after it for a
+  background sub-agent, which writes through its parent's manager from its own
+  thread. The file backing was never refused a cross-thread connection — it
+  opens a private one per statement — but it is not untouched either, and now
+  takes the same lock: Python's sqlite3 opens no transaction for a `SELECT`, so
+  `upsert_memory`'s read-then-write is not atomic across two connections, and
+  two concurrent saves of the *same key* both read "no row" and the second
+  `INSERT` fails the unique index. The lock is process-local, which is the
+  scope this change created; two agentao processes on one project `memory.db`
+  can still race it. (#260)
+
+- **A scope downgrade with no user store is no longer silent.** A `user`-scope
+  write on a `MemoryManager` built without a `user_store=` is still stored as
+  `project` — the bare-construction default, and a library embedder needs the
+  write to land somewhere — but nothing in the logs distinguished "saved as
+  project because you asked" from "saved as project because this manager has no
+  user store". An explicit `scope="user"` now warns; an inferred one (`user_` key
+  prefix, `preference` / `profile` tag) goes to `agentao.log` at debug, because
+  on a project-only manager that is the ordinary case and a warning on most
+  writes trains the reader to ignore all of them. Neither line carries the key
+  or the value. (#260)
+
 - **Two MCP tool calls in one model response no longer lose one of them.**
   The tool executor runs a batch's calls on parallel threads, and every MCP
   tool of an agent goes through its `McpClientManager`. The manager ran its

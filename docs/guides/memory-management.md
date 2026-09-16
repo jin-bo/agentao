@@ -152,12 +152,22 @@ reason: tag_match,title_jaccard
 LLM 只能调用一个 memory 工具：
 
 ```
-save_memory(key, value, tags?)
+save_memory(key, value, tags?, scope?, type?)
 ```
 
 - **key** *(required)*：唯一标识符，snake_case，如 `user_preferred_language`
 - **value** *(required)*：要保存的内容（超长内容会被截断）
 - **tags** *(optional)*：分类标签数组；含 `user` 标签 → user scope
+- **scope** *(optional)*：`user` / `project`；省略则按 key 前缀和标签推断
+
+写入目标由 **manager** 决定，不由调用它的 agent 决定：
+
+- **manager 没有 user store 时**，user scope 会降级存进 project 库。行为不变，但不再无声 ——
+  显式传 `scope="user"` 记一条 warning，推断出来的记 debug（项目级 manager 上这是常态，每条都
+  warning 只会让人学会忽略它们）。两条日志都不含 key 和 value。
+- **子代理的 `save_memory` 走父级的 manager**（#260）。长期记忆本就该落在父级的库里，包括 user
+  库和宿主注入的 manager。子代理自己的 manager 只留给它自己的会话 id 和会话摘要，随子代理一起
+  关闭 —— 所以改绑的是工具的写入目标，不是整个 manager。
 
 ---
 

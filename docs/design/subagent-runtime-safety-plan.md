@@ -69,7 +69,12 @@ instance" and "share the MCP loop" are each not the fix.
 > - **One registry.** The runner, the planner and the model all use it. It is the parent's live
 >   registry at spawn, intersected with the definition's allowlist, and `complete_task` is added.
 > - **Built-ins** are the sub-agent's own instances, bound to the parent's `filesystem` and
->   `shell`, which are shared by identity (that part of SUB-01).
+>   `shell`, which are shared by identity (that part of SUB-01). `save_memory` is the exception
+>   the identity-sharing rule turned out to need: its `memory_manager` is rebound to the
+>   parent's, because a long-term memory belongs in the parent's stores rather than in a
+>   sub-agent's throwaway one (#260). The rest of the child's memory — session id, session
+>   summaries, what `close()` releases — stays its own, which is why the rebind is on the tool
+>   and not on `sub_agent.memory_manager`.
 > - **`mcp_*` are the parent's instances**, over the parent's connections. The sub-agent is
 >   built with an empty `InMemoryMCPRegistry()` and connects nothing.
 > - **`origin` (SUB-02, PR-a, #256).** `ToolRegistry.register` takes a keyword-only `origin`,

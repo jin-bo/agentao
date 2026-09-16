@@ -150,6 +150,91 @@ def _copy_declared_host_tool(
     return copied
 
 
+# The one built-in whose write target belongs to the parent rather than to the
+# sub-agent itself. ``save_memory`` writes *long-term* memory — a fact meant to
+# outlive the conversation — so it has to land where the parent's memories
+# land. A sub-agent's own manager is built bare: project store only, no user
+# store, and never the one a host injected. So the write went to a store
+# nothing reads, a ``scope="user"`` request was silently downgraded to project,
+# and a host that injected a ``MemoryManager`` was not in the loop for anything
+# any sub-agent saved (#260).
+#
+# Only the write target moves. This rebinds the *tool's* attribute, not
+# ``sub_agent.memory_manager``: the agent property carries the session id, the
+# session summaries the child's own compaction writes, and the stores its
+# ``close()`` releases. Assigning it would mix the child's summaries into the
+# parent's session and close the parent's stores the moment the child finished.
+_PARENT_MEMORY_TARGET_TOOL = "save_memory"
+
+
+def _bind_parent_memory_target(
+    own_tool: RegistrableTool, parent_tool: RegistrableTool, agent_name: str,
+) -> bool:
+    """Point the sub-agent's ``save_memory`` at the parent's memory manager.
+
+    True when the sub-agent's own instance now writes where the parent's
+    writes. False leaves the tool **out** of the sub-agent, because the only
+    alternative is the defect itself: a tool that reports "Saved memory: x"
+    into a store nothing will read. Absent, the model is told the tool does not
+    exist, which is at least true.
+
+    Fail-closed on each of the three ways the rebind can fail — the parent's
+    tool has no readable ``memory_manager``, that manager is ``None``, or the
+    sub-agent's instance will not take the attribute. None of the three is
+    reachable while
+    both sides are the built-in :class:`~agentao.tools.SaveMemoryTool`, since a
+    host that replaced ``save_memory`` registered a *host* tool and never
+    reaches this branch — so each one means the assumption the rebind rests on
+    has stopped holding, and guessing past it writes memories into the dark.
+    """
+    try:
+        manager = parent_tool.memory_manager
+    except Exception as exc:
+        logger.warning(
+            "Sub-agent '%s' does not get '%s': reading the parent tool's "
+            "`memory_manager` raised %s: %s.",
+            agent_name, _PARENT_MEMORY_TARGET_TOOL, type(exc).__name__, exc,
+        )
+        return False
+    if manager is None:
+        logger.warning(
+            "Sub-agent '%s' does not get '%s': the parent's instance has no "
+            "memory manager to write through.",
+            agent_name, _PARENT_MEMORY_TARGET_TOOL,
+        )
+        return False
+    try:
+        # ``hasattr`` swallows only ``AttributeError``; a property that raises
+        # anything else would otherwise propagate out of ``_narrow_tools`` and
+        # abort the spawn, which is the one outcome this function exists to
+        # avoid.
+        keeps_one = hasattr(own_tool, "memory_manager")
+    except Exception as exc:
+        logger.warning(
+            "Sub-agent '%s' does not get '%s': reading its own "
+            "`memory_manager` raised %s: %s.",
+            agent_name, _PARENT_MEMORY_TARGET_TOOL, type(exc).__name__, exc,
+        )
+        return False
+    if not keeps_one:
+        logger.warning(
+            "Sub-agent '%s' does not get '%s': its own %s keeps no "
+            "`memory_manager`, so the parent's cannot be bound to it.",
+            agent_name, _PARENT_MEMORY_TARGET_TOOL, type(own_tool).__name__,
+        )
+        return False
+    try:
+        own_tool.memory_manager = manager
+    except Exception as exc:
+        logger.warning(
+            "Sub-agent '%s' does not get '%s': binding the parent's memory "
+            "manager to its own instance raised %s: %s.",
+            agent_name, _PARENT_MEMORY_TARGET_TOOL, type(exc).__name__, exc,
+        )
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class _IncompleteOutcome:
     """Why a sub-agent stopped short. ``reason`` is machine-readable."""
@@ -723,7 +808,12 @@ class AgentToolWrapper(Tool):
         the rest:
 
         - **a built-in**: the sub-agent's own instance, bound to its own
-          transport, todo list and memory;
+          transport and todo list. ``save_memory`` is the exception — its write
+          target is rebound to the parent's ``MemoryManager``, because a
+          long-term memory has to land where the parent's memories land, user
+          store and host injection included (#260). The rest of the child's
+          memory stays its own: its session id, the session summaries its own
+          compaction writes, and the stores its ``close()`` releases;
         - **an MCP tool**: the parent's instance, which calls through the
           parent's connection, so the sub-agent opens none;
         - **an agent tool**: left out, so a sub-agent cannot spawn another;
@@ -759,7 +849,13 @@ class AgentToolWrapper(Tool):
             if origin == "mcp":
                 kept.append((tool, "mcp"))
             elif origin == "builtin" and name in own.tools and own.origin(name) == "builtin":
-                kept.append((own.tools[name], "builtin"))
+                own_tool = own.tools[name]
+                if name == _PARENT_MEMORY_TARGET_TOOL and not _bind_parent_memory_target(
+                    own_tool, tool, agent_name,
+                ):
+                    left_out.append(name)
+                else:
+                    kept.append((own_tool, "builtin"))
             elif origin == "host":
                 copied = _copy_declared_host_tool(tool, name, agent_name)
                 if copied is None:
@@ -786,8 +882,11 @@ class AgentToolWrapper(Tool):
             logger.warning(
                 "Sub-agent '%s' lists tools it does not get: %s. A sub-agent gets "
                 "built-in and MCP tools, plus host tools that declare "
-                "`copies_to_subagents`; agent and plan tools are left out.",
+                "`copies_to_subagents`; agent and plan tools are left out, and so "
+                "is '%s' when its write target cannot be rebound to the parent's "
+                "memory manager (a separate warning above says which).",
                 agent_name, ", ".join(sorted(left_out)),
+                _PARENT_MEMORY_TARGET_TOOL,
             )
         unavailable = sorted(set(requested) - set(self._all_tools) - {complete.name})
         if unavailable:

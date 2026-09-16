@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -92,7 +93,28 @@ class SQLiteMemoryStore:
         self.db_path = db_path
         self._is_memory = db_path == ":memory:"
         self._persistent_conn: Optional[sqlite3.Connection] = None
+        # Serialises every ``_connect`` scope in this process, on **both**
+        # backings. The transient one needs it because its single connection
+        # is genuinely shared between threads. The file backing needs it for a
+        # different reason and needs it just as much: Python's sqlite3 opens
+        # no transaction for a ``SELECT``, so ``upsert_memory``'s
+        # read-then-write is not atomic across two private connections — two
+        # concurrent saves of the same key both read "no row" and the second
+        # ``INSERT`` fails the ``uix_memories_scope_key`` unique index, which
+        # reaches the model as ``Error saving memory: UNIQUE constraint
+        # failed``. A background sub-agent writing through its parent's
+        # manager (#260) is exactly that second writer.
+        #
+        # Reentrant because a ``_connect`` scope is held for the caller's
+        # whole ``with`` block, and a method that opened a second one inside
+        # the first would otherwise deadlock rather than raise.
+        self._lock = threading.RLock()
+        # False until the schema has been applied once. After that, a *new*
+        # transient connection can only be a post-``close()`` reconnect, and
+        # it carries no schema of its own — see ``_connect``.
+        self._bootstrapped = False
         self._init_db()
+        self._bootstrapped = True
 
     # ------------------------------------------------------------------
     # Path-based constructors
@@ -156,24 +178,51 @@ class SQLiteMemoryStore:
         The in-memory backing keeps its single connection deliberately: closing it
         would discard the database.
         """
-        if self._is_memory:
-            # For in-memory DBs, reuse a single connection to preserve data
-            if self._persistent_conn is None:
-                self._persistent_conn = sqlite3.connect(":memory:")
-                self._persistent_conn.row_factory = sqlite3.Row
-            with self._persistent_conn as conn:
-                yield conn
-            return
-        conn = sqlite3.connect(self.db_path)
-        try:
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA foreign_keys=ON")
-            # ``with conn`` for the commit/rollback the call sites already relied on.
-            with conn:
-                yield conn
-        finally:
-            conn.close()
+        # The lock makes a whole ``_connect`` scope exclusive, on both
+        # backings: see ``__init__`` for why the file backing needs it too.
+        with self._lock:
+            if self._is_memory:
+                # For in-memory DBs, reuse a single connection to preserve
+                # data — and reach it from one thread at a time.
+                #
+                # ``check_same_thread=False`` because that connection is
+                # genuinely reached from several: a tool call runs on the
+                # executor's worker thread whenever its batch holds more than
+                # one call, and a background sub-agent's ``save_memory``
+                # writes through its parent's manager from the sub-agent's own
+                # thread (#260). Without it sqlite3 refuses the write outright
+                # and the model is told "Error saving memory: SQLite objects
+                # created in a thread…".
+                if self._persistent_conn is None:
+                    conn = sqlite3.connect(":memory:", check_same_thread=False)
+                    conn.row_factory = sqlite3.Row
+                    if self._bootstrapped:
+                        # A reconnect after ``close()``. ``_init_db`` ran once,
+                        # in ``__init__``, so a fresh connection here carries
+                        # no schema: without this every statement would fail
+                        # with "no such table: memories". The contents are gone
+                        # either way — closing a ``:memory:`` connection
+                        # discards the database — so say so rather than hand
+                        # back a store that answers nothing.
+                        conn.executescript(_INIT_SQL)
+                        logger.warning(
+                            "Transient memory store reconnected after close(); "
+                            "its previous contents were discarded.",
+                        )
+                    self._persistent_conn = conn
+                with self._persistent_conn as conn:
+                    yield conn
+                return
+            conn = sqlite3.connect(self.db_path)
+            try:
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA foreign_keys=ON")
+                # ``with conn`` for the commit/rollback the call sites already relied on.
+                with conn:
+                    yield conn
+            finally:
+                conn.close()
 
     def close(self) -> None:
         """Release the in-memory backing, if this store has one.
@@ -182,12 +231,13 @@ class SQLiteMemoryStore:
         there is nothing to release for them; this exists so a host can drop the
         transient store without waiting for the collector.
         """
-        if self._persistent_conn is not None:
-            try:
-                self._persistent_conn.close()
-            except sqlite3.Error:
-                pass
-            self._persistent_conn = None
+        with self._lock:
+            if self._persistent_conn is not None:
+                try:
+                    self._persistent_conn.close()
+                except sqlite3.Error:
+                    pass
+                self._persistent_conn = None
 
     def _init_db(self) -> None:
         with self._connect() as conn:
