@@ -203,7 +203,20 @@ def _bind_parent_memory_target(
             agent_name, _PARENT_MEMORY_TARGET_TOOL,
         )
         return False
-    if not hasattr(own_tool, "memory_manager"):
+    try:
+        # ``hasattr`` swallows only ``AttributeError``; a property that raises
+        # anything else would otherwise propagate out of ``_narrow_tools`` and
+        # abort the spawn, which is the one outcome this function exists to
+        # avoid.
+        keeps_one = hasattr(own_tool, "memory_manager")
+    except Exception as exc:
+        logger.warning(
+            "Sub-agent '%s' does not get '%s': reading its own "
+            "`memory_manager` raised %s: %s.",
+            agent_name, _PARENT_MEMORY_TARGET_TOOL, type(exc).__name__, exc,
+        )
+        return False
+    if not keeps_one:
         logger.warning(
             "Sub-agent '%s' does not get '%s': its own %s keeps no "
             "`memory_manager`, so the parent's cannot be bound to it.",
@@ -837,8 +850,8 @@ class AgentToolWrapper(Tool):
                 kept.append((tool, "mcp"))
             elif origin == "builtin" and name in own.tools and own.origin(name) == "builtin":
                 own_tool = own.tools[name]
-                if name == _PARENT_MEMORY_TARGET_TOOL and not (
-                    _bind_parent_memory_target(own_tool, tool, agent_name)
+                if name == _PARENT_MEMORY_TARGET_TOOL and not _bind_parent_memory_target(
+                    own_tool, tool, agent_name,
                 ):
                     left_out.append(name)
                 else:
@@ -869,8 +882,11 @@ class AgentToolWrapper(Tool):
             logger.warning(
                 "Sub-agent '%s' lists tools it does not get: %s. A sub-agent gets "
                 "built-in and MCP tools, plus host tools that declare "
-                "`copies_to_subagents`; agent and plan tools are left out.",
+                "`copies_to_subagents`; agent and plan tools are left out, and so "
+                "is '%s' when its write target cannot be rebound to the parent's "
+                "memory manager (a separate warning above says which).",
                 agent_name, ", ".join(sorted(left_out)),
+                _PARENT_MEMORY_TARGET_TOOL,
             )
         unavailable = sorted(set(requested) - set(self._all_tools) - {complete.name})
         if unavailable:

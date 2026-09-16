@@ -10,6 +10,7 @@ callers. The manager itself is storage-agnostic: it never imports
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Literal, Optional
@@ -66,13 +67,24 @@ class MemoryManager:
         # Session tracking
         self._session_id: str = uuid.uuid4().hex[:12]
 
-        # Monotonic counter incremented on every mutating operation
+        # Monotonic counter incremented on every mutating operation.
+        # One manager is now written from more than one thread — a sub-agent's
+        # ``save_memory`` writes through its *parent's* manager, and a
+        # background sub-agent does it from its own thread (#260) — and
+        # ``+= 1`` on an attribute is a read-modify-write the interpreter may
+        # split between the load and the store. A lost increment leaves
+        # ``MemoryRetriever`` recalling a stale index, so the bump takes a lock.
         self._write_version: int = 0
+        self._write_version_lock = threading.Lock()
 
     @property
     def write_version(self) -> int:
         """Increments on every save/delete/clear -- use for dirty-flag detection."""
         return self._write_version
+
+    def _bump_write_version(self) -> None:
+        with self._write_version_lock:
+            self._write_version += 1
 
     def close(self) -> None:
         """Release both stores' resources. Safe to call more than once.
@@ -159,7 +171,7 @@ class MemoryManager:
         )
 
         saved = store.upsert_memory(record)
-        self._write_version += 1
+        self._bump_write_version()
 
         # Enforce auto-entry limit
         if request.source == "auto":
@@ -255,10 +267,10 @@ class MemoryManager:
     def delete(self, entry_id: str) -> bool:
         """Soft-delete an entry by id. Returns True if found and deleted."""
         if self.project_store.soft_delete_memory(entry_id):
-            self._write_version += 1
+            self._bump_write_version()
             return True
         if self.user_store and self.user_store.soft_delete_memory(entry_id):
-            self._write_version += 1
+            self._bump_write_version()
             return True
         return False
 
@@ -285,7 +297,7 @@ class MemoryManager:
             # version change, so skipping the bump would keep recalling the
             # project rows that are already gone.
             if count:
-                self._write_version += 1
+                self._bump_write_version()
         return count
 
     # =========================================================================

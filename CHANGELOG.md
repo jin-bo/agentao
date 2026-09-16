@@ -106,8 +106,14 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   commits the other's half-written work. Reachable before this release when a
   batch held more than one tool call, and unconditionally after it for a
   background sub-agent, which writes through its parent's manager from its own
-  thread. The file backing opens a private connection per statement and is
-  unaffected. (#260)
+  thread. The file backing was never refused a cross-thread connection — it
+  opens a private one per statement — but it is not untouched either, and now
+  takes the same lock: Python's sqlite3 opens no transaction for a `SELECT`, so
+  `upsert_memory`'s read-then-write is not atomic across two connections, and
+  two concurrent saves of the *same key* both read "no row" and the second
+  `INSERT` fails the unique index. The lock is process-local, which is the
+  scope this change created; two agentao processes on one project `memory.db`
+  can still race it. (#260)
 
 - **A scope downgrade with no user store is no longer silent.** A `user`-scope
   write on a `MemoryManager` built without a `user_store=` is still stored as

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 
 import pytest
@@ -219,6 +220,16 @@ class TestTheWriteLandsOnTheParentsManager:
         try:
             parent.tools.tools["agent_generalist"].execute("x", run_in_background=True)
             assert _eventually(lambda: "from_background" in _keys(manager))
+            # Let the background thread finish before ``parent.close()`` takes
+            # the manager out from under it: the write it is verified to have
+            # made is not the last thing it does, and closing a transient store
+            # mid-run is a different bug's territory.
+            assert _eventually(
+                lambda: not any(
+                    t.is_alive() for t in threading.enumerate()
+                    if t.name.startswith("bg-agent-")
+                )
+            )
         finally:
             parent.close()
 
@@ -472,7 +483,12 @@ class TestTheScopeDowngradeIsLogged:
             manager.save_from_tool("k", "v", [], scope="user")
 
         assert "k" in _keys(manager, scope="user")
-        assert caplog.records == []
+        # Scoped to this module's logger: ``caplog`` captures at the root, so a
+        # bare ``== []`` fails on any unrelated debug line from anywhere in
+        # agentao.
+        assert [
+            r for r in caplog.records if r.name == "agentao.memory.manager"
+        ] == []
 
     def test_the_downgrade_log_carries_no_memory_content(self, tmp_path, caplog):
         manager = self._project_only(tmp_path)
@@ -485,3 +501,35 @@ class TestTheScopeDowngradeIsLogged:
         text = " ".join(r.getMessage() for r in caplog.records)
         assert "secret-path" not in text
         assert "api_endpoint" not in text
+
+
+class TestARaisingPropertyDoesNotAbortTheSpawn:
+    """``hasattr`` swallows only ``AttributeError``.
+
+    Every other read in ``_bind_parent_memory_target`` is wrapped, and this one
+    was not, so a ``memory_manager`` property raising anything else propagated
+    out of ``_narrow_tools`` and failed the whole sub-task — the one outcome a
+    function documented as fail-closed exists to avoid.
+    """
+
+    def test_a_raising_property_on_the_childs_instance_is_refused(self, tmp_path):
+        class Exploding(NamedTool):
+            @property
+            def memory_manager(self):
+                raise RuntimeError("boom")
+
+        parent_tool = SaveMemoryTool(memory_manager=_host_manager(tmp_path))
+        assert _bind_parent_memory_target(
+            Exploding("save_memory"), parent_tool, "a",
+        ) is False
+
+    def test_a_raising_property_on_the_parents_instance_is_refused(self, tmp_path):
+        class Exploding(NamedTool):
+            @property
+            def memory_manager(self):
+                raise RuntimeError("boom")
+
+        own = SaveMemoryTool(memory_manager=_host_manager(tmp_path))
+        assert _bind_parent_memory_target(
+            own, Exploding("save_memory"), "a",
+        ) is False

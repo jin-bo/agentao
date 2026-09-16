@@ -1,5 +1,6 @@
 """Tests for SQLiteMemoryStore: CRUD, session summaries, soft delete."""
 
+import logging
 import sqlite3
 import threading
 import uuid
@@ -839,9 +840,11 @@ class TestTheInMemoryBackingIsReachedFromMoreThanOneThread:
         t.start()
         t.join()
 
-        assert errors == []
-        assert [m.key_normalized for m in store.list_memories()] == ["from_thread"]
-        store.close()
+        try:
+            assert errors == []
+            assert [m.key_normalized for m in store.list_memories()] == ["from_thread"]
+        finally:
+            store.close()
 
     def test_concurrent_writers_all_land(self):
         """``check_same_thread=False`` alone would let one writer's commit
@@ -851,8 +854,8 @@ class TestTheInMemoryBackingIsReachedFromMoreThanOneThread:
         errors: list = []
 
         def write(n: int):
-            start.wait(timeout=10)
             try:
+                start.wait(timeout=10)
                 store.upsert_memory(_make_record(key=f"k{n}", title=f"v{n}"))
             except Exception as exc:
                 errors.append(exc)
@@ -863,11 +866,13 @@ class TestTheInMemoryBackingIsReachedFromMoreThanOneThread:
         for t in threads:
             t.join()
 
-        assert errors == []
-        assert {m.key_normalized for m in store.list_memories()} == {
-            f"k{n}" for n in range(8)
-        }
-        store.close()
+        try:
+            assert errors == []
+            assert {m.key_normalized for m in store.list_memories()} == {
+                f"k{n}" for n in range(8)
+            }
+        finally:
+            store.close()
 
     def test_a_reader_and_a_writer_do_not_collide(self):
         store = SQLiteMemoryStore(":memory:")
@@ -891,6 +896,81 @@ class TestTheInMemoryBackingIsReachedFromMoreThanOneThread:
             stop.set()
             reader.join(timeout=10)
 
+        try:
+            assert errors == []
+            assert len(store.list_memories()) == 50
+        finally:
+            store.close()
+
+    def test_concurrent_saves_of_one_key_do_not_break_the_unique_index(self, tmp_path):
+        """The file backing needs the lock too, for a different reason.
+
+        It opens a private connection per statement and was never refused a
+        cross-thread one — but Python's sqlite3 opens no transaction for a
+        ``SELECT``, so ``upsert_memory``'s read-then-write is not atomic across
+        two of them: both writers read "no row" and the second ``INSERT`` fails
+        ``uix_memories_scope_key``. That reaches the model as ``Error saving
+        memory: UNIQUE constraint failed``, and a background sub-agent writing
+        through its parent's manager is exactly that second writer (#260).
+        """
+        store = _make_store(tmp_path)
+        start = threading.Barrier(12)
+        errors: list = []
+
+        def write():
+            try:
+                start.wait(timeout=20)
+                for _ in range(30):
+                    store.upsert_memory(_make_record(key="same_key", title="v"))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=write) for _ in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
         assert errors == []
-        assert len(store.list_memories()) == 50
+        # One key, one row — the upsert converged rather than racing itself.
+        assert [m.key_normalized for m in store.list_memories()] == ["same_key"]
+
+
+class TestAReconnectAfterCloseIsNotASchemalessDatabase:
+    """``close()`` drops the transient backing's one connection, and the next
+    ``_connect`` makes a new one. ``_init_db`` ran in ``__init__`` and does not
+    run again, so that connection used to carry no schema at all and every
+    statement failed with ``no such table: memories``. Newly reachable: a
+    background sub-agent writes through its *parent's* manager from a daemon
+    thread, and the host closes the agent at shutdown without joining it."""
+
+    def test_a_write_after_close_succeeds_rather_than_failing_on_no_such_table(self):
+        store = SQLiteMemoryStore(":memory:")
+        store.upsert_memory(_make_record(key="before", title="v"))
+        store.close()
+
+        store.upsert_memory(_make_record(key="after", title="v"))
+        assert [m.key_normalized for m in store.list_memories()] == ["after"]
+        store.close()
+
+    def test_the_discarded_contents_are_reported(self, caplog):
+        """Closing a ``:memory:`` connection discards the database, so a silent
+        empty store would be the more misleading of the two answers."""
+        store = SQLiteMemoryStore(":memory:")
+        store.upsert_memory(_make_record(key="before", title="v"))
+        store.close()
+
+        with caplog.at_level(logging.WARNING, logger="agentao.memory.storage"):
+            store.list_memories()
+
+        assert [r for r in caplog.records if "discarded" in r.getMessage()]
+        store.close()
+
+    def test_the_first_connection_is_not_reported_as_a_reconnect(self, caplog):
+        """``__init__`` bootstraps the schema; that is not data loss."""
+        with caplog.at_level(logging.WARNING, logger="agentao.memory.storage"):
+            store = SQLiteMemoryStore(":memory:")
+            store.upsert_memory(_make_record(key="k", title="v"))
+
+        assert [r for r in caplog.records if "discarded" in r.getMessage()] == []
         store.close()
