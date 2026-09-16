@@ -3,7 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 if TYPE_CHECKING:
     from ..capabilities import FileSystem, ShellExecutor
@@ -210,6 +210,14 @@ def _declares_shell_spec(tool: object) -> bool:
     return hasattr(type(tool), "shell_spec") or "shell_spec" in vars(tool)
 
 
+# Where a registered tool came from (SUB-02, ``docs/design/subagent-runtime-safety-plan.md``).
+# Sub-agents decide by it: a built-in is rebuilt from the sub-agent's own dependencies, an MCP
+# tool is the parent's instance, and everything else is left out. ``host`` is the default and
+# the fail-closed reading, so a tool registered by a bare ``agent.tools.register(tool)`` is a
+# host tool.
+TOOL_ORIGINS: frozenset = frozenset({"builtin", "host", "mcp", "agent", "plan"})
+
+
 class ToolRegistry:
     """Registry for managing tools."""
 
@@ -220,8 +228,14 @@ class ToolRegistry:
 
     def __init__(self):
         self.tools = {}
+        # name -> (the instance registered, its origin). The instance is kept so that a write
+        # to ``self.tools`` that bypasses ``register`` reads as ``host`` rather than inheriting
+        # the origin of whatever was registered under that name before.
+        self._origins: Dict[str, Tuple[RegistrableTool, str]] = {}
 
-    def register(self, tool: RegistrableTool, *, replace: bool = False) -> None:
+    def register(
+        self, tool: RegistrableTool, *, replace: bool = False, origin: str = "host",
+    ) -> None:
         """Register a tool.
 
         When ``replace`` is ``False`` (default) and a tool with the same
@@ -230,7 +244,18 @@ class ToolRegistry:
         ``replace`` is ``True`` the overwrite is intentional (a host
         ``extra_tools`` entry deliberately replacing a built-in / agent
         tool) and is performed silently. Either way the last write wins.
+
+        ``origin`` records where the tool came from, one of
+        :data:`TOOL_ORIGINS`. A host leaves it at ``host``; the other values
+        are what agentao's own registration sites pass. A replacement
+        overwrites the name's origin, so a host tool that replaced a
+        built-in reads as ``host`` even when it is an instance of the
+        built-in's own class.
         """
+        if origin not in TOOL_ORIGINS:
+            raise ValueError(
+                f"Unknown tool origin {origin!r}; expected one of {sorted(TOOL_ORIGINS)}."
+            )
         if tool.name == SHELL_TOOL_NAME and not _declares_shell_spec(tool):
             raise ValueError(
                 f"TOOL-01: {type(tool).__name__} registered as '{SHELL_TOOL_NAME}' does not "
@@ -246,6 +271,7 @@ class ToolRegistry:
                 type(tool).__name__,
             )
         self.tools[tool.name] = tool
+        self._origins[tool.name] = (tool, origin)
 
     def unregister(self, name: str) -> bool:
         """Remove ``name`` from the registry.
@@ -255,7 +281,23 @@ class ToolRegistry:
         pure dict operation with no side effects; capability unbinding is
         not needed because the removed instance is simply dropped.
         """
+        self._origins.pop(name, None)
         return self.tools.pop(name, None) is not None
+
+    def origin(self, name: str) -> str:
+        """Where the tool registered under ``name`` came from.
+
+        One of :data:`TOOL_ORIGINS`. A tool placed in :attr:`tools` without
+        going through :meth:`register` reads as ``host``.
+
+        Raises:
+            KeyError: when no tool is registered under ``name``, as :meth:`get`.
+        """
+        tool = self.get(name)
+        recorded = self._origins.get(name)
+        if recorded is None or recorded[0] is not tool:
+            return "host"
+        return recorded[1]
 
     def get(self, name: str) -> RegistrableTool:
         """Get a tool by name.

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...cancellation import AgentCancelledError, CancellationToken
-from ...tools.base import RegistrableTool, Tool, ToolRegistry
+from ...tools.base import RegistrableTool, Tool
 from ..bg_store import BackgroundTaskStore
 from ._complete import CompleteTaskTool, TaskComplete
 from ._progress import SubagentProgress
@@ -194,11 +194,15 @@ class AgentToolWrapper(Tool):
         filesystem: Optional[Any] = None,
         shell: Optional[Any] = None,
         permission_engine_getter: Optional[Callable] = None,
+        tool_origin_getter: Optional[Callable[[str], str]] = None,
     ):
         self._definition = definition
         # The parent's live registry: tools it adds or removes between turns
         # count for sub-agents launched afterwards (see ``_narrow_tools``).
         self._all_tools = all_tools
+        # The origin the parent's registry recorded for each of those names.
+        # Absent, every parent tool reads as a host tool and is left out.
+        self._tool_origin_getter = tool_origin_getter or (lambda _name: "host")
         # Live getter so a runtime ``session/set_model`` (model /
         # maxTokens) is reflected in sub-agents launched afterwards.
         self._llm_config_getter = llm_config_getter
@@ -625,34 +629,41 @@ class AgentToolWrapper(Tool):
           parent's connection, so the sub-agent opens none;
         - **an agent tool**: left out, so a sub-agent cannot spawn another;
         - **a plan-only tool**: left out;
-        - **anything else is the host's**, including a tool that replaced a
-          built-in, and is left out by name. Sharing the host's instance
-          would share whatever state it holds with another thread, and
-          falling back to the built-in under that name would run the very
-          implementation the host replaced.
+        - **a host tool** is left out by name, including one that replaced a
+          built-in. Sharing the host's instance would share whatever state it
+          holds with another thread, and falling back to the built-in under
+          that name would run the very implementation the host replaced.
 
-        A parent tool counts as a built-in when the sub-agent registered an
-        instance of exactly its class under the same name. ``complete_task``
-        is always added.
+        Which of these a parent tool is comes from the origin the parent's
+        registry recorded when it was registered (``ToolRegistry.origin``),
+        never from its class: a host that replaced ``web_search`` with a
+        configured ``WebSearchTool`` registered a host tool (#256). A built-in
+        is kept only when the sub-agent's tool under that name is a built-in
+        too. ``complete_task`` is always added.
         """
-        own = sub_agent.tools.tools
+        own = sub_agent.tools
         requested = self._definition.get("tools")
-        tools: Dict[str, RegistrableTool] = {}
+        kept: List[Tuple[RegistrableTool, str]] = []
         left_out: List[str] = []
         for name, tool in list(self._all_tools.items()):
             if requested is not None and name not in requested:
                 continue
-            if name.startswith("mcp_"):
-                tools[name] = tool
-            elif isinstance(tool, AgentToolWrapper) or name in ToolRegistry._PLAN_ONLY_TOOLS:
-                left_out.append(name)
-            elif name in own and type(own[name]) is type(tool):
-                tools[name] = own[name]
+            try:
+                origin = self._tool_origin_getter(name)
+            except KeyError:  # removed from the parent since the snapshot
+                continue
+            if origin == "mcp":
+                kept.append((tool, "mcp"))
+            elif origin == "builtin" and name in own.tools and own.origin(name) == "builtin":
+                kept.append((own.tools[name], "builtin"))
             else:
                 left_out.append(name)
         complete = CompleteTaskTool()
-        tools[complete.name] = complete
-        sub_agent.tools.tools = tools
+        kept.append((complete, "builtin"))
+        for name in list(own.tools):
+            own.unregister(name)
+        for tool, origin in kept:
+            own.register(tool, origin=origin)
 
         agent_name = self._definition["name"]
         if requested is None:

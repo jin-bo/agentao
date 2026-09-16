@@ -72,11 +72,15 @@ instance" and "share the MCP loop" are each not the fix.
 >   `shell`, which are shared by identity (that part of SUB-01).
 > - **`mcp_*` are the parent's instances**, over the parent's connections. The sub-agent is
 >   built with an empty `InMemoryMCPRegistry()` and connects nothing.
-> - **SUB-03's outcome, without a declaration or `origin`.** Host tools are absent, and so is
->   the name they occupied. A parent tool counts as a built-in only when the sub-agent registered
->   an instance of exactly its class under that name. That stand-in misreads a host's replacement
->   built from the built-in's own class as the built-in, and swaps it back (#256, fixed by PR-a in
->   §5.1).
+> - **`origin` (SUB-02, PR-a, #256).** `ToolRegistry.register` takes a keyword-only `origin`,
+>   defaulting to `host`, and `ToolRegistry.origin(name)` reads it back. Every in-repo
+>   registration site passes its origin. A tool put in the registry's dict without `register`
+>   reads as `host`.
+> - **SUB-03's outcome, without a declaration.** Host tools are absent, and so is the name they
+>   occupied. A parent tool counts as a built-in only when its origin is `builtin` and so is the
+>   sub-agent's tool under that name. The class is not consulted, so a host's replacement built
+>   from the built-in's own class is a host tool. Before PR-a, class identity was the stand-in,
+>   and such a replacement was swapped back for the built-in.
 > - **Agent tools are never given to a sub-agent**, not even when the definition names one
 >   (SUB-04 without its exception). `agent_manager = None` stays, now only so the system prompt
 >   does not list agents the sub-agent cannot call.
@@ -92,7 +96,6 @@ instance" and "share the MCP loop" are each not the fix.
 > - the `_for_subagent` factory, and skipping `__init__`'s registration passes (SUB-05);
 > - sharing the permission engine by identity (a sub-agent holds a snapshot, so a mode switch
 >   on the parent does not reach a sub-agent already running);
-> - `origin` on `ToolRegistry.register` (PR-a, §5.1);
 > - the host-tool declaration and its per-sub-agent copy (SUB-03 as revised 2026-09-15, PR-b,
 >   §5.1), which replaces the earlier `ToolForkable`.
 
