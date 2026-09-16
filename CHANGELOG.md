@@ -38,6 +38,41 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **A tool name is no longer repaired by similarity.** `repair_tool_name` still
+  normalises padding, case, separators, camelCase and a trailing `Tool` suffix,
+  and now answers only when one of those reproduces an offered name **exactly**.
+  The `difflib` pass that dispatched the closest match above cutoff 0.7 is gone,
+  along with its `known=` parameter. A cutoff cannot tell a misspelling from a
+  different tool — `read_file` and `write_file` are as close as a typo — so
+  guarding it closed one input class at a time while leaving the mechanism that
+  produced them: a sub-agent denied `read_file` wrote with `write_file`, and
+  after that was patched, one denied a host tool could still be repaired into a
+  different host tool it was granted (`deploy_site` → `deploy_docs`, #261). An
+  unresolved name now returns the existing tool-not-found error, which already
+  lists the available tools, and the model re-issues the call. The cost is one
+  extra turn on a genuine typo — for as long as the model *changes* its answer:
+  the doom-loop counter is keyed on the raw `(name, arguments)` pair, so a model
+  that re-issues the identical misspelling three times halts the turn. Both
+  peers agentao is measured against do the same: codex answers "unsupported
+  call" (`codex-rs/core/src/tools/registry.rs:821`), gemini-cli errors with a
+  "did you mean" built from edit distance that it never runs
+  (`packages/core/src/utils/tool-utils.ts`). (#261)
+
+- **Two spellings the similarity pass had been covering are now normalised
+  outright.** Removing it removed the only thing that resolved them, so both
+  are handled by the spelling pass instead of by a cutoff: a name padded with
+  whitespace or an edge separator (`"read_file\n"`, `" read_file "`,
+  `"read_file_"` — `_normalise_separators` used to map the padding to
+  underscores and produce `_read_file_`), and an offered name that is not
+  lowercase snake_case (an MCP server's `getFileContents`, now reachable from
+  `get_file_contents` / `GetFileContents` / `get-file-contents` because the
+  offered names are normalised too, fail-closed when two of them share a
+  spelling). Candidate order is by **fidelity** rather than alphabetical, which
+  is what decides `PatchTool` in a registry holding both `patch` and
+  `patch_tool`: the camelCase normalisation reproduces the whole name, while a
+  suffix strip reaches `patch` only by discarding a word the model wrote.
+  (#261)
+
 ### Fixed
 
 - **Two MCP tool calls in one model response no longer lose one of them.**
