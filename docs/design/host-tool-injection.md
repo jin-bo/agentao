@@ -8,6 +8,9 @@
 - `docs/design/embedded-host-contract.md` — the host-contract stability boundary (where this design belongs)
 - `agentao/tooling/registry.py` — `register_builtin_tools`, the main change site
 - `agentao/tools/base.py` — `Tool` / `AsyncToolBase` / `ToolRegistry.register`
+- `docs/design/subagent-runtime-safety-plan.md` §5.1 — whether an injected tool reaches a
+  **sub-agent**, which this design does not decide. Since PR-b it does only when the tool
+  declares `copies_to_subagents`, and then as one shallow copy per spawn
 
 ---
 

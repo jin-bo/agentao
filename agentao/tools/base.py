@@ -125,6 +125,42 @@ class _BaseTool(ABC):
         """
         return False
 
+    @property
+    def copies_to_subagents(self) -> bool:
+        """Whether a host tool may be passed down to a sub-agent, as a copy.
+
+        ``False`` by default, and only consulted for tools whose registered
+        origin is ``host`` — a built-in is rebuilt from the sub-agent's own
+        dependencies and an ``mcp_`` tool is the parent's instance, neither of
+        which asks this question (SUB-03,
+        ``docs/design/subagent-runtime-safety-plan.md``).
+
+        Returning ``True`` is a promise the runtime cannot check, and it says
+        three things:
+
+        1. the tool suits a sub-task at all;
+        2. it tolerates ``copy.copy`` — one shallow copy is made per spawn, so
+           the sub-agent's call cannot rebind an attribute on the parent's
+           instance;
+        3. every dependency the copy still *shares* with the original — a
+           closure, an HTTP client, a connection pool, a container handle —
+           tolerates concurrent use from the parent and the sub-agent, which
+           run on different threads.
+
+        (3) is the one that bites, because a shallow copy separates only the
+        instance's own attributes. A tool that needs a deeper split should
+        implement ``__copy__``; that is covered by the same promise.
+
+        The copy is made once at spawn rather than per call, so a tool may
+        keep state across the calls of one sub-task.
+
+        A tool that declares nothing is absent from the sub-agent, **and so is
+        the name it occupied**: a host tool that replaced ``read_file`` does
+        not leave the built-in ``read_file`` visible underneath it. The
+        declaration does not bypass the definition's ``tools:`` allowlist.
+        """
+        return False
+
     def to_openai_format(self) -> Dict[str, Any]:
         """Convert tool to OpenAI function format."""
         return {

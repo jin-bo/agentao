@@ -76,11 +76,15 @@ instance" and "share the MCP loop" are each not the fix.
 >   defaulting to `host`, and `ToolRegistry.origin(name)` reads it back. Every in-repo
 >   registration site passes its origin. A tool put in the registry's dict without `register`
 >   reads as `host`.
-> - **SUB-03's outcome, without a declaration.** Host tools are absent, and so is the name they
->   occupied. A parent tool counts as a built-in only when its origin is `builtin` and so is the
->   sub-agent's tool under that name. The class is not consulted, so a host's replacement built
->   from the built-in's own class is a host tool. Before PR-a, class identity was the stand-in,
->   and such a replacement was swapped back for the built-in.
+> - **SUB-03's outcome.** A parent tool counts as a built-in only when its origin is `builtin` and
+>   so is the sub-agent's tool under that name. The class is not consulted, so a host's replacement
+>   built from the built-in's own class is a host tool. Before PR-a, class identity was the
+>   stand-in, and such a replacement was swapped back for the built-in.
+> - **The declaration (SUB-03, PR-b).** `copies_to_subagents` on the tool object, default `False`,
+>   read at spawn. Declared: one `copy.copy` per spawn, registered with origin `host`. Undeclared,
+>   or a declaration or a copy that **raises**: absent, and so is the name it occupied, with a
+>   warning naming the exception for the two failures. Never shared, never replaced by the
+>   built-in. The declaration does not outrank the definition's allowlist.
 > - **Agent tools are never given to a sub-agent**, not even when the definition names one
 >   (SUB-04 without its exception). `agent_manager = None` stays, now only so the system prompt
 >   does not list agents the sub-agent cannot call.
@@ -382,7 +386,7 @@ The host-tool parts of SUB-02 and SUB-03 ship ahead of PR-0's factory, on the #2
 | PR | Content | User-visible | Depends on |
 |---|---|---|---|
 | **PR-a** (#256) | `ToolRegistry.register` gains the keyword-only `origin` of SUB-02, defaulting to `host`. That is a compatible extension of a public method. Every in-repo registration site passes its origin, and a replacement overwrites it. `_narrow_tools` decides by origin, and the class check is removed. **It introduces no way for a host tool to reach a sub-agent**: host tools stay absent | yes — a host's replacement of a built-in made from the built-in's own class (`extra_tools=[WebSearchTool(backend="bocha", …)]`) is no longer swapped back to the sub-agent's default instance | — |
-| **PR-b** | the declaration on the tool object; one shallow copy per sub-agent, made at spawn and registered with origin `host`; a failed copy leaves the tool absent and says why (the table in §2 item 2) | yes — opt-in per tool | PR-a |
+| **PR-b** (implemented) | the declaration on the tool object; one shallow copy per sub-agent, made at spawn and registered with origin `host`; a failed copy leaves the tool absent and says why (the table in §2 item 2). **Shipped as `copies_to_subagents`**, a property on `_BaseTool` defaulting to `False`, read in `_narrow_tools` through `_copy_declared_host_tool`. A declaration that *raises* is also a fail-closed absence, which the acceptance list did not name | yes — opt-in per tool | PR-a |
 
 **PR-a is accepted when:**
 - a replacement of a built-in made from the built-in's own class, through `extra_tools=`, `add_tool(replace=True)` or a bare

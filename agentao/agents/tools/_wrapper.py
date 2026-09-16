@@ -17,6 +17,7 @@ extracted.
 
 from __future__ import annotations
 
+import copy
 import logging
 import threading
 import time
@@ -49,6 +50,52 @@ _INCOMPLETE_DETAILS: Dict[str, str] = {
 # vocabulary — ``max_iterations`` is a separate axis by design — so it gets its
 # own key rather than being smuggled into that closed set.
 _MAX_ITERATIONS_REASON = "max_iterations"
+
+
+def _copy_declared_host_tool(
+    tool: RegistrableTool, name: str, agent_name: str,
+) -> Optional[RegistrableTool]:
+    """The copy a host tool contributes to a sub-agent, or ``None`` (SUB-03).
+
+    ``None`` means the tool is absent from the sub-agent, and so is the name
+    it occupied — the caller never falls back to sharing ``tool`` or to the
+    built-in it may have replaced. Three ways to get there, and the two
+    failures each log once, naming the tool and the exception:
+
+    - the tool does not declare ``copies_to_subagents`` (the default, and
+      silent: an undeclared host tool being absent is the contract, not a
+      fault);
+    - reading the declaration raises. Fail closed: a property that cannot say
+      yes has not said yes;
+    - ``copy.copy`` raises. A tool that declared it tolerates a copy and then
+      cannot be copied is a host bug, and the exception is the only useful
+      thing to report about it.
+
+    The declaration is read here rather than at registration because a host
+    may set it per instance, and because a property is free to answer from
+    state that only exists once the tool is wired up.
+    """
+    try:
+        declared = bool(tool.copies_to_subagents)
+    except Exception as exc:
+        logger.warning(
+            "Sub-agent '%s' does not get host tool '%s': reading "
+            "`copies_to_subagents` raised %s: %s",
+            agent_name, name, type(exc).__name__, exc,
+        )
+        return None
+    if not declared:
+        return None
+    try:
+        return copy.copy(tool)
+    except Exception as exc:
+        logger.warning(
+            "Sub-agent '%s' does not get host tool '%s': it declares "
+            "`copies_to_subagents` but copying it raised %s: %s. The parent's "
+            "instance is never shared instead.",
+            agent_name, name, type(exc).__name__, exc,
+        )
+        return None
 
 
 @dataclass(frozen=True)
@@ -629,10 +676,14 @@ class AgentToolWrapper(Tool):
           parent's connection, so the sub-agent opens none;
         - **an agent tool**: left out, so a sub-agent cannot spawn another;
         - **a plan-only tool**: left out;
-        - **a host tool** is left out by name, including one that replaced a
-          built-in. Sharing the host's instance would share whatever state it
-          holds with another thread, and falling back to the built-in under
-          that name would run the very implementation the host replaced.
+        - **a host tool** reaches the sub-agent only when the tool object
+          declares ``copies_to_subagents``, and then as one ``copy.copy`` made
+          here, registered with origin ``host`` (SUB-03 / PR-b). A tool that
+          declares nothing is left out **by name**: falling back to the
+          built-in under that name would run the very implementation the host
+          replaced. Sharing the instance is what the copy exists to avoid —
+          the executor rebinds ``output_callback`` on it per call under a lock
+          scoped to one batch, and a sub-agent's batch holds a different one.
 
         Which of these a parent tool is comes from the origin the parent's
         registry recorded when it was registered (``ToolRegistry.origin``),
@@ -643,6 +694,7 @@ class AgentToolWrapper(Tool):
         """
         own = sub_agent.tools
         requested = self._definition.get("tools")
+        agent_name = self._definition["name"]
         kept: List[Tuple[RegistrableTool, str]] = []
         left_out: List[str] = []
         for name, tool in list(self._all_tools.items()):
@@ -656,6 +708,12 @@ class AgentToolWrapper(Tool):
                 kept.append((tool, "mcp"))
             elif origin == "builtin" and name in own.tools and own.origin(name) == "builtin":
                 kept.append((own.tools[name], "builtin"))
+            elif origin == "host":
+                copied = _copy_declared_host_tool(tool, name, agent_name)
+                if copied is None:
+                    left_out.append(name)
+                else:
+                    kept.append((copied, "host"))
             else:
                 left_out.append(name)
         complete = CompleteTaskTool()
@@ -665,7 +723,6 @@ class AgentToolWrapper(Tool):
         for tool, origin in kept:
             own.register(tool, origin=origin)
 
-        agent_name = self._definition["name"]
         if requested is None:
             if left_out:
                 logger.debug(
@@ -676,7 +733,8 @@ class AgentToolWrapper(Tool):
         if left_out:
             logger.warning(
                 "Sub-agent '%s' lists tools it does not get: %s. A sub-agent gets "
-                "built-in and MCP tools only; host, agent and plan tools are left out.",
+                "built-in and MCP tools, plus host tools that declare "
+                "`copies_to_subagents`; agent and plan tools are left out.",
                 agent_name, ", ".join(sorted(left_out)),
             )
         unavailable = sorted(set(requested) - set(self._all_tools) - {complete.name})

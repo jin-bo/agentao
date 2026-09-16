@@ -52,7 +52,7 @@ class MyTool(Tool):
         return f"Found {len(results)} items: {results}"
 ```
 
-**Six essentials**:
+**Seven essentials**:
 
 | Attribute/method | Required | Purpose |
 |------------------|----------|---------|
@@ -62,6 +62,48 @@ class MyTool(Tool):
 | `execute(**kwargs) -> str` | ✅ | Returns a plain string; no dicts, no bytes |
 | `requires_confirmation` | ❌ | True for side-effecting tools → routes through `confirm_tool` |
 | `is_read_only` | ❌ | True for pure reads; permission engine / Plan mode can optimize |
+| `copies_to_subagents` | ❌ | True lets sub-agents use the tool, as a copy — see below. Default False: your tool reaches no sub-agent |
+
+## Letting a sub-agent use your tool
+
+By default a host tool is **absent from every sub-agent**, and so is the name it
+occupied: a tool you registered as `read_file` does not leave the built-in
+`read_file` visible underneath it. Opt in by declaring it:
+
+```python
+class DeployTool(Tool):
+    @property
+    def copies_to_subagents(self) -> bool:
+        return True
+```
+
+Then each spawn registers **one `copy.copy` of your instance**, not the instance
+itself. Returning True is a promise the runtime cannot check, and it says three
+things:
+
+1. the tool suits a sub-task at all;
+2. it tolerates `copy.copy` — a shallow copy, so the sub-agent's call cannot
+   rebind an attribute on your instance;
+3. every dependency the copy still **shares** with the original — a closure, an
+   HTTP client, a connection pool, a container handle — tolerates concurrent use
+   from the parent and the sub-agent, which run on **different threads**.
+
+(3) is the one that bites, because a shallow copy separates only the instance's
+own attributes. If your tool needs a deeper split, implement `__copy__`; the
+same promise covers whatever it does.
+
+Two more properties of the mechanism:
+
+- **One copy per spawn, not per call**, so a tool may keep state across the calls
+  of one sub-task.
+- **A copy that raises leaves the tool absent**, with a warning naming the
+  exception. It is never shared instead, and never replaced by the built-in it
+  may have overridden.
+
+The declaration does **not** outrank an agent definition's `tools:` allowlist: a
+declared tool the definition does not list is still absent. And it says nothing
+about semantics — a tool holding *this* session's state, like the CLI's own
+`update_goal`, should not declare it at any copy depth.
 
 ## Why must `execute` return a string?
 

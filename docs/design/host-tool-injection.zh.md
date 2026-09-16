@@ -9,6 +9,9 @@
 - `docs/design/embedded-host-contract.md` — host 契约稳定边界（本设计的归属处）
 - `agentao/tooling/registry.py` — `register_builtin_tools`，改造主战场
 - `agentao/tools/base.py` — `Tool` / `AsyncToolBase` / `ToolRegistry.register`
+- `docs/design/subagent-runtime-safety-plan.zh.md` §5.1 —— 注入的工具会不会进入**子代理**，
+  本设计不做这个决定。PR-b 之后，只有工具自身声明了 `copies_to_subagents` 才会进入，
+  且每次 spawn 一份浅拷贝
 
 ---
 
