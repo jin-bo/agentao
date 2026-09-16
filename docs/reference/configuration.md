@@ -426,6 +426,8 @@ See [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) for prompt-composition 
   - User: `~/.agentao/memory.db`
 - **Format.** SQLite; schema owned by `memory/manager.py::MemoryManager`. Not hand-edited.
 - **Precedence.** Both DBs are read independently; both are visible to the prompt renderer. Project memory does not override user memory.
+- **No user store configured.** A `user`-scope write is stored as `project` instead — the behaviour a bare `Agentao(...)` has always had, since its manager is built with a project store only. It is no longer silent: an explicit `scope="user"` logs a warning, an inferred one (`user_` key prefix, `preference` / `profile` tag) logs at debug into `agentao.log`. Neither line carries the key or the value. To get user scope, construct the manager with a `user_store=` — `agentao.embedding.build_from_environment()` does. (#260)
+- **Sub-agents write here too.** A sub-agent's `save_memory` writes through the **parent's** manager, so a memory it saves lands in the same stores, at the same scope, and through a host-injected manager if there is one. Its *session summaries* stay in its own store, which is discarded with it. (#260)
 
 Full schema, tables, and lifecycle → [memory-management.md](../guides/memory-management.md).
 

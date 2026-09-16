@@ -59,7 +59,10 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
 > - **一份 registry。**runner、planner 和模型都用它。它是子代理启动时父级的活 registry 与定义白名单的
 >   交集，再加上 `complete_task`。
 > - **内置工具**是子代理自己的实例，绑定到父级的 `filesystem` 和 `shell`；这两者按身份共享（SUB-01
->   的这一部分）。
+>   的这一部分）。`save_memory` 是这条规则最终需要的例外：它的 `memory_manager` 改绑到父级的，因为
+>   长期记忆该落在父级的库里，而不是子代理用完即弃的那个（#260）。子代理记忆的其余部分 —— 会话
+>   id、它自己压缩写下的会话摘要、`close()` 释放的那些库 —— 仍归它自己，所以改绑的是工具属性，
+>   不是 `sub_agent.memory_manager`。
 > - **`mcp_*` 是父级的实例**，走父级的连接。子代理以空的 `InMemoryMCPRegistry()` 构建，自己不连接任何
 >   服务器。
 > - **`origin`（SUB-02，PR-a，#256）。**`ToolRegistry.register` 接受仅关键字的 `origin`，默认

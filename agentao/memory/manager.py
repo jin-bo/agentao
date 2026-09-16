@@ -48,7 +48,8 @@ class MemoryManager:
         project_store: project-scope persistent store (always present).
         user_store: optional cross-project user-scope store. ``None``
             downgrades user-scope writes to project scope (matches the
-            pre-#16 behavior when ``global_root`` was ``None``).
+            pre-#16 behavior when ``global_root`` was ``None``), and says so
+            in the log rather than silently — see :meth:`upsert`.
         guard: optional :class:`MemoryGuard`; defaults to a fresh one.
     """
 
@@ -106,9 +107,33 @@ class MemoryManager:
         self.guard.detect_sensitive(content)
 
         scope = self.guard.classify_scope(normalized, request.tags, request.scope)
-        # Downgrade user scope to project when no user store is configured
+        # Downgrade user scope to project when no user store is configured.
+        # The behaviour stays — bare construction is project-scope-only by
+        # design, and a library embedder needs the write to land somewhere —
+        # but it is no longer silent: nothing in the logs distinguished "saved
+        # as project because you asked" from "saved as project because this
+        # manager has no user store" (#260).
+        #
+        # An explicit ``scope="user"`` is a request that was not honoured, so
+        # it warns. An inferred one is the classifier's reading of a key or a
+        # tag (``user_`` prefix, ``preference`` / ``profile`` tag), which on a
+        # project-only manager is the ordinary case rather than a fault and
+        # would warn on a large share of writes — that one goes to
+        # ``agentao.log`` at debug instead. Neither records ``key`` or
+        # ``value``: the requested and the actual scope are the whole point,
+        # and the content is what the memory guard exists to keep out of logs.
         if scope == "user" and self.user_store is None:
             scope = "project"
+            if request.scope == "user":
+                logger.warning(
+                    "save_memory asked for user scope and was saved to project "
+                    "scope: this MemoryManager has no user store configured",
+                )
+            else:
+                logger.debug(
+                    "memory classified as user scope, saved to project scope: "
+                    "no user store configured",
+                )
         type_ = self.guard.classify_type(normalized, request.tags, request.type)
         keywords = self.guard.extract_keywords(title, request.tags, content)
 

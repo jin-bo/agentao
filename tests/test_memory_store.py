@@ -1,6 +1,7 @@
 """Tests for SQLiteMemoryStore: CRUD, session summaries, soft delete."""
 
 import sqlite3
+import threading
 import uuid
 from pathlib import Path
 
@@ -812,3 +813,84 @@ class TestConnectionsDoNotLeak:
 
         store.close()
         assert len(closed) == len(opened)
+
+
+class TestTheInMemoryBackingIsReachedFromMoreThanOneThread:
+    """One connection is shared, so the sharing has to be made safe.
+
+    A tool call runs on the executor's worker thread whenever its batch holds
+    more than one call, and a background sub-agent's ``save_memory`` writes
+    through its *parent's* manager from the sub-agent's own thread (#260). A
+    file-backed store gets a private connection per statement and never
+    noticed; the transient backing keeps one and sqlite3 refused it outright.
+    """
+
+    def test_a_write_from_another_thread_is_not_refused(self):
+        store = SQLiteMemoryStore(":memory:")
+        errors: list = []
+
+        def write():
+            try:
+                store.upsert_memory(_make_record(key="from_thread", title="v"))
+            except Exception as exc:  # the pre-fix failure, kept in the report
+                errors.append(exc)
+
+        t = threading.Thread(target=write)
+        t.start()
+        t.join()
+
+        assert errors == []
+        assert [m.key_normalized for m in store.list_memories()] == ["from_thread"]
+        store.close()
+
+    def test_concurrent_writers_all_land(self):
+        """``check_same_thread=False`` alone would let one writer's commit
+        carry another's half-written transaction; the lock is the other half."""
+        store = SQLiteMemoryStore(":memory:")
+        start = threading.Barrier(8)
+        errors: list = []
+
+        def write(n: int):
+            start.wait(timeout=10)
+            try:
+                store.upsert_memory(_make_record(key=f"k{n}", title=f"v{n}"))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=write, args=(n,)) for n in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        assert {m.key_normalized for m in store.list_memories()} == {
+            f"k{n}" for n in range(8)
+        }
+        store.close()
+
+    def test_a_reader_and_a_writer_do_not_collide(self):
+        store = SQLiteMemoryStore(":memory:")
+        stop = threading.Event()
+        errors: list = []
+
+        def read():
+            while not stop.is_set():
+                try:
+                    store.list_memories()
+                except Exception as exc:
+                    errors.append(exc)
+                    return
+
+        reader = threading.Thread(target=read)
+        reader.start()
+        try:
+            for n in range(50):
+                store.upsert_memory(_make_record(key=f"k{n}", title=f"v{n}"))
+        finally:
+            stop.set()
+            reader.join(timeout=10)
+
+        assert errors == []
+        assert len(store.list_memories()) == 50
+        store.close()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -92,6 +93,12 @@ class SQLiteMemoryStore:
         self.db_path = db_path
         self._is_memory = db_path == ":memory:"
         self._persistent_conn: Optional[sqlite3.Connection] = None
+        # Guards the transient backing's one shared connection. Reentrant
+        # because a ``_connect`` scope is held for the caller's whole ``with``
+        # block, and a method that opened a second one inside the first would
+        # otherwise deadlock rather than raise. Unused by the file backing,
+        # whose connection is private to the call.
+        self._memory_lock = threading.RLock()
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -157,12 +164,32 @@ class SQLiteMemoryStore:
         would discard the database.
         """
         if self._is_memory:
-            # For in-memory DBs, reuse a single connection to preserve data
-            if self._persistent_conn is None:
-                self._persistent_conn = sqlite3.connect(":memory:")
-                self._persistent_conn.row_factory = sqlite3.Row
-            with self._persistent_conn as conn:
-                yield conn
+            # For in-memory DBs, reuse a single connection to preserve data —
+            # and reach it from one thread at a time.
+            #
+            # ``check_same_thread=False`` because that connection is genuinely
+            # reached from several: a tool call runs on the executor's worker
+            # thread whenever its batch holds more than one call, and a
+            # background sub-agent's ``save_memory`` writes through its
+            # parent's manager from the sub-agent's own thread (#260). Without
+            # it sqlite3 refuses the write outright and the model is told
+            # "Error saving memory: SQLite objects created in a thread…".
+            #
+            # The lock is the other half, and is not optional: sqlite3 is
+            # serialized at the C level, so the *statements* are safe, but two
+            # threads inside one connection's implicit transaction are not —
+            # whichever leaves first commits the other's half-written work.
+            # Holding the lock across the yield makes a ``_connect`` scope
+            # exclusive, which is what the file backing gets for free from its
+            # own private connection.
+            with self._memory_lock:
+                if self._persistent_conn is None:
+                    self._persistent_conn = sqlite3.connect(
+                        ":memory:", check_same_thread=False
+                    )
+                    self._persistent_conn.row_factory = sqlite3.Row
+                with self._persistent_conn as conn:
+                    yield conn
             return
         conn = sqlite3.connect(self.db_path)
         try:
@@ -182,12 +209,13 @@ class SQLiteMemoryStore:
         there is nothing to release for them; this exists so a host can drop the
         transient store without waiting for the collector.
         """
-        if self._persistent_conn is not None:
-            try:
-                self._persistent_conn.close()
-            except sqlite3.Error:
-                pass
-            self._persistent_conn = None
+        with self._memory_lock:
+            if self._persistent_conn is not None:
+                try:
+                    self._persistent_conn.close()
+                except sqlite3.Error:
+                    pass
+                self._persistent_conn = None
 
     def _init_db(self) -> None:
         with self._connect() as conn:
