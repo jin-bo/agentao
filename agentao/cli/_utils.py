@@ -27,15 +27,51 @@ MEMORY_WIPE_RACE_NOTE = (
 def wipe_all_memories(mgr) -> tuple[int, int, list[str]]:
     """The hard memory reset that ``/clear`` and ``/memory clear`` share.
 
+    A thin call to ``MemoryManager.wipe_all()``, which is where the operation
+    now lives so an embedded host performs the same wipe and reads the same
+    documented result (#235). The legacy path below is kept for a
+    host-injected memory manager predating that method: the CLI's factory
+    contract requires *a* ``memory_manager`` attribute
+    (``app.py::_REQUIRED_AGENT_ATTRS``), not a ``MemoryManager``.
+
     Returns ``(memories_cleared, summaries_cleared, not_cleared)``, where
     ``not_cleared`` names each part still in place. Neither return count can
     say that on its own: ``clear_all_session_summaries`` answers 0 both for
     "nothing to delete" and "the delete failed", so the summaries are
     checked by reading the store back.
 
-    Never raises, and runs the second half even when the first fails.
-    ``/clear`` calls this mid-reset; a raise there abandons the reset after
-    the history is gone but before the permission mode is restored.
+    Never raises. ``/clear`` calls this mid-reset; a raise there abandons the
+    reset after the history is gone but before the permission mode is
+    restored.
+    """
+    wipe = getattr(mgr, "wipe_all", None)
+    if wipe is not None:
+        try:
+            result = wipe()
+            return (
+                result.memories_cleared,
+                result.summaries_cleared,
+                list(result.not_cleared),
+            )
+        except Exception:
+            # A host manager whose own ``wipe_all`` raises — ``MemoryManager``
+            # never does. Falling through re-runs the clear, which is
+            # idempotent (a second soft delete touches no rows, a second
+            # DELETE removes none), so the only cost is that the counts below
+            # report what was *left* and may undercount what the first pass
+            # removed. The counts are not the success signal; ``not_cleared``
+            # is.
+            logger.warning("memory_manager.wipe_all failed", exc_info=True)
+    return _legacy_wipe(mgr)
+
+
+def _legacy_wipe(mgr) -> tuple[int, int, list[str]]:
+    """``wipe_all_memories`` for a manager without :meth:`wipe_all`.
+
+    Byte-for-byte the behaviour that shipped before #235 moved it onto the
+    manager, kept because the CLI accepts any object with the attribute. Do
+    not let this drift from ``MemoryManager.wipe_all`` — it is the same
+    operation against the same three method names.
     """
     not_cleared: list[str] = []
     memories = 0

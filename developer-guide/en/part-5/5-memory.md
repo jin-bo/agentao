@@ -168,12 +168,29 @@ for record in mm.search("typescript"):
 # Soft delete by id (use ``delete_by_title`` for the human-friendly key)
 mm.delete(record_id)
 
-# Full clear: soft-delete every memory + drop every session summary
-mm.clear()                       # both scopes; pass scope="project" or "user" to narrow
-mm.clear_all_session_summaries()
+# Full clear: soft-delete every memory + drop every session summary.
+# Always check the result. A storage failure comes back *in it*, never as an
+# exception and never as a zero — a count of 0 also means "nothing to delete".
+result = mm.wipe_all()
+if not result.ok:
+    print("still in place:", ", ".join(result.not_cleared))
+
+# Narrower primitives are still there. Note `clear()` raises on a store
+# failure, and a raise after the project store has committed skips whatever
+# you were going to run next — which is why `wipe_all()` exists.
+mm.clear(scope="project")        # one scope only
 ```
 
 **Compliance value**: "show the user what AI remembers about them" and a "forget me" button are often SaaS hard requirements.
+
+::: warning `wipe_all()` does not clear the review queue
+It clears persistent memories (both scopes) and session summaries (all
+sessions). The rule-based crystallizer's pending candidates in
+`memory_review_queue` are a fourth data type: they carry excerpts of the
+messages they were extracted from, survive a wipe, and stay visible to
+`/memory review`. `reject_review_item(id)` is the only remedy, one at a time. If
+you are building a "forget me" button, decide explicitly what to do with them.
+:::
 
 ## Memory vs conversation history vs AGENTAO.md
 
@@ -208,13 +225,13 @@ Two users' agents pointing at the same default `Path.cwd()` or `working_director
 
 ### ❌ Forgetting memory outlives `clear_history()`
 
-A user clicks "new conversation" → `agent.clear_history()` — that clears session but not memory. If "new conversation" should forget everything, also call `MemoryManager.clear()` + `clear_all_session_summaries()`.
+A user clicks "new conversation" → `agent.clear_history()` — that clears session but not memory. If "new conversation" should forget everything, also call `MemoryManager.wipe_all()` **and check `result.ok`**: a wipe that silently failed leaves session summaries that `get_cross_session_tail()` puts straight back into the next prompt.
 
 ## TL;DR
 
 - Memory ≠ conversation history. Memory persists across sessions in SQLite; history lives on `agent.messages`.
 - Two scopes / two DBs: **project** (`<wd>/.agentao/memory.db`) and **user** (`~/.agentao/memory.db`). Multi-tenant deployments must key user scope by `tenant_id+user_id` or disable it.
 - Read-only / restricted FS auto-degrades to in-memory store with a warning — agent keeps starting.
-- `clear_history()` does **not** clear memory; that's intentional. Wipe both explicitly when "new conversation" should forget everything.
+- `clear_history()` does **not** clear memory; that's intentional. Wipe both explicitly with `MemoryManager.wipe_all()` when "new conversation" should forget everything — and check `result.ok`, because the counts cannot tell a failed wipe from an empty store.
 
 → Next: [5.6 System Prompt Customization](./6-system-prompt)

@@ -167,12 +167,27 @@ for record in mm.search("typescript"):
 # 按 id 软删除（按用户友好的 key 删用 ``delete_by_title``）
 mm.delete(record_id)
 
-# 完全清空：把所有作用域的 memory 都软删除 + 删掉会话摘要
-mm.clear()                       # 两个作用域；传 scope="project" / "user" 可只清一个
-mm.clear_all_session_summaries()
+# 完全清空：把所有作用域的 memory 都软删除 + 删掉会话摘要。
+# 一定要检查返回值：存储失败通过它回报，既不抛异常也不体现为计数 ——
+# 计数 0 同样可能只是「本来就没东西可删」。
+result = mm.wipe_all()
+if not result.ok:
+    print("仍然残留：", ", ".join(result.not_cleared))
+
+# 更细的原语仍然可用。注意 `clear()` 在存储失败时会抛异常，
+# 而且 project 库已提交之后抛出，会把你接下来要做的事一起跳过 ——
+# 这正是 `wipe_all()` 存在的理由。
+mm.clear(scope="project")        # 只清一个作用域
 ```
 
 **合规价值**：给用户"查看 AI 知道关于我的什么"和"一键遗忘"的按钮，是很多 SaaS 场景的硬性要求。
+
+::: warning `wipe_all()` 不清 review queue
+它清的是长期记忆（两个作用域）和会话摘要（所有会话）。规则结晶器写进
+`memory_review_queue` 的待审候选是第四类数据：它们带着被提取消息的原文摘录，
+清除之后依然存在，`/memory review` 照样列得出来。唯一的补救是
+`reject_review_item(id)`，一条一条退。要做"一键遗忘"按钮，必须显式决定这些条目怎么处理。
+:::
 
 ## 记忆 vs 会话历史 vs AGENTAO.md
 
@@ -207,13 +222,13 @@ save_memory("doc", open("readme.md").read())   # 几十 KB
 
 ### ❌ 忘记记忆跨 `clear_history()` 存活
 
-用户在 UI 上点"新对话"→ `agent.clear_history()` 只清会话，不清记忆。如果"新对话"应该忘掉一切，要同时调 `MemoryManager.clear()` + `clear_all_session_summaries()`。
+用户在 UI 上点"新对话"→ `agent.clear_history()` 只清会话，不清记忆。如果"新对话"应该忘掉一切，要调 `MemoryManager.wipe_all()`，**并检查 `result.ok`**：一次静默失败的清除会留下会话摘要，而 `get_cross_session_tail()` 会把它们原样塞回下一个 prompt。
 
 ## TL;DR
 
 - 记忆 ≠ 对话历史。记忆跨会话存在 SQLite；历史活在 `agent.messages` 上。
 - 两个作用域 / 两个 DB：**项目**（`<wd>/.agentao/memory.db`）和**用户**（`~/.agentao/memory.db`）。多租户部署里要么按 `tenant_id+user_id` 拆分用户作用域，要么直接禁用。
 - 只读 / 受限 FS 自动降级为内存 store 并 warning——Agent 还是能起。
-- `clear_history()` **不**清记忆；这是设计如此。要"新对话"彻底忘记时显式同时清两边。
+- `clear_history()` **不**清记忆；这是设计如此。要"新对话"彻底忘记时显式调 `MemoryManager.wipe_all()`，并检查 `result.ok` —— 计数分不清「清除失败」和「本来就是空的」。
 
 → 下一节：[5.6 系统提示定制](./6-system-prompt)

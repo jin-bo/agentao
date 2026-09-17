@@ -21,6 +21,8 @@ from .models import (
     SESSION_TAIL_CHARS,
     MemoryRecord,
     MemoryReviewItem,
+    MemoryWipeResult,
+    MemoryWipeTarget,
     SaveMemoryRequest,
     SessionSummaryRecord,
 )
@@ -401,6 +403,75 @@ class MemoryManager:
             return bool(self.project_store.list_session_summaries(session_id=None, limit=1))
         except Exception:
             return True
+
+    # =========================================================================
+    # Hard reset
+    # =========================================================================
+
+    def wipe_all(self) -> MemoryWipeResult:
+        """Clear every memory and every session summary. **Never raises.**
+
+        The hard reset behind ``/clear`` and ``/memory clear``, on the manager
+        so an embedded host performs the same operation and reads the same
+        documented result (#235). A storage failure comes back *in the
+        result*, never as an exception and never as a zero: read
+        :attr:`~agentao.memory.models.MemoryWipeResult.ok`, because neither
+        count can carry that on its own —
+        :meth:`clear_all_session_summaries` answers 0 both for "nothing to
+        delete" and for "the delete failed", which is why the summaries are
+        confirmed by reading the store back rather than by the count.
+
+        Runs the second half even when the first fails: ``/clear`` calls this
+        mid-reset, and a raise there would abandon the reset after the history
+        is gone but before the permission mode is restored.
+
+        **Clears** persistent memories in both scopes (soft delete, via
+        :meth:`clear`) and session summaries from every session (via
+        :meth:`clear_all_session_summaries`).
+
+        **Does not clear the review queue** (``memory_review_queue``): the
+        crystallizer's pending candidates carry excerpts of the messages they
+        were extracted from and stay visible to ``/memory review`` after a
+        wipe. :meth:`reject_review_item` is the only remedy, one item at a
+        time.
+
+        The answer is true as of the read. A background sub-agent's
+        ``save_memory`` writes through this manager (#260), and a second
+        process can write to the same project store, so a memory saved after
+        the wipe is not a failure of it.
+        """
+        not_cleared: list[MemoryWipeTarget] = []
+
+        memories = 0
+        try:
+            memories = self.clear()
+        except Exception:
+            # ``clear`` deliberately does not swallow — it is the one part of
+            # this whose failure the caller could already see — so this is
+            # where that exception becomes a reportable outcome. A user store
+            # that raises after the project store committed still counts as
+            # not cleared: part of the memories are still there.
+            logger.warning("clearing memories failed", exc_info=True)
+            not_cleared.append("memories")
+
+        summaries = 0
+        try:
+            summaries = self.clear_all_session_summaries()
+            remain = self.session_summaries_remain()
+        except Exception:
+            # Both of those swallow their own errors today, so this is for a
+            # subclass or an injected store that raises somewhere they do not
+            # expect — the "never raises" promise above has to be structural.
+            logger.warning("clearing session summaries failed", exc_info=True)
+            remain = True
+        if remain:
+            not_cleared.append("session summaries")
+
+        return MemoryWipeResult(
+            memories_cleared=memories,
+            summaries_cleared=summaries,
+            not_cleared=tuple(not_cleared),
+        )
 
     # =========================================================================
     # Private helpers

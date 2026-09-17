@@ -492,6 +492,13 @@ def test_reset_tolerates_a_runtime_without_bg_store():
 
 
 def test_wipe_never_raises_from_the_summary_half():
+    """Also the coverage for the legacy path — keep ``_Mgr`` without ``wipe_all``.
+
+    The helper prefers ``MemoryManager.wipe_all`` (#235) and only falls back
+    for a host-injected manager that predates it. Completing this fake with a
+    ``wipe_all`` would delete that coverage silently; the test below asks for
+    it by name.
+    """
     from agentao.cli._utils import wipe_all_memories
 
     class _Mgr:
@@ -505,6 +512,52 @@ def test_wipe_never_raises_from_the_summary_half():
 
     assert (memories, summaries) == (2, 0)
     assert not_cleared == ["session summaries"]
+
+
+def test_a_manager_without_wipe_all_still_gets_wiped():
+    """The CLI's factory contract requires *a* ``memory_manager``, not a
+    ``MemoryManager`` (``app.py::_REQUIRED_AGENT_ATTRS``), so ``/clear`` has
+    to keep working against one that never grew the new method."""
+    from agentao.cli._utils import wipe_all_memories
+
+    calls = []
+
+    class _Mgr:
+        def clear(self):
+            calls.append("clear")
+            return 3
+
+        def clear_all_session_summaries(self):
+            calls.append("summaries")
+            return 1
+
+        def session_summaries_remain(self):
+            return False
+
+    assert wipe_all_memories(_Mgr()) == (3, 1, [])
+    assert calls == ["clear", "summaries"]
+
+
+def test_a_wipe_all_that_raises_falls_back_instead_of_propagating():
+    """A host manager may implement ``wipe_all`` badly. The clear is
+    idempotent, so re-running it through the legacy path is safe; what must
+    not happen is a raise into the middle of ``/clear``."""
+    from agentao.cli._utils import wipe_all_memories
+
+    class _Mgr:
+        def wipe_all(self):
+            raise RuntimeError("host manager bug")
+
+        def clear(self):
+            return 3
+
+        def clear_all_session_summaries(self):
+            return 1
+
+        def session_summaries_remain(self):
+            return False
+
+    assert wipe_all_memories(_Mgr()) == (3, 1, [])
 
 
 def test_a_partial_clear_still_invalidates_the_recall_index(tmp_path, monkeypatch):
