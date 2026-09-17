@@ -75,6 +75,33 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A `/skills reload` no longer erases a disable it could not see.**
+  `reload_skills()` intersected `disabled_skills` with what the scan had just
+  found and persisted the result in the same breath. A scan cannot tell
+  "deleted" from "not discoverable right now" — a project `.agentao/skills` on
+  an unmounted share, a directory renamed mid-session, a host-injected manager
+  whose plugin skills were never re-registered — so one `/skills reload` (or
+  one `/crystallize`, which calls it) dropped the user's disable from memory
+  *and* from `skills_config.json` with no message, and the skill came back
+  enabled. Since #266 that set is also the activation gate, so the erasure
+  re-armed the skill for the model, not merely for the catalogue. The set is
+  now left alone across a reload, nothing is written back there, and only
+  `/skills disable` / `/skills enable` change it — which is what codex
+  (`codex-rs/ext/skills/src/host_service.rs:366`: the config's rules are
+  resolved against each scan's outcome, the config itself never rewritten)
+  and gemini-cli (`packages/core/src/config/config.ts:3691`:
+  `setDisabledSkills(...)` re-applied after discovery, over a list it re-reads
+  from settings at `:3679` rather than one it recomputes) both do. The
+  accepted cost is that a name can outlive the skill it disabled;
+  `/skills enable <name>` keys
+  off the disabled set rather than the catalogue, so it clears such a name
+  whether or not the skill is currently present, and no cleanup command,
+  config key or migration was needed. `/skills` lists those names in their own
+  **Disabled, not found by the last scan** section — it used to intersect the
+  disabled set with the catalogue, which was lossless only while the prune
+  kept the two equal, and would otherwise have hidden the very name the
+  remedy needs typed. (#270)
+
 - **An ACP-loaded session gets its skills back.** `session/load` and the
   startup `--resume` both read the persisted `active_skills` list off disk and
   then dropped it — one bound the name and never used it, the other spelled it

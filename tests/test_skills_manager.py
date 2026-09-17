@@ -824,3 +824,172 @@ def test_non_string_entries_are_dropped_and_the_rest_kept(tmp_path):
 
     assert m.disabled_skills == {"alpha"}
     assert m.list_available_skills() == ["beta"]
+
+
+# ---------------------------------------------------------------------------
+# A reload never prunes ``disabled_skills`` (#270)
+# ---------------------------------------------------------------------------
+
+def _disabled_on_disk(tmp_path) -> list:
+    cfg = tmp_path / ".agentao" / "skills_config.json"
+    return json.loads(cfg.read_text(encoding="utf-8"))["disabled_skills"]
+
+
+def test_a_disable_survives_a_reload_that_cannot_find_the_skill(tmp_path):
+    """``reload_skills`` used to intersect ``disabled_skills`` with what the
+    scan found and persist the result, so a skill that was momentarily
+    undiscoverable — an unmounted share, a directory renamed mid-session —
+    lost its disable from memory *and* ``skills_config.json`` silently, and
+    came back enabled. Since #266 that set is the activation gate, so the
+    erasure also re-armed the skill for the model."""
+    g = tmp_path / "global"
+    _write_skill(g, "alpha", body="## Body\nSecret alpha instructions.")
+    _write_skill(g, "beta")
+
+    with patch.multiple(_mod, _GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b"):
+        m = SkillManager(working_directory=tmp_path)
+        m.disable_skill("alpha")
+        assert _disabled_on_disk(tmp_path) == ["alpha"]
+
+        (g / "alpha").rename(tmp_path / "alpha_away")
+        # The other half of the invariant, and the half the assertions below
+        # cannot see: a reload writes *nothing* back. Re-adding
+        # ``_save_config()`` without the prune leaves every content assertion
+        # here green while restoring the cross-process clobber — a second
+        # agentao's disable, written after this one started, would be
+        # overwritten from a stale in-memory set.
+        with patch.object(m, "_save_config") as saved:
+            m.reload_skills()
+        assert saved.call_count == 0
+        assert m.disabled_skills == {"alpha"}
+        assert _disabled_on_disk(tmp_path) == ["alpha"]
+
+        (tmp_path / "alpha_away").rename(g / "alpha")
+        m.reload_skills()
+
+        assert m.disabled_skills == {"alpha"}
+        assert _disabled_on_disk(tmp_path) == ["alpha"]
+        assert "alpha" in m.list_all_skills()
+        assert m.list_available_skills() == ["beta"]
+        assert m.activate_skill("alpha", "task").startswith("Error: Unknown skill 'alpha'")
+        # ``beta`` first, so the context is non-empty: with nothing active
+        # ``get_skills_context()`` answers "" whatever the disable did, and
+        # the assertion below would hold even for a skill that activated.
+        m.activate_skill("beta", "task")
+        context = m.get_skills_context()
+        assert "beta" in context
+        assert "Secret alpha instructions." not in context
+
+
+def test_a_disable_read_at_startup_survives_a_skill_that_is_not_there_yet(tmp_path):
+    """The transient absence the prune handled worst: the skill is already
+    missing when the config is read, so "was it ever discoverable in this
+    process" has no answer to give. The record is kept until the user says
+    otherwise."""
+    g = tmp_path / "global"
+    _write_skill(g, "beta")
+    cfg = tmp_path / ".agentao" / "skills_config.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps({"disabled_skills": ["alpha"]}), encoding="utf-8")
+
+    with patch.multiple(_mod, _GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b"):
+        m = SkillManager(working_directory=tmp_path)
+        assert m.disabled_skills == {"alpha"}
+
+        m.reload_skills()
+        assert m.disabled_skills == {"alpha"}
+
+        _write_skill(g, "alpha", body="## Body\nSecret alpha instructions.")
+        m.reload_skills()
+
+        assert "alpha" in m.list_all_skills()
+        assert m.list_available_skills() == ["beta"]
+        assert m.activate_skill("alpha", "task").startswith("Error: Unknown skill 'alpha'")
+        # See the sibling test: an empty ``active_skills`` makes
+        # ``get_skills_context()`` answer "" regardless, so activate an
+        # enabled skill first and assert against a context that has content.
+        m.activate_skill("beta", "task")
+        context = m.get_skills_context()
+        assert "beta" in context
+        assert "Secret alpha instructions." not in context
+
+    assert _disabled_on_disk(tmp_path) == ["alpha"]
+
+
+def test_enabling_a_skill_that_is_not_discoverable_still_clears_the_record(tmp_path):
+    """Why no cleanup command is needed for the names the prune used to drop:
+    ``enable_skill`` keys off ``disabled_skills``, not ``available_skills``,
+    so a name left over from a skill the user deleted on purpose is removable
+    by the command that already exists."""
+    g = tmp_path / "global"
+    _write_skill(g, "beta")
+    cfg = tmp_path / ".agentao" / "skills_config.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps({"disabled_skills": ["alpha"]}), encoding="utf-8")
+
+    with patch.multiple(_mod, _GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b"):
+        m = SkillManager(working_directory=tmp_path)
+        assert "alpha" not in m.available_skills
+
+        assert m.enable_skill("alpha").endswith("has been re-enabled.")
+
+        assert m.disabled_skills == set()
+
+    assert _disabled_on_disk(tmp_path) == []
+
+
+def test_slash_skills_lists_a_disable_whose_skill_the_scan_did_not_find(tmp_path, monkeypatch):
+    """The remedy the docs name — ``/skills enable <name>`` — needs the name
+    typed, and ``/skills`` is where the user reads it. Intersecting the
+    disabled set with the catalogue was lossless only while the prune kept the
+    two equal; since #270 they diverge for as long as a skill stays missing."""
+    from agentao.cli import ui as ui_mod
+
+    printed: list[str] = []
+    monkeypatch.setattr(
+        ui_mod.console, "print", lambda *a, **k: printed.append(" ".join(map(str, a)))
+    )
+
+    g = tmp_path / "global"
+    _write_skill(g, "beta")
+    cfg = tmp_path / ".agentao" / "skills_config.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(
+        json.dumps({"disabled_skills": ["alpha", "beta"]}), encoding="utf-8"
+    )
+
+    with patch.multiple(_mod, _GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b"):
+        m = SkillManager(working_directory=tmp_path)
+
+    ui_mod.list_skills(SimpleNamespace(agent=SimpleNamespace(skill_manager=m)))
+    out = "\n".join(printed)
+
+    # ``beta`` is disabled and in the catalogue; ``alpha`` is disabled and not.
+    assert "Disabled Skills (1)" in out
+    assert "Disabled, not found by the last scan (1)" in out
+    assert "alpha" in out
+    assert "/skills enable <name>" in out
+
+
+def test_slash_skills_survives_a_manager_carrying_no_disabled_set(tmp_path, monkeypatch):
+    """``cli/commands/skills.py`` guards for a host-injected manager whose
+    ``disabled_skills`` is ``None``. ``None & set()`` is a ``TypeError``, and
+    the listing reaches it before any subcommand does."""
+    from agentao.cli import ui as ui_mod
+
+    printed: list[str] = []
+    monkeypatch.setattr(
+        ui_mod.console, "print", lambda *a, **k: printed.append(" ".join(map(str, a)))
+    )
+
+    fake = SimpleNamespace(
+        list_available_skills=lambda: [],
+        available_skills={},
+        disabled_skills=None,
+        get_active_skills=lambda: {},
+        get_skill_info=lambda name: None,
+    )
+
+    ui_mod.list_skills(SimpleNamespace(agent=SimpleNamespace(skill_manager=fake)))
+
+    assert "Available Skills (0)" in "\n".join(printed)
