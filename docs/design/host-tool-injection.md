@@ -1,6 +1,6 @@
 # Host tool injection: `extra_tools` / `disable_tools` (v1)
 
-**Status:** **v1 landed** (`extra_tools` + `disable_tools` + `WebSearchTool(backend/api_key)`, see §11; tests in `tests/test_host_tool_injection.py`). `tool_options` / settings.json still deferred, see §10.
+**Status:** **v1 shipped in 0.4.9**; `copies_to_subagents` — a host tool's opt-in to reaching sub-agents, as one shallow copy per spawn — **shipped in 0.4.24** (see §11 and `tests/test_subagent_host_tool_declaration.py`). v1 is `extra_tools` + `disable_tools` + `WebSearchTool(backend/api_key)`, tests in `tests/test_host_tool_injection.py`. `tool_options` / settings.json still deferred, see §10.
 **Audience:** agentao maintainers building a declarative host tool-injection surface; reviewers of the follow-up PR.
 **Companions:**
 - `docs/design/host-tool-injection.zh.md` — Chinese version

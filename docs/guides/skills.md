@@ -12,6 +12,45 @@ Agentao dynamically loads skills from the `skills` directory. Each skill is defi
 4. **Parse Metadata**: Extract name and description from YAML frontmatter
 5. **Make Available**: Skills are automatically available in the CLI
 
+## Enabling and Disabling Skills
+
+A discovered skill can be switched off without deleting it:
+
+```bash
+/skills disable <name>     # persistent — survives restart
+/skills enable <name>      # reverse it
+/skills                    # list, including a Disabled section
+```
+
+The state lives in `.agentao/skills_config.json` under `disabled_skills`, so
+it applies to every future session in that project.
+
+**Disable is not deactivate.** `/skills deactivate` drops a skill out of the
+current session's prompt; the skill is still there and can be activated again.
+`disable` is the stronger statement: the skill does not load, does not appear
+in the catalogue the model is shown, and — since 0.4.24 — cannot be activated
+by name either, by the model's `activate_skill` tool, by `/skills activate`, by
+a session restore, or by a sub-agent that inherited the catalogue. Before
+0.4.24 the name was merely hidden, and activating it directly still worked.
+
+**A disable is never pruned by a scan.** A reload cannot tell "this skill was
+deleted" from "this skill is not discoverable right now" — a project
+`.agentao/skills` on an unmounted share, a directory renamed mid-session — so
+`/skills reload` (and `/crystallize`, which calls it) leaves the disabled set
+alone. The accepted cost is that a name can outlive the skill it disabled;
+`/skills` lists those under **Disabled, not found by the last scan**, and
+`/skills enable <name>` clears such a name whether or not the skill is
+currently present.
+
+**The file is safe to hand-edit and safe to share between processes.** Each
+`/skills disable` / `/skills enable` is a read-modify-write of that one name,
+with the read and the write inside one lock, swapped in via a temp file. Every
+other disabled name and every other key in the file survives, including ones
+another agentao process wrote after this one started. The write path parses
+strictly: malformed JSON, a non-array `disabled_skills`, or a non-string entry
+in it refuses the write and reports the path, rather than writing back a
+lenient reading that would delete the names the file holds.
+
 ## Current Skills
 
 ✅ **17 skills loaded successfully:**
