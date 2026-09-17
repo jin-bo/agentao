@@ -80,11 +80,28 @@ def _reset_session(cli: AgentaoCLI, *, clear_memories: bool) -> _ResetOutcome:
     )
 
 
-def _print_detached(count: int) -> None:
-    if count:
+def _print_detached(count: int, *, memories_wiped: bool) -> None:
+    """Report the background agents that outlived the reset.
+
+    ``memories_wiped`` adds the part ``/clear`` in particular cannot promise:
+    a running sub-agent's ``save_memory`` writes through the *parent's*
+    memory manager (#260), so the wipe is true when it runs, not for as long
+    as those agents are alive. Session summaries are deliberately not in that
+    sentence — a sub-agent's compaction writes to a transient store of its own
+    (#234), so a long-term memory is the only thing that can come back.
+    ``/new`` keeps memories, so there the sentence would name a loss that did
+    not happen.
+    """
+    if not count:
+        return
+    console.print(
+        f"[warning]{count} background agent(s) still running from the previous "
+        f"session. They will not report into this one — check /agents.[/warning]"
+    )
+    if memories_wiped:
         console.print(
-            f"[warning]{count} background agent(s) still running from the previous "
-            f"session. They will not report into this one — check /agents.[/warning]"
+            "[warning]One of them can still save a long-term memory: the wipe "
+            "holds as of now, not for as long as they run.[/warning]"
         )
 
 
@@ -99,7 +116,7 @@ def handle_clear_command(cli: AgentaoCLI, args: str = "") -> None:
         )
     else:
         console.print("\n[success]Session and all memories cleared.[/success]")
-    _print_detached(outcome.detached_agents)
+    _print_detached(outcome.detached_agents, memories_wiped=True)
     console.print("[info]Permission mode reset to workspace-write.[/info]\n")
 
 
@@ -110,5 +127,5 @@ def handle_new_command(cli: AgentaoCLI, args: str = "") -> None:
         "\n[success]New session started. Long-term memories and earlier "
         "session summaries preserved.[/success]"
     )
-    _print_detached(outcome.detached_agents)
+    _print_detached(outcome.detached_agents, memories_wiped=False)
     console.print("[info]Permission mode reset to workspace-write.[/info]\n")

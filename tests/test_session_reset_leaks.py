@@ -326,6 +326,36 @@ def test_reset_warns_about_agents_that_will_now_finish_silently(cli, output, han
     assert bg_store.drain_notifications() == []
 
 
+@pytest.mark.parametrize(
+    "handler_name, warns", [("handle_clear_command", True), ("handle_new_command", False)],
+)
+def test_only_clear_says_a_running_agent_can_still_write_memory(
+    cli, output, handler_name, warns
+):
+    """The memory sentence belongs to ``/clear`` alone (#234).
+
+    A background sub-agent's ``save_memory`` writes through the *parent's*
+    manager (#260), so a wipe is true when it runs and not a moment longer.
+    ``/new`` keeps memories, so the same sentence there would name a loss that
+    did not happen — which is why ``_print_detached`` takes the flag rather
+    than carrying the sentence for both callers.
+
+    Long-term memory only: since #234 a sub-agent's compaction writes to a
+    transient store of its own, so no summary can come back either way.
+    """
+    from agentao.cli import commands
+
+    bg_store = cli.agent.bg_store
+    bg_store.register("worker-1", "worker", "task")
+    bg_store.mark_running("worker-1")
+
+    getattr(commands, handler_name)(cli, "")
+
+    text = output.export_text()
+    assert "1 background agent(s) still running" in text
+    assert ("can still save a long-term memory" in text) is warns
+
+
 def test_new_without_background_agents_prints_no_warning(cli, output):
     from agentao.cli.commands import handle_new_command
 
