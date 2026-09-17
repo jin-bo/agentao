@@ -43,7 +43,7 @@ schema_meta        — 版本元数据
 
 ---
 
-## 三类数据
+## 四类数据
 
 ### 1. Persistent Memories（持久记忆）
 
@@ -111,6 +111,18 @@ schema_meta        — 版本元数据
 | 时效性（recency） | ×1 |
 
 **关键字段：** `memory_id`, `scope`, `type`, `title`, `excerpt`, `score`, `reasons`
+
+---
+
+### 4. Review Items（待审条目）
+
+数据模型：`MemoryReviewItem`，存储于 `memory_review_queue` 表。
+
+**产生时机：** 规则 crystallizer 的产出——`commit_compaction` 第 4b 步自动跑一次，`/memory crystallize` 手动再跑一次。同一 `(scope, key_normalized)` 的 pending 行会被折叠，`occurrences` 累加。
+
+**关键字段：** `title`、`content`、`evidence`（触发匹配的原文摘录）、`source_session`、`occurrences`、`status`（`pending` / `approved` / `rejected`）
+
+**只能逐条处理：** `/memory review approve <id>` 提升为正式记忆，`/memory review reject <id>` 退掉。**`/clear` 和 `/memory clear` 都碰不到这张表**——`MemoryManager.wipe_all()` 清的是 `memories` 和 `session_summaries`，待审条目连同它们携带的原文摘录会活下来。做"一键遗忘"要单独处理。
 
 ---
 

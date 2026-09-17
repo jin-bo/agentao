@@ -173,7 +173,7 @@ to run `/sandbox off` or switch profile via `/sandbox profile <name>`.
 | 用户确认 callback | 当决策为 ASK 时，用户手动点击 yes/no | `tool_runner.py` Phase 2 |
 | **Sandbox policy**（本功能） | **允许后，子进程的能力边界** | `tool_runner.py` Phase 3 |
 
-三层独立、可组合。即使 `allow_all_tools=True` 跳过了用户确认，沙箱仍在兜底。
+三层独立、可组合。即使 `/mode full-access` 跳过了用户确认，沙箱仍在兜底。
 
 ## 验证
 
