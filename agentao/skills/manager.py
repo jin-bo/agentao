@@ -3,16 +3,34 @@
 import copy
 import json
 import logging
+import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from agentao.frontmatter import parse_frontmatter
 
 from ..paths import user_root
 
 logger = logging.getLogger(__name__)
+
+#: How long a ``skills_config.json`` read-modify-write waits for the
+#: cross-process lock before giving up. Matches ``skills/registry.py``, which
+#: locks the same kind of user-edited JSON for the same reason.
+_CONFIG_LOCK_TIMEOUT_S = 10
+
+
+class _SkillConfigWriteError(Exception):
+    """A ``skills_config.json`` update that did not happen.
+
+    The message names the path and the reason and is returned to the caller
+    verbatim, because both callers (``/skills disable`` / ``/skills enable``)
+    answer with a string the CLI prints. Raised rather than returned so that
+    no partial state — an in-memory add, a deactivation — can be applied on
+    a path that did not reach the disk.
+    """
 
 if TYPE_CHECKING:
     # Declared here, not at module scope: the plugin subsystem is an
@@ -276,46 +294,248 @@ class SkillManager:
                 )
                 self.disabled_skills = set()
 
-    def _save_config(self):
-        """Save disabled skills list to config file.
+    # ------------------------------------------------------------------
+    # Config writes — one name at a time, under a cross-process lock (#275)
+    # ------------------------------------------------------------------
 
-        A no-op on a :meth:`child_view`: it shares the parent's
-        ``_config_file`` but owns a forked ``disabled_skills``, so writing
-        would persist a sub-agent's ephemeral set over the user's
-        ``skills_config.json``.
+    @property
+    def _config_lock_file(self) -> Path:
+        return self._config_file.with_name(self._config_file.name + ".lock")
+
+    def _read_config_for_write(self) -> Dict[str, Any]:
+        """Parse ``skills_config.json`` for a read-modify-write, strictly.
+
+        Deliberately **stricter than** :meth:`_load_config`, and the asymmetry
+        is the point. At startup a file that will not parse must not stop the
+        CLI from launching, so the loader warns and falls back to "nothing
+        disabled". Here the fallback would be destructive: writing an empty
+        set plus one name over a file that *does* hold names, but could not be
+        read, erases them — which is #275 with a decoder in front of it. A
+        missing file is the one benign absence and reads as ``{}``.
+
+        Non-string entries are refused rather than dropped for the same
+        reason: :meth:`_load_config` tolerates them because it only *reads*,
+        while writing the tolerated view back deletes them from the user's
+        file. The message names the path, so the remedy is to open it.
         """
-        if getattr(self, "_derived", False):
-            logger.debug(
-                "Not persisting skills config from a derived child view."
+        try:
+            raw = self._config_file.read_text(encoding="utf-8-sig")
+        except FileNotFoundError:
+            return {}
+        except UnicodeDecodeError as exc:
+            raise _SkillConfigWriteError(
+                f"Error: not updating {self._config_file}: not valid UTF-8 "
+                f"({exc.reason} at byte {exc.start}). Re-save it as UTF-8 — "
+                f"PowerShell 5.1 writes UTF-16LE from `>` and `Out-File`."
+            ) from exc
+        except OSError as exc:
+            raise _SkillConfigWriteError(
+                f"Error: not updating {self._config_file}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise _SkillConfigWriteError(
+                f"Error: not updating {self._config_file}: it is not valid "
+                f"JSON ({exc}). Fix or delete the file — overwriting it would "
+                f"discard whatever it disables."
+            ) from exc
+
+        if not isinstance(data, dict):
+            raise _SkillConfigWriteError(
+                f"Error: not updating {self._config_file}: top-level value "
+                f"must be a JSON object, got {type(data).__name__}."
             )
-            return
-        self._config_dir.mkdir(parents=True, exist_ok=True)
-        config = {"disabled_skills": sorted(self.disabled_skills)}
-        with open(self._config_file, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2)
+        names = data.get("disabled_skills", [])
+        if not isinstance(names, (list, tuple)):
+            raise _SkillConfigWriteError(
+                f"Error: not updating {self._config_file}: "
+                f"'disabled_skills' must be a JSON array of skill names, got "
+                f"{type(names).__name__}."
+            )
+        bad = [name for name in names if not isinstance(name, str)]
+        if bad:
+            raise _SkillConfigWriteError(
+                f"Error: not updating {self._config_file}: "
+                f"'disabled_skills' holds {len(bad)} non-string "
+                f"entr{'y' if len(bad) == 1 else 'ies'} "
+                f"({', '.join(repr(b) for b in bad[:3])}). Remove them — "
+                f"writing the file back would drop them silently."
+            )
+        return data
+
+    def _write_config_atomically(self, data: Dict[str, Any]) -> None:
+        """Replace the config with ``data`` via a temp file in the same dir.
+
+        A plain ``open(..., "w")`` truncates first, so an error between the
+        truncate and the write leaves an empty file — every disable in it
+        gone. ``os.replace`` makes the swap atomic instead; the Windows retry
+        it needs (a concurrent reader without ``FILE_SHARE_DELETE`` makes the
+        rename raise) is already solved once in ``capabilities/filesystem``
+        and is imported rather than copied.
+        """
+        from agentao.capabilities.filesystem import _replace_with_retry
+
+        fd, tmp = tempfile.mkstemp(dir=str(self._config_dir), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            _replace_with_retry(Path(tmp), self._config_file)
+        except OSError as exc:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise _SkillConfigWriteError(
+                f"Error: could not write {self._config_file}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+    def _update_disabled_on_disk(
+        self, skill_name: str, *, disable: bool
+    ) -> Tuple[bool, Set[str]]:
+        """Add or remove **one** name in the config, under a lock.
+
+        Returns ``(changed, disabled)``, where ``disabled`` is the set the
+        file holds afterwards — read back from the file this call merged
+        into, never from memory. ``changed`` is ``False`` when the file
+        already agreed, which is what makes "already disabled" / "is not
+        disabled" an answer about the file rather than about a snapshot this
+        process may have taken minutes ago.
+
+        The lock spans the whole read-modify-write, not just the write: two
+        processes that each read before either wrote would otherwise merge
+        into the same stale set and the second would still erase the first.
+        Raises :class:`_SkillConfigWriteError` if nothing was written.
+        """
+        from filelock import FileLock, Timeout
+
+        try:
+            self._config_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise _SkillConfigWriteError(
+                f"Error: could not create {self._config_dir}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+        lock = FileLock(str(self._config_lock_file), timeout=_CONFIG_LOCK_TIMEOUT_S)
+        try:
+            lock.acquire()
+        except Timeout as exc:
+            raise _SkillConfigWriteError(
+                f"Error: timed out after {_CONFIG_LOCK_TIMEOUT_S}s waiting for "
+                f"{self._config_lock_file}. Another agentao process is "
+                f"updating the skills config; try again."
+            ) from exc
+        except OSError as exc:
+            raise _SkillConfigWriteError(
+                f"Error: could not lock {self._config_lock_file}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+        try:
+            data = self._read_config_for_write()
+            disabled = {name for name in data.get("disabled_skills", [])}
+            changed = disable != (skill_name in disabled)
+            if changed:
+                if disable:
+                    disabled.add(skill_name)
+                else:
+                    disabled.discard(skill_name)
+                # Assign into the parsed dict so every other key the user or
+                # a future version put in the file survives the write, and
+                # keeps its position.
+                data["disabled_skills"] = sorted(disabled)
+                self._write_config_atomically(data)
+            return changed, disabled
+        finally:
+            lock.release()
+
+    def _adopt_disabled(self, disabled: Set[str]) -> None:
+        """Adopt the set the file now holds, and drop anything active in it.
+
+        Mutated in place rather than rebound: the set is a plain attribute
+        several call sites read straight off the manager, and a rebind would
+        strand any holder on the old object.
+
+        The deactivation loop covers more than the name this call changed —
+        a disable another process wrote is adopted here too, and a skill left
+        active would otherwise keep its whole ``SKILL.md`` body in the system
+        prompt while the gate says it is off.
+        """
+        self.disabled_skills.clear()
+        self.disabled_skills.update(disabled)
+        for name in list(self.active_skills):
+            if name in self.disabled_skills:
+                self.deactivate_skill(name)
 
     def disable_skill(self, skill_name: str) -> str:
-        """Disable a skill, hiding it from the available list."""
+        """Disable a skill, hiding it from the available list.
+
+        The config is updated one name at a time under a cross-process lock
+        (#275): every other disabled name, and every other key in the file,
+        survives — including ones written by a second agentao process after
+        this one started.
+        """
         if skill_name not in self.available_skills:
             available = ", ".join(sorted(self.available_skills.keys()))
             return f"Error: Unknown skill '{skill_name}'. Known skills: {available}"
-        if skill_name in self.disabled_skills:
+
+        if getattr(self, "_derived", False):
+            # A :meth:`child_view` owns a forked set and shares the parent's
+            # ``_config_file``, so it stays off the disk entirely — writing
+            # would persist an ephemeral sub-agent's set over the user's.
+            logger.debug("Not persisting skills config from a derived child view.")
+            if skill_name in self.disabled_skills:
+                return f"Skill '{skill_name}' is already disabled."
+            self.disabled_skills.add(skill_name)
+            if skill_name in self.active_skills:
+                self.deactivate_skill(skill_name)
+            return f"Skill '{skill_name}' has been disabled."
+
+        try:
+            changed, disabled = self._update_disabled_on_disk(skill_name, disable=True)
+        except _SkillConfigWriteError as exc:
+            # Nothing reached the disk, so nothing changes here either — not
+            # the set, not the activation. Reporting success over a failed
+            # write is the shape that made #275 unrecoverable.
+            return str(exc)
+        self._adopt_disabled(disabled)
+        if not changed:
             return f"Skill '{skill_name}' is already disabled."
-        self.disabled_skills.add(skill_name)
-        if skill_name in self.active_skills:
-            self.deactivate_skill(skill_name)
-        self._save_config()
         return f"Skill '{skill_name}' has been disabled."
 
     def enable_skill(self, skill_name: str) -> str:
-        """Re-enable a previously disabled skill."""
-        if skill_name not in self.disabled_skills:
+        """Re-enable a previously disabled skill.
+
+        Keys off the disabled set rather than the catalogue, so a name left
+        over from a skill that no longer exists (#270) is clearable — and,
+        since #275, off the set **the file** holds, so a disable written by
+        another process is not reported as "not disabled".
+        """
+        if getattr(self, "_derived", False):
+            logger.debug("Not persisting skills config from a derived child view.")
+            if skill_name not in self.disabled_skills:
+                if skill_name in self.available_skills:
+                    return f"Skill '{skill_name}' is not disabled."
+                available = ", ".join(sorted(self.available_skills.keys()))
+                return f"Error: Unknown skill '{skill_name}'. Known skills: {available}"
+            self.disabled_skills.discard(skill_name)
+            return f"Skill '{skill_name}' has been re-enabled."
+
+        try:
+            changed, disabled = self._update_disabled_on_disk(skill_name, disable=False)
+        except _SkillConfigWriteError as exc:
+            return str(exc)
+        self._adopt_disabled(disabled)
+        if not changed:
             if skill_name in self.available_skills:
                 return f"Skill '{skill_name}' is not disabled."
             available = ", ".join(sorted(self.available_skills.keys()))
             return f"Error: Unknown skill '{skill_name}'. Known skills: {available}"
-        self.disabled_skills.discard(skill_name)
-        self._save_config()
         return f"Skill '{skill_name}' has been re-enabled."
 
     # ------------------------------------------------------------------

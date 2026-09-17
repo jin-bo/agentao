@@ -75,6 +75,39 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`/skills disable` and `/skills enable` update the config one name at a
+  time, under a lock.** `_save_config` overwrote the whole file with the
+  `disabled_skills` set this process happened to hold, and `_load_config`
+  filled that set exactly once, in `__init__` — so nothing ever
+  resynchronised with the file it overwrote. Two doors onto the same
+  erasure #270 closed: a second agentao process's disable (or a hand edit —
+  the schema is documented, which invites one) was gone at this process's
+  next `/skills disable`; and a config that failed to parse degraded to
+  "nothing disabled" at startup, whose write-back then deleted every name
+  the file did hold. Both ended in a skill the user had disabled being
+  activatable again, silently, which since #266 means re-armed for the
+  model. The write is now a read-modify-write of the single name the user
+  asked about, with the read and the write inside one `filelock` on
+  `skills_config.json.lock` (10s, the protocol `skills/registry.py` already
+  uses), swapped in via a temp file and `os.replace` so a failure mid-write
+  cannot leave a truncated config. Consequences worth knowing:
+  every other disabled name and every other key in the file survives;
+  "already disabled" / "is not disabled" is answered from the file rather
+  than from a stale snapshot, so an enable no longer short-circuits on a
+  disable it has not seen; the write path parses **strictly** where the
+  loader is lenient — malformed JSON, a non-object top level, a non-array
+  `disabled_skills`, a non-string entry in it, a decode error, a lock
+  timeout or a failed write each refuse the write and return an error
+  naming the path, leaving the file, the in-memory set and the active
+  skills untouched; and on success the manager adopts the set the file now
+  holds, deactivating any active skill that another process disabled —
+  otherwise its whole `SKILL.md` body stays in the system prompt while the
+  gate says it is off. A `child_view` is unchanged: it owns a forked set,
+  shares the parent's path, and still never touches the disk. The lock
+  binds agentao processes following this protocol, not an editor saving the
+  file at the same moment; `reload_skills()` keeps the semantics #270 gave
+  it and does not re-read the config. (#275)
+
 - **A `/skills reload` no longer erases a disable it could not see.**
   `reload_skills()` intersected `disabled_skills` with what the scan had just
   found and persisted the result in the same breath. A scan cannot tell
