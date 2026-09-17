@@ -853,14 +853,14 @@ def test_a_disable_survives_a_reload_that_cannot_find_the_skill(tmp_path):
 
         (g / "alpha").rename(tmp_path / "alpha_away")
         # The other half of the invariant, and the half the assertions below
-        # cannot see: a reload writes *nothing* back. Re-adding
-        # ``_save_config()`` without the prune leaves every content assertion
-        # here green while restoring the cross-process clobber — a second
-        # agentao's disable, written after this one started, would be
-        # overwritten from a stale in-memory set.
-        with patch.object(m, "_save_config") as saved:
+        # cannot see: a reload writes *nothing* back. Re-adding a save without
+        # the prune leaves every content assertion here green while restoring
+        # the cross-process clobber — a second agentao's disable, written
+        # after this one started, would be overwritten from a stale set.
+        # ``_update_disabled_on_disk`` is the one write entry point (#275).
+        with patch.object(m, "_update_disabled_on_disk") as wrote:
             m.reload_skills()
-        assert saved.call_count == 0
+        assert wrote.call_count == 0
         assert m.disabled_skills == {"alpha"}
         assert _disabled_on_disk(tmp_path) == ["alpha"]
 
@@ -993,3 +993,250 @@ def test_slash_skills_survives_a_manager_carrying_no_disabled_set(tmp_path, monk
     ui_mod.list_skills(SimpleNamespace(agent=SimpleNamespace(skill_manager=fake)))
 
     assert "Available Skills (0)" in "\n".join(printed)
+
+
+# ---------------------------------------------------------------------------
+# The config is updated one name at a time, under a lock (#275)
+# ---------------------------------------------------------------------------
+
+def _two_managers(tmp_path, *names):
+    """Two managers over one config, both constructed before either writes.
+
+    That is the shape of the defect: each holds a snapshot of the file as it
+    was at its own construction, and the old whole-file save wrote that
+    snapshot plus one name over whatever the other had since written.
+    """
+    g = tmp_path / "global"
+    for name in names:
+        _write_skill(g, name, body=f"## Body\nSecret {name} instructions.")
+    patches = dict(_GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b")
+    with patch.multiple(_mod, **patches):
+        return (
+            SkillManager(working_directory=tmp_path),
+            SkillManager(working_directory=tmp_path),
+            patches,
+        )
+
+
+def test_a_second_process_disable_does_not_erase_the_first(tmp_path):
+    """The headline of #275: `_save_config` wrote the whole set from memory,
+    so B — whose snapshot predates A's write — replaced `["alpha"]` with
+    `["beta"]` and A's disable was gone from disk with no message."""
+    a, b, patches = _two_managers(tmp_path, "alpha", "beta", "gamma")
+
+    with patch.multiple(_mod, **patches):
+        assert a.disable_skill("alpha").endswith("has been disabled.")
+        assert b.disabled_skills == set()  # B's snapshot is stale by now
+        assert b.disable_skill("beta").endswith("has been disabled.")
+
+        assert _disabled_on_disk(tmp_path) == ["alpha", "beta"]
+        # ...and B adopted what the file holds, not just its own name.
+        assert b.disabled_skills == {"alpha", "beta"}
+
+
+def test_a_stale_snapshot_does_not_short_circuit_an_enable(tmp_path):
+    """The other half of "judge from the file": A's set still says only
+    `alpha`, so the old `if skill_name not in self.disabled_skills` answered
+    "Skill 'beta' is not disabled." and did nothing — while the file had it
+    disabled and the activation gate was refusing it."""
+    a, b, patches = _two_managers(tmp_path, "alpha", "beta")
+
+    with patch.multiple(_mod, **patches):
+        a.disable_skill("alpha")
+        b.disable_skill("beta")
+        assert a.disabled_skills == {"alpha"}  # stale
+
+        assert a.enable_skill("beta").endswith("has been re-enabled.")
+
+        assert _disabled_on_disk(tmp_path) == ["alpha"]
+        assert a.disabled_skills == {"alpha"}
+        # And the mirror image: a disable the file already holds is reported
+        # as such rather than re-announced as new work.
+        assert a.disable_skill("alpha") == "Skill 'alpha' is already disabled."
+
+
+def test_other_config_keys_survive_an_update(tmp_path):
+    """The write merges into the parsed file, so a key this version does not
+    know about — a newer agentao's, or the user's own — is not collateral."""
+    g = tmp_path / "global"
+    _write_skill(g, "alpha")
+    cfg = tmp_path / ".agentao" / "skills_config.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(
+        json.dumps({"disabled_skills": ["ghost"], "some_future_key": {"a": 1}}),
+        encoding="utf-8",
+    )
+
+    with patch.multiple(_mod, _GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b"):
+        m = SkillManager(working_directory=tmp_path)
+        assert m.disable_skill("alpha").endswith("has been disabled.")
+
+    saved = json.loads(cfg.read_text(encoding="utf-8"))
+    assert saved["disabled_skills"] == ["alpha", "ghost"]
+    assert saved["some_future_key"] == {"a": 1}
+
+
+def test_a_disable_written_elsewhere_is_adopted_and_deactivated(tmp_path):
+    """Adoption is not bookkeeping: a skill left active keeps its whole
+    ``SKILL.md`` body in the system prompt, so a gate that says "off" while
+    the body is still in the prompt is the #266 failure with extra steps."""
+    a, b, patches = _two_managers(tmp_path, "alpha", "beta")
+
+    with patch.multiple(_mod, **patches):
+        a.activate_skill("alpha", "task")
+        assert "Secret alpha instructions." in a.get_skills_context()
+
+        b.disable_skill("alpha")
+        # Any config operation on A is where A learns of it.
+        a.disable_skill("beta")
+
+        assert a.disabled_skills == {"alpha", "beta"}
+        assert "alpha" not in a.get_active_skills()
+        assert "Secret alpha instructions." not in a.get_skills_context()
+        assert a.activate_skill("alpha", "task").startswith("Error: Unknown skill")
+
+
+# --- failures leave the file and the manager exactly as they were ----------
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ('{"disabled_skills": ["ghost",]}', "not valid JSON"),
+        ('["ghost"]', "must be a JSON object"),
+        ('{"disabled_skills": "ghost"}', "must be a JSON array"),
+        ('{"disabled_skills": ["ghost", 7]}', "non-string entr"),
+    ],
+)
+def test_a_config_that_will_not_parse_is_refused_not_overwritten(tmp_path, raw, expected):
+    """``_load_config`` degrades a bad file to "nothing disabled" so the CLI
+    still starts. Writing that view back is what makes the degradation
+    destructive — it deletes every name the file holds. The write path parses
+    strictly instead and refuses, naming the path."""
+    g = tmp_path / "global"
+    _write_skill(g, "alpha")
+    cfg = tmp_path / ".agentao" / "skills_config.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(raw, encoding="utf-8")
+
+    with patch.multiple(_mod, _GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b"):
+        m = SkillManager(working_directory=tmp_path)
+        m.activate_skill("alpha", "task")
+        # Whatever the lenient startup read made of it — the non-string case
+        # keeps ``ghost`` and drops the ``7``, the rest degrade to empty.
+        loaded = set(m.disabled_skills)
+
+        result = m.disable_skill("alpha")
+
+        assert result.startswith("Error:")
+        assert expected in result
+        assert str(cfg) in result
+        # Nothing moved: not the file, not the set, not the activation.
+        assert cfg.read_text(encoding="utf-8") == raw
+        assert m.disabled_skills == loaded
+        assert "alpha" in m.get_active_skills()
+
+
+def test_a_lock_held_elsewhere_times_out_without_touching_the_file(tmp_path):
+    from filelock import FileLock
+
+    g = tmp_path / "global"
+    _write_skill(g, "alpha")
+    _write_skill(g, "beta")
+    cfg = tmp_path / ".agentao" / "skills_config.json"
+
+    with patch.multiple(
+        _mod,
+        _GLOBAL_SKILLS_DIR=g,
+        _BUNDLED_SKILLS_DIR=tmp_path / "b",
+        _CONFIG_LOCK_TIMEOUT_S=0.1,
+    ):
+        m = SkillManager(working_directory=tmp_path)
+        m.disable_skill("alpha")
+        before = cfg.read_text(encoding="utf-8")
+
+        held = FileLock(str(m._config_lock_file), timeout=5)
+        held.acquire()
+        try:
+            result = m.disable_skill("beta")
+        finally:
+            held.release()
+
+    assert result.startswith("Error: timed out")
+    assert str(m._config_lock_file) in result
+    assert cfg.read_text(encoding="utf-8") == before
+    assert m.disabled_skills == {"alpha"}
+
+
+def test_a_failed_replace_leaves_the_original_file_and_no_temp_behind(tmp_path):
+    """The reason the write is temp-file + ``os.replace`` and not
+    ``open(..., "w")``: a truncating write that fails mid-flight leaves an
+    empty config, which is every disable in it gone."""
+    g = tmp_path / "global"
+    _write_skill(g, "alpha")
+    _write_skill(g, "beta")
+    cfg = tmp_path / ".agentao" / "skills_config.json"
+
+    with patch.multiple(_mod, _GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b"):
+        m = SkillManager(working_directory=tmp_path)
+        m.disable_skill("alpha")
+        before = cfg.read_text(encoding="utf-8")
+
+        with patch(
+            "agentao.capabilities.filesystem._replace_with_retry",
+            side_effect=OSError("disk full"),
+        ):
+            result = m.disable_skill("beta")
+
+    assert result.startswith("Error: could not write")
+    assert "disk full" in result
+    assert cfg.read_text(encoding="utf-8") == before
+    assert m.disabled_skills == {"alpha"}
+    assert list(cfg.parent.glob("*.tmp")) == []
+
+
+def test_concurrent_disables_all_survive(tmp_path):
+    """The claim option 3 of #275 exists to make, exercised rather than
+    asserted: every manager snapshots an empty set, then they all write at a
+    barrier. Under the old whole-file save the last writer won and the rest
+    were erased — a real 8-process probe left 1 of 8 names on disk.
+
+    Threads, not processes: each ``_update_disabled_on_disk`` builds its own
+    ``FileLock`` instance, and two instances conflict within a process the
+    same way they do across two (``fcntl.flock`` binds to the open file
+    description, not the pid), which the timeout test above measures. That
+    keeps this free of spawn semantics and Windows process start-up.
+    """
+    import threading
+
+    names = [f"skill{i}" for i in range(8)]
+    g = tmp_path / "global"
+    for name in names:
+        _write_skill(g, name)
+
+    with patch.multiple(_mod, _GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b"):
+        managers = [SkillManager(working_directory=tmp_path) for _ in names]
+        assert all(m.disabled_skills == set() for m in managers)
+
+        barrier = threading.Barrier(len(names))
+        results: list = []
+        lock = threading.Lock()
+
+        def run(manager, name):
+            barrier.wait(timeout=10)
+            answer = manager.disable_skill(name)
+            with lock:
+                results.append(answer)
+
+        threads = [
+            threading.Thread(target=run, args=(m, n))
+            for m, n in zip(managers, names)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        assert not any(t.is_alive() for t in threads)
+
+    assert all(r.endswith("has been disabled.") for r in results), results
+    assert _disabled_on_disk(tmp_path) == sorted(names)
+    assert list((tmp_path / ".agentao").glob("*.tmp")) == []

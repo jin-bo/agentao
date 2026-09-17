@@ -344,6 +344,7 @@ PowerShell 上会在它之上再叠一张 Windows 专属的不可恢复类别表
 - **路径。** `<cwd>/.agentao/skills_config.json`（仅项目级）。
 - **Loader。** `skills/manager.py`。
 - **失败行为。** 文件缺失 → 静默。文件不可读、不是合法 UTF-8、JSON 损坏、顶层不是对象、或 `disabled_skills` 的值不是数组 → 打一条带路径的 warning，然后退回默认值（不禁用任何 skill）；数组里的非字符串条目会被丢弃并打 warning，其余保留。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
+- **写入行为。** `/skills disable` 与 `/skills enable` 做的是**单个名字**的读—改—写：先拿 `skills_config.json.lock` 上的 `filelock`（10 秒，与 `skills/registry.py` 同一套协议），**读和写都在锁内**，再经同目录临时文件 + `os.replace` 换入。文件里其余的禁用名字、以及其余的配置字段都会保留 —— 包括本进程启动之后由第二个 agentao 进程写入的；「已经禁用／未禁用」也以文件为准，而不是以本进程构造时读到的那份快照为准。写入路径的解析**比上面的加载严格**：JSON 损坏、顶层不是对象、`disabled_skills` 不是数组、数组里有非字符串条目、或解码失败，都会**拒绝写入**并返回带路径的错误 —— 加载时那套宽容视图一旦被写回去，删掉的正是文件里原有的那些名字。锁超时或写入失败同理。以上任一情况下，文件、内存集合、已激活技能三者都不动，也不会报告成功。该锁只约束遵循同一协议的 agentao 进程；文本编辑器同时保存不在保证范围内。
 
 ### Schema
 
