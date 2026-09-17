@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from rich.markdown import Markdown
+from rich.markup import escape as markup_escape
 from rich.panel import Panel
 
 from .._globals import console, split_subcommand
@@ -38,6 +39,10 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
         tok_s = f"~{tok // 1000}k" if tok >= 1000 else str(tok)
         return f"{t.get('turns', 0)}t {t.get('tool_calls', 0)}c {tok_s}"
 
+    def _duration(t: dict) -> str:
+        ms = t.get("duration_ms", 0)
+        return f"{ms / 1000:.1f}s" if ms >= 1000 else f"{ms}ms"
+
     def _fmt_status(t: dict) -> Text:
         status = t["status"]
         if status == "pending":
@@ -47,15 +52,16 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
             elapsed = _time.time() - started if started else 0
             return Text(f"○  {elapsed:.0f}s", style="yellow")
         if status == "completed":
-            ms = t.get("duration_ms", 0)
-            dur_s = f"{ms / 1000:.1f}s" if ms >= 1000 else f"{ms}ms"
-            return Text(f"✓  {_counters(t)}  {dur_s}", style="green")
+            return Text(f"✓  {_counters(t)}  {_duration(t)}", style="green")
         if status == "cancelled":
-            # A cancelled *running* task carries the same counters a completed
-            # one does (#244); only one cancelled before it started has none.
+            # A cancelled *running* task carries the same counters and duration
+            # a completed one does (#244); only one cancelled before it started
+            # has none.
             if not t.get("turns"):
                 return Text("⊘  cancelled", style="dim")
-            return Text(f"⊘  cancelled  {_counters(t)}", style="dim")
+            return Text(
+                f"⊘  cancelled  {_counters(t)}  {_duration(t)}", style="dim",
+            )
         if t.get("incomplete_reason"):
             # Ran to a stop without answering — not a crash. Yellow, not red:
             # there is usually a partial result worth reading.
@@ -89,10 +95,21 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
             if t["status"] == "failed" and t.get("incomplete_reason"):
                 err_hint = "  [dim yellow]partial result available[/dim yellow]"
             elif t["status"] == "failed" and t.get("error"):
-                err_hint = f"  [dim red]{str(t['error'])[:60]}[/dim red]"
-            elif t["status"] == "cancelled" and t.get("turns"):
-                err_hint = "  [dim]partial result available[/dim]"
-            task_cell = (t.get("task", "")[:55] or "") + err_hint
+                err_hint = (
+                    f"  [dim red]{markup_escape(str(t['error'])[:60])}[/dim red]"
+                )
+            elif t["status"] == "cancelled" and t.get("result"):
+                # Same predicate ``check_background_agent`` uses, and the same
+                # claim: there is a record to read. Not "partial result" — a
+                # cancel that lands at a safe point makes the turn's whole text
+                # agentao's own ``[Cancelled: …]`` marker, which is stripped as
+                # a harness notice, so the stored result is often the header
+                # and the counters with no sub-agent output at all.
+                err_hint = "  [dim]result available[/dim]"
+            # ``task`` is LLM- or user-authored, and a Table cell given a str is
+            # parsed as Rich markup — an unescaped ``[/dim]`` or
+            # ``[black on black]`` in it rewrites the row.
+            task_cell = markup_escape(t.get("task", "")[:55] or "") + err_hint
             tbl.add_row(t["id"], t["agent_name"], status_cell, task_cell)
 
         summary = (
@@ -198,7 +215,7 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
                 console.print(
                     f"  [{color}]{status:<10}[/{color}]  [cyan]{t['id']}[/cyan]"
                     f"  [bold]{t['agent_name']}[/bold]  ({elapsed})"
-                    f"  [dim]{t['task'][:60]}[/dim]"
+                    f"  [dim]{markup_escape(t['task'][:60])}[/dim]"
                 )
             console.print()
         else:
@@ -215,7 +232,7 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
             )
             console.print(f"\n[info]Agent:[/info] [bold]{rec['agent_name']}[/bold]  ID: [cyan]{agent_id}[/cyan]")
             console.print(f"[info]Status:[/info] [{color}]{status}[/{color}]")
-            console.print(f"[info]Task:[/info]   {rec['task']}")
+            console.print(f"[info]Task:[/info]   {markup_escape(rec['task'])}")
             if rec.get("finished_at") and rec.get("started_at"):
                 elapsed = rec["finished_at"] - rec["started_at"]
                 console.print(f"[info]Time:[/info]   {elapsed:.1f}s")
@@ -239,9 +256,19 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
                     console.print("\n[info]Partial result:[/info]")
                     console.print(Markdown(rec["result"]))
             elif status == "failed" and rec.get("error"):
-                console.print(f"\n[error]Error:[/error] {rec['error']}")
+                console.print(
+                    f"\n[error]Error:[/error] {markup_escape(str(rec['error']))}"
+                )
             elif status == "cancelled":
+                # The same regression as the ``failed`` + ``incomplete_reason``
+                # branch above, one status over: since #244 a run cancelled
+                # *while running* keeps its result and its counters, and this
+                # is the only surface that can hand them back. A task cancelled
+                # before it started has no result and reads as it always did.
                 console.print("\n[dim]Agent was cancelled.[/dim]")
+                if rec.get("result"):
+                    console.print("\n[info]Result so far:[/info]")
+                    console.print(Markdown(rec["result"]))
             console.print()
         return
 

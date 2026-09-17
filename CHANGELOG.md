@@ -94,9 +94,13 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   `incomplete:cancelled` out of `error_type` reads the phase instead. The
   record moves in lockstep (`status="cancelled"`, `incomplete_reason=None`) and
   **keeps the partial result and the counters** the run produced —
-  `check_background_agent` and `/agents` now surface them, where the cancelled
-  branch used to drop the result on the floor. The notification still says only
-  that the task was cancelled; read the record for the work. (#244)
+  `check_background_agent`, `/agent status <id>` and the `/agents` dashboard now
+  surface them, where the cancelled branch used to drop the result on the floor.
+  The notification still says only that the task was cancelled; read the record
+  for the work. Records already on disk are left as they are: a
+  `background_tasks.json` written by an earlier version keeps its
+  `failed`/`incomplete:cancelled` rows, which `/agents` still renders under
+  "unfinished". (#244)
 
 - **agentao's own cancellation markers are no longer handed to the parent LLM
   as the sub-agent's "partial result".** `[Cancelled: <reason>]` and

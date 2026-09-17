@@ -193,6 +193,23 @@ def _cancel_once_running(monkeypatch):
     return in_chat
 
 
+def _join_worker(agent_id, timeout=10.0):
+    """Wait for the background worker to leave its ``finally``.
+
+    Every assertion below gates on state the worker publishes *before* that
+    block, which is the point of publish-before-close — but the parent is
+    closed in this test's own ``finally``, and racing the child's teardown on
+    a daemon thread is how a suite acquires an intermittent failure. Joining
+    the named thread also covers the ``unregister_token`` the publish does not.
+    """
+    for t in threading.enumerate():
+        if t.name == f"bg-agent-{agent_id}":
+            t.join(timeout)
+            assert not t.is_alive(), "the background worker never finished"
+            return
+    # Already finished and reaped.
+
+
 def _eventually(predicate, timeout=10.0):
     deadline = threading.Event()
     timer = threading.Timer(timeout, deadline.set)
@@ -245,6 +262,9 @@ def test_a_cancelled_background_sub_agent_keeps_its_work(tmp_path, monkeypatch):
         assert _eventually(lambda: len(stream.events) == 2)
         assert [e.phase for e in stream.events] == ["spawned", "cancelled"]
         assert stream.events[-1].error_type is None
+
+        _join_worker(agent_id)
+        assert store.get_token(agent_id) is None
     finally:
         parent.close()
 
@@ -264,6 +284,7 @@ def test_a_pending_cancel_and_a_running_cancel_agree(tmp_path, monkeypatch):
         assert in_chat.wait(10)
         store.cancel(running["id"])
         assert _eventually(lambda: store.get(running["id"])["status"] != "running")
+        _join_worker(running["id"])
 
         store.register("pending-one", "generalist", "queued")
         store.register_token("pending-one", CancellationToken())
