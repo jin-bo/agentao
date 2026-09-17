@@ -5,6 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+_Targeting 0.4.25. Add entries under the relevant heading as work lands._
+
+### Fixed
+
+- **A sub-agent started during `/skills disable` or `/skills enable` no
+  longer sees every skill as enabled.** Adopting the set the file holds
+  (added in 0.4.24 by #275) emptied the in-memory `disabled_skills` and then
+  refilled it. A background sub-agent copies that set from its own thread,
+  without a lock, so one started between those two steps got an empty
+  copy — every disabled skill activatable, by the model, for the sub-agent's
+  whole run; re-disabling on the parent does not reach a copy already taken.
+  Any `/skills disable` or `/skills enable` opened the window, including one
+  naming an unrelated skill, one that changed nothing, and one that answered
+  "Unknown skill". The set now grows before it shrinks — the union of the
+  old and new sets, then the new set — so every state a sub-agent can copy
+  still holds every name either side disables. This closes that window
+  only; the manager is still not built for concurrent writers.
+
+### Documentation
+
+- **A sub-agent's disabled set is a copy taken when it starts.** A disable
+  made while a sub-agent is running reaches the next sub-agent, not that
+  one; the skills guide and the configuration reference now say so.
+
 ## [0.4.24] — 2026-09-17
 
 ### Added
