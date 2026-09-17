@@ -491,7 +491,13 @@ def test_reset_tolerates_a_runtime_without_bg_store():
     assert cli.started == "clear"
 
 
-def test_wipe_never_raises_from_the_summary_half():
+def test_a_manager_that_cannot_be_wiped_here_is_reported_unwiped():
+    """The CLI's factory contract requires *a* ``memory_manager``, not a
+    ``MemoryManager`` (``app.py::_REQUIRED_AGENT_ATTRS``). Since #235 the wipe
+    has exactly one implementation — ``MemoryManager.wipe_all`` — so an object
+    without it cannot be wiped here. It is reported as both parts still in
+    place rather than raising into the middle of ``/clear``; the reason goes
+    to ``agentao.log``."""
     from agentao.cli._utils import wipe_all_memories
 
     class _Mgr:
@@ -499,12 +505,55 @@ def test_wipe_never_raises_from_the_summary_half():
             return 2
 
         def clear_all_session_summaries(self):
-            raise RuntimeError("no such method on this host's manager")
+            return 0
 
-    memories, summaries, not_cleared = wipe_all_memories(_Mgr())
+    assert wipe_all_memories(_Mgr()) == (0, 0, ["memories", "session summaries"])
 
-    assert (memories, summaries) == (2, 0)
-    assert not_cleared == ["session summaries"]
+
+def test_a_wipe_all_that_raises_does_not_propagate():
+    """``/clear`` calls this after ``clear_history()`` and before the
+    permission mode is restored, so the promise is never-raises even when the
+    manager is a host's own."""
+    from agentao.cli._utils import wipe_all_memories
+
+    class _Mgr:
+        def wipe_all(self):
+            raise RuntimeError("host manager bug")
+
+    assert wipe_all_memories(_Mgr()) == (0, 0, ["memories", "session summaries"])
+
+
+def test_an_object_that_merely_answers_wipe_all_does_not_get_believed():
+    """The one fail-*open* misreading available here (#235).
+
+    ``MagicMock`` answers every attribute, so ``mgr.wipe_all()`` "succeeds"
+    and its ``not_cleared`` iterates empty — which both commands print as a
+    successful wipe, with nothing cleared. The shim type-checks the three
+    fields instead, so the counts are never believed."""
+    from unittest.mock import MagicMock
+
+    from agentao.cli._utils import wipe_all_memories
+
+    memories, summaries, not_cleared = wipe_all_memories(MagicMock())
+
+    assert (memories, summaries) == (0, 0)
+    assert not_cleared == ["memories", "session summaries"]
+
+
+def test_a_wipe_all_returning_the_wrong_shape_is_not_believed():
+    """Same gate, with a plausible host result instead of a mock."""
+    from agentao.cli._utils import wipe_all_memories
+
+    class _Result:
+        memories_cleared = "3"          # str, not int
+        summaries_cleared = 1
+        not_cleared = ()
+
+    class _Mgr:
+        def wipe_all(self):
+            return _Result()
+
+    assert wipe_all_memories(_Mgr()) == (0, 0, ["memories", "session summaries"])
 
 
 def test_a_partial_clear_still_invalidates_the_recall_index(tmp_path, monkeypatch):

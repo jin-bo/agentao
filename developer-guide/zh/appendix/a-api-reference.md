@@ -338,6 +338,7 @@ mgr = MemoryManager(
 | `save_session_summary(...)` / `get_recent_session_summaries(...)` | 压缩流水线用 |
 | `archive_session() / clear_session()` | 会话末尾清理 |
 | `clear_all_session_summaries()` | 清掉所有会话的所有摘要 |
+| `wipe_all()` | 硬清除：两个作用域的记忆（**软**删除，行仍留在库文件里）+ 所有会话摘要。永不抛异常，返回 `MemoryWipeResult`，成功信号是 `ok`。**不清** review queue |
 | `get_stable_entries(...)` | 注入 `<memory-stable>` 系统提示块 |
 
 ### `MemoryStore`（Protocol，0.3.0 / #16）

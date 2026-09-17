@@ -85,14 +85,12 @@ class _StubPlanSession:
 
 
 class _StubMemory:
-    def clear(self):
-        pass
+    def wipe_all(self):
+        # The one method the CLI calls since #235; anything else is reported
+        # as an unwiped store, which would send `/clear` down its error branch.
+        from agentao.memory import MemoryWipeResult
 
-    def clear_all_session_summaries(self):
-        return 0
-
-    def session_summaries_remain(self):
-        return False
+        return MemoryWipeResult()
 
 
 class _StubAgent:

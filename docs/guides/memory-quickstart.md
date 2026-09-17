@@ -280,7 +280,7 @@ A:
 
 ### Q: `/memory clear` 是不是会清掉跨会话记忆？
 
-A: 是的。`/memory clear` 调用 `clear_all_session_summaries()`，会同时清空 `memories`（软删除）和**所有**会话的 `session_summaries`。如果只想开新会话保留长期记忆，用 `/new`。
+A: 是的。`/memory clear` 调用 `MemoryManager.wipe_all()`，会同时清空 `memories`（软删除）和**所有**会话的 `session_summaries`。如果只想开新会话保留长期记忆，用 `/new`。清除失败不会静默：`wipe_all()` 回读确认，命令会点名哪一部分还在（`memory_review_queue` 里的待审候选两个命令都清不掉，只能 `/memory review reject <id>`）。
 
 ---
 

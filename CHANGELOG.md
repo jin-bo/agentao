@@ -11,6 +11,29 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **A host can tell a failed memory wipe from an empty store.**
+  `MemoryManager.wipe_all()` clears every memory (both scopes) and every
+  session summary, and returns a `MemoryWipeResult` — `memories_cleared`,
+  `summaries_cleared`, `not_cleared`, and `ok`. **`ok` is the success signal,
+  not the counts**: `clear_all_session_summaries()` answers 0 both for
+  "nothing to delete" and for "the delete was swallowed", so the summaries are
+  confirmed by reading the store back, and a store that cannot be read counts
+  as not cleared. The method never raises — a `clear()` that fails is reported
+  in the result and the summaries are cleared anyway, because `/clear` calls
+  this mid-reset. Two things survive it and a "forget me" button has to handle
+  both: the memories half is a **soft** delete, so every row keeps its
+  `content` in the database file with `deleted_at` set (no read path returns
+  it, but `ok` is not an erasure guarantee); and the review queue
+  (`memory_review_queue`) is untouched — those candidates carry excerpts of
+  the messages they came from, stay visible to `/memory review`, and
+  `reject_review_item(id)` remains the only remedy. `clear()`,
+  `clear_all_session_summaries()` and `session_summaries_remain()` are
+  unchanged, and the developer-guide "forget everything" recipes now point at
+  `wipe_all()`. `/clear` and `/memory clear` call it and nothing else — a
+  host-injected memory manager without `wipe_all` (or one answering with
+  something that is not a `MemoryWipeResult`) is reported as an unwiped
+  store instead of being wiped by a second code path. (#235)
+
 - **A host tool can opt in to reaching sub-agents.** Declare
   `copies_to_subagents` on the tool object — a property on the `Tool` /
   `AsyncToolBase` base, defaulting to `False` — and each spawn registers one

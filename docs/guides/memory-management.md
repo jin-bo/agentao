@@ -28,7 +28,7 @@ Agentao 使用 SQLite 作为唯一的持久化后端，管理三类不同性质�
 
 最后一行是刻意的取舍，不是修复的副作用：子 agent 因此可以写入一条自己读不回来的记忆。要恢复读取，需要一个共享父级 store 的 `MemoryManager` 子视图，且它的 `close()` 不能关掉共享的 store。
 
-> **存量污染：** 修复前已经写进项目库的子 agent 摘要没有可靠的来源标记，无法精确识别。`/clear` 与 `/memory clear` 会清掉**全部**会话摘要和**全部**长期记忆（`clear_all_session_summaries()` + `clear()`），代价是连合法的历史会话摘要一起丢；已进入 `memory_review_queue` 的提案则两个命令都清不掉。
+> **存量污染：** 修复前已经写进项目库的子 agent 摘要没有可靠的来源标记，无法精确识别。`/clear` 与 `/memory clear` 会清掉**全部**会话摘要和**全部**长期记忆（`wipe_all()`），代价是连合法的历史会话摘要一起丢；已进入 `memory_review_queue` 的提案则两个命令都清不掉。
 
 ---
 
@@ -198,7 +198,7 @@ save_memory(key, value, tags?, scope?, type?)
 | `/memory user` | 只看 user scope | `get_all_entries(scope="user")` |
 | `/memory project` | 只看 project scope | `get_all_entries(scope="project")` |
 | `/memory delete <title-or-key>` | 软删除（先按 title 匹配，未命中再按 key_normalized 匹配） | `delete_by_title(title)` → `delete(id)` |
-| `/memory clear` | 软删除全部 memories **并** 清空所有 session（含跨会话） | `clear()` + `clear_all_session_summaries()` |
+| `/memory clear` | 软删除全部 memories **并** 清空所有 session（含跨会话） | `wipe_all()` |
 | `/memory session` | 查看本会话最近的摘要（最多 10 条，截取末尾 2000 字符） | `get_recent_session_summaries(limit=10)` |
 | `/memory status` | 条目数 + 召回观测：召回命中数、召回错误数、最近一次错误、stable block 字符数、最近一条 session summary 字符数 | 统计汇总 |
 | `/memory crystallize` | 对当前对话缓冲区跑一次规则 crystallizer，候选写入审阅队列 | `crystallize_user_messages(self.agent.messages)` |

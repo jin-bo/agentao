@@ -24,8 +24,28 @@ MEMORY_WIPE_RACE_NOTE = (
 )
 
 
+# What the CLI reports when it could not get a usable answer out of the
+# memory manager at all. Both parts, because nothing was confirmed cleared —
+# the same fail-closed reading ``MemoryWipeResult`` gives a store it cannot
+# read back.
+_NOTHING_CONFIRMED = ("memories", "session summaries")
+
+
 def wipe_all_memories(mgr) -> tuple[int, int, list[str]]:
     """The hard memory reset that ``/clear`` and ``/memory clear`` share.
+
+    A thin call to ``MemoryManager.wipe_all()``, which is where the operation
+    lives (#235) so an embedded host performs the same wipe and reads the
+    same documented result. This function only flattens that result for the
+    two commands; it is deliberately **not** a second implementation of the
+    wipe.
+
+    **The check is on the result, not on the attribute.** ``hasattr`` alone
+    would be fail-*open*: an object that merely answers ``wipe_all`` — a
+    ``MagicMock`` in a test, a host object whose ``wipe_all`` means something
+    else — would hand back an empty ``not_cleared`` that both commands print
+    as success, with nothing cleared. So the three fields are type-checked
+    before they are trusted.
 
     Returns ``(memories_cleared, summaries_cleared, not_cleared)``, where
     ``not_cleared`` names each part still in place. Neither return count can
@@ -33,30 +53,39 @@ def wipe_all_memories(mgr) -> tuple[int, int, list[str]]:
     "nothing to delete" and "the delete failed", so the summaries are
     checked by reading the store back.
 
-    Never raises, and runs the second half even when the first fails.
-    ``/clear`` calls this mid-reset; a raise there abandons the reset after
-    the history is gone but before the permission mode is restored.
+    A manager with no ``wipe_all``, one whose ``wipe_all`` raises, and one
+    that answers with something else all come back as **both parts not
+    cleared**. The CLI's factory contract requires *a* ``memory_manager``
+    attribute (``app.py::_REQUIRED_AGENT_ATTRS``), not a ``MemoryManager``,
+    and such an object cannot be wiped here — reporting that is the honest
+    answer, and every other ``/memory`` subcommand already calls
+    ``MemoryManager``-only methods with no fallback at all. ``agentao.log``
+    carries the reason.
+
+    Never raises. ``/clear`` calls this mid-reset; a raise there abandons the
+    reset after the history is gone but before the permission mode is
+    restored.
     """
-    not_cleared: list[str] = []
-    memories = 0
     try:
-        memories = mgr.clear()
+        result = mgr.wipe_all()
+        memories = result.memories_cleared
+        summaries = result.summaries_cleared
+        parts = result.not_cleared
+        if (
+            isinstance(memories, int)
+            and isinstance(summaries, int)
+            and isinstance(parts, (list, tuple))
+            and all(isinstance(part, str) for part in parts)
+        ):
+            return memories, summaries, list(parts)
+        logger.warning(
+            "memory_manager.wipe_all returned %s, which is not a "
+            "MemoryWipeResult; reporting the wipe as unconfirmed",
+            type(result).__name__,
+        )
     except Exception:
-        logger.warning("clearing memories failed", exc_info=True)
-        not_cleared.append("memories")
-    summaries = 0
-    try:
-        summaries = mgr.clear_all_session_summaries()
-        remain = mgr.session_summaries_remain()
-    except Exception:
-        # ``MemoryManager`` swallows its own errors, but the CLI factory
-        # contract only requires *a* ``memory_manager``; a raise here would
-        # break the "never raises" promise above at exactly the wrong moment.
-        logger.warning("clearing session summaries failed", exc_info=True)
-        remain = True
-    if remain:
-        not_cleared.append("session summaries")
-    return memories, summaries, not_cleared
+        logger.warning("memory_manager.wipe_all failed", exc_info=True)
+    return 0, 0, list(_NOTHING_CONFIRMED)
 
 
 def _tool_args_summary(tool_name: str, args: dict) -> str:
