@@ -15,6 +15,23 @@ _Targeting 0.4.26. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A 429 for exhausted quota fails at once instead of being retried.**
+  Every 429 was retried as a rate limit, so a request from an account that
+  was out of quota, credit or spend allowance was sent four more times,
+  with 22–29 s of backoff in between (up to the 60 s budget when the
+  provider sends `Retry-After`), before the same error surfaced. The retry
+  policy now reads the error's `code` and `type`, as codex does:
+  `insufficient_quota`, `credit_balance_exhausted`,
+  `organization_spend_limit_exceeded`, `project_spend_limit_exceeded` and
+  `organization_usage_limit_exceeded` are not retried, on the streaming and
+  non-streaming paths alike. The match is exact and follows OpenAI's error
+  codes: a provider that reports exhausted quota some other way is still
+  retried as before, and every other 429 — including one with no JSON
+  body — still waits. The error that is raised is unchanged, and so are the
+  `llm_error` turn classification and `agentao run`'s exit code. A `/goal`
+  loop on an exhausted key now sends one request per continuation, not
+  five, before its no-progress guard stops it.
+
 ---
 
 ## [0.4.25] — 2026-09-17
