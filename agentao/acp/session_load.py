@@ -29,15 +29,38 @@ Architectural choices
   for the response before sending the next ``session/prompt`` will
   therefore observe the full replayed history before any new turn.
 
-- **Hard error for missing session.** ``FileNotFoundError`` from the
-  load layer becomes :class:`JsonRpcHandlerError(INVALID_REQUEST)` so
-  clients can distinguish "wrong id" from "I broke my server". The
-  bare-string ``session/load`` not-found case (no sessions directory
-  at all) gets the same treatment so the error surface is uniform.
+- **Hard error for an unusable session file.** ``OSError`` (of which
+  ``FileNotFoundError`` is one) and ``ValueError`` from the load layer
+  both become :class:`JsonRpcHandlerError(INVALID_REQUEST)` so clients
+  can distinguish "wrong id" from "I broke my server". The bare-string
+  ``session/load`` not-found case (no sessions directory at all) gets
+  the same treatment so the error surface is uniform. ``ValueError``
+  has to be in that pair: a corrupt or hand-edited file surfaces as
+  ``json.JSONDecodeError`` ⊂ ``ValueError``, and the not-an-object
+  shape ``load_session_record`` normalizes into the same type — both
+  reachable through the timestamp-prefix branch of the selector, which
+  matches on the file *stem* and so does not skip a file it cannot
+  parse. Uncaught, the dispatcher turns either into ``-32603``
+  INTERNAL_ERROR, which blames the server for the client's bad file.
+  This is the same pair :func:`resume_session_on_new` catches.
 
 - **Reuses Issue 04's ``agent_factory`` injection point.** Tests
   inject a lightweight ``FakeAgent`` to avoid pulling in the LLM
   stack, exactly the same pattern as ``session_new``.
+
+- **Re-activates the session's persisted skills**, the same way the CLI
+  ``/sessions resume`` does (#271). A skill's ``SKILL.md`` body is in the
+  system prompt only while that skill is active, so a reload that restored
+  the transcript but not the activations handed the model back a
+  conversation whose shaping instructions had silently vanished. Both
+  entry points go through :func:`_instantiate_loaded_session`, which calls
+  the one restore shared with the CLI
+  (:func:`agentao.embedding.sessions.restore_agent_skills`), so no two
+  loading paths can drift apart again. Restoration is per-skill
+  best-effort: one that has since been deleted or disabled (#266) is logged
+  and skipped while the rest still come back. The activation text
+  ``activate_skill`` returns is model-facing and is **not** appended to the
+  history — restoring is a side effect on the skill manager, not a turn.
 
 Out of scope for v1
 -------------------
@@ -49,14 +72,21 @@ Out of scope for v1
   silently replacing the running session — the client should issue
   ``session/cancel`` first if they want to overwrite a live session.
 
-- **Restoring tool execution state, sub-agents, plan mode, active
-  skills, or the model.** Only the message history carries over. The
-  persisted model name is NOT re-bound (provider is never on disk, so
-  re-binding the name onto the current provider can be inconsistent);
-  the runtime keeps its process-default model. Skill activation and
-  plan-mode flags are likewise reset because they depend on runtime
-  SKILL.md / project state that may have changed since the session was
-  persisted.
+- **Restoring tool execution state, sub-agents, plan mode, or the
+  model.** Beyond the message history and the active skills, nothing
+  carries over. The persisted model name is NOT re-bound (provider is
+  never on disk, so re-binding the name onto the current provider can be
+  inconsistent); the runtime keeps its process-default model. Plan-mode
+  flags are likewise reset.
+
+- **Surfacing a skill that could not be restored to the client.**
+  Neither response has a field for it — ``session/load``'s result carries
+  only ``configOptions``, and the startup resume answers a
+  ``session/new`` — so for now a skipped skill is a WARNING in
+  ``agentao.log`` naming the session, the skill, and the reason. A
+  ``session/update`` notice (not a new result field, which clients would
+  have to be taught to read) is the obvious next step if this turns out
+  to need client visibility.
 
 - **Streaming chunked replay.** Messages are emitted one notification
   per persisted entry; large historical messages are NOT split into
@@ -70,7 +100,11 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from agentao.embedding.sessions import load_session, load_session_record
+from agentao.embedding.sessions import (
+    load_session,
+    load_session_record,
+    restore_agent_skills,
+)
 from agentao.runtime.model import purge_thinking_artifacts
 
 from ._lifecycle import session_start_publisher
@@ -140,7 +174,9 @@ def handle_session_load(
          the injected factory (same path as ``session/new``).
       6. Hydrate the runtime's ``messages`` list from the loaded
          history *before* replay so a follow-up ``session/prompt``
-         continues the same conversation.
+         continues the same conversation, and re-activate the persisted
+         skills onto its ``skill_manager`` so the next system prompt
+         carries the same ``SKILL.md`` bodies the saved conversation had.
       7. Replay the history through
          :meth:`ACPTransport.replay_history` so the client can
          reconstruct the conversation view.
@@ -180,12 +216,16 @@ def handle_session_load(
             ),
         )
 
-    # 4) Pull the persisted history off disk.
+    # 4) Pull the persisted history off disk. ``OSError`` covers the missing
+    #    /unreadable file, ``ValueError`` the corrupt or not-an-object one —
+    #    the same pair ``resume_session_on_new`` catches, and for the same
+    #    reason: both are the client's file, not a server fault, so neither
+    #    may fall through to the dispatcher's ``-32603``.
     try:
         messages, _model, active_skills = load_session(
             session_id=session_id, project_root=cwd
         )
-    except FileNotFoundError as e:
+    except (OSError, ValueError) as e:
         raise JsonRpcHandlerError(
             code=INVALID_REQUEST,
             message=f"session/load: {e}",
@@ -206,6 +246,7 @@ def handle_session_load(
         cwd=cwd,
         mcp_servers=mcp_servers,
         messages=messages,
+        active_skills=active_skills,
         agent_factory=agent_factory,
         origin="session/load",
     )
@@ -228,17 +269,28 @@ def _instantiate_loaded_session(
     cwd: Path,
     mcp_servers: List[Dict[str, Any]],
     messages: List[Dict[str, Any]],
+    active_skills: Any,
     agent_factory: AgentFactory,
     origin: str,
 ) -> AcpSessionState:
     """Build, replay, and register a session from persisted history.
 
     Shared by :func:`handle_session_load` and :func:`resume_session_on_new`
-    so both paths construct the runtime, hydrate ``agent.messages``, replay
-    the conversation as ``session/update`` notifications, and register the
-    session through one code path. Registration happens **after** replay so
-    a pipelined ``session/prompt`` cannot interleave a live turn with the
-    historical updates.
+    so both paths construct the runtime, hydrate ``agent.messages``, restore
+    the persisted skill activations, replay the conversation as
+    ``session/update`` notifications, and register the session through one
+    code path. Registration happens **after** replay so a pipelined
+    ``session/prompt`` cannot interleave a live turn with the historical
+    updates.
+
+    ``active_skills`` is the persisted name list, and is **required** rather
+    than defaulted: both call sites already had it in hand and dropped it on
+    the floor (#271), and a required argument is what stops a third loading
+    path from repeating that. It is typed ``Any`` because it arrives straight
+    off disk — :func:`~agentao.embedding.sessions.load_session_record` does
+    not validate it — and
+    :func:`~agentao.embedding.sessions.restore_agent_skills` is what narrows
+    it.
 
     The persisted ``model`` is intentionally **not** restored: a session
     stores only the model *name*, never its provider (api_key / base_url
@@ -322,6 +374,18 @@ def _instantiate_loaded_session(
             )
             # Continue — the client still gets the replay, and a new
             # prompt would just start a fresh conversation.
+
+        # Re-activate the skills the session was saved with, before the
+        # session becomes reachable. Purely a side effect on the skill
+        # manager: the activation text is model-facing and deliberately
+        # never enters ``agent.messages`` (the saved history already holds
+        # whatever the original activation put there).
+        restore_agent_skills(
+            agent,
+            active_skills,
+            session_id=session_id,
+            context=f"acp: {origin}",
+        )
 
         # Replay history BEFORE registering the session so a pipelined
         # ``session/prompt`` cannot start a live turn that interleaves
@@ -437,7 +501,7 @@ def resume_session_on_new(
     """
     selector = directive.session_id
     try:
-        session_id, messages, _model, _active_skills = load_session_record(
+        session_id, messages, _model, active_skills = load_session_record(
             session_id=selector, project_root=cwd
         )
     except (OSError, ValueError) as e:
@@ -478,6 +542,7 @@ def resume_session_on_new(
         cwd=cwd,
         mcp_servers=mcp_servers,
         messages=messages,
+        active_skills=active_skills,
         agent_factory=agent_factory,
         origin="resume",
     )

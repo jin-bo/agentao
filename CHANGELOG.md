@@ -75,6 +75,44 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **An ACP-loaded session gets its skills back.** `session/load` and the
+  startup `--resume` both read the persisted `active_skills` list off disk and
+  then dropped it — one bound the name and never used it, the other spelled it
+  `_active_skills` — so a client reopening a session got the transcript back
+  without the activations, and a skill's `SKILL.md` body, which is in the
+  system prompt only while that skill is active, silently left it. The same
+  file reopened through the CLI's `/sessions resume` had always restored them.
+  Both ACP entry points now restore through the one loader they already share,
+  with the read-back `/sessions resume` needed: `activate_skill` **answers**
+  `Error: ...` for a skill deleted or disabled since the save (#266) rather
+  than raising, so guarding only against exceptions would count every refusal
+  as a success. A refusal, a raise, and a runtime with no skill manager are
+  each isolated — the remaining skills still come back, and the load itself
+  never fails over one stale name. Restoring is a side effect on the skill
+  manager: the activation text is model-facing but belongs to no turn, so it
+  never enters the replayed history. A skipped skill is a WARNING in
+  `agentao.log` naming the session, the skill and the reason — neither response
+  has a field for it (`session/load`'s result carries only `configOptions`, and
+  the startup resume answers a `session/new`), so neither grew one. The restore
+  itself is now **one function**, `embedding.sessions.restore_agent_skills` —
+  the disk→agent counterpart of `persist_agent_session`, and shared by all
+  three loading paths. `/sessions resume` had its own copy, which is how it
+  ended up without the narrowing: a hand-edited `active_skills` holding a bare
+  string was iterated character by character (`activate_skill("p")`), and one
+  holding a number or `null` raised `TypeError` straight out of the `for`
+  statement — fatal on the `--resume` launch path, where the caller is the
+  fatal-error handler. (#271)
+
+- **A corrupt session file is the client's error, not the server's.**
+  `session/load` caught only `FileNotFoundError`, so a truncated or
+  hand-edited file surfaced as `json.JSONDecodeError` and the dispatcher
+  turned it into `-32603` INTERNAL_ERROR — the server blaming itself for
+  something the module docstring says it exists to distinguish. Reachable
+  through the timestamp-prefix branch of the selector, which matches on the
+  file *stem* and so, unlike the UUID branch, does not skip a file it cannot
+  parse. It now catches `(OSError, ValueError)` and answers `-32600`
+  INVALID_REQUEST, the same pair `resume_session_on_new` already caught.
+
 - **A sub-agent's compaction no longer writes into the parent's memory
   database.** A sub-agent built its `MemoryManager` from the default, which
   opens `working_directory/.agentao/memory.db` — the same file the CLI factory

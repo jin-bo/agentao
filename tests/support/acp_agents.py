@@ -23,20 +23,69 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from agentao.cancellation import CancellationToken
 
 
-class _FakeSkillManager:
-    """Duck-types the ``skill_manager.get_active_skills()`` call that
-    ``AcpSessionState._save_session`` makes during teardown."""
+class FakeContextManager:
+    """Duck-types the one ``context_manager`` call the ACP loader makes.
 
-    def __init__(self, active: Optional[Dict[str, Any]] = None) -> None:
-        self._active = active or {}
+    ``_instantiate_loaded_session`` hydrates ``agent.messages`` and then
+    drops the Tier-1 token anchor, both inside **one** try/except. Without
+    this attribute the ``invalidate_token_anchor()`` line raised
+    ``AttributeError`` on every fake, so every ACP load test silently ran
+    the hydration *failure* branch and ``purge_thinking_artifacts`` — the
+    line after it — never executed at all.
+    """
+
+    def __init__(self) -> None:
+        self.invalidate_calls = 0
+
+    def invalidate_token_anchor(self) -> None:
+        self.invalidate_calls += 1
+
+
+class FakeSkillManager:
+    """Duck-types the two skill-manager calls the ACP layer makes.
+
+    ``get_active_skills()`` is read by ``AcpSessionState._save_session``
+    during teardown; ``activate_skill()`` is called by
+    ``embedding.sessions.restore_agent_skills`` when a persisted session is
+    reloaded (#271).
+
+    ``refuse`` and ``raise_on`` reproduce the two distinct failure shapes
+    the real manager has, which are easy to conflate: a disabled or unknown
+    skill is **answered** with an ``"Error: ..."`` string (#266), while a
+    host-injected manager is free to raise. A restore that only handled the
+    exception would count every refusal as a success.
+    """
+
+    def __init__(
+        self,
+        active: Optional[Dict[str, Any]] = None,
+        *,
+        refuse: Iterable[str] = (),
+        raise_on: Iterable[str] = (),
+    ) -> None:
+        self._active: Dict[str, Any] = dict(active or {})
+        self._refuse = set(refuse)
+        self._raise_on = set(raise_on)
+        self.activate_calls: List[Tuple[str, str]] = []
 
     def get_active_skills(self) -> Dict[str, Any]:
         return dict(self._active)
+
+    def activate_skill(self, skill_name: str, task_description: str) -> str:
+        self.activate_calls.append((skill_name, task_description))
+        if skill_name in self._raise_on:
+            raise RuntimeError(f"simulated activation failure: {skill_name}")
+        if skill_name in self._refuse:
+            # Byte-for-byte the real refusal's prefix — the caller keys off
+            # ``startswith("Error")``.
+            return f"Error: Unknown skill '{skill_name}'. Available skills: "
+        self._active[skill_name] = {"task": task_description}
+        return f"\nSkill Activated: {skill_name}\nTask: {task_description}\n"
 
 
 class FakeAgent:
@@ -57,6 +106,12 @@ class FakeAgent:
             by ``chat`` when ``track_messages`` is True.
         chat_calls: ``(user_message, cancellation_token)`` tuples.
         close_calls: Incremented on each ``close`` call.
+        skill_manager: A :class:`FakeSkillManager` unless one is injected.
+            ``session_load`` restores a persisted session's skills through
+            it, so a test that cares about the outcome passes its own.
+        context_manager: A :class:`FakeContextManager`. Present so the ACP
+            loader's hydration block runs to completion instead of dying on
+            ``AttributeError`` at ``invalidate_token_anchor()``.
     """
 
     def __init__(
@@ -67,6 +122,7 @@ class FakeAgent:
         track_messages: bool = False,
         model: str = "test-model",
         working_directory: Optional[Path] = None,
+        skill_manager: Optional[Any] = None,
     ) -> None:
         self.reply = reply
         self.side_effect = side_effect
@@ -78,7 +134,10 @@ class FakeAgent:
         # Surface that ``AcpSessionState._save_session`` reads on teardown.
         self.model = model
         self.working_directory = working_directory
-        self.skill_manager = _FakeSkillManager()
+        self.skill_manager = (
+            skill_manager if skill_manager is not None else FakeSkillManager()
+        )
+        self.context_manager = FakeContextManager()
 
     def get_current_model(self) -> str:
         return self.model

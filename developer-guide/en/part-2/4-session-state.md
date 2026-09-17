@@ -102,9 +102,14 @@ def load_session(session_id: str, db) -> Agentao:
     for msg in json.loads(row["messages"]):
         agent.messages.append(msg)  # or: agent.add_message(msg["role"], msg["content"])
 
-    # Re-activate skills. Activation is idempotent.
+    # Re-activate skills. ``task_description`` is required (it is rendered
+    # into the <active-skills> prompt block as "Task: ..."), and a skill
+    # deleted or disabled since the save is *answered* with an "Error: ..."
+    # string rather than raising — so read the outcome back. Agentao ships
+    # the whole rule as ``embedding.sessions.restore_agent_skills(agent,
+    # row["active_skills"])``, which also narrows a hand-edited list.
     for name in row["active_skills"]:
-        agent.skill_manager.activate_skill(name)
+        agent.skill_manager.activate_skill(name, "Restored from session")
 
     return agent
 ```
