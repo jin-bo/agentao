@@ -1,7 +1,7 @@
 # Compaction Orchestration — Implementation Plan
 
 > **✅ Implemented — 2026-08-24. All six PRs are merged to `main`, in the dependency order below.**
-> Not yet released; targeting 0.4.20.
+> Shipped in 0.4.20.
 >
 > | | PR | Squashed onto `main` as |
 > |---|---|---|

@@ -1,5 +1,13 @@
 # Sub-agent runtime safety — the engine shared by identity, the registry rebuilt by origin, MCP ownership and cancellation
 
+> **Update — shipped in 0.4.24, by a narrower mechanism than this plan.** §1's defect is
+> closed: a sub-agent decides with a `PermissionEngine.snapshot()` of its parent's engine, not
+> with the engine shared by identity (§2). Also shipped: one registry rebuilt by origin, with
+> `copies_to_subagents` (§2, §5.1); the MCP owner thread and per-connection owner tasks, with
+> sub-agents calling the parent's instances (§3); and a skill catalogue derived from the parent
+> (§5.2). Not built: the `_for_subagent` factory, §4's engine lock, and §3's view, leases and
+> call context. The status below is the plan as it stood before that.
+>
 > ⚠️ **Status:** this plan was **PR-0** of the old PowerShell plan and was split out verbatim on
 > 2026-09-03 (rev 25). It has nothing to do with PowerShell and does not wait for it. **That
 > PowerShell design was retired on 2026-09-06** (the lightweight design is in
@@ -108,9 +116,7 @@ instance" and "share the MCP loop" are each not the fix.
 > **Not built:**
 > - the `_for_subagent` factory, and skipping `__init__`'s registration passes (SUB-05);
 > - sharing the permission engine by identity (a sub-agent holds a snapshot, so a mode switch
->   on the parent does not reach a sub-agent already running);
-> - the host-tool declaration and its per-sub-agent copy (SUB-03 as revised 2026-09-15, PR-b,
->   §5.1), which replaces the earlier `ToolForkable`.
+>   on the parent does not reach a sub-agent already running).
 
 **PR-0 — a sub-agent is built by the internal factory `Agentao._for_subagent(parent,
 definition)`, never through public constructor arguments.** §2.16 shows that `enabled_tools=`,

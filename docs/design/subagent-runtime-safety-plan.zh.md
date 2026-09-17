@@ -1,5 +1,11 @@
 # 子代理运行期安全计划 —— 引擎按身份继承、registry 按来源重建、MCP 所有权与取消
 
+> **更新 —— 已随 0.4.24 发布，机制比本计划更窄。** §1 的缺陷已关闭：子代理用父级引擎的
+> `PermissionEngine.snapshot()` 做判定，而不是按身份共享同一个引擎（§2）。同时发布的还有：按来源重建的
+> 单一 registry 及 `copies_to_subagents`（§2、§5.1）；MCP 所有者线程与每条连接的所有者任务，子代理直接调用
+> 父级的实例（§3）；以及从父级派生的技能目录（§5.2）。尚未实现：`_for_subagent` 工厂、§4 的引擎锁，以及
+> §3 的视图、租约与调用上下文。下面的状态是在此之前的计划原文。
+>
 > ⚠️ **状态：** 本计划原是当年那份 PowerShell 计划的 **PR-0**，2026-09-03 按原文拆出（rev 25），与
 > PowerShell 无关，也不等 PowerShell。**那份 PowerShell 设计已于 2026-09-06 退役**（轻量方案见
 > `powershell-support-lightweight.zh.md`，历史在 Git 里），本计划不随之作废。**引擎那一半是一处已实测、早于该计划的活缺陷（证据 §2.12：子代理
@@ -87,9 +93,7 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
 >
 > **尚未实现：**
 > - `_for_subagent` 工厂，以及跳过 `__init__` 的注册过程（SUB-05）；
-> - 按身份共享权限引擎（子代理持有快照，所以父级切换模式不会影响已在运行的子代理）；
-> - 宿主工具的下放声明及每个子代理一份的拷贝（2026-09-15 修订后的 SUB-03，PR-b，§5.1），取代早先的
->   `ToolForkable`。
+> - 按身份共享权限引擎（子代理持有快照，所以父级切换模式不会影响已在运行的子代理）。
 
 **PR-0 —— 子代理由内部工厂 `Agentao._for_subagent(parent, definition)` 构建，不经公开构造参数。**
 §2.16 表明 `enabled_tools=` / `extra_tools=` / `remove_tool` 每一个都有一道守卫或一种语义，会把
