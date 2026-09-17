@@ -5,9 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.4.24. Add entries under the relevant heading as work lands._
+## [0.4.24] — 2026-09-17
 
 ### Added
 
@@ -485,7 +483,12 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   and an `agentao run` spec's allow and deny rules. A sub-agent no longer
   re-reads `permissions.json`, which its parent does not re-read either.
 - **A call for a tool the runtime does not offer is no longer run as a
-  similarly named tool.** Tool-name repair fell back to fuzzy matching, which
+  similarly named tool.** *(Superseded later in this same cycle: the guard
+  described here narrowed the fuzzy pass, and "A tool name is no longer
+  repaired by similarity" under Changed then removed that pass altogether.
+  What ships is the removal; this entry records the input classes that were
+  found, and the round that only guarded them.)*
+  Tool-name repair fell back to fuzzy matching, which
   cannot tell a typo from a different tool: `read_file` and `write_file` are as
   close as a misspelling. A sub-agent not given `read_file` ran `write_file`
   instead, one whose host had replaced `check_background_agent` cancelled the
@@ -532,6 +535,10 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   `/sessions resume`, which replaces the history without going through
   `clear_history()`, applies the same cutoff.
 - **`/clear` and `/memory clear` no longer report a failed wipe as success.**
+  *(The mechanism named below moved one layer down later in this same cycle —
+  see `MemoryManager.wipe_all()` under Added. The commands no longer call
+  `session_summaries_remain()` themselves; they call `wipe_all()`, which does.
+  The behaviour this entry describes is unchanged.)*
   `clear_all_session_summaries()` answers 0 both for "nothing to delete" and
   for a swallowed storage error, and both commands printed success either way.
   A surviving summary is not inert: the cross-session tail puts it back in the
