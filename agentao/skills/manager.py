@@ -613,6 +613,9 @@ class SkillManager:
         Plugin-provided skills are preserved across reloads since they
         are not backed by on-disk skill directories.
 
+        ``disabled_skills`` is *not* reconciled against what the scan found
+        — see the comment at the end of this method.
+
         Returns how many skills are available afterwards — the same count
         ``/skills reload`` prints. ``/crystallize`` already reads the return
         value (``cli/commands_ext/crystallize/_handler.py``: ``count =
@@ -632,8 +635,22 @@ class SkillManager:
         for name, info in plugin_entries.items():
             if name not in self.available_skills:
                 self.available_skills[name] = info
-        self.disabled_skills &= set(self.available_skills.keys())
-        self._save_config()
+        # A disable survives a reload that cannot find the skill, and nothing
+        # is written back here (#270). Intersecting the set with what the
+        # scan found looks like housekeeping — drop names for skills that no
+        # longer exist — but a scan cannot tell "deleted" from "not
+        # discoverable right now": a project ``.agentao/skills`` on an
+        # unmounted share, a directory renamed mid-session, a host-injected
+        # manager whose plugin skills were never re-registered. The pruned
+        # set was persisted in the same breath, so one ``/skills reload`` (or
+        # one ``/crystallize``, which calls this) erased the user's intent
+        # from memory *and* ``skills_config.json`` with no message, and the
+        # skill came back enabled. Since #266 that set is also the activation
+        # gate, so the erasure re-armed the skill for the model. A stale name
+        # costs one string in the config and re-arms itself correctly if the
+        # skill ever returns; only an explicit ``disable_skill`` /
+        # ``enable_skill`` changes it, and ``enable_skill`` clears a name
+        # whether or not the skill is currently discoverable.
         return len(self.list_available_skills())
 
     def get_skill_content(self, skill_name: str) -> Optional[str]:

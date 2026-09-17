@@ -43,7 +43,18 @@ def print_help(cli: "AgentaoCLI") -> None:
 def list_skills(cli: "AgentaoCLI") -> None:
     sm = cli.agent.skill_manager
     available = sm.list_available_skills()
-    disabled = sorted(sm.disabled_skills & set(sm.available_skills.keys()))
+    # ``or set()`` as well as the default: a host-injected manager may carry
+    # the attribute set to ``None``, and ``&`` on ``None`` is a TypeError
+    # (``cli/commands/skills.py`` guards the same way).
+    disabled_set = getattr(sm, "disabled_skills", None) or set()
+    known = set(sm.available_skills.keys())
+    disabled = sorted(disabled_set & known)
+    # Since #270 a reload no longer prunes ``disabled_skills`` against what
+    # the scan found, so the two can diverge for as long as a skill stays
+    # undiscoverable. Intersecting alone would hide such a name from every
+    # CLI surface, and ``/skills enable <name>`` — the documented way to
+    # clear one — needs the name to be typed.
+    stale = sorted(disabled_set - known)
 
     console.print(f"\n[info]Available Skills ({len(available)}):[/info]\n")
     for skill_name in sorted(available):
@@ -60,6 +71,17 @@ def list_skills(cli: "AgentaoCLI") -> None:
             skill_info = sm.get_skill_info(skill_name)
             title = skill_info.get('title', skill_name) if skill_info else skill_name
             console.print(f"  • [dim]{skill_name}[/dim] - {title}")
+
+    if stale:
+        console.print(
+            f"\n[info]Disabled, not found by the last scan ({len(stale)}):[/info]\n"
+        )
+        for skill_name in stale:
+            console.print(f"  • [dim]{skill_name}[/dim]")
+        console.print(
+            "  [dim]Kept so the skill comes back disabled if it reappears; "
+            "clear one with /skills enable <name>.[/dim]"
+        )
 
     console.print("\n[info]Active Skills:[/info]")
     active = sm.get_active_skills()

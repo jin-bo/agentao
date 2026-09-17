@@ -355,7 +355,7 @@ PowerShell 上会在它之上再叠一张 Windows 专属的不可恢复类别表
 
 | 键 | 类型 | 说明 |
 |---|---|---|
-| `disabled_skills` | string[] | 要从自动发现中**排除**的 skill 名。CLI 里用 `/skills disable <name>` 管理。被禁用的 skill **激活时也会被拒绝** —— `activate_skill` 工具、`/skills activate`、以及继承该集合的子代理都一样。工具侧回答「Unknown skill」（对想激活它的调用方而言，被禁用的 skill 就是不存在）；`/skills activate` 则直接说明状态与补救办法。要激活须先 `/skills enable <name>` 重新启用。 |
+| `disabled_skills` | string[] | 要从自动发现中**排除**的 skill 名。CLI 里用 `/skills disable <name>` 管理。被禁用的 skill **激活时也会被拒绝** —— `activate_skill` 工具、`/skills activate`、以及继承该集合的子代理都一样。工具侧回答「Unknown skill」（对想激活它的调用方而言，被禁用的 skill 就是不存在）；`/skills activate` 则直接说明状态与补救办法。要激活须先 `/skills enable <name>` 重新启用。这份名单**从不与扫描结果对账**：一次扫不到该 skill 的 reload（共享盘未挂载、目录运行中被改名）会原样保留名字、也不写盘，于是 skill 回来时仍是禁用状态 —— 扫描分不清「已删除」和「此刻发现不到」，而禁用本身是激活门禁，猜错就等于静默把这个 skill 重新放行给模型。只有 `/skills disable` / `/skills enable` 会改动名单；代价是名字可能比它禁用的 skill 活得更久 —— 这类名字会在 `/skills` 里单列为 **Disabled, not found by the last scan**，而 `/skills enable <name>` 不论该 skill 当前是否存在都能清掉它。 |
 
 skill 的发现与激活规则见 [SKILLS_GUIDE.md](../guides/skills.md)。
 
