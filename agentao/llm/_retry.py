@@ -30,6 +30,21 @@ MAX_BACKOFF_SECONDS = 30.0        # per-step ceiling
 MAX_TOTAL_RETRY_SECONDS = 60.0    # wall-clock budget across all attempts
 JITTER_FRACTION = 0.3             # uniform(0, base * 0.3) added on top of base
 
+# A 429 that waiting cannot clear: the account is out of quota, credit or
+# spend allowance, so every retry is one more request that fails the same way.
+# These are OpenAI's error codes, matched exactly, as codex does (#44492); a
+# provider that says the same thing some other way is still retried. That is
+# the safe side to miss on — an unrecognised code costs the backoff it always
+# did, while a wrong match would end a turn on a rate limit it could have
+# waited out.
+QUOTA_EXHAUSTED_CODES = frozenset({
+    "insufficient_quota",
+    "credit_balance_exhausted",
+    "organization_spend_limit_exceeded",
+    "project_spend_limit_exceeded",
+    "organization_usage_limit_exceeded",
+})
+
 
 # Phrases providers actually use when they reject ``stream=True``. We match
 # against full phrases (not bare "stream"/"streaming") so that proxy errors
@@ -55,8 +70,10 @@ def _classify_retry(exc: BaseException) -> Tuple[bool, Optional[int], Optional[s
     Returns ``(retryable, status_code, retry_after_header)``. Network-level
     failures (``APIConnectionError`` / ``APITimeoutError``) are retryable
     with no status. ``APIStatusError`` is retryable only when its status is
-    in :data:`RETRYABLE_STATUS_CODES`. Anything else (auth, validation,
-    non-OpenAI exceptions) is not retryable so the caller raises it.
+    in :data:`RETRYABLE_STATUS_CODES`, and a 429 only when it is not a
+    quota error (:func:`_is_quota_exhausted`). Anything else (auth,
+    validation, non-OpenAI exceptions) is not retryable so the caller
+    raises it.
     """
     try:
         from openai import (
@@ -69,6 +86,8 @@ def _classify_retry(exc: BaseException) -> Tuple[bool, Optional[int], Optional[s
         return (False, None, None)
 
     if isinstance(exc, RateLimitError):
+        if _is_quota_exhausted(exc):
+            return (False, 429, None)
         retry_after = None
         if getattr(exc, "response", None) is not None:
             retry_after = exc.response.headers.get("retry-after")
@@ -87,6 +106,21 @@ def _classify_retry(exc: BaseException) -> Tuple[bool, Optional[int], Optional[s
         return (True, None, None)
 
     return (False, None, None)
+
+
+def _is_quota_exhausted(exc: BaseException) -> bool:
+    """True when a 429 says the account is out of quota, not rate-limited.
+
+    The SDK lifts ``code`` and ``type`` off the response's ``error`` object
+    (both 2.x and 3.x). Each is checked to be a string before it is
+    compared, so an error object that merely answers the attribute is not
+    read as a quota error.
+    """
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code in QUOTA_EXHAUSTED_CODES:
+        return True
+    error_type = getattr(exc, "type", None)
+    return isinstance(error_type, str) and error_type == "insufficient_quota"
 
 
 def _parse_retry_after(header: Optional[str]) -> Optional[float]:

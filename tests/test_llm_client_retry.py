@@ -43,6 +43,41 @@ def _make_status_error(status: int, *, retry_after: str | None = None, cls=None)
     return cls(message=f"status={status}", response=resp, body=None)
 
 
+def _sdk_error(status: int, body, *, stream: bool = False):
+    """The exception the installed SDK raises for ``status`` + ``body``.
+
+    Goes through a real request, so ``code`` / ``type`` are whatever the SDK
+    lifts off the response — not what a hand-built error assumes it does.
+    ``body`` is JSON-encoded unless it is a ``str``, which is sent as text.
+    """
+    def handler(request):
+        if isinstance(body, str):
+            return httpx.Response(status, text=body)
+        return httpx.Response(status, json=body)
+
+    sdk = openai.OpenAI(
+        api_key="k",
+        base_url="https://example.test/v1",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    kwargs = dict(model="m", messages=[{"role": "user", "content": "hi"}])
+    try:
+        if stream:
+            for _ in sdk.chat.completions.create(stream=True, **kwargs):
+                pass
+        else:
+            sdk.chat.completions.with_raw_response.create(**kwargs)
+    except openai.APIStatusError as exc:
+        return exc
+    raise AssertionError(f"the SDK raised nothing for {status}")
+
+
+_QUOTA_MESSAGE = (
+    "You exceeded your current quota, please check your plan and billing details."
+)
+
+
 def _make_completion(content: str = "ok", prompt_tokens: int = 5, completion_tokens: int = 3):
     """Build a mock object shaped like ``ChatCompletion``."""
     msg = MagicMock()
@@ -168,6 +203,112 @@ class TestClassifyRetry:
     def test_unknown_exception_is_not_retryable(self):
         retryable, _, _ = _classify_retry(ValueError("nope"))
         assert retryable is False
+
+
+class TestQuotaExhausted429:
+    """A 429 for exhausted quota fails at once; a rate-limit 429 still waits.
+
+    Retrying a quota 429 cost four more requests and ~23 s of backoff before
+    the same error surfaced (codex #44492 made the same split).
+    """
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pytest.param(
+                {"message": _QUOTA_MESSAGE, "type": "insufficient_quota",
+                 "param": None, "code": "insufficient_quota"},
+                id="openai-insufficient_quota",
+            ),
+            pytest.param({"message": "m", "code": "credit_balance_exhausted"},
+                         id="credit_balance_exhausted"),
+            pytest.param({"message": "m", "code": "organization_spend_limit_exceeded"},
+                         id="organization_spend_limit_exceeded"),
+            pytest.param({"message": "m", "code": "project_spend_limit_exceeded"},
+                         id="project_spend_limit_exceeded"),
+            pytest.param({"message": "m", "code": "organization_usage_limit_exceeded"},
+                         id="organization_usage_limit_exceeded"),
+            pytest.param({"message": "m", "type": "insufficient_quota"},
+                         id="type-only"),
+        ],
+    )
+    def test_quota_429_is_not_retryable(self, error, stream):
+        err = _sdk_error(429, {"error": error}, stream=stream)
+        assert isinstance(err, openai.RateLimitError)
+        assert _classify_retry(err) == (False, 429, None)
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param(
+                {"error": {"message": "Rate limit reached for gpt-4o on requests "
+                           "per min (RPM): Limit 3, Used 3, Requested 1.",
+                           "type": "requests", "param": None,
+                           "code": "rate_limit_exceeded"}},
+                id="openai-rate_limit_exceeded",
+            ),
+            pytest.param({"error": {"type": "rate_limit_error", "code": "slow_down"}},
+                         id="slow_down"),
+            pytest.param({"error": {"message": "Too many requests", "code": 429}},
+                         id="numeric-code"),
+            # Unhashable: a bare ``code in frozenset`` would raise TypeError.
+            pytest.param({"error": {"code": ["insufficient_quota"],
+                                    "type": ["insufficient_quota"]}},
+                         id="non-string-fields"),
+            pytest.param("Too Many Requests", id="non-json-body"),
+        ],
+    )
+    def test_other_429s_stay_retryable(self, body):
+        err = _sdk_error(429, body)
+        assert isinstance(err, openai.RateLimitError)
+        assert _classify_retry(err)[:2] == (True, 429)
+
+    def test_quota_code_on_another_status_is_left_to_the_status(self):
+        # The quota split is a 429 rule, as in codex; a 503 stays retryable
+        # whatever its body says.
+        err = _sdk_error(503, {"error": {"code": "insufficient_quota"}})
+        assert _classify_retry(err)[:2] == (True, 503)
+
+    def test_chat_makes_one_request_and_never_sleeps(self, monkeypatch):
+        sleeps: List[float] = []
+        monkeypatch.setattr(client_mod.time, "sleep", sleeps.append)
+
+        client = _make_client()
+        err = _sdk_error(429, {"error": {"message": _QUOTA_MESSAGE,
+                                         "type": "insufficient_quota",
+                                         "code": "insufficient_quota"}})
+        create = MagicMock(side_effect=err)
+        client.client.chat.completions.with_raw_response.create = create
+
+        with pytest.raises(openai.RateLimitError) as excinfo:
+            client.chat(messages=[{"role": "user", "content": "hi"}])
+
+        assert excinfo.value is err
+        assert create.call_count == 1
+        assert sleeps == []
+
+    def test_chat_stream_makes_one_request_and_takes_no_fallback(self, monkeypatch):
+        sleeps: List[float] = []
+        monkeypatch.setattr(client_mod.time, "sleep", sleeps.append)
+
+        client = _make_client()
+        err = _sdk_error(429, {"error": {"message": _QUOTA_MESSAGE,
+                                         "type": "insufficient_quota",
+                                         "code": "insufficient_quota"}},
+                         stream=True)
+        client.client.chat.completions.create = MagicMock(side_effect=err)
+        client.client.chat.completions.with_raw_response.create = MagicMock(
+            side_effect=AssertionError("non-streaming fallback must not run")
+        )
+
+        with pytest.raises(openai.RateLimitError) as excinfo:
+            client.chat_stream(messages=[{"role": "user", "content": "hi"}])
+
+        assert excinfo.value is err
+        assert getattr(err, "streamed", None) is False
+        assert client.client.chat.completions.create.call_count == 1
+        assert sleeps == []
 
 
 class TestParseRetryAfter:
