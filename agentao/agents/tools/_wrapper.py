@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...tools.base import RegistrableTool, Tool
-from ..bg_store import BackgroundTaskStore
+from ..bg_store import BackgroundTaskStore, BgTaskStatus
 from ._complete import CompleteTaskTool, TaskComplete
 from ._progress import SubagentProgress
 
@@ -50,6 +50,14 @@ _INCOMPLETE_DETAILS: Dict[str, str] = {
 # vocabulary — ``max_iterations`` is a separate axis by design — so it gets its
 # own key rather than being smuggled into that closed set.
 _MAX_ITERATIONS_REASON = "max_iterations"
+
+# The one ``_IncompleteOutcome.reason`` that names a user action rather than a
+# way of stopping short. Minted in exactly one place (the ``status ==
+# "cancelled"`` branch of ``_classify_subagent_outcome``) and read in exactly
+# one other (``_terminal_state``), so it is a constant rather than two string
+# literals free to drift apart: it is the join key between what happened and
+# what every surface calls it.
+_CANCELLED_REASON = "cancelled"
 
 
 # Handed to ``SkillManager`` to mean "no skills at all" — the documented
@@ -335,21 +343,31 @@ class _IncompleteOutcome:
 # Harness-authored turn text. None of these is sub-agent output, so none may
 # be presented to the parent LLM as the child's "partial result" — doing so
 # would attribute the harness's own notice to the sub-agent. The empty-turn
-# placeholder is imported lazily (see ``_format_result``); these two are the
-# max-iterations and LLM-error notices from ``chat_loop/_runner.py``.
-_HARNESS_NOTICE_PREFIXES = ("[LLM API error:",)
-_HARNESS_NOTICE_EXACT = ("Maximum tool call iterations reached.",)
+# placeholder is imported lazily (see ``_format_result``); the rest are the
+# max-iterations and LLM-error notices from ``chat_loop/_runner.py`` and the
+# two cancellation markers from ``runtime/turn.py``.
+#
+# The cancel markers are here because they are the *whole* text of a turn that
+# ``AgentCancelledError`` or ``KeyboardInterrupt`` ended, so labelling them
+# "Partial result" tells the parent LLM the child reported "[Cancelled:
+# user-cancel]" as its work. A turn cancelled mid-stream returns whatever the
+# model had produced instead, which is real output and stays labelled.
+_HARNESS_NOTICE_PREFIXES = ("[LLM API error:", "[Cancelled:")
+_HARNESS_NOTICE_EXACT = (
+    "Maximum tool call iterations reached.",
+    "[Interrupted by user]",
+)
 
 
 def _is_harness_notice(text: Optional[str]) -> bool:
     """True if ``text`` is agentao's own notice rather than model output.
 
     Used to decide what may be shown to the parent LLM as a sub-agent's
-    "partial result". ``[No response]``, ``[LLM API error: …]`` and
-    "Maximum tool call iterations reached." are all strings the harness
-    authored on the child's behalf; labelling them as the child's partial
-    work would attribute the harness's words to the sub-agent — the exact
-    misreporting this whole path exists to stop.
+    "partial result". ``[No response]``, ``[LLM API error: …]``, "Maximum
+    tool call iterations reached." and the two cancellation markers are all
+    strings the harness authored on the child's behalf; labelling them as
+    the child's partial work would attribute the harness's words to the
+    sub-agent — the exact misreporting this whole path exists to stop.
     """
     # Deferred: ``agentao.runtime`` imports ``agentao.agents`` for
     # ``TaskComplete``, so a module-level import here is a cycle.
@@ -426,12 +444,45 @@ def _classify_subagent_outcome(
 
     status = getattr(outcome, "status", None)
     if status == "cancelled":
-        return _IncompleteOutcome("cancelled", "it was cancelled")
+        return _IncompleteOutcome(_CANCELLED_REASON, "it was cancelled")
     if status == "error":
         return _IncompleteOutcome("error", "it ended with an error")
     # ``is_answer`` false with no reason and no bad status shouldn't happen;
     # report it honestly rather than papering over it as success.
     return _IncompleteOutcome("unknown", "it did not produce a complete answer")
+
+
+def _terminal_state(incomplete: Optional[_IncompleteOutcome]) -> BgTaskStatus:
+    """What to call a finished sub-agent run — the one mapping both paths use.
+
+    Answers in the ``BgTaskStatus`` vocabulary that the background store, the
+    foreground ``SubagentProgress`` and the public ``SubagentLifecycleEvent``
+    phase all share, so a cancel cannot land in one terminal state on the
+    foreground path and another on the background one.
+
+    **Derived from the classification, never from whether an exception
+    escaped.** Both paths used to decide this inline as ``"completed" if
+    incomplete is None else "failed"`` and lean on an ``except
+    AgentCancelledError`` to recover the cancelled case — a branch ``chat()``
+    never reaches, so every running cancel was recorded as a failure (#244).
+    A cancel arrives here three different ways and none of them is an
+    exception by the time the wrapper sees it: ``AgentCancelledError`` and
+    ``KeyboardInterrupt`` are both mapped to ``status="cancelled"`` in
+    ``runtime/turn.py``, and a token cancelled mid-stream lets the turn return
+    normally and is flipped to that same status in the ``finally`` there.
+
+    ``complete_task`` and the turn budget keep the precedence
+    :func:`_classify_subagent_outcome` gives them: a sub-agent that declared
+    itself done and was cancelled a moment later reads ``completed``, and one
+    that exhausted its budget as the cancel landed reads ``failed`` with
+    ``max_iterations``. Both are the classifier's answer to what ended the
+    run, and a cancel arriving after the fact does not rewrite it.
+    """
+    if incomplete is None:
+        return "completed"
+    if incomplete.reason == _CANCELLED_REASON:
+        return "cancelled"
+    return "failed"
 
 
 class AgentToolWrapper(Tool):
@@ -606,6 +657,11 @@ class AgentToolWrapper(Tool):
                 task, parent_context, cancellation_token=token,
             )
         except AgentCancelledError:
+            # Defensive only: ``runtime/turn.py`` maps this to
+            # ``status="cancelled"`` and returns, so ``chat()`` does not raise
+            # it and an ordinary cancel is classified below (#244). Kept for a
+            # cancellation raised outside the turn — building or closing the
+            # sub-agent — where there is no classification to read.
             self._terminal_subagent_event(subagent_ctx, "cancelled", task_summary)
             raise
         except Exception as exc:
@@ -615,6 +671,7 @@ class AgentToolWrapper(Tool):
             raise
 
         incomplete = stats.get("incomplete")
+        state = _terminal_state(incomplete)
 
         # Signal sub-agent end to the CLI
         if self._step_callback:
@@ -622,20 +679,22 @@ class AgentToolWrapper(Tool):
                 self._AGENT_END,
                 SubagentProgress(
                     agent_name=agent_name,
-                    state="completed" if incomplete is None else "failed",
+                    state=state,
                     task=task[:80],
                     max_turns=max_turns,
                     turns=stats["turns"],
                     tool_calls=stats["tool_calls"],
                     tokens=stats["tokens"],
                     duration_ms=stats["duration_ms"],
-                    error=None if incomplete is None else incomplete.detail,
+                    # ``error`` is the failure detail, so a cancel leaves it
+                    # empty: ``state`` carries that fact and the display
+                    # labels it. Filling it in would put "it was cancelled"
+                    # where the CLI renders a crash reason.
+                    error=incomplete.detail if state == "failed" else None,
                 ),
             )
 
-        if incomplete is None:
-            self._terminal_subagent_event(subagent_ctx, "completed", task_summary)
-        else:
+        if state == "failed":
             # The run did not raise, but it did not answer either. Reporting
             # ``completed`` here would make the public host contract state
             # something untrue; the phase vocabulary already has the value
@@ -646,6 +705,9 @@ class AgentToolWrapper(Tool):
                 task_summary,
                 error_type=f"incomplete:{incomplete.reason}",
             )
+        else:
+            # ``completed`` or ``cancelled`` — neither carries an error type.
+            self._terminal_subagent_event(subagent_ctx, state, task_summary)
         return self._format_result(result, stats)
 
     # ------------------------------------------------------------------
@@ -1223,29 +1285,41 @@ class AgentToolWrapper(Tool):
                 # happened, or ``check_background_agent`` and any host
                 # subscriber both read a non-answer as a success.
                 incomplete = stats.get("incomplete")
+                state = _terminal_state(incomplete)
                 self._bg_store.update(
                     agent_id,
-                    status="completed" if incomplete is None else "failed",
+                    status=state,
+                    # Passed on *every* terminal state, cancelled included:
+                    # ``update`` overwrites the record's result and its four
+                    # counters unconditionally, so a cancel that omitted them
+                    # would erase the work the run did before it was stopped.
                     result=formatted,
-                    error=None if incomplete is None else incomplete.detail,
+                    error=incomplete.detail if state == "failed" else None,
                     # The record must say *which* kind of "failed" this is.
                     # Without it every reader has to guess from the presence
                     # of `result`, and the CLI guessed wrong — it printed the
-                    # error and discarded the work.
-                    incomplete_reason=None if incomplete is None else incomplete.reason,
+                    # error and discarded the work. Set only alongside
+                    # ``failed``, per the field's contract in ``bg_store``: on
+                    # a cancel the status already names the cause.
+                    incomplete_reason=incomplete.reason if state == "failed" else None,
                     turns=stats["turns"], tool_calls=stats["tool_calls"],
                     tokens=stats["tokens"], duration_ms=stats["duration_ms"],
                 )
-                if incomplete is None:
-                    self._terminal_subagent_event(
-                        subagent_ctx, "completed", task_summary,
-                    )
-                else:
+                if state == "failed":
                     self._terminal_subagent_event(
                         subagent_ctx, "failed", task_summary,
                         error_type=f"incomplete:{incomplete.reason}",
                     )
+                else:
+                    self._terminal_subagent_event(
+                        subagent_ctx, state, task_summary,
+                    )
             except AgentCancelledError:
+                # Defensive only — see the foreground site. ``chat()`` does not
+                # raise this, so an ordinary cancel is classified above and
+                # keeps its partial result and counters. Reaching here means
+                # the cancellation came from outside the drive, where there is
+                # no run to record.
                 self._bg_store.update(agent_id, status="cancelled")
                 self._terminal_subagent_event(subagent_ctx, "cancelled", task_summary)
             except Exception as exc:

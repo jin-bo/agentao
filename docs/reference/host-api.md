@@ -84,11 +84,12 @@ it into the vocabulary and this paragraph is the correction. What is still
 true on *this* surface is narrower: the sub-agent classifier tests the turn
 budget in its own branch, **before** it reads `incomplete_reason`, so
 `max_iterations` can reach the suffix without the turn having been classified
-that way. Three defensive values
-(`cancelled`, `error`, `unknown`) can appear when a turn outcome reports
+that way. Two defensive values
+(`error`, `unknown`) can appear when a turn outcome reports
 neither an answer nor a reason; treat any unrecognized suffix as
 "stopped short, cause unclassified" rather than matching the list
-exhaustively.
+exhaustively. A third, `cancelled`, was reachable before 0.4.24 — see
+below.
 
 ```python
 if isinstance(ev, SubagentLifecycleEvent) and ev.phase == "failed":
@@ -98,7 +99,15 @@ if isinstance(ev, SubagentLifecycleEvent) and ev.phase == "failed":
         pager.fire(ev.error_type)                            # a real crash
 ```
 
-Cancellation is unaffected — it stays on `phase="cancelled"`.
+**Cancellation has its own phase, and since 0.4.24 it actually gets it.**
+A sub-agent cancelled while it was *running* used to arrive as
+`phase="failed"` with `error_type="incomplete:cancelled"`, while one
+cancelled before it started arrived as `phase="cancelled"` — the same user
+action in two phases, depending on timing. Both are now `phase="cancelled"`,
+where `error_type` is `None`: a host that parsed `incomplete:cancelled` out
+of `error_type` reads the phase instead. `BackgroundTaskStore` records match
+(`status="cancelled"`, `incomplete_reason=None`) and keep whatever partial
+result and counters the run produced.
 
 Both emit sites carry this behavior: the foreground sub-agent call and
 the background (`run_in_background=True`) worker. The background

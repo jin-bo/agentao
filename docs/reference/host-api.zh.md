@@ -73,9 +73,10 @@ Harness API 是宿主应用嵌入 Agentao 时面向外部的兼容性边界。�
 `incomplete_reason` 正交的另一根轴、所以单独占一个 key」，0.4.19 已把它并入
 词表，这一段就是那处更正。在*这个*面上仍然成立的是更窄的一句：子 agent 的
 分类器在**读 `incomplete_reason` 之前**就先单独判了 turn 预算，所以
-`max_iterations` 可以不经由 turn 的分类而直接出现在后缀里。另有三个兜底值（`cancelled`、`error`、`unknown`）会在
+`max_iterations` 可以不经由 turn 的分类而直接出现在后缀里。另有两个兜底值（`error`、`unknown`）会在
 turn 结果既没有答案、也没给出原因时出现；请把任何不认识的后缀一律当作
-"停在半路、原因未分类"处理，不要按列表做穷举匹配。
+"停在半路、原因未分类"处理，不要按列表做穷举匹配。第三个兜底值
+`cancelled` 在 0.4.24 之前也会出现，见下。
 
 ```python
 if isinstance(ev, SubagentLifecycleEvent) and ev.phase == "failed":
@@ -85,7 +86,14 @@ if isinstance(ev, SubagentLifecycleEvent) and ev.phase == "failed":
         pager.fire(ev.error_type)                            # 真崩了
 ```
 
-取消不受影响——它仍然走 `phase="cancelled"`。
+**取消有自己的 phase，而从 0.4.24 起它才真正用上。** 运行**中**被取消的
+子 Agent 过去报的是 `phase="failed"` + `error_type="incomplete:cancelled"`，
+而在开跑**前**被取消的报 `phase="cancelled"` —— 同一个用户动作，因时机不同
+落在两个 phase 上。现在两者统一为 `phase="cancelled"`，该 phase 上
+`error_type` 恒为 `None`：原先从 `error_type` 里解析 `incomplete:cancelled`
+的宿主，改读 phase 即可。`BackgroundTaskStore` 的记录同步变化
+（`status="cancelled"`、`incomplete_reason=None`），并保留这次跑出来的部分
+结果与计数。
 
 两个发事件的位置行为一致：前台子 Agent 调用，以及后台
 （`run_in_background=True`）worker。后台的 `BackgroundTaskStore` 记录

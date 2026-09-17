@@ -75,6 +75,38 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A cancelled sub-agent is reported as cancelled, not as a failure.** A
+  sub-agent stopped while it was *running* settled as `failed` on every
+  surface — task record (`status="failed"`, `incomplete_reason="cancelled"`,
+  `error="it was cancelled"`), the notification to the parent, the CLI toolbar
+  (`✗`), the `/agents` dashboard (counted under "unfinished") and the public
+  `SubagentLifecycleEvent` (`phase="failed"`, `error_type="incomplete:cancelled"`)
+  — while one cancelled *before it started* settled as `cancelled`. The same
+  user action, in two terminal states, decided by timing. Both paths recovered
+  the cancelled case from an `except AgentCancelledError` branch that cannot
+  run: `runtime/turn.py` absorbs that exception, records `status="cancelled"`
+  and returns, so `chat()` never raises it. The terminal state is now derived
+  from the run's classification, which is what all three cancel routes have in
+  common — `AgentCancelledError`, `KeyboardInterrupt`, and a token cancelled
+  mid-stream that lets the turn return normally. **Contract change for hosts:**
+  a running cancel now publishes `phase="cancelled"`, where `error_type` is
+  `None` by definition, so a host that told cancels from crashes by parsing
+  `incomplete:cancelled` out of `error_type` reads the phase instead. The
+  record moves in lockstep (`status="cancelled"`, `incomplete_reason=None`) and
+  **keeps the partial result and the counters** the run produced —
+  `check_background_agent` and `/agents` now surface them, where the cancelled
+  branch used to drop the result on the floor. The notification still says only
+  that the task was cancelled; read the record for the work. (#244)
+
+- **agentao's own cancellation markers are no longer handed to the parent LLM
+  as the sub-agent's "partial result".** `[Cancelled: <reason>]` and
+  `[Interrupted by user]` are harness-authored turn text, like the
+  `[LLM API error: …]` and max-iterations notices already on that list, so a
+  cancelled sub-agent reported *agentao's* marker as the work it had done. A
+  turn cancelled mid-stream returns what the model had actually produced, which
+  is real output and is still labelled. Visible now that a cancelled record
+  keeps its result. (#244)
+
 - **A sub-agent gets the parent's skills, with activation state of its own.** It
   was built with an empty `SkillManager`, so a skill the parent had discovered —
   or that a plugin registered onto it — was invisible to every sub-agent, and

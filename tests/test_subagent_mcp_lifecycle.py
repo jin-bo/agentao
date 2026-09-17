@@ -227,10 +227,14 @@ def _bg_is_cancelled(monkeypatch, store, tmp_path):
         assert in_chat.wait(10)
         assert store.cancel(agent_id).startswith("Cancellation signal sent")
 
-    # Today's value, pinned on purpose: a running cancel is recorded as
-    # ``failed`` rather than ``cancelled`` (#244). This suite tests when the
-    # close happens, not that vocabulary; whoever fixes #244 updates this.
-    return cancel, {"status": "failed", "incomplete_reason": "cancelled"}, None
+    # A running cancel settles as ``cancelled`` and keeps the work the run
+    # did (#244). ``incomplete_reason`` stays ``None``: it is the "failed, but
+    # which kind" discriminator, and the status already names this cause.
+    return (
+        cancel,
+        {"status": "cancelled", "incomplete_reason": None},
+        "did not finish: it was cancelled",
+    )
 
 
 def _bg_fails_in_setup(monkeypatch, store, tmp_path):

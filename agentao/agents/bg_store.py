@@ -508,7 +508,10 @@ class BackgroundTaskStore:
                 self._tokens.pop(agent_id, None)
             return f"Agent '{agent_name}' ({agent_id}) cancelled before it started."
 
-        # Running: signal the token; the thread catches AgentCancelledError → "cancelled"
+        # Running: signal the token. The worker does *not* see an exception —
+        # ``runtime/turn.py`` maps the cancellation to ``status="cancelled"``
+        # and ``chat()`` returns normally — so the record goes terminal when
+        # the worker classifies the run and calls ``update()`` (#244).
         with self._token_lock:
             token = self._tokens.get(agent_id)
         if token is None:

@@ -32,6 +32,12 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
         )
         return
 
+    def _counters(t: dict) -> str:
+        """turns / tool calls / tokens — what any run that started has."""
+        tok = t.get("tokens", 0)
+        tok_s = f"~{tok // 1000}k" if tok >= 1000 else str(tok)
+        return f"{t.get('turns', 0)}t {t.get('tool_calls', 0)}c {tok_s}"
+
     def _fmt_status(t: dict) -> Text:
         status = t["status"]
         if status == "pending":
@@ -42,14 +48,14 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
             return Text(f"○  {elapsed:.0f}s", style="yellow")
         if status == "completed":
             ms = t.get("duration_ms", 0)
-            turns = t.get("turns", 0)
-            calls = t.get("tool_calls", 0)
-            tok = t.get("tokens", 0)
-            tok_s = f"~{tok // 1000}k" if tok >= 1000 else str(tok)
             dur_s = f"{ms / 1000:.1f}s" if ms >= 1000 else f"{ms}ms"
-            return Text(f"✓  {turns}t {calls}c {tok_s}  {dur_s}", style="green")
+            return Text(f"✓  {_counters(t)}  {dur_s}", style="green")
         if status == "cancelled":
-            return Text("⊘  cancelled", style="dim")
+            # A cancelled *running* task carries the same counters a completed
+            # one does (#244); only one cancelled before it started has none.
+            if not t.get("turns"):
+                return Text("⊘  cancelled", style="dim")
+            return Text(f"⊘  cancelled  {_counters(t)}", style="dim")
         if t.get("incomplete_reason"):
             # Ran to a stop without answering — not a crash. Yellow, not red:
             # there is usually a partial result worth reading.
@@ -84,6 +90,8 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
                 err_hint = "  [dim yellow]partial result available[/dim yellow]"
             elif t["status"] == "failed" and t.get("error"):
                 err_hint = f"  [dim red]{str(t['error'])[:60]}[/dim red]"
+            elif t["status"] == "cancelled" and t.get("turns"):
+                err_hint = "  [dim]partial result available[/dim]"
             task_cell = (t.get("task", "")[:55] or "") + err_hint
             tbl.add_row(t["id"], t["agent_name"], status_cell, task_cell)
 

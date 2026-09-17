@@ -94,7 +94,14 @@ class CheckBackgroundAgentTool(Tool):
                 f"({elapsed:.1f}s):\n\n{rec['result']}"
             )
         elif status == "cancelled":
-            return f"Agent '{name}' ({agent_id}) was cancelled."
+            # A cancel can land on a run that already did work. Same rule as
+            # the ``failed`` branch below: the status says what happened and
+            # the result is still worth reading. A task cancelled before it
+            # started has none, and reads exactly as it used to.
+            report = f"Agent '{name}' ({agent_id}) was cancelled."
+            if rec.get("result"):
+                report += f"\n\n{rec['result']}"
+            return report
         else:
             # ``failed`` covers two shapes: a raised exception (no result),
             # and a run that finished without answering — budget exhausted,
