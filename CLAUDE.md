@@ -147,9 +147,11 @@ nor holds a coordinator**. That is why the shared types live in the neutral
 `compress_messages` is split at the summarization call:
 `prepare_compaction` (pure computation, **no SQLite write, no touch of
 `agent.messages`**) → decide → summarize → `commit_compaction` (the two
-SQLite writes and the new list). `_run_compaction` strings those together and
-owns all three failure-counting points — they cannot live in commit, which
-never runs when summarization returns nothing.
+SQLite writes — `crystallize_user_messages` over the raw user messages, then
+`save_session_summary`, two different tables — and the new list).
+`_run_compaction` strings those together and owns all three
+failure-counting points — they cannot live in commit, which never runs when
+summarization returns nothing.
 
 **The circuit breaker is a recoverable state machine, and its state stays in
 `ContextManager`.** Three consecutive *automatic* failures pause the threshold
@@ -255,11 +257,12 @@ Activate via the `activate_skill` tool or `/skills activate <name>`.
 | Project store | `.agentao/memory.db` | Project-scoped persistent memories + session summaries |
 | User store | `<home>/.agentao/memory.db` | Cross-project user-scoped persistent memories |
 
-**Three data types:**
+**Four data types:**
 
 1. **Persistent memories** (`MemoryRecord`) — rows in `memories`. Soft-deleted. Scoped `user` / `project`.
 2. **Session summaries** (`SessionSummaryRecord`) — rows in `session_summaries`. Written by microcompaction / full LLM summarization. Scoped to `session_id`.
 3. **Recall candidates** (`RecallCandidate`) — transient, in-memory, scored at query time by `MemoryRetriever`. Never stored.
+4. **Review items** (`MemoryReviewItem`) — rows in `memory_review_queue`. Written by the rule-based crystallizer (`commit_compaction` step 4b, and `/memory crystallize`); `/memory review approve` promotes one into a real memory. **Neither `/clear` nor `/memory clear` reaches this table** — `/memory review reject <id>`, one at a time.
 
 **Prompt injection (per turn, two blocks):**
 - `<memory-stable>` — stable persistent memories (budget-limited), **plus the cross-session tail**: up to 3 summaries from *previous* sessions (`manager.py::get_cross_session_tail`, which keeps every `session_id` that is not the reader's own). Only the **current** session's summaries are excluded — they already live in message history as `[Conversation Summary]` blocks. A sub-agent's summaries never enter the tail because its store is transient and its own (#234); before that they did, and read as an earlier session of the parent's.
@@ -381,7 +384,7 @@ The authoritative list with full subcommand syntax lives in `agentao/cli/help_te
 - `/mode read-only|workspace-write|full-access` — permission posture (see Permission modes above).
 - `/plan` / `/plan implement` / `/plan show` — plan mode (LLM plans, does not execute).
 - `/goal <objective> [--for 30m] [--turns 10] [--unbounded]` — long-task auto-continuation with a time/turn budget; subcommands `show|budget|pause|resume|edit|clear`. Host-owned loop in `cli/input_loop.py::run_goal_continuation`; state in `.agentao/goal.json` (`cli/goal_state.py`); `update_goal` tool injected via `add_tool` (`tools/goal.py`). See Common gotchas for `--turns` vs `max_iterations`.
-- `/clear` — saves current session, clears conversation + **all memories**, starts a new one.
+- `/clear` — saves current session, clears conversation + **all memories**, starts a new one. Shares one implementation with `/memory clear` (`cli/_utils.py::wipe_all_memories`), so a change to what a wipe does *or says* belongs there, not in one of the two commands.
 - `/model`, `/provider`, `/temperature`, `/thinking` — LLM config. `/thinking [minimal|low|medium|high|off]` sets thinking depth (`reasoning_effort`) on the live client's `extra_body` passthrough (`cli/commands/provider.py::handle_thinking_command`); `off` clears it. No auto-recovery — a model that rejects `reasoning_effort` fails until `off` (see `docs/design/host-llm-extra-params.md`).
 
 ## Adding new components
@@ -390,6 +393,8 @@ Adding a built-in tool or a skill to this repo: see [docs/guides/adding-componen
 
 ## Common gotchas
 
+- **Docs come in en/zh twins.** 55 `.zh.md` files under `docs/`, plus `README.zh.md` and `developer-guide/en` + `/zh`. A doc change is not done until both twins say the same thing, and the stale one is not always the zh.
+- **Two ways a memory test passes without testing anything.** A fixture that puts the parent's store anywhere but `wd/.agentao/memory.db` is not the CLI's layout — that path is also what a bare `Agentao(...)` opens, so a same-file bug cannot fail such a test. And any read from a `:memory:` store *after* `close()` sees a fresh empty schema, so a post-close assertion holds whatever the store contained.
 - **`cli.py` was split into the `cli/` package** in 0.4.x. Older docs and design notes may still say `cli.py` — grep `agentao/cli/` for the actual handler.
 - **`agentao.harness` → `agentao.host`** rename in 0.4.2. The old name is a deprecated alias scheduled for removal in 0.5.0. Use `agentao.host.HostEvent`, `export_host_acp_json_schema`, etc.
 - **`allow_all_tools` is gone.** Use `/mode full-access` (or the equivalent host-API call) instead.
