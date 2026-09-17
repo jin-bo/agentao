@@ -140,6 +140,21 @@ def test_a_swallowed_summary_delete_is_reported_not_counted(tmp_path, monkeypatc
     assert "survivor" in mgr.get_cross_session_tail()  # why it matters
 
 
+def test_the_summary_half_raising_does_not_take_the_wipe_down(tmp_path, monkeypatch):
+    """``clear_all_session_summaries`` and ``session_summaries_remain`` both
+    swallow their own errors today, so this covers a subclass or an injected
+    store that raises where they do not expect it. ``/clear`` calls this
+    mid-reset, so the promise has to hold structurally, not by luck."""
+    mgr = _manager(tmp_path)
+    _save(mgr)
+    monkeypatch.setattr(mgr, "clear_all_session_summaries", _raise)
+
+    result = mgr.wipe_all()
+
+    assert result.not_cleared == ("session summaries",)
+    assert result.memories_cleared == 1
+
+
 def test_a_store_that_cannot_be_read_cannot_confirm_the_wipe(tmp_path, monkeypatch):
     mgr = _manager(tmp_path)
     monkeypatch.setattr(mgr.project_store, "list_session_summaries", _raise)

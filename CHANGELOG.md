@@ -29,7 +29,10 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   `reject_review_item(id)` remains the only remedy. `clear()`,
   `clear_all_session_summaries()` and `session_summaries_remain()` are
   unchanged, and the developer-guide "forget everything" recipes now point at
-  `wipe_all()`. (#235)
+  `wipe_all()`. `/clear` and `/memory clear` call it and nothing else — a
+  host-injected memory manager without `wipe_all` (or one answering with
+  something that is not a `MemoryWipeResult`) is reported as an unwiped
+  store instead of being wiped by a second code path. (#235)
 
 - **A host tool can opt in to reaching sub-agents.** Declare
   `copies_to_subagents` on the tool object — a property on the `Tool` /
