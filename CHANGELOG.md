@@ -75,6 +75,43 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A sub-agent's compaction no longer writes into the parent's memory
+  database.** A sub-agent built its `MemoryManager` from the default, which
+  opens `working_directory/.agentao/memory.db` — the same file the CLI factory
+  hands the *parent* as its project store. So both writes
+  `ContextManager.commit_compaction` makes landed in the parent's database: the
+  session summary, stamped with the child's own session id, which
+  `get_cross_session_tail()` keeps *because* the id is not the reader's own and
+  which then renders into `<memory-stable>` as an earlier session of the
+  parent's — no `/clear` needed for that; and the crystallizer's proposals,
+  which sat in `memory_review_queue`, where `/memory review approve` promotes
+  one into a real memory, over text that is the parent model's task prompt
+  rather than anything the user said. A sub-agent is now built with a transient
+  store of its own, discarded when it closes. **The read side goes with it,
+  deliberately: a sub-agent reads no memories** — no `<memory-stable>` block,
+  no recall — where sharing the file used to hand it the parent's project
+  memories; it is briefed by its `parent_context` instead — the parent's
+  recent *messages*, which carry no memories — and `save_memory`
+  still writes through the parent's manager (#260), so it can save a memory it
+  will not read back. Restoring reads means a `MemoryManager` child view that
+  shares the parent's stores and whose `close()` does not close them. Rows
+  already written carry nothing that identifies them as a sub-agent's and are
+  left alone: `/clear` and `/memory clear` remove every session summary (and
+  every memory) but reach no review item. (#234)
+
+- **Neither memory wipe over-promises while background agents are running.**
+  `/clear`'s detached-agent warning now adds that a running sub-agent can still
+  save a long-term memory — its `save_memory` writes through the parent's
+  manager — so the wipe is true when it runs rather than for as long as those
+  agents live, and `/memory clear` says the same thing, because it runs the
+  identical `wipe_all_memories` and therefore carries the identical exposure.
+  The sentence is one shared constant (`cli/_utils.py ::
+  MEMORY_WIPE_RACE_NOTE`) so the two surfaces cannot drift. It is withheld
+  where it would be false: `/new` keeps memories, and a `/clear` whose wipe
+  *failed* has just said those memories are still there. Nothing else can come
+  back: since the fix above, a sub-agent's summaries never leave its own
+  store. (#234)
+
 - **A disabled skill can no longer be activated by name.** `/skills disable X`
   hid `X` from the prompt's skill catalogue, from `list_available_skills()` and
   from the `activate_skill` tool's `enum`, but `activate_skill` itself never

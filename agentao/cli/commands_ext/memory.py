@@ -8,7 +8,11 @@ from rich.markup import escape as markup_escape
 from rich.prompt import Confirm
 
 from .._globals import console, unknown_subcommand
-from .._utils import _display_layered_entries, wipe_all_memories
+from .._utils import (
+    MEMORY_WIPE_RACE_NOTE,
+    _display_layered_entries,
+    wipe_all_memories,
+)
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -128,6 +132,18 @@ def show_memories(cli: AgentaoCLI, subcommand: str = "", arg: str = "") -> None:
                 )
             else:
                 console.print(f"\n[success]Successfully cleared {count} memory(ies)[/success]\n")
+            if "memories" not in not_cleared:
+                # The same exposure ``/clear`` reports, on the other surface
+                # that runs the very same ``wipe_all_memories``. ``getattr``
+                # because ``bg_store`` is not in the agent-factory contract
+                # (``app.py::_REQUIRED_AGENT_ATTRS``).
+                bg_store = getattr(cli.agent, "bg_store", None)
+                in_flight = 0 if bg_store is None else bg_store.count_in_flight()
+                if in_flight:
+                    console.print(
+                        f"[warning]{in_flight} background agent(s) still "
+                        f"running: one of them {MEMORY_WIPE_RACE_NOTE}[/warning]\n"
+                    )
         else:
             console.print("\n[info]Cancelled.[/info]\n")
 

@@ -8,6 +8,22 @@ from rich.markup import escape as markup_escape
 from ._globals import _TOOL_SUMMARY_KEYS, console, logger
 
 
+# What a memory wipe cannot promise while background sub-agents are running:
+# a running sub-agent's ``save_memory`` writes through the *parent's* memory
+# manager (#260), so the wipe is true when it runs and not for as long as
+# those agents live. Shared by both wipe surfaces — ``/clear``
+# (``commands/reset.py``) and ``/memory clear`` (``commands_ext/memory.py``) —
+# because they perform the identical ``wipe_all_memories`` and so carry the
+# identical exposure; only ``/clear`` used to say so. Session summaries are
+# deliberately not in the sentence: a sub-agent's compaction writes to a
+# transient store of its own (#234), so a long-term memory is the only thing
+# that can come back. Each caller supplies its own lead-in naming the count.
+MEMORY_WIPE_RACE_NOTE = (
+    "can still save a long-term memory: the wipe holds as of now, not for "
+    "as long as they run."
+)
+
+
 def wipe_all_memories(mgr) -> tuple[int, int, list[str]]:
     """The hard memory reset that ``/clear`` and ``/memory clear`` share.
 

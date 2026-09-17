@@ -15,6 +15,23 @@ Agentao 使用 SQLite 作为唯一的持久化后端，管理三类不同性质�
 
 两个文件在首次启动时自动创建。`.agentao/` 目录已添加至 `.gitignore`。
 
+### 子 agent 的记忆边界
+
+子 agent 的 `MemoryManager` 建在 **transient（`:memory:`）store** 上，随子 agent `close()` 一起丢弃（`agents/tools/_wrapper.py::_child_memory_manager`，#234）。
+
+| 方向 | 落点 | 原因 |
+|------|------|------|
+| `save_memory`（长期记忆） | **父级** manager，含 user 库与宿主注入的库 | 长期记忆要落在父级记忆所在的地方（#260） |
+| 压缩写的会话摘要 | 子 agent 自己的 transient store | 摘要带的是子 agent 自己的 session_id，落进父库就会被 `get_cross_session_tail()` 当成「之前会话」注入 `<memory-stable>`（不需要 `/clear` 就会发生） |
+| 结晶器提案 | 同上 | 子 agent 的 `role: "user"` 消息是父模型写的任务 prompt；落进父库的 `memory_review_queue` 后可被 `/memory review approve` 提升成用户从未说过的记忆，而该表**没有任何批量清除路径**（只能 `/memory review reject <id>` 一条条退掉） |
+| 读取（`<memory-stable>` / 召回） | **无** | transient store 是空的：子 agent 不读任何记忆，改由 `parent_context` 交代背景 —— 那里面只有父级最近的**对话消息**，不含任何记忆 |
+
+最后一行是刻意的取舍，不是修复的副作用：子 agent 因此可以写入一条自己读不回来的记忆。要恢复读取，需要一个共享父级 store 的 `MemoryManager` 子视图，且它的 `close()` 不能关掉共享的 store。
+
+> **存量污染：** 修复前已经写进项目库的子 agent 摘要没有可靠的来源标记，无法精确识别。`/clear` 与 `/memory clear` 会清掉**全部**会话摘要和**全部**长期记忆（`clear_all_session_summaries()` + `clear()`），代价是连合法的历史会话摘要一起丢；已进入 `memory_review_queue` 的提案则两个命令都清不掉。
+
+---
+
 ### SQLite 表结构
 
 ```

@@ -62,7 +62,10 @@ planner，而 wrapper 事后那句 `tool_runner._permission_engine = engine` 写
 >   的这一部分）。`save_memory` 是这条规则最终需要的例外：它的 `memory_manager` 改绑到父级的，因为
 >   长期记忆该落在父级的库里，而不是子代理用完即弃的那个（#260）。子代理记忆的其余部分 —— 会话
 >   id、它自己压缩写下的会话摘要、`close()` 释放的那些库 —— 仍归它自己，所以改绑的是工具属性，
->   不是 `sub_agent.memory_manager`。
+>   不是 `sub_agent.memory_manager`。**自 #234 起那个库是名副其实的「用完即弃」**：
+>   `_child_memory_manager` 每次 spawn 建一个 `:memory:` 库，因为默认值打开的是
+>   `working_directory/.agentao/memory.db` —— 父级自己的项目库 —— 子代理压缩写下的会话摘要与
+>   结晶器提案都落进了那里。读的一侧也随之一起没了，这是刻意的：子代理不读任何记忆。
 > - **`mcp_*` 是父级的实例**，走父级的连接。子代理以空的 `InMemoryMCPRegistry()` 构建，自己不连接任何
 >   服务器。
 > - **`origin`（SUB-02，PR-a，#256）。**`ToolRegistry.register` 接受仅关键字的 `origin`，默认

@@ -15,6 +15,14 @@ compaction writes, and the stores its ``close()`` releases — so these tests
 hold the line from both sides: the long-term write must land on the parent, and
 nothing session-shaped may follow it there.
 
+The other half of that line is where the child's own store *is* (#234). It used
+to be the parent's project ``memory.db``, opened a second time by path, so
+"stays the child's" was true of the manager and false of the file underneath
+it: a compaction wrote the child's session summary and the crystallizer's
+proposals straight into the parent's database. ``TestTheChildsStoreIsItsOwn``
+is the half that has to be run in the CLI's own layout to mean anything — see
+``_child_own_store``.
+
 Every sub-agent call runs through the sub-agent's real ``ToolRunner``. Only
 ``Agentao.chat`` is replaced, because a real one is a networked LLM turn; the
 replacement runs the calls a model would have sent and records their results.
@@ -48,12 +56,31 @@ def _isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(home))  # Windows
 
 
-# The child's own bare manager opens this path (``working_directory`` +
-# ``.agentao/memory.db``). The host's stores below live somewhere else on
-# purpose, so "landed on the parent's manager" and "landed in the child's own
-# store" are two distinguishable outcomes rather than one shared file.
+# Where a sub-agent's bare manager used to open a store of its own
+# (``working_directory`` + ``.agentao/memory.db``). The host's stores below
+# live somewhere else on purpose, so "landed on the parent's manager" and
+# "landed in the child's own store" are two distinguishable outcomes rather
+# than one shared file.
+#
+# Do not "simplify" the two layouts into one: that separation is what makes
+# the #260 question answerable, and it is also exactly what hid #234 — in the
+# CLI both are ``wd/.agentao/memory.db`` (``embedding/factory.py`` against
+# ``agent.py::_init_skill_and_memory``), so a child's summary landing in the
+# parent's store could not fail a test written this way.
+# ``TestTheChildsStoreIsItsOwn`` uses ``_shared_layout_manager`` instead, and
+# is the only place that reproduces the CLI.
 def _child_own_store(tmp_path) -> SQLiteMemoryStore:
     return SQLiteMemoryStore.open(tmp_path / ".agentao" / "memory.db")
+
+
+def _shared_layout_manager(tmp_path) -> MemoryManager:
+    """A parent whose project store is the file the CLI gives it.
+
+    The same path a sub-agent's bare manager would have opened, which is the
+    whole of #234: nothing about the child has to be wrong for its writes to
+    land in the parent's database — they were the same database.
+    """
+    return MemoryManager(project_store=_child_own_store(tmp_path))
 
 
 def _host_manager(
@@ -189,8 +216,10 @@ class TestTheWriteLandsOnTheParentsManager:
         finally:
             parent.close()
 
-        # Opened fresh: the child's own store is closed with the child, and
-        # the question is what is on disk at the path its bare manager used.
+        # Nothing is on disk at the path a child's bare manager used to open
+        # — since #234 it opens no file at all, so the database is not even
+        # created. Checked before ``_child_own_store`` creates it below.
+        assert not (tmp_path / ".agentao" / "memory.db").exists()
         own = _child_own_store(tmp_path)
         try:
             assert own.list_memories() == []
@@ -533,3 +562,157 @@ class TestARaisingPropertyDoesNotAbortTheSpawn:
         assert _bind_parent_memory_target(
             own, Exploding("save_memory"), "a",
         ) is False
+
+
+# ── the child's store is its own file, not the parent's (#234) ──────────────
+
+
+class TestTheChildsStoreIsItsOwn:
+    """Run in the CLI's layout: the parent's project store at ``wd/.agentao``.
+
+    Every test here builds the parent with ``_shared_layout_manager``, the
+    path a sub-agent's bare manager would itself have opened. That is the only
+    arrangement in which these assertions can fail, and the reason the rest of
+    this module cannot host them.
+
+    The two writes are made through the child's manager directly rather than
+    by driving a real compaction, which needs a summarizing LLM call. What
+    pins them to the real call site is the pair: ``commit_compaction`` makes
+    exactly these two calls on ``self.memory_manager``
+    (``context_manager.py``), and
+    ``test_the_child_keeps_its_own_manager_and_rebinds_only_the_tool`` asserts
+    that ``child.context_manager.memory_manager`` is the child's own.
+    """
+
+    @staticmethod
+    def _compaction_writes(child) -> None:
+        """What ``ContextManager.commit_compaction`` writes, in its order."""
+        child.memory_manager.crystallize_user_messages(
+            [{"role": "user", "content": "always run the suite with uv"}],
+        )
+        child.memory_manager.save_session_summary(
+            "the child compacted its own history",
+        )
+
+    def test_a_childs_summary_does_not_become_the_parents_earlier_session(
+        self, tmp_path, monkeypatch
+    ):
+        manager = _shared_layout_manager(tmp_path)
+        parent = _parent(tmp_path, manager=manager)
+        _sub_agents_call(
+            monkeypatch,
+            _call("save_memory", key="build_command", value="uv run pytest"),
+            before=self._compaction_writes,
+        )
+        try:
+            _run(parent)
+            # The whole point of the issue: the tail keeps every session id
+            # that is not the reader's own, so a child's summary qualified —
+            # and the stable block is built from it on every turn.
+            assert manager.get_cross_session_tail() == ""
+            assert "compacted its own history" not in parent._build_system_prompt()
+        finally:
+            parent.close()
+
+        # The long-term write still crossed over (#260); nothing else did.
+        assert "build_command" in _keys(manager)
+        assert manager.project_store.list_session_summaries() == []
+
+    def test_a_childs_proposals_do_not_enter_the_parents_review_queue(
+        self, tmp_path, monkeypatch
+    ):
+        """The second writer in ``commit_compaction``, and the worse one.
+
+        A sub-agent's ``role: "user"`` messages are the task prompt the parent
+        *model* wrote, so crystallizing them proposes a memory the user never
+        said — and ``/memory review approve`` promotes a proposal into a real
+        memory. Nothing clears ``memory_review_queue``: not ``/clear``, not
+        ``/memory clear``, so a proposal that lands there outlives every
+        remedy agentao has.
+        """
+        manager = _shared_layout_manager(tmp_path)
+        parent = _parent(tmp_path, manager=manager)
+        _sub_agents_call(
+            monkeypatch,
+            _call("save_memory", key="build_command", value="uv run pytest"),
+            before=self._compaction_writes,
+        )
+        try:
+            _run(parent)
+        finally:
+            parent.close()
+
+        assert manager.list_review_items() == []
+
+    def test_a_background_childs_writes_do_not_reach_it_either(
+        self, tmp_path, monkeypatch
+    ):
+        """Same store, a thread the reset path cannot wait for.
+
+        The foreground case is the common one; this is the case ``/clear``
+        warns about, and the one where "the parent's database" and "a store
+        the parent is reading right now" are the same sentence.
+        """
+        manager = _shared_layout_manager(tmp_path)
+        parent = _parent(
+            tmp_path, manager=manager,
+            bg_store=BackgroundTaskStore(persistence_dir=None),
+        )
+        _sub_agents_call(
+            monkeypatch,
+            _call("save_memory", key="from_background", value="v"),
+            before=self._compaction_writes,
+        )
+        try:
+            parent.tools.tools["agent_generalist"].execute("x", run_in_background=True)
+            assert _eventually(lambda: "from_background" in _keys(manager))
+            assert _eventually(
+                lambda: not any(
+                    t.is_alive() for t in threading.enumerate()
+                    if t.name.startswith("bg-agent-")
+                )
+            )
+            assert manager.project_store.list_session_summaries() == []
+            assert manager.list_review_items() == []
+        finally:
+            parent.close()
+
+    def test_the_child_reads_no_memories(self, tmp_path, monkeypatch):
+        """The decision that comes with the fix, pinned rather than implied.
+
+        A transient store is empty in both directions: the child no longer
+        reads the parent's project memories either, where sharing the file
+        used to hand them over. It is briefed by ``parent_context`` instead,
+        and it can still *write* a long-term memory it will not read back
+        (#260). Reversing this wants a ``MemoryManager`` child view, and
+        changing it here should be a decision, not a diff nobody noticed.
+        """
+        manager = _shared_layout_manager(tmp_path)
+        manager.save_from_tool("build_command", "uv run pytest", [])
+        parent = _parent(tmp_path, manager=manager)
+        # Read while the child is alive. Asserting afterwards cannot fail for
+        # the reason this test names: ``close()`` discards a ``:memory:``
+        # database, and the next statement silently reconnects onto a fresh
+        # empty schema — so a post-run store is empty however the child read.
+        seen: dict = {}
+        _, sub_agents = _sub_agents_call(
+            monkeypatch, _call("save_memory", key="k", value="v"),
+            before=lambda child: seen.update(
+                prompt=child._build_system_prompt(),
+                keys=_keys(child.memory_manager),
+                stable=child.memory_manager.get_stable_entries(),
+            ),
+        )
+        try:
+            assert "build_command" in parent._build_system_prompt()
+            _run(parent)
+        finally:
+            parent.close()
+
+        assert seen["keys"] == set()
+        assert seen["stable"] == []
+        assert "build_command" not in seen["prompt"]
+        # Not the parent's store either, so nothing written there later can
+        # reach the child and nothing the child writes can reach the parent.
+        child = sub_agents[0]
+        assert child.memory_manager.project_store is not manager.project_store

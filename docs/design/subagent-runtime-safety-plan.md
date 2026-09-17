@@ -74,7 +74,11 @@ instance" and "share the MCP loop" are each not the fix.
 >   parent's, because a long-term memory belongs in the parent's stores rather than in a
 >   sub-agent's throwaway one (#260). The rest of the child's memory — session id, session
 >   summaries, what `close()` releases — stays its own, which is why the rebind is on the tool
->   and not on `sub_agent.memory_manager`.
+>   and not on `sub_agent.memory_manager`. Since **#234** that store is literally throwaway:
+>   `_child_memory_manager` builds a `:memory:` one per spawn, because the default opened
+>   `working_directory/.agentao/memory.db` — the parent's own project store — and the child's
+>   compaction wrote both its session summary and the crystallizer's proposals into it. The read
+>   side went with it, deliberately: a sub-agent reads no memories.
 > - **`mcp_*` are the parent's instances**, over the parent's connections. The sub-agent is
 >   built with an empty `InMemoryMCPRegistry()` and connects nothing.
 > - **`origin` (SUB-02, PR-a, #256).** `ToolRegistry.register` takes a keyword-only `origin`,

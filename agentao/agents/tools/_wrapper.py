@@ -149,6 +149,56 @@ def _child_skill_manager(
     return child
 
 
+def _child_memory_manager(agent_name: str) -> Any:
+    """The sub-agent's ``MemoryManager``: a store of its own that nothing reads (#234).
+
+    Left to the default, a sub-agent's bare manager opens
+    ``working_directory/.agentao/memory.db`` — the same file the CLI factory
+    hands the *parent* as its project store. Two writers the child never sees
+    follow from that, both from ``ContextManager.commit_compaction``: a session
+    summary stamped with the child's own session id, which the parent's
+    ``get_cross_session_tail()`` keeps *because* that id is not the parent's,
+    and renders into ``<memory-stable>`` as an earlier session; and the
+    crystallizer's proposals, which land in the parent's review queue, where
+    ``/memory review approve`` can promote a sub-task's prompt into a memory
+    the user never said. Neither needs ``/clear`` to happen, and no bulk
+    remedy reaches the review queue: ``/memory review reject <id>`` retires
+    one item at a time, and neither ``/clear`` nor ``/memory clear`` touches
+    the table.
+
+    A transient store closes both — and it is deliberately a whole store rather
+    than a sink for those two writes: **a sub-agent reads no memories.** Its
+    ``<memory-stable>`` block and its recall are empty, where until now they
+    were the parent's project store, read through the shared file. That is the
+    decision and not a side effect: a sub-agent is briefed by the
+    ``parent_context`` it is spawned with — which carries the parent's recent
+    *messages*, never its memories, so this is a narrowing and not a
+    relocation — and gemini-cli's generalist arrives at the same place from
+    the other direction (``userMemory=undefined``). Only
+    the long-term *write* crosses over, through ``save_memory``'s rebound
+    target (#260) — so the child can save a memory it cannot read back.
+    Reversing the read side does not reopen this one: it wants a
+    ``MemoryManager`` child view that shares the parent's stores and keeps a
+    sink of its own, and whose ``close()`` must then not close what it shares.
+
+    ``agent_name`` is for the log only. There is no fallback branch, and the
+    difference from ``_child_skill_manager`` — which catches everything so an
+    auxiliary subsystem can never fail a spawn — is deliberate: there the
+    fallback (a catalogue with no skills) is coherent and fail-closed, and
+    here the only candidate is ``None``, which means "open the project
+    database" and reinstates the defect. So a store that cannot be built
+    fails the spawn, which a transient sqlite3 store can only do where the
+    parent's own store has already failed.
+    """
+    from ...memory import MemoryManager, SQLiteMemoryStore
+
+    logger.debug(
+        "Sub-agent '%s' gets a transient memory store of its own; it reads no "
+        "memories and its compaction writes stay in it.", agent_name,
+    )
+    return MemoryManager(project_store=SQLiteMemoryStore(":memory:"))
+
+
 def _copy_declared_host_tool(
     tool: RegistrableTool, name: str, agent_name: str,
 ) -> Optional[RegistrableTool]:
@@ -250,11 +300,15 @@ def _copy_declared_host_tool(
 # The one built-in whose write target belongs to the parent rather than to the
 # sub-agent itself. ``save_memory`` writes *long-term* memory — a fact meant to
 # outlive the conversation — so it has to land where the parent's memories
-# land. A sub-agent's own manager is built bare: project store only, no user
-# store, and never the one a host injected. So the write went to a store
-# nothing reads, a ``scope="user"`` request was silently downgraded to project,
-# and a host that injected a ``MemoryManager`` was not in the loop for anything
-# any sub-agent saved (#260).
+# land. A sub-agent's own manager is built on a transient store
+# (``_child_memory_manager``, #234), so without the rebind the write would go
+# where nothing reads it. Before #234 it was a bare project-scope manager on
+# the parent's own ``memory.db`` file, which is why #260 is not stated as a
+# black hole: in the CLI the row *was* readable, by accident of the shared
+# path, and what was wrong is the rest — a ``scope="user"`` request was
+# silently downgraded to project, and a host that injected a
+# ``MemoryManager`` (never the store the child opened, either way) was not in
+# the loop for anything any sub-agent saved (#260).
 #
 # Only the write target moves. This rebinds the *tool's* attribute, not
 # ``sub_agent.memory_manager``: the agent property carries the session id, the
@@ -930,6 +984,12 @@ class AgentToolWrapper(Tool):
             skill_manager=_child_skill_manager(
                 self._skill_manager_getter, agent_name,
             ),
+            # A memory store of the child's own: transient, unread, and
+            # discarded with it (#234). Left to the default it opened the
+            # parent's project ``memory.db``, and its compaction wrote both a
+            # session summary and crystallized proposals into it — see
+            # ``_child_memory_manager`` for why the read side goes with them.
+            memory_manager=_child_memory_manager(agent_name),
             # The parent's background-task store, so the sub-agent's own
             # ``check_background_agent`` / ``cancel_background_agent`` query
             # and cancel the same tasks the parent's do.
@@ -969,8 +1029,10 @@ class AgentToolWrapper(Tool):
           target is rebound to the parent's ``MemoryManager``, because a
           long-term memory has to land where the parent's memories land, user
           store and host injection included (#260). The rest of the child's
-          memory stays its own: its session id, the session summaries its own
-          compaction writes, and the stores its ``close()`` releases;
+          memory stays its own: its session id, the session summaries and
+          crystallized proposals its own compaction writes, and the transient
+          store its ``close()`` releases — which is also why it reads no
+          memories at all (#234);
         - **an MCP tool**: the parent's instance, which calls through the
           parent's connection, so the sub-agent opens none;
         - **an agent tool**: left out, so a sub-agent cannot spawn another;
