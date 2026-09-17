@@ -690,8 +690,18 @@ class TestTheChildsStoreIsItsOwn:
         manager = _shared_layout_manager(tmp_path)
         manager.save_from_tool("build_command", "uv run pytest", [])
         parent = _parent(tmp_path, manager=manager)
+        # Read while the child is alive. Asserting afterwards cannot fail for
+        # the reason this test names: ``close()`` discards a ``:memory:``
+        # database, and the next statement silently reconnects onto a fresh
+        # empty schema — so a post-run store is empty however the child read.
+        seen: dict = {}
         _, sub_agents = _sub_agents_call(
             monkeypatch, _call("save_memory", key="k", value="v"),
+            before=lambda child: seen.update(
+                prompt=child._build_system_prompt(),
+                keys=_keys(child.memory_manager),
+                stable=child.memory_manager.get_stable_entries(),
+            ),
         )
         try:
             assert "build_command" in parent._build_system_prompt()
@@ -699,6 +709,10 @@ class TestTheChildsStoreIsItsOwn:
         finally:
             parent.close()
 
+        assert seen["keys"] == set()
+        assert seen["stable"] == []
+        assert "build_command" not in seen["prompt"]
+        # Not the parent's store either, so nothing written there later can
+        # reach the child and nothing the child writes can reach the parent.
         child = sub_agents[0]
-        assert _keys(child.memory_manager) == set()
-        assert child.memory_manager.get_stable_entries() == []
+        assert child.memory_manager.project_store is not manager.project_store

@@ -356,6 +356,68 @@ def test_only_clear_says_a_running_agent_can_still_write_memory(
     assert ("can still save a long-term memory" in text) is warns
 
 
+def test_a_failed_wipe_does_not_also_promise_it_held_as_of_now(
+    cli, output, monkeypatch
+):
+    """The two sentences cannot both be true (#234 follow-up).
+
+    ``/clear`` reports the memories it could *not* clear; adding "the wipe
+    holds as of now" underneath it names a wipe that did not happen. The
+    detached-agent line itself still belongs there — those agents really are
+    detached.
+    """
+    from agentao.cli.commands import handle_clear_command
+
+    bg_store = cli.agent.bg_store
+    bg_store.register("worker-1", "worker", "task")
+    bg_store.mark_running("worker-1")
+    monkeypatch.setattr(cli.agent.memory_manager, "clear", _raise)
+
+    handle_clear_command(cli, "")
+
+    text = output.export_text()
+    assert "could not be cleared: memories" in text
+    assert "1 background agent(s) still running" in text
+    assert "can still save a long-term memory" not in text
+
+
+def test_memory_clear_carries_the_same_caveat_as_clear(cli, tmp_path, monkeypatch):
+    """``/memory clear`` runs the identical ``wipe_all_memories`` (#234).
+
+    Same wipe, same exposure: a running sub-agent's ``save_memory`` writes
+    through the *parent's* manager (#260). Only ``/clear`` used to say so,
+    which made the quieter surface the more reassuring one.
+    """
+    from agentao.cli.commands_ext import memory as mem_mod
+
+    rec = Console(record=True, width=200)
+    monkeypatch.setattr(mem_mod, "console", rec)
+    monkeypatch.setattr(mem_mod.Confirm, "ask", lambda *a, **k: True)
+
+    bg_store = cli.agent.bg_store
+    bg_store.register("worker-1", "worker", "task")
+    bg_store.mark_running("worker-1")
+
+    mem_mod.show_memories(cli, "clear")
+
+    text = rec.export_text()
+    assert "Successfully cleared" in text
+    assert "1 background agent(s) still running" in text
+    assert "can still save a long-term memory" in text
+
+
+def test_memory_clear_is_silent_when_nothing_is_running(cli, monkeypatch):
+    from agentao.cli.commands_ext import memory as mem_mod
+
+    rec = Console(record=True, width=200)
+    monkeypatch.setattr(mem_mod, "console", rec)
+    monkeypatch.setattr(mem_mod.Confirm, "ask", lambda *a, **k: True)
+
+    mem_mod.show_memories(cli, "clear")
+
+    assert "can still save a long-term memory" not in rec.export_text()
+
+
 def test_new_without_background_agents_prints_no_warning(cli, output):
     from agentao.cli.commands import handle_new_command
 

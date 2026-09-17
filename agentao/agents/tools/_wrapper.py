@@ -161,26 +161,34 @@ def _child_memory_manager(agent_name: str) -> Any:
     and renders into ``<memory-stable>`` as an earlier session; and the
     crystallizer's proposals, which land in the parent's review queue, where
     ``/memory review approve`` can promote a sub-task's prompt into a memory
-    the user never said. Neither needs ``/clear`` to happen, and nothing clears
-    the review queue at all.
+    the user never said. Neither needs ``/clear`` to happen, and no bulk
+    remedy reaches the review queue: ``/memory review reject <id>`` retires
+    one item at a time, and neither ``/clear`` nor ``/memory clear`` touches
+    the table.
 
     A transient store closes both — and it is deliberately a whole store rather
     than a sink for those two writes: **a sub-agent reads no memories.** Its
     ``<memory-stable>`` block and its recall are empty, where until now they
     were the parent's project store, read through the shared file. That is the
     decision and not a side effect: a sub-agent is briefed by the
-    ``parent_context`` it is spawned with, and gemini-cli's generalist arrives
-    at the same place from the other direction (``userMemory=undefined``). Only
+    ``parent_context`` it is spawned with — which carries the parent's recent
+    *messages*, never its memories, so this is a narrowing and not a
+    relocation — and gemini-cli's generalist arrives at the same place from
+    the other direction (``userMemory=undefined``). Only
     the long-term *write* crosses over, through ``save_memory``'s rebound
     target (#260) — so the child can save a memory it cannot read back.
     Reversing the read side does not reopen this one: it wants a
     ``MemoryManager`` child view that shares the parent's stores and keeps a
     sink of its own, and whose ``close()`` must then not close what it shares.
 
-    ``agent_name`` is for the log only. There is no fallback branch: ``None``
-    to the constructor means "open the project database", which is the defect
-    itself, and a transient sqlite3 store can only fail where the parent's own
-    store has already failed.
+    ``agent_name`` is for the log only. There is no fallback branch, and the
+    difference from ``_child_skill_manager`` — which catches everything so an
+    auxiliary subsystem can never fail a spawn — is deliberate: there the
+    fallback (a catalogue with no skills) is coherent and fail-closed, and
+    here the only candidate is ``None``, which means "open the project
+    database" and reinstates the defect. So a store that cannot be built
+    fails the spawn, which a transient sqlite3 store can only do where the
+    parent's own store has already failed.
     """
     from ...memory import MemoryManager, SQLiteMemoryStore
 
@@ -293,12 +301,14 @@ def _copy_declared_host_tool(
 # sub-agent itself. ``save_memory`` writes *long-term* memory — a fact meant to
 # outlive the conversation — so it has to land where the parent's memories
 # land. A sub-agent's own manager is built on a transient store
-# (``_child_memory_manager``, #234); before that it was a bare project-scope
-# manager on the parent's own ``memory.db`` file. Never the store a host
-# injected, either way — so the write went where nothing reads it, a
-# ``scope="user"`` request was silently downgraded to project,
-# and a host that injected a ``MemoryManager`` was not in the loop for anything
-# any sub-agent saved (#260).
+# (``_child_memory_manager``, #234), so without the rebind the write would go
+# where nothing reads it. Before #234 it was a bare project-scope manager on
+# the parent's own ``memory.db`` file, which is why #260 is not stated as a
+# black hole: in the CLI the row *was* readable, by accident of the shared
+# path, and what was wrong is the rest — a ``scope="user"`` request was
+# silently downgraded to project, and a host that injected a
+# ``MemoryManager`` (never the store the child opened, either way) was not in
+# the loop for anything any sub-agent saved (#260).
 #
 # Only the write target moves. This rebinds the *tool's* attribute, not
 # ``sub_agent.memory_manager``: the agent property carries the session id, the

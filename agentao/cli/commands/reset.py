@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from ...permissions import PermissionMode
 from .._globals import console
-from .._utils import wipe_all_memories
+from .._utils import MEMORY_WIPE_RACE_NOTE, wipe_all_memories
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -83,14 +83,12 @@ def _reset_session(cli: AgentaoCLI, *, clear_memories: bool) -> _ResetOutcome:
 def _print_detached(count: int, *, memories_wiped: bool) -> None:
     """Report the background agents that outlived the reset.
 
-    ``memories_wiped`` adds the part ``/clear`` in particular cannot promise:
-    a running sub-agent's ``save_memory`` writes through the *parent's*
-    memory manager (#260), so the wipe is true when it runs, not for as long
-    as those agents are alive. Session summaries are deliberately not in that
-    sentence — a sub-agent's compaction writes to a transient store of its own
-    (#234), so a long-term memory is the only thing that can come back.
-    ``/new`` keeps memories, so there the sentence would name a loss that did
-    not happen.
+    ``memories_wiped`` adds the part ``/clear`` in particular cannot promise —
+    see ``_utils.MEMORY_WIPE_RACE_NOTE``, which ``/memory clear`` prints for
+    the same reason. ``/new`` keeps memories, so there the sentence would name
+    a loss that did not happen; and a ``/clear`` whose wipe *failed* passes
+    ``False`` too, because the caller has just said those memories are still
+    there and "the wipe holds as of now" would contradict it.
     """
     if not count:
         return
@@ -99,10 +97,7 @@ def _print_detached(count: int, *, memories_wiped: bool) -> None:
         f"session. They will not report into this one — check /agents.[/warning]"
     )
     if memories_wiped:
-        console.print(
-            "[warning]One of them can still save a long-term memory: the wipe "
-            "holds as of now, not for as long as they run.[/warning]"
-        )
+        console.print(f"[warning]One of them {MEMORY_WIPE_RACE_NOTE}[/warning]")
 
 
 def handle_clear_command(cli: AgentaoCLI, args: str = "") -> None:
@@ -116,7 +111,13 @@ def handle_clear_command(cli: AgentaoCLI, args: str = "") -> None:
         )
     else:
         console.print("\n[success]Session and all memories cleared.[/success]")
-    _print_detached(outcome.detached_agents, memories_wiped=True)
+    _print_detached(
+        outcome.detached_agents,
+        # Only when the wipe actually landed: with ``memories`` in
+        # ``not_cleared`` the message above has already said they are still
+        # in place, and promising a wipe "as of now" would contradict it.
+        memories_wiped="memories" not in outcome.not_cleared,
+    )
     console.print("[info]Permission mode reset to workspace-write.[/info]\n")
 
 

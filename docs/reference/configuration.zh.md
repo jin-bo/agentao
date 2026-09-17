@@ -379,7 +379,7 @@ prompt 组成规则与约定见 [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md
 - **格式。** SQLite；schema 由 `memory/manager.py::MemoryManager` 拥有。**不要手编辑**。
 - **优先级。** 两个 DB 独立读取；prompt 渲染器都会看到。Project 不会覆盖 user。
 - **没有配置 user store 时。** user scope 的写入会改存为 `project` —— 裸构造的 `Agentao(...)` 一直是这个行为，因为它的 manager 只带 project store。但不再无声：显式的 `scope="user"` 记 warning，推断出来的（`user_` 前缀的 key、`preference` / `profile` 标签）以 debug 记进 `agentao.log`。两条都不写 key 和 value。想要 user scope，就给 manager 传 `user_store=` —— `agentao.embedding.build_from_environment()` 就是这么做的。（#260）
-- **子代理也写这里。** 子代理的 `save_memory` 走**父级**的 manager，所以它存下的记忆落在同一批库、同一个 scope 里；宿主注入过 manager 的话也会经过它。它自己的**会话摘要**仍留在它自己的库里，随它一起丢弃。（#260）
+- **子代理也写这里 —— 但一个字也不从这里读。** 子代理的 `save_memory` 走**父级**的 manager，所以它存下的记忆落在同一批库、同一个 scope 里；宿主注入过 manager 的话也会经过它（#260）。它记忆的其余部分都归自己：自 #234 起它建在 transient（`:memory:`）库上，**会话摘要**与结晶器的审阅提案都留在那里，随它一起丢弃 —— 在此之前这两样都落进上面那个项目库，因为子代理的默认值打开的正是同一个文件。那个库同时也是空的，这是同一个决定的读侧：**子代理没有 `<memory-stable>` 块，也没有召回**，只靠父级最近的**对话消息**（`parent_context`）交代背景，而那里面不含任何记忆 —— 所以它能存下一条自己读不回来的长期记忆。#234 之前子代理写进项目库的行没有任何来源标记；`/clear` 与 `/memory clear` 会清掉全部会话摘要和全部长期记忆，但都碰不到审阅队列。（#234）
 
 完整 schema、表结构、生命周期 → [memory-management.md](../guides/memory-management.md)。
 
