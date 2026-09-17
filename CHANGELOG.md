@@ -5,9 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.4.25. Add entries under the relevant heading as work lands._
+## [0.4.25] — 2026-09-17
 
 ### Fixed
 
