@@ -1,19 +1,20 @@
 # 5.5 Memory System
 
 > **What you'll learn**
-> - The three kinds of data Memory holds: persistent records, session summaries, recall candidates
+> - The four kinds of data Memory holds: persistent records, session summaries, recall candidates, review items
 > - The two SQLite databases (project + user scope) and how they're chosen
 > - How to wipe / migrate / disable memory cleanly
 
 Memory lets the agent **remember across sessions** — user preferences, project facts, conventions. It's distinct from conversation history (this turn's messages); memory persists.
 
-## Three kinds of data
+## Four kinds of data
 
 | Type | Storage | Purpose |
 |------|---------|---------|
 | **Persistent memory** (MemoryRecord) | SQLite `memories` table | Preferences, facts, rules — soft-deleted, never physically removed |
 | **Session summary** (SessionSummaryRecord) | SQLite `session_summaries` table | LLM-generated summaries from context compression |
 | **Recall candidate** (RecallCandidate) | In-memory only | Top-k scored against the current user message |
+| **Review item** (MemoryReviewItem) | SQLite `memory_review_queue` table | Crystallizer candidates awaiting `/memory review approve`. No bulk clear reaches this table — see the wipe warning below |
 
 ## Two SQLite databases
 
