@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -631,3 +632,195 @@ def test_a_child_views_disabled_set_is_never_persisted(tmp_path):
     assert not cfg_file.exists()
     assert "alpha" in child.disabled_skills
     assert parent.disabled_skills == set()
+
+
+# ---------------------------------------------------------------------------
+# A disabled skill cannot be activated (#266)
+# ---------------------------------------------------------------------------
+
+def _manager_with_skills(tmp_path, *names):
+    """A manager holding exactly ``names``, each with an identifiable body.
+
+    ``working_directory=tmp_path`` moves the project *and* repo-root skill
+    dirs plus the config file under ``tmp_path``. The module constants patched
+    here are the two the constructor still reads globally (global skills,
+    bundled skills) — patching ``_PROJECT_SKILLS_DIR`` / ``_CONFIG_*`` instead
+    would leave ``<cwd>/skills`` in the scan, which is the repo's own
+    ``skills/`` when the suite runs from the repo root, and the catalogue
+    under test would then vary with the checkout.
+    """
+    g = tmp_path / "global"
+    for name in names:
+        _write_skill(g, name, body=f"## Body\nSecret {name} instructions.")
+    patches = dict(
+        _GLOBAL_SKILLS_DIR=g,
+        _BUNDLED_SKILLS_DIR=tmp_path / "b",
+    )
+    with patch.multiple(_mod, **patches):
+        return SkillManager(working_directory=tmp_path)
+
+
+def test_activating_a_disabled_skill_is_refused(tmp_path):
+    """The name stays resolvable through ``available_skills`` after a
+    ``/skills disable``, so without a check at activation the whole
+    ``SKILL.md`` body re-enters the prompt on every later turn."""
+    m = _manager_with_skills(tmp_path, "alpha", "beta")
+    m.disable_skill("alpha")
+
+    result = m.activate_skill("alpha", "task")
+
+    assert result.startswith("Error: Unknown skill 'alpha'")
+    assert "beta" in result  # the message lists what *is* activatable
+    assert "alpha" not in m.get_active_skills()
+    assert "Secret alpha instructions." not in m.get_skills_context()
+
+
+def test_disabling_an_active_skill_still_deactivates_it(tmp_path):
+    """The other half of the pair, and the reason the refusal above belongs
+    in the manager: disabling already meant "not active"."""
+    m = _manager_with_skills(tmp_path, "alpha")
+    m.activate_skill("alpha", "task")
+    assert "alpha" in m.get_active_skills()
+
+    m.disable_skill("alpha")
+
+    assert "alpha" not in m.get_active_skills()
+    assert "Secret alpha instructions." not in m.get_skills_context()
+
+
+def test_re_enabling_a_skill_makes_it_activatable_again(tmp_path):
+    """The refusal is state, not a permanent verdict on the name."""
+    m = _manager_with_skills(tmp_path, "alpha")
+    m.disable_skill("alpha")
+    m.enable_skill("alpha")
+
+    assert "Skill Activated: alpha" in m.activate_skill("alpha", "task")
+    assert "alpha" in m.get_active_skills()
+
+
+def test_the_activate_skill_tool_refuses_a_disabled_skill(tmp_path):
+    """The model's path. Its ``enum`` already omits the name, but an enum is
+    advisory and several providers do not enforce it."""
+    from agentao.tools.skill import ActivateSkillTool
+
+    m = _manager_with_skills(tmp_path, "alpha", "beta")
+    m.disable_skill("alpha")
+    tool = ActivateSkillTool(skill_manager=m)
+
+    assert "alpha" not in tool.parameters["properties"]["skill_name"]["enum"]
+    assert tool.execute("alpha", "task").startswith("Error: Unknown skill 'alpha'")
+    assert "alpha" not in m.get_active_skills()
+    assert "Skill Activated: beta" in tool.execute("beta", "task")
+
+
+def test_a_disabled_skill_is_refused_when_the_enum_is_not_even_emitted(tmp_path):
+    """The worst shape in #266: with *every* skill disabled the tool drops
+    the ``enum`` key entirely (``tools/skill.py``: ``if skill_names:``) and
+    ``skill_name`` widens back to a free-form string, so nothing but this
+    check constrains the argument."""
+    from agentao.tools.skill import ActivateSkillTool
+
+    m = _manager_with_skills(tmp_path, "alpha")
+    m.disable_skill("alpha")
+    tool = ActivateSkillTool(skill_manager=m)
+
+    assert m.list_all_skills() == ["alpha"]
+    assert m.list_available_skills() == []
+    assert "enum" not in tool.parameters["properties"]["skill_name"]
+    assert tool.execute("alpha", "task").startswith("Error: Unknown skill 'alpha'")
+    assert m.get_active_skills() == {}
+
+
+def test_slash_skills_activate_refuses_a_disabled_skill(tmp_path, monkeypatch):
+    """``/skills activate`` reaches the same entry, so refusing in the manager
+    is what stops it here. The *message* is the CLI's, not the manager's:
+    ``/skills`` lists this name under "Disabled Skills", so "Unknown skill"
+    would read as a bug and hide the one-word remedy."""
+    from agentao.cli.commands import handle_skills_command
+    from agentao.cli.commands import skills as skills_mod
+
+    printed: list[str] = []
+    monkeypatch.setattr(
+        skills_mod.console, "print", lambda *a, **k: printed.append(" ".join(map(str, a)))
+    )
+
+    m = _manager_with_skills(tmp_path, "alpha")
+    m.disable_skill("alpha")
+    cli = SimpleNamespace(agent=SimpleNamespace(skill_manager=m))
+
+    handle_skills_command(cli, "activate alpha")
+
+    assert "is disabled" in printed[-1]
+    assert "/skills enable alpha" in printed[-1]
+    assert "alpha" not in m.get_active_skills()
+
+
+def test_a_sub_agent_cannot_activate_a_skill_the_parent_disabled(tmp_path):
+    """``child_view`` forks ``disabled_skills`` precisely so a disabled skill
+    stays out of a sub-agent's catalogue; that guarantee is only as strong as
+    the check in ``activate_skill``."""
+    m = _manager_with_skills(tmp_path, "alpha", "beta")
+    m.disable_skill("alpha")
+    child = m.child_view()
+
+    assert child.activate_skill("alpha", "task").startswith("Error: Unknown skill 'alpha'")
+    assert child.get_active_skills() == {}
+    assert "Skill Activated: beta" in child.activate_skill("beta", "task")
+
+
+# ---------------------------------------------------------------------------
+# A malformed ``disabled_skills`` value never reaches ``set()``
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad", [None, 3, {"alpha": True}])
+def test_a_non_list_disabled_skills_value_is_ignored_not_raised(tmp_path, bad):
+    """``set(None)`` / ``set(3)`` is a ``TypeError`` straight out of
+    ``SkillManager.__init__`` — and so out of ``Agentao.__init__``, which
+    builds one — so a hand-edited ``skills_config.json`` used to stop the CLI
+    from starting. The top-level-dict check next to it closed the same class
+    of crash one level up."""
+    g = tmp_path / "global"
+    _write_skill(g, "alpha")
+    cfg = tmp_path / ".agentao" / "skills_config.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps({"disabled_skills": bad}), encoding="utf-8")
+
+    with patch.multiple(_mod, _GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b"):
+        m = SkillManager(working_directory=tmp_path)
+
+    assert m.disabled_skills == set()
+    assert "alpha" in m.list_available_skills()
+    assert "Skill Activated: alpha" in m.activate_skill("alpha", "task")
+
+
+def test_a_string_disabled_skills_value_is_not_expanded_to_characters(tmp_path):
+    """``set("ab")`` is ``{"a", "b"}``, which hid — and, since #266, refused
+    to activate — every skill whose name is one of those characters."""
+    g = tmp_path / "global"
+    _write_skill(g, "a")
+    cfg = tmp_path / ".agentao" / "skills_config.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps({"disabled_skills": "ab"}), encoding="utf-8")
+
+    with patch.multiple(_mod, _GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b"):
+        m = SkillManager(working_directory=tmp_path)
+
+    assert m.disabled_skills == set()
+    assert "Skill Activated: a" in m.activate_skill("a", "task")
+
+
+def test_non_string_entries_are_dropped_and_the_rest_kept(tmp_path):
+    g = tmp_path / "global"
+    _write_skill(g, "alpha")
+    _write_skill(g, "beta")
+    cfg = tmp_path / ".agentao" / "skills_config.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(
+        json.dumps({"disabled_skills": ["alpha", 7, None]}), encoding="utf-8"
+    )
+
+    with patch.multiple(_mod, _GLOBAL_SKILLS_DIR=g, _BUNDLED_SKILLS_DIR=tmp_path / "b"):
+        m = SkillManager(working_directory=tmp_path)
+
+    assert m.disabled_skills == {"alpha"}
+    assert m.list_available_skills() == ["beta"]

@@ -41,6 +41,20 @@ def handle_skills_command(cli: AgentaoCLI, args: str) -> None:
         result = manager.activate_skill(
             sub_arg, "Manually activated via /skills activate"
         )
+        # ``or ()`` as well as the default: a host-injected manager may carry
+        # the attribute set to ``None``, and ``x in None`` is a TypeError.
+        disabled = getattr(manager, "disabled_skills", None) or ()
+        if result.startswith("Error") and sub_arg in disabled:
+            # The manager answers "Unknown skill" for a disabled one on
+            # purpose — to a caller trying to activate it, it is not there
+            # (#266). That is right for the model, and wrong for the person
+            # at the prompt: ``/skills`` lists this very name under "Disabled
+            # Skills", so "unknown" reads as a bug and hides the one-word
+            # remedy. The CLI knows which of the two it is, so it says so.
+            result = (
+                f"Error: skill '{sub_arg}' is disabled for this project, so it "
+                f"cannot be activated. Run /skills enable {sub_arg} first."
+            )
         if result.startswith("Error"):
             console.print(f"\n[warning]{result}[/warning]\n")
         else:

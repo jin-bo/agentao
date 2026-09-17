@@ -206,11 +206,23 @@ def resume_session(
     # under provider A that does not exist on the now-current provider B, which
     # only fails on the next LLM call. Keep the current process's already-
     # consistent (provider, model) and surface the saved name for reference.
+    # ``activate_skill`` refuses a skill that has been disabled since the
+    # session was saved (#266) — and it *answers* with an ``Error: ...``
+    # string rather than raising, so discarding the return would leave the
+    # "Active skills" line below naming a skill that is not active. Read the
+    # outcome back instead. A host-injected manager may answer with something
+    # other than a string; only an explicit error string counts as a refusal.
+    restored_skills: list[str] = []
     for skill_name in active_skills:
         try:
-            cli.agent.skill_manager.activate_skill(skill_name, "Restored from session")
+            outcome = cli.agent.skill_manager.activate_skill(
+                skill_name, "Restored from session"
+            )
         except Exception:
-            pass
+            continue
+        if isinstance(outcome, str) and outcome.startswith("Error"):
+            continue
+        restored_skills.append(skill_name)
 
     cli.current_session_id = match.get("session_id") or str(_uuid_mod.uuid4())
     cli.agent._session_id = cli.current_session_id
@@ -257,8 +269,15 @@ def resume_session(
         console.print(
             f"[dim](session was saved on {model}; keeping current model)[/dim]"
         )
-    if active_skills:
-        console.print(f"[dim]Active skills: {', '.join(active_skills)}[/dim]")
+    if restored_skills:
+        console.print(f"[dim]Active skills: {', '.join(restored_skills)}[/dim]")
+    not_restored = [s for s in active_skills if s not in restored_skills]
+    if not_restored:
+        console.print(
+            f"[warning]Not restored: {', '.join(not_restored)} "
+            f"(disabled, or no longer discoverable). "
+            f"Re-enable with /skills enable <name>.[/warning]"
+        )
     if detached_agents:
         console.print(
             f"[warning]{detached_agents} background agent(s) still running from the "

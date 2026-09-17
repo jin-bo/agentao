@@ -391,7 +391,7 @@ Full ACP semantics → [acp-client.md](../guides/acp-client.md) and [acp-embeddi
 
 - **Path.** `<cwd>/.agentao/skills_config.json` (project-only).
 - **Loader.** `skills/manager.py`.
-- **Failure mode.** Missing file → silent. Unreadable, not valid UTF-8, or malformed JSON → a warning naming the path, then the default (no skills disabled). Read as `utf-8-sig`, so a BOM'd file loads. The warning goes to the `agentao` logger: it reaches the terminal only while no handler is attached yet (Python's `lastResort`), which in practice covers the `settings.json` reads but **not** `mcp.json` / `skills_config.json`, both of which are read after the LLM client attaches its file handler — those land in `agentao.log`. `agentao doctor` surfaces all of them.
+- **Failure mode.** Missing file → silent. Unreadable, not valid UTF-8, malformed JSON, a top-level value that is not an object, or a `disabled_skills` value that is not an array → a warning naming the path, then the default (no skills disabled); non-string entries inside the array are dropped with a warning and the rest are kept. Read as `utf-8-sig`, so a BOM'd file loads. The warning goes to the `agentao` logger: it reaches the terminal only while no handler is attached yet (Python's `lastResort`), which in practice covers the `settings.json` reads but **not** `mcp.json` / `skills_config.json`, both of which are read after the LLM client attaches its file handler — those land in `agentao.log`. `agentao doctor` surfaces all of them.
 
 ### Schema
 
@@ -403,7 +403,7 @@ Full ACP semantics → [acp-client.md](../guides/acp-client.md) and [acp-embeddi
 
 | Key | Type | Notes |
 |---|---|---|
-| `disabled_skills` | string[] | Skill names to **exclude** from auto-discovery. Use `/skills disable <name>` from the CLI to manage. |
+| `disabled_skills` | string[] | Skill names to **exclude** from auto-discovery. Use `/skills disable <name>` from the CLI to manage. A disabled skill is also **refused at activation** — by the `activate_skill` tool, by `/skills activate`, and in any sub-agent, which inherits the set. The tool answers "Unknown skill" (to a caller trying to activate it, a disabled skill is not there); `/skills activate` names the state and the remedy. Re-enable it (`/skills enable <name>`) before activating. |
 
 See [SKILLS_GUIDE.md](../guides/skills.md) for skill discovery and activation rules.
 
