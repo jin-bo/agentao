@@ -755,6 +755,23 @@ def test_slash_skills_activate_refuses_a_disabled_skill(tmp_path, monkeypatch):
     assert "alpha" not in m.get_active_skills()
 
 
+def test_parent_disablement_after_derivation_only_reaches_new_children(tmp_path):
+    """Disablement is a spawn-time snapshot, not live capability revocation."""
+    parent = _manager_with_skills(tmp_path, "alpha")
+    existing = parent.child_view()
+
+    assert parent.disable_skill("alpha").endswith("has been disabled.")
+    assert "alpha" in existing.list_available_skills()
+    assert "Skill Activated: alpha" in existing.activate_skill("alpha", "task")
+    assert parent.activate_skill("alpha", "task").startswith("Error:")
+    assert parent.get_active_skills() == {}
+
+    later = parent.child_view()
+    assert "alpha" not in later.list_available_skills()
+    assert later.activate_skill("alpha", "task").startswith("Error:")
+    assert later.get_active_skills() == {}
+
+
 def test_a_sub_agent_cannot_activate_a_skill_the_parent_disabled(tmp_path):
     """``child_view`` forks ``disabled_skills`` precisely so a disabled skill
     stays out of a sub-agent's catalogue; that guarantee is only as strong as
@@ -1240,3 +1257,123 @@ def test_concurrent_disables_all_survive(tmp_path):
     assert all(r.endswith("has been disabled.") for r in results), results
     assert _disabled_on_disk(tmp_path) == sorted(names)
     assert list((tmp_path / ".agentao").glob("*.tmp")) == []
+
+
+# ---------------------------------------------------------------------------
+# Adopting a new disabled set never passes through one that drops a disable
+# ---------------------------------------------------------------------------
+
+_SET_MUTATORS = (
+    "add", "discard", "remove", "pop", "clear",
+    "update", "intersection_update", "difference_update",
+    "symmetric_difference_update",
+    "__ior__", "__iand__", "__isub__", "__ixor__",
+)
+
+
+class _RecordingSet(set):
+    """A ``set`` that calls ``observe`` after every in-place mutation.
+
+    Every mutator is wrapped, not only the two ``_adopt_disabled`` uses, so
+    the test keeps its teeth against whatever sequence a later edit picks.
+    """
+
+    def __init__(self, items, observe):
+        self._observe = observe
+        super().__init__(items)
+
+
+def _recording(name):
+    def method(self, *args):
+        result = getattr(set, name)(self, *args)
+        self._observe(set(self))
+        return result
+
+    method.__name__ = name
+    return method
+
+
+for _name in _SET_MUTATORS:
+    setattr(_RecordingSet, _name, _recording(_name))
+
+
+@pytest.mark.parametrize(
+    ("before", "on_disk", "call", "answer", "after"),
+    [
+        pytest.param(
+            {"alpha"}, None, ("disable_skill", "beta"),
+            "has been disabled.", {"alpha", "beta"}, id="disable",
+        ),
+        pytest.param(
+            {"alpha", "gamma"}, None, ("enable_skill", "gamma"),
+            "has been re-enabled.", {"alpha"}, id="enable",
+        ),
+        pytest.param(
+            {"alpha"}, None, ("disable_skill", "alpha"),
+            "is already disabled.", {"alpha"}, id="unchanged",
+        ),
+        # Answers "unknown", but only after the file was read and adopted.
+        pytest.param(
+            {"alpha"}, None, ("enable_skill", "no-such-skill"),
+            "Known skills: alpha, beta, delta, gamma", {"alpha"},
+            id="unknown-name",
+        ),
+        # A hand edit (or a second process) re-enabled gamma and disabled
+        # delta; this process adopts both along with its own change.
+        pytest.param(
+            {"alpha", "gamma"}, ["alpha", "delta"], ("disable_skill", "beta"),
+            "has been disabled.", {"alpha", "beta", "delta"},
+            id="another-writer",
+        ),
+    ],
+)
+def test_a_child_derived_mid_adoption_keeps_every_standing_disable(
+    tmp_path, before, on_disk, call, answer, after,
+):
+    """``_adopt_disabled`` mutates the set in place and ``child_view`` copies
+    it from a background sub-agent's thread, unlocked — so every state the
+    set passes through is one a child can be built from, and keeps for its
+    whole run. ``clear()`` then ``update()`` passed through the empty set: a
+    child derived there could activate every skill the user had disabled,
+    and a ``/skills enable`` of an unrelated name was enough to open it.
+
+    Deterministic rather than threaded: ``observe`` runs on the writer at
+    exactly the points a reader on another thread can, and derives a child
+    at each one. A name disabled both before and after (``alpha``) must be
+    in every state; nothing outside old ∪ new may appear.
+    """
+    m = _manager_with_skills(tmp_path, "alpha", "beta", "gamma", "delta")
+    for name in sorted(before):
+        assert m.disable_skill(name).endswith("has been disabled.")
+    if on_disk is not None:
+        cfg = tmp_path / ".agentao" / "skills_config.json"
+        cfg.write_text(json.dumps({"disabled_skills": on_disk}), encoding="utf-8")
+
+    states, children = [], []
+
+    def observe(state):
+        states.append(state)
+        child = m.child_view()
+        children.append((child, child.activate_skill("alpha", "task")))
+
+    recording = _RecordingSet(m.disabled_skills, observe)
+    m.disabled_skills = recording
+
+    method, name = call
+    assert getattr(m, method)(name).endswith(answer)
+
+    # The adoption happened in place, so ``states`` saw every step of it —
+    # without this, a rebind would leave nothing below to check.
+    assert m.disabled_skills is recording
+    assert states, "the adoption made no in-place mutation"
+
+    standing, allowed = before & after, before | after
+    for state in states:
+        assert standing <= state, f"{state} dropped a standing disable"
+        assert state <= allowed, f"{state} holds a name neither side disables"
+    for child, result in children:
+        assert result.startswith("Error:"), result
+        assert child.get_active_skills() == {}
+
+    assert m.disabled_skills == after
+    assert _disabled_on_disk(tmp_path) == sorted(after)

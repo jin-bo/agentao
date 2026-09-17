@@ -32,6 +32,8 @@ in the catalogue the model is shown, and — since 0.4.24 — cannot be activate
 by name either, by the model's `activate_skill` tool, by `/skills activate`, by
 a session restore, or by a sub-agent that inherited the catalogue. Before
 0.4.24 the name was merely hidden, and activating it directly still worked.
+A sub-agent copies the disabled set when it starts, so a `/skills disable`
+made while one is running applies to the next sub-agent, not to that one.
 
 **A disable is never pruned by a scan.** A reload cannot tell "this skill was
 deleted" from "this skill is not discoverable right now" — a project

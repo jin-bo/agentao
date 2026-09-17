@@ -176,6 +176,15 @@ class SkillManager:
         not reach a sub-agent already running; the per-skill dicts inside
         the catalogue are shared, and every reader treats them as read-only.
 
+        This is spawn-time isolation, not dynamic revocation. A child
+        (including a background child) can still activate a skill disabled
+        on the parent after this copy. Children derived after disablement
+        inherit the updated set — and a child derived *while* the parent
+        adopts a new set gets one that still holds every name the old or the
+        new set disables, because :meth:`_adopt_disabled` only ever grows
+        before it shrinks. The fail-closed derivation fallback guards
+        construction failures; it does not propagate later policy changes.
+
         Raises:
             TypeError: when ``copy.copy`` answers with this very instance — a
                 subclass whose ``__copy__`` returns ``self``. Checked before
@@ -461,13 +470,24 @@ class SkillManager:
         several call sites read straight off the manager, and a rebind would
         strand any holder on the old object.
 
+        In place means every intermediate state is visible to a reader on
+        another thread — :meth:`child_view` copies this set from a
+        background sub-agent's thread, with no lock. So the order is
+        **grow, then shrink**: after ``update`` the set is old ∪ new, after
+        ``intersection_update`` it is new, and no state in between lacks a
+        name that either side disables. ``clear()`` then ``update()`` exposed
+        an empty set, and a child derived there kept that empty snapshot —
+        every disable off — for its whole run. That is the only guarantee
+        here: the order keeps a gate from failing open, it does not make the
+        manager safe for concurrent writers.
+
         The deactivation loop covers more than the name this call changed —
         a disable another process wrote is adopted here too, and a skill left
         active would otherwise keep its whole ``SKILL.md`` body in the system
         prompt while the gate says it is off.
         """
-        self.disabled_skills.clear()
         self.disabled_skills.update(disabled)
+        self.disabled_skills.intersection_update(disabled)
         for name in list(self.active_skills):
             if name in self.disabled_skills:
                 self.deactivate_skill(name)

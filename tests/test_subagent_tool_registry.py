@@ -466,6 +466,50 @@ def test_an_activation_stays_inside_the_sub_agent_that_made_it(tmp_path, monkeyp
     assert "MARKER-DEMO-BODY" not in parent_prompt
 
 
+def test_parent_disablement_does_not_revoke_a_running_background_child(
+    tmp_path, monkeypatch,
+):
+    """Pause after derivation, then disable before the child's tool call."""
+    _project_skill(tmp_path, "demo-skill", body="MARKER-DEMO-BODY")
+    store = BackgroundTaskStore(persistence_dir=None)
+    parent = _parent(tmp_path, bg_store=store)
+    ready, resume = threading.Event(), threading.Event()
+    workers, results, prompts = [], [], []
+
+    def chat(self, user_message, **kwargs):
+        workers.append(threading.current_thread())
+        ready.set()
+        if not resume.wait(10):
+            raise RuntimeError("Parent did not release the background child")
+        _, messages = self.tool_runner.execute([
+            _call("activate_skill", skill_name="demo-skill", task_description="t"),
+        ])
+        results.extend(m["content"] for m in messages)
+        prompts.append(self._build_system_prompt())
+        return ""
+
+    monkeypatch.setattr(Agentao, "chat", chat)
+    try:
+        parent.tools.tools["agent_generalist"].execute("x", run_in_background=True)
+        assert ready.wait(10), "Background child did not reach chat"
+        assert parent.skill_manager.disable_skill("demo-skill").endswith(
+            "has been disabled."
+        )
+        resume.set()
+        workers[0].join(10)
+        assert not workers[0].is_alive(), "Background child did not finish"
+
+        assert any("Skill Activated: demo-skill" in result for result in results)
+        assert "MARKER-DEMO-BODY" in prompts[0]
+        assert parent.skill_manager.get_active_skills() == {}
+        assert "MARKER-DEMO-BODY" not in parent._build_system_prompt()
+    finally:
+        resume.set()
+        for worker in workers:
+            worker.join(10)
+        parent.close()
+
+
 def test_a_sub_agent_without_activate_skill_gets_no_catalogue(tmp_path, monkeypatch):
     """``codebase-investigator`` lists its tools and ``activate_skill`` is not
     among them. Advertising skills it cannot activate is the same lie #254
