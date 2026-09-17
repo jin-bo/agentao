@@ -560,6 +560,51 @@ def test_a_wipe_all_that_raises_falls_back_instead_of_propagating():
     assert wipe_all_memories(_Mgr()) == (3, 1, [])
 
 
+def test_an_object_that_merely_answers_wipe_all_does_not_get_believed():
+    """The one fail-*open* misreading of the ``hasattr`` probe (#235).
+
+    ``MagicMock`` answers every attribute, so ``mgr.wipe_all()`` "succeeds",
+    ``not_cleared`` iterates empty and both commands print the wipe as a
+    success — while ``clear()`` was never called and nothing was cleared. The
+    shim type-checks the three fields instead, so anything that is not a
+    ``MemoryWipeResult`` falls through to the real calls.
+    """
+    from unittest.mock import MagicMock
+
+    from agentao.cli._utils import wipe_all_memories
+
+    mgr = MagicMock()
+    wipe_all_memories(mgr)
+
+    assert mgr.clear.called, "the fast path was believed and nothing was wiped"
+    assert mgr.clear_all_session_summaries.called
+
+
+def test_a_wipe_all_returning_the_wrong_shape_falls_back():
+    """Same gate, with a plausible host result instead of a mock."""
+    from agentao.cli._utils import wipe_all_memories
+
+    class _Result:
+        memories_cleared = "3"          # str, not int
+        summaries_cleared = 1
+        not_cleared = ()
+
+    class _Mgr:
+        def wipe_all(self):
+            return _Result()
+
+        def clear(self):
+            return 3
+
+        def clear_all_session_summaries(self):
+            return 1
+
+        def session_summaries_remain(self):
+            return False
+
+    assert wipe_all_memories(_Mgr()) == (3, 1, [])
+
+
 def test_a_partial_clear_still_invalidates_the_recall_index(tmp_path, monkeypatch):
     """Project rows committed before the user store raised: the retriever only
     rebuilds on a version change, so the bump must happen anyway."""

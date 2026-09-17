@@ -342,7 +342,7 @@ mgr = MemoryManager(
 | `save_session_summary(...)` / `get_recent_session_summaries(...)` | Used by the compaction pipeline |
 | `archive_session() / clear_session()` | End-of-session house-keeping |
 | `clear_all_session_summaries()` | Drop every session summary across all sessions |
-| `wipe_all()` | Hard reset: memories (both scopes) + every session summary. Never raises — returns a `MemoryWipeResult` whose `ok` is the success signal. Does **not** clear the review queue |
+| `wipe_all()` | Hard reset: memories (both scopes, **soft** delete — rows stay in the file) + every session summary. Never raises — returns a `MemoryWipeResult` whose `ok` is the success signal. Does **not** clear the review queue |
 | `get_stable_entries(...)` | Render into `<memory-stable>` system-prompt block |
 
 ### `MemoryStore` (Protocol, 0.3.0 / #16)

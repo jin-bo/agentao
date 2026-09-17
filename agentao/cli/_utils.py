@@ -34,6 +34,15 @@ def wipe_all_memories(mgr) -> tuple[int, int, list[str]]:
     contract requires *a* ``memory_manager`` attribute
     (``app.py::_REQUIRED_AGENT_ATTRS``), not a ``MemoryManager``.
 
+    **The probe is on the result, not on the attribute.** ``hasattr`` alone
+    is the one fail-*open* misreading available here: an object that merely
+    answers ``wipe_all`` — a ``MagicMock`` in a test, a host object whose
+    ``wipe_all`` means something else — would take the fast path, clear
+    nothing, and hand back an empty ``not_cleared`` that both commands print
+    as success. So the three fields are type-checked before they are
+    trusted, and anything else falls through to the legacy path, which is the
+    behaviour those callers had before #235.
+
     Returns ``(memories_cleared, summaries_cleared, not_cleared)``, where
     ``not_cleared`` names each part still in place. Neither return count can
     say that on its own: ``clear_all_session_summaries`` answers 0 both for
@@ -48,10 +57,20 @@ def wipe_all_memories(mgr) -> tuple[int, int, list[str]]:
     if wipe is not None:
         try:
             result = wipe()
-            return (
-                result.memories_cleared,
-                result.summaries_cleared,
-                list(result.not_cleared),
+            memories = result.memories_cleared
+            summaries = result.summaries_cleared
+            parts = result.not_cleared
+            if (
+                isinstance(memories, int)
+                and isinstance(summaries, int)
+                and isinstance(parts, (list, tuple))
+                and all(isinstance(part, str) for part in parts)
+            ):
+                return memories, summaries, list(parts)
+            logger.warning(
+                "memory_manager.wipe_all returned %s, which is not a "
+                "MemoryWipeResult; re-running the wipe directly",
+                type(result).__name__,
             )
         except Exception:
             # A host manager whose own ``wipe_all`` raises — ``MemoryManager``
@@ -60,7 +79,10 @@ def wipe_all_memories(mgr) -> tuple[int, int, list[str]]:
             # DELETE removes none), so the only cost is that the counts below
             # report what was *left* and may undercount what the first pass
             # removed. The counts are not the success signal; ``not_cleared``
-            # is.
+            # is — but note they are also what ``/memory clear`` puts on the
+            # ``MEMORY_CLEARED`` event, so an audit record written after this
+            # fallback can read as "nothing was there" for a wipe that did
+            # remove rows. ``agentao.log`` carries the warning that explains it.
             logger.warning("memory_manager.wipe_all failed", exc_info=True)
     return _legacy_wipe(mgr)
 

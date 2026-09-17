@@ -425,9 +425,16 @@ class MemoryManager:
         mid-reset, and a raise there would abandon the reset after the history
         is gone but before the permission mode is restored.
 
-        **Clears** persistent memories in both scopes (soft delete, via
-        :meth:`clear`) and session summaries from every session (via
+        **Clears** persistent memories in both scopes (via :meth:`clear`) and
+        session summaries from every session (via
         :meth:`clear_all_session_summaries`).
+
+        **The memories half is a soft delete and is therefore not erasure.**
+        Every row keeps its ``content`` and stays in the database file with
+        ``deleted_at`` set; no read path returns it again, but ``ok`` being
+        true does not mean the text is gone. A host building a "forget me"
+        guarantee on this needs its own hard delete or file-level disposal.
+        The summaries half is a real ``DELETE``.
 
         **Does not clear the review queue** (``memory_review_queue``): the
         crystallizer's pending candidates carry excerpts of the messages they

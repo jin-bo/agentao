@@ -178,18 +178,28 @@ if not result.ok:
 # Narrower primitives are still there. Note `clear()` raises on a store
 # failure, and a raise after the project store has committed skips whatever
 # you were going to run next — which is why `wipe_all()` exists.
+mm.clear()                       # both scopes (what `wipe_all()` calls)
 mm.clear(scope="project")        # one scope only
 ```
 
 **Compliance value**: "show the user what AI remembers about them" and a "forget me" button are often SaaS hard requirements.
 
-::: warning `wipe_all()` does not clear the review queue
-It clears persistent memories (both scopes) and session summaries (all
-sessions). The rule-based crystallizer's pending candidates in
-`memory_review_queue` are a fourth data type: they carry excerpts of the
-messages they were extracted from, survive a wipe, and stay visible to
-`/memory review`. `reject_review_item(id)` is the only remedy, one at a time. If
-you are building a "forget me" button, decide explicitly what to do with them.
+::: warning `wipe_all()` is not erasure — read this before building "forget me"
+Two things survive it, and a compliance button has to deal with both.
+
+**Memories are soft-deleted.** `wipe_all()` sets `deleted_at` on every row; the
+`content` column keeps the text and the row stays in `memory.db`. Nothing reads
+it back afterwards — not recall, not the prompt blocks, not `get_all_entries()`
+— but `ok is True` does **not** mean the bytes are gone. Real erasure needs
+your own `DELETE` plus a `VACUUM`, or disposing of the database file.
+
+**The review queue is untouched.** The rule-based crystallizer's pending
+candidates in `memory_review_queue` are a fourth data type: they carry excerpts
+of the messages they were extracted from, survive a wipe, and stay visible to
+`/memory review`. `reject_review_item(id)` is the only remedy, one at a time.
+
+What it *does* clear: persistent memories in both scopes (soft), and session
+summaries from every session (hard `DELETE`).
 :::
 
 ## Memory vs conversation history vs AGENTAO.md

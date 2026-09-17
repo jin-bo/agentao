@@ -20,9 +20,12 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
   confirmed by reading the store back, and a store that cannot be read counts
   as not cleared. The method never raises — a `clear()` that fails is reported
   in the result and the summaries are cleared anyway, because `/clear` calls
-  this mid-reset. It does **not** clear the review queue
-  (`memory_review_queue`): those candidates carry excerpts of the messages
-  they came from, survive a wipe and stay visible to `/memory review`;
+  this mid-reset. Two things survive it and a "forget me" button has to handle
+  both: the memories half is a **soft** delete, so every row keeps its
+  `content` in the database file with `deleted_at` set (no read path returns
+  it, but `ok` is not an erasure guarantee); and the review queue
+  (`memory_review_queue`) is untouched — those candidates carry excerpts of
+  the messages they came from, stay visible to `/memory review`, and
   `reject_review_item(id)` remains the only remedy. `clear()`,
   `clear_all_session_summaries()` and `session_summaries_remain()` are
   unchanged, and the developer-guide "forget everything" recipes now point at

@@ -177,16 +177,26 @@ if not result.ok:
 # 更细的原语仍然可用。注意 `clear()` 在存储失败时会抛异常，
 # 而且 project 库已提交之后抛出，会把你接下来要做的事一起跳过 ——
 # 这正是 `wipe_all()` 存在的理由。
+mm.clear()                       # 两个作用域（`wipe_all()` 调的就是它）
 mm.clear(scope="project")        # 只清一个作用域
 ```
 
 **合规价值**：给用户"查看 AI 知道关于我的什么"和"一键遗忘"的按钮，是很多 SaaS 场景的硬性要求。
 
-::: warning `wipe_all()` 不清 review queue
-它清的是长期记忆（两个作用域）和会话摘要（所有会话）。规则结晶器写进
-`memory_review_queue` 的待审候选是第四类数据：它们带着被提取消息的原文摘录，
-清除之后依然存在，`/memory review` 照样列得出来。唯一的补救是
-`reject_review_item(id)`，一条一条退。要做"一键遗忘"按钮，必须显式决定这些条目怎么处理。
+::: warning `wipe_all()` 不等于抹除——做"一键遗忘"之前先读这段
+有两样东西能活过它，合规按钮这两样都得处理。
+
+**记忆是软删除。** `wipe_all()` 只是给每一行打上 `deleted_at`；`content` 列原文
+还在，行也还在 `memory.db` 里。之后任何读路径都不会再拿到它——召回不会、提示块
+不会、`get_all_entries()` 也不会——但 `ok is True` **不代表**那些字节没了。真正的
+抹除要你自己 `DELETE` 加 `VACUUM`，或者干脆处理掉整个数据库文件。
+
+**review queue 完全没动。** 规则结晶器写进 `memory_review_queue` 的待审候选是第
+四类数据：它们带着被提取消息的原文摘录，清除之后依然存在，`/memory review` 照样
+列得出来。唯一的补救是 `reject_review_item(id)`，一条一条退。
+
+它**确实**清掉的：两个作用域的长期记忆（软删除），以及所有会话的会话摘要（硬
+`DELETE`）。
 :::
 
 ## 记忆 vs 会话历史 vs AGENTAO.md
