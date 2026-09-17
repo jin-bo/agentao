@@ -75,6 +75,45 @@ _Targeting 0.4.24. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A disabled skill can no longer be activated by name.** `/skills disable X`
+  hid `X` from the prompt's skill catalogue, from `list_available_skills()` and
+  from the `activate_skill` tool's `enum`, but `activate_skill` itself never
+  consulted `disabled_skills` — it resolved the name through `available_skills`,
+  where `X` was still present, and activated it, putting the whole `SKILL.md`
+  body into the system prompt on every later turn. The check now sits in
+  `SkillManager.activate_skill`, the one entry the model's tool,
+  `/skills activate`, session restore and every sub-agent's inherited catalogue
+  all pass through; a disabled skill gets the existing "Unknown skill" error,
+  which already lists only the enabled ones — right for the model, where a
+  disabled skill simply is not there, and wrong for the person at the prompt,
+  since `/skills` lists that very name under "Disabled Skills", so
+  `/skills activate` names the state and the one-word remedy instead. Disabling
+  already deactivated a skill that was active, so "disabled" was always meant to
+  imply "not active" — the activate half was simply missing the check. The
+  `enum` was never a backstop: it is advisory, several providers do not enforce
+  it, and with *every* skill disabled the key was omitted entirely, widening
+  `skill_name` back to a free-form string. `/skills activate X` on a disabled
+  skill now fails where it used to be obeyed; run `/skills enable X` first.
+  (#266)
+
+- **`/resume` no longer reports a skill it failed to restore as active.** The
+  restore loop discarded `activate_skill`'s return value, and the summary line
+  printed the *saved* skill list, so a skill disabled since the session was
+  saved — refused, as of the fix above — was still announced as active. The
+  outcome is now read back: what actually activated is listed, and what did not
+  is named with the remedy. (#266)
+
+- **A malformed `disabled_skills` value no longer stops the CLI from
+  starting.** `skills_config.json` had its *top level* checked for being a JSON
+  object, but the value under `disabled_skills` went straight into `set(...)`:
+  `null` or a number raised an uncaught `TypeError` out of
+  `SkillManager.__init__` — and so out of `Agentao.__init__`, which builds one —
+  and a bare string silently expanded to its **characters**, which hid (and,
+  after the fix above, refused to activate) every one-character skill name. The
+  value is now required to be an array, with the same warn-and-default the
+  surrounding decode and JSON failures use; non-string entries are dropped and
+  the rest kept.
+
 - **A cancelled sub-agent is reported as cancelled, not as a failure.** A
   sub-agent stopped while it was *running* settled as `failed` on every
   surface — task record (`status="failed"`, `incomplete_reason="cancelled"`,

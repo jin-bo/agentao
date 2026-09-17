@@ -230,7 +230,37 @@ class SkillManager:
                     )
                     self.disabled_skills = set()
                     return
-                self.disabled_skills = set(config.get("disabled_skills", []))
+                raw_disabled = config.get("disabled_skills", [])
+                if not isinstance(raw_disabled, (list, tuple)):
+                    # ``set(...)`` on the wrong shape is the same uncaught-shape
+                    # crash the check above closes, one level down: ``null`` or
+                    # a number raises ``TypeError`` straight out of
+                    # ``SkillManager.__init__`` (and so out of ``Agentao``'s),
+                    # and a bare string silently expands to its *characters*,
+                    # hiding — and, since #266, refusing to activate — every
+                    # one-character skill name.
+                    logger.warning(
+                        "Ignoring 'disabled_skills' in %s: must be a JSON "
+                        "array of skill names, got %s.",
+                        self._config_file, type(raw_disabled).__name__,
+                    )
+                    self.disabled_skills = set()
+                    return
+                self.disabled_skills = {
+                    name for name in raw_disabled if isinstance(name, str)
+                }
+                # Counted over the entries, not as a length delta: duplicate
+                # names collapse in the set and would report as drops.
+                dropped = sum(
+                    1 for name in raw_disabled if not isinstance(name, str)
+                )
+                if dropped:
+                    logger.warning(
+                        "Ignoring %d non-string entr%s in 'disabled_skills' "
+                        "in %s.",
+                        dropped, "y" if dropped == 1 else "ies",
+                        self._config_file,
+                    )
             except UnicodeDecodeError as exc:
                 logger.warning(
                     "Ignoring %s: not valid UTF-8 (%s at byte %d). Re-save it "
@@ -423,9 +453,34 @@ class SkillManager:
     # ------------------------------------------------------------------
 
     def activate_skill(self, skill_name: str, task_description: str) -> str:
+        """Activate a skill for this session, refusing a disabled one.
+
+        The disabled check lives here rather than at each caller because
+        this is the one entry the model's ``activate_skill`` tool,
+        ``/skills activate``, session restore and every sub-agent built from
+        :meth:`child_view` all pass through — and because
+        :meth:`disable_skill` already deactivates a skill that is currently
+        active, so "disabled" was always meant to imply "not active".
+
+        The surfaces that *enumerate* skills hide a disabled one, but none of
+        them constrains the name: the tool's ``enum`` is advisory, several
+        providers do not enforce it, and ``tools/skill.py`` omits the key
+        entirely when every skill is disabled, which widens ``skill_name``
+        back to a free-form string. Without a check here, naming a disabled
+        skill activated it and put the whole ``SKILL.md`` body into the
+        system prompt on every later turn (#266).
+
+        The refusal reuses the unknown-name message, which already lists only
+        the enabled skills: to a caller trying to activate one, a disabled
+        skill is not there.
+        """
         skill_info = self.get_skill_info(skill_name)
-        if not skill_info:
-            available = ", ".join(self.list_available_skills())
+        if not skill_info or skill_name in self.disabled_skills:
+            # Sorted, like the sibling messages in ``disable_skill`` /
+            # ``enable_skill``: unsorted, the list is scan order, so the same
+            # refusal reads differently depending on which directory layer a
+            # skill came from.
+            available = ", ".join(sorted(self.list_available_skills()))
             return f"Error: Unknown skill '{skill_name}'. Available skills: {available}"
 
         self.active_skills[skill_name] = {

@@ -343,7 +343,7 @@ PowerShell 上会在它之上再叠一张 Windows 专属的不可恢复类别表
 
 - **路径。** `<cwd>/.agentao/skills_config.json`（仅项目级）。
 - **Loader。** `skills/manager.py`。
-- **失败行为。** 文件缺失 → 静默。文件不可读、不是合法 UTF-8、或 JSON 损坏 → 打一条带路径的 warning，然后退回默认值（不禁用任何 skill）。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
+- **失败行为。** 文件缺失 → 静默。文件不可读、不是合法 UTF-8、JSON 损坏、顶层不是对象、或 `disabled_skills` 的值不是数组 → 打一条带路径的 warning，然后退回默认值（不禁用任何 skill）；数组里的非字符串条目会被丢弃并打 warning，其余保留。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
 
 ### Schema
 
@@ -355,7 +355,7 @@ PowerShell 上会在它之上再叠一张 Windows 专属的不可恢复类别表
 
 | 键 | 类型 | 说明 |
 |---|---|---|
-| `disabled_skills` | string[] | 要从自动发现中**排除**的 skill 名。CLI 里用 `/skills disable <name>` 管理。 |
+| `disabled_skills` | string[] | 要从自动发现中**排除**的 skill 名。CLI 里用 `/skills disable <name>` 管理。被禁用的 skill **激活时也会被拒绝** —— `activate_skill` 工具、`/skills activate`、以及继承该集合的子代理都一样。工具侧回答「Unknown skill」（对想激活它的调用方而言，被禁用的 skill 就是不存在）；`/skills activate` 则直接说明状态与补救办法。要激活须先 `/skills enable <name>` 重新启用。 |
 
 skill 的发现与激活规则见 [SKILLS_GUIDE.md](../guides/skills.md)。
 
