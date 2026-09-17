@@ -6,11 +6,14 @@ concern, not part of the inference core.
 """
 
 import json
+import logging
 import re
 import uuid as _uuid_mod
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 
@@ -188,6 +191,149 @@ def persist_agent_session(
         session_id=session_id,
         project_root=project_root,
     )
+
+
+#: Task description recorded against a restored activation. It is rendered
+#: into the ``<active-skills>`` prompt block as ``Task: ...``, so it is
+#: model-facing text — one spelling for every restore path.
+RESTORE_TASK_DESCRIPTION = "Restored from session"
+
+
+def restore_agent_skills(
+    agent: Any,
+    active_skills: Any,
+    *,
+    session_id: str = "",
+    context: str = "resume",
+) -> Tuple[List[str], List[str]]:
+    """Re-activate a loaded session's skills, one failure at a time.
+
+    The disk→agent counterpart of :func:`persist_agent_session`, and shared
+    by every restore path for the same reason that one is shared: the CLI's
+    ``/sessions resume``, ACP's ``session/load`` and ACP's startup
+    ``--resume`` all have to narrow the same untrusted field and read back
+    the same non-exception refusal, and three copies is how one of them ends
+    up missing a rule (#271).
+
+    Returns ``(restored, skipped)`` — both drawn from the *narrowed* name
+    list, so a caller can report each without re-deriving it. Never raises: a
+    load that reached this point has a usable runtime and a hydrated
+    transcript, and losing all of that over one stale skill name would be a
+    worse outcome than the missing activation this function exists to repair.
+
+    Ways a name does not come back, all logged:
+
+    - **Per skill, refused.** ``activate_skill`` *answers* ``"Error: ..."``
+      rather than raising for an unknown *or* a disabled skill (#266), so
+      discarding the return value would count a refusal as a success. The
+      rest are still tried.
+    - **Per skill, raised**, e.g. a host-injected manager with its own rules.
+      Likewise isolated.
+    - **Whole list: no usable ``skill_manager.activate_skill``** — absent,
+      not callable, or an attribute access that itself raises. One warning
+      for the list rather than one per name, because it is a property of the
+      runtime: a duck-typed embedder's agent is entitled to lack a skill
+      manager entirely.
+
+    ``active_skills`` is whatever was on disk, so it is narrowed here rather
+    than trusted: :func:`load_session_record` does no validation, and a
+    hand-edited file holding a bare string would otherwise be iterated
+    character by character and try to activate ``"p"``, ``"d"``, ``"f"`` —
+    while a number or ``null`` would raise ``TypeError`` straight out of the
+    ``for`` statement, which on the ``--resume`` launch path is fatal.
+
+    ``context`` is a label used only in log lines (e.g. ``"session/load"``,
+    ``"resume"``, ``"/sessions resume"``).
+    """
+    if isinstance(active_skills, (list, tuple)):
+        names = [n for n in active_skills if isinstance(n, str) and n]
+        dropped = len(active_skills) - len(names)
+    else:
+        # Not a sequence at all, so ``len()`` is not safe to reach for here —
+        # a JSON number would raise, out of the one function that promised
+        # not to take the load down with it.
+        names = []
+        dropped = 1 if active_skills else 0
+    if dropped:
+        logger.warning(
+            "%s ignored %d malformed active_skills entr%s for %s (%r)",
+            context,
+            dropped,
+            "y" if dropped == 1 else "ies",
+            session_id or "session",
+            active_skills,
+        )
+    if not names:
+        return [], []
+
+    # ``getattr(..., None)`` defaults a *missing* attribute; it does not
+    # swallow one that raises, and a host's ``skill_manager`` is free to be a
+    # property that does. Unguarded, that escapes into the caller's cleanup
+    # block and tears down a session that was otherwise fully loaded.
+    try:
+        activate = getattr(
+            getattr(agent, "skill_manager", None), "activate_skill", None
+        )
+    except Exception:
+        logger.exception(
+            "%s could not reach skill_manager to restore %d skill(s) for "
+            "%s: %s",
+            context,
+            len(names),
+            session_id or "session",
+            ", ".join(names),
+        )
+        return [], list(names)
+    if not callable(activate):
+        logger.warning(
+            "%s cannot restore %d active skill(s) for %s — this runtime has "
+            "no skill_manager.activate_skill: %s",
+            context,
+            len(names),
+            session_id or "session",
+            ", ".join(names),
+        )
+        return [], list(names)
+
+    restored: List[str] = []
+    skipped: List[str] = []
+    for name in names:
+        try:
+            outcome = activate(name, RESTORE_TASK_DESCRIPTION)
+        except Exception:
+            logger.exception(
+                "%s could not restore skill %r for %s",
+                context,
+                name,
+                session_id or "session",
+            )
+            skipped.append(name)
+            continue
+        # Only an explicit error string is a refusal — a host-injected
+        # manager may answer with something else entirely, and that is not
+        # this function's business to adjudicate.
+        if isinstance(outcome, str) and outcome.startswith("Error"):
+            logger.warning(
+                "%s did not restore skill %r for %s (disabled, or no longer "
+                "discoverable): %s",
+                context,
+                name,
+                session_id or "session",
+                outcome.strip(),
+            )
+            skipped.append(name)
+            continue
+        restored.append(name)
+
+    logger.info(
+        "%s restored %d of %d active skill(s) for %s%s",
+        context,
+        len(restored),
+        len(names),
+        session_id or "session",
+        f": {', '.join(restored)}" if restored else "",
+    )
+    return restored, skipped
 
 
 def _resolve_session_file(

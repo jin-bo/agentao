@@ -102,9 +102,13 @@ def load_session(session_id: str, db) -> Agentao:
     for msg in json.loads(row["messages"]):
         agent.messages.append(msg)  # 或：agent.add_message(msg["role"], msg["content"])
 
-    # 重新激活技能。激活操作幂等。
+    # 重新激活技能。``task_description`` 是必填的（它会以 "Task: ..." 渲染进
+    # <active-skills> 提示块）；而且保存之后被删除或禁用的技能是**返回**
+    # "Error: ..." 字符串而不是抛异常，所以要把返回值读回来判断。Agentao 已把
+    # 整条规则封装为 ``embedding.sessions.restore_agent_skills(agent,
+    # row["active_skills"])``，它还会收窄手工改过的列表。
     for name in row["active_skills"]:
-        agent.skill_manager.activate_skill(name)
+        agent.skill_manager.activate_skill(name, "Restored from session")
 
     return agent
 ```

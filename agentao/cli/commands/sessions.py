@@ -109,7 +109,11 @@ def resume_session(
     """
     import uuid as _uuid_mod
 
-    from ...embedding.sessions import list_sessions, load_session
+    from ...embedding.sessions import (
+        list_sessions,
+        load_session,
+        restore_agent_skills,
+    )
     from ...runtime.model import purge_thinking_artifacts
 
     project_root = cli.agent.working_directory
@@ -206,23 +210,19 @@ def resume_session(
     # under provider A that does not exist on the now-current provider B, which
     # only fails on the next LLM call. Keep the current process's already-
     # consistent (provider, model) and surface the saved name for reference.
-    # ``activate_skill`` refuses a skill that has been disabled since the
-    # session was saved (#266) — and it *answers* with an ``Error: ...``
-    # string rather than raising, so discarding the return would leave the
-    # "Active skills" line below naming a skill that is not active. Read the
-    # outcome back instead. A host-injected manager may answer with something
-    # other than a string; only an explicit error string counts as a refusal.
-    restored_skills: list[str] = []
-    for skill_name in active_skills:
-        try:
-            outcome = cli.agent.skill_manager.activate_skill(
-                skill_name, "Restored from session"
-            )
-        except Exception:
-            continue
-        if isinstance(outcome, str) and outcome.startswith("Error"):
-            continue
-        restored_skills.append(skill_name)
+    # One restore for every loading path (``/sessions resume`` and both ACP
+    # entry points) — ``restore_agent_skills`` narrows the untrusted on-disk
+    # field and reads the outcome back, because ``activate_skill`` *answers*
+    # with an ``Error: ...`` string rather than raising for a skill disabled
+    # since the save (#266), and discarding that would leave the "Active
+    # skills" line below naming a skill that is not active. It returns the
+    # split this command prints, so ``not_restored`` is not re-derived.
+    restored_skills, not_restored = restore_agent_skills(
+        cli.agent,
+        active_skills,
+        session_id=match.get("session_id") or match["id"],
+        context="/sessions resume",
+    )
 
     cli.current_session_id = match.get("session_id") or str(_uuid_mod.uuid4())
     cli.agent._session_id = cli.current_session_id
@@ -271,7 +271,6 @@ def resume_session(
         )
     if restored_skills:
         console.print(f"[dim]Active skills: {', '.join(restored_skills)}[/dim]")
-    not_restored = [s for s in active_skills if s not in restored_skills]
     if not_restored:
         console.print(
             f"[warning]Not restored: {', '.join(not_restored)} "
