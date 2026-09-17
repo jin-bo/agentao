@@ -686,7 +686,16 @@ class DisplayController:
         if error:
             stats += f" · {_shorten(error, 50)}"
 
-        style = "cyan" if state == "completed" else "red"
+        if state == "completed":
+            style = "cyan"
+        elif state == "cancelled":
+            # The user's own Ctrl+C, not a crash. ``error`` is empty on this
+            # path by design, so without the label the rule would be a bare
+            # line of statistics — and red would report the cancel as a
+            # failure, which is the surface half of #244.
+            style, stats = "dim", f"cancelled · {stats}"
+        else:
+            style = "red"
         self._stop_spinner()
         self._console.rule(f"[bold {style}]◀ [{agent}]  {stats}[/bold {style}]", style=style)
         self._start_spinner("[bold yellow]Thinking…[/bold yellow]")

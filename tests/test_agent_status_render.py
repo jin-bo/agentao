@@ -82,6 +82,31 @@ class TestStatusShowsPartialWork:
         assert "Audited 41 of 60 modules" in out
         assert "Did not finish" not in out
 
+    def test_a_cancelled_run_surfaces_its_result(self, capsys):
+        """The same regression, one status over (#244).
+
+        A run cancelled *while it was running* keeps its result and its
+        counters; this view is the only surface that can hand them back.
+        """
+        cli, tid = _cli_with(dict(
+            status="cancelled", result=PARTIAL,
+            turns=3, tool_calls=5, tokens=2000, duration_ms=4200,
+        ))
+        out = _render(capsys, cli, f"status {tid}")
+
+        assert "Audited 41 of 60 modules" in out, (
+            "the cancelled run's result was discarded on the way to the screen"
+        )
+        assert "cancelled" in out
+        assert "Error:" not in out
+
+    def test_a_cancel_before_it_started_has_nothing_to_show(self, capsys):
+        """No result, no counters — and no empty 'Result so far' heading."""
+        cli, tid = _cli_with(dict(status="cancelled"))
+        out = _render(capsys, cli, f"status {tid}")
+        assert "cancelled" in out
+        assert "Result so far" not in out
+
     def test_incomplete_with_no_result_still_reports_the_reason(self, capsys):
         """A run that stopped short having produced nothing must not go silent."""
         cli, tid = _cli_with(dict(
