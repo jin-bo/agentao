@@ -9,8 +9,9 @@ When ``None`` (the default), each subsystem is fully disabled:
   notification drain short-circuits.
 - ``sandbox_policy=None`` → ``ToolRunner`` runs shell commands without
   the macOS sandbox-exec wrapper.
-- ``replay_config=None`` → ``Agentao._replay_config`` is the no-op
-  default, no ``<wd>/.agentao/replay.json`` is read.
+- ``replay_config=None`` → no ``ReplayManager`` is attached
+  (``agent.replay_manager is None``), no ``<wd>/.agentao/replay.json``
+  is read.
 
 The factory (:func:`agentao.embedding.build_from_environment`) wires
 all three up from disk so CLI / ACP behavior is preserved.
@@ -26,7 +27,6 @@ from agentao.agent import Agentao
 from agentao.agents.bg_store import BackgroundTaskStore
 from agentao.embedding import build_from_environment
 from agentao.embedding.factory import discover_llm_kwargs
-from agentao.replay import ReplayConfig
 from agentao.sandbox import SandboxPolicy
 
 
@@ -55,9 +55,9 @@ class TestDefaultsAreNone:
         assert agent.sandbox_policy is None
 
     def test_replay_config_default_is_disabled(self, tmp_path):
-        """No disk read; ``ReplayConfig()`` (no-op default) is what's stored."""
+        """No disk read, and no manager: recording is off, not defaulted."""
         agent = _bare(tmp_path)
-        assert isinstance(agent._replay_config, ReplayConfig)
+        assert agent.replay_manager is None
         # No ``<wd>/.agentao/replay.json`` was touched — confirm by
         # asserting the directory wasn't created as a side effect.
         assert not (tmp_path / ".agentao" / "replay.json").exists()

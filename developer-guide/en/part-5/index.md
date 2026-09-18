@@ -20,7 +20,7 @@ This part has two axes: the **capability plane** gives the agent business capabi
 - [**5.3 MCP Server Integration**](./3-mcp) — reuse the community / official tool ecosystem
 - [**5.4 Permission Engine**](./4-permissions) — the first rule-based defense, layered with `confirm_tool`
 - [**5.5 Memory System**](./5-memory) — cross-session persistence and compliance
-- [**5.6 System Prompt Customization**](./6-system-prompt) — the 3 of 11 prompt blocks you actually own
+- [**5.6 System Prompt Customization**](./6-system-prompt) — the 3 of 15 prompt blocks you actually own
 
 **Control plane**
 

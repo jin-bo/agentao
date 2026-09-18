@@ -237,7 +237,6 @@ def test_the_ladder_records_what_the_provider_said(tmp_path, monkeypatch):
     # the request-only volatile tail. This agent's skill manager is a mock,
     # so the real tail builder would try to join mock sections.
     monkeypatch.setattr(agent, "_build_volatile_tail", lambda: "")
-    monkeypatch.setattr(agent, "_emit_session_summary_if_new", lambda *_a, **_k: None)
     monkeypatch.setattr(
         agent.context_manager, "_run_compaction",
         lambda msgs, **kw: CompactionOutcome(

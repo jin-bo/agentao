@@ -29,8 +29,9 @@ Agentao(
     base_url: str | None = None,
     model: str | None = None,
     temperature: float | None = None,
+    max_tokens: int | None = None,
+    *,                                           # 以下全部仅限关键字（0.5.0）
     transport: Transport | None = None,
-    *,
     working_directory: Path,                     # 0.3.0 起必传
     extra_body: dict | None = None,              # 仅关键字；LLM .create() 请求体直通
     extra_mcp_servers: dict[str, dict] | None = None,
@@ -54,13 +55,10 @@ Agentao(
     replay_config: ReplayConfig | None = None,
     sandbox_policy: SandboxPolicy | None = None,
     bg_store: BackgroundTaskStore | None = None,
-    # 老式回调（已废弃 —— 会发 DeprecationWarning；0.5.0 移除）
-    output_callback: Callable[[str], None] | None = None,
-    confirmation_callback: Callable[[str, str, dict], bool] | None = None,
-    ask_user_callback: Callable[[str], str] | None = None,
-    on_max_iterations_callback: Callable[[int, list], dict] | None = None,
     # ...
 )
+# 8 个 legacy 回调 kwarg（confirmation_callback、step_callback……）已于 0.5.0
+# 移除 —— 传入任何一个都是 TypeError。见下文 build_compat_transport。
 ```
 
 互斥规则（违反时抛 `ValueError`）：
@@ -72,7 +70,7 @@ Agentao(
 
 可选子系统语义（默认 `None`）：
 
-- `replay_config=None` —— 构造时不读 `<wd>/.agentao/replay.json`，内部用 no-op 的 `ReplayConfig()`。
+- `replay_config=None` —— 构造时不读 `<wd>/.agentao/replay.json`，也不挂 `ReplayManager`：在 `start_replay()` / `reload_replay_config()` 创建它之前，`agent.replay_manager` 是 `None`。
 - `sandbox_policy=None` —— `ToolRunner` 跑 shell 时不再走 macOS `sandbox-exec` 包装。
 - `bg_store=None` —— `check_background_agent` / `cancel_background_agent` 不注册，chat loop 后台通知 drain 短路，子 agent 工具定义里 `run_in_background` 字段在 **schema 层被移除**（LLM 看不到、就不会调用一个被禁用的能力）。`/agent bg|dashboard|cancel|delete|logs|result` 这几个 CLI 子命令也会短路，并打印明确的提示。
 
@@ -162,7 +160,7 @@ SdkTransport(
 
 ### `build_compat_transport`
 
-从老式分立回调参数构造 `Transport` 的 helper。位于 `agentao.embedding.compat`，是仍在用 0.2.10 之前回调形态的宿主**有文档保证的迁移面**——显式调用它即可避开构造期的 `DeprecationWarning`。一般也不会直接用——`Agentao(...)` 在你传 `confirmation_callback=` 等参数时会自动调（并在每次构造时发一次 `DeprecationWarning`）。8 个 legacy 回调 kwarg 本身将在 **0.5.0** 从 `Agentao(...)` 签名中移除；`build_compat_transport()` 自身保留。
+从 8 个老式分立回调参数（`confirmation_callback`、`step_callback`、`thinking_callback`、`ask_user_callback`、`output_callback`、`tool_complete_callback`、`llm_text_callback`、`on_max_iterations_callback`）构造 `Transport` 的 helper。位于 `agentao.embedding.compat`，是仍在用 0.2.10 之前回调形态的宿主**有文档保证的迁移面**。自 **0.5.0** 起这些 kwarg 已从 `Agentao(...)` 签名中移除，所以它是继续使用这些回调的唯一途径：`Agentao(transport=build_compat_transport(confirmation_callback=...), ...)`。它本身没有被废弃。
 
 ### `AgentEvent` / `EventType`
 
@@ -538,7 +536,7 @@ load_acp_client_config(project_root: Path | None = None) -> AcpClientConfig
 
 `agentao.host` 是嵌入 Agentao 的 **稳定宿主面 API**。内部运行时类型（`AgentEvent`、`ToolExecutionResult`、`PermissionEngine`）刻意 **不在** 该面内 —— 任何版本都可能改动。只针对 `agentao.host`（加上 `Agentao(...)` 构造器以及上文标注的方法）开发的宿主可在版本升级中保持前向兼容。
 
-> **命名说明。** "Harness" 仍然指 *Agentao 自身嵌入在宿主应用中运行* 这一概念（见 `docs/design/embedded-host-contract.md` 设计语境）；合约包重命名为 `agentao.host` 是为了让 `from agentao.host import HostEvent` 读起来自洽。旧的 `agentao.harness` 导入路径以及旧符号名（`HarnessEvent`、`HarnessReplaySink`、`export_harness_*`）作为弃用别名保留至 0.5.0，首次导入时发一次 `DeprecationWarning`。
+> **命名说明。** "Harness" 仍然指 *Agentao 自身嵌入在宿主应用中运行* 这一概念（见 `docs/design/embedded-host-contract.md` 设计语境）；合约包重命名为 `agentao.host` 是为了让 `from agentao.host import HostEvent` 读起来自洽。旧的 `agentao.harness` 导入路径以及旧符号名（`HarnessEvent`、`HarnessReplaySink`、`export_harness_*`）自 0.4.2 起告警，**已于 0.5.0 移除** —— 把 `harness` / `Harness` 换成 `host` / `Host` 即可。
 
 完整参考：[`docs/reference/host-api.md`](../../../docs/reference/host-api.md) · [`docs/reference/host-api.zh.md`](../../../docs/reference/host-api.zh.md)。设计动机：[`docs/design/embedded-host-contract.md`](../../../docs/design/embedded-host-contract.md)。
 

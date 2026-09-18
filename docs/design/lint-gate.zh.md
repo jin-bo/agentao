@@ -14,7 +14,7 @@
 | `F402` | import 被循环变量遮蔽 —— 潜伏的 `UnboundLocalError` | 全仓 |
 | `F811` | 重复定义未使用的名字 —— 两者之一是死的 | 全仓 |
 | `F821` | 未定义名字 —— 运行时必然 `NameError` | 全仓，**星号导入模块除外** |
-| `F405` | 星号导入模块**内**的未定义名字 —— F821 的盲区 | 那 8 个星号导入模块 |
+| `F405` | 星号导入模块**内**的未定义名字 —— F821 的盲区 | 每个星号导入模块（目前 1 个） |
 | `F401` | 未使用的 import | 除 `agentao/` 外全仓 —— 见下文 |
 
 没了。不管风格、不管格式化、不管 import 排序、不管语法现代化。
@@ -23,25 +23,25 @@
 
 它不是第二个目标，而是**让 F821 真正生效的前提**。pyflakes 会把任何含
 `from x import *` 的模块里的未定义名字全部降级成 `F405`（"可能未定义，或来自星号
-导入"）。只选 F821 的话，这条旗舰规则在最不该失效的那批模块里恰好静默失效：
+导入"）。只选 F821 的话，这条旗舰规则在最不该失效的那批模块里恰好静默失效 ——
+兼容 shim，也就是公开的导入路径。
+
+这道门落地时这样的模块有 **8** 个。其中 7 个是 `agentao/harness/*` 别名包，已于
+0.5.0 移除；那次移除正是当初选上这条规则要守的那次改动，它在 `F405` 为 0 的状态下
+完成了。现在剩一个：
 
 ```
-agentao/harness/__init__.py            agentao/harness/projection.py
-agentao/harness/events.py              agentao/harness/replay_projection.py
-agentao/harness/models.py              agentao/harness/schema.py
-agentao/harness/protocols.py           agentao/tool_runner.py
+agentao/tool_runner.py
 ```
 
-`agentao/harness/` 是 `agentao.host` 的**公开**弃用别名，而且这些文件里每一个都
-带有真实的导入后逻辑（`HarnessEvent = _HostEvent`、`__all__ = list(_host_all) +
-[...]`、`__getattr__` / `__dir__`），不只是一行星号导入。
+它是 `agentao.runtime.tool_runner` 的旧导入路径，带有真实的导入后逻辑
+（`__all__ = getattr(...) or [...]`、`__getattr__` / `__dir__`），不只是一行星号
+导入。移除之后重新实测过：星号导入模块里放一个未定义名字，`F821` 仍报
+`All checks passed`，`F405` 才报出来。
 
-实测验证过：星号导入模块里放一个未定义名字，`F821` 报 `All checks passed`，
-`F405` 才报出来。不堵这个洞的话，0.5.0 删除别名时改到这些文件引入的一个拼写错误
-会一路绿灯发布，然后在仍走弃用路径的下游 embedder 那里 `import agentao.harness`
-直接 `NameError`。
-
-`F405` 在全仓实测为 **0**，所以今天加它零成本。
+所以规则保留，只是立足点变小了，理由有二：幸存的这个 shim 仍是 `F821` 单独看不见的
+模块；而下一次改名还会像前两次那样再添一个星号导入 shim。`F405` 在全仓实测为
+**0**，保留它零成本。
 
 ### 范围是 `.`，不是目录清单
 

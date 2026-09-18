@@ -177,7 +177,7 @@ Sandbox: enabled
 ---
 
 ::: info 这一章在体系里的位置
-CLI 的确认 UI 只是 harness `confirmation_callback` 钩子的一种实现。嵌入式宿主可以传自己的回调进 `Agentao(confirmation_callback=...)`，从而把 UI 换成 IDE 弹窗、Web 按钮、CI 审计日志等。模式模型和规则引擎在 CLI 和嵌入两条路径上完全一致。见 [Part 4.5 · 工具确认 UI](/zh/part-4/5-tool-confirmation-ui)。
+CLI 的确认 UI 只是 `Transport.confirm_tool` 方法的一种实现。嵌入式宿主可以传 `Agentao(transport=SdkTransport(confirm_tool=...))`，从而把 UI 换成 IDE 弹窗、Web 按钮、CI 审计日志等。模式模型和规则引擎在 CLI 和嵌入两条路径上完全一致。见 [Part 4.5 · 工具确认 UI](/zh/part-4/5-tool-confirmation-ui)。
 :::
 
 ::: tip 真相源头

@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING, Tuple
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple
 
 from ..capabilities.shell_spec import Deny
 from ..permissions import PermissionDecision, PermissionEngine
@@ -71,15 +71,6 @@ class ToolRunner:
         *,
         host_tool_emitter: Optional["HostToolEmitter"] = None,
         host_permission_emitter: Optional["HostPermissionEmitter"] = None,
-        # ── Deprecated: accepted-but-ignored for backward compatibility ──────
-        # No-ops (never stored or used); kept so an existing host/test caller
-        # that still passes them does not hit a ``TypeError``. Slated for
-        # removal in 0.5.0 with the matching ``Agentao.__init__`` legacy
-        # callbacks, not before.
-        confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
-        step_callback: Optional[Callable[[Optional[str], Dict[str, Any]], None]] = None,
-        output_callback: Optional[Callable[[str, str], None]] = None,
-        tool_complete_callback: Optional[Callable[[str], None]] = None,
     ):
         self._tools = tools
         self._permission_engine = permission_engine

@@ -24,6 +24,10 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from ..replay.observability import (
+    emit_context_compressed,
+    emit_session_summary_if_new,
+)
 from .types import (
     CompactionDecision,
     CompactionDecisionContext,
@@ -235,8 +239,8 @@ class CompactionCoordinator:
             # ``_last_session_summary_id`` is created lazily at the start of a
             # turn (``runtime/turn.py``); a manual ``/compact`` may run before
             # that — e.g. right after ``/sessions resume`` — so fall back.
-            agent._last_session_summary_id = agent._emit_session_summary_if_new(
-                getattr(agent, "_last_session_summary_id", None),
+            agent._last_session_summary_id = emit_session_summary_if_new(
+                agent, getattr(agent, "_last_session_summary_id", None),
             )
 
         self._info(
@@ -716,7 +720,8 @@ class CompactionCoordinator:
         if outcome.status != "success":
             return
 
-        agent._emit_context_compressed(
+        emit_context_compressed(
+            agent,
             compression_type=request.kind,
             reason=request.reason,
             pre_msgs=pre_msgs,

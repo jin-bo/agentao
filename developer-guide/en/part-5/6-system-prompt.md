@@ -1,7 +1,7 @@
 # 5.6 System Prompt Customization
 
 > **What you'll learn**
-> - The 16 blocks the agent's instructions are composed from, and which of the
+> - The 15 blocks the agent's instructions are composed from, and which of the
 >   two messages each one rides
 > - Which 3 you actually own (AGENTAO.md, skills, custom Tool descriptions)
 > - Which ones are runtime-injected and not safe to override
@@ -26,10 +26,9 @@ request and never written into the transcript.
 │  6. Completion standard                      │  ← fixed
 │  7. Untrusted-input boundary                 │  ← fixed
 │  8. Operational guidelines                   │  ← fixed
-│  9. Reasoning directive (if thinking)        │  ← conditional
-│ 10. Available sub-agents                     │  ← fixed list
-│ 11. Available skills catalog                 │  ← changes with the enabled set
-│ 12. <memory-stable> stable memories          │  ← slow-changing
+│  9. Available sub-agents                     │  ← fixed list
+│ 10. Available skills catalog                 │  ← changes with the enabled set
+│ 11. <memory-stable> stable memories          │  ← slow-changing
 │     === the cacheable prefix ends here ===   │
 └──────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────┐
@@ -43,10 +42,10 @@ request and never written into the transcript.
 ┌──────────────────────────────────────────────┐
 │ Volatile tail — one user message, request-only│
 │   <system-reminder>                          │
-│ 13. Active skills full text                  │  ← changes on activation
-│ 14. Current todos                            │  ← dynamic, per request
-│ 15. <memory-context> dynamic recall          │  ← per turn
-│ 16. Plan-mode prompt (conditional)           │  ← conditional
+│ 12. Active skills full text                  │  ← changes on activation
+│ 13. Current todos                            │  ← dynamic, per request
+│ 14. <memory-context> dynamic recall          │  ← per turn
+│ 15. Plan-mode prompt (conditional)           │  ← conditional
 │   </system-reminder>                         │
 └──────────────────────────────────────────────┘
 ```
@@ -57,7 +56,14 @@ replay record or compaction. Do not copy the date/time reminder's pattern for
 new volatile content: that one *is* persisted, and a persisted tail would pile
 one todos snapshot into the transcript per turn.
 
-Blocks 13–16 left the system message in 0.4.26 (stage 0a of
+Until 0.5.0 there was a sixteenth block: a "Reasoning Requirement" section
+between the operational guidelines and the sub-agent list, rendered only when
+the `thinking_callback=` constructor kwarg was set. Nothing else switched it
+on, so a host on `transport=` — agentao's own CLI included — never had it, and
+it was retired with the kwarg. Its text is in
+`docs/migration/0.4.x-to-0.5.0.md` §7 if you want it in your `AGENTAO.md`.
+
+Blocks 12–15 left the system message in 0.4.26 (stage 0a of
 `docs/design/llm-api-adapters.md` §2.3). They were the reason the "stable"
 prefix was not actually stable: `<memory-context>` is query-specific, so it
 changed every turn, and since `messages[0]` is the head of the provider's
@@ -66,15 +72,15 @@ turn. One side effect worth knowing: because the tail is rebuilt per *request*
 rather than per turn, a `todo_write` the model makes in one tool iteration is
 visible to the next one.
 
-**The skills catalog (block 11) went with them in 0.4.26 and came back in
+**The skills catalog (block 10) went with them in 0.4.26 and came back in
 0.4.27.** It lists every enabled skill, *including* the active ones, so
 activating a skill leaves the system message byte-identical; what activation
-changes is block 13, in the tail, which is also how the model learns which
+changes is block 12, in the tail, which is also how the model learns which
 catalog entries are already active. The catalog changes only when the enabled
 set does — enable, disable, install, reload — and those already rewrite the
 `activate_skill` tool's `skill_name` enum, so the prefix was being rebuilt on
 those events anyway. It sits ahead of `<memory-stable>` because it changes less
-often: a `save_memory` rebuilds from block 12 on, and the catalog stays cached
+often: a `save_memory` rebuilds from block 11 on, and the catalog stays cached
 — on a token-prefix cache. With the explicit breakpoints below the system
 message is one cached block, and a `save_memory` re-writes all of it.
 
@@ -167,7 +173,7 @@ prompt caches can reuse it — and, more importantly, reuse the history behind i
 
 ### What goes in the stable prefix
 
-The whole system message (blocks 1–12), and then the conversation history
+The whole system message (blocks 1–11), and then the conversation history
 itself. The prefix a provider can reuse ends at the last message that has not
 changed since the previous request.
 
@@ -175,8 +181,8 @@ changed since the previous request.
 
 - Mutating `AGENTAO.md` between turns — it is block 1, so this invalidates
   everything.
-- A `save_memory` that lands in `<memory-stable>` (block 12).
-- Enabling, disabling, installing or reloading a skill (block 11, and the
+- A `save_memory` that lands in `<memory-stable>` (block 11).
+- Enabling, disabling, installing or reloading a skill (block 10, and the
   `activate_skill` enum in the tools block with it). **Activating** one does
   not.
 - A model or endpoint switch (agentao drops its own token anchor there too).
@@ -301,7 +307,7 @@ AGENTAO.md is a project file — it may land in git, in memory, or in logs. **Ne
 ## TL;DR
 
 - The instructions are **rebuilt every turn** — never assume they're a static string you can cache.
-- They arrive in **two messages**: a stable system message (blocks 1–12) and a request-only volatile tail (blocks 13–16, one `user` message that never enters the transcript).
+- They arrive in **two messages**: a stable system message (blocks 1–11) and a request-only volatile tail (blocks 12–15, one `user` message that never enters the transcript).
 - You own 3 blocks: **`AGENTAO.md`** (project hard rules), **skill bodies** (activated knowledge), **custom Tool descriptions** (when/how to call).
 - The rest — date, working directory, available tools/skills catalog, memory recall, todos, etc. — are runtime-injected and should not be overridden.
 - Keep `AGENTAO.md` short and absolute ("never run X", "always use Y format") — long preambles dilute attention.

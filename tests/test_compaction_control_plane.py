@@ -60,10 +60,7 @@ def _agent(cm, messages, *, rules=None, controller=None, cwd=None):
         _last_session_summary_id=None,
         _turn_finish_reason_missing=False,
         _build_system_prompt=lambda: "sys",
-        _emit_session_summary_if_new=lambda _prev: None,
-        _emit_context_compressed=lambda **kw: events.append(
-            SimpleNamespace(type="context_compressed", data=kw)
-        ),
+        memory_manager=None,
         active_permissions=lambda: SimpleNamespace(mode="workspace-write"),
     )
     agent.compaction_coordinator = CompactionCoordinator(agent)

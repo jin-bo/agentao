@@ -163,8 +163,7 @@ class SystemPromptBuilder:
         Order: project_instructions (optional) → stable prefix
         (identity, reliability, task_classification, execution_protocol,
         completion_standard, untrusted_input, operational_guidelines,
-        reasoning_requirement?, available_agents?, available_skills?,
-        stable_memory?).
+        available_agents?, available_skills?, stable_memory?).
 
         Every section here is stable across the turns of one session; the
         volatile ones live in :meth:`_build_volatile_sections`.
@@ -197,9 +196,6 @@ class SystemPromptBuilder:
             plan_mode=agent._plan_mode,
             dialect=_prompt_dialect(agent),
         )
-
-        if agent._has_thinking_handler:
-            sections["reasoning_requirement"] = self._reasoning_requirement_block()
 
         # Available agents (suppressed in plan mode — delegation contradicts
         # research-only intent).
@@ -335,20 +331,6 @@ class SystemPromptBuilder:
     # ------------------------------------------------------------------
     # Sub-blocks (kept private; assembly-only, no business logic)
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _reasoning_requirement_block() -> str:
-        return (
-            "\n\n=== Reasoning Requirement ===\n"
-            "Before any tool call that modifies state, runs a shell command, "
-            "or is part of a multi-step investigation, write 2-3 sentences:\n"
-            "- Action: What tool you are calling and with what input.\n"
-            "- Expectation: What you expect to find or what the result should confirm.\n"
-            "- If wrong: What you will do if the result contradicts your expectation.\n"
-            "Skip this preamble for trivial read-only lookups "
-            "(single read_file, list_directory, glob). "
-            "Be specific and falsifiable when you do write it."
-        )
 
     def _available_agents_block(self) -> str:
         agent_descriptions = self._agent.agent_manager.list_agents()

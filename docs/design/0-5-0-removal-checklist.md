@@ -1,8 +1,9 @@
 # 0.5.0 back-compat removal checklist
 
-**Status:** **review draft — not authorized.** No code has been removed. Inventory
-measured against `main@2f51570` on 2026-09-18; every row below was read in the tree,
-not recalled from the deprecation notes.
+**Status:** **implemented 2026-09-18** (PR #292), authorized the same day; unreleased, targeting
+0.5.0. Inventory measured against `main@2f51570` on 2026-09-18; every row below was
+read in the tree, not recalled from the deprecation notes. What implementing it found
+that three review rounds had not is at the end — see *Implementation record*.
 
 **Two sequencing rules, both load-bearing.**
 
@@ -71,17 +72,17 @@ migration note; **nine** functions in `embedding/sessions.py` take
 | `:521` | `delete_session` | no |
 | `:554` | `delete_all_sessions` | no |
 
-- [ ] delete `agentao/session.py` (**105 lines**)
-- [ ] **delete the fallback in `_session_dir`'s body**, not just its parameter default:
+- [x] delete `agentao/session.py` (**105 lines**)
+- [x] **delete the fallback in `_session_dir`'s body**, not just its parameter default:
       `:54` is `root = project_root if project_root is not None else Path.cwd()`. Dropping
       the default alone leaves that `else` branch reachable, so an explicit
       `project_root=None` still resolves to cwd. Make the parameter required **and** let
       `None` fail — tightening only the public signatures moves the failure inward instead
       of removing it
-- [ ] make `project_root` required on all seven public entry points above, not just the
+- [x] make `project_root` required on all seven public entry points above, not just the
       two that documented it
-- [ ] audit every in-tree caller of those seven for one relying on the default
-- [ ] test both omitting the argument **and** passing `project_root=None` explicitly —
+- [x] audit every in-tree caller of those seven for one relying on the default
+- [x] test both omitting the argument **and** passing `project_root=None` explicitly —
       the current signature accepts the latter and silently means cwd
 
 **This is the only row that changes behaviour for a caller who is not using a
@@ -102,7 +103,7 @@ Five separate regions in `agentao/agent.py`, not one:
 
 Coupled, in the same batch (`runtime/tool_runner.py:74-82` says "not before"):
 
-- [ ] `runtime/tool_runner.py:74-82` — four **accepted-but-ignored** kwargs
+- [x] `runtime/tool_runner.py:74-82` — four **accepted-but-ignored** kwargs
       (`confirmation_callback`, `step_callback`, `output_callback`,
       `tool_complete_callback`), never stored, kept so an existing caller does not hit
       `TypeError`
@@ -117,12 +118,12 @@ raise `TypeError: unexpected keyword argument` — foreground and background ali
 gone. This is in-tree first-party code, so it is a prerequisite, not a downstream
 migration:
 
-- [ ] fold the foreground callbacks into the transport the factory already builds —
+- [x] fold the foreground callbacks into the transport the factory already builds —
       `build_compat_transport(...)` at `:942` where `transport = None` today
-- [ ] leave the background branch's `SdkTransport(confirm_tool=lambda *_: False)`
+- [x] leave the background branch's `SdkTransport(confirm_tool=lambda *_: False)`
       (`:946`) exactly as it is — that refusal is the documented background posture
-- [ ] pass `transport=` only, with no callback kwargs
-- [ ] acceptance: a foreground and a background sub-agent both spawn, emit their
+- [x] pass `transport=` only, with no callback kwargs
+- [x] acceptance: a foreground and a background sub-agent both spawn, emit their
       lifecycle events, and keep their confirmation behaviour (background still refuses)
 
 **A deprecated kwarg drives a prompt section, and nothing else sets it.**
@@ -132,11 +133,11 @@ section on it. Deleting C1–C5 silently drops that section for every host —
 `build_compat_transport()` does **not** preserve it, because it produces a transport and
 never touches this flag. Decide the destination before deleting:
 
-- [ ] either derive it from the transport (does the live transport handle reasoning
+- *not taken:* either derive it from the transport (does the live transport handle reasoning
       output?) or from an explicit constructor argument
-- [ ] or state plainly that the conditional section is retired and the block becomes
+- [x] or state plainly that the conditional section is retired and the block becomes
       unconditional / removed
-- [ ] a before/after prompt test either way — the section's presence is observable and
+- [x] a before/after prompt test either way — the section's presence is observable and
       currently depends on a kwarg that is going away
 
 **Keep `agentao/embedding/compat.py`.** Its own docstring calls it the "public
@@ -159,10 +160,10 @@ them — **and that is still true**:
 | `cli/replay_commands.py` | `:220` | `cli.agent._replay_config` |
 | `cli/replay_commands.py` | `:240` | `getattr(cli.agent, "_replay_recorder", None)` |
 
-- [ ] migrate those three call sites to `agent.replay_manager.config` / `.recorder`
+- [x] migrate those three call sites to `agent.replay_manager.config` / `.recorder`
       (with the no-manager case handled explicitly — the property's current fallback is
       what the CLI is relying on)
-- [ ] then delete the four properties and the banner comment at `:1066-1070`
+- [x] then delete the four properties and the banner comment at `:1066-1070`
 
 **Do not widen this row.** The comment at `agent.py:1047-1058` is explicit that the
 *public* replay methods (`start_replay` / `end_replay` / `reload_replay_config`) are
@@ -189,12 +190,12 @@ Deleting the methods first makes every **successful** compaction raise `Attribut
 in its settle path — the failure would not appear until a session was long enough to
 compact.
 
-- [ ] migrate `coordinator.py:238` and `:719` to call
+- [x] migrate `coordinator.py:238` and `:719` to call
       `agentao.replay.observability` directly (the same way `runtime/chat_loop` already
       imports it)
-- [ ] then migrate the tests that patch these on the agent
-- [ ] then delete the three delegations and correct the banner
-- [ ] a test that a **successful full compaction that produced a new summary** still
+- [x] then migrate the tests that patch these on the agent
+- [x] then delete the three delegations and correct the banner
+- [x] a test that a **successful full compaction that produced a new summary** still
       emits both events after the migration. Scope it that way: `_emit_session_summary_if_new`
       is conditional by name, so a microcompaction or a run with no new summary must not
       be asserted to emit `SESSION_SUMMARY_WRITTEN`
@@ -249,11 +250,11 @@ real thing to test there is the factory migration in §C, not these two lines.
 
 Add:
 
-- [ ] `import agentao.harness` raises `ModuleNotFoundError`
-- [ ] `import agentao.session` raises `ModuleNotFoundError`
-- [ ] each `embedding/sessions.py` entry point without `project_root` raises `TypeError`,
+- [x] `import agentao.harness` raises `ModuleNotFoundError`
+- [x] `import agentao.session` raises `ModuleNotFoundError`
+- [x] each `embedding/sessions.py` entry point without `project_root` raises `TypeError`,
       and passing `project_root=None` explicitly does too (§B)
-- [ ] `build_compat_transport()` still accepts all eight names after the constructor
+- [x] `build_compat_transport()` still accepts all eight names after the constructor
       kwargs are gone
 
 ## H. The lint gate's rationale is built on this package
@@ -262,27 +263,27 @@ Add:
 modules** where `F821` is silently inert, and lists them. Measured today, **7 of the 8
 are `agentao/harness/*`**; after §A the only one left is `agentao/tool_runner.py`.
 
-- [ ] rewrite "Why `F405` is in the list" around the surviving module, or state
+- [x] rewrite "Why `F405` is in the list" around the surviving module, or state
       plainly that the rule is kept for the next star-import shim
-- [ ] update the module list in both `lint-gate.md` and `lint-gate.zh.md` (the zh twin
+- [x] update the module list in both `lint-gate.md` and `lint-gate.zh.md` (the zh twin
       carries the same list at `:29-32`)
-- [ ] re-check the `F401` exemption rationale, which names `agentao.harness` as its
+- [x] re-check the `F401` exemption rationale, which names `agentao.harness` as its
       canonical example
 
 The gate itself should stay selected; only its stated evidence changes.
 
 ## I. Live docs — 10 files. The other 22 are records.
 
-- [ ] `CLAUDE.md` — the `agentao/harness/` subpackage-map row, the
+- [x] `CLAUDE.md` — the `agentao/harness/` subpackage-map row, the
       `agentao.harness → agentao.host` gotcha, the "8 legacy callbacks" gotcha
-- [ ] `developer-guide/{en,zh}/part-2/2-constructor-reference.md`
-- [ ] `developer-guide/{en,zh}/part-4/7-host-contract.md`
-- [ ] `developer-guide/{en,zh}/appendix/a-api-reference.md`
-- [ ] `developer-guide/{en,zh}/part-4/3-sdk-transport.md` — documents "mixing transport
+- [x] `developer-guide/{en,zh}/part-2/2-constructor-reference.md`
+- [x] `developer-guide/{en,zh}/part-4/7-host-contract.md`
+- [x] `developer-guide/{en,zh}/appendix/a-api-reference.md`
+- [x] `developer-guide/{en,zh}/part-4/3-sdk-transport.md` — documents "mixing transport
       with legacy callbacks" and, in the zh twin at `:171`, that the eight callbacks are
       "still accepted" and auto-wrapped via `build_compat_transport()`
-- [ ] `docs/guides/embed-for-agents.md`
-- [ ] new `docs/migration/0.4.x-to-0.5.0.md` **and its `.zh.md` twin** — **decided
+- [x] `docs/guides/embed-for-agents.md`
+- [x] new `docs/migration/0.4.x-to-0.5.0.md` **and its `.zh.md` twin** — **decided
       2026-09-18: write both.** The precedent `docs/migration/0.3.x-to-0.4.0.md` is
       en-only, but that is the gap, not the rule: CLAUDE.md requires twins under `docs/`,
       and a migration guide is the one document a reader hits precisely because something
@@ -296,16 +297,16 @@ The gate itself should stay selected; only its stated evidence changes.
 
 ## J. Release mechanics
 
-- [ ] `agentao/__init__.py:10` → `0.5.0.dev0` (single source; `pyproject.toml` has
+- [x] `agentao/__init__.py:10` → `0.5.0.dev0` (single source; `pyproject.toml` has
       `dynamic = ["version"]` + `[tool.hatch.version] path = "agentao/__init__.py"`)
-- [ ] `CHANGELOG.md` `[Unreleased]` → `_Targeting 0.5.0._` with a **Removed** heading
-- [ ] `uv run python -m pytest tests/` and `uv run ruff check .` (required CI check)
-- [ ] `uv build`, then `uv run python -m pytest -m slow` (clean-install smoke; needs a
+- [x] `CHANGELOG.md` `[Unreleased]` → `_Targeting 0.5.0._` with a **Removed** heading
+- [x] `uv run python -m pytest tests/` and `uv run ruff check .` (required CI check)
+- [x] `uv build`, then `uv run python -m pytest -m slow` (clean-install smoke; needs a
       `dist/*.whl`, and it is also a required check)
-- [ ] `agentao/embedding/__init__.py:10-14` — still says the legacy `agentao.session`
+- [x] `agentao/embedding/__init__.py:10-14` — still says the legacy `agentao.session`
       import path "remains as a deprecation shim until 0.5.0"; §B removes that path, so
       the sentence goes with it
-- [ ] final `grep -rn "0\.5\.0" agentao/` returns nothing but the version string
+- [x] final `grep -rn "0\.5\.0" agentao/` returns nothing but the version string
 
 ## Measured context
 
@@ -334,5 +335,71 @@ The gate itself should stay selected; only its stated evidence changes.
   kwargs are not referenced by name anywhere near the spawn path, they are just passed. For
   a constructor-surface removal, grep the constructor's call sites, not only its parameter
   names.
+
+## Implementation record (2026-09-18)
+
+Implemented in one PR, as rule 2 requires, in three commits: the caller
+migrations (§D, §E) first and on their own, then the constructor (§C), then the
+deletions with the version (§A, §B, §J). Line numbers above are as measured at
+`main@2f51570` and are left as written; four PRs landed in between, so they
+were re-grepped before each edit rather than trusted.
+
+**Decisions this inventory left open, and how they were made.**
+
+- **§C — the Reasoning Requirement section is retired**, not re-derived and not
+  made unconditional. The deciding evidence is in git, not in the code:
+  `bcd3909` (2026-04-04) did derive the flag from "a transport is attached",
+  and `af67cbc` narrowed it back to the kwarg **the same day** — "transport
+  presence alone doesn't imply a thinking UI is wired up". Since then no
+  first-party surface (CLI, ACP, `agentao run`) has rendered the section, and
+  neither has a host that followed the migration advice, since
+  `build_compat_transport` never touched the flag. Making it unconditional
+  would have changed the prompt of every host that never had it; a new
+  constructor argument would have been new API in a removal release, for a
+  measured zero consumers. The text is preserved in the migration guide §7.
+- **§B — the signature split.** `project_root` is keyword-only where it follows
+  optional parameters (four functions) and a plain required parameter where it
+  does not (three). One rule would have been simpler to state, but
+  keyword-only everywhere breaks `list_sessions(root)` for a caller who was
+  already doing the right thing. `None` is refused in `_session_dir` with a
+  message that names the parameter.
+
+**What the inventory did not have — the fourth round, found by doing it.**
+
+- **Deleting parameters from the middle of a signature re-binds positional
+  callers silently.** The eight callbacks were interleaved with
+  `max_context_tokens` / `permission_engine` / `transport` / `plan_session`.
+  §C lists five regions to delete and none of them is "the parameters that
+  were *behind* these". Everything after `max_tokens` is keyword-only now.
+  The same shape as the three review rounds — a row that reads as a deletion —
+  but found by a different question again: not "who calls this" or "who
+  constructs this" but **"what moves when this goes"**.
+- `tests/test_llm_client_extra_body.py` pinned `pos[5] ==
+  "confirmation_callback"` — a ninth test file, outside §G's three categories
+  because it names the kwarg as a string, not as a keyword.
+- §E's "tests that patch these on the agent" were eight files, six of them
+  `SimpleNamespace` fakes carrying the old method names. Those now emit through
+  the fake's transport, so the real emitters run; one of them had been
+  asserting the *kwarg* names of `_emit_context_compressed` under a docstring
+  that claimed to pin the wire payload's keys.
+- §D: `acp/models.py` was the one in-tree caller passing `project_root`
+  positionally, and its value can be `None`.
+- §I's ten live docs were not all of them — also `cli/3-permissions-modes`,
+  `part-5/6-system-prompt` (the prompt diagram numbers its blocks),
+  `part-6/7-resource-concurrency`, each with a zh twin, plus
+  `docs/guides/tool-confirmation.md` and the `pyproject.toml` comment that
+  repeats §H's rationale.
+- §H's third item found nothing to change: the `F401` rationale names
+  `HostEvent` and `agentao.host`, not the alias package.
+- The 0.4.5 CHANGELOG also promised "six `Agentao.replay_*` facade methods plus
+  the `replay_config=` constructor kwarg" for 0.5.0. §D's "do not widen this
+  row" already overrides that; the migration guide and the CHANGELOG now say so
+  to a reader who planned around the old note.
+- A source checkout keeps `agentao/harness/__pycache__`, which Python imports
+  as an empty namespace package, so the removal test asserts `ImportError` on
+  a *from*-import rather than `ModuleNotFoundError` on the package.
+- §J's last box, read literally, fails: `grep 0.5.0 agentao/` returns eleven
+  lines besides the version. All are past tense ("removed in 0.5.0"). The box's
+  intent — no promise left standing — holds.
 
 `.zh.md` twin: `docs/design/0-5-0-removal-checklist.zh.md`.

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
 import textwrap
 from pathlib import Path
 
@@ -218,40 +217,3 @@ def test_host_all_matches_documented_set() -> None:
         "agentao.host.__all__ drifted from the documented public surface "
         "in docs/api/host.md. Update both, in the same PR."
     )
-
-
-def test_harness_alias_emits_deprecation_warning_and_re_exports():
-    """``agentao.harness`` is a deprecated re-export alias for ``agentao.host``.
-
-    Locks two things in:
-      1. Importing ``agentao.harness`` raises a ``DeprecationWarning`` that
-         names the new path so downstream embedders know what to migrate to.
-      2. Every public name from ``agentao.host`` is reachable via the alias —
-         the literal find/replace migration documented in CHANGELOG works.
-
-    Removing the alias in 0.5.0 means deleting this test (and the
-    ``agentao/harness/`` shim package) together.
-    """
-    import importlib
-    import warnings
-
-    # Force a fresh import so the warning fires deterministically.
-    for mod in list(sys.modules):
-        if mod == "agentao.harness" or mod.startswith("agentao.harness."):
-            del sys.modules[mod]
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        harness = importlib.import_module("agentao.harness")
-
-    deprecation = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert deprecation, "agentao.harness import must emit a DeprecationWarning"
-    assert "agentao.host" in str(deprecation[0].message), (
-        "DeprecationWarning must name the new module path"
-    )
-
-    from agentao import host
-    for name in host.__all__:
-        assert getattr(harness, name) is getattr(host, name), (
-            f"agentao.harness.{name} must re-export agentao.host.{name}"
-        )

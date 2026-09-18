@@ -355,7 +355,7 @@ def test_start_replay_auto_attaches_host_sink(tmp_path: Path) -> None:
         try:
             replay_path = agent.start_replay(session_id="sess-wired")
             assert replay_path is not None and replay_path.exists()
-            assert agent._host_replay_sink is not None
+            assert agent.replay_manager.host_replay_sink is not None
 
             tool = ToolLifecycleEvent(
                 session_id="sess-wired",
@@ -370,7 +370,7 @@ def test_start_replay_auto_attaches_host_sink(tmp_path: Path) -> None:
 
             # End the replay so the file is flushed and the sink detached.
             agent.end_replay()
-            assert agent._host_replay_sink is None
+            assert agent.replay_manager.host_replay_sink is None
         finally:
             agent.close()
 

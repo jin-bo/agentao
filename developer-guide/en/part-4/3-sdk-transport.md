@@ -3,7 +3,7 @@
 > **What you'll learn**
 > - The four optional callbacks `SdkTransport` exposes and their fallbacks
 > - Idiomatic patterns: dispatcher, fan-out, class-grouped state
-> - Common pitfalls: hangs, exceptions, mixing transport with legacy callbacks
+> - Common pitfalls: hangs, exceptions — and where the 8 legacy callbacks went
 
 `SdkTransport` is Agentao's official **general-purpose Transport implementation** — four callbacks that cover 90% of embeddings.
 
@@ -160,19 +160,29 @@ fanout.subscribe(update_ui_state)
 transport = SdkTransport(on_event=fanout)
 ```
 
-## Legacy 8-callback API
+## The legacy 8-callback API (removed in 0.5.0)
 
-Pre-0.2.10 Agentao used 8 standalone callbacks (`confirmation_callback`, `step_callback`, `thinking_callback`…). **They still work** — internally Agentao auto-wraps them via `build_compat_transport()` into an `SdkTransport`:
+Pre-0.2.10 Agentao used 8 standalone callbacks (`confirmation_callback`, `step_callback`, `thinking_callback`…) as `Agentao(...)` kwargs. **They are no longer parameters** — passing one raises `TypeError`. What auto-wrapped them is still there, and still supported: call `build_compat_transport()` yourself and pass the result as `transport=`.
 
 ```python
-# Old (still works)
+# 0.4.x — a TypeError on 0.5.0
 agent = Agentao(
     confirmation_callback=lambda n, d, a: True,
     llm_text_callback=lambda chunk: print(chunk, end=""),
     step_callback=lambda name, args: print(f"[{name}]"),
 )
 
-# New (preferred)
+# 0.5.0, same callbacks — one line moved
+from agentao.embedding.compat import build_compat_transport
+
+agent = Agentao(transport=build_compat_transport(
+    confirmation_callback=lambda n, d, a: True,
+    llm_text_callback=lambda chunk: print(chunk, end=""),
+    step_callback=lambda name, args: print(f"[{name}]"),
+))
+
+# 0.5.0, preferred — the event stream, which also carries the events
+# the 8 callbacks never saw (TURN_BEGIN / TURN_END / AGENT_* / …)
 def on_event(ev):
     if ev.type == EventType.LLM_TEXT:
         print(ev.data["chunk"], end="")
@@ -185,14 +195,14 @@ agent = Agentao(transport=SdkTransport(
 ))
 ```
 
-See [2.2 Deprecated 8 callbacks](/en/part-2/2-constructor-reference#deprecated-8-callbacks-legacy).
+The callback-by-callback table is in [2.2 Constructor Reference](/en/part-2/2-constructor-reference); the full upgrade guide is [`docs/migration/0.4.x-to-0.5.0.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.4.x-to-0.5.0.md).
 
 ## ⚠️ Common pitfalls
 
 ::: warning Don't ship without these
 - ❌ **Raising inside `on_event`** — `emit` swallows it but downstream side-effects may be half-done
 - ❌ **Hanging forever in `confirm_tool`** — the agent loop hangs along with you
-- ❌ **Mixing `transport=` with legacy callbacks** — legacy ones are silently ignored
+- ❌ **Passing a legacy callback to `Agentao(...)`** — a `TypeError` since 0.5.0; wrap it with `build_compat_transport()`
 
 Each pitfall below has the full fix.
 :::
@@ -219,17 +229,16 @@ def on_event(ev):
 
 If your confirmation dialog bugs out and never returns, the agent **hangs indefinitely**. Always give sync waits a **timeout** (see 4.5).
 
-### ❌ Mixing `transport` with legacy callbacks
+### ❌ Passing a legacy callback to `Agentao(...)`
 
 ```python
-# Both provided — legacy ones are IGNORED
 agent = Agentao(
     transport=my_transport,
-    confirmation_callback=my_callback,  # not called!
+    confirmation_callback=my_callback,  # TypeError since 0.5.0
 )
 ```
 
-Pick one. `transport` wins.
+Through 0.4.x this combination *ignored* the callback, with a `DeprecationWarning`. Now it cannot be written. There is one way in: `transport=`. If the callback is what you have, `build_compat_transport(confirmation_callback=my_callback)` is a transport.
 
 ## Minimal "handle everything" template
 

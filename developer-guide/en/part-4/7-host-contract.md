@@ -12,7 +12,7 @@ If you've read [4.2 AgentEvent](./2-agent-events) and the `:::warning` told you 
 
 You're shipping a multi-tenant SaaS. Every action the agent takes has to produce an audit row: tenant, user, tool name, args, was it approved, did it succeed.
 
-You build it on top of `AgentEvent` (Part 4.2), it works, you ship. Three months later Agentao 0.5.0 lands. `EventType.MEMORY_WRITE` got renamed. Two `data` fields moved. Your audit pipeline silently misses rows for a week before someone notices the ETL count diverging.
+You build it on top of `AgentEvent` (Part 4.2), it works, you ship. Three months later the next Agentao minor lands. `EventType.MEMORY_WRITE` got renamed. Two `data` fields moved. Your audit pipeline silently misses rows for a week before someone notices the ETL count diverging.
 
 This is the **churn problem**. `AgentEvent` is the runtime's internal event bus — it powers the CLI, debug UI, and replay machinery, all of which need rich detail and can absorb churn release-by-release. **A production host can't.**
 
@@ -193,7 +193,7 @@ async def handle_request(tenant_id: str, message: str, db):
 - Same-session ordering is guaranteed by the contract — your audit row order matches event order.
 - `PermissionDecisionEvent` precedes the matching `ToolLifecycleEvent(phase="started")` (same `tool_call_id`) so downstream views can stitch them.
 - Dropping a slow consumer doesn't drop events: backpressure is host-pulled via a bounded queue. Events block the producer rather than silently get dropped.
-- When Agentao 0.5 ships and adds a new internal event variant, your audit pipeline doesn't notice — that event isn't projected to harness, and any new `HostEvent` variant the projection *does* gain only adds optional fields.
+- When a later Agentao release adds a new internal event variant, your audit pipeline doesn't notice — that event isn't projected to harness, and any new `HostEvent` variant the projection *does* gain only adds optional fields.
 
 ## 4.7.6 `agent.active_permissions()` — policy snapshots
 
@@ -275,7 +275,7 @@ Q: I need to react to agent events. Which surface?
 ## TL;DR
 
 - **`agentao.host` is the stable, schema-snapshotted, forward-compatible host surface.** Pin to it for production code.
-- **Three surfaces**: `events()` for streams, `active_permissions()` for policy snapshots, `harness.protocols` for capability injection.
+- **Three surfaces**: `events()` for streams, `active_permissions()` for policy snapshots, `agentao.host.protocols` for capability injection.
 - **`events()` is not a replacement for Transport** — they're complementary. Use Transport for UI streaming, `events()` for audit / observability.
 - **`isinstance`-dispatch on `HostEvent`** to route to the right handler. The three event types are orthogonal lifecycle facts, not a hierarchy.
 - **30 lines + a database** is all it takes to ship a tenant audit pipeline that survives release upgrades.

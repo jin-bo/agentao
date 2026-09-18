@@ -3,7 +3,7 @@
 > **本节你会学到**
 > - `SdkTransport` 的 4 个可选回调及缺省 fallback
 > - 惯用模式：dispatcher、fan-out、用类来组织共享状态
-> - 常见坑：挂死、异常、与 legacy 回调混用
+> - 常见坑：挂死、异常 —— 以及 8 个 legacy 回调去了哪里
 
 `SdkTransport` 是 Agentao 官方提供的**通用 Transport 实现**——四个回调，覆盖 90% 嵌入场景。
 
@@ -166,19 +166,29 @@ fanout.subscribe(update_ui_state)
 transport = SdkTransport(on_event=fanout)
 ```
 
-## 向后兼容的 8 回调 API
+## legacy 8 回调 API（已于 0.5.0 移除）
 
-Agentao 0.2.10 之前用 8 个独立回调（`confirmation_callback`, `step_callback`, `thinking_callback`, …）。这种写法**仍被接受**，但内部会通过 `build_compat_transport()` 自动转成一个 `SdkTransport`：
+Agentao 0.2.10 之前用 8 个独立回调（`confirmation_callback`, `step_callback`, `thinking_callback`, …）作为 `Agentao(...)` 的 kwarg。它们**不再是参数** —— 传入任何一个都会抛 `TypeError`。过去替你自动包装它们的那个函数还在，而且仍受支持：自己调用 `build_compat_transport()`，把结果作为 `transport=` 传进去。
 
 ```python
-# 老代码（仍能跑）
+# 0.4.x —— 在 0.5.0 上是 TypeError
 agent = Agentao(
     confirmation_callback=lambda n, d, a: True,
     llm_text_callback=lambda chunk: print(chunk, end=""),
     step_callback=lambda name, args: print(f"[{name}]"),
 )
 
-# 新代码（推荐）
+# 0.5.0，回调原样保留 —— 只挪了一行
+from agentao.embedding.compat import build_compat_transport
+
+agent = Agentao(transport=build_compat_transport(
+    confirmation_callback=lambda n, d, a: True,
+    llm_text_callback=lambda chunk: print(chunk, end=""),
+    step_callback=lambda name, args: print(f"[{name}]"),
+))
+
+# 0.5.0，推荐 —— 事件流，它还带着 8 个回调从来看不到的事件
+# （TURN_BEGIN / TURN_END / AGENT_* / …）
 def on_event(ev):
     if ev.type == EventType.LLM_TEXT:
         print(ev.data["chunk"], end="")
@@ -191,14 +201,14 @@ agent = Agentao(transport=SdkTransport(
 ))
 ```
 
-参见 [2.2 构造器参数表 · 已废弃的 8 个回调](/zh/part-2/2-constructor-reference#已废弃的-8-个回调legacy)。
+逐个回调的对照表在 [2.2 构造器参数表](/zh/part-2/2-constructor-reference)；完整升级指南见 [`docs/migration/0.4.x-to-0.5.0.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.4.x-to-0.5.0.zh.md)。
 
 ## ⚠️ 常见陷阱
 
 ::: warning 上线前先确认这几条
 - ❌ **在 `on_event` 里抛异常** —— `emit` 会替你吞掉，但下游副作用可能只做了一半
 - ❌ **在 `confirm_tool` 里长时间卡死** —— Agent 循环跟着你一起挂
-- ❌ **同时传 `transport=` 和 legacy 回调** —— legacy 那些会被静默忽略
+- ❌ **把 legacy 回调传给 `Agentao(...)`** —— 自 0.5.0 起是 `TypeError`；用 `build_compat_transport()` 包起来
 
 下面每一条都附完整修法。
 :::
@@ -225,17 +235,16 @@ def on_event(ev):
 
 如果你的确认弹窗 bug 导致永不返回，Agent 会**永远挂在那**。务必给同步等待加**超时**（见 4.5）。
 
-### ❌ 混用 `transport` 和 legacy callbacks
+### ❌ 把 legacy 回调传给 `Agentao(...)`
 
 ```python
-# 都传了——legacy 会被忽略
 agent = Agentao(
     transport=my_transport,
-    confirmation_callback=my_callback,  # 不会被调用！
+    confirmation_callback=my_callback,  # 自 0.5.0 起是 TypeError
 )
 ```
 
-二选一。`transport` 优先级最高。
+在 0.4.x 期间，这种组合会*忽略*回调，并发一次 `DeprecationWarning`。现在根本写不出来了。入口只有一个：`transport=`。如果你手里只有回调，`build_compat_transport(confirmation_callback=my_callback)` 就是一个 transport。
 
 ## 最小 "什么都处理" 模板
 

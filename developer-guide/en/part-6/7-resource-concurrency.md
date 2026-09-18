@@ -43,7 +43,7 @@ Exceeding triggers **context compression** — the LLM summarizes old messages. 
 reply = agent.chat(msg, max_iterations=50)   # default 100
 ```
 
-Pair with `on_max_iterations_callback` ([4.6](/en/part-4/6-max-iterations)) for bailout.
+Pair with `SdkTransport(on_max_iterations=...)` ([4.6](/en/part-4/6-max-iterations)) for bailout.
 
 Agentao also tracks repeated tool-call failures inside a turn. Identical repeated tool calls trip doom-loop protection, and repeated unparseable argument payloads for the same tool are answered with a `role:tool` halt message so the next LLM request remains protocol-valid instead of spinning forever.
 

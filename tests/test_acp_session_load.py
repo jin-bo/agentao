@@ -9,7 +9,7 @@ Three layers:
    detection, session-not-found behavior, end-to-end factory wiring.
 3. **End-to-end** ``session/load`` then ``session/prompt`` — drive the
    real :class:`AcpServer.run` loop, persist a fixture session via the
-   real :func:`agentao.session.save_session`, load it through the wire,
+   real :func:`agentao.embedding.sessions.save_session`, load it through the wire,
    and confirm a follow-up prompt continues the same conversation.
 
 Test doubles and server builders live in :mod:`tests.support.acp_agents`

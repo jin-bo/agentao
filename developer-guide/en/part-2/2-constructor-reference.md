@@ -184,11 +184,11 @@ agent = Agentao(
 `extra_headers` and a `settings.json` file layer are intentionally deferred; see `docs/design/host-llm-extra-params.md`.
 :::
 
-::: details Legacy 8 callbacks (still accepted, deprecated — removed in 0.5.0)
-Pre-0.2.10 API. Internally wrapped via `build_compat_transport()` into an `SdkTransport`. **Passing any of these now emits a single `DeprecationWarning`**; the constructor signature itself will be removed in **0.5.0**. New code should go straight through `Transport`.
+::: details The 8 legacy callbacks (removed in 0.5.0)
+Pre-0.2.10 API. They warned through 0.4.x and are **no longer parameters**: passing one raises `TypeError`. Either go through `Transport`, or keep the callbacks and wrap them — `agentao.embedding.compat.build_compat_transport(...)` takes the same eight names and is not deprecated: `Agentao(transport=build_compat_transport(confirmation_callback=...), ...)`.
 
-| Legacy param | Replacement |
-|--------------|-------------|
+| Removed param | Replacement |
+|---------------|-------------|
 | `confirmation_callback` | `SdkTransport(confirm_tool=...)` |
 | `step_callback` | `on_event=` + `TOOL_START` / `TURN_START` |
 | `thinking_callback` | `on_event=` + `THINKING` |
@@ -198,7 +198,7 @@ Pre-0.2.10 API. Internally wrapped via `build_compat_transport()` into an `SdkTr
 | `llm_text_callback` | `on_event=` + `LLM_TEXT` |
 | `on_max_iterations_callback` | `SdkTransport(on_max_iterations=...)` |
 
-⚠️ Mixing `transport=` with legacy callbacks **ignores** the legacy ones and now also emits a `DeprecationWarning` so the dead kwargs surface in test runs. Pick one path.
+⚠️ **Only the first five parameters are positional** (`api_key`, `base_url`, `model`, `temperature`, `max_tokens`). The callbacks used to sit between `max_context_tokens`, `permission_engine`, `transport` and `plan_session`, so those four are keyword-only now — a call still passing a callback sixth is a `TypeError`, not a silent re-binding. Full guide: [`docs/migration/0.4.x-to-0.5.0.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.4.x-to-0.5.0.md).
 :::
 
 ---
@@ -301,8 +301,8 @@ agent = build_from_environment(
 ---
 
 ::: info Version note
-- **0.5.0 (planned)** — The 8 legacy callback kwargs (`confirmation_callback`, `step_callback`, `thinking_callback`, `ask_user_callback`, `output_callback`, `tool_complete_callback`, `llm_text_callback`, `on_max_iterations_callback`) will be **removed** from the `Agentao(...)` signature. Migrate to `transport=SdkTransport(...)` before then.
-- **0.4.x** — The 8 legacy callbacks now emit a single `DeprecationWarning` per construction. `agentao.embedding.compat` is the documented migration surface.
+- **0.5.0** — The 8 legacy callback kwargs (`confirmation_callback`, `step_callback`, `thinking_callback`, `ask_user_callback`, `output_callback`, `tool_complete_callback`, `llm_text_callback`, `on_max_iterations_callback`) were **removed** from the `Agentao(...)` signature, and every parameter after `max_tokens` became keyword-only. Use `transport=SdkTransport(...)`, or wrap the old callbacks with `agentao.embedding.compat.build_compat_transport(...)`.
+- **0.4.x** — The 8 legacy callbacks emitted a single `DeprecationWarning` per construction (from 0.4.5).
 - **0.3.4** — Capability protocols (`FileSystem`, `ShellExecutor`) re-exported on `agentao.host.protocols`. Always import from there, not internal `agentao.capabilities.*`.
 - **0.3.0** — `working_directory=` became a required keyword (calls without it raise `TypeError`). `mcp_registry=` introduced as a stable config-source surface; default `FileBackedMCPRegistry` matches the pre-#17 disk read.
 - **0.2.16** — Explicit-injection surface added (`memory_manager`, `skill_manager`, `mcp_manager`, `filesystem`, `shell`, …); `replay_config`, `sandbox_policy`, `bg_store` defaulted to `None`.

@@ -49,13 +49,8 @@ def _make_agent(cm, messages):
         _last_session_summary_id=None,
         _turn_finish_reason_missing=False,
         _build_system_prompt=lambda: "sys",
-        _emit_session_summary_if_new=lambda _prev: "summary-id",
+        memory_manager=None,
     )
-
-    def _emit_context_compressed(**kw):
-        events.append(SimpleNamespace(type="context_compressed", data=kw))
-
-    agent._emit_context_compressed = _emit_context_compressed
     agent.compaction_coordinator = CompactionCoordinator(agent)
     return agent, events
 
@@ -224,16 +219,64 @@ def test_context_compressed_payload_keys_and_unit_are_unchanged():
 
     old = [e for e in events if _kinds([e])[0] == "context_compressed"][0].data
     assert set(old) == {
-        "compression_type", "reason", "pre_msgs", "post_msgs",
-        "pre_tokens", "post_tokens", "duration_ms",
+        "type", "reason", "pre_msgs", "post_msgs",
+        "pre_est_tokens", "post_est_tokens", "duration_ms",
     }
     # System-inclusive: measured over ``[system] + messages``, so strictly
     # larger than the outcome's history-only 111 / 22.
-    assert old["pre_tokens"] > 111
-    assert old["post_tokens"] != 22
+    assert old["pre_est_tokens"] > 111
+    assert old["post_est_tokens"] != 22
     new = _settled(events)[0].data
     assert new["pre_tokens_history"] == 111
     assert new["post_tokens_history"] == 22
+
+
+def test_a_full_compaction_that_wrote_a_summary_emits_both_events(tmp_path):
+    """The coordinator reaches the observability module directly.
+
+    Until 0.5.0 it went through two delegations on ``Agentao`` whose banner
+    said they existed for tests. Nothing here is faked below the summarizer:
+    a real ``MemoryManager`` on a real file, a real ``commit_compaction``
+    writing the summary row, and the two real emitters — so a coordinator
+    that lost its way to either event fails this, which a ``SimpleNamespace``
+    carrying the old method names never could.
+
+    Scoped to a *full* compaction that produced a new summary on purpose:
+    ``SESSION_SUMMARY_WRITTEN`` is conditional by name.
+    """
+    from agentao.memory.manager import MemoryManager
+    from agentao.memory.storage import SQLiteMemoryStore
+
+    mem = MemoryManager(
+        SQLiteMemoryStore.open(tmp_path / ".agentao" / "memory.db"),
+    )
+    cm = _make_cm(memory_manager=mem)
+    cm._summarize_formatted = lambda _formatted: "a summary"
+    agent, events = _make_agent(cm, _history())
+    agent.memory_manager = mem
+    agent._session_id = "sess-1"
+
+    run = agent.compaction_coordinator.run(
+        CompactionRequest("auto", "full", "compression_threshold"),
+        system_prompt="sys",
+    )
+
+    assert run.outcome.status == "success"
+    kinds = _kinds(events)
+    assert "context_compressed" in kinds
+    assert kinds.count("session_summary_written") == 1
+    written = [e for e in events if _kinds([e])[0] == "session_summary_written"][0]
+    assert written.data["session_id"] == "sess-1"
+    assert written.data["summary_size"] == len("a summary")
+    assert agent._last_session_summary_id == written.data["summary_id"]
+
+    # The same id again is not news: nothing new was written.
+    before = len(events)
+    from agentao.replay.observability import emit_session_summary_if_new
+    assert emit_session_summary_if_new(
+        agent, agent._last_session_summary_id,
+    ) == agent._last_session_summary_id
+    assert len(events) == before
 
 
 def test_overflow_rungs_carry_no_tokens_on_the_old_event():
@@ -258,8 +301,8 @@ def test_overflow_rungs_carry_no_tokens_on_the_old_event():
     )
 
     old = [e for e in events if _kinds([e])[0] == "context_compressed"][0].data
-    assert old["pre_tokens"] is None
-    assert old["post_tokens"] is None
+    assert old["pre_est_tokens"] is None
+    assert old["post_est_tokens"] is None
 
 
 def test_minimal_history_goes_through_context_manager():

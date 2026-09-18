@@ -13,8 +13,7 @@ Architectural choices
   already handles UUID prefix lookup, timestamp prefix fallback,
   latest-wins ordering, and error reporting via
   :class:`FileNotFoundError`. This is the same code path the CLI
-  ``/load`` command uses (the legacy ``agentao.session`` shim
-  delegates here).
+  ``/load`` command uses.
 
 - **Replays through :meth:`ACPTransport.replay_history`** so the
   mapping from persisted OpenAI-format messages to ACP update events

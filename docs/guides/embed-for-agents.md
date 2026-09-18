@@ -204,8 +204,15 @@ from agentao.host.protocols import (            # capability injection
 
 ⚠️ **Rename trail (don't use the old names):**
 
-- `agentao.harness` → **`agentao.host`** (deprecated alias since 0.4.2,
-  removed in 0.5.0). Import from `agentao.host`.
+- `agentao.harness` → **`agentao.host`**. The alias warned from 0.4.2 and
+  was **removed in 0.5.0** — `import agentao.harness` fails. Import from
+  `agentao.host`.
+- `Agentao(confirmation_callback=..., step_callback=..., …)` — the eight
+  legacy callback kwargs were **removed in 0.5.0** (`TypeError`). Pass
+  `transport=`; and pass everything after `max_tokens` by keyword, since
+  only the first five parameters are positional.
+- `agentao.session` → **`agentao.embedding.sessions`**, removed in 0.5.0.
+  `project_root` is required there — `None` no longer means the cwd.
 - `allow_all_tools` flag is **gone**. Use permission modes / the
   permission engine instead (see §5).
 

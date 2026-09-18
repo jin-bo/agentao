@@ -13,6 +13,16 @@ from unittest.mock import Mock
 from agentao.cli.commands import handle_compact_command
 from agentao.compaction.coordinator import CompactionCoordinator
 from agentao.compaction.types import CompactionOutcome
+from agentao.transport import EventType
+
+
+def _context_compressed(agent):
+    """The ``CONTEXT_COMPRESSED`` payloads that reached the transport."""
+    return [
+        call.args[0].data
+        for call in agent.transport.emit.call_args_list
+        if call.args[0].type == EventType.CONTEXT_COMPRESSED
+    ]
 
 
 def _outcome(status, messages, **kw):
@@ -48,8 +58,7 @@ def _cli_with_messages(messages: list[dict], outcome: CompactionOutcome | None =
         _plugin_hook_rules=[],
         _last_session_summary_id=None,
         _build_system_prompt=Mock(return_value="system"),
-        _emit_context_compressed=Mock(),
-        _emit_session_summary_if_new=Mock(return_value="summary-id"),
+        memory_manager=None,
     )
     agent.compaction_coordinator = CompactionCoordinator(agent)
     cli = SimpleNamespace(agent=agent, _cached_ctx_pct=0.0)
@@ -75,12 +84,11 @@ def test_compact_command_updates_history_and_emits_event():
     assert call.args[0] == messages
     assert call.kwargs["is_auto"] is False
     assert call.kwargs["reason"] == "manual_cli"
-    agent._emit_context_compressed.assert_called_once()
-    kwargs = agent._emit_context_compressed.call_args.kwargs
-    assert kwargs["compression_type"] == "full"
-    assert kwargs["reason"] == "manual_cli"
-    assert kwargs["pre_msgs"] == 10
-    assert kwargs["post_msgs"] == 3
+    (payload,) = _context_compressed(agent)
+    assert payload["type"] == "full"
+    assert payload["reason"] == "manual_cli"
+    assert payload["pre_msgs"] == 10
+    assert payload["post_msgs"] == 3
     assert cli._cached_ctx_pct == 12.5
 
 
@@ -99,7 +107,7 @@ def test_compact_command_keeps_history_when_the_outcome_is_not_success():
         handle_compact_command(cli, "")
 
         assert agent.messages == messages, status
-        agent._emit_context_compressed.assert_not_called()
+        assert _context_compressed(agent) == []
 
 
 def test_compact_command_skips_short_history():
@@ -109,7 +117,7 @@ def test_compact_command_skips_short_history():
     handle_compact_command(cli, "")
 
     cm._run_compaction.assert_not_called()
-    agent._emit_context_compressed.assert_not_called()
+    assert _context_compressed(agent) == []
 
 
 def test_compact_runs_as_a_probe_through_an_open_breaker(monkeypatch):

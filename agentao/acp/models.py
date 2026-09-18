@@ -337,6 +337,8 @@ class AcpSessionState:
             from agentao.embedding.sessions import persist_agent_session
 
             project_root = self.cwd or getattr(agent, "working_directory", None)
-            persist_agent_session(agent, self.session_id, project_root)
+            persist_agent_session(
+                agent, self.session_id, project_root=project_root,
+            )
         except Exception:
             logger.exception("acp: error saving session %s on close", self.session_id)

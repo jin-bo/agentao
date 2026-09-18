@@ -1,5 +1,11 @@
 # Tool Confirmation Feature
 
+> **0.5.0 注：** 本文记录的是该功能最初落地时的改动。文中的 `confirmation_callback`
+> 构造参数已于 0.5.0 移除；确认现在经由 `Transport.confirm_tool` ——
+> `Agentao(transport=SdkTransport(confirm_tool=...))`，或用
+> `agentao.embedding.compat.build_compat_transport(confirmation_callback=...)` 包住旧回调。
+> 见 `docs/migration/0.4.x-to-0.5.0.zh.md` §3。
+
 ## 概述
 
 为 Agentao 添加了工具确认功能，在执行 Shell 和 Web 工具前需要用户明确确认，提高安全性。
