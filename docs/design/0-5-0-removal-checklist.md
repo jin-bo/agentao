@@ -6,7 +6,7 @@ not recalled from the deprecation notes.
 
 **Two sequencing rules, both load-bearing.**
 
-1. **0.4.26 ships first.** It already carries a user-facing fix (#283 — a 429 for
+1. **0.4.26 ships first** — *done: released 2026-09-18.* It already carried a user-facing fix (#283 — a 429 for
    exhausted quota no longer retries four times). Switching the version now is the
    difference between "upgrade for the fix" and "accept a breaking release for the fix".
 2. **`chore: open 0.5.0.dev0` lands in the same batch as the removals, never alone.**
