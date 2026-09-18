@@ -1,6 +1,6 @@
 # Multi-wire-API support: `anthropic-messages`, `openai-responses` and `gemini-api`
 
-**Status:** **Stage 0 implemented (0.4.26, unreleased). Stages 1–3 proposed and not
+**Status:** **Stage 0 implemented and shipped in 0.4.26. Stages 1–3 proposed and not
 authorized. rev 11 (2026-09-17).** §2.3's stage 0a and 0b are on `main`; no
 adapter and no second wire protocol has been written, and stage 1 still needs an
 explicit decision on §2 (does the benefit justify the cost) and §12 (open
