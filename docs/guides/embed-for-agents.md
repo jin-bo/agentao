@@ -125,7 +125,8 @@ API pass the **keyword-only** `api_format="anthropic-messages"` with
 inferred from the URL or the model, inherited by sub-agents, and mutually
 exclusive with `llm_client=` like the rest of the raw config. `extra_body` keys
 are per-protocol: on that wire it is `{"output_config": {"effort": "high"}}`, and
-`reasoning_effort` is rejected.
+`reasoning_effort` is rejected. Runnable, with an offline smoke over the real
+SDK: [`examples/anthropic-wire/`](../../examples/anthropic-wire/).
 
 ---
 

@@ -6,7 +6,7 @@
 
 ## 经典嵌入形态（P0.6 · 离线 smoke 在 CI 跑）
 
-六个最小形态样例，全部对接 fake LLM 端到端运行，**无需 API key**。每个都有自己的 `pyproject.toml`、≤ 50 行的 README，以及 `tests/` smoke 套件。
+八个最小形态样例，全部对接 fake LLM（或脚本化 socket） 端到端运行，**无需 API key**。每个都有自己的 `pyproject.toml`、≤ 50 行的 README，以及 `tests/` smoke 套件。
 
 | 目录 | 宿主形态 | Smoke 测试 |
 |------|---------|-----------|
@@ -17,6 +17,7 @@
 | [`wechat-bot/`](./wechat-bot/) | 微信轮询守护进程 → 单轮对话；按联系人作权限隔离 | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 | [`protocol-injection/`](./protocol-injection/) | `agentao.host.protocols` 全部四个槽位都被替换（内存 FS、审计型 shell、可编程 MCP 注册表、字典 MemoryStore） | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 | [`tool-injection/`](./tool-injection/) | 用 Jina 作后端：构造期注入 `web_fetch`（`extra_tools=`，`r.jina.ai`）+ 运行期注入 `web_search`（`add_tool`，`s.jina.ai`） | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
+| [`anthropic-wire/`](./anthropic-wire/) | `api_format="anthropic-messages"` —— Anthropic 原生 Messages API；smoke 在**真实** `anthropic` SDK 之下放一个脚本化 socket | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 
 ## 完整蓝图（接真 LLM、端到端栈）
 
@@ -32,8 +33,8 @@
 
 | 文件 | 演示内容 | 启动 |
 |------|---------|------|
-| [`headless_worker.py`](./headless_worker.py) | `ACPManager` 驱动一个内联的 mock ACP server（成功 / interaction-required / cancel 三条路径）。Week 1 回归基线 fixture，对应 [`docs/features/headless-runtime.md`](../docs/features/headless-runtime.md)。 | `uv run python examples/headless_worker.py` |
-| [`host_events.py`](./host_events.py) | 公开的 harness 契约（自 0.3.1 起）：`agent.events()` 异步迭代器 + `agent.active_permissions()` 快照，与 `agent.arun(...)` 通过 `asyncio.gather` 并跑。详见 [`docs/api/host.md`](../docs/api/host.md)。 | `OPENAI_API_KEY=sk-... uv run python examples/host_events.py` |
+| [`headless_worker.py`](./headless_worker.py) | `ACPManager` 驱动一个内联的 mock ACP server（成功 / interaction-required / cancel 三条路径）。Week 1 回归基线 fixture，对应 [`docs/guides/headless-runtime.md`](../docs/guides/headless-runtime.md)。 | `uv run python examples/headless_worker.py` |
+| [`host_events.py`](./host_events.py) | 公开的 harness 契约（自 0.3.1 起）：`agent.events()` 异步迭代器 + `agent.active_permissions()` 快照，与 `agent.arun(...)` 通过 `asyncio.gather` 并跑。详见 [`docs/reference/host-api.zh.md`](../docs/reference/host-api.zh.md)。 | `OPENAI_API_KEY=sk-... uv run python examples/host_events.py` |
 | [`host_audit_pipeline.py`](./host_audit_pipeline.py) | 端到端的多租户审计管线：把 `agent.events()` 写入本地 SQLite 的 `agent_audit` 表，会话开始时 pin 一份 `active_permissions()` 快照，对话结束后 dump 整张表。配套 [`developer-guide §4.7`](../developer-guide/zh/part-4/7-host-contract.md)。 | `OPENAI_API_KEY=sk-... uv run python examples/host_audit_pipeline.py` |
 
 ## Persona 画廊（仅 `AGENTAO.md`，无代码）

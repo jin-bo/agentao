@@ -417,6 +417,8 @@ jobs:
           - slack-bot
           - wechat-bot
           - tool-injection
+          - protocol-injection
+          - anthropic-wire
 
     steps:
       - uses: actions/checkout@v5
@@ -429,10 +431,17 @@ jobs:
 
       - name: Sync example dependencies (with dev extras)
         working-directory: examples/${{ matrix.example }}
-        run: uv sync --python 3.12 --extra dev
+        # ``--locked``: a stale ``uv.lock`` fails here instead of being quietly
+        # re-resolved. Every example's lock went stale when ``anthropic``
+        # became a core dependency, and nothing noticed — a user who installs
+        # ``--frozen`` from such a lock gets an agentao that cannot import it.
+        # The lock records agentao as an editable path with no version, so a
+        # release bump does not trip this; a dependency change does, and the
+        # remedy is ``uv lock`` in each example directory.
+        run: uv sync --locked --python 3.12 --extra dev
 
       - name: Run example smoke
         working-directory: examples/${{ matrix.example }}
         env:
           PYTHONPATH: .
-        run: uv run --python 3.12 pytest tests/ -v --tb=short
+        run: uv run --locked --python 3.12 pytest tests/ -v --tb=short
