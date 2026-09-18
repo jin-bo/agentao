@@ -1,6 +1,6 @@
 # 0.5.0 back-compat removal checklist
 
-**Status:** **implemented 2026-09-18**, authorized the same day; unreleased, targeting
+**Status:** **implemented 2026-09-18** (PR #292), authorized the same day; unreleased, targeting
 0.5.0. Inventory measured against `main@2f51570` on 2026-09-18; every row below was
 read in the tree, not recalled from the deprecation notes. What implementing it found
 that three review rounds had not is at the end — see *Implementation record*.
