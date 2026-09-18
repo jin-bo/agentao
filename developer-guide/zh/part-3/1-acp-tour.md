@@ -9,7 +9,7 @@
 在读完整协议拆解之前，先跑一次真实握手，感受一下形态：
 
 ```bash
-pip install 'agentao[cli]>=0.4.0'
+pip install 'agentao[cli]>=0.5.0'
 export OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://api.openai.com/v1 OPENAI_MODEL=gpt-5.4
 
 agentao --acp --stdio

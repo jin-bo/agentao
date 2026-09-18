@@ -5,12 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.5.0] — 2026-09-19
 
-_Targeting 0.5.0 — a **removal release** that also carries one opt-in
-addition, the `anthropic-messages` wire. Add entries under the relevant
-heading as work lands. Upgrade guide: `docs/migration/0.4.x-to-0.5.0.md`
-(`.zh.md` twin)._
+A **removal release** that also carries one opt-in addition, the
+`anthropic-messages` wire. Upgrade guide: `docs/migration/0.4.x-to-0.5.0.md`
+(`.zh.md` twin). Release notes: `docs/releases/v0.5.0.md`.
 
 ### Removed
 
@@ -215,8 +214,6 @@ every session. `agentao.tool_runner`, the old import path of
   its callbacks ride one `build_compat_transport`. Confirmation behaviour is
   unchanged: a foreground sub-agent asks its parent by name, a background one
   refuses what needs asking.
-
-### Fixed
 
 ---
 

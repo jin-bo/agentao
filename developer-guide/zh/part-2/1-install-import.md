@@ -12,19 +12,19 @@ CLI / web fetch / 中文分词都是显式声明的 extras。
 
 ```bash
 # 嵌入宿主（`from agentao import Agentao`）—— 闭包最小
-pip install 'agentao>=0.4.0'
+pip install 'agentao>=0.5.0'
 
 # 用 web_fetch / web_search 工具 —— 加上 beautifulsoup4
-pip install 'agentao[web]>=0.4.0'
+pip install 'agentao[web]>=0.5.0'
 
 # 用中文记忆召回 —— 加上 jieba
-pip install 'agentao[i18n]>=0.4.0'
+pip install 'agentao[i18n]>=0.5.0'
 
 # CLI 用户 —— 加上 rich/prompt-toolkit/readchar/pygments
-pip install 'agentao[cli]>=0.4.0'
+pip install 'agentao[cli]>=0.5.0'
 
 # 从 0.3.x 升级且要零行为变更
-pip install 'agentao[full]>=0.4.0'
+pip install 'agentao[full]>=0.5.0'
 ```
 
 完整 extras 矩阵见 [1.5 运行环境要求](/zh/part-1/5-requirements)。
@@ -91,7 +91,7 @@ def get_agent():
 
 ```python
 import agentao
-print(agentao.__version__)   # "0.4.0"
+print(agentao.__version__)   # "0.5.0"
 ```
 
 生产代码建议在启动时校验：
@@ -100,7 +100,7 @@ print(agentao.__version__)   # "0.4.0"
 import agentao
 from packaging.version import Version
 
-MIN = Version("0.4.0")
+MIN = Version("0.5.0")
 if Version(agentao.__version__) < MIN:
     raise RuntimeError(f"Need agentao >= {MIN}, got {agentao.__version__}")
 ```
@@ -128,12 +128,13 @@ def on_event_is_text(ev) -> bool:
 
 ## TL;DR
 
-- `pip install 'agentao>=0.4.0'` 是嵌入最小集——按需加 `[web]` / `[i18n]` / `[cli]` / `[full]` 等 extras。
+- `pip install 'agentao>=0.5.0'` 是嵌入最小集——按需加 `[web]` / `[i18n]` / `[cli]` / `[full]` 等 extras。
 - 永远要用的两个 import：`from agentao import Agentao` + `from agentao.transport import SdkTransport`。
 - `import agentao` 是**便宜**的——重依赖（`openai` / `bs4` / `jieba` / `mcp` / `rich` …）都被延迟到首次运行时才加载。
-- 生产环境锁定版本范围：`agentao>=0.4.0,<0.5`。
+- 生产环境锁定版本范围：`agentao>=0.5.0,<0.6`。
 
 ::: info 版本说明
+- **0.5.0** — 一次移除发布：`agentao.harness`、`agentao.session`、`Agentao(...)` 上的八个回调参数都没有了；`agentao.embedding.sessions` 的 `project_root` 变为必填；`max_tokens` 之后的参数全部仅关键字。`anthropic>=1.6.0` 与 `openai` 并列成为核心依赖（惰性导入；只有显式选用的 `api_format="anthropic-messages"` 才会加载它）。详见 [0.4.x → 0.5.0 迁移指南](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.4.x-to-0.5.0.zh.md)。
 - **0.4.0** — `pip install agentao` 现在只装嵌入核心；`[web]` / `[cli]` / `[i18n]` 等改为显式 extras。`[full]` 复刻 0.3.x 的依赖闭包。详见[迁移指南](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.3.x-to-0.4.0.md)。
 - **0.3.4** — 懒加载延迟范围扩展到全部 opt-in 依赖（OpenAI SDK、BeautifulSoup、jieba、filelock、rich、prompt_toolkit、readchar、click、pygments、starlette、uvicorn）。`tests/test_no_cli_deps_in_core.py` 与 `tests/test_import_cost.py` 强制约束。
 :::

@@ -1,7 +1,7 @@
 # Multi-wire-API support: `anthropic-messages`, `openai-responses` and `gemini-api`
 
 **Status:** **Stage 0 implemented and shipped in 0.4.26. Stage 1 implemented
-2026-09-18 (ships with 0.5.0), against a scripted socket and then a live endpoint
+2026-09-18 (shipped in 0.5.0), against a scripted socket and then a live endpoint
 (*Live results*, below); the provider-switch piece of stage 3 followed the same day. The rest of
 stages 2–3 is proposed and not authorized. rev 15 (2026-09-18).** §2.3's
 stage 0a and 0b are on `main`; stage 1 adds the adapter seam under `LLMClient`

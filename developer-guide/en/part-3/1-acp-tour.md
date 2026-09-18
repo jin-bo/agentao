@@ -9,7 +9,7 @@ Spec: <https://agentclientprotocol.com/>
 Before reading the full protocol breakdown, run a real handshake to feel the shape:
 
 ```bash
-pip install 'agentao[cli]>=0.4.0'
+pip install 'agentao[cli]>=0.5.0'
 export OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://api.openai.com/v1 OPENAI_MODEL=gpt-5.4
 
 agentao --acp --stdio

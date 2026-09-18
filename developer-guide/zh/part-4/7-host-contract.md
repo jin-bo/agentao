@@ -227,7 +227,7 @@ snap.loaded_sources   # list[str] —— 来源标签
 - **内部类型**（`agentao.transport.AgentEvent` / `agentao.tools.ToolExecutionResult` / `agentao.permissions.PermissionEngine`）任何版本都可能变。**不要直接 import 进生产代码路径**。
 - **schema 快照由 CI 强制**：`tests/test_host_schema.py` 会从 Pydantic 模型重生成 schema，做字节级断言——一个改动同时改了模型和 wire 形状但忘了更新 schema 时，CI 会失败。
 
-运营上这给你什么：**生产环境可以放心 pin `agentao>=0.4.0,<1.0`**，0.9.x 时 harness 合约还是同一份合约。
+运营上这给你什么：**你今天对接的 harness 合约，到 0.9.x 还是同一份合约。**这是对**这个表面**的承诺，不是对整个包的承诺 —— 0.5.0 在移除 `agentao.harness`、`agentao.session` 和 `Agentao(...)` 上八个回调参数的同时，`agentao.host` 的每个模型和两份 schema 快照都原样未动。所以包本身仍按 0.x 的常规方式锁：`agentao>=0.5.0,<0.6`，每个次版本读一遍迁移指南；合约带给你的是：你升级的时候，宿主里消费事件的那一半不用跟着动。
 
 ## 4.7.8 *不在*合约里的东西
 

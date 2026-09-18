@@ -6,14 +6,14 @@
 
 ::: tip ⚡ 端到端可跑（约 3 分钟）
 **产出** —— Agent 思考、调用 `glob` + `run_shell_command`，打印 cwd 下最大的 3 个文件。
-**技术栈** —— `pip install 'agentao>=0.4.0'` + 3 个环境变量 + 6 行 Python。
+**技术栈** —— `pip install 'agentao>=0.5.0'` + 3 个环境变量 + 6 行 Python。
 **运行** —— 粘贴 Step 3 的代码后跑 `python hello.py`。
 :::
 
 ## 第 1 步 · 安装（1 分钟）
 
 ```bash
-pip install 'agentao>=0.4.0'
+pip install 'agentao>=0.5.0'
 ```
 
 `pip install agentao` 只装嵌入核心。`[web]` / `[cli]` / `[i18n]` 等 extras 按需后加，见 [1.5 运行环境](./5-requirements)。

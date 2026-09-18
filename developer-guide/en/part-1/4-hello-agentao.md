@@ -6,14 +6,14 @@ Goal: get a minimal Python embedding running. Pure SDK path, **no custom code**.
 
 ::: tip ⚡ Runnable end-to-end (≈ 3 minutes)
 **Outcome** — agent thinks, runs `glob` + `run_shell_command`, prints the 3 largest files under cwd.
-**Stack** — `pip install 'agentao>=0.4.0'` + 3 env vars + 6 lines of Python.
+**Stack** — `pip install 'agentao>=0.5.0'` + 3 env vars + 6 lines of Python.
 **Run** — `python hello.py` (after pasting the snippet from Step 3 below).
 :::
 
 ## Step 1 · Install (1 minute)
 
 ```bash
-pip install 'agentao>=0.4.0'
+pip install 'agentao>=0.5.0'
 ```
 
 `pip install agentao` ships the embedding-only core. Add extras (`[web]`, `[cli]`, `[i18n]`, …) later as needed — see [1.5 Requirements](./5-requirements).
