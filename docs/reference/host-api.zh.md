@@ -183,16 +183,18 @@ host 摘要在提交前会被校验（非空、是 `str`、不超过 `ctx.max_su
 | | 含义 | 谁写 |
 |---|---|---|
 | `context_manager.max_tokens` | host **配置的**值 | host（`max_context_tokens=`、`/context limit`、ACP `contextLength`） |
-| `context_manager.effective_max_tokens` | `min(configured, observed)` | 派生，只读 |
+| `context_manager.effective_max_tokens` | `min(configured, observed, reported)` | 派生，只读 |
 | `context_manager.observed_limit` | **provider 自己声明的**窗口，从溢出错误里学到 | agentao |
+| `context_manager.reported_limit` | **provider 的 Models API 给出的**窗口（`max_input_tokens`），从 `llm.model_input_limit` 实时读取；没被告知时为 `None` —— 目前只有 `anthropic-messages` 线路会查，且是在为某个模型发出第一个请求时才查，在那之前为 `None` | agentao |
 
 **所有内部预算**——压缩阈值、微压缩带、摘要输入预算、`usage_percent`——都以
 **effective** 窗口计。**`get_usage_stats()['max_tokens']` 与 ACP
 `session/set_model` 的回显仍返回 configured**：前者是为了不动既有读者，后者是因为
 `session/set_model` 是 setter，回显必须等于刚写进去的值，否则客户端会把 agentao 的
 自愈读成一次写入失败。`effective_max_tokens`、`observed_limit`、
-`observed_limit_provenance` 都是 `get_usage_stats()` 上的**新增**键。
+`observed_limit_provenance`、`reported_limit` 都是 `get_usage_stats()` 上的**新增**键。
 
+两个学到的上限都只能**收窄** —— Models API 报出比 host 配置更大的窗口，不构成去用它的理由。
 observed 只能**收窄**：provider 在 N 上拒绝，是关于 N 的证据，不是越过 host 上限的
 许可。切模型或切端点时它会被丢弃（并告警：新模型的窗口尚未验证）；单纯轮换凭据则
 保持不动。

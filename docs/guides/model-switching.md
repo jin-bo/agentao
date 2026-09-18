@@ -202,7 +202,22 @@ OPENAI_BASE_URL=https://openrouter.ai/api/v1
 # For custom endpoints
 OPENAI_API_KEY=your-key
 OPENAI_BASE_URL=https://your-endpoint.com/v1
+
+# For Claude on Anthropic's own API, natively (0.5.0). The protocol is named,
+# never inferred; the base URL is the API root, no /v1.
+LLM_PROVIDER=CLAUDE
+CLAUDE_API_KEY=sk-ant-...
+CLAUDE_BASE_URL=https://api.anthropic.com
+CLAUDE_MODEL=claude-sonnet-5
+CLAUDE_API_FORMAT=anthropic-messages
 ```
+
+`/model` stays on the current wire protocol. `/provider <NAME>` carries the
+target block's `_API_FORMAT`, so it is how a session moves between Chat
+Completions and the Messages API. On the native wire the model's output cap and
+input window come from the provider's Models API when the endpoint has one, and
+`/thinking <level>` writes `output_config.effort` rather than `reasoning_effort`.
+See [configuration reference §2](../reference/configuration.md).
 
 ## Examples
 

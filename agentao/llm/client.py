@@ -284,6 +284,15 @@ class LLMClient(_LoggingMixin):
         # Track tools hash to avoid logging unchanged tool lists repeatedly
         self._last_tools_hash: Optional[int] = None
 
+        # What the provider's Models API says about ``self.model``, when the
+        # wire has one and the endpoint implements it (``anthropic-messages``:
+        # ``GET /v1/models/{id}``). Filled by the adapter on its first request
+        # and cleared with the capability latches; ``None`` means "not told",
+        # never "unlimited". ``model_input_limit`` narrows the context window
+        # (``ContextManager.effective_max_tokens``).
+        self.model_input_limit: Optional[int] = None
+        self.model_capabilities: Optional[Dict[str, Any]] = None
+
         # The adapter owns everything protocol-specific, the SDK client
         # included; ``self.client`` stays the live SDK object because
         # ``list_available_models`` and a good many tests reach for it.
@@ -503,6 +512,8 @@ class LLMClient(_LoggingMixin):
         """
         self._use_max_completion_tokens = False
         self.omit_temperature = False
+        self.model_input_limit = None
+        self.model_capabilities = None
         self._adapter.reset_latches()
 
     def _build_request_kwargs(
@@ -567,6 +578,8 @@ class LLMClient(_LoggingMixin):
         self.request_count += 1
         request_id = f"req_{self.request_count}"
 
+        # Before the request is built, so what is logged is what is sent.
+        self._adapter.prepare()
         # Build request parameters (single source — see _build_request_kwargs)
         kwargs = self._build_request_kwargs(
             messages, tools, max_tokens, stream=False,
@@ -684,6 +697,7 @@ class LLMClient(_LoggingMixin):
         self.request_count += 1
         request_id = f"req_{self.request_count}"
 
+        self._adapter.prepare()
         kwargs = self._build_request_kwargs(
             messages, tools, max_tokens, stream=True,
             cache_boundary=cache_boundary,

@@ -147,7 +147,7 @@ pip install 'agentao[full]'
 
 **Required Python:** 3.10+. **Required env:** `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` — all three, or startup raises `ValueError`.
 
-For Anthropic / Gemini / DeepSeek / any OpenAI-compatible provider, set `<NAME>_API_KEY` + `<NAME>_BASE_URL` + `<NAME>_MODEL` and pick it via `LLM_PROVIDER` or `/provider` at runtime. Full list: [`docs/reference/configuration.md`](docs/reference/configuration.md).
+For Anthropic / Gemini / DeepSeek / any OpenAI-compatible provider, set `<NAME>_API_KEY` + `<NAME>_BASE_URL` + `<NAME>_MODEL` and pick it via `LLM_PROVIDER` or `/provider` at runtime. To talk to Anthropic's own API natively (Messages API — working prompt caching, signed thinking), add `<NAME>_API_FORMAT=anthropic-messages`; it is never inferred from a URL or a name. Full list: [`docs/reference/configuration.md`](docs/reference/configuration.md).
 
 ---
 

@@ -19,7 +19,7 @@ You drop into a chat REPL. Type a normal sentence to talk to the agent. Type `/`
 ## Coverage
 
 - [**1. Getting Started**](./1-getting-started) — `/help`, `/clear`, `/new`, `/status`, `/exit` · the minimum loop
-- [**2. Models & Providers**](./2-models-providers) — `/model`, `/provider`, `/temperature` · switch LLMs and credentials at runtime
+- [**2. Models & Providers**](./2-models-providers) — `/model`, `/provider`, `/temperature`, `/thinking` · switch LLMs, credentials and wire protocol at runtime
 - [**3. Permissions & Modes**](./3-permissions-modes) — `/mode`, tool-confirmation UI, `/sandbox` (macOS) · how the agent asks before doing dangerous things
 - [**4. Plan Mode**](./4-plan-mode) — `/plan` workflow · read-only "think first, then commit" loop
 - [**5. Skills & Crystallize**](./5-skills-crystallize) — `/skills`, `/crystallize` · activate skills and distill new ones from a session

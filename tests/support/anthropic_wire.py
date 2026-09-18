@@ -130,14 +130,33 @@ Scripted = Union[bytes, ChunkedBody, Tuple[int, Dict[str, Any]], Tuple[int, Dict
 
 
 class Wire:
-    """Serves scripted responses in order and records every request body."""
+    """Serves scripted responses in order and records every request body.
 
-    def __init__(self, *responses: Scripted) -> None:
+    ``GET /v1/models/{id}`` is answered apart from the script — 404 unless
+    ``models`` maps the id to a body — and recorded in ``model_lookups`` only,
+    so a test's ``requests`` stay the Messages calls it scripted.
+    """
+
+    def __init__(self, *responses: Scripted, models: Optional[Dict[str, Any]] = None) -> None:
         self._responses = list(responses)
+        self._models = models or {}
         self.requests: List[Dict[str, Any]] = []
         self.urls: List[str] = []
+        self.model_lookups: List[str] = []
 
     def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        if request.method == "GET":
+            model_id = str(request.url).rsplit("/", 1)[-1]
+            self.model_lookups.append(model_id)
+            body = self._models.get(model_id)
+            if isinstance(body, tuple):  # (status, body): a scripted failure
+                return httpx2.Response(body[0], json=body[1])
+            if body is None:
+                return httpx2.Response(404, json={
+                    "type": "error",
+                    "error": {"type": "not_found_error", "message": "Not support"},
+                })
+            return httpx2.Response(200, json=body)
         self.urls.append(str(request.url))
         self.requests.append(json.loads(request.content))
         scripted = self._responses.pop(0)

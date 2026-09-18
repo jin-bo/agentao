@@ -111,8 +111,15 @@ every session. `agentao.tool_runner`, the old import path of
   (`{"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}` on
   current models, which reject the older
   `{"thinking": {"type": "enabled", "budget_tokens": 8000}}` with a 400; older
-  models take only that one); `/thinking`
-  refuses to store `reasoning_effort`, which this protocol rejects.
+  models take only that one). **`/thinking <level>` writes
+  `output_config.effort` on this wire** — `reasoning_effort` is a Chat
+  Completions field the protocol rejects, and on current models the effort
+  alone turns adaptive thinking on (observed). Levels are
+  `low | medium | high | xhigh | max`, or whatever the Models API's
+  `capabilities.effort` marks supported once it has been asked; `minimal` is not
+  one and is refused rather than stored, since there is no auto-recovery. `off`
+  clears the effort (and a `reasoning_effort` carried over a wire switch) and
+  leaves a host's other `output_config` keys alone.
   **`max_tokens` is required by the protocol**, so a call that names none sends
   the configured cap (default 65,536), and a model that answers
   `max_tokens: N > M` has `M` adopted for the session at the cost of that one
@@ -148,6 +155,30 @@ every session. `agentao.tool_runner`, the old import path of
   uncached (159,843 of 177,771 prompt tokens read from cache); the same session
   over Anthropic's OpenAI-compatible endpoint reports no cache fields at all, so
   the markers' effect there cannot be read from the response.
+- **The `anthropic-messages` wire adopts what the provider's Models API says
+  about the model.** Before its first request for a model the client asks
+  `GET /v1/models/{id}` (5 seconds per connection phase; not cancellable) and
+  uses three fields.
+  `max_tokens` seeds the output cap, so a request above it is clamped instead of
+  being spent on a `max_tokens: N > M` rejection — the repair stays as the
+  fallback. `max_input_tokens` becomes a third term of the context window,
+  `effective_max_tokens = min(configured, observed, reported)`: like the observed
+  limit it can only **narrow** the host's `max_context_tokens`, never widen it
+  (`claude-sonnet-5` reports 1,000,000; a window that size may need a tier this
+  client does not hold). It reads back as `context_manager.reported_limit` and a
+  new additive `reported_limit` key on `get_usage_stats()`. `capabilities` is
+  kept on `LLMClient.model_capabilities`, and `/thinking` on this wire reads its
+  effort levels from it. All of it is cleared
+  and re-asked on a model or provider switch. **An endpoint without the route
+  changes nothing**: a 404 (what Anthropic-compatible gateways answer), a
+  timeout, an error or a field that is not a positive integer leaves behaviour
+  exactly as before. A definite answer — 200 or a 4xx — is final for that model;
+  a transient failure (429, 5xx, a timeout) gets one more try on the next
+  request and then stops too, so a stalling endpoint is not asked for ever. The
+  lookup runs before the request is built, so `agentao.log` records the
+  `max_tokens` that went out. Nothing is fetched at construction. Observed live on `api.anthropic.com` (adopted) and
+  on a compatible gateway (404, unchanged). Chat Completions has no such route
+  and is untouched.
 - **Anthropic's second context-overflow message is recognised**
   (`input length and max_tokens exceed context limit: A + B > C`), on either
   wire: it enters the overflow recovery ladder and `C` is adopted as the

@@ -712,14 +712,33 @@ class ContextManager:
     def effective_max_tokens(self) -> int:
         """The window every internal budget is actually denominated in.
 
-        ``min(configured, observed)``. Read-only: a host that wants to change
-        the window sets :attr:`max_tokens`, which this can only narrow, never
-        widen — a provider that rejected a request at N is evidence about N,
-        not permission to exceed the host's own ceiling.
+        ``min(configured, observed, reported)``. Read-only: a host that wants
+        to change the window sets :attr:`max_tokens`, which this can only
+        narrow, never widen — a provider that rejected a request at N is
+        evidence about N, not permission to exceed the host's own ceiling, and
+        neither is a Models API that advertises a larger window (a 1M window
+        may need a tier or a beta header this client does not hold).
+
+        ``reported`` is the client's ``model_input_limit`` — what the
+        provider's Models API states, read live so a model switch that clears
+        it on the client clears it here. Type-checked: a ``MagicMock`` client
+        answers any attribute.
         """
-        if self._observed_limit is None:
-            return self.max_tokens
-        return min(self.max_tokens, self._observed_limit)
+        window = self.max_tokens
+        if self._observed_limit is not None:
+            window = min(window, self._observed_limit)
+        reported = self.reported_limit
+        if reported is not None:
+            window = min(window, reported)
+        return window
+
+    @property
+    def reported_limit(self) -> Optional[int]:
+        """The model's input window per the provider's Models API, if told."""
+        value = getattr(self.llm_client, "model_input_limit", None)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return value
+        return None
 
     @property
     def observed_limit(self) -> Optional[int]:
@@ -2299,6 +2318,7 @@ class ContextManager:
             "effective_max_tokens": self.effective_max_tokens,
             "observed_limit": self._observed_limit,
             "observed_limit_provenance": self._observed_limit_provenance,
+            "reported_limit": self.reported_limit,
             "usage_percent": round(usage_percent, 1),
             "message_count": len(messages),
             "token_breakdown": breakdown,

@@ -47,6 +47,7 @@ What it does:
 
 - Sets `context_manager.max_tokens` for **this session**
 - Affects when auto-compaction triggers (compaction fires before approaching this number)
+- Is a **ceiling**, not the last word: the budget actually used is the smaller of this, a limit the provider stated in a context-overflow error, and — on the `anthropic-messages` wire — the `max_input_tokens` its Models API reports for the model. Both can only narrow it; a model advertising 1M does not raise a 200K setting
 - Resets on restart — to make it persistent, set the `AGENTAO_CONTEXT_TOKENS` environment variable (see [10. Configuration Reference](./10-config-reference))
 
 Minimum: 1,000. Below that the CLI refuses.

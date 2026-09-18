@@ -415,19 +415,69 @@ def test_a_failed_client_build_leaves_reconfigure_undone(monkeypatch):
     assert after[4] is before[4] and after[5] is before[5]
 
 
-def test_thinking_does_not_store_a_field_this_wire_rejects(monkeypatch):
+def test_thinking_sets_output_config_effort_on_this_wire(monkeypatch):
+    """``reasoning_effort`` is rejected here; the level rides
+    ``output_config.effort``, and is read off the socket to prove it lands in
+    the body."""
     from agentao.cli.commands import provider as provider_cmd
 
     printed = []
-    monkeypatch.setattr(provider_cmd.console, "print", lambda *a, **k: printed.append(str(a[0])))
-    agent = _agent()
+    monkeypatch.setattr(provider_cmd.console, "print",
+                        lambda *a, **k: printed.append(str(a[0]) if a else ""))
+    agent = _agent(extra_body={"output_config": {"format": "keep-me"},
+                               "reasoning_effort": "stale"})
+    cli = SimpleNamespace(agent=agent)
     try:
-        provider_cmd.handle_thinking_command(SimpleNamespace(agent=agent), "high")
-        assert "reasoning_effort" not in agent.llm.extra_body
-        assert "anthropic-messages" in printed[-1]
+        provider_cmd.handle_thinking_command(cli, "HIGH")
+        assert agent.llm.extra_body == {"output_config": {"format": "keep-me", "effort": "high"}}
+        assert agent._llm_config["extra_body"]["output_config"]["effort"] == "high"
+
+        wire = attach(agent.llm, Wire(stream_of(
+            message_start(input_tokens=5), text_block(0, "ok"), message_end("end_turn"))))
+        agent.chat("hi")
+        assert wire.requests[0]["output_config"]["effort"] == "high"
+        assert "reasoning_effort" not in wire.requests[0]
+
+        # Not one of the five the API takes, and there is no auto-recovery.
+        provider_cmd.handle_thinking_command(cli, "minimal")
+        assert agent.llm.extra_body["output_config"]["effort"] == "high"
+        assert any("Invalid thinking depth" in line for line in printed)
+
+        provider_cmd.handle_thinking_command(cli, "off")
+        assert agent.llm.extra_body == {"output_config": {"format": "keep-me"}}
     finally:
         agent.close()
 
+
+def test_thinking_levels_come_from_the_models_api_when_it_has_spoken(monkeypatch):
+    from agentao.cli.commands import provider as provider_cmd
+
+    printed = []
+    monkeypatch.setattr(provider_cmd.console, "print",
+                        lambda *a, **k: printed.append(str(a[0]) if a else ""))
+    agent = _agent()
+    cli = SimpleNamespace(agent=agent)
+    try:
+        agent.llm.model_capabilities = {"effort": {
+            "supported": True, "low": {"supported": True}, "high": {"supported": False}}}
+        provider_cmd.handle_thinking_command(cli, "high")
+        assert agent.llm.extra_body in (None, {})
+        provider_cmd.handle_thinking_command(cli, "low")
+        assert agent.llm.extra_body == {"output_config": {"effort": "low"}}
+        # ``off`` leaves nothing behind.
+        provider_cmd.handle_thinking_command(cli, "off")
+        assert agent.llm.extra_body == {}
+    finally:
+        agent.close()
+
+
+def test_thinking_still_sets_reasoning_effort_on_chat_completions(monkeypatch):
+    from agentao.cli.commands import provider as provider_cmd
+
+    monkeypatch.setattr(provider_cmd.console, "print", lambda *a, **k: None)
+    llm = LLMClient(api_key="k", base_url="https://a.test/v1", model="m")
+    provider_cmd.handle_thinking_command(SimpleNamespace(agent=SimpleNamespace(llm=llm)), "minimal")
+    assert llm.extra_body == {"reasoning_effort": "minimal"}
 
 
 def test_a_wire_switch_re_reads_which_extra_body_keys_are_structural(caplog):

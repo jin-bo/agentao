@@ -96,6 +96,20 @@ _TOOL_ID_VALID = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 #: the text differs nothing is repaired and the 400 surfaces as it would have.
 _MAX_TOKENS_CAP = re.compile(r"max_tokens:\s*(\d+)\s*>\s*(\d+)")
 
+#: The Models API lookup is a convenience; a slow endpoint must not hold the
+#: first turn for the SDK's ten-minute default.
+#: httpx applies it per phase (connect, write, read, pool), so it bounds each
+#: one rather than the whole lookup, and the lookup is not cancellable.
+_MODEL_INFO_TIMEOUT_S = 5.0
+_MODEL_INFO_ATTEMPTS = 2
+
+
+def _positive_int(value: Any) -> Optional[int]:
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
 _ASSISTANT_FIRST_PLACEHOLDER = (
     "(The conversation before this point is not available.)"
 )
@@ -440,6 +454,12 @@ class AnthropicMessagesAdapter:
         # The model's output cap, learned from the rejection that states it.
         # Model-specific, so cleared with the other capability latches.
         self._max_output_tokens: Optional[int] = None
+        # How many times the Models API may still be asked about the current
+        # model. A definite answer — 200, or a 4xx such as the 404 compatible
+        # gateways give — spends them all; a transient failure (429, 5xx, a
+        # timeout) spends one, so a blip on the first turn does not cost the
+        # session its limits and a stalling endpoint is not asked for ever.
+        self._model_info_attempts = _MODEL_INFO_ATTEMPTS
 
     def create_client(self) -> Any:
         try:
@@ -472,6 +492,56 @@ class AnthropicMessagesAdapter:
 
     def reset_latches(self) -> None:
         self._max_output_tokens = None
+        self._model_info_attempts = _MODEL_INFO_ATTEMPTS
+
+    def prepare(self) -> None:
+        """Ask ``GET /v1/models/{id}`` and adopt what it states.
+
+        ``max_tokens`` seeds the output-cap latch, so the first request is not
+        spent learning it from a rejection; ``max_input_tokens`` and
+        ``capabilities`` go on the client for the context manager and the CLI.
+        Everything is optional twice over — the endpoint may not implement the
+        route, and the SDK types every field ``Optional`` — so any failure and
+        any field that is not a positive ``int`` leaves today's behaviour
+        exactly as it was.
+
+        ``LLMClient`` calls this on the send path, **before** it builds and
+        logs the request, so the ``max_tokens`` in ``agentao.log`` is the one
+        that went out. Never at construction, and never from
+        ``build_request``, which tests and the golden call with no socket.
+        """
+        if self._model_info_attempts <= 0:
+            return
+        self._model_info_attempts -= 1
+        owner = self._owner
+        try:
+            info = owner.client.models.retrieve(owner.model, timeout=_MODEL_INFO_TIMEOUT_S)
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if isinstance(status, int) and 400 <= status < 500 and status != 429:
+                self._model_info_attempts = 0  # the endpoint has answered: no
+            owner.logger.debug(
+                "Models API gave nothing for %r (%s); keeping configured limits",
+                owner.model, type(exc).__name__,
+            )
+            return
+        out_cap = _positive_int(getattr(info, "max_tokens", None))
+        in_cap = _positive_int(getattr(info, "max_input_tokens", None))
+        self._model_info_attempts = 0
+        if out_cap is not None:
+            self._max_output_tokens = out_cap
+        owner.model_input_limit = in_cap
+        caps = getattr(info, "capabilities", None)
+        dump = getattr(caps, "model_dump", None)
+        try:
+            dumped = dump(mode="json") if callable(dump) else None
+        except Exception:
+            dumped = None
+        owner.model_capabilities = dumped if isinstance(dumped, dict) else None
+        owner.logger.info(
+            "Models API for %s: max_tokens=%s, max_input_tokens=%s",
+            owner.model, out_cap, in_cap,
+        )
 
     # -- request ------------------------------------------------------------
 

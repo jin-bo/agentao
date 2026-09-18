@@ -47,6 +47,7 @@ Context limit set to 500,000 tokens
 
 - 设置 `context_manager.max_tokens`，**仅本会话**
 - 影响自动压缩触发点（压缩在接近这个值之前就会启动）
+- 它是**上限**，不是最终值：实际使用的预算取三者中最小的 — 这个值、provider 在上下文溢出报错里声明过的上限、以及（在 `anthropic-messages` 线路上）Models API 为该模型报告的 `max_input_tokens`。后两者只会收窄；模型宣称 1M 并不会把 200K 的设置抬高
 - 重启后复位 — 要持久化，设置环境变量 `AGENTAO_CONTEXT_TOKENS`（见 [10. 配置文件参考](./10-config-reference)）
 
 最低值 1,000，再低 CLI 拒绝。
