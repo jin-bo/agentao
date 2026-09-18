@@ -5,11 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.4.27. Add entries under the relevant heading as work lands._
-
-### Added
+## [0.4.27] — 2026-09-18
 
 ### Changed
 
@@ -55,8 +51,6 @@ _Targeting 0.4.27. Add entries under the relevant heading as work lands._
   was always model-visible instruction text by design, so this widens nothing
   an installed skill could not already do, but it is the placement to know
   about when auditing what reaches the system message.
-
-### Fixed
 
 ---
 
