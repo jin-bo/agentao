@@ -117,13 +117,25 @@ def test_an_endpoint_that_reports_no_cache_fields_is_not_rendered_as_no_caching(
     assert "not reported" in table and "see the bill" in table
 
 
-def test_the_delta_is_against_the_first_arm():
+def test_the_saving_is_each_arm_against_its_own_full_price():
+    """Not against another arm: the first live run had one arm make 19
+    requests and the others 11, so a cross-arm delta measured the model."""
     wires = []
-    silent = _run(wires, usages=[dict(input_tokens=10000)] * 3)   # 30,000 at full rate
     cached = _run(wires)
-    table = script.render([silent, cached])
-    expected = (cached["input_cost_units"] - 30000) / 30000
-    assert f"({expected:+.0%})" in table
+    full = cached["totals"]["prompt_tokens"]
+    expected = (cached["input_cost_units"] - full) / full
+    assert f"({expected:+.0%} vs its own full price)" in script.render([cached])
+
+
+def test_differing_request_counts_are_called_out():
+    wires = []
+    short = script.run_arm(
+        "c", api_key="k", base_url="https://api.example.test", model="claude-test",
+        turns=TURNS[:2], make_agent=_factory(wires, *[_answer(**u) for u in CACHED[:2]]))
+    table = script.render([short, _run(wires)])
+    assert "Request counts differ between arms (c: 2, c: 3)" in table
+    assert "not comparable" in table
+    assert "differ between arms" not in script.render([_run(wires), _run(wires)])
 
 
 def test_an_activation_records_how_much_history_a_prefix_move_would_rewrite():

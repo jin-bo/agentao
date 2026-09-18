@@ -199,27 +199,34 @@ def run_arm(
 def render(results: List[Dict[str, Any]]) -> str:
     lines = ["| Arm | Wire | Requests | Prompt tokens | Cache written | Cache read | Input cost units |",
              "|---|---|---|---|---|---|---|"]
-    # Every delta is against the first arm. An arm whose endpoint reported no
-    # cache fields is priced at the full rate — an upper bound, not a finding
-    # that nothing was cached — and says so.
-    baseline: Optional[int] = None
+    # The saving is each arm against **its own** full price, never against
+    # another arm. The model decides how many tool rounds a turn takes, and it
+    # does not decide the same way twice: the first live run of this script
+    # had one arm make 19 requests and the other two 11, so a cross-arm delta
+    # measured the model's mood, not the cache. An arm whose endpoint reported
+    # no cache fields is priced at the full rate — an upper bound, not a
+    # finding that nothing was cached — and says so.
     for result in results:
         totals = result["totals"]
+        full = totals["prompt_tokens"]
         if result["cache_fields_reported"]:
             written, read = f"{totals['cache_creation_tokens']:,}", f"{totals['cache_read_tokens']:,}"
-            effective = result["input_cost_units"]
-            cost = f"{effective:,}"
+            cost = f"{result['input_cost_units']:,}"
+            if full:
+                cost += f" ({(result['input_cost_units'] - full) / full:+.0%} vs its own full price)"
         else:
             written = read = "not reported"
-            effective = totals["prompt_tokens"]
-            cost = f"≤ {effective:,} (see the bill)"
-        if baseline is None:
-            baseline = effective
-        elif baseline and result["cache_fields_reported"]:
-            cost += f" ({(effective - baseline) / baseline:+.0%})"
+            cost = f"≤ {full:,} (see the bill)"
         lines.append(
             f"| {result['arm']} — {result['label']} | `{result['api_format']}` | "
-            f"{len(result['requests'])} | {totals['prompt_tokens']:,} | {written} | {read} | {cost} |")
+            f"{len(result['requests'])} | {full:,} | {written} | {read} | {cost} |")
+    counts = [(result["arm"], len(result["requests"])) for result in results]
+    if len({n for _arm, n in counts}) > 1:
+        lines.append(
+            "\nRequest counts differ between arms ("
+            + ", ".join(f"{arm}: {n}" for arm, n in counts)
+            + ") — the model took a different number of tool rounds. Totals are not "
+            "comparable across those arms; the percentage in each row is.")
     for result in results:
         act = result.get("activation")
         if act:

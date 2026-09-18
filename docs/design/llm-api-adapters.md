@@ -210,8 +210,30 @@ same three arms (or a subset, against any endpoint), isolates each arm with a
 nonce in the first tool definition, and reads the per-request cache counts off
 `LLM_CALL_COMPLETED` — which carries them since 0.5.1. It sends nothing without
 `--yes`, and renders an endpoint that reports no cache fields as *"not reported
-— see the bill"*, never as a zero. Three questions remain, and none of them is
-answered by re-running the table above:
+— see the bill"*, never as a zero.
+
+**Second run, through that script (same day, same endpoint, `claude-sonnet-5`).**
+
+| Arm | Wire | Requests | Prompt tokens | Cache written | Cache read | Input cost units |
+|---|---|---|---|---|---|---|
+| A — 0a only | Chat Completions | **19** | 292,524 | not reported | not reported | ≤ 292,524 |
+| B — 0a + 0b | Chat Completions | 11 | 197,511 | not reported | not reported | ≤ 197,511 |
+| C — native | `anthropic-messages` | 11 | 198,881 | 21,879 | 176,980 | **45,069** (−77% vs its own full price) |
+
+It reproduces the first run's finding — −77% against −78% — and sharpens it: on
+the native wire **22 tokens in the whole session were billed at the full rate**,
+two per request; every request after the first read its entire previous prefix
+back. B and C took the identical path (11 requests, the same count in every
+turn), so that pair is like-for-like: ≤ 197,511 against 45,069. **Arm A is not
+comparable on totals**: the model split its file reads into more tool rounds
+that time and made 19 requests. That is a fault in the method the first run did
+not expose — the model decides how many rounds a turn takes and does not decide
+the same way twice — so the script now reports each arm against **its own** full
+price and says when request counts differ, instead of printing a cross-arm
+delta. The prompt ends larger than in the first run (9.6k → 21.9k against 9.6k →
+17.9k); why was not investigated. The per-request pattern is the same.
+
+Three questions remain, and none of them is answered by re-running the table:
 
 1. **A versus B on Anthropic's compatible endpoint** is on the bill and nowhere
    else. Only the account holder can read it.
