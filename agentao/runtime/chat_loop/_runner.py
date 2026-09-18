@@ -43,7 +43,11 @@ from ._compaction import _CompactionMixin
 from ._hook_dispatch import _HookDispatchMixin
 from ...plugins.hooks._profile import PROFILE_ID
 from ._outcomes import _HookOutcome
-from ._serialize import _attach_reasoning, _serialize_tool_call
+from ._serialize import (
+    _attach_reasoning,
+    _attach_thinking_blocks,
+    _serialize_tool_call,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
     from ...agent import Agentao
@@ -661,6 +665,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             ],
         }
         _attach_reasoning(assistant_msg, reasoning_content)
+        _attach_thinking_blocks(assistant_msg, assistant_message)
 
         msg_sanitized = sanitize_assistant_message(assistant_msg)
         if tcs_changed or msg_sanitized:
@@ -975,6 +980,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             )
         final_msg: Dict[str, Any] = {"role": "assistant", "content": assistant_content}
         _attach_reasoning(final_msg, reasoning_content)
+        _attach_thinking_blocks(final_msg, assistant_message)
         if sanitize_assistant_message(final_msg):
             agent.llm.logger.warning(
                 "Sanitised final assistant message (lone surrogates and/or invisible "

@@ -213,7 +213,7 @@ Switch the model (and optionally the provider) via the ACP-standard config-optio
 
 ### Resolution & errors
 
-- **`provider/model`**: the agent calls `provider_resolver(provider_id)` → `{api_key, base_url?}`, then swaps provider + model. The **default** resolver accepts only the configured `LLM_PROVIDER` (case-insensitive) and reads `{PREFIX}_API_KEY` / `{PREFIX}_BASE_URL`; any other provider → `-32600` `cannot resolve provider '<id>'`. Inject a richer resolver to support more providers.
+- **`provider/model`**: the agent calls `provider_resolver(provider_id)` → `{api_key, base_url?}`, then swaps provider + model. The **default** resolver accepts only the configured `LLM_PROVIDER` (case-insensitive) and reads `{PREFIX}_API_KEY` / `{PREFIX}_BASE_URL`; any other provider → `-32600` `cannot resolve provider '<id>'`. Inject a richer resolver to support more providers. A resolver whose providers speak different **wire protocols** (0.5.0: `openai-completions` / `anthropic-messages`) adds an optional `api_format` to what it returns; the protocol is fixed when the session is created, so a provider declaring a different one — or an unknown one — is refused with `-32600` rather than switched to. A resolver that omits the key is taken to mean the session's own protocol.
 - **bare `model`**: model-only switch (provider unchanged) via the same path as `_agentao.cn/set_model`.
 - On resolver failure the server logs only the provider id + exception **type**, never the message (it could embed a key).
 

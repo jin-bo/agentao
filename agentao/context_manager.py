@@ -10,6 +10,7 @@ from .compaction.types import (
     CompactionDecisionContext,
     CompactionOutcome,
 )
+from .llm._stream_response import ANTHROPIC_THINKING_BLOCKS
 
 try:
     import tiktoken as _tiktoken
@@ -466,6 +467,14 @@ class ContextManager:
         rc = msg.get("reasoning_content")
         if isinstance(rc, str) and rc:
             tokens += self.count_tokens_in_text(rc)
+        # The ``anthropic-messages`` wire sends signed thinking back whole, and
+        # inside a tool loop it is billed as input like any other block.
+        blocks = msg.get(ANTHROPIC_THINKING_BLOCKS)
+        if isinstance(blocks, list):
+            for block in blocks:
+                thinking = block.get("thinking") if isinstance(block, dict) else None
+                if isinstance(thinking, str):
+                    tokens += self.count_tokens_in_text(thinking)
         if "tool_calls" in msg:
             tokens += self.count_tokens_in_text(str(msg["tool_calls"]))
         return tokens
@@ -2311,6 +2320,7 @@ _OVERFLOW_PATTERNS = [
     re.compile(p, re.IGNORECASE)
     for p in (
         r"prompt is too long",  # Anthropic: "prompt is too long: 213462 tokens > 200000 maximum"
+        r"exceed context limit",  # Anthropic: "input length and `max_tokens` exceed context limit: 188240 + 21333 > 200000"
         r"request_too_large",  # Anthropic 413 byte-size overflow
         r"exceeds the context window",  # OpenAI (Completions & Responses)
         r"maximum context length",  # OpenAI/LiteLLM/OpenRouter: "...of N tokens", "...is N tokens", "(N)" — broad; guard below filters throttling
@@ -2368,6 +2378,11 @@ _OBSERVED_LIMIT_PATTERNS = [
     for p, name in (
         # Anthropic: "prompt is too long: 213462 tokens > 200000 maximum"
         (r"\d[\d,]*\s*tokens?\s*>\s*([\d,]+)\s*maximum", "anthropic:tokens>maximum"),
+        # Anthropic, input + max_tokens over the window: "exceed context limit:
+        # 188240 + 21333 > 200000". Three numbers; only the one after ``>`` is
+        # the window. On the native wire this is the overflow met *first* — it
+        # fires as soon as the prompt leaves less room than ``max_tokens``.
+        (r"exceed context limit:\s*[\d,]+\s*\+\s*[\d,]+\s*>\s*([\d,]+)", "anthropic:exceed_context_limit"),
         # OpenAI / LiteLLM / OpenRouter: "maximum context length is|of N tokens"
         (r"maximum context length\s+(?:is|of)\s+([\d,]+)", "maximum_context_length_is"),
         # OpenAI paren form: "exceeds model's maximum context length (262144)"

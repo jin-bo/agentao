@@ -277,6 +277,39 @@ class TestSetConfigOptionSwitch:
         )
         assert agent.llm.base_url == "https://new.example"
 
+    @pytest.mark.parametrize("declared", ["anthropic-messages", "no-such-wire"])
+    def test_a_provider_on_another_wire_protocol_is_refused(self, declared):
+        """The protocol is fixed when the agent is built. A switch across it
+        would hand one protocol's credentials to the other protocol's SDK."""
+        server = make_initialized_server()
+        agent = _FakeAgent(base_url="https://old.example")
+        _register(server, agent)
+        server.provider_resolver = lambda pid: {
+            "api_key": "k", "base_url": "https://api.anthropic.com",
+            "api_format": declared,
+        }
+        with pytest.raises(JsonRpcHandlerError) as exc:
+            acp_set_config.handle_session_set_config_option(
+                server, {"sessionId": "s", "configId": "model", "value": "claude/opus"}
+            )
+        assert exc.value.code == INVALID_REQUEST
+        assert "wire protocol" in exc.value.message
+        assert agent.set_provider_calls == []
+        assert agent.llm.base_url == "https://old.example"
+
+    def test_a_provider_declaring_the_same_wire_protocol_switches(self):
+        server = make_initialized_server()
+        agent = _FakeAgent()
+        _register(server, agent)
+        server.provider_resolver = lambda pid: {
+            "api_key": "k", "base_url": "https://new.example",
+            "api_format": "OpenAI-Completions",
+        }
+        acp_set_config.handle_session_set_config_option(
+            server, {"sessionId": "s", "configId": "model", "value": "custom/m"}
+        )
+        assert agent.llm.base_url == "https://new.example"
+
     def test_unknown_provider_maps_to_invalid_request(self):
         server = make_initialized_server()
         _register(server, _FakeAgent())

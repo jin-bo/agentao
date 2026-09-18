@@ -213,7 +213,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 
 ### 解析与错误
 
-- **`provider/model`**：Agentao 调 `provider_resolver(provider_id)` → `{api_key, base_url?}`，然后整套切换 provider + model。**默认** resolver 只接受配置的 `LLM_PROVIDER`（大小写不敏感），读 `{PREFIX}_API_KEY` / `{PREFIX}_BASE_URL`；其它 provider → `-32600` `cannot resolve provider '<id>'`。要支持更多提供方，注入更丰富的 resolver。
+- **`provider/model`**：Agentao 调 `provider_resolver(provider_id)` → `{api_key, base_url?}`，然后整套切换 provider + model。**默认** resolver 只接受配置的 `LLM_PROVIDER`（大小写不敏感），读 `{PREFIX}_API_KEY` / `{PREFIX}_BASE_URL`；其它 provider → `-32600` `cannot resolve provider '<id>'`。要支持更多提供方，注入更丰富的 resolver。若 resolver 名下的 provider 说的是不同的**线路协议**（0.5.0：`openai-completions` / `anthropic-messages`），就在返回值里加一个可选的 `api_format`；协议在会话创建时就固定了，所以声明了另一种协议（或未知协议）的 provider 会以 `-32600` 被拒绝，而不是切过去。不带这个键的 resolver 视为与会话同一协议。
 - **裸 `model`**：只换模型（provider 不变），与 `_agentao.cn/set_model` 走同一条核心路径。
 - resolver 失败时，服务端只记录 provider id + 异常**类型**，绝不记录消息（可能夹带密钥）。
 

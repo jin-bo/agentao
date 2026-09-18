@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any, List, Optional, TYPE_CHECKING
 
 from ..context_manager import _get_tiktoken_encoding
+from ..llm._stream_response import ANTHROPIC_THINKING_BLOCKS
 from ..llm.client import KEEP_BASE_URL
 from ..transport import AgentEvent, EventType
 
@@ -26,10 +27,15 @@ if TYPE_CHECKING:
 def purge_thinking_artifacts(messages: List[dict]) -> int:
     """Drop provider-minted thinking artifacts from conversation history.
 
-    Removes ``reasoning_content`` from assistant messages and
-    ``thought_signature`` from **both** levels of each tool call — the entry
-    itself and its ``function`` object. Returns the number of fields removed
-    (0 when history was already clean).
+    Removes ``reasoning_content`` and the ``anthropic-messages`` wire's signed
+    thinking blocks (``anthropic_thinking_blocks``) from assistant messages,
+    and ``thought_signature`` from **both** levels of each tool call — the
+    entry itself and its ``function`` object. Returns the number of fields
+    removed (0 when history was already clean).
+
+    A new wire adapter that persists a carrier key of its own adds it here:
+    the purge is the union of every adapter's keys, and it runs on every
+    switch, whichever wire is live.
 
     Both levels are load-bearing, not defensive breadth: ``_serialize_tool_call``
     serialises via ``model_dump()`` precisely so the field survives
@@ -65,6 +71,8 @@ def purge_thinking_artifacts(messages: List[dict]) -> int:
         if not isinstance(msg, dict):
             continue
         if msg.pop("reasoning_content", None) is not None:
+            removed += 1
+        if msg.pop(ANTHROPIC_THINKING_BLOCKS, None) is not None:
             removed += 1
         tool_calls = msg.get("tool_calls")
         if not isinstance(tool_calls, list):

@@ -105,7 +105,7 @@ def _build_request_kwargs(self, messages, tools, max_tokens, *, stream):
 
 ### 3.3 结构性重叠守卫（构造时、warn-once）
 
-`extra_body` 会被 SDK 合并**进请求体**，故其中的键可能遮蔽某个结构性 body 字段（`model`、`messages`、`stream`、`stream_options`、`tools`、`tool_choice`、`temperature`、`max_tokens`、`max_completion_tokens`）。这是 host 显式、被命名空间隔离的选择——并非与普通 kwargs 静默混合——故 v1 **不**拒绝它。但因遮蔽 `messages` 会很难调试，构造函数在 `extra_body` 与该结构性/受管集有任何键重叠时发出**一次性**告警（而非每请求检查——那会刷屏热路径）。按 §3.1 的顺序注意，此告警须在 logger 初始化**之后**（`client.py:160`）发出，而非紧挨 `__init__` 顶部的类型校验。
+`extra_body` 会被 SDK 合并**进请求体**，故其中的键可能遮蔽某个结构性 body 字段（`model`、`messages`、`stream`、`stream_options`、`tools`、`tool_choice`、`temperature`、`max_tokens`、`max_completion_tokens`）。这是 host 显式、被命名空间隔离的选择——并非与普通 kwargs 静默混合——故 v1 **不**拒绝它。但因遮蔽 `messages` 会很难调试，构造函数在 `extra_body` 与该结构性/受管集有任何键重叠时发出**一次性**告警（而非每请求检查——那会刷屏热路径）。按 §3.1 的顺序注意，此告警须在 logger 初始化**之后**（`client.py:160`）发出，而非紧挨 `__init__` 顶部的类型校验。 **自 0.5.0 起这个集合按线路区分**（适配器上的 `structural_body_keys`）：上面那份是 `openai-completions` 的；在 `anthropic-messages` 上是 `model` / `messages` / `system` / `tools` / `max_tokens` / `stream` —— 含 `system`，因为它会替换整个 system prompt；**不含** `temperature` 和 `thinking`，因为在那条线路上 `extra_body` 正是传它们的受支持方式。
 
 ### 3.4 与现有一次性 latch 的交互
 

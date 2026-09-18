@@ -301,6 +301,12 @@ def sanitize_assistant_message(msg: Dict[str, Any]) -> bool:
     additionally strips invisible tag characters from every one of those
     **except** ``id`` and ``arguments``. Returns True if any field changed.
 
+    ``anthropic_thinking_blocks`` — the ``anthropic-messages`` wire's signed
+    thinking — is not touched at all, by omission and on purpose: the
+    signature covers the block's text, so any rewrite makes the provider
+    reject it. It is never displayed; ``reasoning_content`` is the copy that
+    is, and that one is sanitized above.
+
     Two deliberate exemptions, both about not corrupting bytes that have to
     round-trip:
 

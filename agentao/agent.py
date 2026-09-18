@@ -120,6 +120,9 @@ class Agentao:
         # raw-config family: mutually exclusive with ``llm_client=``.
         prompt_cache: Optional[str] = None,
         prompt_cache_ttl: Optional[str] = None,
+        # The wire protocol spoken to ``base_url``. Same raw-config family,
+        # KEYWORD-ONLY for the same reason.
+        api_format: Optional[str] = None,
         extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None,
         # Host compaction control plane. KEYWORD-ONLY for the same reason as
         # ``extra_body`` above — inserting it into the older group would shift
@@ -159,6 +162,13 @@ class Agentao:
                 to that client instead.
             prompt_cache_ttl: Retention hint, ``"5m"`` (provider default) or
                 ``"1h"``. Ignored when ``prompt_cache`` is off.
+            api_format: The wire protocol spoken to ``base_url`` —
+                ``"openai-completions"`` (default) or ``"anthropic-messages"``
+                (Anthropic's Messages API, over the official SDK). Configured,
+                never inferred from the URL or the model name, and fixed for
+                the life of the agent; sub-agents inherit it. Raw-config only:
+                a host that injects ``llm_client=`` passes it to that client
+                instead. An unknown value raises ``ValueError``.
             extra_body: Optional dict forwarded verbatim to the LLM
                 ``.create()`` call as the SDK's ``extra_body`` request
                 option (``reasoning_effort`` / ``top_p`` / ``seed`` /
@@ -238,6 +248,7 @@ class Agentao:
             extra_body=extra_body,
             prompt_cache=prompt_cache,
             prompt_cache_ttl=prompt_cache_ttl,
+            api_format=api_format,
             mcp_manager=mcp_manager,
             extra_mcp_servers=extra_mcp_servers,
             mcp_registry=mcp_registry,
@@ -287,6 +298,7 @@ class Agentao:
             extra_body=extra_body,
             prompt_cache=prompt_cache,
             prompt_cache_ttl=prompt_cache_ttl,
+            api_format=api_format,
             logger=logger,
         )
         self._init_skill_and_memory(skill_manager, memory_manager)
@@ -340,6 +352,7 @@ class Agentao:
         extra_body: Optional[Dict[str, Any]],
         prompt_cache: Optional[str],
         prompt_cache_ttl: Optional[str],
+        api_format: Optional[str],
         mcp_manager: Optional["McpClientManager"],
         extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]],
         mcp_registry: Optional["MCPRegistry"],
@@ -357,13 +370,13 @@ class Agentao:
             v is not None
             for v in (
                 api_key, base_url, model, temperature, max_tokens, extra_body,
-                prompt_cache, prompt_cache_ttl,
+                prompt_cache, prompt_cache_ttl, api_format,
             )
         ):
             raise ValueError(
                 "Agentao(): pass either llm_client= or "
                 "api_key/base_url/model/temperature/max_tokens/extra_body/"
-                "prompt_cache/prompt_cache_ttl, not both."
+                "prompt_cache/prompt_cache_ttl/api_format, not both."
             )
         if mcp_manager is not None and extra_mcp_servers is not None:
             raise ValueError(
@@ -736,6 +749,7 @@ class Agentao:
         extra_body: Optional[Dict[str, Any]],
         prompt_cache: Optional[str],
         prompt_cache_ttl: Optional[str],
+        api_format: Optional[str],
         logger: Optional[logging.Logger],
     ) -> LLMClient:
         """Return the injected client, or build one from raw provider config.
@@ -771,6 +785,8 @@ class Agentao:
             llm_kwargs["prompt_cache"] = prompt_cache
         if prompt_cache_ttl is not None:
             llm_kwargs["prompt_cache_ttl"] = prompt_cache_ttl
+        if api_format is not None:
+            llm_kwargs["api_format"] = api_format
         return LLMClient(**llm_kwargs)
 
     @property
@@ -800,6 +816,11 @@ class Agentao:
             # asking. ``None`` when unset so the raw-config build omits it.
             "prompt_cache": getattr(self.llm, "prompt_cache", None),
             "prompt_cache_ttl": getattr(self.llm, "prompt_cache_ttl", None),
+            # The wire protocol is a property of the endpoint too: a sub-agent
+            # that fell back to the default would speak Chat Completions at a
+            # Messages endpoint. ``None`` for an injected client that has no
+            # such attribute, which leaves the default in place.
+            "api_format": getattr(self.llm, "api_format", None),
             # Not provider config, but read from the same place and for the
             # same reason: a sub-agent built without it constructs an
             # ``LLMClient`` with ``logger=None``, and that path *evicts and

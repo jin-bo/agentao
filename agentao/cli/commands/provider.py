@@ -71,6 +71,28 @@ def handle_provider_command(cli: AgentaoCLI, args: str) -> None:
                            f"(expected env var: {args}_MODEL, e.g. {args}_MODEL=gpt-5.4)[/error]\n")
             return
 
+        # The wire protocol is chosen at startup and a live client cannot
+        # change it (switching is stage 3 of docs/design/llm-api-adapters.md).
+        # Refused here rather than attempted: the switch would hand one
+        # protocol's credentials and base URL to the other protocol's SDK.
+        from ...llm._api_format import DEFAULT_API_FORMAT, resolve_api_format
+
+        try:
+            target_format = resolve_api_format(os.getenv(f"{args}_API_FORMAT"))
+        except ValueError as exc:
+            console.print(f"\n[error]{escape(str(exc))} "
+                          f"(env var: {args}_API_FORMAT)[/error]\n")
+            return
+        live_format = getattr(cli.agent.llm, "api_format", None) or DEFAULT_API_FORMAT
+        if target_format != live_format:
+            console.print(
+                f"\n[error]Provider '{args}' is configured for the "
+                f"{target_format} wire protocol, and this session runs on "
+                f"{live_format}. The protocol is fixed at startup: set "
+                f"LLM_PROVIDER={args} and restart.[/error]\n"
+            )
+            return
+
         cli.agent.set_provider(api_key=api_key, base_url=base_url, model=model)
         cli.current_provider = args
 
@@ -237,6 +259,21 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
         console.print(f"\n[error]Invalid thinking depth: '{escape(args)}' — expected a "
                       f"single level ({' | '.join(_REASONING_LEVELS)}) or 'off', "
                       "not multiple words.[/error]\n")
+        return
+
+    # ``reasoning_effort`` is a Chat Completions field. The Messages API
+    # rejects it as an unknown input, and with no auto-recovery that would fail
+    # every request until ``off`` — so on that wire the level is not stored.
+    # Which thinking budget a level should mean there is a product decision
+    # this command does not make; the passthrough already carries it.
+    if getattr(llm, "api_format", None) == "anthropic-messages":
+        console.print(
+            "\n[warning]/thinking sets reasoning_effort, which the "
+            "anthropic-messages wire rejects. Turn extended thinking on through "
+            "the passthrough instead, e.g. "
+            "LLM_EXTRA_BODY='{\"thinking\": {\"type\": \"enabled\", "
+            "\"budget_tokens\": 8000}}'.[/warning]\n"
+        )
         return
 
     # Normalize a *known* level to its canonical lowercase form (so ``HIGH`` →

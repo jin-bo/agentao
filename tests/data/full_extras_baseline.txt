@@ -10,6 +10,7 @@
 #
 # Refresh:  uv build && uv run pytest tests/test_dependency_split.py -m slow
 annotated-types
+anthropic
 anyio
 attrs
 beautifulsoup4
@@ -18,6 +19,7 @@ cffi
 charset-normalizer
 click
 cryptography
+docstring-parser
 filelock
 greenlet
 h11

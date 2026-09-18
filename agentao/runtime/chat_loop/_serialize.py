@@ -12,8 +12,10 @@ file reads as control flow without inline serialization noise.
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Dict, Optional
 
+from ...llm._stream_response import ANTHROPIC_THINKING_BLOCKS
 from ..sanitize import canonicalize_tool_arguments
 
 
@@ -33,6 +35,33 @@ def _attach_reasoning(msg: Dict[str, Any], reasoning_content: Optional[str]) -> 
     if len(reasoning_content) > MAX_REASONING_HISTORY_CHARS:
         stored += "..."
     msg["reasoning_content"] = stored
+
+
+def _attach_thinking_blocks(msg: Dict[str, Any], assistant_message: Any) -> None:
+    """Carry the response's signed thinking blocks onto ``msg`` (in place).
+
+    The second, **untruncated** carrier beside ``reasoning_content``. That one
+    is a display copy cut to 500 characters; a signed block has to go back to
+    the provider whole, and a truncated one is worse than none — it is
+    rejected. Only the ``anthropic-messages`` adapter sets the attribute, so
+    this is a no-op on every other wire.
+
+    Called for the two messages that record the model's **own** output: the
+    tool-call message and the final response. The four synthetic finals
+    (max-iterations, length abort, hook stop, doom loop) are a second assistant
+    message built from a response whose blocks were already recorded on the
+    first; a signed block is the record of one model output, not of two.
+
+    The answer is type-checked, not merely probed: this codebase substitutes
+    ``MagicMock`` responses freely, and a mock answers any attribute.
+    """
+    blocks = getattr(assistant_message, ANTHROPIC_THINKING_BLOCKS, None)
+    if (
+        isinstance(blocks, list)
+        and blocks
+        and all(isinstance(block, dict) for block in blocks)
+    ):
+        msg[ANTHROPIC_THINKING_BLOCKS] = copy.deepcopy(blocks)
 
 
 def _serialize_tool_call(tc, *, logger=None) -> dict:
