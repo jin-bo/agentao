@@ -330,22 +330,36 @@ class ContextManager:
         is now "truth minus a local estimate": an error in ``tail_tokens``
         lands in the anchor. That is the smaller error, and it is bounded by
         the tail, which is the smallest part of the request.
+
+        A subtraction that does not leave a positive prefix **drops the
+        anchor** instead of clamping it. A tail estimate at least as large as
+        the provider's whole count means one of the two numbers is not
+        describing this request (an image-bearing tail, a tokenizer mismatch, a
+        gateway reporting ``prompt_tokens`` net of its cache reads), and a 0
+        anchor is worse than none: it still reads as fresh, so
+        :meth:`_threshold_token_estimate` would report the history as nearly
+        empty and compaction would stop firing until some later response
+        happened to re-anchor. No anchor just means the full local estimate,
+        which is only slower.
         """
+        self._last_api_request_tokens = prompt_tokens
         if (
             tail_tokens
             and isinstance(prompt_tokens, int)
             and not isinstance(prompt_tokens, bool)
         ):
-            # Clamped: a tail estimate larger than the provider's own count
-            # (an image-bearing tail, a tokenizer mismatch) must not anchor a
-            # negative prefix. ``_threshold_token_estimate`` guards a
-            # non-integer ``prompt_tokens`` on its own, so a provider's
-            # malformed usage field is left exactly as it was before.
-            self._last_api_prompt_tokens = max(0, prompt_tokens - tail_tokens)
+            # ``_threshold_token_estimate`` guards a non-integer
+            # ``prompt_tokens`` on its own, so a provider's malformed usage
+            # field is left exactly as it was before.
+            prefix_tokens = prompt_tokens - tail_tokens
+            if prefix_tokens <= 0:
+                self._last_api_prompt_tokens = None
+                self._api_anchor_msg_count = None
+                return
+            self._last_api_prompt_tokens = prefix_tokens
         else:
             self._last_api_prompt_tokens = prompt_tokens
         self._api_anchor_msg_count = message_count
-        self._last_api_request_tokens = prompt_tokens
 
     def invalidate_token_anchor(self) -> None:
         """Drop the Tier-1 anchor after history is mutated in place.
@@ -2253,11 +2267,12 @@ class ContextManager:
         # Tier 1: prefer real count from last API response. The *request*
         # total, not the prefix anchor — this is a "what did the last turn
         # cost" surface, and the anchor has the volatile tail subtracted out.
+        # One field, not a fallback chain: ``record_api_usage`` always writes
+        # this one and ``invalidate_token_anchor`` always clears it, so it is
+        # set exactly when the prefix anchor is — reading the anchor as a
+        # second-chance source would be dead code that looks live.
         if self._last_api_request_tokens is not None:
             estimated = self._last_api_request_tokens
-            source = "api"
-        elif self._last_api_prompt_tokens is not None:
-            estimated = self._last_api_prompt_tokens
             source = "api"
         else:
             estimated = breakdown["total"]

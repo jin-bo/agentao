@@ -29,6 +29,11 @@ _Targeting 0.4.26. Add entries under the relevant heading as work lands._
   (openai 2.24.0), not that any particular gateway honours it, so the operator
   names the format for an endpoint they have verified. An unknown value raises
   at startup rather than silently disabling the thing it was set to enable.
+  The markers are dropped when `/provider` changes the base URL — the knob
+  asserts something about one endpoint, a new base URL is a deployment that
+  assertion does not cover, and there is no auto-recovery latch here, so an
+  endpoint that rejects the key would reject every request until someone
+  noticed. A credential rotation against the same endpoint keeps them.
   Stage 0b of `docs/design/llm-api-adapters.md` §2.3.
 
 ### Changed
@@ -63,6 +68,18 @@ _Targeting 0.4.26. Add entries under the relevant heading as work lands._
   `_build_system_prompt()` returns the stable half only; the volatile half is
   `_build_volatile_tail()`. Both are private, and any host or test reading
   todos / skills / recall out of the system prompt needs the second call now.
+  `get_usage_stats()['token_breakdown']` gains a `tail` bucket so those tokens
+  do not read as having vanished.
+
+  Two shapes worth knowing before you read a provider error. The tail is a
+  second `user` message, so a turn's first request now sends two in a row;
+  Chat Completions allows it and agentao already produced the shape via
+  background notifications, but an endpoint enforcing strict role alternation
+  rejects it, which is a constraint stage 1's `anthropic-messages` adapter has
+  to absorb. And a literal `</system-reminder>` inside a memory value or a
+  skill description is neutralized before wrapping, so content the model or a
+  server authored cannot close the wrapper early and land the rest of itself in
+  the request as bare trailing user text.
   Stage 0a of `docs/design/llm-api-adapters.md` §2.3.
 
 ### Fixed

@@ -272,14 +272,19 @@ def test_endpoint_change_trigger_against_a_real_llm_client():
     from agentao.llm.client import LLMClient
 
     agent = _FakeAgent()
-    agent.llm = LLMClient.__new__(LLMClient)
-    agent.llm.api_key = "k"
-    agent.llm.base_url = "https://a.example"
-    agent.llm.model = "gemini-3-pro"
-    agent.llm.temperature = 0.7
-    agent.llm.extra_body = {}
-    agent.llm.logger = SimpleNamespace(info=lambda *a, **k: None,
-                                       warning=lambda *a, **k: None)
+    # A fully constructed client, not ``__new__`` plus the attributes
+    # ``reconfigure`` is believed to touch. That hand-built shape is the same
+    # restatement-of-the-author's-belief this test exists to avoid, one layer
+    # down, and it breaks the day ``reconfigure`` reads one more field — which
+    # is exactly what happened when it grew the prompt-cache drop.
+    # ``log_file=None`` keeps it off the package logger.
+    agent.llm = LLMClient(
+        api_key="k",
+        base_url="https://a.example",
+        model="gemini-3-pro",
+        temperature=0.7,
+        log_file=None,
+    )
 
     # Credential rotation: real reconfigure keeps the endpoint -> no purge.
     set_provider(agent, api_key="rotated")

@@ -1166,6 +1166,19 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         ``<system-reminder>`` patterns (the per-turn date/time, background
         notifications) are both persisted; this one is not, and conflating them
         would pile a todos snapshot into the transcript every turn.
+
+        **It is a second ``user`` message, and on the first request of a turn
+        that makes two in a row** (the turn's own user message, then this).
+        Chat Completions allows it, and agentao already produced the shape
+        before 0a — a background notification lands after a tool batch and the
+        next turn's user message follows it. What changed is the frequency:
+        every request now, rather than occasionally. Endpoints that enforce
+        strict role alternation (native Anthropic, and translators that map
+        OpenAI messages 1:1 without merging) reject it, so stage 1's
+        ``anthropic-messages`` adapter has to merge consecutive same-role
+        messages. Folding the tail into a copy of the preceding message instead
+        would only fix a turn's *first* request: every later iteration ends on a
+        ``role: "tool"`` message, which cannot carry it.
         """
         agent = self._agent
         text = agent._build_volatile_tail()

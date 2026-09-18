@@ -380,6 +380,33 @@ def test_the_summarizer_call_carries_no_breakpoints():
     print("✅ No boundary passed, no markers")
 
 
+def test_an_endpoint_change_drops_the_markers_and_a_key_rotation_keeps_them():
+    """``prompt_cache`` asserts something about *one* endpoint. A new base URL is
+    a new deployment that the assertion does not cover, and there is no latch
+    here — an endpoint that 400s on the key would 400 on every request until
+    someone noticed. A bare credential rotation changes neither."""
+    client = _client(prompt_cache="anthropic", prompt_cache_ttl="1h")
+    assert client.cache_control is not None
+
+    # Key rotation, same endpoint: kept.
+    client.reconfigure(api_key="k2")
+    assert client.cache_control == {"type": "ephemeral", "ttl": "1h"}
+
+    # New endpoint: dropped, along with the configured spellings a sub-agent
+    # would otherwise inherit and re-enable for the new deployment.
+    client.reconfigure(api_key="k2", base_url="https://other.test/v1")
+    assert client.cache_control is None
+    assert client.prompt_cache is None
+    assert client.prompt_cache_ttl is None
+
+    messages = [{"role": "system", "content": "S"}, {"role": "user", "content": "u"}]
+    kwargs = client._build_request_kwargs(
+        messages, None, 100, stream=False, cache_boundary=0,
+    )
+    assert _markers(kwargs["messages"]) == []
+    print("✅ Markers dropped on an endpoint change, kept on a key rotation")
+
+
 def test_a_sub_agent_inherits_the_endpoint_s_prompt_cache_posture():
     """Same endpoint, same posture — the reason ``extra_body`` is inherited.
     Read off ``_llm_config``, the live snapshot the sub-agent factory builds

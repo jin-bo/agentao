@@ -377,6 +377,7 @@ class LLMClient(_LoggingMixin):
                 previous provider's custom endpoint.
             model: New model name (None keeps existing)
         """
+        _old_base = self.base_url
         self.api_key = api_key
         if base_url is not KEEP_BASE_URL:
             self.base_url = base_url
@@ -388,6 +389,27 @@ class LLMClient(_LoggingMixin):
         # (auto-recovered via the ``omit_temperature`` latch), a stale
         # ``extra_body`` key after a model switch has no latch — the host owns
         # dropping model-specific keys (e.g. ``reasoning_effort``) on switch.
+        #
+        # ``cache_control`` is a third category and **is** dropped on an
+        # endpoint change. It is neither host passthrough nor a detected quirk:
+        # agentao mints the markers itself on the strength of the operator
+        # asserting that *this endpoint* honours them. A new base URL is a new
+        # deployment, that assertion no longer covers it, and there is no latch
+        # here — an endpoint that 400s on the key would 400 on every request
+        # until someone noticed. Same family as the observed context limit and
+        # the thinking-artifact purge, which also clear on an endpoint change.
+        # A bare credential rotation (same base_url) keeps it.
+        if self.base_url != _old_base and self.cache_control is not None:
+            self.logger.warning(
+                "Endpoint changed (%s -> %s); dropping the explicit "
+                "prompt-cache breakpoints configured for the old one. "
+                "Re-set prompt_cache / LLM_PROMPT_CACHE once the new endpoint "
+                "is verified.",
+                _old_base, self.base_url,
+            )
+            self.cache_control = None
+            self.prompt_cache = None
+            self.prompt_cache_ttl = None
         self.reset_capability_latches()
         self.client = _openai_client_cls()(
             api_key=self.api_key,

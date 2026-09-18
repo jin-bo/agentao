@@ -119,14 +119,20 @@ def apply_cache_control(
     # tools → system → messages, so a breakpoint at the end of history covers
     # everything, one on system covers tools + system, and one on the last tool
     # covers the tools alone.
-    if _mark_last_stable_message(
+    #
+    # Each helper answers how many **new** markers it wrote — 0 or 1 — and 0
+    # covers two different cases that must both leave the budget alone: there
+    # was nothing markable at that site, and the site already carries the
+    # caller's own marker (which ``_count_existing`` already charged, so
+    # spending a second unit on it would silently ship two breakpoints instead
+    # of three).
+    budget -= _mark_last_stable_message(
         out_messages, cache_control, request_only_tail=request_only_tail,
-    ):
-        budget -= 1
-    if budget > 0 and _mark_instruction_message(out_messages, cache_control):
-        budget -= 1
-    if budget > 0 and out_tools and _mark_last_tool(out_tools, cache_control):
-        budget -= 1
+    )
+    if budget > 0:
+        budget -= _mark_instruction_message(out_messages, cache_control)
+    if budget > 0 and out_tools:
+        budget -= _mark_last_tool(out_tools, cache_control)
     return out_messages, out_tools
 
 
@@ -137,18 +143,22 @@ def apply_cache_control(
 
 def _mark_instruction_message(
     messages: List[Dict[str, Any]], cache_control: Dict[str, str],
-) -> bool:
-    """Mark the first ``system`` / ``developer`` message, in place in the list."""
+) -> int:
+    """Mark the first ``system`` / ``developer`` message, in place in the list.
+
+    Returns the number of **new** markers written: 0 or 1 (see
+    :func:`apply_cache_control` for why "already marked" must also be 0).
+    """
     for i, message in enumerate(messages):
         if not isinstance(message, dict):
             continue
         if message.get("role") in _INSTRUCTION_ROLES:
             marked = _marked_message(message, cache_control)
-            if marked is None:
-                return False
+            if marked is None or marked is message:
+                return 0
             messages[i] = marked
-            return True
-    return False
+            return 1
+    return 0
 
 
 def _mark_last_stable_message(
@@ -156,7 +166,7 @@ def _mark_last_stable_message(
     cache_control: Dict[str, str],
     *,
     request_only_tail: int = 0,
-) -> bool:
+) -> int:
     """Mark the last markable conversation message before the volatile tail.
 
     Scans backwards, because the last message is not always markable: an
@@ -164,6 +174,8 @@ def _mark_last_stable_message(
     and no text part to hang the marker on. Marking the message *before* it is
     right — a prefix is a prefix — and is what pi-mono's own backward scan
     does.
+
+    Returns the number of **new** markers written: 0 or 1.
     """
     end = len(messages) - max(0, request_only_tail)
     for i in range(end - 1, -1, -1):
@@ -173,28 +185,41 @@ def _mark_last_stable_message(
         if message.get("role") not in _CONVERSATION_ROLES:
             continue
         marked = _marked_message(message, cache_control)
+        if marked is message:
+            # The site the scan wanted already carries the caller's own marker.
+            # Stop here rather than walking further back — the boundary is
+            # covered, and it is covered at a *later* point than any earlier
+            # message would give.
+            return 0
         if marked is not None:
             messages[i] = marked
-            return True
-    return False
+            return 1
+    return 0
 
 
 def _mark_last_tool(
     tools: List[Dict[str, Any]], cache_control: Dict[str, str],
-) -> bool:
+) -> int:
     """Mark the last tool definition, in place in the list.
 
     The marker sits at the top level of the tool dict, next to ``type`` and
     ``function`` — not inside ``function``. A copy, because ``tools`` holds the
     registry's canonical serialized schemas.
+
+    Returns the number of **new** markers written: 0 or 1. A tool the caller
+    already marked is left exactly as it is — overwriting it would replace the
+    caller's own ttl and spend a budget unit ``_count_existing`` already
+    charged.
     """
     last = tools[-1]
     if not isinstance(last, dict):
-        return False
+        return 0
+    if "cache_control" in last:
+        return 0
     marked = dict(last)
     marked["cache_control"] = cache_control
     tools[-1] = marked
-    return True
+    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -207,14 +232,23 @@ def _marked_message(
 ) -> Optional[Dict[str, Any]]:
     """A copy of ``message`` with the marker on its last text part.
 
-    ``None`` when there is nothing to mark: no content, empty string content,
-    or a content list with no text part. The caller then keeps looking or
-    spends the slot elsewhere — an unplaceable marker must not be counted as
-    placed.
+    Three answers, and the caller has to tell them apart:
+
+    - ``None`` — nothing to mark: no content, empty string content, or a
+      content list with no text part. The caller keeps looking or spends the
+      slot elsewhere; an unplaceable marker must not be counted as placed.
+    - ``message`` **itself** — the site already carries a marker the caller
+      placed. Left untouched (so the caller's own ttl survives) and *not*
+      counted as a new breakpoint, because ``_count_existing`` already charged
+      it. Overwriting it here would ship two breakpoints where the budget says
+      three.
+    - anything else — a copy carrying the new marker.
 
     A string ``content`` is promoted to a one-element text-part list, which is
     the only way to carry a block-level marker on this wire.
     """
+    if "cache_control" in message:
+        return message
     content = message.get("content")
     if isinstance(content, str):
         if not content:
@@ -228,6 +262,8 @@ def _marked_message(
         for i in range(len(content) - 1, -1, -1):
             part = content[i]
             if isinstance(part, dict) and part.get("type") == "text":
+                if "cache_control" in part:
+                    return message
                 marked = dict(message)
                 new_content = list(content)
                 new_part = dict(part)

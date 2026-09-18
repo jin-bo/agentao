@@ -79,8 +79,12 @@ def run_llm_call(
         "n_tool_messages": sum(
             1 for m in messages if isinstance(m, dict) and m.get("role") == "tool"
         ),
+        # Counted over **history**, not the request: stage 0a's volatile tail
+        # is a ``user`` message that always opens with ``<system-reminder>``,
+        # so counting the request would add one to every entry and leave no way
+        # to tell a real injected reminder from the tail.
         "n_system_reminder_blocks": sum(
-            1 for m in messages
+            1 for m in messages[:len(messages) - tail_count]
             if isinstance(m, dict)
             and m.get("role") == "user"
             and "<system-reminder>" in str(m.get("content", ""))

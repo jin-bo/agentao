@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Dict
 
 from ..plan import build_plan_prompt
@@ -63,6 +64,17 @@ if TYPE_CHECKING:  # pragma: no cover - import-time only
 
 
 _logger = logging.getLogger("agentao.prompt_diag")
+
+#: A literal ``</system-reminder>`` anywhere inside the tail's body would close
+#: the wrapper early and drop everything after it into the request as bare
+#: trailing user text — the highest-leverage position there is — shedding the
+#: "this is data, not instructions" framing the wrapper exists to supply. The
+#: body is not all agentao-authored: it carries memory values the model itself
+#: wrote, and skill / MCP descriptions from disk and from servers. Matched
+#: case-insensitively and with loose whitespace, because the reader being
+#: steered is a language model, not an XML parser: ``</ SYSTEM-REMINDER >``
+#: works on it just as well as the exact spelling.
+_CLOSING_REMINDER_RE = re.compile(r"</\s*system-reminder\s*>", re.IGNORECASE)
 
 # The tool the available-skills catalogue tells the model to call.
 # Spelled here rather than imported: ``agentao.tools`` pulls the whole
@@ -130,12 +142,19 @@ class SystemPromptBuilder:
 
         Returns ``""`` when nothing volatile renders, in which case the
         request is the pre-0a one exactly.
+
+        A literal closing tag inside the body is neutralized first — see
+        :data:`_CLOSING_REMINDER_RE`.
         """
         sections = self._build_volatile_sections()
         body = "".join(sections.values()).strip()
         if not body:
             return ""
         self._log_section_diagnostics(sections, label="volatile_tail_sections")
+        # Neutralized, not stripped: the escaped form stays readable, so a
+        # memory or skill description that legitimately discusses the tag still
+        # reads correctly instead of losing text.
+        body = _CLOSING_REMINDER_RE.sub(r"<\\/system-reminder>", body)
         return f"<system-reminder>\n{body}\n</system-reminder>"
 
     def _build_sections(self) -> Dict[str, str]:
