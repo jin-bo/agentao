@@ -86,7 +86,10 @@ def default_provider_resolver(provider_id: str) -> Dict[str, Optional[str]]:
     ``{PROVIDER}_*`` lookup for an arbitrary id. Multi-provider switching is a
     host concern (inject ``provider_resolver``).
 
-    Returns ``{"api_key", "base_url"}`` (``base_url`` may be ``None``).
+    Returns ``{"api_key", "base_url"}`` (``base_url`` may be ``None``). A
+    host resolver may add ``"api_format"``; see the handler for what a
+    mismatch does. This one never needs to: it only ever answers for the
+    provider the process was started on.
     """
     # Read LLM_PROVIDER directly (not via factory.resolve_provider_name, which
     # upper-cases): the accept/reject comparison below must use the raw value's
@@ -248,6 +251,38 @@ def handle_session_set_config_option(
                         f"{provider_id!r}"
                     ),
                 )
+            # The wire protocol is fixed when the agent is built; a live client
+            # cannot change it (docs/design/llm-api-adapters.md, stage 3). A
+            # host resolver that serves providers on different protocols says
+            # so with an optional ``api_format`` key, and a mismatch is refused
+            # here — the switch would otherwise hand one protocol's credentials
+            # and base URL to the other protocol's SDK. A resolver that omits
+            # the key is taken to mean "same wire", which is all it could mean
+            # before there were two.
+            target_format = creds.get("api_format")
+            if target_format is not None:
+                from agentao.llm._api_format import (
+                    DEFAULT_API_FORMAT,
+                    resolve_api_format,
+                )
+
+                live_format = (
+                    getattr(session.agent.llm, "api_format", None)
+                    or DEFAULT_API_FORMAT
+                )
+                try:
+                    target_format = resolve_api_format(target_format)
+                except (TypeError, ValueError):
+                    target_format = None
+                if target_format != live_format:
+                    raise JsonRpcHandlerError(
+                        code=INVALID_REQUEST,
+                        message=(
+                            f"provider {provider_id!r} is not on this session's "
+                            f"wire protocol ({live_format}); the protocol is "
+                            "fixed when the session is created"
+                        ),
+                    )
             # A provider switch replaces the endpoint wholesale: pass the
             # resolved base_url explicitly (``None`` clears it to the SDK
             # default, rather than inheriting the previous provider's custom

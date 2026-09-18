@@ -12,8 +12,9 @@ Every knob Agentao reads — environment variables first, then on-disk JSON. All
 |-----|----------|---------|-------|
 | `LLM_PROVIDER` | — | `OPENAI` | Picks the `{PROVIDER}_*` prefix. Any upper-case name works (e.g. `DEEPSEEK`, `ANTHROPIC`, `GEMINI`) |
 | `{PROVIDER}_API_KEY` | **yes** | — | Constructor `api_key=` overrides |
-| `{PROVIDER}_BASE_URL` | **yes** | — | Constructor `base_url=` overrides. OpenAI-compatible endpoint |
+| `{PROVIDER}_BASE_URL` | **yes** | — | Constructor `base_url=` overrides. An OpenAI-compatible endpoint by default; the API root (`https://api.anthropic.com`) when `{PROVIDER}_API_FORMAT=anthropic-messages` |
 | `{PROVIDER}_MODEL` | **yes** | — | Constructor `model=` overrides. Runtime-swappable via `agent.set_model()` |
+| `{PROVIDER}_API_FORMAT` | — | `openai-completions` | The wire protocol spoken to that block's endpoint (0.5.0): `openai-completions` or `anthropic-messages` (Anthropic's Messages API). **Never inferred** from the URL, the provider name or the model name; an unknown value raises at startup. Fixed for the session — `/provider` refuses a switch to a block on a different protocol, and sub-agents inherit it. On `anthropic-messages`, `LLM_TEMPERATURE` is not sent and extended thinking is turned on through `LLM_EXTRA_BODY`. Equivalent to the constructor `api_format=`. Full notes: `docs/reference/configuration.md` §2 |
 
 > **Fail-fast rule:** `LLMClient.__init__` raises `ValueError` at startup if any of `{PROVIDER}_API_KEY`, `{PROVIDER}_BASE_URL`, or `{PROVIDER}_MODEL` is absent and was not supplied via the constructor. The `/provider` listing and switching commands apply the same gate — all three must be set for a provider to appear in the list or be switchable.
 
@@ -246,6 +247,7 @@ Every env var and JSON key above has a Python equivalent on `Agentao(...)`:
 | `{PROVIDER}_API_KEY` | `api_key=` |
 | `{PROVIDER}_BASE_URL` | `base_url=` |
 | `{PROVIDER}_MODEL` | `model=` |
+| `{PROVIDER}_API_FORMAT` | `api_format=` |
 | `AGENTAO_WORKING_DIRECTORY` | `working_directory=` |
 | `AGENTAO_CONTEXT_TOKENS` | `max_context_tokens=` |
 | `mcp.json` | `extra_mcp_servers=` (merged on top of file) |

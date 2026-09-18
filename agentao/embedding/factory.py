@@ -80,11 +80,20 @@ def discover_llm_kwargs() -> Dict[str, Any]:
 
     Reads ``LLM_PROVIDER`` (default ``OPENAI``) and the provider-prefixed
     ``{PROVIDER}_API_KEY`` / ``{PROVIDER}_BASE_URL`` /
-    ``{PROVIDER}_MODEL``, plus the provider-agnostic ``LLM_TEMPERATURE``,
+    ``{PROVIDER}_MODEL`` / ``{PROVIDER}_API_FORMAT``, plus the provider-agnostic
+    ``LLM_TEMPERATURE``,
     ``LLM_MAX_TOKENS``, ``LLM_EXTRA_BODY``, ``LLM_PROMPT_CACHE`` and
     ``LLM_PROMPT_CACHE_TTL``. Missing values are omitted from the returned dict
     so the caller can ``setdefault`` / merge without colliding with explicit
     ``None`` overrides.
+
+    ``{PROVIDER}_API_FORMAT`` names the wire protocol spoken to that
+    provider block's endpoint (``openai-completions``, the default, or
+    ``anthropic-messages``). It rides the provider prefix because it is a
+    property of the endpoint, not a request preference, and it is never
+    inferred: ``LLM_PROVIDER=ANTHROPIC`` pointing at an OpenAI-compatible
+    gateway is a working configuration, and the name must not change its
+    wire. An unknown value raises from :class:`agentao.llm.LLMClient`.
 
     ``LLM_PROMPT_CACHE`` opts the endpoint into explicit prompt-cache
     breakpoints (``anthropic``, or ``off`` / empty for the default). It is
@@ -118,6 +127,8 @@ def discover_llm_kwargs() -> Dict[str, Any]:
         out["base_url"] = v
     if (v := os.getenv(f"{provider}_MODEL")) is not None:
         out["model"] = v
+    if (v := os.getenv(f"{provider}_API_FORMAT")) is not None and v.strip():
+        out["api_format"] = v.strip()
     if (v := os.getenv("LLM_TEMPERATURE")) is not None:
         out["temperature"] = float(v)
     if (v := os.getenv("LLM_MAX_TOKENS")) is not None:

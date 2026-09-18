@@ -27,6 +27,12 @@ dependencies = [
     # an OpenAI-compatible endpoint. CLI / web-fetch / Chinese tokenization
     # are opt-in extras.
     "openai>=1.0.0",
+    # The `anthropic-messages` wire (`{PROVIDER}_API_FORMAT`). Core, like
+    # `openai`: a wire protocol is what the runtime speaks, not an add-on. The
+    # floor is the release the adapter was verified against, not a guess at an
+    # older one that might work. Imported lazily, so the default wire never
+    # loads it.
+    "anthropic>=1.6.0",
     "httpx>=0.25.0",
     "pydantic>=2",
     "pyyaml>=6.0.3",

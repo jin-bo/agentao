@@ -32,6 +32,9 @@ FORBIDDEN_TOP_LEVEL_PACKAGES = {
     "bs4",
     "jieba",
     "openai",
+    # Core since 0.5.0, for the ``anthropic-messages`` wire — and loaded only
+    # when that wire is constructed.
+    "anthropic",
     "rich",
     "prompt_toolkit",
     "readchar",

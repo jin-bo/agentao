@@ -1,10 +1,12 @@
 # 多线路协议支持：`anthropic-messages`、`openai-responses` 与 `gemini-api`
 
-**状态：** **阶段 0 已实施，随 0.4.26 发布。阶段 1–3 仍是提案、未授权。rev 11
-（2026-09-17）。** §2.3 的阶段 0a 与 0b 已在 `main`；尚未写任何适配器、也没有第二条线路协议，
-阶段 1 仍需对 §2（收益是否值这个成本）和 §12（待决问题）做出明确决定 —— 首先是 §12.1，而
-阶段 0 正是为回答它而做。除此之外，本文记录接缝在哪、放接缝的三个选项、推荐方案、agentao
-自身历史格式里已核实的翻译陷阱，以及分阶段计划。
+**状态：** **阶段 0 已实施，随 0.4.26 发布。阶段 1 已于 2026-09-18 实施（随 0.5.0 发布），
+验证对象是脚本化的 socket —— 尚未对真实端点跑过。阶段 2–3 仍是提案、未授权。rev 12
+（2026-09-18）。** §2.3 的阶段 0a 与 0b 已在 `main`；阶段 1 在 `LLMClient` 之下加了适配器
+接缝，以及第二条线路 `anthropic-messages`，启动时选定。§12.1 —— 阶段 0 是否让适配器变得
+不必要 —— **没有**先靠实测回答：维护者在阶段 0 的账单对比仍欠着的情况下授权了阶段 1，这笔
+欠账顺延（见「阶段 1 落了什么」末段）。除此之外，本文记录接缝在哪、放接缝的三个选项、推荐
+方案、agentao 自身历史格式里已核实的翻译陷阱，以及分阶段计划。
 
 **阶段 0 落了什么**（`prompts/builder.py`、`agent.py`、`runtime/chat_loop/_runner.py`、
 `runtime/llm_call.py`、`context_manager.py`、`llm/_cache_control.py`、`llm/client.py`、
@@ -36,6 +38,81 @@
 为空。尾消息里剩下的大项是**已激活技能的正文** —— 一个技能约 4.1k tokens／请求 —— 而这一项
 不是无代价的搬动：放进前缀，每次激活要付一次整段历史的缓存失效，所以取决于技能通常在会话的
 什么时点被激活，这一点尚无数据。做账单实测时，请记录每次激活时的历史长度。
+
+**阶段 1 落了什么**（`llm/_api_format.py`、`llm/_openai_completions.py`、
+`llm/_anthropic_messages.py`、`llm/client.py`、`llm/_stream_response.py`、
+`runtime/chat_loop/_serialize.py`、`runtime/chat_loop/_runner.py`、`runtime/model.py`、
+`context_manager.py`、`agent.py`、`embedding/factory.py`、`agents/tools/_wrapper.py`、
+`cli/commands/provider.py`；`tests/test_llm_api_extraction_noop.py`、
+`tests/test_anthropic_messages_adapter.py`、`tests/test_anthropic_messages_runtime.py`、
+`tests/support/anthropic_wire.py`）：
+
+- **接缝。** `LLMClient` 保留重试/退避循环、日志和 token 累计；适配器拥有请求形状、线路调用、
+  流循环、一次性请求修复和重试分类。Chat Completions 路径逐句搬进了
+  `OpenAICompletionsAdapter`，它构造的请求与 `main@a2c8c6d`（抽取之前）抓取的样本保持
+  **逐字节相同**（§10 要的回归证据，同一个 PR）。当前工作接口是 `create_client /
+  build_request / log_view / send / new_accumulator / consume_stream / repair_request /
+  classify_retry`（外加 `reset_latches`）。§5.1 草图里的 `describe_error` 和 `purge_keys`
+  **没有**做成方法：溢出检测和上限解析本来就是基于字符串的、且已经匹配 Anthropic 的文本；清洗
+  则是 `runtime/model.py` 里的一张列表。两者仍留给第一个后续适配器去定型。
+- **§12 的待决问题，这里的决定。**（2）SDK 是**核心依赖**（`anthropic>=1.6.0`，与
+  `openai` 并列），这是维护者的决定 —— 初稿曾把它做成 extra。它是惰性导入的，默认线路从不加载
+  它；进核心依赖也正是 CI 会真的跑适配器测试、而不是跳过的原因。
+  （3）子代理继承 `api_format`，理由同 `extra_body`：同一个端点。（4）暂时不会发生 —— 只在
+  启动时选定，`/provider` 会**拒绝**切到配置了另一种协议的块。
+- **配置。** `{PROVIDER}_API_FORMAT` 与仅关键字的 `Agentao(api_format=)` /
+  `LLMClient(api_format=)`；未知值和尚未实现的值一律 fail closed，并列出有效值（§9）。
+
+**实现与下文正文不一致之处，以及原因。** 每一条都是跑真实的 `anthropic` SDK（1.6.0）跑出来
+的，不是读协议读出来的：
+
+1. **`chat()` 和 `chat_stream()` 都走流式传输。** SDK 会拒绝 `max_tokens` 意味着超过十分钟的
+   非流式请求（`_base_client.py::_calculate_nonstreaming_timeout`：约 21,333 以上）。agentao
+   的默认值是 65,536，而摘要器调用 `chat()` 时根本不带上限，所以真正的非流式路径会在第一次
+   压缩时抛 `ValueError`。`chat()` 就是不带回调地消费这条流；§10 的「流式/非流式一致」因此是
+   构造使然，但仍有测试。
+2. **不发送 `temperature`，§6.8 因此不再适用。** 这个 SDK 的 `messages.create` 没有
+   `temperature` / `top_p` / `top_k` 参数 —— 传一个就是 `TypeError`，请求根本到不了网络。
+   `LLM_TEMPERATURE` 和 `/temperature` 在这条线路上不起作用；确实接受它的网关通过
+   `extra_body` 传。有一条测试钉住这个 `TypeError`，所以哪天某个版本把参数加回来，测试会说。
+3. **块载体只写在六处中的两处，§5.1 的元组没有变长。** 工具调用消息和最终回复记录的是模型
+   **自己**的输出，带 `anthropic_thinking_blocks`。四条合成的收尾消息（max-iterations、长度
+   中止、hook stop、doom loop）是用同一个响应拼出来的**第二条** assistant 消息，那个响应的块
+   已经在第一条上了；在那里再放一遍带签名的块，等于把一次模型输出记了两遍。它们照旧只带截断
+   的展示副本。
+4. **thinking 排在所属轮次的最前；与 text 的交错不保留。** OpenAI 形状的 dict 只有一个
+   `content` 字符串和一个 `tool_calls` 列表，`[thinking, text, thinking, tool_use]` 没有表示
+   方式。发出时先按序放块，再放 text，再放调用 —— 这正是 API 自己的规则点名的位置（开着
+   thinking 时，工具循环里的 assistant 轮次必须以 thinking 块开头）。这就是 §4 说过的那个
+   上限，碰到了。
+5. **流内部的 `error` 事件按 body 分类。** 它是随 HTTP 200 到达的，SDK 抛出的是
+   `status_code == 200` 的裸 `APIStatusError`，只看状态码的分类表会把它判成永久错误。过载是
+   最常见的一种，而且通常早于任何内容。`overloaded_error` / `rate_limit_error` /
+   `api_error` / `timeout_error` 在尚未向宿主展示任何内容时会重试。
+6. **三处较小的增补。** 一次性修复会采纳模型自己说出的输出上限（`max_tokens: N > M`）——
+   默认的 65,536 可能超过某个模型的上限，而这条报错的文本格式**没有对真实端点核实过**；来自
+   别家 provider 会话的 id（`functions.read_file:0`）只在出站副本上改写，并且经过一张
+   **覆盖整个请求的一对一映射** —— 单纯改写是有损的（`call.1` 和 `call:1` 会撞，第 64 个
+   字符之后才不同的 id 也会撞），而重复的 `tool_use` id 是 400，且因为 id 在历史里，此后每个
+   请求都 400；Anthropic 的第二种溢出报错（`input length and max_tokens exceed context
+   limit: A + B > C`）加进了检测表和上限表，因为在这条线路上它才是**最先**遇到的溢出。
+
+7. **第一轮评审改掉的两处。** §6.6 的「data URL 之外一律显式报错」改为对 `http(s)` 图片 URL
+   透传（`source: {type: "url"}`）：这个 part 是持久化的，所以报错是永久性的 —— 此后每个请求
+   都会报错，只有 `/clear` 能恢复。其它形态仍然报错。另外，`extra_body` 的遮蔽告警
+   （`host-llm-extra-params.zh.md` §3.3）改为从适配器读取键集合：在这条线路上 `system` 是
+   结构性字段 —— 写进 `extra_body` 会悄悄替换掉整个 system prompt —— 而 `temperature` 和
+   `thinking` 不是，因为在这里 `extra_body` 正是宿主传它们的方式。
+
+**阶段 1 的验收门还缺什么。** 上面所有内容都是用真实 SDK 在脚本化 socket 上验证的：请求体是
+SDK 序列化出来的 JSON，事件和异常都是 SDK 自己的。**没有任何一项对真实端点跑过**，所以有四件
+事是依据文档和同行实现断言的、而不是观察到的 —— thinking 在前的顺序会被接受；assistant 开头
+的历史前面补的那条合成 user 消息会被接受；输出上限报错的措辞；以及提升到 `tool_result` 上的
+断点会生效。§10 验收门里的**缓存收益检查**同样没做，而且现在需要在同一个端点上做三组：只有
+阶段 0a、Chat Completions 上的 0b、以及原生线路。
+
+**rev 12 改了什么：** 阶段 1 已实施；上面两块记录了落了什么、与正文哪里不一致及原因、以及
+它的验收门还缺什么。§12.2 与 §12.3 已定（核心依赖；继承）。下文的设计正文相对 rev 10 其余未改。
 
 **rev 11 改了什么：** 阶段 0 已实施；上面的状态块记录了落了什么、落在哪、以及它的验收门
 还缺什么。下文的设计正文相对 rev 10 未改 —— 它是这次实施所依据的记录，也是将来评判阶段 1

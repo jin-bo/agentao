@@ -1,13 +1,16 @@
 # Multi-wire-API support: `anthropic-messages`, `openai-responses` and `gemini-api`
 
-**Status:** **Stage 0 implemented and shipped in 0.4.26. Stages 1–3 proposed and not
-authorized. rev 11 (2026-09-17).** §2.3's stage 0a and 0b are on `main`; no
-adapter and no second wire protocol has been written, and stage 1 still needs an
-explicit decision on §2 (does the benefit justify the cost) and §12 (open
-questions) — starting with §12.1, which stage 0 exists to answer. This document
-otherwise records the seam, the three options for where to put it, the
-recommendation, the verified translation hazards inside agentao's own history
-format, and the staged plan.
+**Status:** **Stage 0 implemented and shipped in 0.4.26. Stage 1 implemented
+2026-09-18 (ships with 0.5.0), against a scripted socket — not yet run against a live
+endpoint. Stages 2–3 proposed and not authorized. rev 12 (2026-09-18).** §2.3's
+stage 0a and 0b are on `main`; stage 1 adds the adapter seam under `LLMClient`
+and one second wire, `anthropic-messages`, selected at startup. §12.1 — whether
+stage 0 makes the adapters unnecessary — was **not** answered by measurement
+first: the maintainer authorized stage 1 with stage 0's billed comparison still
+owed, and that debt carries over (see *What stage 1 landed*, last paragraph).
+This document otherwise records the seam, the three options for where to put it,
+the recommendation, the verified translation hazards inside agentao's own
+history format, and the staged plan.
 
 **What stage 0 landed** (`prompts/builder.py`, `agent.py`, `runtime/chat_loop/_runner.py`,
 `runtime/llm_call.py`, `context_manager.py`, `llm/_cache_control.py`, `llm/client.py`,
@@ -49,6 +52,112 @@ skill's body** — ~4.1k tokens per request for one skill — and that one is no
 free move: in the prefix it costs one whole-history cache miss per activation,
 so it depends on when in a session skills get activated, which is unmeasured.
 Record the history length at each activation when the billed measurement runs.
+
+**What stage 1 landed** (`llm/_api_format.py`, `llm/_openai_completions.py`,
+`llm/_anthropic_messages.py`, `llm/client.py`, `llm/_stream_response.py`,
+`runtime/chat_loop/_serialize.py`, `runtime/chat_loop/_runner.py`,
+`runtime/model.py`, `context_manager.py`, `agent.py`, `embedding/factory.py`,
+`agents/tools/_wrapper.py`, `cli/commands/provider.py`;
+`tests/test_llm_api_extraction_noop.py`, `tests/test_anthropic_messages_adapter.py`,
+`tests/test_anthropic_messages_runtime.py`, `tests/support/anthropic_wire.py`):
+
+- **The seam.** `LLMClient` keeps the retry/backoff loop, logging and token
+  totals; an adapter owns the request shape, the wire call, the stream loop, the
+  one-shot request repairs and the retry classification. The Chat Completions
+  path moved into `OpenAICompletionsAdapter` statement for statement, and the
+  request it builds is held **byte-identical** to a capture taken at
+  `main@a2c8c6d`, before the extraction (§10's regression evidence, same PR).
+  The working interface is `create_client / build_request / log_view / send /
+  new_accumulator / consume_stream / repair_request / classify_retry`
+  (`+ reset_latches`). §5.1's `describe_error` and `purge_keys` were **not**
+  built as methods: overflow detection and limit parsing were already
+  string-based and already matched Anthropic's text, and the purge is a list in
+  `runtime/model.py`. Both still settle with the first follow-on adapter.
+- **§12's open questions, as decided here.** (2) The SDK is a **core dependency**
+  (`anthropic>=1.6.0`, beside `openai`), by the maintainer's decision — a first
+  draft shipped it as an extra. It is imported lazily, so the default wire
+  never loads it, and being core is also what makes CI run the adapter's tests
+  rather than skip them. (3) Sub-agents inherit `api_format`, for `extra_body`'s reason:
+  same endpoint. (4) Does not arise yet — selection is startup-only, and
+  `/provider` **refuses** a switch to a block configured for another protocol.
+- **Config.** `{PROVIDER}_API_FORMAT` and keyword-only `Agentao(api_format=)` /
+  `LLMClient(api_format=)`; unknown and not-yet-implemented values fail closed
+  and list the valid ones (§9).
+
+**Where the implementation departs from the text below, and why.** Each of
+these was found by running the real `anthropic` SDK (1.6.0) rather than by
+reading the protocol:
+
+1. **`chat()` and `chat_stream()` both run over the streaming transport.** The
+   SDK refuses a non-streaming request whose `max_tokens` implies more than ten
+   minutes (`_base_client.py::_calculate_nonstreaming_timeout`: anything above
+   ~21,333). agentao's default is 65,536, and the summarizer calls `chat()` with
+   no cap at all, so a true non-streaming path would have raised `ValueError`
+   on the first compaction. `chat()` consumes the stream with no callback; §10's
+   "streaming/non-streaming parity" is therefore by construction, and is still
+   tested.
+2. **`temperature` is not sent, so §6.8 is moot.** `messages.create` has no
+   `temperature` / `top_p` / `top_k` parameter in this SDK — passing one is a
+   `TypeError` before anything reaches the network. `LLM_TEMPERATURE` and
+   `/temperature` have no effect on this wire; a gateway that takes one gets it
+   through `extra_body`. A test pins the `TypeError`, so the day a release
+   brings the parameter back, the suite says so.
+3. **The block carrier is written at two of the six sites, and the tuple in
+   §5.1 did not grow.** The tool-call message and the final response record the
+   model's own output and carry `anthropic_thinking_blocks`. The four synthetic
+   finals (max-iterations, length abort, hook stop, doom loop) are a *second*
+   assistant message built from a response whose blocks are already on the
+   first; repeating a signed block there records one model output twice. They
+   keep the truncated display copy, as before.
+4. **Thinking leads its turn; interleaving with text is not preserved.** An
+   OpenAI-shaped dict has one `content` string and one `tool_calls` list, so
+   `[thinking, text, thinking, tool_use]` has no representation. Blocks go out
+   first, in order, then text, then calls — the placement the API's own rule
+   names (with thinking on, the assistant turn of a tool loop must start with a
+   thinking block). This is §4's stated ceiling, met.
+5. **An `error` event inside a stream is classified by its body.** It arrives
+   on an HTTP 200, the SDK raises a bare `APIStatusError` with
+   `status_code == 200`, and a status-only table calls it permanent. Overload
+   is the common one and usually precedes any content.
+   `overloaded_error` / `rate_limit_error` / `api_error` / `timeout_error` are
+   retried when nothing has been shown to the host.
+6. **Three smaller additions.** A one-shot repair adopts the output cap a model
+   states (`max_tokens: N > M`) — the default 65,536 can exceed a model's cap,
+   and the message format is **unverified against a live endpoint**; an
+   id from another provider's session (`functions.read_file:0`) is rewritten
+   on the outbound copy only, through a **one-to-one map built over the whole
+   request** — the rewrite alone is lossy (`call.1` and `call:1` collide, as do
+   ids differing past the 64th character), and a duplicate `tool_use` id is a
+   400 on every later request because the ids are in history; and
+   Anthropic's second overflow message (`input length and max_tokens exceed
+   context limit: A + B > C`) joined the detection and limit tables, because on
+   this wire it is the overflow met *first*.
+
+7. **Two things the first review changed.** §6.6's "fail loudly on anything
+   but a data URL" became a pass-through for `http(s)` image URLs
+   (`source: {type: "url"}`): the part is persisted, so raising was permanent —
+   every later request raised too, with nothing short of `/clear` to recover.
+   Anything else still raises. And the `extra_body` shadow warning
+   (`host-llm-extra-params.md` §3.3) reads its key set from the adapter: on
+   this wire `system` is structural — in `extra_body` it silently replaces the
+   whole system prompt — while `temperature` and `thinking` are not, since
+   `extra_body` is how a host is meant to send them here.
+
+**What stage 1's gate still needs.** Everything above was verified against the
+real SDK over a scripted socket: request bodies are the JSON the SDK serialized,
+events and exceptions are the SDK's own. **Nothing has been run against a live
+endpoint**, so four things are asserted from documentation and peer
+implementations rather than observed — that thinking-first ordering is
+accepted, that the synthetic user turn in front of an assistant-first history
+is accepted, the wording of the output-cap rejection, and that a breakpoint
+hoisted onto a `tool_result` is honoured. The **cache-benefit check** in §10's
+gate is not done either, and it now needs three arms on one endpoint: stage 0a
+alone, 0b over Chat Completions, and the native wire.
+
+**rev 12 — what changed:** Stage 1 was implemented; the two blocks above record
+what landed, where it departs from this text and why, and what its gate still
+needs. §12.2 and §12.3 are decided (core dependency; inherit). The design text below is
+otherwise unchanged from rev 10.
 
 **rev 11 — what changed:** Stage 0 was implemented; the status block above records
 what landed, where, and what its gate still needs. The design text below is

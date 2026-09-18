@@ -13,7 +13,7 @@ uv run python script.py    # Run Python scripts
 uv run agentao             # Run the CLI
 ```
 
-Core deps live in `[project.dependencies]`; the heavyweight UI / fetch / tokenization deps are opt-in extras. A bare `pip install agentao` gets a library-only install; `pip install 'agentao[cli]'` is the smallest interactive CLI. (The `[pdf]` / `[excel]` / `[image]` / `[crypto]` / `[google]` extras were removed as dead weight — zero in-tree consumers; see `docs/design/optimization-opportunities-review.md` T1.1.)
+Core deps live in `[project.dependencies]`; the heavyweight UI / fetch / tokenization deps are opt-in extras. A bare `pip install agentao` gets a library-only install; `pip install 'agentao[cli]'` is the smallest interactive CLI. Both wire SDKs — `openai` and `anthropic` — are core, imported lazily. (The `[pdf]` / `[excel]` / `[image]` / `[crypto]` / `[google]` extras were removed as dead weight — zero in-tree consumers; see `docs/design/optimization-opportunities-review.md` T1.1.)
 
 ## Running
 
@@ -60,6 +60,7 @@ Agentao is an **embedded agent harness**: the same runtime drives the interactiv
 |---|---|
 | `agentao/agent.py` | `Agentao` class — sync `chat()` and async `arun()`. Construction wires LLM, tools, skills, plugins, permissions, replay. |
 | `agentao/runtime/` | Per-turn machinery extracted from `Agentao` — `ChatLoopRunner` (loop body), `ToolRunner` (4-phase tool pipeline: plan / execute / format / sanitize), `run_llm_call`, model/provider switching. |
+| `agentao/llm/` | `LLMClient` — the retry / logging shell — over a wire adapter: `_openai_completions.py` (Chat Completions, the default) or `_anthropic_messages.py` (Anthropic Messages), selected by `_api_format.py`. `_stream_response.py` is the one response duck-type both build. See *LLM wire protocols*. |
 | `agentao/compaction/` | Compaction orchestration. `types.py` is the contract (`CompactionOutcome`, `CompactionDecisionContext`, `CompactionDecision`, `CompactionController`, and the `trigger`/`kind`/`reason` vocabulary) and **imports nothing but the standard library**; `coordinator.py` holds `CompactionCoordinator`. `__init__.py` must never re-export `coordinator` — see Common gotchas. |
 | `agentao/host/` | **Public host contract.** `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `EventStream`, `ActivePermissions`. Stability boundary for embedded hosts. |
 | `agentao/embedding/` | Host-side construction: `build_from_environment()` (env / dotenv / `.agentao/*.json` reads routed through explicit kwargs), `permission_loader`, `sessions`, `plugins/` (manifest loader, validators, MCP merge, resolvers). |
@@ -112,7 +113,7 @@ The split landed in 0.4.26 as stage 0a of `docs/design/llm-api-adapters.md` §2.
 
 Because the tail is rebuilt per *request*, a `todo_write` in one tool iteration is visible to the next — before 0a it waited for a system-prompt rebuild.
 
-**Explicit prompt-cache breakpoints are opt-in** (stage 0b): `LLM_PROMPT_CACHE=anthropic` / `prompt_cache=` puts at most 3 `cache_control` markers on a request (system message, last tool definition, end of stable history), reserving the 4th slot for the endpoint's automatic caching. Marking happens in `llm/client.py::_build_request_kwargs` — *below* replay — and is **copy-on-mark** (`llm/_cache_control.py`): the request shares its dicts with `agent.messages`, so an in-place marker would enter history, the session file, replay and compaction, and accumulate one breakpoint per turn. Off by default because SDK pass-through is verified and endpoint acceptance is not; never inferred from a base URL or model name.
+**Explicit prompt-cache breakpoints are opt-in** (stage 0b): `LLM_PROMPT_CACHE=anthropic` / `prompt_cache=` puts at most 3 `cache_control` markers on a request (system message, last tool definition, end of stable history), reserving the 4th slot for the endpoint's automatic caching. Marking happens in the wire adapter's `build_request` (reached through `llm/client.py::_build_request_kwargs`) — *below* replay — and is **copy-on-mark** (`llm/_cache_control.py`): the request shares its dicts with `agent.messages`, so an in-place marker would enter history, the session file, replay and compaction, and accumulate one breakpoint per turn. Off by default because SDK pass-through is verified and endpoint acceptance is not; never inferred from a base URL or model name.
 
 **The date/time is in neither of the two.** It is injected per-turn as a `<system-reminder>` prepended to the *user message* (`runtime/chat_loop/_runner.py::run`, `Current Date/Time: YYYY-MM-DD HH:MM:SS (Day)`) — keeping it out of the cached prefix is the whole point. `tests/test_date_in_prompt.py` asserts both halves.
 
@@ -384,9 +385,22 @@ Key files: `agentao/mcp/config.py`, `client.py`, `tool.py`, `_compat.py`.
 
 CLI: `/mcp list`, `/mcp add [--http|--sse] <name> <command|url>`, `/mcp remove <name>`.
 
+### LLM wire protocols
+
+`LLMClient` (`agentao/llm/client.py`) is a retry / logging shell over one **wire adapter**, chosen at construction by `api_format` (`{PROVIDER}_API_FORMAT`) and fixed for the client's life: `openai-completions` (`llm/_openai_completions.py`, the default) or `anthropic-messages` (`llm/_anthropic_messages.py`; its SDK is a core dependency, imported lazily). `api_format` is **not** the provider — `LLM_PROVIDER` names a credential block, and the format is never inferred from a URL, a provider name or a model name (`llm/_api_format.py`; an unimplemented format fails closed). Stage 1 of `docs/design/llm-api-adapters.md`.
+
+- **History did not change shape, and must not.** `agent.messages` stays OpenAI dicts on every wire; an adapter translates an outbound *copy* and folds the response back into the one duck-type in `llm/_stream_response.py` — both adapters build through `_StreamAccumulator`. A new wire adds an adapter, never a message model.
+- **The Chat Completions adapter is an extraction, held byte-identical** to a request captured before it moved (`tests/test_llm_api_extraction_noop.py`, golden in `tests/data/`). Never regenerate that golden from the current build. Its two latches stay on `LLMClient` because tests and `/temperature` read them there; `LLMClient.client` stays the live SDK object for the same reason, and the adapter reads config back through `owner` at request time because `/model` and `/thinking` mutate the live client.
+- **Signed thinking rides a second carrier.** `reasoning_content` is a 500-character display copy; Anthropic's signed blocks go back whole or are rejected, so they ride `anthropic_thinking_blocks` on the assistant dict (`chat_loop/_serialize.py::_attach_thinking_blocks`) — written at the **two** sites that record the model's own output, not at the four synthetic finals, which are a second message built from the same response. The key is untouched by `sanitize_assistant_message` on purpose (the signature covers the text) and is in `purge_thinking_artifacts`. **A new adapter's carrier key must be added to that purge**, which runs on every switch whichever wire is live.
+- **Three facts that came from running the SDK, not from the protocol docs.** `anthropic` 1.6.0 has no `temperature` parameter at all, so this wire never sends one. It also refuses a non-streaming request above ~21k `max_tokens` (agentao's default is 65,536 and the summarizer names none), so `chat()` consumes the stream with no callback — there is no non-streaming path to "restore". And an `error` event inside a stream arrives on HTTP 200 as a bare `APIStatusError(status_code=200)`, so retry classification on this wire reads the body.
+- **`usage.prompt_tokens` is the whole prompt** — `input_tokens + cache_creation + cache_read`. Anthropic's `input_tokens` is the uncached remainder, and the Tier-1 anchor takes `prompt_tokens` as the size of what was sent. Gemini's native field already includes the cache; do not copy the mapping across adapters.
+- **Test a wire adapter against the real SDK.** `tests/support/anthropic_wire.py` replaces only the socket (`httpx2.MockTransport`), so request bodies are what the SDK serialized and events/exceptions are the SDK's own — that is how the `temperature` and non-streaming facts above were found. Nothing has been run against a live endpoint; the design doc lists what is asserted rather than observed.
+
 ### Logging
 
 `agentao.log` captures every LLM request/response, all tool calls with formatted JSON arguments, tool results, token usage, timestamps. Nothing is truncated. Logger lives in `agentao/llm/client.py` — read this file first when debugging tool execution or LLM behavior.
+
+On the `anthropic-messages` wire the request is logged as the **canonical** OpenAI-shaped list, not the translated body — the logger is incremental over message indices and translation merges messages.
 
 Content is **not verbatim**: the file handler carries a `_RedactingFormatter` that rewrites credential-shaped strings to `[REDACTED:<kind>]` using the shared patterns in `agentao/security/secret_scan.py`. It is a `Formatter`, not a `Filter`, deliberately — a `Filter` mutates the shared `LogRecord` and would leak the redaction into every other handler on the logger, including an embedded host's own. If a debugging session needs the raw bytes, that formatter is the single place to bypass.
 

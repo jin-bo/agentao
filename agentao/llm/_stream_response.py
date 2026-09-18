@@ -9,15 +9,28 @@ attribute surface here is the union of what those callers touch:
 - ``response.usage``
 - ``response.model``
 - ``tc.id``, ``tc.function.{name,arguments,thought_signature}``
+- ``message.anthropic_thinking_blocks`` — only on the ``anthropic-messages``
+  wire, and only when the model returned signed thinking (see
+  ``_anthropic_messages.py``). Absent, not ``None``, everywhere else.
 
-Nothing in this module talks to OpenAI or the network; it is pure data
+Nothing in this module talks to a provider or the network; it is pure data
 structure plumbing kept separate so the network/retry path in
-``client.py`` reads as one concern.
+``client.py`` reads as one concern. Both wire adapters build their response
+through :class:`_StreamAccumulator`, so there is one duck-type and not one per
+protocol.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+
+#: The attribute on the duck-type message **and** the key on the history dict
+#: that carries Anthropic's signed thinking blocks. One spelling for both, so
+#: a reader can grep from the wire to the session file. Named for its wire on
+#: purpose: a block signed by one protocol is rejected by every other, and an
+#: OpenAI-compatible gateway that returns a field of its own called
+#: ``thinking_blocks`` must not start being persisted because of this one.
+ANTHROPIC_THINKING_BLOCKS = "anthropic_thinking_blocks"
 
 
 class _StreamAccumulator:
@@ -33,6 +46,9 @@ class _StreamAccumulator:
     def __init__(self, model: str) -> None:
         self.content_parts: List[str] = []
         self.reasoning_parts: List[str] = []
+        # Anthropic's signed ``thinking`` / ``redacted_thinking`` blocks, whole
+        # and in order. Never filled on the Chat Completions wire.
+        self.thinking_blocks: List[Dict[str, Any]] = []
         self.tool_calls_data: Dict[int, Dict[str, str]] = {}
         # Streaming tool-call keying state. The OpenAI streaming spec tags
         # every tool_call delta with an ``index`` so fragments reassemble
@@ -106,6 +122,7 @@ class _StreamAccumulator:
             finish_reason_reported=self.finish_reason_reported,
             usage=self.usage_data,
             reasoning_content="".join(self.reasoning_parts) if self.reasoning_parts else None,
+            thinking_blocks=self.thinking_blocks or None,
         )
 
 
@@ -125,7 +142,13 @@ class _StreamToolCall:
 
 
 class _StreamMessage:
-    def __init__(self, content, tool_calls, reasoning_content: Optional[str] = None):
+    def __init__(
+        self,
+        content,
+        tool_calls,
+        reasoning_content: Optional[str] = None,
+        thinking_blocks: Optional[List[Dict[str, Any]]] = None,
+    ):
         self.content = content
         self.tool_calls = tool_calls
         self.role = "assistant"
@@ -133,6 +156,10 @@ class _StreamMessage:
         # chat_loop / context_manager / sanitize all see thinking-model output
         # the same way regardless of streaming mode.
         self.reasoning_content = reasoning_content
+        # Set only when there is something to carry, like ``thought_signature``
+        # above: a Chat Completions response must not grow an attribute.
+        if thinking_blocks:
+            self.anthropic_thinking_blocks = thinking_blocks
 
 
 class _StreamChoice:
@@ -153,6 +180,7 @@ class _StreamResponse:
         finish_reason_reported: bool,
         usage: Any = None,
         reasoning_content: Optional[str] = None,
+        thinking_blocks: Optional[List[Dict[str, Any]]] = None,
     ):
         self.model = model
         self.usage = usage  # populated when provider supports stream_options include_usage
@@ -189,5 +217,6 @@ class _StreamResponse:
             content=content,
             tool_calls=tool_calls,
             reasoning_content=reasoning_content,
+            thinking_blocks=thinking_blocks,
         )
         self.choices = [_StreamChoice(message=message, finish_reason=finish_reason)]

@@ -24,6 +24,7 @@ classes**, not pytest fixtures — construction is explicit at the call site.
 | `acp_agents.py` | `FakeAgent` and friends — duck-typed `Agentao` replacements for ACP handler tests. |
 | `acp_client.py` | Fake ACP subprocess servers (`JSONRPC_MOCK_SCRIPT`, `INTERACTION_SERVER_SCRIPT`) + manager/handle builders. |
 | `acp_server.py` | In-memory `AcpServer` builders, plus the `BlockingStdin` / `CapturingStdout` / `RecordingServer` stream doubles. |
+| `anthropic_wire.py` | A scripted Anthropic Messages endpoint **below the real SDK**: SSE event builders, a `Wire` that serves responses and records request bodies, and `ChunkedBody` for delivery-order and stream-closure assertions. Only the socket is fake. |
 | `host_events.py` | Host event-stream capture. |
 | `mcp.py` | MCP client/tool doubles. |
 | `stdio_mcp_server.py` | A real SDK-free stdio MCP server that records launches, calls, overlapping calls and stdin EOF as marker files, plus `stdio_server()` to write it and build its config. |

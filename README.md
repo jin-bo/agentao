@@ -206,7 +206,7 @@ Open source. Use and modify as needed.
 
 ## Acknowledgments
 
-- LLM client: [OpenAI Python SDK](https://github.com/openai/openai-python)
+- LLM clients: [OpenAI Python SDK](https://github.com/openai/openai-python) · [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python)
 - CLI: [Rich](https://github.com/Textualize/rich) · [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) · [readchar](https://github.com/magmax/python-readchar)
 - Optional local JS rendering for `web_fetch`: [Playwright](https://github.com/microsoft/playwright-python)
 - MCP: [Model Context Protocol SDK](https://github.com/modelcontextprotocol/python-sdk) — architecture inspired by [Gemini CLI](https://github.com/google-gemini/gemini-cli)

@@ -7,7 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Targeting 0.5.0 — a **removal release**. Add entries under the relevant
+_Targeting 0.5.0 — a **removal release** that also carries one opt-in
+addition, the `anthropic-messages` wire. Add entries under the relevant
 heading as work lands. Upgrade guide: `docs/migration/0.4.x-to-0.5.0.md`
 (`.zh.md` twin)._
 
@@ -63,6 +64,70 @@ every session. `agentao.tool_runner`, the old import path of
 `agentao.runtime.tool_runner`, is a different shim and also stays.
 
 ### Added
+
+- **A second wire protocol: `anthropic-messages`** (`{PROVIDER}_API_FORMAT`,
+  keyword-only `api_format=` on `Agentao(...)` and `LLMClient(...)`). Stage 1
+  of `docs/design/llm-api-adapters.md`. agentao can now speak Anthropic's
+  Messages API natively, over the official SDK, instead of only Chat
+  Completions. **Opt-in and never inferred** — not from the base URL, the
+  provider name or the model name: `LLM_PROVIDER=ANTHROPIC` pointing at an
+  OpenAI-compatible gateway keeps working exactly as it does today. The
+  `anthropic` SDK (`>=1.6.0`) is a **new core dependency**, beside `openai`: it
+  is imported lazily, so the default wire never loads it, but every install now
+  pulls it, and `docstring-parser` with it — the only two additions to the
+  install closure, since its other requirements were already there. An unknown value — including the two formats the
+  design names and nothing implements yet, `openai-responses` and `gemini-api` —
+  raises at startup and lists the valid ones.
+  History is unchanged: `agent.messages`, session files, replay and ACP stay
+  OpenAI-shaped dicts, and the adapter translates an outbound copy. What that
+  translation has to get right is agentao's own history format — a compaction
+  summary is a mid-history `role: "system"` message, which has no target on this
+  wire and goes out as user text; the per-result `role: "tool"` messages, a
+  persisted background notification and the request-only tail are merged into
+  one user turn with every `tool_result` first; and a history the last overflow
+  rung opened on an assistant message gets a user turn put in front. A tool-call
+  id from a session recorded on another provider is rewritten to the API's
+  pattern through a one-to-one map, so two ids that would rewrite alike stay
+  distinct; an `http(s)` image URL is passed through for the provider to fetch.
+  The `extra_body` shadow warning now knows each wire's structural fields — on
+  this one, `system` in `extra_body` replaces the whole system prompt and warns;
+  `thinking` and `temperature` do not.
+  **Signed thinking blocks round-trip whole.** They ride on the assistant
+  message under `anthropic_thinking_blocks`, beside the 500-character
+  `reasoning_content` display copy, are exempt from the sanitizer (the signature
+  covers the text), are sent back verbatim at the head of their turn, and are
+  purged with the other thinking artifacts on a model or endpoint switch,
+  `/resume` and ACP `session/load`. `usage.prompt_tokens` **folds the cached
+  prompt back in** — Anthropic reports the uncached remainder as `input_tokens`,
+  and the Tier-1 compaction anchor reads `prompt_tokens` as the size of what was
+  sent, so mapping the one onto the other would have under-counted by exactly the
+  cached amount. `LLM_PROMPT_CACHE=anthropic` places the same three breakpoints
+  natively.
+  Four things to know before switching a deployment over. **`temperature` is
+  not sent** on this wire: `anthropic` 1.6.0 has no such parameter on
+  `messages.create` at all, so `LLM_TEMPERATURE` and `/temperature` have no
+  effect, and a gateway that takes one gets it through `LLM_EXTRA_BODY`.
+  **Extended thinking is turned on through `LLM_EXTRA_BODY`**
+  (`{"thinking": {"type": "enabled", "budget_tokens": 8000}}`); `/thinking`
+  refuses to store `reasoning_effort`, which this protocol rejects.
+  **`max_tokens` is required by the protocol**, so a call that names none sends
+  the configured cap (default 65,536), and a model that answers
+  `max_tokens: N > M` has `M` adopted for the session at the cost of that one
+  request — set `LLM_MAX_TOKENS` to avoid it. **The protocol is fixed at
+  startup:** `/provider` refuses a switch to a block configured for a different
+  one, ACP's `session/set_config_option` refuses a host `provider_resolver`
+  answer that declares a different one (a new optional `api_format` key in what
+  the resolver returns), and sub-agents inherit the parent's. Both `chat()` and `chat_stream()`
+  run over the streaming transport — the SDK refuses a non-streaming request at
+  agentao's default `max_tokens`.
+  **Verified against the real SDK over a scripted socket, not against a live
+  endpoint**, and no billed cache comparison has been run; the design document
+  lists what is asserted rather than observed.
+- **Anthropic's second context-overflow message is recognised**
+  (`input length and max_tokens exceed context limit: A + B > C`), on either
+  wire: it enters the overflow recovery ladder and `C` is adopted as the
+  observed window. It fires as soon as the prompt leaves less room than
+  `max_tokens`, so it is met before "prompt is too long".
 
 ### Changed
 

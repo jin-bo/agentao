@@ -78,6 +78,7 @@ agent = Agentao(
 | `base_url` | `str` | OpenAI 默认 | 切换到任意 OpenAI 兼容端点 |
 | `temperature` | `float` | `0.2` | 采样温度 |
 | `extra_body` | `Dict[str,Any]` | `None` | 原样转发给 LLM `.create()` 的 SDK `extra_body` —— 封闭请求构建够不到的参数的逃生舱（`reasoning_effort` / `top_p` / `seed` / `response_format` / provider 专有字段）。**仅关键字。** 子 agent 继承;日志中凭据键脱敏。**与 `llm_client` 互斥**。详见下文 |
+| `api_format` | `str` | `"openai-completions"` | 对 `base_url` 说哪种线路协议（0.5.0）：`"openai-completions"` 或 `"anthropic-messages"`（Anthropic 的 Messages API，走官方 SDK）。**仅关键字**；显式配置，从不根据 URL 或模型名推断；在 agent 生命周期内固定；子代理继承；**与 `llm_client=` 互斥**。未知值抛 `ValueError`。在 `anthropic-messages` 上，`base_url` 是 API 根，不发送 `temperature`，扩展思考走 `extra_body`。环境变量等价物：`{PROVIDER}_API_FORMAT` —— 见[附录 B](/zh/appendix/b-config-keys) |
 | `transport` | `Transport` | `NullTransport()` | UI 桥：事件流 + 工具确认 + ask_user + 最大迭代回调，详见 [第 4 部分](/zh/part-4/) |
 | `permission_engine` | `PermissionEngine` | 工厂自动建一个根在 `working_directory` | 规则级权限引擎，详见 [5.4](/zh/part-5/4-permissions) |
 | `max_context_tokens` | `int` | `200_000` | 超过即触发对话压缩 |

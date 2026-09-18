@@ -1,4 +1,10 @@
-"""OpenAI-compatible LLM client.
+"""The LLM client: one retry / logging shell over a wire-protocol adapter.
+
+``LLMClient`` speaks Chat Completions by default (``openai-completions``) and
+Anthropic's Messages API when constructed with
+``api_format="anthropic-messages"``. What differs per protocol lives in an
+adapter (``_openai_completions``, ``_anthropic_messages``); the retry loop,
+the logging and the token totals stay here, once.
 
 The retry policy and streaming duck-types are split into sibling
 modules (``_retry``, ``_stream_response``) and re-imported here so the
@@ -24,7 +30,9 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from ._cache_control import apply_cache_control, resolve_cache_control
+from ._api_format import ANTHROPIC_MESSAGES, OPENAI_COMPLETIONS, resolve_api_format
+from ._cache_control import resolve_cache_control
+from ._openai_completions import OpenAICompletionsAdapter
 from ._retry import (
     BASE_BACKOFF_SECONDS,
     JITTER_FRACTION,
@@ -36,7 +44,6 @@ from ._retry import (
     _compute_backoff_delay,
     _interruptible_sleep,
     _is_streaming_unsupported,
-    _is_temperature_unsupported,
     _mark_streamed,
     _parse_retry_after,
 )
@@ -78,16 +85,6 @@ def __getattr__(name: str):
 #: custom endpoint instead of silently inheriting it.
 KEEP_BASE_URL: Any = object()
 
-#: Request-body fields the client owns from the normal request build. ``extra_body``
-#: is merged *into the body* by the SDK (last-wins), so a key here that also appears
-#: in ``extra_body`` would shadow the client's value. Used only for the one-time
-#: construction warning (§3.3 of host-llm-extra-params.md) — not a hot-path check.
-_STRUCTURAL_BODY_KEYS = frozenset({
-    "model", "messages", "stream", "stream_options",
-    "tools", "tool_choice", "temperature",
-    "max_tokens", "max_completion_tokens",
-})
-
 
 class _RedactingFormatter(logging.Formatter):
     """Formatter that strips credential-shaped strings from log records.
@@ -120,7 +117,7 @@ class _RedactingFormatter(logging.Formatter):
 
 
 class LLMClient(_LoggingMixin):
-    """OpenAI-compatible LLM client with comprehensive logging.
+    """LLM client with comprehensive logging, over one configured wire protocol.
 
     Pass ``logger=...`` to skip all ``agentao`` package-root mutation
     (handler attach, level set, marker eviction) — embedded hosts own
@@ -141,6 +138,7 @@ class LLMClient(_LoggingMixin):
         extra_body: Optional[Dict[str, Any]] = None,
         prompt_cache: Optional[str] = None,
         prompt_cache_ttl: Optional[str] = None,
+        api_format: Optional[str] = None,
         log_file: Optional[str] = "agentao.log",
         logger: Optional[logging.Logger] = None,
     ):
@@ -179,6 +177,13 @@ class LLMClient(_LoggingMixin):
             prompt_cache_ttl: Retention hint, ``"5m"`` (the provider default,
                 same as ``None``) or ``"1h"``. Ignored when ``prompt_cache``
                 is off.
+            api_format: The wire protocol spoken to ``base_url`` —
+                ``"openai-completions"`` (the default, same as ``None``) or
+                ``"anthropic-messages"`` (Anthropic's Messages API).
+                Configured, never inferred from the URL or the model name, and
+                fixed for the life of the client. An unknown value raises
+                ``ValueError`` listing the valid ones. See
+                :mod:`agentao.llm._api_format`.
             log_file: Path to log file for LLM interactions. ``None`` skips
                 the file handler entirely.
             logger: Optional injected logger. When provided, the client
@@ -193,6 +198,9 @@ class LLMClient(_LoggingMixin):
             raise ValueError("LLMClient requires a non-empty base_url.")
         if not model:
             raise ValueError("LLMClient requires a non-empty model.")
+        # Resolved before anything is built, so a misspelled format fails
+        # without having opened a log file or an SDK client.
+        self.api_format: str = resolve_api_format(api_format)
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
@@ -237,17 +245,6 @@ class LLMClient(_LoggingMixin):
         # models (o1/o3/gpt-5, …) reject any non-default temperature.
         self.omit_temperature: bool = False
 
-        # max_retries=0: defer retry policy to _classify_retry / _compute_backoff_delay
-        # so 408/409/425/429/5xx/529 + Retry-After + cancellation are handled
-        # uniformly across non-stream and stream paths. Two layers of retry
-        # would otherwise compound (SDK default is 2) and ignore Retry-After
-        # the way our caller expects.
-        self.client = _openai_client_cls()(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            max_retries=0,
-        )
-
         # Injected logger → host owns the stack; skip package-root mutation.
         if logger is not None:
             self.logger = logger
@@ -287,7 +284,15 @@ class LLMClient(_LoggingMixin):
         # Track tools hash to avoid logging unchanged tool lists repeatedly
         self._last_tools_hash: Optional[int] = None
 
+        # The adapter owns everything protocol-specific, the SDK client
+        # included; ``self.client`` stays the live SDK object because
+        # ``list_available_models`` and a good many tests reach for it.
+        self._adapter = self._make_adapter()
+        self.client = self._adapter.create_client()
+
         self.logger.info(f"LLMClient initialized with model: {self.model}")
+        if self.api_format != OPENAI_COMPLETIONS:
+            self.logger.info(f"LLMClient wire protocol: {self.api_format}")
 
         # Structural-overlap guard (§3.3): a key inside ``extra_body`` that the
         # SDK merges into the body could shadow a structural field the client
@@ -296,9 +301,11 @@ class LLMClient(_LoggingMixin):
         # so warn ONCE here (not per request — that would spam the hot path).
         # Must run after logger init: ``self.logger`` does not exist until the
         # block above, so emitting it next to the §3.1 type-check would
-        # AttributeError.
+        # AttributeError. The key set is the adapter's: which fields are
+        # structural depends on the wire (``system`` is one on Messages, and
+        # ``temperature`` is not).
         if self.extra_body:
-            overlap = _STRUCTURAL_BODY_KEYS & self.extra_body.keys()
+            overlap = self._adapter.structural_body_keys & self.extra_body.keys()
             if overlap:
                 self.logger.warning(
                     "LLMClient.extra_body contains key(s) %s that the client "
@@ -307,6 +314,14 @@ class LLMClient(_LoggingMixin):
                     "client's values.",
                     ", ".join(sorted(overlap)),
                 )
+
+    def _make_adapter(self) -> Any:
+        if self.api_format == ANTHROPIC_MESSAGES:
+            # Imported here so the default wire never loads this module.
+            from ._anthropic_messages import AnthropicMessagesAdapter
+
+            return AnthropicMessagesAdapter(self)
+        return OpenAICompletionsAdapter(self, _openai_client_cls)
 
     @staticmethod
     def _build_file_handler(log_file: str) -> Optional[logging.FileHandler]:
@@ -411,11 +426,7 @@ class LLMClient(_LoggingMixin):
             self.prompt_cache = None
             self.prompt_cache_ttl = None
         self.reset_capability_latches()
-        self.client = _openai_client_cls()(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            max_retries=0,
-        )
+        self.client = self._adapter.create_client()
         self.logger.info(
             f"LLMClient reconfigured: model={self.model}, base_url={self.base_url}"
         )
@@ -433,6 +444,7 @@ class LLMClient(_LoggingMixin):
         """
         self._use_max_completion_tokens = False
         self.omit_temperature = False
+        self._adapter.reset_latches()
 
     def _build_request_kwargs(
         self,
@@ -467,29 +479,10 @@ class LLMClient(_LoggingMixin):
         out of ``agent.messages``: everything above this line saw the unmarked
         request.
         """
-        if cache_boundary is not None and self.cache_control is not None:
-            messages, tools = apply_cache_control(
-                messages, tools, self.cache_control,
-                request_only_tail=cache_boundary,
-            )
-        kwargs: Dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-        }
-        if stream:
-            kwargs["stream"] = True
-            kwargs["stream_options"] = {"include_usage": True}
-        if not self.omit_temperature:
-            kwargs["temperature"] = self.temperature
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-        if max_tokens:
-            key = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
-            kwargs[key] = max_tokens
-        if self.extra_body:
-            kwargs["extra_body"] = self.extra_body
-        return kwargs
+        return self._adapter.build_request(
+            messages, tools, max_tokens, stream=stream,
+            cache_boundary=cache_boundary,
+        )
 
     def chat(
         self,
@@ -522,14 +515,13 @@ class LLMClient(_LoggingMixin):
         )
 
         # Log request
-        self._log_request(request_id, kwargs)
+        self._log_request(request_id, self._adapter.log_view(kwargs, messages, tools))
 
         deadline = time.monotonic() + MAX_TOTAL_RETRY_SECONDS
         attempt = 0  # number of retries performed; first try is attempt 0
         while True:
             try:
-                raw = self.client.chat.completions.with_raw_response.create(**kwargs)
-                response = raw.parse()
+                response = self._adapter.send(kwargs)
 
                 if hasattr(response, "usage") and response.usage:
                     self.total_prompt_tokens += response.usage.prompt_tokens or 0
@@ -539,30 +531,14 @@ class LLMClient(_LoggingMixin):
                 return response
 
             except Exception as e:
-                # max_tokens vs max_completion_tokens param mismatch is a one-shot
-                # fix-up, not a retry — does not consume retry budget. The flag is
-                # latched to True after the first hit so this branch can fire at
-                # most once per LLMClient instance.
-                if (
-                    not self._use_max_completion_tokens
-                    and "max_tokens" in str(e)
-                    and "max_completion_tokens" in str(e)
-                ):
-                    self._use_max_completion_tokens = True
-                    self.logger.info("Switching to max_completion_tokens for this model")
-                    if "max_tokens" in kwargs:
-                        kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+                # A rejected parameter (max_tokens vs max_completion_tokens, an
+                # unsupported temperature, …) is a one-shot fix-up, not a retry
+                # — it does not consume retry budget. Each repair latches, so
+                # it can fire at most once per model.
+                if self._adapter.repair_request(str(e), kwargs, stream=False):
                     continue
 
-                # temperature unsupported (reasoning models: o1/o3/gpt-5, …) —
-                # one-shot fix-up, same shape as the max_completion_tokens branch.
-                if not self.omit_temperature and _is_temperature_unsupported(str(e)):
-                    self.omit_temperature = True
-                    self.logger.info("Model rejects 'temperature'; omitting it for this client")
-                    kwargs.pop("temperature", None)
-                    continue
-
-                retryable, status, retry_after = _classify_retry(e)
+                retryable, status, retry_after = self._adapter.classify_retry(e)
                 if not retryable or attempt >= MAX_RETRY_ATTEMPTS - 1:
                     import traceback
                     self.logger.error(
@@ -637,8 +613,10 @@ class LLMClient(_LoggingMixin):
         Returns:
             ChatCompletion (Pydantic) or duck-type ChatCompletion response compatible with agent.py
         """
-        # Gemini: bypass streaming to preserve thought_signature on tool calls
-        if self._is_gemini():
+        # Gemini: bypass streaming to preserve thought_signature on tool calls.
+        # A quirk of Gemini *behind the Chat Completions wire* — an explicitly
+        # configured native wire is dispatched first and never takes it.
+        if self.api_format == OPENAI_COMPLETIONS and self._is_gemini():
             return self._emit_nonstreaming(
                 messages, tools, max_tokens, on_text_chunk,
                 cache_boundary=cache_boundary,
@@ -653,13 +631,12 @@ class LLMClient(_LoggingMixin):
         )
 
         # Log without the stream flag (matches non-streaming log format)
-        log_kwargs = {k: v for k, v in kwargs.items() if k != "stream"}
-        self._log_request(request_id, log_kwargs)
+        self._log_request(request_id, self._adapter.log_view(kwargs, messages, tools))
 
         deadline = time.monotonic() + MAX_TOTAL_RETRY_SECONDS
         attempt = 0  # number of retries performed; first try is attempt 0
         while True:
-            acc = _StreamAccumulator(self.model)
+            acc = self._adapter.new_accumulator()
             try:
                 response = self._consume_stream(
                     kwargs, acc, on_text_chunk, cancellation_token,
@@ -675,51 +652,32 @@ class LLMClient(_LoggingMixin):
                 # a retry would duplicate already-emitted content.
                 err_str = str(e).lower()
 
-                # max_tokens vs max_completion_tokens param mismatch — one-shot
-                # fix-up. Only safe at zero progress (otherwise we'd re-emit
-                # content via on_text_chunk). Latched flag prevents loops.
-                if (
-                    not acc.progress_made
-                    and not self._use_max_completion_tokens
-                    and "max_tokens" in err_str
-                    and "max_completion_tokens" in err_str
+                # A rejected parameter — one-shot fix-up. Only safe at zero
+                # progress (otherwise we'd re-emit content via on_text_chunk).
+                # Each repair latches, which prevents loops.
+                if not acc.progress_made and self._adapter.repair_request(
+                    err_str, kwargs, stream=True,
                 ):
-                    self._use_max_completion_tokens = True
-                    self.logger.info(
-                        "Switching to max_completion_tokens for this model (stream retry)"
-                    )
-                    if "max_tokens" in kwargs:
-                        kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
-                    continue
-
-                # temperature unsupported — one-shot fix-up. Only safe at zero
-                # progress (otherwise the retry would re-emit content).
-                if (
-                    not acc.progress_made
-                    and not self.omit_temperature
-                    and _is_temperature_unsupported(err_str)
-                ):
-                    self.omit_temperature = True
-                    self.logger.info(
-                        "Model rejects 'temperature'; omitting it for this client (stream retry)"
-                    )
-                    kwargs.pop("temperature", None)
                     continue
 
                 # Status-based retry classification — done up front so a
                 # retryable upstream/proxy failure (whose message often
                 # contains "upstream") doesn't get mis-routed into the
                 # streaming-unsupported fallback below.
-                retryable, status, retry_after = _classify_retry(e)
+                retryable, status, retry_after = self._adapter.classify_retry(e)
 
                 # Provider rejected stream=True altogether — fall back to
                 # non-streaming chat(). One-shot, only at zero progress, and
                 # only for clearly non-retryable errors that explicitly say
                 # streaming is unsupported (never bare "stream"/"streaming",
                 # which also matches "upstream" in 502/503 proxy errors).
+                # Chat Completions only: the ``anthropic-messages`` wire has
+                # no non-streaming transport (``chat()`` streams too), so the
+                # "fallback" there would re-send the request that just failed.
                 if (
                     not acc.progress_made
                     and not retryable
+                    and self.api_format == OPENAI_COMPLETIONS
                     and _is_streaming_unsupported(err_str)
                 ):
                     self.logger.info(
@@ -802,67 +760,15 @@ class LLMClient(_LoggingMixin):
         retry handler can tell whether a retry would duplicate
         already-emitted content.
         """
-        stream = self.client.chat.completions.create(**kwargs)
-
-        for chunk in stream:
-            if cancellation_token and cancellation_token.is_cancelled:
-                break
-            # Capture usage from final usage-only chunk (stream_options include_usage)
-            if hasattr(chunk, "usage") and chunk.usage:
-                acc.usage_data = chunk.usage
-            if not chunk.choices:
-                continue
-            choice = chunk.choices[0]
-            delta = choice.delta
-
-            # Accumulate text content and fire callback
-            if delta and delta.content:
-                acc.content_parts.append(delta.content)
-                if on_text_chunk:
-                    on_text_chunk(delta.content)
-                    acc.progress_made = True
-
-            # Accumulate reasoning_content (DeepSeek/MiniMax/Kimi-style thinking
-            # field). Non-streaming exposes it on message.reasoning_content;
-            # without this branch the streaming path would silently drop it.
-            if delta and getattr(delta, "reasoning_content", None):
-                acc.reasoning_parts.append(delta.reasoning_content)
-
-            # Accumulate tool call deltas. ``acc.tool_call_key`` resolves the
-            # stream-stable key for this delta, tolerating providers that omit
-            # the OpenAI ``index`` field (see _StreamAccumulator.tool_call_key
-            # and goose #10023).
-            if delta and delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = acc.tool_call_key(tc_delta)
-                    if idx not in acc.tool_calls_data:
-                        acc.tool_calls_data[idx] = {"id": "", "name": "", "arguments": ""}
-                    if tc_delta.id:
-                        acc.tool_calls_data[idx]["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            acc.tool_calls_data[idx]["name"] += tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            acc.tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
-                        # Gemini thinking models: preserve thought_signature
-                        thought_sig = getattr(tc_delta.function, "thought_signature", None)
-                        if thought_sig is not None:
-                            acc.tool_calls_data[idx]["thought_signature"] = thought_sig
-
-            if choice.finish_reason:
-                acc.finish_reason = choice.finish_reason
-                acc.finish_reason_reported = True
-
-            if hasattr(chunk, "model") and chunk.model:
-                acc.response_model = chunk.model
+        response = self._adapter.consume_stream(
+            kwargs, acc, on_text_chunk, cancellation_token,
+        )
 
         # Accumulate session token totals
         if acc.usage_data is not None:
             self.total_prompt_tokens += getattr(acc.usage_data, "prompt_tokens", 0) or 0
             self.total_completion_tokens += getattr(acc.usage_data, "completion_tokens", 0) or 0
-
-        # Build a duck-type response that agent.py can consume like a ChatCompletion
-        return acc.build()
+        return response
 
     def _emit_nonstreaming(
         self,

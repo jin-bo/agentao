@@ -927,6 +927,8 @@ class AgentToolWrapper(Tool):
         # Same endpoint, so the same prompt-cache posture (stage 0b).
         prompt_cache = live_cfg.get("prompt_cache")
         prompt_cache_ttl = live_cfg.get("prompt_cache_ttl")
+        # And the same wire protocol — the endpoint speaks one.
+        api_format = live_cfg.get("api_format")
 
         max_turns = self._definition.get("max_turns", 15)
         agent_name = self._definition["name"]
@@ -976,6 +978,7 @@ class AgentToolWrapper(Tool):
             extra_body=extra_body,
             prompt_cache=prompt_cache,
             prompt_cache_ttl=prompt_cache_ttl,
+            api_format=api_format,
             working_directory=self._working_directory,
             sandbox_policy=self._sandbox_policy,
             filesystem=self._filesystem,
