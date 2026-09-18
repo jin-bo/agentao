@@ -180,8 +180,8 @@ class LLMClient(_LoggingMixin):
             api_format: The wire protocol spoken to ``base_url`` —
                 ``"openai-completions"`` (the default, same as ``None``) or
                 ``"anthropic-messages"`` (Anthropic's Messages API).
-                Configured, never inferred from the URL or the model name, and
-                fixed for the life of the client. An unknown value raises
+                Configured, never inferred from the URL or the model name;
+                only :meth:`reconfigure` changes it. An unknown value raises
                 ``ValueError`` listing the valid ones. See
                 :mod:`agentao.llm._api_format`.
             log_file: Path to log file for LLM interactions. ``None`` skips
@@ -304,16 +304,18 @@ class LLMClient(_LoggingMixin):
         # AttributeError. The key set is the adapter's: which fields are
         # structural depends on the wire (``system`` is one on Messages, and
         # ``temperature`` is not).
-        if self.extra_body:
-            overlap = self._adapter.structural_body_keys & self.extra_body.keys()
-            if overlap:
-                self.logger.warning(
-                    "LLMClient.extra_body contains key(s) %s that the client "
-                    "sets as structural request fields; the SDK merges "
-                    "extra_body into the body last-wins, so these shadow the "
-                    "client's values.",
-                    ", ".join(sorted(overlap)),
-                )
+        self._warn_structural_overlap()
+
+    def _warn_structural_overlap(self) -> None:
+        overlap = self._adapter.structural_body_keys & (self.extra_body or {}).keys()
+        if overlap:
+            self.logger.warning(
+                "LLMClient.extra_body contains key(s) %s that the client "
+                "sets as structural request fields; the SDK merges "
+                "extra_body into the body last-wins, so these shadow the "
+                "client's values.",
+                ", ".join(sorted(overlap)),
+            )
 
     def _make_adapter(self) -> Any:
         if self.api_format == ANTHROPIC_MESSAGES:
@@ -380,8 +382,9 @@ class LLMClient(_LoggingMixin):
         api_key: str,
         base_url: Any = KEEP_BASE_URL,
         model: Optional[str] = None,
+        api_format: Optional[str] = None,
     ) -> None:
-        """Reinitialize the OpenAI client with new provider credentials.
+        """Reinitialize the SDK client with new provider credentials.
 
         Args:
             api_key: New API key
@@ -391,8 +394,42 @@ class LLMClient(_LoggingMixin):
                 The None-clears path lets a cross-provider switch drop a
                 previous provider's custom endpoint.
             model: New model name (None keeps existing)
+            api_format: The new provider's wire protocol (None keeps the
+                current one). A different value replaces the adapter, and
+                with it that wire's own latches. Validated before anything
+                is touched, so a refused value leaves the client as it was.
         """
+        _new_format = (
+            self.api_format if api_format is None else resolve_api_format(api_format)
+        )
         _old_base = self.base_url
+        # What a failed adapter/SDK-client build below puts back. Without it a
+        # raise from ``create_client`` (the lazy ``anthropic`` import is the
+        # reachable one) leaves ``api_format`` / ``_adapter`` on the new wire
+        # and ``client`` on the old SDK object — and the next request calls
+        # one protocol's method on the other protocol's client.
+        _rollback = {
+            name: getattr(self, name)
+            for name in (
+                "api_key", "base_url", "model", "api_format", "_adapter",
+                "client", "cache_control", "prompt_cache", "prompt_cache_ttl",
+            )
+        }
+        try:
+            self._apply_reconfigure(api_key, base_url, model, _new_format, _old_base)
+        except BaseException:
+            for name, value in _rollback.items():
+                setattr(self, name, value)
+            raise
+
+    def _apply_reconfigure(
+        self,
+        api_key: str,
+        base_url: Any,
+        model: Optional[str],
+        _new_format: str,
+        _old_base: Any,
+    ) -> None:
         self.api_key = api_key
         if base_url is not KEEP_BASE_URL:
             self.base_url = base_url
@@ -413,18 +450,40 @@ class LLMClient(_LoggingMixin):
         # here — an endpoint that 400s on the key would 400 on every request
         # until someone noticed. Same family as the observed context limit and
         # the thinking-artifact purge, which also clear on an endpoint change.
-        # A bare credential rotation (same base_url) keeps it.
-        if self.base_url != _old_base and self.cache_control is not None:
+        # A bare credential rotation (same base_url) keeps it. A wire-protocol
+        # change counts as an endpoint change even on the same URL: the
+        # assertion was made about the other protocol.
+        if (
+            self.base_url != _old_base or _new_format != self.api_format
+        ) and self.cache_control is not None:
             self.logger.warning(
-                "Endpoint changed (%s -> %s); dropping the explicit "
+                "Endpoint changed (%s %s -> %s %s); dropping the explicit "
                 "prompt-cache breakpoints configured for the old one. "
                 "Re-set prompt_cache / LLM_PROMPT_CACHE once the new endpoint "
                 "is verified.",
-                _old_base, self.base_url,
+                _old_base, self.api_format, self.base_url, _new_format,
             )
             self.cache_control = None
             self.prompt_cache = None
             self.prompt_cache_ttl = None
+        if _new_format != self.api_format:
+            self.logger.info(
+                "Wire protocol changed: %s -> %s", self.api_format, _new_format
+            )
+            self.api_format = _new_format
+            self._adapter = self._make_adapter()
+            # ``extra_body`` stays (above), and that is now a sharper edge: its
+            # keys were written for the other wire's request body. Said once,
+            # here, and the structural overlap is re-read against the new
+            # adapter — ``system`` is inert on Chat Completions and replaces
+            # the whole system prompt on Messages.
+            if self.extra_body:
+                self.logger.warning(
+                    "extra_body key(s) %s were configured for the previous "
+                    "wire protocol and go to %s unchanged.",
+                    ", ".join(sorted(self.extra_body)), _new_format,
+                )
+                self._warn_structural_overlap()
         self.reset_capability_latches()
         self.client = self._adapter.create_client()
         self.logger.info(

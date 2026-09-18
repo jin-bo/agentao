@@ -8,8 +8,9 @@ OpenAI-compatible gateway is a working configuration today — so the format is
 configured, never inferred from a URL, a provider name or a model name
 (``docs/design/llm-api-adapters.md`` §3, §9).
 
-Selection is fixed at construction. Switching the wire mid-session is stage 3
-of that design, not this one.
+Chosen at construction; afterwards only a provider switch that names another
+format changes it (``LLMClient.reconfigure(api_format=)``). Per-model overrides
+are stage 3 of that design and are not built.
 """
 
 from __future__ import annotations

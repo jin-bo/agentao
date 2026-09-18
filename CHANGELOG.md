@@ -113,11 +113,26 @@ every session. `agentao.tool_runner`, the old import path of
   **`max_tokens` is required by the protocol**, so a call that names none sends
   the configured cap (default 65,536), and a model that answers
   `max_tokens: N > M` has `M` adopted for the session at the cost of that one
-  request — set `LLM_MAX_TOKENS` to avoid it. **The protocol is fixed at
-  startup:** `/provider` refuses a switch to a block configured for a different
-  one, ACP's `session/set_config_option` refuses a host `provider_resolver`
-  answer that declares a different one (a new optional `api_format` key in what
-  the resolver returns), and sub-agents inherit the parent's. Both `chat()` and `chat_stream()`
+  request — set `LLM_MAX_TOKENS` to avoid it. **A provider switch carries the
+  protocol:** `/provider` reads the target block's `{PROVIDER}_API_FORMAT`,
+  ACP's `session/set_config_option` reads a new optional `api_format` key in
+  what a host `provider_resolver` returns (omitted means the default,
+  `openai-completions`, exactly as an unset variable does — not the session's
+  current wire, or a resolver that marks only its Anthropic provider could never
+  switch back; the default resolver now returns the block's own value), and
+  `Agentao.set_provider()` / `LLMClient.reconfigure()` take keyword `api_format=`
+  (`None` keeps the current wire). A wire change replaces the adapter and clears
+  what a model or endpoint change clears — thinking artifacts in history (signed
+  blocks included, which cannot be recovered), the token anchor, the observed
+  context limit, the capability latches and the explicit prompt-cache
+  breakpoints. `extra_body` is kept, as on any switch, and the CLI names its
+  keys when the wire changes, since they were written for the other protocol.
+  A key the new wire treats as structural (`system`, on Messages) gets the same
+  one-time shadowing warning the constructor gives. An unknown or unimplemented
+  value is refused before anything is touched, and a client that cannot be built
+  rolls the whole `reconfigure()` back. `MODEL_CHANGED` from `set_provider` gains
+  `api_format_changed`, so a wire-only switch no longer records as a no-op.
+  Sub-agents are built on the parent's current wire. Both `chat()` and `chat_stream()`
   run over the streaming transport — the SDK refuses a non-streaming request at
   agentao's default `max_tokens`.
   **Verified against the real SDK over a scripted socket, not against a live

@@ -23,6 +23,14 @@ agent.set_provider(
     model="deepseek-chat",
 )
 
+# Full swap onto another wire protocol (0.5.0) — name it, it is never inferred
+agent.set_provider(
+    api_key="sk-ant-xxx",
+    base_url="https://api.anthropic.com",
+    model="claude-sonnet-5",
+    api_format="anthropic-messages",
+)
+
 # List everything the current endpoint advertises
 models = agent.list_available_models()  # -> ["gpt-5.4", "gpt-5.4", ...]
 ```
@@ -137,7 +145,7 @@ except RuntimeError:
    `set_provider()` rewrites the tiktoken encoding to match the new model name. But OpenAI's tokenizer is still used for non-OpenAI providers (there's no universal tokenizer). Budget estimates on DeepSeek / Moonshot / Qwen are therefore **approximate**. Leave headroom.
 
 2. **Tool-call schema is provider-dependent**
-   All Agentao-supported providers must speak the **OpenAI-compatible** tool-calls schema. If you swap to a provider that doesn't, `chat()` will either error ("function not supported") or silently drop the tool call. Test each provider in your fallback chain.
+   All Agentao-supported providers must speak the **OpenAI-compatible** tool-calls schema — or Anthropic's Messages API, selected with `api_format=`. If you swap to a provider that doesn't, `chat()` will either error ("function not supported") or silently drop the tool call. Test each provider in your fallback chain.
 
 3. **Streaming behavior may differ**
    Some providers send smaller/larger chunks or delay the first token. UI-perceived latency can change noticeably after a swap. Your `Transport.emit(...)` still fires — but chunk boundaries are different.
@@ -152,17 +160,17 @@ except RuntimeError:
 
 You might notice `Agentao(...)` takes `api_key / base_url / model` directly but no abstract `provider=` parameter. That's deliberate:
 
-- Agentao speaks only the OpenAI-compatible protocol
+- Agentao speaks OpenAI Chat Completions by default, and since 0.5.0 Anthropic's Messages API when told to (`api_format="anthropic-messages"`) — a wire protocol, which is a property of the endpoint, not of a vendor
 - Any provider (OpenAI, Azure, DeepSeek, Moonshot, Together, local Ollama, vLLM…) that exposes the OpenAI schema is a valid target
-- "Switching provider" is just "switching key + base_url + model"
+- "Switching provider" is just "switching key + base_url + model" — plus `api_format=` when the new endpoint speaks the other protocol
 
-So there's no `OpenAIProvider` / `AnthropicProvider` / `GoogleProvider` abstraction — keep your routing code simple. If you need native Anthropic or Gemini, put them behind an OpenAI-compatible gateway.
+So there's no `OpenAIProvider` / `AnthropicProvider` / `GoogleProvider` abstraction — keep your routing code simple. Native Gemini still needs an OpenAI-compatible gateway.
 
 ## TL;DR
 
-- Three APIs: `set_provider(api_key, base_url, model)` (full swap) · `set_model(name)` (model only) · `get_current_model()` (read).
+- Three APIs: `set_provider(api_key, base_url, model, api_format=)` (full swap) · `set_model(name)` (model only) · `get_current_model()` (read).
 - Swapping does **not** clear history — the next `chat()` continues on the same context with the new model.
-- All providers are hit via the OpenAI schema; no per-vendor `Provider` abstraction. For native Anthropic / Gemini, put them behind an OpenAI-compatible gateway.
+- No per-vendor `Provider` abstraction: two wire protocols, `openai-completions` (default) and `anthropic-messages` (0.5.0), named explicitly. Native Gemini still needs an OpenAI-compatible gateway.
 - Common routing: **cheap-then-expensive** (small talk vs. planning), **primary-with-fallback** (timeout switch), **A/B** (eval different models on the same session).
 
 ---

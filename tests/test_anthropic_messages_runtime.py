@@ -255,34 +255,164 @@ def test_a_sub_agent_is_built_on_the_parents_wire(monkeypatch):
     assert built == ["anthropic-messages"]
 
 
-def test_provider_refuses_a_switch_that_would_change_the_wire(monkeypatch):
+def _completions_wire(requests):
+    """A real ``openai`` client over a scripted socket, one streamed answer."""
+    import httpx
+    import openai
+
+    def chunk(delta, finish=None):
+        body = {"id": "c1", "object": "chat.completion.chunk", "created": 0,
+                "model": "gpt-x",
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+        return f"data: {json.dumps(body)}\n\n"
+
+    def handler(request):
+        requests.append((str(request.url), json.loads(request.content)))
+        sse = chunk({"role": "assistant", "content": "over completions"})
+        sse += chunk({}, "stop") + "data: [DONE]\n\n"
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=sse.encode(),
+        )
+
+    return openai.OpenAI(
+        api_key="k2", base_url="http://wire.test/v1", max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+
+def test_provider_switches_across_the_wire_and_back(turn, monkeypatch):
+    """Both directions, read off the socket: after each switch the next
+    request is the new protocol's, and nothing the old one minted rides it."""
+    import anthropic
+    import openai
+
     from agentao.cli.commands import provider as provider_cmd
 
     printed = []
-    monkeypatch.setattr(provider_cmd.console, "print", lambda *a, **k: printed.append(str(a[0])))
+    monkeypatch.setattr(provider_cmd.console, "print",
+                        lambda *a, **k: printed.append(str(a[0]) if a else ""))
     for name, value in {
         "OTHER_API_KEY": "k2", "OTHER_BASE_URL": "https://other.test/v1",
         "OTHER_MODEL": "gpt-x",
+        "CLAUDE_API_KEY": "k3", "CLAUDE_BASE_URL": "https://api.example.test",
+        "CLAUDE_MODEL": "claude-test", "CLAUDE_API_FORMAT": "anthropic-messages",
     }.items():
         monkeypatch.setenv(name, value)
     monkeypatch.delenv("OTHER_API_FORMAT", raising=False)
+
+    agent = turn.agent
+    assert any(ANTHROPIC_THINKING_BLOCKS in m for m in agent.messages)
+    agent.llm._adapter._max_output_tokens = 4096  # a latch the old wire learned
+    cli = SimpleNamespace(agent=agent, current_provider="ANTHROPIC")
+
+    provider_cmd.handle_provider_command(cli, "OTHER")
+    assert cli.current_provider == "OTHER"
+    assert agent.llm.api_format == "openai-completions"
+    assert isinstance(agent.llm.client, openai.OpenAI)
+    assert agent._llm_config["api_format"] == "openai-completions"
+    assert any("anthropic-messages → " in line for line in printed)
+    # Signed blocks mean nothing to the other wire, and the openai SDK would
+    # forward the unknown key verbatim.
+    assert not any(ANTHROPIC_THINKING_BLOCKS in m for m in agent.messages)
+
+    sent = []
+    agent.llm.client = _completions_wire(sent)
+    assert agent.chat("and again") == "over completions"
+    url, body = sent[0]
+    assert url.endswith("/chat/completions")
+    assert body["messages"][0]["role"] == "system"
+    assert ANTHROPIC_THINKING_BLOCKS not in json.dumps(body)
+
+    provider_cmd.handle_provider_command(cli, "CLAUDE")
+    assert agent.llm.api_format == "anthropic-messages"
+    assert isinstance(agent.llm.client, anthropic.Anthropic)
+    # A fresh adapter: the limit learned before the round trip is not carried.
+    assert agent.llm._adapter._max_output_tokens is None
+    wire = attach(agent.llm, Wire(stream_of(
+        message_start(input_tokens=10), text_block(0, "back"), message_end("end_turn"),
+    )))
+    assert agent.chat("once more") == "back"
+    assert wire.urls[0].endswith("/v1/messages")
+    assert isinstance(wire.requests[0]["system"], str)
+    assert "over completions" in json.dumps(wire.requests[0]["messages"])
+
+
+def test_a_bad_api_format_leaves_the_session_on_its_provider(monkeypatch):
+    from agentao.cli.commands import provider as provider_cmd
+
+    printed = []
+    monkeypatch.setattr(provider_cmd.console, "print",
+                        lambda *a, **k: printed.append(str(a[0]) if a else ""))
+    for name, value in {
+        "OTHER_API_KEY": "k2", "OTHER_BASE_URL": "https://other.test/v1",
+        "OTHER_MODEL": "gpt-x", "OTHER_API_FORMAT": "openai-responses",
+    }.items():
+        monkeypatch.setenv(name, value)
 
     agent = _agent()
     cli = SimpleNamespace(agent=agent, current_provider="ANTHROPIC")
     try:
         provider_cmd.handle_provider_command(cli, "OTHER")
         assert cli.current_provider == "ANTHROPIC"
-        assert agent.llm.model == "claude-test"
-        assert "fixed at startup" in printed[-1]
-
-        # Same wire on the other block: the switch goes through.
-        monkeypatch.setenv("OTHER_API_FORMAT", "anthropic-messages")
-        provider_cmd.handle_provider_command(cli, "OTHER")
-        assert cli.current_provider == "OTHER"
-        assert agent.llm.model == "gpt-x"
-        assert agent.llm.api_format == "anthropic-messages"
+        assert (agent.llm.model, agent.llm.api_format) == ("claude-test", "anthropic-messages")
+        assert "OTHER_API_FORMAT" in printed[-1]
     finally:
         agent.close()
+
+
+@pytest.mark.parametrize("signed", [True, False])
+def test_a_wire_switch_alone_clears_what_the_old_wire_asserted(signed):
+    """Same model name, same URL, other protocol: still a switch. The anchor
+    goes whether or not the purge found anything to remove."""
+    agent = _agent(prompt_cache="anthropic")
+    try:
+        carrier = {ANTHROPIC_THINKING_BLOCKS: [SIGNED]} if signed else {}
+        agent.messages.append({"role": "assistant", "content": "x", **carrier})
+        agent.context_manager.record_api_usage(1234, 1)
+        assert agent.context_manager._last_api_prompt_tokens is not None
+        assert agent.llm.cache_control is not None
+
+        agent.set_provider("k", api_format="openai-completions")
+
+        assert agent.llm.api_format == "openai-completions"
+        assert agent.llm.cache_control is None
+        assert ANTHROPIC_THINKING_BLOCKS not in agent.messages[-1]
+        assert agent.context_manager._last_api_prompt_tokens is None
+    finally:
+        agent.close()
+
+
+def test_reconfigure_refuses_an_unknown_wire_before_touching_anything():
+    llm = LLMClient(api_key="k", base_url="https://a.test/v1", model="m")
+    client = llm.client
+    with pytest.raises(ValueError):
+        llm.reconfigure("k2", base_url="https://b.test", model="m2", api_format="nope")
+    assert (llm.api_key, llm.base_url, llm.model) == ("k", "https://a.test/v1", "m")
+    assert llm.client is client
+
+
+def test_a_failed_client_build_leaves_reconfigure_undone(monkeypatch):
+    """The value was fine and the build still failed (the lazy SDK import is
+    the reachable case). Half a switch is the worst outcome: the new wire's
+    adapter driving the old wire's SDK object."""
+    from agentao.llm import _anthropic_messages as wire_mod
+
+    llm = LLMClient(api_key="k", base_url="https://a.test/v1", model="m",
+                    prompt_cache="anthropic")
+    before = (llm.api_key, llm.base_url, llm.model, llm.api_format,
+              llm._adapter, llm.client, llm.cache_control, llm.prompt_cache)
+
+    def boom(self):
+        raise ImportError("no anthropic here")
+
+    monkeypatch.setattr(wire_mod.AnthropicMessagesAdapter, "create_client", boom)
+    with pytest.raises(ImportError):
+        llm.reconfigure("k2", base_url="https://b.test", model="m2",
+                        api_format="anthropic-messages")
+    after = (llm.api_key, llm.base_url, llm.model, llm.api_format,
+             llm._adapter, llm.client, llm.cache_control, llm.prompt_cache)
+    assert all(a is b or a == b for a, b in zip(after, before))
+    assert after[4] is before[4] and after[5] is before[5]
 
 
 def test_thinking_does_not_store_a_field_this_wire_rejects(monkeypatch):
@@ -298,3 +428,17 @@ def test_thinking_does_not_store_a_field_this_wire_rejects(monkeypatch):
     finally:
         agent.close()
 
+
+
+def test_a_wire_switch_re_reads_which_extra_body_keys_are_structural(caplog):
+    """``system`` is inert on Chat Completions; on Messages it replaces the
+    whole system prompt, and only the new adapter's key set says so."""
+    llm = LLMClient(api_key="k", base_url="https://a.test/v1", model="m",
+                    extra_body={"system": "mine", "top_k": 5})
+    with caplog.at_level("WARNING", logger=llm.logger.name):
+        caplog.clear()
+        llm.reconfigure("k", api_format="anthropic-messages")
+    structural = [r.getMessage() for r in caplog.records
+                  if "structural request fields" in r.getMessage()]
+    assert len(structural) == 1
+    assert "system" in structural[0] and "top_k" not in structural[0]

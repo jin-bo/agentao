@@ -63,9 +63,10 @@ class _FakeAgent:
         api_key: str,
         base_url: Any = KEEP_BASE_URL,
         model: Optional[str] = None,
+        **extra: Any,
     ) -> None:
         self.set_provider_calls.append(
-            {"api_key": api_key, "base_url": base_url, "model": model}
+            {"api_key": api_key, "base_url": base_url, "model": model, **extra}
         )
         # Mirror set_provider/reconfigure: the KEEP_BASE_URL sentinel keeps
         # the current endpoint; an explicit value (incl. None) replaces it.
@@ -192,6 +193,8 @@ class TestSetConfigOptionSwitch:
                 "api_key": "sk-secret",
                 "base_url": "https://api.openai.com/v1",
                 "model": "gpt-4o",
+                # No OPENAI_API_FORMAT in this env: the default wire, named.
+                "api_format": "openai-completions",
             }
         ]
         assert agent.llm.model == "gpt-4o"
@@ -277,10 +280,47 @@ class TestSetConfigOptionSwitch:
         )
         assert agent.llm.base_url == "https://new.example"
 
-    @pytest.mark.parametrize("declared", ["anthropic-messages", "no-such-wire"])
-    def test_a_provider_on_another_wire_protocol_is_refused(self, declared):
-        """The protocol is fixed when the agent is built. A switch across it
-        would hand one protocol's credentials to the other protocol's SDK."""
+    def test_a_provider_on_another_wire_protocol_carries_it_into_the_switch(self):
+        server = make_initialized_server()
+        agent = _FakeAgent(base_url="https://old.example")
+        _register(server, agent)
+        server.provider_resolver = lambda pid: {
+            "api_key": "k", "base_url": "https://api.anthropic.com",
+            "api_format": " Anthropic-Messages ",
+        }
+        acp_set_config.handle_session_set_config_option(
+            server, {"sessionId": "s", "configId": "model", "value": "claude/opus"}
+        )
+        assert agent.set_provider_calls[0]["api_format"] == "anthropic-messages"
+
+    def test_a_resolver_that_names_no_wire_means_the_default_one(self):
+        """Not "the session's current wire": a resolver that marks only its
+        Anthropic provider must still be able to switch back."""
+        server = make_initialized_server()
+        agent = _FakeAgent()
+        _register(server, agent)
+        wires = {"claude": {"api_format": "anthropic-messages"}, "custom": {}}
+        server.provider_resolver = lambda pid: {"api_key": "k", **wires[pid]}
+        for value in ("claude/opus", "custom/m"):
+            acp_set_config.handle_session_set_config_option(
+                server, {"sessionId": "s", "configId": "model", "value": value}
+            )
+        assert [c["api_format"] for c in agent.set_provider_calls] == [
+            "anthropic-messages", "openai-completions",
+        ]
+
+    def test_the_default_resolver_answers_with_the_blocks_own_wire(self, monkeypatch):
+        """Re-selecting the configured provider must not leave its protocol."""
+        monkeypatch.setenv("LLM_PROVIDER", "CLAUDE")
+        monkeypatch.setenv("CLAUDE_API_KEY", "k")
+        monkeypatch.setenv("CLAUDE_API_FORMAT", "anthropic-messages")
+        creds = acp_set_config.default_provider_resolver("claude")
+        assert creds["api_format"] == "anthropic-messages"
+
+    @pytest.mark.parametrize("declared", ["openai-responses", "no-such-wire", 7])
+    def test_an_unusable_wire_protocol_is_refused(self, declared):
+        """Refused before the switch: a guess would hand one protocol's
+        credentials to another protocol's SDK."""
         server = make_initialized_server()
         agent = _FakeAgent(base_url="https://old.example")
         _register(server, agent)
@@ -293,7 +333,7 @@ class TestSetConfigOptionSwitch:
                 server, {"sessionId": "s", "configId": "model", "value": "claude/opus"}
             )
         assert exc.value.code == INVALID_REQUEST
-        assert "wire protocol" in exc.value.message
+        assert "api_format" in exc.value.message
         assert agent.set_provider_calls == []
         assert agent.llm.base_url == "https://old.example"
 

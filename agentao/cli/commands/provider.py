@@ -71,10 +71,10 @@ def handle_provider_command(cli: AgentaoCLI, args: str) -> None:
                            f"(expected env var: {args}_MODEL, e.g. {args}_MODEL=gpt-5.4)[/error]\n")
             return
 
-        # The wire protocol is chosen at startup and a live client cannot
-        # change it (switching is stage 3 of docs/design/llm-api-adapters.md).
-        # Refused here rather than attempted: the switch would hand one
-        # protocol's credentials and base URL to the other protocol's SDK.
+        # The block names its own wire protocol, and the switch carries it:
+        # without it the new credentials and base URL would go to the previous
+        # protocol's SDK. Resolved before anything is touched, so a bad value
+        # leaves the session on the provider it had.
         from ...llm._api_format import DEFAULT_API_FORMAT, resolve_api_format
 
         try:
@@ -84,21 +84,26 @@ def handle_provider_command(cli: AgentaoCLI, args: str) -> None:
                           f"(env var: {args}_API_FORMAT)[/error]\n")
             return
         live_format = getattr(cli.agent.llm, "api_format", None) or DEFAULT_API_FORMAT
-        if target_format != live_format:
-            console.print(
-                f"\n[error]Provider '{args}' is configured for the "
-                f"{target_format} wire protocol, and this session runs on "
-                f"{live_format}. The protocol is fixed at startup: set "
-                f"LLM_PROVIDER={args} and restart.[/error]\n"
-            )
-            return
-
-        cli.agent.set_provider(api_key=api_key, base_url=base_url, model=model)
+        cli.agent.set_provider(
+            api_key=api_key, base_url=base_url, model=model,
+            api_format=target_format,
+        )
         cli.current_provider = args
 
         current_model = cli.agent.get_current_model()
         console.print(f"\n[success]Switched to provider: {args}[/success]")
-        console.print(f"[info]Model:[/info] [cyan]{current_model}[/cyan]\n")
+        console.print(f"[info]Model:[/info] [cyan]{current_model}[/cyan]")
+        if target_format != live_format:
+            console.print(f"[info]Wire protocol:[/info] {live_format} → "
+                          f"[cyan]{target_format}[/cyan]")
+            stale = sorted(getattr(cli.agent.llm, "extra_body", None) or {})
+            if stale:
+                console.print(
+                    f"[warning]extra_body ({escape(', '.join(stale))}) was "
+                    f"configured for {live_format} and is sent to "
+                    f"{target_format} unchanged.[/warning]"
+                )
+        console.print()
 
 
 def handle_model_command(cli: AgentaoCLI, args: str) -> None:

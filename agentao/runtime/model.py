@@ -119,6 +119,7 @@ def set_provider(
     api_key: str,
     base_url: Any = KEEP_BASE_URL,
     model: Optional[str] = None,
+    api_format: Optional[str] = None,
 ) -> None:
     """Reconfigure the LLM client with a new provider's credentials.
 
@@ -135,10 +136,28 @@ def set_provider(
     count on ``context_manager`` are reset — the same model-specific state
     ``set_model`` clears. A stale encoding would otherwise miscount tokens
     for the rest of the session after a cross-provider model switch.
+
+    ``api_format`` names the new provider's wire protocol; ``None`` keeps the
+    current one. A wire change is a switch in the same sense as a model or
+    endpoint change — it clears the same state — and it is only forwarded
+    when given, so an injected client whose ``reconfigure`` predates the
+    parameter keeps working.
     """
     _old_model = agent.llm.model
     _old_base = agent.llm.base_url
-    agent.llm.reconfigure(api_key=api_key, base_url=base_url, model=model)
+    _old_format = getattr(agent.llm, "api_format", None)
+    if api_format is None:
+        agent.llm.reconfigure(api_key=api_key, base_url=base_url, model=model)
+    else:
+        agent.llm.reconfigure(
+            api_key=api_key, base_url=base_url, model=model, api_format=api_format,
+        )
+    _format_changed = getattr(agent.llm, "api_format", None) != _old_format
+    if _format_changed:
+        # The anchor is a count the *previous* wire reported for this history,
+        # and the observed limit was parsed from its error text.
+        agent.context_manager.invalidate_token_anchor()
+        agent.context_manager.clear_observed_limit("wire protocol switch")
     if model is not None and model != _old_model:
         agent.context_manager._encoding = _get_tiktoken_encoding(agent.llm.model)
         agent.context_manager.invalidate_token_anchor()
@@ -151,7 +170,11 @@ def set_provider(
     # name behind a different backend is a different signer, so its thinking
     # artifacts are just as stale. A pure credential rotation (same model, same
     # base_url) changes neither and leaves history alone.
-    if (model is not None and model != _old_model) or agent.llm.base_url != _old_base:
+    if (
+        (model is not None and model != _old_model)
+        or agent.llm.base_url != _old_base
+        or _format_changed
+    ):
         _purge_and_log(agent, "set_provider")
     try:
         agent.transport.emit(AgentEvent(EventType.MODEL_CHANGED, {
@@ -160,6 +183,9 @@ def set_provider(
             # Compare the resolved endpoints so a clear (-> None) or a switch
             # is reported accurately, regardless of how base_url was passed.
             "base_url_changed": agent.llm.base_url != _old_base,
+            # A wire-only switch changes neither of the two above; without
+            # this the replay record of it reads as a no-op.
+            "api_format_changed": _format_changed,
             "cause": "set_provider",
         }))
     except Exception:
