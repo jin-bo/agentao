@@ -934,6 +934,9 @@ class AgentToolWrapper(Tool):
 
         # A foreground sub-agent asks through the parent: the callback prepends
         # "[agent_name]" to the tool name so the user knows which one is asking.
+        # Its callbacks ride one compat transport — with none of them set that
+        # transport answers exactly as a ``NullTransport`` does (approve, the
+        # non-interactive ``ask_user`` sentinel, stop at max iterations).
         #
         # A background sub-agent has nobody to ask, and must not read stdin from
         # its thread (that corrupts the terminal's raw mode). So it refuses every
@@ -942,18 +945,27 @@ class AgentToolWrapper(Tool):
         # all. It can still run whatever permission rules allow outright, and a
         # denial still denies. ``NullTransport`` itself keeps approving, since
         # that is the documented default for a host with no callbacks.
-        transport = None
         if suppress_output:
             from ...transport import SdkTransport
 
             transport = SdkTransport(confirm_tool=lambda *_: False)
-            confirm_cb = None
-        elif not self._confirmation_callback:
-            confirm_cb = None
         else:
-            _parent_cb = self._confirmation_callback
-            def confirm_cb(tool_name: str, tool_desc: str, tool_args: dict) -> bool:
-                return _parent_cb(f"[{agent_name}] {tool_name}", tool_desc, tool_args)
+            from ...transport import build_compat_transport
+
+            confirm_cb = None
+            if self._confirmation_callback:
+                _parent_cb = self._confirmation_callback
+                def confirm_cb(tool_name: str, tool_desc: str, tool_args: dict) -> bool:
+                    return _parent_cb(f"[{agent_name}] {tool_name}", tool_desc, tool_args)
+
+            # No ``thinking_callback``: a sub-agent's reasoning is not shown.
+            transport = build_compat_transport(
+                confirmation_callback=confirm_cb,
+                step_callback=step_cb,
+                output_callback=self._output_callback,
+                tool_complete_callback=self._tool_complete_callback,
+                ask_user_callback=self._ask_user_callback,
+            )
 
         sub_agent = Agentao(
             api_key=api_key,
@@ -1000,13 +1012,7 @@ class AgentToolWrapper(Tool):
             # and cancel the same tasks the parent's do.
             bg_store=self._bg_store,
             transport=transport,
-            confirmation_callback=confirm_cb,
-            step_callback=step_cb,
-            output_callback=None if suppress_output else self._output_callback,
-            tool_complete_callback=None if suppress_output else self._tool_complete_callback,
-            ask_user_callback=None if suppress_output else self._ask_user_callback,
             max_context_tokens=self._max_context_tokens or 200_000,
-            # thinking_callback intentionally omitted for sub-agents
         )
 
         return sub_agent, {

@@ -9,13 +9,13 @@ import pytest
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 
-def _make_agent(thinking_callback=None):
+def _make_agent(transport=None):
     with patch('agentao.agent.LLMClient') as mock_llm_client:
         mock_llm_client.return_value.logger = Mock()
         mock_llm_client.return_value.model = "gpt-4"
         from agentao.agent import Agentao
         agent = Agentao(
-            thinking_callback=thinking_callback,
+            transport=transport,
             working_directory=Path.cwd(),
         )
     return agent
@@ -78,23 +78,24 @@ def test_reliability_rule_numbering():
     print("✅ Reliability rules numbered 1-7 in order")
 
 
-def test_reasoning_structure_with_thinking_callback():
-    """When thinking_callback is set, reasoning instructions include 'Expectation:' and 'falsifiable'."""
-    agent = _make_agent(thinking_callback=lambda x: None)
-    prompt = agent._build_system_prompt()
-    assert "Expectation:" in prompt, "Reasoning instructions should contain 'Expectation:'"
-    assert "falsifiable" in prompt, "Reasoning instructions should contain 'falsifiable'"
-    print("✅ Structured reasoning instructions present when thinking_callback is set")
+def test_the_reasoning_requirement_section_is_retired():
+    """No transport brings back the section ``thinking_callback=`` used to gate.
 
+    Until 0.5.0 a ``=== Reasoning Requirement ===`` block rendered only when
+    the deprecated ``thinking_callback=`` constructor kwarg was set. Nothing
+    else set the flag: a host on ``transport=`` — the CLI, the ACP server,
+    ``agentao run``, and anyone who followed the migration advice — had been
+    running without it since the day the Transport protocol landed. The kwarg
+    is gone and the section went with it, rather than reappearing for hosts
+    that never had it. A transport that *does* handle ``THINKING`` events is
+    the case that would bring it back if the gate were ever re-derived.
+    """
+    from agentao.embedding.compat import build_compat_transport
 
-def test_reasoning_structure_absent_without_thinking_callback():
-    """When thinking_callback is None, the Reasoning Requirement section is absent."""
-    agent = _make_agent(thinking_callback=None)
-    prompt = agent._build_system_prompt()
-    assert "=== Reasoning Requirement ===" not in prompt, (
-        "Reasoning Requirement section should not appear when thinking_callback is None"
-    )
-    print("✅ Reasoning Requirement section absent when thinking_callback is None")
+    for transport in (None, build_compat_transport(thinking_callback=lambda _t: None)):
+        prompt = _make_agent(transport=transport)._build_system_prompt()
+        assert "=== Reasoning Requirement ===" not in prompt
+        assert "Expectation:" not in prompt
 
 
 def test_reliability_before_memories():
@@ -118,11 +119,12 @@ def test_stable_prefix_order():
     is where the system message now ends. Protects the prompt-cache prefix
     against future reorder regressions.
 
-    Since stage 0a the skills catalogue is not below <memory-stable> — it is
-    not in this message at all. ``test_system_prompt_sections.py`` pins that
-    half; asserting it here too would only be an index comparison against a
-    marker that is always absent, which is the shape of a test that cannot
-    fail."""
+    The skills catalogue sits between the last two since 0.4.27, but only
+    when a described skill is on disk — this agent's skill directories are
+    whatever the machine holds. ``test_system_prompt_sections.py`` seeds one
+    and pins that half; asserting it here would be an index comparison
+    against a marker that may be absent, which is the shape of a test that
+    cannot fail."""
     agent = _make_agent()
     agent.memory_tool.execute(key="order_probe", value="v")
     prompt = agent._build_system_prompt()
@@ -141,17 +143,6 @@ def test_stable_prefix_order():
     print("✅ Stable prefix order: Reliability → Operational → memory-stable")
 
 
-def test_reasoning_requirement_has_gating_clause():
-    """Reasoning Requirement instructs the model to skip the preamble for
-    trivial read-only lookups, not demand it on every tool call."""
-    agent = _make_agent(thinking_callback=lambda x: None)
-    prompt = agent._build_system_prompt()
-    assert "Skip this preamble" in prompt, (
-        "Reasoning Requirement should contain a gating clause for trivial calls"
-    )
-    print("✅ Reasoning Requirement gated for trivial read-only lookups")
-
-
 if __name__ == "__main__":
     print("Testing reliability principles in system prompt...")
     print()
@@ -160,11 +151,9 @@ if __name__ == "__main__":
         test_reliability_section_present_with_project_instructions,
         test_reliability_keywords,
         test_reliability_rule_numbering,
-        test_reasoning_structure_with_thinking_callback,
-        test_reasoning_structure_absent_without_thinking_callback,
+        test_the_reasoning_requirement_section_is_retired,
         test_reliability_before_memories,
         test_stable_prefix_order,
-        test_reasoning_requirement_has_gating_clause,
     ]
     passed = 0
     for t in tests:

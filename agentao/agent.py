@@ -4,10 +4,9 @@ import asyncio
 import logging
 import os
 import threading
-import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Union, TYPE_CHECKING
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Union, TYPE_CHECKING
 
 from .llm import LLMClient
 from .llm.client import KEEP_BASE_URL as _KEEP_BASE_URL
@@ -35,7 +34,7 @@ from .prompts import (
 from .skills import SkillManager
 from .context_manager import ContextManager
 from .sandbox import SandboxPolicy
-from .transport import NullTransport, build_compat_transport
+from .transport import NullTransport
 
 if TYPE_CHECKING:
     from .compaction.types import CompactionController, CompactionOutcome
@@ -100,26 +99,19 @@ class Agentao:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        # ── Deprecated callbacks — kept for backward compatibility ────────────
-        confirmation_callback: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
-        max_context_tokens: int = 200_000,
-        step_callback: Optional[Callable[[Optional[str], Dict[str, Any]], None]] = None,
-        thinking_callback: Optional[Callable[[str], None]] = None,
-        ask_user_callback: Optional[Callable[[str], str]] = None,
-        output_callback: Optional[Callable[[str, str], None]] = None,
-        tool_complete_callback: Optional[Callable[[str], None]] = None,
-        llm_text_callback: Optional[Callable[[str], None]] = None,
-        permission_engine: Optional[PermissionEngine] = None,
-        on_max_iterations_callback: Optional[Callable[[int, list], dict]] = None,
-        transport=None,                   # Transport protocol instance (preferred)
-        plan_session: Optional[PlanSession] = None,
-        *,
-        working_directory: Path,
-        # Host LLM request-body passthrough. KEYWORD-ONLY (placed after ``*``)
-        # on purpose: inserting it up in the raw-config group would shift the
-        # legacy *positional* callback arguments (a caller passing
+        # Everything below is KEYWORD-ONLY. Until 0.5.0 eight legacy callbacks
+        # sat interleaved with the next four parameters, positionally; with
+        # them gone, a caller still passing
         # ``Agentao(key, url, model, temp, max_tok, confirmation_cb)`` would
-        # bind the callback to extra_body). Same raw-config family as
+        # have bound the callback to ``max_context_tokens`` without a word.
+        # Behind the ``*`` that call is a ``TypeError`` at the call site.
+        *,
+        max_context_tokens: int = 200_000,
+        permission_engine: Optional[PermissionEngine] = None,
+        transport=None,                   # Transport protocol instance
+        plan_session: Optional[PlanSession] = None,
+        working_directory: Path,
+        # Host LLM request-body passthrough. Same raw-config family as
         # api_key/.../max_tokens above; mutually exclusive with llm_client=
         # (see _validate_construction_args).
         extra_body: Optional[Dict[str, Any]] = None,
@@ -177,8 +169,8 @@ class Agentao:
                 ``docs/design/host-llm-extra-params.md``.
             transport: A Transport instance that receives all runtime events and
                        handles interactive requests (confirm_tool, ask_user, etc.).
-                       If omitted and no legacy callbacks are provided, a NullTransport
-                       is used (silent / headless mode).
+                       If omitted, a NullTransport is used (silent /
+                       headless mode: every confirmation is approved).
             max_context_tokens: Maximum context window tokens (default 200K).
             permission_engine: Optional PermissionEngine for rule-based tool access.
             working_directory: Per-runtime working directory (required
@@ -227,20 +219,14 @@ class Agentao:
                 construction; unknown names raise after registration (typo
                 guard). See ``docs/design/host-tool-allowlist.md``.
 
-        Deprecated args (still accepted for backward compatibility,
-        scheduled for removal in 0.5.0):
-            confirmation_callback, step_callback, thinking_callback, ask_user_callback,
-            output_callback, tool_complete_callback, llm_text_callback,
-            on_max_iterations_callback.
-
-        Passing any of the eight emits a single ``DeprecationWarning``.
-        Embedded hosts should construct an
-        :class:`agentao.transport.SdkTransport` directly (preferred) or,
-        when rewiring the host onto :class:`AgentEvent` would be too
-        invasive, call
-        :func:`agentao.embedding.compat.build_compat_transport` to wrap
-        the legacy callbacks into a single transport and pass
-        ``transport=`` here. Both paths bypass the warning.
+        The eight legacy callback kwargs (``confirmation_callback``,
+        ``step_callback``, ``thinking_callback``, ``ask_user_callback``,
+        ``output_callback``, ``tool_complete_callback``,
+        ``llm_text_callback``, ``on_max_iterations_callback``) were removed
+        in 0.5.0. Construct an :class:`agentao.transport.SdkTransport`, or
+        wrap the old callbacks with
+        :func:`agentao.embedding.compat.build_compat_transport`, and pass
+        ``transport=``. See ``docs/migration/0.4.x-to-0.5.0.md``.
         """
         self._validate_construction_args(
             llm_client=llm_client,
@@ -313,20 +299,8 @@ class Agentao:
         self.todo_tool = TodoWriteTool()
         self.permission_engine = permission_engine
 
-        # Resolve transport: explicit > compat shim from old callbacks > NullTransport.
-        self._resolve_transport(
-            transport,
-            {
-                "confirmation_callback": confirmation_callback,
-                "step_callback": step_callback,
-                "thinking_callback": thinking_callback,
-                "ask_user_callback": ask_user_callback,
-                "output_callback": output_callback,
-                "tool_complete_callback": tool_complete_callback,
-                "llm_text_callback": llm_text_callback,
-                "on_max_iterations_callback": on_max_iterations_callback,
-            },
-        )
+        # An explicit transport, or the silent headless default.
+        self.transport = transport if transport is not None else NullTransport()
 
         # Initialize context manager
         self.context_manager = ContextManager(
@@ -798,59 +772,6 @@ class Agentao:
         if prompt_cache_ttl is not None:
             llm_kwargs["prompt_cache_ttl"] = prompt_cache_ttl
         return LLMClient(**llm_kwargs)
-
-    def _resolve_transport(self, transport, callbacks: Dict[str, Any]) -> None:
-        """Resolve the live transport and stash the legacy callback attrs.
-
-        Precedence: an explicit ``transport=`` wins; otherwise a compat
-        shim is built from any of the eight deprecated callbacks; failing
-        both, a silent ``NullTransport`` (headless mode). ``callbacks`` is
-        keyed by the deprecated kwarg names so it can splat straight into
-        :func:`build_compat_transport`.
-        """
-        _has_legacy = any(callbacks.values())
-        if transport is not None:
-            if _has_legacy:
-                # Mid-migration footgun: a host that wires a Transport
-                # *and* passes legacy callbacks would silently drop the
-                # callbacks — the explicit transport always wins. Warn
-                # so the host can delete the dead kwargs.
-                warnings.warn(
-                    "Agentao(): legacy callback kwargs were passed alongside "
-                    "transport=, so the callbacks are ignored. Drop them — "
-                    "the transport= path supersedes them.",
-                    DeprecationWarning,
-                    stacklevel=3,
-                )
-            self.transport = transport
-        elif _has_legacy:
-            warnings.warn(
-                "Agentao(): the legacy callback kwargs "
-                "(confirmation_callback, step_callback, thinking_callback, "
-                "ask_user_callback, output_callback, tool_complete_callback, "
-                "llm_text_callback, on_max_iterations_callback) are deprecated "
-                "and will be removed in 0.5.0. Build an SdkTransport directly "
-                "or call agentao.embedding.compat.build_compat_transport(...) "
-                "and pass transport= instead.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            self.transport = build_compat_transport(**callbacks)
-        else:
-            self.transport = NullTransport()
-
-        # Store legacy callback attrs for backward compat (read-only; transport is the live wire)
-        self.confirmation_callback = callbacks["confirmation_callback"]
-        self.step_callback = callbacks["step_callback"]
-        self.thinking_callback = callbacks["thinking_callback"]
-        self.ask_user_callback = callbacks["ask_user_callback"]
-        self.output_callback = callbacks["output_callback"]
-        self.tool_complete_callback = callbacks["tool_complete_callback"]
-        self.llm_text_callback = callbacks["llm_text_callback"]
-        self.on_max_iterations_callback = callbacks["on_max_iterations_callback"]
-
-        # Reasoning prompt is shown only when a dedicated thinking callback is registered
-        self._has_thinking_handler = callbacks["thinking_callback"] is not None
 
     @property
     def _llm_config(self) -> Dict[str, Any]:

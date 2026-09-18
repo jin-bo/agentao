@@ -211,3 +211,48 @@ def test_a_rule_the_host_passed_in_code_applies_in_a_sub_agent(tmp_path, monkeyp
     assert not target.exists()
     (result,) = results
     assert "not permitted" in result
+
+
+def test_a_foreground_sub_agent_asks_the_parents_transport_by_name(tmp_path, monkeypatch):
+    """The foreground half of the factory, after the 0.5.0 callback removal.
+
+    The factory used to hand ``Agentao(...)`` five legacy callback kwargs next
+    to ``transport=None``; with those parameters gone it folds them into one
+    compat transport. What must survive is the path, not the spelling: the
+    question reaches the *parent's* transport, carries the sub-agent's name so
+    the user can tell who is asking, and a refusal there is a refusal.
+
+    ``error::DeprecationWarning`` is the other half. First-party code was the
+    last in-tree caller of the deprecated kwargs, so every foreground spawn
+    warned about a migration only agentao itself could make.
+    """
+    import warnings
+
+    from agentao.transport import SdkTransport
+
+    asked = []
+
+    def _confirm(name, description, args):
+        asked.append(name)
+        return False
+
+    target = tmp_path / "written.txt"
+    store = BackgroundTaskStore(persistence_dir=None)
+    parent = Agentao(
+        working_directory=tmp_path, api_key="k",
+        base_url="https://test.local/v1", model="m",
+        enable_builtin_agents=True, bg_store=store,
+        transport=SdkTransport(confirm_tool=_confirm),
+    )
+    results = _sub_agents_write(monkeypatch, target)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            _run(parent, store, "foreground")
+    finally:
+        parent.close()
+
+    assert asked == ["[generalist] write_file"]
+    assert not target.exists()
+    (result,) = results
+    assert "declined" in result

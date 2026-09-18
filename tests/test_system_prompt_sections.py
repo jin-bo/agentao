@@ -16,15 +16,12 @@ from agentao.plan import PlanPhase
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 
-def _make_agent(thinking_callback=None):
+def _make_agent():
     with patch("agentao.agent.LLMClient") as mock_llm_client:
         mock_llm_client.return_value.logger = Mock()
         mock_llm_client.return_value.model = "gpt-4"
         from agentao.agent import Agentao
-        return Agentao(
-            thinking_callback=thinking_callback,
-            working_directory=Path.cwd(),
-        )
+        return Agentao(working_directory=Path.cwd())
 
 
 def _seed_project_skill(name="probe-skill"):

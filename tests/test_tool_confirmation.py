@@ -31,82 +31,46 @@ def test_requires_confirmation_property():
     print("✅ File operation tools don't require confirmation")
 
 
-def test_agent_with_confirmation_callback():
-    """Test agent with confirmation callback."""
-
-    # Mock the LLMClient and OpenAI
+def _agent(**kwargs):
     with patch('agentao.agent.LLMClient') as mock_llm_client:
-        mock_logger = Mock()
-        mock_llm_client.return_value.logger = mock_logger
+        mock_llm_client.return_value.logger = Mock()
         mock_llm_client.return_value.model = "gpt-4"
 
         from agentao.agent import Agentao
 
-        # Create a mock confirmation callback
-        confirmation_callback = Mock(return_value=True)
-
-        # Create agent with confirmation callback
-        agent = Agentao(
-            confirmation_callback=confirmation_callback,
-            working_directory=Path.cwd(),
-        )
-
-        assert agent.confirmation_callback is not None, "Confirmation callback should be set"
-        print("✅ Agent accepts confirmation callback")
-
-        # Test that callback is called
-        confirmation_callback.reset_mock()
-
-        # Simulate tool execution
-        tool = agent.tools.get("run_shell_command")
-        assert tool.requires_confirmation is True
-
-        print("✅ Shell tool properly registered and requires confirmation")
+        return Agentao(working_directory=Path.cwd(), **kwargs)
 
 
-def test_confirmation_callback_signature():
-    """Test that confirmation callback has correct signature."""
+def test_a_confirmation_callback_reaches_the_agent_through_a_transport():
+    """The legacy callback survives 0.5.0 on ``build_compat_transport``.
 
-    def sample_callback(tool_name: str, tool_description: str, tool_args: dict) -> bool:
-        """Sample confirmation callback."""
-        return True
+    ``Agentao(confirmation_callback=...)`` is gone; the callback itself is
+    not. Wrapped, it is what ``agent.transport.confirm_tool`` asks — with the
+    same three arguments, and its answer is the answer.
+    """
+    from agentao.embedding.compat import build_compat_transport
 
-    # Mock the LLMClient
-    with patch('agentao.agent.LLMClient') as mock_llm_client:
-        mock_logger = Mock()
-        mock_llm_client.return_value.logger = mock_logger
-        mock_llm_client.return_value.model = "gpt-4"
+    confirmation_callback = Mock(return_value=False)
+    agent = _agent(
+        transport=build_compat_transport(confirmation_callback=confirmation_callback),
+    )
 
-        from agentao.agent import Agentao
+    tool = agent.tools.get("run_shell_command")
+    assert tool.requires_confirmation is True
 
-        # Create agent with callback
-        agent = Agentao(
-            confirmation_callback=sample_callback,
-            working_directory=Path.cwd(),
-        )
-
-        # Test callback
-        result = agent.confirmation_callback("test_tool", "Test tool description", {"arg1": "value1"})
-        assert result is True
-
-        print("✅ Confirmation callback signature is correct")
+    args = {"command": "ls"}
+    assert agent.transport.confirm_tool("run_shell_command", "List files", args) is False
+    confirmation_callback.assert_called_once_with("run_shell_command", "List files", args)
 
 
-def test_no_confirmation_callback():
-    """Test agent works without confirmation callback."""
+def test_without_a_transport_every_confirmation_is_approved():
+    """The headless default, unchanged: ``NullTransport`` says yes."""
+    from agentao.transport import NullTransport
 
-    with patch('agentao.agent.LLMClient') as mock_llm_client:
-        mock_logger = Mock()
-        mock_llm_client.return_value.logger = mock_logger
-        mock_llm_client.return_value.model = "gpt-4"
+    agent = _agent()
 
-        from agentao.agent import Agentao
-
-        # Create agent without callback
-        agent = Agentao(working_directory=Path.cwd())
-
-        assert agent.confirmation_callback is None, "Confirmation callback should be None"
-        print("✅ Agent works without confirmation callback")
+    assert isinstance(agent.transport, NullTransport)
+    assert agent.transport.confirm_tool("run_shell_command", "List files", {}) is True
 
 
 if __name__ == "__main__":
@@ -116,11 +80,9 @@ if __name__ == "__main__":
     try:
         test_requires_confirmation_property()
         print()
-        test_agent_with_confirmation_callback()
+        test_a_confirmation_callback_reaches_the_agent_through_a_transport()
         print()
-        test_confirmation_callback_signature()
-        print()
-        test_no_confirmation_callback()
+        test_without_a_transport_every_confirmation_is_approved()
         print()
         print("=" * 50)
         print("✅ All tests passed!")

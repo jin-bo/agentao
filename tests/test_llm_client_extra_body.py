@@ -203,10 +203,14 @@ def test_agentao_rejects_extra_body_alongside_llm_client(tmp_path):
 
 
 def test_agentao_extra_body_is_keyword_only():
-    """Codex P1: extra_body must be keyword-only so it does NOT shift the
-    legacy positional callback args (api_key..plan_session are
-    positional-or-keyword on Agentao.__init__). The 6th positional must still
-    be confirmation_callback, not extra_body."""
+    """``extra_body`` is keyword-only — and since 0.5.0 so is everything
+    past the raw-config five.
+
+    Eight legacy callbacks used to sit interleaved with ``max_context_tokens``
+    / ``permission_engine`` / ``transport`` / ``plan_session``, positionally.
+    Deleting them would have shifted those four up, so a caller still passing
+    a callback sixth would have bound it to ``max_context_tokens`` silently;
+    behind the ``*`` it is a ``TypeError`` at the call site instead."""
     from agentao import Agentao
 
     init = Agentao.__init__
@@ -221,13 +225,11 @@ def test_agentao_extra_body_is_keyword_only():
 
     params = inspect.signature(init).parameters
     assert params["extra_body"].kind is inspect.Parameter.KEYWORD_ONLY
-    # The positional-or-keyword group's 6th entry (after self) is unchanged.
     pos = [
         n for n, p in params.items()
         if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD and n != "self"
     ]
-    assert pos[5] == "confirmation_callback"
-    assert "extra_body" not in pos
+    assert pos == ["api_key", "base_url", "model", "temperature", "max_tokens"]
 
 
 # ---------------------------------------------------------------------------
