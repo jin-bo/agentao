@@ -87,7 +87,6 @@ def test_the_volatile_blocks_are_not_in_the_system_message():
 
     assert "<memory-stable>" in prompt, "stable memory block must stay in system"
     for marker in (
-        "=== Available Skills ===",
         "=== Active Skills ===",
         "=== Current Task List ===",
         "<memory-context>",
@@ -101,14 +100,25 @@ def test_the_volatile_blocks_are_not_in_the_system_message():
     assert "step one" in tail
     assert tail.startswith("<system-reminder>")
     assert tail.endswith("</system-reminder>")
+
+    # The skills *catalogue* is the one skills block that is stable, so it is
+    # on the other side of the split: in the system message, ahead of stable
+    # memory (which changes more often), and not re-sent in the tail.
+    catalogue = prompt.find("=== Available Skills ===")
+    assert catalogue != -1, "the skills catalogue belongs to the stable prefix"
+    assert catalogue < prompt.find("<memory-stable>")
+    assert "=== Available Skills ===" not in tail
     print("✅ Volatile blocks left the system message for the request-only tail")
 
 
 def test_the_volatile_tail_is_empty_when_nothing_volatile_renders():
-    """No todos, no skills, no plan, no recall → no tail, and the request is
-    then byte-identical to the pre-0a one."""
+    """No todos, no *active* skill, no plan, no recall → no tail, and the
+    request is then byte-identical to the pre-0a one.
+
+    Available skills are deliberately left in place: the catalogue is in the
+    system message, so skills on disk alone must not produce a tail."""
     agent = _make_agent()
-    agent.skill_manager.available_skills = {}
+    assert agent.skill_manager.list_available_skills(), "fixture has no skills"
     agent.skill_manager.active_skills = {}
     assert agent._build_volatile_tail() == ""
     print("✅ Empty volatile state sends no tail message")

@@ -35,6 +35,21 @@ and now byte-identical turn to turn, against a re-sent tail of ~1.8k tokens of
 which 1,779 is the available-skills catalogue. That ratio is repo-specific and is
 the number to check first — see §13's "Stop at stage 0".
 
+**Follow-up, 0.4.27 — the catalogue went back into the prefix.** It was the
+tail's dominant item and it did not need to be volatile: it was volatile only
+because it listed the *inactive* skills, so each activation rewrote it. It now
+lists every enabled skill, active or not, and sits in the system message ahead
+of `<memory-stable>`; it changes only with the enabled set, an event that
+already rewrites `activate_skill`'s enum in the tools block. pi-mono
+(`system-prompt.ts`) and gemini-cli (`promptProvider.ts`) list the same way and
+neither removes a skill once used; codex appends a `developer` update only when
+the catalogue changes. Re-measured here with 14 skills on disk: system message
+~5.2k tokens, tail empty. What remains in the tail and is large is an **active
+skill's body** — ~4.1k tokens per request for one skill — and that one is not a
+free move: in the prefix it costs one whole-history cache miss per activation,
+so it depends on when in a session skills get activated, which is unmeasured.
+Record the history length at each activation when the billed measurement runs.
+
 **rev 11 — what changed:** Stage 0 was implemented; the status block above records
 what landed, where, and what its gate still needs. The design text below is
 unchanged from rev 10 — it is the record the implementation was built from, and
