@@ -123,6 +123,24 @@ agent_b = Agentao(working_directory=Path("/data/tenant-b"))
 
 这个设计让你可以**堆很多技能**而不污染上下文：只有真正用到的才占 token。
 
+## 禁用一个技能
+
+`activate_skill` 不是唯一的门禁。技能可以按项目**禁用**，这比「取消激活」更强：
+
+```bash
+/skills disable <name>     # 持久化，重启后仍然有效
+/skills enable <name>      # 撤销
+/skills                    # 列表，其中有独立的 Disabled 段
+```
+
+状态存在 `.agentao/skills_config.json` 的 `disabled_skills` 里（仅项目级作用域，见 [附录 B](/zh/appendix/b-config-keys)）。嵌入时要注意三点：
+
+- **禁用不是取消激活。** `/skills deactivate` 只是把技能移出**本次会话**的 `active_skills`，技能仍可被发现，模型可以再次激活它。禁用则意味着技能不加载、不出现在目录里，并且**在激活时被拒绝** —— `activate_skill` 回答 `Unknown skill`，因为对一个试图激活它的调用方而言，被禁用的技能就是不存在。只有 `/skills activate` 会说明状态并给出补救办法。
+- **子代理在启动那一刻复制这个禁用集合。** 在子代理运行期间做的禁用，只对**下一个**子代理生效，对正在跑的那个无效。
+- **扫描从不修剪这份名单。** 一次扫不到该技能的 `/skills reload`（共享盘未挂载、目录运行中被改名）会原样保留名字、也不写盘，于是技能回来时仍是禁用状态。扫描分不清「已删除」和「此刻发现不到」，而禁用本身是激活门禁，猜错就等于静默把这个技能重新放行给模型。
+
+最后一条的代价是：名字可能比它禁用的技能活得更久。`/skills` 会把这类名字单列在 **Disabled, not found by the last scan** 之下，而 `/skills enable <name>` 不论该技能当前是否存在都能清掉它。
+
 ## 按需参考目录
 
 `references/*.md` 不会自动加载。技能正文里可以告诉 LLM："如果你遇到特殊情况，用 `read_file` 读 `skills/my-skill/references/edge-cases.md`"。
@@ -246,5 +264,6 @@ print(agent.skill_manager.get_skills_context())
 - `description` 决定 LLM **何时**激活——按 LLM 第一视角写（"用户问到 X 时激活我"）。
 - 三层搜索顺序：`~/.agentao/skills/`（全局）→ `<wd>/.agentao/skills/` → `<wd>/skills/`，**项目内的优先级最高**。
 - 多个小而具体的技能 > 一个大杂烩。激活会消耗上下文 token，技能小才不肉疼。
+- `/skills disable` 是**激活门禁**而不是显示过滤，而且扫描从不修剪它 —— 名字可能比技能活得更久，会出现在 *Disabled, not found by the last scan* 一节（见[禁用一个技能](#禁用一个技能)）。
 
 → 下一节：[5.3 MCP 服务器接入](./3-mcp)

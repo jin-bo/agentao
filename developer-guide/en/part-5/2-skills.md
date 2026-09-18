@@ -127,6 +127,24 @@ Skills are **not passive** — they are not in the system prompt by default. Onl
 
 This design lets you **stack many skills** without bloating context: only the ones actually used cost tokens.
 
+## Disabling a skill
+
+`activate_skill` is not the only gate. A skill can be **disabled** for the project, which is stronger than deactivating it:
+
+```bash
+/skills disable <name>     # persistent — survives restart
+/skills enable <name>      # undo
+/skills                    # list, with its own Disabled section
+```
+
+The state lives in `.agentao/skills_config.json` under `disabled_skills` (project scope only — see [Appendix B](/en/appendix/b-config-keys)). Three things matter when you embed:
+
+- **Disable is not deactivate.** `/skills deactivate` drops a skill out of *this session's* `active_skills`; the skill is still discoverable and the model can activate it again. A disable means the skill does not load, does not appear in the catalogue, and is **refused at activation** — `activate_skill` answers `Unknown skill`, because to a caller trying to activate it a disabled skill is not there. `/skills activate` is the one surface that names the state and the remedy instead.
+- **A sub-agent copies the disabled set when it starts.** A disable made while a sub-agent is running reaches the *next* sub-agent, not that one.
+- **A scan never prunes the list.** A `/skills reload` that cannot see the skill — unmounted share, directory renamed mid-session — leaves the name in place and writes nothing, so the skill comes back still disabled. A scan cannot tell "deleted" from "not discoverable right now", and since a disable is an activation gate, guessing wrong would silently re-arm the skill for the model.
+
+The cost of that last rule is that a name can outlive the skill it disabled. `/skills` lists those separately, under **Disabled, not found by the last scan**, and `/skills enable <name>` clears such a name whether or not the skill is currently present.
+
 ## On-demand references
 
 `references/*.md` is not auto-loaded. Inside the skill body you can say: "If you hit a special case, `read_file skills/my-skill/references/edge-cases.md`." Benefits:
@@ -246,5 +264,6 @@ print(agent.skill_manager.get_skills_context())
 - The `description` decides *when* the LLM activates the skill — write it from the LLM's POV ("activate this when the user asks about X").
 - 3 search layers: `~/.agentao/skills/` (global) → `<wd>/.agentao/skills/` → `<wd>/skills/`. Project-local wins.
 - Many small specific skills > one monster skill. Activating a skill costs context tokens; small ones stay cheap.
+- `/skills disable` is an **activation gate**, not a display filter, and a scan never prunes it — a name can outlive its skill and shows up under *Disabled, not found by the last scan* (see [Disabling a skill](#disabling-a-skill)).
 
 → Next: [5.3 MCP Integration](./3-mcp)

@@ -1,9 +1,8 @@
 # Session-lifecycle hook values — codex #44349 against agentao's three surfaces
 
 > **⚠️ Everything described here is implemented.** §1 was a priority ordering of findings; it is now
-> a summary table. `docs/reference/configuration.md` §11 is the authority on the values themselves. Exactly one item needs a maintainer decision (§4, the
-> ACP question); the rest of the implemented scope was wiring, not deciding. Quote this line whenever
-> you quote the table.
+> a summary table — every row has landed, §4 (ACP) included. `docs/reference/configuration.md` §11 is
+> the authority on the values themselves. Quote this line whenever you quote the table.
 
 **Status:** **shipped in 0.4.23** (2026-09-11) — §6.1 and §6.2 (the CLI values and the resume
 path), §4 (ACP), and §6.3 (compaction), each cleared by its own maintainer review, plus a fourth
