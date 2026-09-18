@@ -130,10 +130,15 @@ See [`docs/migration/0.3.x-to-0.4.0.md`](https://github.com/jin-bo/agentao/blob/
 
 - Agentao is currently in **0.x (Beta)**. Breaking changes can land between minor versions — pin exact versions:
   ```
-  agentao>=0.4.0,<0.5
+  agentao>=0.5.0,<0.6
   ```
-- This guide targets **v0.4.0 GA**. Version-specific notes will be flagged inline.
-- The single break in 0.4.0 is the dependency split (P0.9). 0.3.x users who
+- This guide targets **v0.5.0**. Version-specific notes will be flagged inline.
+- **0.5.0 is a removal release**: `agentao.harness`, `agentao.session` and the
+  eight legacy callback kwargs on `Agentao(...)` are gone, and two changes never
+  warned — `project_root` is required on `agentao.embedding.sessions`, and
+  `Agentao(...)` takes only its first five parameters positionally. Coming from
+  0.4.x, read [`docs/migration/0.4.x-to-0.5.0.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.4.x-to-0.5.0.md) first.
+- The single break in 0.4.0 was the dependency split (P0.9). 0.3.x users who
   want zero behaviour change can use `pip install 'agentao[full]'`.
 
 ## Checklist
@@ -156,8 +161,8 @@ Environment green — move on to Part 2 for actual integration work.
 
 - **Python ≥ 3.10** required; 3.11 / 3.12 recommended.
 - **3 env vars** required: `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` (constructor args also work).
-- **Default install is embedding-only**. Add extras as needed: `[web]`, `[i18n]`, `[cli]`, `[pdf]`, `[excel]`, `[image]`, `[full]` (everything).
+- **Default install is embedding-only**. Add extras as needed: `[web]`, `[i18n]`, `[cli]`, `[playwright]`, `[tokenizer]`, `[full]` (everything).
 - **No inbound port** — agent is a library or stdio subprocess; outbound goes to your LLM endpoint and any tool URLs.
-- **Pin a version range** in production: `agentao>=0.4.0,<0.5`.
+- **Pin a version range** in production: `agentao>=0.5.0,<0.6`.
 
 → [Part 2 · Python In-Process Embedding](/en/part-2/)

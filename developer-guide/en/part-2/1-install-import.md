@@ -13,19 +13,19 @@ Chinese tokenization are opt-in extras.
 
 ```bash
 # Embedding host (`from agentao import Agentao`) — minimum closure
-pip install 'agentao>=0.4.0'
+pip install 'agentao>=0.5.0'
 
 # Need the web_fetch / web_search tools — adds beautifulsoup4
-pip install 'agentao[web]>=0.4.0'
+pip install 'agentao[web]>=0.5.0'
 
 # Need Chinese-text memory recall — adds jieba
-pip install 'agentao[i18n]>=0.4.0'
+pip install 'agentao[i18n]>=0.5.0'
 
 # CLI users only — adds rich/prompt-toolkit/readchar/pygments
-pip install 'agentao[cli]>=0.4.0'
+pip install 'agentao[cli]>=0.5.0'
 
 # Upgrading from 0.3.x and want zero behaviour change
-pip install 'agentao[full]>=0.4.0'
+pip install 'agentao[full]>=0.5.0'
 ```
 
 Extras matrix is documented in [1.5 Requirements](/en/part-1/5-requirements).
@@ -92,7 +92,7 @@ def get_agent():
 
 ```python
 import agentao
-print(agentao.__version__)   # "0.4.0"
+print(agentao.__version__)   # "0.5.0"
 ```
 
 In production, verify at startup:
@@ -101,7 +101,7 @@ In production, verify at startup:
 import agentao
 from packaging.version import Version
 
-MIN = Version("0.4.0")
+MIN = Version("0.5.0")
 if Version(agentao.__version__) < MIN:
     raise RuntimeError(f"Need agentao >= {MIN}, got {agentao.__version__}")
 ```
@@ -129,12 +129,13 @@ Parameter meanings are covered next.
 
 ## TL;DR
 
-- `pip install 'agentao>=0.4.0'` is the embedding-only minimum — add `[web]` / `[i18n]` / `[cli]` / `[full]` etc. as needed.
+- `pip install 'agentao>=0.5.0'` is the embedding-only minimum — add `[web]` / `[i18n]` / `[cli]` / `[full]` etc. as needed.
 - Two imports you'll always need: `from agentao import Agentao` + `from agentao.transport import SdkTransport`.
 - `import agentao` is cheap — heavy libs (`openai`, `bs4`, `jieba`, `mcp`, `rich` …) are deferred to first runtime use.
-- Pin in production: `agentao>=0.4.0,<0.5`.
+- Pin in production: `agentao>=0.5.0,<0.6`.
 
 ::: info Version note
+- **0.5.0** — A removal release: `agentao.harness`, `agentao.session` and the eight callback kwargs on `Agentao(...)` are gone; `project_root` is required on `agentao.embedding.sessions`; everything after `max_tokens` is keyword-only. `anthropic>=1.6.0` joins `openai` as a core dependency (lazily imported; only the opt-in `api_format="anthropic-messages"` loads it). See the [0.4.x → 0.5.0 migration guide](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.4.x-to-0.5.0.md).
 - **0.4.0** — `pip install agentao` now ships embedding-only core; `[web]`, `[cli]`, `[i18n]`, etc. are opt-in extras. `[full]` reproduces the 0.3.x dependency closure. See [migration guide](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.3.x-to-0.4.0.md).
 - **0.3.4** — Lazy-import deferral expanded to cover the full opt-in surface (OpenAI SDK, BeautifulSoup, jieba, filelock, rich, prompt_toolkit, readchar, click, pygments, starlette, uvicorn). Invariant enforced by `tests/test_no_cli_deps_in_core.py` and `tests/test_import_cost.py`.
 :::

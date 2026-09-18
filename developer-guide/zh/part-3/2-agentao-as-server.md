@@ -335,7 +335,7 @@ sequenceDiagram
 
 ::: tip ⚡ 端到端可跑（约 5 分钟）
 **产出** —— 从 50 行 Python 客户端驱动 `agentao --acp --stdio`；能看到 `session/update` 流式通知 + 最终 `stopReason`。
-**技术栈** —— `pip install 'agentao[cli]>=0.4.0'` + 3 个环境变量；下方 Python 即所需的全部宿主代码。
+**技术栈** —— `pip install 'agentao[cli]>=0.5.0'` + 3 个环境变量；下方 Python 即所需的全部宿主代码。
 **运行** —— 粘贴到 `acp_demo.py`，然后 `python acp_demo.py`。
 **宿主不是 Python？** —— 读懂线协议流后，照 [3.3 宿主作为 ACP Client](./3-host-client-architecture) 翻译到目标语言。
 :::

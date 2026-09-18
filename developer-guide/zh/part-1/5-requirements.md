@@ -126,9 +126,13 @@ pip install 'agentao[full]'        # cli + web + i18n + playwright + tokenizer
 
 - Agentao **目前为 0.x**（Beta）。次版本间可能有破坏性变化，请锁定版本号：
   ```
-  agentao>=0.4.0,<0.5
+  agentao>=0.5.0,<0.6
   ```
-- 本指南基于 **v0.4.0 GA**。版本差异会在章节开头标注。
+- 本指南基于 **v0.5.0**。版本差异会在章节开头标注。
+- **0.5.0 是一次移除发布**：`agentao.harness`、`agentao.session`、`Agentao(...)` 上的八个
+  旧回调参数都没有了；另有两处变更从未告警 —— `agentao.embedding.sessions` 的 `project_root`
+  变为必填，`Agentao(...)` 只有前五个参数可以按位置传。从 0.4.x 过来，请先读
+  [`docs/migration/0.4.x-to-0.5.0.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.4.x-to-0.5.0.zh.md)。
 - 0.4.0 唯一的 break 是依赖拆分（P0.9）。0.3.x 用户要零行为变更可用
   `pip install 'agentao[full]'`。
 
@@ -152,8 +156,8 @@ python -c "from agentao.transport import SdkTransport; print('OK')"
 
 - **Python ≥ 3.10** 必需，推荐 3.11 / 3.12。
 - **3 个环境变量必填**：`OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`（也可走构造器参数）。
-- **默认装包只含嵌入核心**，按需加 extras：`[web]` / `[i18n]` / `[cli]` / `[pdf]` / `[excel]` / `[image]` / `[full]`（全装）。
+- **默认装包只含嵌入核心**，按需加 extras：`[web]` / `[i18n]` / `[cli]` / `[playwright]` / `[tokenizer]` / `[full]`（全装）。
 - **不监听任何入站端口**——Agentao 要么是库、要么是 stdio 子进程；出站只会去你的 LLM 端点和工具 URL。
-- **生产环境务必锁定版本范围**：`agentao>=0.4.0,<0.5`。
+- **生产环境务必锁定版本范围**：`agentao>=0.5.0,<0.6`。
 
 → [第 2 部分 · Python 进程内嵌入](/zh/part-2/)

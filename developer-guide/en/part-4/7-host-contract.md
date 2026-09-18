@@ -227,7 +227,7 @@ What `agentao.host` promises:
 - **Internal types** (`agentao.transport.AgentEvent`, `agentao.tools.ToolExecutionResult`, `agentao.permissions.PermissionEngine`) may change in any release. **Don't import them directly into production code paths.**
 - **Schema snapshots are CI-enforced** via `tests/test_host_schema.py` — a model change that shifts the wire form fails the build until both the model and the snapshot are updated together.
 
-What this gives you operationally: **you can pin `agentao>=0.4.0,<1.0` in production** with confidence that the harness contract is the contract you'll have at 0.9.x.
+What this gives you operationally: **the harness contract you build against today is the one you'll have at 0.9.x.** That is a promise about *this* surface, not about the rest of the package — 0.5.0 kept every `agentao.host` model and both schema snapshots unchanged while removing `agentao.harness`, `agentao.session` and the eight callback kwargs on `Agentao(...)`. So pin the package the ordinary 0.x way, `agentao>=0.5.0,<0.6`, and read the migration guide at each minor; what the contract buys is that the event-consuming half of your host does not move when you do.
 
 ## 4.7.8 What's *not* in the contract
 

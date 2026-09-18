@@ -336,7 +336,7 @@ For **persistent session** scenarios: store `sessionId` + history in your DB, re
 
 ::: tip ⚡ Runnable end-to-end (≈ 5 minutes)
 **Outcome** — drives `agentao --acp --stdio` from a 50-line Python client; you see streaming `session/update` notifications + the final `stopReason`.
-**Stack** — `pip install 'agentao[cli]>=0.4.0'` + 3 env vars; the Python below is the only host code you need.
+**Stack** — `pip install 'agentao[cli]>=0.5.0'` + 3 env vars; the Python below is the only host code you need.
 **Run** — paste into `acp_demo.py`, then `python acp_demo.py`.
 **Even if your host isn't Python** — read this to understand the wire flow, then translate to your language using [3.3 Host as ACP Client](./3-host-client-architecture).
 :::

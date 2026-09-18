@@ -86,6 +86,8 @@ agentao -p "Reply with the single word: OK"
 agentao
 ```
 
+> **Upgrading from 0.4.x?** 0.5.0 removes what 0.4.x deprecated — `agentao.harness` (use `agentao.host`), `agentao.session` (use `agentao.embedding.sessions`) and the eight callback kwargs on `Agentao(...)` (use `transport=`, or `build_compat_transport`) — and two things that never warned: `project_root` is required on the session functions, and `Agentao(...)` takes only its first five parameters positionally. See [docs/migration/0.4.x-to-0.5.0.md](docs/migration/0.4.x-to-0.5.0.md).
+>
 > **Upgrading from 0.3.x?** From 0.4.0 the CLI deps moved into the `[cli]` extra. Use `pip install 'agentao[full]'` for zero behaviour change. See [docs/migration/0.3.x-to-0.4.0.md](docs/migration/0.3.x-to-0.4.0.md).
 
 First commands once the REPL is up:

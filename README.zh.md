@@ -83,6 +83,8 @@ agentao -p "Reply with the single word: OK"
 agentao
 ```
 
+> **从 0.4.x 升级？** 0.5.0 移除了 0.4.x 期间已弃用的东西 —— `agentao.harness`（改用 `agentao.host`）、`agentao.session`（改用 `agentao.embedding.sessions`）、`Agentao(...)` 上的八个回调参数（改用 `transport=`，或 `build_compat_transport`）—— 另有两处从未告警：会话函数的 `project_root` 变为必填，`Agentao(...)` 只有前五个参数可以按位置传。详见 [docs/migration/0.4.x-to-0.5.0.zh.md](docs/migration/0.4.x-to-0.5.0.zh.md)。
+>
 > **从 0.3.x 升级？** 0.4.0 起 CLI 依赖移到了 `[cli]` extra 里。零行为变更升级用 `pip install 'agentao[full]'`。详见 [docs/migration/0.3.x-to-0.4.0.md](docs/migration/0.3.x-to-0.4.0.md)。
 
 REPL 起来后最先用的几个命令：
