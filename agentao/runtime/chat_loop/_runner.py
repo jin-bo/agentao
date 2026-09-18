@@ -362,7 +362,11 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         # Reset doom-loop counter for this chat() invocation
         agent.tool_runner.reset()
 
-        # System prompt dirty-flag: only rebuild when skills or memories change
+        # System prompt dirty-flag: only rebuild when skills or memories change.
+        # Since 0.4.27 the system message no longer reads the *active* set —
+        # the catalogue lists active skills too — so an activation rebuilds a
+        # byte-identical string. The active set stays in the flag because the
+        # same comparison drives the skill-diff events.
         current_active_skills = frozenset(agent.skill_manager.get_active_skills().keys())
         current_memory_version = agent.memory_manager.write_version
 

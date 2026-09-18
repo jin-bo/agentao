@@ -73,9 +73,9 @@ def _sub_agents_call(monkeypatch, *calls, prompts=None):
 
     ``prompts``, when given a list, also collects what each sub-agent would
     instruct itself with on its *next* turn — the system message plus the
-    request-only volatile tail, since stage 0a put the skills blocks in the
-    latter — built while it is still alive, which is the only place the effect
-    of an activation is visible."""
+    request-only volatile tail, since the active-skills block rides the latter
+    (the catalogue is in the former) — built while it is still alive, which is
+    the only place the effect of an activation is visible."""
     results, sub_agents = {}, []
 
     def chat(self, user_message, max_iterations=100, cancellation_token=None, images=None):

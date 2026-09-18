@@ -453,10 +453,15 @@ All commands start with `/`:
 Skills integrate with the Agentao through:
 
 1. **activate_skill tool**: LLM can call this tool
-2. **Skills context**: the available-skills catalogue and the bodies of active
-   skills ride the per-request volatile tail, **not** the system message — see
-   `SystemPromptBuilder.build_volatile_tail()` (stage 0a, 0.4.26). Reading them
-   out of `_build_system_prompt()` alone finds nothing.
+2. **Skills context**, in two places. The available-skills **catalogue** is in
+   the system message (`_build_system_prompt()`); it lists every enabled
+   skill, active ones included, so activating a skill does not change it and
+   the provider's prompt cache survives. The **bodies of active skills** ride
+   the per-request volatile tail — `SystemPromptBuilder.build_volatile_tail()`
+   (stage 0a, 0.4.26) — so reading them out of `_build_system_prompt()` alone
+   finds nothing. (In 0.4.26 the catalogue was in the tail too; 0.4.27 moved
+   it back.) An active skill's body is re-sent uncached on every request, so
+   `/skills deactivate <name>` when you are done with one.
 3. **Documentation access**: LLM can read full SKILL.md content
 
 ## Best Practices for Skill Development

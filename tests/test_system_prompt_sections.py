@@ -27,6 +27,24 @@ def _make_agent(thinking_callback=None):
         )
 
 
+def _seed_project_skill(name="probe-skill"):
+    """Put one described skill under the (isolated) cwd, before the agent scans.
+
+    ``_make_agent`` does not redirect the global or bundled skill directories,
+    so without this the catalogue assertions below would pass or fail on
+    whatever the machine's own ``~/.agentao/skills`` happens to hold — empty on
+    a home the bundled-skill bootstrap cannot write to, half-copied while
+    another xdist worker is still running that bootstrap.
+    """
+    d = Path.cwd() / ".agentao" / "skills" / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: A probe skill\n---\n\n# {name}\n\nBODY\n",
+        encoding="utf-8",
+    )
+    return name
+
+
 # ---------------------------------------------------------------------------
 # Section order
 # ---------------------------------------------------------------------------
@@ -76,6 +94,7 @@ def test_the_volatile_blocks_are_not_in_the_system_message():
     checks volatile *wording* reads system + tail together; this one is where
     the split itself is pinned, in both directions.
     """
+    skill = _seed_project_skill()
     agent = _make_agent()
     # Force renderable volatile content
     agent.memory_tool.execute(key="suffix_probe", value="v")
@@ -87,7 +106,6 @@ def test_the_volatile_blocks_are_not_in_the_system_message():
 
     assert "<memory-stable>" in prompt, "stable memory block must stay in system"
     for marker in (
-        "=== Available Skills ===",
         "=== Active Skills ===",
         "=== Current Task List ===",
         "<memory-context>",
@@ -101,14 +119,26 @@ def test_the_volatile_blocks_are_not_in_the_system_message():
     assert "step one" in tail
     assert tail.startswith("<system-reminder>")
     assert tail.endswith("</system-reminder>")
+
+    # The skills *catalogue* is the one skills block that is stable, so it is
+    # on the other side of the split: in the system message, ahead of stable
+    # memory (which changes more often), and not re-sent in the tail.
+    catalogue = prompt.find("=== Available Skills ===")
+    assert catalogue != -1, "the skills catalogue belongs to the stable prefix"
+    assert catalogue < prompt.find(f"• {skill}:") < prompt.find("<memory-stable>")
+    assert "=== Available Skills ===" not in tail
     print("✅ Volatile blocks left the system message for the request-only tail")
 
 
 def test_the_volatile_tail_is_empty_when_nothing_volatile_renders():
-    """No todos, no skills, no plan, no recall → no tail, and the request is
-    then byte-identical to the pre-0a one."""
+    """No todos, no *active* skill, no plan, no recall → no tail, and the
+    request is then byte-identical to the pre-0a one.
+
+    Available skills are deliberately left in place: the catalogue is in the
+    system message, so skills on disk alone must not produce a tail."""
+    skill = _seed_project_skill()
     agent = _make_agent()
-    agent.skill_manager.available_skills = {}
+    assert skill in agent.skill_manager.list_available_skills()
     agent.skill_manager.active_skills = {}
     assert agent._build_volatile_tail() == ""
     print("✅ Empty volatile state sends no tail message")

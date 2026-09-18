@@ -13,6 +13,49 @@ _Targeting 0.4.27. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **The available-skills catalogue is back in the system message, and it now
+  lists active skills too.** 0.4.26 moved it to the request-only tail with the
+  other volatile blocks, where it was the tail's dominant item — re-sent
+  uncached on every request, every tool iteration included. It was volatile
+  for one reason only: it listed the *inactive* skills, so each activation
+  rewrote it. It now lists every enabled skill that has a description, sorted,
+  active or not, and sits ahead of `<memory-stable>`; activating or
+  deactivating a skill leaves the system message byte-identical, and what
+  changes is the active-skills block in the tail — which is also how the model
+  learns which catalogue entries are already active. The catalogue's closing
+  instruction now says to call `activate_skill` when a skill matches *and is
+  not already active*.
+
+  The catalogue changes only when the enabled set does (enable, disable,
+  install, reload). Those events already rewrite the `activate_skill` tool's
+  `skill_name` enum in the tools block, so they were rebuilding the cached
+  prefix anyway; the move adds no new invalidation, with one exception — a
+  reload that picks up an edited `description` or `when-to-use` rewrites the
+  catalogue and not the enum, which carries names only. One timing difference:
+  the catalogue is now read when the system message is built — per turn, and
+  again when the active set or the memory version changes, or after a full
+  compaction — rather than per request.
+  The tools block, enum included, is serialized once per turn. A skill disabled
+  mid-turn can stay listed until the next turn; `activate_skill` still refuses
+  it.
+
+  Measured in this repo with 14 skills on disk, as local token estimates and
+  not billed figures: the system message goes from ~2.7k to ~5.2k tokens and
+  the idle tail from ~2.5k to empty. The tail's remaining large item is an
+  active skill's body (~4.1k tokens per request for one skill here), which is
+  unchanged by this entry — `/skills deactivate` when done with one. The rule
+  that the catalogue renders only for an agent that has `activate_skill` is
+  unchanged. pi-mono and gemini-cli keep their catalogues in the system prompt
+  the same way, and neither removes a skill once it has been used.
+
+  One posture note for hosts that load third-party or plugin skills: a skill's
+  `description` and `when-to-use` are system-role text again, as they were
+  before 0.4.26, rather than sitting inside the tail's `<system-reminder>`
+  wrapper. They are not neutralized or stripped on the way in. A skill's body
+  was always model-visible instruction text by design, so this widens nothing
+  an installed skill could not already do, but it is the placement to know
+  about when auditing what reaches the system message.
+
 ### Fixed
 
 ---

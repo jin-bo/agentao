@@ -11,7 +11,7 @@ Two products, two cadences:
 - :meth:`SystemPromptBuilder.build` returns the **system message**, which
   is the stable prefix and nothing else.
 - :meth:`SystemPromptBuilder.build_volatile_tail` returns the volatile
-  content (skills, todos, dynamic recall, plan) as one
+  content (active-skill bodies, todos, dynamic recall, plan) as one
   ``<system-reminder>`` block, which the runtime appends to the outgoing
   request as a trailing ``user`` message and never persists.
 
@@ -70,7 +70,7 @@ _logger = logging.getLogger("agentao.prompt_diag")
 #: trailing user text — the highest-leverage position there is — shedding the
 #: "this is data, not instructions" framing the wrapper exists to supply. The
 #: body is not all agentao-authored: it carries memory values the model itself
-#: wrote, and skill / MCP descriptions from disk and from servers. Matched
+#: wrote, and active skills' bodies from disk and from plugins. Matched
 #: case-insensitively and with loose whitespace, because the reader being
 #: steered is a language model, not an XML parser: ``</ SYSTEM-REMINDER >``
 #: works on it just as well as the exact spelling.
@@ -163,7 +163,8 @@ class SystemPromptBuilder:
         Order: project_instructions (optional) → stable prefix
         (identity, reliability, task_classification, execution_protocol,
         completion_standard, untrusted_input, operational_guidelines,
-        reasoning_requirement?, available_agents?, stable_memory?).
+        reasoning_requirement?, available_agents?, available_skills?,
+        stable_memory?).
 
         Every section here is stable across the turns of one session; the
         volatile ones live in :meth:`_build_volatile_sections`.
@@ -183,8 +184,8 @@ class SystemPromptBuilder:
             )
 
         # --- Stable prefix (cached across turns) ---------------------------
-        # Volatile content (skills, todos, dynamic recall, plan suffix)
-        # is not in this message at all — it rides a request-only tail, see
+        # Volatile content (active-skill bodies, todos, dynamic recall, plan
+        # suffix) is not in this message at all — it rides a request-only tail, see
         # ``build_volatile_tail``.
         sections["identity"] = build_identity_section(agent.working_directory)
         sections["reliability"] = build_reliability_section()
@@ -206,6 +207,17 @@ class SystemPromptBuilder:
             agents_block = self._available_agents_block()
             if agents_block:
                 sections["available_agents"] = agents_block
+
+        # The skills catalogue — every enabled skill, active or not, so an
+        # activation leaves this message byte-identical. Ahead of stable
+        # memory because it changes less often: a ``save_memory`` rebuilds
+        # from the memory block on, and the catalogue stays cached — on a
+        # token-prefix cache, that is. A block-granular one (the opt-in
+        # ``cache_control`` markers send this message as a single text block)
+        # re-writes the whole message whichever order the two are in.
+        skills_block = self._available_skills_block()
+        if skills_block:
+            sections["available_skills"] = skills_block
 
         # Stable memory block — last item in the stable prefix. Writes
         # ``_stable_block_chars`` onto the agent so the CLI status surface
@@ -229,9 +241,14 @@ class SystemPromptBuilder:
     def _build_volatile_sections(self) -> Dict[str, str]:
         """Build the volatile tail's sections. Insertion-ordered.
 
-        Order: available_skills? → active_skills_context? → todos? →
-        dynamic_recall? → plan_prompt?. Same relative order they had at the
-        bottom of the system message before 0a moved them out of it.
+        Order: active_skills_context? → todos? → dynamic_recall? →
+        plan_prompt?. Same relative order they had at the bottom of the
+        system message before 0a moved them out of it.
+
+        The skills *catalogue* is not here — it is in the stable prefix. What
+        is here is what activation changes: the active skills' bodies, which
+        is also how the model learns which catalogue entries are already
+        active.
 
         Rebuilt per *request*, not per turn, which is the one behavioural
         gain beyond caching: a ``todo_write`` in iteration 3 is visible to
@@ -241,10 +258,6 @@ class SystemPromptBuilder:
         """
         agent = self._agent
         sections: Dict[str, str] = {}
-
-        skills_block = self._available_skills_block()
-        if skills_block:
-            sections["available_skills"] = skills_block
 
         skills_context = agent.skill_manager.get_skills_context()
         if skills_context:
@@ -365,30 +378,40 @@ class SystemPromptBuilder:
         registered = getattr(registry, "tools", None)
         if registered is not None and _ACTIVATE_SKILL_TOOL not in registered:
             return ""
+
+        # **Active skills are listed too, and that is what keeps this block in
+        # the cached prefix.** It used to list only the inactive ones, so every
+        # activation rewrote it — and it sits in ``messages[0]``, ahead of the
+        # whole history. Now it changes only when the *enabled set* does
+        # (enable / disable / install / reload), which already changes
+        # ``activate_skill``'s ``skill_name`` enum in the tools block, so the
+        # prefix was being rebuilt on those events anyway. pi-mono and
+        # gemini-cli list the same way; neither removes a skill once used.
         skill_manager = self._agent.skill_manager
-        available_skills = skill_manager.list_available_skills()
-        active_names = set(skill_manager.get_active_skills().keys())
         # Skills with no description give the model nothing to match on, so
         # rendering them as ``• name: `` (empty after the colon) just wastes
         # tokens. Drop them from the prompt; ``/skills`` still lists them.
-        described_inactive = []
-        for s in available_skills:
-            if s in active_names:
-                continue
+        described = []
+        for s in skill_manager.list_available_skills():
             info = skill_manager.get_skill_info(s)
             if info and (info.get('description') or '').strip():
-                described_inactive.append((s, info))
-        if not described_inactive:
+                described.append((s, info))
+        if not described:
             return ""
         out = "\n\n=== Available Skills ===\n"
         out += "You have access to specialized skills. Use the 'activate_skill' tool to activate them when needed.\n\n"
-        for skill_name, skill_info in sorted(described_inactive, key=lambda p: p[0]):
+        for skill_name, skill_info in sorted(described, key=lambda p: p[0]):
             description = skill_info['description'].strip()
             when_to_use = skill_info.get('when_to_use', '')
             out += f"• {skill_name}: {description}\n"
             if when_to_use:
                 out += f"  Activate when: {when_to_use}\n"
-        out += "\nWhen the user's request matches a skill's description, use the activate_skill tool before proceeding with the task."
+        out += (
+            "\nWhen the user's request matches a skill's description and that "
+            "skill is not already active, use the activate_skill tool before "
+            "proceeding with the task. Active skills, if any, are listed with "
+            "their instructions under \"Active Skills\"."
+        )
         out += (
             "\nSkill files (SKILL.md, scripts/, references/) live in each "
             "skill's own directory, which is usually NOT your current working "

@@ -103,7 +103,7 @@ State is on `AgentaoCLI` (`agentao/cli/app.py`) and projected into prompts.
 
 ### System prompt composition
 
-**The model's instructions arrive in two messages, and the second one is not in history.** `agent.py::_build_system_prompt()` builds the system message — the stable prefix, byte-identical across the turns of a session, ending at `<memory-stable>` (`builder.py::_build_sections()` is the authoritative order). `agent.py::_build_volatile_tail()` builds the volatile half — skills catalogue, active-skill bodies, todos, `<memory-context>`, plan prompt (`builder.py::_build_volatile_sections()`) — wrapped as one `<system-reminder>` and appended to the **outgoing request** as a trailing `user` message. One non-obvious rule inside the prefix: available agents are suppressed in plan mode (delegation contradicts research-only intent).
+**The model's instructions arrive in two messages, and the second one is not in history.** `agent.py::_build_system_prompt()` builds the system message — the stable prefix, byte-identical across the turns of a session, ending at `<memory-stable>` (`builder.py::_build_sections()` is the authoritative order). `agent.py::_build_volatile_tail()` builds the volatile half — active-skill bodies, todos, `<memory-context>`, plan prompt (`builder.py::_build_volatile_sections()`) — wrapped as one `<system-reminder>` and appended to the **outgoing request** as a trailing `user` message. One non-obvious rule inside the prefix: available agents are suppressed in plan mode (delegation contradicts research-only intent).
 
 The split landed in 0.4.26 as stage 0a of `docs/design/llm-api-adapters.md` §2.3, and three of its invariants are easy to break:
 
@@ -257,6 +257,8 @@ Auto-discovered from `skills/`. Each subdir has `SKILL.md` (YAML frontmatter `na
 Activate via the `activate_skill` tool or `/skills activate <name>`.
 
 **The available-skills catalogue renders only for an agent that has `activate_skill`** (`prompts/builder.py::_available_skills_block`) — the block's whole text is an instruction to call that tool, and it can be absent three ways: `disable_tools`, an `enabled_tools` allowlist, or a sub-agent definition whose `tools:` list omits it. The *active*-skills block is deliberately not gated: `/skills activate` calls the manager directly, so a skill can be active for an agent that never had the tool.
+
+**The catalogue lists active skills too, and must keep doing so** (0.4.27). It is in the system message, ahead of `<memory-stable>`; while it listed only the *inactive* skills, every activation rewrote `messages[0]` and with it the provider's cached prefix over the whole history. Now it changes only when the *enabled set* does (enable / disable / install / reload) — events that already rewrite `activate_skill`'s `skill_name` enum in the tools block, so they were rebuilding the prefix anyway. What activation changes is the active-skills block, which rides the volatile tail and is how the model learns which entries are already active. pi-mono and gemini-cli list the same way. `tests/test_skills_prompt.py` pins byte-identity across activate → deactivate. The active bodies are now the tail's large item (one skill ≈ 4k tokens per request here); whether they belong in the prefix depends on *when* in a session skills get activated, which is unmeasured.
 
 ### Memory system
 

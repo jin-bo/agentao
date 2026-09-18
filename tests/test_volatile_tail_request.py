@@ -116,9 +116,10 @@ def test_the_tail_is_the_last_request_message_and_never_enters_history():
 
 
 def test_no_tail_message_when_nothing_volatile_renders():
-    """A bare agent with no todos / skills / plan sends the pre-0a request."""
+    """A bare agent with no todos / active skills / plan sends the pre-0a
+    request. *Available* skills are left alone: the catalogue is in the system
+    message since 0.4.27, so skills on disk must not produce a tail."""
     agent = _make_agent()
-    agent.skill_manager.available_skills = {}
     agent.skill_manager.active_skills = {}
     sent = _capture(agent, [_fake_response("done")])
 

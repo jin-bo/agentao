@@ -1161,17 +1161,18 @@ class Agentao:
         this method stays as a thin entry point so existing callers and
         tests keep working unchanged.
 
-        Skills, todos, dynamic recall and the plan prompt are **not** in the
-        returned string; they ride the request-only tail built by
-        :meth:`_build_volatile_tail`.
+        Active-skill bodies, todos, dynamic recall and the plan prompt are
+        **not** in the returned string; they ride the request-only tail built
+        by :meth:`_build_volatile_tail`. The available-skills *catalogue* is
+        here — it lists active skills too, so an activation does not change it.
         """
         return SystemPromptBuilder(self).build()
 
     def _build_volatile_tail(self) -> str:
         """Build the request-only volatile tail, or ``""`` when empty.
 
-        One ``<system-reminder>`` block carrying skills, todos, dynamic
-        recall and the plan prompt. The chat loop appends it to the
+        One ``<system-reminder>`` block carrying active-skill bodies, todos,
+        dynamic recall and the plan prompt. The chat loop appends it to the
         *outgoing request* as a trailing ``user`` message and never to
         ``self.messages`` — see
         :meth:`agentao.prompts.SystemPromptBuilder.build_volatile_tail`.
