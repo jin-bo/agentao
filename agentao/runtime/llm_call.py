@@ -21,6 +21,7 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..cancellation import CancellationToken
+from ..llm._usage import cache_token_counts
 from ..transport import AgentEvent, EventType
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
@@ -184,6 +185,8 @@ def run_llm_call(
             "finish_reason": None,
             "prompt_tokens": None,
             "completion_tokens": None,
+            "cache_read_tokens": None,
+            "cache_creation_tokens": None,
         }))
         raise
 
@@ -195,6 +198,11 @@ def run_llm_call(
     finish_reason_reported: bool = True
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
+    # Additive keys: the parts of ``prompt_tokens`` billed at cache rates.
+    # ``None`` when the response carried no usage at all, else an int (0 when
+    # the provider did not state it).
+    cache_read_tokens: Optional[int] = None
+    cache_creation_tokens: Optional[int] = None
     try:
         choices = getattr(response, "choices", None)
         if choices:
@@ -206,6 +214,7 @@ def run_llm_call(
         if usage is not None:
             prompt_tokens = getattr(usage, "prompt_tokens", None)
             completion_tokens = getattr(usage, "completion_tokens", None)
+            cache_read_tokens, cache_creation_tokens = cache_token_counts(usage)
     except Exception:
         pass
 
@@ -222,5 +231,7 @@ def run_llm_call(
         "finish_reason_reported": finish_reason_reported,
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
     }))
     return response

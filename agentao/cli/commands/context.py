@@ -18,7 +18,17 @@ def handle_context_command(cli: AgentaoCLI, args: str) -> None:
     if not args:
         stats = cm.get_usage_stats(cli.agent.messages)
         console.print("\n[info]Context Window Status:[/info]")
-        console.print(f"  Estimated tokens: [cyan]{stats['estimated_tokens']:,}[/cyan]")
+        # Two different quantities share this line. With an API count it is
+        # the size of the *last request* — exact, and one step behind: what
+        # has been appended since (the reply, tool results) is not in it.
+        # Without one it is a local estimate of the history as it stands.
+        if stats.get("token_count_source") == "api":
+            basis = "last request, as the API counted it"
+        else:
+            basis = "local estimate"
+        console.print(
+            f"  Estimated tokens: [cyan]{stats['estimated_tokens']:,}[/cyan] [dim]({basis})[/dim]"
+        )
         console.print(f"  Max tokens:       [cyan]{stats['max_tokens']:,}[/cyan] [dim](configured)[/dim]")
         observed = stats.get("observed_limit")
         reported = stats.get("reported_limit")

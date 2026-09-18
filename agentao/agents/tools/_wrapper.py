@@ -574,7 +574,7 @@ class AgentToolWrapper(Tool):
         permission_engine_getter: Optional[Callable] = None,
         tool_origin_getter: Optional[Callable[[str], str]] = None,
         skill_manager_getter: Optional[Callable[[], Any]] = None,
-        usage_sink: Optional[Callable[[int, int], None]] = None,
+        usage_sink: Optional[Callable[..., None]] = None,
     ):
         self._definition = definition
         # The parent's live registry: tools it adds or removes between turns
@@ -1150,7 +1150,11 @@ class AgentToolWrapper(Tool):
             return
         try:
             llm = sub_agent.llm
-            self._usage_sink(llm.total_prompt_tokens, llm.total_completion_tokens)
+            self._usage_sink(
+                llm.total_prompt_tokens, llm.total_completion_tokens,
+                cache_read_tokens=getattr(llm, "total_cache_read_tokens", 0),
+                cache_creation_tokens=getattr(llm, "total_cache_creation_tokens", 0),
+            )
         except Exception:
             logger.warning(
                 "Rolling a sub-agent's token usage up to its parent failed (%s)",

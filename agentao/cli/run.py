@@ -331,6 +331,20 @@ def _resolve_permission_mode(name: Optional[PermissionModeName]):
     return PermissionMode(name or "workspace-write")
 
 
+def _cache_totals(llm: Any) -> "tuple[int, int]":
+    """``(cache_read, cache_creation)`` session totals, 0 for a client without.
+
+    Type-checked rather than ``getattr(..., 0)``: ``llm`` may be a host's own
+    object or a mock that answers any attribute.
+    """
+    from ..llm._usage import positive_int
+
+    return (
+        positive_int(getattr(llm, "total_cache_read_tokens", None)),
+        positive_int(getattr(llm, "total_cache_creation_tokens", None)),
+    )
+
+
 def _serialize_result(result: RunResult, output_format: str) -> str:
     if output_format == "text":
         return result.final_text or ""
@@ -721,6 +735,7 @@ def _run_pipeline(
 
     pre_prompt = agent.llm.total_prompt_tokens
     pre_completion = agent.llm.total_completion_tokens
+    pre_cache = _cache_totals(agent.llm)
 
     tool_calls_count = 0
     captured_turn_id: Optional[str] = None
@@ -814,6 +829,8 @@ def _run_pipeline(
         prompt_tokens=delta_prompt,
         completion_tokens=delta_completion,
         total_tokens=delta_prompt + delta_completion,
+        cache_read_tokens=max(0, _cache_totals(agent.llm)[0] - pre_cache[0]),
+        cache_creation_tokens=max(0, _cache_totals(agent.llm)[1] - pre_cache[1]),
     )
 
     result = RunResult(

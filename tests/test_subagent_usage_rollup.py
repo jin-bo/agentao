@@ -74,6 +74,9 @@ def test_a_foreground_sub_agents_usage_is_added_to_the_parents(child_wires):
         (child,) = built
         assert (child.llm.total_prompt_tokens, child.llm.total_completion_tokens) == (4900, 40)
         assert (parent.llm.total_prompt_tokens, parent.llm.total_completion_tokens) == (5000, 50)
+        # The cache parts of the child's prompt come along, or a delegating
+        # session would show its cached input as full-price.
+        assert (parent.llm.total_cache_read_tokens, parent.llm.total_cache_creation_tokens) == (4000, 0)
     finally:
         parent.close()
 

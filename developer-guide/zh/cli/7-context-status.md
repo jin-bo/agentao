@@ -10,7 +10,7 @@
 > /context
 
 Context Window Status:
-  Estimated tokens: 47,231
+  Estimated tokens: 47,231 (last request, as the API counted it)
   Max tokens:       200,000
   Usage:            23.6%
   Messages:         54
@@ -21,7 +21,7 @@ Context Window Status:
 
 | 字段 | 含义 |
 |---|---|
-| Estimated tokens | 当前对话发出去时大约的 token 数 |
+| Estimated tokens | 两种口径之一，行尾会写明是哪一种。`(last request, as the API counted it)` —— 上一次请求的真实大小，滞后一步：之后追加的回复和工具结果不在里面。`(local estimate)` —— 对当前历史的本地估算，出现在第一次响应之前和刚压缩完之后。压缩阈值两者都不单独用：已发送的部分取 API 计数，只估算之后新增的部分 |
 | Max tokens | 配置的上限（默认 200,000） |
 | Effective | 仅当 provider 对窗口有过说法时才显示：`min(配置值, 观测值, 报告值)`，并逐项写明来源 —— `provider asserted N`（从溢出错误里学到）和 `Models API reports N`（模型的 `max_input_tokens`；目前只有 `anthropic-messages` 线路会查）。低于 Max tokens 时为黄色 —— 这就是压缩比配置值所暗示的更早触发的原因 |
 | Usage | `Estimated / Effective`（没有 Effective 行时即 `Max`）。颜色：绿（<55%）、黄（<65%）、红（≥65%） |

@@ -1192,8 +1192,31 @@ class Agentao:
         # ``/clear``, because the only other reset is a successful compaction
         # and the open breaker is what prevents one on the automatic path.
         self.context_manager.reset_compaction_circuit()
-        self.llm.total_prompt_tokens = 0
-        self.llm.total_completion_tokens = 0
+        # Under the client's lock when it has one: a background sub-agent may
+        # be adding its usage from another thread. A host-injected client
+        # without ``reset_usage`` keeps the two plain writes it always had.
+        reset_usage = getattr(self.llm, "reset_usage", None)
+        if callable(reset_usage):
+            reset_usage()
+        else:
+            self.llm.total_prompt_tokens = 0
+            self.llm.total_completion_tokens = 0
+
+    def _cached_usage_note(self) -> str:
+        """`` (N cached, M cache-write)`` for the session line, or ``""``.
+
+        Both are parts of the prompt total, shown because a provider bills
+        them at a different rate. Type-checked: ``self.llm`` may be a host's
+        own object, or a mock that answers any attribute.
+        """
+        from .llm._usage import positive_int
+
+        read = positive_int(getattr(self.llm, "total_cache_read_tokens", None))
+        creation = positive_int(getattr(self.llm, "total_cache_creation_tokens", None))
+        parts = ([f"{read:,} cached"] if read else []) + (
+            [f"{creation:,} cache-write"] if creation else []
+        )
+        return f" ({', '.join(parts)})" if parts else ""
 
     @property
     def _plan_mode(self) -> bool:
@@ -1354,7 +1377,7 @@ class Agentao:
             f"messages: {bd.get('messages', 0):,}  "
             f"tail: {bd.get('tail', 0):,}  "
             f"tools: {bd.get('tools', 0):,}\n"
-            f"Session: {self.llm.total_prompt_tokens:,} prompt / "
+            f"Session: {self.llm.total_prompt_tokens:,} prompt{self._cached_usage_note()} / "
             f"{self.llm.total_completion_tokens:,} completion tokens"
         )
 

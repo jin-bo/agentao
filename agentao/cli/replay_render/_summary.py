@@ -173,6 +173,11 @@ def _summarize_replay_event(event: dict) -> str:
             usage.append(f"p={payload['prompt_tokens']}")
         if payload.get("completion_tokens") is not None:
             usage.append(f"c={payload['completion_tokens']}")
+        # Parts of ``p``; shown only when the provider stated one.
+        if payload.get("cache_read_tokens"):
+            usage.append(f"cached={payload['cache_read_tokens']}")
+        if payload.get("cache_creation_tokens"):
+            usage.append(f"cache-write={payload['cache_creation_tokens']}")
         return (
             f"[{color}]{status}[/{color}] [dim]"
             f"finish={markup_escape(str(payload.get('finish_reason')))} "

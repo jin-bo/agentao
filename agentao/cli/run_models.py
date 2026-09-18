@@ -271,6 +271,10 @@ class RunUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    # Parts of ``prompt_tokens`` (not additions to it, and not in
+    # ``total_tokens`` twice): the input a provider bills at cache rates.
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
 
     model_config = ConfigDict(extra="ignore")
 
