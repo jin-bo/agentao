@@ -697,7 +697,22 @@ class LLMClient(_LoggingMixin):
         self.request_count += 1
         request_id = f"req_{self.request_count}"
 
+        # The adapters first look at the token *inside* their event loop, which
+        # is after the POST went out and the first event came back — so a turn
+        # cancelled before that still sent the request and paid for the whole
+        # prompt. ``prepare()`` is what makes the window worth closing: it can
+        # hold this thread for seconds (a Models API lookup that is not
+        # cancellable), and the runner's own check sits before this call.
+        # Checked on both sides of it: before, so a cancelled turn does not
+        # start the lookup; after, so one cancelled during it sends nothing.
+        # The exit is the one a mid-stream ``break`` takes — an empty response
+        # with ``finish_reason_reported`` False, which ``runtime/turn.py``
+        # already classifies as cancelled — never a new exception.
+        if self._cancelled_before_send(cancellation_token, request_id):
+            return self._adapter.new_accumulator().build()
         self._adapter.prepare()
+        if self._cancelled_before_send(cancellation_token, request_id):
+            return self._adapter.new_accumulator().build()
         kwargs = self._build_request_kwargs(
             messages, tools, max_tokens, stream=True,
             cache_boundary=cache_boundary,
@@ -817,6 +832,12 @@ class LLMClient(_LoggingMixin):
                     )
                     raise
                 attempt += 1
+
+    def _cancelled_before_send(self, cancellation_token: Optional[Any], request_id: str) -> bool:
+        if cancellation_token is None or not cancellation_token.is_cancelled:
+            return False
+        self.logger.info("%s: cancelled before the request went out; nothing sent", request_id)
+        return True
 
     def _consume_stream(
         self,
