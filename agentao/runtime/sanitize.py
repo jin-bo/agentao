@@ -303,8 +303,11 @@ def sanitize_assistant_message(msg: Dict[str, Any]) -> bool:
 
     ``anthropic_thinking_blocks`` — the ``anthropic-messages`` wire's signed
     thinking — is not touched at all, by omission and on purpose: the
-    signature covers the block's text, so any rewrite makes the provider
-    reject it. It is never displayed; ``reasoning_content`` is the copy that
+    protocol's rule is that a block goes back as it arrived, and a corrupted
+    signature is a 400 (observed). Whether the signature also binds the
+    visible text is the provider's business — on ``claude-sonnet-5`` an edited
+    text was accepted — so this is not a tamper check, only a refusal to be
+    the one who rewrites. It is never displayed; ``reasoning_content`` is the copy that
     is, and that one is sanitized above.
 
     Two deliberate exemptions, both about not corrupting bytes that have to
