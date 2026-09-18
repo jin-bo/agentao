@@ -204,6 +204,31 @@ the native wire.** 0b's value is for third-party gateways that both honour the
 markers and report them, which is still unmeasured, and is why it stays off by
 default.
 
+**Reproducing it, and what is still open.** That comparison was run by hand and
+its script was not kept. It now is: `scripts/measure_prompt_cache.py` runs the
+same three arms (or a subset, against any endpoint), isolates each arm with a
+nonce in the first tool definition, and reads the per-request cache counts off
+`LLM_CALL_COMPLETED` — which carries them since 0.5.1. It sends nothing without
+`--yes`, and renders an endpoint that reports no cache fields as *"not reported
+— see the bill"*, never as a zero. Three questions remain, and none of them is
+answered by re-running the table above:
+
+1. **A versus B on Anthropic's compatible endpoint** is on the bill and nowhere
+   else. Only the account holder can read it.
+2. **0b on a gateway that honours the markers and reports them**: `--arms a,b
+   --base-url-compat <gateway>/v1`. Unrun — it needs such a gateway.
+3. **Whether an active skill's body belongs in the prefix.** `--activate-skill
+   NAME --at-turn K` records the history size at the activation, which is the
+   input this needs. The trade, from the price model rather than from a run:
+   in the tail the body `S` is sent uncached on each of the `N` requests that
+   follow; in the prefix it is written once and read after, but the activation
+   rewrites the system prompt `P` and the history `H` behind it instead of
+   reading them. With write 1.25 and read 0.1 the prefix wins when
+   `N > (1.15 × (P + H) / S + 1.15) / 0.9` — about **6** further requests for
+   this repo's `P` ≈ 5.2k, `S` ≈ 4.1k at `H` = 10k, about **19** at `H` = 50k.
+   That is a bound to test, not a finding: it ignores the 5-minute expiry and
+   any compaction in between, both of which favour the tail.
+
 **rev 15 — what changed:** The adapter adopts the provider's Models API
 (`GET /v1/models/{id}`): `max_tokens` seeds the output-cap latch before any
 rejection, `max_input_tokens` is a third, narrowing-only term of the effective
