@@ -7,11 +7,10 @@ ACP entrypoints go through this single surface so embedded hosts that
 already have explicit config can construct :class:`Agentao` directly
 without any of the env-touching side effects.
 
-`sessions` (formerly the top-level :mod:`agentao.session`) holds the
-``.agentao/sessions/*.json`` save/load/list/delete helpers. The legacy
-import path remains as a deprecation shim until 0.5.0; new code should
-``from agentao.embedding.sessions import save_session, ...`` and pass
-``project_root`` explicitly.
+`sessions` holds the ``.agentao/sessions/*.json`` save/load/list/delete
+helpers. ``project_root`` is required on every one of them — there is no
+implicit ``Path.cwd()`` — and the top-level ``agentao.session`` shim that
+used to supply that fallback was removed in 0.5.0.
 
 `permission_loader` holds :func:`load_permission_rules`, the public
 helper that reads ``<user_root>/permissions.json``. Hosts pass the

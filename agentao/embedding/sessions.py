@@ -49,10 +49,22 @@ def _content_to_text(content: Any) -> str:
     return ""
 
 
-def _session_dir(project_root: Optional[Path] = None) -> Path:
-    """Return the ``.agentao/sessions`` directory for a project."""
-    root = project_root if project_root is not None else Path.cwd()
-    return root / _SESSION_SUBDIR
+def _session_dir(project_root: Path) -> Path:
+    """Return the ``.agentao/sessions`` directory for a project.
+
+    ``None`` is refused here, in the one place every entry point funnels
+    through, and not only by the signatures: until 0.5.0 it meant "the
+    process cwd", so a caller whose own root was unset would read and write
+    — and ``delete_all_sessions`` would delete — some other project's
+    sessions without a word.
+    """
+    if project_root is None:
+        raise TypeError(
+            "project_root is required: pass the project directory whose "
+            ".agentao/sessions should be used (there is no implicit "
+            "Path.cwd() fallback since 0.5.0)"
+        )
+    return Path(project_root) / _SESSION_SUBDIR
 
 
 def _derive_title(messages: List[Dict[str, Any]]) -> str:
@@ -121,14 +133,14 @@ def save_session(
     model: str,
     active_skills: Optional[List[str]] = None,
     session_id: Optional[str] = None,
-    project_root: Optional[Path] = None,
+    *,
+    project_root: Path,
 ) -> Tuple[Path, str]:
     """Serialize conversation to disk and rotate old sessions.
 
     Args:
         project_root: Project directory whose ``.agentao/sessions`` subdir
-            should hold the persisted session files. Optional during the
-            0.4.x migration window; will become required in 0.5.0.
+            should hold the persisted session files. Required, by keyword.
 
     Returns:
         ``(path, session_id)`` — path of the saved file and the stable session UUID.
@@ -174,7 +186,8 @@ def save_session(
 def persist_agent_session(
     agent: Any,
     session_id: Optional[str] = None,
-    project_root: Optional[Path] = None,
+    *,
+    project_root: Path,
 ) -> Tuple[Path, str]:
     """Persist ``agent``'s conversation, deriving model + active skills from it.
 
@@ -338,7 +351,8 @@ def restore_agent_skills(
 
 def _resolve_session_file(
     session_id: Optional[str] = None,
-    project_root: Optional[Path] = None,
+    *,
+    project_root: Path,
 ) -> Path:
     """Resolve a session selector to the on-disk session file.
 
@@ -387,7 +401,8 @@ def _resolve_session_file(
 
 def load_session_record(
     session_id: Optional[str] = None,
-    project_root: Optional[Path] = None,
+    *,
+    project_root: Path,
 ) -> Tuple[str, List[Dict[str, Any]], str, List[str]]:
     """Load a saved session including its persisted ``session_id``.
 
@@ -401,7 +416,7 @@ def load_session_record(
     Args:
         session_id: UUID string (or prefix), timestamp prefix, or None for latest.
         project_root: Project directory containing the persisted
-            ``.agentao/sessions`` subdir.
+            ``.agentao/sessions`` subdir. Required, by keyword.
 
     Returns:
         ``(session_id, messages, model, active_skills)``. The id falls back
@@ -419,7 +434,7 @@ def load_session_record(
             standing between a bad file and ``agentao --resume`` starting the
             CLI at all.
     """
-    session_file = _resolve_session_file(session_id, project_root)
+    session_file = _resolve_session_file(session_id, project_root=project_root)
 
     with open(session_file, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -439,15 +454,15 @@ def load_session_record(
 
 def load_session(
     session_id: Optional[str] = None,
-    project_root: Optional[Path] = None,
+    *,
+    project_root: Path,
 ) -> Tuple[List[Dict[str, Any]], str, List[str]]:
     """Load a saved session.
 
     Args:
         session_id: UUID string (or prefix), timestamp prefix, or None for latest.
         project_root: Project directory containing the persisted
-            ``.agentao/sessions`` subdir. Optional during the 0.4.x
-            migration window; will become required in 0.5.0.
+            ``.agentao/sessions`` subdir. Required, by keyword.
 
     Returns:
         ``(messages, model, active_skills)``
@@ -456,12 +471,12 @@ def load_session(
         FileNotFoundError: If no sessions exist or the given ID is not found.
     """
     _session_id, messages, model, active_skills = load_session_record(
-        session_id, project_root
+        session_id, project_root=project_root
     )
     return (messages, model, active_skills)
 
 
-def list_sessions(project_root: Optional[Path] = None) -> List[Dict[str, Any]]:
+def list_sessions(project_root: Path) -> List[Dict[str, Any]]:
     """Return metadata for all saved sessions, newest first."""
     session_dir = _session_dir(project_root)
     if not session_dir.exists():
@@ -518,7 +533,7 @@ def list_sessions(project_root: Optional[Path] = None) -> List[Dict[str, Any]]:
     return result
 
 
-def delete_session(session_id: str, project_root: Optional[Path] = None) -> bool:
+def delete_session(session_id: str, project_root: Path) -> bool:
     """Delete a session by UUID or timestamp prefix.
 
     Returns:
@@ -551,7 +566,7 @@ def delete_session(session_id: str, project_root: Optional[Path] = None) -> bool
     return True
 
 
-def delete_all_sessions(project_root: Optional[Path] = None) -> int:
+def delete_all_sessions(project_root: Path) -> int:
     """Delete all saved sessions.
 
     Returns:

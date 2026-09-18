@@ -5,12 +5,11 @@ eight callbacks for incremental UI plumbing
 (``confirmation_callback``, ``step_callback``, ``thinking_callback``,
 ``ask_user_callback``, ``output_callback``, ``tool_complete_callback``,
 ``llm_text_callback``, ``on_max_iterations_callback``). They predate
-the :class:`agentao.transport.Transport` protocol and have been
-deprecated since 0.4.x. Until 0.5.0 they remain accepted on
-``Agentao.__init__`` for back-compat, but constructing them as
-constructor kwargs emits a single ``DeprecationWarning``.
+the :class:`agentao.transport.Transport` protocol, were deprecated
+through 0.4.x, and were removed from ``Agentao.__init__`` in 0.5.0 —
+passing one is now a ``TypeError``. This module is what survives.
 
-The recommended migration path for embedded hosts:
+The migration path for embedded hosts:
 
 1. Build an :class:`agentao.transport.SdkTransport` directly with
    ``on_event=`` / ``confirm_tool=`` / ``ask_user=`` /
@@ -21,9 +20,7 @@ The recommended migration path for embedded hosts:
    legacy 8-callback API into a single transport, then pass
    ``transport=`` to ``Agentao(...)``.
 
-Both paths bypass the deprecation warning and route through the
-public Transport contract — the constructor's legacy kwargs become
-opt-out rather than opt-in.
+Both paths route through the public Transport contract.
 """
 
 from ..transport.sdk import build_compat_transport

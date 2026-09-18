@@ -1009,9 +1009,10 @@ class Agentao:
     # server (``acp/session_new.py`` / ``acp/session_load.py``) all call them.
     # They are thin delegations onto :class:`agentao.replay.ReplayManager`;
     # embedded hosts may instead call ``agent.replay_manager.start()`` /
-    # ``end()`` / ``reload_config()`` directly. These methods are NOT slated
-    # for removal — only the private ``_replay_*`` property views further
-    # down are the back-compat shims scheduled for removal in 0.5.0.
+    # ``end()`` / ``reload_config()`` directly. The recorder, adapter, host
+    # sink and config are read off ``agent.replay_manager`` (``None`` until
+    # something attaches one); the four private ``_replay_*`` views that
+    # used to mirror them here were removed in 0.5.0.
     # ------------------------------------------------------------------
 
     def _ensure_replay_manager(self) -> "ReplayManager":
@@ -1019,31 +1020,6 @@ class Agentao:
             from .replay import ReplayManager
             self.replay_manager = ReplayManager(self)
         return self.replay_manager
-
-    # ── Back-compat property views for the four old private attrs ──
-    # Tests and CLI code still reach for ``agent._replay_recorder`` /
-    # ``_replay_adapter`` / ``_replay_config`` / ``_host_replay_sink``
-    # directly. These return the manager's state, or a no-op fallback
-    # when no manager is attached. Scheduled for removal in 0.5.0.
-    @property
-    def _replay_recorder(self):
-        return self.replay_manager.recorder if self.replay_manager else None
-
-    @property
-    def _replay_adapter(self):
-        return self.replay_manager.adapter if self.replay_manager else None
-
-    @property
-    def _host_replay_sink(self):
-        return self.replay_manager.host_replay_sink if self.replay_manager else None
-
-    @property
-    def _replay_config(self) -> "ReplayConfig":
-        """Active replay config, or a fresh disabled default when no manager is attached."""
-        if self.replay_manager is not None:
-            return self.replay_manager.config
-        from .replay import ReplayConfig
-        return ReplayConfig()
 
     def start_replay(self, session_id: Optional[str] = None) -> Optional[Path]:
         return self._ensure_replay_manager().start(session_id)
@@ -1106,17 +1082,6 @@ class Agentao:
         # as an agent method keep working.
         return extract_context_hints(self.messages)
 
-    # ------------------------------------------------------------------
-    # Replay observability helpers — back-compat shims (remove in 0.5.0)
-    # The real helpers live in :mod:`agentao.replay.observability` and
-    # are imported directly by :mod:`agentao.runtime.chat_loop`. These
-    # delegations remain for tests that patch them on the agent.
-    # ------------------------------------------------------------------
-
-    def _latest_session_summary_id(self) -> Optional[str]:
-        from .replay.observability import latest_session_summary_id
-        return latest_session_summary_id(self)
-
     @property
     def compaction_coordinator(self):
         """The single orchestrator every compaction entry point goes through.
@@ -1165,33 +1130,6 @@ class Agentao:
             measure_system_tokens=True,
         )
         return run.outcome
-
-    def _emit_context_compressed(
-        self,
-        *,
-        compression_type: str,
-        reason: str,
-        pre_msgs: int,
-        post_msgs: int,
-        pre_tokens: Optional[int] = None,
-        post_tokens: Optional[int] = None,
-        duration_ms: Optional[int] = None,
-    ) -> None:
-        from .replay.observability import emit_context_compressed
-        emit_context_compressed(
-            self,
-            compression_type=compression_type,
-            reason=reason,
-            pre_msgs=pre_msgs,
-            post_msgs=post_msgs,
-            pre_tokens=pre_tokens,
-            post_tokens=post_tokens,
-            duration_ms=duration_ms,
-        )
-
-    def _emit_session_summary_if_new(self, previous_summary_id: Optional[str]) -> Optional[str]:
-        from .replay.observability import emit_session_summary_if_new
-        return emit_session_summary_if_new(self, previous_summary_id)
 
     def _llm_call(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]],
                   cancellation_token: Optional[CancellationToken] = None) -> Any:

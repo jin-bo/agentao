@@ -1,35 +1,48 @@
 """Regression tests for session save/restore.
 
-The implementation moved to :mod:`agentao.embedding.sessions` (the
-top-level :mod:`agentao.session` survives only as a deprecation shim
-until 0.5.0). The tests still import the public functions through the
-shim to confirm the shim works, but ``_session_dir`` monkeypatching
-targets the new module — wrapper-shim mechanics cannot intercept
-internal-helper monkeypatching across module boundaries, since
-``embedding.sessions.save_session`` resolves ``_session_dir`` in its
-own lexical scope.
+Against :mod:`agentao.embedding.sessions`, and against the real on-disk
+layout: every call names a ``project_root`` and the files land in
+``<root>/.agentao/sessions``. Until 0.5.0 these tests imported through the
+``agentao.session`` shim and monkeypatched ``_session_dir`` to a fixed
+directory — which replaced the one function that decides where a session
+goes, so the ``Path.cwd()`` fallback it used to carry was never on any
+test's path. The wrappers below only supply the root; ``_session_dir`` is
+the real one.
 """
 
 import datetime
 import json
 import os
 import time
-import warnings
 
 import pytest
 
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore", DeprecationWarning)
-    from agentao.session import (
-        delete_all_sessions,
-        delete_session,
-        format_session_time_local,
-        list_sessions,
-        load_session,
-        save_session,
-    )
-
 import agentao.embedding.sessions as session_module
+from agentao.embedding.sessions import format_session_time_local
+
+#: The project root of the test in progress — set by ``project_root`` below.
+_ROOT = None
+
+
+def save_session(*args, **kwargs):
+    return session_module.save_session(*args, project_root=_ROOT, **kwargs)
+
+
+def load_session(*args, **kwargs):
+    return session_module.load_session(*args, project_root=_ROOT, **kwargs)
+
+
+def list_sessions():
+    return session_module.list_sessions(_ROOT)
+
+
+def delete_session(session_id):
+    return session_module.delete_session(session_id, _ROOT)
+
+
+def delete_all_sessions():
+    return session_module.delete_all_sessions(_ROOT)
+
 
 _MESSAGES = [
     {"role": "user", "content": "hello"},
@@ -40,19 +53,10 @@ _SKILLS = ["my-skill"]
 
 
 @pytest.fixture(autouse=True)
-def isolated_session_dir(tmp_path, monkeypatch):
-    """Redirect _session_dir() to a temp directory for every test.
-
-    Issue 05 added an optional ``project_root`` parameter to ``_session_dir``;
-    the mock accepts but ignores it so the tests keep working unchanged.
-    Patches ``agentao.embedding.sessions._session_dir`` (where the helper
-    actually lives after the 0.4.5 migration); the ``agentao.session``
-    shim delegates through ``embedding.sessions``, so a single patch
-    redirects both paths.
-    """
-    monkeypatch.setattr(
-        session_module, "_session_dir", lambda project_root=None: tmp_path / "sessions"
-    )
+def project_root(tmp_path, monkeypatch):
+    """Every test's sessions live under its own ``tmp_path``."""
+    monkeypatch.setattr(f"{__name__}._ROOT", tmp_path)
+    return tmp_path
 
 
 def test_save_and_load_roundtrip():
@@ -67,7 +71,7 @@ def test_save_and_load_roundtrip():
 def test_load_latest_when_no_id(tmp_path):
     # Write two files with distinct second-precision timestamps directly, so the
     # "latest" is unambiguous regardless of how fast the test runs.
-    session_dir = tmp_path / "sessions"
+    session_dir = tmp_path / ".agentao" / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
     for ts, model, content in [
         ("20260101_000001", "gpt-4", "first"),
@@ -87,7 +91,7 @@ def test_load_latest_when_no_id(tmp_path):
 
 def test_load_by_id_prefix(tmp_path):
     # Create two files with distinct timestamps; load the first one by its full stem prefix.
-    session_dir = tmp_path / "sessions"
+    session_dir = tmp_path / ".agentao" / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
     ts1, ts2 = "20260101_000001", "20260101_000002"
     for ts, content in [(ts1, "alpha"), (ts2, "beta")]:
@@ -182,7 +186,7 @@ def test_rotation_keeps_max_10(tmp_path):
     # save_session uses second-precision timestamps that collide in rapid loops;
     # create session files directly and invoke _rotate_sessions explicitly.
     from agentao.embedding.sessions import _rotate_sessions
-    session_dir = tmp_path / "sessions"
+    session_dir = tmp_path / ".agentao" / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
     for i in range(12):
         ts = f"20260101_{i:06d}"
@@ -214,7 +218,7 @@ def test_delete_session_returns_false_for_missing():
 
 def test_delete_all_sessions(tmp_path):
     # Create two session files with distinct timestamps directly.
-    session_dir = tmp_path / "sessions"
+    session_dir = tmp_path / ".agentao" / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
     for ts in ["20260101_000001", "20260101_000002"]:
         data = {"timestamp": ts, "model": _MODEL, "active_skills": [], "messages": _MESSAGES}
@@ -269,7 +273,7 @@ def test_save_continuation_preserves_created_at():
 def test_delete_removes_all_checkpoints_with_same_uuid(tmp_path):
     """Deleting a session UUID must remove every checkpoint file sharing that UUID."""
     import uuid as _uuid
-    session_dir = tmp_path / "sessions"
+    session_dir = tmp_path / ".agentao" / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
     sid = str(_uuid.uuid4())
     # Write two checkpoint files with distinct timestamps but the same session_id.
@@ -325,8 +329,6 @@ class TestTheFilenameIsNotAUniquenessGuarantee:
                 return fixed
 
         monkeypatch.setattr(sessions_mod, "datetime", _FrozenDatetime)
-        monkeypatch.setattr(sessions_mod, "_session_dir",
-                            lambda project_root=None: tmp_path / "sessions")
 
     def test_two_saves_in_one_tick_both_survive(self, monkeypatch, tmp_path):
         self._freeze_clock(monkeypatch, tmp_path)

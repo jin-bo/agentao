@@ -27,11 +27,9 @@ Internal runtime types (``AgentEvent``, ``ToolExecutionResult``,
 "harness" still refers to Agentao-as-embedded-runtime; only the package
 and the symbols around it were renamed for consistency).
 
-The ``agentao.harness`` import path remains for one minor as a
-deprecated alias (with a ``DeprecationWarning`` on first import) and
-keeps the old symbol names (``HarnessEvent``, ``HarnessReplaySink``,
-``export_harness_*``) wired to the new ones via the shim — so existing
-code keeps running until 0.5.0.
+The ``agentao.harness`` alias package — the old import path and the old
+symbol names (``HarnessEvent``, ``HarnessReplaySink``,
+``export_harness_*``) — was removed in 0.5.0 after warning since 0.4.2.
 """
 
 from .events import EventStream, StreamSubscribeError

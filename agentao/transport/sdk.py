@@ -190,8 +190,10 @@ def build_compat_transport(
 ) -> "SdkTransport":
     """Wrap the legacy 8-callback API into a single ``SdkTransport``.
 
-    Called automatically by ``Agentao.__init__`` when old-style callbacks
-    are passed without a ``transport`` argument.  All parameters are optional.
+    The surviving migration surface for the eight callbacks
+    ``Agentao.__init__`` accepted until 0.5.0: build one of these and pass
+    ``transport=``. The sub-agent factory uses it the same way. All
+    parameters are optional.
     """
     # Decide once (not per-event) which metadata keywords each callback can
     # receive, so a same-named parallel tool batch stays correlatable

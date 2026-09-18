@@ -5,10 +5,9 @@ transport events each time the chat loop rewrites history. Keeping
 them here (rather than inline on ``Agentao``) lets new observability
 events live in one place alongside other replay primitives.
 
-The agent keeps thin facade methods (``_emit_context_compressed``,
-``_emit_session_summary_if_new``, ``_latest_session_summary_id``) so
-``runtime/chat_loop.py`` and any external test patches continue to
-work unchanged.
+Callers import these functions directly — ``runtime/turn.py`` for the
+turn-start snapshot, ``compaction/coordinator.py`` for the two events. The
+three delegating methods ``Agentao`` used to carry were removed in 0.5.0.
 """
 
 from __future__ import annotations
