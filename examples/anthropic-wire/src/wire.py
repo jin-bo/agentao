@@ -23,6 +23,7 @@ Without a key it exits with instructions; the offline smoke is ``tests/``.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import tempfile
@@ -43,13 +44,17 @@ def build_agent(
     base_url: str = ANTHROPIC_API_ROOT,
     effort: Optional[str] = None,
     prompt_cache: bool = False,
+    logger: Optional[logging.Logger] = None,
 ) -> Agentao:
     """One ``Agentao`` on the ``anthropic-messages`` wire.
 
     ``effort`` turns on extended thinking the way current models take it
     (``adaptive`` + ``output_config.effort``). ``prompt_cache`` opts into
     explicit cache breakpoints — off by default because whether an endpoint
-    honours them is the endpoint's to say.
+    honours them is the endpoint's to say. ``logger`` is the embedding host's
+    own: given one, Agentao installs no file handler; left ``None`` it opens
+    ``<working_directory>/agentao.log`` and keeps it open — which a temporary
+    working directory cannot survive on Windows (see ``main``).
     """
     extra_body: Optional[Dict[str, Any]] = None
     if effort is not None:
@@ -60,6 +65,7 @@ def build_agent(
         base_url=base_url,
         model=model,
         api_format="anthropic-messages",  # keyword-only; sub-agents inherit it
+        logger=logger,
         extra_body=extra_body,
         prompt_cache="anthropic" if prompt_cache else None,
     )
@@ -91,8 +97,11 @@ def main(argv: Optional[list] = None) -> int:
         return 2
     prompt = " ".join(argv) or "Say hello in five words."
     with tempfile.TemporaryDirectory(prefix="agentao-anthropic-wire-") as workdir:
+        # A logger of our own, because ``workdir`` is deleted on the way out:
+        # an open ``agentao.log`` inside it is a PermissionError on Windows.
         agent = build_agent(Path(workdir), api_key=api_key,
-                            model=os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL))
+                            model=os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL),
+                            logger=logging.getLogger("anthropic_wire_example"))
         try:
             print(agent.chat(prompt))
             print(usage_report(agent))

@@ -11,6 +11,7 @@ a scripted socket.
 """
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,26 @@ def test_the_rows_and_the_cost_are_the_documented_arithmetic():
     assert result["cache_fields_reported"] is True
 
 
+def test_nothing_is_left_open_in_the_directory_the_arm_deletes(monkeypatch):
+    """The arm's working directory is temporary. ``Agentao`` left to its default
+    opens ``agentao.log`` there and keeps it open; POSIX deletes an open file
+    without complaint, **Windows raises WinError 32 from the cleanup** — which
+    is how this reached CI red on Windows only. Asserted at the moment the
+    arm's agent closes, so it fails on every platform, not just that one."""
+    seen = []
+    real_close = script.Agentao.close
+
+    def close(self):
+        seen.append(sorted(p.name for p in Path(self.working_directory).iterdir()))
+        return real_close(self)
+
+    monkeypatch.setattr(script.Agentao, "close", close)
+    _run([])
+    (names,) = seen
+    assert "agentao.log" not in names
+    assert {"inventory.md", "orders.csv", "policy.md"} <= set(names)  # looked in the right place
+
+
 def test_each_arm_is_isolated_from_the_first_byte_of_the_cached_prefix():
     """The registry emits tools alphabetically, so it is the nonce tool's
     *name* that has to sort first. (Written assuming registration order; this
@@ -106,6 +127,18 @@ def test_the_native_arm_really_asks_for_breakpoints():
     _run(wires)
     body = wires[0].requests[-1]
     assert "cache_control" in body["tools"][-1]
+
+
+def test_the_control_arm_is_the_same_wire_with_no_breakpoints():
+    """A gateway that caches prefixes on its own reports reads whether or not
+    it read a marker, so arm c means nothing there without this beside it."""
+    wires = []
+    script.run_arm(
+        "d", api_key="k", base_url="https://api.example.test", model="claude-test",
+        turns=TURNS, make_agent=_factory(wires, *[_answer(**u) for u in CACHED]))
+    body = wires[0].requests[-1]
+    assert "/v1/messages" in wires[0].urls[-1]
+    assert "cache_control" not in json.dumps(body)
 
 
 def test_an_endpoint_that_reports_no_cache_fields_is_not_rendered_as_no_caching():

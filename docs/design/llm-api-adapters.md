@@ -237,8 +237,20 @@ Three questions remain, and none of them is answered by re-running the table:
 
 1. **A versus B on Anthropic's compatible endpoint** is on the bill and nowhere
    else. Only the account holder can read it.
-2. **0b on a gateway that honours the markers and reports them**: `--arms a,b
-   --base-url-compat <gateway>/v1`. Unrun — it needs such a gateway.
+2. **Whether a gateway honours the markers.** One gateway run so far, and it
+   does not answer this: an Anthropic-compatible endpoint fronting
+   `deepseek-v4.1-flash`, arm C, 17 requests — 250,766 prompt tokens, **0
+   written, 229,504 read (91.5%)**. The reads are all multiples of 64 (6,400,
+   9,216, 12,288, …) and no write is ever reported, which is automatic,
+   block-granular prefix caching — it would report the same reads whether or
+   not it read a single `cache_control` marker. So arm C alone says nothing
+   about the markers on such an endpoint; the script gained arm **D** (the same
+   wire with no breakpoints) as the control, **not yet run**. What the run does
+   show: on this gateway the prefix 0a made byte-stable is cached with no
+   markers' help being demonstrable, and the default `--read-rate 0.1` is
+   Anthropic's — a gateway's own hit price goes in its place. For Chat
+   Completions gateways the pair is still `--arms a,b --base-url-compat
+   <gateway>/v1`, unrun.
 3. **Whether an active skill's body belongs in the prefix.** `--activate-skill
    NAME --at-turn K` records the history size at the activation, which is the
    input this needs. The trade, from the price model rather than from a run:

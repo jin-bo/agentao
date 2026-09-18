@@ -13,6 +13,12 @@ files, so the prompt grows the way an agent's does)::
     a   Chat Completions, no breakpoints          stage 0a alone
     b   Chat Completions, 3 cache_control marks   stage 0a + 0b
     c   anthropic-messages, native breakpoints    stage 1
+    d   anthropic-messages, no breakpoints        the control for c
+
+**d** is what makes **c** interpretable on a gateway: an endpoint that caches
+prefixes on its own (DeepSeek-style, block-granular, no write count) reports
+cache reads whether or not it read a single marker, so **c** alone cannot say
+the markers were honoured. Only **c** against **d** can.
 
 Each arm gets a fresh nonce in the **first** tool definition, so no arm reads a
 cache another arm wrote — the first byte of the cached prefix differs.
@@ -45,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -60,6 +67,7 @@ ARMS: Dict[str, Dict[str, Any]] = {
     "a": {"label": "0a only", "api_format": "openai-completions", "prompt_cache": None},
     "b": {"label": "0a + 0b", "api_format": "openai-completions", "prompt_cache": "anthropic"},
     "c": {"label": "native", "api_format": "anthropic-messages", "prompt_cache": "anthropic"},
+    "d": {"label": "native, no marks", "api_format": "anthropic-messages", "prompt_cache": None},
 }
 
 SEED_FILES = {
@@ -117,9 +125,19 @@ class _CacheNonce(Tool):
         return "This tool does nothing."
 
 
+#: Handing ``Agentao`` a logger means it installs **no file handler**. Left to
+#: its default it opens ``<working_directory>/agentao.log`` and keeps it open,
+#: and the working directory here is a temporary one: POSIX deletes an open
+#: file without complaint, Windows raises ``PermissionError`` (WinError 32) from
+#: the cleanup — after the arm's requests have been paid for.
+_LOGGER = logging.getLogger("measure_prompt_cache")
+_LOGGER.addHandler(logging.NullHandler())
+
+
 def _default_agent(workdir: Path, *, api_key: str, base_url: str, model: str,
                    arm: Dict[str, Any], nonce: str) -> Agentao:
     return Agentao(
+        logger=_LOGGER,
         working_directory=workdir, api_key=api_key, base_url=base_url, model=model,
         api_format=arm["api_format"], prompt_cache=arm["prompt_cache"],
         extra_tools=[_CacheNonce(nonce)],
@@ -241,7 +259,7 @@ def render(results: List[Dict[str, Any]]) -> str:
 
 def _parse(argv: Optional[List[str]]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--arms", default="a,b,c", help="comma-separated subset of a,b,c")
+    parser.add_argument("--arms", default="a,b,c", help="comma-separated subset of a,b,c,d")
     parser.add_argument("--api-key-env", default="ANTHROPIC_API_KEY",
                         help="name of the environment variable holding the key")
     parser.add_argument("--model", default="claude-sonnet-5")
@@ -272,7 +290,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.yes:
         print(f"Plan: arms {','.join(args.arms)} × {len(TURNS)} user turns on {args.model} "
               f"(about {2 * len(TURNS) - 1} requests per arm, prompt growing past ~15k tokens).\n"
-              f"  a, b → {args.base_url_compat}\n  c    → {args.base_url_native}\n"
+              f"  a, b → {args.base_url_compat}\n  c, d → {args.base_url_native}\n"
               f"Key from ${args.api_key_env}. This spends money; re-run with --yes to send.")
         return 0
     api_key = os.environ.get(args.api_key_env)
@@ -281,7 +299,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
     results = []
     for key in args.arms:
-        base_url = args.base_url_native if key == "c" else args.base_url_compat
+        native = ARMS[key]["api_format"] == "anthropic-messages"
+        base_url = args.base_url_native if native else args.base_url_compat
         print(f"arm {key} ({ARMS[key]['label']}) …", file=sys.stderr)
         results.append(run_arm(
             key, api_key=api_key, base_url=base_url, model=args.model,
