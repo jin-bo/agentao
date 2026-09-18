@@ -39,6 +39,10 @@ def _ok() -> bytes:
     return stream_of(message_start(input_tokens=5), text_block(0, "ok"), message_end())
 
 
+# ``LLMClient`` opens ``agentao.log`` in the process cwd: see ``isolated_cwd``.
+pytestmark = pytest.mark.usefixtures("isolated_cwd")
+
+
 def _llm(**kwargs) -> LLMClient:
     return LLMClient(api_key="k", base_url="https://api.example.test", model="claude-test",
                      api_format="anthropic-messages", **kwargs)
