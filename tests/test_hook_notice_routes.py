@@ -265,12 +265,11 @@ def test_a_compaction_hooks_notice_reaches_the_terminal(printed, monkeypatch):
         _last_session_summary_id=None,
         _turn_finish_reason_missing=False,
         _build_system_prompt=lambda: "sys",
-        _emit_session_summary_if_new=lambda _prev: "summary-id",
+        memory_manager=None,
     )
     agent.add_message = lambda role, content: agent.messages.append(
         {"role": role, "content": content}
     )
-    agent._emit_context_compressed = lambda **kw: None
     agent.compaction_coordinator = CompactionCoordinator(agent)
 
     agent.compaction_coordinator.run(

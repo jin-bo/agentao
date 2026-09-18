@@ -121,12 +121,27 @@ def handle_replay_command(cli: AgentaoCLI, args: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _replay_config(cli: AgentaoCLI):
+    """The agent's replay config, or a disabled default with no manager.
+
+    A bare ``Agentao(...)`` has no ``ReplayManager`` until something calls
+    ``start_replay`` / ``reload_replay_config``; ``/replay list`` and
+    ``/replay prune`` must still answer there.
+    """
+    manager = cli.agent.replay_manager
+    if manager is not None:
+        return manager.config
+    from ..replay import ReplayConfig
+
+    return ReplayConfig()
+
+
 def _handle_list(cli: AgentaoCLI) -> None:
     from ..replay import list_replays
 
     project_root = cli.agent.working_directory
     metas = list_replays(project_root)
-    cfg = cli.agent._replay_config
+    cfg = _replay_config(cli)
     state = "[green]on[/green]" if cfg.enabled else "[yellow]off[/yellow]"
 
     console.print(
@@ -217,7 +232,7 @@ def _handle_prune(cli: AgentaoCLI) -> None:
     from ..replay import ReplayRetentionPolicy
 
     project_root = cli.agent.working_directory
-    cfg = cli.agent._replay_config
+    cfg = _replay_config(cli)
     deleted = ReplayRetentionPolicy(max_instances=cfg.max_instances).prune(project_root)
     if deleted:
         console.print(
@@ -237,7 +252,8 @@ def _handle_prune(cli: AgentaoCLI) -> None:
 
 def _active_replay_path(cli: AgentaoCLI):
     """Path of the currently-recording replay file, or None."""
-    recorder = getattr(cli.agent, "_replay_recorder", None)
+    manager = cli.agent.replay_manager
+    recorder = manager.recorder if manager is not None else None
     if recorder is None:
         return None
     return getattr(recorder, "path", None)

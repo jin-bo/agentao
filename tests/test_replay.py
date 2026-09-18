@@ -572,7 +572,7 @@ def test_agent_disabled_by_default_creates_no_file(tmp_path):
     agent = _build_agent(tmp_path)
     path = agent.start_replay("sess-123")
     assert path is None
-    assert agent._replay_recorder is None
+    assert agent.replay_manager.recorder is None
     assert not (tmp_path / ".agentao" / "replays").exists()
     agent.close()
 
@@ -585,7 +585,7 @@ def test_agent_enabled_creates_file(tmp_path):
     path = agent.start_replay("sess-123")
     assert path is not None
     assert path.exists()
-    assert agent._replay_adapter is not None
+    assert agent.replay_manager.adapter is not None
     agent.end_replay()
     agent.close()
 
@@ -615,8 +615,8 @@ def test_agent_session_saved_never_emitted_in_v1(tmp_path):
     agent.reload_replay_config()
     path = agent.start_replay("sess-saved")
     # Drive a couple of lifecycle events through the adapter.
-    agent._replay_adapter.begin_turn("hi")
-    agent._replay_adapter.end_turn("bye")
+    agent.replay_manager.adapter.begin_turn("hi")
+    agent.replay_manager.adapter.end_turn("bye")
     agent.end_replay()
     agent.close()
     kinds = [e["kind"] for e in ReplayReader(path).events()]
@@ -668,8 +668,8 @@ def test_agent_turn_error_does_not_break_replay(tmp_path):
     agent.reload_replay_config()
     path = agent.start_replay("sess-err")
     # Force a failure during turn to confirm end_turn still fires with status.
-    agent._replay_adapter.begin_turn("oops")
-    agent._replay_adapter.end_turn("[Interrupted]", status="cancelled", error="user-cancel")
+    agent.replay_manager.adapter.begin_turn("oops")
+    agent.replay_manager.adapter.end_turn("[Interrupted]", status="cancelled", error="user-cancel")
     agent.end_replay()
     agent.close()
     completed = [
@@ -744,3 +744,36 @@ def test_llm_call_delta_emits_only_new_messages_across_turns(tmp_path):
     assert t2["total_messages"] == 4
     assert len(t2["added_messages"]) == 1
     assert t2["added_messages"][0]["content"] == "again"
+
+
+# ---------------------------------------------------------------------------
+# /replay reads the manager, not private views on the agent (0.5.0)
+# ---------------------------------------------------------------------------
+
+
+def test_replay_commands_answer_without_a_manager(tmp_path):
+    """``/replay list`` and ``/replay prune`` on an agent that never recorded.
+
+    A bare ``Agentao(...)`` has ``replay_manager is None``. Until 0.5.0 the
+    CLI read ``agent._replay_config``, a property whose fallback hid that;
+    the fallback now lives where it is used.
+    """
+    from types import SimpleNamespace
+
+    from agentao.cli.replay_commands import _active_replay_path, _replay_config
+
+    agent = _build_agent(tmp_path)
+    cli = SimpleNamespace(agent=agent)
+    try:
+        assert agent.replay_manager is None
+        assert _replay_config(cli).enabled is False
+        assert _active_replay_path(cli) is None
+
+        save_replay_enabled(True, tmp_path)
+        agent.reload_replay_config()
+        path = agent.start_replay("sess-cli")
+        assert _replay_config(cli).enabled is True
+        assert _active_replay_path(cli) == path
+    finally:
+        agent.end_replay()
+        agent.close()
