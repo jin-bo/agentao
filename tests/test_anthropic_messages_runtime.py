@@ -158,7 +158,7 @@ def test_purge_counts_the_carrier_key():
 
 def test_the_sanitizer_leaves_a_signed_block_byte_for_byte():
     """An invisible tag character inside signed thinking stays: stripping it
-    is a rewrite, and the signature covers the text."""
+    is a rewrite, and a block goes back as it arrived."""
     smuggled = "plan\U000e0041\U000e0042 it"
     message = {
         "role": "assistant", "content": f"answer{chr(0xE0041)}",

@@ -276,8 +276,10 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
             "\n[warning]/thinking sets reasoning_effort, which the "
             "anthropic-messages wire rejects. Turn extended thinking on through "
             "the passthrough instead, e.g. "
-            "LLM_EXTRA_BODY='{\"thinking\": {\"type\": \"enabled\", "
-            "\"budget_tokens\": 8000}}'.[/warning]\n"
+            "LLM_EXTRA_BODY='{\"thinking\": {\"type\": \"adaptive\"}, "
+            "\"output_config\": {\"effort\": \"high\"}}' (older models: "
+            "{\"thinking\": {\"type\": \"enabled\", "
+            "\"budget_tokens\": 8000}}).[/warning]\n"
         )
         return
 

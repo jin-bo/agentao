@@ -1,9 +1,9 @@
 # Multi-wire-API support: `anthropic-messages`, `openai-responses` and `gemini-api`
 
 **Status:** **Stage 0 implemented and shipped in 0.4.26. Stage 1 implemented
-2026-09-18 (ships with 0.5.0), against a scripted socket — not yet run against a live
-endpoint; the provider-switch piece of stage 3 followed the same day. The rest of
-stages 2–3 is proposed and not authorized. rev 13 (2026-09-18).** §2.3's
+2026-09-18 (ships with 0.5.0), against a scripted socket and then a live endpoint
+(*Live results*, below); the provider-switch piece of stage 3 followed the same day. The rest of
+stages 2–3 is proposed and not authorized. rev 14 (2026-09-18).** §2.3's
 stage 0a and 0b are on `main`; stage 1 adds the adapter seam under `LLMClient`
 and one second wire, `anthropic-messages`, selected at startup or by a provider
 switch. §12.1 — whether
@@ -128,7 +128,7 @@ reading the protocol:
    retried when nothing has been shown to the host.
 6. **Three smaller additions.** A one-shot repair adopts the output cap a model
    states (`max_tokens: N > M`) — the default 65,536 can exceed a model's cap,
-   and the message format is **unverified against a live endpoint**; an
+   and the message format was confirmed live (*Live results*); an
    id from another provider's session (`functions.read_file:0`) is rewritten
    on the outbound copy only, through a **one-to-one map built over the whole
    request** — the rewrite alone is lossy (`call.1` and `call:1` collide, as do
@@ -150,14 +150,61 @@ reading the protocol:
 
 **What stage 1's gate still needs.** Everything above was verified against the
 real SDK over a scripted socket: request bodies are the JSON the SDK serialized,
-events and exceptions are the SDK's own. **Nothing has been run against a live
-endpoint**, so four things are asserted from documentation and peer
+events and exceptions are the SDK's own. At the time **nothing had been run
+against a live endpoint**, so four things were asserted from documentation and peer
 implementations rather than observed — that thinking-first ordering is
 accepted, that the synthetic user turn in front of an assistant-first history
 is accepted, the wording of the output-cap rejection, and that a breakpoint
 hoisted onto a `tool_result` is honoured. The **cache-benefit check** in §10's
-gate is not done either, and it now needs three arms on one endpoint: stage 0a
-alone, 0b over Chat Completions, and the native wire.
+gate was not done either, and needed three arms on one endpoint: stage 0a
+alone, 0b over Chat Completions, and the native wire. Both debts are paid below.
+
+**Live results (2026-09-18, `api.anthropic.com`, `claude-sonnet-5`, through
+`LLMClient` and this adapter, about a dozen small requests).** The four
+assertions above are now observations: (1) the rejection reads `max_tokens:
+1000000 > 128000, which is the maximum allowed number of output tokens for
+claude-sonnet-5`, the repair latched 128000 and the re-send succeeded — and the
+default 65,536 is *under* this model's cap, so the repair does not fire here;
+(2) the synthetic user turn is accepted; (3) a signed block sent back at the
+head of its turn inside a tool loop is accepted, and a control with a corrupted
+signature is a 400 (`Invalid signature in thinking block`), so the API does
+check; (4) a breakpoint on a `tool_result` wrote 13,007 cache tokens on the
+first request and read 13,007 on the second. Three things nobody asserted:
+**this model rejects `thinking.type.enabled`** and wants `{"thinking": {"type":
+"adaptive"}, "output_config": {"effort": ...}}` — every example here said the
+old form, now corrected; its **thinking text comes back empty** (0 characters
+beside a 504-character signature), so the display copy is empty too; and an
+*edited* thinking text under an intact signature was accepted, so "the signature
+covers the text" was a claim, not a fact — the sanitizer exemption stands on the
+protocol's as-it-arrived rule instead. Thinking **mid-turn** (`[text, thinking,
+text, tool_use]` answered by a `tool_result`, the shape same-role merging can
+produce) was accepted as well, so merging needs no guard.
+
+**The three-arm cache comparison (same day, same endpoint and model).** One
+scripted session — 7 user turns, 13 requests, real tool calls over three seeded
+files, prompt growing from ~9.6k to ~17.9k tokens — run three times, each arm
+isolated from the others' caches by a nonce in the first tool definition.
+
+| Arm | Wire | Breakpoints | Prompt tokens | Cache written | Cache read | Input cost, in uncached-token units |
+|---|---|---|---|---|---|---|
+| A — 0a only | Chat Completions (`/v1/`) | none | 176,166 | not reported | not reported | 176,166 |
+| B — 0a + 0b | Chat Completions (`/v1/`) | 3 `cache_control` markers | 178,920 | not reported | not reported | 178,920 |
+| C — native | `anthropic-messages` | 3, native | 177,771 | 17,902 | 159,843 | **38,388** (−78%) |
+
+Cost units are `uncached + 1.25 × written + 0.1 × read`. On the native wire
+every request after the first read its whole previous prefix back (request 13:
+17,807 of 17,904 tokens) and 26 tokens in the whole session were billed at the
+full rate. **Arms A and B cannot be told apart from here**: Anthropic's
+OpenAI-compatible endpoint accepted the `cache_control` markers without error
+but its `usage` carries no cache fields at all (`prompt_tokens_details` is
+null), so whether it honoured them is not observable from the response — only
+from the bill. What the numbers do settle is §12.1 as far as this endpoint goes:
+**on Anthropic's own API the caching win is reachable, and measurable, only on
+the native wire.** 0b's value is for third-party gateways that both honour the
+markers and report them, which is still unmeasured, and is why it stays off by
+default.
+
+**rev 14 — what changed:** *Live results* above, and the thinking examples.
 
 **rev 13 — what changed:** The first use of the second wire was a `/provider`
 to a block on it, which stage 1 refused. The provider-switch piece of stage 3 is

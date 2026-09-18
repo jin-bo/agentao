@@ -94,8 +94,8 @@ every session. `agentao.tool_runner`, the old import path of
   `thinking` and `temperature` do not.
   **Signed thinking blocks round-trip whole.** They ride on the assistant
   message under `anthropic_thinking_blocks`, beside the 500-character
-  `reasoning_content` display copy, are exempt from the sanitizer (the signature
-  covers the text), are sent back verbatim at the head of their turn, and are
+  `reasoning_content` display copy, are exempt from the sanitizer (a block goes
+  back as it arrived or the API answers 400), are sent back verbatim at the head of their turn, and are
   purged with the other thinking artifacts on a model or endpoint switch,
   `/resume` and ACP `session/load`. `usage.prompt_tokens` **folds the cached
   prompt back in** — Anthropic reports the uncached remainder as `input_tokens`,
@@ -108,7 +108,10 @@ every session. `agentao.tool_runner`, the old import path of
   `messages.create` at all, so `LLM_TEMPERATURE` and `/temperature` have no
   effect, and a gateway that takes one gets it through `LLM_EXTRA_BODY`.
   **Extended thinking is turned on through `LLM_EXTRA_BODY`**
-  (`{"thinking": {"type": "enabled", "budget_tokens": 8000}}`); `/thinking`
+  (`{"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}` on
+  current models, which reject the older
+  `{"thinking": {"type": "enabled", "budget_tokens": 8000}}` with a 400; older
+  models take only that one); `/thinking`
   refuses to store `reasoning_effort`, which this protocol rejects.
   **`max_tokens` is required by the protocol**, so a call that names none sends
   the configured cap (default 65,536), and a model that answers
@@ -135,9 +138,16 @@ every session. `agentao.tool_runner`, the old import path of
   Sub-agents are built on the parent's current wire. Both `chat()` and `chat_stream()`
   run over the streaming transport — the SDK refuses a non-streaming request at
   agentao's default `max_tokens`.
-  **Verified against the real SDK over a scripted socket, not against a live
-  endpoint**, and no billed cache comparison has been run; the design document
-  lists what is asserted rather than observed.
+  **Verified against the real SDK over a scripted socket, and then against
+  `api.anthropic.com` (`claude-sonnet-5`, 2026-09-18)**: the output-cap wording
+  and its repair, the synthetic user turn, the signed-thinking round trip in a
+  tool loop, and a cache breakpoint on a `tool_result` (13,007 tokens written,
+  then read) all behave as built. That model returns *empty* thinking text with
+  its signature, so `reasoning_content` is empty there. A 13-request session
+  with `LLM_PROMPT_CACHE=anthropic` cost 78% less input on this wire than
+  uncached (159,843 of 177,771 prompt tokens read from cache); the same session
+  over Anthropic's OpenAI-compatible endpoint reports no cache fields at all, so
+  the markers' effect there cannot be read from the response.
 - **Anthropic's second context-overflow message is recognised**
   (`input length and max_tokens exceed context limit: A + B > C`), on either
   wire: it enters the overflow recovery ladder and `C` is adopted as the
