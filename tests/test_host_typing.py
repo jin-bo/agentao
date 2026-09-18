@@ -190,7 +190,7 @@ def test_protocols_module_all_matches_imports() -> None:
 
 
 def test_host_all_matches_documented_set() -> None:
-    """``agentao.host.__all__`` must match the surface listed in docs/api/host.md.
+    """``agentao.host.__all__`` must match the surface listed in docs/reference/host-api.md.
 
     Drift detection: a new public name added to ``__all__`` without a
     docs entry — or removed from docs without a deprecation cycle — fails
@@ -215,5 +215,5 @@ def test_host_all_matches_documented_set() -> None:
     }
     assert set(host.__all__) == documented, (
         "agentao.host.__all__ drifted from the documented public surface "
-        "in docs/api/host.md. Update both, in the same PR."
+        "in docs/reference/host-api.md. Update both, in the same PR."
     )

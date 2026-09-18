@@ -6,7 +6,7 @@ Runnable companions to [Part 7 of the developer guide](../developer-guide/en/par
 
 ## Canonical embedding shapes (P0.6 — offline smoke in CI)
 
-Four minimum-shape samples that run end-to-end against a fake LLM, no API key required. Each has its own `pyproject.toml`, ≤ 50-line README, and a `tests/` smoke suite.
+Eight minimum-shape samples that run end-to-end against a fake LLM (or a scripted socket), no API key required. Each has its own `pyproject.toml`, ≤ 50-line README, and a `tests/` smoke suite.
 
 | Directory | Host shape | Smoke |
 |-----------|------------|-------|
@@ -17,6 +17,7 @@ Four minimum-shape samples that run end-to-end against a fake LLM, no API key re
 | [`wechat-bot/`](./wechat-bot/) | WeChat polling daemon → one turn; contact-scoped permissions | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 | [`protocol-injection/`](./protocol-injection/) | All four `agentao.host.protocols` slots replaced (in-memory FS, audit shell, programmatic MCP registry, dict MemoryStore) | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 | [`tool-injection/`](./tool-injection/) | Jina-backed `web_fetch` injected at construction (`extra_tools=`, `r.jina.ai`) + `web_search` injected at runtime (`add_tool`, `s.jina.ai`) | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
+| [`anthropic-wire/`](./anthropic-wire/) | `api_format="anthropic-messages"` — Anthropic's native Messages API; the smoke runs a scripted socket under the **real** `anthropic` SDK | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 
 ## Larger blueprints (live LLM, end-to-end stacks)
 
@@ -32,8 +33,8 @@ Four minimum-shape samples that run end-to-end against a fake LLM, no API key re
 
 | File | What it shows | Run |
 |------|---------------|-----|
-| [`headless_worker.py`](./headless_worker.py) | `ACPManager` driving an inline mock ACP server (success / interaction-required / cancel paths). Authoritative Week 1 regression fixture for [`docs/features/headless-runtime.md`](../docs/features/headless-runtime.md). | `uv run python examples/headless_worker.py` |
-| [`host_events.py`](./host_events.py) | Public harness contract (since 0.3.1): `agent.events()` async iterator + `agent.active_permissions()` snapshot, wired alongside `agent.arun(...)` via `asyncio.gather`. See [`docs/api/host.md`](../docs/api/host.md). | `OPENAI_API_KEY=sk-... uv run python examples/host_events.py` |
+| [`headless_worker.py`](./headless_worker.py) | `ACPManager` driving an inline mock ACP server (success / interaction-required / cancel paths). Authoritative Week 1 regression fixture for [`docs/guides/headless-runtime.md`](../docs/guides/headless-runtime.md). | `uv run python examples/headless_worker.py` |
+| [`host_events.py`](./host_events.py) | Public harness contract (since 0.3.1): `agent.events()` async iterator + `agent.active_permissions()` snapshot, wired alongside `agent.arun(...)` via `asyncio.gather`. See [`docs/reference/host-api.md`](../docs/reference/host-api.md). | `OPENAI_API_KEY=sk-... uv run python examples/host_events.py` |
 | [`host_audit_pipeline.py`](./host_audit_pipeline.py) | End-to-end tenant audit pipeline: drains `agent.events()` into a local SQLite `agent_audit` table, pins an `active_permissions()` snapshot at session start, dumps the table after the turn. Companion to [`developer-guide §4.7`](../developer-guide/en/part-4/7-host-contract.md). | `OPENAI_API_KEY=sk-... uv run python examples/host_audit_pipeline.py` |
 
 ## Persona gallery (`AGENTAO.md` only — no code)

@@ -29,6 +29,15 @@ _Targeting 0.5.1. Add entries under the relevant heading as work lands._
   keyword arguments and `reset_usage()` is new. Agentao applies no prices:
   that table is the host's.
 
+- **`examples/anthropic-wire/`** — embedding over Anthropic's native Messages
+  API (`api_format="anthropic-messages"`): the one-keyword change, the three
+  things that differ on that wire (`base_url` is the API root, thinking depth
+  is `output_config.effort`, `temperature` is never sent), and a
+  `usage_report()` over the four usage quantities. Its smoke puts a scripted
+  socket under the **real** `anthropic` SDK, so it needs no key and the
+  request bodies it reads are the SDK's own. No example named `api_format`
+  before this.
+
 ### Changed
 
 - **`/context` says which quantity its total is.** With an API count the
@@ -40,6 +49,19 @@ _Targeting 0.5.1. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **Every example's `uv.lock` was stale, and CI could not tell.** All eleven
+  predated `anthropic` becoming a core dependency, so none listed it: an
+  environment installed `--frozen` from one had an agentao that raised
+  `ImportError` on `api_format="anthropic-messages"`. The Examples job ran a
+  bare `uv sync`, which quietly re-resolves, so it stayed green throughout.
+  The locks are refreshed and the job now runs `uv sync --locked`, which fails
+  on a stale lock instead. (The lock records agentao as an editable path with
+  no version, so a release bump does not trip it — a dependency change does;
+  the remedy is `uv lock` in each example directory.) The job also gains
+  `protocol-injection`, which the examples index listed as CI-covered and was
+  not. Three dangling doc references in `examples/` are fixed
+  (`docs/api/host.md`, `docs/features/headless-runtime.md`,
+  `docs/EMBEDDING.md`).
 - **A sub-agent's token usage now reaches its parent's totals.** A sub-agent
   is a separate `Agentao` with its own `LLMClient`, so its requests were in
   nobody's count: the session line in `/status` and `agentao run`'s `usage`
