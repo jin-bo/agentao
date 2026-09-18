@@ -61,6 +61,20 @@ def _markers(messages, tools=None):
     return found
 
 
+def _ttl_sequence(messages, tools=None):
+    """Every marker's retention in prompt order (tools, then messages).
+
+    ``None`` ttl is reported as ``5m``, the provider default. The list must be
+    non-increasing in retention length for the request to be legal.
+    """
+    out = []
+    for _, marker in _markers([], tools):
+        out.append(marker.get("ttl") or "5m")
+    for _, marker in _markers(messages, None):
+        out.append(marker.get("ttl") or "5m")
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -359,6 +373,133 @@ def test_a_short_budget_keeps_the_most_covering_breakpoint():
     assert added, _markers(out_messages)
     assert "cache_control" not in str(out_messages[0])
     print("✅ Short budget spent on the end of history")
+
+
+# ---------------------------------------------------------------------------
+# Retention order: longer TTL first
+# ---------------------------------------------------------------------------
+#
+# Anthropic, fetched 2026-09-17: "You can use both 1-hour and 5-minute cache
+# controls in the same request, but with an important constraint: Cache entries
+# with longer TTL must appear before shorter TTLs (that is, a 1-hour cache entry
+# must appear before any 5-minute cache entries)."
+#
+# agentao's own three markers share one configured retention, so agentao alone
+# can never mix. The rule only bites next to a marker the *caller* placed with a
+# different ttl — and then in both directions.
+
+HOUR = {"type": "ephemeral", "ttl": "1h"}
+FIVE = {"type": "ephemeral", "ttl": "5m"}
+
+
+def test_a_configured_1h_is_not_added_after_a_callers_5m():
+    """The reported case. A caller's 5m on the system message forbids agentao's
+    1h anywhere later in the prompt — which is every history position. The tools
+    block sits *ahead* of system, so that one is still legal and still placed."""
+    messages = [
+        {"role": "system", "content": [
+            {"type": "text", "text": "S", "cache_control": FIVE},
+        ]},
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1"},
+    ]
+    tools = [{"type": "function", "function": {"name": "f"}}]
+
+    out_messages, out_tools = apply_cache_control(messages, tools, HOUR)
+
+    placed = _markers(out_messages, out_tools)
+    assert ("tools[0]", HOUR) in placed, placed
+    # Nothing 1h after the caller's 5m.
+    assert not any(
+        where.startswith("messages[1]") or where.startswith("messages[2]")
+        for where, _ in placed
+    ), placed
+    assert _ttl_sequence(out_messages, out_tools) == ["1h", "5m"]
+    print("✅ No 1h breakpoint behind a caller's 5m")
+
+
+def test_a_configured_5m_is_not_added_before_a_callers_1h():
+    """The mirror image, which the same rule forbids just as hard: a 5m placed
+    ahead of a 1h is the illegal order too."""
+    messages = [
+        {"role": "system", "content": "S"},
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": [
+            {"type": "text", "text": "a1", "cache_control": HOUR},
+        ]},
+        {"role": "user", "content": "u2"},
+    ]
+    tools = [{"type": "function", "function": {"name": "f"}}]
+
+    out_messages, out_tools = apply_cache_control(messages, tools, FIVE)
+
+    placed = _markers(out_messages, out_tools)
+    assert _markers(out_tools) == [], "a 5m tool marker would precede the 1h"
+    assert not any(where.startswith("messages[0]") for where, _ in placed)
+    # Behind the 1h is fine, and is where the conversation breakpoint lands.
+    assert ("messages[3].content[0]", FIVE) in placed, placed
+    assert _ttl_sequence(out_messages, out_tools) == ["1h", "5m"]
+    print("✅ No 5m breakpoint ahead of a caller's 1h")
+
+
+def test_the_backward_scan_steps_ahead_of_a_callers_marker_instead_of_giving_up():
+    """A caller's 5m on the *last* stable message forbids a 1h at that position
+    but not one message earlier, which is still a valid prefix boundary. Giving
+    up on the first illegal position would throw away a breakpoint that the rule
+    permits."""
+    messages = [
+        {"role": "system", "content": "S"},
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": [
+            {"type": "text", "text": "a1", "cache_control": FIVE},
+        ]},
+    ]
+    out_messages, _ = apply_cache_control(messages, None, HOUR)
+    placed = _markers(out_messages)
+    assert ("messages[1].content[0]", HOUR) in placed, placed
+    assert _ttl_sequence(out_messages, None) == ["1h", "1h", "5m"]
+    print("✅ Scan steps ahead of the caller's marker")
+
+
+def test_the_same_retention_spelled_two_ways_never_loses_a_breakpoint():
+    """A bare ``{"type": "ephemeral"}`` *is* 5m — the provider default — so it
+    ranks equal to an explicit ``5m`` even though the dicts differ. Equal ranks
+    are legal in either direction, so the ordinary all-one-retention request
+    keeps every breakpoint it had."""
+    messages = [
+        {"role": "system", "content": [
+            {"type": "text", "text": "S", "cache_control": {"type": "ephemeral"}},
+        ]},
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1"},
+    ]
+    tools = [{"type": "function", "function": {"name": "f"}}]
+
+    out_messages, out_tools = apply_cache_control(messages, tools, FIVE)
+
+    # Budget: 3 minus the caller's 1 = 2, and both are placed.
+    assert len(_markers(out_messages, out_tools)) == MAX_EXPLICIT_BREAKPOINTS
+    print("✅ Bare ephemeral ranks as 5m, and equal ranks place freely")
+
+
+def test_a_retention_agentao_does_not_recognise_places_nothing():
+    """A gateway extension or a typo on a caller's marker makes the ordering
+    rule unanswerable. Guessing a rank is how the illegal order gets emitted, so
+    nothing is placed and the caller's own marker is left working."""
+    messages = [
+        {"role": "system", "content": [
+            {"type": "text", "text": "S",
+             "cache_control": {"type": "ephemeral", "ttl": "24h"}},
+        ]},
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1"},
+    ]
+    before = copy.deepcopy(messages)
+    out_messages, _ = apply_cache_control(messages, None, HOUR)
+    assert _markers(out_messages) == [("messages[0].content[0]",
+                                       {"type": "ephemeral", "ttl": "24h"})]
+    assert messages == before
+    print("✅ Unknown retention → place nothing, touch nothing")
 
 
 # ---------------------------------------------------------------------------

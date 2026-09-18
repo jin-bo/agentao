@@ -29,6 +29,15 @@ _Targeting 0.4.26. Add entries under the relevant heading as work lands._
   (openai 2.24.0), not that any particular gateway honours it, so the operator
   names the format for an endpoint they have verified. An unknown value raises
   at startup rather than silently disabling the thing it was set to enable.
+  Markers a host placed itself count against the three, are never overwritten,
+  and constrain where agentao may add its own: Anthropic's caching
+  documentation requires longer-lived cache entries to precede shorter-lived
+  ones, so a site that would put a configured `1h` behind a caller's `5m` — or
+  a configured `5m` ahead of a caller's `1h` — is skipped rather than re-timed,
+  and an unrecognised `ttl` suppresses agentao's markers entirely rather than
+  guessing a retention rank. agentao's own three markers share one configured
+  retention, so agentao alone never mixes them.
+
   The markers are dropped when `/provider` changes the base URL — the knob
   asserts something about one endpoint, a new base URL is a deployment that
   assertion does not cover, and there is no auto-recovery latch here, so an

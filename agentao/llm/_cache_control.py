@@ -36,6 +36,29 @@ Three rules this module exists to hold:
    that changes every request, and a breakpoint there would never be read back
    — it would burn a slot and a cache *write* to cache something already known
    to be different next time.
+4. **Longer retention has to come first.** Anthropic's caching documentation
+   (fetched 2026-09-17 from
+   ``platform.claude.com/docs/en/build-with-claude/prompt-caching``): "You can
+   use both 1-hour and 5-minute cache controls in the same request, but with an
+   important constraint: Cache entries with longer TTL must appear before
+   shorter TTLs (that is, a 1-hour cache entry must appear before any 5-minute
+   cache entries)." agentao's own three markers all carry one configured
+   retention, so agentao alone can never mix — the rule only bites next to a
+   marker the *caller* placed with a different ttl, and then it bites in both
+   directions: a configured ``1h`` added after a caller's ``5m``, and a
+   configured ``5m`` added before a caller's ``1h``, are each illegal. Such a
+   site is **skipped**, never re-timed: substituting the caller's retention for
+   the configured one, or the reverse, would silently change what the operator
+   asked for. The documentation states the constraint without naming the
+   failure, so a violation is mis-billed against its own ``A``/``B``/``C``
+   position model at best and rejected at worst; either way it is not ours to
+   emit.
+
+Prompt order, which rules 2 and 4 are both counted in, is also from that page:
+"Cache prefixes are created in the following order: ``tools``, ``system``, then
+``messages``." In agentao's Chat Completions assembly the system message *is*
+``messages[0]``, so one index over the message list already orders system ahead
+of history; only the tool definitions need a block of their own.
 """
 
 from __future__ import annotations
@@ -46,9 +69,15 @@ from typing import Any, Dict, List, Optional, Tuple
 #: the protocol adapters of stage 1+, not to a key bolted onto this one.
 CACHE_CONTROL_FORMATS = frozenset({"anthropic"})
 
+#: Retention values Anthropic documents for ``cache_control``, ranked by how
+#: long-lived they are (higher is longer). The rank is what rule 4 is checked
+#: in; the key set is the accepted-value list, derived from it rather than
+#: written twice so the two cannot drift.
+_TTL_RANKS = {"5m": 0, "1h": 1}
+
 #: Retention values Anthropic documents for ``cache_control``. ``None`` means
 #: "send no ttl", which is the 5-minute default.
-CACHE_CONTROL_TTLS = frozenset({"5m", "1h"})
+CACHE_CONTROL_TTLS = frozenset(_TTL_RANKS)
 
 #: Three, with the fourth slot left for the endpoint's automatic caching —
 #: see rule 2 in the module docstring.
@@ -56,6 +85,14 @@ MAX_EXPLICIT_BREAKPOINTS = 3
 
 _INSTRUCTION_ROLES = ("system", "developer")
 _CONVERSATION_ROLES = ("user", "assistant", "tool")
+
+#: Prompt-order blocks, so a marker's position is comparable across them.
+#: ``tools`` precedes everything in ``messages`` (see the docstring).
+_TOOLS_BLOCK = 0
+_MESSAGES_BLOCK = 1
+
+#: One marker's position in the prompt: ``(block, index within it)``.
+_Position = Tuple[int, int]
 
 
 def resolve_cache_control(
@@ -110,9 +147,22 @@ def apply_cache_control(
     out_messages: List[Dict[str, Any]] = list(messages)
     out_tools: Optional[List[Dict[str, Any]]] = list(tools) if tools else tools
 
-    budget = MAX_EXPLICIT_BREAKPOINTS - _count_existing(out_messages, out_tools)
+    existing = _existing_markers(out_messages, out_tools)
+    budget = MAX_EXPLICIT_BREAKPOINTS - len(existing)
     if budget <= 0:
         return out_messages, out_tools
+
+    rank = _retention_rank(cache_control)
+    if rank is None or any(other is None for _, other in existing):
+        # A retention agentao does not recognise — a gateway extension on a
+        # caller's marker, or a malformed one — makes rule 4 unanswerable.
+        # Place nothing rather than assume a rank: guessing wrong emits exactly
+        # the illegal order the rule exists to prevent, and the markers the
+        # caller placed keep working untouched either way.
+        return out_messages, out_tools
+    ranked: List[Tuple[_Position, int]] = [
+        (position, other) for position, other in existing if other is not None
+    ]
 
     # Placed most-covering first, so a budget short of three keeps the
     # breakpoints that cover the most tokens. Anthropic orders a prompt
@@ -121,18 +171,21 @@ def apply_cache_control(
     # covers the tools alone.
     #
     # Each helper answers how many **new** markers it wrote — 0 or 1 — and 0
-    # covers two different cases that must both leave the budget alone: there
-    # was nothing markable at that site, and the site already carries the
-    # caller's own marker (which ``_count_existing`` already charged, so
-    # spending a second unit on it would silently ship two breakpoints instead
-    # of three).
+    # covers three different cases that must all leave the budget alone: there
+    # was nothing markable at that site; the site already carries the caller's
+    # own marker (which ``_existing_markers`` already charged, so spending a
+    # second unit on it would silently ship two breakpoints instead of three);
+    # and placing there would break rule 4's retention order.
     budget -= _mark_last_stable_message(
-        out_messages, cache_control, request_only_tail=request_only_tail,
+        out_messages, cache_control, rank, ranked,
+        request_only_tail=request_only_tail,
     )
     if budget > 0:
-        budget -= _mark_instruction_message(out_messages, cache_control)
+        budget -= _mark_instruction_message(
+            out_messages, cache_control, rank, ranked,
+        )
     if budget > 0 and out_tools:
-        budget -= _mark_last_tool(out_tools, cache_control)
+        budget -= _mark_last_tool(out_tools, cache_control, rank, ranked)
     return out_messages, out_tools
 
 
@@ -142,17 +195,23 @@ def apply_cache_control(
 
 
 def _mark_instruction_message(
-    messages: List[Dict[str, Any]], cache_control: Dict[str, str],
+    messages: List[Dict[str, Any]],
+    cache_control: Dict[str, str],
+    rank: int,
+    ranked: List[Tuple[_Position, int]],
 ) -> int:
     """Mark the first ``system`` / ``developer`` message, in place in the list.
 
     Returns the number of **new** markers written: 0 or 1 (see
-    :func:`apply_cache_control` for why "already marked" must also be 0).
+    :func:`apply_cache_control` for why "already marked" and "would break
+    retention order" must also be 0).
     """
     for i, message in enumerate(messages):
         if not isinstance(message, dict):
             continue
         if message.get("role") in _INSTRUCTION_ROLES:
+            if not _ordering_allows((_MESSAGES_BLOCK, i), rank, ranked):
+                return 0
             marked = _marked_message(message, cache_control)
             if marked is None or marked is message:
                 return 0
@@ -164,6 +223,8 @@ def _mark_instruction_message(
 def _mark_last_stable_message(
     messages: List[Dict[str, Any]],
     cache_control: Dict[str, str],
+    rank: int,
+    ranked: List[Tuple[_Position, int]],
     *,
     request_only_tail: int = 0,
 ) -> int:
@@ -184,6 +245,11 @@ def _mark_last_stable_message(
             continue
         if message.get("role") not in _CONVERSATION_ROLES:
             continue
+        if not _ordering_allows((_MESSAGES_BLOCK, i), rank, ranked):
+            # Keep scanning: an earlier position can be legal where this one is
+            # not — a caller's ``1h`` further back forbids a configured ``5m``
+            # in front of it, but not behind it.
+            continue
         marked = _marked_message(message, cache_control)
         if marked is message:
             # The site the scan wanted already carries the caller's own marker.
@@ -198,7 +264,10 @@ def _mark_last_stable_message(
 
 
 def _mark_last_tool(
-    tools: List[Dict[str, Any]], cache_control: Dict[str, str],
+    tools: List[Dict[str, Any]],
+    cache_control: Dict[str, str],
+    rank: int,
+    ranked: List[Tuple[_Position, int]],
 ) -> int:
     """Mark the last tool definition, in place in the list.
 
@@ -215,6 +284,8 @@ def _mark_last_tool(
     if not isinstance(last, dict):
         return 0
     if "cache_control" in last:
+        return 0
+    if not _ordering_allows((_TOOLS_BLOCK, len(tools) - 1), rank, ranked):
         return 0
     marked = dict(last)
     marked["cache_control"] = cache_control
@@ -275,28 +346,83 @@ def _marked_message(
     return None
 
 
-def _count_existing(
-    messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]],
-) -> int:
-    """Count ``cache_control`` markers the caller already placed.
+# ---------------------------------------------------------------------------
+# What the caller already placed
+# ---------------------------------------------------------------------------
 
-    Counted so a host that marks its own messages cannot push the request past
-    four breakpoints by sitting underneath a feature that assumes it owns all
-    of them.
+
+def _retention_rank(marker: Any) -> Optional[int]:
+    """How long-lived a marker is — higher is longer. ``None`` = undecidable.
+
+    An absent ``ttl`` is the provider's 5-minute default, which is why a bare
+    ``{"type": "ephemeral"}`` and an explicit ``{"ttl": "5m"}`` rank the same
+    although the dicts differ. A ttl agentao does not recognise (a gateway
+    extension, a typo on a caller's own marker) returns ``None``: the caller
+    must then place nothing rather than guess a rank, because guessing wrong
+    emits exactly the illegal order rule 4 exists to prevent.
     """
-    total = 0
-    for message in messages:
+    if not isinstance(marker, dict):
+        return None
+    ttl = marker.get("ttl")
+    if ttl is None:
+        return _TTL_RANKS["5m"]
+    return _TTL_RANKS.get(str(ttl).strip().lower())
+
+
+def _existing_markers(
+    messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]],
+) -> List[Tuple[_Position, Optional[int]]]:
+    """Every marker the caller already placed, as ``(position, rank)``.
+
+    Two jobs in one pass. The count bounds the budget, so a host that marks its
+    own messages cannot push the request past four breakpoints by sitting
+    underneath a feature that assumes it owns all of them. The positions and
+    ranks are what rule 4 is checked against — which is why they are collected
+    in prompt order (tools, then messages) rather than just tallied.
+    """
+    found: List[Tuple[_Position, Optional[int]]] = []
+    for index, tool in enumerate(tools or ()):
+        if isinstance(tool, dict) and "cache_control" in tool:
+            found.append(
+                ((_TOOLS_BLOCK, index), _retention_rank(tool["cache_control"])),
+            )
+    for index, message in enumerate(messages):
         if not isinstance(message, dict):
             continue
         if "cache_control" in message:
-            total += 1
+            found.append(
+                ((_MESSAGES_BLOCK, index), _retention_rank(message["cache_control"])),
+            )
         content = message.get("content")
         if isinstance(content, list):
-            total += sum(
-                1 for part in content
-                if isinstance(part, dict) and "cache_control" in part
-            )
-    for tool in tools or ():
-        if isinstance(tool, dict) and "cache_control" in tool:
-            total += 1
-    return total
+            for part in content:
+                if isinstance(part, dict) and "cache_control" in part:
+                    found.append((
+                        (_MESSAGES_BLOCK, index),
+                        _retention_rank(part["cache_control"]),
+                    ))
+    return found
+
+
+def _ordering_allows(
+    position: _Position, rank: int, ranked: List[Tuple[_Position, int]],
+) -> bool:
+    """Whether a marker of ``rank`` at ``position`` keeps retention order legal.
+
+    Rule 4 is "longer TTL first", so the ranks along the prompt must be
+    non-increasing. Every marker agentao places carries the *same* configured
+    rank, which collapses the check to two questions per site: is there a
+    shorter-lived marker at or before this position (placing a longer-lived one
+    after it is illegal), and is there a longer-lived one at or after it
+    (placing a shorter-lived one before it is illegal).
+
+    Equal ranks are fine in either direction — non-increasing, not decreasing —
+    which is why an all-``5m`` or all-``1h`` request never loses a breakpoint to
+    this check, and neither does the ordinary case of no caller markers at all.
+    """
+    for other_position, other_rank in ranked:
+        if other_rank < rank and other_position <= position:
+            return False
+        if other_rank > rank and other_position >= position:
+            return False
+    return True
