@@ -807,12 +807,22 @@ class TestChatStreamRetry:
 
         client = _make_client()
         err = _make_status_error(429, retry_after="0", cls=openai.RateLimitError)
-        client.client.chat.completions.create = MagicMock(side_effect=err)
 
-        # Cancellation token reports cancelled → _interruptible_sleep returns False
-        # immediately → chat_stream raises without making a second create() call.
+        # Cancelled *while the first request is out*, which is what the name
+        # says. A token cancelled from the start no longer reaches create() at
+        # all (tests/test_cancel_before_send.py), so it cannot stand in for
+        # this. Once cancelled, _interruptible_sleep returns False immediately
+        # → chat_stream raises without making a second create() call.
         token = MagicMock()
-        token.is_cancelled = True
+        token.is_cancelled = False
+
+        def _rate_limited_then_cancelled(**_kwargs):
+            token.is_cancelled = True
+            raise err
+
+        client.client.chat.completions.create = MagicMock(
+            side_effect=_rate_limited_then_cancelled
+        )
 
         # Force any computed delay to be > 0 so _interruptible_sleep is exercised.
         monkeypatch.setattr(

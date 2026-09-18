@@ -29,6 +29,20 @@ _Targeting 0.5.1. Add entries under the relevant heading as work lands._
   value is stored but not sent, and point at `LLM_EXTRA_BODY`. It is still
   stored: the value is the client's, and a `/provider` switch back to Chat
   Completions sends it. Chat Completions answers are unchanged.
+- **A turn cancelled before its request goes out no longer sends it.** Both
+  wire adapters first read the cancellation token *inside* their event loop —
+  after the POST had gone out and the first event had come back — so a turn
+  cancelled in the gap still sent the generation request, paid for the whole
+  prompt (and a cache write, with `LLM_PROMPT_CACHE` on), and only then hung
+  up. On the `anthropic-messages` wire the gap was seconds wide, because the
+  Models API lookup runs in it and cannot be interrupted. `chat_stream` now
+  checks the token on both sides of that lookup: a turn already cancelled does
+  not start it, and one cancelled during it sends nothing. The exit is the one
+  a mid-stream cancel already takes — an empty response with
+  `finish_reason_reported` false, which the turn reports as
+  `status="cancelled"` — not a new exception. The lookup itself is still not
+  interruptible; what is promised is that a cancelled task is not *continued*
+  once it returns.
 
 ---
 

@@ -100,6 +100,8 @@ _MAX_TOKENS_CAP = re.compile(r"max_tokens:\s*(\d+)\s*>\s*(\d+)")
 #: first turn for the SDK's ten-minute default.
 #: httpx applies it per phase (connect, write, read, pool), so it bounds each
 #: one rather than the whole lookup, and the lookup is not cancellable.
+#: ``LLMClient.chat_stream`` reads the token on both sides of it instead, so a
+#: turn cancelled meanwhile is not continued once this returns.
 _MODEL_INFO_TIMEOUT_S = 5.0
 _MODEL_INFO_ATTEMPTS = 2
 
