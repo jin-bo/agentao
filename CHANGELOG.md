@@ -5,9 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.4.26. Add entries under the relevant heading as work lands._
+## [0.4.26] — 2026-09-18
 
 ### Added
 
@@ -21,14 +19,14 @@ _Targeting 0.4.26. Add entries under the relevant heading as work lands._
   returning 400. Markers are **copy-on-mark** and applied at the wire boundary
   (`llm/client.py::_build_request_kwargs`), so they never enter `agent.messages`,
   session files, the replay record or compaction, and cannot accumulate across
-  turns; any the caller already placed count against the three. The volatile
-  tail is deliberately excluded from the conversation breakpoint — it differs on
-  the next request by construction, so a marker there would buy a cache write
-  nothing reads back. **Off by default**, and never inferred from a base URL or
-  a model name: agentao verified that the OpenAI SDK forwards the key unchanged
-  (openai 2.24.0), not that any particular gateway honours it, so the operator
-  names the format for an endpoint they have verified. An unknown value raises
-  at startup rather than silently disabling the thing it was set to enable.
+  turns. The volatile tail is deliberately excluded from the conversation
+  breakpoint — it differs on the next request by construction, so a marker
+  there would buy a cache write nothing reads back. **Off by default**, and
+  never inferred from a base URL or a model name: agentao verified that the
+  OpenAI SDK forwards the key unchanged (openai 2.24.0), not that any
+  particular gateway honours it, so the operator names the format for an
+  endpoint they have verified. An unknown value raises at startup rather than
+  silently disabling the thing it was set to enable.
   Markers a host placed itself count against the three, are never overwritten,
   and constrain where agentao may add its own: Anthropic's caching
   documentation requires longer-lived cache entries to precede shorter-lived

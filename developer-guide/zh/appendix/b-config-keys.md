@@ -24,6 +24,8 @@ Agentao 读取的所有开关——先看环境变量，再看磁盘上的 JSON�
 | `LLM_TEMPERATURE` | `0.2` | 采样温度（0.0–2.0）。畸形值在启动时**抛错** |
 | `LLM_MAX_TOKENS` | 未设 | 单次调用的 LLM completion tokens 上限。畸形值在启动时**抛错** |
 | `LLM_EXTRA_BODY` | 未设 | JSON **对象**，原样转发给 LLM `.create()` 的 SDK `extra_body` —— `reasoning_effort` / `top_p` / `seed` / `response_format` / provider 专有字段的逃生舱。等价于构造参数 `extra_body=`。例：`LLM_EXTRA_BODY='{"reasoning_effort":"high"}'`。与上面两个不同，畸形*或*合法但非对象的值会**告警并跳过**（不致命）；空/纯空白当未设（静默）。日志中凭据键脱敏 |
+| `LLM_PROMPT_CACHE` | 关闭 | 显式 prompt 缓存断点（0.4.26）：`anthropic`，或 `off` / 空 / 未设。开启后，每个 agent 回合的请求最多带 3 个 Anthropic 风格的 `cache_control` 标记 —— system 消息、最后一个工具定义、稳定历史的末尾。**需显式开启，绝不从 base URL 或模型名推断**：只对你已确认会转发这个键的端点设置。未知值在启动时**抛错**。等价于构造参数 `prompt_cache=`。开启前要在端点上确认的事项见 `docs/reference/configuration.zh.md` §2 |
+| `LLM_PROMPT_CACHE_TTL` | `5m` | 上述标记的保留时长提示：`5m` 或 `1h`。`LLM_PROMPT_CACHE` 关闭时不读取 —— 连校验也不做。等价于构造参数 `prompt_cache_ttl=` |
 | `AGENTAO_CONTEXT_TOKENS` | `200000` | 上下文预算；超出触发压缩 |
 | `AGENTAO_WORKING_DIRECTORY` | — | 启动时覆盖工作目录（等价于构造器 `working_directory=`） |
 | `AGENTAO_SCRUB_CHILD_ENV` | 开启 | shell 与 MCP 子进程是否继承 agentao **自己的** provider 凭据。默认会把 `HARNESS_ENV_KEYS`（`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`LLM_EXTRA_BODY`……）从子进程环境剔除。设为 `0`/`false`/`no`/`off` 恢复完整继承——在 agent 自己的 shell 里跑 `agentao run` 或任何调用 provider 的脚本时需要。只剔除 agentao 自己的 key；`AWS_*`、`GITHUB_TOKEN`、`DATABASE_URL` 原样保留。见 `capabilities/process.py::build_child_env` |
