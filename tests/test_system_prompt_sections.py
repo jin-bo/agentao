@@ -67,8 +67,15 @@ def test_stable_prefix_order_full():
           "Completion Standard → Untrusted Input → Operational Guidelines → <memory-stable>")
 
 
-def test_volatile_suffix_after_memory_stable():
-    """Skills, todos, and dynamic recall live below <memory-stable>."""
+def test_the_volatile_blocks_are_not_in_the_system_message():
+    """Stage 0a: the system message ends at <memory-stable>.
+
+    This is the assertion the whole change exists for. While the volatile
+    blocks sat inside ``messages[0]``, one ``todo_write`` invalidated the
+    provider's cached prefix over the entire history. Every other test that
+    checks volatile *wording* reads system + tail together; this one is where
+    the split itself is pinned, in both directions.
+    """
     agent = _make_agent()
     # Force renderable volatile content
     agent.memory_tool.execute(key="suffix_probe", value="v")
@@ -76,19 +83,35 @@ def test_volatile_suffix_after_memory_stable():
         {"content": "step one", "status": "pending"},
     ])
     prompt = agent._build_system_prompt()
+    tail = agent._build_volatile_tail()
 
-    mem_idx = prompt.find("<memory-stable>")
-    assert mem_idx != -1
-    todo_idx = prompt.find("=== Current Task List ===")
-    assert todo_idx != -1, "Todo block must render when todos exist"
-    assert todo_idx > mem_idx, (
-        f"Todo block (pos {todo_idx}) must follow <memory-stable> (pos {mem_idx})"
-    )
+    assert "<memory-stable>" in prompt, "stable memory block must stay in system"
+    for marker in (
+        "=== Available Skills ===",
+        "=== Active Skills ===",
+        "=== Current Task List ===",
+        "<memory-context>",
+        "=== PLAN MODE ===",
+    ):
+        assert marker not in prompt, (
+            f"{marker!r} is volatile and must not be in the system message"
+        )
 
-    skills_idx = prompt.find("=== Available Skills ===")
-    if skills_idx != -1:
-        assert skills_idx > mem_idx, "Available Skills must follow <memory-stable>"
-    print("✅ Volatile suffix (todos/skills) sits after <memory-stable>")
+    assert "=== Current Task List ===" in tail, "todos must render in the tail"
+    assert "step one" in tail
+    assert tail.startswith("<system-reminder>")
+    assert tail.endswith("</system-reminder>")
+    print("✅ Volatile blocks left the system message for the request-only tail")
+
+
+def test_the_volatile_tail_is_empty_when_nothing_volatile_renders():
+    """No todos, no skills, no plan, no recall → no tail, and the request is
+    then byte-identical to the pre-0a one."""
+    agent = _make_agent()
+    agent.skill_manager.available_skills = {}
+    agent.skill_manager.active_skills = {}
+    assert agent._build_volatile_tail() == ""
+    print("✅ Empty volatile state sends no tail message")
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +279,8 @@ if __name__ == "__main__":
     print()
     tests = [
         test_stable_prefix_order_full,
-        test_volatile_suffix_after_memory_stable,
+        test_the_volatile_blocks_are_not_in_the_system_message,
+        test_the_volatile_tail_is_empty_when_nothing_volatile_renders,
         test_identity_lists_four_domains,
         test_identity_signals_coding_is_one_of_four,
         test_explore_before_ask_triggers,

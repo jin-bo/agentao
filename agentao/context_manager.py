@@ -43,6 +43,14 @@ def _get_tiktoken_encoding(model: str):
     return None
 
 
+#: Per-message framing the provider bills on top of content (role, delimiters).
+#: OpenAI's own cookbook counts 4 for a Chat Completions message; the exact
+#: number is provider-specific and small. Used **only** by
+#: ``estimate_request_tail_tokens`` — see the note there for why the rest of
+#: the estimator can afford to ignore it and that one caller cannot.
+_MESSAGE_ENVELOPE_TOKENS = 4
+
+
 def _heuristic_token_count(text: str) -> int:
     """CJK-aware token estimation (adapted from gemini-cli tokenCalculation.ts).
 
@@ -273,12 +281,21 @@ class ContextManager:
         # Stats from the last completed compaction (surfaced via get_usage_stats)
         self._last_compact_stats: Optional[Dict[str, Any]] = None
 
-        # Tier 1: last real prompt_tokens from API response (updated after each LLM call)
+        # Tier 1: real prompt_tokens from the last API response, **minus the
+        # request-only volatile tail** — i.e. the real cost of the *persistent*
+        # prefix, which is the only part the next request re-sends unchanged.
         self._last_api_prompt_tokens: Optional[int] = None
-        # Length of the message list that produced _last_api_prompt_tokens, so the
+        # Length of the persistent message list that produced
+        # _last_api_prompt_tokens (system + history, excluding the tail), so the
         # hot-path threshold check can reuse the real count for the already-sent
         # prefix and only locally estimate messages appended since.
         self._api_anchor_msg_count: Optional[int] = None
+        # The same response's prompt_tokens **unmodified** — what the last
+        # request actually cost, tail included. Reporting only (``/context``).
+        # Named apart from the anchor above because they answer two different
+        # questions and must never be wired into each other: the anchor is a
+        # prefix the next request reuses, this is one request's total bill.
+        self._last_api_request_tokens: Optional[int] = None
         # Tier 3: cached tiktoken encoding; None = CJK-aware heuristic fallback
         self._encoding = _get_tiktoken_encoding(self.llm_client.model)
 
@@ -286,18 +303,49 @@ class ContextManager:
     # Token estimation
     # -----------------------------------------------------------------------
 
-    def record_api_usage(self, prompt_tokens: int, message_count: Optional[int] = None) -> None:
+    def record_api_usage(
+        self,
+        prompt_tokens: int,
+        message_count: Optional[int] = None,
+        *,
+        tail_tokens: int = 0,
+    ) -> None:
         """Store real prompt_tokens from the latest API response (Tier 1).
 
-        ``message_count`` is the length of the message list that produced this
-        count (system + history, as sent). When provided it anchors the
-        hot-path threshold estimate so subsequent turns reuse the real count
-        for the already-sent prefix instead of re-encoding the whole history.
-        Omitting it (legacy callers) clears the anchor and forces the full
-        local estimate.
+        ``message_count`` is the length of the **persistent** message list that
+        produced this count (system + history) — *not* the length of the request
+        when a request-only volatile tail was appended to it. When provided it
+        anchors the hot-path threshold estimate so subsequent turns reuse the
+        real count for the already-sent prefix instead of re-encoding the whole
+        history. Omitting it (legacy callers) clears the anchor and forces the
+        full local estimate.
+
+        ``tail_tokens`` is the local estimate of that request-only tail, frozen
+        at send time by the caller. It is subtracted here so the anchor
+        describes the persistent prefix and nothing else. Recording the
+        request's own length and total instead makes the next slice both skip
+        the first new history message *and* count a new tail on top of the old
+        one — a per-turn error at whole-tail scale, and one that fires every
+        turn rather than settling. The price of the subtraction is that Tier 1
+        is now "truth minus a local estimate": an error in ``tail_tokens``
+        lands in the anchor. That is the smaller error, and it is bounded by
+        the tail, which is the smallest part of the request.
         """
-        self._last_api_prompt_tokens = prompt_tokens
+        if (
+            tail_tokens
+            and isinstance(prompt_tokens, int)
+            and not isinstance(prompt_tokens, bool)
+        ):
+            # Clamped: a tail estimate larger than the provider's own count
+            # (an image-bearing tail, a tokenizer mismatch) must not anchor a
+            # negative prefix. ``_threshold_token_estimate`` guards a
+            # non-integer ``prompt_tokens`` on its own, so a provider's
+            # malformed usage field is left exactly as it was before.
+            self._last_api_prompt_tokens = max(0, prompt_tokens - tail_tokens)
+        else:
+            self._last_api_prompt_tokens = prompt_tokens
         self._api_anchor_msg_count = message_count
+        self._last_api_request_tokens = prompt_tokens
 
     def invalidate_token_anchor(self) -> None:
         """Drop the Tier-1 anchor after history is mutated in place.
@@ -308,22 +356,34 @@ class ContextManager:
         """
         self._last_api_prompt_tokens = None
         self._api_anchor_msg_count = None
+        self._last_api_request_tokens = None
 
-    def _threshold_token_estimate(self, messages: List[Dict[str, Any]]) -> int:
+    def _threshold_token_estimate(
+        self, messages: List[Dict[str, Any]], tail_tokens: int = 0,
+    ) -> int:
         """Token count for hot-path threshold checks.
 
-        Reuses the real prompt_tokens from the last API response (Tier 1) for
-        the already-sent prefix and locally estimates only the messages
-        appended since, avoiding a full re-encode of the history every turn.
-        Falls back to a full local estimate when no fresh anchor is available
-        (no API count yet, or right after compaction).
+        ``messages`` is the **persistent** list (system + history). Reuses the
+        real prompt_tokens from the last API response (Tier 1) for the
+        already-sent prefix and locally estimates only the messages appended
+        since, avoiding a full re-encode of the history every turn. Falls back
+        to a full local estimate when no fresh anchor is available (no API
+        count yet, or right after compaction).
+
+        ``tail_tokens`` is the estimate for the request-only volatile tail this
+        request will carry. It is added on top rather than folded into
+        ``messages`` because the tail is not part of the anchored prefix and
+        never enters history: the anchor was recorded with it subtracted, so
+        adding it back here is what makes the two halves agree. Passing 0
+        estimates a request with no tail.
 
         Note: ``messages[0]`` (the system prompt) lives inside the anchored
-        prefix, but it is rebuilt every turn with volatile content (memory
-        recall, todos, active skills, timestamp). The anchor therefore charges
-        the *previous* turn's system-prompt size for one turn until the next
-        API response re-anchors — a bounded, self-healing accuracy trade-off,
-        not a correctness bug. Do not "fix" it by trusting the anchor harder.
+        prefix. Since 0a it is stable within a session, so the anchor charges
+        the right size for it on every turn but the ones where a *stable*
+        section changes (a new stable memory, an agent list change); those
+        still charge the previous turn's size for one turn until the next API
+        response re-anchors — a bounded, self-healing accuracy trade-off, not a
+        correctness bug. Do not "fix" it by trusting the anchor harder.
         """
         anchor = self._last_api_prompt_tokens
         n = self._api_anchor_msg_count
@@ -336,8 +396,24 @@ class ContextManager:
             or not isinstance(n, int)
             or n > len(messages)
         ):
-            return self.estimate_tokens(messages)
-        return anchor + sum(self._count_message_tokens(m) for m in messages[n:])
+            return self.estimate_tokens(messages) + tail_tokens
+        return (
+            anchor
+            + sum(self._count_message_tokens(m) for m in messages[n:])
+            + tail_tokens
+        )
+
+    def estimate_request_tail_tokens(self, message: Dict[str, Any]) -> int:
+        """Estimate one request-only tail message, envelope included.
+
+        The envelope constant is the piece :meth:`_count_message_tokens` does
+        not charge: it counts content, and the provider also bills the role and
+        the framing around it. Everywhere else that omission is harmless
+        because it is uniform on both sides of a comparison — here it is not,
+        because this number is *subtracted from the provider's own count* in
+        :meth:`record_api_usage`, so whatever it misses is left in the anchor.
+        """
+        return self._count_message_tokens(message) + _MESSAGE_ENVELOPE_TOKENS
 
     def count_tokens_in_text(self, text: str) -> int:
         """Count tokens via tiktoken; fall back to CJK-aware heuristic."""
@@ -393,11 +469,19 @@ class ContextManager:
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
+        tail: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, int]:
         """Per-component token breakdown (always local estimate).
 
-        Returns dict with keys: system, messages, tools, total.
+        Returns dict with keys: system, messages, tail, tools, total.
         Only called at reporting time, not in hot-path threshold checks.
+
+        ``tail`` is the request-only volatile tail message, reported in its own
+        bucket rather than folded into ``messages`` (it is not history) or into
+        ``system`` (it is not the cached prefix — which is the one thing a
+        reader of this breakdown most needs to be able to tell). Omitted, its
+        bucket is 0 and ``total`` excludes it, which is the right answer for a
+        caller measuring a message list that was never going to carry one.
         """
         system_tokens = 0
         message_tokens = 0
@@ -407,6 +491,7 @@ class ContextManager:
                 system_tokens += count
             else:
                 message_tokens += count
+        tail_tokens = self.estimate_request_tail_tokens(tail) if tail else 0
         tools_tokens = 0
         if tools is not None:
             try:
@@ -414,10 +499,11 @@ class ContextManager:
             except Exception:
                 tools_str = str(tools)
             tools_tokens = self.count_tokens_in_text(tools_str)
-        total = system_tokens + message_tokens + tools_tokens
+        total = system_tokens + message_tokens + tail_tokens + tools_tokens
         return {
             "system": system_tokens,
             "messages": message_tokens,
+            "tail": tail_tokens,
             "tools": tools_tokens,
             "total": total,
         }
@@ -2159,13 +2245,18 @@ class ContextManager:
 
         Returns:
             Dict with estimated_tokens, token_count_source ("api"/"local"),
-            token_breakdown (system/messages/tools/total), max_tokens,
+            token_breakdown (system/messages/tail/tools/total), max_tokens,
             usage_percent, message_count, circuit_breaker_failures,
             and (if available) last_compact metadata.
         """
         breakdown = self.estimate_tokens_breakdown(messages, tools=tools)
-        # Tier 1: prefer real count from last API response
-        if self._last_api_prompt_tokens is not None:
+        # Tier 1: prefer real count from last API response. The *request*
+        # total, not the prefix anchor — this is a "what did the last turn
+        # cost" surface, and the anchor has the volatile tail subtracted out.
+        if self._last_api_request_tokens is not None:
+            estimated = self._last_api_request_tokens
+            source = "api"
+        elif self._last_api_prompt_tokens is not None:
             estimated = self._last_api_prompt_tokens
             source = "api"
         else:

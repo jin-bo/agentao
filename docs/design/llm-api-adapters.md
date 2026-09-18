@@ -1,10 +1,44 @@
 # Multi-wire-API support: `anthropic-messages`, `openai-responses` and `gemini-api`
 
-**Status:** **Proposed — not authorized for implementation. rev 10, review corrections (2026-09-18).** No code has been written. This records the seam, the three
-options for where to put it, the recommendation, the verified translation hazards
-inside agentao's own history format, and a staged plan. Nothing here should be
-built without an explicit decision on §2 (does the benefit justify the cost) and
-§12 (open questions).
+**Status:** **Stage 0 implemented (0.4.26, unreleased). Stages 1–3 proposed and not
+authorized. rev 11 (2026-09-17).** §2.3's stage 0a and 0b are on `main`; no
+adapter and no second wire protocol has been written, and stage 1 still needs an
+explicit decision on §2 (does the benefit justify the cost) and §12 (open
+questions) — starting with §12.1, which stage 0 exists to answer. This document
+otherwise records the seam, the three options for where to put it, the
+recommendation, the verified translation hazards inside agentao's own history
+format, and the staged plan.
+
+**What stage 0 landed** (`prompts/builder.py`, `agent.py`, `runtime/chat_loop/_runner.py`,
+`runtime/llm_call.py`, `context_manager.py`, `llm/_cache_control.py`, `llm/client.py`,
+`embedding/factory.py`; `tests/test_volatile_tail_request.py`,
+`tests/test_prompt_cache_breakpoints.py`):
+
+- **0a** — skills, active-skill bodies, todos, `<memory-context>` and the plan
+  prompt moved out of the system message into one request-only `<system-reminder>`
+  tail, appended at a single choke point (`_call_llm_with_overflow_recovery`'s
+  `_send`, the only caller of `agent._llm_call`) so all seven assembly sites keep
+  building the persistent prefix and none can lose or duplicate a tail. The
+  Tier-1 anchor correction landed with it:
+  `record_api_usage(prompt_tokens, len(persistent), tail_tokens=est(T))`, with the
+  §11 drift gate as a test over 12 turns of deliberately varied tail size.
+- **0b** — opt-in explicit `cache_control` (`LLM_PROMPT_CACHE=anthropic`,
+  `prompt_cache=`), at most 3 breakpoints with the 4th slot reserved, copy-on-mark,
+  applied in `_build_request_kwargs` (below replay) and per call (so the
+  summarizer is not marked). Off by default: endpoint acceptance is still
+  unverified, which is the one thing this design said must not be assumed.
+
+**What stage 0's own gate still needs:** measured cache-hit rates and cost, 0a
+against the pre-0a build and 0b against 0a, on a real endpoint. The local
+measurement so far is structural, not billed: the system message is 2,350 tokens
+and now byte-identical turn to turn, against a re-sent tail of ~1.8k tokens of
+which 1,779 is the available-skills catalogue. That ratio is repo-specific and is
+the number to check first — see §13's "Stop at stage 0".
+
+**rev 11 — what changed:** Stage 0 was implemented; the status block above records
+what landed, where, and what its gate still needs. The design text below is
+unchanged from rev 10 — it is the record the implementation was built from, and
+the one stage 1 would be judged against.
 
 **rev 10 — what changed:** Verified a second corroborating implementation, gemini-cli
 (`9450ade79`, `@google/genai` 1.30.0): one GenerateContent protocol serving three access

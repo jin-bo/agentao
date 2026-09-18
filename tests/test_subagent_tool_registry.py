@@ -71,9 +71,11 @@ def _sub_agents_call(monkeypatch, *calls, prompts=None):
     was made with, and the sub-agents that ran. Keyed by call, not by the name
     on the result message, which the planner's name repair can change.
 
-    ``prompts``, when given a list, also collects the system prompt each
-    sub-agent would send on its *next* turn — built while it is still alive,
-    which is the only place the effect of an activation is visible."""
+    ``prompts``, when given a list, also collects what each sub-agent would
+    instruct itself with on its *next* turn — the system message plus the
+    request-only volatile tail, since stage 0a put the skills blocks in the
+    latter — built while it is still alive, which is the only place the effect
+    of an activation is visible."""
     results, sub_agents = {}, []
 
     def chat(self, user_message, max_iterations=100, cancellation_token=None, images=None):
@@ -85,7 +87,9 @@ def _sub_agents_call(monkeypatch, *calls, prompts=None):
         by_id = {m["tool_call_id"]: m["content"] for m in messages}
         results.update({c.function.name: by_id[c.id] for c in calls})
         if prompts is not None:
-            prompts.append(self._build_system_prompt())
+            prompts.append(
+                self._build_system_prompt() + self._build_volatile_tail()
+            )
         return ""
 
     monkeypatch.setattr(Agentao, "chat", chat)
@@ -485,7 +489,9 @@ def test_parent_disablement_does_not_revoke_a_running_background_child(
             _call("activate_skill", skill_name="demo-skill", task_description="t"),
         ])
         results.extend(m["content"] for m in messages)
-        prompts.append(self._build_system_prompt())
+        prompts.append(
+            self._build_system_prompt() + self._build_volatile_tail()
+        )
         return ""
 
     monkeypatch.setattr(Agentao, "chat", chat)
@@ -502,7 +508,9 @@ def test_parent_disablement_does_not_revoke_a_running_background_child(
         assert any("Skill Activated: demo-skill" in result for result in results)
         assert "MARKER-DEMO-BODY" in prompts[0]
         assert parent.skill_manager.get_active_skills() == {}
-        assert "MARKER-DEMO-BODY" not in parent._build_system_prompt()
+        assert "MARKER-DEMO-BODY" not in (
+            parent._build_system_prompt() + parent._build_volatile_tail()
+        )
     finally:
         resume.set()
         for worker in workers:

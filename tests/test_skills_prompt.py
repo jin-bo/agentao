@@ -1,4 +1,10 @@
-"""Test that skills are included in system prompt."""
+"""Skills reach the turn's prompt.
+
+Since stage 0a the two skills blocks ride the request-only volatile tail
+rather than the system message, so every assertion here reads both. The
+negative one especially: against the system message alone it would now
+hold no matter what the catalogue did.
+"""
 
 import os
 from pathlib import Path
@@ -27,7 +33,7 @@ def test_skills_in_system_prompt():
     print("=" * 80)
 
     # Build system prompt
-    system_prompt = agent._build_system_prompt()
+    system_prompt = (agent._build_system_prompt() + agent._build_volatile_tail())
 
     print("\n=== SYSTEM PROMPT ===")
     print(system_prompt)
@@ -54,7 +60,7 @@ def test_skills_in_system_prompt():
     print(f"Activated skill: {activation_target} -> {result[:100]}...")
 
     # Rebuild system prompt after activation
-    system_prompt_after = agent._build_system_prompt()
+    system_prompt_after = (agent._build_system_prompt() + agent._build_volatile_tail())
     assert "=== Active Skills ===" in system_prompt_after
     assert activation_target in system_prompt_after
 
@@ -96,7 +102,7 @@ def _agent_with_a_skill(tmp_path, monkeypatch, **kwargs):
 def test_the_catalogue_renders_when_activate_skill_is_registered(tmp_path, monkeypatch):
     agent = _agent_with_a_skill(tmp_path, monkeypatch)
     try:
-        prompt = agent._build_system_prompt()
+        prompt = (agent._build_system_prompt() + agent._build_volatile_tail())
     finally:
         agent.close()
 
@@ -111,7 +117,7 @@ def test_the_catalogue_is_dropped_when_activate_skill_is_not_registered(tmp_path
     the model to "use the activate_skill tool" that it does not have."""
     agent = _agent_with_a_skill(tmp_path, monkeypatch, disable_tools={"activate_skill"})
     try:
-        prompt = agent._build_system_prompt()
+        prompt = (agent._build_system_prompt() + agent._build_volatile_tail())
     finally:
         agent.close()
 
@@ -127,7 +133,7 @@ def test_an_active_skill_still_renders_without_the_tool(tmp_path, monkeypatch):
     agent = _agent_with_a_skill(tmp_path, monkeypatch, disable_tools={"activate_skill"})
     try:
         agent.skill_manager.activate_skill("demo-skill", "task")
-        prompt = agent._build_system_prompt()
+        prompt = (agent._build_system_prompt() + agent._build_volatile_tail())
     finally:
         agent.close()
 

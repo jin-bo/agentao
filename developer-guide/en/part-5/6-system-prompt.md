@@ -1,53 +1,70 @@
 # 5.6 System Prompt Customization
 
 > **What you'll learn**
-> - The 11 blocks the system prompt is composed from each turn
+> - The 16 blocks the agent's instructions are composed from, and which of the
+>   two messages each one rides
 > - Which 3 you actually own (AGENTAO.md, skills, custom Tool descriptions)
-> - Which 8 are runtime-injected and not safe to override
+> - Which ones are runtime-injected and not safe to override
 
-The agent's system prompt is **rebuilt every `chat()` turn**, not a static string. This section walks through the 11 stitched blocks — where each comes from, which you can customize, and which you shouldn't touch.
+The agent's instructions are **rebuilt every `chat()` turn**, not a static string, and they arrive in **two** messages: a stable system message, and a volatile `user` tail assembled per request and never persisted. This section walks through the stitched blocks — where each comes from, which you can customize, and which you shouldn't touch.
 
 ## System prompt structure
 
+Two messages carry the instructions, not one. The **system message** is the
+stable half; the volatile half rides a trailing `user` message rebuilt on every
+request and never written into the transcript.
+
 ```
-┌────────────────────────────────────────────┐
-│ System prompt                               │
-│                                            │
-│ ┌─────────────────────────────────────┐    │
-│ │ 1. Project instructions (AGENTAO.md)│    │  ← you write
-│ ├─────────────────────────────────────┤    │
-│ │ 2. Agent capability description     │    │  ← fixed
-│ ├─────────────────────────────────────┤    │
-│ │ 3. Reliability principles           │    │  ← fixed
-│ ├─────────────────────────────────────┤    │
-│ │ 4. Operational rules (tone, tools)  │    │  ← fixed
-│ ├─────────────────────────────────────┤    │
-│ │ 5. Reasoning directive (if thinking)│    │  ← conditional
-│ ├─────────────────────────────────────┤    │
-│ │ 6. Available sub-agents             │    │  ← fixed list
-│ ├─────────────────────────────────────┤    │
-│ │ === STABLE PREFIX ENDS (cacheable) =│    │
-│ ├─────────────────────────────────────┤    │
-│ │ 7. Available skills catalog         │    │  ← changes on activation
-│ ├─────────────────────────────────────┤    │
-│ │ 8. Active skills full text          │    │  ← changes on activation
-│ ├─────────────────────────────────────┤    │
-│ │ 9. Current todos                    │    │  ← dynamic
-│ ├─────────────────────────────────────┤    │
-│ │ 10. <memory-stable> stable memories │    │  ← slow-changing
-│ ├─────────────────────────────────────┤    │
-│ │ 11. <memory-context> dynamic recall │    │  ← per-turn
-│ ├─────────────────────────────────────┤    │
-│ │ 12. Plan-mode suffix (conditional)  │    │  ← conditional
-│ └─────────────────────────────────────┘    │
-│                                            │
-│ ┌─────────────────────────────────────┐    │
-│ │ <system-reminder>                   │    │  ← per-turn
-│ │ Current Date/Time: 2026-04-16 15:30 │    │
-│ │ </system-reminder>                  │    │
-│ └─────────────────────────────────────┘    │
-└────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ System message — stable for a whole session   │
+│                                              │
+│  1. Project instructions (AGENTAO.md)        │  ← you write
+│  2. Identity / capability description        │  ← fixed
+│  3. Reliability principles                   │  ← fixed
+│  4. Task classification                      │  ← fixed
+│  5. Execution protocol                       │  ← fixed
+│  6. Completion standard                      │  ← fixed
+│  7. Untrusted-input boundary                 │  ← fixed
+│  8. Operational guidelines                   │  ← fixed
+│  9. Reasoning directive (if thinking)        │  ← conditional
+│ 10. Available sub-agents                     │  ← fixed list
+│ 11. <memory-stable> stable memories          │  ← slow-changing
+│     === the cacheable prefix ends here ===   │
+└──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ …conversation history…                        │
+│ this turn's user message (persisted):        │
+│   <system-reminder>                          │  ← per turn
+│   Current Date/Time: 2026-04-16 15:30        │
+│   </system-reminder>                         │
+│   <the text you passed to chat()>            │
+└──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ Volatile tail — one user message, request-only│
+│   <system-reminder>                          │
+│ 12. Available skills catalog                 │  ← changes on activation
+│ 13. Active skills full text                  │  ← changes on activation
+│ 14. Current todos                            │  ← dynamic, per request
+│ 15. <memory-context> dynamic recall          │  ← per turn
+│ 16. Plan-mode prompt (conditional)           │  ← conditional
+│   </system-reminder>                         │
+└──────────────────────────────────────────────┘
 ```
+
+**The tail is request-only.** It is assembled for one outgoing request and is
+never appended to `agent.messages`, so it does not reach the session file, the
+replay record or compaction. Do not copy the date/time reminder's pattern for
+new volatile content: that one *is* persisted, and a persisted tail would pile
+one todos snapshot into the transcript per turn.
+
+Blocks 12–16 left the system message in 0.4.26 (stage 0a of
+`docs/design/llm-api-adapters.md` §2.3). They were the reason the "stable"
+prefix was not actually stable: `<memory-context>` is query-specific, so it
+changed every turn, and since `messages[0]` is the head of the provider's
+cached prefix, that invalidated the cache covering the **whole history** every
+turn. One side effect worth knowing: because the tail is rebuilt per *request*
+rather than per turn, a `todo_write` the model makes in one tool iteration is
+visible to the next one.
 
 ## Three injection points you own
 
@@ -110,10 +127,13 @@ If you want to **drastically reshape** agent behavior (remove a capability, impo
 ```python
 # Right after construction
 agent = Agentao(working_directory=Path.cwd())
-print(agent._build_system_prompt())
+print(agent._build_system_prompt())   # the stable system message
+print(agent._build_volatile_tail())   # the request-only tail ("" when empty)
 ```
 
-⚠️ `_build_system_prompt()` is private; not guaranteed stable. Debug only.
+⚠️ Both are private; not guaranteed stable. Debug only. `_build_system_prompt()`
+returns the stable half **only** — if you are looking for todos, the skills
+catalog or dynamic recall, they are in the tail.
 
 In production, log the **character length** as a metric:
 
@@ -130,21 +150,49 @@ A bloated prompt will:
 
 ## Prompt Cache tactics
 
-Agentao splits the prompt into "stable prefix + dynamic suffix" — the prefix is identical across turns, so vendor prompt caches **cut cost and latency significantly**.
+The system message is byte-identical across the turns of a session, so vendor
+prompt caches can reuse it — and, more importantly, reuse the history behind it.
 
 ### What goes in the stable prefix
 
-Blocks 1–6 (AGENTAO.md, capability, rules, reasoning, sub-agents).
+The whole system message (blocks 1–11), and then the conversation history
+itself. The prefix a provider can reuse ends at the last message that has not
+changed since the previous request.
 
 ### What breaks the cache
 
-- Mutating `AGENTAO.md` between turns
-- Switching activated skills (block 8 moves — the cache invalidates for that suffix, but blocks 1-6 stay cached — that's fine)
-- Adding todos / memories (blocks 9-11) **does not** break the prefix cache — they live after it
+- Mutating `AGENTAO.md` between turns — it is block 1, so this invalidates
+  everything.
+- A `save_memory` that lands in `<memory-stable>` (block 11).
+- A model or endpoint switch (agentao drops its own token anchor there too).
+- **Not** todos, skills, recall or the plan prompt: since 0.4.26 those live in
+  the request-only tail, *after* the history, so changing them costs one
+  uncached tail and nothing else.
+
+The trade: the tail is re-sent in full on every request. In this repo that is
+about 1.8k tokens, nearly all of it the available-skills catalog, against a
+2.3k-token cached system message. Measure it for your own deployment — a
+project with no skills on disk has a tail of a few dozen tokens.
+
+### Explicit breakpoints (opt-in)
+
+For an endpoint that honours Anthropic-style `cache_control` over the ordinary
+Chat Completions wire, set `LLM_PROMPT_CACHE=anthropic` (optionally
+`LLM_PROMPT_CACHE_TTL=1h`). agentao then marks at most three breakpoints per
+agent-turn request — the system message, the last tool definition, and the end
+of stable history — and leaves the fourth slot for the endpoint's own automatic
+caching.
+
+Off by default, and deliberately not inferred from your base URL or model name:
+agentao verified that the OpenAI SDK forwards the key unchanged, not that your
+gateway honours it. Verify your endpoint, then turn it on. See
+`docs/reference/configuration.md` §2.
 
 ### Monitor cache hit rate
 
-On OpenAI: response includes `usage.prompt_tokens_details.cached_tokens`. Ideal case: from turn 2 onward most of the system prompt is cached.
+On OpenAI: the response includes `usage.prompt_tokens_details.cached_tokens`.
+Ideal case: from turn 2 onward, the system message and everything but the newest
+messages and the tail is cached.
 
 ## Different AGENTAO.md per business line
 
@@ -233,9 +281,10 @@ AGENTAO.md is a project file — it may land in git, in memory, or in logs. **Ne
 
 ## TL;DR
 
-- The system prompt is **rebuilt every turn** — never assume it's a static string you can cache.
-- You own 3 of 11 blocks: **`AGENTAO.md`** (project hard rules), **skill bodies** (activated knowledge), **custom Tool descriptions** (when/how to call).
-- The other 8 — date, working directory, available tools/skills catalog, memory recall, todos, etc. — are runtime-injected and should not be overridden.
+- The instructions are **rebuilt every turn** — never assume they're a static string you can cache.
+- They arrive in **two messages**: a stable system message (blocks 1–11) and a request-only volatile tail (blocks 12–16, one `user` message that never enters the transcript).
+- You own 3 blocks: **`AGENTAO.md`** (project hard rules), **skill bodies** (activated knowledge), **custom Tool descriptions** (when/how to call).
+- The rest — date, working directory, available tools/skills catalog, memory recall, todos, etc. — are runtime-injected and should not be overridden.
 - Keep `AGENTAO.md` short and absolute ("never run X", "always use Y format") — long preambles dilute attention.
 
 → [Part 6 · Security & Production](/en/part-6/)

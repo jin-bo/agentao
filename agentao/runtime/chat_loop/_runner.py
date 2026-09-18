@@ -11,6 +11,18 @@ Plugin-hook dispatch and pre-LLM compaction live in sibling mix-in
 modules so the file you're reading is mostly the long ``run()`` method
 plus the three helpers it calls (``_inject_background_notifications``,
 ``_call_llm_with_overflow_recovery``, ``_emit_skill_and_memory_diffs``).
+
+**``messages_with_system`` is the persistent prefix, never the request.**
+The seven assembly sites in this file all build ``[system] + agent.messages``
+and nothing else. The volatile tail (skills, todos, dynamic recall, plan —
+stage 0a of ``docs/design/llm-api-adapters.md`` §2.3) is appended in exactly
+one place, ``_call_llm_with_overflow_recovery``'s ``_send``, which is the
+only code in the package that calls ``agent._llm_call``. That is what keeps
+all seven sites correct without seven wirings: none of them can lose or
+duplicate a tail they never hold. Appending the tail into
+``messages_with_system`` instead would hand it to compaction, to the
+threshold estimate twice over, and to the Tier-1 anchor as if it were
+history.
 """
 
 from __future__ import annotations
@@ -383,7 +395,16 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             # 55-80%, full >80%) and microcompaction only lowers the count, so
             # reusing the pre-mutation estimate yields the same fire/no-op
             # decision as recomputing — without the redundant second estimate.
-            est_tokens = agent.context_manager._threshold_token_estimate(messages_with_system)
+            # One volatile-tail build per iteration, shared by the threshold
+            # estimate, the request itself and the anchor arithmetic below.
+            # Building it again for the request would spend a second
+            # memory-recall pass and could hand the estimate a different tail
+            # than the request carried, which is the one thing the anchor
+            # subtraction cannot tolerate.
+            tail_msg, tail_tokens = self._volatile_tail()
+            est_tokens = agent.context_manager._threshold_token_estimate(
+                messages_with_system, tail_tokens=tail_tokens,
+            )
             messages_with_system, system_prompt = self._maybe_microcompact(
                 messages_with_system, system_prompt, tokens=est_tokens,
             )
@@ -406,6 +427,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 system_prompt,
                 tools,
                 token,
+                tail=tail_msg,
                 image_fallback_text=image_fallback_text if iteration == 1 else None,
                 image_fallback_index=image_fallback_index if iteration == 1 else None,
             )
@@ -422,10 +444,17 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             messages_with_system = llm_outcome.messages_with_system
             system_prompt = llm_outcome.system_prompt
 
-            # Tier 1 token count: record real prompt_tokens from API response
+            # Tier 1 token count: record real prompt_tokens from API response.
+            # Anchored on the **persistent** prefix — ``messages_with_system``
+            # is exactly that, and ``tail_tokens`` is the local estimate of the
+            # request-only tail that rode on top of it, subtracted out by
+            # ``record_api_usage``. Recording the request's own length and
+            # total would make the next slice skip the first new history
+            # message and re-charge a tail.
             if getattr(response, "usage", None) and getattr(response.usage, "prompt_tokens", None):
                 agent.context_manager.record_api_usage(
-                    response.usage.prompt_tokens, len(messages_with_system)
+                    response.usage.prompt_tokens, len(messages_with_system),
+                    tail_tokens=tail_tokens,
                 )
 
             assistant_message = response.choices[0].message
@@ -1123,6 +1152,41 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         return ChatLoopRunner._Step("return", value=assistant_content)
 
     # ------------------------------------------------------------------
+    # Request assembly — the volatile tail (stage 0a)
+    # ------------------------------------------------------------------
+
+    def _volatile_tail(self) -> tuple[Optional[Dict[str, Any]], int]:
+        """This request's volatile tail message plus its frozen token estimate.
+
+        ``(None, 0)`` when nothing volatile renders, in which case the request
+        is byte-for-byte the pre-0a one.
+
+        The returned dict is a plain ``user`` message and is appended to the
+        outgoing request only — never to ``agent.messages``. The two existing
+        ``<system-reminder>`` patterns (the per-turn date/time, background
+        notifications) are both persisted; this one is not, and conflating them
+        would pile a todos snapshot into the transcript every turn.
+        """
+        agent = self._agent
+        text = agent._build_volatile_tail()
+        # Type-check the answer, not the attribute: a ``MagicMock`` agent (this
+        # suite substitutes them freely) answers this call with a truthy mock,
+        # and sending that as message content would put a repr on the wire.
+        # Same fail-closed rule as the capability probes in CLAUDE.md.
+        if not isinstance(text, str) or not text:
+            return None, 0
+        msg: Dict[str, Any] = {"role": "user", "content": text}
+        try:
+            tail_tokens = agent.context_manager.estimate_request_tail_tokens(msg)
+        except Exception:  # noqa: BLE001 - estimation never fails a turn
+            tail_tokens = 0
+        if not isinstance(tail_tokens, int) or isinstance(tail_tokens, bool):
+            # Same reason as above. A mock estimate must not reach the anchor
+            # arithmetic, which would then subtract a mock from real usage.
+            tail_tokens = 0
+        return msg, tail_tokens
+
+    # ------------------------------------------------------------------
     # Plugin-hook dispatch
     # ------------------------------------------------------------------
 
@@ -1186,12 +1250,36 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         system_prompt: str,
         tools: list,
         token: CancellationToken,
+        tail: Optional[Dict[str, Any]] = None,
         image_fallback_text: Optional[str] = None,
         image_fallback_index: Optional[int] = None,
     ) -> "ChatLoopRunner._LlmOutcome":
+        """Send one request, recovering from image rejection and overflow.
+
+        Every ``_llm_call`` in the package goes through ``_send`` below, which
+        is where — and the only place where — the request-only volatile tail is
+        appended to the persistent prefix. The same ``tail`` is reused for
+        every attempt on the ladder: a compaction rewrites the system prompt
+        and the history, not skills / todos / recall / plan, so rebuilding it
+        per attempt would pay for a fresh memory-recall pass and return the
+        same text.
+        """
         agent = self._agent
+
+        def _send(persistent: list):
+            """Assemble ``persistent + [tail]`` and run one LLM attempt."""
+            if tail is None:
+                agent._llm_request_tail_count = 0
+                return agent._llm_call(persistent, tools, token)
+            # Recorded for ``run_llm_call``'s replay-delta baseline, which
+            # counts *history*: without it the next call's delta would start
+            # one message late and silently drop a history message from the
+            # audit record.
+            agent._llm_request_tail_count = 1
+            return agent._llm_call(persistent + [tail], tools, token)
+
         try:
-            response = agent._llm_call(messages_with_system, tools, token)
+            response = _send(messages_with_system)
             return ChatLoopRunner._LlmOutcome(
                 response=response,
                 messages_with_system=messages_with_system,
@@ -1210,7 +1298,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     {"role": "system", "content": system_prompt}
                 ] + agent.messages
                 try:
-                    response = agent._llm_call(messages_with_system, tools, token)
+                    response = _send(messages_with_system)
                     return ChatLoopRunner._LlmOutcome(
                         response=response,
                         messages_with_system=messages_with_system,
@@ -1263,7 +1351,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             system_prompt = run.system_prompt
             messages_with_system = run.messages_with_system
             try:
-                response = agent._llm_call(messages_with_system, tools, token)
+                response = _send(messages_with_system)
                 return ChatLoopRunner._LlmOutcome(
                     response=response,
                     messages_with_system=messages_with_system,
@@ -1311,7 +1399,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                         return ChatLoopRunner._LlmOutcome(error_return=err_msg)
                     messages_with_system = run.messages_with_system
                     try:
-                        response = agent._llm_call(messages_with_system, tools, token)
+                        response = _send(messages_with_system)
                         return ChatLoopRunner._LlmOutcome(
                             response=response,
                             messages_with_system=messages_with_system,

@@ -1,8 +1,35 @@
 # 多线路协议支持：`anthropic-messages`、`openai-responses` 与 `gemini-api`
 
-**状态：** **提案 —— 未授权实施。rev 10，复审修订（2026-09-18）。** 尚未写任何代码。本文记录
-接缝在哪、放接缝的三个选项、推荐方案、agentao 自身历史格式里已核实的翻译陷阱，以及分阶段
-计划。在对 §2（收益是否值这个成本）和 §12（待决问题）做出明确决定之前，不应开工。
+**状态：** **阶段 0 已实施（0.4.26，未发布）。阶段 1–3 仍是提案、未授权。rev 11
+（2026-09-17）。** §2.3 的阶段 0a 与 0b 已在 `main`；尚未写任何适配器、也没有第二条线路协议，
+阶段 1 仍需对 §2（收益是否值这个成本）和 §12（待决问题）做出明确决定 —— 首先是 §12.1，而
+阶段 0 正是为回答它而做。除此之外，本文记录接缝在哪、放接缝的三个选项、推荐方案、agentao
+自身历史格式里已核实的翻译陷阱，以及分阶段计划。
+
+**阶段 0 落了什么**（`prompts/builder.py`、`agent.py`、`runtime/chat_loop/_runner.py`、
+`runtime/llm_call.py`、`context_manager.py`、`llm/_cache_control.py`、`llm/client.py`、
+`embedding/factory.py`；`tests/test_volatile_tail_request.py`、
+`tests/test_prompt_cache_breakpoints.py`）：
+
+- **0a** —— 技能清单、激活技能全文、todos、`<memory-context>` 与 plan 提示从 system 消息
+  移出，改为一条仅属于请求的 `<system-reminder>` 尾消息，在**唯一一处**收口追加
+  （`_call_llm_with_overflow_recovery` 里的 `_send`，全包唯一调用 `agent._llm_call` 的地方），
+  因此七个装配点照旧只拼持久前缀，谁也不可能丢掉或重复一条它们根本不持有的尾消息。锚点
+  修正同批落地：`record_api_usage(prompt_tokens, len(persistent), tail_tokens=est(T))`，
+  §11 的漂移门做成了一条跑 12 轮、刻意变动尾消息大小的测试。
+- **0b** —— opt-in 的显式 `cache_control`（`LLM_PROMPT_CACHE=anthropic`、`prompt_cache=`），
+  最多 3 个断点、保留第 4 槽、copy-on-mark，在 `_build_request_kwargs` 里施加（位于 replay
+  之下），且按调用 opt-in（所以摘要调用不打标记）。默认关闭：端点是否认这个键仍未核实，
+  而这正是本设计说过不能假设的那一件事。
+
+**阶段 0 自己的验收门还缺什么：** 在真实端点上实测缓存命中率与成本 —— 0a 对比改造前、0b
+对比 0a。目前本机的测量是结构性的、不是账单：system 消息 2,350 tokens 且已逐轮逐字节相同，
+对应一条约 1.8k tokens 的重发尾消息，其中 1,779 是可用技能清单。这个比例是仓库相关的，也是
+最该先核的数字 —— 见 §13 的「停在阶段 0」。
+
+**rev 11 改了什么：** 阶段 0 已实施；上面的状态块记录了落了什么、落在哪、以及它的验收门
+还缺什么。下文的设计正文相对 rev 10 未改 —— 它是这次实施所依据的记录，也是将来评判阶段 1
+的那份记录。
 
 **rev 10 改了什么：** 核实第二份佐证实现 gemini-cli（`9450ade79`，`@google/genai` 1.30.0）：
 同一个 GenerateContent 协议服务三种接入（API key、`vertexai: true`、Code Assist

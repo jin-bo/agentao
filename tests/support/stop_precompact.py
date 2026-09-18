@@ -141,6 +141,10 @@ def make_runner_with_stub_llm(
         lambda m, s, t, k, **kw: fake_outcome,
     )
     monkeypatch.setattr(agent, "_build_system_prompt", lambda: "")
+    # Two prompt products per turn since stage 0a: the system message and
+    # the request-only volatile tail. This agent's skill manager is a mock,
+    # so the real tail builder would try to join mock sections.
+    monkeypatch.setattr(agent, "_build_volatile_tail", lambda: "")
     agent.skill_manager = MagicMock()
     agent.skill_manager.get_active_skills.return_value = {}
     agent.memory_manager = MagicMock()

@@ -32,9 +32,11 @@ Current Date/Time: 2026-02-11 14:40:58 (Wednesday)
 
 ## 为什么不放进系统提示词
 
-系统提示词的**稳定前缀**（identity、operational guidelines、`<memory-stable>` 等）被刻意维持成逐 turn **逐字节相同**，好让 provider 的 prompt cache 能复用它（见 `agentao/prompts/builder.py::_build_sections()`）。
+系统提示词**整条**都是稳定前缀（identity、operational guidelines、`<memory-stable>` 等），被刻意维持成逐 turn **逐字节相同**，好让 provider 的 prompt cache 能复用它（见 `agentao/prompts/builder.py::SystemPromptBuilder.build()`）。
 
 时间每秒都在变。把它放进前缀，等于每个 turn 都让缓存失效——为了一行字，付掉整个前缀的缓存收益。放在用户消息里，前缀保持稳定，日期照样每 turn 刷新。
+
+**那为什么不放进 0.4.26 新增的易变尾消息？** 因为那条尾消息**不落盘**（`SystemPromptBuilder.build_volatile_tail()`，仅属于一次请求），而日期是要留在对话记录里的：恢复一个会话、读一份 replay 时，每轮发生在什么时候本身就是信息。两者都写成 `<system-reminder>`，生命周期却相反，不要混为一谈。
 
 这也是为什么 `tests/test_date_in_prompt.py` 同时断言两边：日期**必须**出现在用户消息里，且**必须不**出现在系统提示词里。任何把它挪回前缀的改动都会让测试变红。
 
