@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 
 
 def print_welcome(cli: "AgentaoCLI") -> None:
+    from .. import __version__
+
     current_model = cli.agent.get_current_model()
 
     logo = [
@@ -30,7 +32,13 @@ def print_welcome(cli: "AgentaoCLI") -> None:
     console.print()
     for line in logo:
         console.print(f"[bold cyan]{line}[/bold cyan]")
-    console.print("[bold cyan]        |___/        [/bold cyan][bold yellow](The Way of Agents)[/bold yellow]")
+    # The version rides the tagline: the logo's last row has the room, and a
+    # bug report that quotes the banner then says which build it came from.
+    console.print(
+        "[bold cyan]        |___/        [/bold cyan]"
+        "[bold yellow](The Way of Agents)[/bold yellow]"
+        f"  [dim]v{__version__}[/dim]"
+    )
     console.print()
     console.print(f"  [dim]Model:[/dim] [green]{current_model}[/green]  [dim]|[/dim]  [dim]Type[/dim] [cyan]/help[/cyan] [dim]for commands[/dim]")
     console.print()

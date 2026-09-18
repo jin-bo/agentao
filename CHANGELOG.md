@@ -65,6 +65,9 @@ every session. `agentao.tool_runner`, the old import path of
 
 ### Added
 
+- **The CLI's welcome banner shows the Agentao version**, on the tagline row
+  (`(The Way of Agents)  v0.5.0`) — so a screenshot or a pasted banner in a bug
+  report says which build it came from.
 - **A second wire protocol: `anthropic-messages`** (`{PROVIDER}_API_FORMAT`,
   keyword-only `api_format=` on `Agentao(...)` and `LLMClient(...)`). Stage 1
   of `docs/design/llm-api-adapters.md`. agentao can now speak Anthropic's
