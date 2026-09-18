@@ -165,8 +165,9 @@ class Agentao:
             api_format: The wire protocol spoken to ``base_url`` —
                 ``"openai-completions"`` (default) or ``"anthropic-messages"``
                 (Anthropic's Messages API, over the official SDK). Configured,
-                never inferred from the URL or the model name, and fixed for
-                the life of the agent; sub-agents inherit it. Raw-config only:
+                never inferred from the URL or the model name; only
+                ``set_provider(api_format=)`` changes it afterwards, and
+                sub-agents are built on the current one. Raw-config only:
                 a host that injects ``llm_client=`` passes it to that client
                 instead. An unknown value raises ``ValueError``.
             extra_body: Optional dict forwarded verbatim to the LLM
@@ -1370,11 +1371,22 @@ class Agentao:
         """
         return self.llm.model
 
-    def set_provider(self, api_key: str, base_url: Any = _KEEP_BASE_URL, model: Optional[str] = None) -> None:
+    def set_provider(
+        self,
+        api_key: str,
+        base_url: Any = _KEEP_BASE_URL,
+        model: Optional[str] = None,
+        *,
+        api_format: Optional[str] = None,
+    ) -> None:
         # Implementation lives in ``agentao.runtime.model``. ``base_url``
         # defaults to the keep-current sentinel; an explicit value (incl.
         # ``None``, which clears to the SDK default) replaces the endpoint.
-        _runtime_model.set_provider(self, api_key, base_url=base_url, model=model)
+        # ``api_format`` names the new provider's wire protocol (``None``
+        # keeps the current one).
+        _runtime_model.set_provider(
+            self, api_key, base_url=base_url, model=model, api_format=api_format,
+        )
 
     def set_model(self, model: str) -> str:
         # Implementation lives in ``agentao.runtime.model``.

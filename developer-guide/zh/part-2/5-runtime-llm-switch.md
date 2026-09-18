@@ -23,6 +23,14 @@ agent.set_provider(
     model="deepseek-chat",
 )
 
+# 整套切换到另一种线路协议（0.5.0）——要明说，从不推断
+agent.set_provider(
+    api_key="sk-ant-xxx",
+    base_url="https://api.anthropic.com",
+    model="claude-sonnet-5",
+    api_format="anthropic-messages",
+)
+
 # 列出当前 endpoint 声明的模型
 models = agent.list_available_models()  # -> ["gpt-5.4", "gpt-5.4", ...]
 ```
@@ -137,7 +145,7 @@ except RuntimeError:
    `set_provider()` 会按新模型名换 tiktoken 编码；但 tiktoken 本身是 OpenAI 的，对 DeepSeek/Moonshot/Qwen 等非 OpenAI 家只能**近似估算**。预算留点余量
 
 2. **工具调用 schema 依赖 provider**
-   所有 Agentao 支持的 provider 必须讲 **OpenAI 兼容**的 tool-calls schema。换到不兼容的 provider，`chat()` 要么报 "function not supported"，要么悄无声息地丢 tool call。级联链里每个 provider 都要测
+   所有 Agentao 支持的 provider 必须讲 **OpenAI 兼容**的 tool-calls schema——或者 Anthropic 的 Messages API，用 `api_format=` 选定。换到不兼容的 provider，`chat()` 要么报 "function not supported"，要么悄无声息地丢 tool call。级联链里每个 provider 都要测
 
 3. **流式行为可能不同**
    不同 provider 的 chunk 切分、首 token 延迟不同。切换后 UI 感受可能明显变化。`Transport.emit(...)` 仍会照样触发——只是 chunk 边界不一样
@@ -152,17 +160,17 @@ except RuntimeError:
 
 你会注意到 `Agentao(...)` 直接收 `api_key / base_url / model`，没有抽象的 `provider=`。这是故意的：
 
-- Agentao 只说 OpenAI 兼容协议
+- Agentao 默认说 OpenAI Chat Completions，0.5.0 起在你明说时也说 Anthropic 的 Messages API（`api_format="anthropic-messages"`）——线路协议是端点的属性，不是厂商的属性
 - 任何暴露 OpenAI schema 的 provider（OpenAI、Azure、DeepSeek、Moonshot、Together、本地 Ollama / vLLM……）都能直连
-- "切换 provider" 就等于"切换 key + base_url + model"
+- "切换 provider" 就等于"切换 key + base_url + model"——新端点说另一种协议时再加 `api_format=`
 
-所以没有 `OpenAIProvider` / `AnthropicProvider` / `GoogleProvider` 抽象——路由代码保持简单。需要原生 Anthropic / Gemini 请套一个 OpenAI 兼容网关。
+所以没有 `OpenAIProvider` / `AnthropicProvider` / `GoogleProvider` 抽象——路由代码保持简单。原生 Gemini 仍需套一个 OpenAI 兼容网关。
 
 ## TL;DR
 
-- 三个 API：`set_provider(api_key, base_url, model)`（整套切换）·`set_model(name)`（只换模型）·`get_current_model()`（读取）。
+- 三个 API：`set_provider(api_key, base_url, model, api_format=)`（整套切换）·`set_model(name)`（只换模型）·`get_current_model()`（读取）。
 - 切换**不会**清历史——下一轮 `chat()` 会用新模型继续同一上下文。
-- 所有 provider 都走 OpenAI schema；不存在按厂商分的 `Provider` 抽象。要原生 Anthropic / Gemini，请套 OpenAI 兼容网关。
+- 不存在按厂商分的 `Provider` 抽象：两种线路协议，`openai-completions`（默认）与 `anthropic-messages`（0.5.0），都要明说。原生 Gemini 仍需套 OpenAI 兼容网关。
 - 常见路由：**便宜→贵**（小问题/规划）、**主+备**（超时切换）、**A/B**（同会话评测不同模型）。
 
 ---

@@ -86,10 +86,10 @@ def default_provider_resolver(provider_id: str) -> Dict[str, Optional[str]]:
     ``{PROVIDER}_*`` lookup for an arbitrary id. Multi-provider switching is a
     host concern (inject ``provider_resolver``).
 
-    Returns ``{"api_key", "base_url"}`` (``base_url`` may be ``None``). A
-    host resolver may add ``"api_format"``; see the handler for what a
-    mismatch does. This one never needs to: it only ever answers for the
-    provider the process was started on.
+    Returns ``{"api_key", "base_url", "api_format"}`` (the last two may be
+    ``None``). ``api_format`` is the block's ``{PREFIX}_API_FORMAT``; a host
+    resolver that omits the key gets the default wire, as an unset variable
+    does — see the handler.
     """
     # Read LLM_PROVIDER directly (not via factory.resolve_provider_name, which
     # upper-cases): the accept/reject comparison below must use the raw value's
@@ -109,7 +109,13 @@ def default_provider_resolver(provider_id: str) -> Dict[str, Optional[str]]:
             f"no API key configured for provider {provider_id!r} "
             f"(expected {prefix}_API_KEY)"
         )
-    return {"api_key": api_key, "base_url": os.getenv(f"{prefix}_BASE_URL")}
+    return {
+        "api_key": api_key,
+        "base_url": os.getenv(f"{prefix}_BASE_URL"),
+        # The block's own wire. Omitting it would now mean the default one,
+        # and re-selecting the configured provider would leave its protocol.
+        "api_format": os.getenv(f"{prefix}_API_FORMAT"),
+    }
 
 
 def _current_provider_id(session: "AcpSessionState") -> str:
@@ -251,38 +257,28 @@ def handle_session_set_config_option(
                         f"{provider_id!r}"
                     ),
                 )
-            # The wire protocol is fixed when the agent is built; a live client
-            # cannot change it (docs/design/llm-api-adapters.md, stage 3). A
-            # host resolver that serves providers on different protocols says
-            # so with an optional ``api_format`` key, and a mismatch is refused
-            # here — the switch would otherwise hand one protocol's credentials
-            # and base URL to the other protocol's SDK. A resolver that omits
-            # the key is taken to mean "same wire", which is all it could mean
-            # before there were two.
-            target_format = creds.get("api_format")
-            if target_format is not None:
-                from agentao.llm._api_format import (
-                    DEFAULT_API_FORMAT,
-                    resolve_api_format,
-                )
+            # A host resolver that serves providers on different wire
+            # protocols says so with an optional ``api_format`` key, and the
+            # switch carries it — otherwise one protocol's credentials and base
+            # URL would go to the other protocol's SDK. A resolver that omits
+            # the key means the **default** wire, exactly as an unset
+            # ``{PROVIDER}_API_FORMAT`` does — never "whatever the session is
+            # on": a resolver that marks only its Anthropic provider would
+            # otherwise be unable to switch back, and the OpenAI key would go
+            # to the Anthropic SDK. An unusable value is refused before
+            # anything is touched, so the session stays on the provider it had.
+            from agentao.llm._api_format import resolve_api_format
 
-                live_format = (
-                    getattr(session.agent.llm, "api_format", None)
-                    or DEFAULT_API_FORMAT
+            try:
+                target_format = resolve_api_format(creds.get("api_format"))
+            except (TypeError, ValueError):
+                raise JsonRpcHandlerError(
+                    code=INVALID_REQUEST,
+                    message=(
+                        f"provider_resolver returned an unusable "
+                        f"api_format for {provider_id!r}"
+                    ),
                 )
-                try:
-                    target_format = resolve_api_format(target_format)
-                except (TypeError, ValueError):
-                    target_format = None
-                if target_format != live_format:
-                    raise JsonRpcHandlerError(
-                        code=INVALID_REQUEST,
-                        message=(
-                            f"provider {provider_id!r} is not on this session's "
-                            f"wire protocol ({live_format}); the protocol is "
-                            "fixed when the session is created"
-                        ),
-                    )
             # A provider switch replaces the endpoint wholesale: pass the
             # resolved base_url explicitly (``None`` clears it to the SDK
             # default, rather than inheriting the previous provider's custom
@@ -294,6 +290,7 @@ def handle_session_set_config_option(
                 api_key=creds["api_key"],
                 base_url=creds.get("base_url"),
                 model=model_id,
+                api_format=target_format,
             )
             session.provider_id = provider_id
         else:  # bare value — model-only switch, keep the current provider

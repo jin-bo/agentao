@@ -2,9 +2,11 @@
 
 **Status:** **Stage 0 implemented and shipped in 0.4.26. Stage 1 implemented
 2026-09-18 (ships with 0.5.0), against a scripted socket — not yet run against a live
-endpoint. Stages 2–3 proposed and not authorized. rev 12 (2026-09-18).** §2.3's
+endpoint; the provider-switch piece of stage 3 followed the same day. The rest of
+stages 2–3 is proposed and not authorized. rev 13 (2026-09-18).** §2.3's
 stage 0a and 0b are on `main`; stage 1 adds the adapter seam under `LLMClient`
-and one second wire, `anthropic-messages`, selected at startup. §12.1 — whether
+and one second wire, `anthropic-messages`, selected at startup or by a provider
+switch. §12.1 — whether
 stage 0 makes the adapters unnecessary — was **not** answered by measurement
 first: the maintainer authorized stage 1 with stage 0's billed comparison still
 owed, and that debt carries over (see *What stage 1 landed*, last paragraph).
@@ -78,8 +80,11 @@ Record the history length at each activation when the billed measurement runs.
   draft shipped it as an extra. It is imported lazily, so the default wire
   never loads it, and being core is also what makes CI run the adapter's tests
   rather than skip them. (3) Sub-agents inherit `api_format`, for `extra_body`'s reason:
-  same endpoint. (4) Does not arise yet — selection is startup-only, and
-  `/provider` **refuses** a switch to a block configured for another protocol.
+  same endpoint. (4) **Log, don't prompt.** A provider switch carries the
+  protocol (rev 13): the purge runs and reports its count to `agentao.log`, as
+  it does on every model switch, which already drops the same signed blocks
+  irrecoverably with no prompt. The one thing a wire change adds is that
+  `extra_body` was written for the other protocol, and the CLI names its keys.
 - **Config.** `{PROVIDER}_API_FORMAT` and keyword-only `Agentao(api_format=)` /
   `LLMClient(api_format=)`; unknown and not-yet-implemented values fail closed
   and list the valid ones (§9).
@@ -153,6 +158,26 @@ is accepted, the wording of the output-cap rejection, and that a breakpoint
 hoisted onto a `tool_result` is honoured. The **cache-benefit check** in §10's
 gate is not done either, and it now needs three arms on one endpoint: stage 0a
 alone, 0b over Chat Completions, and the native wire.
+
+**rev 13 — what changed:** The first use of the second wire was a `/provider`
+to a block on it, which stage 1 refused. The provider-switch piece of stage 3 is
+now built and nothing else of that stage is: `LLMClient.reconfigure`,
+`Agentao.set_provider` and `runtime/model.py::set_provider` take `api_format=`
+(`None` keeps the wire), `/provider` passes the target block's
+`{PROVIDER}_API_FORMAT`, and ACP passes the resolver's optional `api_format` —
+omitted means the default wire, as an unset variable does, never "the session's
+current one", or a resolver that marks only its Anthropic provider could not
+switch back. `MODEL_CHANGED` carries `api_format_changed`. A
+wire change swaps the adapter — a fresh one, so its latches go with it — and
+joins §8's clear-on-switch family on its own, even with the model name and URL
+unchanged: purge, token anchor, observed limit, capability latches, explicit
+cache breakpoints. `extra_body` is kept, as on every switch, and its structural
+overlap is re-read against the new adapter (`system` is inert on one wire and the
+whole system prompt on the other). The value is resolved before anything is
+mutated and a failed client build rolls `reconfigure` back, so a refused switch
+leaves the session on the provider it had. `/model` and ACP `session/set_model` stay within a wire, and
+per-model overrides (§9) are not built. Tested in both directions off the socket
+(`tests/test_anthropic_messages_runtime.py`).
 
 **rev 12 — what changed:** Stage 1 was implemented; the two blocks above record
 what landed, where it departs from this text and why, and what its gate still

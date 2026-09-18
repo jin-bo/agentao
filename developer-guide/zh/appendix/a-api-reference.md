@@ -97,7 +97,7 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 | `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | 异步接口——通过 `loop.run_in_executor` 桥到 `chat()`。取消、replay、`max_iterations`、`images` 语义与同步版完全一致 |
 | `clear_history` | `clear_history() -> None` | 清 `self.messages`、已激活 skills、todos 与 token 计数；不影响 memory DB。后台 agent 继续运行，但完成通知不再进入历史（用 `check_background_agent` 查看） |
 | `close` | `close() -> None` | 关 MCP 子进程与 DB handle；请放 `finally:` |
-| `set_provider` | `set_provider(api_key, base_url=None, model=None) -> None` | 运行时换 LLM |
+| `set_provider` | `set_provider(api_key, base_url=None, model=None, *, api_format=None) -> None` | 运行时换 LLM。`api_format`（0.5.0）指明新 provider 的线路协议；`None` 保持当前线路 |
 | `set_model` | `set_model(model: str) -> str` | 只换模型；返回旧 id |
 | `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncIterator[HostEvent]` | 订阅公共 harness 事件（工具/子 Agent/权限决定生命周期）。无 replay；有界背压。详见 [A.10](#a-10-嵌入-harness-合约) |
 | `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | 当前权限策略快照（`mode`、`rules`、`loaded_sources`），JSON-safe。详见 [A.10](#a-10-嵌入-harness-合约) |
