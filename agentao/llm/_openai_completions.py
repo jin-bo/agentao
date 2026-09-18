@@ -69,6 +69,10 @@ class OpenAICompletionsAdapter:
         """Nothing of its own: this wire's two latches live on ``LLMClient``,
         where ``/temperature``, the sub-agent factory and the tests read them."""
 
+    def prepare(self) -> None:
+        """Called on the send path before the request is built. Nothing to
+        learn here: Chat Completions has no route that states a model's limits."""
+
     def build_request(
         self,
         messages: List[Dict[str, Any]],

@@ -237,8 +237,9 @@ at a point where history has already been destroyed.
 | | Meaning | Who writes it |
 |---|---|---|
 | `context_manager.max_tokens` | what the host **configured** | the host (`max_context_tokens=`, `/context limit`, ACP `contextLength`) |
-| `context_manager.effective_max_tokens` | `min(configured, observed)` | derived, read-only |
+| `context_manager.effective_max_tokens` | `min(configured, observed, reported)` | derived, read-only |
 | `context_manager.observed_limit` | what the **provider asserted**, learned from an overflow error | agentao |
+| `context_manager.reported_limit` | what the **provider's Models API states** (`max_input_tokens`), read live from `llm.model_input_limit`; `None` when not told — today only the `anthropic-messages` wire asks, as part of sending its first request for a model, so it is `None` until then | agentao |
 
 **Every internal budget** — the compaction thresholds, the microcompaction
 band, the summary-input budget, `usage_percent` — is denominated in the
@@ -247,11 +248,12 @@ band, the summary-input budget, `usage_percent` — is denominated in the
 existing readers are unaffected, the second because `session/set_model` is a
 setter and its echo must equal what was just written, or a client reads
 agentao's self-healing as a failed write. `effective_max_tokens`,
-`observed_limit` and `observed_limit_provenance` are additive keys on
-`get_usage_stats()`.
+`observed_limit`, `observed_limit_provenance` and `reported_limit` are additive
+keys on `get_usage_stats()`.
 
-The observed limit can only **narrow**: a provider rejecting at N is evidence
-about N, not permission to exceed the host's ceiling. It is discarded on a
+Both learned limits can only **narrow** — a Models API advertising a larger
+window than the host configured is not a reason to use it, and a provider rejecting at N is evidence
+about N, not permission to exceed the host's ceiling. The observed limit is discarded on a
 model or endpoint switch (with a warning that the window is unverified for the
 new model); a pure credential rotation leaves it alone.
 

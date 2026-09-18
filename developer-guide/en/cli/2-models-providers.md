@@ -4,7 +4,7 @@ The CLI lets you switch model, provider, and sampling temperature without restar
 
 ## The provider concept
 
-A **provider** is a (`API_KEY`, `BASE_URL`, `MODEL`) triple — one set of credentials pointing at one OpenAI-compatible endpoint with one default model. Provider names are arbitrary; they come from your `.env` file.
+A **provider** is a (`API_KEY`, `BASE_URL`, `MODEL`) triple — one set of credentials pointing at one endpoint with one default model. The endpoint speaks OpenAI Chat Completions unless the block says otherwise with a fourth, optional variable, `XXXX_API_FORMAT` (0.5.0) — see *Wire protocol* below. Provider names are arbitrary; they come from your `.env` file.
 
 The convention is `XXXX_API_KEY` / `XXXX_BASE_URL` / `XXXX_MODEL`, where `XXXX` is the provider name in upper case:
 
@@ -28,9 +28,19 @@ DEEPSEEK_MODEL=deepseek-chat
 LOCAL_API_KEY=any-string
 LOCAL_BASE_URL=http://localhost:8000/v1
 LOCAL_MODEL=qwen2.5-72b
+
+# Anthropic's own API, natively (0.5.0) — the base URL is the API root, no /v1
+CLAUDE_API_KEY=sk-ant-...
+CLAUDE_BASE_URL=https://api.anthropic.com
+CLAUDE_MODEL=claude-sonnet-5
+CLAUDE_API_FORMAT=anthropic-messages
 ```
 
 A provider is only listed if **all three** of its env vars are set. If `GEMINI_API_KEY` exists but `GEMINI_BASE_URL` is missing, `GEMINI` doesn't appear.
+
+### Wire protocol
+
+`XXXX_API_FORMAT` names the protocol spoken to that block's endpoint: `openai-completions` (the default when unset) or `anthropic-messages` (Anthropic's Messages API). It is **never inferred** — not from the URL, the provider name or the model name — so `CLAUDE_*` pointing at an OpenAI-compatible gateway stays on Chat Completions until you say otherwise, and an unknown value is an error rather than a fallback. What the native wire buys is prompt caching that works and is reported (`LLM_PROMPT_CACHE=anthropic`) and signed thinking blocks that survive a tool loop. Full notes: [configuration reference §2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#2-env--llm-provider-config).
 
 ## `/provider` — list or switch
 
@@ -44,7 +54,7 @@ Lists every detected provider, marks the active one with ✓, prints usage hint.
 > /provider GEMINI
 ```
 
-Switches credentials + base URL + default model in one shot. The conversation history is preserved — only the LLM client changes. The next turn goes to the new provider.
+Switches credentials + base URL + default model in one shot — and the **wire protocol**, when the target block's `XXXX_API_FORMAT` differs (the CLI prints `Wire protocol: A → B`). The conversation history is preserved — only the LLM client changes. The next turn goes to the new provider. What does *not* carry over is anything minted by the model being left: thinking artifacts in history (signed thinking blocks included) are dropped, as on any model switch. `LLM_EXTRA_BODY` is kept, and on a wire change the CLI names its keys, since they were written for the other protocol.
 
 Common errors:
 
@@ -54,6 +64,7 @@ Common errors:
 | `No API key found for provider 'GEMINI'` | `GEMINI_API_KEY` is missing |
 | `No base URL configured for provider 'GEMINI'` | `GEMINI_BASE_URL` is missing |
 | `No model configured for provider 'GEMINI'` | `GEMINI_MODEL` is missing |
+| `Unknown api_format '…'` | `GEMINI_API_FORMAT` is not `openai-completions` or `anthropic-messages`; the session stays on the provider it had |
 
 ## `/model` — list or switch model on the current provider
 
@@ -111,6 +122,8 @@ The change is **per session**. Restarting the CLI resets to the provider default
 LLM_TEMPERATURE=0.3
 ```
 
+On the `anthropic-messages` wire `/temperature` and `LLM_TEMPERATURE` have **no effect**: the SDK's `messages.create` has no `temperature` parameter. A gateway that does take one gets it through `LLM_EXTRA_BODY`.
+
 Need a request param the CLI has no command for — `reasoning_effort`, `top_p`, `seed`, `response_format`, or a provider-specific field? Set `LLM_EXTRA_BODY` to a JSON object; it is forwarded verbatim to the LLM `.create()` (and inherited by sub-agents):
 
 ```bash
@@ -118,6 +131,23 @@ LLM_EXTRA_BODY='{"reasoning_effort":"high"}'
 ```
 
 See [Appendix B](/en/appendix/b-config-keys) for parsing/redaction details.
+
+## `/thinking` — thinking depth
+
+```text
+> /thinking           # show current
+> /thinking high      # set
+> /thinking off       # back to the provider default
+```
+
+What it writes depends on the wire, because the two protocols name the field differently:
+
+| Wire | Field written into `extra_body` | Levels |
+|------|--------------------------------|--------|
+| `openai-completions` | `reasoning_effort` | `minimal` · `low` · `medium` · `high` (a non-standard word is passed through for the provider to validate) |
+| `anthropic-messages` | `output_config.effort` | `low` · `medium` · `high` · `xhigh` · `max`, or the levels the provider's Models API marks supported for this model; anything else is **refused, not stored** |
+
+On current Anthropic models the effort alone turns adaptive thinking on. There is **no auto-recovery** on either wire: a model that rejects the field fails every request until `/thinking off`. The setting is per session and sub-agents inherit it; to make it persistent put the same field in `LLM_EXTRA_BODY`.
 
 ## When to switch what
 
@@ -128,6 +158,7 @@ See [Appendix B](/en/appendix/b-config-keys) for parsing/redaction details.
 | Switch to a different vendor | `/provider <NAME>` (history kept, credentials swap) |
 | Outputs feel too random / hallucinatory | `/temperature 0.2` |
 | Outputs feel too rigid / repetitive | `/temperature 1.2` |
+| Hard problem, want more reasoning | `/thinking high` |
 | Cost is exploding mid-session | `/model` to a smaller variant before the next turn |
 
 ## Pitfalls

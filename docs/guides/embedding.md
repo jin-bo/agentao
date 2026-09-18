@@ -220,6 +220,14 @@ agent = Agentao(
   switching to a non-reasoning model 400s every call until cleared; dropping
   model-specific keys on switch is the host's responsibility.
 - **CLI / factory path:** set `LLM_EXTRA_BODY` to a JSON object.
+- **Keys are per wire protocol.** The examples above are Chat Completions
+  fields. With the keyword-only `api_format="anthropic-messages"` (Anthropic's
+  own API; `base_url` is the API root, no `/v1`; named, never inferred) the
+  body is a Messages request: `reasoning_effort` is rejected there and the
+  equivalent is `{"output_config": {"effort": "high"}}`, while `temperature`
+  is not sent at all. `set_provider(..., api_format=)` moves a live agent
+  between the two, keeping `extra_body` as it is — so a host that switches
+  wires owns swapping those keys, same rule as a model switch.
 
 Full contract: [`docs/design/host-llm-extra-params.md`](../design/host-llm-extra-params.md).
 

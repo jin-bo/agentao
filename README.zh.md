@@ -144,7 +144,7 @@ pip install 'agentao[full]'
 
 **要求 Python：** 3.10+。**必填环境变量：** `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL` —— 三个都必须有，否则启动直接 `ValueError`。
 
-要用 Anthropic / Gemini / DeepSeek / 任意 OpenAI 兼容 provider，配 `<NAME>_API_KEY` + `<NAME>_BASE_URL` + `<NAME>_MODEL`，再用 `LLM_PROVIDER` 或运行时 `/provider` 切。完整清单：[`docs/reference/configuration.md`](docs/reference/configuration.md)。
+要用 Anthropic / Gemini / DeepSeek / 任意 OpenAI 兼容 provider，配 `<NAME>_API_KEY` + `<NAME>_BASE_URL` + `<NAME>_MODEL`，再用 `LLM_PROVIDER` 或运行时 `/provider` 切。要原生对接 Anthropic 自家 API（Messages API —— 真正生效的提示缓存、签名 thinking），再加一行 `<NAME>_API_FORMAT=anthropic-messages`；它从不根据 URL 或名字推断。完整清单：[`docs/reference/configuration.md`](docs/reference/configuration.md)。
 
 ---
 

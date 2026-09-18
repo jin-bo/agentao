@@ -106,6 +106,87 @@ def handle_provider_command(cli: AgentaoCLI, args: str) -> None:
         console.print()
 
 
+#: What ``output_config.effort`` accepts on the Messages API when the endpoint
+#: has no Models API to say so itself (observed on api.anthropic.com: anything
+#: else is a 400 naming these five). ``minimal`` is not one of them.
+_ANTHROPIC_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
+def _effort_levels(capabilities: object) -> tuple:
+    """The effort levels the Models API marks supported, else the static five."""
+    try:
+        effort = capabilities["effort"]  # type: ignore[index]
+        levels = tuple(name for name, value in effort.items()
+                       if isinstance(value, dict) and value.get("supported") is True)
+    except (KeyError, TypeError, AttributeError):
+        return _ANTHROPIC_EFFORT_LEVELS
+    # The API lists them alphabetically; show them weakest first.
+    known = _ANTHROPIC_EFFORT_LEVELS
+    ordered = tuple(sorted(levels, key=lambda n: known.index(n) if n in known else len(known)))
+    return ordered or _ANTHROPIC_EFFORT_LEVELS
+
+
+def _handle_thinking_anthropic(llm: object, extra_body: dict, args: str) -> None:
+    """``/thinking`` on the ``anthropic-messages`` wire: ``output_config.effort``.
+
+    ``reasoning_effort`` is a Chat Completions field and the Messages API
+    rejects it, so here a level is written to ``output_config.effort`` instead
+    — which on current models also turns adaptive thinking on (observed). The
+    level is checked against the Models API's ``capabilities.effort`` when the
+    endpoint has told us, else against the five values the API accepts; there
+    is still no auto-recovery, so an unlisted word is refused rather than
+    stored. Other ``output_config`` keys a host set are left alone.
+    """
+    output_config = extra_body.get("output_config")
+    current = output_config.get("effort") if isinstance(output_config, dict) else None
+    levels = _effort_levels(getattr(llm, "model_capabilities", None))
+    usage = f"[dim]Usage: /thinking <{' | '.join(levels)} | off>[/dim]\n"
+
+    if not args:
+        shown = escape(str(current)) if current is not None else "default"
+        console.print(f"\n[info]Thinking depth:[/info] [cyan]{shown}[/cyan] "
+                      "[dim](output_config.effort)[/dim]")
+        console.print(usage)
+        return
+
+    lowered = args.lower()
+    if lowered == "off":
+        # A ``reasoning_effort`` carried over a wire switch fails every request
+        # here, so ``off`` clears that too.
+        stale = extra_body.pop("reasoning_effort", None)
+        if isinstance(output_config, dict):
+            output_config.pop("effort", None)
+            if not output_config:
+                extra_body.pop("output_config", None)
+        if current is None and stale is None:
+            console.print("\n[info]Thinking depth already at provider default "
+                          "(output_config.effort unset).[/info]\n")
+            return
+        console.print("\n[success]Thinking depth off — output_config.effort "
+                      "cleared; provider default in effect.[/success]\n")
+        return
+
+    if lowered not in levels:
+        console.print(f"\n[error]Invalid thinking depth for this model: "
+                      f"'{escape(args)}'.[/error]")
+        console.print(usage)
+        return
+
+    if not isinstance(output_config, dict):
+        output_config = {}
+        extra_body["output_config"] = output_config
+    output_config["effort"] = lowered
+    extra_body.pop("reasoning_effort", None)
+    if current is None:
+        console.print(f"\n[success]Thinking depth set to [cyan]{lowered}[/cyan]"
+                      "[/success] [dim](output_config.effort)[/dim]")
+    else:
+        console.print(f"\n[success]Thinking depth changed from {escape(str(current))} "
+                      f"to [cyan]{lowered}[/cyan][/success]")
+    console.print("[dim]No auto-recovery: if this model rejects output_config.effort, "
+                  "requests fail until /thinking off.[/dim]\n")
+
+
 def handle_model_command(cli: AgentaoCLI, args: str) -> None:
     """Handle model command."""
     args = args.strip()
@@ -211,6 +292,9 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
     has no ``omit_*`` mirror): if the active model rejects ``reasoning_effort``,
     every subsequent call 400s until ``/thinking off`` clears it. That asymmetry
     is documented in ``docs/design/host-llm-extra-params.md`` §"no auto-recovery".
+
+    On the ``anthropic-messages`` wire the field is ``output_config.effort``
+    instead; see :func:`_handle_thinking_anthropic`.
     """
     llm = cli.agent.llm
     if not hasattr(llm, "extra_body"):
@@ -226,6 +310,9 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
     extra_body = llm.extra_body
 
     args = args.strip()
+    if getattr(llm, "api_format", None) == "anthropic-messages":
+        _handle_thinking_anthropic(llm, extra_body, args)
+        return
     # Membership, not ``.get() is None``: a host may set ``reasoning_effort=None``
     # explicitly (which is still sent to the provider), and ``off`` must be able
     # to clear *that* too — conflating the two would make ``off`` a no-op.
@@ -264,23 +351,6 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
         console.print(f"\n[error]Invalid thinking depth: '{escape(args)}' — expected a "
                       f"single level ({' | '.join(_REASONING_LEVELS)}) or 'off', "
                       "not multiple words.[/error]\n")
-        return
-
-    # ``reasoning_effort`` is a Chat Completions field. The Messages API
-    # rejects it as an unknown input, and with no auto-recovery that would fail
-    # every request until ``off`` — so on that wire the level is not stored.
-    # Which thinking budget a level should mean there is a product decision
-    # this command does not make; the passthrough already carries it.
-    if getattr(llm, "api_format", None) == "anthropic-messages":
-        console.print(
-            "\n[warning]/thinking sets reasoning_effort, which the "
-            "anthropic-messages wire rejects. Turn extended thinking on through "
-            "the passthrough instead, e.g. "
-            "LLM_EXTRA_BODY='{\"thinking\": {\"type\": \"adaptive\"}, "
-            "\"output_config\": {\"effort\": \"high\"}}' (older models: "
-            "{\"thinking\": {\"type\": \"enabled\", "
-            "\"budget_tokens\": 8000}}).[/warning]\n"
-        )
         return
 
     # Normalize a *known* level to its canonical lowercase form (so ``HIGH`` →

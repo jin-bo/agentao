@@ -3,7 +3,7 @@
 **Status:** **Stage 0 implemented and shipped in 0.4.26. Stage 1 implemented
 2026-09-18 (ships with 0.5.0), against a scripted socket and then a live endpoint
 (*Live results*, below); the provider-switch piece of stage 3 followed the same day. The rest of
-stages 2–3 is proposed and not authorized. rev 14 (2026-09-18).** §2.3's
+stages 2–3 is proposed and not authorized. rev 15 (2026-09-18).** §2.3's
 stage 0a and 0b are on `main`; stage 1 adds the adapter seam under `LLMClient`
 and one second wire, `anthropic-messages`, selected at startup or by a provider
 switch. §12.1 — whether
@@ -203,6 +203,21 @@ from the bill. What the numbers do settle is §12.1 as far as this endpoint goes
 the native wire.** 0b's value is for third-party gateways that both honour the
 markers and report them, which is still unmeasured, and is why it stays off by
 default.
+
+**rev 15 — what changed:** The adapter adopts the provider's Models API
+(`GET /v1/models/{id}`): `max_tokens` seeds the output-cap latch before any
+rejection, `max_input_tokens` is a third, narrowing-only term of the effective
+context window, and `capabilities` feeds `/thinking`, which on this wire now
+writes `output_config.effort` (levels from `capabilities.effort`, else the five
+the API accepts; effort alone turns adaptive thinking on, observed). Asked on
+the send path before the request is built — so the log shows what was sent —
+with a definite answer final per model and a transient failure retried once,
+re-asked after a switch, and inert on an endpoint without the
+route — observed both ways (`api.anthropic.com` adopts 128,000 / 1,000,000; a
+compatible gateway answers 404 and nothing changes). This is the one place the
+design's "no model catalogue" rule (§9) bends, and only this far: the *provider*
+states the limits of the model the user already named; agentao still ships no
+table and infers nothing from a name.
 
 **rev 14 — what changed:** *Live results* above, and the thinking examples.
 

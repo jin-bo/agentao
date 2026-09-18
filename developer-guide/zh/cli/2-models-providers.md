@@ -4,7 +4,7 @@ CLI 不必重启就能切模型、切 provider、调温度。三个命令搞定�
 
 ## "Provider" 是什么
 
-一个 **provider** 就是一组 (`API_KEY`, `BASE_URL`, `MODEL`) 三元组 — 一份凭证指向一个 OpenAI 兼容端点，并附带一个默认模型。Provider 名字是任意的，来自你的 `.env` 文件。
+一个 **provider** 就是一组 (`API_KEY`, `BASE_URL`, `MODEL`) 三元组 — 一份凭证指向一个端点，并附带一个默认模型。端点默认说 OpenAI Chat Completions，除非这个块用第四个可选变量 `XXXX_API_FORMAT`（0.5.0）另行说明 — 见下文「线路协议」。Provider 名字是任意的，来自你的 `.env` 文件。
 
 约定是 `XXXX_API_KEY` / `XXXX_BASE_URL` / `XXXX_MODEL`，其中 `XXXX` 是 provider 名（大写）：
 
@@ -28,9 +28,19 @@ DEEPSEEK_MODEL=deepseek-chat
 LOCAL_API_KEY=any-string
 LOCAL_BASE_URL=http://localhost:8000/v1
 LOCAL_MODEL=qwen2.5-72b
+
+# Anthropic 自家 API，原生协议（0.5.0）— base URL 是 API 根，不带 /v1
+CLAUDE_API_KEY=sk-ant-...
+CLAUDE_BASE_URL=https://api.anthropic.com
+CLAUDE_MODEL=claude-sonnet-5
+CLAUDE_API_FORMAT=anthropic-messages
 ```
 
 只有当某个 provider 的**三个 env var 都齐全**时它才出现在列表里。`GEMINI_API_KEY` 设了但 `GEMINI_BASE_URL` 没设，`GEMINI` 就不会显示。
+
+### 线路协议
+
+`XXXX_API_FORMAT` 指明对该块的端点说哪种协议：`openai-completions`（不设时的默认值）或 `anthropic-messages`（Anthropic 的 Messages API）。它**从不推断** — 不看 URL、不看 provider 名、不看模型名 — 所以指向 OpenAI 兼容网关的 `CLAUDE_*` 在你明说之前仍走 Chat Completions，未知的值会报错而不是回退。原生线路带来的是真正生效、且会上报的提示缓存（`LLM_PROMPT_CACHE=anthropic`），以及能在工具循环中完整保留的签名 thinking 块。完整说明：[配置参考 §2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md)。
 
 ## `/provider` — 列出或切换
 
@@ -44,7 +54,7 @@ LOCAL_MODEL=qwen2.5-72b
 > /provider GEMINI
 ```
 
-一次性切换凭证 + base URL + 默认模型。**对话历史保留** — 只换 LLM 客户端。下一轮就发到新 provider。
+一次性切换凭证 + base URL + 默认模型 — 目标块的 `XXXX_API_FORMAT` 不同时，**线路协议**也一起换（CLI 会打印 `Wire protocol: A → B`）。**对话历史保留** — 只换 LLM 客户端。下一轮就发到新 provider。**不会**带过去的是被离开的那个模型签发的东西：历史里的 thinking 产物（含签名 thinking 块）会被丢弃，与任何一次换模型相同。`LLM_EXTRA_BODY` 保留；线路变化时 CLI 会列出它的键，因为它们是为另一种协议写的。
 
 常见错误：
 
@@ -54,6 +64,7 @@ LOCAL_MODEL=qwen2.5-72b
 | `No API key found for provider 'GEMINI'` | `GEMINI_API_KEY` 没设 |
 | `No base URL configured for provider 'GEMINI'` | `GEMINI_BASE_URL` 没设 |
 | `No model configured for provider 'GEMINI'` | `GEMINI_MODEL` 没设 |
+| `Unknown api_format '…'` | `GEMINI_API_FORMAT` 不是 `openai-completions` 或 `anthropic-messages`；会话停在原来的 provider 上 |
 
 ## `/model` — 在当前 provider 里列 / 切模型
 
@@ -111,6 +122,8 @@ Temperature changed from 1.0 to 0.2
 LLM_TEMPERATURE=0.3
 ```
 
+在 `anthropic-messages` 线路上，`/temperature` 和 `LLM_TEMPERATURE` **不起作用**：SDK 的 `messages.create` 没有 `temperature` 参数。确实接受它的网关请通过 `LLM_EXTRA_BODY` 传。
+
 需要 CLI 没有对应命令的请求参数 —— `reasoning_effort`、`top_p`、`seed`、`response_format`，或某个 provider 专有字段？把 `LLM_EXTRA_BODY` 设成 JSON 对象；它会被原样转发给 LLM `.create()`（并被子 agent 继承）：
 
 ```bash
@@ -118,6 +131,23 @@ LLM_EXTRA_BODY='{"reasoning_effort":"high"}'
 ```
 
 解析 / 脱敏细节见 [附录 B](/zh/appendix/b-config-keys)。
+
+## `/thinking` — 思考深度
+
+```text
+> /thinking           # 查看当前值
+> /thinking high      # 设置
+> /thinking off       # 回到 provider 默认
+```
+
+它写什么取决于线路，因为两种协议对这个字段的叫法不同：
+
+| 线路 | 写入 `extra_body` 的字段 | 档位 |
+|------|------------------------|------|
+| `openai-completions` | `reasoning_effort` | `minimal` · `low` · `medium` · `high`（非标准的词会原样透传，由 provider 校验） |
+| `anthropic-messages` | `output_config.effort` | `low` · `medium` · `high` · `xhigh` · `max`，或 provider 的 Models API 对当前模型标为支持的那些；其余一律**拒绝、不写入** |
+
+在当前的 Anthropic 模型上，只写 effort 就会打开 adaptive thinking。两条线路上都**没有自动恢复**：模型不接受这个字段时，每个请求都会失败，直到 `/thinking off`。设置是会话级的，子 agent 会继承；要持久化，把同一个字段写进 `LLM_EXTRA_BODY`。
 
 ## 什么时候该切什么
 
@@ -128,6 +158,7 @@ LLM_EXTRA_BODY='{"reasoning_effort":"high"}'
 | 换厂商 | `/provider <NAME>`（历史保留，凭证切换） |
 | 输出太随机 / 开始幻觉 | `/temperature 0.2` |
 | 输出太死板 / 重复 | `/temperature 1.2` |
+| 问题难，想让它多想一会儿 | `/thinking high` |
 | 会话进行中 cost 在飙升 | 下一轮前 `/model` 切到小一号 |
 
 ## 容易踩的坑
