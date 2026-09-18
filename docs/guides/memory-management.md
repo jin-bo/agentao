@@ -128,7 +128,10 @@ schema_meta        — 版本元数据
 
 ## 提示词注入
 
-每轮调用 `_build_system_prompt()` 时注入两个块：
+每轮注入两个块，但**它们已不在同一条消息里**（0.4.26 的 stage 0a）：`<memory-stable>` 由
+`_build_system_prompt()` 放进 system 消息（稳定前缀，逐轮逐字节相同）；`<memory-context>` 由
+`_build_volatile_tail()` 放进一条**仅属于本次请求**的 `<system-reminder>` 尾消息，不进
+`agent.messages`、不进会话文件、不进 replay。只读 `_build_system_prompt()` 找不到动态召回。
 
 ### `<memory-stable>` 块
 

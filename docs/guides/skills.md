@@ -453,7 +453,10 @@ All commands start with `/`:
 Skills integrate with the Agentao through:
 
 1. **activate_skill tool**: LLM can call this tool
-2. **Skills context**: Active skills are added to system prompt
+2. **Skills context**: the available-skills catalogue and the bodies of active
+   skills ride the per-request volatile tail, **not** the system message — see
+   `SystemPromptBuilder.build_volatile_tail()` (stage 0a, 0.4.26). Reading them
+   out of `_build_system_prompt()` alone finds nothing.
 3. **Documentation access**: LLM can read full SKILL.md content
 
 ## Best Practices for Skill Development

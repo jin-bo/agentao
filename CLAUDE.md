@@ -103,9 +103,19 @@ State is on `AgentaoCLI` (`agentao/cli/app.py`) and projected into prompts.
 
 ### System prompt composition
 
-Built fresh on every `chat()` — `agent.py::_build_system_prompt()` delegates to `agentao/prompts/` (`SystemPromptBuilder`). Sections are ordered to keep the **stable prefix byte-identical across turns** so provider prompt-caching can reuse it; everything that changes within a session sits below that line. `builder.py::_build_sections()` is the authoritative order. The stable prefix ends at `<memory-stable>`; skills, todos, `<memory-context>` and the plan prompt form the volatile suffix. One non-obvious rule: available agents are suppressed in plan mode (delegation contradicts research-only intent).
+**The model's instructions arrive in two messages, and the second one is not in history.** `agent.py::_build_system_prompt()` builds the system message — the stable prefix, byte-identical across the turns of a session, ending at `<memory-stable>` (`builder.py::_build_sections()` is the authoritative order). `agent.py::_build_volatile_tail()` builds the volatile half — skills catalogue, active-skill bodies, todos, `<memory-context>`, plan prompt (`builder.py::_build_volatile_sections()`) — wrapped as one `<system-reminder>` and appended to the **outgoing request** as a trailing `user` message. One non-obvious rule inside the prefix: available agents are suppressed in plan mode (delegation contradicts research-only intent).
 
-**The date/time is *not* in the system prompt.** It is injected per-turn as a `<system-reminder>` prepended to the *user message* (`runtime/chat_loop/_runner.py::run`, `Current Date/Time: YYYY-MM-DD HH:MM:SS (Day)`) — keeping it out of the cached prefix is the whole point. `tests/test_date_in_prompt.py` asserts both halves.
+The split landed in 0.4.26 as stage 0a of `docs/design/llm-api-adapters.md` §2.3, and three of its invariants are easy to break:
+
+- **`messages_with_system` in `runtime/chat_loop/` is the persistent prefix, never the request.** All seven assembly sites build `[system] + agent.messages`; the tail is appended in exactly one place, `_call_llm_with_overflow_recovery`'s `_send`, which is the only caller of `agent._llm_call`. Putting the tail into `messages_with_system` hands it to compaction and to the token anchor as if it were history.
+- **The tail is request-only; the other two `<system-reminder>` patterns are persisted.** The date/time and background notifications are appended to `agent.messages` on purpose. A persisted tail would pile one todos snapshot into the transcript per turn.
+- **The Tier-1 token anchor is recorded against the persistent prefix**, i.e. `record_api_usage(prompt_tokens, len(persistent), tail_tokens=est(T))`. Anchoring the request instead makes the next slice skip the first new history message *and* re-charge a tail — a whole-tail-sized over-estimate every turn, in the direction that triggers compaction early. `tests/test_volatile_tail_request.py` pins it over 12 turns with the tail size deliberately varied.
+
+Because the tail is rebuilt per *request*, a `todo_write` in one tool iteration is visible to the next — before 0a it waited for a system-prompt rebuild.
+
+**Explicit prompt-cache breakpoints are opt-in** (stage 0b): `LLM_PROMPT_CACHE=anthropic` / `prompt_cache=` puts at most 3 `cache_control` markers on a request (system message, last tool definition, end of stable history), reserving the 4th slot for the endpoint's automatic caching. Marking happens in `llm/client.py::_build_request_kwargs` — *below* replay — and is **copy-on-mark** (`llm/_cache_control.py`): the request shares its dicts with `agent.messages`, so an in-place marker would enter history, the session file, replay and compaction, and accumulate one breakpoint per turn. Off by default because SDK pass-through is verified and endpoint acceptance is not; never inferred from a base URL or model name.
+
+**The date/time is in neither of the two.** It is injected per-turn as a `<system-reminder>` prepended to the *user message* (`runtime/chat_loop/_runner.py::run`, `Current Date/Time: YYYY-MM-DD HH:MM:SS (Day)`) — keeping it out of the cached prefix is the whole point. `tests/test_date_in_prompt.py` asserts both halves.
 
 ### Conversation flow
 

@@ -233,6 +233,10 @@ def test_the_ladder_records_what_the_provider_said(tmp_path, monkeypatch):
     agent.messages = [{"role": "user", "content": f"m{i}"} for i in range(6)]
     agent._last_session_summary_id = None
     monkeypatch.setattr(agent, "_build_system_prompt", lambda: "")
+    # Two prompt products per turn since stage 0a: the system message and
+    # the request-only volatile tail. This agent's skill manager is a mock,
+    # so the real tail builder would try to join mock sections.
+    monkeypatch.setattr(agent, "_build_volatile_tail", lambda: "")
     monkeypatch.setattr(agent, "_emit_session_summary_if_new", lambda *_a, **_k: None)
     monkeypatch.setattr(
         agent.context_manager, "_run_compaction",

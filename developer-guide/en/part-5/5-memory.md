@@ -44,7 +44,7 @@ The user-scope store uses `SQLiteMemoryStore.open(...)` (strict): a failure disa
 
 You usually **don't touch MemoryManager directly** — Agentao handles:
 
-1. Injecting relevant memories into the system prompt each turn (`<memory-context>` block)
+1. Injecting relevant memories into every request each turn (`<memory-context>` block)
 2. Letting the LLM save memories via the built-in `save_memory` tool
 3. Preserving memory across `clear_history()` — memory lives longer than sessions
 
@@ -96,15 +96,17 @@ The `MemoryStore` capability protocol (`agentao.capabilities.MemoryStore`) is th
 
 ## The two prompt blocks
 
-Agentao injects two memory blocks into the system prompt (composition lives in `agentao/prompts/builder.py::SystemPromptBuilder.build()`, invoked via the `agent._build_system_prompt()` facade):
+Agentao injects two memory blocks, and **they ride different messages** — which is the whole point of the split:
 
 ### `<memory-stable>` — stable block
 
-Holds **long-term, structural** memories (types `profile` / `constraint` / `decision`). Identical every turn → benefits from **prompt caching** (most LLM vendors cache stable prefixes, reducing cost and latency).
+In the **system message**, as its last section (`agentao/prompts/builder.py::SystemPromptBuilder.build()`, reached via the `agent._build_system_prompt()` facade). Holds **long-term, structural** memories (types `profile` / `constraint` / `decision`). Identical every turn → benefits from **prompt caching** (most LLM vendors cache stable prefixes, reducing cost and latency).
 
 ### `<memory-context>` — dynamic recall
 
-Top-k recall scored against the current user message each turn. Selected from all saved memories using keyword / Jaccard / tag / recency scoring.
+In the **request-only volatile tail** (`SystemPromptBuilder.build_volatile_tail()`), a trailing `user` message that is never persisted. Top-k recall scored against the current user message each turn, selected from all saved memories using keyword / Jaccard / tag / recency scoring.
+
+It is deliberately *not* in the system message: it is query-specific, so putting it there changed `messages[0]` every turn and invalidated the provider's cached prefix over the entire history. See `developer-guide/en/part-5/6-system-prompt.md`.
 
 **Division of labor**:
 

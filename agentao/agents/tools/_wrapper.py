@@ -924,6 +924,9 @@ class AgentToolWrapper(Tool):
         # host-set reasoning_effort / provider-mandatory field reaches
         # sub-agent LLM calls too — None when unset.
         extra_body = live_cfg.get("extra_body")
+        # Same endpoint, so the same prompt-cache posture (stage 0b).
+        prompt_cache = live_cfg.get("prompt_cache")
+        prompt_cache_ttl = live_cfg.get("prompt_cache_ttl")
 
         max_turns = self._definition.get("max_turns", 15)
         agent_name = self._definition["name"]
@@ -959,6 +962,8 @@ class AgentToolWrapper(Tool):
             temperature=temperature,
             max_tokens=max_tokens,
             extra_body=extra_body,
+            prompt_cache=prompt_cache,
+            prompt_cache_ttl=prompt_cache_ttl,
             working_directory=self._working_directory,
             sandbox_policy=self._sandbox_policy,
             filesystem=self._filesystem,

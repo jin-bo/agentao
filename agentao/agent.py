@@ -7,7 +7,7 @@ import threading
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Union, TYPE_CHECKING
 
 from .llm import LLMClient
 from .llm.client import KEEP_BASE_URL as _KEEP_BASE_URL
@@ -123,6 +123,11 @@ class Agentao:
         # api_key/.../max_tokens above; mutually exclusive with llm_client=
         # (see _validate_construction_args).
         extra_body: Optional[Dict[str, Any]] = None,
+        # Explicit prompt-cache breakpoints for this endpoint (stage 0b).
+        # KEYWORD-ONLY for the same reason as ``extra_body``, and in the same
+        # raw-config family: mutually exclusive with ``llm_client=``.
+        prompt_cache: Optional[str] = None,
+        prompt_cache_ttl: Optional[str] = None,
         extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None,
         # Host compaction control plane. KEYWORD-ONLY for the same reason as
         # ``extra_body`` above — inserting it into the older group would shift
@@ -156,6 +161,12 @@ class Agentao:
             api_key: API key for LLM service.
             base_url: Base URL for API endpoint.
             model: Model name to use.
+            prompt_cache: Explicit prompt-cache breakpoint format for this
+                endpoint — ``"anthropic"`` or ``None``/``"off"`` (default off).
+                Raw-config only: a host that injects ``llm_client=`` passes it
+                to that client instead.
+            prompt_cache_ttl: Retention hint, ``"5m"`` (provider default) or
+                ``"1h"``. Ignored when ``prompt_cache`` is off.
             extra_body: Optional dict forwarded verbatim to the LLM
                 ``.create()`` call as the SDK's ``extra_body`` request
                 option (``reasoning_effort`` / ``top_p`` / ``seed`` /
@@ -239,6 +250,8 @@ class Agentao:
             temperature=temperature,
             max_tokens=max_tokens,
             extra_body=extra_body,
+            prompt_cache=prompt_cache,
+            prompt_cache_ttl=prompt_cache_ttl,
             mcp_manager=mcp_manager,
             extra_mcp_servers=extra_mcp_servers,
             mcp_registry=mcp_registry,
@@ -286,11 +299,17 @@ class Agentao:
             temperature=temperature,
             max_tokens=max_tokens,
             extra_body=extra_body,
+            prompt_cache=prompt_cache,
+            prompt_cache_ttl=prompt_cache_ttl,
             logger=logger,
         )
         self._init_skill_and_memory(skill_manager, memory_manager)
         self._last_user_message: str = ""
         self._stable_block_chars: int = 0  # size of last rendered <memory-stable> block
+        # Ids rendered in the last <memory-stable> block. The volatile tail's
+        # dynamic-recall pass excludes them; the two are built by separate
+        # calls, so the set is handed over on the agent (see prompts/builder.py).
+        self._stable_memory_ids: Set[str] = set()
         self.todo_tool = TodoWriteTool()
         self.permission_engine = permission_engine
 
@@ -345,6 +364,8 @@ class Agentao:
         temperature: Optional[float],
         max_tokens: Optional[int],
         extra_body: Optional[Dict[str, Any]],
+        prompt_cache: Optional[str],
+        prompt_cache_ttl: Optional[str],
         mcp_manager: Optional["McpClientManager"],
         extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]],
         mcp_registry: Optional["MCPRegistry"],
@@ -360,12 +381,15 @@ class Agentao:
         # host with its own client passes ``extra_body=`` to that client.
         if llm_client is not None and any(
             v is not None
-            for v in (api_key, base_url, model, temperature, max_tokens, extra_body)
+            for v in (
+                api_key, base_url, model, temperature, max_tokens, extra_body,
+                prompt_cache, prompt_cache_ttl,
+            )
         ):
             raise ValueError(
                 "Agentao(): pass either llm_client= or "
-                "api_key/base_url/model/temperature/max_tokens/extra_body, "
-                "not both."
+                "api_key/base_url/model/temperature/max_tokens/extra_body/"
+                "prompt_cache/prompt_cache_ttl, not both."
             )
         if mcp_manager is not None and extra_mcp_servers is not None:
             raise ValueError(
@@ -736,6 +760,8 @@ class Agentao:
         temperature: Optional[float],
         max_tokens: Optional[int],
         extra_body: Optional[Dict[str, Any]],
+        prompt_cache: Optional[str],
+        prompt_cache_ttl: Optional[str],
         logger: Optional[logging.Logger],
     ) -> LLMClient:
         """Return the injected client, or build one from raw provider config.
@@ -767,6 +793,10 @@ class Agentao:
             llm_kwargs["max_tokens"] = max_tokens
         if extra_body is not None:
             llm_kwargs["extra_body"] = extra_body
+        if prompt_cache is not None:
+            llm_kwargs["prompt_cache"] = prompt_cache
+        if prompt_cache_ttl is not None:
+            llm_kwargs["prompt_cache_ttl"] = prompt_cache_ttl
         return LLMClient(**llm_kwargs)
 
     def _resolve_transport(self, transport, callbacks: Dict[str, Any]) -> None:
@@ -843,6 +873,12 @@ class Agentao:
             # sub-agent's raw-config build simply omits it. ``or None`` maps an
             # empty dict to "unset".
             "extra_body": getattr(self.llm, "extra_body", None) or None,
+            # Inherited for the same reason as extra_body: a sub-agent talks to
+            # the *same endpoint*, so whether that endpoint honours explicit
+            # cache breakpoints is a property of the deployment, not of who is
+            # asking. ``None`` when unset so the raw-config build omits it.
+            "prompt_cache": getattr(self.llm, "prompt_cache", None),
+            "prompt_cache_ttl": getattr(self.llm, "prompt_cache_ttl", None),
             # Not provider config, but read from the same place and for the
             # same reason: a sub-agent built without it constructs an
             # ``LLMClient`` with ``logger=None``, and that path *evicts and
@@ -1119,13 +1155,28 @@ class Agentao:
         register_agent_tools(self)
 
     def _build_system_prompt(self) -> str:
-        """Build the system prompt for one turn.
+        """Build the system prompt for one turn — the stable prefix only.
 
         Composition lives in :class:`agentao.prompts.SystemPromptBuilder`;
         this method stays as a thin entry point so existing callers and
         tests keep working unchanged.
+
+        Skills, todos, dynamic recall and the plan prompt are **not** in the
+        returned string; they ride the request-only tail built by
+        :meth:`_build_volatile_tail`.
         """
         return SystemPromptBuilder(self).build()
+
+    def _build_volatile_tail(self) -> str:
+        """Build the request-only volatile tail, or ``""`` when empty.
+
+        One ``<system-reminder>`` block carrying skills, todos, dynamic
+        recall and the plan prompt. The chat loop appends it to the
+        *outgoing request* as a trailing ``user`` message and never to
+        ``self.messages`` — see
+        :meth:`agentao.prompts.SystemPromptBuilder.build_volatile_tail`.
+        """
+        return SystemPromptBuilder(self).build_volatile_tail()
 
     def _extract_context_hints(self) -> List[str]:
         # Implementation lives in :mod:`agentao.prompts.helpers`. Kept as a
@@ -1373,11 +1424,19 @@ class Agentao:
             messages_with_system = [
                 {"role": "system", "content": self._build_system_prompt()}
             ] + self.messages
+            # The volatile tail is part of what the next request costs, so it
+            # gets its own bucket. Leaving it out would report the
+            # skills/todos/recall tokens as having vanished when 0a moved them
+            # out of the system prompt — they did not, they moved messages.
+            tail_text = self._build_volatile_tail()
             bd_full = self.context_manager.estimate_tokens_breakdown(
-                messages_with_system, tools=tools_schema
+                messages_with_system, tools=tools_schema,
+                tail=({"role": "user", "content": tail_text} if tail_text else None),
             )
         else:
-            bd_full = {"system": 0, "messages": 0, "tools": 0, "total": 0}
+            bd_full = {
+                "system": 0, "messages": 0, "tail": 0, "tools": 0, "total": 0,
+            }
         stats["token_breakdown"] = bd_full
         memory_count = len(self.memory_manager.get_all_entries())
 
@@ -1411,6 +1470,7 @@ class Agentao:
             f"({stats['usage_percent']:.1f}%)\n"
             f"  system: {bd.get('system', 0):,}  "
             f"messages: {bd.get('messages', 0):,}  "
+            f"tail: {bd.get('tail', 0):,}  "
             f"tools: {bd.get('tools', 0):,}\n"
             f"Session: {self.llm.total_prompt_tokens:,} prompt / "
             f"{self.llm.total_completion_tokens:,} completion tokens"

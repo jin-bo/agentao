@@ -78,6 +78,11 @@ def run_turn(
     # instead of replaying the entire accumulated conversation every turn.
     agent._llm_call_seq = 0
     agent._llm_call_last_msg_count = 1 + len(agent.messages)
+    # How many trailing messages of the last request were request-only (the
+    # stage-0a volatile tail): 0 or 1. Read by ``run_llm_call`` to keep the
+    # delta baseline counted in history messages. Reset per turn so a tail
+    # from the previous turn cannot shift this turn's first baseline.
+    agent._llm_request_tail_count = 0
     # Turn-level tool-call counter. The chat loop bumps this by the
     # number of tool calls in each LLM response; TURN_END reports the
     # total so host telemetry can size a turn without replaying every

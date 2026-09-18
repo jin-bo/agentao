@@ -81,9 +81,20 @@ def discover_llm_kwargs() -> Dict[str, Any]:
     Reads ``LLM_PROVIDER`` (default ``OPENAI``) and the provider-prefixed
     ``{PROVIDER}_API_KEY`` / ``{PROVIDER}_BASE_URL`` /
     ``{PROVIDER}_MODEL``, plus the provider-agnostic ``LLM_TEMPERATURE``,
-    ``LLM_MAX_TOKENS`` and ``LLM_EXTRA_BODY``. Missing values are omitted
-    from the returned dict so the caller can ``setdefault`` / merge without
-    colliding with explicit ``None`` overrides.
+    ``LLM_MAX_TOKENS``, ``LLM_EXTRA_BODY``, ``LLM_PROMPT_CACHE`` and
+    ``LLM_PROMPT_CACHE_TTL``. Missing values are omitted from the returned dict
+    so the caller can ``setdefault`` / merge without colliding with explicit
+    ``None`` overrides.
+
+    ``LLM_PROMPT_CACHE`` opts the endpoint into explicit prompt-cache
+    breakpoints (``anthropic``, or ``off`` / empty for the default). It is
+    **not** inferred from the base URL or the model name: agentao can verify
+    that the SDK forwards the key but not that a given gateway honours it, so
+    the operator names it for the endpoint they verified. An unknown value
+    raises from :class:`agentao.llm.LLMClient` rather than being warned and
+    skipped — unlike ``LLM_EXTRA_BODY``, a typo here would silently disable the
+    very thing it was set to enable, which is indistinguishable from caching
+    that does not work.
 
     ``LLM_EXTRA_BODY`` is a JSON **object** (forwarded as the SDK's
     ``extra_body`` request option). Unlike ``LLM_TEMPERATURE`` /
@@ -111,6 +122,10 @@ def discover_llm_kwargs() -> Dict[str, Any]:
         out["temperature"] = float(v)
     if (v := os.getenv("LLM_MAX_TOKENS")) is not None:
         out["max_tokens"] = int(v)
+    if (v := os.getenv("LLM_PROMPT_CACHE")) is not None and v.strip():
+        out["prompt_cache"] = v.strip()
+    if (v := os.getenv("LLM_PROMPT_CACHE_TTL")) is not None and v.strip():
+        out["prompt_cache_ttl"] = v.strip()
     if (v := os.getenv("LLM_EXTRA_BODY")) is not None and v.strip():
         try:
             parsed = json.loads(v)

@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from ._cache_control import apply_cache_control, resolve_cache_control
 from ._retry import (
     BASE_BACKOFF_SECONDS,
     JITTER_FRACTION,
@@ -138,6 +139,8 @@ class LLMClient(_LoggingMixin):
         temperature: float = 0.2,
         max_tokens: int = 65536,
         extra_body: Optional[Dict[str, Any]] = None,
+        prompt_cache: Optional[str] = None,
+        prompt_cache_ttl: Optional[str] = None,
         log_file: Optional[str] = "agentao.log",
         logger: Optional[logging.Logger] = None,
     ):
@@ -167,6 +170,15 @@ class LLMClient(_LoggingMixin):
                 SDK / provider validates the values; the host configures
                 its own endpoint. ``None``/empty → not forwarded → request
                 is byte-identical to today. Must be a dict or ``None``.
+            prompt_cache: Explicit prompt-cache breakpoint format for this
+                endpoint — ``"anthropic"`` or ``None``/``"off"`` (default).
+                Opt-in because agentao can verify the SDK forwards the key
+                but not that *your* endpoint honours it; see
+                :mod:`agentao.llm._cache_control`. Raises ``ValueError`` on
+                an unknown value rather than quietly sending nothing.
+            prompt_cache_ttl: Retention hint, ``"5m"`` (the provider default,
+                same as ``None``) or ``"1h"``. Ignored when ``prompt_cache``
+                is off.
             log_file: Path to log file for LLM interactions. ``None`` skips
                 the file handler entirely.
             logger: Optional injected logger. When provided, the client
@@ -201,6 +213,20 @@ class LLMClient(_LoggingMixin):
         # (e.g. ``extra_body["extra_headers"]["Authorization"]``) cannot alter
         # in-flight requests through the shared reference.
         self.extra_body: Dict[str, Any] = copy.deepcopy(extra_body) if extra_body else {}
+
+        # Explicit prompt-cache marker for this endpoint, or None when off.
+        # Resolved (and validated) once at construction; which *calls* carry
+        # markers is decided per call — see ``_build_request_kwargs``.
+        self.cache_control: Optional[Dict[str, str]] = resolve_cache_control(
+            prompt_cache, prompt_cache_ttl,
+        )
+        # The configured spellings, kept beside the resolved marker so a
+        # sub-agent's raw-config build can inherit them (``_llm_config``).
+        # Not derived back from ``cache_control``: one format resolves to one
+        # marker today, and reversing that mapping would quietly pick the wrong
+        # format the day there are two.
+        self.prompt_cache: Optional[str] = prompt_cache
+        self.prompt_cache_ttl: Optional[str] = prompt_cache_ttl
 
         # Set to True after detecting the model requires max_completion_tokens
         self._use_max_completion_tokens: bool = False
@@ -351,6 +377,7 @@ class LLMClient(_LoggingMixin):
                 previous provider's custom endpoint.
             model: New model name (None keeps existing)
         """
+        _old_base = self.base_url
         self.api_key = api_key
         if base_url is not KEEP_BASE_URL:
             self.base_url = base_url
@@ -362,6 +389,27 @@ class LLMClient(_LoggingMixin):
         # (auto-recovered via the ``omit_temperature`` latch), a stale
         # ``extra_body`` key after a model switch has no latch — the host owns
         # dropping model-specific keys (e.g. ``reasoning_effort``) on switch.
+        #
+        # ``cache_control`` is a third category and **is** dropped on an
+        # endpoint change. It is neither host passthrough nor a detected quirk:
+        # agentao mints the markers itself on the strength of the operator
+        # asserting that *this endpoint* honours them. A new base URL is a new
+        # deployment, that assertion no longer covers it, and there is no latch
+        # here — an endpoint that 400s on the key would 400 on every request
+        # until someone noticed. Same family as the observed context limit and
+        # the thinking-artifact purge, which also clear on an endpoint change.
+        # A bare credential rotation (same base_url) keeps it.
+        if self.base_url != _old_base and self.cache_control is not None:
+            self.logger.warning(
+                "Endpoint changed (%s -> %s); dropping the explicit "
+                "prompt-cache breakpoints configured for the old one. "
+                "Re-set prompt_cache / LLM_PROMPT_CACHE once the new endpoint "
+                "is verified.",
+                _old_base, self.base_url,
+            )
+            self.cache_control = None
+            self.prompt_cache = None
+            self.prompt_cache_ttl = None
         self.reset_capability_latches()
         self.client = _openai_client_cls()(
             api_key=self.api_key,
@@ -393,6 +441,7 @@ class LLMClient(_LoggingMixin):
         max_tokens: Optional[int],
         *,
         stream: bool,
+        cache_boundary: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Assemble the ``.create(**kwargs)`` request dict for one call.
 
@@ -403,7 +452,26 @@ class LLMClient(_LoggingMixin):
         here forwards it through both call sites with no signature change;
         omitted when empty so the request stays byte-identical to the
         pre-passthrough build (back-compat).
+
+        ``cache_boundary`` opts *this call* into explicit prompt-cache
+        breakpoints (stage 0b) and says how many trailing messages are
+        request-only, so the conversation breakpoint lands at the end of stable
+        history. ``None`` — the default — marks nothing. Per call rather than
+        per client because a cache *write* costs more than an ordinary read:
+        the agent turn has a large prefix worth caching, while the one-shot
+        summarizer prompt would pay the write premium for a prefix nothing
+        reads back.
+
+        This is also the last point before the wire. Marking here rather than
+        in the chat loop is what keeps the markers out of the replay record and
+        out of ``agent.messages``: everything above this line saw the unmarked
+        request.
         """
+        if cache_boundary is not None and self.cache_control is not None:
+            messages, tools = apply_cache_control(
+                messages, tools, self.cache_control,
+                request_only_tail=cache_boundary,
+            )
         kwargs: Dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -428,6 +496,8 @@ class LLMClient(_LoggingMixin):
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         max_tokens: Optional[int] = None,
+        *,
+        cache_boundary: Optional[int] = None,
     ) -> Any:
         """Send chat request to LLM.
 
@@ -435,6 +505,9 @@ class LLMClient(_LoggingMixin):
             messages: List of message dictionaries
             tools: Optional list of tool definitions
             max_tokens: Maximum tokens to generate
+            cache_boundary: Opt this call into explicit prompt-cache
+                breakpoints, and say how many trailing messages are
+                request-only. See :meth:`_build_request_kwargs`.
 
         Returns:
             Response from the LLM
@@ -443,7 +516,10 @@ class LLMClient(_LoggingMixin):
         request_id = f"req_{self.request_count}"
 
         # Build request parameters (single source — see _build_request_kwargs)
-        kwargs = self._build_request_kwargs(messages, tools, max_tokens, stream=False)
+        kwargs = self._build_request_kwargs(
+            messages, tools, max_tokens, stream=False,
+            cache_boundary=cache_boundary,
+        )
 
         # Log request
         self._log_request(request_id, kwargs)
@@ -534,6 +610,8 @@ class LLMClient(_LoggingMixin):
         max_tokens: Optional[int] = None,
         on_text_chunk: Optional[Any] = None,
         cancellation_token: Optional[Any] = None,
+        *,
+        cache_boundary: Optional[int] = None,
     ) -> Any:
         """Streaming variant of chat(). Calls on_text_chunk(chunk) for each text delta.
 
@@ -552,18 +630,27 @@ class LLMClient(_LoggingMixin):
             tools: Optional list of tool definitions
             max_tokens: Maximum tokens to generate
             on_text_chunk: Optional callable(str) invoked for each text delta
+            cache_boundary: Opt this call into explicit prompt-cache
+                breakpoints, and say how many trailing messages are
+                request-only. See :meth:`_build_request_kwargs`.
 
         Returns:
             ChatCompletion (Pydantic) or duck-type ChatCompletion response compatible with agent.py
         """
         # Gemini: bypass streaming to preserve thought_signature on tool calls
         if self._is_gemini():
-            return self._emit_nonstreaming(messages, tools, max_tokens, on_text_chunk)
+            return self._emit_nonstreaming(
+                messages, tools, max_tokens, on_text_chunk,
+                cache_boundary=cache_boundary,
+            )
 
         self.request_count += 1
         request_id = f"req_{self.request_count}"
 
-        kwargs = self._build_request_kwargs(messages, tools, max_tokens, stream=True)
+        kwargs = self._build_request_kwargs(
+            messages, tools, max_tokens, stream=True,
+            cache_boundary=cache_boundary,
+        )
 
         # Log without the stream flag (matches non-streaming log format)
         log_kwargs = {k: v for k, v in kwargs.items() if k != "stream"}
@@ -642,6 +729,7 @@ class LLMClient(_LoggingMixin):
                     try:
                         return self._emit_nonstreaming(
                             messages, tools, max_tokens, on_text_chunk,
+                            cache_boundary=cache_boundary,
                         )
                     except Exception as fallback_e:
                         import traceback
@@ -782,13 +870,18 @@ class LLMClient(_LoggingMixin):
         tools: Optional[List[Dict[str, Any]]],
         max_tokens: Optional[int],
         on_text_chunk: Optional[Any],
+        *,
+        cache_boundary: Optional[int] = None,
     ) -> Any:
         """Run the non-streaming ``chat()`` and replay its full content
         through ``on_text_chunk`` so streaming callers behave identically.
 
         Shared by the Gemini bypass and the streaming-unsupported fallback.
         """
-        response = self.chat(messages, tools=tools, max_tokens=max_tokens)
+        response = self.chat(
+            messages, tools=tools, max_tokens=max_tokens,
+            cache_boundary=cache_boundary,
+        )
         if on_text_chunk:
             content = response.choices[0].message.content
             if content:

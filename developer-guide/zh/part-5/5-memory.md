@@ -44,7 +44,7 @@ SQLiteMemoryStore.open_or_memory(<cwd>/.agentao/memory.db)
 
 大多数情况你**不需要直接碰 MemoryManager**——Agentao 自己会：
 
-1. 每轮 `chat()` 前把相关记忆注入系统提示（`<memory-context>` 块）
+1. 每轮 `chat()` 前把相关记忆注入请求（`<memory-context>` 块）
 2. LLM 通过内置 `save_memory` 工具主动存记忆
 3. `clear_history()` 时不清记忆（记忆跨会话存在）
 
@@ -96,15 +96,17 @@ agent = Agentao(
 
 ## 提示词里的两个记忆块
 
-Agentao 在系统提示中注入两种块（组装逻辑在 `agentao/prompts/builder.py::SystemPromptBuilder.build()`，由 `agent._build_system_prompt()` facade 转发）：
+Agentao 注入两种记忆块，而且**它们挂在不同的消息上** —— 这正是拆开它们的意义：
 
 ### `<memory-stable>` — 稳定块
 
-放**长期、结构化**的记忆（类型 `profile` / `constraint` / `decision`）。每轮 `chat()` 都一样，从而享受 **prompt cache**（大多数 LLM 厂商把稳定前缀缓存起来、降费降延迟）。
+在 **system 消息**里，是它的最后一段（`agentao/prompts/builder.py::SystemPromptBuilder.build()`，由 `agent._build_system_prompt()` facade 转发）。放**长期、结构化**的记忆（类型 `profile` / `constraint` / `decision`）。每轮 `chat()` 都一样，从而享受 **prompt cache**（大多数 LLM 厂商把稳定前缀缓存起来、降费降延迟）。
 
 ### `<memory-context>` — 动态召回块
 
-根据本轮 user message 做 top-k 召回，每轮不同。从所有已存记忆里按关键词/Jaccard/标签/时间 等打分挑最相关的。
+在**仅属于请求的易变尾消息**里（`SystemPromptBuilder.build_volatile_tail()`），那是一条从不落盘的尾部 `user` 消息。根据本轮 user message 做 top-k 召回，每轮不同，从所有已存记忆里按关键词/Jaccard/标签/时间 等打分挑最相关的。
+
+它刻意**不**放在 system 消息里：它按查询生成，放进去就会让 `messages[0]` 每轮都变，从而废掉 provider 覆盖整段历史的缓存前缀。见 `developer-guide/zh/part-5/6-system-prompt.md`。
 
 **两块的分工**：
 - 稳定块 = "这个用户一直是这样的"

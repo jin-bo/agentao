@@ -42,7 +42,15 @@ def _completed(transport: _CaptureTransport) -> dict:
 def _make_llm(chunks: list[str], *, finish: str = "stop"):
     """A stand-in ``agent.llm`` whose ``chat_stream`` streams ``chunks``."""
 
-    def chat_stream(*, messages, tools, max_tokens, on_text_chunk, cancellation_token):
+    def chat_stream(
+        *, messages, tools, max_tokens, on_text_chunk, cancellation_token,
+        cache_boundary=None,
+    ):
+        # ``cache_boundary`` is how many trailing messages of the request are
+        # request-only (stage 0a's volatile tail), forwarded so the stage-0b
+        # breakpoint lands at the end of stable history. Spelled out rather
+        # than swallowed by ``**kwargs`` so a rename shows up here.
+        assert cache_boundary == 0, cache_boundary
         for c in chunks:
             on_text_chunk(c)
         choice = SimpleNamespace(finish_reason=finish)
@@ -81,7 +89,10 @@ def test_llm_call_completed_ttft_none_when_no_text_streamed():
 
 
 def test_llm_call_completed_error_path_still_reports_latency():
-    def chat_stream(*, messages, tools, max_tokens, on_text_chunk, cancellation_token):
+    def chat_stream(
+        *, messages, tools, max_tokens, on_text_chunk, cancellation_token,
+        cache_boundary=None,
+    ):
         on_text_chunk("partial ")
         exc = RuntimeError("boom")
         exc.streamed = True

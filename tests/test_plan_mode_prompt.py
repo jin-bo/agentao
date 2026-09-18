@@ -25,11 +25,22 @@ def _activate_plan(agent):
     agent._plan_session.phase = PlanPhase.ACTIVE
 
 
+def _turn_text(agent):
+    """Everything the model is instructed with this turn, both messages.
+
+    Since stage 0a the plan prompt rides the request-only volatile tail, not
+    the system message. These tests are about the wording the model receives,
+    so they read both; which message carries which block is asserted once, in
+    ``test_system_prompt_sections.py``.
+    """
+    return agent._build_system_prompt() + agent._build_volatile_tail()
+
+
 def test_plan_mode_prompt_contains_proposal_only_constraints():
     agent = _make_agent()
     _activate_plan(agent)
 
-    prompt = agent._build_system_prompt()
+    prompt = _turn_text(agent)
 
     assert "=== PLAN MODE ===" in prompt
     assert "reviewable" in prompt
@@ -44,7 +55,7 @@ def test_plan_mode_prompt_still_allows_clarification_and_research():
     agent = _make_agent()
     _activate_plan(agent)
 
-    prompt = agent._build_system_prompt()
+    prompt = _turn_text(agent)
 
     assert "ask_user" in prompt
     assert "read-only tools" in prompt
@@ -53,12 +64,12 @@ def test_plan_mode_prompt_still_allows_clarification_and_research():
 def test_plan_mode_prompt_replaces_autonomous_completion_language():
     agent = _make_agent()
 
-    normal_prompt = agent._build_system_prompt()
+    normal_prompt = _turn_text(agent)
     assert "Work autonomously until the task is fully resolved before yielding back to the user." in normal_prompt
     assert "Use tools proactively only when they materially improve correctness" in normal_prompt
 
     _activate_plan(agent)
-    plan_prompt = agent._build_system_prompt()
+    plan_prompt = _turn_text(agent)
     assert "Work autonomously until the task is fully resolved before yielding back to the user." not in plan_prompt
     assert "Use tools proactively only when they materially improve correctness" not in plan_prompt
     assert "In plan mode, stop after the research and proposal are complete." in plan_prompt
@@ -69,7 +80,7 @@ def test_plan_mode_prompt_includes_tool_protocol():
     agent = _make_agent()
     _activate_plan(agent)
 
-    prompt = agent._build_system_prompt()
+    prompt = _turn_text(agent)
 
     assert "plan_save" in prompt
     assert "plan_finalize" in prompt
@@ -83,7 +94,7 @@ def test_plan_mode_prompt_excludes_agents_section():
     agent = _make_agent()
     _activate_plan(agent)
 
-    prompt = agent._build_system_prompt()
+    prompt = _turn_text(agent)
 
     assert "Available Agents" not in prompt
 
@@ -92,7 +103,7 @@ def test_plan_mode_prompt_requires_save_before_ending_turn():
     agent = _make_agent()
     _activate_plan(agent)
 
-    prompt = agent._build_system_prompt()
+    prompt = _turn_text(agent)
 
     assert "must call plan_save" in prompt
     assert "not considered complete until it has been saved and finalized" in prompt
@@ -102,7 +113,7 @@ def test_plan_mode_prompt_handles_user_execute_intent():
     agent = _make_agent()
     _activate_plan(agent)
 
-    prompt = agent._build_system_prompt()
+    prompt = _turn_text(agent)
 
     assert "expresses intent to execute" in prompt
     assert "plan_finalize on the latest draft_id" in prompt
@@ -112,7 +123,7 @@ def test_plan_mode_prompt_stale_draft_retry():
     agent = _make_agent()
     _activate_plan(agent)
 
-    prompt = agent._build_system_prompt()
+    prompt = _turn_text(agent)
 
     assert "stale draft_id" in prompt
     assert "call plan_save again" in prompt
@@ -122,7 +133,7 @@ def test_plan_mode_prompt_prohibits_pseudo_code():
     agent = _make_agent()
     _activate_plan(agent)
 
-    prompt = agent._build_system_prompt()
+    prompt = _turn_text(agent)
 
     assert "patch-style" in prompt
     assert "diff-shaped" in prompt
@@ -133,7 +144,7 @@ def test_plan_mode_prompt_skill_boundary():
     agent = _make_agent()
     _activate_plan(agent)
 
-    prompt = agent._build_system_prompt()
+    prompt = _turn_text(agent)
 
     assert "Skills may be activated only for read-only" in prompt
 
@@ -142,7 +153,7 @@ def test_plan_mode_prompt_tiered_sections():
     agent = _make_agent()
     _activate_plan(agent)
 
-    prompt = agent._build_system_prompt()
+    prompt = _turn_text(agent)
 
     assert "Small tasks" in prompt
     assert "Medium to large tasks" in prompt

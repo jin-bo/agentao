@@ -114,19 +114,22 @@ def test_reliability_before_memories():
 
 
 def test_stable_prefix_order():
-    """Stable prefix comes before volatile sections: Reliability → Operational
-    → <memory-stable> → Available Skills. Protects the prompt-cache prefix
-    against future reorder regressions."""
+    """Stable prefix order: Reliability → Operational → <memory-stable>, which
+    is where the system message now ends. Protects the prompt-cache prefix
+    against future reorder regressions.
+
+    Since stage 0a the skills catalogue is not below <memory-stable> — it is
+    not in this message at all. ``test_system_prompt_sections.py`` pins that
+    half; asserting it here too would only be an index comparison against a
+    marker that is always absent, which is the shape of a test that cannot
+    fail."""
     agent = _make_agent()
-    # Ensure both a memory entry and at least one available skill exist so
-    # the indices are non-(-1).
     agent.memory_tool.execute(key="order_probe", value="v")
     prompt = agent._build_system_prompt()
 
     rel_idx = prompt.find("=== Reliability Principles ===")
     op_idx = prompt.find("=== Operational Guidelines ===")
     mem_idx = prompt.find("<memory-stable>")
-    skills_idx = prompt.find("=== Available Skills ===")
 
     assert rel_idx != -1, "Reliability section missing"
     assert op_idx != -1, "Operational Guidelines section missing"
@@ -135,14 +138,7 @@ def test_stable_prefix_order():
     assert rel_idx < op_idx < mem_idx, (
         f"Stable-prefix order violated: rel={rel_idx} op={op_idx} mem={mem_idx}"
     )
-    # Skills section is optional (depends on on-disk skills/); only assert order
-    # when it is actually rendered.
-    if skills_idx != -1:
-        assert mem_idx < skills_idx, (
-            f"<memory-stable> (pos {mem_idx}) must precede "
-            f"Available Skills (pos {skills_idx}) to keep skills in the volatile suffix"
-        )
-    print("✅ Stable prefix order: Reliability → Operational → memory-stable → Skills")
+    print("✅ Stable prefix order: Reliability → Operational → memory-stable")
 
 
 def test_reasoning_requirement_has_gating_clause():

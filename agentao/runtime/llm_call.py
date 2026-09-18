@@ -62,6 +62,14 @@ def run_llm_call(
         else {}
     )
 
+    # How many trailing messages of this request are request-only (stage 0a's
+    # volatile tail: 0 or 1). Read here, above both consumers — the replay
+    # delta baseline and the cache boundary — because delta capture is a
+    # capture flag and the cache boundary is not.
+    tail_count = getattr(agent, "_llm_request_tail_count", 0)
+    if not isinstance(tail_count, int) or isinstance(tail_count, bool):
+        tail_count = 0
+
     started_payload: Dict[str, Any] = {
         "attempt": attempt,
         "model": agent.llm.model,
@@ -71,8 +79,12 @@ def run_llm_call(
         "n_tool_messages": sum(
             1 for m in messages if isinstance(m, dict) and m.get("role") == "tool"
         ),
+        # Counted over **history**, not the request: stage 0a's volatile tail
+        # is a ``user`` message that always opens with ``<system-reminder>``,
+        # so counting the request would add one to every entry and leave no way
+        # to tell a real injected reminder from the tail.
         "n_system_reminder_blocks": sum(
-            1 for m in messages
+            1 for m in messages[:len(messages) - tail_count]
             if isinstance(m, dict)
             and m.get("role") == "user"
             and "<system-reminder>" in str(m.get("content", ""))
@@ -100,7 +112,13 @@ def run_llm_call(
             "total_messages": len(messages),
             "added_messages": added,
         }))
-        agent._llm_call_last_msg_count = len(messages)
+        # Baseline for the *next* call's delta, counted in **history**
+        # messages. ``messages`` may carry a trailing request-only volatile
+        # tail (stage 0a) that never enters ``agent.messages``; counting it
+        # here would start the next delta one message late and drop a real
+        # history message from the replay record. The tail itself still shows
+        # up in ``added_messages`` above — it was sent, so the audit says so.
+        agent._llm_call_last_msg_count = max(0, len(messages) - tail_count)
 
     # Full IO capture (opt-in). Cost is large: every call writes the
     # entire messages array. Scanner still runs inside the recorder.
@@ -138,6 +156,13 @@ def run_llm_call(
             max_tokens=agent.llm.max_tokens,
             on_text_chunk=_on_text_chunk,
             cancellation_token=cancellation_token,
+            # Opts the agent turn into explicit prompt-cache breakpoints when
+            # the endpoint is configured for them (stage 0b; a no-op
+            # otherwise), and tells the marker where stable history ends. The
+            # summarizer's own ``llm_client.chat(...)`` deliberately does not
+            # pass this: a one-shot prompt would pay the cache-write premium
+            # for a prefix nothing reads back.
+            cache_boundary=tail_count,
         )
     except Exception as exc:
         # `streamed` is attached by LLMClient.chat_stream before raising:

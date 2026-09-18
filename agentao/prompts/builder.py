@@ -6,28 +6,46 @@ Holds *only* the assembly logic. Section text lives in
 keeps the builder stateless and the agent unaware of the assembly
 order — both can change independently.
 
+Two products, two cadences:
+
+- :meth:`SystemPromptBuilder.build` returns the **system message**, which
+  is the stable prefix and nothing else.
+- :meth:`SystemPromptBuilder.build_volatile_tail` returns the volatile
+  content (skills, todos, dynamic recall, plan) as one
+  ``<system-reminder>`` block, which the runtime appends to the outgoing
+  request as a trailing ``user`` message and never persists.
+
+They are split because ``messages[0]`` is the head of the provider's
+cached prefix: while the volatile blocks lived inside the system message,
+flipping one todo status invalidated the cache covering the whole
+history. See ``docs/design/llm-api-adapters.md`` §2.3 stage 0a.
+
 Behavioral contract:
 
-- Section ordering follows the documented stable-prefix / volatile-suffix
+- Section ordering follows the documented stable-prefix / volatile-tail
   layout for prompt-cache reuse.
 - ``_stable_block_chars`` is written onto the agent after the stable
   memory block is rendered (the CLI status surface reads it via
-  ``getattr(cli.agent, '_stable_block_chars', 0)``).
+  ``getattr(cli.agent, '_stable_block_chars', 0)``), and
+  ``_stable_memory_ids`` with it — the dynamic-recall block in the tail
+  excludes whatever the stable block already showed, and the two halves
+  are now built by separate calls.
 - ``_extract_context_hints`` is called as an agent method, since tests
   assert on it directly.
 
-Per-section token diagnostics are emitted as a single ``prompt_sections``
-log line (logger ``agentao.prompt_diag``) on every build. Token counts
-are cached on the agent keyed by section text so unchanged sections
-(notably the stable prefix) are not re-tokenized every turn.
-Diagnostics are best-effort — if estimation fails the build still
-returns normally.
+Per-section token diagnostics are emitted as one ``prompt_sections`` log
+line per system build and one ``volatile_tail_sections`` line per tail
+build (logger ``agentao.prompt_diag``). Token counts are cached on the
+agent keyed by section text so unchanged sections (notably the stable
+prefix) are not re-tokenized every turn. Diagnostics are best-effort —
+if estimation fails the build still returns normally.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Dict
 
 from ..plan import build_plan_prompt
@@ -46,6 +64,17 @@ if TYPE_CHECKING:  # pragma: no cover - import-time only
 
 
 _logger = logging.getLogger("agentao.prompt_diag")
+
+#: A literal ``</system-reminder>`` anywhere inside the tail's body would close
+#: the wrapper early and drop everything after it into the request as bare
+#: trailing user text — the highest-leverage position there is — shedding the
+#: "this is data, not instructions" framing the wrapper exists to supply. The
+#: body is not all agentao-authored: it carries memory values the model itself
+#: wrote, and skill / MCP descriptions from disk and from servers. Matched
+#: case-insensitively and with loose whitespace, because the reader being
+#: steered is a language model, not an XML parser: ``</ SYSTEM-REMINDER >``
+#: works on it just as well as the exact spelling.
+_CLOSING_REMINDER_RE = re.compile(r"</\s*system-reminder\s*>", re.IGNORECASE)
 
 # The tool the available-skills catalogue tells the model to call.
 # Spelled here rather than imported: ``agentao.tools`` pulls the whole
@@ -87,20 +116,57 @@ class SystemPromptBuilder:
         self._agent = agent
 
     def build(self) -> str:
+        """Build the system message — the stable prefix, and nothing else.
+
+        The volatile blocks are *not* here; see
+        :meth:`build_volatile_tail`.
+        """
         sections = self._build_sections()
         prompt = "".join(sections.values())
         self._log_section_diagnostics(sections)
         return prompt
 
+    def build_volatile_tail(self) -> str:
+        """Build the request-only volatile tail, or ``""`` when empty.
+
+        Wrapped in a single ``<system-reminder>`` element, ready to be the
+        ``content`` of a trailing ``user`` message on one outgoing request.
+
+        **Request-only, and that is a new lifecycle in this codebase.** The
+        two existing ``<system-reminder>`` patterns — the per-turn date/time
+        and background notifications — are both *persisted* into
+        ``agent.messages``. This one must not be: a persisted tail would pile
+        one todos snapshot per turn into the transcript, and the whole point
+        of 0a is that this content is cheap to re-send because it is outside
+        the cached prefix.
+
+        Returns ``""`` when nothing volatile renders, in which case the
+        request is the pre-0a one exactly.
+
+        A literal closing tag inside the body is neutralized first — see
+        :data:`_CLOSING_REMINDER_RE`.
+        """
+        sections = self._build_volatile_sections()
+        body = "".join(sections.values()).strip()
+        if not body:
+            return ""
+        self._log_section_diagnostics(sections, label="volatile_tail_sections")
+        # Neutralized, not stripped: the escaped form stays readable, so a
+        # memory or skill description that legitimately discusses the tag still
+        # reads correctly instead of losing text.
+        body = _CLOSING_REMINDER_RE.sub(r"<\\/system-reminder>", body)
+        return f"<system-reminder>\n{body}\n</system-reminder>"
+
     def _build_sections(self) -> Dict[str, str]:
-        """Build each named section. Returns insertion-ordered dict.
+        """Build the system message's sections. Insertion-ordered.
 
         Order: project_instructions (optional) → stable prefix
         (identity, reliability, task_classification, execution_protocol,
         completion_standard, untrusted_input, operational_guidelines,
-        reasoning_requirement?, available_agents?, stable_memory?) →
-        volatile suffix (available_skills?, active_skills_context?,
-        todos?, dynamic_recall?, plan_prompt?).
+        reasoning_requirement?, available_agents?, stable_memory?).
+
+        Every section here is stable across the turns of one session; the
+        volatile ones live in :meth:`_build_volatile_sections`.
 
         Empty optional sections are omitted from the dict so the
         diagnostic log isn't polluted with zero-token entries.
@@ -118,7 +184,8 @@ class SystemPromptBuilder:
 
         # --- Stable prefix (cached across turns) ---------------------------
         # Volatile content (skills, todos, dynamic recall, plan suffix)
-        # lives below this prefix to maximize prompt-cache reuse.
+        # is not in this message at all — it rides a request-only tail, see
+        # ``build_volatile_tail``.
         sections["identity"] = build_identity_section(agent.working_directory)
         sections["reliability"] = build_reliability_section()
         sections["task_classification"] = build_task_classification_section()
@@ -149,10 +216,32 @@ class SystemPromptBuilder:
             stable_records, session_tail=cross_session_tail,
         )
         agent._stable_block_chars = len(stable_block)
+        # Handed to the tail builder, which excludes these from dynamic
+        # recall. Written even when the block is empty, so a memory that
+        # *stops* being stable cannot stay excluded from recall by a set
+        # left over from an earlier build.
+        agent._stable_memory_ids = {r.id for r in stable_records}
         if stable_block:
             sections["stable_memory"] = "\n\n" + stable_block
 
-        # --- Volatile suffix (changes within a session) --------------------
+        return sections
+
+    def _build_volatile_sections(self) -> Dict[str, str]:
+        """Build the volatile tail's sections. Insertion-ordered.
+
+        Order: available_skills? → active_skills_context? → todos? →
+        dynamic_recall? → plan_prompt?. Same relative order they had at the
+        bottom of the system message before 0a moved them out of it.
+
+        Rebuilt per *request*, not per turn, which is the one behavioural
+        gain beyond caching: a ``todo_write`` in iteration 3 is visible to
+        iteration 4, where before it waited for a system-prompt rebuild.
+        Re-running dynamic recall per request is the cost of that; it is a
+        scored pass over the memory store, not an LLM call.
+        """
+        agent = self._agent
+        sections: Dict[str, str] = {}
+
         skills_block = self._available_skills_block()
         if skills_block:
             sections["available_skills"] = skills_block
@@ -165,11 +254,14 @@ class SystemPromptBuilder:
         if todos_block:
             sections["todos"] = todos_block
 
-        # Dynamic recall (per-turn; query-specific top-k candidates).
+        # Dynamic recall (per-request; query-specific top-k candidates).
         # Exclude entries already shown in the stable block to avoid
-        # duplication.
+        # duplication — ``_stable_memory_ids`` is written by the system
+        # build, which always precedes a tail build in the runtime. A
+        # standalone tail build (a test, a host poking at the builder) sees
+        # an empty set and may duplicate an entry: wasteful, not wrong.
         context_hints = agent._extract_context_hints()
-        stable_ids = {r.id for r in stable_records}
+        stable_ids = getattr(agent, "_stable_memory_ids", None) or set()
         candidates = agent.memory_retriever.recall_candidates(
             query=agent._last_user_message or "",
             context_hints=context_hints,
@@ -185,12 +277,16 @@ class SystemPromptBuilder:
 
         return sections
 
-    def _log_section_diagnostics(self, sections: Dict[str, str]) -> None:
+    def _log_section_diagnostics(
+        self, sections: Dict[str, str], label: str = "prompt_sections",
+    ) -> None:
         """Log per-section token counts. Best-effort — never raises.
 
         Stable-prefix sections are byte-identical across turns, so
         results are memoized on the agent (keyed by section name +
-        text) to avoid re-tokenizing them on every build.
+        text) to avoid re-tokenizing them on every build. ``label``
+        separates the system build's line from the tail's; the two
+        section-name spaces are disjoint, so they share one cache.
         """
         if not _logger.isEnabledFor(logging.INFO):
             return
@@ -215,7 +311,8 @@ class SystemPromptBuilder:
                     counts[name] = n
 
             _logger.info(
-                "prompt_sections total_tokens=%d breakdown=%s",
+                "%s total_tokens=%d breakdown=%s",
+                label,
                 sum(counts.values()),
                 json.dumps(counts, separators=(",", ":")),
             )
