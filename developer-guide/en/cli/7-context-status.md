@@ -23,7 +23,8 @@ Context Window Status:
 |-------|---------|
 | Estimated tokens | Approximate token count of the conversation as it would be sent now |
 | Max tokens | Configured upper bound (default 200,000) |
-| Usage | `Estimated / Max`. Color: green (<55%), yellow (<65%), red (>=65%) |
+| Effective | Shown only when the provider has said something about the window: `min(configured, observed, reported)`, with each input named — `provider asserted N` (learned from an overflow error) and `Models API reports N` (the model's `max_input_tokens`; today only the `anthropic-messages` wire asks). Yellow when it is below Max tokens — that is why compaction fires earlier than the configured number suggests |
+| Usage | `Estimated / Effective` (`Effective` is `Max` when the line is absent). Color: green (<55%), yellow (<65%), red (>=65%) |
 | Messages | Number of messages in `agent.messages` |
 | Compact failures | How many times the auto-compactor has failed in this session, out of the circuit-breaker limit. Hits the limit → auto-compact disables for safety. |
 | Last compact | When auto-compaction last ran; pre/post token counts; how many messages were summarized vs kept |

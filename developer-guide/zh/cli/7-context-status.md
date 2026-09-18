@@ -23,7 +23,8 @@ Context Window Status:
 |---|---|
 | Estimated tokens | 当前对话发出去时大约的 token 数 |
 | Max tokens | 配置的上限（默认 200,000） |
-| Usage | `Estimated / Max`。颜色：绿（<55%）、黄（<65%）、红（≥65%） |
+| Effective | 仅当 provider 对窗口有过说法时才显示：`min(配置值, 观测值, 报告值)`，并逐项写明来源 —— `provider asserted N`（从溢出错误里学到）和 `Models API reports N`（模型的 `max_input_tokens`；目前只有 `anthropic-messages` 线路会查）。低于 Max tokens 时为黄色 —— 这就是压缩比配置值所暗示的更早触发的原因 |
+| Usage | `Estimated / Effective`（没有 Effective 行时即 `Max`）。颜色：绿（<55%）、黄（<65%）、红（≥65%） |
 | Messages | `agent.messages` 里的消息数 |
 | Compact failures | 本会话中自动压缩失败次数 / 熔断阈值。打到阈值就关掉自动压缩 |
 | Last compact | 上次自动压缩的时间、压缩前后 token 数、被摘要的消息数 vs 保留的消息数 |

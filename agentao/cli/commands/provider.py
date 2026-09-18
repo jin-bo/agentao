@@ -233,11 +233,30 @@ def handle_model_command(cli: AgentaoCLI, args: str) -> None:
         console.print(f"\n[success]{result}[/success]\n")
 
 
+#: Why ``/temperature`` reports rather than acts on ``anthropic-messages``.
+_TEMPERATURE_UNSENT = (
+    "the anthropic-messages wire has no 'temperature' parameter; "
+    "a gateway that takes one gets it through LLM_EXTRA_BODY"
+)
+
+
 def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
-    """Handle /temperature command — show or set LLM temperature."""
+    """Handle /temperature command — show or set LLM temperature.
+
+    The ``anthropic-messages`` wire never sends ``temperature`` (see
+    ``llm/_anthropic_messages.py``). The value is still stored there — it is
+    the client's, and a ``/provider`` switch back to Chat Completions sends it
+    — but every answer says it is not going out, instead of "sending 0.7".
+    """
     args = args.strip()
+    unsent = getattr(cli.agent.llm, "api_format", None) == "anthropic-messages"
     if not args:
-        if getattr(cli.agent.llm, "omit_temperature", False):
+        if unsent:
+            console.print(
+                f"\n[info]Temperature:[/info] [cyan]{cli.agent.llm.temperature}[/cyan] "
+                f"[warning](not sent — {_TEMPERATURE_UNSENT})[/warning]"
+            )
+        elif getattr(cli.agent.llm, "omit_temperature", False):
             console.print("\n[info]Temperature:[/info] [cyan]off[/cyan] [dim](omitted from requests)[/dim]")
         else:
             console.print(f"\n[info]Temperature:[/info] [cyan]{cli.agent.llm.temperature}[/cyan]")
@@ -251,6 +270,12 @@ def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
         return
     if lowered == "on":
         cli.agent.llm.omit_temperature = False
+        if unsent:
+            console.print(
+                f"\n[warning]Temperature on ({cli.agent.llm.temperature}), but not sent — "
+                f"{_TEMPERATURE_UNSENT}[/warning]\n"
+            )
+            return
         console.print(f"\n[success]Temperature on — sending {cli.agent.llm.temperature}[/success]\n")
         return
 
@@ -265,6 +290,12 @@ def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
     old = cli.agent.llm.temperature
     cli.agent.llm.temperature = value
     cli.agent.llm.omit_temperature = False
+    if unsent:
+        console.print(
+            f"\n[warning]Temperature stored as {value} (was {old}), but not sent — "
+            f"{_TEMPERATURE_UNSENT}[/warning]\n"
+        )
+        return
     console.print(f"\n[success]Temperature changed from {old} to {value}[/success]\n")
 
 

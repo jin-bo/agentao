@@ -15,6 +15,21 @@ _Targeting 0.5.1. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`/context` names a window the Models API narrowed.** The "Effective" line
+  was keyed on an *observed* overflow limit alone, so on the
+  `anthropic-messages` wire — where the model's `max_input_tokens` narrows the
+  window with no overflow at all — it showed only the configured number while
+  every budget ran on a smaller one, and compaction fired early with nothing
+  on screen to say why. The line now appears whenever either input has
+  spoken, and names both: `provider asserted N — <provenance>` and
+  `Models API reports N`. `get_usage_stats()` already carried
+  `reported_limit`; only the CLI was silent.
+- **`/temperature` no longer says "sending 0.7" on the `anthropic-messages`
+  wire**, which never sends it. Show, `on` and `<value>` all answer that the
+  value is stored but not sent, and point at `LLM_EXTRA_BODY`. It is still
+  stored: the value is the client's, and a `/provider` switch back to Chat
+  Completions sends it. Chat Completions answers are unchanged.
+
 ---
 
 ## [0.5.0] — 2026-09-19

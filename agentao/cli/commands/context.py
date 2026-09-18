@@ -21,20 +21,32 @@ def handle_context_command(cli: AgentaoCLI, args: str) -> None:
         console.print(f"  Estimated tokens: [cyan]{stats['estimated_tokens']:,}[/cyan]")
         console.print(f"  Max tokens:       [cyan]{stats['max_tokens']:,}[/cyan] [dim](configured)[/dim]")
         observed = stats.get("observed_limit")
+        reported = stats.get("reported_limit")
         effective = stats.get("effective_max_tokens", stats["max_tokens"])
-        if observed is not None and effective != stats["max_tokens"]:
+        # Both narrowing inputs are named, not only the one that won: the
+        # window is ``min(configured, observed, reported)``, and a line keyed
+        # on ``observed`` alone said nothing when the Models API was what
+        # narrowed it — which is the common case, since that needs no overflow.
+        sources = []
+        if observed is not None:
+            sources.append(
+                f"provider asserted {observed:,} — "
+                f"{stats.get('observed_limit_provenance')}"
+            )
+        if reported is not None:
+            sources.append(f"Models API reports {reported:,}")
+        if sources and effective != stats["max_tokens"]:
             # The mismatch is the whole point of showing this: budgets are
             # denominated in the effective window, and a user reading only
             # the configured one would not know why compaction fires early.
             console.print(
                 f"  Effective:        [yellow]{effective:,}[/yellow] "
-                f"[dim](provider asserted {observed:,} — "
-                f"{stats.get('observed_limit_provenance')})[/dim]"
+                f"[dim]({'; '.join(sources)})[/dim]"
             )
-        elif observed is not None:
+        elif sources:
             console.print(
                 f"  Effective:        [cyan]{effective:,}[/cyan] "
-                f"[dim](provider asserted {observed:,}, at or above configured)[/dim]"
+                f"[dim]({'; '.join(sources)}; at or above configured)[/dim]"
             )
 
         pct = stats["usage_percent"]
