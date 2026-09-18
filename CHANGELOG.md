@@ -11,7 +11,32 @@ _Targeting 0.5.1. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **The token totals say how much of the input was cached.**
+  `total_prompt_tokens` is the whole prompt on every wire — what the
+  compaction anchor needs, and exactly what makes it useless for cost, since a
+  provider bills cache reads and writes at other rates. The counts were
+  already on each response; nothing summed them. Now:
+  `LLMClient.total_cache_read_tokens` / `total_cache_creation_tokens`;
+  `cache_read_tokens` / `cache_creation_tokens` on `agentao run`'s `usage`
+  and on `LLM_CALL_COMPLETED` (so on replay too, whose summary shows
+  `cached=` / `cache-write=` when stated); and `/status` reads
+  `Session: 5,100 prompt (4,000 cached, 200 cache-write) / 40 completion`.
+  Read from `cache_read_input_tokens` / `cache_creation_input_tokens` on the
+  Anthropic wire and `prompt_tokens_details.cached_tokens` on Chat
+  Completions (no cache-write count there); two names for one read are never
+  summed. All are parts **of** the prompt count, not additions to it. A
+  sub-agent's roll-up carries them. `LLMClient.add_usage()` grows two
+  keyword arguments and `reset_usage()` is new. Agentao applies no prices:
+  that table is the host's.
+
 ### Changed
+
+- **`/context` says which quantity its total is.** With an API count the
+  line is the size of the *last request* — exact, and one step behind what
+  has been appended since; without one it is a local estimate of the history
+  as it stands. It printed both as "Estimated tokens" with nothing to tell
+  them apart. Now suffixed `(last request, as the API counted it)` or
+  `(local estimate)`.
 
 ### Fixed
 

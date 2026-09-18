@@ -49,6 +49,7 @@ from ._retry import (
     _parse_retry_after,
 )
 from ._stream_response import _StreamAccumulator, _StreamResponse
+from ._usage import cache_token_counts, positive_int
 from ._logging import _LoggingMixin
 from ..paths import user_root
 from ..security.secret_scan import redact
@@ -278,6 +279,10 @@ class LLMClient(_LoggingMixin):
         # Cumulative token usage across all calls this session
         self.total_prompt_tokens: int = 0
         self.total_completion_tokens: int = 0
+        # Parts *of* ``total_prompt_tokens``, not additions to it: the input
+        # a provider bills at its cache rates (see ``_usage.py``).
+        self.total_cache_read_tokens: int = 0
+        self.total_cache_creation_tokens: int = 0
         # ``+=`` on an attribute is a read and a write. A background sub-agent
         # adds its usage from its own thread (``add_usage``) while this
         # client's turn adds its own, so every writer goes through the lock.
@@ -601,10 +606,7 @@ class LLMClient(_LoggingMixin):
                 response = self._adapter.send(kwargs)
 
                 if hasattr(response, "usage") and response.usage:
-                    self.add_usage(
-                        response.usage.prompt_tokens or 0,
-                        response.usage.completion_tokens or 0,
-                    )
+                    self._count_response_usage(response.usage)
 
                 self._log_response(request_id, response)
                 return response
@@ -840,23 +842,39 @@ class LLMClient(_LoggingMixin):
                     raise
                 attempt += 1
 
-    def add_usage(self, prompt_tokens: int, completion_tokens: int) -> None:
+    def _count_response_usage(self, usage: Any) -> None:
+        cache_read, cache_creation = cache_token_counts(usage)
+        self.add_usage(
+            getattr(usage, "prompt_tokens", 0), getattr(usage, "completion_tokens", 0),
+            cache_read_tokens=cache_read, cache_creation_tokens=cache_creation,
+        )
+
+    def add_usage(
+        self, prompt_tokens: int, completion_tokens: int, *,
+        cache_read_tokens: int = 0, cache_creation_tokens: int = 0,
+    ) -> None:
         """Add to the session totals. Safe from any thread.
 
-        The one writer of ``total_prompt_tokens`` / ``total_completion_tokens``
-        besides a reset: this client's own requests, and a sub-agent's usage
+        The one writer of the four ``total_*_tokens`` counters besides
+        ``reset_usage``: this client's own requests, and a sub-agent's usage
         rolled up when it finishes (``agents/tools/_wrapper.py``) — a
         sub-agent has its own client, so without that its requests were in
         nobody's total. Anything that is not a non-negative ``int`` is
         ignored: a mocked response answers any attribute.
         """
-        def _count(value: Any) -> int:
-            ok = isinstance(value, int) and not isinstance(value, bool) and value > 0
-            return value if ok else 0
-
         with self._usage_lock:
-            self.total_prompt_tokens += _count(prompt_tokens)
-            self.total_completion_tokens += _count(completion_tokens)
+            self.total_prompt_tokens += positive_int(prompt_tokens)
+            self.total_completion_tokens += positive_int(completion_tokens)
+            self.total_cache_read_tokens += positive_int(cache_read_tokens)
+            self.total_cache_creation_tokens += positive_int(cache_creation_tokens)
+
+    def reset_usage(self) -> None:
+        """Zero the session totals (a new conversation). Same lock as the adds."""
+        with self._usage_lock:
+            self.total_prompt_tokens = 0
+            self.total_completion_tokens = 0
+            self.total_cache_read_tokens = 0
+            self.total_cache_creation_tokens = 0
 
     def _cancelled_before_send(self, cancellation_token: Optional[Any], request_id: str) -> bool:
         if cancellation_token is None or not cancellation_token.is_cancelled:
@@ -885,10 +903,7 @@ class LLMClient(_LoggingMixin):
 
         # Accumulate session token totals
         if acc.usage_data is not None:
-            self.add_usage(
-                getattr(acc.usage_data, "prompt_tokens", 0) or 0,
-                getattr(acc.usage_data, "completion_tokens", 0) or 0,
-            )
+            self._count_response_usage(acc.usage_data)
         return response
 
     def _emit_nonstreaming(

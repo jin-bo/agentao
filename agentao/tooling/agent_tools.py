@@ -18,7 +18,9 @@ if TYPE_CHECKING:
     from ..agent import Agentao
 
 
-def _add_usage(agent: "Agentao", prompt_tokens: int, completion_tokens: int) -> None:
+def _add_usage(
+    agent: "Agentao", prompt_tokens: int, completion_tokens: int, **cache_counts: int,
+) -> None:
     """Add a finished sub-agent's usage to the parent's session totals.
 
     ``agent.llm`` is read here rather than captured: it is the object a host
@@ -26,7 +28,7 @@ def _add_usage(agent: "Agentao", prompt_tokens: int, completion_tokens: int) -> 
     """
     add = getattr(agent.llm, "add_usage", None)
     if callable(add):
-        add(prompt_tokens, completion_tokens)
+        add(prompt_tokens, completion_tokens, **cache_counts)
 
 
 def register_agent_tools(agent: "Agentao") -> None:
@@ -119,7 +121,7 @@ def register_agent_tools(agent: "Agentao") -> None:
         # session totals — and ``agentao run``'s usage — only through this.
         # Read at call time: a host-injected ``llm_client`` may not have the
         # method, and then there is nothing to add to.
-        usage_sink=lambda prompt, completion: _add_usage(agent, prompt, completion),
+        usage_sink=lambda prompt, completion, **cache: _add_usage(agent, prompt, completion, **cache),
         sandbox_policy=getattr(agent, "sandbox_policy", None),
         subagent_emitter=getattr(agent, "_host_subagent_emitter", None),
         # The backends the parent's built-ins were bound to, so a sub-agent's

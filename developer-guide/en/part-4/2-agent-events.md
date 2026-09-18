@@ -198,7 +198,7 @@ For normal UI spinners, prefer `TOOL_COMPLETE`. Use `TOOL_RESULT` for replay, au
 | Field | Description |
 |-------|-------------|
 | Trigger | Around each provider call |
-| `data` | Provider-call metadata before the call; usage / finish metadata after the call. `LLM_CALL_COMPLETED` carries `duration_ms`, `model_latency_ms` (a stable intent-named alias of `duration_ms`), `first_token_ms` (time-to-first-token in ms, or `null` when the call streamed no text — e.g. a tool-only response or a failure before the first delta), `prompt_tokens`, `completion_tokens`, `finish_reason`, plus `status` / `error_class` / `error_message` / `streamed` on the error path |
+| `data` | Provider-call metadata before the call; usage / finish metadata after the call. `LLM_CALL_COMPLETED` carries `duration_ms`, `model_latency_ms` (a stable intent-named alias of `duration_ms`), `first_token_ms` (time-to-first-token in ms, or `null` when the call streamed no text — e.g. a tool-only response or a failure before the first delta), `prompt_tokens`, `completion_tokens`, `finish_reason`, plus `status` / `error_class` / `error_message` / `streamed` on the error path. Since 0.5.1 also `cache_read_tokens` / `cache_creation_tokens`: the parts **of** `prompt_tokens` the provider bills at its cache rates (`cache_read_input_tokens` / `cache_creation_input_tokens` on the Anthropic wire; `prompt_tokens_details.cached_tokens` on Chat Completions, which has no cache-write count). `None` when the response carried no usage, `0` when the provider did not state one |
 | Typical use | Metrics, cost tracking, debugging model behavior — `first_token_ms` vs `model_latency_ms` separates queueing/TTFT from total generation time |
 
 ### `LLM_CALL_DELTA`

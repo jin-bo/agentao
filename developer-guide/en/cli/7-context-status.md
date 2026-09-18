@@ -10,7 +10,7 @@
 > /context
 
 Context Window Status:
-  Estimated tokens: 47,231
+  Estimated tokens: 47,231 (last request, as the API counted it)
   Max tokens:       200,000
   Usage:            23.6%
   Messages:         54
@@ -21,7 +21,7 @@ Context Window Status:
 
 | Field | Meaning |
 |-------|---------|
-| Estimated tokens | Approximate token count of the conversation as it would be sent now |
+| Estimated tokens | One of two quantities, and the line says which. `(last request, as the API counted it)` — the exact size of the last request sent, one step behind: the reply and any tool results appended since are not in it. `(local estimate)` — a local estimate of the history as it stands, shown before the first response and right after a compaction. The compaction thresholds use neither alone: they take the API count for what was already sent and estimate only what was appended since |
 | Max tokens | Configured upper bound (default 200,000) |
 | Effective | Shown only when the provider has said something about the window: `min(configured, observed, reported)`, with each input named — `provider asserted N` (learned from an overflow error) and `Models API reports N` (the model's `max_input_tokens`; today only the `anthropic-messages` wire asks). Yellow when it is below Max tokens — that is why compaction fires earlier than the configured number suggests |
 | Usage | `Estimated / Effective` (`Effective` is `Max` when the line is absent). Color: green (<55%), yellow (<65%), red (>=65%) |

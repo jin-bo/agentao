@@ -286,6 +286,55 @@ def test_format_json_emits_structured_envelope(
     assert payload["model"] == "stub-model"
 
 
+def test_usage_carries_the_cache_parts_of_the_prompt_as_a_delta(
+    monkeypatch, tmp_path, stub_pipeline, capsys,
+):
+    """``usage`` is a delta over the run. The two cache counts are parts of
+    ``prompt_tokens`` — billed at another rate — so they do not enter
+    ``total_tokens`` a second time."""
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    _captured, StubAgent = stub_pipeline
+
+    def chat(self, prompt, max_iterations=100, cancellation_token=None):
+        # What was already on the client before this run must not be reported.
+        assert (self.llm.total_cache_read_tokens, self.llm.total_cache_creation_tokens) == (50, 5)
+        self.llm.total_prompt_tokens += 5000
+        self.llm.total_completion_tokens += 40
+        self.llm.total_cache_read_tokens += 4000
+        self.llm.total_cache_creation_tokens += 200
+        return "stub final text"
+
+    real_init = StubAgent.__init__
+
+    def init(self, **kwargs):
+        real_init(self, **kwargs)
+        self.llm.total_cache_read_tokens = 50
+        self.llm.total_cache_creation_tokens = 5
+
+    monkeypatch.setattr(StubAgent, "__init__", init)
+    monkeypatch.setattr(StubAgent, "chat", chat)
+
+    assert run._execute_with_args(_build_args(prompt="hi", output_format="json")) == 0
+    assert json.loads(capsys.readouterr().out)["usage"] == {
+        "prompt_tokens": 5000, "completion_tokens": 40, "total_tokens": 5040,
+        "cache_read_tokens": 4000, "cache_creation_tokens": 200,
+    }
+
+
+def test_usage_reports_no_cache_counts_for_a_client_that_keeps_none(
+    monkeypatch, tmp_path, stub_pipeline, capsys,
+):
+    """The stub client has no cache totals at all — a host's own may not."""
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    assert run._execute_with_args(_build_args(prompt="hi", output_format="json")) == 0
+    usage = json.loads(capsys.readouterr().out)["usage"]
+    assert (usage["cache_read_tokens"], usage["cache_creation_tokens"]) == (0, 0)
+
+
 # ---------------------------------------------------------------------------
 # Empty model turn — must not read as success
 # ---------------------------------------------------------------------------
