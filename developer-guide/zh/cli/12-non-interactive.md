@@ -159,6 +159,8 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 }
 ```
 
+`usage` 是本次运行各个 LLM 请求上报用量的总和：agent 自己的调用、它的压缩摘要请求，以及——自 0.5.1 起——它委派出去的每个**前台子代理**（此前子代理的请求不计入任何地方，所以有委派的运行会少报）。后台子代理的用量在它结束时才加入，可能晚于 envelope 写出。`prompt_tokens` 含缓存命中的输入，而 provider 对这部分按另一个价格计费；流中失败的请求也可能没计入——请把它当用量，不要当账单。
+
 失败时 `final_text` 为 `null`，`error` 字段携带 `{ type, message, reason?, tool_name?, tool_call_id?, question?, matched_rule? }`。`type` 取值：`permission_required`、`permission_denied`、`interaction_required`、`max_iterations`、`runtime_error`、`invalid_spec`、`interrupted`、`empty_response`、`length_truncated`、`doom_loop`。消费方应把 envelope 视为前向兼容（多余字段直接忽略）。
 
 有三种 type 表示 turn 结束但没有可交回的答案，且它们的 `reason` 都携带运行时的精确分类——请基于 `reason` 分支，而不是 `message`：

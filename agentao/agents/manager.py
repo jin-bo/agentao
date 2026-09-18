@@ -155,6 +155,7 @@ class AgentManager:
         permission_engine_getter: Optional[Callable] = None,
         tool_origin_getter: Optional[Callable[[str], str]] = None,
         skill_manager_getter: Optional[Callable[[], Any]] = None,
+        usage_sink: Optional[Callable[[int, int], None]] = None,
     ) -> List[RegistrableTool]:
         """Create an :class:`AgentToolWrapper` per agent definition.
 
@@ -173,6 +174,10 @@ class AgentManager:
         each sub-agent is built with a ``child_view()`` of it. Without it a
         sub-agent has no skills, which is coherent but silently drops the
         parent's catalogue (#254).
+
+        ``usage_sink(prompt_tokens, completion_tokens)`` receives each
+        finished sub-agent's token usage. Without it a sub-agent's requests
+        are counted nowhere: it has its own LLM client.
         """
         _readonly_getter = readonly_mode_getter or (lambda: False)
         wrappers = [
@@ -198,6 +203,7 @@ class AgentManager:
                 permission_engine_getter=permission_engine_getter,
                 tool_origin_getter=tool_origin_getter,
                 skill_manager_getter=skill_manager_getter,
+                usage_sink=usage_sink,
             )
             for defn in self.definitions.values()
         ]

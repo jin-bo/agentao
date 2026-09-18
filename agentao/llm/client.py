@@ -26,6 +26,7 @@ import logging
 import logging.handlers
 import random
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -277,6 +278,10 @@ class LLMClient(_LoggingMixin):
         # Cumulative token usage across all calls this session
         self.total_prompt_tokens: int = 0
         self.total_completion_tokens: int = 0
+        # ``+=`` on an attribute is a read and a write. A background sub-agent
+        # adds its usage from its own thread (``add_usage``) while this
+        # client's turn adds its own, so every writer goes through the lock.
+        self._usage_lock = threading.Lock()
         # Track how many messages have already been logged (for incremental logging)
         self._logged_message_count = 0
         # Track system prompt content to log full text on first call and diffs on changes
@@ -596,8 +601,10 @@ class LLMClient(_LoggingMixin):
                 response = self._adapter.send(kwargs)
 
                 if hasattr(response, "usage") and response.usage:
-                    self.total_prompt_tokens += response.usage.prompt_tokens or 0
-                    self.total_completion_tokens += response.usage.completion_tokens or 0
+                    self.add_usage(
+                        response.usage.prompt_tokens or 0,
+                        response.usage.completion_tokens or 0,
+                    )
 
                 self._log_response(request_id, response)
                 return response
@@ -833,6 +840,24 @@ class LLMClient(_LoggingMixin):
                     raise
                 attempt += 1
 
+    def add_usage(self, prompt_tokens: int, completion_tokens: int) -> None:
+        """Add to the session totals. Safe from any thread.
+
+        The one writer of ``total_prompt_tokens`` / ``total_completion_tokens``
+        besides a reset: this client's own requests, and a sub-agent's usage
+        rolled up when it finishes (``agents/tools/_wrapper.py``) — a
+        sub-agent has its own client, so without that its requests were in
+        nobody's total. Anything that is not a non-negative ``int`` is
+        ignored: a mocked response answers any attribute.
+        """
+        def _count(value: Any) -> int:
+            ok = isinstance(value, int) and not isinstance(value, bool) and value > 0
+            return value if ok else 0
+
+        with self._usage_lock:
+            self.total_prompt_tokens += _count(prompt_tokens)
+            self.total_completion_tokens += _count(completion_tokens)
+
     def _cancelled_before_send(self, cancellation_token: Optional[Any], request_id: str) -> bool:
         if cancellation_token is None or not cancellation_token.is_cancelled:
             return False
@@ -860,8 +885,10 @@ class LLMClient(_LoggingMixin):
 
         # Accumulate session token totals
         if acc.usage_data is not None:
-            self.total_prompt_tokens += getattr(acc.usage_data, "prompt_tokens", 0) or 0
-            self.total_completion_tokens += getattr(acc.usage_data, "completion_tokens", 0) or 0
+            self.add_usage(
+                getattr(acc.usage_data, "prompt_tokens", 0) or 0,
+                getattr(acc.usage_data, "completion_tokens", 0) or 0,
+            )
         return response
 
     def _emit_nonstreaming(

@@ -159,6 +159,8 @@ For the full design rationale — including v1 scope, deferred typing (`number` 
 }
 ```
 
+`usage` is what the run's LLM requests reported, summed: the agent's own calls, its compaction summaries, and — since 0.5.1 — every **foreground sub-agent** it delegated to (before that a sub-agent's requests were counted nowhere, so a delegating run under-reported). A background sub-agent's usage is added when it finishes, which may be after the envelope is written. `prompt_tokens` includes cached input, which providers bill at a different rate, and a request that failed mid-stream may not be counted — treat it as usage, not as an invoice.
+
 On failure, `final_text` is `null` and `error` carries `{ type, message, reason?, tool_name?, tool_call_id?, question?, matched_rule? }`. Error `type` is one of `permission_required`, `permission_denied`, `interaction_required`, `max_iterations`, `runtime_error`, `invalid_spec`, `interrupted`, `empty_response`, `length_truncated`, `doom_loop`. Consumers should treat the envelope as forward-compatible (extra fields ignored).
 
 Three types mean the turn completed with no answer to hand back, and `reason` carries the runtime's exact classification for all of them — branch on `reason`, not on `message`:

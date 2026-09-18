@@ -574,6 +574,7 @@ class AgentToolWrapper(Tool):
         permission_engine_getter: Optional[Callable] = None,
         tool_origin_getter: Optional[Callable[[str], str]] = None,
         skill_manager_getter: Optional[Callable[[], Any]] = None,
+        usage_sink: Optional[Callable[[int, int], None]] = None,
     ):
         self._definition = definition
         # The parent's live registry: tools it adds or removes between turns
@@ -605,6 +606,10 @@ class AgentToolWrapper(Tool):
         # a child view of it (``_child_skill_manager``). Live, because the
         # CLI registers plugin skills onto it after construction.
         self._skill_manager_getter = skill_manager_getter
+        # Where a finished sub-agent's token usage goes: the parent's session
+        # totals. A sub-agent has its own ``LLMClient``, so without this its
+        # requests are in nobody's total (``_roll_up_usage``).
+        self._usage_sink = usage_sink
         self._sandbox_policy = sandbox_policy
         # Where the parent's file and shell tools run (a host may redirect them
         # into a container or a virtual filesystem). A sub-agent's built-ins
@@ -883,6 +888,7 @@ class AgentToolWrapper(Tool):
                 **setup,
             )
         finally:
+            self._roll_up_usage(sub_agent)
             self._close_sub_agent(sub_agent)
 
     def _build_sub_agent(self, suppress_output: bool) -> Tuple[Any, Dict[str, Any]]:
@@ -1126,6 +1132,29 @@ class AgentToolWrapper(Tool):
             logger.debug(
                 "Sub-agent '%s' lists tools the parent does not have: %s",
                 agent_name, ", ".join(unavailable),
+            )
+
+    def _roll_up_usage(self, sub_agent: Any) -> None:
+        """Add what this sub-agent's requests cost to the parent's totals.
+
+        Once per sub-agent, from the ``finally`` that closes it — so a run
+        that raised or was cancelled is counted too: its requests were made
+        and paid for whatever came of them. One level is the whole tree,
+        since agent tools are withheld from a sub-agent (``_narrow_tools``).
+
+        Same footing as ``_close_sub_agent``: the outcome is decided, so a
+        failure here is logged and never replaces it. The counts are
+        type-checked where they land (``LLMClient.add_usage``).
+        """
+        if self._usage_sink is None:
+            return
+        try:
+            llm = sub_agent.llm
+            self._usage_sink(llm.total_prompt_tokens, llm.total_completion_tokens)
+        except Exception:
+            logger.warning(
+                "Rolling a sub-agent's token usage up to its parent failed (%s)",
+                self._definition["name"], exc_info=True,
             )
 
     def _close_sub_agent(self, sub_agent: Any) -> None:
@@ -1407,6 +1436,7 @@ class AgentToolWrapper(Tool):
             finally:
                 self._bg_store.unregister_token(agent_id)
                 if sub_agent is not None:
+                    self._roll_up_usage(sub_agent)
                     self._close_sub_agent(sub_agent)
 
         # Background agents run silently: suppress_output=True ensures no callbacks

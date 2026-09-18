@@ -15,6 +15,22 @@ _Targeting 0.5.1. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A sub-agent's token usage now reaches its parent's totals.** A sub-agent
+  is a separate `Agentao` with its own `LLMClient`, so its requests were in
+  nobody's count: the session line in `/status` and `agentao run`'s `usage`
+  (a delta of the same two counters) reported a delegating run as costing
+  only the parent's own calls. Each sub-agent's `total_prompt_tokens` /
+  `total_completion_tokens` are now added to the parent's when it finishes —
+  from the `finally` that closes it, so a run that raised or was cancelled is
+  counted too, its requests having been paid for either way. A foreground
+  sub-agent lands inside the parent's turn; a background one when it ends,
+  from its own thread, which is why every writer of the totals now goes
+  through the new thread-safe `LLMClient.add_usage()` (it ignores anything
+  that is not a positive `int`). The `~N tokens` in a sub-agent's result
+  footer is unchanged and was never usage — it is a local estimate of the
+  size of its final message list. A host-injected `llm_client` without
+  `add_usage` is left alone. Not changed: the totals still have no cache
+  read/write split, so they are usage, not an invoice.
 - **`/context` names a window the Models API narrowed.** The "Effective" line
   was keyed on an *observed* overflow limit alone, so on the
   `anthropic-messages` wire — where the model's `max_input_tokens` narrows the
