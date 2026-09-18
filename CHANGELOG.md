@@ -5,6 +5,97 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+_Targeting 0.5.0 — a **removal release**. Add entries under the relevant
+heading as work lands. Upgrade guide: `docs/migration/0.4.x-to-0.5.0.md`
+(`.zh.md` twin)._
+
+### Removed
+
+Everything here warned with a `DeprecationWarning` through 0.4.x unless it
+says otherwise. The executable inventory, with the live callers each row
+turned out to have, is `docs/design/0-5-0-removal-checklist.md`.
+
+- **`agentao.harness`**, the alias package for `agentao.host` (deprecated in
+  0.4.2), with its seven modules and every old-name alias: `HarnessEvent`,
+  `HarnessToolEmitter` / `HarnessPermissionEmitter` /
+  `HarnessSubagentEmitter`, `HarnessReplaySink`,
+  `harness_event_to_replay_kind` / `harness_event_to_replay_payload`,
+  `replay_payload_to_harness_event`, `export_harness_event_json_schema` /
+  `export_harness_acp_json_schema`. Replace `harness` / `Harness` with `host`
+  / `Host`; the objects are the same objects.
+- **`agentao.session`**, the shim over `agentao.embedding.sessions`
+  (deprecated in 0.4.5). Import from `agentao.embedding.sessions` — and see
+  the `project_root` entry under **Changed**, which applies to a direct caller
+  of that module as well.
+- **The eight legacy callback kwargs on `Agentao(...)`** (deprecated in
+  0.4.5): `confirmation_callback`, `step_callback`, `thinking_callback`,
+  `ask_user_callback`, `output_callback`, `tool_complete_callback`,
+  `llm_text_callback`, `on_max_iterations_callback` — and the attributes of
+  the same names on the agent. Passing one is a `TypeError`. **Keep the
+  callbacks and wrap them**:
+  `Agentao(transport=build_compat_transport(confirmation_callback=...))`.
+  `agentao.embedding.compat.build_compat_transport` takes the same eight names
+  and is not deprecated; or build an `SdkTransport` directly.
+- The four callback kwargs `ToolRunner(...)` had accepted and ignored since
+  the Transport protocol landed. Internal runtime class; never warned.
+- Private, never warned: the `_replay_config` / `_replay_recorder` /
+  `_replay_adapter` / `_host_replay_sink` property views on `Agentao` (read
+  `agent.replay_manager.config` / `.recorder` / `.adapter` /
+  `.host_replay_sink`; the manager is `None` on an agent that never had replay
+  attached), and the `_emit_context_compressed` /
+  `_emit_session_summary_if_new` / `_latest_session_summary_id` delegations
+  (call `agentao.replay.observability` directly).
+- **The "Reasoning Requirement" section of the system prompt.** It rendered
+  only when `thinking_callback=` was passed to the constructor, and nothing
+  else set the flag — so a host on `transport=` never had it, including one
+  that had wrapped its `thinking_callback` with `build_compat_transport` as
+  advised, and including agentao's own CLI, ACP server and `agentao run`, since
+  2026-04-04. It is retired with the kwarg rather than switched on for every
+  host that never had it. The text is in the migration guide (§7) for a host
+  that wants it in its `AGENTAO.md`. `THINKING` events are unaffected.
+
+**Not removed**, although the 0.4.5 notes listed them for 0.5.0:
+`Agentao.start_replay()` / `end_replay()` / `reload_replay_config()` and the
+`replay_config=` constructor argument. The CLI and the ACP server call them on
+every session. `agentao.tool_runner`, the old import path of
+`agentao.runtime.tool_runner`, is a different shim and also stays.
+
+### Added
+
+### Changed
+
+- **`Agentao(...)` takes five positional parameters; everything after
+  `max_tokens` is keyword-only.** Breaking, and it never warned. The eight
+  removed callbacks sat *between* `max_context_tokens`, `permission_engine`,
+  `transport` and `plan_session`, positionally. Deleting them alone would have
+  moved those four up, and a caller still passing a callback sixth would have
+  bound it to `max_context_tokens` without a word; behind the `*` that call is
+  a `TypeError` where it is written. A caller that passes those four by
+  keyword — every example in the docs — is unaffected.
+- **`project_root` is required on all seven `agentao.embedding.sessions` entry
+  points, and an explicit `None` is refused.** Breaking, and it never warned:
+  the 0.4.x note promised this on two of the seven signatures, and the
+  `Path.cwd()` fallback lived in the body of the one helper they all funnel
+  through, so it applied to a direct caller of the new module too, not only to
+  the `agentao.session` shim. `None` used to mean the process cwd — for
+  `delete_all_sessions` as much as for `save_session`. It is keyword-only on
+  `save_session`, `persist_agent_session`, `load_session` and
+  `load_session_record` (where it follows optional parameters) and a plain
+  required parameter on `list_sessions`, `delete_session` and
+  `delete_all_sessions`; passing `project_root=` by keyword works on all of
+  them. `TypeError` either way, naming the parameter.
+- A foreground sub-agent no longer emits a `DeprecationWarning` at spawn. The
+  sub-agent factory was the last in-tree caller of the legacy callback kwargs;
+  its callbacks ride one `build_compat_transport`. Confirmation behaviour is
+  unchanged: a foreground sub-agent asks its parent by name, a background one
+  refuses what needs asking.
+
+### Fixed
+
+---
+
 ## [0.4.27] — 2026-09-18
 
 ### Changed

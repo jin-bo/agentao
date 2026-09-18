@@ -29,8 +29,9 @@ Agentao(
     base_url: str | None = None,
     model: str | None = None,
     temperature: float | None = None,
+    max_tokens: int | None = None,
+    *,                                          # everything below is keyword-only (0.5.0)
     transport: Transport | None = None,
-    *,
     working_directory: Path,                    # required since 0.3.0
     extra_body: dict | None = None,             # keyword-only; LLM .create() request-body passthrough
     extra_mcp_servers: dict[str, dict] | None = None,
@@ -54,13 +55,10 @@ Agentao(
     replay_config: ReplayConfig | None = None,
     sandbox_policy: SandboxPolicy | None = None,
     bg_store: BackgroundTaskStore | None = None,
-    # Legacy callbacks (deprecated — emit DeprecationWarning; removed in 0.5.0)
-    output_callback: Callable[[str], None] | None = None,
-    confirmation_callback: Callable[[str, str, dict], bool] | None = None,
-    ask_user_callback: Callable[[str], str] | None = None,
-    on_max_iterations_callback: Callable[[int, list], dict] | None = None,
     # ...
 )
+# The 8 legacy callback kwargs (confirmation_callback, step_callback, …) were
+# removed in 0.5.0 — passing one is a TypeError. See build_compat_transport below.
 ```
 
 Mutual-exclusion rules (raise `ValueError` if violated):
@@ -72,7 +70,7 @@ Mutual-exclusion rules (raise `ValueError` if violated):
 
 Opt-in subsystem semantics (defaults are `None` since 0.2.16):
 
-- `replay_config=None` — no `<wd>/.agentao/replay.json` is read at construction time; the agent uses a no-op `ReplayConfig()` internally.
+- `replay_config=None` — no `<wd>/.agentao/replay.json` is read at construction time and no `ReplayManager` is attached: `agent.replay_manager` is `None` until `start_replay()` / `reload_replay_config()` creates one.
 - `sandbox_policy=None` — `ToolRunner` runs shell commands without the macOS `sandbox-exec` wrapper.
 - `bg_store=None` — `check_background_agent` / `cancel_background_agent` are not registered, the chat loop's background-notification drain short-circuits, and the `run_in_background` field is **schema-level removed** from sub-agent tool definitions (the LLM cannot call a disabled feature). `/agent bg|dashboard|cancel|delete|logs|result` CLI subcommands short-circuit with a clear warning.
 
@@ -165,7 +163,7 @@ Any unset callback falls back to `NullTransport` behavior (allow, empty answer, 
 
 ### `build_compat_transport`
 
-Helper that builds a `Transport` from the legacy per-callback constructor args. Lives in `agentao.embedding.compat` and is the **documented migration surface** for hosts still on the pre-0.2.10 callback shape — call it explicitly to opt out of the constructor-level `DeprecationWarning`. You rarely need it directly otherwise; `Agentao(...)` uses it internally when you pass `confirmation_callback=` et al. (and emits a single `DeprecationWarning` per construction). The 8 legacy callback kwargs themselves will be removed from the `Agentao(...)` signature in **0.5.0**; `build_compat_transport()` itself remains available.
+Helper that builds a `Transport` from the 8 legacy per-callback args (`confirmation_callback`, `step_callback`, `thinking_callback`, `ask_user_callback`, `output_callback`, `tool_complete_callback`, `llm_text_callback`, `on_max_iterations_callback`). Lives in `agentao.embedding.compat` and is the **documented migration surface** for hosts still on the pre-0.2.10 callback shape. Since **0.5.0** those kwargs are gone from the `Agentao(...)` signature, so this is the only way to keep using the callbacks: `Agentao(transport=build_compat_transport(confirmation_callback=...), ...)`. It is not deprecated.
 
 ### `AgentEvent` / `EventType`
 
@@ -541,7 +539,7 @@ Loaded lazily via `from agentao import SkillManager`. Most callers reach it via 
 
 The `agentao.host` package is the **stable host-facing API surface** for embedding Agentao. Internal runtime types (`AgentEvent`, `ToolExecutionResult`, `PermissionEngine`) are intentionally not part of this surface — they may change in any release. Hosts that target only `agentao.host` (plus the `Agentao(...)` constructor and the methods marked above) stay forward-compatible.
 
-> **Naming.** "Harness" still refers to *Agentao itself running embedded in a host application* (the conceptual framing in `docs/design/embedded-host-contract.md`); the contract package was renamed to `agentao.host` to make `from agentao.host import HostEvent` read consistently. The old `agentao.harness` import path and old symbol names (`HarnessEvent`, `HarnessReplaySink`, `export_harness_*`) remain as a deprecated alias through 0.5.0 and emit one `DeprecationWarning` on first import.
+> **Naming.** "Harness" still refers to *Agentao itself running embedded in a host application* (the conceptual framing in `docs/design/embedded-host-contract.md`); the contract package was renamed to `agentao.host` to make `from agentao.host import HostEvent` read consistently. The old `agentao.harness` import path and old symbol names (`HarnessEvent`, `HarnessReplaySink`, `export_harness_*`) warned from 0.4.2 and were **removed in 0.5.0** — replace `harness` / `Harness` with `host` / `Host`.
 
 Full reference: [`docs/reference/host-api.md`](../../../docs/reference/host-api.md). Design rationale: [`docs/design/embedded-host-contract.md`](../../../docs/design/embedded-host-contract.md).
 

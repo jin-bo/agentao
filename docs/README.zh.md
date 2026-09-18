@@ -94,7 +94,8 @@ Schema 快照已 check-in。任何改变 wire form 的 model 变更必须在同�
 ## 发布与迁移
 
 - [releases/](releases)——版本发布说明
-- [migration/0.3.x-to-0.4.0.md](migration/0.3.x-to-0.4.0.md)——升级指南
+- [migration/0.4.x-to-0.5.0.zh.md](migration/0.4.x-to-0.5.0.zh.md)——0.5.0 移除版本：什么会坏、该改写成什么，以及两项从未告警过的变化（另有英文孪生）
+- [migration/0.3.x-to-0.4.0.md](migration/0.3.x-to-0.4.0.md)——0.4.0 的 extras 拆分（仅英文；那次迁移已经结束）
 
 ## history —— 历史资料
 

@@ -12,7 +12,7 @@
 | `F402` | Import shadowed by a loop variable — latent `UnboundLocalError` | everywhere |
 | `F811` | Redefinition of an unused name — one of the two is dead | everywhere |
 | `F821` | Undefined name — guaranteed `NameError` at runtime | everywhere *except* star-import modules |
-| `F405` | Undefined name **in** a star-import module — F821's blind spot | the 8 star-import modules |
+| `F405` | Undefined name **in** a star-import module — F821's blind spot | every star-import module (one today) |
 | `F401` | Unused import | everywhere except `agentao/` — see below |
 
 Nothing else. No style, no formatting, no import sorting, no modernization.
@@ -23,25 +23,27 @@ Not as a second ambition — it is what makes `F821` actually hold. pyflakes
 reclassifies *every* undefined name as `F405` ("may be undefined, or defined
 from star imports") in any module containing `from x import *`. With `F821`
 alone the flagship rule is silently inert in exactly the modules where it is
-least affordable:
+least affordable — the compatibility shims, which are public import paths.
+
+When the gate landed there were **8** of them. Seven were the
+`agentao/harness/*` alias package, removed in 0.5.0; that removal is the edit
+this rule was selected to guard, and it went through with `F405` at 0. One is
+left:
 
 ```
-agentao/harness/__init__.py            agentao/harness/projection.py
-agentao/harness/events.py              agentao/harness/replay_projection.py
-agentao/harness/models.py              agentao/harness/schema.py
-agentao/harness/protocols.py           agentao/tool_runner.py
+agentao/tool_runner.py
 ```
 
-`agentao/harness/` is the deprecated **public** alias for `agentao.host`, and
-every one of those files carries real post-import logic (`HarnessEvent =
-_HostEvent`, `__all__ = list(_host_all) + [...]`, `__getattr__`/`__dir__`) —
-not just the star import. Verified by probe: an undefined name in such a
-module reports `All checks passed` under `F821`, and `F405` under `F405`.
-Left unclosed, a typo introduced during the scheduled 0.5.0 alias removal
-ships green and raises `NameError` at `import agentao.harness` for an
-embedder still on the deprecated path.
+It is the old import path of `agentao.runtime.tool_runner`, and it carries
+real post-import logic (`__all__ = getattr(...) or [...]`,
+`__getattr__`/`__dir__`) — not just the star import. Re-probed after the
+removal: an undefined name in a star-import module still reports `All checks
+passed` under `F821`, and `F405` under `F405`.
 
-`F405` measures **0** across the repo, so it costs nothing today.
+So the rule stays, on a smaller footing, for two reasons: the surviving shim
+is still a module where `F821` alone sees nothing, and the next rename will
+add another star-import shim exactly the way the last two did. `F405`
+measures **0** across the repo, so keeping it costs nothing.
 
 ### Scope is `.`, not a directory list
 

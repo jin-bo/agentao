@@ -177,7 +177,7 @@ There's also a `/permission` command for inspecting the currently effective rule
 ---
 
 ::: info Where this fits
-The CLI's confirmation UI is one implementation of the harness's `confirmation_callback` hook. An embedding host provides its own UI (modal in an IDE, button in a web app, audit log in a CI runner) by passing a callback to `Agentao(confirmation_callback=...)`. The mode model and rule engine are identical across CLI and embedded paths. See [Part 4.5 · Tool Confirmation UI](/en/part-4/5-tool-confirmation-ui).
+The CLI's confirmation UI is one implementation of the `Transport.confirm_tool` method. An embedding host provides its own UI (modal in an IDE, button in a web app, audit log in a CI runner) by passing `Agentao(transport=SdkTransport(confirm_tool=...))`. The mode model and rule engine are identical across CLI and embedded paths. See [Part 4.5 · Tool Confirmation UI](/en/part-4/5-tool-confirmation-ui).
 :::
 
 ::: tip Authoritative help

@@ -184,11 +184,11 @@ agent = Agentao(
 `extra_headers` 与 `settings.json` 文件层有意延后；见 `docs/design/host-llm-extra-params.md`。
 :::
 
-::: details 已废弃的 8 个回调（仍接收 —— 0.5.0 将移除）
-0.2.10 之前的接口。内部由 `build_compat_transport()` 翻译成 `SdkTransport`。**任意一个被传入现在都会发出一次 `DeprecationWarning`**；构造函数签名本身将在 **0.5.0** 移除。新代码请直接走 Transport。
+::: details 8 个 legacy 回调（已于 0.5.0 移除）
+0.2.10 之前的接口。它们在 0.4.x 期间一直告警，现在**不再是参数**：传入任何一个都会抛 `TypeError`。要么直接走 Transport，要么保留回调、包一层 —— `agentao.embedding.compat.build_compat_transport(...)` 接受同样的八个名字，且没有被废弃：`Agentao(transport=build_compat_transport(confirmation_callback=...), ...)`。
 
-| 旧参数 | 替代 |
-|-------|------|
+| 已移除的参数 | 替代 |
+|-------------|------|
 | `confirmation_callback` | `SdkTransport(confirm_tool=...)` |
 | `step_callback` | `on_event=` + `TOOL_START` / `TURN_START` |
 | `thinking_callback` | `on_event=` + `THINKING` |
@@ -198,7 +198,7 @@ agent = Agentao(
 | `llm_text_callback` | `on_event=` + `LLM_TEXT` |
 | `on_max_iterations_callback` | `SdkTransport(on_max_iterations=...)` |
 
-⚠️ 同时传 `transport=` 和 legacy 回调时，legacy 的会被**忽略**，并发出一次 `DeprecationWarning`，让测试里能看见这些没生效的 kwargs。选一条路。
+⚠️ **只有前五个参数可以按位置传**（`api_key`、`base_url`、`model`、`temperature`、`max_tokens`）。那些回调过去夹在 `max_context_tokens`、`permission_engine`、`transport`、`plan_session` 之间，所以这四个现在是仅限关键字 —— 仍把回调传在第六位的调用会得到 `TypeError`，而不是被悄悄改绑。完整指南：[`docs/migration/0.4.x-to-0.5.0.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.4.x-to-0.5.0.zh.md)。
 :::
 
 ---
@@ -301,8 +301,8 @@ agent = build_from_environment(
 ---
 
 ::: info 版本说明
-- **0.5.0（计划）** —— 8 个 legacy 回调 kwarg（`confirmation_callback` / `step_callback` / `thinking_callback` / `ask_user_callback` / `output_callback` / `tool_complete_callback` / `llm_text_callback` / `on_max_iterations_callback`）将从 `Agentao(...)` 签名中**移除**。请在此之前迁移到 `transport=SdkTransport(...)`。
-- **0.4.x** —— 8 个 legacy 回调每次构造发一次 `DeprecationWarning`；`agentao.embedding.compat` 是有文档保证的迁移面。
+- **0.5.0** —— 8 个 legacy 回调 kwarg（`confirmation_callback` / `step_callback` / `thinking_callback` / `ask_user_callback` / `output_callback` / `tool_complete_callback` / `llm_text_callback` / `on_max_iterations_callback`）已从 `Agentao(...)` 签名中**移除**，`max_tokens` 之后的每个参数都变为仅限关键字。请用 `transport=SdkTransport(...)`，或用 `agentao.embedding.compat.build_compat_transport(...)` 把旧回调包起来。
+- **0.4.x** —— 8 个 legacy 回调每次构造发一次 `DeprecationWarning`（自 0.4.5 起）。
 - **0.3.4** — Capability 协议（`FileSystem` / `ShellExecutor`）在 `agentao.host.protocols` 上 re-export。**始终从这里导入**，不要伸手到内部的 `agentao.capabilities.*`。
 - **0.3.0** — `working_directory=` 必传（不传抛 `TypeError`）。新增 `mcp_registry=` 作为稳定的配置源；默认 `FileBackedMCPRegistry` 与 #17 之前的磁盘读一致。
 - **0.2.16** — 显式注入面（`memory_manager` / `skill_manager` / `mcp_manager` / `filesystem` / `shell` …）落地；`replay_config` / `sandbox_policy` / `bg_store` 默认改为 `None`。

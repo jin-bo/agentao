@@ -1,7 +1,8 @@
 # 0.5.0 向后兼容面移除清单
 
-**状态：** **评审草稿 —— 未授权。** 尚未删除任何代码。盘点对照 `main@2f51570`，
-2026-09-18；下面每一行都是在代码里读到的，不是照抄弃用注释。
+**状态：** **已于 2026-09-18 实施**，当天获得授权；尚未发布，目标版本 0.5.0。盘点对照
+`main@2f51570`，2026-09-18；下面每一行都是在代码里读到的，不是照抄弃用注释。实施过程中
+发现了三轮评审都没发现的东西，记在文末 —— 见*实施记录*。
 
 **两条次序规则，都是承重的。**
 
@@ -63,14 +64,14 @@
 | `:521` | `delete_session` | 无 |
 | `:554` | `delete_all_sessions` | 无 |
 
-- [ ] 删除 `agentao/session.py`（**105 行**）
-- [ ] **删掉 `_session_dir` 函数体里的兜底**，不只是它的参数默认值：`:54` 是
+- [x] 删除 `agentao/session.py`（**105 行**）
+- [x] **删掉 `_session_dir` 函数体里的兜底**，不只是它的参数默认值：`:54` 是
       `root = project_root if project_root is not None else Path.cwd()`。只去掉默认值，
       那个 `else` 分支依然可达，显式传 `project_root=None` 仍然落到 cwd。要让参数必填
       **并且**让 `None` 报错 —— 只收紧公开签名等于把失败推到内部，而不是移除它
-- [ ] 把上表七个公开入口的 `project_root` 全部改为必填，不只是那两个写了注记的
-- [ ] 逐一核查这七个入口在仓内的调用方，看有没有依赖默认值的
-- [ ] 同时测试**省略该参数**与**显式传 `project_root=None`** —— 当前签名接受后者并静默
+- [x] 把上表七个公开入口的 `project_root` 全部改为必填，不只是那两个写了注记的
+- [x] 逐一核查这七个入口在仓内的调用方，看有没有依赖默认值的
+- [x] 同时测试**省略该参数**与**显式传 `project_root=None`** —— 当前签名接受后者并静默
       当作 cwd
 
 **这是唯一一行会改变「没有使用任何弃用名字」的调用方行为的变更。** 它需要自己的测试和
@@ -90,7 +91,7 @@
 
 配套、同批（`runtime/tool_runner.py:74-82` 写的是 "not before"）：
 
-- [ ] `runtime/tool_runner.py:74-82` —— 四个**接受但忽略**的 kwarg
+- [x] `runtime/tool_runner.py:74-82` —— 四个**接受但忽略**的 kwarg
       （`confirmation_callback`、`step_callback`、`output_callback`、
       `tool_complete_callback`），从不存储，留着只是让既有调用方不撞 `TypeError`
 
@@ -102,12 +103,12 @@
 `TypeError: unexpected keyword argument` —— 前台后台都一样，而且**与取值无关**：参数一旦
 消失，`None` 也是未知 kwarg。这是仓内第一方代码，所以它是前置条件，不是下游迁移：
 
-- [ ] 把前台那几个回调折进工厂本来就在构造的 transport —— 即 `:942` 处现在
+- [x] 把前台那几个回调折进工厂本来就在构造的 transport —— 即 `:942` 处现在
       `transport = None` 的位置改用 `build_compat_transport(...)`
-- [ ] 后台分支的 `SdkTransport(confirm_tool=lambda *_: False)`（`:946`）原样保留 ——
+- [x] 后台分支的 `SdkTransport(confirm_tool=lambda *_: False)`（`:946`）原样保留 ——
       那个拒绝确认就是成文的后台姿态
-- [ ] 构造时只传 `transport=`，不再传任何回调 kwarg
-- [ ] 验收：前台和后台子代理都能 spawn、发出各自的生命周期事件、确认行为不变
+- [x] 构造时只传 `transport=`，不再传任何回调 kwarg
+- [x] 验收：前台和后台子代理都能 spawn、发出各自的生命周期事件、确认行为不变
       （后台仍然拒绝）
 
 **一个弃用 kwarg 驱动着一段提示词，而且没有别的东西设置它。**
@@ -116,10 +117,10 @@
 一节。删掉 C1–C5 会让这一节对所有宿主静默消失 —— `build_compat_transport()` **保不住它**，
 因为它产出的是 transport，从不碰这个标志。删之前必须先定去向：
 
-- [ ] 要么从 transport 推导（当前 transport 是否处理 reasoning 输出？），要么改成一个显式
+- *未采用：* 要么从 transport 推导（当前 transport 是否处理 reasoning 输出？），要么改成一个显式
       构造参数
-- [ ] 要么明确宣布这条条件行为取消，该段落改为无条件加入或删除
-- [ ] 无论哪种都要有迁移前后的提示词验收 —— 这一节存在与否是可观测的，而它现在依赖一个
+- [x] 要么明确宣布这条条件行为取消，该段落改为无条件加入或删除
+- [x] 无论哪种都要有迁移前后的提示词验收 —— 这一节存在与否是可观测的，而它现在依赖一个
       即将消失的 kwarg
 
 **保留 `agentao/embedding/compat.py`。** 它自己的 docstring（`:1`）就称自己是
@@ -140,9 +141,9 @@
 | `cli/replay_commands.py` | `:220` | `cli.agent._replay_config` |
 | `cli/replay_commands.py` | `:240` | `getattr(cli.agent, "_replay_recorder", None)` |
 
-- [ ] 把这三处迁到 `agent.replay_manager.config` / `.recorder`（并显式处理无 manager 的
+- [x] 把这三处迁到 `agent.replay_manager.config` / `.recorder`（并显式处理无 manager 的
       情况 —— CLI 现在依赖的正是这些属性的兜底）
-- [ ] 然后删掉那四个属性和 `:1066-1070` 的段落注释
+- [x] 然后删掉那四个属性和 `:1066-1070` 的段落注释
 
 **不要把这一行扩大。** `agent.py:1047-1058` 的注释明确写着：**公开**的 replay 方法
 （`start_replay` / `end_replay` / `reload_replay_config`）是 LIVE API，由
@@ -166,11 +167,11 @@ that patch them on the agent"。其中两个是压缩协调器的活调用：
 先删方法会让每一次**成功**压缩在收尾时抛 `AttributeError` —— 而且只有会话长到触发压缩
 才会暴露。
 
-- [ ] 先把 `coordinator.py:238` 与 `:719` 改为直接调用
+- [x] 先把 `coordinator.py:238` 与 `:719` 改为直接调用
       `agentao.replay.observability`（与 `runtime/chat_loop` 现有做法一致）
-- [ ] 再迁移那些在 agent 上 patch 这些方法的测试
-- [ ] 然后删掉这三个委派，并改正那段注释
-- [ ] 补一个测试：迁移后**成功的完整压缩且产生了新摘要**时仍然发出这两个事件。验收要这样
+- [x] 再迁移那些在 agent 上 patch 这些方法的测试
+- [x] 然后删掉这三个委派，并改正那段注释
+- [x] 补一个测试：迁移后**成功的完整压缩且产生了新摘要**时仍然发出这两个事件。验收要这样
       限定 —— `_emit_session_summary_if_new` 名字里就带条件，所以微压缩或没有新摘要的那次
       不应被要求发出 `SESSION_SUMMARY_WRITTEN`
 
@@ -222,11 +223,11 @@ that patch them on the agent"。其中两个是压缩协调器的活调用：
 
 新增：
 
-- [ ] `import agentao.harness` 抛 `ModuleNotFoundError`
-- [ ] `import agentao.session` 抛 `ModuleNotFoundError`
-- [ ] `embedding/sessions.py` 每个入口不传 `project_root` 抛 `TypeError`，显式传
+- [x] `import agentao.harness` 抛 `ModuleNotFoundError`
+- [x] `import agentao.session` 抛 `ModuleNotFoundError`
+- [x] `embedding/sessions.py` 每个入口不传 `project_root` 抛 `TypeError`，显式传
       `project_root=None` 也抛（§B）
-- [ ] 构造 kwarg 删除之后，`build_compat_transport()` 仍接受全部八个名字
+- [x] 构造 kwarg 删除之后，`build_compat_transport()` 仍接受全部八个名字
 
 ## H. lint gate 的论证正建立在这个包上
 
@@ -234,25 +235,25 @@ that patch them on the agent"。其中两个是压缩协调器的活调用：
 选上 `F405`，并列出了它们。今天实测：**8 个里有 7 个是 `agentao/harness/*`**；
 执行 §A 之后只剩 `agentao/tool_runner.py` 一个。
 
-- [ ] 围绕那个存活模块重写 "Why `F405` is in the list"，或者直接写明这条规则是为下一个
+- [x] 围绕那个存活模块重写 "Why `F405` is in the list"，或者直接写明这条规则是为下一个
       星号导入 shim 留着的
-- [ ] 同步 `lint-gate.md` 与 `lint-gate.zh.md` 里的模块清单（zh 孪生在 `:29-32` 有同一份）
-- [ ] 复查 `F401` 豁免的论证 —— 它把 `agentao.harness` 当作典型例子
+- [x] 同步 `lint-gate.md` 与 `lint-gate.zh.md` 里的模块清单（zh 孪生在 `:29-32` 有同一份）
+- [x] 复查 `F401` 豁免的论证 —— 它把 `agentao.harness` 当作典型例子
 
 规则本身应当保留，变的只是它写出来的依据。
 
 ## I. 活文档 10 份，另外 22 份是记录
 
-- [ ] `CLAUDE.md` —— `agentao/harness/` 那行子包表、`agentao.harness → agentao.host`
+- [x] `CLAUDE.md` —— `agentao/harness/` 那行子包表、`agentao.harness → agentao.host`
       那条 gotcha、"8 legacy callbacks" 那条 gotcha
-- [ ] `developer-guide/{en,zh}/part-2/2-constructor-reference.md`
-- [ ] `developer-guide/{en,zh}/part-4/7-host-contract.md`
-- [ ] `developer-guide/{en,zh}/appendix/a-api-reference.md`
-- [ ] `developer-guide/{en,zh}/part-4/3-sdk-transport.md` —— 写了「transport 与遗留回调
+- [x] `developer-guide/{en,zh}/part-2/2-constructor-reference.md`
+- [x] `developer-guide/{en,zh}/part-4/7-host-contract.md`
+- [x] `developer-guide/{en,zh}/appendix/a-api-reference.md`
+- [x] `developer-guide/{en,zh}/part-4/3-sdk-transport.md` —— 写了「transport 与遗留回调
       混用」的注意事项，zh 孪生 `:171` 还写着那八个回调「仍被接受」并经
       `build_compat_transport()` 自动转换
-- [ ] `docs/guides/embed-for-agents.md`
-- [ ] 新增 `docs/migration/0.4.x-to-0.5.0.md` **及其 `.zh.md` 孪生** —— **2026-09-18
+- [x] `docs/guides/embed-for-agents.md`
+- [x] 新增 `docs/migration/0.4.x-to-0.5.0.md` **及其 `.zh.md` 孪生** —— **2026-09-18
       已定：两份都写。** 先例 `docs/migration/0.3.x-to-0.4.0.md` 是 en-only，但那是缺口
       而不是规矩：CLAUDE.md 要求 `docs/` 下成对，而迁移指南恰恰是读者「因为自己的东西坏了」
       才会去翻的那一份文档。0.3.x 那份先例原样留着 —— 它记录的是一场已经结束的迁移 ——
@@ -264,15 +265,15 @@ that patch them on the agent"。其中两个是压缩协调器的活调用：
 
 ## J. 发布机制
 
-- [ ] `agentao/__init__.py:10` → `0.5.0.dev0`（单一来源；`pyproject.toml` 是
+- [x] `agentao/__init__.py:10` → `0.5.0.dev0`（单一来源；`pyproject.toml` 是
       `dynamic = ["version"]` + `[tool.hatch.version] path = "agentao/__init__.py"`）
-- [ ] `CHANGELOG.md` `[Unreleased]` → `_Targeting 0.5.0._`，并加一个 **Removed** 段
-- [ ] `uv run python -m pytest tests/` 与 `uv run ruff check .`（必需 CI 检查）
-- [ ] `uv build` 后跑 `uv run python -m pytest -m slow`（干净安装 smoke，需要
+- [x] `CHANGELOG.md` `[Unreleased]` → `_Targeting 0.5.0._`，并加一个 **Removed** 段
+- [x] `uv run python -m pytest tests/` 与 `uv run ruff check .`（必需 CI 检查）
+- [x] `uv build` 后跑 `uv run python -m pytest -m slow`（干净安装 smoke，需要
       `dist/*.whl`，同样是必需检查）
-- [ ] `agentao/embedding/__init__.py:10-14` —— 仍写着旧的 `agentao.session` 导入路径
+- [x] `agentao/embedding/__init__.py:10-14` —— 仍写着旧的 `agentao.session` 导入路径
       「remains as a deprecation shim until 0.5.0」；§B 会删掉那条路径，这句话跟着一起删
-- [ ] 最后 `grep -rn "0\.5\.0" agentao/` 除版本号外不应有任何命中
+- [x] 最后 `grep -rn "0\.5\.0" agentao/` 除版本号外不应有任何命中
 
 ## 实测背景
 
@@ -295,5 +296,50 @@ that patch them on the agent"。其中两个是压缩协调器的活调用：
   grep **符号的调用方**查出了 §E 和 §B。子代理工厂需要换一个问法：**谁在构造 `Agentao`**
   —— 那些 kwarg 在 spawn 路径附近根本没有按名字被引用过，只是被一路传下去。移除一个构造面时，
   要 grep 构造器的调用点，不只是它的参数名。
+
+## 实施记录（2026-09-18）
+
+按规则 2 的要求在一个 PR 里完成，分三个提交：先单独做调用方迁移（§D、§E），再做构造函数
+（§C），最后是删除连同版本号（§A、§B、§J）。上文行号是在 `main@2f51570` 上测得的，保持
+原样；其间又合入了四个 PR，所以每次改动前都重新 grep，而不是直接信它。
+
+**清单留着没定的决定，以及是怎么定的。**
+
+- **§C —— Reasoning Requirement 段退役**，既不重新推导，也不改成无条件。起决定作用的证据
+  在 git 里而不在代码里：`bcd3909`（2026-04-04）确实曾按「挂了 transport」来推导这个开关，
+  而 `af67cbc` **当天**就把它收窄回 kwarg —— "transport presence alone doesn't imply a
+  thinking UI is wired up"。此后没有任何一方自有入口（CLI、ACP、`agentao run`）渲染过这一段，
+  照迁移建议做的宿主也没有，因为 `build_compat_transport` 从不碰这个开关。改成无条件，会改动
+  每个从未有过它的宿主的提示词；加一个新构造参数，则是在移除版本里新增 API，而实测使用者为
+  零。原文保留在迁移指南 §7。
+- **§B —— 签名的分法。** `project_root` 排在可选参数后面的（四个函数）是仅限关键字，不排在
+  后面的（三个）是普通必填参数。一条规则说起来更简单，但一律仅限关键字会让
+  `list_sessions(root)` 这种本来就做对了的调用也坏掉。`None` 在 `_session_dir` 里被拒绝，
+  报错信息点名该参数。
+
+**清单里没有的东西 —— 第四轮，是做的时候发现的。**
+
+- **从签名中间删参数，会悄悄改绑按位置传参的调用方。** 八个回调与 `max_context_tokens` /
+  `permission_engine` / `transport` / `plan_session` 交错排列。§C 列了五处要删的区域，没有
+  一处是「排在这些*后面*的参数」。现在 `max_tokens` 之后的一切都是仅限关键字。与三轮评审
+  是同一种形状 —— 一行读起来像删除 —— 但又是换了一个问法才找到的：不是「谁调用它」，也不是
+  「谁构造它」，而是**「它走了之后，什么会跟着挪动」**。
+- `tests/test_llm_client_extra_body.py` 钉住了 `pos[5] == "confirmation_callback"` ——
+  第九个测试文件，落在 §G 三个类别之外，因为它是以字符串而不是关键字的形式提到这个 kwarg 的。
+- §E 的「在 agent 上打补丁的测试」实为八个文件，其中六个是身上带着旧方法名的
+  `SimpleNamespace` 假对象。它们现在经由假对象的 transport 发事件，于是跑的是真实的发射函数；其中一个过去断言的是
+  `_emit_context_compressed` 的*kwarg*名，而它的 docstring 声称钉的是线上载荷的键。
+- §D：`acp/models.py` 是仓内唯一按位置传 `project_root` 的调用方，而且它传的值可能是 `None`。
+- §I 的十份活文档并不是全部 —— 还有 `cli/3-permissions-modes`、`part-5/6-system-prompt`（提示词
+  示意图给各块编了号）、`part-6/7-resource-concurrency`，各带一份 zh 孪生，外加
+  `docs/guides/tool-confirmation.md` 和 `pyproject.toml` 里那段重复 §H 依据的注释。
+- §H 第三项查下来无需改动：`F401` 的依据点名的是 `HostEvent` 和 `agentao.host`，不是别名包。
+- 0.4.5 的 CHANGELOG 还承诺过在 0.5.0 移除「六个 `Agentao.replay_*` facade 方法以及构造参数
+  `replay_config=`」。§D 的「不要扩大这一行」已经推翻了它；迁移指南和 CHANGELOG 现在对照着
+  旧说明把这一点讲明了。
+- 源码检出会留下 `agentao/harness/__pycache__`，Python 把它当成空的命名空间包导入，所以移除
+  测试断言的是 *from*-import 的 `ImportError`，而不是对包的 `ModuleNotFoundError`。
+- §J 最后一个勾，按字面读是不成立的：`grep 0.5.0 agentao/` 除版本号外还返回十一行，全是过去
+  时（"removed in 0.5.0"）。这个勾的本意 —— 不再留下任何未兑现的承诺 —— 成立。
 
 英文孪生：`docs/design/0-5-0-removal-checklist.md`。

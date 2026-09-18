@@ -99,7 +99,8 @@ Architecture decisions, host-facing contracts, cross-repo reviews, and implement
 ## Releases & Migration
 
 - [releases/](releases) — versioned release notes
-- [migration/0.3.x-to-0.4.0.md](migration/0.3.x-to-0.4.0.md) — upgrade guides
+- [migration/0.4.x-to-0.5.0.md](migration/0.4.x-to-0.5.0.md) — the 0.5.0 removal release: what breaks, what to write instead, and the two changes that never warned (`.zh.md` twin)
+- [migration/0.3.x-to-0.4.0.md](migration/0.3.x-to-0.4.0.md) — the 0.4.0 extras split (en only; that migration is over)
 
 ## History
 

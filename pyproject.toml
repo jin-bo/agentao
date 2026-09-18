@@ -158,12 +158,13 @@ target-version = "py310"
 # F405 is not a separate ambition — it is what makes F821 actually hold.
 # pyflakes downgrades every undefined name to F405 in any module containing
 # `from x import *`, so with F821 alone the rule is silently inert in
-# exactly the 8 star-import shims: `agentao/harness/*` (the deprecated
-# public alias, which carries real post-import logic) and
-# `agentao/tool_runner.py`. Verified by probe: an undefined name in a
+# exactly the star-import shims. There were 8 when the gate landed; 7 were
+# `agentao/harness/*`, removed in 0.5.0 — the edit this rule was selected to
+# guard. `agentao/tool_runner.py` is left, and carries real post-import
+# logic. Verified by probe, again after the removal: an undefined name in a
 # star-import module reports `All checks passed` under F821 and `F405`
-# under F405. It measures 0 across the repo, so it costs nothing today and
-# closes the hole before the 0.5.0 alias removal edits those files.
+# under F405. It measures 0 across the repo, so keeping it costs nothing,
+# and the next rename will add another such shim.
 #
 # `select` replaces ruff's default `E4,E7,E9,F` rather than extending it.
 # That is deliberate but worth stating: it also drops F841 (unused

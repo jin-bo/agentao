@@ -12,7 +12,7 @@
 
 你在做多租户 SaaS。Agent 的每个动作都要落一行审计：租户、用户、工具名、参数、是否批准、是否成功。
 
-你基于 `AgentEvent`（4.2 节）写好了，跑得很顺，上线。三个月后 Agentao 0.5.0 发布，`EventType.MEMORY_WRITE` 改名了、两个 `data` 字段被挪了位置——你的审计流水线**静默地**漏行漏了一周，直到 ETL 计数对不上才被人发现。
+你基于 `AgentEvent`（4.2 节）写好了，跑得很顺，上线。三个月后 Agentao 的下一个次版本发布，`EventType.MEMORY_WRITE` 改名了、两个 `data` 字段被挪了位置——你的审计流水线**静默地**漏行漏了一周，直到 ETL 计数对不上才被人发现。
 
 这就是**字段漂移问题**。`AgentEvent` 是运行时的内部事件总线——驱动 CLI、调试 UI、replay 机制——这些消费方需要丰富细节，且能在每次发布时承受变更。**生产宿主承受不起这种代价**。
 
@@ -193,7 +193,7 @@ async def handle_request(tenant_id: str, message: str, db):
 - 同会话顺序由合约保证——你的审计行顺序就是事件顺序。
 - 同一个 `tool_call_id` 的 `PermissionDecisionEvent` 永远在 `ToolLifecycleEvent(phase="started")` 之前——下游可以拼起来。
 - 慢消费者不会丢事件：背压走有界队列，**生产者会被阻塞**而不是默默丢事件。
-- Agentao 0.5 发布并新增了内部事件变体时，你的审计流水线根本不会注意到——那种事件不会被投影到 harness；harness 自己 *如果* 增加新变体，也只会加可选字段。
+- 之后某个 Agentao 版本新增了内部事件变体时，你的审计流水线根本不会注意到——那种事件不会被投影到 harness；harness 自己 *如果* 增加新变体，也只会加可选字段。
 
 ## 4.7.6 `agent.active_permissions()` —— 策略快照
 
@@ -275,7 +275,7 @@ Q: 我要消费 Agent 事件，用哪个表面？
 ## TL;DR
 
 - **`agentao.host` 是稳定的、schema 快照的、前向兼容的宿主表面。** 生产代码就 pin 这个。
-- **三个表面**：`events()` 接事件流、`active_permissions()` 取策略快照、`harness.protocols` 注入能力。
+- **三个表面**：`events()` 接事件流、`active_permissions()` 取策略快照、`agentao.host.protocols` 注入能力。
 - **`events()` 不是 Transport 的替代** —— 它们互补。UI 流式用 Transport，审计 / 可观测用 `events()`。
 - **`isinstance` 分派 `HostEvent`** 把事件路由到对应 handler。三种事件是正交的生命周期事实，不是层级关系。
 - **30 行 + 一张数据库表**就能落出能扛住版本升级的租户审计流水线。
