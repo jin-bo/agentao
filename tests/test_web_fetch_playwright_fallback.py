@@ -17,6 +17,7 @@ import asyncio
 import inspect
 import logging
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -899,11 +900,18 @@ def test_a_flood_of_distinct_origins_cannot_exhaust_threads(monkeypatch):
     asyncio.run(web_mod._render_with_playwright("https://x.test/"))
 
     peak = 0
+    # The stall ends when the test says so, not after a fixed sleep. A lookup
+    # that *returns* is a pass — this validator raises nothing — so a sleep
+    # merely longer than the budget is a race against the loop: on a loaded
+    # Windows runner the loop fell far enough behind that the first thread's
+    # 0.3s sleep finished before its 0.05s timeout was serviced, and that one
+    # request continued (seen in CI: 39 of 40 aborted, `r0` did not).
+    release = threading.Event()
 
     def stalling_validator(url, **kwargs):
         nonlocal peak
         peak = max(peak, url_policy_mod._live_policy_threads)
-        time.sleep(0.3)
+        release.wait(timeout=_STALL_SECONDS)
 
     monkeypatch.setattr(url_policy_mod, "validate_outbound_url", stalling_validator)
 
@@ -915,7 +923,12 @@ def test_a_flood_of_distinct_origins_cannot_exhaust_threads(monkeypatch):
         await asyncio.gather(*(page.route_handler(r) for r in routes))
         return routes
 
-    routes = asyncio.run(drive())
+    try:
+        routes = asyncio.run(drive())
+    finally:
+        # Let the abandoned threads go, so their slots return to the cap
+        # before the next test reads it.
+        release.set()
 
     assert peak <= 4, f"live lookup threads exceeded the cap: {peak}"
     assert all(r.action == "abort" for r in routes)
