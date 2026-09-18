@@ -174,8 +174,11 @@ def test_activating_a_skill_leaves_the_system_message_byte_identical(tmp_path, m
 def test_disabling_a_skill_changes_the_catalogue_and_the_tool_enum_together(tmp_path, monkeypatch):
     """The one event that does rewrite the catalogue already rewrites the
     ``activate_skill`` enum in the tools block, which is why the catalogue can
-    live in the cached prefix at no extra cost. Both are read at the turn
-    boundary, so that is where they are compared."""
+    live in the cached prefix at no extra cost.
+
+    This reads the two sources directly. That a *running turn* sees them move
+    together rests on the runner serializing the tools block once per turn
+    (``chat_loop/_runner.py::run``), which this test does not pin."""
     agent = _agent_with_a_skill(tmp_path, monkeypatch)
 
     def enum():

@@ -29,9 +29,12 @@ _Targeting 0.4.27. Add entries under the relevant heading as work lands._
   The catalogue changes only when the enabled set does (enable, disable,
   install, reload). Those events already rewrite the `activate_skill` tool's
   `skill_name` enum in the tools block, so they were rebuilding the cached
-  prefix anyway; the move adds no new invalidation. One timing difference: the
-  catalogue is now read when the system message is built — per turn, and again
-  when the active set or the memory version changes — rather than per request.
+  prefix anyway; the move adds no new invalidation, with one exception — a
+  reload that picks up an edited `description` or `when-to-use` rewrites the
+  catalogue and not the enum, which carries names only. One timing difference:
+  the catalogue is now read when the system message is built — per turn, and
+  again when the active set or the memory version changes, or after a full
+  compaction — rather than per request.
   The tools block, enum included, is serialized once per turn. A skill disabled
   mid-turn can stay listed until the next turn; `activate_skill` still refuses
   it.
@@ -44,6 +47,14 @@ _Targeting 0.4.27. Add entries under the relevant heading as work lands._
   that the catalogue renders only for an agent that has `activate_skill` is
   unchanged. pi-mono and gemini-cli keep their catalogues in the system prompt
   the same way, and neither removes a skill once it has been used.
+
+  One posture note for hosts that load third-party or plugin skills: a skill's
+  `description` and `when-to-use` are system-role text again, as they were
+  before 0.4.26, rather than sitting inside the tail's `<system-reminder>`
+  wrapper. They are not neutralized or stripped on the way in. A skill's body
+  was always model-visible instruction text by design, so this widens nothing
+  an installed skill could not already do, but it is the placement to know
+  about when auditing what reaches the system message.
 
 ### Fixed
 

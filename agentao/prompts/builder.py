@@ -70,7 +70,7 @@ _logger = logging.getLogger("agentao.prompt_diag")
 #: trailing user text — the highest-leverage position there is — shedding the
 #: "this is data, not instructions" framing the wrapper exists to supply. The
 #: body is not all agentao-authored: it carries memory values the model itself
-#: wrote, and skill / MCP descriptions from disk and from servers. Matched
+#: wrote, and active skills' bodies from disk and from plugins. Matched
 #: case-insensitively and with loose whitespace, because the reader being
 #: steered is a language model, not an XML parser: ``</ SYSTEM-REMINDER >``
 #: works on it just as well as the exact spelling.
@@ -211,7 +211,10 @@ class SystemPromptBuilder:
         # The skills catalogue — every enabled skill, active or not, so an
         # activation leaves this message byte-identical. Ahead of stable
         # memory because it changes less often: a ``save_memory`` rebuilds
-        # from the memory block on, and the catalogue stays cached.
+        # from the memory block on, and the catalogue stays cached — on a
+        # token-prefix cache, that is. A block-granular one (the opt-in
+        # ``cache_control`` markers send this message as a single text block)
+        # re-writes the whole message whichever order the two are in.
         skills_block = self._available_skills_block()
         if skills_block:
             sections["available_skills"] = skills_block

@@ -74,7 +74,9 @@ catalog entries are already active. The catalog changes only when the enabled
 set does — enable, disable, install, reload — and those already rewrite the
 `activate_skill` tool's `skill_name` enum, so the prefix was being rebuilt on
 those events anyway. It sits ahead of `<memory-stable>` because it changes less
-often: a `save_memory` rebuilds from block 12 on, and the catalog stays cached.
+often: a `save_memory` rebuilds from block 12 on, and the catalog stays cached
+— on a token-prefix cache. With the explicit breakpoints below the system
+message is one cached block, and a `save_memory` re-writes all of it.
 
 ## Three injection points you own
 
