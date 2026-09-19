@@ -11,6 +11,45 @@ _Targeting 0.5.3. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`api_format="openai-responses"`: the OpenAI Responses API as a third wire.**
+  Selected like the other two — `{PROVIDER}_API_FORMAT` or `api_format=`, never
+  inferred from a URL or a model name. No new dependency: it is the `openai`
+  SDK already in core. History does not change shape; the adapter translates an
+  outbound copy into `input` items and folds the event stream back into the
+  one response duck-type. What it does:
+  - **Stateless on purpose** — `store: false`, no `previous_response_id`.
+    agentao's history is the single source of truth (compaction rewrites it,
+    `/clear` wipes it, replay replays it), and a server-side conversation would
+    diverge from all three.
+  - **One history id for the wire's two.** A function call has a `call_id` and
+    an item `id`; history keeps `call_id|item_id` and splits it on the way out,
+    on the last separator and only when what follows is an item id — an id
+    minted on another wire before a provider switch is never split. The item
+    id is kept and **not yet sent**: the API pairs an `fc_` id with the `rs_`
+    reasoning item produced beside it and refuses one without the other.
+  - **Tools are sent `strict: false`.** Strict is the API's default for a
+    function tool, and strict mode rejects a schema that does not require
+    every property, which agentao's tools and MCP servers' do not.
+  - **A failure inside a 200 stream is raised.** The SDK yields `error` and
+    `response.failed` as ordinary events; read only the events one knows and
+    the turn ends as an empty, clean-looking answer. `server_error` and
+    `rate_limit_exceeded` are retried, a quota code is not.
+  - `max_output_tokens` is raised to the API's floor of 16; an `incomplete`
+    response is a truncation (`finish_reason="length"`), which the runtime
+    already refuses to run tool calls from; `input_tokens` **includes** the
+    cached part here and maps to `prompt_tokens` as it stands, with
+    `cache_read_tokens` from `input_tokens_details.cached_tokens`.
+
+  **Not yet, and landing before 0.5.3 ships:** encrypted reasoning carried
+  across turns (a reasoning model currently starts each request without its
+  earlier reasoning), `/thinking` on this wire — until then it **refuses** a
+  level there, since the `reasoning_effort` it would store is rejected by that
+  API on every request — a session moved from this wire to Chat Completions
+  (the composite id is longer than OpenAI's 40-character limit there), and the
+  configuration docs.
+  Verified against the real SDK over a scripted socket; **not yet run against
+  a live endpoint**.
+
 ### Changed
 
 ### Fixed

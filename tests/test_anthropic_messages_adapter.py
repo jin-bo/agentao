@@ -78,7 +78,7 @@ def test_api_format_resolves_the_default_and_normalises_spelling():
     assert resolve_api_format(" Anthropic-Messages ") == "anthropic-messages"
 
 
-@pytest.mark.parametrize("value", ["anthropic", "openai-responses", "gemini-api", "messages"])
+@pytest.mark.parametrize("value", ["anthropic", "openai-response", "gemini-api", "messages"])
 def test_an_unknown_or_unimplemented_format_fails_closed_and_lists_the_valid_ones(value):
     """A format the design names but nothing implements is not accepted: it
     would mean quietly speaking some other protocol at that endpoint."""

@@ -163,8 +163,9 @@ class Agentao:
             prompt_cache_ttl: Retention hint, ``"5m"`` (provider default) or
                 ``"1h"``. Ignored when ``prompt_cache`` is off.
             api_format: The wire protocol spoken to ``base_url`` —
-                ``"openai-completions"`` (default) or ``"anthropic-messages"``
-                (Anthropic's Messages API, over the official SDK). Configured,
+                ``"openai-completions"`` (default), ``"anthropic-messages"``
+                (Anthropic's Messages API, over the official SDK) or
+                ``"openai-responses"`` (the OpenAI Responses API). Configured,
                 never inferred from the URL or the model name; only
                 ``set_provider(api_format=)`` changes it afterwards, and
                 sub-agents are built on the current one. Raw-config only:

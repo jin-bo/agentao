@@ -88,8 +88,8 @@ def discover_llm_kwargs() -> Dict[str, Any]:
     ``None`` overrides.
 
     ``{PROVIDER}_API_FORMAT`` names the wire protocol spoken to that
-    provider block's endpoint (``openai-completions``, the default, or
-    ``anthropic-messages``). It rides the provider prefix because it is a
+    provider block's endpoint (``openai-completions``, the default,
+    ``anthropic-messages`` or ``openai-responses``). It rides the provider prefix because it is a
     property of the endpoint, not a request preference, and it is never
     inferred: ``LLM_PROVIDER=ANTHROPIC`` pointing at an OpenAI-compatible
     gateway is a working configuration, and the name must not change its
