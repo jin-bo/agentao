@@ -13,7 +13,7 @@
 - `from agentao.memory.manager import MemoryManager`
 - `from agentao.cancellation import ...` → `CancellationToken`、`AgentCancelledError`
 - `from agentao.acp_client import ...` → `ACPManager`、`ACPClient`、`AcpClientError`、`AcpErrorCode`、`AcpRpcError`、`AcpInteractionRequiredError`、`AcpClientConfig`、`AcpServerConfig`、`AcpConfigError`、`PromptResult`、`ServerState`、`load_acp_client_config`（以及更底层的 re-export——哪些属于"稳定嵌入面"、哪些属于"实现细节"请参考 `agentao.acp_client.__init__.py` 的 docstring）
-- `from agentao.host import ...` → `ActivePermissions`、`EventStream`、`StreamSubscribeError`、`HostEvent`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`PermissionDecisionEvent`、`RFC3339UTCString`、`export_host_event_json_schema`、`export_host_acp_json_schema` —— 宿主面 harness 合约，详见 [A.10](#a-10-嵌入-harness-合约)
+- `from agentao.host import ...` → `ActivePermissions`、`EventStream`、`StreamSubscribeError`、`HostEvent`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`SubagentUsage`、`PermissionDecisionEvent`、`RFC3339UTCString`、`export_host_event_json_schema`、`export_host_acp_json_schema` —— 宿主面 harness 合约，详见 [A.10](#a-10-嵌入-harness-合约)
 
 ## A.1 `Agentao`
 
@@ -551,6 +551,7 @@ from agentao.host import (
     HostEvent,
     ToolLifecycleEvent,
     SubagentLifecycleEvent,
+    SubagentUsage,
     PermissionDecisionEvent,
     RFC3339UTCString,
     export_host_event_json_schema,
@@ -563,6 +564,7 @@ from agentao.host import (
 | `ActivePermissions` | 当前权限策略的只读快照（`mode`、`rules`、`loaded_sources`） |
 | `ToolLifecycleEvent` | 单次工具调用的公共生命周期信封。`phase ∈ {started, completed, failed}`；取消以 `phase="failed", outcome="cancelled"` 体现 |
 | `SubagentLifecycleEvent` | 子 Agent 任务/会话的血缘事实。`phase ∈ {spawned, completed, failed, cancelled}` —— `cancelled` 在这里是独立 phase。`failed` 有两义：子 Agent **抛了异常**（`error_type` 是异常类名），**或**它跑完却没给出答案（`error_type = "incomplete:<reason>"`，`<reason>` ∈ `no_output`、`reasoning_only`、`length_truncated`、`doom_loop`、`llm_error`、`max_iterations`）。升级告警前先按 `error_type` 分支——见 [4.7](/zh/part-4/7-host-contract) |
+| `SubagentUsage` | 终态 `SubagentLifecycleEvent.usage` 上的四项 token 计数（0.5.2）：`prompt_tokens`（整个输入）、`completion_tokens`、`cache_read_tokens`、`cache_creation_tokens` —— 后两项是 `prompt_tokens` 的**组成部分**。在 `spawned` 上、以及子 Agent 根本没建出来时为 `None`。事件触发时已计入父级的会话累计 |
 | `PermissionDecisionEvent` | 单次权限决定的投影。在 `allow` / `deny` / `prompt` 都触发；不渲染 allow 的消费者也必须排空迭代器以避免背压 |
 | `HostEvent` | 三种事件模型的判别联合（Pydantic discriminator: `event_type`） |
 | `RFC3339UTCString` | 受约束的时间戳类型。仅允许标准 `Z` 后缀 —— `+00:00` 偏移会被拒绝 |
