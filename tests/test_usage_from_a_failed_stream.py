@@ -164,6 +164,22 @@ def test_the_chat_completions_wire_has_nothing_to_keep_from_a_dead_stream():
         http_client=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(
             200, headers={"content-type": "text/event-stream"}, stream=Dies()))),
     )
-    with pytest.raises(Exception):
+    # The transport's own error, and marked as having streamed: a broken
+    # fixture (an SDK signature change, say) would raise something else before
+    # any chunk was read, and must not pass for "a dead stream adds nothing".
+    with pytest.raises(httpx.ReadError) as raised:
         llm.chat_stream(HELLO, on_text_chunk=lambda _chunk: None)
+    assert raised.value.streamed is True
     assert _totals(llm) == (0, 0, 0, 0)
+
+
+def test_the_non_streaming_entry_counts_a_failed_attempt_too():
+    """``chat()`` is a stream on this wire as well (the summarizer's path), and
+    it counts from the *response* — which a raising attempt never produces."""
+    llm = _llm()
+    attach(llm, Wire(
+        stream_of(message_start(input_tokens=700), error_event("overloaded_error")),
+        _ok("recovered", input_tokens=700),
+    ))
+    assert llm.chat(HELLO).choices[0].message.content == "recovered"
+    assert _totals(llm) == (700 + 700, 1 + 5, 0, 0)

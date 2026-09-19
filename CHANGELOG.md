@@ -24,8 +24,9 @@ _Targeting 0.5.2. Add entries under the relevant heading as work lands._
   adapter now records usage on its way out either way and `LLMClient` counts
   it in a `finally`, once per attempt: a failed attempt and the retry after it
   are two requests and both count, and an attempt that reported nothing adds
-  nothing. It is what the server **reported**, not a claim about what it
-  billed. The Chat Completions wire is unchanged in effect — it states usage
+  nothing. `chat()` is a stream on that wire too (the summarizer's path) and
+  counts a failed attempt the same way. It is what the server **reported**,
+  not a claim about what it billed. The Chat Completions wire is unchanged in effect — it states usage
   only in its last chunk, so a stream that dies before it has nothing to keep.
   `LLM_CALL_COMPLETED` on the error path still carries no counts.
 
