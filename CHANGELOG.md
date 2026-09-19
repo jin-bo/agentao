@@ -15,6 +15,20 @@ _Targeting 0.5.2. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A stream that fails part-way still counts what the server said it cost.**
+  The session totals were added after the stream consumer *returned*, so an
+  attempt that raised — an `error` event inside the stream, a dropped
+  connection — added nothing, though on the `anthropic-messages` wire
+  `message_start` had already stated the whole input count. 0.5.1's notes
+  admitted it ("a request that failed mid-stream may go uncounted"). The
+  adapter now records usage on its way out either way and `LLMClient` counts
+  it in a `finally`, once per attempt: a failed attempt and the retry after it
+  are two requests and both count, and an attempt that reported nothing adds
+  nothing. It is what the server **reported**, not a claim about what it
+  billed. The Chat Completions wire is unchanged in effect — it states usage
+  only in its last chunk, so a stream that dies before it has nothing to keep.
+  `LLM_CALL_COMPLETED` on the error path still carries no counts.
+
 ---
 
 ## [0.5.1] — 2026-09-19
