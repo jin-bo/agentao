@@ -1,6 +1,6 @@
 # Host tool allowlist: `enabled_tools` (design draft · converged)
 
-**Status:** **Draft, pending review.** Not yet implemented. The additive dual of `host-tool-injection` (`extra_tools` / `disable_tools`, already shipped).
+**Status:** **Implemented** (PR #68) and **shipped in 0.4.9** as `Agentao(enabled_tools=...)`. The text below is the design as drafted; where it and the code differ, the code and `docs/reference/host-api.md` are what exists. The additive dual of `host-tool-injection` (`extra_tools` / `disable_tools`, already shipped).
 **Audience:** agentao maintainers who want to give hosts a declarative "minimal tool set" selector; and reviewers of the follow-up PR.
 **Companions:**
 - `docs/design/host-tool-allowlist.zh.md` — Chinese version (authoritative source; this file mirrors it)

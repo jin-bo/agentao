@@ -1,9 +1,9 @@
 # Host 工具白名单：`enabled_tools`（设计草案 · 收敛版）
 
-**状态：** **草案，待评审。** 实现未开始。是 `host-tool-injection`（`extra_tools` / `disable_tools`，已落地）的加法对偶。
+**状态：** **已实现**（PR #68），并**已随 0.4.9 发布**，即 `Agentao(enabled_tools=...)`。下文是起草时的设计原文；它与代码不一致之处，以代码和 `docs/reference/host-api.md` 为准。是 `host-tool-injection`（`extra_tools` / `disable_tools`，已落地）的加法对偶。
 **读者：** 要给 host 一个声明式「最小工具集」选择口的 agentao 维护者；以及本设计后续 PR 的评审者。
 **配套：**
-- `docs/design/host-tool-allowlist.md` — 英文版（本草案确认后再写）
+- `docs/design/host-tool-allowlist.md` — 英文版
 - `docs/design/host-tool-injection.zh.md` — 减法/加法注入口 `extra_tools` / `disable_tools`（直接前身）
 - `docs/design/runtime-tool-injection.zh.md` — 运行时对偶 `add_tool` / `remove_tool`
 - `docs/design/embedded-host-contract.md` — host 契约稳定边界（本设计的归属处）
