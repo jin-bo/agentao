@@ -897,14 +897,21 @@ class LLMClient(_LoggingMixin):
         retry handler can tell whether a retry would duplicate
         already-emitted content.
         """
-        response = self._adapter.consume_stream(
-            kwargs, acc, on_text_chunk, cancellation_token,
-        )
-
-        # Accumulate session token totals
-        if acc.usage_data is not None:
-            self._count_response_usage(acc.usage_data)
-        return response
+        try:
+            return self._adapter.consume_stream(
+                kwargs, acc, on_text_chunk, cancellation_token,
+            )
+        finally:
+            # Session totals, on the way out **either way**. An attempt that
+            # raised was still a request, and ``acc`` reflects whatever usage
+            # the server had reported by then — the same contract it already
+            # keeps for ``progress_made``. ``acc`` is built fresh per attempt
+            # (``chat_stream``'s loop), so each attempt is counted at most
+            # once; a failed attempt and the retry that follows are two
+            # requests, and both count. Nothing reported, nothing added: the
+            # Chat Completions wire states usage only in its last chunk.
+            if acc.usage_data is not None:
+                self._count_response_usage(acc.usage_data)
 
     def _emit_nonstreaming(
         self,

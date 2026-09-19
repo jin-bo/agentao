@@ -664,8 +664,20 @@ class AnthropicMessagesAdapter:
     # -- response -----------------------------------------------------------
 
     def send(self, kwargs: Dict[str, Any]) -> Any:
-        """One ``chat()`` attempt — the stream, consumed with no callback."""
-        return self.consume_stream(kwargs, self.new_accumulator(), None, None)
+        """One ``chat()`` attempt — the stream, consumed with no callback.
+
+        ``chat()`` counts usage from the response it gets back, so an attempt
+        that raises has to be counted here: this is a stream too, and
+        ``message_start`` had stated the input before it failed. Only on the
+        way out by exception — a returned response is ``chat()``'s to count.
+        """
+        acc = self.new_accumulator()
+        try:
+            return self.consume_stream(kwargs, acc, None, None)
+        except BaseException:
+            if acc.usage_data is not None:
+                self._owner._count_response_usage(acc.usage_data)
+            raise
 
     def new_accumulator(self) -> _StreamAccumulator:
         return _StreamAccumulator(self._owner.model)
@@ -712,11 +724,17 @@ class AnthropicMessagesAdapter:
                         acc.finish_reason = _FINISH_REASONS.get(stop_reason, "stop")
                         acc.finish_reason_reported = True
         finally:
+            # In the ``finally``, not after it: a stream that raises part-way
+            # has usually already said what it cost. ``message_start`` carries
+            # the whole input count, so a request that died on its third event
+            # was still a request of that size, and ``LLMClient`` counts what
+            # ``acc`` holds whether or not this returns. What the server
+            # *reported*, which is not a claim about what it billed.
+            if usage:
+                acc.usage_data = _Usage(usage)
             close = getattr(stream, "close", None)
             if callable(close):
                 close()
-        if usage:
-            acc.usage_data = _Usage(usage)
         return acc.build()
 
     @staticmethod
