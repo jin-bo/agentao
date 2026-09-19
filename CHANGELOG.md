@@ -25,11 +25,11 @@ _Targeting 0.5.3. Add entries under the relevant heading as work lands._
     an item `id`; history keeps `call_id|item_id` and splits it on the way out,
     on the last separator and only when what follows is an item id — an id
     minted on another wire before a provider switch is never split. The item
-    id goes back **only beside the reasoning it was produced with**: the API
-    pairs an `fc_` id with its `rs_` reasoning item and refuses one without
-    the other, and a reasoning item can be missing for ordinary reasons (a
-    switch purged it, the endpoint issued none). `call_id` alone still pairs
-    the output.
+    id goes back **only beside the reasoning it was produced with** — pi-mono
+    records the API refusing an `fc_` id without its `rs_` reasoning item;
+    api.openai.com with `store: false` accepted every combination, so this is
+    the conservative side, and costs nothing: `call_id` alone pairs the
+    output.
   - **Reasoning survives the turn.** Stateless means the provider keeps
     nothing, so a reasoning model's earlier reasoning exists on the next
     request only if it is sent back. Every request asks for
@@ -64,7 +64,7 @@ _Targeting 0.5.3. Add entries under the relevant heading as work lands._
     reasoning text this API shows, stay off unless asked for:
     `LLM_EXTRA_BODY='{"reasoning": {"summary": "auto"}}'`.
   - **A session that called tools here can move to Chat Completions and
-    back.** The composite id is longer than the 40 characters OpenAI allows a
+    back.** The composite id (83 characters) is longer than the 64 OpenAI allows a
     `tool_calls[*].id`, and it is in history, so every request after the
     switch would have been the same 400. The Chat Completions adapter now
     sends a composite id as its `call_id`, in the outbound copy only; two
@@ -76,8 +76,13 @@ _Targeting 0.5.3. Add entries under the relevant heading as work lands._
   - An example, `examples/openai-responses-wire/`, with an offline smoke over
     the real SDK; it is in CI's examples matrix.
 
-  Verified against the real SDK over a scripted socket; **not yet run against
-  a live endpoint**.
+  Verified against the real SDK over a scripted socket, then on
+  api.openai.com (`gpt-6-astra`, `gpt-4.1-mini`) and an Aliyun
+  OpenAI-compatible gateway (`deepseek-v4.1-flash`): tool round trips,
+  encrypted reasoning carried across three requests, and a switch of the same
+  history to Chat Completions all completed. Not observed on either: an
+  endpoint rejecting `include`, and an `error` event with a null `code`.
+  Details in `docs/design/llm-api-adapters.md`, *Live results*.
 
 - **The cache-write count on the OpenAI wires, where the SDK states one.**
   `openai` 3.x reads `cache_write_tokens` beside `cached_tokens` (and, on the

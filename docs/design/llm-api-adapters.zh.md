@@ -3,7 +3,7 @@
 **状态：** **阶段 0 已实施，随 0.4.26 发布。阶段 1 已于 2026-09-18 实施（已随 0.5.0 发布），
 验证对象是脚本化的 socket，随后是真实端点（见下文「真实端点实测」）；阶段 3 里「切换 provider」那一块同日跟进。
 **阶段 2 的 `openai-responses` 已于 2026-09-19 实施（目标 0.5.3；见下文「阶段 2 落了什么」）—— 验证对象是
-脚本化 socket 之上的真实 SDK，尚未碰过真实端点。** `gemini-api` 与阶段 3 的其余部分仍是提案、未授权。rev 16（2026-09-19）。** §2.3 的阶段 0a 与 0b 已在 `main`；阶段 1 在 `LLMClient` 之下加了适配器
+脚本化 socket 之上的真实 SDK，随后是 api.openai.com 与一个阿里云网关（见该节「真实端点实测」）。** `gemini-api` 与阶段 3 的其余部分仍是提案、未授权。rev 16（2026-09-19）。** §2.3 的阶段 0a 与 0b 已在 `main`；阶段 1 在 `LLMClient` 之下加了适配器
 接缝，以及第二条线路 `anthropic-messages`，启动时选定、或由切换 provider 改变。§12.1 —— 阶段 0 是否让适配器变得
 不必要 —— **没有**先靠实测回答：维护者在阶段 0 的账单对比仍欠着的情况下授权了阶段 1，这笔
 欠账顺延（见「阶段 1 落了什么」末段）。除此之外，本文记录接缝在哪、放接缝的三个选项、推荐
@@ -126,15 +126,17 @@ SDK 序列化出来的 JSON，事件和异常都是 SDK 自己的。当时**没�
   `response.failed` 是被 SDK 的迭代器**产出**的、不是抛出的，只读自己认识的事件的适配器会
   返回一个空的、看起来正常的响应；这里把它们抛成 `ResponsesStreamError`。（2）function
   工具默认 strict，而 strict 模式拒绝没有把每个属性都列为 required 的 schema —— 工具以
-  `strict: false` 发出。（3）`fc_` 项 id 与同时产生的 `rs_` 推理项是**配对**的，所以只有
-  那段推理在同一轮里时才发回（`openai-responses-shared.ts` 也这么做）；切换清掉推理之后只
-  留 `call_id`，它仍然能配上输出。
+  `strict: false` 发出。（3）`fc_` 项 id 只在与它同时产生的 `rs_` 推理项也在同一轮时才发回，
+  与 `openai-responses-shared.ts` 相同：pi-mono 记录的是 API 会拒绝只有其一的请求。**真实端点
+  没有复现这一点**（见下）—— 所以这是一条没见到被强制执行的规则的保守一侧，保留它是因为没有
+  代价：只用 `call_id` 就能配上输出。
 - **推理走第二个载体键 `openai_reasoning_items`**，登记在 `WIRE_CARRIER_KEYS` —— 记录和
   清除读的是同一个元组，所以不可能出现「被持久化却不被清除」的载体。没有
   `encrypted_content` 的项不保留：`store: false` 之下 provider 那边这个 id 下什么都没有。
   端点拒绝 `include` 时，不带它重发一次，此后的每个请求都既不要这个字段、也不发这些项。
-- **复合 id 离开这条线路时只剩 `call_id`。** `call_id|fc_…` 超过 OpenAI 的 Chat
-  Completions 允许的 40 个字符，而 id 在历史里，所以切回去的会话会一直 400。Chat
+- **复合 id 离开这条线路时只剩 `call_id`。** `call_id|fc_…`（api.openai.com 生成的是
+  83 个字符）超过 OpenAI 的 Chat Completions 允许的 **64** 个字符 —— 这是实测（见下）；
+  最初写在这里的 40 是 pi-mono 的截断长度，不是 API 的上限 ——而 id 在历史里，所以切回去的会话会一直 400。Chat
   Completions 适配器在对外副本里**只改写复合 id** —— 没有复合 id 的请求就是同一个 list
   对象，所以逐字节一致的 golden 仍然成立，网关自己的长 id 也不动；两个调用共用一个
   `call_id` 时用哈希而不是计数器，这样写法不取决于 id 出现的顺序（另一个调用被压缩掉之后，剩下的那个会退回裸 `call_id`；每个请求自身一致，只是缓存前缀变一次）。Anthropic
@@ -147,10 +149,38 @@ SDK 序列化出来的 JSON，事件和异常都是 SDK 自己的。当时**没�
   `input_tokens_details.cache_write_tokens`；两条 OpenAI 线路都把它读作缓存写入量，
   fixture 在两个大版本上都通过校验。
 
-**没有观察到、只是脚本化的** —— 要靠一次真实端点运行来还的账：不做推理的模型是否接受
-`include`；`rs_` 项与带 `fc_` 名字的调用一起、推理在前，是否被接受；拒绝 `include` 时的
-真实措辞（匹配了三种写法，都是惯例）；`code` 为空的 `error` 事件（当前按永久错误处理）；
-以及与调用交错的推理是否需要保留顺序（今天所有推理都排在它那一轮的最前面）。
+**真实端点实测（2026-09-19，两个端点，经由 `LLMClient` 与本适配器，外加几次直接的 SDK
+调用；约二十个小请求，key 从未离开进程）。**
+
+*api.openai.com* —— `gpt-6-astra`（推理）、`gpt-4.1-mini`（非推理）：
+
+- **请求形状端到端被接受。** `effort: high` 的一轮工具调用返回一个 `rs_` 项（加密内容
+  2,724 个字符）和一个复合 id 为 83 个字符的调用；下一个请求 —— 推理在前、调用带着它的
+  `fc_` id、然后是输出 —— 被接受，第三个请求再次发回第一轮的推理，也被接受。真实输出顺序是
+  **reasoning → message → function_call**，正是本适配器翻译一轮时用的顺序，所以对这种形状
+  不存在交错顺序的问题。
+- **配对规则没有被强制执行。** 同一个真实轮次以四种方式发送 —— 都带、只带 `fc_` id 不带
+  推理、带推理但调用不带 id、都不带 —— 四次全部被接受（`store: false`）。适配器保留它的保守
+  规则；文档不再说 API 会拒绝。
+- **Chat Completions 的上限是 64，不是 40。** 原样发送复合 id 得到 `400
+  string_above_max_length`：「Expected a string with maximum length 64, but got a string with
+  length 83」。经过适配器，同一份历史被接受。`_TOOL_ID_MAX` 现在是 64。
+- 非推理模型接受 `include`。`gpt-6-astra` 拒绝 `temperature`，既有的闩锁把它去掉了。真实
+  usage 里有 `cache_write_tokens`（这里是 0）。在 `low` / `medium` 档位下这个模型经常**完全
+  不**产生推理项 —— 用这两档做探测，测不到载体的任何行为。
+
+*阿里云 maas 网关* —— `deepseek-v4.1-flash`，OpenAI 兼容：
+
+- 上面的参数全部被接受；一次工具往返、以及把同一份历史切到 Chat Completions，都完成了。
+- **它的每个 item id 都是 `msg_…`，函数调用也一样** —— 所以没有 `fc_` id，历史里存的是
+  29 个字符的裸 `call_id`，前缀规则起到了它该起的作用。
+- **推理以 `response.reasoning_text.delta` 到达**（评审时补读的 LM Studio / vLLM 形状），
+  `encrypted_content` 为 null、没有摘要：文本会显示，但不会带到下一个请求 —— 在这个网关上
+  载体什么也不做，这是对的。
+- 它的 usage 里没有 `cache_write_tokens`；标准字段旁边还有网关自己的 `x_details`，被忽略。
+
+**仍未观察到的**（两个端点都没产生）：拒绝 `include` 时的措辞（两边都接受了这个字段；
+匹配的是三种惯例写法），以及 `code` 为空的 `error` 事件（当前按永久错误处理）。
 
 **真实端点实测（2026-09-18，`api.anthropic.com`，`claude-sonnet-5`，经由 `LLMClient` 与本
 适配器，约十来个小请求）。** 上面四条断言现在都是观测结果：（1）报错原文是 `max_tokens:

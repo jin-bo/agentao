@@ -4,7 +4,7 @@
 2026-09-18 (shipped in 0.5.0), against a scripted socket and then a live endpoint
 (*Live results*, below); the provider-switch piece of stage 3 followed the same day.
 **Stage 2's `openai-responses` implemented 2026-09-19 (targeting 0.5.3; *What stage 2
-landed*, below) — against the real SDK over a scripted socket, not yet a live endpoint.**
+landed*, below) — against the real SDK over a scripted socket, then api.openai.com and an Aliyun gateway (*Live results*, in that section).**
 `gemini-api` and the rest of stage 3 are proposed and not authorized. rev 16 (2026-09-19).** §2.3's
 stage 0a and 0b are on `main`; stage 1 adds the adapter seam under `LLMClient`
 and one second wire, `anthropic-messages`, selected at startup or by a provider
@@ -176,19 +176,22 @@ the accumulator (#317), the adapter (#318), encrypted reasoning across requests
   adapter that reads only the events it knows returns an empty, clean-looking
   response; they are raised as `ResponsesStreamError`. (2) A function tool is
   strict by default, and strict mode rejects a schema that does not require
-  every property — tools go out `strict: false`. (3) An `fc_` item id is
-  **paired** with the `rs_` reasoning item it was produced beside, so it goes
-  back only when that reasoning is in the same turn (`openai-responses-shared.ts`
-  does the same); a switch that purged the reasoning leaves `call_id` alone,
-  which still pairs the output.
+  every property — tools go out `strict: false`. (3) An `fc_` item id goes
+  back only when the `rs_` reasoning item it was produced beside is in the same
+  turn, as `openai-responses-shared.ts` does: pi-mono records the API refusing
+  one without the other. **The live run did not reproduce that** (below) — so
+  this is the conservative side of a rule not seen enforced, kept because it
+  costs nothing: `call_id` alone pairs the output.
 - **Reasoning rides a second carrier, `openai_reasoning_items`**, registered in
   `WIRE_CARRIER_KEYS` — the one tuple recording and purging both read, so a
   carrier cannot be persisted without being purged. An item without
   `encrypted_content` is not kept: with `store: false` the provider has nothing
   under that id. An endpoint that rejects `include` is asked once without it
   and then gets neither the field nor the items, on every later request too.
-- **The composite id leaves this wire as its `call_id`.** `call_id|fc_…` is
-  longer than the 40 characters OpenAI's Chat Completions allows, and the id is
+- **The composite id leaves this wire as its `call_id`.** `call_id|fc_…` (83
+  characters as api.openai.com mints it) is longer than the **64** OpenAI's Chat
+  Completions allows — observed, below; the 40 first written here was pi-mono's
+  truncation, not the API's limit — and the id is
   in history, so a session switched back would 400 forever. The Chat
   Completions adapter rewrites **only composite ids** in the outbound copy — a
   request without one is the same list object, so the byte-identical golden
@@ -207,12 +210,51 @@ the accumulator (#317), the adapter (#318), encrypted reasoning across requests
   `input_tokens_details.cache_write_tokens`; it is read as the cache-write
   count on both OpenAI wires, and the fixtures validate on both majors.
 
-**Not observed, only scripted** — the debts a live run has to pay: that a
-non-reasoning model accepts `include`; that `rs_` items and an `fc_`-named
-call are accepted together, reasoning first; the real wording of an `include`
-rejection (three spellings are matched, all conventional); an `error` event
-with a null `code` (treated as permanent); and whether reasoning interleaved
-with calls needs its order kept (today all reasoning leads its turn).
+**Live results (2026-09-19, two endpoints, through `LLMClient` and this
+adapter plus a few raw SDK calls; about twenty small requests, the key never
+leaving the process).**
+
+*api.openai.com* — `gpt-6-astra` (reasoning), `gpt-4.1-mini` (not):
+
+- **The request shape is accepted end to end.** A tool turn at `effort: high`
+  returned one `rs_` item (2,724 characters encrypted) and one call whose
+  composite id is 83 characters; the next request — reasoning first, the call
+  naming its `fc_` id, then the output — was accepted, and so was a third that
+  sent the first turn's reasoning back again. The live output order was
+  **reasoning → message → function_call**, which is the order this adapter
+  translates a turn into, so the interleaving concern does not arise for that
+  shape.
+- **The pairing rule was not enforced.** The same real turn sent four ways —
+  both, the `fc_` id without its reasoning, the reasoning with a bare call,
+  neither — was accepted all four times (`store: false`). The adapter keeps
+  its conservative rule; the docs no longer say the API refuses.
+- **The Chat Completions limit is 64, not 40.** The composite id sent as it is
+  came back `400 string_above_max_length`: "Expected a string with maximum
+  length 64, but got a string with length 83". Through the adapter the same
+  history was accepted. `_TOOL_ID_MAX` is 64 now.
+- A non-reasoning model accepts `include`. `gpt-6-astra` rejects
+  `temperature`, and the existing latch removed it. `cache_write_tokens` is in
+  the live usage object (0 here). At `low` / `medium` effort this model often
+  produced **no** reasoning item at all — a probe at those levels tests none of
+  the carrier.
+
+*An Aliyun maas gateway* — `deepseek-v4.1-flash`, OpenAI-compatible:
+
+- Every parameter above accepted; a tool round trip and a switch of the same
+  history to Chat Completions both completed.
+- **Its item ids are `msg_…` for every item, function calls included** — so
+  there is no `fc_` id, history keeps the bare 29-character `call_id`, and the
+  prefix rule did what it is for.
+- **Reasoning arrives as `response.reasoning_text.delta`** (the LM Studio /
+  vLLM shape the adapter reads since review) with `encrypted_content: null`
+  and no summary: the text is shown, and nothing is carried to the next
+  request — on this gateway the carrier does nothing, correctly.
+- No `cache_write_tokens` in its usage; a gateway-specific `x_details` beside
+  the standard fields, ignored.
+
+**Still not observed** (neither endpoint produced them): the wording of an
+`include` rejection (both accepted the field; three conventional spellings are
+matched) and an `error` event with a null `code` (treated as permanent).
 
 **Live results (2026-09-18, `api.anthropic.com`, `claude-sonnet-5`, through
 `LLMClient` and this adapter, about a dozen small requests).** The four
