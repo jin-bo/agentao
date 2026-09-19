@@ -91,7 +91,19 @@ def test_the_completions_wire_reads_cached_tokens_from_the_details():
         "prompt_tokens_details": {"cached_tokens": 1024},
     })
     llm.chat_stream(HELLO)
-    assert _totals(llm) == (1200, 30, 1024, 0)  # this wire has no cache-write count
+    assert _totals(llm) == (1200, 30, 1024, 0)  # no write count stated: 0
+
+
+def test_the_completions_wire_reads_a_cache_write_count_where_one_is_stated():
+    """``openai`` 3.x states ``prompt_tokens_details.cache_write_tokens``; 2.x
+    keeps it as an extra field. Either way it is read, as a part *of* the prompt."""
+    llm = LLMClient(api_key="k", base_url="http://wire.test/v1", model="gpt-x")
+    llm.client = _completions_client({
+        "prompt_tokens": 1200, "completion_tokens": 30, "total_tokens": 1230,
+        "prompt_tokens_details": {"cached_tokens": 1024, "cache_write_tokens": 128},
+    })
+    llm.chat_stream(HELLO)
+    assert _totals(llm) == (1200, 30, 1024, 128)
 
 
 def test_a_response_that_states_no_cache_counts_adds_none():

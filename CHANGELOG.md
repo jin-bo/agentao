@@ -5,9 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.5.3] — 2026-09-19
 
-_Targeting 0.5.3. Add entries under the relevant heading as work lands._
+A third wire: the OpenAI Responses API, `api_format="openai-responses"`. Nothing
+removed, nothing to migrate. Release notes: `docs/releases/v0.5.3.md`.
 
 ### Added
 
@@ -91,10 +92,6 @@ _Targeting 0.5.3. Add entries under the relevant heading as work lands._
   that does not state it, the count is 0 as before. `agentao` pins no upper
   bound on `openai`, so a fresh install resolves 3.x: the test suite was run
   on 2.24.0 and 3.16.2.
-
-### Changed
-
-### Fixed
 
 ---
 
