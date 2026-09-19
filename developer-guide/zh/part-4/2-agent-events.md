@@ -198,7 +198,7 @@ if event.type == EventType.TOOL_COMPLETE:
 | 字段 | 说明 |
 |------|------|
 | 触发时机 | 每次 provider 调用前后 |
-| `data` | 调用前元数据；调用后的 usage / finish 元数据。`LLM_CALL_COMPLETED` 携带 `duration_ms`、`model_latency_ms`（`duration_ms` 的稳定别名，命名更贴合意图）、`first_token_ms`（首 token 时延，毫秒；当本次调用没有流式文本——例如纯工具调用响应、或首个 delta 之前就失败——为 `null`）、`prompt_tokens`、`completion_tokens`、`finish_reason`，错误路径上还有 `status` / `error_class` / `error_message` / `streamed`。自 0.5.1 起还有 `cache_read_tokens` / `cache_creation_tokens`：`prompt_tokens` **之中** provider 按缓存价格计费的那部分（Anthropic 线路取 `cache_read_input_tokens` / `cache_creation_input_tokens`；Chat Completions 取 `prompt_tokens_details.cached_tokens`，该线路没有缓存写入计数）。响应不带 usage 时为 `None`，provider 没给出时为 `0` |
+| `data` | 调用前元数据；调用后的 usage / finish 元数据。`LLM_CALL_COMPLETED` 携带 `duration_ms`、`model_latency_ms`（`duration_ms` 的稳定别名，命名更贴合意图）、`first_token_ms`（首 token 时延，毫秒；当本次调用没有流式文本——例如纯工具调用响应、或首个 delta 之前就失败——为 `null`）、`prompt_tokens`、`completion_tokens`、`finish_reason`，错误路径上还有 `status` / `error_class` / `error_message` / `streamed`。自 0.5.1 起还有 `cache_read_tokens` / `cache_creation_tokens`：`prompt_tokens` **之中** provider 按缓存价格计费的那部分（Anthropic 线路取 `cache_read_input_tokens` / `cache_creation_input_tokens`；Chat Completions 取 `prompt_tokens_details.cached_tokens` / `.cache_write_tokens`，`openai-responses` 取 `input_tokens_details` 下的同名两项 —— 写入计数只在 SDK 给出时才有，即 `openai` 3.x 起）。响应不带 usage 时为 `None`，provider 没给出时为 `0` |
 | 典型用法 | 指标、成本统计、调试模型行为 —— `first_token_ms` 与 `model_latency_ms` 把排队/TTFT 与总生成时间区分开 |
 
 ### `LLM_CALL_DELTA`

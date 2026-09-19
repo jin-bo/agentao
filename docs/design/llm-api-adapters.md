@@ -3,7 +3,7 @@
 **Status:** **Stage 0 implemented and shipped in 0.4.26. Stage 1 implemented
 2026-09-18 (shipped in 0.5.0), against a scripted socket and then a live endpoint
 (*Live results*, below); the provider-switch piece of stage 3 followed the same day.
-**Stage 2's `openai-responses` implemented 2026-09-19 (targeting 0.5.3; *What stage 2
+**Stage 2's `openai-responses` implemented 2026-09-19 (shipped in 0.5.3; *What stage 2
 landed*, below) — against the real SDK over a scripted socket, then api.openai.com and an Aliyun gateway (*Live results*, in that section).**
 `gemini-api` and the rest of stage 3 are proposed and not authorized. rev 16 (2026-09-19).** §2.3's
 stage 0a and 0b are on `main`; stage 1 adds the adapter seam under `LLMClient`
