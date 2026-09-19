@@ -307,7 +307,9 @@ def sanitize_assistant_message(msg: Dict[str, Any]) -> bool:
     signature is a 400 (observed). Whether the signature also binds the
     visible text is the provider's business — on ``claude-sonnet-5`` an edited
     text was accepted — so this is not a tamper check, only a refusal to be
-    the one who rewrites. It is never displayed; ``reasoning_content`` is the copy that
+    the one who rewrites. The same holds, for the same reason, for the
+    ``openai-responses`` wire's ``openai_reasoning_items``: encrypted, opaque,
+    and no use to anyone once a byte of it has changed. It is never displayed; ``reasoning_content`` is the copy that
     is, and that one is sanitized above.
 
     Two deliberate exemptions, both about not corrupting bytes that have to

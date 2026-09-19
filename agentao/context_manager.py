@@ -10,7 +10,7 @@ from .compaction.types import (
     CompactionDecisionContext,
     CompactionOutcome,
 )
-from .llm._stream_response import ANTHROPIC_THINKING_BLOCKS
+from .llm._stream_response import ANTHROPIC_THINKING_BLOCKS, OPENAI_REASONING_ITEMS
 
 try:
     import tiktoken as _tiktoken
@@ -475,6 +475,19 @@ class ContextManager:
                 thinking = block.get("thinking") if isinstance(block, dict) else None
                 if isinstance(thinking, str):
                     tokens += self.count_tokens_in_text(thinking)
+        # The ``openai-responses`` wire sends reasoning items back too. Only
+        # the summary is countable: ``encrypted_content`` is opaque, and its
+        # length says nothing a tokenizer could use. The Tier-1 anchor takes
+        # the provider's own count each turn, so this is the estimate between
+        # anchors, not the budget.
+        items = msg.get(OPENAI_REASONING_ITEMS)
+        if isinstance(items, list):
+            for item in items:
+                summary = item.get("summary") if isinstance(item, dict) else None
+                for part in summary if isinstance(summary, list) else []:
+                    text = part.get("text") if isinstance(part, dict) else None
+                    if isinstance(text, str):
+                        tokens += self.count_tokens_in_text(text)
         if "tool_calls" in msg:
             tokens += self.count_tokens_in_text(str(msg["tool_calls"]))
         return tokens

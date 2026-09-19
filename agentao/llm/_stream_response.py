@@ -32,6 +32,20 @@ from typing import Any, Dict, List, Optional
 #: ``thinking_blocks`` must not start being persisted because of this one.
 ANTHROPIC_THINKING_BLOCKS = "anthropic_thinking_blocks"
 
+#: The same, for the ``openai-responses`` wire: its ``reasoning`` output items,
+#: each whole and carrying ``encrypted_content``. With ``store: false`` the
+#: provider keeps nothing, so a reasoning model's earlier reasoning exists only
+#: if it is sent back — and the item is opaque, so whole or not at all.
+OPENAI_REASONING_ITEMS = "openai_reasoning_items"
+
+#: Every key a wire adapter persists on an assistant dict to get model-minted,
+#: model-bound state back to the model that minted it. **A new adapter's
+#: carrier goes here**, and only here: recording it onto history
+#: (``chat_loop/_serialize.py``) and dropping it on a model or provider switch
+#: (``runtime/model.py::purge_thinking_artifacts``) both read this tuple, so a
+#: key cannot be persisted without also being purged.
+WIRE_CARRIER_KEYS = (ANTHROPIC_THINKING_BLOCKS, OPENAI_REASONING_ITEMS)
+
 
 class _StreamAccumulator:
     """Mutable per-attempt state for one streaming chat completion.
@@ -49,6 +63,8 @@ class _StreamAccumulator:
         # Anthropic's signed ``thinking`` / ``redacted_thinking`` blocks, whole
         # and in order. Never filled on the Chat Completions wire.
         self.thinking_blocks: List[Dict[str, Any]] = []
+        # The ``openai-responses`` wire's reasoning items, whole and in order.
+        self.reasoning_items: List[Dict[str, Any]] = []
         self.tool_calls_data: Dict[int, Dict[str, str]] = {}
         # Streaming tool-call keying state. The OpenAI streaming spec tags
         # every tool_call delta with an ``index`` so fragments reassemble
@@ -123,6 +139,7 @@ class _StreamAccumulator:
             usage=self.usage_data,
             reasoning_content="".join(self.reasoning_parts) if self.reasoning_parts else None,
             thinking_blocks=self.thinking_blocks or None,
+            reasoning_items=self.reasoning_items or None,
         )
 
 
@@ -148,6 +165,7 @@ class _StreamMessage:
         tool_calls,
         reasoning_content: Optional[str] = None,
         thinking_blocks: Optional[List[Dict[str, Any]]] = None,
+        reasoning_items: Optional[List[Dict[str, Any]]] = None,
     ):
         self.content = content
         self.tool_calls = tool_calls
@@ -160,6 +178,8 @@ class _StreamMessage:
         # above: a Chat Completions response must not grow an attribute.
         if thinking_blocks:
             self.anthropic_thinking_blocks = thinking_blocks
+        if reasoning_items:
+            self.openai_reasoning_items = reasoning_items
 
 
 class _StreamChoice:
@@ -181,6 +201,7 @@ class _StreamResponse:
         usage: Any = None,
         reasoning_content: Optional[str] = None,
         thinking_blocks: Optional[List[Dict[str, Any]]] = None,
+        reasoning_items: Optional[List[Dict[str, Any]]] = None,
     ):
         self.model = model
         self.usage = usage  # populated when provider supports stream_options include_usage
@@ -218,5 +239,6 @@ class _StreamResponse:
             tool_calls=tool_calls,
             reasoning_content=reasoning_content,
             thinking_blocks=thinking_blocks,
+            reasoning_items=reasoning_items,
         )
         self.choices = [_StreamChoice(message=message, finish_reason=finish_reason)]

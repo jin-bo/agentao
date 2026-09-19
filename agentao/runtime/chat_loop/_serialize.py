@@ -15,7 +15,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict, Optional
 
-from ...llm._stream_response import ANTHROPIC_THINKING_BLOCKS
+from ...llm._stream_response import WIRE_CARRIER_KEYS
 from ..sanitize import canonicalize_tool_arguments
 
 
@@ -55,13 +55,16 @@ def _attach_thinking_blocks(msg: Dict[str, Any], assistant_message: Any) -> None
     The answer is type-checked, not merely probed: this codebase substitutes
     ``MagicMock`` responses freely, and a mock answers any attribute.
     """
-    blocks = getattr(assistant_message, ANTHROPIC_THINKING_BLOCKS, None)
-    if (
-        isinstance(blocks, list)
-        and blocks
-        and all(isinstance(block, dict) for block in blocks)
-    ):
-        msg[ANTHROPIC_THINKING_BLOCKS] = copy.deepcopy(blocks)
+    # One rule for every wire's carrier (``WIRE_CARRIER_KEYS``): a non-empty
+    # list of dicts, copied whole under the name it had on the response.
+    for key in WIRE_CARRIER_KEYS:
+        blocks = getattr(assistant_message, key, None)
+        if (
+            isinstance(blocks, list)
+            and blocks
+            and all(isinstance(block, dict) for block in blocks)
+        ):
+            msg[key] = copy.deepcopy(blocks)
 
 
 def _serialize_tool_call(tc, *, logger=None) -> dict:

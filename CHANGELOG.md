@@ -25,8 +25,24 @@ _Targeting 0.5.3. Add entries under the relevant heading as work lands._
     an item `id`; history keeps `call_id|item_id` and splits it on the way out,
     on the last separator and only when what follows is an item id — an id
     minted on another wire before a provider switch is never split. The item
-    id is kept and **not yet sent**: the API pairs an `fc_` id with the `rs_`
-    reasoning item produced beside it and refuses one without the other.
+    id goes back **only beside the reasoning it was produced with**: the API
+    pairs an `fc_` id with its `rs_` reasoning item and refuses one without
+    the other, and a reasoning item can be missing for ordinary reasons (a
+    switch purged it, the endpoint issued none). `call_id` alone still pairs
+    the output.
+  - **Reasoning survives the turn.** Stateless means the provider keeps
+    nothing, so a reasoning model's earlier reasoning exists on the next
+    request only if it is sent back. Every request asks for
+    `reasoning.encrypted_content`; each reasoning item is kept whole on the
+    assistant message under a second carrier key, `openai_reasoning_items`,
+    and replayed ahead of its turn. An item with no encrypted content is not
+    kept — the provider has nothing under that id — and some servers state it
+    only in the terminal response, which is read for exactly that. An endpoint
+    that rejects the field is asked once more without it, and from then on
+    gets neither the field nor the items. A model or provider switch, and a
+    session restore, drop the carrier like Anthropic's signed thinking:
+    `WIRE_CARRIER_KEYS` is the one tuple both recording and purging read, so a
+    carrier cannot be persisted without being purged.
   - **Tools are sent `strict: false`.** Strict is the API's default for a
     function tool, and strict mode rejects a schema that does not require
     every property, which agentao's tools and MCP servers' do not.
@@ -40,9 +56,7 @@ _Targeting 0.5.3. Add entries under the relevant heading as work lands._
     cached part here and maps to `prompt_tokens` as it stands, with
     `cache_read_tokens` from `input_tokens_details.cached_tokens`.
 
-  **Not yet, and landing before 0.5.3 ships:** encrypted reasoning carried
-  across turns (a reasoning model currently starts each request without its
-  earlier reasoning), `/thinking` on this wire — until then it **refuses** a
+  **Not yet, and landing before 0.5.3 ships:** `/thinking` on this wire — until then it **refuses** a
   level there, since the `reasoning_effort` it would store is rejected by that
   API on every request — a session moved from this wire to Chat Completions
   (the composite id is longer than OpenAI's 40-character limit there), and the
