@@ -13,7 +13,7 @@ Authoritative `__all__`:
 - `from agentao.memory.manager import MemoryManager`
 - `from agentao.cancellation import ...` → `CancellationToken`, `AgentCancelledError`
 - `from agentao.acp_client import ...` → `ACPManager`, `ACPClient`, `AcpClientError`, `AcpErrorCode`, `AcpRpcError`, `AcpInteractionRequiredError`, `AcpClientConfig`, `AcpServerConfig`, `AcpConfigError`, `PromptResult`, `ServerState`, `load_acp_client_config` (and lower-level re-exports — see `agentao.acp_client.__init__.py` docstring for which are "stable embedding surface" vs. "implementation detail")
-- `from agentao.host import ...` → `ActivePermissions`, `EventStream`, `StreamSubscribeError`, `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `RFC3339UTCString`, `export_host_event_json_schema`, `export_host_acp_json_schema` — host-facing harness contract, see [A.10](#a-10-embedded-host-contract)
+- `from agentao.host import ...` → `ActivePermissions`, `EventStream`, `StreamSubscribeError`, `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `SubagentUsage`, `PermissionDecisionEvent`, `RFC3339UTCString`, `export_host_event_json_schema`, `export_host_acp_json_schema` — host-facing harness contract, see [A.10](#a-10-embedded-host-contract)
 
 ## A.1 `Agentao`
 
@@ -554,6 +554,7 @@ from agentao.host import (
     HostEvent,
     ToolLifecycleEvent,
     SubagentLifecycleEvent,
+    SubagentUsage,
     PermissionDecisionEvent,
     RFC3339UTCString,
     export_host_event_json_schema,
@@ -566,6 +567,7 @@ from agentao.host import (
 | `ActivePermissions` | Read-only snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). |
 | `ToolLifecycleEvent` | Public envelope for one tool call. `phase ∈ {started, completed, failed}`; cancellation surfaces as `phase="failed", outcome="cancelled"`. |
 | `SubagentLifecycleEvent` | Lineage fact for a sub-agent task/session. `phase ∈ {spawned, completed, failed, cancelled}` — `cancelled` is a distinct phase here. `failed` means either "the sub-agent raised" (`error_type` = exception class name) **or** "it returned without ever answering" (`error_type = "incomplete:<reason>"`, `<reason>` ∈ `no_output`, `reasoning_only`, `length_truncated`, `doom_loop`, `llm_error`, `max_iterations`). Branch on `error_type` before escalating — see [4.7](/en/part-4/7-host-contract). |
+| `SubagentUsage` | The four token counts on a terminal `SubagentLifecycleEvent.usage` (0.5.2): `prompt_tokens` (the whole input), `completion_tokens`, `cache_read_tokens`, `cache_creation_tokens` — the last two are parts *of* `prompt_tokens`. `None` on `spawned` and wherever no sub-agent was built. Already included in the parent's session totals when the event fires. |
 | `PermissionDecisionEvent` | Per-decision projection. Fires on `allow` / `deny` / `prompt`; consumers must drain even allow events. |
 | `HostEvent` | Discriminated union of the three event models (Pydantic discriminator: `event_type`). |
 | `RFC3339UTCString` | Constrained timestamp type. Canonical `Z` suffix only — `+00:00` offsets are rejected. |
