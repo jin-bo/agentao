@@ -1,9 +1,11 @@
 """The LLM client: one retry / logging shell over a wire-protocol adapter.
 
-``LLMClient`` speaks Chat Completions by default (``openai-completions``) and
+``LLMClient`` speaks Chat Completions by default (``openai-completions``),
 Anthropic's Messages API when constructed with
-``api_format="anthropic-messages"``. What differs per protocol lives in an
-adapter (``_openai_completions``, ``_anthropic_messages``); the retry loop,
+``api_format="anthropic-messages"`` and the OpenAI Responses API with
+``api_format="openai-responses"``. What differs per protocol lives in an
+adapter (``_openai_completions``, ``_anthropic_messages``,
+``_openai_responses``); the retry loop,
 the logging and the token totals stay here, once.
 
 The retry policy and streaming duck-types are split into sibling
@@ -31,7 +33,12 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from ._api_format import ANTHROPIC_MESSAGES, OPENAI_COMPLETIONS, resolve_api_format
+from ._api_format import (
+    ANTHROPIC_MESSAGES,
+    OPENAI_COMPLETIONS,
+    OPENAI_RESPONSES,
+    resolve_api_format,
+)
 from ._cache_control import resolve_cache_control
 from ._openai_completions import OpenAICompletionsAdapter
 from ._retry import (
@@ -180,8 +187,9 @@ class LLMClient(_LoggingMixin):
                 same as ``None``) or ``"1h"``. Ignored when ``prompt_cache``
                 is off.
             api_format: The wire protocol spoken to ``base_url`` —
-                ``"openai-completions"`` (the default, same as ``None``) or
-                ``"anthropic-messages"`` (Anthropic's Messages API).
+                ``"openai-completions"`` (the default, same as ``None``),
+                ``"anthropic-messages"`` (Anthropic's Messages API) or
+                ``"openai-responses"`` (the OpenAI Responses API).
                 Configured, never inferred from the URL or the model name;
                 only :meth:`reconfigure` changes it. An unknown value raises
                 ``ValueError`` listing the valid ones. See
@@ -342,6 +350,10 @@ class LLMClient(_LoggingMixin):
             from ._anthropic_messages import AnthropicMessagesAdapter
 
             return AnthropicMessagesAdapter(self)
+        if self.api_format == OPENAI_RESPONSES:
+            from ._openai_responses import OpenAIResponsesAdapter
+
+            return OpenAIResponsesAdapter(self, _openai_client_cls)
         return OpenAICompletionsAdapter(self, _openai_client_cls)
 
     @staticmethod

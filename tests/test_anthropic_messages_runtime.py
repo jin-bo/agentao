@@ -345,7 +345,7 @@ def test_a_bad_api_format_leaves_the_session_on_its_provider(monkeypatch):
                         lambda *a, **k: printed.append(str(a[0]) if a else ""))
     for name, value in {
         "OTHER_API_KEY": "k2", "OTHER_BASE_URL": "https://other.test/v1",
-        "OTHER_MODEL": "gpt-x", "OTHER_API_FORMAT": "openai-responses",
+        "OTHER_MODEL": "gpt-x", "OTHER_API_FORMAT": "gemini-api",
     }.items():
         monkeypatch.setenv(name, value)
 

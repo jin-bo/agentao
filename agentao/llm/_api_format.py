@@ -19,12 +19,13 @@ from typing import Optional
 
 OPENAI_COMPLETIONS = "openai-completions"
 ANTHROPIC_MESSAGES = "anthropic-messages"
+OPENAI_RESPONSES = "openai-responses"
 
 #: The formats this build implements, in the order they are listed to a user
 #: who misspelled one. A format the design names but nothing implements yet
-#: (``openai-responses``, ``gemini-api``) is deliberately absent: accepting it
-#: would mean silently speaking some other protocol.
-API_FORMATS = (OPENAI_COMPLETIONS, ANTHROPIC_MESSAGES)
+#: (``gemini-api``) is deliberately absent: accepting it would mean silently
+#: speaking some other protocol.
+API_FORMATS = (OPENAI_COMPLETIONS, ANTHROPIC_MESSAGES, OPENAI_RESPONSES)
 
 DEFAULT_API_FORMAT = OPENAI_COMPLETIONS
 

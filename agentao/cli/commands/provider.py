@@ -375,6 +375,17 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
                       f"('{escape(str(prev))}') cleared; provider default in effect.[/success]\n")
         return
 
+    # ``openai-responses`` spells it ``reasoning.effort`` and answers a
+    # top-level ``reasoning_effort`` with a 400 — on every later request, since
+    # the value is stored. Refused rather than stored until the command writes
+    # this wire's own field; showing and ``off`` above still work, so a value
+    # carried in across a provider switch can be seen and cleared.
+    if getattr(llm, "api_format", None) == "openai-responses":
+        console.print("\n[error]/thinking cannot set a level on the openai-responses "
+                      "wire yet: it would store `reasoning_effort`, which that API "
+                      "rejects on every request. Nothing was changed.[/error]\n")
+        return
+
     # Reject a multi-word argument: ``/thinking high please`` would otherwise
     # store "high please" verbatim and 400 every later request with no clear
     # cause. A reasoning_effort token is always a single word.

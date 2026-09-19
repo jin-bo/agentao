@@ -317,7 +317,7 @@ class TestSetConfigOptionSwitch:
         creds = acp_set_config.default_provider_resolver("claude")
         assert creds["api_format"] == "anthropic-messages"
 
-    @pytest.mark.parametrize("declared", ["openai-responses", "no-such-wire", 7])
+    @pytest.mark.parametrize("declared", ["gemini-api", "no-such-wire", 7])
     def test_an_unusable_wire_protocol_is_refused(self, declared):
         """Refused before the switch: a guess would hand one protocol's
         credentials to another protocol's SDK."""

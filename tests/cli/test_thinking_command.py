@@ -142,3 +142,28 @@ def test_explicit_none_value_is_treated_as_set():
     cli = _fake_cli({"reasoning_effort": None})
     handle_thinking_command(cli, "off")
     assert "reasoning_effort" not in _eb(cli)
+
+
+# -- the openai-responses wire ------------------------------------------------
+
+
+def _responses_cli(extra_body=None):
+    cli = _fake_cli(extra_body)
+    cli.agent.llm.api_format = "openai-responses"
+    return cli
+
+
+def test_a_level_is_refused_on_the_responses_wire_rather_than_stored(capsys):
+    """That API spells it ``reasoning.effort`` and 400s ``reasoning_effort`` —
+    on every later request, because the value is stored."""
+    cli = _responses_cli()
+    handle_thinking_command(cli, "high")
+    assert _eb(cli) == {}
+    assert "openai-responses" in capsys.readouterr().out
+
+
+def test_a_value_carried_onto_the_responses_wire_can_still_be_cleared():
+    """A ``/provider`` switch keeps ``extra_body``, so the stale key can arrive."""
+    cli = _responses_cli({"reasoning_effort": "high"})
+    handle_thinking_command(cli, "off")
+    assert _eb(cli) == {}
