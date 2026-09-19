@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+_Targeting 0.5.4. Add entries under the relevant heading as work lands._
+
+### Added
+
+### Changed
+
+### Fixed
+
+---
+
 ## [0.5.3] — 2026-09-19
 
 A third wire: the OpenAI Responses API, `api_format="openai-responses"`. Nothing
