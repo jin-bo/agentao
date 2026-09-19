@@ -94,6 +94,23 @@ class ToolLifecycleEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SubagentUsage(BaseModel):
+    """What one sub-agent's LLM requests reported, summed over its run.
+
+    Same four quantities and the same names as ``agentao run``'s ``usage``.
+    ``prompt_tokens`` is the **whole** input; the two cache counts are parts
+    *of* it, not additions to it. Reported by the provider, not billed, and
+    agentao applies no prices.
+    """
+
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_creation_tokens: int = Field(default=0, ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class SubagentLifecycleEvent(BaseModel):
     """Public lineage fact for a sub-agent task/session.
 
@@ -105,6 +122,12 @@ class SubagentLifecycleEvent(BaseModel):
 
     ``task_summary`` is redacted/truncated, never raw user input or raw
     child-agent prompt text.
+
+    ``usage`` is set on a terminal phase only, and only when the sub-agent
+    was built: ``None`` on ``spawned``, on a run cancelled before it started,
+    and on one whose construction raised. By the time a terminal event is
+    published the same counts are already in the parent's session totals, so
+    a host that reads those totals from its handler sees them included.
     """
 
     event_type: Literal["subagent_lifecycle"] = "subagent_lifecycle"
@@ -118,6 +141,7 @@ class SubagentLifecycleEvent(BaseModel):
     started_at: RFC3339UTCString
     completed_at: Optional[RFC3339UTCString] = None
     error_type: Optional[str] = None
+    usage: Optional[SubagentUsage] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -166,5 +190,6 @@ __all__ = [
     "PermissionDecisionEvent",
     "RFC3339UTCString",
     "SubagentLifecycleEvent",
+    "SubagentUsage",
     "ToolLifecycleEvent",
 ]

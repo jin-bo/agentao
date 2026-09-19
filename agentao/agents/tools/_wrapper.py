@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...cancellation import AgentCancelledError, CancellationToken
+from ...llm._usage import positive_int
 from ...tools.base import RegistrableTool, Tool
 from ..bg_store import BackgroundTaskStore, BgTaskStatus
 from ._complete import CompleteTaskTool, TaskComplete
@@ -413,6 +414,11 @@ _HARNESS_NOTICE_EXACT = (
 )
 
 
+_USAGE_KEYS = (
+    "prompt_tokens", "completion_tokens", "cache_read_tokens", "cache_creation_tokens",
+)
+
+
 def _is_harness_notice(text: Optional[str]) -> bool:
     """True if ``text`` is agentao's own notice rather than model output.
 
@@ -711,9 +717,12 @@ class AgentToolWrapper(Tool):
         task_summary = f"sub-agent: {agent_name}"
         subagent_ctx = self._spawn_subagent_event(task_summary)
 
+        # Filled by ``_run_sync``'s ``finally``, so it is there on the two
+        # raising paths below as well as on the ordinary one.
+        settled: Dict[str, Any] = {}
         try:
             result, stats = self._run_sync(
-                task, parent_context, cancellation_token=token,
+                task, parent_context, cancellation_token=token, settled=settled,
             )
         except AgentCancelledError:
             # Defensive only: ``runtime/turn.py`` maps this to
@@ -721,11 +730,14 @@ class AgentToolWrapper(Tool):
             # it and an ordinary cancel is classified below (#244). Kept for a
             # cancellation raised outside the turn — building or closing the
             # sub-agent — where there is no classification to read.
-            self._terminal_subagent_event(subagent_ctx, "cancelled", task_summary)
+            self._terminal_subagent_event(
+                subagent_ctx, "cancelled", task_summary, usage=settled.get("usage"),
+            )
             raise
         except Exception as exc:
             self._terminal_subagent_event(
                 subagent_ctx, "failed", task_summary, error_type=type(exc).__name__,
+                usage=settled.get("usage"),
             )
             raise
 
@@ -763,10 +775,13 @@ class AgentToolWrapper(Tool):
                 "failed",
                 task_summary,
                 error_type=f"incomplete:{incomplete.reason}",
+                usage=settled.get("usage"),
             )
         else:
             # ``completed`` or ``cancelled`` — neither carries an error type.
-            self._terminal_subagent_event(subagent_ctx, state, task_summary)
+            self._terminal_subagent_event(
+                subagent_ctx, state, task_summary, usage=settled.get("usage"),
+            )
         return self._format_result(result, stats)
 
     # ------------------------------------------------------------------
@@ -795,17 +810,23 @@ class AgentToolWrapper(Tool):
         task_summary: str,
         *,
         error_type: Optional[str] = None,
+        usage: Optional[Dict[str, int]] = None,
     ) -> None:
         if self._subagent_emitter is None or ctx is None:
             return
         try:
             if phase == "completed":
-                self._subagent_emitter.completed(ctx=ctx, task_summary=task_summary)
+                self._subagent_emitter.completed(
+                    ctx=ctx, task_summary=task_summary, usage=usage,
+                )
             elif phase == "cancelled":
-                self._subagent_emitter.cancelled(ctx=ctx, task_summary=task_summary)
+                self._subagent_emitter.cancelled(
+                    ctx=ctx, task_summary=task_summary, usage=usage,
+                )
             else:  # "failed"
                 self._subagent_emitter.failed(
                     ctx=ctx, task_summary=task_summary, error_type=error_type,
+                    usage=usage,
                 )
         except Exception:
             pass
@@ -862,8 +883,13 @@ class AgentToolWrapper(Tool):
     def _run_sync(
         self, task: str, parent_context: str = "", suppress_output: bool = False,
         cancellation_token: Optional[Any] = None,
+        settled: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Create, run and close a sub-agent. Returns (result, stats).
+
+        ``settled``, when given, receives ``"usage"`` from the ``finally`` —
+        an out-parameter because the caller needs it on the raising paths too,
+        where there is no return value to carry it.
 
         The foreground path. A background run composes the same three steps
         in a different order — see ``_launch_background``.
@@ -888,7 +914,9 @@ class AgentToolWrapper(Tool):
                 **setup,
             )
         finally:
-            self._roll_up_usage(sub_agent)
+            usage = self._roll_up_usage(sub_agent)
+            if settled is not None:
+                settled["usage"] = usage
             self._close_sub_agent(sub_agent)
 
     def _build_sub_agent(self, suppress_output: bool) -> Tuple[Any, Dict[str, Any]]:
@@ -1134,32 +1162,57 @@ class AgentToolWrapper(Tool):
                 agent_name, ", ".join(unavailable),
             )
 
-    def _roll_up_usage(self, sub_agent: Any) -> None:
-        """Add what this sub-agent's requests cost to the parent's totals.
+    def _roll_up_usage(self, sub_agent: Any) -> Optional[Dict[str, int]]:
+        """Add what this sub-agent's requests cost to the parent's totals,
+        and return it for the record and the terminal event.
 
-        Once per sub-agent, from the ``finally`` that closes it — so a run
-        that raised or was cancelled is counted too: its requests were made
-        and paid for whatever came of them. One level is the whole tree,
-        since agent tools are withheld from a sub-agent (``_narrow_tools``).
+        **Once per sub-agent, and before its outcome is published** — a host
+        told "completed" reads the parent's totals from its handler, and the
+        background path used to publish first and add afterwards. A run that
+        raised or was cancelled is counted too: its requests were made and
+        paid for whatever came of them. One level is the whole tree, since
+        agent tools are withheld from a sub-agent (``_narrow_tools``).
 
-        Same footing as ``_close_sub_agent``: the outcome is decided, so a
-        failure here is logged and never replaces it. The counts are
-        type-checked where they land (``LLMClient.add_usage``).
+        Same footing as ``_close_sub_agent``: a failure here is logged and
+        never replaces the outcome. The counts are type-checked **here**, not
+        only where they land: the dict becomes a ``SubagentUsage``, and a
+        value that model refused would take the terminal event down with it.
+        ``None`` means the counts could not be read, not that they were zero.
         """
-        if self._usage_sink is None:
-            return
         try:
             llm = sub_agent.llm
-            self._usage_sink(
-                llm.total_prompt_tokens, llm.total_completion_tokens,
-                cache_read_tokens=getattr(llm, "total_cache_read_tokens", 0),
-                cache_creation_tokens=getattr(llm, "total_cache_creation_tokens", 0),
-            )
+            # One locked read where the client offers it; a cancelled run's
+            # stream consumer may still be adding. A host's own ``llm_client``
+            # need not, so what came back is checked, not that it answered.
+            snapshot = getattr(llm, "usage_snapshot", None)
+            counts = snapshot() if callable(snapshot) else None
+            if not isinstance(counts, dict):
+                counts = {
+                    "prompt_tokens": llm.total_prompt_tokens,
+                    "completion_tokens": llm.total_completion_tokens,
+                    "cache_read_tokens": getattr(llm, "total_cache_read_tokens", 0),
+                    "cache_creation_tokens": getattr(llm, "total_cache_creation_tokens", 0),
+                }
+            usage = {key: positive_int(counts.get(key)) for key in _USAGE_KEYS}
         except Exception:
             logger.warning(
-                "Rolling a sub-agent's token usage up to its parent failed (%s)",
+                "Reading a sub-agent's token usage failed (%s)",
                 self._definition["name"], exc_info=True,
             )
+            return None
+        if self._usage_sink is not None:
+            try:
+                self._usage_sink(
+                    usage["prompt_tokens"], usage["completion_tokens"],
+                    cache_read_tokens=usage["cache_read_tokens"],
+                    cache_creation_tokens=usage["cache_creation_tokens"],
+                )
+            except Exception:
+                logger.warning(
+                    "Rolling a sub-agent's token usage up to its parent failed (%s)",
+                    self._definition["name"], exc_info=True,
+                )
+        return usage
 
     def _close_sub_agent(self, sub_agent: Any) -> None:
         """Release a sub-agent's resources.
@@ -1377,7 +1430,24 @@ class AgentToolWrapper(Tool):
             # window: ``check_background_agent`` had no result yet, and a
             # cancel sent then was acknowledged for a run that had already
             # finished.
+            #
+            # Usage is settled *before* the outcome is published, not in the
+            # ``finally`` with the close: ``update`` queues the completion
+            # notice and the terminal event reaches host subscribers, and
+            # either reader then looks at the parent's totals. Settled after,
+            # those totals were still missing this run when they looked.
             sub_agent = None
+            settled: Dict[str, Any] = {}
+
+            def _settle() -> Optional[Dict[str, int]]:
+                # Once: three paths publish, and the ``finally`` is the fourth
+                # caller, for a drive that raised ``BaseException``.
+                if "usage" not in settled:
+                    settled["usage"] = (
+                        self._roll_up_usage(sub_agent) if sub_agent is not None else None
+                    )
+                return settled["usage"]
+
             try:
                 sub_agent, setup = self._build_sub_agent(suppress_output=True)
                 result, stats = self._drive_sub_agent(
@@ -1395,9 +1465,11 @@ class AgentToolWrapper(Tool):
                 # subscriber both read a non-answer as a success.
                 incomplete = stats.get("incomplete")
                 state = _terminal_state(incomplete)
+                usage = _settle()
                 self._bg_store.update(
                     agent_id,
                     status=state,
+                    usage=usage,
                     # Passed on *every* terminal state, cancelled included:
                     # ``update`` overwrites the record's result and its four
                     # counters unconditionally, so a cancel that omitted them
@@ -1417,11 +1489,11 @@ class AgentToolWrapper(Tool):
                 if state == "failed":
                     self._terminal_subagent_event(
                         subagent_ctx, "failed", task_summary,
-                        error_type=f"incomplete:{incomplete.reason}",
+                        error_type=f"incomplete:{incomplete.reason}", usage=usage,
                     )
                 else:
                     self._terminal_subagent_event(
-                        subagent_ctx, state, task_summary,
+                        subagent_ctx, state, task_summary, usage=usage,
                     )
             except AgentCancelledError:
                 # Defensive only — see the foreground site. ``chat()`` does not
@@ -1429,18 +1501,25 @@ class AgentToolWrapper(Tool):
                 # keeps its partial result and counters. Reaching here means
                 # the cancellation came from outside the drive, where there is
                 # no run to record.
-                self._bg_store.update(agent_id, status="cancelled")
-                self._terminal_subagent_event(subagent_ctx, "cancelled", task_summary)
+                usage = _settle()
+                self._bg_store.update(agent_id, status="cancelled", usage=usage)
+                self._terminal_subagent_event(
+                    subagent_ctx, "cancelled", task_summary, usage=usage,
+                )
             except Exception as exc:
-                self._bg_store.update(agent_id, status="failed", error=str(exc))
+                # A drive that raised still made its requests.
+                usage = _settle()
+                self._bg_store.update(
+                    agent_id, status="failed", error=str(exc), usage=usage,
+                )
                 self._terminal_subagent_event(
                     subagent_ctx, "failed", task_summary,
-                    error_type=type(exc).__name__,
+                    error_type=type(exc).__name__, usage=usage,
                 )
             finally:
                 self._bg_store.unregister_token(agent_id)
                 if sub_agent is not None:
-                    self._roll_up_usage(sub_agent)
+                    _settle()
                     self._close_sub_agent(sub_agent)
 
         # Background agents run silently: suppress_output=True ensures no callbacks

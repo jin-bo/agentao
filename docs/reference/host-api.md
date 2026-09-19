@@ -45,6 +45,7 @@ intentionally not part of this surface.
 | `ActivePermissions` | Read-only snapshot of the active permission policy. |
 | `ToolLifecycleEvent` | Public envelope for one tool call's lifecycle. |
 | `SubagentLifecycleEvent` | Lineage fact for a sub-agent task/session. `phase ∈ {spawned, completed, failed, cancelled}`; `failed` covers both a raised exception and a run that never answered — see [Sub-agent `failed` has two shapes](#sub-agent-failed-has-two-shapes). |
+| `SubagentUsage` | The four token counts on a terminal `SubagentLifecycleEvent.usage` (0.5.2) — see [What a sub-agent cost](#what-a-sub-agent-cost). |
 | `PermissionDecisionEvent` | Per-decision permission projection. |
 | `HostEvent` | Discriminated union of the three event models. |
 | `RFC3339UTCString` | Constrained timestamp type used by all public events. |
@@ -108,6 +109,36 @@ where `error_type` is `None`: a host that parsed `incomplete:cancelled` out
 of `error_type` reads the phase instead. `BackgroundTaskStore` records match
 (`status="cancelled"`, `incomplete_reason=None`) and keep whatever partial
 result and counters the run produced.
+
+### What a sub-agent cost
+
+A terminal `SubagentLifecycleEvent` carries `usage` (0.5.2): a
+`SubagentUsage` with `prompt_tokens`, `completion_tokens`,
+`cache_read_tokens` and `cache_creation_tokens` — the same four quantities,
+under the same names, as `agentao run`'s `usage`. `prompt_tokens` is the
+**whole** input and the two cache counts are parts *of* it. It is what the
+sub-agent's requests **reported**, summed over its run, a failed or cancelled
+one included; agentao applies no prices.
+
+`usage` is `None` on `spawned`, on a run cancelled before it started, and on
+one whose construction raised — there was no sub-agent to read. `None` means
+"not read", never "zero".
+
+**The same counts are in the parent's session totals before the event is
+published**, on both paths. Before 0.5.2 a background sub-agent's terminal
+event (and its `BackgroundTaskStore` record) went out first and the totals
+were updated afterwards, so a handler that read `agent.llm.total_prompt_tokens`
+on `completed` saw a total that still left the run out. Do not add
+`event.usage` to a total you read after the event: it is already in there.
+The `BackgroundTaskStore` record carries the same dict under `usage`; its
+older `tokens` key is something else, a local estimate of how large the
+sub-agent's history ended up. A record recovered from a file written before
+0.5.2 has no `usage` key at all — read it with `.get("usage")`.
+
+Every count is a non-negative integer, and the schema says so (`minimum: 0`).
+They are read from the sub-agent's client in one locked read
+(`LLMClient.usage_snapshot()`), so the four numbers describe one moment even
+when a cancelled run's stream is still winding down on another thread.
 
 Both emit sites carry this behavior: the foreground sub-agent call and
 the background (`run_in_background=True`) worker. The background

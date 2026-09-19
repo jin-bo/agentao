@@ -39,6 +39,7 @@ from .models import (
     PermissionDecisionEvent,
     RFC3339UTCString,
     SubagentLifecycleEvent,
+    SubagentUsage,
     ToolLifecycleEvent,
 )
 from typing import Any, TYPE_CHECKING
@@ -79,6 +80,7 @@ __all__ = [
     "RegistrableTool",
     "StreamSubscribeError",
     "SubagentLifecycleEvent",
+    "SubagentUsage",
     "Tool",
     "ToolLifecycleEvent",
     "export_host_acp_json_schema",

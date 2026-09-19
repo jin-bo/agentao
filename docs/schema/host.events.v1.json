@@ -156,7 +156,7 @@
     },
     "SubagentLifecycleEvent": {
       "additionalProperties": false,
-      "description": "Public lineage fact for a sub-agent task/session.\n\nUnlike :class:`ToolLifecycleEvent`, this model exposes ``cancelled``\nas a distinct phase because sub-agent lineage tracking benefits from\nexplicit cancellation in the phase value. ``ToolLifecycleEvent``\nkeeps cancellation under ``phase=\"failed\", outcome=\"cancelled\"`` to\nkeep the tool-call shape compact.\n\n``task_summary`` is redacted/truncated, never raw user input or raw\nchild-agent prompt text.",
+      "description": "Public lineage fact for a sub-agent task/session.\n\nUnlike :class:`ToolLifecycleEvent`, this model exposes ``cancelled``\nas a distinct phase because sub-agent lineage tracking benefits from\nexplicit cancellation in the phase value. ``ToolLifecycleEvent``\nkeeps cancellation under ``phase=\"failed\", outcome=\"cancelled\"`` to\nkeep the tool-call shape compact.\n\n``task_summary`` is redacted/truncated, never raw user input or raw\nchild-agent prompt text.\n\n``usage`` is set on a terminal phase only, and only when the sub-agent\nwas built: ``None`` on ``spawned``, on a run cancelled before it started,\nand on one whose construction raised. By the time a terminal event is\npublished the same counts are already in the parent's session totals, so\na host that reads those totals from its handler sees them included.",
       "properties": {
         "child_session_id": {
           "anyOf": [
@@ -261,6 +261,17 @@
           ],
           "default": null,
           "title": "Task Summary"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SubagentUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -270,6 +281,38 @@
         "started_at"
       ],
       "title": "SubagentLifecycleEvent",
+      "type": "object"
+    },
+    "SubagentUsage": {
+      "additionalProperties": false,
+      "description": "What one sub-agent's LLM requests reported, summed over its run.\n\nSame four quantities and the same names as ``agentao run``'s ``usage``.\n``prompt_tokens`` is the **whole** input; the two cache counts are parts\n*of* it, not additions to it. Reported by the provider, not billed, and\nagentao applies no prices.",
+      "properties": {
+        "cache_creation_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Creation Tokens",
+          "type": "integer"
+        },
+        "cache_read_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Read Tokens",
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "prompt_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "SubagentUsage",
       "type": "object"
     },
     "ToolLifecycleEvent": {

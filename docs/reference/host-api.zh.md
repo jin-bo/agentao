@@ -41,6 +41,7 @@ Harness API 是宿主应用嵌入 Agentao 时面向外部的兼容性边界。�
 | `ActivePermissions` | 当前权限策略的只读快照。 |
 | `ToolLifecycleEvent` | 一次工具调用生命周期的对外信封。 |
 | `SubagentLifecycleEvent` | 子 Agent 任务/会话的血统事件。`phase ∈ {spawned, completed, failed, cancelled}`；`failed` 同时覆盖"抛异常"和"跑完但没给出答案"两种形态——见[子 Agent 的 `failed` 有两种形态](#子-agent-的-failed-有两种形态)。 |
+| `SubagentUsage` | 终态 `SubagentLifecycleEvent.usage` 上的四项 token 计数（0.5.2）——见[子 Agent 花了多少](#子-agent-花了多少)。 |
 | `PermissionDecisionEvent` | 每次权限决策的对外投影。 |
 | `HostEvent` | 上述三种事件的判别联合。 |
 | `RFC3339UTCString` | 所有公共事件使用的受限时间戳类型。 |
@@ -94,6 +95,31 @@ if isinstance(ev, SubagentLifecycleEvent) and ev.phase == "failed":
 的宿主，改读 phase 即可。`BackgroundTaskStore` 的记录同步变化
 （`status="cancelled"`、`incomplete_reason=None`），并保留这次跑出来的部分
 结果与计数。
+
+### 子 Agent 花了多少
+
+终态的 `SubagentLifecycleEvent` 带 `usage`（0.5.2）：一个 `SubagentUsage`，
+含 `prompt_tokens`、`completion_tokens`、`cache_read_tokens`、
+`cache_creation_tokens` —— 与 `agentao run` 的 `usage` 是同样四个量、同样的
+名字。`prompt_tokens` 是**整个**输入，两项缓存计数是它的**组成部分**而不是
+额外相加。它是这个子 Agent 的请求**上报**的数，按整次运行求和，失败或被取消
+的运行同样计入；agentao 不套用任何价格。
+
+`usage` 在 `spawned` 上、在开跑前就被取消的运行上、以及在构造阶段就抛异常
+的运行上为 `None` —— 没有子 Agent 可读。`None` 表示"没读到"，不表示"零"。
+
+**事件发布之前，同样的数已经计入父级的会话累计**，两条路径都是如此。0.5.2
+之前，后台子 Agent 的终态事件（以及它的 `BackgroundTaskStore` 记录）先发出、
+累计后更新，于是在 `completed` 上读 `agent.llm.total_prompt_tokens` 的处理
+函数读到的仍是不含这次运行的数。不要把 `event.usage` 再加到事件之后读到的
+累计上：它已经在里面了。`BackgroundTaskStore` 记录在 `usage` 键下带同一个
+字典；旧的 `tokens` 键是另一回事，是对子 Agent 最终历史大小的本地估算。
+从 0.5.2 之前写出的文件里恢复的记录根本没有 `usage` 键——请用
+`.get("usage")` 读取。
+
+每个计数都是非负整数，schema 里也这样写明（`minimum: 0`）。它们是对子 Agent
+的 client 做一次持锁读取得到的（`LLMClient.usage_snapshot()`），所以即使被
+取消的运行还有流在另一个线程上收尾，这四个数描述的也是同一时刻。
 
 两个发事件的位置行为一致：前台子 Agent 调用，以及后台
 （`run_in_background=True`）worker。后台的 `BackgroundTaskStore` 记录

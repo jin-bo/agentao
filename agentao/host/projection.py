@@ -19,6 +19,7 @@ from .models import (
     ActivePermissions,
     PermissionDecisionEvent,
     SubagentLifecycleEvent,
+    SubagentUsage,
     ToolLifecycleEvent,
 )
 
@@ -321,8 +322,14 @@ class HostSubagentEmitter:
             "parent_session_id": parent_session_id,
         }
 
-    def completed(self, *, ctx: Dict[str, Any], task_summary: Optional[str]) -> None:
-        self._publish_terminal(ctx, "completed", task_summary, error_type=None)
+    def completed(
+        self,
+        *,
+        ctx: Dict[str, Any],
+        task_summary: Optional[str],
+        usage: Optional[Dict[str, int]] = None,
+    ) -> None:
+        self._publish_terminal(ctx, "completed", task_summary, error_type=None, usage=usage)
 
     def failed(
         self,
@@ -330,11 +337,18 @@ class HostSubagentEmitter:
         ctx: Dict[str, Any],
         task_summary: Optional[str],
         error_type: Optional[str],
+        usage: Optional[Dict[str, int]] = None,
     ) -> None:
-        self._publish_terminal(ctx, "failed", task_summary, error_type=error_type)
+        self._publish_terminal(ctx, "failed", task_summary, error_type=error_type, usage=usage)
 
-    def cancelled(self, *, ctx: Dict[str, Any], task_summary: Optional[str] = None) -> None:
-        self._publish_terminal(ctx, "cancelled", task_summary, error_type=None)
+    def cancelled(
+        self,
+        *,
+        ctx: Dict[str, Any],
+        task_summary: Optional[str] = None,
+        usage: Optional[Dict[str, int]] = None,
+    ) -> None:
+        self._publish_terminal(ctx, "cancelled", task_summary, error_type=None, usage=usage)
 
     def _publish_terminal(
         self,
@@ -343,6 +357,7 @@ class HostSubagentEmitter:
         task_summary: Optional[str],
         *,
         error_type: Optional[str],
+        usage: Optional[Dict[str, int]] = None,
     ) -> None:
         child_session_id = ctx.get("child_session_id")
         # Reuse the spawn-time parent session id from ctx so the
@@ -367,6 +382,7 @@ class HostSubagentEmitter:
             started_at=ctx["started_at"],
             completed_at=_identity.utc_now_rfc3339(),
             error_type=error_type,
+            usage=SubagentUsage(**usage) if usage is not None else None,
         ))
 
 
