@@ -2,7 +2,8 @@
 
 **状态：** **阶段 0 已实施，随 0.4.26 发布。阶段 1 已于 2026-09-18 实施（已随 0.5.0 发布），
 验证对象是脚本化的 socket，随后是真实端点（见下文「真实端点实测」）；阶段 3 里「切换 provider」那一块同日跟进。
-阶段 2–3 的其余部分仍是提案、未授权。rev 15（2026-09-18）。** §2.3 的阶段 0a 与 0b 已在 `main`；阶段 1 在 `LLMClient` 之下加了适配器
+**阶段 2 的 `openai-responses` 已于 2026-09-19 实施（目标 0.5.3；见下文「阶段 2 落了什么」）—— 验证对象是
+脚本化 socket 之上的真实 SDK，尚未碰过真实端点。** `gemini-api` 与阶段 3 的其余部分仍是提案、未授权。rev 16（2026-09-19）。** §2.3 的阶段 0a 与 0b 已在 `main`；阶段 1 在 `LLMClient` 之下加了适配器
 接缝，以及第二条线路 `anthropic-messages`，启动时选定、或由切换 provider 改变。§12.1 —— 阶段 0 是否让适配器变得
 不必要 —— **没有**先靠实测回答：维护者在阶段 0 的账单对比仍欠着的情况下授权了阶段 1，这笔
 欠账顺延（见「阶段 1 落了什么」末段）。除此之外，本文记录接缝在哪、放接缝的三个选项、推荐
@@ -113,6 +114,44 @@ SDK 序列化出来的 JSON，事件和异常都是 SDK 自己的。当时**没�
 断点会生效。§10 验收门里的**缓存收益检查**当时同样没做，需要在同一个端点上做三组：只有
 阶段 0a、Chat Completions 上的 0b、以及原生线路。这两笔欠账都在下文结清。
 
+**阶段 2 落了什么 —— `openai-responses`**（`llm/_openai_responses.py`、
+`llm/_stream_response.py`、`llm/_openai_completions.py`、`llm/_usage.py`、
+`cli/commands/provider.py`；`tests/support/openai_responses_wire.py`、
+`tests/test_openai_responses_adapter.py`、`tests/test_openai_responses_reasoning.py`、
+`tests/test_tool_id_across_wires.py`；`examples/openai-responses-wire/`）。四个 PR 加配置面：
+用量计数归到一处、从累加器读（#317），适配器本体（#318），加密推理跨请求保留（#319），
+然后是 `/thinking`、工具 id 改写与文档。
+
+- **附录 A 成立，另有三条来自 SDK 和 pi-mono 源码、而不是来自附录。**（1）`error` 与
+  `response.failed` 是被 SDK 的迭代器**产出**的、不是抛出的，只读自己认识的事件的适配器会
+  返回一个空的、看起来正常的响应；这里把它们抛成 `ResponsesStreamError`。（2）function
+  工具默认 strict，而 strict 模式拒绝没有把每个属性都列为 required 的 schema —— 工具以
+  `strict: false` 发出。（3）`fc_` 项 id 与同时产生的 `rs_` 推理项是**配对**的，所以只有
+  那段推理在同一轮里时才发回（`openai-responses-shared.ts` 也这么做）；切换清掉推理之后只
+  留 `call_id`，它仍然能配上输出。
+- **推理走第二个载体键 `openai_reasoning_items`**，登记在 `WIRE_CARRIER_KEYS` —— 记录和
+  清除读的是同一个元组，所以不可能出现「被持久化却不被清除」的载体。没有
+  `encrypted_content` 的项不保留：`store: false` 之下 provider 那边这个 id 下什么都没有。
+  端点拒绝 `include` 时，不带它重发一次，此后的每个请求都既不要这个字段、也不发这些项。
+- **复合 id 离开这条线路时只剩 `call_id`。** `call_id|fc_…` 超过 OpenAI 的 Chat
+  Completions 允许的 40 个字符，而 id 在历史里，所以切回去的会话会一直 400。Chat
+  Completions 适配器在对外副本里**只改写复合 id** —— 没有复合 id 的请求就是同一个 list
+  对象，所以逐字节一致的 golden 仍然成立，网关自己的长 id 也不动；两个调用共用一个
+  `call_id` 时用哈希而不是计数器，这样写法不取决于 id 出现的顺序（另一个调用被压缩掉之后，剩下的那个会退回裸 `call_id`；每个请求自身一致，只是缓存前缀变一次）。Anthropic
+  适配器本来就会改写不符合它模式的 id。
+- **`/thinking` 写 `reasoning.effort`**，不动宿主设置的其它 `reasoning` 键，并移除从别的线路
+  带过来的 `reasoning_effort`。
+- **做示例时发现的，不在计划内：** 全新解析会装上 `openai` 3.x，而锁文件里是 2.24.0。全量
+  套件在 3.16.2 上只有一个 Chat Completions 的期望不同（流中途的传输错误被包成
+  `APIConnectionError`），现已写成两个大版本都成立。3.x 还**要求**
+  `input_tokens_details.cache_write_tokens`；两条 OpenAI 线路都把它读作缓存写入量，
+  fixture 在两个大版本上都通过校验。
+
+**没有观察到、只是脚本化的** —— 要靠一次真实端点运行来还的账：不做推理的模型是否接受
+`include`；`rs_` 项与带 `fc_` 名字的调用一起、推理在前，是否被接受；拒绝 `include` 时的
+真实措辞（匹配了三种写法，都是惯例）；`code` 为空的 `error` 事件（当前按永久错误处理）；
+以及与调用交错的推理是否需要保留顺序（今天所有推理都排在它那一轮的最前面）。
+
 **真实端点实测（2026-09-18，`api.anthropic.com`，`claude-sonnet-5`，经由 `LLMClient` 与本
 适配器，约十来个小请求）。** 上面四条断言现在都是观测结果：（1）报错原文是 `max_tokens:
 1000000 > 128000, which is the maximum allowed number of output tokens for
@@ -209,6 +248,9 @@ tool_use]` 后接 `tool_result`，即同角色合并可能产生的形状）同�
    `N > (1.15 × (P + H) / S + 1.15) / 0.9` —— 以本仓库的 `P` ≈ 5.2k、`S` ≈ 4.1k 计，
    `H` = 10k 时约需再发 **6** 个请求，`H` = 50k 时约 **19** 个。这是一个待检验的界，不是结论：
    它没算 5 分钟过期，也没算中途的压缩，这两者都对尾部有利。
+
+**rev 16 改了什么：** `openai-responses` 已实施（见「阶段 2 落了什么」）。附录 A 是它据以
+编写的翻译表；实现与附录不同的地方写在状态块里，附录保持原样，作为当时计划的记录。
 
 **rev 15 改了什么：** 适配器采纳 provider 的 Models API（`GET /v1/models/{id}`）：
 `max_tokens` 在任何拒绝发生之前就写入输出上限闩锁，`max_input_tokens` 成为有效上下文窗口的

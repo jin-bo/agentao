@@ -18,9 +18,12 @@ taken at construction would go stale).
 
 from __future__ import annotations
 
+import hashlib
+from collections import Counter
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from ._cache_control import apply_cache_control
+from ._tool_ids import split_tool_id
 from ._retry import _classify_retry, _is_temperature_unsupported
 from ._stream_response import _StreamAccumulator
 
@@ -28,6 +31,85 @@ if TYPE_CHECKING:  # pragma: no cover - import-time only
     from .client import LLMClient
 
 API_FORMAT = "openai-completions"
+
+#: OpenAI's Chat Completions refuses a ``tool_calls[*].id`` longer than this
+#: ("string too long. Expected a string with maximum length 40").
+_TOOL_ID_MAX = 40
+
+
+def _wire_tool_ids(messages: List[Dict[str, Any]]) -> Dict[str, str]:
+    """History id → the id this request sends, for ids minted on ``openai-responses``.
+
+    That wire keeps ``call_id|fc_…`` in history's one id slot, and the item id
+    alone runs past 40 characters — so after a ``/provider`` switch back to
+    this wire, every request carrying such a call is a 400, and stays one,
+    because the id is in history. It goes out as its ``call_id``, which is what
+    this API would have minted. Two things keep that one-to-one: a ``call_id``
+    that is too long, or that another id in the request also spells (pi-mono
+    records providers whose parallel calls share one ``call_id`` and differ
+    only by item id), goes out as a prefix plus a hash of the whole history id
+    — a hash rather than a counter, so the spelling does not depend on the
+    order the ids appear in. (Whether an id is hashed at all does depend on
+    its sibling being in the request: once compaction drops the other call,
+    the survivor goes out as the bare ``call_id``. Each request stays
+    self-consistent; only the cached prefix moves, once.)
+
+    **Only composite ids are touched.** Any other id goes out byte for byte,
+    whatever its length: this adapter also serves gateways that mint longer
+    ids of their own and take them back, and the request is held byte-identical
+    to the pre-extraction build. Outbound copy only — history keeps the
+    original, which is what the Responses wire needs if the session returns.
+    """
+    raws: List[str] = []
+    for message in messages:
+        for call in message.get("tool_calls") or []:
+            if isinstance(call, dict) and isinstance(call.get("id"), str):
+                raws.append(call["id"])
+        if message.get("role") == "tool" and isinstance(message.get("tool_call_id"), str):
+            raws.append(message["tool_call_id"])
+    ordered = list(dict.fromkeys(raws))
+    composite = {
+        raw: call_id
+        for raw, (call_id, item_id) in ((r, split_tool_id(r)) for r in ordered)
+        if item_id
+    }
+    if not composite:
+        return {}
+    spellings = Counter(composite.get(raw, raw) for raw in ordered)
+    mapping: Dict[str, str] = {}
+    for raw, call_id in composite.items():
+        if len(call_id) <= _TOOL_ID_MAX and spellings[call_id] == 1:
+            mapping[raw] = call_id
+            continue
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
+        mapping[raw] = f"{call_id[: _TOOL_ID_MAX - 9]}_{digest}"
+    return mapping
+
+
+def _with_wire_tool_ids(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """``messages`` with composite tool ids rewritten — **the same list** when
+    there are none, and the same dict for every message that names none."""
+    ids = _wire_tool_ids(messages)
+    if not ids:
+        return messages
+    def wire(call: Any) -> Any:
+        tool_id = call.get("id") if isinstance(call, dict) else None
+        if isinstance(tool_id, str) and tool_id in ids:
+            return {**call, "id": ids[tool_id]}
+        return call
+
+    out: List[Dict[str, Any]] = []
+    for message in messages:
+        calls = message.get("tool_calls")
+        result_id = message.get("tool_call_id")
+        if isinstance(calls, list):
+            rewritten = [wire(c) for c in calls]
+            if any(new is not old for new, old in zip(rewritten, calls)):
+                message = {**message, "tool_calls": rewritten}
+        elif message.get("role") == "tool" and isinstance(result_id, str) and result_id in ids:
+            message = {**message, "tool_call_id": ids[result_id]}
+        out.append(message)
+    return out
 
 
 class OpenAICompletionsAdapter:
@@ -84,6 +166,7 @@ class OpenAICompletionsAdapter:
     ) -> Dict[str, Any]:
         """The ``.create(**kwargs)`` dict. See ``LLMClient._build_request_kwargs``."""
         owner = self._owner
+        messages = _with_wire_tool_ids(messages)
         if cache_boundary is not None and owner.cache_control is not None:
             messages, tools = apply_cache_control(
                 messages, tools, owner.cache_control,

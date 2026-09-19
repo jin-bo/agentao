@@ -55,14 +55,37 @@ _Targeting 0.5.3. Add entries under the relevant heading as work lands._
     already refuses to run tool calls from; `input_tokens` **includes** the
     cached part here and maps to `prompt_tokens` as it stands, with
     `cache_read_tokens` from `input_tokens_details.cached_tokens`.
+  - **`/thinking <level>` writes `reasoning.effort` on this wire.** A
+    top-level `reasoning_effort` is rejected by this API on every request, so
+    the level goes into the `reasoning` object, other keys a host put there
+    (`summary`) are left alone, and a `reasoning_effort` carried in across a
+    provider switch is removed by the same command. Not validated, as on Chat
+    Completions — the scale is the model's. Reasoning *summaries*, the only
+    reasoning text this API shows, stay off unless asked for:
+    `LLM_EXTRA_BODY='{"reasoning": {"summary": "auto"}}'`.
+  - **A session that called tools here can move to Chat Completions and
+    back.** The composite id is longer than the 40 characters OpenAI allows a
+    `tool_calls[*].id`, and it is in history, so every request after the
+    switch would have been the same 400. The Chat Completions adapter now
+    sends a composite id as its `call_id`, in the outbound copy only; two
+    calls that share a `call_id` get a hash suffix, so the spelling does not
+    depend on the order they appear in. **Only composite ids are
+    touched** — any other id goes out byte for byte, whatever its length, and
+    a request with none is the same list it was. `/provider` and ACP's
+    `provider_resolver` select this wire like the others.
+  - An example, `examples/openai-responses-wire/`, with an offline smoke over
+    the real SDK; it is in CI's examples matrix.
 
-  **Not yet, and landing before 0.5.3 ships:** `/thinking` on this wire — until then it **refuses** a
-  level there, since the `reasoning_effort` it would store is rejected by that
-  API on every request — a session moved from this wire to Chat Completions
-  (the composite id is longer than OpenAI's 40-character limit there), and the
-  configuration docs.
   Verified against the real SDK over a scripted socket; **not yet run against
   a live endpoint**.
+
+- **The cache-write count on the OpenAI wires, where the SDK states one.**
+  `openai` 3.x reads `cache_write_tokens` beside `cached_tokens` (and, on the
+  Responses API, requires it); it now reaches `cache_creation_tokens` /
+  `usage_snapshot()` on both OpenAI wires. On `openai` 2.x, or an endpoint
+  that does not state it, the count is 0 as before. `agentao` pins no upper
+  bound on `openai`, so a fresh install resolves 3.x: the test suite was run
+  on 2.24.0 and 3.16.2.
 
 ### Changed
 

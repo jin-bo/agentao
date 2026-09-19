@@ -34,7 +34,7 @@ Agentao(
     transport: Transport | None = None,
     working_directory: Path,                     # 0.3.0 起必传
     extra_body: dict | None = None,              # 仅关键字；LLM .create() 请求体直通
-    api_format: str | None = None,               # 仅关键字；"openai-completions"（默认）| "anthropic-messages"
+    api_format: str | None = None,               # 仅关键字；"openai-completions"（默认）| "anthropic-messages" | "openai-responses"
     extra_mcp_servers: dict[str, dict] | None = None,
     extra_tools: Sequence[RegistrableTool] | None = None,   # 注入 / 替换工具
     disable_tools: Iterable[str] | None = None,             # 按名跳过内置

@@ -34,7 +34,7 @@ Agentao(
     transport: Transport | None = None,
     working_directory: Path,                    # required since 0.3.0
     extra_body: dict | None = None,             # keyword-only; LLM .create() request-body passthrough
-    api_format: str | None = None,              # keyword-only; "openai-completions" (default) | "anthropic-messages"
+    api_format: str | None = None,              # keyword-only; "openai-completions" (default) | "anthropic-messages" | "openai-responses"
     extra_mcp_servers: dict[str, dict] | None = None,
     extra_tools: Sequence[RegistrableTool] | None = None,   # inject / replace tools
     disable_tools: Iterable[str] | None = None,             # skip built-ins by name

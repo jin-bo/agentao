@@ -170,7 +170,7 @@ So there's no `OpenAIProvider` / `AnthropicProvider` / `GoogleProvider` abstract
 
 - Three APIs: `set_provider(api_key, base_url, model, api_format=)` (full swap) · `set_model(name)` (model only) · `get_current_model()` (read).
 - Swapping does **not** clear history — the next `chat()` continues on the same context with the new model.
-- No per-vendor `Provider` abstraction: two wire protocols, `openai-completions` (default) and `anthropic-messages` (0.5.0), named explicitly. Native Gemini still needs an OpenAI-compatible gateway.
+- No per-vendor `Provider` abstraction: three wire protocols, `openai-completions` (default), `anthropic-messages` (0.5.0) and `openai-responses` (0.5.3), named explicitly. Native Gemini still needs an OpenAI-compatible gateway.
 - Common routing: **cheap-then-expensive** (small talk vs. planning), **primary-with-fallback** (timeout switch), **A/B** (eval different models on the same session).
 
 ---

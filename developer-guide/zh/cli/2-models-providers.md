@@ -40,7 +40,7 @@ CLAUDE_API_FORMAT=anthropic-messages
 
 ### 线路协议
 
-`XXXX_API_FORMAT` 指明对该块的端点说哪种协议：`openai-completions`（不设时的默认值）或 `anthropic-messages`（Anthropic 的 Messages API）。它**从不推断** — 不看 URL、不看 provider 名、不看模型名 — 所以指向 OpenAI 兼容网关的 `CLAUDE_*` 在你明说之前仍走 Chat Completions，未知的值会报错而不是回退。原生线路带来的是真正生效、且会上报的提示缓存（`LLM_PROMPT_CACHE=anthropic`），以及能在工具循环中完整保留的签名 thinking 块。完整说明：[配置参考 §2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md)。
+`XXXX_API_FORMAT` 指明对该块的端点说哪种协议：`openai-completions`（不设时的默认值）、`anthropic-messages`（Anthropic 的 Messages API）或 `openai-responses`（OpenAI 的 Responses API，0.5.3）。它**从不推断** — 不看 URL、不看 provider 名、不看模型名 — 所以指向 OpenAI 兼容网关的 `CLAUDE_*` 在你明说之前仍走 Chat Completions，未知的值会报错而不是回退。原生线路带来的是真正生效、且会上报的提示缓存（`LLM_PROMPT_CACHE=anthropic`），以及能在工具循环中完整保留的签名 thinking 块。完整说明：[配置参考 §2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md)。
 
 ## `/provider` — 列出或切换
 
@@ -64,7 +64,7 @@ CLAUDE_API_FORMAT=anthropic-messages
 | `No API key found for provider 'GEMINI'` | `GEMINI_API_KEY` 没设 |
 | `No base URL configured for provider 'GEMINI'` | `GEMINI_BASE_URL` 没设 |
 | `No model configured for provider 'GEMINI'` | `GEMINI_MODEL` 没设 |
-| `Unknown api_format '…'` | `GEMINI_API_FORMAT` 不是 `openai-completions` 或 `anthropic-messages`；会话停在原来的 provider 上 |
+| `Unknown api_format '…'` | `GEMINI_API_FORMAT` 不是 `openai-completions`、`anthropic-messages` 或 `openai-responses`；会话停在原来的 provider 上 |
 
 ## `/model` — 在当前 provider 里列 / 切模型
 
@@ -140,14 +140,15 @@ LLM_EXTRA_BODY='{"reasoning_effort":"high"}'
 > /thinking off       # 回到 provider 默认
 ```
 
-它写什么取决于线路，因为两种协议对这个字段的叫法不同：
+它写什么取决于线路，因为各协议对这个字段的叫法不同：
 
 | 线路 | 写入 `extra_body` 的字段 | 档位 |
 |------|------------------------|------|
 | `openai-completions` | `reasoning_effort` | `minimal` · `low` · `medium` · `high`（非标准的词会原样透传，由 provider 校验） |
 | `anthropic-messages` | `output_config.effort` | `low` · `medium` · `high` · `xhigh` · `max`，或 provider 的 Models API 对当前模型标为支持的那些；其余一律**拒绝、不写入** |
+| `openai-responses` | `reasoning.effort` | `minimal` · `low` · `medium` · `high`（非标准的词原样透传，与 Chat Completions 相同）。你自己设的其它 `reasoning` 键（如 `summary`）不动；从别的线路带过来的 `reasoning_effort` 会被移除，因为这个 API 拒绝它 |
 
-在当前的 Anthropic 模型上，只写 effort 就会打开 adaptive thinking。两条线路上都**没有自动恢复**：模型不接受这个字段时，每个请求都会失败，直到 `/thinking off`。设置是会话级的，子 agent 会继承；要持久化，把同一个字段写进 `LLM_EXTRA_BODY`。
+在当前的 Anthropic 模型上，只写 effort 就会打开 adaptive thinking。哪条线路上都**没有自动恢复**：模型不接受这个字段时，每个请求都会失败，直到 `/thinking off`。设置是会话级的，子 agent 会继承；要持久化，把同一个字段写进 `LLM_EXTRA_BODY`。
 
 ## 什么时候该切什么
 

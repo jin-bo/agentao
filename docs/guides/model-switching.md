@@ -217,6 +217,9 @@ target block's `_API_FORMAT`, so it is how a session moves between Chat
 Completions and the Messages API. On the native wire the model's output cap and
 input window come from the provider's Models API when the endpoint has one, and
 `/thinking <level>` writes `output_config.effort` rather than `reasoning_effort`.
+`{PROVIDER}_API_FORMAT=openai-responses` (0.5.3) selects OpenAI's Responses API
+the same way; there `/thinking` writes `reasoning.effort`, and a session that
+called tools on it can move to Chat Completions and back.
 See [configuration reference §2](../reference/configuration.md).
 
 ## Examples

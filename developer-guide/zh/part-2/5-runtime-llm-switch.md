@@ -170,7 +170,7 @@ except RuntimeError:
 
 - 三个 API：`set_provider(api_key, base_url, model, api_format=)`（整套切换）·`set_model(name)`（只换模型）·`get_current_model()`（读取）。
 - 切换**不会**清历史——下一轮 `chat()` 会用新模型继续同一上下文。
-- 不存在按厂商分的 `Provider` 抽象：两种线路协议，`openai-completions`（默认）与 `anthropic-messages`（0.5.0），都要明说。原生 Gemini 仍需套 OpenAI 兼容网关。
+- 不存在按厂商分的 `Provider` 抽象：三种线路协议，`openai-completions`（默认）、`anthropic-messages`（0.5.0）与 `openai-responses`（0.5.3），都要明说。原生 Gemini 仍需套 OpenAI 兼容网关。
 - 常见路由：**便宜→贵**（小问题/规划）、**主+备**（超时切换）、**A/B**（同会话评测不同模型）。
 
 ---

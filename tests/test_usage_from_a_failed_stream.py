@@ -164,10 +164,11 @@ def test_the_chat_completions_wire_has_nothing_to_keep_from_a_dead_stream():
         http_client=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(
             200, headers={"content-type": "text/event-stream"}, stream=Dies()))),
     )
-    # The transport's own error, and marked as having streamed: a broken
-    # fixture (an SDK signature change, say) would raise something else before
-    # any chunk was read, and must not pass for "a dead stream adds nothing".
-    with pytest.raises(httpx.ReadError) as raised:
+    # The transport's own error — raw from ``openai`` 2.x, wrapped as
+    # ``APIConnectionError`` from 3.x on — and marked as having streamed: a
+    # broken fixture (an SDK signature change, say) would raise before any
+    # chunk was read, and must not pass for "a dead stream adds nothing".
+    with pytest.raises((httpx.ReadError, openai.APIConnectionError)) as raised:
         llm.chat_stream(HELLO, on_text_chunk=lambda _chunk: None)
     assert raised.value.streamed is True
     assert _totals(llm) == (0, 0, 0, 0)

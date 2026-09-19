@@ -419,6 +419,7 @@ jobs:
           - tool-injection
           - protocol-injection
           - anthropic-wire
+          - openai-responses-wire
 
     steps:
       - uses: actions/checkout@v5

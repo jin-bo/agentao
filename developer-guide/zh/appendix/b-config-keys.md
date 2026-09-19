@@ -14,7 +14,7 @@ Agentao 读取的所有开关——先看环境变量，再看磁盘上的 JSON�
 | `{PROVIDER}_API_KEY` | **必填** | — | 构造器 `api_key=` 可覆盖 |
 | `{PROVIDER}_BASE_URL` | **必填** | — | 构造器 `base_url=` 可覆盖；默认是 OpenAI 兼容端点，`{PROVIDER}_API_FORMAT=anthropic-messages` 时是 API 根（`https://api.anthropic.com`） |
 | `{PROVIDER}_MODEL` | **必填** | — | 构造器 `model=` 可覆盖；运行时可用 `agent.set_model()` 切换 |
-| `{PROVIDER}_API_FORMAT` | — | `openai-completions` | 对该块的端点说哪种线路协议（0.5.0）：`openai-completions` 或 `anthropic-messages`（Anthropic 的 Messages API）。**从不推断** —— 不看 URL、provider 名、模型名；未知值在启动时抛错。`/provider` 读取目标块的这个值，所以在不同协议的块之间切换时线路也跟着换；子代理按父级当前的线路构建。在 `anthropic-messages` 上不发送 `LLM_TEMPERATURE`，扩展思考通过 `LLM_EXTRA_BODY` 打开。等价于构造器 `api_format=`。完整说明：`docs/reference/configuration.zh.md` §2 |
+| `{PROVIDER}_API_FORMAT` | — | `openai-completions` | 对该块的端点说哪种线路协议（0.5.0）：`openai-completions`、`anthropic-messages`（Anthropic 的 Messages API）或 `openai-responses`（OpenAI 的 Responses API，0.5.3）。**从不推断** —— 不看 URL、provider 名、模型名；未知值在启动时抛错。`/provider` 读取目标块的这个值，所以在不同协议的块之间切换时线路也跟着换；子代理按父级当前的线路构建。在 `anthropic-messages` 上不发送 `LLM_TEMPERATURE`，扩展思考通过 `LLM_EXTRA_BODY` 打开。等价于构造器 `api_format=`。完整说明：`docs/reference/configuration.zh.md` §2 |
 
 > **失败即止规则：** `LLMClient.__init__` 在启动时立即检查。若 `{PROVIDER}_API_KEY`、`{PROVIDER}_BASE_URL` 或 `{PROVIDER}_MODEL` 任一缺失且未通过构造器传入，直接抛 `ValueError`。`/provider` 列表与切换命令同样执行此校验——三者必须全部设置，provider 才会出现在列表中并允许切换。
 

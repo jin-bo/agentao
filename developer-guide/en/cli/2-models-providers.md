@@ -40,7 +40,7 @@ A provider is only listed if **all three** of its env vars are set. If `GEMINI_A
 
 ### Wire protocol
 
-`XXXX_API_FORMAT` names the protocol spoken to that block's endpoint: `openai-completions` (the default when unset) or `anthropic-messages` (Anthropic's Messages API). It is **never inferred** — not from the URL, the provider name or the model name — so `CLAUDE_*` pointing at an OpenAI-compatible gateway stays on Chat Completions until you say otherwise, and an unknown value is an error rather than a fallback. What the native wire buys is prompt caching that works and is reported (`LLM_PROMPT_CACHE=anthropic`) and signed thinking blocks that survive a tool loop. Full notes: [configuration reference §2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#2-env--llm-provider-config).
+`XXXX_API_FORMAT` names the protocol spoken to that block's endpoint: `openai-completions` (the default when unset), `anthropic-messages` (Anthropic's Messages API) or `openai-responses` (OpenAI's Responses API, 0.5.3). It is **never inferred** — not from the URL, the provider name or the model name — so `CLAUDE_*` pointing at an OpenAI-compatible gateway stays on Chat Completions until you say otherwise, and an unknown value is an error rather than a fallback. What the native wire buys is prompt caching that works and is reported (`LLM_PROMPT_CACHE=anthropic`) and signed thinking blocks that survive a tool loop. Full notes: [configuration reference §2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#2-env--llm-provider-config).
 
 ## `/provider` — list or switch
 
@@ -64,7 +64,7 @@ Common errors:
 | `No API key found for provider 'GEMINI'` | `GEMINI_API_KEY` is missing |
 | `No base URL configured for provider 'GEMINI'` | `GEMINI_BASE_URL` is missing |
 | `No model configured for provider 'GEMINI'` | `GEMINI_MODEL` is missing |
-| `Unknown api_format '…'` | `GEMINI_API_FORMAT` is not `openai-completions` or `anthropic-messages`; the session stays on the provider it had |
+| `Unknown api_format '…'` | `GEMINI_API_FORMAT` is not `openai-completions`, `anthropic-messages` or `openai-responses`; the session stays on the provider it had |
 
 ## `/model` — list or switch model on the current provider
 
@@ -140,14 +140,15 @@ See [Appendix B](/en/appendix/b-config-keys) for parsing/redaction details.
 > /thinking off       # back to the provider default
 ```
 
-What it writes depends on the wire, because the two protocols name the field differently:
+What it writes depends on the wire, because the protocols name the field differently:
 
 | Wire | Field written into `extra_body` | Levels |
 |------|--------------------------------|--------|
 | `openai-completions` | `reasoning_effort` | `minimal` · `low` · `medium` · `high` (a non-standard word is passed through for the provider to validate) |
 | `anthropic-messages` | `output_config.effort` | `low` · `medium` · `high` · `xhigh` · `max`, or the levels the provider's Models API marks supported for this model; anything else is **refused, not stored** |
+| `openai-responses` | `reasoning.effort` | `minimal` · `low` · `medium` · `high` (a non-standard word is passed through, as on Chat Completions). Other `reasoning` keys you set — `summary` — are left alone, and a `reasoning_effort` carried in from another wire is removed, since this API rejects it |
 
-On current Anthropic models the effort alone turns adaptive thinking on. There is **no auto-recovery** on either wire: a model that rejects the field fails every request until `/thinking off`. The setting is per session and sub-agents inherit it; to make it persistent put the same field in `LLM_EXTRA_BODY`.
+On current Anthropic models the effort alone turns adaptive thinking on. There is **no auto-recovery** on any wire: a model that rejects the field fails every request until `/thinking off`. The setting is per session and sub-agents inherit it; to make it persistent put the same field in `LLM_EXTRA_BODY`.
 
 ## When to switch what
 

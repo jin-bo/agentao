@@ -309,6 +309,90 @@ def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
 _REASONING_LEVELS = ("minimal", "low", "medium", "high")
 
 
+def _handle_thinking_responses(extra_body: dict, args: str) -> None:
+    """``/thinking`` on the ``openai-responses`` wire: ``reasoning.effort``.
+
+    The Responses API spells the field as a key of a ``reasoning`` object and
+    answers a top-level ``reasoning_effort`` with a 400 — on every later
+    request, since the value is stored. So a level is written to
+    ``reasoning.effort``, and a ``reasoning_effort`` carried in across a
+    provider switch is dropped by the same command that replaces it. Other
+    ``reasoning`` keys a host set (``summary``) are left alone. The value is
+    not validated, as on Chat Completions: the scale is the model's
+    (``none`` and ``xhigh`` exist on some), and the provider checks it.
+    """
+    reasoning = extra_body.get("reasoning")
+    if "reasoning" in extra_body and not isinstance(reasoning, dict):
+        # Not something this API accepts, and every request would say so:
+        # treated as the level it was presumably meant to be, so ``off`` and a
+        # new level both replace it.
+        is_set, current, malformed = True, reasoning, True
+    else:
+        malformed = False
+        is_set = isinstance(reasoning, dict) and "effort" in reasoning
+        current = reasoning.get("effort") if is_set else None
+    stale = "reasoning_effort" in extra_body
+    usage = f"[dim]Usage: /thinking <{' | '.join(_REASONING_LEVELS)} | off>[/dim]\n"
+
+    if not args:
+        shown = escape(str(current)) if is_set else "default"
+        console.print(f"\n[info]Thinking depth:[/info] [cyan]{shown}[/cyan] "
+                      "[dim](reasoning.effort)[/dim]")
+        if malformed:
+            console.print(
+                "[warning]extra_body's `reasoning` is not an object, which this "
+                "wire rejects on every request; /thinking off or a new level "
+                "replaces it.[/warning]")
+        if stale:
+            console.print(
+                "[warning]extra_body also carries `reasoning_effort` "
+                f"('{escape(str(extra_body['reasoning_effort']))}'), which this "
+                "wire rejects; /thinking off or a new level clears it.[/warning]")
+        console.print(usage)
+        return
+
+    lowered = args.lower()
+    if lowered == "off":
+        extra_body.pop("reasoning_effort", None)
+        if isinstance(reasoning, dict):
+            reasoning.pop("effort", None)
+        if not isinstance(reasoning, dict) or not reasoning:
+            extra_body.pop("reasoning", None)
+        if not is_set and not stale:
+            console.print("\n[info]Thinking depth already at provider default "
+                          "(reasoning.effort unset).[/info]\n")
+            return
+        console.print("\n[success]Thinking depth off — reasoning.effort "
+                      "cleared; provider default in effect.[/success]\n")
+        return
+
+    if len(args.split()) > 1:
+        console.print(f"\n[error]Invalid thinking depth: '{escape(args)}' — expected a "
+                      f"single level ({' | '.join(_REASONING_LEVELS)}) or 'off', "
+                      "not multiple words.[/error]\n")
+        return
+
+    value = lowered if lowered in _REASONING_LEVELS else args
+    if not isinstance(reasoning, dict):
+        # A non-dict ``reasoning`` is not something this API accepts; replaced.
+        reasoning = {}
+        extra_body["reasoning"] = reasoning
+    reasoning["effort"] = value
+    extra_body.pop("reasoning_effort", None)
+    note = ""
+    if value not in _REASONING_LEVELS:
+        note = (f"  [dim](non-standard — your provider validates it; "
+                f"standard: {', '.join(_REASONING_LEVELS)})[/dim]")
+    if not is_set:
+        console.print(f"\n[success]Thinking depth set to [cyan]{escape(value)}[/cyan]"
+                      f"[/success] [dim](reasoning.effort)[/dim]{note}")
+    else:
+        console.print(f"\n[success]Thinking depth changed from {escape(str(current))} "
+                      f"to [cyan]{escape(value)}[/cyan][/success]{note}")
+    console.print("[dim]No auto-recovery: if this model rejects reasoning.effort, "
+                  "requests fail until /thinking off.[/dim]\n")
+
+
 def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /thinking command — show/set the model's thinking depth.
 
@@ -325,7 +409,8 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
     is documented in ``docs/design/host-llm-extra-params.md`` §"no auto-recovery".
 
     On the ``anthropic-messages`` wire the field is ``output_config.effort``
-    instead; see :func:`_handle_thinking_anthropic`.
+    instead; see :func:`_handle_thinking_anthropic`. On ``openai-responses`` it
+    is ``reasoning.effort``; see :func:`_handle_thinking_responses`.
     """
     llm = cli.agent.llm
     if not hasattr(llm, "extra_body"):
@@ -343,6 +428,9 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
     args = args.strip()
     if getattr(llm, "api_format", None) == "anthropic-messages":
         _handle_thinking_anthropic(llm, extra_body, args)
+        return
+    if getattr(llm, "api_format", None) == "openai-responses":
+        _handle_thinking_responses(extra_body, args)
         return
     # Membership, not ``.get() is None``: a host may set ``reasoning_effort=None``
     # explicitly (which is still sent to the provider), and ``off`` must be able
@@ -373,17 +461,6 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
         prev = extra_body.pop("reasoning_effort", None)
         console.print(f"\n[success]Thinking depth off — reasoning_effort "
                       f"('{escape(str(prev))}') cleared; provider default in effect.[/success]\n")
-        return
-
-    # ``openai-responses`` spells it ``reasoning.effort`` and answers a
-    # top-level ``reasoning_effort`` with a 400 — on every later request, since
-    # the value is stored. Refused rather than stored until the command writes
-    # this wire's own field; showing and ``off`` above still work, so a value
-    # carried in across a provider switch can be seen and cleared.
-    if getattr(llm, "api_format", None) == "openai-responses":
-        console.print("\n[error]/thinking cannot set a level on the openai-responses "
-                      "wire yet: it would store `reasoning_effort`, which that API "
-                      "rejects on every request. Nothing was changed.[/error]\n")
         return
 
     # Reject a multi-word argument: ``/thinking high please`` would otherwise
