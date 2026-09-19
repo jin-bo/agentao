@@ -374,5 +374,5 @@ Rev 2 方案把 hardline 捆进 PR 1 是因为两者都被打了 P0 标签。Rou
     1. shell 变量间接赋值：`dst=~/.bashrc; echo X > "$dst"`。
     2. 字面展开路径：`/Users/<u>/.bashrc`、`/home/<u>/.bashrc`。
     3. 进程替换包装：`tee >(cat > ~/.bashrc)`。
-    用 `bashlex` 解析 —— 跟 hardline shell 安全扫描器处理 `rm -rf` 间接赋值的方案一样 —— 能解决 (1) 和 (3)。(2) 需要运行时知道用户家目录，会引入宿主耦合，先放一放，等具体攻击面浮现再补。
+    用 `bashlex` 解析能解决 (1) 和 (3)。**更正（2026-09-19）：** 这句话原先说它「跟 hardline shell 安全扫描器处理 `rm -rf` 间接赋值的方案一样」。hardline 扫描器并没有用 `bashlex` —— `agentao/` 里没有任何地方 import 它 —— 也完全不跟踪间接赋值：对 `hardline_check` 实测，`rm -rf /` 与 `timeout 5 rm -rf /` 被拒绝，而 `D=/; rm -rf $D`、`D=rm; $D -rf /`、`X=-rf; rm $X /` 全部通过。所以 (1) 这个缺口是命令底线同样存在的，并非在那边已经解决；无论给哪一层补上，都是变量传播，要先单独写方案。(2) 需要运行时知道用户家目录，会引入宿主耦合，先放一放，等具体攻击面浮现再补。
     不阻塞 —— workspace-write 对所有未在只读白名单的命令本来就 ASK，所以今天的 regex 层是"文档 + 未来防御"，并不是关键的拦截门。
