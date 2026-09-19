@@ -10,13 +10,15 @@ It rides a second carrier key on the assistant dict,
 around and are what this file is mostly about:
 
 * the ``fc_`` item id of a function call goes back **only beside the reasoning
-  it was produced with** — the API pairs the two and refuses one without the
-  other;
+  it was produced with** — pi-mono records the API refusing one without the
+  other; api.openai.com with ``store: false`` did not (2026-09-19), so this is
+  the conservative side of an unenforced rule;
 * whatever rewrites history wholesale — compaction, a model switch, a session
   restore — has to leave a request the API would still take.
 
-Real ``openai`` SDK over a scripted socket throughout. That a live server
-accepts what is asserted here is observed separately.
+Real ``openai`` SDK over a scripted socket throughout. The request shape
+asserted here was accepted by api.openai.com on 2026-09-19 (the design doc's
+*Live results*); what a server does beyond that is not asserted here.
 """
 
 from __future__ import annotations
@@ -186,8 +188,9 @@ def test_reasoning_goes_back_ahead_of_its_call_and_the_call_names_its_item_id():
 
 def test_a_call_whose_reasoning_is_gone_does_not_name_its_item_id():
     """Purged by a switch, lost from an edited session file, never issued by
-    the endpoint: the API refuses an ``fc_`` id without the ``rs_`` item it
-    was produced beside, and ``call_id`` alone still pairs the output."""
+    the endpoint: pi-mono records the API refusing an ``fc_`` id without the
+    ``rs_`` item it was produced beside (not reproduced live, with
+    ``store: false``), and ``call_id`` alone pairs the output either way."""
     call = {"id": "call_1|fc_1", "type": "function",
             "function": {"name": "read_file", "arguments": "{}"}}
     carried = {"role": "assistant", "content": None, "tool_calls": [call],

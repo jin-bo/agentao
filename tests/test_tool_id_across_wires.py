@@ -1,12 +1,13 @@
 """A session that called tools on ``openai-responses`` moves to Chat Completions.
 
-History keeps a Responses call as ``call_id|fc_…`` — one slot, two wire ids —
-and the item id alone runs past the 40 characters OpenAI's Chat Completions
-allows a ``tool_calls[*].id``. The id is in history, so without a rewrite every
-request after the switch is the same 400. pi-mono handles this in
-``openai-completions.ts::normalizeToolCallId``; that is where the limit and the
-shared-``call_id`` case below come from. The limit itself is recorded there,
-not observed here.
+History keeps a Responses call as ``call_id|fc_…`` — one slot, two wire ids,
+83 characters as api.openai.com mints them — and OpenAI's Chat Completions
+allows a ``tool_calls[*].id`` 64 (observed 2026-09-19: ``string_above_max_length``,
+"maximum length 64 … got a string with length 83"). The id is in history, so
+without a rewrite every request after the switch is the same 400. The
+shared-``call_id`` case below comes from pi-mono's
+``openai-completions.ts::normalizeToolCallId``; its 40-character truncation
+does not — that is pi-mono's number, not the API's.
 
 Real SDK on both sides of the switch; only the sockets are scripted.
 """
@@ -34,8 +35,9 @@ from tests.support.openai_responses_wire import (
 
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
-#: The shape api.openai.com mints: ``fc_`` + 48 hex, ``call_`` + 24.
-ITEM_ID = "fc_" + "0a1b2c3d" * 6
+#: The shape api.openai.com mints (observed 2026-09-19): a 53-character
+#: ``fc_`` item id and a 29-character ``call_`` id — 83 with the separator.
+ITEM_ID = "fc_" + "0a1b2c3d" * 6 + "ab"
 CALL_ID = "call_" + "AbCdEfGh" * 3
 COMPOSITE = compose_tool_id(CALL_ID, ITEM_ID)
 
@@ -274,3 +276,12 @@ def test_the_default_wire_does_not_import_the_responses_adapter():
     code = ("import sys, agentao.llm._openai_completions; "
             "sys.exit('agentao.llm._openai_responses' in sys.modules)")
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+def test_the_limit_is_the_one_the_api_states():
+    """64, observed — not pi-mono's 40. A ``call_id`` between the two goes out
+    whole; shortened further, it would be a spelling no one needed."""
+    assert _TOOL_ID_MAX == 64
+    call_id = "call_" + "x" * 50                      # 55: over 40, under 64
+    raw = compose_tool_id(call_id, "fc_1")
+    assert set(_sent_ids(_with_wire_tool_ids([_call(raw), _result(raw)]))) == {call_id}

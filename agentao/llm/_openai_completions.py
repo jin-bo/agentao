@@ -32,16 +32,19 @@ if TYPE_CHECKING:  # pragma: no cover - import-time only
 
 API_FORMAT = "openai-completions"
 
-#: OpenAI's Chat Completions refuses a ``tool_calls[*].id`` longer than this
-#: ("string too long. Expected a string with maximum length 40").
-_TOOL_ID_MAX = 40
+#: OpenAI's Chat Completions refuses a ``tool_calls[*].id`` longer than this.
+#: Observed on api.openai.com, 2026-09-19: ``string_above_max_length``,
+#: "Expected a string with maximum length 64, but got a string with length 83"
+#: — for exactly the composite id this module rewrites. (pi-mono truncates to
+#: 40; that number was copied here first, and it is not the API's.)
+_TOOL_ID_MAX = 64
 
 
 def _wire_tool_ids(messages: List[Dict[str, Any]]) -> Dict[str, str]:
     """History id → the id this request sends, for ids minted on ``openai-responses``.
 
     That wire keeps ``call_id|fc_…`` in history's one id slot, and the item id
-    alone runs past 40 characters — so after a ``/provider`` switch back to
+    alone runs to 53 characters, the pair to 83 — past the 64 this API allows — so after a ``/provider`` switch back to
     this wire, every request carrying such a call is a 400, and stays one,
     because the id is in history. It goes out as its ``call_id``, which is what
     this API would have minted. Two things keep that one-to-one: a ``call_id``

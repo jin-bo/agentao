@@ -215,13 +215,14 @@ def translate_messages(
                     "arguments": fn.get("arguments") or "{}",
                 }
                 # The item id goes back **only beside the reasoning it was
-                # produced with**. The API tracks which ``fc_`` id belongs
-                # with which ``rs_`` item and refuses a call that names one
-                # without the other — and a reasoning item can be missing for
-                # ordinary reasons: a switch purged it, a session file lost
-                # it, the endpoint returned none. pi-mono drops the id on the
-                # same ground (``openai-responses-shared.ts``, "avoid pairing
-                # validation"). ``call_id`` alone still pairs the output.
+                # produced with**. pi-mono drops it otherwise
+                # (``openai-responses-shared.ts``, "avoid pairing validation"),
+                # recording that the API refuses a call naming an ``fc_`` id
+                # whose ``rs_`` item is absent. Not reproduced on
+                # api.openai.com with ``store: false`` (2026-09-19: all four
+                # combinations accepted), so this is the conservative side of
+                # a rule we have not seen enforced, kept because it costs
+                # nothing — ``call_id`` alone pairs the output.
                 if item_id is not None and carried:
                     item["id"] = item_id
                 items.append(item)
