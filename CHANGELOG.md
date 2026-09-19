@@ -7,7 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Targeting 0.5.1. Add entries under the relevant heading as work lands._
+---
+
+## [0.5.1] — 2026-09-19
+
+A **stabilisation release** after 0.5.0: usage that accounts for sub-agents and
+for cached input, a cancelled task that no longer sends its request, and three
+CLI answers that were not true. Nothing removed, nothing to migrate. Release
+notes: `docs/releases/v0.5.1.md`.
 
 ### Added
 
@@ -76,8 +83,9 @@ _Targeting 0.5.1. Add entries under the relevant heading as work lands._
   that is not a positive `int`). The `~N tokens` in a sub-agent's result
   footer is unchanged and was never usage — it is a local estimate of the
   size of its final message list. A host-injected `llm_client` without
-  `add_usage` is left alone. Not changed: the totals still have no cache
-  read/write split, so they are usage, not an invoice.
+  `add_usage` is left alone. The roll-up carries the cache read/write counts
+  added under *Added* above as well. A request that failed mid-stream may
+  still go uncounted, so the totals are usage, not an invoice.
 - **`/context` names a window the Models API narrowed.** The "Effective" line
   was keyed on an *observed* overflow limit alone, so on the
   `anthropic-messages` wire — where the model's `max_input_tokens` narrows the
