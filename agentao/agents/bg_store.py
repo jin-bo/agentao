@@ -52,6 +52,15 @@ def _flush_lock_for(path_key: str) -> threading.Lock:
         return lock
 
 
+def _record_copy(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """A reader's copy of a record. ``usage`` is the one nested value, so a
+    plain ``dict(rec)`` would hand out the store's own dict to be mutated."""
+    out = dict(rec)
+    if isinstance(out.get("usage"), dict):
+        out["usage"] = dict(out["usage"])
+    return out
+
+
 def _reset_recovery_guard_for_tests() -> None:
     """Test helper to clear the per-process recovery guard."""
     with _recovered_paths_lock:
@@ -348,6 +357,12 @@ class BackgroundTaskStore:
                 "tool_calls": 0,
                 "tokens": 0,
                 "duration_ms": 0,
+                # What the run's LLM requests *reported*, summed — the four
+                # quantities of ``agentao run``'s ``usage``. ``tokens`` above
+                # is something else: a local estimate of how large the
+                # sub-agent's history ended up. ``None`` until the run ends,
+                # and after it when the counts could not be read.
+                "usage": None,
             }
             self._owned_ids.add(agent_id)
             if persistence_path is not None:
@@ -382,6 +397,7 @@ class BackgroundTaskStore:
         tool_calls: int = 0,
         tokens: int = 0,
         duration_ms: int = 0,
+        usage: Optional[Dict[str, int]] = None,
     ) -> None:
         assert status in _VALID_BG_STATUSES, f"Invalid bg task status: {status!r}"
         self._check_persistence_rebind()
@@ -399,6 +415,7 @@ class BackgroundTaskStore:
                 rec["tool_calls"] = tool_calls
                 rec["tokens"] = tokens
                 rec["duration_ms"] = duration_ms
+                rec["usage"] = dict(usage) if usage is not None else None
                 agent_name = rec["agent_name"]
 
         if agent_name is None:
@@ -442,7 +459,7 @@ class BackgroundTaskStore:
                 # Owned but pinned to a different project (background thread
                 # is still running there). Hide from this project's view.
                 return None
-            return dict(rec)
+            return _record_copy(rec)
 
     def list(self) -> List[Dict[str, Any]]:
         self._check_persistence_rebind()
@@ -450,7 +467,7 @@ class BackgroundTaskStore:
         current_path = self._resolve_persistence_path()
         with self._lock:
             return [
-                dict(v) | {"id": k}
+                _record_copy(v) | {"id": k}
                 for k, v in self._tasks.items()
                 if k not in self._owned_ids
                 or self._owner_path.get(k) == current_path
@@ -496,6 +513,7 @@ class BackgroundTaskStore:
                 rec["tool_calls"] = 0
                 rec["tokens"] = 0
                 rec["duration_ms"] = 0
+                rec["usage"] = None
                 cancelled_before_start = True
 
         if cancelled_before_start:

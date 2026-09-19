@@ -53,7 +53,7 @@
 |------|------|---------|
 | `ToolLifecycleEvent` | `started` · `completed` · `failed` | 任何工具调用（内置或自定义）。取消会以 `phase="failed", outcome="cancelled"` 形式出现。 |
 | `PermissionDecisionEvent` | （单次决策，无阶段） | 每次权限决策：`allow` / `deny` / `prompt`。**消费方必须把 allow 也消化掉**——审计行需要它。 |
-| `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | 子 agent 任务的生命周期。注意：这里 `cancelled` 是**独立阶段**（与工具事件不同）。`failed` 覆盖**两种**形态——见下。 |
+| `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | 子 agent 任务的生命周期。注意：这里 `cancelled` 是**独立阶段**（与工具事件不同）。`failed` 覆盖**两种**形态——见下。终态阶段带 `usage`（0.5.2）：子 agent 的请求上报的四项 token 计数，事件触发时已计入父级的会话累计。 |
 
 :::warning `failed` 不只是"它崩了"
 `SubagentLifecycleEvent(phase="failed")` 既会在子 agent **抛异常**时触发，也会在它**跑完却始终没给出答案**时触发（空 turn、只有 reasoning、被长度截断、doom-loop 被拦停、LLM 调用失败、turn 预算耗尽）。把后者报成 `completed` 会让契约陈述一件不真实的事。

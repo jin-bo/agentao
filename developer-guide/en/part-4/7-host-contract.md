@@ -53,7 +53,7 @@ Three orthogonal lifecycle facts. Each is a Pydantic model carrying just enough 
 |-------|--------|---------|
 | `ToolLifecycleEvent` | `started` · `completed` · `failed` | Every tool call (built-in or custom). Cancellation surfaces as `phase="failed", outcome="cancelled"`. |
 | `PermissionDecisionEvent` | (no phases — single decision per call) | Every permission decision: `allow` / `deny` / `prompt`. **Consumers must drain even allow events** — the audit row needs them. |
-| `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | Sub-agent task lifecycle. Note: `cancelled` is a **distinct phase** here (unlike tools). `failed` spans **two** shapes — see below. |
+| `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | Sub-agent task lifecycle. Note: `cancelled` is a **distinct phase** here (unlike tools). `failed` spans **two** shapes — see below. A terminal phase carries `usage` (0.5.2): the four token counts the sub-agent's requests reported, already included in the parent's session totals when the event fires. |
 
 :::warning `failed` is not only "it crashed"
 `SubagentLifecycleEvent(phase="failed")` fires both when the sub-agent **raised** and when it **returned without ever answering** (empty turn, reasoning only, length-truncated, doom-loop halted, LLM call failed, turn budget exhausted). Reporting the second as `completed` would make the contract state something untrue.

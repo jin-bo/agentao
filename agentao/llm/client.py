@@ -876,6 +876,22 @@ class LLMClient(_LoggingMixin):
             self.total_cache_read_tokens = 0
             self.total_cache_creation_tokens = 0
 
+    def usage_snapshot(self) -> Dict[str, int]:
+        """The four session totals, read together under the lock the adds take.
+
+        Read one attribute at a time and an ``add_usage`` on another thread
+        can land between two of the reads: a prompt count from after it beside
+        a completion count from before — a state that never existed. Keys are
+        the ones ``agentao run``'s ``usage`` and ``SubagentUsage`` use.
+        """
+        with self._usage_lock:
+            return {
+                "prompt_tokens": self.total_prompt_tokens,
+                "completion_tokens": self.total_completion_tokens,
+                "cache_read_tokens": self.total_cache_read_tokens,
+                "cache_creation_tokens": self.total_cache_creation_tokens,
+            }
+
     def _cancelled_before_send(self, cancellation_token: Optional[Any], request_id: str) -> bool:
         if cancellation_token is None or not cancellation_token.is_cancelled:
             return False

@@ -11,10 +11,34 @@ _Targeting 0.5.2. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **A terminal `SubagentLifecycleEvent` says what the sub-agent cost.** New
+  optional `usage` field — a `SubagentUsage` (exported from `agentao.host`)
+  with the four quantities of `agentao run`'s `usage`, under the same names.
+  `None` on `spawned` and wherever no sub-agent was built. Additive: the
+  `host.events.v1` and replay 1.2 / 1.3 schema snapshots gain the property
+  and nothing else changes. A `BackgroundTaskStore` record carries the same
+  dict under `usage`; its `tokens` key remains a local estimate of the final
+  history's size, which was never usage. Counts are non-negative in the
+  schema (`minimum: 0`), not only at the producer.
+- **`LLMClient.usage_snapshot()`** returns the four session totals from one
+  locked read. Reading the attributes one at a time lets an `add_usage` on
+  another thread land between two of them; the sub-agent roll-up reads
+  through this.
+
 ### Changed
 
 ### Fixed
 
+- **A background sub-agent's usage is settled before anyone is told it
+  finished.** 0.5.1 added a sub-agent's requests to its parent's totals from
+  the `finally` that closes it; on the background path that runs *after* the
+  record is updated and the terminal event is published. A host that read the
+  parent's totals from its `completed` handler — or anything reacting to the
+  completion notice — saw totals that still left the run out. The roll-up now
+  happens first, once, on every terminal path including a run that raised.
+  The foreground path already had this order. Still true, and now said in the
+  `agentao run` docs: a background sub-agent that outlives the run is not in
+  that run's `usage`, which is a snapshot taken when the envelope is written.
 - **A stream that fails part-way still counts what the server said it cost.**
   The session totals were added after the stream consumer *returned*, so an
   attempt that raised — an `error` event inside the stream, a dropped

@@ -208,6 +208,7 @@ def test_host_all_matches_documented_set() -> None:
         "RegistrableTool",
         "StreamSubscribeError",
         "SubagentLifecycleEvent",
+        "SubagentUsage",
         "Tool",
         "ToolLifecycleEvent",
         "export_host_acp_json_schema",

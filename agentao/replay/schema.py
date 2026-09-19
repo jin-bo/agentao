@@ -133,15 +133,41 @@ def _harness_payload_schema(model_name: str) -> dict:
     model = models[model_name]
     adapter: TypeAdapter[Any] = TypeAdapter(model)
     payload_schema = adapter.json_schema(ref_template="#/$defs/{model}")
-    # Inline ``$defs`` (e.g. enum types referenced by the model) so the
-    # variant is self-contained — readers don't need a parent document.
-    if "$defs" in payload_schema:
-        defs = payload_schema.pop("$defs")
-        # Resolve refs locally if any subschemas reference one another.
-        payload_schema["$defs"] = defs
+    # Inline ``$defs`` so the variant is self-contained. Leaving them under
+    # the payload does not do that: ``#/$defs/X`` is a pointer from the
+    # *document* root, and this subschema sits several levels below it, so
+    # the ref pointed at nothing and a validator raised on every
+    # ``subagent_lifecycle`` line (``SubagentUsage`` was the first model to
+    # produce one).
+    defs = payload_schema.pop("$defs", {})
+    payload_schema = _inline_refs(payload_schema, defs)
     _assert_sanitize_metadata_in_sync()
     payload_schema.setdefault("properties", {}).update(_SANITIZE_METADATA_PROPERTIES)
     return payload_schema
+
+
+_REF_PREFIX = "#/$defs/"
+
+
+def _inline_refs(node: Any, defs: Dict[str, Any], _open: tuple = ()) -> Any:
+    """``node`` with every ``#/$defs/X`` ref replaced by a copy of ``X``.
+
+    Keys beside a ``$ref`` are kept and win over the definition's. A
+    self-referential model cannot be inlined and fails generation rather
+    than recursing: none of the projected models is one.
+    """
+    if isinstance(node, list):
+        return [_inline_refs(item, defs, _open) for item in node]
+    if not isinstance(node, dict):
+        return node
+    ref = node.get("$ref")
+    if isinstance(ref, str) and ref.startswith(_REF_PREFIX):
+        name = ref[len(_REF_PREFIX):]
+        if name in _open:
+            raise ValueError(f"recursive $ref {ref!r} cannot be inlined")
+        merged = {**defs[name], **{k: v for k, v in node.items() if k != "$ref"}}
+        return _inline_refs(merged, defs, _open + (name,))
+    return {key: _inline_refs(value, defs, _open) for key, value in node.items()}
 
 
 # Map from v1.2 harness-projected kind to the Pydantic model whose
