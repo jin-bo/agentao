@@ -117,10 +117,18 @@ class OpenAICompletionsAdapter:
         """What ``_log_request`` renders: the request itself, minus ``stream``."""
         return {k: v for k, v in kwargs.items() if k != "stream"}
 
-    def send(self, kwargs: Dict[str, Any]) -> Any:
-        """One non-streaming attempt."""
+    def send(self, kwargs: Dict[str, Any], acc: _StreamAccumulator) -> Any:
+        """One non-streaming attempt.
+
+        ``acc`` carries nothing here but the usage the response stated: it is
+        where ``LLMClient`` counts an attempt from, on every wire and on both
+        entry points. A request that raised has no response, and so nothing
+        to report.
+        """
         raw = self._owner.client.chat.completions.with_raw_response.create(**kwargs)
-        return raw.parse()
+        response = raw.parse()
+        acc.usage_data = getattr(response, "usage", None)
+        return response
 
     def new_accumulator(self) -> _StreamAccumulator:
         return _StreamAccumulator(self._owner.model)
