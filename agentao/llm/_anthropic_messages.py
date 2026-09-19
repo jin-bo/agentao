@@ -663,21 +663,14 @@ class AnthropicMessagesAdapter:
 
     # -- response -----------------------------------------------------------
 
-    def send(self, kwargs: Dict[str, Any]) -> Any:
+    def send(self, kwargs: Dict[str, Any], acc: _StreamAccumulator) -> Any:
         """One ``chat()`` attempt — the stream, consumed with no callback.
 
-        ``chat()`` counts usage from the response it gets back, so an attempt
-        that raises has to be counted here: this is a stream too, and
-        ``message_start`` had stated the input before it failed. Only on the
-        way out by exception — a returned response is ``chat()``'s to count.
+        The caller's ``acc``, not one built here: ``LLMClient`` counts the
+        attempt from it on the way out either way, and this is a stream too —
+        ``message_start`` has stated the input before anything can fail.
         """
-        acc = self.new_accumulator()
-        try:
-            return self.consume_stream(kwargs, acc, None, None)
-        except BaseException:
-            if acc.usage_data is not None:
-                self._owner._count_response_usage(acc.usage_data)
-            raise
+        return self.consume_stream(kwargs, acc, None, None)
 
     def new_accumulator(self) -> _StreamAccumulator:
         return _StreamAccumulator(self._owner.model)

@@ -602,11 +602,14 @@ class LLMClient(_LoggingMixin):
         deadline = time.monotonic() + MAX_TOTAL_RETRY_SECONDS
         attempt = 0  # number of retries performed; first try is attempt 0
         while True:
+            # Fresh per attempt, like ``chat_stream``'s: it is what the
+            # attempt is counted from.
+            acc = self._adapter.new_accumulator()
             try:
-                response = self._adapter.send(kwargs)
-
-                if hasattr(response, "usage") and response.usage:
-                    self._count_response_usage(response.usage)
+                try:
+                    response = self._adapter.send(kwargs, acc)
+                finally:
+                    self._count_attempt(acc)
 
                 self._log_response(request_id, response)
                 return response
@@ -842,6 +845,22 @@ class LLMClient(_LoggingMixin):
                     raise
                 attempt += 1
 
+    def _count_attempt(self, acc: "_StreamAccumulator") -> None:
+        """Add one attempt to the session totals — the only place that does.
+
+        Called from a ``finally`` by both entry points, so on the way out
+        **either way**: an attempt that raised was still a request, and
+        ``acc`` holds whatever usage the server had reported by then, the same
+        contract it keeps for ``progress_made``. An adapter's one duty here is
+        to leave that on ``acc.usage_data``. ``acc`` is built fresh per
+        attempt, so each is counted at most once; a failed attempt and the
+        retry after it are two requests, and both count. Nothing reported,
+        nothing added: Chat Completions states usage only with its last chunk
+        (or on the response, when not streaming).
+        """
+        if acc.usage_data is not None:
+            self._count_response_usage(acc.usage_data)
+
     def _count_response_usage(self, usage: Any) -> None:
         cache_read, cache_creation = cache_token_counts(usage)
         self.add_usage(
@@ -918,16 +937,7 @@ class LLMClient(_LoggingMixin):
                 kwargs, acc, on_text_chunk, cancellation_token,
             )
         finally:
-            # Session totals, on the way out **either way**. An attempt that
-            # raised was still a request, and ``acc`` reflects whatever usage
-            # the server had reported by then — the same contract it already
-            # keeps for ``progress_made``. ``acc`` is built fresh per attempt
-            # (``chat_stream``'s loop), so each attempt is counted at most
-            # once; a failed attempt and the retry that follows are two
-            # requests, and both count. Nothing reported, nothing added: the
-            # Chat Completions wire states usage only in its last chunk.
-            if acc.usage_data is not None:
-                self._count_response_usage(acc.usage_data)
+            self._count_attempt(acc)
 
     def _emit_nonstreaming(
         self,
