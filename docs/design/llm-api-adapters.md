@@ -198,9 +198,13 @@ full rate. **Arms A and B cannot be told apart from here**: Anthropic's
 OpenAI-compatible endpoint accepted the `cache_control` markers without error
 but its `usage` carries no cache fields at all (`prompt_tokens_details` is
 null), so whether it honoured them is not observable from the response — only
-from the bill. What the numbers do settle is §12.1 as far as this endpoint goes:
-**on Anthropic's own API the caching win is reachable, and measurable, only on
-the native wire.** 0b's value is for third-party gateways that both honour the
+from the bill. What the numbers settle is narrower than it was first written
+here: **on Anthropic's own API the caching win is *measurable* only on the
+native wire.** Whether it is also *reached* over the compatible endpoint — by
+the markers, or by caching the endpoint does without being asked — is not
+shown either way: an endpoint that reports nothing has not been shown to cache
+nothing. (The first version of this sentence said "reachable, and measurable,
+only on the native wire"; the evidence supported the second word.) 0b's value is for third-party gateways that both honour the
 markers and report them, which is still unmeasured, and is why it stays off by
 default.
 
@@ -237,20 +241,47 @@ Three questions remain, and none of them is answered by re-running the table:
 
 1. **A versus B on Anthropic's compatible endpoint** is on the bill and nowhere
    else. Only the account holder can read it.
-2. **Whether a gateway honours the markers.** One gateway run so far, and it
-   does not answer this: an Anthropic-compatible endpoint fronting
-   `deepseek-v4.1-flash`, arm C, 17 requests — 250,766 prompt tokens, **0
-   written, 229,504 read (91.5%)**. The reads are all multiples of 64 (6,400,
-   9,216, 12,288, …) and no write is ever reported, which is automatic,
-   block-granular prefix caching — it would report the same reads whether or
-   not it read a single `cache_control` marker. So arm C alone says nothing
-   about the markers on such an endpoint; the script gained arm **D** (the same
-   wire with no breakpoints) as the control, **not yet run**. What the run does
-   show: on this gateway the prefix 0a made byte-stable is cached with no
-   markers' help being demonstrable, and the default `--read-rate 0.1` is
-   Anthropic's — a gateway's own hit price goes in its place. For Chat
-   Completions gateways the pair is still `--arms a,b --base-url-compat
-   <gateway>/v1`, unrun.
+2. **Whether a gateway honours the markers.** Answered for one gateway, open
+   for the rest. An Anthropic-compatible endpoint fronting `deepseek-v4.1-flash`,
+   the native wire with breakpoints (C) against the same wire with none (D):
+
+   | Arm | Requests | Prompt tokens | Cache written | Cache read | Hit rate |
+   |---|---|---|---|---|---|
+   | C — native, 3 breakpoints | 14 | 204,196 | 0 | 181,504 | 88.9% |
+   | D — native, **no** breakpoints | 19 | 271,411 | 0 | 248,320 | 91.5% |
+
+   **The markers make no measurable difference there.** The arm without them
+   hit no less often, and both show the same signature — every read a multiple
+   of 64, no write ever reported — which is automatic, block-granular prefix
+   caching. It reports the same reads whether or not it read a single
+   `cache_control`, which is why an earlier C-only run (17 requests, 91.5%)
+   could not settle this and the script gained arm D. What does the work on
+   such an endpoint is stage **0a**: the byte-stable prefix is what gets
+   cached, with nothing asked of the endpoint. `prompt_cache` buys nothing
+   demonstrable there and stays off. Two cautions: hit rate is the comparable
+   figure, not the totals (the model took 14 rounds in one arm and 19 in the
+   other), and the default `--read-rate 0.1` is Anthropic's price — a gateway's
+   own hit price goes in its place.
+
+   **The same question over Chat Completions** — the same vendor's
+   OpenAI-compatible endpoint, the same model, no breakpoints (A) against three
+   `cache_control` marks (B):
+
+   | Arm | Requests | Prompt tokens | Cache written | Cache read | Hit rate |
+   |---|---|---|---|---|---|
+   | A — 0a only | 15 | 233,169 | 0 | 211,712 | 90.8% |
+   | B — 0a + 0b | 14 | 206,074 | 0 | 185,088 | 89.8% |
+
+   The same answer, and the same signature. The marks were accepted without
+   error and changed nothing measurable. This endpoint *does* report — through
+   `prompt_tokens_details.cached_tokens`, the first live reading of the path
+   0.5.1 added — so, unlike Anthropic's compatible endpoint, A and B can be told
+   apart here, and they are not different. Across all four arms the hit rate
+   sits within three points (88.9–91.5%) whichever wire and whether or not
+   anything was marked. **That is two endpoints of one vendor on one model**, not
+   a finding about gateways: one that implements Anthropic-style breakpoint
+   caching and nothing automatic would show C above D, and none has been
+   measured.
 3. **Whether an active skill's body belongs in the prefix.** `--activate-skill
    NAME --at-turn K` records the history size at the activation, which is the
    input this needs. The trade, from the price model rather than from a run:
