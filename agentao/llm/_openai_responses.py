@@ -34,6 +34,7 @@ silently diverge from all three.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from ._retry import (
@@ -41,7 +42,7 @@ from ._retry import (
     _classify_retry,
     _is_temperature_unsupported,
 )
-from ._stream_response import _StreamAccumulator
+from ._stream_response import OPENAI_REASONING_ITEMS, _StreamAccumulator
 from ._usage import positive_int
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
@@ -57,6 +58,10 @@ _ID_SEPARATOR = "|"
 #: The prefix OpenAI gives a function-call *item* id. :func:`split_tool_id`
 #: reads the part after the separator as an item id only when it has it.
 _ITEM_ID_PREFIX = "fc_"
+
+#: What makes ``store: false`` workable for a reasoning model: the API returns
+#: each reasoning item's content encrypted, and takes it back as input.
+_ENCRYPTED_REASONING = "reasoning.encrypted_content"
 
 #: ``incomplete_details.reason`` → the ``finish_reason`` the runtime reads.
 _INCOMPLETE_REASONS = {
@@ -164,7 +169,41 @@ def _text_of(content: Any) -> str:
     )
 
 
-def translate_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _reasoning_items(carrier: Any) -> List[Dict[str, Any]]:
+    """The reasoning items off an assistant dict — all of them, or none.
+
+    Rebuilt key by key rather than passed through: the carrier is persisted to
+    session files a host can edit, and an unknown key is a 400. An item with
+    no ``encrypted_content`` cannot go back: with ``store: false`` the provider
+    kept nothing under that id, so naming it asks for an item that is not
+    there.
+
+    **One entry that cannot go back takes the whole carrier with it**, the
+    same rule ``consume_stream`` applies when recording. Sending the rest
+    would still count as "reasoning carried", and the turn's calls would name
+    their ``fc_`` ids — one of which was produced beside the item just dropped.
+    """
+    items: List[Dict[str, Any]] = []
+    for entry in carrier if isinstance(carrier, list) else []:
+        if not isinstance(entry, dict):
+            return []
+        item_id, encrypted = entry.get("id"), entry.get("encrypted_content")
+        if not (isinstance(item_id, str) and item_id
+                and isinstance(encrypted, str) and encrypted):
+            return []
+        summary = [
+            {"type": "summary_text", "text": part["text"]}
+            for part in entry.get("summary") or []
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        ]
+        items.append({"type": "reasoning", "id": item_id, "summary": summary,
+                      "encrypted_content": encrypted})
+    return items
+
+
+def translate_messages(
+    messages: List[Dict[str, Any]], *, reasoning: bool = True,
+) -> List[Dict[str, Any]]:
     """Canonical history → Responses ``input`` items. The input is not mutated.
 
     Every item is rebuilt key by key: history dicts carry keys this wire has
@@ -175,34 +214,55 @@ def translate_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     rather than being hoisted into ``instructions``: compaction leaves
     ``role: "system"`` summaries inside history, and one rule for all of them
     keeps the request's order the order of ``agent.messages``.
+
+    ``reasoning=False`` leaves the reasoning items out, and with them every
+    function-call item id: for an endpoint that has refused encrypted
+    reasoning, which can no more take it back than issue it.
     """
     items: List[Dict[str, Any]] = []
     for message in messages:
         role = message.get("role")
         if role == "assistant":
+            # Reasoning leads its turn, as it did in the response.
+            carried = (
+                _reasoning_items(message.get(OPENAI_REASONING_ITEMS)) if reasoning else []
+            )
             text = _text_of(message.get("content"))
+            # ...and only when the turn has something to lead. The API refuses
+            # a reasoning item "provided without its required following item",
+            # and a turn can be reasoning alone: one cut off at
+            # ``max_output_tokens`` while still thinking records no text and
+            # no call.
+            if not text and not any(
+                isinstance(call, dict) for call in message.get("tool_calls") or []
+            ):
+                carried = []
+            items.extend(carried)
             if text:
                 items.append({"role": "assistant", "content": text})
             for call in message.get("tool_calls") or []:
                 if not isinstance(call, dict):
                     continue
                 fn = call.get("function") or {}
-                # The item id is kept in history and deliberately **not sent**.
-                # The API tracks which ``fc_`` id was produced beside which
-                # ``rs_`` reasoning item and refuses a call item that names one
-                # without the other; this adapter does not carry reasoning
-                # items yet, so naming the id would fail a reasoning model's
-                # second request. pi-mono drops it on the same ground
-                # (``openai-responses-shared.ts``, "avoid pairing validation").
-                # It goes back once the reasoning item it pairs with does.
-                call_id, _item_id = split_tool_id(call.get("id"))
-                items.append({
+                call_id, item_id = split_tool_id(call.get("id"))
+                item: Dict[str, Any] = {
                     "type": "function_call",
                     "call_id": call_id,
                     "name": fn.get("name") or "unknown",
                     # JSON *text* on this wire, as history holds it.
                     "arguments": fn.get("arguments") or "{}",
-                })
+                }
+                # The item id goes back **only beside the reasoning it was
+                # produced with**. The API tracks which ``fc_`` id belongs
+                # with which ``rs_`` item and refuses a call that names one
+                # without the other — and a reasoning item can be missing for
+                # ordinary reasons: a switch purged it, a session file lost
+                # it, the endpoint returned none. pi-mono drops the id on the
+                # same ground (``openai-responses-shared.ts``, "avoid pairing
+                # validation"). ``call_id`` alone still pairs the output.
+                if item_id is not None and carried:
+                    item["id"] = item_id
+                items.append(item)
         elif role == "tool":
             call_id, _ = split_tool_id(message.get("tool_call_id"))
             items.append({
@@ -223,6 +283,67 @@ def translate_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "content": parts[0]["text"] if plain else parts,
                 })
     return items
+
+
+def without_reasoning(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Already-translated input items, as ``translate_messages(...,
+    reasoning=False)`` would have produced them: no reasoning items, and no
+    function-call item id, which is only ever sent beside one.
+
+    For ``repair_request``, which is handed the request and not the history it
+    came from. A test holds the two spellings of the rule to the same output.
+    """
+    return [
+        {k: v for k, v in item.items()
+         if not (k == "id" and item.get("type") == "function_call")}
+        for item in items if item.get("type") != "reasoning"
+    ]
+
+
+#: An endpoint refusing the ``include`` *parameter*, as opposed to the value
+#: in it. Each needs a rejecting word bound to the name: a bare "include" is
+#: ordinary English ("the request must include…") and would latch on nothing.
+_INCLUDE_PARAMETER_REJECTED = re.compile(
+    # OpenAI-style: "Unknown parameter: 'include'", "Unsupported parameter…",
+    # "Unrecognized request argument supplied: include".
+    r"(?:unknown|unsupported|unrecognized|unexpected|invalid)\s+"
+    r"(?:request\s+)?(?:parameter|argument|field|key)s?(?:\s+supplied)?\s*:?\s*['\"`]?include\b"
+    # The error object naming it as the offending parameter.
+    r"|['\"]param['\"]\s*:\s*['\"]include['\"]"
+    # A pydantic-validated gateway (vLLM, FastAPI): "Extra inputs are not
+    # permitted" at ``loc: ('body', 'include')``.
+    r"|['\"]loc['\"]\s*:\s*[\[(][^\])]*['\"]include['\"]"
+)
+
+
+def _rejects_the_include_field(err_text: str) -> bool:
+    """Whether a 400 says the endpoint does not take
+    ``include: [reasoning.encrypted_content]``.
+
+    Two shapes, both from compatible gateways rather than OpenAI: the *value*
+    is refused (the text names ``encrypted_content`` and ``include``), or the
+    *parameter* is (``Unknown parameter: include`` — no mention of the value at
+    all). Every request carries the field, so missing the second shape turns
+    an endpoint that worked before this adapter asked into a permanent 400.
+
+    Narrow in the other direction too, because the answer is latched for the
+    client's life. ``invalid_encrypted_content`` names the same words and
+    means something else entirely — *one item* could not be decrypted (a
+    rotated key, a stale session) on an endpoint that supports the field
+    perfectly well — and reading it as "unsupported" would end reasoning
+    carry-over for the session.
+
+    Lower-cased **here**, like ``_is_temperature_unsupported``: only
+    ``chat_stream`` hands ``repair_request`` lower-cased text, and ``chat()``
+    — the summarizer's entry — passes the exception's own words, capitals
+    and all.
+    """
+    err_text = err_text.lower()
+    if "invalid_encrypted_content" in err_text:
+        return False
+    if "encrypted_content" in err_text and "include" in err_text:
+        return True
+    return _INCLUDE_PARAMETER_REJECTED.search(err_text) is not None
 
 
 def translate_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -278,13 +399,16 @@ class OpenAIResponsesAdapter:
 
     #: Body fields this adapter sets; see the Chat Completions adapter.
     structural_body_keys = frozenset({
-        "model", "input", "stream", "store", "tools",
+        "model", "input", "stream", "store", "include", "tools",
         "temperature", "max_output_tokens",
     })
 
     def __init__(self, owner: "LLMClient", client_cls: Callable[[], Any]) -> None:
         self._owner = owner
         self._client_cls = client_cls
+        # Set when an endpoint rejects ``include: [reasoning.encrypted_content]``
+        # — a compatible gateway, not OpenAI. Per model, like every latch.
+        self._omit_encrypted_reasoning = False
 
     def create_client(self) -> Any:
         # Same SDK and the same reason as Chat Completions: one retry policy.
@@ -295,7 +419,8 @@ class OpenAIResponsesAdapter:
         )
 
     def reset_latches(self) -> None:
-        """Nothing of its own: the temperature latch lives on ``LLMClient``."""
+        """The temperature latch lives on ``LLMClient``; this one is ours."""
+        self._omit_encrypted_reasoning = False
 
     def prepare(self) -> None:
         """Nothing to learn: ``GET /v1/models/{id}`` states no limits here."""
@@ -320,10 +445,17 @@ class OpenAIResponsesAdapter:
         owner = self._owner
         kwargs: Dict[str, Any] = {
             "model": owner.model,
-            "input": translate_messages(messages),
+            "input": translate_messages(
+                messages, reasoning=not self._omit_encrypted_reasoning,
+            ),
             "stream": True,
             "store": False,
         }
+        if not self._omit_encrypted_reasoning:
+            # Asked of every model: one that does not reason returns no
+            # reasoning items and the field costs nothing, and there is no
+            # way to know which kind this is — a model name is never read.
+            kwargs["include"] = [_ENCRYPTED_REASONING]
         if not owner.omit_temperature:
             kwargs["temperature"] = owner.temperature
         if tools:
@@ -358,6 +490,19 @@ class OpenAIResponsesAdapter:
             owner.omit_temperature = True
             owner.logger.info("Model rejects temperature; omitting it for this client")
             kwargs.pop("temperature", None)
+            return True
+        if not self._omit_encrypted_reasoning and _rejects_the_include_field(err_text):
+            # This request goes again without the field, and without the
+            # items it would have carried back: an endpoint that cannot issue
+            # encrypted reasoning cannot take it either. Later requests get
+            # the same from ``build_request``, which reads the latch.
+            self._omit_encrypted_reasoning = True
+            owner.logger.info(
+                "Endpoint rejects reasoning.encrypted_content; reasoning will "
+                "not be carried across turns on this client"
+            )
+            kwargs.pop("include", None)
+            kwargs["input"] = without_reasoning(kwargs.get("input", []))
             return True
         return False
 
@@ -403,6 +548,8 @@ class OpenAIResponsesAdapter:
         # Output indices whose text arrived as deltas — so the whole-item
         # events that follow do not append the same text a second time.
         streamed_text: set = set()
+        # Reasoning items by id, as the item events stated them.
+        reasoning: Dict[str, Dict[str, Any]] = {}
         try:
             for event in stream:
                 if cancellation_token and cancellation_token.is_cancelled:
@@ -440,10 +587,17 @@ class OpenAIResponsesAdapter:
                     if call is not None and event.delta:
                         call["arguments"] += event.delta
                 elif kind == "response.output_item.done":
+                    self._note_reasoning(reasoning, event.item)
                     self._close_item(
                         acc, event.output_index, event.item, streamed_text, on_text_chunk,
                     )
                 elif kind in ("response.completed", "response.incomplete"):
+                    # The terminal response restates every item, and is the
+                    # only place some servers state ``encrypted_content`` at
+                    # all (Azure, per pi-mono) — so it is read after the item
+                    # events and fills what they left out.
+                    for item in getattr(event.response, "output", None) or []:
+                        self._note_reasoning(reasoning, item)
                     self._finish(acc, event.response, streamed_text, on_text_chunk)
                 elif kind == "response.failed":
                     response = event.response
@@ -460,7 +614,33 @@ class OpenAIResponsesAdapter:
             close = getattr(stream, "close", None)
             if callable(close):
                 close()
+        # Whole items only. One without ``encrypted_content`` cannot go back
+        # (``_reasoning_items``), and half a carrier is worse than none: it
+        # would send the ``fc_`` id its call was paired with.
+        items = list(reasoning.values())
+        if items and all(item.get("encrypted_content") for item in items):
+            acc.reasoning_items = items
         return acc.build()
+
+    @staticmethod
+    def _note_reasoning(reasoning: Dict[str, Dict[str, Any]], item: Any) -> None:
+        """Record a reasoning item, keeping whatever an earlier sighting had."""
+        if getattr(item, "type", None) != "reasoning":
+            return
+        item_id = getattr(item, "id", None)
+        if not isinstance(item_id, str) or not item_id:
+            return
+        seen = reasoning.setdefault(item_id, {"id": item_id, "summary": []})
+        summary = [
+            {"type": "summary_text", "text": part.text}
+            for part in getattr(item, "summary", None) or []
+            if isinstance(getattr(part, "text", None), str)
+        ]
+        if summary:
+            seen["summary"] = summary
+        encrypted = getattr(item, "encrypted_content", None)
+        if isinstance(encrypted, str) and encrypted:
+            seen["encrypted_content"] = encrypted
 
     @staticmethod
     def _record_usage(acc: _StreamAccumulator, response: Any) -> None:
