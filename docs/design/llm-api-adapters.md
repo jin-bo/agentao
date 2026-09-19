@@ -204,6 +204,65 @@ the native wire.** 0b's value is for third-party gateways that both honour the
 markers and report them, which is still unmeasured, and is why it stays off by
 default.
 
+**Reproducing it, and what is still open.** That comparison was run by hand and
+its script was not kept. It now is: `scripts/measure_prompt_cache.py` runs the
+same three arms (or a subset, against any endpoint), isolates each arm with a
+nonce in the first tool definition, and reads the per-request cache counts off
+`LLM_CALL_COMPLETED` — which carries them since 0.5.1. It sends nothing without
+`--yes`, and renders an endpoint that reports no cache fields as *"not reported
+— see the bill"*, never as a zero.
+
+**Second run, through that script (same day, same endpoint, `claude-sonnet-5`).**
+
+| Arm | Wire | Requests | Prompt tokens | Cache written | Cache read | Input cost units |
+|---|---|---|---|---|---|---|
+| A — 0a only | Chat Completions | **19** | 292,524 | not reported | not reported | ≤ 292,524 |
+| B — 0a + 0b | Chat Completions | 11 | 197,511 | not reported | not reported | ≤ 197,511 |
+| C — native | `anthropic-messages` | 11 | 198,881 | 21,879 | 176,980 | **45,069** (−77% vs its own full price) |
+
+It reproduces the first run's finding — −77% against −78% — and sharpens it: on
+the native wire **22 tokens in the whole session were billed at the full rate**,
+two per request; every request after the first read its entire previous prefix
+back. B and C took the identical path (11 requests, the same count in every
+turn), so that pair is like-for-like: ≤ 197,511 against 45,069. **Arm A is not
+comparable on totals**: the model split its file reads into more tool rounds
+that time and made 19 requests. That is a fault in the method the first run did
+not expose — the model decides how many rounds a turn takes and does not decide
+the same way twice — so the script now reports each arm against **its own** full
+price and says when request counts differ, instead of printing a cross-arm
+delta. The prompt ends larger than in the first run (9.6k → 21.9k against 9.6k →
+17.9k); why was not investigated. The per-request pattern is the same.
+
+Three questions remain, and none of them is answered by re-running the table:
+
+1. **A versus B on Anthropic's compatible endpoint** is on the bill and nowhere
+   else. Only the account holder can read it.
+2. **Whether a gateway honours the markers.** One gateway run so far, and it
+   does not answer this: an Anthropic-compatible endpoint fronting
+   `deepseek-v4.1-flash`, arm C, 17 requests — 250,766 prompt tokens, **0
+   written, 229,504 read (91.5%)**. The reads are all multiples of 64 (6,400,
+   9,216, 12,288, …) and no write is ever reported, which is automatic,
+   block-granular prefix caching — it would report the same reads whether or
+   not it read a single `cache_control` marker. So arm C alone says nothing
+   about the markers on such an endpoint; the script gained arm **D** (the same
+   wire with no breakpoints) as the control, **not yet run**. What the run does
+   show: on this gateway the prefix 0a made byte-stable is cached with no
+   markers' help being demonstrable, and the default `--read-rate 0.1` is
+   Anthropic's — a gateway's own hit price goes in its place. For Chat
+   Completions gateways the pair is still `--arms a,b --base-url-compat
+   <gateway>/v1`, unrun.
+3. **Whether an active skill's body belongs in the prefix.** `--activate-skill
+   NAME --at-turn K` records the history size at the activation, which is the
+   input this needs. The trade, from the price model rather than from a run:
+   in the tail the body `S` is sent uncached on each of the `N` requests that
+   follow; in the prefix it is written once and read after, but the activation
+   rewrites the system prompt `P` and the history `H` behind it instead of
+   reading them. With write 1.25 and read 0.1 the prefix wins when
+   `N > (1.15 × (P + H) / S + 1.15) / 0.9` — about **6** further requests for
+   this repo's `P` ≈ 5.2k, `S` ≈ 4.1k at `H` = 10k, about **19** at `H` = 50k.
+   That is a bound to test, not a finding: it ignores the 5-minute expiry and
+   any compaction in between, both of which favour the tail.
+
 **rev 15 — what changed:** The adapter adopts the provider's Models API
 (`GET /v1/models/{id}`): `max_tokens` seeds the output-cap latch before any
 rejection, `max_input_tokens` is a third, narrowing-only term of the effective
