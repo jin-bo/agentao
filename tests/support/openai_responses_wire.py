@@ -30,10 +30,12 @@ Event = Dict[str, Any]
 
 
 def usage(input_tokens: int = 10, output_tokens: int = 5, *, cached: int = 0,
-          reasoning: int = 0) -> Dict[str, Any]:
+          reasoning: int = 0, cache_write: int = 0) -> Dict[str, Any]:
     return {
         "input_tokens": input_tokens,
-        "input_tokens_details": {"cached_tokens": cached},
+        # ``cache_write_tokens`` is required by ``openai`` 3.x and unknown to
+        # 2.x, which keeps it as an extra field; the fixtures validate on both.
+        "input_tokens_details": {"cached_tokens": cached, "cache_write_tokens": cache_write},
         "output_tokens": output_tokens,
         "output_tokens_details": {"reasoning_tokens": reasoning},
         "total_tokens": input_tokens + output_tokens,

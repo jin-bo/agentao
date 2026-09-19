@@ -293,6 +293,19 @@ class TestSetConfigOptionSwitch:
         )
         assert agent.set_provider_calls[0]["api_format"] == "anthropic-messages"
 
+    def test_a_resolver_can_name_the_responses_wire(self):
+        server = make_initialized_server()
+        agent = _FakeAgent(base_url="https://old.example")
+        _register(server, agent)
+        server.provider_resolver = lambda pid: {
+            "api_key": "k", "base_url": "https://api.openai.com/v1",
+            "api_format": "openai-responses",
+        }
+        acp_set_config.handle_session_set_config_option(
+            server, {"sessionId": "s", "configId": "model", "value": "openai/gpt-5"}
+        )
+        assert agent.set_provider_calls[0]["api_format"] == "openai-responses"
+
     def test_a_resolver_that_names_no_wire_means_the_default_one(self):
         """Not "the session's current wire": a resolver that marks only its
         Anthropic provider must still be able to switch back."""

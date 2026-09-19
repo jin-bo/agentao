@@ -43,6 +43,7 @@ from ._retry import (
     _is_temperature_unsupported,
 )
 from ._stream_response import OPENAI_REASONING_ITEMS, _StreamAccumulator
+from ._tool_ids import compose_tool_id, split_tool_id  # noqa: F401 — re-exported; tests and docs name them here
 from ._usage import positive_int
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
@@ -52,12 +53,6 @@ API_FORMAT = "openai-responses"
 
 #: Below this the API rejects the request outright.
 _MIN_OUTPUT_TOKENS = 16
-
-#: One history slot, two wire ids. See :func:`compose_tool_id`.
-_ID_SEPARATOR = "|"
-#: The prefix OpenAI gives a function-call *item* id. :func:`split_tool_id`
-#: reads the part after the separator as an item id only when it has it.
-_ITEM_ID_PREFIX = "fc_"
 
 #: What makes ``store: false`` workable for a reasoning model: the API returns
 #: each reasoning item's content encrypted, and takes it back as input.
@@ -93,39 +88,6 @@ class ResponsesStreamError(Exception):
         self.code = code if isinstance(code, str) and code else None
         self.message = message if isinstance(message, str) else ""
         super().__init__(f"{self.code or 'error'}: {self.message}")
-
-
-# -- ids ----------------------------------------------------------------------
-
-
-def compose_tool_id(call_id: str, item_id: Optional[str]) -> str:
-    """The one id agentao's history keeps for a Responses function call.
-
-    The wire has two: ``call_id`` correlates the output, and the item ``id``
-    names the call item itself. History has one slot, and that id must
-    round-trip byte for byte — a second key would have to survive sanitize,
-    compaction, replay and session load, and ``tool_call_id`` is what the
-    compaction pairing rules match on. So: ``call_id|item_id``.
-    """
-    if isinstance(item_id, str) and item_id.startswith(_ITEM_ID_PREFIX):
-        return f"{call_id}{_ID_SEPARATOR}{item_id}"
-    return call_id
-
-
-def split_tool_id(tool_id: Any) -> Tuple[str, Optional[str]]:
-    """``(call_id, item_id)`` back out of a history id.
-
-    Split on the **last** separator, and only when what follows looks like an
-    item id. History outlives a provider switch, so the id may have been
-    minted on another wire: one that merely contains ``|`` stays whole, since
-    a mis-split would send half of it as the ``call_id`` and the other half as
-    an item id the API never issued.
-    """
-    text = tool_id if isinstance(tool_id, str) else ""
-    head, sep, tail = text.rpartition(_ID_SEPARATOR)
-    if sep and head and tail.startswith(_ITEM_ID_PREFIX):
-        return head, tail
-    return text, None
 
 
 # -- request translation ------------------------------------------------------
@@ -367,8 +329,9 @@ def translate_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 class _PromptTokensDetails:
-    def __init__(self, cached_tokens: int) -> None:
+    def __init__(self, cached_tokens: int, cache_write_tokens: int) -> None:
         self.cached_tokens = cached_tokens
+        self.cache_write_tokens = cache_write_tokens
 
 
 class _Usage:
@@ -377,9 +340,10 @@ class _Usage:
     ``input_tokens`` already **includes** the cached part on this wire, so it
     maps to ``prompt_tokens`` as it stands — the opposite of Anthropic's
     ``input_tokens``, which is the uncached remainder. Do not copy either
-    mapping across adapters. The cached count rides where Chat Completions
-    puts it, so ``cache_token_counts`` reads both wires with one rule; there
-    is no cache-write count.
+    mapping across adapters. Both cache counts are parts *of* it, and ride
+    where Chat Completions puts them, so ``cache_token_counts`` reads both
+    wires with one rule. ``cache_write_tokens`` is a field the ``openai`` SDK
+    has from 3.x on (there it is required); on 2.x it is absent and reads 0.
     """
 
     def __init__(self, usage: Any) -> None:
@@ -388,7 +352,8 @@ class _Usage:
         self.total_tokens = self.prompt_tokens + self.completion_tokens
         details = getattr(usage, "input_tokens_details", None)
         self.prompt_tokens_details = _PromptTokensDetails(
-            positive_int(getattr(details, "cached_tokens", None))
+            positive_int(getattr(details, "cached_tokens", None)),
+            positive_int(getattr(details, "cache_write_tokens", None)),
         )
 
 

@@ -18,6 +18,7 @@ Eight minimum-shape samples that run end-to-end against a fake LLM (or a scripte
 | [`protocol-injection/`](./protocol-injection/) | All four `agentao.host.protocols` slots replaced (in-memory FS, audit shell, programmatic MCP registry, dict MemoryStore) | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 | [`tool-injection/`](./tool-injection/) | Jina-backed `web_fetch` injected at construction (`extra_tools=`, `r.jina.ai`) + `web_search` injected at runtime (`add_tool`, `s.jina.ai`) | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 | [`anthropic-wire/`](./anthropic-wire/) | `api_format="anthropic-messages"` — Anthropic's native Messages API; the smoke runs a scripted socket under the **real** `anthropic` SDK | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
+| [`openai-responses-wire/`](./openai-responses-wire/) | `api_format="openai-responses"` — OpenAI's Responses API, stateless, with reasoning carried across requests; the smoke runs a scripted socket under the **real** `openai` SDK | `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/` |
 
 ## Larger blueprints (live LLM, end-to-end stacks)
 

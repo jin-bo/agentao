@@ -27,11 +27,17 @@ def cache_token_counts(usage: Any) -> Tuple[int, int]:
     OpenAI-compatible gateway in front of Anthropic tends to pass through —
     then OpenAI's ``prompt_tokens_details.cached_tokens``. The first that is
     stated wins; they are two names for one quantity, so they are never
-    summed. Chat Completions has no cache-write count.
+    summed. The write count is read the same way: Anthropic's field, then
+    ``prompt_tokens_details.cache_write_tokens`` — which the ``openai`` SDK
+    states from 3.x on, for Chat Completions and the Responses API both, and
+    which an older SDK or a gateway simply does not have.
     """
     read = positive_int(getattr(usage, "cache_read_input_tokens", None))
     if not read:
         details = getattr(usage, "prompt_tokens_details", None)
         read = positive_int(getattr(details, "cached_tokens", None))
     creation = positive_int(getattr(usage, "cache_creation_input_tokens", None))
+    if not creation:
+        details = getattr(usage, "prompt_tokens_details", None)
+        creation = positive_int(getattr(details, "cache_write_tokens", None))
     return read, creation

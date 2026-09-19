@@ -2,8 +2,10 @@
 
 **Status:** **Stage 0 implemented and shipped in 0.4.26. Stage 1 implemented
 2026-09-18 (shipped in 0.5.0), against a scripted socket and then a live endpoint
-(*Live results*, below); the provider-switch piece of stage 3 followed the same day. The rest of
-stages 2–3 is proposed and not authorized. rev 15 (2026-09-18).** §2.3's
+(*Live results*, below); the provider-switch piece of stage 3 followed the same day.
+**Stage 2's `openai-responses` implemented 2026-09-19 (targeting 0.5.3; *What stage 2
+landed*, below) — against the real SDK over a scripted socket, not yet a live endpoint.**
+`gemini-api` and the rest of stage 3 are proposed and not authorized. rev 16 (2026-09-19).** §2.3's
 stage 0a and 0b are on `main`; stage 1 adds the adapter seam under `LLMClient`
 and one second wire, `anthropic-messages`, selected at startup or by a provider
 switch. §12.1 — whether
@@ -159,6 +161,59 @@ hoisted onto a `tool_result` is honoured. The **cache-benefit check** in §10's
 gate was not done either, and needed three arms on one endpoint: stage 0a
 alone, 0b over Chat Completions, and the native wire. Both debts are paid below.
 
+**What stage 2 landed — `openai-responses`** (`llm/_openai_responses.py`,
+`llm/_stream_response.py`, `llm/_openai_completions.py`, `llm/_usage.py`,
+`cli/commands/provider.py`; `tests/support/openai_responses_wire.py`,
+`tests/test_openai_responses_adapter.py`, `tests/test_openai_responses_reasoning.py`,
+`tests/test_tool_id_across_wires.py`; `examples/openai-responses-wire/`). Four
+PRs plus the configuration surface: usage counting moved to one site that reads
+the accumulator (#317), the adapter (#318), encrypted reasoning across requests
+(#319), then `/thinking`, the tool-id rewrite and the docs.
+
+- **Appendix A held, with three additions that came from the SDK and from
+  pi-mono's source rather than from the appendix.** (1) `error` and
+  `response.failed` are *yielded* by the SDK's iterator, not raised, so an
+  adapter that reads only the events it knows returns an empty, clean-looking
+  response; they are raised as `ResponsesStreamError`. (2) A function tool is
+  strict by default, and strict mode rejects a schema that does not require
+  every property — tools go out `strict: false`. (3) An `fc_` item id is
+  **paired** with the `rs_` reasoning item it was produced beside, so it goes
+  back only when that reasoning is in the same turn (`openai-responses-shared.ts`
+  does the same); a switch that purged the reasoning leaves `call_id` alone,
+  which still pairs the output.
+- **Reasoning rides a second carrier, `openai_reasoning_items`**, registered in
+  `WIRE_CARRIER_KEYS` — the one tuple recording and purging both read, so a
+  carrier cannot be persisted without being purged. An item without
+  `encrypted_content` is not kept: with `store: false` the provider has nothing
+  under that id. An endpoint that rejects `include` is asked once without it
+  and then gets neither the field nor the items, on every later request too.
+- **The composite id leaves this wire as its `call_id`.** `call_id|fc_…` is
+  longer than the 40 characters OpenAI's Chat Completions allows, and the id is
+  in history, so a session switched back would 400 forever. The Chat
+  Completions adapter rewrites **only composite ids** in the outbound copy — a
+  request without one is the same list object, so the byte-identical golden
+  holds and a gateway's own long ids are untouched — with a hash, not a
+  counter, where two calls share a `call_id`, so the spelling does not depend
+  on the order the ids appear in (once compaction drops the other call, the
+  survivor reverts to the bare `call_id`; each request is self-consistent, and
+  only the cached prefix moves, once). The Anthropic adapter already
+  rewrote any id outside its pattern.
+- **`/thinking` writes `reasoning.effort`**, leaves a host's other `reasoning`
+  keys alone, and removes a `reasoning_effort` carried in from another wire.
+- **Found while building the example, not planned:** a fresh resolve installs
+  `openai` 3.x, where the lock has 2.24.0. The whole suite passes on 3.16.2 but
+  for one Chat Completions expectation (a mid-stream transport error arrives
+  wrapped as `APIConnectionError`), now written for both. 3.x also **requires**
+  `input_tokens_details.cache_write_tokens`; it is read as the cache-write
+  count on both OpenAI wires, and the fixtures validate on both majors.
+
+**Not observed, only scripted** — the debts a live run has to pay: that a
+non-reasoning model accepts `include`; that `rs_` items and an `fc_`-named
+call are accepted together, reasoning first; the real wording of an `include`
+rejection (three spellings are matched, all conventional); an `error` event
+with a null `code` (treated as permanent); and whether reasoning interleaved
+with calls needs its order kept (today all reasoning leads its turn).
+
 **Live results (2026-09-18, `api.anthropic.com`, `claude-sonnet-5`, through
 `LLMClient` and this adapter, about a dozen small requests).** The four
 assertions above are now observations: (1) the rejection reads `max_tokens:
@@ -293,6 +348,11 @@ Three questions remain, and none of them is answered by re-running the table:
    this repo's `P` ≈ 5.2k, `S` ≈ 4.1k at `H` = 10k, about **19** at `H` = 50k.
    That is a bound to test, not a finding: it ignores the 5-minute expiry and
    any compaction in between, both of which favour the tail.
+
+**rev 16 — what changed:** `openai-responses` is implemented (*What stage 2
+landed*). Appendix A was the translation table it was written from; where the
+implementation differs from the appendix, the status block says so and the
+appendix is left as the record of what was planned.
 
 **rev 15 — what changed:** The adapter adopts the provider's Models API
 (`GET /v1/models/{id}`): `max_tokens` seeds the output-cap latch before any

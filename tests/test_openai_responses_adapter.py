@@ -313,6 +313,16 @@ def test_usage_is_the_whole_input_with_the_cached_part_beside_it():
     assert _totals(llm) == (5100, 40, 4096, 0)
 
 
+def test_a_cache_write_count_is_reported_when_the_api_states_one():
+    """``openai`` 3.x states ``input_tokens_details.cache_write_tokens`` (and
+    requires it); 2.x has no such field and keeps it as an extra. Read through
+    the real SDK either way — and a part *of* the input, so nothing is added."""
+    llm = _llm()
+    attach(llm, Wire(_says(usage_=usage(5100, 40, cached=4096, cache_write=512))))
+    assert llm.chat_stream(HELLO).usage.prompt_tokens == 5100
+    assert _totals(llm) == (5100, 40, 4096, 512)
+
+
 def test_the_non_streaming_entry_is_the_same_stream():
     llm = _llm()
     wire = attach(llm, Wire(_says("summary", usage_=usage(300, 9))))

@@ -153,17 +153,61 @@ def _responses_cli(extra_body=None):
     return cli
 
 
-def test_a_level_is_refused_on_the_responses_wire_rather_than_stored(capsys):
-    """That API spells it ``reasoning.effort`` and 400s ``reasoning_effort`` —
-    on every later request, because the value is stored."""
+def test_a_level_goes_to_reasoning_effort_on_the_responses_wire(capsys):
+    """That API spells it ``reasoning.effort`` and 400s a top-level
+    ``reasoning_effort`` — on every later request, because the value is stored."""
     cli = _responses_cli()
-    handle_thinking_command(cli, "high")
+    handle_thinking_command(cli, "HIGH")
+    assert _eb(cli) == {"reasoning": {"effort": "high"}}
+    assert "reasoning.effort" in capsys.readouterr().out
+
+
+def test_a_level_leaves_the_hosts_other_reasoning_keys_alone():
+    cli = _responses_cli({"reasoning": {"summary": "auto"}, "seed": 7})
+    handle_thinking_command(cli, "low")
+    assert _eb(cli) == {"reasoning": {"summary": "auto", "effort": "low"}, "seed": 7}
+    handle_thinking_command(cli, "off")
+    assert _eb(cli) == {"reasoning": {"summary": "auto"}, "seed": 7}
+
+
+def test_off_removes_a_reasoning_object_it_emptied():
+    cli = _responses_cli({"reasoning": {"effort": "medium"}})
+    handle_thinking_command(cli, "off")
     assert _eb(cli) == {}
-    assert "openai-responses" in capsys.readouterr().out
 
 
 def test_a_value_carried_onto_the_responses_wire_can_still_be_cleared():
     """A ``/provider`` switch keeps ``extra_body``, so the stale key can arrive."""
     cli = _responses_cli({"reasoning_effort": "high"})
+    handle_thinking_command(cli, "off")
+    assert _eb(cli) == {}
+
+
+def test_a_new_level_replaces_the_carried_key_rather_than_joining_it(capsys):
+    cli = _responses_cli({"reasoning_effort": "high"})
+    handle_thinking_command(cli, "")
+    assert "rejects" in capsys.readouterr().out  # shown, so it can be understood
+    assert _eb(cli) == {"reasoning_effort": "high"}  # and showing changes nothing
+    handle_thinking_command(cli, "low")
+    assert _eb(cli) == {"reasoning": {"effort": "low"}}
+
+
+def test_the_responses_wire_refuses_what_the_other_one_refuses(capsys):
+    cli = _responses_cli()
+    handle_thinking_command(cli, "high please")
+    assert _eb(cli) == {}
+    assert "Invalid" in capsys.readouterr().out
+    handle_thinking_command(cli, "xhigh")  # the model's scale, not ours
+    assert _eb(cli) == {"reasoning": {"effort": "xhigh"}}
+
+
+def test_a_reasoning_value_that_is_not_an_object_is_replaced(capsys):
+    cli = _responses_cli({"reasoning": "high"})
+    handle_thinking_command(cli, "")  # must not raise
+    assert "rejects" in capsys.readouterr().out  # every request is a 400: say so
+    assert _eb(cli) == {"reasoning": "high"}
+    handle_thinking_command(cli, "high")
+    assert _eb(cli) == {"reasoning": {"effort": "high"}}
+    cli = _responses_cli({"reasoning": "high"})
     handle_thinking_command(cli, "off")
     assert _eb(cli) == {}
