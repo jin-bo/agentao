@@ -5,13 +5,15 @@
 command, the `ext/goal` extension crate, the protocol/state model, and the steering
 templates (purely descriptive; no recommendation). **§§10–11 — Agentao candidate
 design**: an exploratory relevance note (§10) plus a candidate design split with a
-drafted `/goal` surface (§11), both **explicitly marked NOT an approved plan / not
-implemented**. The teardown stands on its own; within the candidate design, **§11's
-concrete claims are grep-verified against `agentao/`** while **§10 stays exploratory
-and unverified** — and the whole candidate still needs maintainer sign-off before it
-becomes a proposal.
-(If §11 ever graduates to an approved plan, split it into its own implementation-plan
-doc — keeping it here while it is still a candidate avoids fragmenting the EN/ZH pair.)
+drafted `/goal` surface (§11). **§11 was approved and shipped in 0.4.13**
+(2026-06-24, the day after this document was drafted) — see the restatus banner on
+§11. §10 stays exploratory and unverified, and was never acted on as such.
+The teardown stands on its own; within the candidate design, **§11's
+concrete claims were grep-verified against `agentao/`** at drafting time.
+(§11 was never split into its own implementation-plan doc as the draft proposed —
+it graduated straight to implementation, so this document is also the `/goal`
+design record. `agentao/cli/commands/goal.py:6` cites §11.1 back as the surface
+spec, which is why this status line must not say "not implemented".)
 **Audience:** Agentao maintainers studying long-running-task / autonomous-continuation
 designs; anyone reverse-reviewing Codex.
 **Companion:** `codex-goal-mechanism-review.zh.md`.
@@ -296,11 +298,28 @@ judgment to the maintainer.
 
 ---
 
-## 11. Design option under evaluation — three-layer split (NOT an approved plan)
+## 11. Three-layer split — **approved and shipped in 0.4.13**
 
-**Status:** Candidate shape only, recorded for evaluation. Grep-verified against
-`main` (2026-06-23). Whether to build any of this is the maintainer's call. This is
-*not* a commitment.
+> **Restatus (2026-09-19).** This section was drafted as a candidate ("NOT an
+> approved plan"). It was approved and **implemented in full, shipping in 0.4.13**
+> on 2026-06-24 — the day after it was drafted — and neither this heading, the two
+> `Status:` blocks below, nor `docs/design/README.md` was updated across the
+> **eighteen releases** from 0.4.14 to 0.5.3. All three layers landed:
+>
+> - **Layer 1** — realized as designed by needing no change; `CHANGELOG.md`
+>   §0.4.13 states the harness stays goal-agnostic.
+> - **Layer 2** — `agentao/cli/commands/goal.py`, `agentao/cli/goal_state.py`
+>   (`.agentao/goal.json`), `agentao/cli/input_loop.py::run_goal_continuation`,
+>   and the injected `update_goal` tool (`agentao/tools/goal.py`).
+> - **Layer 3** — `developer-guide/{en,zh}/part-4/8-orchestration-continuation.md`,
+>   at the exact path this section proposed, in both languages. User guide:
+>   `docs/guides/goal.md`.
+>
+> The text below is preserved as the design record — it is what was built, not a
+> proposal. Read "candidate" / "not a commitment" as historical.
+
+**Status:** ~~Candidate shape only, recorded for evaluation.~~ **Approved and shipped
+in 0.4.13** (2026-06-24). Grep-verified against `main` (2026-06-23) when drafted.
 
 **Decision (2026-06-23, maintainer):** Token budgets are **out of scope for now**;
 goal budgets use **time / turn-count** instead. Consequence: the one harness gap
@@ -392,7 +411,12 @@ addition — out of scope per the decision above, not owed today.) "goal" is a
 
 ### 11.1 Interface surface draft — `/goal` time/turn budget (item 4)
 
-**Status:** Draft for evaluation; not approved/implemented. Scope = the CLI (reference
+**Status:** ~~Draft for evaluation; not approved/implemented.~~ **Shipped in 0.4.13**
+(2026-06-24), essentially as drafted — including the C-block defaults
+(`_DEFAULT_MAX_TURNS = 25`, `_DEFAULT_TIME_BUDGET = "120m"`,
+`agentao/cli/commands/goal.py:35-36`). **`agentao/cli/commands/goal.py:6` cites this
+subsection as the surface spec**, so treat it as the live contract, not a draft.
+Scope = the CLI (reference
 host) command surface + state model + continuation-loop integration. No token budget
 (per the decision above). `/goal` is a CLI slash command, **not** an LLM tool; other
 hosts implement their own surface per the developer-guide.
