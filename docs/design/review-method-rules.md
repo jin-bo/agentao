@@ -2,11 +2,16 @@
 
 **Status:** current · **Date:** 2026-09-06
 
-These thirty-two rules come from forty-two rounds of review over the PowerShell support design.
+Rules 1–32 come from forty-two rounds of review over the PowerShell support design.
 That document set has been retired (`powershell-support-lightweight.md` records the final design;
 the history is in Git), but the rules themselves have nothing to do with that subject — each one
 exists because *not* having it let a defect through, they are ordered by how many times that
 happened, and every one of them holds for any review. So they live here on their own.
+
+**Rule 33 has a different provenance** — a 2026-09-20 audit of every `Status:` line under
+`docs/design/`, not the PowerShell rounds — and it is appended rather than ranked, because one
+case is not a frequency. The file's own count is now thirty-three; rule 8 applies to that
+sentence.
 
 The examples still cite the rule identifiers of the time (`IMG-01`, `LAUNCH-08`, …) and the file
 names of the time. **Those identifiers no longer exist.** They are coordinates for the cases
@@ -416,3 +421,24 @@ here, showing what concrete defect each rule was bought with.
     branch has to be tested, written into the configuration reference, and read again at the next
     change. The loader's key set was already closed, so deleting the keys yields a named error by
     itself; that is all "not silently ignored" ever needed to cost.
+
+33. **A deferral written in one document is overturned by another document's implementation, and
+    nothing connects the two — so when a PR implements a capability, grep for every *other* place
+    that still says it is unbuilt.** The 2026-09-20 status audit found `agentao/cli/commands/goal.py:6`
+    citing `codex-goal-mechanism-review.md` §11.1 as the surface spec, while that document said in
+    three places, and in both language twins, that §11 was "NOT an approved plan / not implemented".
+    §11 had shipped **in full** in 0.4.13 — the day after the document was drafted — and the status
+    survived the eighteen releases from 0.4.14 to 0.5.3. The code's own pointer landed a reader on a
+    document telling them the feature does not exist. **The same sentence had also reached source:**
+    `acp/session_set_mode.py`'s module docstring deferred `current_mode_update` forty lines above the
+    function that emits it, because the thing that shipped it (ACP G4 PR-1) belonged to a *different*
+    design, and `deepchat-acp-patch-revision.md` — the doc the docstring pointed at — was not the doc
+    being edited. This is the one drift class that escapes into code, which is why it is worth a grep
+    that no review of either document would perform: neither one is wrong about itself.
+    **Two corollaries.** *Partial restatus is worse than none:* `acp-server-conformance-review.md`
+    carried a "RESOLVED in 0.4.16" banner on G3 while G4 and G5 — shipped in 0.4.12 and 0.4.14 — had
+    none, so the two closed gaps read as *deliberately* still-open. If you banner one, sweep the rest.
+    *And the audit's own arithmetic is an assertion too* (rule 8): the first draft of this fix said
+    "fifteen months" of drift, taken from a subagent's figure, when it was under three; the correction
+    then said "twelve releases" when it was eighteen. Both went **into the remedy** before anyone
+    counted.
