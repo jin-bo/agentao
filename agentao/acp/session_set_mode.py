@@ -12,11 +12,14 @@ preset. This handler therefore:
   - maps to a permission preset **only on an exact match**, calling
     ``permission_engine.set_mode(...)``.
 
-Deferred (their own design — see the patch-revision doc): splitting the
-permission axis from the UI mode axis, and advertising ``availableModes`` /
-``currentModeId`` + the ``current_mode_update`` notification. This PR is the
-minimal field rename + accept-unknown so a DeepChat-style client is not
-rejected.
+``availableModes`` / ``currentModeId`` (on ``session/new``, see
+``session_new.py``) and the ``current_mode_update`` notification
+(:func:`_emit_current_mode_update` below) were deferred when this handler
+landed in 0.4.8 and **shipped in 0.4.12** with ACP G4 PR-1 — see
+``docs/design/acp-g4-plan-modes-commands.md``.
+
+Still deferred (its own design — see ``docs/design/deepchat-acp-patch-revision.md``
+§B2 / Decision #6): splitting the permission axis from the UI mode axis.
 
 Per-session: each session owns its own ``PermissionEngine``, so a preset
 change on session A never affects session B.
