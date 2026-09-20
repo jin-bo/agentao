@@ -1,6 +1,6 @@
 # Lint gate
 
-**Status:** landed. CI job `lint-gate`, config in `pyproject.toml :: [tool.ruff.lint]`.
+**Status:** landed; **shipped in 0.4.19**. CI job `lint-gate`, config in `pyproject.toml :: [tool.ruff.lint]`.
 
 ## What it is
 

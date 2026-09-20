@@ -1,6 +1,6 @@
 # PowerShell support: the lightweight design
 
-**Status:** implemented · **Date:** 2026-09-06
+**Status:** implemented, **shipped in 0.4.22** · **Date:** 2026-09-06
 
 > §1–§4 are the plan as it was written, implemented point by point with no deviation.
 > **§6 records the behaviour that actually landed in the code**, together with the handful of

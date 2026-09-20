@@ -1,6 +1,6 @@
 # MCP tool-list pagination — Design
 
-**Status:** **Implemented 2026-08-03.** Fixed a live silent-truncation defect:
+**Status:** **Implemented 2026-08-03, shipped in 0.4.19.** Fixed a live silent-truncation defect:
 agentao issued exactly one `tools/list` call per MCP server and never read the
 response's pagination cursor, so every tool past the first page was invisible to
 the model with no error and no warning. The borrow source is codex's

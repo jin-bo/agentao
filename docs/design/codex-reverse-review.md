@@ -36,7 +36,7 @@ This section records the code-grounded checks that drive the narrowed scope.
 
 ### P0: `agentao doctor --json`
 
-Status — implemented 2026-05-16.
+Status — implemented 2026-05-16, **shipped in 0.4.7**.
 
 Goal: aggregate existing health signals into one operator-facing command.
 
@@ -67,7 +67,7 @@ Output contract:
 
 ### P0: `agentao config validate`
 
-Status — implemented 2026-05-16.
+Status — implemented 2026-05-16, **shipped in 0.4.7**.
 
 Goal: make configuration problems visible without changing runtime startup
 semantics.

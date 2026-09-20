@@ -465,6 +465,8 @@ read with these corrections:
   `TypeError`. They are restored as accepted-but-ignored no-ops, scheduled for
   removal in 0.5.0 alongside the matching `Agentao.__init__` legacy callbacks
   (same compat policy), not before. Net: no change to `tool_runner.py`.
+  **That removal happened: both went in 0.5.0** (PR #292, `0-5-0-removal-checklist.md`);
+  `ToolRunner.__init__` no longer accepts the four kwargs.
 - **T2.1 — the "safe drop-in" claim held only for `session_cancel`.** On close
   reading, `session_prompt` is **not** behavior-preserving against
   `require_active_session` (it parses the prompt *before* the session lookup, and

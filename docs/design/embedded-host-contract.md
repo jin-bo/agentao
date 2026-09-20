@@ -1,6 +1,10 @@
 # Embedded Harness Contract
 
-**Status:** Design record. Decision captured 2026-04-30. Implementation: 0.3.1 (`agentao.host`).
+**Status:** Design record. Decision captured 2026-04-30. Implementation: **0.3.1**,
+where it shipped as **`agentao.harness`** (`CHANGELOG.md` §0.3.1). The package was
+renamed to **`agentao.host` in 0.4.2**, and the `agentao.harness` alias was removed
+in **0.5.0** — so this line used to pair the right release with a name that did not
+exist in it. Read `agentao.host` for everything from 0.4.2 on.
 **Audience:** Agentao maintainers and host application integrators.
 **Related docs:** `docs/history/implementation/embedded-harness-implementation-plan.md`,
 `docs/history/implementation/embedded-harness-protocol-plan.md`,

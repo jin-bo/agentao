@@ -1,6 +1,6 @@
 # ACP G4 —— Plan、Modes、Commands 的 session/update 设计
 
-**状态：** 设计——**已在 PR-1 实现**（分支 `feat/acp-g4-modes-plan`，2026-06-18）。是
+**状态：** 设计——**已在 PR-1 实现，随 0.4.12 发布**（分支 `feat/acp-g4-modes-plan`，2026-06-18）。是
 `acp-server-conformance-review.md` 中 **G4** 的落地设计——在维护者把目标 client 类别定为
 **chat/automation**（故 G1 fs/terminal 为非目标、G4/G3/G2-diff 为 now-work）之后，G4 是最靠前的
 chat 相关 ACP 差距。`modes` 部分按设计落地（且 `--resume` 路径同样播报）。`plan` 部分在**实现阶段

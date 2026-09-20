@@ -372,6 +372,8 @@ Tier-1 与 Tier-2 全部一次性落地（Tier-3 仅记录、未做）。默认�
   结束其向后兼容窗口：外部 host/测试若仍直接用这些参数构造 `ToolRunner` 会触发
   `TypeError`。已恢复为“接受但忽略”的 no-op，并按与 `Agentao.__init__` 同类遗留回调
   相同的兼容政策排期 0.5.0 移除，而非现在。净效果：`tool_runner.py` 无改动。
+  **该移除已经发生：两者都在 0.5.0 删除**（PR #292，见 `0-5-0-removal-checklist.md`）；
+  `ToolRunner.__init__` 已不再接受这四个 kwargs。
 - **T2.1 — “safe drop-in”仅对 `session_cancel` 成立。** 细读发现 `session_prompt`
   对 `require_active_session` **并非**行为保持（它在 session 查找**之前**解析 prompt，
   且把 agent 缺失的 session 映射为 `INTERNAL_ERROR` 而非 `INVALID_REQUEST`），

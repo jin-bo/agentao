@@ -1,6 +1,6 @@
 # Interactive CLI host injection: `agent_factory`
 
-**Status:** **Implemented** 2026-07-19 for [issue #132](https://github.com/jin-bo/agentao/issues/132) — the seam (§3), the post-condition checks (§3.1), and the transport guard (§3.2, resolving Q3) all landed. Still open: Q1 (type-alias export — currently module-internal), Q2 (parameter naming — currently `agent_factory`), Q4 (`main()` error rendering — unchanged), Q5 (`agentao run` — out of scope). The decision proposed here is a keyword-only `agent_factory` seam on `AgentaoCLI` and `cli.main()`; it does not extend plugins or introduce a global tool registry.
+**Status:** **Implemented** 2026-07-19, **shipped in 0.4.16**, for [issue #132](https://github.com/jin-bo/agentao/issues/132) — the seam (§3), the post-condition checks (§3.1), and the transport guard (§3.2, resolving Q3) all landed. Still open: Q1 (type-alias export — currently module-internal), Q2 (parameter naming — currently `agent_factory`), Q4 (`main()` error rendering — unchanged), Q5 (`agentao run` — out of scope). The decision proposed here is a keyword-only `agent_factory` seam on `AgentaoCLI` and `cli.main()`; it does not extend plugins or introduce a global tool registry.
 **Audience:** maintainers and Python hosts that reuse Agentao's interactive CLI while supplying a host-configured `Agentao` runtime.
 **Companions:**
 - `docs/design/cli-host-agent-factory.zh.md` — Chinese version

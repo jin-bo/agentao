@@ -1,6 +1,13 @@
 # RunSpec Parameters & Instructions: Closing the Recipe Gap
 
-**Status:** Shipped 2026-05-25. Implementation notes follow at the bottom of this doc.
+**Status:** Shipped 2026-05-25 — **in 0.4.8**, recovered from git (`9698f6f`,
+`git describe --contains` → `v0.4.8~18`), **not from `CHANGELOG.md`: this feature
+has no changelog entry at all.** That is a hole in the release record, not a
+missing status line, and it is recorded here rather than back-filled — a changelog
+is what a release said at the time, and editing a shipped version's entry
+retroactively makes every other entry less trustworthy. Anyone auditing "what
+shipped in 0.4.8" from the changelog alone will not find this. Implementation notes
+follow at the bottom of this doc.
 **Audience:** agentao maintainers considering `agentao run` ergonomics and the
 goose-recipes comparison.
 **Companion:** `run-spec-parameters.zh.md`.
