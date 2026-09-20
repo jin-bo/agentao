@@ -1,6 +1,6 @@
 # Permission Hardening Plan
 
-**Status:** Implementation plan, rev 3. Drafted 2026-05-03 across four review rounds. **PR 1 (P0 correctness), PR 2 (P1 optional hardline), and PRs 3–5 (P2/P3 convenience + sensitive-write preset) all landed 2026-05-04.** Plan is closed; future hardening work tracked separately. See §9 for what shipped where; §10 carries open follow-ups (notably the `bashlex`-based supersedence of PR 5's regex tier).
+**Status:** Implementation plan, rev 3. Drafted 2026-05-03 across four review rounds. **PR 1 (P0 correctness), PR 2 (P1 optional hardline), and PRs 3–5 (P2/P3 convenience + sensitive-write preset) all landed 2026-05-04 and **shipped in 0.4.3**.** Plan is closed; future hardening work tracked separately. See §9 for what shipped where; §10 carries open follow-ups (notably the `bashlex`-based supersedence of PR 5's regex tier).
 **Audience:** Agentao maintainers picking up the work; reviewers of subsequent PRs.
 **Related docs:**
 - `docs/design/embedded-host-contract.md` — `PermissionDecisionEvent` lives here

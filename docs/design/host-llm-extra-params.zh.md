@@ -1,6 +1,6 @@
 # Host LLM 请求直通：`extra_body`（v1）
 
-**状态：** **已实现（v1）。** 由 goose 2026-06-13 pull 的反向评审发现（发现项 "B"）：LLM 请求 kwargs 是一个封闭集，host 够不到 `reasoning_effort` / `top_p` / `seed` / `response_format` 或任何 provider 专有字段。落地于 `agentao/llm/client.py`（字段 + `_build_request_kwargs` + overlap 告警）、`agentao/llm/_logging.py`（脱敏日志）、`agentao/agent.py`（构造接线 + 守卫 + `_llm_config` 快照）、`agentao/agents/tools/_wrapper.py`（子 agent 继承，§4.2）、`agentao/embedding/factory.py`（`LLM_EXTRA_BODY` 环境变量）、`docs/reference/configuration.md` 及 `tests/test_llm_client_extra_body.py`。
+**状态：** **已实现（v1），随 0.4.10 发布。** 由 goose 2026-06-13 pull 的反向评审发现（发现项 "B"）：LLM 请求 kwargs 是一个封闭集，host 够不到 `reasoning_effort` / `top_p` / `seed` / `response_format` 或任何 provider 专有字段。落地于 `agentao/llm/client.py`（字段 + `_build_request_kwargs` + overlap 告警）、`agentao/llm/_logging.py`（脱敏日志）、`agentao/agent.py`（构造接线 + 守卫 + `_llm_config` 快照）、`agentao/agents/tools/_wrapper.py`（子 agent 继承，§4.2）、`agentao/embedding/factory.py`（`LLM_EXTRA_BODY` 环境变量）、`docs/reference/configuration.md` 及 `tests/test_llm_client_extra_body.py`。
 **机制说明：** 早期草案曾提议一个"顶层合并"的 `extra_params` 字典。一次反向评审（对 `openai 2.24.0` 实测）发现 `.create()` **没有 `**kwargs`**——未知顶层键会抛 `TypeError`，而 SDK 传任意 body 字段的官方逃生舱是 **`extra_body`**。故 v1 改为原样转发 `extra_body`，而非把键合进顶层。完整理由见 §2。
 **读者：** 构建 host LLM 配置面的 agentao 维护者；实现 PR 的评审者。
 **配套文档：**

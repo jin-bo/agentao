@@ -1,6 +1,6 @@
 # 运行时工具注入：`add_tool` / `remove_tool`（推迟设计）
 
-**状态：** **v1 已落地** —— 按 §6 实现了 `Agentao.add_tool` / `remove_tool` + `ToolRegistry.unregister`。跟踪于 [issue #65](https://github.com/jin-bo/agentao/issues/65)。本文档保留为设计记录;§8 的 demand-gate 说明它在此前为何推迟。
+**状态：** **v1 已落地，随 0.4.9 发布** —— 按 §6 实现了 `Agentao.add_tool` / `remove_tool` + `ToolRegistry.unregister`。跟踪于 [issue #65](https://github.com/jin-bo/agentao/issues/65)。本文档保留为设计记录;§8 的 demand-gate 说明它在此前为何推迟。
 **读者：** 在构造期工具注入(PR #64)之上,考虑给 host 一个运行时(构造后)增/删工具入口的 agentao 维护者。
 **配套:**
 - `docs/design/runtime-tool-injection.md` — 英文版

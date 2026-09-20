@@ -1,6 +1,6 @@
 # ACP G4 — Plan, Modes & Commands session/update Design
 
-**Status:** Design — **IMPLEMENTED in PR-1** (branch `feat/acp-g4-modes-plan`,
+**Status:** Design — **IMPLEMENTED in PR-1, shipped in 0.4.12** (branch `feat/acp-g4-modes-plan`,
 2026-06-18). Build design for **G4** from `acp-server-conformance-review.md` — the
 top chat-relevant ACP gap after the maintainer set the target-client class to
 **chat/automation** (so G1 fs/terminal is a non-goal and G4/G3/G2-diff are the

@@ -1,6 +1,6 @@
 # 交互式 CLI 宿主注入：`agent_factory`
 
-**状态：** **已实现。** 2026-07-19 为 [issue #132](https://github.com/jin-bo/agentao/issues/132) 落地——接缝（§3）、后置条件校验（§3.1）与 transport guard（§3.2，即 Q3 的结论）均已实现。仍开放：Q1（type alias 是否导出——当前保持模块内部）、Q2（参数命名——当前 `agent_factory`）、Q4（`main()` 错误展示——未改）、Q5（`agentao run`——范围外）。本文提议在 `AgentaoCLI` 与 `cli.main()` 上增加 keyword-only `agent_factory` 接缝；不扩展 plugin，也不引入全局工具注册表。
+**状态：** **已实现，随 0.4.16 发布。** 2026-07-19 为 [issue #132](https://github.com/jin-bo/agentao/issues/132) 落地——接缝（§3）、后置条件校验（§3.1）与 transport guard（§3.2，即 Q3 的结论）均已实现。仍开放：Q1（type alias 是否导出——当前保持模块内部）、Q2（参数命名——当前 `agent_factory`）、Q4（`main()` 错误展示——未改）、Q5（`agentao run`——范围外）。本文提议在 `AgentaoCLI` 与 `cli.main()` 上增加 keyword-only `agent_factory` 接缝；不扩展 plugin，也不引入全局工具注册表。
 **读者：** agentao 维护者，以及复用 agentao 交互式 CLI、同时需要自行配置 `Agentao` runtime 的 Python 宿主。
 **同伴文档：**
 - `docs/design/cli-host-agent-factory.md` — English version

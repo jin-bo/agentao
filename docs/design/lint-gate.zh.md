@@ -1,6 +1,6 @@
 # Lint 门禁
 
-**状态：** 已落地。CI job 名为 `lint-gate`，配置在 `pyproject.toml :: [tool.ruff.lint]`。
+**状态：** 已落地，**随 0.4.19 发布**。CI job 名为 `lint-gate`，配置在 `pyproject.toml :: [tool.ruff.lint]`。
 
 英文对照件：[lint-gate.md](lint-gate.md)。
 

@@ -3,8 +3,11 @@
 **Status:** Review record. Drafted 2026-07-23 from a June-grade four-dimension
 audit of the `agentao/acp_client/` subpackage — the ACP *client* (Agentao talking
 **out** to project-local ACP servers it spawns as child processes over stdio).
-**This is an evidence-backed findings list + prioritized proposal, not an approved
-plan.** The subpackage was **not in scope** of the 2026-06-19
+~~**This is an evidence-backed findings list + prioritized proposal, not an approved
+plan.**~~ **It was approved and implemented: AC1–AC8 landed 2026-07-23/24 (PR #137 +
+#138, `a6b1b9e`) and shipped in 0.4.16** — AC8 partial, AC4 re-scoped; see
+*Implementation status* below, which is the authoritative account and has said so
+since the day after this header was written. The subpackage was **not in scope** of the 2026-06-19
 `optimization-opportunities-review.md` (that pass covered the runtime, packaging,
 CLI, and the ACP *server*); this closes that gap.
 **Audience:** Agentao maintainers.

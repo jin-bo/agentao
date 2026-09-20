@@ -1,6 +1,6 @@
 # Runtime tool injection: `add_tool` / `remove_tool` (deferred design)
 
-**Status:** **v1 landed** — `Agentao.add_tool` / `remove_tool` + `ToolRegistry.unregister` implemented per §6. Tracked in [issue #65](https://github.com/jin-bo/agentao/issues/65). This document is kept as the design record; the demand-gate rationale (§8) explains why it was deferred until then.
+**Status:** **v1 landed, shipped in 0.4.9** — `Agentao.add_tool` / `remove_tool` + `ToolRegistry.unregister` implemented per §6. Tracked in [issue #65](https://github.com/jin-bo/agentao/issues/65). This document is kept as the design record; the demand-gate rationale (§8) explains why it was deferred until then.
 **Audience:** agentao maintainers considering, on top of construction-time tool injection (PR #64), a runtime (post-construction) entry point for hosts to add / remove tools.
 **Companions:**
 - `docs/design/runtime-tool-injection.zh.md` — Chinese version
