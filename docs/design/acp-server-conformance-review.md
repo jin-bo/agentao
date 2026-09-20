@@ -6,6 +6,12 @@
 proposal, not an approved plan.** It records what the ACP server implements,
 where it diverges from the standard, and — *for the maintainer's judgment* —
 what to build, document, or deliberately decline.
+**Three of its six gaps have since closed, and each carries a banner at its own
+section** (restatused 2026-09-19): **G3** → 0.4.16, **G4**'s modes and plan halves
+→ 0.4.12 (the commands third was deliberately declined), **G5**'s MCP transport
+bullet → 0.4.14. **G1** (fs/terminal proxy) is a documented non-goal; **G2**
+(`diff` / `locations`) and **G6** (upstream schema conformance test) are still
+open as written. Read a gap's banner before quoting it.
 **Audience:** Agentao maintainers; anyone embedding agentao behind an ACP
 client (Zed, DeepChat, …).
 **Companion:** `acp-server-conformance-review.zh.md`.
@@ -260,24 +266,47 @@ Two layers, not one:
 
 ### G4 — mode / plan / commands not surfaced as ACP updates
 
+> **RESOLVED in 0.4.12 — modes and plan only; commands stand.** ACP G4 PR-1
+> (`dfe7d78`, #101) landed both: `session/new` advertises
+> `availableModes` / `currentModeId` (`session_new.py:85`), `current_mode_update`
+> is emitted (`session_set_mode.py::_emit_current_mode_update`), and the plan
+> `sessionUpdate` is built at `_transport_helpers.py:93`. **The commands third
+> was decided against that round and is still accurate** — see
+> `acp-g4-plan-modes-commands.md` § Decision; open a fresh design if a client asks.
+> The UI-mode-vs-permission-axis split is also still deferred
+> (`deepchat-acp-patch-revision.md` §B2 / Decision #6). The analysis below is kept
+> as the record of why.
+
 - **Modes**: `session/set_mode` works but `session/new` does not advertise
   `availableModes` / `currentModeId`, and no `current_mode_update` notification
-  is emitted. `session_set_mode.py:15-19` explicitly defers this and the
-  UI-mode-vs-permission-axis split.
+  is emitted. `session_set_mode.py`'s module docstring explicitly defers this and
+  the UI-mode-vs-permission-axis split. *(Only the axis split is still deferred;
+  that docstring said the rest was too until it was corrected in 2026-09.)*
 - **Plan**: ACP has a `plan` `sessionUpdate` variant (entries with status that
   clients render as a task checklist). Agentao has plan mode **and** a todo tool,
   but neither is mapped to `plan` — they stay internal. Sub-agents are likewise
   flattened to `agent_thought_chunk` text markers rather than structured
-  `tool_call` timelines (`transport.py:30-35,279-301`).
+  `tool_call` timelines (`transport.py:30-35,279-301`). *(The plan mapping landed;
+  the sub-agent flattening is unchanged.)*
 - **Commands**: no `available_commands_update`. Agentao's rich slash-command set
   is CLI-only and never advertised to ACP clients.
 
 ### G5 — Thin capability surface *(mostly demand-gated)*
 
+> **The MCP transport bullet RESOLVED in 0.4.14; the rest stands.**
+> `streamable_http_client` landed with `mcp-streamable-http.md`, and
+> `initialize.py:77` now advertises `"http": True` — a bare `url` in fact
+> *defaults* to Streamable HTTP now, with SSE opt-in via `"type": "sse"`
+> (a breaking change). **Still accurate as written:** `promptCapabilities.audio`
+> and `embeddedContext` are both still `False` (`initialize.py:64-66`), and
+> `resource_link` is still not dereferenced. The analysis below is kept as the
+> record of why.
+
 From `initialize.py`:
-- `mcpCapabilities.http:false`, `sse:true` (`:75-78`) — only `sse_client` is
+- ~~`mcpCapabilities.http:false`~~, `sse:true` (`:75-78`) — only `sse_client` is
   imported; streamable-HTTP MCP servers passed by the client cannot be connected.
   (Consistent with the SSE-only posture in `project_mcp_connect_preflight`.)
+  **Closed in 0.4.14 — `http` is now `True`.**
 - `promptCapabilities.audio:false`, `embeddedContext:false` (`:63-67`) — no audio;
   embedded `resource` blocks are rejected (`session_prompt.py:199-203`).
 - `resource_link` is preserved as a text label but **not dereferenced**
@@ -324,12 +353,16 @@ integration), so:
 The items below are the actual now-work — all client-agnostic or chat-relevant,
 none editor-specific.
 
-**P1 — Surface plan + modes + commands (G4).** *(top chat-relevant item)* Map
-plan mode / the todo tool to ACP `plan` updates; advertise `availableModes` and
-emit `current_mode_update`; advertise slash commands via
+**P1 — Surface plan + modes + commands (G4).** *(top chat-relevant item)*
+**✅ Plan and modes done in 0.4.12; commands declined; the axis split still open.**
+~~Map plan mode / the todo tool to ACP `plan` updates; advertise `availableModes` and
+emit `current_mode_update`;~~ advertise slash commands via
 `available_commands_update`; split the UI-mode axis from the permission axis
 (already noted as deferred design). These are exactly what a chat client renders,
 and DeepChat's `set_mode`/`set_model` work already signals the demand direction.
+— *ACP G4 PR-1 (`dfe7d78`, #101) took the first two. The commands third was*
+***deliberately declined*** *that round (`acp-g4-plan-modes-commands.md` § Decision),
+so it is not an outstanding item — open a fresh design if a client asks for it.*
 
 **P1 — Structured `stopReason` (G3).** Two steps: (1) add `max_tokens` to the
 local `StopReason` enum (`schema.py:270`) and regenerate the schema snapshot; (2)
@@ -344,9 +377,11 @@ editors. Widen the frozen contract first (`agentao/acp/schema.py`: add the
 v1's 9 values), regenerate `docs/schema/host.acp.v1.json`, update the snapshot
 tests, then emit. The **`locations` half is editor-only — defer it with G1.**
 
-**P2 — Streamable-HTTP MCP transport (G5).** Add `streamable_http_client` so
-`mcpCapabilities.http:true`. Demand-gated: only when a target client actually
-passes HTTP MCP servers in `session/new`.
+**~~P2 — Streamable-HTTP MCP transport (G5).~~ ✅ Done in 0.4.14.** Add
+`streamable_http_client` so `mcpCapabilities.http:true`. Demand-gated: only when a
+target client actually passes HTTP MCP servers in `session/new`. — *Landed with*
+`mcp-streamable-http.md`*, and went further than this recommendation: a bare* `url`
+*now defaults to Streamable HTTP, with SSE opt-in via* `"type": "sse"`.
 
 **P3 — Upstream conformance test (G6).** Wire `schema_export.py` to the official
 ACP schema (or run agentao under the reference ACP client) as a CI check so spec
@@ -381,13 +416,13 @@ v1). All v1 method membership verified against the official schema on 2026-06-18
 | `session/load` | c→a | I | history replay |
 | `session/prompt` | c→a | I | text/resource_link/image; `stopReason` thin + missing `max_tokens` (G3) |
 | `session/cancel` | c→a | I | notification; request-tolerant |
-| `session/set_mode` | c→a | I | no `availableModes`/`current_mode_update` (G4) |
+| `session/set_mode` | c→a | I | ~~no `availableModes`/`current_mode_update`~~ both landed in 0.4.12 (G4) |
 | `session/set_config_option` | c→a | I | host `provider_resolver` |
 | `session/list`/`delete`/`close`/`resume` | c→a | — | **v1 methods, unimplemented**; demand-gated (G5) |
 | `session/set_model` | c→a | ext | **Agentao extension, not ACP v1** |
 | `session/list_models` | c→a | ext | **Agentao extension, not ACP v1** |
 | `_agentao.cn/set_model` | c→a | ext | free-form model setter |
-| `session/update` | a→c | I | rich mapping; no `plan`/`diff`/`locations` (G2/G4) |
+| `session/update` | a→c | I | rich mapping; `plan` landed in 0.4.12; still no `diff`/`locations` (G2) |
 | `session/request_permission` | a→c | I | blocking, concurrency-safe |
 | `fs/read_text_file` | a→c | — | **G1** |
 | `fs/write_text_file` | a→c | — | **G1** |
