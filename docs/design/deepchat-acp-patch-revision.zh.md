@@ -1,7 +1,14 @@
 # DeepChat ACP 集成 Patch —— 修订方案
 
-**状态:** 设计记录。起草于 2026-05-29。实现进行中 —— PR-1/PR-2/PR-3
-已落地(见 PR 排序);PR-4 起尚未开始。
+**状态:** 设计记录。起草于 2026-05-29。**已随 0.4.8 发布**(2026-05-30)—— PR-1/PR-2/PR-3
+与核心 ACP 改造 PR-4/PR-5/PR-6(B1/B2/B3)全部落地(#53–#58,见 PR 排序)。
+**仅剩 PR-7 开放**(退休遗留选模型方法),且其闸门在 DeepChat fork 迁移到 `configOptions`,
+不在 agentao —— 注意 **0.5.0 这个破坏性移除版已经过去、并未顺手做掉它**,所以现在是这道闸门
+单独拦着两个非标准方法留在裸 `session/` 命名空间里。
+
+> **说明(2026-09-19):** 本文中文版此前一直写着「PR-4 起尚未开始」,处置表 B1/B2/B3 仍是 🔧,
+> PR 排序里 PR-4/5/6 也没有完成标记 —— 因为 `#60`(标记三者完成)只改了英文版、没动中文版。
+> 本次按英文版与代码校齐。
 **读者:** Agentao 维护者;DeepChat/TensorChat 集成 fork 的负责人。
 **相关文档:** `docs/design/embedded-host-contract.md`,
 `docs/design/embedding-vs-acp.md`(若存在),
@@ -107,9 +114,9 @@ host 可注入的 `provider_resolver` 取而代之。
 | **A1 —— 多模态图片输入**(`agent.py`、`runtime/turn.py`、`runtime/chat_loop/_runner.py`、`llm/client.py` 日志、`cli/display.py`、`tests/test_logging.py`) | ✅ | 提成独立 PR。图片数据走标准 ACP content block,本就与 DeepChat 解耦。日志改动(摘要多模态而非 dump base64)随之上游。 |
 | **A2 —— 结构化 `ask_user`**(`tools/ask_user.py`、`tools/base.py`、`cli/app.py`) | ✅ | 上游(决议 #1),但回调契约必须**向后兼容**:`ask_user_callback` 是 deprecated 1 参 `Callable[[str], str]`(`agent.py:52`),裸加 `options`/`header`/`multiple` 会让传 `lambda q: ...` 的 embedded host `TypeError`。保留 1 参形式可用(变长 / 新增可选 structured 回调),形状与 host 无关(非 DeepChat 选项卡)。补单测。 |
 | **A3 —— `$HOME` 路径健壮性**(`paths.py` + `memory/storage.py`、`skills/manager.py`、`llm/client.py` fallback、`tests/test_memory_store.py`) | ✅ | 小 PR。确认 `$HOME` 未设时的回退。 |
-| **B1 —— secret-wire 修复(PR-4,核心)**(`acp/session_set_model.py`、`models.py`、`server.py`、`transport.py`、`initialize.py`、`schema.py`、`session_new.py`、`test_acp_set_model.py`) | 🔧 | **丢弃** `apiKey`/`baseUrl`/`modelId`/`_meta`。新增 `session/set_config_option`(仅 `configId="model"`;单 `category:"model"` 选项、`provider/model` value)+ 注入式 `provider_resolver`(server 端 secret;**handler 白名单 + `extra="forbid"` 拒 `apiKey`/`baseUrl`/`_meta`**)。**新增 `_agentao.cn/set_model`**(`{sessionId, model}`、free-form、本就无 secret;共用 core 代码路径 —— 决议 #4),并**保留既有 `session/set_model` 原样**作为一个版本的兼容别名 —— 其现有形状 `{sessionId, model?, contextLength?, maxTokens?}` 本就 `extra="forbid"`、无 secret;PR-4 只是**不采纳 patch 给它加的 `modelId`/`apiKey`/`baseUrl`/`_meta`**(CHANGELOG 标弃用;与 `list_models` 一起在 PR-7 退休)。默认 catalog = **当前 env** 那一条 `provider/model`(model 取自实时 `agent.llm.model`);更丰富 catalog 由 host 注入。本 PR **`session/list_models` 保留为兼容端点**。见「核心重设计」。 |
-| **B2 —— `session/set_mode` 字段(PR-5,独立)**(`acp/session_set_mode.py`、`schema.py`、`test_acp_set_mode.py`) | 🔧 | 最小:`mode` → **`modeId`** 且**接受未知值**(始终持久化;命中 preset 才映射)——让 DeepChat 的 `code`/`ask` 不被拒。**推迟**(决议 #6 —— 解耦是大重构):权限轴拆分 *以及* `availableModes`/`currentModeId` + `current_mode_update`。不进 model/provider PR。 |
-| **B3 —— `initialize` 的 `extensions` 数组 → `_meta`(PR-6,低优先)**(`acp/initialize.py`、`acp/schema.py`) | 🔧 | **决议 #5:挪到 `_meta`**(合规)。agentao 自己的 client 不读 `extensions`;只影响 schema 快照 + `test_acp_schema.py`。独立小 PR;**不**捆进 secret-wire 修复;排最后。bump 快照(`docs/schema/host.acp.v1.json`)。 |
+| **B1 —— secret-wire 修复(PR-4,核心)**(`acp/session_set_model.py`、`models.py`、`server.py`、`transport.py`、`initialize.py`、`schema.py`、`session_new.py`、`test_acp_set_model.py`) | ✅ 已完成(`#56`) | **丢弃** `apiKey`/`baseUrl`/`modelId`/`_meta`。新增 `session/set_config_option`(仅 `configId="model"`;单 `category:"model"` 选项、`provider/model` value)+ 注入式 `provider_resolver`(server 端 secret;**handler 白名单 + `extra="forbid"` 拒 `apiKey`/`baseUrl`/`_meta`**)。**新增 `_agentao.cn/set_model`**(`{sessionId, model}`、free-form、本就无 secret;共用 core 代码路径 —— 决议 #4),并**保留既有 `session/set_model` 原样**作为一个版本的兼容别名 —— 其现有形状 `{sessionId, model?, contextLength?, maxTokens?}` 本就 `extra="forbid"`、无 secret;PR-4 只是**不采纳 patch 给它加的 `modelId`/`apiKey`/`baseUrl`/`_meta`**(CHANGELOG 标弃用;与 `list_models` 一起在 PR-7 退休)。默认 catalog = **当前 env** 那一条 `provider/model`(model 取自实时 `agent.llm.model`);更丰富 catalog 由 host 注入。本 PR **`session/list_models` 保留为兼容端点**。见「核心重设计」。 |
+| **B2 —— `session/set_mode` 字段(PR-5,独立)**(`acp/session_set_mode.py`、`schema.py`、`test_acp_set_mode.py`) | ✅ 已完成(`#57`) | 最小:`mode` → **`modeId`** 且**接受未知值**(始终持久化;命中 preset 才映射)——让 DeepChat 的 `code`/`ask` 不被拒。**推迟**(决议 #6 —— 解耦是大重构):权限轴拆分 *以及* `availableModes`/`currentModeId` + `current_mode_update`。不进 model/provider PR。**2026-09-19 restatus:`availableModes`/`currentModeId` + `current_mode_update` 已随 0.4.12 发布**,经 ACP G4 PR-1(`dfe7d78`,#101)—— 那是*另一份*设计(`acp-g4-plan-modes-commands.md`),所以本行一直没被更新。如今只剩权限轴拆分仍推迟。 |
+| **B3 —— `initialize` 的 `extensions` 数组 → `_meta`(PR-6,低优先)**(`acp/initialize.py`、`acp/schema.py`) | ✅ 已完成(`#58`) | **决议 #5:挪到 `_meta`**(合规)。agentao 自己的 client 不读 `extensions`;只影响 schema 快照 + `test_acp_schema.py`。独立小 PR;**不**捆进 secret-wire 修复;排最后。bump 快照(`docs/schema/host.acp.v1.json`)。 |
 | **B4 —— 退休遗留选模型方法(PR-7,后续)** | 🔧 | 待有 host 消费标准 `configOptions` 路径后:**两个**兼容端点一起删 —— `session/list_models` **与** `session/set_model` 名称别名(规范名 `_agentao.cn/set_model` 保留)。方向是标准对齐;跨版本分批。 |
 | **C1 —— 重复 ACP 传输**(`transport/acp.py`、`transport/acp_server.py`、`transport/__init__.py`、`transport/sdk.py`) | ❌ | 整组丢弃。`agentao/acp/` 已是完整 server 包。 |
 | **C2 —— PyInstaller 打包**(`run.py`、`pyinstaller.spec`、`scripts/build_binaries.sh`、`.github/workflows/build-matrix.yml`、`pyproject.toml`) | 🟠 | 留 DeepChat fork。与 Agentao「嵌入式库」定位(`pip install agentao`)冲突。仅当项目决定发二进制(独立产品决策)时才上游。 |
@@ -204,7 +211,10 @@ def handle_set_config_option(server, params):
 两件事,别混为一谈:
 
 - **凭据解析** —— `provider_resolver(provider_id) -> {"api_key",
-  "base_url"}`。只有两条路:**host 注入**的 resolver;或——未注入时——
+  "base_url"}`。*(2026-09-19 restatus:实际落地时还会返回第三个可选键 `api_format`,
+  0.5.0 起加入 —— 那时 provider 切换开始可以改变 LLM 的线路协议。缺省或 `None` 表示
+  沿用当前线路。见 `session_set_config_option.py:89,117,270-293` 与 `llm-api-adapters.md`。)*
+  只有两条路:**host 注入**的 resolver;或——未注入时——
   **默认**实现,从既有 `factory.py` env(`LLM_PROVIDER` + 其 `{PROVIDER}_*`
   变量)解析**当前那一个** provider。默认实现**只接受** `provider_id ==
   LLM_PROVIDER`;**其它任何 `provider_id` → `INVALID_REQUEST`**。它**不**
@@ -317,7 +327,8 @@ core)落在 **PR-4**,不延后;别名只是原方法原样保留。
    (squash `0b8b4f4`)。新增 `agentao.paths.user_home()` 并把散落的 `Path.home()`
    调用点都路由过去;无 home 时的兜底是私有、按用户隔离、校验属主/权限的临时目录
    (按进程缓存)。已测试(`tests/test_paths.py`)。
-4. **PR-4 —— 最小核心 ACP 选模型修复**(B1)。只做核心 provider/model 面、不越界:
+4. **PR-4 —— 最小核心 ACP 选模型修复**(B1)。✅ **已完成** —— 在 `#56` 合并
+   (squash `c4fee7e`)。只做核心 provider/model 面、不越界:
    - 拒收 patch 给请求加的 `apiKey`/`baseUrl`/`modelId`/`_meta`。
    - 新增 `session/set_config_option` 仅 `configId="model"`(`provider/model`
      value;裸 value 保持当前 provider)。
@@ -334,14 +345,21 @@ core)落在 **PR-4**,不延后;别名只是原方法原样保留。
    - 在 `set_config_option` **响应里**返回当前 `configOptions` —— 本 PR **不**发
      `config_option_update` 通知。
    - **`session/list_models` 保留为兼容端点** —— 不改写、本 PR 不删。
-5. **PR-5 —— `set_mode` 字段修正**(B2,最小)。`mode` → `modeId`,接受未知
-   值(让 `code`/`ask` 不被拒)。权限轴拆分 + `current_mode_update` 各自另开
-   设计。
-6. **PR-6 —— `initialize.extensions` → `_meta`**(B3)。独立小 PR;把数组挪到
-   `_meta` 下,重生 schema 快照。低优先。
+5. **PR-5 —— `set_mode` 字段修正**(B2,最小)。✅ **已完成** —— 在 `#57` 合并
+   (squash `e1f0283`)。`mode` → `modeId`,接受未知值(让 `code`/`ask` 不被拒;
+   持久化在 session 上并原样回显)。权限轴拆分 + `current_mode_update` 各自另开设计
+   —— 其中 **`current_mode_update` 已随 0.4.12 由 ACP G4 PR-1(#101)落地**,
+   仅权限轴拆分仍推迟。
+6. **PR-6 —— `initialize.extensions` → `_meta`**(B3)。✅ **已完成** —— 在 `#58` 合并
+   (squash `005a77e`)。把数组挪到 `_meta["_agentao.cn/extensions"]`(厂商命名空间)下,
+   去掉顶层 `extensions` 字段,重生 schema 快照。低优先。
 7. **PR-7(后续版本)—— 退休遗留选模型方法**,待有 host 消费标准
    `configOptions` 路径:`session/list_models` **与** `session/set_model` 名称
-   别名一起删。规范名 `_agentao.cn/set_model`(PR-4)保留。
+   别名一起删。规范名 `_agentao.cn/set_model`(PR-4)保留。**截至 0.5.3 仍开放** ——
+   两者都还注册着(`acp/__main__.py:104,108`;`acp/protocol.py:52,54`)。
+   **0.5.0 是破坏性移除版,并未做它**(`0-5-0-removal-checklist.md` 从未列入),
+   因为闸门是 fork 的迁移,不是弃用跑道。若这道闸门始终不到,应显式决定是否无论如何都退休,
+   而不是让两个非标准方法无限期留在裸 `session/` 命名空间里。
 8. **清理 —— `docs/dev-notes`**(D2)。若确要删,走独立 housekeeping PR。
    (`acp_client` 测试还原**不**在此 —— 它是上面的前置项。)
 
@@ -411,7 +429,9 @@ fork 要消费的接缝(`provider_resolver` / catalog 注入点、无 secret 的
    `acp_client` 不读 `extensions`(0 引用);只影响 schema 快照
    (`docs/schema/host.acp.v1.json`)+ `test_acp_schema.py`。改动小(加 `_meta`、
    重生快照)。不阻塞;排最后。
-6. **`set_mode` 权限耦合 → 现在不拆。** 解耦是**大重构**:`_PRESET_RULES[mode.value]`
+6. **`set_mode` 权限耦合 → 现在不拆。** *(2026-09-19 restatus:本条推迟中的
+   `availableModes`/`currentModeId` + `current_mode_update` 那一半**已随 0.4.12 发布**,
+   经 ACP G4 PR-1(#101)。只剩下文的轴拆分仍推迟。)* 解耦是**大重构**:`_PRESET_RULES[mode.value]`
    查表(`permissions.py:385`)、规则求值顺序依 mode(`:482,570-577`)、子 agent
    传 `PermissionMode` 枚举(`_wrapper.py:525`)、CLI 按 mode 分支。本轮只做最小
    `mode`→`modeId` + 接受未知值(PR-5)。完整轴拆分单独立项、推迟 —— 非 DeepChat

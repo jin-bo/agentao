@@ -4,6 +4,10 @@
 对照 Agent Client Protocol（ACP，协议版本 1）核对。**这是一份差距分析 + 优先级化的改进
 建议，而非已批准的方案。** 它记录 ACP server 实现了什么、在哪些地方偏离标准，并*供维护者
 判断*——什么该建、什么该写明文档、什么该有意不做。
+**其六个差距中已有三个闭合，各自在所属小节挂了横幅**（2026-09-19 restatus）：**G3** → 0.4.16，
+**G4** 的 modes 与 plan 两半 → 0.4.12（commands 一项为有意否决），**G5** 的 MCP 传输那一条 →
+0.4.14。**G1**（fs/terminal 代理）是有文档的 non-goal；**G2**（`diff` / `locations`）与
+**G6**（上游 schema 一致性测试）按原文仍然开放。引用某个差距前先读它的横幅。
 **读者：** Agentao 维护者；以及任何把 agentao 嵌入到 ACP client（Zed、DeepChat……）
 背后的人。
 **对照件：** `acp-server-conformance-review.md`。
@@ -209,21 +213,38 @@ schema 拒绝的值。因此实现 G2 意味着：更新 `agentao/acp/schema.py`
 
 ### G4 —— mode / plan / commands 未映射为 ACP 更新
 
+> **已在 0.4.12 解决——仅 modes 与 plan 两项；commands 一项仍然成立。** ACP G4 PR-1
+> （`dfe7d78`，#101）把前两项都落地了：`session/new` 现在广告
+> `availableModes` / `currentModeId`（`session_new.py:85`），`current_mode_update` 会发出
+> （`session_set_mode.py::_emit_current_mode_update`），plan 的 `sessionUpdate` 在
+> `_transport_helpers.py:93` 构造。**commands 那一项是当轮有意不做，至今仍准确**——见
+> `acp-g4-plan-modes-commands.md` 的 § Decision；若有 client 提出需求，另开设计。
+> UI-mode 与权限轴的拆分同样仍推迟（`deepchat-acp-patch-revision.md` §B2 / 决议 #6）。
+> 下方分析按原样保留为「当时为何这么判断」的记录。
+
 - **Modes**：`session/set_mode` 可用，但 `session/new` 不广告 `availableModes` /
-  `currentModeId`，也不发 `current_mode_update` notification。`session_set_mode.py:15-19`
-  明确把这点、以及 UI-mode 与权限轴的拆分，列为 deferred。
+  `currentModeId`，也不发 `current_mode_update` notification。`session_set_mode.py`
+  的模块 docstring 明确把这点、以及 UI-mode 与权限轴的拆分，列为 deferred。*（如今只剩轴拆分
+  仍推迟；那段 docstring 直到 2026-09 被更正前，一直把其余部分也写成推迟。）*
 - **Plan**：ACP 有 `plan` 这种 `sessionUpdate`（带状态的条目，client 渲染成任务勾选清单）。
   agentao 既有 plan 模式**又**有 todo 工具，却都没映射到 `plan`——它们停留在内部。子 agent
   同样被拍平成 `agent_thought_chunk` 文本标记，而非结构化 `tool_call` 时间线
-  （`transport.py:30-35,279-301`）。
+  （`transport.py:30-35,279-301`）。*（plan 映射已落地；子 agent 拍平这点未变。）*
 - **Commands**：无 `available_commands_update`。agentao 丰富的斜杠命令是 CLI-only，从不向
   ACP client 广告。
 
 ### G5 —— 能力面较薄 *(多属需求门控)*
 
+> **其中 MCP 传输那一条已在 0.4.14 解决；其余仍然成立。** `streamable_http_client` 随
+> `mcp-streamable-http.md` 落地，`initialize.py:77` 现在广告 `"http": True`——而且走得更远：
+> 裸 `url` 现在**默认**就是 Streamable HTTP，SSE 改为 `"type": "sse"` 显式选择（破坏性变更）。
+> **按原文仍准确：** `promptCapabilities.audio` 与 `embeddedContext` 依然都是 `False`
+> （`initialize.py:64-66`），`resource_link` 依然不解引用。下方分析按原样保留。
+
 来自 `initialize.py`：
-- `mcpCapabilities.http:false`、`sse:true`（`:75-78`）—— 只引了 `sse_client`；client 传入的
+- ~~`mcpCapabilities.http:false`~~、`sse:true`（`:75-78`）—— 只引了 `sse_client`；client 传入的
   streamable-HTTP MCP server 连不上。（与 `project_mcp_connect_preflight` 的 SSE-only 立场一致。）
+  **已于 0.4.14 关闭——`http` 现为 `True`。**
 - `promptCapabilities.audio:false`、`embeddedContext:false`（`:63-67`）—— 无 audio；
   内嵌 `resource` block 被拒（`session_prompt.py:199-203`）。
 - `resource_link` 被保留为文本标签但**不解引用**（`session_prompt.py:135-147`）——解引用需要
@@ -259,10 +280,13 @@ schema 拒绝的值。因此实现 G2 意味着：更新 `agentao/acp/schema.py`
 
 以下各项才是实际 now-work——都 client 无关或 chat 相关，无编辑器专属。
 
-**P1 —— surface plan + modes + commands（G4）。** *(最靠前的 chat 相关项)* 把 plan 模式 / todo
-工具映射为 ACP `plan` 更新；广告 `availableModes` 并发 `current_mode_update`；用
+**P1 —— surface plan + modes + commands（G4）。** *(最靠前的 chat 相关项)*
+**✅ plan 与 modes 已于 0.4.12 完成；commands 有意不做；轴拆分仍开放。**
+~~把 plan 模式 / todo 工具映射为 ACP `plan` 更新；广告 `availableModes` 并发 `current_mode_update`；~~用
 `available_commands_update` 广告斜杠命令；拆分 UI-mode 轴与权限轴（已记为 deferred 设计）。这些
 正是 chat client 会渲染的东西，DeepChat 的 `set_mode`/`set_model` 工作已经指明了这个需求方向。
+—— *ACP G4 PR-1（`dfe7d78`，#101）拿下了前两项。commands 那一项当轮***有意否决***
+（`acp-g4-plan-modes-commands.md` § Decision），因此它不是遗留待办——若有 client 提出需求，另开设计。*
 
 **P1 —— 结构化 `stopReason`（G3）。** 两步：(1) 给本地 `StopReason` 枚举（`schema.py:270`）
 加 `max_tokens` 并重新生成 schema 快照；(2) 让终止元数据从 `agent.chat()` 透出（如
@@ -275,8 +299,10 @@ automation 表面和任意 client UI 都重要。
 枚举扩到 v1 的 9 个值），重新生成 `docs/schema/host.acp.v1.json`、更新快照测试，然后发送。
 **`locations` 那一半是编辑器专属——随 G1 一起延后。**
 
-**P2 —— streamable-HTTP MCP 传输（G5）。** 加 `streamable_http_client` 让
+**~~P2 —— streamable-HTTP MCP 传输（G5）。~~ ✅ 已于 0.4.14 完成。** 加 `streamable_http_client` 让
 `mcpCapabilities.http:true`。需求门控：仅当目标 client 真在 `session/new` 传入 HTTP MCP server 时。
+—— *随* `mcp-streamable-http.md` *落地，且比本建议走得更远：裸* `url` *现在默认即 Streamable HTTP，
+SSE 改为* `"type": "sse"` *显式选择。*
 
 **P3 —— 上游一致性测试（G6）。** 把 `schema_export.py` 接到官方 ACP schema（或让 agentao 跑在
 参考 ACP client 下）作为 CI 检查，使规范漂移被机械捕获。
@@ -308,13 +334,13 @@ client 无关 / chat 相关的收益——**G4**（plan/modes/commands）、**G3
 | `session/load` | c→a | I | 历史回放 |
 | `session/prompt` | c→a | I | text/resource_link/image；`stopReason` 偏薄 + 漏 `max_tokens`（G3） |
 | `session/cancel` | c→a | I | notification；容忍 request |
-| `session/set_mode` | c→a | I | 无 `availableModes`/`current_mode_update`（G4） |
+| `session/set_mode` | c→a | I | ~~无 `availableModes`/`current_mode_update`~~ 两者均已于 0.4.12 落地（G4） |
 | `session/set_config_option` | c→a | I | host `provider_resolver` |
 | `session/list`/`delete`/`close`/`resume` | c→a | — | **v1 方法，未实现**；需求门控（G5） |
 | `session/set_model` | c→a | ext | **Agentao 扩展，不在 ACP v1** |
 | `session/list_models` | c→a | ext | **Agentao 扩展，不在 ACP v1** |
 | `_agentao.cn/set_model` | c→a | ext | 自由文本模型设定 |
-| `session/update` | a→c | I | 映射丰富；无 `plan`/`diff`/`locations`（G2/G4） |
+| `session/update` | a→c | I | 映射丰富；`plan` 已于 0.4.12 落地；仍无 `diff`/`locations`（G2） |
 | `session/request_permission` | a→c | I | 阻塞式、并发安全 |
 | `fs/read_text_file` | a→c | — | **G1** |
 | `fs/write_text_file` | a→c | — | **G1** |

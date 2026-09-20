@@ -1,8 +1,28 @@
 # pi-mono compaction vs Agentao compaction
 
-> **⚠️ Analysis only. Nothing here is authorized for implementation.** The ranking in §1 is a
+> **⚠️ Both P1s were subsequently implemented and shipped in 0.4.20 (2026-08-24)** — see the
+> restatus banner below. **The rest of this document remains analysis only, and nothing else here
+> is authorized for implementation.** The ranking in §1 is a
 > **priority ordering of findings**, not a work schedule. Quote this line whenever you quote the
 > table — it is what stops the next reader from reading the ordering as a sprint plan.
+
+> **⚠️ Restatus (2026-09-19) — the two P1s are closed.** They were taken up by
+> `compaction-orchestration-plan.md` (six PRs, #187–#192) and **shipped in 0.4.20**, one day after
+> this document's anchor. `docs/design/README.md` has said so since that plan landed; this document
+> did not, and kept asserting "No implementation authorized" for eleven releases.
+>
+> - **§8 — `PreCompact` can now say no.** The hook reads
+>   `hookSpecificOutput.compactionDecision` (`plugins/hooks/_dispatcher.py:336`), and a host
+>   controller can also substitute a summary (`compaction/types.py:117` `can_provide_summary`,
+>   applied at `context_manager.py:1586`). First-cancel-wins across hooks, then the
+>   `compaction_controller=` layer.
+> - **§9 — the breaker has a reset path.** `ContextManager.reset_compaction_circuit()`
+>   (`context_manager.py:833`, called on success at `:1636`), plus half-open **probes**: manual
+>   `/compact` and `api_overflow` run through an open breaker and a successful probe closes it
+>   (`_PROBE_REASONS` in `compaction/coordinator.py`).
+>
+> The §8 / §9 text below is preserved as the finding as written, against `main@a996395`. The P2/P3
+> findings are **not** affected by this banner and remain unauthorized.
 
 
 > **⚠️ Threshold changed (2026-08-23, after this doc's anchor):** `COMPRESSION_THRESHOLD` was raised
@@ -10,7 +30,8 @@
 > `(55 %, 65 %]` to `(55 %, 80 %]`. Every "65 %" in the body is preserved as of the anchor —
 > **do not** read it as the current value.
 
-**Status:** analysis, rev 6 (2026-08-23). No implementation authorized.
+**Status:** analysis, rev 6 (2026-08-23). **Both P1s shipped in 0.4.20** (2026-08-24, via
+`compaction-orchestration-plan.md`); everything else remains unauthorized. Restatused 2026-09-19.
 **rev 3 after a maintainer review — 14 corrections, all upheld against source. rev 4 after a second
 review: those corrections are now *folded into* the body, the tables and §13, and the superseded
 verdicts are deleted rather than annotated.** §14 is therefore a **historical record**, not a live
@@ -53,8 +74,8 @@ summarizer; pi-mono compacts late and invests in never destroying what it compac
 
 | If implemented, priority | Finding | Section |
 |---|---|---|
-| **P1** | The `PreCompact` plugin hook is notify-only (`-> None`). An embedded host can observe compaction but cannot cancel it or substitute its own result. pi-mono's `session_before_compact` can do both. | §8 |
-| **P1** | The summarizer-failure circuit breaker has **no reset path**: once open it short-circuits before any attempt, so it can never succeed, so it never resets. Compaction — **including manual `/compact`** — is dead for the life of that `ContextManager` instance. | §9 |
+| **P1** — ✅ **closed in 0.4.20** | The `PreCompact` plugin hook is notify-only (`-> None`). An embedded host can observe compaction but cannot cancel it or substitute its own result. pi-mono's `session_before_compact` can do both. | §8 |
+| **P1** — ✅ **closed in 0.4.20** | The summarizer-failure circuit breaker has **no reset path**: once open it short-circuits before any attempt, so it can never succeed, so it never resets. Compaction — **including manual `/compact`** — is dead for the life of that `ContextManager` instance. | §9 |
 | **P2** *(was P1 in rev 2)* | **The context window is host-owned but unvalidated.** `max_context_tokens` is a documented host knob on **four** surfaces, so "it does not follow the model" is a design choice, not a defect. What is real: the CLI applies one `200_000` default to every model (`cli/app.py:278`) and `/model` performs **no validation, warning, or reconciliation**. A window configured *larger* than the model's real one degrades the two-tier design into the emergency ladder **under gradual growth**; a lumpy jump *may* land in the cheap-tier band instead, or overshoot it into planned full compaction, so the tier is not strictly unreachable. Recovery is not guaranteed either. | §3.4 |
 | **P2** | `KEEP_RECENT_MESSAGES = 20` is a *message count*, not a token budget. 20 messages can be 500 tokens or 200 K. | §5 |
 | **P2** | The previous summary is re-fed **as a block inside the newest-first allocator**, so it competes for eviction against live messages — the shape that produced the index-1 defect and required `carry_index` + `_clip_carry_summary` to patch. pi-mono has no such allocator: it appends the old summary after the transcript unconditionally, in a `<previous-summary>` tag, with a dedicated UPDATE prompt. (Both send one flat string; the difference is the eviction pool, not the wire format.) | §6.2 |
@@ -463,7 +484,13 @@ pi-mono also threads a typed `details` generic through the entry, which is the e
 
 ---
 
-## 8. Extensibility — P1
+## 8. Extensibility — P1 · ✅ **closed in 0.4.20**
+
+> The gap below is real as written (against `main@a996395`) and was **closed in 0.4.20**: a
+> `PreCompact` hook can cancel via `hookSpecificOutput.compactionDecision`
+> (`plugins/hooks/_dispatcher.py:336`), and a `compaction_controller=` can also substitute a summary
+> (`compaction/types.py:117`). Everything that is not an explicit cancel means allow — **including a
+> raise** — because two of the five entry points are the overflow-recovery ladder.
 
 | | agentao | pi-mono |
 |---|---|---|
@@ -501,7 +528,13 @@ obviously correct — that is a design decision, not a port.
 
 ---
 
-## 9. Failure handling
+## 9. Failure handling · the no-reset P1 is ✅ **closed in 0.4.20**
+
+> The breaker is now a recoverable state machine: `reset_compaction_circuit()`
+> (`context_manager.py:833`, called on success at `:1636`), `/clear` closes it, and manual
+> `/compact` and `api_overflow` run as half-open **probes** through an open breaker — a successful
+> probe closes it. The state stays in `ContextManager`; the coordinator only applies policy. The
+> text below is the finding as written.
 
 ### 9.1 When the summarizer call fails
 
