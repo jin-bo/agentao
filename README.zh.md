@@ -150,6 +150,31 @@ pip install 'agentao[full]'
 
 ---
 
+### A2Agent 配置示例
+
+沿用现有通用供应商配置和 OpenAI Chat Completions 协议。在本地 `.env` 中添加以下内容，使用前替换两个占位符：
+
+```dotenv
+LLM_PROVIDER=A2AGENT
+A2AGENT_API_KEY=your-api-key-here
+A2AGENT_BASE_URL=https://api.a2agent.me/v1
+A2AGENT_MODEL=your-explicit-model-id
+A2AGENT_API_FORMAT=openai-completions
+```
+
+从 [A2Agent 模型目录](https://a2agent.me/models) 选择准确的模型 ID。SDK 使用 Bearer 身份验证，在基础 URL 后追加 `/chat/completions`；详见 [API 文档](https://docs.a2agent.me/api-reference/chat-completions)。运行 `uv run agentao` 启动，或在已有会话中使用 `/provider A2AGENT` 切换。供应商名称可以自行更换，只需保持环境变量前缀一致。本示例保留显式模型配置，不增加模型发现或供应商专属运行逻辑。请勿在提交、Issue 或共享日志中包含真实密钥。
+
+在源码目录运行无需密钥的回归测试：
+
+```bash
+uv sync --extra cli
+uv run python -m pytest tests/test_a2agent_compatibility.py
+```
+
+测试通过真实 SDK 和模拟 HTTP 响应，覆盖文本流式输出、分片工具调用及结果续传，以及不同密钥、接口地址和模型 ID 的供应商切换。它们验证通用客户端约定，**不代表已经完成 A2Agent 实际兼容性验证**，也不覆盖工具执行或多代理行为。
+
+真实接口的文本流式冒烟测试默认跳过。若要主动开启，请在 shell 中显式设置 `AGENTAO_TEST_A2AGENT_LIVE=1`、`A2AGENT_API_KEY` 和 `A2AGENT_MODEL`，再运行 `uv run python -m pytest tests/test_a2agent_compatibility.py -k live`。该测试不会加载 `.env`，会向 `https://api.a2agent.me/v1` 发送合成提示词，并可能产生 API 费用。真实工具支持和其它模型能力仍需单独验证。
+
 ## 给贡献者
 
 ```bash

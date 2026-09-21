@@ -153,6 +153,31 @@ For Anthropic / Gemini / DeepSeek / any OpenAI-compatible provider, set `<NAME>_
 
 ---
 
+### A2Agent configuration example
+
+Use the existing generic provider configuration with the OpenAI Chat Completions wire. Add these entries to your local `.env`, replacing both placeholders before use:
+
+```dotenv
+LLM_PROVIDER=A2AGENT
+A2AGENT_API_KEY=your-api-key-here
+A2AGENT_BASE_URL=https://api.a2agent.me/v1
+A2AGENT_MODEL=your-explicit-model-id
+A2AGENT_API_FORMAT=openai-completions
+```
+
+Choose an exact model ID from the [A2Agent catalog](https://a2agent.me/models). The SDK sends Bearer authentication and appends `/chat/completions` to the base URL; see the [API documentation](https://docs.a2agent.me/api-reference/chat-completions). Start with `uv run agentao`, or switch an existing session with `/provider A2AGENT`. Another provider name works equally well if all environment-variable prefixes match. This example keeps explicit model selection and adds no model discovery or provider-specific runtime behavior. Keep real keys out of commits, issues, and shared logs.
+
+From a source checkout, run the credential-free regression tests:
+
+```bash
+uv sync --extra cli
+uv run python -m pytest tests/test_a2agent_compatibility.py
+```
+
+These tests exercise the real SDK with mocked HTTP responses: streamed text, fragmented tool calls and result continuation, and provider switching with separate keys, endpoints, and model IDs. They verify the generic client contract, **not live A2Agent compatibility**, tool execution, or multi-agent behavior.
+
+The live text-stream smoke test is skipped by default. To opt in, explicitly export `AGENTAO_TEST_A2AGENT_LIVE=1`, `A2AGENT_API_KEY`, and `A2AGENT_MODEL` into your shell, then run `uv run python -m pytest tests/test_a2agent_compatibility.py -k live`. It does not load `.env`; it sends a synthetic prompt to `https://api.a2agent.me/v1` and may incur API charges. Live tool support and other model capabilities still require separate validation.
+
 ## For contributors
 
 ```bash
