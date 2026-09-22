@@ -126,6 +126,18 @@ if isinstance(ev, SubagentLifecycleEvent) and ev.phase == "failed":
 同步变化，所以 `check_background_agent` 对"没答出来"同样报 `failed`
 ——并且会把这次跑出来的部分结果一并带上。
 
+## 可选的技能推荐注入
+
+`Agentao(skill_recommender=...)` 新增仅限关键字参数，可传入
+`JevSkillRecommender`，默认 `None`。构造 Agentao 不会发现 Jev 配置或 Key；
+`build_from_environment` 自动发现，除非显式指定此参数（包括 `None`）。
+每个 Agent 使用独立推荐服务，由 `Agentao.close()` 关闭。
+建议仅进入请求上下文，不直接激活技能或修改权限。
+详见[使用说明](../guides/jev-skills.zh.md)。
+可选实现类型位于 `agentao.recommendations`，不属于版本化的
+`agentao.host` 事件/schema 接口。
+
+
 ## 压缩（`Agentao.compact`）
 
 ```python

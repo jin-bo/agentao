@@ -26,6 +26,7 @@ User-facing configuration files (the surfaces you may hand-edit):
 | 8 | Memory store | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
 | 9 | Run spec (`agentao run`) | any path passed to `--spec` (or stdin) | — | `cli/run_models.py::RunSpec`, `cli/run_template.py::render_spec` | [run-spec-parameters.md](../design/run-spec-parameters.md) |
 | 10 | Plugin hooks | `<plugin>/hooks/hooks.json`, or inline/declared via the plugin manifest's `hooks` | — *(travels with the plugin)* | `embedding/plugins/manager.py` (discovery) → `plugins/hooks/_parser.py` (parse) | §11 below; Developer Guide §5.7 |
+| 11 | Jev skill suggestions | `.agentao/settings.json` (`jev`), `.env` | `~/.agentao/credentials.json` | `embedding/jev.py` | [Jev skill suggestions](../guides/jev-skills.md); §12 |
 
 Internal state files (auto-managed; documented for awareness, not for editing):
 
@@ -685,6 +686,44 @@ contract of the rule that produced the continuation — 8 under the profile,
 3 under `agentao-v1`.
 
 ---
+
+## 12. Jev skill suggestions
+
+**Loader:** `embedding/jev.py`; **guide:** [Jev skill suggestions](../guides/jev-skills.md).
+All fields in the project `.agentao/settings.json` `jev` object are optional:
+
+| Field | Type | Default | Allowed |
+|---|---|---|---|
+| `enabled` | boolean | `false` | `true` / `false` |
+| `model` | string | `jev-1.13.0` | Nonempty, at most 100 characters |
+| `timeout_ms` | integer | `10000` | 1–30000; total recommendation wait |
+| `min_confidence` | number | `0.7` | Finite value in [0, 1] |
+| `skill_recommendation` | string | `suggest` | Only `suggest` |
+
+```json
+{
+  "jev": {
+    "enabled": false,
+    "model": "jev-1.13.0",
+    "timeout_ms": 10000,
+    "min_confidence": 0.7,
+    "skill_recommendation": "suggest"
+  }
+}
+```
+
+Invalid fields disable Jev with a fixed warning. Unknown keys are ignored.
+An `api_key` field here is ignored. Credentials resolve from the first nonempty
+`TYPESAFE_API_KEY` in the process environment, then the project `.env`, then
+`typesafe_api_key` in the user-only `~/.agentao/credentials.json`.
+The user credential field is optional, must be a string, and defaults to no key.
+Missing/unreadable credentials mean ordinary operation without recommendations.
+`/jev save` changes only the `jev` block and preserves other settings.
+Use `/jev status` to inspect Jev's resolved settings; the generic configuration
+validator does not validate this optional block or credential file.
+
+---
+
 
 ## Appendix A — Adding a new configuration surface
 

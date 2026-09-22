@@ -58,6 +58,7 @@ __all__ = [
 # scripts the agent was asked to run, with a 401 that points nowhere near
 # agentao. Gemini's own ``GEMINI_API_KEY`` is unambiguous and is stripped.
 HARNESS_ENV_KEYS: frozenset = frozenset({
+    "TYPESAFE_API_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
     "GEMINI_API_KEY",

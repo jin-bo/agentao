@@ -107,6 +107,7 @@ def _tool_args_summary(tool_name: str, args: dict) -> str:
 
 
 _SLASH_COMMANDS = [
+    '/jev', '/jev on', '/jev off', '/jev status', '/jev setup', '/jev save',
     '/acp', '/acp cancel', '/acp list', '/acp logs',
     '/acp restart', '/acp send',
     '/acp start', '/acp status', '/acp stop',

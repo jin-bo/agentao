@@ -304,11 +304,15 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             f"</system-reminder>\n"
         )
         agent._last_user_message = user_message
+        agent._skill_suggestion = None
 
         hook_outcome = self._dispatch_user_prompt_submit(user_message)
         if hook_outcome.early_return is not None:
             return hook_outcome.early_return
         user_message = hook_outcome.user_message
+
+        from ...recommendations.integration import prepare_skill_suggestion
+        prepare_skill_suggestion(agent, user_message, token)
 
         image_fallback_text: Optional[str] = None
         image_fallback_index: Optional[int] = None

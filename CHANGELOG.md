@@ -11,6 +11,12 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- Optional Jev skill suggestions, disabled by default, with per-project settings
+  and `/jev on|off|status|setup|save`. Keys resolve from the environment, project
+  `.env`, or optional user credentials entered through a hidden prompt.
+  Recommendations are transient, advisory context; timeouts/errors fall back to
+  normal skill selection. Hosts can inject a recommender without environment discovery.
+
 ### Changed
 
 ### Fixed

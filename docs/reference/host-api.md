@@ -172,6 +172,19 @@ v1 supports calling these methods **between** turns only (not from a concurrent
 task, nor from inside a tool's `execute()` mid-turn — see
 [`runtime-tool-injection.md`](../design/runtime-tool-injection.md) §7).
 
+## Optional skill recommendation injection
+
+`Agentao(skill_recommender=...)` accepts a `JevSkillRecommender` via a
+keyword-only parameter, defaulting to `None`. Constructing Agentao never
+discovers Jev settings or keys. `build_from_environment` discovers them unless
+the parameter is explicitly supplied (including `None`).
+The service is owned by this agent and closed by `Agentao.close()`; create
+one per agent. Suggestions are request-only context and do not activate skills
+or modify permissions. See [the guide and example](../guides/jev-skills.md#embedding).
+These optional implementation types live in `agentao.recommendations`, outside
+the versioned `agentao.host` event/schema surface.
+
+
 ## Compaction (`Agentao.compact`)
 
 ```python

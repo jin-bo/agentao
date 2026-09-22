@@ -37,6 +37,7 @@ from .sandbox import SandboxPolicy
 from .transport import NullTransport
 
 if TYPE_CHECKING:
+    from .recommendations import JevSkillRecommender
     from .compaction.types import CompactionController, CompactionOutcome
     from .agents.bg_store import BackgroundTaskStore  # noqa: F401
     from .capabilities import FileSystem, MCPRegistry, ShellExecutor
@@ -149,6 +150,7 @@ class Agentao:
         sandbox_policy: Optional[SandboxPolicy] = None,
         replay_config: Optional["ReplayConfig"] = None,
         enable_builtin_agents: bool = False,
+        skill_recommender: Optional["JevSkillRecommender"] = None,
     ):
         """Initialize Agentao agent.
 
@@ -305,6 +307,9 @@ class Agentao:
         )
         self._init_skill_and_memory(skill_manager, memory_manager)
         self._last_user_message: str = ""
+        # Explicit opt-in; only the environment factory discovers Jev settings.
+        self.skill_recommender = skill_recommender
+        self._skill_suggestion = None
         self._stable_block_chars: int = 0  # size of last rendered <memory-stable> block
         # Ids rendered in the last <memory-stable> block. The volatile tail's
         # dynamic-recall pass excludes them; the two are built by separate
@@ -1003,6 +1008,9 @@ class Agentao:
         close() on every exit path.  We intentionally do NOT duplicate
         the dispatch here to avoid double-firing.
         """
+        recommender = getattr(self, "skill_recommender", None)
+        if recommender is not None:
+            recommender.close()
         if self.replay_manager is not None:
             try:
                 self.replay_manager.end()

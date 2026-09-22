@@ -2,6 +2,10 @@
 
 A **skill** is a markdown file that teaches the agent how to handle a specific kind of task. The agent activates skills automatically when they look relevant, but you can also activate them manually. **Crystallize** is the reverse direction: distill a successful conversation into a new skill you can reuse.
 
+## Optional Jev suggestions
+
+Use `/jev on` to enable Jev skill suggestions for this session. If no key is configured, it prompts for hidden input and offers optional user-wide storage. `/jev off` disables it, `/jev status` shows the state, and `/jev save` persists the project setting without the key. It is off by default, sends request and skill text to TypeSafe, and never directly activates a skill. See the [full guide](https://github.com/jin-bo/agentao/blob/main/docs/guides/jev-skills.md).
+
 ## Skills, in 30 seconds
 
 Each skill is a directory under `skills/` with a `SKILL.md` like:

@@ -2,6 +2,10 @@
 
 **Skill** 是一份 markdown 文件，教 agent 如何处理某一类特定任务。Agent 看到相关请求会自动激活对应 skill，你也可以手动激活。**Crystallize** 走的是反向 — 把一次成功的对话蒸馏成一份能复用的 skill。
 
+## 可选的 Jev 推荐
+
+使用 `/jev on` 为本次会话启用 Jev 技能推荐。缺少 Key 时会隐藏输入，并提供可选的用户级保存。`/jev off` 关闭，`/jev status` 查看状态，`/jev save` 保存项目设置（不含 Key）。默认关闭；启用后会向 TypeSafe 发送请求和技能文本，不会直接激活技能。详见[完整说明](https://github.com/jin-bo/agentao/blob/main/docs/guides/jev-skills.zh.md)。
+
 ## Skill 长什么样（30 秒）
 
 每个 skill 是 `skills/` 下的一个目录，里面有 `SKILL.md`：

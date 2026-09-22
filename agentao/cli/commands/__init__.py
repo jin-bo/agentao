@@ -12,6 +12,7 @@ from .compact import handle_compact_command
 from .context import handle_context_command
 from .goal import handle_goal_command
 from .image import handle_image_command
+from .jev import handle_jev_command
 from .mcp import handle_mcp_command
 from .permission import (
     handle_mode_command,
@@ -36,6 +37,7 @@ __all__ = [
     "handle_context_command",
     "handle_goal_command",
     "handle_image_command",
+    "handle_jev_command",
     "handle_mcp_command",
     "handle_mode_command",
     "handle_model_command",

@@ -26,6 +26,7 @@
 | 8 | 记忆库 | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
 | 9 | Run spec（`agentao run`） | `--spec` 传入的任意路径（或 stdin） | — | `cli/run_models.py::RunSpec`、`cli/run_template.py::render_spec` | [run-spec-parameters.zh.md](../design/run-spec-parameters.zh.md) |
 | 10 | 插件 hooks | `<plugin>/hooks/hooks.json`，或经插件 manifest 的 `hooks` 声明/内联 | — *（随插件走）* | `embedding/plugins/manager.py`（发现）→ `plugins/hooks/_parser.py`（解析） | 见下文 §11；Developer Guide §5.7 |
+| 11 | Jev 技能推荐 | `.agentao/settings.json` (`jev`), `.env` | `~/.agentao/credentials.json` | `embedding/jev.py` | [Jev 技能推荐](../guides/jev-skills.zh.md); §12 |
 
 **内部状态文件**（自动管理；列出仅为告知，请勿手动编辑）：
 
@@ -605,6 +606,42 @@ hook 必须由调用方显式给 `env=`，或在 `AGENTAO_SCRUB_CHILD_ENV=0` 下
 hook 的重入上限跟随产出该 continuation 的那条规则的契约 —— profile 下是 8，`agentao-v1` 下是 3。
 
 ---
+
+## 12. Jev 技能推荐
+
+**Loader：** `embedding/jev.py`；**使用说明：** [Jev 技能推荐](../guides/jev-skills.zh.md)。
+项目 `.agentao/settings.json` 的 `jev` 对象中，所有字段均为可选：
+
+| 字段 | 类型 | 默认值 | 允许值 |
+|---|---|---|---|
+| `enabled` | boolean | `false` | `true` / `false` |
+| `model` | string | `jev-1.13.0` | 非空，最多 100 字符 |
+| `timeout_ms` | integer | `10000` | 1–30000；推荐流程总等待时间 |
+| `min_confidence` | number | `0.7` | [0, 1] 内的有限数值 |
+| `skill_recommendation` | string | `suggest` | 仅支持 `suggest` |
+
+```json
+{
+  "jev": {
+    "enabled": false,
+    "model": "jev-1.13.0",
+    "timeout_ms": 10000,
+    "min_confidence": 0.7,
+    "skill_recommendation": "suggest"
+  }
+}
+```
+
+字段值非法时以固定警告提示并关闭 Jev；未知字段会忽略。
+此处的 `api_key` 字段不生效。凭据取第一个非空值，优先级为：进程环境变量
+`TYPESAFE_API_KEY`、项目 `.env` 中同名变量、用户专属
+`~/.agentao/credentials.json` 中的 `typesafe_api_key`。
+该用户凭据字段是可选字符串，默认无 Key；凭据不存在或无法读取时不进行推荐。
+`/jev save` 仅修改 `jev` 块，保留其他设置。
+使用 `/jev status` 检查解析后的 Jev 设置；通用配置验证器暂不校验这个可选块或凭据文件。
+
+---
+
 
 ## 附录 A —— 新增配置面时的 checklist
 

@@ -53,6 +53,9 @@ All commands start with `/`:
   - `/skills disable <name>` - Persistently disable a skill for this project
   - `/skills enable <name>` - Re-enable a disabled skill
   - `/skills reload` - Re-scan skill directories
+- `/jev on|off|status|setup|save` - Optional Jev skill suggestions (off by default).
+  `on`/`off` affect this session; `save` persists project settings. `setup` accepts a
+  hidden API key and optionally saves it in your user directory as plaintext.
 - `/crystallize [subcommand]` - Draft a reusable skill from the current session
   - `/crystallize` or `/crystallize suggest` - Analyze the session and generate a skill draft
   - `/crystallize feedback <text>` - Add feedback and rewrite the current draft

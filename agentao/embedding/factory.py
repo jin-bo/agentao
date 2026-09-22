@@ -281,6 +281,9 @@ def build_from_environment(
             replay_config = None
     if "enable_builtin_agents" not in overrides:
         overrides["enable_builtin_agents"] = _builtin_agents_enabled(settings)
+    if "skill_recommender" not in overrides:
+        from .jev import load_jev
+        overrides["skill_recommender"] = load_jev(wd)
     # Issue #17: default MCP registry reads the same on-disk files the
     # pre-Protocol path consulted. Embedded hosts that want
     # programmatic registration pass ``mcp_registry=`` (or

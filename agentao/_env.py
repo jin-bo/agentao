@@ -42,6 +42,10 @@ def safe_load_dotenv(dotenv_path: Optional[Union[str, Path]] = None) -> None:
     if not path:
         return
     for key, value in dotenv_values(path).items():
+        # Jev keys are resolved per project by embedding.jev, not copied to
+        # process-global state where another embedded project would inherit them.
+        if key == "TYPESAFE_API_KEY":
+            continue
         if value is None:
             continue
         if os.environ.get(key, "").strip():

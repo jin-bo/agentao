@@ -213,7 +213,7 @@ def _build_command_table() -> Dict[str, "CommandHandler"]:
         handle_permission_command, handle_plan_command, handle_provider_command,
         handle_sandbox_command, handle_sessions_command, handle_skills_command,
         handle_temperature_command, handle_thinking_command, handle_todos_command,
-        handle_tools_command,
+        handle_tools_command, handle_jev_command,
     )
     from .commands_ext import (
         _show_agents_dashboard, handle_acp_command, handle_agent_command,
@@ -234,6 +234,7 @@ def _build_command_table() -> Dict[str, "CommandHandler"]:
         "goal": handle_goal_command,
         "help": _handle_help_command,
         "image": handle_image_command,
+        "jev": handle_jev_command,
         "markdown": _handle_markdown_command,
         "mcp": handle_mcp_command,
         "memory": _handle_memory_command,

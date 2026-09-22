@@ -259,6 +259,11 @@ class SystemPromptBuilder:
         if skills_context:
             sections["active_skills_context"] = "\n\n" + skills_context
 
+        from ..recommendations.integration import suggestion_context
+        recommendation = suggestion_context(agent)
+        if recommendation:
+            sections["skill_recommendation"] = "\n\n" + recommendation
+
         todos_block = self._todos_block()
         if todos_block:
             sections["todos"] = todos_block
