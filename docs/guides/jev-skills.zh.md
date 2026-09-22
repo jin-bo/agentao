@@ -20,21 +20,21 @@ Jev 为主模型的当前请求提供技能建议，**默认关闭**。它不会
 
 ```mermaid
 flowchart TD
-    A["User message after hooks"] --> B{"Jev enabled, key available,<br/>and activate_skill available?"}
-    B -->|No| M["Main model with the existing skill catalog"]
-    B -->|Yes| C{"Explicit skill name or no enabled candidates?"}
-    C -->|Yes| M
-    C -->|No| D["Rank enabled names and descriptions<br/>in bounded batches, including none"]
-    D --> E{"Valid shortlist?"}
-    E -->|No| M
-    E -->|Yes| F["Verify finalists using short skill excerpts<br/>including none"]
-    F --> G{"Valid enabled choice<br/>meets confidence threshold?"}
-    G -->|No| M
-    G -->|Yes| H["Add an advisory suggestion<br/>to transient request context"]
+    A["钩子处理后的用户消息"] --> B{"已启用 Jev、已配置密钥，<br/>且技能激活工具可用？"}
+    B -->|否| M["主模型使用现有技能目录"]
+    B -->|是| C{"已明确指定技能，<br/>或没有已启用的候选技能？"}
+    C -->|是| M
+    C -->|否| D["按已启用技能的名称和描述分批排序<br/>限制每批大小，并保留不推荐选项"]
+    D --> E{"候选列表有效？"}
+    E -->|否| M
+    E -->|是| F["使用技能正文短摘录复核候选<br/>保留不推荐选项"]
+    F --> G{"选择有效且技能已启用，<br/>置信度达到阈值？"}
+    G -->|否| M
+    G -->|是| H["将技能建议加入本次请求的临时上下文"]
     H --> M
-    D -. "Timeout, cancellation, API error,<br/>or input limit" .-> M
-    F -. "Timeout, cancellation, API error,<br/>or input limit" .-> M
-    M --> I["Normal model/tool flow<br/>with existing activation and permission checks"]
+    D -. "超时、取消、接口错误<br/>或达到输入上限" .-> M
+    F -. "超时、取消、接口错误<br/>或达到输入上限" .-> M
+    M --> I["继续正常的模型与工具流程<br/>保留现有技能激活和权限检查"]
 ```
 
 通常每个符合条件的回合调用两次：排序和复核。大型目录可能需要多批排序，
