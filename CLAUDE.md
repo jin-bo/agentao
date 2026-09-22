@@ -94,7 +94,7 @@ The contents are swapped **in place**, because the runner and planner hold the r
 
 `/mode read-only | workspace-write | full-access` switches the runtime's permission posture. `plan` is the fourth posture — entered via `/plan` interactively (not `/mode plan`), or `--permission-mode plan` on `agentao run`:
 
-- `read-only` — blocks all write and shell tools.
+- `read-only` — blocks all write and shell tools. `activate_skill` and `todo_write` are allowed (session state only); `save_memory` is not. The mode has **two switches**, the runner's flag and the engine's mode (whose `read-only` preset is an empty list), and `ToolRunner._readonly_active` honours either. ACP `session/set_mode`, a host's `set_mode` and a sub-agent's engine snapshot set only the engine's mode; before 0.5.4 that meant writes and shell got ASK.
 - `workspace-write` — allows file writes and safe shell; asks for web (default).
 - `full-access` — allows all tools without prompting.
 - `plan` — LLM plans, does not execute; entered via `/plan`.

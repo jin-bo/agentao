@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple
 
 from ..capabilities.shell_spec import Deny
-from ..permissions import PermissionDecision, PermissionEngine
+from ..permissions import PermissionDecision, PermissionEngine, PermissionMode
 from ..sandbox import SandboxPolicy
 from ..tools import ToolRegistry
 from ..transport import AgentEvent, EventType
@@ -125,6 +125,24 @@ class ToolRunner:
         except Exception:
             pass
 
+    def _readonly_active(self) -> bool:
+        """Whether read-only mode applies: the flag above, or the engine's mode.
+
+        The engine's ``read-only`` preset is an empty rule list; this gate is
+        what enforces it. A caller that set only the engine's mode (ACP
+        ``session/set_mode``, an embedded host calling ``set_mode``, a
+        sub-agent's engine snapshot) got the empty preset alone, so writes
+        and shell fell through to ASK and ``save_memory`` ran.
+        """
+        # Never raises: ``_apply_updated_input`` calls this inside the try whose
+        # except denies the call, so an error here would pass for a failed
+        # re-decision. ``is`` against the member, so only a real READ_ONLY
+        # turns the gate on.
+        engine = getattr(self._planner, "_permission_engine", None)
+        return self.readonly_mode or (
+            getattr(engine, "active_mode", None) is PermissionMode.READ_ONLY
+        )
+
     def reset(self) -> None:
         """Reset doom-loop counter. Call at the start of each chat() invocation."""
         self._planner.reset()
@@ -175,7 +193,7 @@ class ToolRunner:
         # --- Phase 1: Planning (sequential, no I/O) ---
         # Doom-loop detection, JSON parse, tool lookup, and the
         # permission decision are all delegated to ToolCallPlanner.
-        planning = self._planner.plan(tool_calls, readonly_mode=self.readonly_mode)
+        planning = self._planner.plan(tool_calls, readonly_mode=self._readonly_active())
         result_messages.extend(planning.early_messages)
 
         if planning.doom_loop_triggered:
@@ -265,7 +283,7 @@ class ToolRunner:
         _exec_results = self._executor.execute_batch(
             _plans,
             cancellation_token=cancellation_token,
-            readonly_mode=self.readonly_mode,
+            readonly_mode=self._readonly_active(),
             hook_rules=self._plugin_hook_rules,
             hook_cwd=self._working_directory,
             hook_session_id=self._session_id,
@@ -477,7 +495,7 @@ class ToolRunner:
             # computed for the original, which is the state this method exists to prevent.
             candidate_record = _decided_call(plan.tool, shell_spec, candidate)
             new_decision, new_detail = self._planner._decide(
-                plan.tool, plan.function_name, candidate, self.readonly_mode, shell_spec,
+                plan.tool, plan.function_name, candidate, self._readonly_active(), shell_spec,
                 candidate_record,
             )
         except Exception as exc:  # pragma: no cover - defensive

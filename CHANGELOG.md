@@ -23,6 +23,15 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- Read-only mode is enforced when only the permission engine's mode is set. ACP
+  `session/set_mode` with `modeId: "read-only"`, an embedded host calling
+  `permission_engine.set_mode(PermissionMode.READ_ONLY)` and a sub-agent deciding
+  with a snapshot of such an engine used to get the engine's empty read-only
+  preset and nothing else: `write_file`, `replace` and `run_shell_command` fell
+  through to ASK, which the default transport approves, and `save_memory` ran
+  without asking. Only the CLI and `agentao run`, which also set the runner's
+  flag, blocked them. The runner now reads the engine's mode too.
+
 ---
 
 ## [0.5.3] — 2026-09-19

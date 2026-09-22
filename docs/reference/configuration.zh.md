@@ -166,7 +166,7 @@
 **内置 preset** 在 `permissions.py::_PRESET_RULES`，按上述顺序追加在自定义规则之后（或在 `full-access` / `plan` 下放在前面）：
 
 - `workspace-write` —— 自动放行 `write_file` / `replace`；放行约 16 条只读 shell（`ls`、`cat`、`grep`、`git status|log|diff|show|…`…）；拒绝 `rm -rf` / `sudo` / `mkfs` / `dd if=`；放行受信任文档站点（`.github.com`、`.docs.python.org`、`.wikipedia.org`、`.pypi.org`、`.readthedocs.io`、`r.jina.ai`）；屏蔽 SSRF 目标（`localhost`、`127.0.0.1`、`0.0.0.0`、`169.254.169.254`、`.internal`、`.local`、`::1`）；其余 → ask。
-- `read-only` —— preset 为空；`ToolRunner` 用 `tool.is_read_only` 直接短路。
+- `read-only` —— preset 为空；`ToolRunner` 用 `tool.is_read_only` 直接短路，拒绝所有非只读工具。无论模式来自 runner 的标志（CLI、`agentao run`），还是只设了引擎（ACP 的 `session/set_mode`、嵌入宿主调用 `set_mode`），都会生效。只读工具是各读取类工具，外加只改会话状态的 `activate_skill` 和 `todo_write`；`save_memory` 会写 SQLite，因此被拒绝。
 - `full-access` —— 单条 `{"tool": "*", "action": "allow"}`。
 - `plan` —— 拒绝所有写入与记忆改动；放行只读 shell allowlist；web 规则与 `workspace-write` 相同。
 

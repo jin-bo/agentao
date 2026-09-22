@@ -180,7 +180,7 @@ See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each
 **Built-in presets** live in `permissions.py::_PRESET_RULES` and run after custom rules (or before, in `full-access` / `plan`):
 
 - `workspace-write` — auto-allows `write_file` / `replace`; allowlists ~16 read-only shell commands (`ls`, `cat`, `grep`, `git status|log|diff|show|…`, …); denies `rm -rf` / `sudo` / `mkfs` / `dd if=`; allowlists trusted docs domains (`.github.com`, `.docs.python.org`, `.wikipedia.org`, `.pypi.org`, `.readthedocs.io`, `r.jina.ai`); blocklists SSRF targets (`localhost`, `127.0.0.1`, `0.0.0.0`, `169.254.169.254`, `.internal`, `.local`, `::1`); rest → ask.
-- `read-only` — empty preset; `ToolRunner` short-circuits on `tool.is_read_only`.
+- `read-only` — empty preset; `ToolRunner` short-circuits on `tool.is_read_only`, denying every tool that is not read-only. It does so whether the mode came from the runner's flag (CLI, `agentao run`) or only from the engine (`session/set_mode` over ACP, an embedded host's `set_mode`). Read-only tools are the readers plus `activate_skill` and `todo_write`, which change only session state; `save_memory` writes SQLite and is denied.
 - `full-access` — single rule `{"tool": "*", "action": "allow"}`.
 - `plan` — denies all writes / memory mutations; allows the read-only shell allowlist; web rules identical to `workspace-write`.
 
