@@ -13,6 +13,14 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- Read-only mode now allows `activate_skill` and `todo_write`. Both change only
+  the current session (the active-skill set, an in-memory checklist), so a
+  read-only session, `agentao run --permission-mode read-only` or a read-only
+  sub-agent can load a skill and track its steps. `save_memory` is still denied:
+  it writes SQLite and outlives the session. Plan mode is unchanged and still
+  denies `todo_write` through its own rule. `Tool.is_read_only` now reads "allowed
+  in read-only mode": no file writes, no commands, no state outside the session.
+
 ### Fixed
 
 ---

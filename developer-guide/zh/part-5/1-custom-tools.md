@@ -61,7 +61,7 @@ class MyTool(Tool):
 | `parameters` | ✅ | JSON Schema；任何 OpenAI function calling 支持的 schema 都能用 |
 | `execute(**kwargs) -> str` | ✅ | 返回纯字符串；不能返回 dict/bytes |
 | `requires_confirmation` | ❌ | 写/网络/危险操作应 True，走 confirm_tool 流程 |
-| `is_read_only` | ❌ | 纯读时 True；权限引擎/Plan 模式据此优化 |
+| `is_read_only` | ❌ | 只读模式可以运行它时为 True：不写文件、不跑命令、不改会话之外的状态。只读模式会拒绝所有返回 False 的工具 |
 | `copies_to_subagents` | ❌ | True 表示允许子代理使用该工具，且以副本形式——见下文。默认 False：你的工具不会进入任何子代理 |
 
 ## 让子代理能用你的工具
@@ -391,7 +391,7 @@ return json.dumps({
 
 - Tool 必须返回**字符串**（`role:tool` 消息）；不能直接返回 dict 或 bytes。业务数据要 JSON-stringify 并控制大小。
 - **description 是 LLM 决策的唯一输入**：明确 *什么时候用*、参数含义、返回结构、硬规则。
-- 有副作用（写、删、网络、执行）的工具一律 `requires_confirmation=True`；纯读的设 `is_read_only=True`，让 PermissionEngine 和 Plan 模式能优化。
+- 有副作用（写、删、网络、执行）的工具一律 `requires_confirmation=True`；只有对会话之外没有任何影响的工具才设 `is_read_only=True`，因为只读模式正是据此决定能否运行它。
 - 通过 `extra_tools=` 或 `add_tool()` 注入工具，确保能力绑定和名字校验；`disable_tools` / `enabled_tools` 只用于缩减模型可见 schema。
 - `execute()` 里捕获异常并返回错误字符串——未捕获的异常会让整个 `chat()` 调用挂掉。
 - 一个工具一个聚焦的职责。description 含糊会被到处误调。

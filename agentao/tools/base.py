@@ -116,12 +116,14 @@ class _BaseTool(ABC):
 
     @property
     def is_read_only(self) -> bool:
-        """Whether this tool only reads data and never modifies state.
+        """Whether this tool is allowed in read-only mode.
 
-        Read-only tools (read_file, glob, search_file_content, etc.) can be
-        safely skipped in future plan-mode enforcement and used to inform
-        smarter confirmation policies.  Override and return True in tools that
-        never write files, run commands, or mutate external state.
+        True for tools that never write files, run commands, or change state
+        outside the current session: the readers (read_file, glob,
+        search_file_content, etc.), and tools whose only effect is session
+        state (activate_skill, todo_write). A tool that persists anything,
+        such as save_memory's SQLite write, stays False. Read-only mode
+        denies every tool that returns False.
         """
         return False
 

@@ -21,6 +21,13 @@ class ActivateSkillTool(Tool):
         return "activate_skill"
 
     @property
+    def is_read_only(self) -> bool:
+        # Activation reads SKILL.md and changes only this session's active
+        # set, so read-only mode lets it through; the skill's own
+        # instructions are still gated call by call.
+        return True
+
+    @property
     def description(self) -> str:
         return "Activate a skill for specialized tasks. Skills provide enhanced capabilities for specific domains like PDF handling, spreadsheets, presentations, etc."
 
