@@ -407,6 +407,16 @@ def handle_session_new(
                 "acp: session/new could not bind session id %s to agent",
                 session_id,
             )
+        # Summaries this session writes must carry the ACP id, or a later
+        # ``session/load`` of it cannot recognise them as its own. See
+        # ``MemoryManager.archive_session``.
+        try:
+            agent.memory_manager.archive_session(session_id)
+        except Exception:
+            logger.exception(
+                "acp: session/new could not bind memory session id %s",
+                session_id,
+            )
 
         # Begin a replay instance for this ACP session when recording is
         # enabled in ``<cwd>/.agentao/settings.json``. Creating the

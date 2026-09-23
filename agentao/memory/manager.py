@@ -343,11 +343,25 @@ class MemoryManager:
         sid = session_id or self._session_id
         return self.project_store.list_session_summaries(session_id=sid, limit=limit)
 
-    def archive_session(self) -> Optional[str]:
-        """Start a new session. Returns old session_id if there were summaries."""
+    def archive_session(self, session_id: Optional[str] = None) -> Optional[str]:
+        """Start a new session. Returns old session_id if there were summaries.
+
+        ``session_id`` is the conversation's own id, and callers that have one
+        pass it: summaries are written under this id, and the cross-session
+        tail excludes only this id, so a manager keyed by a fresh random id
+        reads a *resumed* conversation's own summaries back as an earlier
+        session's — injected into ``<memory-stable>`` while the same text is
+        already in history as ``[Conversation Summary]``. Keyed by the
+        conversation id, resuming it (``--resume``, ``/sessions resume``, ACP
+        ``session/load``) adopts the id its summaries were written under.
+        Anything but a non-empty string falls back to a fresh random id.
+        """
         old_id = self._session_id
         summaries = self.project_store.list_session_summaries(session_id=old_id, limit=1)
-        self._session_id = uuid.uuid4().hex[:12]
+        if isinstance(session_id, str) and session_id:
+            self._session_id = session_id
+        else:
+            self._session_id = uuid.uuid4().hex[:12]
         if summaries:
             return old_id
         return None

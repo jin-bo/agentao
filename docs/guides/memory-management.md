@@ -93,6 +93,8 @@ schema_meta        — 版本元数据
 
 **跨会话注入：** `MemoryManager.get_cross_session_tail()` 从 `session_summaries` 表取最近 3 条历史会话摘要（排除当前 `_session_id`），拼接后截断至 `SESSION_TAIL_CHARS`（800 字符）。`render_stable_block()` 对其预先占位，避免被持久记忆条目挤出。
 
+**`_session_id` 就是会话自己的 id。** CLI 在 `on_session_start` 与 `/sessions resume`、ACP 在 `session/new` 与 `session/load` 都调用 `archive_session(<会话 id>)`，所以摘要按会话 id 写入；恢复一个会话（`--resume`、`/sessions resume`、`session/load`）会沿用它的 id，它自己的摘要已在历史里，不会再经跨会话尾部注入一次。改动之前写下的摘要仍挂在当时的随机 id 下，恢复那些旧会话时依旧会重复出现。嵌入宿主自己恢复会话时，同样调用 `agent.memory_manager.archive_session(session_id)`；不传参数则得到一个新的随机 id。
+
 ---
 
 ### 3. Recall Candidates（召回候选）
