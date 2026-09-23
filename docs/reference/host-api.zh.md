@@ -514,7 +514,9 @@ for ev in events:
 的那次压缩，且在改动之后发出。`COMPACTION_SETTLED` 是**一次压缩尝试**的终态
 事件，被否决和失败的那些也在内（`status` 取 `success | cancelled | failed`）。
 `skipped` 的尝试**两个都不发**，这是有意的：四类 skipped 里有三类**每轮迭代
-都会重新触发**，一次一个事件就不是信号而是事件风暴。
+都会重新触发**，一次一个事件就不是信号而是事件风暴。因**轮次本身被取消**而放弃
+的尝试（自 0.5.5 起）同样两个都不发：历史没有改动，结局属于这一轮，按已取消的轮次
+上报。`status: "cancelled"` 仍然只表示 hook 或 `compaction_controller` 否决了这次尝试。
 
 两者的 token 字段是**不同单位，正因如此才取了不同的名字**。
 `CONTEXT_COMPRESSED` 的 `pre_est_tokens` / `post_est_tokens` 量的是

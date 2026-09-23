@@ -63,7 +63,7 @@ def _agent(cm, messages):
 
 def _trip(cm):
     """Three consecutive failed summarizations on the automatic path."""
-    cm._summarize_formatted = lambda _f: ""
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: ""
     for _ in range(cm.CIRCUIT_BREAKER_LIMIT):
         cm._run_compaction(_history(), is_auto=True, reason="compression_threshold")
     assert cm.compaction_circuit_open is True
@@ -95,7 +95,7 @@ def test_threshold_attempts_pause_once_the_breaker_is_open():
 def test_manual_and_overflow_are_allowed_through_as_probes(trigger, reason):
     cm = _make_cm()
     _trip(cm)
-    cm._summarize_formatted = lambda _f: "a fresh summary"
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: "a fresh summary"
     agent, events = _agent(cm, _history())
 
     run = agent.compaction_coordinator.run(
@@ -139,7 +139,7 @@ def test_threshold_resumes_after_a_probe_succeeds():
     )
     assert paused.outcome.status == "skipped"
 
-    cm._summarize_formatted = lambda _f: "a fresh summary"
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: "a fresh summary"
     probe = agent.compaction_coordinator.run(
         CompactionRequest("manual", "full", "manual_cli"), system_prompt="sys",
     )
@@ -161,7 +161,7 @@ def test_a_manual_summarization_failure_no_longer_counts():
     """The deliberate behaviour change: the ``:590`` increment was
     unconditional, so three manual retries disabled automatic compaction."""
     cm = _make_cm()
-    cm._summarize_formatted = lambda _f: ""
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: ""
 
     for _ in range(cm.CIRCUIT_BREAKER_LIMIT + 2):
         out = cm._run_compaction(_history(), is_auto=False, reason="manual_cli")
@@ -173,7 +173,7 @@ def test_a_manual_summarization_failure_no_longer_counts():
 
 def test_an_automatic_summarization_failure_still_counts_and_is_classified():
     cm = _make_cm()
-    cm._summarize_formatted = lambda _f: ""
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: ""
 
     cm._run_compaction(_history(), is_auto=True, reason="compression_threshold")
 
@@ -248,7 +248,7 @@ def test_agent_compact_returns_an_outcome(tmp_path):
 
     agent = make_bare_agent(tmp_path)
     agent.messages = _history()
-    agent.context_manager._summarize_formatted = lambda _f: "a summary"
+    agent.context_manager._summarize_formatted = lambda _f, *, cancellation_token=None: "a summary"
 
     outcome = agent.compact()
 

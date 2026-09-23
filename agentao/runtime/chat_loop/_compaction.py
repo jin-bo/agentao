@@ -13,8 +13,9 @@ Mixed into :class:`ChatLoopRunner`; relies on ``self._agent``.
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
+from ...cancellation import CancellationToken
 from ...compaction.coordinator import CompactionRequest
 
 
@@ -43,6 +44,7 @@ class _CompactionMixin:
         messages_with_system: list,
         system_prompt: str,
         tokens: int | None = None,
+        cancellation_token: Optional[CancellationToken] = None,
     ) -> Tuple[list, str]:
         agent = self._agent
         if not agent.context_manager.needs_compression(messages_with_system, tokens=tokens):
@@ -52,5 +54,6 @@ class _CompactionMixin:
             system_prompt=system_prompt,
             messages_with_system=messages_with_system,
             measure_system_tokens=True,
+            cancellation_token=cancellation_token,
         )
         return run.messages_with_system, run.system_prompt

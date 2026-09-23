@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
+from .cancellation import CancellationToken
 from .compaction.types import (
     CompactionDecisionContext,
     CompactionOutcome,
@@ -1469,6 +1470,7 @@ class ContextManager:
         is_auto: bool,
         reason: str,
         decide=None,
+        cancellation_token: Optional[CancellationToken] = None,
     ) -> CompactionOutcome:
         """prepare -> decide -> summarize -> commit, and the failure counter.
 
@@ -1494,6 +1496,17 @@ class ContextManager:
         Never returns ``skipped`` for an open breaker or a suppression latch:
         both are decided above and never reach here. The only ``skipped`` it
         can produce is ``history_too_short``.
+
+        ``cancellation_token`` is the turn's, when there is one. It reaches
+        the summarizer's retry waits, and it is read twice here — before the
+        summarizer is called, and again **before** the empty-summary failure
+        count and the commit. A cancelled turn raises ``AgentCancelledError``
+        (the turn's own cancel, which ``run_turn`` already reports): history
+        is not rewritten, and the breaker is not charged. Without the second
+        read a cancel that interrupted a retry wait came back as an empty
+        summary, which counts as a summarizer failure — three cancelled turns
+        would have paused automatic compaction. Manual ``/compact`` runs
+        outside a turn and passes none.
         """
         trigger = "auto" if is_auto else "manual"
         kind = "full"
@@ -1606,7 +1619,17 @@ class ContextManager:
                         pass
 
         if summary is None:
-            summary = self._summarize_formatted(prep.summary_input)
+            if cancellation_token is not None:
+                cancellation_token.check()
+            summary = self._summarize_formatted(
+                prep.summary_input, cancellation_token=cancellation_token,
+            )
+
+        # Ahead of both the failure count and the commit, on either summary
+        # source: the turn this compaction belongs to has been cancelled, so
+        # neither a summary nor its absence is the outcome to record.
+        if cancellation_token is not None:
+            cancellation_token.check()
 
         if not summary:
             internal_reason = (
@@ -1850,8 +1873,16 @@ class ContextManager:
         ]
         return self._summarize_formatted(self._format_for_summary(to_summarize))
 
-    def _summarize_formatted(self, formatted: str) -> str:
+    def _summarize_formatted(
+        self,
+        formatted: str,
+        *,
+        cancellation_token: Optional[CancellationToken] = None,
+    ) -> str:
         """The LLM half of summarization, over an already-assembled transcript.
+
+        ``cancellation_token`` is handed to ``chat()`` so its retry backoff —
+        up to a minute per wait — ends when the turn is cancelled.
 
         Returns:
             Formatted summary text, or empty string on failure.
@@ -1866,7 +1897,10 @@ class ContextManager:
                 {"role": "system", "content": self._SUMMARIZE_SYSTEM_PROMPT},
                 {"role": "user", "content": f"Summarize this conversation:\n\n{formatted}"},
             ]
-            response = self.llm_client.chat(messages=recall_messages, tools=None)
+            response = self.llm_client.chat(
+                messages=recall_messages, tools=None,
+                cancellation_token=cancellation_token,
+            )
             # Same two-producer test the chat loop applies (see
             # ``runtime/chat_loop/_runner.py``): a falsy finish_reason, or a
             # streamed response whose provider never sent one.

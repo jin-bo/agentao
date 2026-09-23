@@ -251,7 +251,7 @@ def test_a_full_compaction_that_wrote_a_summary_emits_both_events(tmp_path):
         SQLiteMemoryStore.open(tmp_path / ".agentao" / "memory.db"),
     )
     cm = _make_cm(memory_manager=mem)
-    cm._summarize_formatted = lambda _formatted: "a summary"
+    cm._summarize_formatted = lambda _formatted, *, cancellation_token=None: "a summary"
     agent, events = _make_agent(cm, _history())
     agent.memory_manager = mem
     agent._session_id = "sess-1"
@@ -548,7 +548,7 @@ def test_a_failed_summarization_no_longer_crystallizes():
     """
     mem = Mock()
     cm = _make_cm(memory_manager=mem)
-    cm._summarize_formatted = lambda _formatted: ""
+    cm._summarize_formatted = lambda _formatted, *, cancellation_token=None: ""
 
     out = cm._run_compaction(
         _history(), is_auto=True, reason="compression_threshold",
@@ -563,7 +563,7 @@ def test_a_failed_summarization_no_longer_crystallizes():
 def test_a_successful_summarization_still_crystallizes_the_raw_window():
     mem = Mock()
     cm = _make_cm(memory_manager=mem)
-    cm._summarize_formatted = lambda _formatted: "a summary"
+    cm._summarize_formatted = lambda _formatted, *, cancellation_token=None: "a summary"
 
     out = cm._run_compaction(
         _history(), is_auto=True, reason="compression_threshold",
@@ -581,7 +581,7 @@ def test_an_empty_summary_still_increments_the_failure_counter():
     when summarization returns nothing.
     """
     cm = _make_cm()
-    cm._summarize_formatted = lambda _formatted: ""
+    cm._summarize_formatted = lambda _formatted, *, cancellation_token=None: ""
     assert cm.circuit_breaker_failures == 0
 
     for expected in (1, 2, 3):
@@ -623,7 +623,7 @@ def test_legacy_wrapper_derives_a_reason_from_is_auto():
     values it can mean are mapped one to one."""
     cm = _make_cm()
     seen = []
-    cm._run_compaction = lambda m, *, is_auto, reason, decide=None: (
+    cm._run_compaction = lambda m, *, is_auto, reason, decide=None, cancellation_token=None: (
         seen.append((is_auto, reason))
         or CompactionOutcome(
             status="failed", trigger="auto" if is_auto else "manual",

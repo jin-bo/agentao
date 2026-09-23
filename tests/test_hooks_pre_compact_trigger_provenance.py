@@ -104,7 +104,7 @@ def _neutralize(agent, monkeypatch):
     monkeypatch.setattr(
         agent.context_manager,
         "_run_compaction",
-        lambda msgs, *, is_auto=True, reason="compression_threshold", decide=None: (
+        lambda msgs, *, is_auto=True, reason="compression_threshold", decide=None, cancellation_token=None: (
             CompactionOutcome(
                 status="failed",
                 trigger="auto" if is_auto else "manual",

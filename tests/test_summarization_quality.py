@@ -272,7 +272,7 @@ def test_an_oversized_tail_does_not_open_the_breaker():
     """End to end: the knob's own worst case still compacts."""
     cm = _cm(10_000)
     cm.keep_recent_token_ratio = 0.01
-    cm._summarize_formatted = lambda _f: "a summary"
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: "a summary"
     msgs = [{"role": "user", "content": "x" * 20_000} for _ in range(8)]
 
     for _ in range(cm.CIRCUIT_BREAKER_LIMIT):

@@ -15,6 +15,30 @@ _Targeting 0.5.5. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **Compaction honours the turn's cancel.** The summarizer called
+  `llm_client.chat()` with no cancellation token, so its retry backoff — up to
+  60 s a wait since 0.5.4 — ran to the end after the turn was cancelled. That
+  bit whatever cancels through a token: `agentao run` (SIGINT/SIGTERM become
+  `token.cancel`), ACP `session/cancel`, and a host's own token. The
+  interactive CLI was not affected: its Ctrl+C is a `KeyboardInterrupt` on the
+  main thread, which interrupts the sleep directly. The threshold and
+  API-overflow entry points now pass the turn's token through
+  `CompactionCoordinator.run(cancellation_token=)` to the summarizer's
+  `chat()`.
+
+  It also fixes what a cancelled compaction was recorded as. A cancel that
+  ends a retry wait makes `chat()` re-raise the provider error, which the
+  summarizer turns into an empty summary — and an automatic compaction with an
+  empty summary counts as a summarizer failure, so three cancelled turns would
+  have opened the circuit breaker and paused automatic compaction.
+  `_run_compaction` now reads the token before summarizing (a cancelled turn
+  sends no request) and again before the failure count and the commit; a
+  cancel raises `AgentCancelledError`, the turn's own cancel, with history
+  untouched, nothing written to the memory store and no
+  `COMPACTION_SETTLED` — the outcome is the turn's, not the compaction's.
+  Manual `/compact` and `Agentao.compact()` run outside a turn and are
+  unchanged.
+
 ---
 
 ## [0.5.4] — 2026-09-23
