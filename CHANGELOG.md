@@ -58,6 +58,27 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **ACP: a tool call's streamed output is no longer reduced to its last chunk.**
+  ACP v1 says a `tool_call_update`'s collections are *overwritten, not extended*
+  (the normative schema source states it on three separate fields;
+  `agentclientprotocol/agent-client-protocol@bf6d1ec`,
+  `agent-client-protocol-schema/src/v1/tool_call.rs:167,252,285`). agentao
+  mapped each streamed `TOOL_OUTPUT` chunk to an update carrying that chunk as
+  the whole collection, so a conformant client kept only the latest one. A
+  failing `run_shell_command` was worse: the terminal update sent `Error: …` as
+  the entire collection, erasing the output that said why it failed.
+
+  Each update now restates the whole collection, and an error rides *beside*
+  the output rather than instead of it. Two bounds come with it, because
+  restating per chunk would be quadratic in the output size: an update goes out
+  once every 4 000 accumulated characters (the first chunk always goes, since it
+  carries `pending` → `in_progress`), and the client's excerpt is capped at
+  16 000 characters kept as head + tail with the elided count between them. The
+  cap is on the client's copy only — the model still receives the result through
+  `runtime/tool_result_formatter.py`, and replay still records it. Unbounded
+  live output is what ACP `terminal/create` is for, and that is the G1
+  fs/terminal proxy, still a documented non-goal.
+
 - Read-only mode is enforced when only the permission engine's mode is set. ACP
   `session/set_mode` with `modeId: "read-only"`, an embedded host calling
   `permission_engine.set_mode(PermissionMode.READ_ONLY)` and a sub-agent deciding

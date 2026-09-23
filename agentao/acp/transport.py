@@ -109,6 +109,7 @@ from typing import TYPE_CHECKING, Any, Dict, Set
 
 from agentao.transport.events import AgentEvent, EventType
 
+from ._tool_call_content import ToolCallContentBuffer
 from ._transport_helpers import (
     _json_safe,
     _text_block,
@@ -187,6 +188,13 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
         # during ``session/load`` (see _ReplayMixin), so the matching tool
         # result is skipped — a ``plan`` has no opening ``tool_call`` to close.
         self._replay_plan_call_ids: Set[str] = set()
+        # call_id → the ACP ``content`` collection accumulated for an
+        # in-flight tool call. ACP replaces the collection on every update
+        # rather than extending it, so each update has to restate the whole
+        # thing; see :mod:`agentao.acp._tool_call_content`. Created lazily on
+        # the first ``TOOL_OUTPUT`` and popped at ``TOOL_COMPLETE``, so a call
+        # that streams nothing costs nothing.
+        self._tool_call_content: Dict[str, ToolCallContentBuffer] = {}
 
     # -- One-way events ----------------------------------------------------
 
@@ -276,17 +284,34 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
         if etype == EventType.TOOL_OUTPUT:
             call_id = str(data.get("call_id", ""))
             chunk = str(data.get("chunk", ""))
-            # Incremental tool output: append a content entry and mark the
-            # call in_progress so ACP clients can animate spinners.
-            return {
+            # Streamed tool output. ACP *replaces* a tool call's content
+            # collection on every update rather than extending it, so the
+            # update restates everything accumulated so far — sending the
+            # bare chunk left a conformant client showing only the latest
+            # one. The buffer also throttles: a chunk that does not earn an
+            # update is still recorded and rides the next one.
+            buffer = self._tool_call_content.setdefault(
+                call_id, ToolCallContentBuffer()
+            )
+            if not buffer.append(chunk):
+                return None
+            update: Dict[str, Any] = {
                 "sessionUpdate": "tool_call_update",
                 "toolCallId": call_id,
                 "status": "in_progress",
-                "content": [_tool_content_text(chunk)],
             }
+            entries = buffer.entries()
+            if entries:
+                # An empty collection would *clear* the client's copy, so a
+                # first chunk that carries no text sends the status alone.
+                update["content"] = entries
+            return update
 
         if etype == EventType.TOOL_COMPLETE:
             call_id = str(data.get("call_id", ""))
+            # Pop before the ``todo_write`` branch returns, so no path can
+            # leave a buffer behind for a call that is over.
+            buffer = self._tool_call_content.pop(call_id, None)
             if str(data.get("tool", "")) == "todo_write":
                 plan = self._todo_plan_calls.pop(call_id, None)
                 if plan is not None:
@@ -305,14 +330,26 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
             # surfaces as "failed" because ACP has no cancelled variant
             # for tool calls (only for turns via stopReason).
             acp_status = "completed" if status == "ok" else "failed"
-            update: Dict[str, Any] = {
+            update = {
                 "sessionUpdate": "tool_call_update",
                 "toolCallId": call_id,
                 "status": acp_status,
             }
             error = data.get("error")
+            # The collection is restated only when it would change: output
+            # the throttle held back, or an error line to add. When the last
+            # streamed update already carried everything, omitting ``content``
+            # leaves that copy standing — which is what replace semantics
+            # mean. Note the error rides *beside* the output it explains;
+            # sending it alone used to erase every chunk the tool produced
+            # before it failed, which is the output that says why.
+            entries = list(buffer.entries()) if buffer is not None else []
             if error:
-                update["content"] = [_tool_content_text(f"Error: {error}")]
+                entries.append(_tool_content_text(f"Error: {error}"))
+            elif buffer is None or not buffer.dirty:
+                entries = []
+            if entries:
+                update["content"] = entries
             return update
 
         if etype == EventType.AGENT_START:

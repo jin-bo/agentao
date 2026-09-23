@@ -122,7 +122,7 @@ Server-to-client streaming updates during a prompt turn.
 | `agent_message_chunk` | `LLM_TEXT` | `content: {type:"text", text}` |
 | `agent_thought_chunk` | `THINKING` / `ERROR` | `content: {type:"text", text}` |
 | `tool_call` | `TOOL_START` | `toolCallId`, `title`, `kind`, `status:"pending"`, `rawInput` |
-| `tool_call_update` | `TOOL_OUTPUT` / `TOOL_COMPLETE` | `toolCallId`, `status`, optional `content[]` append |
+| `tool_call_update` | `TOOL_OUTPUT` / `TOOL_COMPLETE` | `toolCallId`, `status`, optional `content[]` — **replaces** the collection, so each update restates it whole |
 
 ### `tool_call.kind` (closed enum)
 

@@ -122,7 +122,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 | `agent_message_chunk` | `LLM_TEXT` | `content: {type:"text", text}` |
 | `agent_thought_chunk` | `THINKING` / `ERROR` | `content: {type:"text", text}` |
 | `tool_call` | `TOOL_START` | `toolCallId`、`title`、`kind`、`status:"pending"`、`rawInput` |
-| `tool_call_update` | `TOOL_OUTPUT` / `TOOL_COMPLETE` | `toolCallId`、`status`，可选 `content[]` 追加 |
+| `tool_call_update` | `TOOL_OUTPUT` / `TOOL_COMPLETE` | `toolCallId`、`status`，可选 `content[]` —— 它**替换**整个集合，所以每条更新都要把集合整个重述一遍 |
 
 ### `tool_call.kind`（封闭枚举）
 

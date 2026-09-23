@@ -422,13 +422,26 @@ Below is a complete client→server→client conversation. Each line on the wire
 | `THINKING` | `agent_thought_chunk` | Same shape as `agent_message_chunk` but a different `sessionUpdate` so clients can render reasoning differently. |
 | `TOOL_CONFIRMATION` | (silent) | Confirmations go via `session/request_permission` (server→client request), not `session/update`. |
 | `TOOL_START` | `tool_call` | `status: "pending"`, `kind` mapped from tool name (`read`, `edit`, `search`, `execute`, `fetch`, …), `rawInput` is the JSON-safe argument dict. |
-| `TOOL_OUTPUT` | `tool_call_update` | `status: "in_progress"`, `content` appends one text entry with the chunk. |
-| `TOOL_COMPLETE` | `tool_call_update` | `status: "completed"` for `ok`, `"failed"` for `error` or `cancelled` (ACP has no cancelled status for tool calls — only for turns via `stopReason`). |
+| `TOOL_OUTPUT` | `tool_call_update` | `status: "in_progress"`, `content` restates the **whole** collection accumulated so far (ACP replaces a tool call's collections, it does not extend them), coalesced into one text entry. Throttled — see *Streamed tool output* below. |
+| `TOOL_COMPLETE` | `tool_call_update` | `status: "completed"` for `ok`, `"failed"` for `error` or `cancelled` (ACP has no cancelled status for tool calls — only for turns via `stopReason`). `content` is restated only when it would change — output the throttle held back, or an error line appended *beside* that output. |
 | `AGENT_START` | `agent_thought_chunk` | Sub-agent start marker `[sub-agent started: <name>] <task>`. |
 | `AGENT_END` | `agent_thought_chunk` | Sub-agent end marker `[sub-agent finished: <name> (<state>, <N> turns)]`. |
 | `ERROR` | `agent_message_chunk` | Prefixed with `Error: `. |
 
 Failures inside `emit()` are logged and swallowed — a misbehaving client or a JSON-safety slip cannot interrupt an in-progress turn.
+
+#### Streamed tool output
+
+ACP v1 is explicit that a `tool_call_update`'s collections are **overwritten, not extended** (the normative schema source says so on three separate fields). Only `run_shell_command` streams in agentao, and mapping each chunk to an update carrying that chunk alone therefore left a conformant client showing just the *latest* chunk — and a failing command replaced even that with the bare `Error: …` line, losing the output that said why it failed.
+
+So each update restates the whole collection. Two bounds come with that, both in `agentao/acp/_tool_call_content.py`:
+
+| Bound | Value | Why |
+|---|---|---|
+| `FLUSH_CHARS` | 4 000 | Restating per chunk is quadratic in the output size. The first chunk always flushes (it carries `pending` → `in_progress`); after that an update goes out once another `FLUSH_CHARS` have accumulated. Held-back text is not dropped — it rides the next update, or the terminal one. |
+| `MAX_CHARS` / `HEAD_CHARS` | 16 000 / 4 000 | The excerpt the client renders is capped, kept as head + tail with a `[… N characters elided …]` marker between them. |
+
+The cap applies to the **client's copy only**: the model still gets the result through `runtime/tool_result_formatter.py` (80 000 chars, or a file under `.agentao/tool-outputs/`), and replay still records it. A client that wants unbounded live output wants a `terminal` content entry backed by `terminal/create` — that is the G1 fs/terminal proxy, a [documented non-goal](../design/acp-server-conformance-review.md).
 
 ### History replay (`session/load`)
 
