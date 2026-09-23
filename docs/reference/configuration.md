@@ -145,7 +145,7 @@ See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each
 - **Provenance.** A file that loads successfully contributes a `loaded_sources` label (`user:<path>`) returned from `PermissionEngine.active_permissions()` and `Agentao.active_permissions()` — see [`docs/reference/host-api.md`](host-api.md).
 - **Public getter.** `PermissionEngine.active_permissions()` returns a cached, JSON-safe `ActivePermissions` snapshot (`mode`, `rules`, `loaded_sources`). Hosts that layer policy on top can call `add_loaded_source("injected:<name>")` so the snapshot reflects their provenance. The cache is invalidated on `set_mode()` and `add_loaded_source()`.
 - **Evaluation order.**
-  - Modes `read-only` / `workspace-write`: `[user rules] → [active mode preset rules]` (first match wins).
+  - Modes `read-only` / `workspace-write`: `[user rules] → [active mode preset rules]` (first match wins). In `read-only` this order applies only to the tools read-only mode admits: any other tool is denied before a rule is consulted, so no rule can allow it.
   - Modes `full-access` / `plan`: `[active mode preset rules] → [user rules]` — presets cannot be overridden.
   - No match → `decide()` returns `None`; the runner falls back to the tool's own `requires_confirmation` attribute.
 
@@ -180,7 +180,7 @@ See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each
 **Built-in presets** live in `permissions.py::_PRESET_RULES` and run after custom rules (or before, in `full-access` / `plan`):
 
 - `workspace-write` — auto-allows `write_file` / `replace`; allowlists ~16 read-only shell commands (`ls`, `cat`, `grep`, `git status|log|diff|show|…`, …); denies `rm -rf` / `sudo` / `mkfs` / `dd if=`; allowlists trusted docs domains (`.github.com`, `.docs.python.org`, `.wikipedia.org`, `.pypi.org`, `.readthedocs.io`, `r.jina.ai`); blocklists SSRF targets (`localhost`, `127.0.0.1`, `0.0.0.0`, `169.254.169.254`, `.internal`, `.local`, `::1`); rest → ask.
-- `read-only` — empty preset; `ToolRunner` short-circuits on `tool.is_read_only`.
+- `read-only` — empty preset; `ToolRunner` short-circuits on `tool.is_read_only`, denying every tool that is not read-only. It does so whether the mode came from the runner's flag (CLI, `agentao run`) or only from the engine (`session/set_mode` over ACP, an embedded host's `set_mode`). Read-only tools are the readers plus `activate_skill` and `todo_write`, which change only session state; `save_memory` writes SQLite and is denied.
 - `full-access` — single rule `{"tool": "*", "action": "allow"}`.
 - `plan` — denies all writes / memory mutations; allows the read-only shell allowlist; web rules identical to `workspace-write`.
 

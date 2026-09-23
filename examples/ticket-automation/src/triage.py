@@ -16,7 +16,12 @@ from dotenv import load_dotenv
 
 from agentao import Agentao  # type alias for return annotation
 from agentao.embedding import build_from_environment
-from agentao.permissions import PermissionDecision, PermissionEngine, PermissionMode
+from agentao.permissions import (
+    PermissionDecision,
+    PermissionDecisionDetail,
+    PermissionEngine,
+    PermissionMode,
+)
 from agentao.tools.base import Tool
 
 
@@ -147,30 +152,66 @@ class SendReply(Tool):
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Permission rules — this agent answers tickets; it does not touch the disk
+# ──────────────────────────────────────────────────────────────────────────
+
+# Every built-in whose ``is_read_only`` is False — the set read-only mode used
+# to deny wholesale. ``save_memory`` belongs on the list: it writes
+# ``.agentao/memory.db`` under this ticket's working directory.
+NO_FILE_OR_SHELL = [
+    {"tool": "write_file", "action": "deny"},
+    {"tool": "replace", "action": "deny"},
+    {"tool": "run_shell_command", "action": "deny"},
+    {"tool": "save_memory", "action": "deny"},
+]
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # PermissionEngine — gate send_reply by confidence
 # ──────────────────────────────────────────────────────────────────────────
 
 class ConfidenceGatedEngine(PermissionEngine):
-    """Auto-allow send_reply only when the model claims confidence >= 0.9."""
+    """Auto-allow send_reply only when the model claims confidence >= 0.9.
+
+    Override ``decide_detail``, not ``decide``: the runtime asks for the
+    detail (the decision plus the reason it reports to the host), and
+    ``decide`` is the thin wrapper over it. Overriding ``decide`` alone
+    leaves the gate unreachable.
+    """
 
     THRESHOLD = 0.9
 
-    def decide(
+    def _gate(self, tool_name: str, tool_args: Dict[str, Any]) -> Optional[float]:
+        """The confidence this engine judges, or ``None`` for other tools."""
+        if tool_name != "send_reply":
+            return None
+        try:
+            return float(tool_args.get("confidence", 0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def decide_detail(
         self,
         tool_name: str,
         tool_args: Dict[str, Any],
-    ) -> Optional[PermissionDecision]:
-        if tool_name == "send_reply":
-            try:
-                conf = float(tool_args.get("confidence", 0))
-            except (TypeError, ValueError):
-                conf = 0.0
-            return (
-                PermissionDecision.ALLOW
-                if conf >= self.THRESHOLD
-                else PermissionDecision.DENY
+        *,
+        shell_spec: Any = None,
+        decided: Any = None,
+    ) -> Optional[PermissionDecisionDetail]:
+        conf = self._gate(tool_name, tool_args)
+        if conf is None:
+            return super().decide_detail(
+                tool_name, tool_args, shell_spec=shell_spec, decided=decided,
             )
-        return super().decide(tool_name, tool_args)
+        allowed = conf >= self.THRESHOLD
+        return PermissionDecisionDetail(
+            PermissionDecision.ALLOW if allowed else PermissionDecision.DENY,
+            reason=f"host-rule:send_reply confidence={conf:.2f}",
+        )
+
+    # No ``decide`` override: the base one is already the thin wrapper
+    # ``detail.decision if detail is not None else None`` over the method
+    # above, so re-declaring it here would only restate it.
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -189,8 +230,13 @@ def build_agent(ticket_id: str) -> Agentao:
         dst_skill.parent.mkdir(parents=True, exist_ok=True)
         dst_skill.symlink_to(src_skill)
 
-    engine = ConfidenceGatedEngine(project_root=workdir)
-    engine.set_mode(PermissionMode.READ_ONLY)
+    # Not ``read-only``: that mode denies every tool whose ``is_read_only``
+    # is False — draft_reply and send_reply included — before any rule is
+    # consulted. Keep the agent out of the filesystem by rule instead: user
+    # rules are evaluated ahead of the workspace-write preset, so these win,
+    # and the engine still decides this example's own tools.
+    engine = ConfidenceGatedEngine(project_root=workdir, rules=NO_FILE_OR_SHELL)
+    engine.set_mode(PermissionMode.WORKSPACE_WRITE)
 
     agent = build_from_environment(
         working_directory=workdir,

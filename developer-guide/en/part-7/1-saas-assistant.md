@@ -30,7 +30,7 @@ FastAPI backend
    └─ Agentao instance per (tenant_id, session_id)
         ├─ working_directory = /data/tenants/{tenant_id}/{session_id}
         ├─ Custom tools: list_projects, create_task, assign_user
-        ├─ PermissionEngine: READ_ONLY by default, WORKSPACE_WRITE after confirm
+        ├─ PermissionEngine: WORKSPACE_WRITE, deny rules for the built-in writers
         └─ SdkTransport → SSE bridge
 ```
 
@@ -167,8 +167,15 @@ async def get_or_create_agent(session_id, workdir, tenant_id, transport):
     if existing:
         existing.transport = transport
         return existing
-    engine = PermissionEngine(project_root=workdir)
-    engine.set_mode(PermissionMode.READ_ONLY)
+    # Deny the built-in writers by rule; read-only mode would deny
+    # CreateTaskTool too. create_task keeps asking via requires_confirmation.
+    engine = PermissionEngine(project_root=workdir, rules=[
+        {"tool": "write_file", "action": "deny"},
+        {"tool": "replace", "action": "deny"},
+        {"tool": "run_shell_command", "action": "deny"},
+        {"tool": "save_memory", "action": "deny"},
+    ])
+    engine.set_mode(PermissionMode.WORKSPACE_WRITE)
     agent = Agentao(
         working_directory=workdir,
         transport=transport,

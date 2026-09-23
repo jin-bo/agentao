@@ -131,7 +131,7 @@
 - **来源标记。** 成功加载的文件会贡献 `loaded_sources` 标签（`user:<path>`），由 `PermissionEngine.active_permissions()` 与 `Agentao.active_permissions()` 暴露 —— 详见 [`docs/reference/host-api.md`](host-api.md)。
 - **公共 getter。** `PermissionEngine.active_permissions()` 返回一个缓存的、JSON 安全的 `ActivePermissions` 快照（`mode`、`rules`、`loaded_sources`）。叠加策略的宿主可调用 `add_loaded_source("injected:<name>")` 让快照反映其 provenance。`set_mode()` 与 `add_loaded_source()` 会使缓存失效。
 - **求值顺序。**
-  - `read-only` / `workspace-write` 模式：`[用户规则] → [当前 mode 的 preset 规则]`，首个命中胜出。
+  - `read-only` / `workspace-write` 模式：`[用户规则] → [当前 mode 的 preset 规则]`，首个命中胜出。在 `read-only` 下，这个顺序只作用于只读模式放行的工具：其他工具在查任何规则之前就被拒绝，因此没有规则能放行它们。
   - `full-access` / `plan` 模式：`[当前 mode 的 preset 规则] → [用户规则]`——preset 不可被覆盖。
   - 没有命中 → `decide()` 返回 `None`；runner 退回到工具自身的 `requires_confirmation` 属性。
 
@@ -166,7 +166,7 @@
 **内置 preset** 在 `permissions.py::_PRESET_RULES`，按上述顺序追加在自定义规则之后（或在 `full-access` / `plan` 下放在前面）：
 
 - `workspace-write` —— 自动放行 `write_file` / `replace`；放行约 16 条只读 shell（`ls`、`cat`、`grep`、`git status|log|diff|show|…`…）；拒绝 `rm -rf` / `sudo` / `mkfs` / `dd if=`；放行受信任文档站点（`.github.com`、`.docs.python.org`、`.wikipedia.org`、`.pypi.org`、`.readthedocs.io`、`r.jina.ai`）；屏蔽 SSRF 目标（`localhost`、`127.0.0.1`、`0.0.0.0`、`169.254.169.254`、`.internal`、`.local`、`::1`）；其余 → ask。
-- `read-only` —— preset 为空；`ToolRunner` 用 `tool.is_read_only` 直接短路。
+- `read-only` —— preset 为空；`ToolRunner` 用 `tool.is_read_only` 直接短路，拒绝所有非只读工具。无论模式来自 runner 的标志（CLI、`agentao run`），还是只设了引擎（ACP 的 `session/set_mode`、嵌入宿主调用 `set_mode`），都会生效。只读工具是各读取类工具，外加只改会话状态的 `activate_skill` 和 `todo_write`；`save_memory` 会写 SQLite，因此被拒绝。
 - `full-access` —— 单条 `{"tool": "*", "action": "allow"}`。
 - `plan` —— 拒绝所有写入与记忆改动；放行只读 shell allowlist；web 规则与 `workspace-write` 相同。
 

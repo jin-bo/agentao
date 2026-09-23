@@ -150,7 +150,7 @@ cmd。什么都不配置时，Windows 仍旧是 `%COMSPEC% /c`，与过去完全
 
 求值顺序：
 
-- `read-only` / `workspace-write`：`[用户规则] → [当前模式预设]`，命中即停。
+- `read-only` / `workspace-write`：`[用户规则] → [当前模式预设]`，命中即停。在 `read-only` 下只作用于 `is_read_only` 为 `True` 的工具；其他工具在查任何规则之前就被拒绝。
 - `full-access` / `plan`：`[当前模式预设] → [用户规则]`，预设不可覆盖。
 - 都未命中 → 回退到该工具的 `requires_confirmation` 属性。
 

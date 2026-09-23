@@ -203,6 +203,8 @@ def test_an_uncomputable_re_decide_denies_rather_than_running_the_original(tmp_p
 
     assert plan.decision is ToolCallDecision.DENY
     assert "re-decision could not be computed" in plan.permission_detail.reason
+    # The engine's own failure, not an error raised on the way to calling it.
+    assert "engine unavailable" in plan.permission_detail.reason
 
 
 def test_a_rewrite_is_never_stored_under_a_verdict_computed_on_the_original(tmp_path):

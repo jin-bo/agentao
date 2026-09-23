@@ -38,7 +38,7 @@ If no rule matches (`decide()` returns `None`), the agent falls back to the tool
 
 | Mode | Writes | Shell | Web | Best for |
 |------|--------|-------|-----|----------|
-| `READ_ONLY` | Deny | Deny | Deny | Read-only exploration, audit |
+| `READ_ONLY` | Deny (no rule can allow) | Deny (no rule can allow) | Ask (rules apply) | Read-only exploration, audit |
 | `WORKSPACE_WRITE` | Allow | Rule-gated | Allowlist/blocklist/ask | **Default for production** |
 | `FULL_ACCESS` | Allow | Allow | Allow | Dev / fully trusted |
 | `PLAN` | Deny (only plan_*) | Deny (only git etc.) | Allowlist | Internal to Plan mode |

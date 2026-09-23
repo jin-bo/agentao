@@ -34,7 +34,7 @@ Python entrypoint
        ├─ Agentao instance (fresh each run, closed cleanly)
        │    ├─ Skill: "daily-digest"
        │    ├─ Tools: web_fetch (read-only curated feeds), write_file
-       │    └─ PermissionEngine: READ_ONLY + explicit write allowlist
+       │    └─ PermissionEngine: default workspace-write (the job writes its report)
        │
        ├─ Output: /reports/YYYY-MM-DD.md
        │

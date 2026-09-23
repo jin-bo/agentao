@@ -1,7 +1,9 @@
 # Built-in tools — a four-way comparison: codex · gemini-cli · pi-mono · agentao
 
-> **⚠️ Analysis only. Nothing here is authorized for implementation.** §1 is a **priority ordering
-> of findings**, not a work schedule. Quote this line whenever you quote the table.
+> **⚠️ Analysis only, with one exception: finding 3 was decided and implemented on 2026-09-22,
+> targeting 0.5.4 (see the banner in §5).** Nothing else here is authorized for implementation.
+> §1 is a **priority ordering of findings**, not a work schedule. Quote this line whenever you
+> quote the table.
 
 **Status:** analysis, **rev 17** (2026-09-01).
 **Anchors:** codex `openai/codex@b7cd519c76` (2026-08-31); gemini-cli
@@ -427,6 +429,17 @@ withheld and *that* shell is offered in their place, not the reason; and codex n
 those tools is not a recorded judgment about anything. Treat the context-cost reading as
 **inference, unmeasured** — the observation that stands is the shape (two harnesses ship a small
 default surface and route general file work through the shell), not a shared motive.
+
+> **⚠️ Decided and implemented (2026-09-22, targeting 0.5.4).** The maintainer made the explicit
+> decision this finding says was never made. Read-only mode now admits `activate_skill` and
+> `todo_write`: both declare `is_read_only`, which now means "allowed in read-only mode", with
+> no file writes, no commands and no state outside the session. `save_memory` is still denied.
+> gemini-cli's middle position (ASK for `activate_skill` when interactive) was not taken.
+> Checking the gate's callers also turned up a fail-open: read-only was enforced only when the
+> runner's flag was set, so ACP `session/set_mode`, an embedded host's `set_mode` and a
+> sub-agent's engine snapshot, which set the engine's mode alone, got ASK for writes and shell
+> and ran `save_memory`. The same change fixed it (`ToolRunner.readonly_active`). The text below
+> is the analysis as written; its line numbers are the anchor's.
 
 **Finding 3.** agentao's `read-only` mode denies any tool whose `is_read_only` is `False`
 (`runtime/tool_planning.py:487`, reason `mode-preset:read-only`), and the base default is `False`

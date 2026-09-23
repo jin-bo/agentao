@@ -8,10 +8,10 @@ Agentao has four permission modes. Three are user-selectable; one (`plan`) is se
 
 | Mode | Writes & shell | Web | Confirmation UI |
 |------|----------------|-----|-----------------|
-| `read-only` | **blocked** | blocked | n/a — refused outright |
+| `read-only` | **blocked** | asks | only for web calls — writes and shell are refused outright |
 | `workspace-write` | allowed for safe ops | **asks per domain** | shown for risky ops |
 | `full-access` | allowed | allowed | **never shown** |
-| `plan` | blocked | blocked | (research-only; see ch. 4) |
+| `plan` | blocked (safe shell allowlisted) | allowlist / asks, as `workspace-write` | (research-only; see ch. 4) |
 
 `workspace-write` is the default and the one you should run in 95% of the time.
 
@@ -38,15 +38,20 @@ You can't change `/mode` while plan mode is active. Exit plan first with `/plan 
 
 ### `read-only`
 
-Refused without asking:
+Refused without asking (before any permission rule is consulted, so no rule can allow them):
 
 - `write_file`, `replace` — any file mutation
 - `run_shell_command` — every command, including read-only ones
-- `web_fetch`, `web_search` — any network call
+- `save_memory` — it writes SQLite and outlives the session
 
 Allowed without asking:
 
 - `read_file`, `list_directory`, `glob`, `search_file_content` — passive reads
+- `activate_skill`, `todo_write` — they change only this session's state (the active skills, the checklist)
+
+Asks before running:
+
+- `web_fetch`, `web_search` — read-only mode admits them, and the empty read-only preset leaves them to their own confirmation
 
 Use when: you want the agent to investigate and explain, but **never** mutate. Code reviews, audits, "what does this codebase do" walkthroughs.
 

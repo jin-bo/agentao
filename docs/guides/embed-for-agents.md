@@ -349,6 +349,21 @@ do not disable the engine.
 - Modes (`agentao.permissions.PermissionMode`): `read-only`,
   `workspace-write` (default), `full-access`, `plan`. Set with
   `agent.permission_engine.set_mode(PermissionMode.WORKSPACE_WRITE)`.
+- **`read-only` is not a rule set — it is a gate, and it covers your tools
+  too.** Its preset rule list is empty; enforcement is
+  `ToolRunner.readonly_active()`, which denies **every** tool whose
+  `is_read_only` is `False` *before* the engine is consulted, so a `rules=`
+  `allow`, a custom engine's `decide_detail`, and an ASK your transport
+  would approve cannot reach one. It applies whether the mode came from
+  `set_mode` alone (embedded host, ACP `session/set_mode`, a sub-agent's
+  engine snapshot) or from `ToolRunner.set_readonly_mode` as well. So a host
+  that wants "no writes, no shell, but my own business tools still run"
+  should use `workspace-write` plus `deny` rules for `write_file`,
+  `replace`, `run_shell_command` and `save_memory` — user rules are
+  evaluated ahead of that preset — rather than `read-only`. Declare
+  `is_read_only = True` only on a tool with no effect outside the session.
+  (`examples/ticket-automation` and `examples/saas-assistant` are the two
+  worked versions.)
 - Rules come from `~/.agentao/permissions.json` (user scope only — a
   project-scope file is ignored with a warning, because a checked-in
   `{"tool": "*", "action": "allow"}` would defeat the user's policy on

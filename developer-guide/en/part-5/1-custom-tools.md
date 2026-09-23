@@ -61,7 +61,7 @@ class MyTool(Tool):
 | `parameters` | ✅ | JSON Schema; anything OpenAI function-calling supports |
 | `execute(**kwargs) -> str` | ✅ | Returns a plain string; no dicts, no bytes |
 | `requires_confirmation` | ❌ | True for side-effecting tools → routes through `confirm_tool` |
-| `is_read_only` | ❌ | True for pure reads; permission engine / Plan mode can optimize |
+| `is_read_only` | ❌ | True if read-only mode may run it: no file writes, no commands, no state outside the session. Read-only mode denies every tool that returns False |
 | `copies_to_subagents` | ❌ | True lets sub-agents use the tool, as a copy — see below. Default False: your tool reaches no sub-agent |
 
 ## Letting a sub-agent use your tool
@@ -401,7 +401,7 @@ Production products usually use all three: tools for business logic, MCP for int
 
 - A Tool returns **a string** (`role:tool` message); never raw dicts/bytes. Bound business data → JSON-stringify and clamp size.
 - The **description** is what the LLM reads to decide *if* and *how* to call. Be specific: when to use, args, return shape, hard rules.
-- Set `requires_confirmation=True` for anything with side effects; set `is_read_only=True` for pure reads (helps PermissionEngine and Plan mode).
+- Set `requires_confirmation=True` for anything with side effects; set `is_read_only=True` only for tools with no effect outside the session, since that is what lets read-only mode run them.
 - Inject tools through `extra_tools=` or `add_tool()` so capabilities are bound and names are validated; use `disable_tools` / `enabled_tools` only to reduce the visible schema.
 - Catch exceptions inside `execute()` and return an error string — uncaught exceptions kill the whole `chat()` call.
 - One tool, one focused job. Vague descriptions get called everywhere.

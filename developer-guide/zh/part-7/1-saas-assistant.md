@@ -30,7 +30,7 @@ FastAPI 后端
    └─ 每个 (tenant_id, session_id) 一个 Agentao 实例
         ├─ working_directory = /data/tenants/{tenant_id}/{session_id}
         ├─ 自定义工具: list_projects, create_task, assign_user
-        ├─ PermissionEngine: 默认 READ_ONLY，经确认后放宽 WORKSPACE_WRITE
+        ├─ PermissionEngine: WORKSPACE_WRITE，内置写入工具用 deny 规则挡掉
         └─ SdkTransport → SSE 桥接
 ```
 
@@ -167,8 +167,15 @@ async def get_or_create_agent(session_id, workdir, tenant_id, transport):
     if existing:
         existing.transport = transport
         return existing
-    engine = PermissionEngine(project_root=workdir)
-    engine.set_mode(PermissionMode.READ_ONLY)
+    # Deny the built-in writers by rule; read-only mode would deny
+    # CreateTaskTool too. create_task keeps asking via requires_confirmation.
+    engine = PermissionEngine(project_root=workdir, rules=[
+        {"tool": "write_file", "action": "deny"},
+        {"tool": "replace", "action": "deny"},
+        {"tool": "run_shell_command", "action": "deny"},
+        {"tool": "save_memory", "action": "deny"},
+    ])
+    engine.set_mode(PermissionMode.WORKSPACE_WRITE)
     agent = Agentao(
         working_directory=workdir,
         transport=transport,

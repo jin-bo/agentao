@@ -20,6 +20,12 @@ class TodoWriteTool(Tool):
         return "todo_write"
 
     @property
+    def is_read_only(self) -> bool:
+        # The checklist lives in memory for this session only, so read-only
+        # mode lets it through. Plan mode still denies it by its own rule.
+        return True
+
+    @property
     def description(self) -> str:
         return (
             "Update the task checklist for the current session. "

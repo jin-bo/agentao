@@ -152,7 +152,7 @@ The `mode` field is **not** stored in `permissions.json` — it lives in `settin
 
 Evaluation order:
 
-- `read-only` / `workspace-write`: `[user rules] → [active mode preset]` — first match wins.
+- `read-only` / `workspace-write`: `[user rules] → [active mode preset]` — first match wins. In `read-only` this applies only to tools whose `is_read_only` is `True`; any other tool is denied before a rule is consulted.
 - `full-access` / `plan`: `[active mode preset] → [user rules]` — presets cannot be overridden.
 - No match → falls back to the tool's own `requires_confirmation` attribute.
 

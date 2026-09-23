@@ -54,8 +54,22 @@ class SessionPool:
             workdir = self.root / tenant_id / key.split(":", 1)[1]
             workdir.mkdir(parents=True, exist_ok=True)
 
-            engine = PermissionEngine(project_root=workdir)
-            engine.set_mode(PermissionMode.READ_ONLY)
+            # Not ``read-only``: that mode denies every tool whose
+            # ``is_read_only`` is False — CreateTaskTool included — before
+            # any rule is consulted. Deny the built-in writers by rule
+            # instead; user rules are evaluated ahead of the
+            # workspace-write preset, so these win, and create_task keeps
+            # going through ``requires_confirmation``.
+            # ``save_memory`` is on the list too: it writes
+            # ``.agentao/memory.db`` under this tenant's directory, and
+            # read-only mode used to deny it along with the rest.
+            engine = PermissionEngine(project_root=workdir, rules=[
+                {"tool": "write_file", "action": "deny"},
+                {"tool": "replace", "action": "deny"},
+                {"tool": "run_shell_command", "action": "deny"},
+                {"tool": "save_memory", "action": "deny"},
+            ])
+            engine.set_mode(PermissionMode.WORKSPACE_WRITE)
 
             agent = build_from_environment(
                 working_directory=workdir,

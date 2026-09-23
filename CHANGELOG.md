@@ -13,7 +13,38 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- Read-only mode now allows `activate_skill` and `todo_write`. Both change only
+  the current session (the active-skill set, an in-memory checklist), so a
+  read-only session, `agentao run --permission-mode read-only` or a read-only
+  sub-agent can load a skill and track its steps. `save_memory` is still denied:
+  it writes SQLite and outlives the session. Plan mode is unchanged and still
+  denies `todo_write` through its own rule. `Tool.is_read_only` now reads "allowed
+  in read-only mode": no file writes, no commands, no state outside the session.
+  The CLI's injected `update_goal` is the one deliberate exception: it writes the
+  goal record (`.agentao/goal.json`), never the user's files.
+
 ### Fixed
+
+- Read-only mode is enforced when only the permission engine's mode is set. ACP
+  `session/set_mode` with `modeId: "read-only"`, an embedded host calling
+  `permission_engine.set_mode(PermissionMode.READ_ONLY)` and a sub-agent deciding
+  with a snapshot of such an engine used to get the engine's empty read-only
+  preset and nothing else: `write_file`, `replace` and `run_shell_command` fell
+  through to ASK, which the default transport approves, and `save_memory` ran
+  without asking. Only the CLI and `agentao run`, which also set the runner's
+  flag, blocked them. The runner now reads the engine's mode too.
+  **Hosts that set read-only through the engine, check your own tools.** Read-only
+  mode denies every tool whose `is_read_only` is `False` *before* the engine is
+  consulted, as the CLI always did: a `rules=` `allow`, a custom engine's
+  decision, or an ASK the transport would approve no longer runs one. A host
+  that used engine-only read-only to block the built-in writes and shell while
+  still running its own business tools (`examples/ticket-automation`'s
+  `draft_reply` / `send_reply`, `examples/saas-assistant`'s `create_task`) now
+  gets every such call denied. Use `workspace-write` with `deny` rules for
+  `write_file`, `replace`, `run_shell_command` and `save_memory` instead (user
+  rules are evaluated before that preset), or declare `is_read_only` only on a
+  tool with no effect outside the session. `docs/guides/embed-for-agents.md`
+  §5 carries the same note.
 
 ---
 

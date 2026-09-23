@@ -34,7 +34,7 @@ Python 入口
        ├─ Agentao 实例（每次跑都新建，结束干净关闭）
        │    ├─ 技能: "daily-digest"
        │    ├─ 工具: web_fetch（只读，白名单源）、write_file
-       │    └─ PermissionEngine: READ_ONLY + 显式写入白名单
+       │    └─ PermissionEngine: 默认 workspace-write（任务要写自己的报告）
        │
        ├─ 产出: /reports/YYYY-MM-DD.md
        │

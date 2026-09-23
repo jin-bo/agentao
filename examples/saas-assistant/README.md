@@ -9,6 +9,7 @@ Corresponds to [Part 7.1 of the developer guide](../../developer-guide/en/part-7
 - **Session pool** — one `Agentao` per `(tenant_id, session_id)` pair, cached in memory
 - **SSE streaming** — events relayed from `SdkTransport(on_event=…)` → asyncio queue → `StreamingResponse`
 - **Custom tools** — `ListProjectsTool` (read-only) and `CreateTaskTool` (`requires_confirmation=True`) wrapped around an in-memory product store
+- **Deny-by-rule posture** — `workspace-write` plus `deny` rules for `write_file` / `replace` / `run_shell_command` / `save_memory` (the built-ins whose `is_read_only` is `False`). Read-only mode would also deny `create_task`: it blocks every tool that is not read-only, before any rule is consulted.
 - **Cancellation wiring** — client-disconnect watcher + explicit `/cancel` endpoint both fire the same `CancellationToken`
 - **Per-tenant isolation** — `working_directory=/data/tenants/{tenant}/{session}` keeps memory/logs scoped
 
