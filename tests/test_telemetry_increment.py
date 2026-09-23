@@ -44,7 +44,7 @@ def _make_llm(chunks: list[str], *, finish: str = "stop"):
 
     def chat_stream(
         *, messages, tools, max_tokens, on_text_chunk, cancellation_token,
-        cache_boundary=None,
+        cache_boundary=None, on_retry=None,
     ):
         # ``cache_boundary`` is how many trailing messages of the request are
         # request-only (stage 0a's volatile tail), forwarded so the stage-0b
@@ -91,7 +91,7 @@ def test_llm_call_completed_ttft_none_when_no_text_streamed():
 def test_llm_call_completed_error_path_still_reports_latency():
     def chat_stream(
         *, messages, tools, max_tokens, on_text_chunk, cancellation_token,
-        cache_boundary=None,
+        cache_boundary=None, on_retry=None,
     ):
         on_text_chunk("partial ")
         exc = RuntimeError("boom")

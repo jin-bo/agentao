@@ -37,6 +37,7 @@ The **JSON-serializable** constraint means every `data` payload can ship over SS
 TURN_BEGIN -> (user message arrives — turn begins; carries the user text)
 └── TURN_START -> (LLM call starts; resets streaming UI)
     ├── LLM_CALL_STARTED        (metadata before the provider call)
+    ├── LLM_RETRY *             (optional: a failed call is about to be retried)
     ├── THINKING *              (optional, 0 or more)
     ├── LLM_TEXT *              (visible streaming chunks)
     ├── LLM_CALL_DELTA          (new messages since previous call)
@@ -200,6 +201,16 @@ For normal UI spinners, prefer `TOOL_COMPLETE`. Use `TOOL_RESULT` for replay, au
 | Trigger | Around each provider call |
 | `data` | Provider-call metadata before the call; usage / finish metadata after the call. `LLM_CALL_COMPLETED` carries `duration_ms`, `model_latency_ms` (a stable intent-named alias of `duration_ms`), `first_token_ms` (time-to-first-token in ms, or `null` when the call streamed no text — e.g. a tool-only response or a failure before the first delta), `prompt_tokens`, `completion_tokens`, `finish_reason`, plus `status` / `error_class` / `error_message` / `streamed` on the error path. Since 0.5.1 also `cache_read_tokens` / `cache_creation_tokens`: the parts **of** `prompt_tokens` the provider bills at its cache rates (`cache_read_input_tokens` / `cache_creation_input_tokens` on the Anthropic wire; `prompt_tokens_details.cached_tokens` / `.cache_write_tokens` on Chat Completions, and the same two under `input_tokens_details` on `openai-responses` — the write count only where the SDK states it, `openai` 3.x on). `None` when the response carried no usage, `0` when the provider did not state one |
 | Typical use | Metrics, cost tracking, debugging model behavior — `first_token_ms` vs `model_latency_ms` separates queueing/TTFT from total generation time |
+
+### `LLM_RETRY`
+
+| Field | Description |
+|-------|-------------|
+| Trigger | A provider call failed with a retryable error and the client is about to wait before trying again — emitted **before** the backoff sleep. Only while nothing has been shown: a call that already streamed text is never retried, so this never interleaves with `LLM_TEXT` |
+| `data` | `{"retry": 1, "max_retries": 4, "delay_s": 1.62, "reason": "status=503"}` — `retry` counts from 1 (the first request is not a retry); `reason` is `status=<code>` or the exception class name (`RemoteProtocolError`, `ReadTimeout`, `StreamEndedEarlyError`, …), never the provider's message |
+| Typical use | Tell the user why the screen went still — the CLI prints `⟳ Reconnecting… 1/4`. Since 0.5.4 |
+
+Retries are bounded by count (5 attempts, so 4 retries), not by a wall-clock budget. Without `Retry-After` the waits double from 7.5 s — 7.5, 15, 30, 60 s, each plus up to 30% jitter, never past 60 s; a `Retry-After` is honoured up to the same 60 s ceiling. What is retried: 408/409/425/429/5xx/529 (a 429 that means *out of quota* is not), a connection or timeout failure before the response, and — since 0.5.4 — a connection dropped **while the body is read**, or, on `anthropic-messages` / `openai-responses`, a stream that ends before its terminal event.
 
 ### `LLM_CALL_DELTA`
 

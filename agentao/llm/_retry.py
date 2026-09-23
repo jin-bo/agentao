@@ -2,12 +2,19 @@
 
 Owns the policy end-to-end: a fixed retryable-status allowlist,
 ``Retry-After`` honored when present, otherwise jittered exponential
-backoff with a per-step ceiling and a global wall-clock budget so a
-misbehaving provider can't pin the caller forever.
+backoff with a per-step ceiling. Retries are bounded by **count**, as
+codex's are: the worst case is four waits of at most
+:data:`MAX_BACKOFF_SECONDS` each, plus the attempts themselves.
+
+There was a 60 s wall-clock budget until 0.5.4, and it was measured from
+before the first attempt — so it charged the failed request's own
+duration to the retries. A request that hung until the SDK's read timeout
+had spent the budget by the time it failed, and was never retried, which
+is precisely the network failure a retry is for.
 
 Constants live here but are also re-exported from
 :mod:`agentao.llm.client` so that ``monkeypatch.setattr(client_mod,
-"MAX_TOTAL_RETRY_SECONDS", 1.0)`` updates the binding the chat-loop
+"MAX_RETRY_ATTEMPTS", 2)`` updates the binding the chat-loop
 actually reads (Python ``LOAD_GLOBAL`` resolves free variables against
 the function's owning module). Tests patch via ``client_mod``; do not
 break that contract by moving the reads into this module.
@@ -15,6 +22,7 @@ break that contract by moving the reads into this module.
 
 from __future__ import annotations
 
+import importlib
 import random
 import time
 from typing import Any, Optional, Tuple
@@ -25,9 +33,12 @@ from typing import Any, Optional, Tuple
 # default is 2) and ignore Retry-After the way our caller expects.
 RETRYABLE_STATUS_CODES = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
 MAX_RETRY_ATTEMPTS = 5            # total attempts including the first (≤ 4 retries)
-BASE_BACKOFF_SECONDS = 1.5        # 1.5 * 2^attempt
-MAX_BACKOFF_SECONDS = 30.0        # per-step ceiling
-MAX_TOTAL_RETRY_SECONDS = 60.0    # wall-clock budget across all attempts
+# 7.5 → 15 → 30 → 60: the fourth and last retry waits the full ceiling, so
+# the four waits span ~2 minutes (~112 s before jitter) — long enough to ride
+# out a gateway restart or a network switch, at the cost of 7.5 s before even
+# the first retry of a momentary blip.
+BASE_BACKOFF_SECONDS = 7.5        # 7.5 * 2^attempt
+MAX_BACKOFF_SECONDS = 60.0        # per-step ceiling, Retry-After included
 JITTER_FRACTION = 0.3             # uniform(0, base * 0.3) added on top of base
 
 # A 429 that waiting cannot clear: the account is out of quota, credit or
@@ -44,6 +55,58 @@ QUOTA_EXHAUSTED_CODES = frozenset({
     "project_spend_limit_exceeded",
     "organization_usage_limit_exceeded",
 })
+
+
+
+class StreamEndedEarlyError(Exception):
+    """A stream that closed before the event its protocol ends every stream with.
+
+    Raised by the wires whose terminal event is mandatory — Anthropic's
+    ``message_delta`` with a ``stop_reason``, the Responses API's
+    ``response.completed`` / ``.incomplete`` — and only when nothing reached
+    the host and the turn was not cancelled. The connection was dropped
+    (usually a proxy or gateway closing an idle SSE body) cleanly enough that
+    no transport exception says so, and what was accumulated is a fragment:
+    an empty answer, or a tool call whose arguments stop mid-JSON. codex
+    retries the same condition ("stream closed before response.completed").
+
+    Chat Completions does not raise it: there the field is optional in
+    practice, and a missing ``finish_reason`` stays a reported flag.
+    """
+
+
+def _is_dropped_connection(exc: BaseException) -> bool:
+    """True for a transport failure raised while a response body is read.
+
+    Before the response arrives, both SDKs wrap an ``httpx`` failure as their
+    own ``APIConnectionError`` / ``APITimeoutError``. Once they have handed
+    back a stream they do not: ``openai`` 2.x (over ``httpx``) and
+    ``anthropic`` (over ``httpx2``) let the raw exception out of the
+    iterator — ``RemoteProtocolError: peer closed connection without sending
+    complete message body`` is the common one. Measured on openai 2.24.0 /
+    anthropic with ``MockTransport``; openai 3.x wraps it instead, which the
+    SDK branch already reads.
+
+    The same three families either way — timeouts, network errors, and the
+    server breaking the protocol. ``LocalProtocolError``, ``ProxyError`` and
+    ``UnsupportedProtocol`` are left out: each says the request or the
+    configuration is wrong, and sending it again fails the same way.
+    """
+    for module_name in ("httpx", "httpx2"):
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        families = tuple(
+            cls for cls in (
+                getattr(module, "TimeoutException", None),
+                getattr(module, "NetworkError", None),
+                getattr(module, "RemoteProtocolError", None),
+            ) if isinstance(cls, type)
+        )
+        if families and isinstance(exc, families):
+            return True
+    return False
 
 
 # Phrases providers actually use when they reject ``stream=True``. We match
@@ -68,8 +131,10 @@ def _classify_retry(exc: BaseException) -> Tuple[bool, Optional[int], Optional[s
     """Decide whether ``exc`` is worth retrying.
 
     Returns ``(retryable, status_code, retry_after_header)``. Network-level
-    failures (``APIConnectionError`` / ``APITimeoutError``) are retryable
-    with no status. ``APIStatusError`` is retryable only when its status is
+    failures (``APIConnectionError`` / ``APITimeoutError``, and a raw
+    transport error or a truncated stream while the body is read —
+    :func:`_is_dropped_connection`, :class:`StreamEndedEarlyError`) are
+    retryable with no status. ``APIStatusError`` is retryable only when its status is
     in :data:`RETRYABLE_STATUS_CODES`, and a 429 only when it is not a
     quota error (:func:`_is_quota_exhausted`). Anything else (auth,
     validation, non-OpenAI exceptions) is not retryable so the caller
@@ -103,6 +168,9 @@ def _classify_retry(exc: BaseException) -> Tuple[bool, Optional[int], Optional[s
         return (False, status, None)
 
     if isinstance(exc, (APITimeoutError, APIConnectionError)):
+        return (True, None, None)
+
+    if isinstance(exc, StreamEndedEarlyError) or _is_dropped_connection(exc):
         return (True, None, None)
 
     return (False, None, None)
@@ -216,19 +284,25 @@ def _interruptible_sleep(delay: float, cancellation_token: Optional[Any] = None)
     Polls ``cancellation_token.is_cancelled`` every 100ms so that a Ctrl+C
     or ACP cancel during a long ``Retry-After`` window doesn't strand the
     user. With no token this is a plain ``time.sleep``.
+
+    The token is read **before** the deadline on every pass, including the
+    first: a ``False`` here is what stops the caller sending another request,
+    so a zero delay (``Retry-After: 0``) and a cancel landing in the last
+    slice must both still report it. Checking the deadline first let either
+    one through as ``True``, and the retry loop went on to re-send a request
+    the user had already cancelled.
     """
-    if delay <= 0:
-        return True
     if cancellation_token is None:
-        time.sleep(delay)
+        if delay > 0:
+            time.sleep(delay)
         return True
     deadline = time.monotonic() + delay
     while True:
+        if getattr(cancellation_token, "is_cancelled", False):
+            return False
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return True
-        if getattr(cancellation_token, "is_cancelled", False):
-            return False
         time.sleep(min(0.1, remaining))
 
 

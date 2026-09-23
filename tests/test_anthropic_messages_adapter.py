@@ -549,7 +549,11 @@ def test_stop_reasons_map_onto_the_finish_reasons_the_runtime_gates_on(stop_reas
 def test_a_stream_that_just_ends_is_not_reported_as_a_finished_answer():
     llm = _llm()
     attach(llm, Wire(stream_of(message_start(), text_block(0, "half an ans"))))
-    response = llm.chat_stream([{"role": "user", "content": "hi"}])
+    # Shown first; before that, the same stream is retried instead
+    # (``test_llm_retry_dropped_stream.py``).
+    response = llm.chat_stream(
+        [{"role": "user", "content": "hi"}], on_text_chunk=lambda _chunk: None,
+    )
     assert response.choices[0].message.content == "half an ans"
     assert response.finish_reason_reported is False
 

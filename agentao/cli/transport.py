@@ -88,6 +88,29 @@ def on_hook_notices(notices: object) -> None:
             print_hook_notice(notice)
 
 
+def on_llm_retry(data: object) -> None:
+    """Say why the spinner has been sitting there: ``Reconnecting… 1/4``.
+
+    Printed as a line rather than written into the spinner, so it needs no
+    reset when the retry succeeds and stays in scrollback as a record of a
+    flaky connection. Safe from any thread, like ``print_hook_notice``.
+    """
+    if not isinstance(data, dict):
+        return
+    retry, max_retries = data.get("retry"), data.get("max_retries")
+    if not isinstance(retry, int) or not isinstance(max_retries, int):
+        return
+    detail = []
+    reason = data.get("reason")
+    if isinstance(reason, str) and reason:
+        detail.append(_display(reason))
+    delay = data.get("delay_s")
+    if isinstance(delay, (int, float)) and not isinstance(delay, bool):
+        detail.append(f"retrying in {delay:.1f}s")
+    suffix = f" [dim]({'; '.join(detail)})[/dim]" if detail else ""
+    console.print(f"[yellow]\u27f3 Reconnecting… {retry}/{max_retries}[/yellow]{suffix}")
+
+
 def emit_event(cli: AgentaoCLI, event: AgentEvent) -> None:
     """Dispatch a runtime event to the appropriate handler."""
     try:
@@ -108,6 +131,8 @@ def emit_event(cli: AgentaoCLI, event: AgentEvent) -> None:
             on_llm_text(cli, event.data.get("chunk", ""))
         elif t == EventType.PLUGIN_HOOK_FIRED:
             on_hook_notices(event.data.get("user_notices"))
+        elif t == EventType.LLM_RETRY:
+            on_llm_retry(event.data)
         else:
             cli.display.on_event(event)
     except Exception:

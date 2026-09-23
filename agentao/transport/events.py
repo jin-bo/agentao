@@ -25,6 +25,7 @@ class EventType(str, Enum):
     LLM_CALL_COMPLETED = "llm_call_completed"  # usage + finish_reason after the call
     LLM_CALL_DELTA     = "llm_call_delta"      # messages NEW since the previous call
     LLM_CALL_IO        = "llm_call_io"         # full messages + tools (opt-in deep capture)
+    LLM_RETRY          = "llm_retry"           # a failed provider call is about to be retried
     ERROR         = "error"         # runtime error
     AGENT_START       = "agent_start"       # sub-agent started (replaces __agent_start__ magic string)
     AGENT_END         = "agent_end"         # sub-agent finished (replaces __agent_end__ magic string)
@@ -94,6 +95,8 @@ class AgentEvent:
                        "duration_ms": 123}
         THINKING      {"text": "Let me think..."}
         LLM_TEXT      {"chunk": "Sure, I can help"}
+        LLM_RETRY     {"retry": 1, "max_retries": 4, "delay_s": 1.62,
+                       "reason": "status=503"|"RemoteProtocolError"}
         ERROR         {"message": "...", "detail": "..."}
         AGENT_START       {"agent": "codebase-investigator", "task": "...", "max_turns": 15}
         AGENT_END         {"agent": "codebase-investigator", "state": "completed",

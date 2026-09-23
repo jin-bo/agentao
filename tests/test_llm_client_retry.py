@@ -342,7 +342,7 @@ class TestParseRetryAfter:
 
 class TestComputeBackoffDelay:
     def test_retry_after_takes_precedence(self):
-        # exponential would be 1.5s for attempt=0; Retry-After=10 wins
+        # exponential would be 7.5s for attempt=0; Retry-After=10 wins
         assert _compute_backoff_delay(0, "10") == 10.0
 
     def test_retry_after_capped_at_max(self):
@@ -355,14 +355,27 @@ class TestComputeBackoffDelay:
         d0 = _compute_backoff_delay(0)
         d1 = _compute_backoff_delay(1)
         d2 = _compute_backoff_delay(2)
-        assert d0 == pytest.approx(1.5)
-        assert d1 == pytest.approx(3.0)
-        assert d2 == pytest.approx(6.0)
+        assert d0 == pytest.approx(7.5)
+        assert d1 == pytest.approx(15.0)
+        assert d2 == pytest.approx(30.0)
+
+    def test_the_last_retry_waits_the_full_60s(self, monkeypatch):
+        # The schedule the policy is tuned to: four retries, doubling from
+        # 7.5 s, the fourth landing exactly on the 60 s ceiling.
+        monkeypatch.setattr(client_mod.random, "random", lambda: 0.0)
+        from agentao.llm.client import MAX_BACKOFF_SECONDS
+        schedule = [_compute_backoff_delay(n) for n in range(MAX_RETRY_ATTEMPTS - 1)]
+        assert schedule == pytest.approx([7.5, 15.0, 30.0, 60.0])
+        assert MAX_BACKOFF_SECONDS == 60.0
+        # Worst-case jitter never pushes any step past the ceiling.
+        monkeypatch.setattr(client_mod.random, "random", lambda: 1.0)
+        jittered = [_compute_backoff_delay(n) for n in range(MAX_RETRY_ATTEMPTS - 1)]
+        assert jittered == pytest.approx([9.75, 19.5, 39.0, 60.0])
 
     def test_jitter_adds_to_base(self, monkeypatch):
         monkeypatch.setattr(client_mod.random, "random", lambda: 1.0)
-        # base = 1.5, jitter = 1.5 * 0.3 * 1.0 = 0.45 → 1.95
-        assert _compute_backoff_delay(0) == pytest.approx(1.95)
+        # base = 7.5, jitter = 7.5 * 0.3 * 1.0 = 2.25 → 9.75
+        assert _compute_backoff_delay(0) == pytest.approx(9.75)
 
     def test_jitter_does_not_exceed_max_cap(self, monkeypatch):
         # Once the exponential base saturates at MAX_BACKOFF_SECONDS, adding
@@ -385,6 +398,25 @@ class TestInterruptibleSleep:
         token = MagicMock()
         token.is_cancelled = True
         assert _interruptible_sleep(5.0, cancellation_token=token) is False
+
+    @pytest.mark.parametrize("delay", [0, -1.0])
+    def test_a_zero_delay_still_reports_a_cancel(self, delay):
+        """``Retry-After: 0`` computes a zero delay; returning ``True`` for it
+        is what let the retry loop re-send a cancelled request."""
+        from agentao.cancellation import CancellationToken
+        token = CancellationToken()
+        token.cancel("test")
+        assert _interruptible_sleep(delay, cancellation_token=token) is False
+
+    def test_a_cancel_in_the_last_slice_is_not_missed(self, monkeypatch):
+        """The token is read before the deadline, so a cancel that lands
+        while the final slice sleeps is reported rather than timed out."""
+        from agentao.cancellation import CancellationToken
+        token = CancellationToken()
+        monkeypatch.setattr(client_mod.time, "sleep", lambda _s: token.cancel("test"))
+        clock = iter([0.0, 0.0, 99.0, 99.0])
+        monkeypatch.setattr(client_mod.time, "monotonic", lambda: next(clock))
+        assert _interruptible_sleep(0.05, cancellation_token=token) is False
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +456,57 @@ class TestChatRetry:
 
         assert client.client.chat.completions.with_raw_response.create.call_count == 1
 
+    def test_cancellation_during_retry_sleep_aborts(self, monkeypatch):
+        """A backoff wait is up to 60 s; chat() (the Gemini bypass and the
+        streaming-unsupported fallback both land here) must honour a cancel
+        during it rather than sleep it out."""
+        monkeypatch.setattr(client_mod.time, "sleep", lambda *_a, **_k: None)
+        monkeypatch.setattr(
+            client_mod, "_compute_backoff_delay", lambda *_a, **_k: 5.0
+        )
+
+        client = _make_client()
+        err = _make_status_error(429, retry_after="0", cls=openai.RateLimitError)
+        from agentao.cancellation import CancellationToken
+        token = CancellationToken()
+
+        def _rate_limited_then_cancelled(**_kwargs):
+            token.cancel("test")
+            raise err
+
+        create = MagicMock(side_effect=_rate_limited_then_cancelled)
+        client.client.chat.completions.with_raw_response.create = create
+
+        with pytest.raises(openai.RateLimitError):
+            client.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                cancellation_token=token,
+            )
+        assert create.call_count == 1
+
+    def test_a_zero_retry_after_does_not_resend_a_cancelled_request(self, monkeypatch):
+        """Codex review P2: ``Retry-After: 0`` → delay 0 → the sleep returned
+        ``True`` without reading the token, and ``chat()`` sent another
+        request after the cancel."""
+        from agentao.cancellation import CancellationToken
+        monkeypatch.setattr(client_mod.time, "sleep", lambda *_a, **_k: None)
+        client = _make_client()
+        err = _make_status_error(429, retry_after="0", cls=openai.RateLimitError)
+        token = CancellationToken()
+
+        def _rate_limited_then_cancelled(**_kwargs):
+            token.cancel("test")
+            raise err
+
+        create = MagicMock(side_effect=_rate_limited_then_cancelled)
+        client.client.chat.completions.with_raw_response.create = create
+        with pytest.raises(openai.RateLimitError):
+            client.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                cancellation_token=token,
+            )
+        assert create.call_count == 1
+
     def test_gives_up_after_max_attempts(self, monkeypatch):
         monkeypatch.setattr(client_mod.time, "sleep", lambda *_a, **_k: None)
 
@@ -440,22 +523,58 @@ class TestChatRetry:
             == MAX_RETRY_ATTEMPTS
         )
 
-    def test_retry_budget_exhausts_before_max_attempts(self, monkeypatch):
-        # If Retry-After is very long, we should bail on the wall-clock budget
-        # rather than sleeping ourselves into oblivion.
-        monkeypatch.setattr(client_mod, "MAX_TOTAL_RETRY_SECONDS", 1.0)
-        monkeypatch.setattr(client_mod.time, "sleep", lambda *_a, **_k: None)
+    def test_a_long_retry_after_is_capped_and_every_attempt_is_made(self, monkeypatch):
+        # Count-bounded, not wall-clock bounded (0.5.4): a Retry-After of 999s
+        # waits MAX_BACKOFF_SECONDS per step, and the attempt cap is what ends
+        # it. The old budget ended it after one attempt.
+        slept = []
+        monkeypatch.setattr(client_mod.time, "sleep", slept.append)
 
         client = _make_client()
-        # Retry-After=999 → first computed delay = 30s (capped) > 1s budget
         err = _make_status_error(429, retry_after="999", cls=openai.RateLimitError)
         client.client.chat.completions.with_raw_response.create = MagicMock(side_effect=err)
 
         with pytest.raises(openai.RateLimitError):
             client.chat(messages=[{"role": "user", "content": "hi"}])
 
-        # First attempt fires, then budget exhausts before the second
-        assert client.client.chat.completions.with_raw_response.create.call_count == 1
+        assert (
+            client.client.chat.completions.with_raw_response.create.call_count
+            == MAX_RETRY_ATTEMPTS
+        )
+        assert slept == [client_mod.MAX_BACKOFF_SECONDS] * (MAX_RETRY_ATTEMPTS - 1)
+
+    def test_a_slow_failure_is_still_retried(self, monkeypatch):
+        """The failed request's own duration is not charged to the retries.
+
+        Under the old 60s wall-clock budget, measured from before the first
+        attempt, a request that hung until a read timeout had spent it by the
+        time it failed and was never retried.
+        """
+        clock = [1000.0]
+        monkeypatch.setattr(client_mod.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(client_mod.time, "sleep", lambda *_a, **_k: None)
+
+        client = _make_client()
+        ok_raw = MagicMock()
+        ok_raw.parse.return_value = _make_completion("after the timeout")
+        req = httpx.Request("POST", "https://example.com/v1/chat/completions")
+
+        def hangs_then_times_out(**_kwargs):
+            clock[0] += 600.0  # the SDK's default read timeout
+            raise openai.APITimeoutError(request=req)
+
+        calls = {"n": 0}
+
+        def create(**kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return hangs_then_times_out(**kwargs)
+            return ok_raw
+
+        client.client.chat.completions.with_raw_response.create = create
+        response = client.chat(messages=[{"role": "user", "content": "hi"}])
+        assert response.choices[0].message.content == "after the timeout"
+        assert calls["n"] == 2
 
     def test_max_tokens_param_fixup_does_not_consume_retry_budget(self, monkeypatch):
         # The historical max_tokens / max_completion_tokens swap must still work
