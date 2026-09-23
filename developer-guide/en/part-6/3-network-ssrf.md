@@ -94,14 +94,15 @@ Customer-facing products should generally default to blocklist; internal tools m
 
 ## Layer 2 · HTTP client behavior
 
-Agentao's `web_fetch` uses `httpx`, defaults:
+Agentao's `web_fetch` uses `httpx` through `agentao/security/url_policy.py::guarded_get_async`:
 
-- 10s timeout
-- Follow up to 3 redirects
+- 30 s per-operation timeout, and a 60 s ceiling on the whole fetch (every hop plus the body) — a server that keeps trickling bytes resets the per-operation timeout on each read, so only the ceiling ends it
+- Up to 20 redirects, chased by agentao rather than httpx: **each hop is resolved and re-validated** against the SSRF policy (and `AGENTAO_WEB_FETCH_ALLOW_CIDRS`), and a hop's body is released unread
+- The final body is read up to **5 MiB decoded**; a declared `Content-Length` over that is refused before any byte is read, and a larger body — declared or not, compressed or not — ends the fetch with an error and no fallback. The Jina fallback reads under the same cap and ceiling. The Playwright fallback is not covered: its page lives in the browser process
 - TLS verification on
 - Customizable User-Agent
 
-**Security note**: redirects let a 302 jump into an internal address, bypassing the hostname check. Production should **disable redirects** or **re-run the domain rule on each hop**. Agentao does not currently re-check across redirects — a known limitation.
+**Security note**: redirect re-validation is per hop, but it re-runs the **SSRF policy**, not the permission engine's domain rules — a 302 from an allowed domain to a public host your rules would have asked about is followed. If that matters, the override below or Layer 3 is the answer.
 
 You can **override `web_fetch`** with your own stricter version:
 
@@ -221,7 +222,7 @@ def on_event(ev):
 ::: warning Don't ship without these
 - ❌ **Allowlist without blocklist** — `*.example.com` allowed, but `169.254.169.254` not denied; agent reaches metadata IP via redirect
 - ❌ **Trusting the LLM not to hit internal** — system prompts won't survive prompt injection; always enforce at rule layer
-- ❌ **Unprotected redirects** — `https://good.com` → 302 → `http://169.254.169.254/` follows by default
+- ❌ **Unprotected redirects in a custom `web_fetch`** — the built-in re-validates every hop; an override using plain `httpx` with `follow_redirects=True` does not
 
 Each pitfall below has the full fix.
 :::
@@ -241,7 +242,7 @@ Prompt injection can **trick** the LLM into any URL. Don't rely on LLM common se
 
 ### ❌ Unprotected redirects
 
-`web_fetch https://good.com` → 302 → `http://169.254.169.254/` follows. Production should override with redirect-disabled `web_fetch`.
+The built-in `web_fetch` blocks `https://good.com` → 302 → `http://169.254.169.254/` at the hop. An override that calls `httpx` with `follow_redirects=True` follows it — disable redirects there, or chase them through `guarded_get` / `guarded_get_async` (pass `max_body_bytes=` too; the default is unbounded).
 
 ## TL;DR
 

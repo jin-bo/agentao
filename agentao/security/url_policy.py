@@ -97,6 +97,20 @@ class UrlPolicyError(ValueError):
     """Raised when an outbound URL is rejected by the SSRF policy."""
 
 
+class ResponseTooLargeError(Exception):
+    """Raised when a response body exceeds the caller's ``max_body_bytes``.
+
+    Deliberately not a :class:`UrlPolicyError`: the target was allowed, it
+    just sent more than the caller will hold. The message names only the
+    limit — how far past it the body went is not known and not worth reading
+    further to find out.
+    """
+
+    def __init__(self, max_bytes: int) -> None:
+        super().__init__(f"response body exceeds the {max_bytes} byte limit")
+        self.max_bytes = max_bytes
+
+
 #: Env var: comma/space-separated CIDRs (or bare IPs) the SSRF policy treats as
 #: allowed even though they are not globally routable. The opt-in escape hatch
 #: for hosts behind a fake-IP proxy (Clash/V2Ray map every domain to a reserved
@@ -455,6 +469,82 @@ def _redirect_target(response: Any, current: str) -> Optional[str]:
     return urljoin(current, location)
 
 
+def _declared_length(response: Any) -> Optional[int]:
+    """``Content-Length`` as a non-negative int, or ``None`` if absent/garbled."""
+    raw = response.headers.get("content-length")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _store_body(response: Any, body: bytes) -> None:
+    # What ``httpx.Response.read()`` / ``aread()`` do themselves once the stream
+    # is drained (httpx 0.28): after this, ``.content`` / ``.text`` / ``.json()``
+    # answer from memory exactly as they would for ``client.get``. There is no
+    # public setter; the alternative — a fresh ``Response(content=...)`` — would
+    # have to drop ``Content-Encoding`` from the headers or httpx would try to
+    # decode the already-decoded bytes a second time.
+    response._content = body
+
+
+def read_capped(response: Any, max_bytes: Optional[int]) -> bytes:
+    """Read a streamed ``httpx.Response`` body, refusing more than ``max_bytes``.
+
+    ``None`` means unbounded — a plain ``response.read()``. Otherwise a declared
+    ``Content-Length`` over the limit is refused before any body byte is read,
+    and the *decoded* bytes are counted as they arrive, so neither a missing
+    length nor a compressed body gets past it. The response is closed on every
+    path, including the ones that raise. On success the body is also cached on
+    the response, so the caller reads it the usual way.
+
+    One decoded chunk is the granularity: a single chunk can overshoot the
+    limit before it is counted. httpx reads the socket in bounded pieces, so
+    that overshoot is one piece's decoded size, not the body's.
+    """
+    try:
+        if max_bytes is None:
+            return response.read()
+        declared = _declared_length(response)
+        if declared is not None and declared > max_bytes:
+            raise ResponseTooLargeError(max_bytes)
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in response.iter_bytes():
+            total += len(chunk)
+            if total > max_bytes:
+                raise ResponseTooLargeError(max_bytes)
+            chunks.append(chunk)
+    finally:
+        response.close()
+    body = b"".join(chunks)
+    _store_body(response, body)
+    return body
+
+
+async def aread_capped(response: Any, max_bytes: Optional[int]) -> bytes:
+    """Async twin of :func:`read_capped`; identical limit semantics."""
+    try:
+        if max_bytes is None:
+            return await response.aread()
+        declared = _declared_length(response)
+        if declared is not None and declared > max_bytes:
+            raise ResponseTooLargeError(max_bytes)
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in response.aiter_bytes():
+            total += len(chunk)
+            if total > max_bytes:
+                raise ResponseTooLargeError(max_bytes)
+            chunks.append(chunk)
+    finally:
+        await response.aclose()
+    body = b"".join(chunks)
+    _store_body(response, body)
+    return body
+
+
 def guarded_get(
     client: "httpx.Client",
     url: str,
@@ -462,6 +552,7 @@ def guarded_get(
     headers: Optional[dict[str, str]] = None,
     max_redirects: int = _MAX_REDIRECTS,
     allow_networks: tuple[_IPNetwork, ...] = (),
+    max_body_bytes: Optional[int] = None,
 ) -> "httpx.Response":
     """GET ``url`` with SSRF validation on the initial URL and every hop.
 
@@ -475,6 +566,12 @@ def guarded_get(
     redirect into the metadata service is still blocked unless its range was
     explicitly allowlisted.
 
+    Every hop is requested as a stream: a redirect's body is never read, only
+    released, and the final body is read through :func:`read_capped`. With
+    ``max_body_bytes`` set, a larger final body raises
+    :class:`ResponseTooLargeError`; ``None`` (the default) reads it whole, as
+    ``client.get`` would. The returned response has its body loaded either way.
+
     Raises :class:`UrlPolicyError` on a disallowed target (initial or any
     hop) or when the redirect budget is exhausted.
 
@@ -485,9 +582,12 @@ def guarded_get(
     current = url
     for _ in range(max_redirects + 1):
         validate_outbound_url(current, allow_networks=allow_networks)
-        response = client.get(current, headers=headers)
+        response = client.send(
+            client.build_request("GET", current, headers=headers), stream=True
+        )
         target = _redirect_target(response, current)
         if target is None:
+            read_capped(response, max_body_bytes)
             return response
         response.close()
         current = target
@@ -502,22 +602,27 @@ async def guarded_get_async(
     max_redirects: int = _MAX_REDIRECTS,
     allow_networks: tuple[_IPNetwork, ...] = (),
     resolve_timeout: float = _DEFAULT_RESOLVE_TIMEOUT_S,
+    max_body_bytes: Optional[int] = None,
 ) -> "httpx.Response":
     """Async twin of :func:`guarded_get`; identical policy, per hop.
 
     ``resolve_timeout`` bounds each hop's name resolution. The sync form
     inherits ``getaddrinfo``'s own (effectively unbounded) behavior, which is
     tolerable when it only blocks its own thread; here it would block the
-    caller's loop, so a budget is mandatory.
+    caller's loop, so a budget is mandatory. ``max_body_bytes`` behaves as in
+    :func:`guarded_get`, through :func:`aread_capped`.
     """
     current = url
     for _ in range(max_redirects + 1):
         await validate_outbound_url_async(
             current, allow_networks=allow_networks, timeout=resolve_timeout
         )
-        response = await client.get(current, headers=headers)
+        response = await client.send(
+            client.build_request("GET", current, headers=headers), stream=True
+        )
         target = _redirect_target(response, current)
         if target is None:
+            await aread_capped(response, max_body_bytes)
             return response
         await response.aclose()
         current = target

@@ -189,21 +189,35 @@ class _FakeResponse:
         self.status_code = status_code
         self.headers = {"location": location} if location else {}
         self.closed = False
+        self.read_called = False
 
     def close(self):
         self.closed = True
 
+    def read(self):
+        self.read_called = True
+        return b""
+
 
 class _FakeClient:
-    """Returns queued responses keyed by requested URL."""
+    """Returns queued responses keyed by requested URL.
+
+    Speaks the ``build_request`` + ``send(stream=True)`` pair the chase uses,
+    so a redirect hop is handed back unread.
+    """
 
     def __init__(self, responses):
         self._responses = dict(responses)
         self.requested: list[str] = []
 
-    def get(self, url, headers=None):
-        self.requested.append(url)
-        return self._responses[url]
+    def build_request(self, method, url, headers=None):
+        assert method == "GET"
+        return url
+
+    def send(self, request, stream=False):
+        assert stream is True
+        self.requested.append(request)
+        return self._responses[request]
 
 
 def test_guarded_get_returns_final_non_redirect(fake_resolver):
@@ -396,6 +410,10 @@ class _FakeAsyncResponse(_FakeResponse):
     async def aclose(self):
         self.closed = True
 
+    async def aread(self):
+        self.read_called = True
+        return b""
+
 
 class _FakeAsyncClient:
     """Async twin of `_FakeClient`."""
@@ -404,9 +422,14 @@ class _FakeAsyncClient:
         self._responses = dict(responses)
         self.requested: list[str] = []
 
-    async def get(self, url, headers=None):
-        self.requested.append(url)
-        return self._responses[url]
+    def build_request(self, method, url, headers=None):
+        assert method == "GET"
+        return url
+
+    async def send(self, request, stream=False):
+        assert stream is True
+        self.requested.append(request)
+        return self._responses[request]
 
 
 def test_validate_async_accepts_what_the_sync_form_accepts(fake_resolver):

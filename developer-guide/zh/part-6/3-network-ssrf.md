@@ -94,14 +94,15 @@ WORKSPACE_WRITE 预设自带的 SSRF 黑名单值得每个项目都**保留+扩�
 
 ## 层 2 · HTTP 客户端行为
 
-Agentao 的 `web_fetch` 使用 `httpx`，默认：
+Agentao 的 `web_fetch` 通过 `agentao/security/url_policy.py::guarded_get_async` 使用 `httpx`：
 
-- 10 秒超时
-- 跟随 3 次重定向
+- 单次操作超时 30 秒，整次抓取（所有跳转加响应体）另有 60 秒总时限——持续一点点发字节的服务器每次读取都会重置单次超时，只有总时限能终止它
+- 最多 20 次重定向，由 agentao 而非 httpx 跟随：**每一跳都重新解析并按 SSRF 策略重新校验**（含 `AGENTAO_WEB_FETCH_ALLOW_CIDRS`），跳转响应的 body 不读取、直接释放
+- 最终响应体最多读取**解码后 5 MiB**；声明的 `Content-Length` 超过上限时，一个字节都不读就拒绝；实际更大的 body（无论是否声明长度、是否压缩）以错误结束抓取，且不走回退。Jina 回退受同一上限和总时限约束。Playwright 回退不在此列：页面在浏览器进程里
 - TLS 验证开启
 - User-Agent 可定制
 
-**安全注意**：允许重定向 = 允许 302 跳转到内网地址绕过 hostname 检查。生产上建议**禁止重定向**或**每次重定向重新跑域名规则**。目前 Agentao 未做"重定向后重检"——这是已知限制。
+**安全注意**：重定向逐跳重检跑的是 **SSRF 策略**，不是权限引擎的域名规则——从已放行域名 302 到一个你的规则本会询问的公网主机，仍会被跟随。若这点重要，用下面的自定义覆盖或第 3 层来解决。
 
 你可以**自定义 web_fetch**（替代内置）来加严：
 
@@ -222,7 +223,7 @@ def on_event(ev):
 ::: warning 上线前先确认这几条
 - ❌ **只有 allowlist 没有 blocklist** —— `*.example.com` 放行，但 `169.254.169.254` 没禁，重定向后还是中招
 - ❌ **相信 LLM 不会去访问内网** —— 系统提示扛不住 Prompt 注入，必须在规则层强制
-- ❌ **重定向未受保护** —— `https://good.com` → 302 → `http://169.254.169.254/` 默认会跟随
+- ❌ **自定义 `web_fetch` 的重定向未受保护** —— 内置版本逐跳重检；用普通 `httpx` 加 `follow_redirects=True` 的覆盖版本不会
 
 下面每一条都附完整修法。
 :::
@@ -242,7 +243,7 @@ Prompt injection 可以**骗**LLM 访问任何 URL。不要依赖 LLM 的"常识
 
 ### ❌ 重定向未受保护
 
-`web_fetch https://good.com` → 302 → `http://169.254.169.254/` 会被内置 `httpx` 跟随。生产上考虑用自定义 `web_fetch` 禁重定向。
+内置 `web_fetch` 会在那一跳拦下 `https://good.com` → 302 → `http://169.254.169.254/`。用 `httpx` 加 `follow_redirects=True` 的覆盖版本会跟随过去——要么在覆盖版本里禁用重定向，要么经由 `guarded_get` / `guarded_get_async` 跟随（同时传 `max_body_bytes=`；默认不设上限）。
 
 ## TL;DR
 

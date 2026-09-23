@@ -3,7 +3,8 @@
 Exposes :class:`PathPolicy` (gates filesystem writes to a project-rooted
 workspace), the outbound-URL SSRF policy used by the web tools, in paired
 sync / async forms (:func:`validate_outbound_url` / :func:`guarded_get` and
-:func:`validate_outbound_url_async` / :func:`guarded_get_async`), and
+:func:`validate_outbound_url_async` / :func:`guarded_get_async`, whose
+``max_body_bytes`` raises :class:`ResponseTooLargeError`), and
 :func:`strip_unicode_tags` (invisible-character smuggling defense; the
 boundaries that apply it are enumerated in ``CLAUDE.md`` — it is a transform,
 not an ambient guarantee about every string in the process).
@@ -19,6 +20,7 @@ from .unicode_tags import (
     strip_unicode_tags,
 )
 from .url_policy import (
+    ResponseTooLargeError,
     UrlPolicyError,
     guarded_get,
     guarded_get_async,
@@ -29,6 +31,7 @@ from .url_policy import (
 __all__ = [
     "PathPolicy",
     "PathPolicyError",
+    "ResponseTooLargeError",
     "UrlPolicyError",
     "count_unicode_tags",
     "guarded_get",
