@@ -11,7 +11,7 @@ Agentao has four permission modes. Three are user-selectable; one (`plan`) is se
 | `read-only` | **blocked** | asks | only for web calls — writes and shell are refused outright |
 | `workspace-write` | allowed for safe ops | **asks per domain** | shown for risky ops |
 | `full-access` | allowed | allowed | **never shown** |
-| `plan` | blocked | blocked | (research-only; see ch. 4) |
+| `plan` | blocked (safe shell allowlisted) | allowlist / asks, as `workspace-write` | (research-only; see ch. 4) |
 
 `workspace-write` is the default and the one you should run in 95% of the time.
 

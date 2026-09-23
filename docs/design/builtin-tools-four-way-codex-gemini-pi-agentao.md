@@ -438,7 +438,7 @@ default surface and route general file work through the shell), not a shared mot
 > Checking the gate's callers also turned up a fail-open: read-only was enforced only when the
 > runner's flag was set, so ACP `session/set_mode`, an embedded host's `set_mode` and a
 > sub-agent's engine snapshot, which set the engine's mode alone, got ASK for writes and shell
-> and ran `save_memory`. The same change fixed it (`ToolRunner._readonly_active`). The text below
+> and ran `save_memory`. The same change fixed it (`ToolRunner.readonly_active`). The text below
 > is the analysis as written; its line numbers are the anchor's.
 
 **Finding 3.** agentao's `read-only` mode denies any tool whose `is_read_only` is `False`

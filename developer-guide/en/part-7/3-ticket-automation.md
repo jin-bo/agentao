@@ -100,6 +100,7 @@ NO_FILE_OR_SHELL = [
     {"tool": "write_file", "action": "deny"},
     {"tool": "replace", "action": "deny"},
     {"tool": "run_shell_command", "action": "deny"},
+    {"tool": "save_memory", "action": "deny"},   # writes .agentao/memory.db
 ]
 
 class ConfidenceGatedEngine(PermissionEngine):
@@ -117,10 +118,6 @@ class ConfidenceGatedEngine(PermissionEngine):
             PermissionDecision.ALLOW if conf >= 0.9 else PermissionDecision.DENY,
             reason=f"host-rule:send_reply confidence={conf:.2f}",
         )
-
-    def decide(self, tool_name: str, tool_args: dict):
-        detail = self.decide_detail(tool_name, tool_args)
-        return detail.decision if detail is not None else None
 ```
 
 ### 3 · Skill that shapes behavior

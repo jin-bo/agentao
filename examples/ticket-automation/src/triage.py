@@ -155,10 +155,14 @@ class SendReply(Tool):
 # Permission rules — this agent answers tickets; it does not touch the disk
 # ──────────────────────────────────────────────────────────────────────────
 
+# Every built-in whose ``is_read_only`` is False — the set read-only mode used
+# to deny wholesale. ``save_memory`` belongs on the list: it writes
+# ``.agentao/memory.db`` under this ticket's working directory.
 NO_FILE_OR_SHELL = [
     {"tool": "write_file", "action": "deny"},
     {"tool": "replace", "action": "deny"},
     {"tool": "run_shell_command", "action": "deny"},
+    {"tool": "save_memory", "action": "deny"},
 ]
 
 
@@ -205,13 +209,9 @@ class ConfidenceGatedEngine(PermissionEngine):
             reason=f"host-rule:send_reply confidence={conf:.2f}",
         )
 
-    def decide(
-        self,
-        tool_name: str,
-        tool_args: Dict[str, Any],
-    ) -> Optional[PermissionDecision]:
-        detail = self.decide_detail(tool_name, tool_args)
-        return detail.decision if detail is not None else None
+    # No ``decide`` override: the base one is already the thin wrapper
+    # ``detail.decision if detail is not None else None`` over the method
+    # above, so re-declaring it here would only restate it.
 
 
 # ──────────────────────────────────────────────────────────────────────────

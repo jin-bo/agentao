@@ -386,7 +386,7 @@ context 成本这个读法当作**推测、未测量** —— 站得住的只是
 > 没有采用 gemini-cli 的中间做法（交互时对 `activate_skill` 询问）。核对这道闸的调用方时还发现一处
 > 失效：只读只在 runner 的标志被设置时才生效，所以 ACP 的 `session/set_mode`、嵌入宿主调用
 > `set_mode`、子代理的引擎快照这三条只设引擎模式的路径，写入和 shell 得到的是 ASK，`save_memory`
-> 直接执行。同一改动一并修复（`ToolRunner._readonly_active`）。下文保留原分析，行号按锚点。
+> 直接执行。同一改动一并修复（`ToolRunner.readonly_active`）。下文保留原分析，行号按锚点。
 
 **发现 3。** agentao 的 `read-only` 模式拒掉任何 `is_read_only` 为 `False` 的工具
 （`runtime/tool_planning.py:487`，理由 `mode-preset:read-only`），而基类默认就是 `False`

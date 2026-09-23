@@ -41,9 +41,10 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
   still running its own business tools (`examples/ticket-automation`'s
   `draft_reply` / `send_reply`, `examples/saas-assistant`'s `create_task`) now
   gets every such call denied. Use `workspace-write` with `deny` rules for
-  `write_file`, `replace` and `run_shell_command` instead (user rules are
-  evaluated before that preset), or declare `is_read_only` only on a tool with
-  no effect outside the session.
+  `write_file`, `replace`, `run_shell_command` and `save_memory` instead (user
+  rules are evaluated before that preset), or declare `is_read_only` only on a
+  tool with no effect outside the session. `docs/guides/embed-for-agents.md`
+  §5 carries the same note.
 
 ---
 

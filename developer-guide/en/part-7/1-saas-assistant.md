@@ -173,6 +173,7 @@ async def get_or_create_agent(session_id, workdir, tenant_id, transport):
         {"tool": "write_file", "action": "deny"},
         {"tool": "replace", "action": "deny"},
         {"tool": "run_shell_command", "action": "deny"},
+        {"tool": "save_memory", "action": "deny"},
     ])
     engine.set_mode(PermissionMode.WORKSPACE_WRITE)
     agent = Agentao(

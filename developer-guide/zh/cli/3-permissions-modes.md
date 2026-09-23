@@ -11,7 +11,7 @@ Agentao 共有四种权限模式。三种用户可切；第四种 (`plan`) 由 `
 | `read-only` | **拒绝** | 问 | 只对网络调用弹 — 写和 shell 直接拒 |
 | `workspace-write` | 安全操作放行 | **按域名问** | 风险操作时弹 |
 | `full-access` | 放行 | 放行 | **永不弹** |
-| `plan` | 拒绝 | 拒绝 | （只读研究模式，见第 4 章） |
+| `plan` | 拒绝（安全 shell 走白名单） | 与 `workspace-write` 相同：白名单 / 问 | （只读研究模式，见第 4 章） |
 
 `workspace-write` 是默认值，95% 时间应该用它。
 

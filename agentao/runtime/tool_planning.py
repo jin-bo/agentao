@@ -609,7 +609,7 @@ class ToolCallPlanner:
             # ``read-only`` preset rule list is intentionally empty —
             # enforcement lives here via ``readonly_mode``, which the runner
             # computes from its flag or the engine's mode
-            # (``ToolRunner._readonly_active``). It runs before the engine,
+            # (``ToolRunner.readonly_active``). It runs before the engine,
             # so no rule can allow a tool that is not read-only.
             return ToolCallDecision.DENY, _synth(
                 PermissionDecision.DENY,

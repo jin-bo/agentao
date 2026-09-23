@@ -627,7 +627,7 @@ def _run_pipeline(
 
     # Permission mode + read-only flag, kept in step as the CLI keeps them.
     # The engine's ``read-only`` preset is empty by design; the runner's
-    # gate (``ToolRunner._readonly_active``) enforces read-only from either
+    # gate (``ToolRunner.readonly_active``) enforces read-only from either
     # the flag or the engine's mode. The flag is what emits
     # ``READONLY_MODE_CHANGED`` for replay.
     if agent.permission_engine is not None:

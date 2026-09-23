@@ -114,7 +114,7 @@ def register_agent_tools(agent: "Agentao") -> None:
         # The runner's flag *or* its engine's mode, as the parent's own gate
         # reads it: a parent put in read-only through the engine alone (ACP
         # ``session/set_mode``, a host's ``set_mode``) sets no flag.
-        readonly_mode_getter=lambda: getattr(agent, 'tool_runner', None) is not None and agent.tool_runner._readonly_active(),
+        readonly_mode_getter=lambda: getattr(agent, 'tool_runner', None) is not None and agent.tool_runner.readonly_active(),
         permission_engine_getter=lambda: getattr(agent.tool_runner, '_permission_engine', None),
         # Live getter: in the CLI a plugin's skills are registered onto this
         # manager *after* the agent is built, so a sub-agent spawned later

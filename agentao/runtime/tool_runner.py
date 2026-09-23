@@ -110,7 +110,19 @@ class ToolRunner:
         self._planner._permission_engine = engine
 
     def set_readonly_mode(self, enabled: bool) -> None:
-        """Enable or disable readonly mode. When enabled, all non-read-only tools are denied."""
+        """Set the runner's read-only flag, one of the mode's **two** switches.
+
+        ``True`` denies every tool whose ``is_read_only`` is ``False``.
+        ``False`` only clears *this* switch: read-only still applies while the
+        permission engine's ``active_mode`` is ``READ_ONLY``, because
+        :meth:`readonly_active` honours either. Leaving read-only therefore
+        means switching the engine's mode too — every in-tree caller
+        (``cli/app.py::_apply_mode``, ``/plan``, the transport's "allow all"
+        answer, ``cli/run.py``) sets the engine first and the flag second.
+
+        ``READONLY_MODE_CHANGED`` reports this flag, not the effective
+        posture: it is the replay record of the switch the caller flipped.
+        """
         previous = self.readonly_mode
         self.readonly_mode = enabled
         if previous == enabled:
@@ -125,7 +137,7 @@ class ToolRunner:
         except Exception:
             pass
 
-    def _readonly_active(self) -> bool:
+    def readonly_active(self) -> bool:
         """Whether read-only mode applies: the flag above, or the engine's mode.
 
         The engine's ``read-only`` preset is an empty rule list; this gate is
@@ -133,17 +145,29 @@ class ToolRunner:
         ``session/set_mode``, an embedded host calling ``set_mode``, a
         sub-agent's engine snapshot) got the empty preset alone, so writes
         and shell fell through to ASK and ``save_memory`` ran.
+
+        Public because it is the supported read of the *effective* posture:
+        ``readonly_mode`` answers only for the flag, and the sub-agent
+        wrapper's ``readonly_mode_getter`` has to propagate the effective
+        one (``tooling/agent_tools.py``).
         """
-        # ``getattr`` absorbs a planner or engine without the attribute; an
-        # engine whose ``active_mode`` raises anything else propagates.
-        # ``_apply_updated_input`` calls this inside the try whose except
-        # denies the call, so such an error there reads as a failed
-        # re-decision. ``is`` against the member, so only a real READ_ONLY
-        # turns the gate on.
+        # ``getattr`` absorbs a planner or engine without the attribute, and
+        # ``is`` against the member means only a real READ_ONLY turns the gate
+        # on. An engine whose ``active_mode`` *raises* fails **closed**: this
+        # is called at the top of ``execute()``, outside any deny path, so
+        # propagating would end the turn instead of restricting it — and an
+        # engine that cannot report its mode is not permission to write.
         engine = getattr(self._planner, "_permission_engine", None)
-        return self.readonly_mode or (
-            getattr(engine, "active_mode", None) is PermissionMode.READ_ONLY
-        )
+        if self.readonly_mode:
+            return True
+        try:
+            return getattr(engine, "active_mode", None) is PermissionMode.READ_ONLY
+        except Exception as exc:
+            self._logger.warning(
+                "permission engine could not report active_mode (%s); "
+                "treating the session as read-only", exc,
+            )
+            return True
 
     def reset(self) -> None:
         """Reset doom-loop counter. Call at the start of each chat() invocation."""
@@ -199,7 +223,7 @@ class ToolRunner:
         # from this value, and a mode switch during phase 2 (the CLI's "allow
         # all" answer, a host thread calling ``set_mode``) must not make that
         # label disagree with the reason phase 1 recorded.
-        readonly = self._readonly_active()
+        readonly = self.readonly_active()
         planning = self._planner.plan(tool_calls, readonly_mode=readonly)
         result_messages.extend(planning.early_messages)
 
@@ -252,7 +276,11 @@ class ToolRunner:
         # special-casing. A hook ``allow`` is a no-op — it never downgrades
         # an engine deny/ask or a tool's own requires_confirmation ask.
         if self._plugin_hook_rules:
-            self._apply_pre_tool_use_hooks(_plans)
+            # The batch's value, not a second live read: a hook's
+            # ``updatedInput`` re-decides the call, and re-reading here would
+            # judge the rewrite under a posture phase 1 never saw and phase 3
+            # will not label.
+            self._apply_pre_tool_use_hooks(_plans, readonly_mode=readonly)
 
         # PermissionDecisionEvent must precede the tool's started event
         # for the same tool_call_id; firing here, before Phase 2 / 3,
@@ -353,7 +381,9 @@ class ToolRunner:
     # PreToolUse hook policy (Phase 1.5)
     # ------------------------------------------------------------------
 
-    def _apply_pre_tool_use_hooks(self, plans) -> None:
+    def _apply_pre_tool_use_hooks(
+        self, plans, *, readonly_mode: Optional[bool] = None,
+    ) -> None:
         """Let PreToolUse hooks deny / downgrade-to-ask each planned call.
 
         Mutates ``plan.decision`` / ``plan.permission_detail`` in place so
@@ -362,6 +392,11 @@ class ToolRunner:
         existing ``reason`` field (prefixed ``pre-tool-hook``); no new
         public field is introduced. Dispatch errors are swallowed with a
         warning — a broken hook must not wedge tool execution.
+
+        ``readonly_mode`` is the batch's posture, forwarded to
+        :meth:`_apply_updated_input` so a rewrite is re-decided under the
+        same value phase 1 used. ``None`` (direct callers / tests) reads it
+        live, which is what this method did before the argument existed.
         """
         pre_rules = [
             r for r in self._plugin_hook_rules
@@ -437,7 +472,10 @@ class ToolRunner:
                 self.last_hook_stop = hook_result.stop_reason or "Hook stopped the turn"
 
             if hook_result.updated_tool_input is not None and not already_denied:
-                self._apply_updated_input(plan, hook_result.updated_tool_input)
+                self._apply_updated_input(
+                    plan, hook_result.updated_tool_input,
+                    readonly_mode=readonly_mode,
+                )
 
             reason = pre_tool_hook_reason(hook_result.reason)
             if hook_result.decision == "deny":
@@ -449,7 +487,9 @@ class ToolRunner:
             # ``allow`` / no decision → no-op (must not downgrade an existing
             # engine deny/ask or a tool's own requires_confirmation ask).
 
-    def _apply_updated_input(self, plan, updated: dict) -> None:
+    def _apply_updated_input(
+        self, plan, updated: dict, *, readonly_mode: Optional[bool] = None,
+    ) -> None:
         """Replace the call's arguments and **re-decide** on what will run.
 
         `updatedInput` "replaces the entire input object", so the verdict
@@ -483,7 +523,15 @@ class ToolRunner:
         (*"the original arguments never reach the executor"*). A hook that
         rewrites a command has already said the original must not run; an
         engine failure is not permission to run it anyway.
+
+        ``readonly_mode`` is the value ``execute()`` read **once** for the
+        batch. Re-reading it here would let a mode switch between phase 1 and
+        phase 1.5 judge the rewrite under a posture the recorded reason and
+        phase 3's ``[Readonly mode]`` label do not describe. ``None`` reads it
+        live, for direct callers that never ran phase 1.
         """
+        if readonly_mode is None:
+            readonly_mode = self.readonly_active()
         previous = plan.decision
         candidate = dict(updated)
         # The re-decision reads the *same* spec the first decision was
@@ -502,7 +550,7 @@ class ToolRunner:
             # computed for the original, which is the state this method exists to prevent.
             candidate_record = _decided_call(plan.tool, shell_spec, candidate)
             new_decision, new_detail = self._planner._decide(
-                plan.tool, plan.function_name, candidate, self._readonly_active(), shell_spec,
+                plan.tool, plan.function_name, candidate, readonly_mode, shell_spec,
                 candidate_record,
             )
         except Exception as exc:  # pragma: no cover - defensive

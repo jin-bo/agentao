@@ -60,10 +60,14 @@ class SessionPool:
             # instead; user rules are evaluated ahead of the
             # workspace-write preset, so these win, and create_task keeps
             # going through ``requires_confirmation``.
+            # ``save_memory`` is on the list too: it writes
+            # ``.agentao/memory.db`` under this tenant's directory, and
+            # read-only mode used to deny it along with the rest.
             engine = PermissionEngine(project_root=workdir, rules=[
                 {"tool": "write_file", "action": "deny"},
                 {"tool": "replace", "action": "deny"},
                 {"tool": "run_shell_command", "action": "deny"},
+                {"tool": "save_memory", "action": "deny"},
             ])
             engine.set_mode(PermissionMode.WORKSPACE_WRITE)
 
