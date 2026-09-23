@@ -95,10 +95,16 @@ def test_replace_opens_with_the_hunk_it_proposes(transport):
     }]
 
 
-def test_an_absolute_path_is_left_alone(transport):
+def test_an_absolute_path_is_left_alone(transport, tmp_path_factory):
+    # Built from a real temp dir rather than written as "/etc/hosts": on
+    # Windows a path with a root but no drive is *not* absolute, and joining
+    # it onto the session cwd (giving ``C:\\etc\\hosts``) is the correct answer
+    # there — so a literal POSIX path tests a different branch per platform.
     t, server, _cwd = transport
-    _start(t, "replace", {"file_path": "/etc/hosts", "old_text": "a", "new_text": "b"})
-    assert _diffs(_updates(server)[-1])[0]["path"] == str(Path("/etc/hosts"))
+    elsewhere = tmp_path_factory.mktemp("elsewhere") / "hosts"
+    assert elsewhere.is_absolute()
+    _start(t, "replace", {"file_path": str(elsewhere), "old_text": "a", "new_text": "b"})
+    assert _diffs(_updates(server)[-1])[0]["path"] == str(elsewhere)
 
 
 def test_with_no_session_cwd_the_path_is_passed_through_rather_than_dropped():
