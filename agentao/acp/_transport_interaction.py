@@ -163,7 +163,12 @@ class _InteractionMixin:
         # moment a diff exists for — the user is being asked to approve the
         # change, and "replace" plus a raw argument dict is not something you
         # can review. The diff goes first so it is what the dialog leads with.
-        diff = proposed_tool_diff(self._server, self._session_id, tool_name, args)
+        # ``session=`` reuses the one looked up above — the second lookup this
+        # replaces ran under a swallow-everything policy, so a session that
+        # vanished mid-request would have quietly produced a relative path.
+        diff = proposed_tool_diff(
+            self._server, self._session_id, tool_name, args, session=session
+        )
         if diff is not None:
             content.append(diff)
         if description:

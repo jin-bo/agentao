@@ -111,6 +111,18 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
   live output is what ACP `terminal/create` is for, and that is the G1
   fs/terminal proxy, still a documented non-goal.
 
+  Two things the accumulation has to survive, because the one tool that streams
+  does not stream from one thread: `LocalShellExecutor.run` reads stdout and
+  stderr in two daemon threads and calls back from both, so the per-call buffer
+  takes a lock (every mutation in it is a read-modify-write); and it joins those
+  threads with a *bounded* timeout, so a reader still holding a killed
+  grandchild's pipe can deliver a chunk after the tool returned — that chunk is
+  now dropped rather than re-opening a call the client already saw `completed`
+  and leaving a buffer behind that nothing pops. The lock covers taking a
+  snapshot but not writing it, so two flushes can still reach the client out
+  of order; the terminal update therefore restates the collection for every
+  call that streamed, as the one update ordered after all of them.
+
 - Read-only mode is enforced when only the permission engine's mode is set. ACP
   `session/set_mode` with `modeId: "read-only"`, an embedded host calling
   `permission_engine.set_mode(PermissionMode.READ_ONLY)` and a sub-agent deciding

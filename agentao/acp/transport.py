@@ -45,7 +45,8 @@ Design notes
 
 - **Tool call content is a collection, not a stream.** ACP replaces it on
   every update, so each update restates everything accumulated so far; see
-  :mod:`agentao.acp._tool_call_content` for the buffer and its two bounds.
+  :mod:`agentao.acp._tool_call_content` for the buffer, its two bounds and
+  the lock it needs because a shell command streams from two reader threads.
 
 - **JSON safety**: agent.py's emit sites already use only JSON-native
   values, but tool ``args`` may contain :class:`pathlib.Path` or other
@@ -113,7 +114,8 @@ Deterministic failure modes:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Set
+from collections import deque
+from typing import TYPE_CHECKING, Any, Deque, Dict, List, Set
 
 from agentao.transport.events import AgentEvent, EventType
 
@@ -145,6 +147,12 @@ if TYPE_CHECKING:
     from .server import AcpServer
 
 logger = logging.getLogger(__name__)
+
+#: How many finished ``call_id``\s to remember, so a chunk that arrives after
+#: its tool call ended is dropped rather than re-opening the call. Comfortably
+#: above any one batch's tool-call count; the membership test is a scan, and it
+#: runs once per streamed chunk.
+_CLOSED_CALL_MEMORY = 64
 
 # Re-exported above for callers that import these names from this module
 # (tests, sibling ACP modules). Referenced here so linters keep the
@@ -204,6 +212,17 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
         # the first ``TOOL_OUTPUT`` and popped at ``TOOL_COMPLETE``, so a call
         # that streams nothing costs nothing.
         self._tool_call_content: Dict[str, ToolCallContentBuffer] = {}
+        # call_ids whose ``TOOL_COMPLETE`` has already been seen. A streamed
+        # chunk that arrives *after* a call is over must not re-create its
+        # buffer: the shell executor joins its two reader threads with a
+        # bounded timeout (``capabilities/shell.py``), so a reader still
+        # holding a killed grandchild's pipe can deliver a chunk after the
+        # tool returned. Without this, that chunk both re-opens a call the
+        # client already saw ``completed`` and leaves behind a buffer nothing
+        # will ever pop. Bounded ring — and a ``TOOL_START`` that reuses an id
+        # clears it, because the sub-agent path falls back to the tool *name*
+        # as the call_id, so ids genuinely do repeat.
+        self._closed_tool_calls: Deque[str] = deque(maxlen=_CLOSED_CALL_MEMORY)
 
     # -- One-way events ----------------------------------------------------
 
@@ -233,6 +252,23 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
 
     def subscribe(self, listener):
         return self._broadcast.subscribe(listener)
+
+    def _buffer_for(self, call_id: str) -> ToolCallContentBuffer:
+        """This call's content buffer, created on first use.
+
+        The miss path goes through ``setdefault`` rather than a plain
+        assignment because two reader threads can deliver the first chunk of
+        one command at once (see :mod:`._tool_call_content`) — ``setdefault``
+        is atomic, so the loser gets the winner's buffer instead of silently
+        replacing it. The ``get`` in front of it is what keeps a 125-chunk
+        build log from allocating 125 throwaway buffers.
+        """
+        buffer = self._tool_call_content.get(call_id)
+        if buffer is None:
+            buffer = self._tool_call_content.setdefault(
+                call_id, ToolCallContentBuffer()
+            )
+        return buffer
 
     # -- Mapping -----------------------------------------------------------
 
@@ -269,6 +305,10 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
             tool = str(data.get("tool", "unknown"))
             call_id = str(data.get("call_id", ""))
             raw_args = data.get("args", {})
+            # A new call under a reused id (the sub-agent path falls back to
+            # the tool name) is live again, whatever the previous one did.
+            while call_id in self._closed_tool_calls:
+                self._closed_tool_calls.remove(call_id)
             if tool == "todo_write":
                 # Surface the task checklist as a native ACP ``plan`` rather
                 # than a ``tool_call`` — but DEFER it to TOOL_COMPLETE so a
@@ -296,9 +336,7 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
             # to restate the diff or it would drop it.
             diff = proposed_tool_diff(self._server, self._session_id, tool, raw_args)
             if diff is not None:
-                buffer = self._tool_call_content.setdefault(
-                    call_id, ToolCallContentBuffer()
-                )
+                buffer = self._buffer_for(call_id)
                 buffer.add_leading(diff)
                 update["content"] = buffer.entries()
                 buffer.mark_sent()
@@ -313,9 +351,13 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
             # bare chunk left a conformant client showing only the latest
             # one. The buffer also throttles: a chunk that does not earn an
             # update is still recorded and rides the next one.
-            buffer = self._tool_call_content.setdefault(
-                call_id, ToolCallContentBuffer()
-            )
+            if call_id in self._closed_tool_calls:
+                # A straggler from a reader thread the shell executor stopped
+                # waiting on. Re-opening a call the client already saw
+                # ``completed`` is worse than dropping the tail of its output,
+                # and the model's copy of the result is unaffected either way.
+                return None
+            buffer = self._buffer_for(call_id)
             if not buffer.append(chunk):
                 return None
             update: Dict[str, Any] = {
@@ -333,8 +375,10 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
         if etype == EventType.TOOL_COMPLETE:
             call_id = str(data.get("call_id", ""))
             # Pop before the ``todo_write`` branch returns, so no path can
-            # leave a buffer behind for a call that is over.
+            # leave a buffer behind for a call that is over — and remember the
+            # id, so a late chunk cannot put one back.
             buffer = self._tool_call_content.pop(call_id, None)
+            self._closed_tool_calls.append(call_id)
             if str(data.get("tool", "")) == "todo_write":
                 plan = self._todo_plan_calls.pop(call_id, None)
                 if plan is not None:
@@ -359,18 +403,24 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
                 "status": acp_status,
             }
             error = data.get("error")
-            # The collection is restated only when it would change: output
-            # the throttle held back, or an error line to add. When the last
-            # streamed update already carried everything, omitting ``content``
-            # leaves that copy standing — which is what replace semantics
-            # mean. Note the error rides *beside* the output it explains;
+            # The collection is restated when it would change (output the
+            # throttle held back, an error line to add) or when the call
+            # streamed at all. A call that opened with a diff and streamed
+            # nothing omits ``content``, which leaves the opening copy
+            # standing — that is what replace semantics mean. Note the error rides *beside* the output it explains;
             # sending it alone used to erase every chunk the tool produced
             # before it failed, which is the output that says why.
-            entries = list(buffer.entries()) if buffer is not None else []
+            # A call that streamed is always restated, dirty or not: its
+            # mid-stream snapshots are written outside the buffer's lock, so
+            # two reader threads can deliver them out of order and leave the
+            # client holding the older one (see ``ToolCallContentBuffer.
+            # streamed``). The terminal update is the one that is ordered
+            # after all of them.
+            entries: List[Dict[str, Any]] = []
+            if buffer is not None and (error or buffer.dirty or buffer.streamed):
+                entries = buffer.entries()
             if error:
                 entries.append(_tool_content_text(f"Error: {error}"))
-            elif buffer is None or not buffer.dirty:
-                entries = []
             if entries:
                 update["content"] = entries
             return update

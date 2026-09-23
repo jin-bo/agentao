@@ -71,8 +71,10 @@ _HOST_TOOL_KIND_ALIASES: Dict[str, str] = {
     "shell": "execute",
     "edit": "edit",
     "edit_file": "edit",
+    "find_files": "search",
     "grep": "search",
     "read_folder": "read",
+    "search_text": "search",
 }
 
 
@@ -259,7 +261,7 @@ def _absolute_path(raw: str, base: Path | None) -> str:
 
 
 def proposed_tool_diff(
-    server: Any, session_id: str, tool_name: str, args: Any
+    server: Any, session_id: str, tool_name: str, args: Any, *, session: Any = None
 ) -> Dict[str, Any] | None:
     """:func:`_tool_call_diff` for a live session, or ``None``.
 
@@ -267,11 +269,20 @@ def proposed_tool_diff(
     opens the call (:meth:`ACPTransport._build_update`) and the
     ``session/request_permission`` that asks the user to approve it
     (:meth:`_InteractionMixin.confirm_tool`). The session lookup is gated on
-    :data:`DIFF_TOOLS` so a read or a shell call does not pay for it.
+    :data:`DIFF_TOOLS` so a read or a shell call does not pay for it — and a
+    caller that already holds the session passes it as ``session=`` rather
+    than paying for a second lookup under a different failure policy.
     """
     if tool_name not in DIFF_TOOLS:
         return None
-    return _tool_call_diff(tool_name, args, base=_session_cwd(server, session_id))
+    base = _cwd_of(session) if session is not None else _session_cwd(server, session_id)
+    return _tool_call_diff(tool_name, args, base=base)
+
+
+def _cwd_of(session: Any) -> Path | None:
+    """A session's working directory, or ``None`` when it is not a path."""
+    cwd = getattr(session, "cwd", None)
+    return cwd if isinstance(cwd, Path) else None
 
 
 def _session_cwd(server: Any, session_id: str) -> Path | None:
@@ -287,8 +298,7 @@ def _session_cwd(server: Any, session_id: str) -> Path | None:
         session = server.sessions.require(session_id)
     except Exception:
         return None
-    cwd = getattr(session, "cwd", None)
-    return cwd if isinstance(cwd, Path) else None
+    return _cwd_of(session)
 
 
 def _tool_content_text(text: str) -> Dict[str, Any]:
