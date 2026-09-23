@@ -7,7 +7,8 @@ Corresponds to [Part 7.3 of the developer guide](../../developer-guide/en/part-7
 ## What it demonstrates
 
 - **Custom `Tool` subclasses** — `GetCustomerProfile`, `SearchKb`, `DraftReply`, `SendReply`
-- **`PermissionEngine` subclass** — `ConfidenceGatedEngine` reads `confidence` from tool args and allows only `>= 0.9`
+- **`PermissionEngine` subclass** — `ConfidenceGatedEngine` reads `confidence` from tool args and allows only `>= 0.9`. It overrides `decide_detail`, which is what the runtime asks for; overriding `decide` alone leaves the gate unreachable.
+- **Deny-by-rule posture** — `workspace-write` plus `deny` rules for `write_file` / `replace` / `run_shell_command`, so the agent never touches the disk. Read-only mode would also deny this blueprint's own `draft_reply` / `send_reply`: it blocks every tool that is not read-only, before any rule is consulted.
 - **Per-session working dir** — each ticket gets its own `runs/<ticket-id>/` folder
 - **Skill-shaped behavior** — tone, escalation matrix, and output contract live in [`.agentao/skills/support-triage/SKILL.md`](./.agentao/skills/support-triage/SKILL.md). Co-located rather than in the [skills gallery](../skills/README.md) because the policy references this blueprint's `ConfidenceGatedEngine` thresholds and would be meaningless lifted out.
 - **In-memory mocks** — `_CUSTOMERS` / `_KB` / `_OUTBOX` stand in for real CRM systems; replace with HTTP clients in production

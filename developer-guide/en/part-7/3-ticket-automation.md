@@ -88,18 +88,39 @@ class SendReply(Tool):
 
 ```python
 # permissions.py
-from agentao.permissions import PermissionEngine, PermissionDecision, PermissionMode
+from agentao.permissions import (
+    PermissionDecision, PermissionDecisionDetail, PermissionEngine, PermissionMode,
+)
+
+# The agent answers tickets; it has no business with the filesystem. Deny the
+# built-in writers by rule — read-only mode would deny draft_reply and
+# send_reply too, since it blocks every tool that is not read-only before any
+# rule is consulted.
+NO_FILE_OR_SHELL = [
+    {"tool": "write_file", "action": "deny"},
+    {"tool": "replace", "action": "deny"},
+    {"tool": "run_shell_command", "action": "deny"},
+]
 
 class ConfidenceGatedEngine(PermissionEngine):
-    def decide(self, tool_name: str, tool_args: dict):
-        if tool_name == "send_reply":
-            conf = float(tool_args.get("confidence", 0))
-            return (
-                PermissionDecision.ALLOW
-                if conf >= 0.9
-                else PermissionDecision.DENY
+    # Override decide_detail, not decide: the runtime asks for the detail
+    # (decision + the reason it reports to the host), and decide is the thin
+    # wrapper over it. Overriding decide alone leaves the gate unreachable.
+    def decide_detail(self, tool_name: str, tool_args: dict, *,
+                      shell_spec=None, decided=None):
+        if tool_name != "send_reply":
+            return super().decide_detail(
+                tool_name, tool_args, shell_spec=shell_spec, decided=decided,
             )
-        return super().decide(tool_name, tool_args)
+        conf = float(tool_args.get("confidence", 0))
+        return PermissionDecisionDetail(
+            PermissionDecision.ALLOW if conf >= 0.9 else PermissionDecision.DENY,
+            reason=f"host-rule:send_reply confidence={conf:.2f}",
+        )
+
+    def decide(self, tool_name: str, tool_args: dict):
+        detail = self.decide_detail(tool_name, tool_args)
+        return detail.decision if detail is not None else None
 ```
 
 ### 3 · Skill that shapes behavior
@@ -151,8 +172,8 @@ app = FastAPI()
 def build_agent(ticket):
     workdir = Path(f"/tmp/ticket-{ticket.id}")
     workdir.mkdir(exist_ok=True)
-    engine = ConfidenceGatedEngine(project_root=workdir)
-    engine.set_mode(PermissionMode.READ_ONLY)
+    engine = ConfidenceGatedEngine(project_root=workdir, rules=NO_FILE_OR_SHELL)
+    engine.set_mode(PermissionMode.WORKSPACE_WRITE)
     agent = Agentao(
         working_directory=workdir,
         permission_engine=engine,
