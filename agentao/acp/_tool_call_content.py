@@ -90,7 +90,7 @@ class ToolCallContentBuffer:
     calls get different buffers, keyed by ``call_id`` in the transport.
     """
 
-    __slots__ = ("_leading", "_head", "_tail", "_elided", "_unflushed", "_flushed_once")
+    __slots__ = ("_leading", "_head", "_tail", "_elided", "_unflushed", "_sent", "_seen_chunk")
 
     def __init__(self) -> None:
         # Entries that precede the streamed text and never change — the
@@ -101,13 +101,28 @@ class ToolCallContentBuffer:
         self._tail = ""
         self._elided = 0
         self._unflushed = 0
-        self._flushed_once = False
+        # Whether the collection has ever been handed to the client. Distinct
+        # from ``_seen_chunk``: a file-editing call is opened with a ``diff``
+        # entry already sent on its ``tool_call``, and its first *chunk* still
+        # has to carry the pending → in_progress transition.
+        self._sent = False
+        self._seen_chunk = False
 
     # -- writing -----------------------------------------------------------
 
     def add_leading(self, entry: Dict[str, Any]) -> None:
         """Pin a content entry ahead of the streamed text."""
         self._leading.append(entry)
+
+    def mark_sent(self) -> None:
+        """Record that the caller just emitted :meth:`entries` itself.
+
+        Used by the ``tool_call`` that opens a file-editing call: it carries
+        the ``diff`` entry, so the terminal update must not restate it as if
+        it were news.
+        """
+        self._sent = True
+        self._unflushed = 0
 
     def append(self, chunk: str) -> bool:
         """Accumulate one streamed chunk; answer whether to send an update.
@@ -119,14 +134,12 @@ class ToolCallContentBuffer:
         """
         if chunk:
             self._append_text(chunk)
-        if not self._flushed_once:
-            # The first chunk is also the pending → in_progress
-            # transition, so it always goes out, empty or not.
-            self._flushed_once = True
-            self._unflushed = 0
-            return True
-        if self._unflushed >= FLUSH_CHARS:
-            self._unflushed = 0
+        first = not self._seen_chunk
+        self._seen_chunk = True
+        if first or self._unflushed >= FLUSH_CHARS:
+            # The first chunk is also the pending → in_progress transition,
+            # so it always goes out, empty or not.
+            self.mark_sent()
             return True
         return False
 
@@ -150,7 +163,7 @@ class ToolCallContentBuffer:
     @property
     def dirty(self) -> bool:
         """True when :meth:`entries` would differ from what was last sent."""
-        return self._unflushed > 0 or not self._flushed_once
+        return self._unflushed > 0 or not self._sent
 
     def entries(self) -> List[Dict[str, Any]]:
         """The whole collection to put on the next ``tool_call_update``."""

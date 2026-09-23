@@ -399,6 +399,67 @@ class TestConfirmToolUnit:
         _, params = server.calls[0]
         assert "content" not in params["toolCall"]
 
+    # --- The proposed edit, where review-before-approve happens ----------
+
+    def test_an_edit_is_shown_as_a_diff_the_user_can_review(self, tmp_path):
+        """"replace" plus an argument dict is not something you can approve."""
+        server = RecordingServer(outcome=self._allow_once())
+        state = _register_session(server)
+        state.cwd = tmp_path
+        transport = _make_transport(server)
+        transport.confirm_tool(
+            "replace",
+            "Edit a file by replacing old text with new text.",
+            {"file_path": "src/app.py", "old_text": "DEBUG = False",
+             "new_text": "DEBUG = True"},
+        )
+
+        _, params = server.calls[0]
+        content = params["toolCall"]["content"]
+        # The diff leads; the tool's generic description follows it.
+        assert content[0] == {
+            "type": "diff",
+            "path": str(tmp_path / "src/app.py"),
+            "oldText": "DEBUG = False",
+            "newText": "DEBUG = True",
+        }
+        assert content[1]["type"] == "content"
+        assert params["toolCall"]["kind"] == "edit"
+
+    def test_an_edit_with_no_description_still_shows_its_diff(self, tmp_path):
+        server = RecordingServer(outcome=self._allow_once())
+        state = _register_session(server)
+        state.cwd = tmp_path
+        transport = _make_transport(server)
+        transport.confirm_tool("replace", "", {"file_path": "/a.py",
+                                               "old_text": "x", "new_text": "y"})
+        _, params = server.calls[0]
+        assert len(params["toolCall"]["content"]) == 1
+        assert params["toolCall"]["content"][0]["type"] == "diff"
+
+    def test_a_whole_file_write_is_not_dressed_up_as_a_creation(self, tmp_path):
+        """No diff rather than an all-green one — see test_acp_tool_call_diff."""
+        server = RecordingServer(outcome=self._allow_once())
+        state = _register_session(server)
+        state.cwd = tmp_path
+        transport = _make_transport(server)
+        transport.confirm_tool("write_file", "Write content to a file.",
+                               {"file_path": "a.py", "content": "NEW = 1\n"})
+        _, params = server.calls[0]
+        assert all(e["type"] != "diff" for e in params["toolCall"]["content"])
+
+    def test_the_permission_payload_validates_against_the_published_schema(self, tmp_path):
+        from agentao.acp.schema import AcpRequestPermissionParams
+
+        server = RecordingServer(outcome=self._allow_once())
+        state = _register_session(server)
+        state.cwd = tmp_path
+        transport = _make_transport(server)
+        transport.confirm_tool("replace", "desc", {"file_path": "/a.py",
+                                                   "old_text": "x", "new_text": "y"})
+        _, params = server.calls[0]
+        AcpRequestPermissionParams.model_validate(params)
+
     # --- Session overrides -----------------------------------------------
 
     def test_allow_always_updates_session_overrides(self):

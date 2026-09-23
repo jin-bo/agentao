@@ -18,7 +18,12 @@ from .protocol import (
     METHOD_ASK_USER,
     METHOD_REQUEST_PERMISSION,
 )
-from ._transport_helpers import _json_safe, _tool_content_text, _tool_kind
+from ._transport_helpers import (
+    _json_safe,
+    _tool_content_text,
+    _tool_kind,
+    proposed_tool_diff,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -153,8 +158,18 @@ class _InteractionMixin:
         }
         # Tool description becomes a single content entry so ACP clients
         # that render a confirmation dialog can show what the tool does.
+        content: List[Dict[str, Any]] = []
+        # A file-editing call is shown as the edit it proposes. This is the
+        # moment a diff exists for — the user is being asked to approve the
+        # change, and "replace" plus a raw argument dict is not something you
+        # can review. The diff goes first so it is what the dialog leads with.
+        diff = proposed_tool_diff(self._server, self._session_id, tool_name, args)
+        if diff is not None:
+            content.append(diff)
         if description:
-            tool_call_payload["content"] = [_tool_content_text(description)]
+            content.append(_tool_content_text(description))
+        if content:
+            tool_call_payload["content"] = content
 
         options: List[Dict[str, str]] = _build_permission_options()
         params: Dict[str, Any] = {

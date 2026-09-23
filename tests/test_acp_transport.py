@@ -491,11 +491,17 @@ def test_emit_never_raises_on_unknown_event_type():
 # ---------------------------------------------------------------------------
 
 def test_tool_kind_known_mappings():
+    # Real registered names only — this assertion used to pin
+    # ``find_files`` → ``search``, a tool agentao has never registered, while
+    # the real search tool fell through to ``other``. See
+    # tests/test_acp_tool_kind.py for the exhaustiveness check that stops
+    # the table drifting off the registry again.
     assert _tool_kind("read_file") == "read"
     assert _tool_kind("write_file") == "edit"
+    assert _tool_kind("replace") == "edit"
     assert _tool_kind("run_shell_command") == "execute"
     assert _tool_kind("web_fetch") == "fetch"
-    assert _tool_kind("find_files") == "search"
+    assert _tool_kind("search_file_content") == "search"
 
 
 def test_tool_kind_unknown_falls_back_to_other():

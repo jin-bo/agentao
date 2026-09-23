@@ -121,12 +121,21 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 | `user_message_chunk` | （回放） | `content: {type:"text", text}` |
 | `agent_message_chunk` | `LLM_TEXT` | `content: {type:"text", text}` |
 | `agent_thought_chunk` | `THINKING` / `ERROR` | `content: {type:"text", text}` |
-| `tool_call` | `TOOL_START` | `toolCallId`、`title`、`kind`、`status:"pending"`、`rawInput` |
+| `tool_call` | `TOOL_START` | `toolCallId`、`title`、`kind`、`status:"pending"`、`rawInput`；文件编辑另带一个只含 `diff` 条目的 `content[]` |
 | `tool_call_update` | `TOOL_OUTPUT` / `TOOL_COMPLETE` | `toolCallId`、`status`，可选 `content[]` —— 它**替换**整个集合，所以每条更新都要把集合整个重述一遍 |
 
 ### `tool_call.kind`（封闭枚举）
 
-`read`、`edit`、`delete`、`move`、`search`、`execute`、`think`、`fetch`、`switch_mode`、`other`。Agentao 会把内部工具名映射到这枚举——见 `agentao/acp/transport.py`。
+`read`、`edit`、`delete`、`move`、`search`、`execute`、`think`、`fetch`、`switch_mode`、`other`。Agentao 会把内部工具名映射到这枚举——`agentao/acp/_transport_helpers.py` 里的 `_TOOL_KIND_MAP`，有测试保证它对 `BUILTIN_TOOL_NAMES` 穷尽。表里没有的工具（宿主注入的、所有 `mcp_*`）落到 `other`，这也是 ACP v1 自己的默认值。Agentao 目前不会产出 `delete`、`move`、`switch_mode`。
+
+### `content[]` 条目（`ToolCallContent`）
+
+| `type` | 形状 | 何时 |
+|--------|------|------|
+| `content` | `{content: {type:"text", text}}` | 确认对话框里的工具描述；流式输出（每次整体重述） |
+| `diff` | `{path, oldText?, newText}` | 文件编辑，发在 `status:"pending"`——是一个 hunk 而非整份文件；没有被替换的内容时 `oldText` 为 `null` |
+
+ACP v1 还有第三种 `terminal`。Agentao 从不发它：它不调用 `terminal/create`（G1 的 fs/terminal 代理是明确的非目标）。
 
 ### `tool_call_update.status`
 

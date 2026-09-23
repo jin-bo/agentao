@@ -121,12 +121,21 @@ Server-to-client streaming updates during a prompt turn.
 | `user_message_chunk` | (replay) | `content: {type:"text", text}` |
 | `agent_message_chunk` | `LLM_TEXT` | `content: {type:"text", text}` |
 | `agent_thought_chunk` | `THINKING` / `ERROR` | `content: {type:"text", text}` |
-| `tool_call` | `TOOL_START` | `toolCallId`, `title`, `kind`, `status:"pending"`, `rawInput` |
+| `tool_call` | `TOOL_START` | `toolCallId`, `title`, `kind`, `status:"pending"`, `rawInput`, and for a file edit a `content[]` holding one `diff` entry |
 | `tool_call_update` | `TOOL_OUTPUT` / `TOOL_COMPLETE` | `toolCallId`, `status`, optional `content[]` — **replaces** the collection, so each update restates it whole |
 
 ### `tool_call.kind` (closed enum)
 
-`read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`. Agentao maps its tool names into this enum — see `agentao/acp/transport.py`.
+`read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`. Agentao maps its tool names into this enum — `_TOOL_KIND_MAP` in `agentao/acp/_transport_helpers.py`, which a test holds exhaustive over `BUILTIN_TOOL_NAMES`. A tool with no entry (host-injected, every `mcp_*`) is `other`, ACP v1's own default. Agentao does not currently produce `delete`, `move` or `switch_mode`.
+
+### `content[]` entries (`ToolCallContent`)
+
+| `type` | Shape | When |
+|--------|-------|------|
+| `content` | `{content: {type:"text", text}}` | Tool description in a confirmation dialog; streamed output, restated whole |
+| `diff` | `{path, oldText?, newText}` | A file edit, at `status:"pending"` — a hunk, not a whole file; `oldText` is `null` when nothing is replaced |
+
+ACP v1 has a third variant, `terminal`. Agentao never emits it: it does not call `terminal/create` (the G1 fs/terminal proxy is a documented non-goal).
 
 ### `tool_call_update.status`
 

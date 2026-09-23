@@ -23,6 +23,38 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **ACP: a file edit is sent as a reviewable diff, and `replace` is finally an
+  `edit`.** `replace` and an appending `write_file` now open their `tool_call`
+  — and the matching `session/request_permission` — with a
+  `{"type":"diff","path","oldText","newText"}` content entry, so a client
+  renders the change instead of `"replace"` plus a raw argument dict. An ACP
+  `Diff` is a *hunk*, not a whole file (ACP's own reference adapter emits one
+  per hunk of a structured patch), so `replace`'s argument pair is exactly the
+  shape the field wants. The entry describes what was **requested**, at
+  `status: "pending"`; the terminal update says whether it applied.
+
+  **A non-append `write_file` deliberately gets no diff.** Its arguments say
+  nothing about whether the file exists, and the transport holds no filesystem
+  to ask; `oldText: null` would render an overwrite as a creation, all-green, at
+  the moment the user approves destroying what was there.
+
+  Alongside it, the tool-name → `kind` table was rebuilt against the registry.
+  It had been mapping `edit_file`, `edit`, `read_folder`, `find_files` and
+  `search_text` — none of which agentao has ever registered — while `replace`
+  and `search_file_content` fell through to `"other"`, so every ACP client was
+  told agentao's principal editing tool was unclassified. A test now holds the
+  table exhaustive over `BUILTIN_TOOL_NAMES` and validates real emissions
+  against the published schema.
+
+  **Contract change** (`docs/schema/host.acp.v1.json` regenerated):
+  `AcpToolCallContentEntry` is now a discriminated union over `content` and
+  `diff`; `AcpSessionUpdateToolCall` gained an optional `content`; the `kind`
+  enum is ACP v1's ten values rather than six. A host that switched on the
+  narrower enum or assumed every content entry was text needs updating. This
+  closes the `diff` half of `docs/design/acp-server-conformance-review.md` G2
+  except for a whole-file `write_file`, which needs a tool-side pre-write
+  snapshot; the `locations` half stays deferred with G1.
+
 - **ACP: a turn whose model call failed now answers with a JSON-RPC error**
   instead of `{"stopReason": "end_turn"}` — `-32603`, the turn's own
   `[LLM API error: …]` notice as `message`, and `data: {"reason": "llm_error"}`

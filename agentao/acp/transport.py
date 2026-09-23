@@ -15,8 +15,9 @@ Internal event         ACP ``session/update.update.sessionUpdate``
 ``TURN_START``         *(no notification — purely internal bookkeeping)*
 ``LLM_TEXT``           ``agent_message_chunk`` with text content
 ``THINKING``           ``agent_thought_chunk`` with text content
-``TOOL_START``         ``tool_call`` (toolCallId, title, kind, status="pending", rawInput)
-``TOOL_OUTPUT``        ``tool_call_update`` (content append, status="in_progress")
+``TOOL_START``         ``tool_call`` (toolCallId, title, kind, status="pending",
+                       rawInput, plus a ``diff`` content entry for a file edit)
+``TOOL_OUTPUT``        ``tool_call_update`` (status="in_progress", content restated whole)
 ``TOOL_COMPLETE``      ``tool_call_update`` (status="completed" or "failed")
 ``AGENT_START``        ``agent_thought_chunk`` with a "[sub-agent started: …]" marker
 ``AGENT_END``          ``agent_thought_chunk`` with a "[sub-agent finished: …]" marker
@@ -36,8 +37,15 @@ Design notes
 
 - **Tool kind mapping**: ACP's ``tool_call.kind`` is a closed enum
   (``read``, ``edit``, ``delete``, ``move``, ``search``, ``execute``,
-  ``think``, ``fetch``, ``other``). :func:`_tool_kind` maps Agentao tool
-  names to those values; unknown tools fall back to ``"other"``.
+  ``think``, ``fetch``, ``switch_mode``, ``other``). :func:`_tool_kind` maps
+  Agentao tool names to those values; unknown tools — host-injected and all
+  ``mcp_*`` ones — fall back to ``"other"``, which is the value ACP v1 itself
+  makes the default. The agentao half of the table is exhaustive over
+  ``BUILTIN_TOOL_NAMES`` by test.
+
+- **Tool call content is a collection, not a stream.** ACP replaces it on
+  every update, so each update restates everything accumulated so far; see
+  :mod:`agentao.acp._tool_call_content` for the buffer and its two bounds.
 
 - **JSON safety**: agent.py's emit sites already use only JSON-native
   values, but tool ``args`` may contain :class:`pathlib.Path` or other
@@ -117,6 +125,7 @@ from ._transport_helpers import (
     _todo_write_plan,
     _tool_content_text,
     _tool_kind,
+    proposed_tool_diff,
     write_session_update,
 )
 from ._transport_interaction import _InteractionMixin, _build_permission_options
@@ -272,7 +281,7 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
                 if plan is not None:
                     self._todo_plan_calls[call_id] = plan
                     return None
-            return {
+            update = {
                 "sessionUpdate": "tool_call",
                 "toolCallId": call_id,
                 "title": tool,
@@ -280,6 +289,20 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
                 "status": "pending",
                 "rawInput": _json_safe(raw_args),
             }
+            # A file-editing call opens with the edit it proposes, so a client
+            # renders a reviewable diff instead of a "Successfully wrote to …"
+            # line after the fact. Pinned as the buffer's leading entry: ACP
+            # replaces the content collection, so a later streamed update has
+            # to restate the diff or it would drop it.
+            diff = proposed_tool_diff(self._server, self._session_id, tool, raw_args)
+            if diff is not None:
+                buffer = self._tool_call_content.setdefault(
+                    call_id, ToolCallContentBuffer()
+                )
+                buffer.add_leading(diff)
+                update["content"] = buffer.entries()
+                buffer.mark_sent()
+            return update
 
         if etype == EventType.TOOL_OUTPUT:
             call_id = str(data.get("call_id", ""))

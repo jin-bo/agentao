@@ -221,6 +221,53 @@ posture should be *decided and documented*, not left implicit.
 > the bare `Error: …` line. Updates now restate the accumulated collection
 > under a flush threshold and a size cap
 > (`agentao/acp/_tool_call_content.py`). The three gaps below are unchanged.
+>
+> **`diff` half RESOLVED 2026-09-22 (unreleased, 0.5.4 cycle).** `replace` and
+> an appending `write_file` now open their `tool_call` — and the matching
+> `session/request_permission` — with a `diff` content entry. The frozen
+> contract was widened first: `AcpToolCallContentEntry` became a discriminated
+> union over `content` and `diff`, `AcpSessionUpdateToolCall` gained `content`,
+> the `kind` enum was aligned with ACP v1's ten values, and
+> `docs/schema/host.acp.v1.json` was regenerated. Three notes:
+>
+> 1. **An ACP `Diff` is a hunk, not a whole file.** ACP's own reference adapter
+>    emits one entry per hunk of a structured patch
+>    (`agentclientprotocol/claude-agent-acp@d571358`, `src/diff.ts`), so
+>    `replace`'s `old_text`/`new_text` pair is the shape the field wants. The
+>    review's "edit-tool results are sent as plain text" framing implied a
+>    whole-file `oldText`; that was wrong about the protocol.
+> 2. **A non-append `write_file` deliberately emits no diff.** Its arguments
+>    give `newText` but say nothing about whether the file exists, and the
+>    transport holds no filesystem to ask (a host may have injected one that
+>    does not answer to local paths). `oldText: null` would render an overwrite
+>    as a creation — all-green, at the moment the user approves destroying what
+>    was there. The reference adapter emits that optimistically and *corrects*
+>    it from the tool's own structured patch; with nothing to correct it from,
+>    silence is the fail-closed choice. **Closing it needs a tool-side
+>    pre-write snapshot** — a `write_file` that captures the old contents and
+>    hands them to the transport. That is the one piece of G2's `diff` half
+>    still open, and it is a runtime change, not an ACP one.
+> 3. **`locations` stays deferred with G1**, per §5.
+>
+> **Two defects found while implementing it, neither in the list below:**
+>
+> - **`_TOOL_KIND_MAP` described tools agentao does not have.** It mapped
+>   `edit_file`, `edit`, `read_folder`, `find_files` and `search_text` — none
+>   ever registered — while the real edit tool (`replace`) and the real search
+>   tool (`search_file_content`) fell through to `"other"`. So the claim below
+>   that the map "can already produce a value its own schema rejects" was true
+>   of a different failure than the one that was live: agentao was telling every
+>   ACP client that its principal editing tool was unclassified. Fixed, and
+>   `tests/test_acp_tool_kind.py` now holds the table exhaustive over
+>   `BUILTIN_TOOL_NAMES` and validates real emissions against the published
+>   schema — there was no such gate before, which is how the drift survived.
+> - **`session/request_permission` mints its own `toolCallId`** (`call_<uuid>`
+>   in `_transport_interaction.py`) which never matches the runtime `call_id`
+>   the following `tool_call` carries, so a client sees two unrelated tool
+>   calls where the reference adapter deliberately converges them. **Not
+>   fixed** — `Transport.confirm_tool(tool_name, description, args)` carries no
+>   call id, so closing it is a protocol change across every transport.
+
 
 `transport.py:236-247` emits `tool_call` with `toolCallId`, `title` (= the raw
 tool name), `kind`, `status`, and `rawInput`. Missing, all of which ACP v1

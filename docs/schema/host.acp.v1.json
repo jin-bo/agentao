@@ -1539,13 +1539,46 @@
       "additionalProperties": false,
       "description": "``tool_call`` notifies the host that a tool is starting.\n\nShape mirrors :class:`AcpToolCallSummary` so hosts can render with\na single widget for both ``session/update`` and the\n``request_permission`` confirmation dialog.",
       "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "items": {
+                "discriminator": {
+                  "mapping": {
+                    "content": "#/$defs/AcpToolCallTextEntry",
+                    "diff": "#/$defs/AcpToolCallDiffEntry"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/AcpToolCallTextEntry"
+                  },
+                  {
+                    "$ref": "#/$defs/AcpToolCallDiffEntry"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content"
+        },
         "kind": {
           "enum": [
             "read",
             "edit",
+            "delete",
+            "move",
             "search",
             "execute",
+            "think",
             "fetch",
+            "switch_mode",
             "other"
           ],
           "title": "Kind",
@@ -1618,7 +1651,21 @@
           "anyOf": [
             {
               "items": {
-                "$ref": "#/$defs/AcpToolCallContentEntry"
+                "discriminator": {
+                  "mapping": {
+                    "content": "#/$defs/AcpToolCallTextEntry",
+                    "diff": "#/$defs/AcpToolCallDiffEntry"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/AcpToolCallTextEntry"
+                  },
+                  {
+                    "$ref": "#/$defs/AcpToolCallDiffEntry"
+                  }
+                ]
               },
               "type": "array"
             },
@@ -1689,24 +1736,42 @@
       "title": "AcpTextContentBlock",
       "type": "object"
     },
-    "AcpToolCallContentEntry": {
+    "AcpToolCallDiffEntry": {
       "additionalProperties": false,
-      "description": "One entry in ``AcpToolCallSummary.content``.\n\nMirrors the runtime shape ``{\"type\": \"content\", \"content\":\n{\"type\": \"text\", \"text\": ...}}`` produced by ``confirm_tool`` when\nthe tool has a description to render in the host's confirmation\ndialog.",
+      "description": "A ``type: \"diff\"`` entry \u2014 a file edit a client can render and review.\n\nEmitted at ``status: \"pending\"`` by the ``tool_call`` that opens a\nfile-editing call and by the ``request_permission`` that asks the user to\napprove it. It is a **hunk**, not a whole file: ``oldText`` is the text\nbeing replaced (``None`` when nothing is \u2014 a new file or a pure append),\n``newText`` is what replaces it. ACP's own reference adapter emits one\nentry per hunk of a structured patch.\n\n``path`` is absolute whenever the session's ``cwd`` is known; a relative\nargument the transport could not resolve is passed through as written\nrather than dropping the entry.",
       "properties": {
-        "content": {
-          "$ref": "#/$defs/AcpToolCallTextBlock"
+        "newText": {
+          "title": "Newtext",
+          "type": "string"
+        },
+        "oldText": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Oldtext"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
         },
         "type": {
-          "const": "content",
-          "default": "content",
+          "const": "diff",
+          "default": "diff",
           "title": "Type",
           "type": "string"
         }
       },
       "required": [
-        "content"
+        "path",
+        "newText"
       ],
-      "title": "AcpToolCallContentEntry",
+      "title": "AcpToolCallDiffEntry",
       "type": "object"
     },
     "AcpToolCallSummary": {
@@ -1717,7 +1782,21 @@
           "anyOf": [
             {
               "items": {
-                "$ref": "#/$defs/AcpToolCallContentEntry"
+                "discriminator": {
+                  "mapping": {
+                    "content": "#/$defs/AcpToolCallTextEntry",
+                    "diff": "#/$defs/AcpToolCallDiffEntry"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/AcpToolCallTextEntry"
+                  },
+                  {
+                    "$ref": "#/$defs/AcpToolCallDiffEntry"
+                  }
+                ]
               },
               "type": "array"
             },
@@ -1732,9 +1811,13 @@
           "enum": [
             "read",
             "edit",
+            "delete",
+            "move",
             "search",
             "execute",
+            "think",
             "fetch",
+            "switch_mode",
             "other"
           ],
           "title": "Kind",
@@ -1800,6 +1883,26 @@
         "text"
       ],
       "title": "AcpToolCallTextBlock",
+      "type": "object"
+    },
+    "AcpToolCallTextEntry": {
+      "additionalProperties": false,
+      "description": "A ``type: \"content\"`` entry \u2014 the text variant of ``ToolCallContent``.\n\nMirrors the runtime shape ``{\"type\": \"content\", \"content\":\n{\"type\": \"text\", \"text\": ...}}`` produced by ``confirm_tool`` when\nthe tool has a description to render in the host's confirmation\ndialog, and by every streamed-output update.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/AcpToolCallTextBlock"
+        },
+        "type": {
+          "const": "content",
+          "default": "content",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "title": "AcpToolCallTextEntry",
       "type": "object"
     }
   },

@@ -570,6 +570,86 @@ class AcpSessionUpdateMessageChunk(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AcpToolCallTextBlock(BaseModel):
+    """Inner content block for ``AcpToolCallContentEntry``."""
+
+    type: Literal["text"] = "text"
+    text: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+#: ACP v1's ``ToolKind``, in full
+#: (``agentclientprotocol/agent-client-protocol@bf6d1ec``,
+#: ``agent-client-protocol-schema/src/v1/tool_call.rs:473``). Agentao does not
+#: currently produce ``delete``, ``move`` or ``switch_mode``, but this is the
+#: protocol's enum rather than agentao's: a host that switches on it should
+#: handle every value ACP can carry, and pinning a subset here is what let the
+#: transport's own name→kind table drift into producing values this contract
+#: would have rejected.
+AcpToolKind = Literal[
+    "read",
+    "edit",
+    "delete",
+    "move",
+    "search",
+    "execute",
+    "think",
+    "fetch",
+    "switch_mode",
+    "other",
+]
+
+
+class AcpToolCallTextEntry(BaseModel):
+    """A ``type: "content"`` entry — the text variant of ``ToolCallContent``.
+
+    Mirrors the runtime shape ``{"type": "content", "content":
+    {"type": "text", "text": ...}}`` produced by ``confirm_tool`` when
+    the tool has a description to render in the host's confirmation
+    dialog, and by every streamed-output update.
+    """
+
+    type: Literal["content"] = "content"
+    content: AcpToolCallTextBlock
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AcpToolCallDiffEntry(BaseModel):
+    """A ``type: "diff"`` entry — a file edit a client can render and review.
+
+    Emitted at ``status: "pending"`` by the ``tool_call`` that opens a
+    file-editing call and by the ``request_permission`` that asks the user to
+    approve it. It is a **hunk**, not a whole file: ``oldText`` is the text
+    being replaced (``None`` when nothing is — a new file or a pure append),
+    ``newText`` is what replaces it. ACP's own reference adapter emits one
+    entry per hunk of a structured patch.
+
+    ``path`` is absolute whenever the session's ``cwd`` is known; a relative
+    argument the transport could not resolve is passed through as written
+    rather than dropping the entry.
+    """
+
+    type: Literal["diff"] = "diff"
+    path: str
+    oldText: Optional[str] = None
+    newText: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+#: One entry in a tool call's ``content`` array. ACP v1 has a third variant,
+#: ``terminal`` — deliberately absent here, because agentao never calls
+#: ``terminal/create`` (the G1 fs/terminal proxy is a documented non-goal), and
+#: a schema shape with no producer tells a host to handle a case that cannot
+#: arrive.
+AcpToolCallContentEntry = Annotated[
+    Union[AcpToolCallTextEntry, AcpToolCallDiffEntry],
+    Field(discriminator="type"),
+]
+
+
 class AcpSessionUpdateToolCall(BaseModel):
     """``tool_call`` notifies the host that a tool is starting.
 
@@ -581,9 +661,13 @@ class AcpSessionUpdateToolCall(BaseModel):
     sessionUpdate: Literal["tool_call"] = "tool_call"
     toolCallId: str
     title: str
-    kind: Literal["read", "edit", "search", "execute", "fetch", "other"]
+    kind: AcpToolKind
     status: Literal["pending", "in_progress", "completed", "failed"]
     rawInput: Optional[Dict[str, Any]] = None
+    # A file-editing call opens with the ``diff`` it proposes, so a client can
+    # render the edit for review rather than a bare argument dict. Absent for
+    # every other tool.
+    content: Optional[List[AcpToolCallContentEntry]] = None
     schema_version: Optional[int] = None
 
     model_config = ConfigDict(extra="forbid")
@@ -695,30 +779,6 @@ class AcpPermissionOption(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class AcpToolCallTextBlock(BaseModel):
-    """Inner content block for ``AcpToolCallContentEntry``."""
-
-    type: Literal["text"] = "text"
-    text: str
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class AcpToolCallContentEntry(BaseModel):
-    """One entry in ``AcpToolCallSummary.content``.
-
-    Mirrors the runtime shape ``{"type": "content", "content":
-    {"type": "text", "text": ...}}`` produced by ``confirm_tool`` when
-    the tool has a description to render in the host's confirmation
-    dialog.
-    """
-
-    type: Literal["content"] = "content"
-    content: AcpToolCallTextBlock
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class AcpToolCallSummary(BaseModel):
     """Tool-call payload mirrored into ``request_permission``.
 
@@ -728,7 +788,7 @@ class AcpToolCallSummary(BaseModel):
 
     toolCallId: str
     title: str
-    kind: Literal["read", "edit", "search", "execute", "fetch", "other"]
+    kind: AcpToolKind
     status: Literal["pending", "in_progress", "completed", "failed"]
     rawInput: Optional[Dict[str, Any]] = None
     # ``confirm_tool`` attaches a description as a content array when
@@ -890,6 +950,9 @@ __all__ = [
     "AcpSessionUpdateToolCallUpdate",
     "AcpTextContentBlock",
     "AcpToolCallContentEntry",
+    "AcpToolCallDiffEntry",
     "AcpToolCallSummary",
     "AcpToolCallTextBlock",
+    "AcpToolCallTextEntry",
+    "AcpToolKind",
 ]

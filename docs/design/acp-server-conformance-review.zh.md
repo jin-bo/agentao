@@ -179,6 +179,43 @@ ACP（Agent Client Protocol，agentclientprotocol.com）是 Zed 发起的、位�
 > 终结更新把 `Error: …` 当作整个集合发出，连那一片也被抹掉。现在每条更新都重述
 > 累积后的集合，并带一个冲刷阈值与一个体积上限
 > （`agentao/acp/_tool_call_content.py`）。下列三项本身未变。
+>
+> **`diff` 那一半已于 2026-09-22 解决（0.5.4 周期，未发布）。** `replace` 与追加模式的
+> `write_file` 现在会让 `tool_call`——以及与之对应的 `session/request_permission`——
+> 带上一个 `diff` content 条目。冻结的契约先做了加宽：`AcpToolCallContentEntry` 变成
+> `content` 与 `diff` 的判别式联合，`AcpSessionUpdateToolCall` 新增 `content`，`kind`
+> 枚举对齐 ACP v1 的十个取值，`docs/schema/host.acp.v1.json` 重新生成。三点说明：
+>
+> 1. **ACP 的 `Diff` 是一个 hunk，不是整份文件。** ACP 自家的参考适配器就是按
+>    structured patch 的每个 hunk 各发一条
+>    （`agentclientprotocol/claude-agent-acp@d571358`，`src/diff.ts`），所以
+>    `replace` 的 `old_text`/`new_text` 正好就是这个字段想要的形状。本文下面
+>    「编辑类工具的结果被当作纯文本发送」的措辞暗示 `oldText` 是整份文件——那是对
+>    协议的误读。
+> 2. **非追加的 `write_file` 有意不发 diff。** 它的参数给得出 `newText`，却说不出
+>    文件是否已存在，而 transport 手里没有文件系统可问（宿主可能注入了一个不认本地
+>    路径的实现）。`oldText: null` 会把覆盖渲染成新建——满屏全绿，而这恰好是用户正在
+>    批准销毁原有内容的那一刻。参考适配器是先乐观地发、再用工具自己的 structured
+>    patch 去**更正**；这里没有可用来更正的东西，于是沉默才是 fail-closed 的选择。
+>    **要补上它需要工具侧的写前快照**——由 `write_file` 抓住旧内容并交给 transport。
+>    这是 G2 `diff` 那一半仍未闭合的唯一一块，且属于运行时改动而非 ACP 改动。
+> 3. **`locations` 按 §5 继续与 G1 一起推迟。**
+>
+> **实施途中查出的两个缺陷，都不在下列清单里：**
+>
+> - **`_TOOL_KIND_MAP` 描述的是 agentao 没有的工具。** 它映射了 `edit_file`、`edit`、
+>   `read_folder`、`find_files`、`search_text`——一个都没注册过——而真正的编辑工具
+>   （`replace`）与真正的搜索工具（`search_file_content`）落到了 `"other"`。所以下面
+>   那句「该映射已经能产出自己 schema 会拒绝的值」说的是另一种失效，而真正在线上的
+>   是：agentao 在对每一个 ACP client 说自己最主要的编辑工具是「未分类」。已修，并且
+>   `tests/test_acp_tool_kind.py` 现在保证该表对 `BUILTIN_TOOL_NAMES` 穷尽，还会拿真实
+>   发出的更新去校验已发布的 schema——此前根本没有这道闸，这正是漂移能存活的原因。
+> - **`session/request_permission` 自己铸了一个 `toolCallId`**
+>   （`_transport_interaction.py` 里的 `call_<uuid>`），它与随后 `tool_call` 携带的运行时
+>   `call_id` 从不相同，于是 client 看到的是两个互不相干的工具调用，而参考适配器是刻意
+>   把这两者合流的。**未修**——`Transport.confirm_tool(tool_name, description, args)`
+>   不带 call id，要闭合它就是一次波及所有 transport 的协议改动。
+
 
 `transport.py:236-247` 发出的 `tool_call` 带 `toolCallId`、`title`（= 工具原名）、`kind`、
 `status`、`rawInput`。缺以下三项，而它们 ACP v1 全部支持、编辑器 client 也会渲染：
