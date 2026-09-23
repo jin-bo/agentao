@@ -353,10 +353,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
                 cli._streaming_started = False
             else:
                 console.print()
-                if cli.markdown_mode:
-                    console.print(Markdown(response))
-                else:
-                    console.print(response)
+                _print_final_response(cli, response)
 
             cli._flush_acp_inbox()
 
@@ -557,10 +554,7 @@ def _handle_plan_approval(cli: "AgentaoCLI") -> None:
                     cli.current_status.stop()
                 cli.current_status = None
             console.print()
-            if cli.markdown_mode:
-                console.print(Markdown(_exec_response))
-            else:
-                console.print(_exec_response)
+            _print_final_response(cli, _exec_response)
             _pf = cli._plan_session.current_plan_path
             if _pf.exists():
                 cli._plan_controller._archive_plan()
@@ -610,6 +604,28 @@ _INTERRUPT_SENTINEL = "[Interrupted by user]"
 
 def _was_interrupted(response) -> bool:
     return isinstance(response, str) and response.strip() == _INTERRUPT_SENTINEL
+
+
+def _print_final_response(cli: "AgentaoCLI", response) -> None:
+    """Print a turn's returned text the way the display mode wants it.
+
+    Markdown mode renders only this text (the stream is not shown live), so
+    for a Ctrl+C it first renders what the model had said before the
+    interrupt — ``runtime/turn.py`` keeps that text in history, and without
+    this the user would never see it. Plain mode already streamed it.
+    """
+    if not cli.markdown_mode:
+        console.print(response)
+        return
+    if _was_interrupted(response):
+        from ..runtime.turn import interrupted_partial
+
+        messages = getattr(cli.agent, "messages", None)
+        last = messages[-1] if isinstance(messages, list) and messages else None
+        partial = interrupted_partial(last.get("content")) if isinstance(last, dict) else None
+        if partial:
+            console.print(Markdown(partial))
+    console.print(Markdown(response))
 
 
 def _staged_images_payload(cli: "AgentaoCLI"):
@@ -670,7 +686,7 @@ def _run_agent_turn(cli: "AgentaoCLI", message: str, images=None) -> str:
         cli._streaming_started = False
     else:
         console.print()
-        console.print(Markdown(response) if cli.markdown_mode else response)
+        _print_final_response(cli, response)
 
     cli._flush_acp_inbox()
     return response

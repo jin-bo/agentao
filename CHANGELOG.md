@@ -43,6 +43,24 @@ _Targeting 0.5.5. Add entries under the relevant heading as work lands._
   `client.get`, so a client stand-in that implements only `get` needs those
   two; the returned response still has its body loaded.
 
+- **A Ctrl+C mid-stream keeps what the model had already said.** The
+  interactive CLI's Ctrl+C is a `KeyboardInterrupt` raised inside the stream
+  read; no adapter catches it, so the half-built response was lost and the
+  turn recorded a bare `[Interrupted]`. The next turn's model did not know
+  its own half-answer — which the user may have read and be replying to —
+  and in markdown mode (the default) the user never saw it either, since
+  that mode renders only the returned text. A token cancel (`agentao run`,
+  ACP, hosts) already kept it.
+
+  `run_llm_call` now keeps the text the current model call has shown and,
+  on a `KeyboardInterrupt` out of the stream, leaves it for the turn's
+  interrupt handler, which records `<text>\n\n[Interrupted]` (sanitized like
+  any assistant text). It is per call and set only there: a Ctrl+C in the
+  tool phase, or with nothing shown yet, still records `[Interrupted]`
+  alone, so text already in history is never written twice. `chat()` still
+  returns `[Interrupted by user]`, which the `/goal` loop reads as a pause.
+  In markdown mode the CLI renders the kept text before that notice.
+
 - **Compaction honours the turn's cancel.** The summarizer called
   `llm_client.chat()` with no cancellation token, so its retry backoff — up to
   60 s a wait since 0.5.4 — ran to the end after the turn was cancelled. That

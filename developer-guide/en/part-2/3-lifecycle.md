@@ -39,7 +39,7 @@ def chat(
 **Return value**: the agent's final text reply.
 
 **Special returns**:
-- `"[Interrupted by user]"` — `KeyboardInterrupt` caught
+- `"[Interrupted by user]"` — `KeyboardInterrupt` caught. History gets one assistant message: the text the model had streamed before the interrupt, then `[Interrupted]` — or `[Interrupted]` alone when the interrupt did not land in a stream (the text of an earlier call in the turn is already in history)
 - `"[Cancelled: <reason>]"` — cancellation token fired
 - `"[Blocked by hook] ..."` / `"[Hook stopped] ..."` — plugin hook intercepted
 

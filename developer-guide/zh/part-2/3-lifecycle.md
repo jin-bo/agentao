@@ -39,7 +39,7 @@ def chat(
 **返回值**：Agent 的最终文本回复（字符串）。
 
 **特殊返回值**：
-- `"[Interrupted by user]"` — 捕获到 `KeyboardInterrupt`
+- `"[Interrupted by user]"` — 捕获到 `KeyboardInterrupt`。历史里写入一条 assistant 消息：中断前模型已流式输出的文本，后接 `[Interrupted]`；中断没落在流式输出中时只有 `[Interrupted]`（本轮更早调用的文本已在历史里）
 - `"[Cancelled: <reason>]"` — cancellation token 被触发
 - `"[Blocked by hook] ..."` / `"[Hook stopped] ..."` — 插件 hook 拦截
 

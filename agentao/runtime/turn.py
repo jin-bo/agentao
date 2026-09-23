@@ -26,10 +26,46 @@ from ..replay.observability import latest_session_summary_id
 from ..transport import AgentEvent, EventType
 from .identity import new_turn_id
 from .outcome import TurnOutcome
-from .sanitize import backfill_orphaned_tool_calls
+from .sanitize import backfill_orphaned_tool_calls, sanitize_text_field
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
     from ..agent import Agentao
+
+
+#: The assistant message a Ctrl+C leaves in history, alone or after the text
+#: the interrupted stream had shown.
+INTERRUPTED_MARKER = "[Interrupted]"
+_PARTIAL_SEPARATOR = "\n\n"
+
+
+def interrupted_content(partial: object) -> str:
+    """History content for a Ctrl+C: the shown text, then the marker.
+
+    ``partial`` is read defensively — a non-string (including a test double's
+    auto-attribute) or whitespace-only text leaves the bare marker. The text is
+    model output re-entering the runtime, so it gets the same field sanitizer
+    as any other assistant text.
+    """
+    if not isinstance(partial, str):
+        return INTERRUPTED_MARKER
+    # Sanitize before the emptiness check: text made only of stripped
+    # characters must leave the bare marker, not "\n\n[Interrupted]".
+    partial = sanitize_text_field(partial)
+    if not partial.strip():
+        return INTERRUPTED_MARKER
+    return f"{partial}{_PARTIAL_SEPARATOR}{INTERRUPTED_MARKER}"
+
+
+def interrupted_partial(content: object) -> Optional[str]:
+    """Inverse of :func:`interrupted_content`: the kept text, or ``None``.
+
+    For a display that did not show the stream live (the CLI's markdown mode
+    renders only the final text) and wants to show it after the fact.
+    """
+    suffix = _PARTIAL_SEPARATOR + INTERRUPTED_MARKER
+    if isinstance(content, str) and content.endswith(suffix):
+        return content[: -len(suffix)]
+    return None
 
 
 def run_turn(
@@ -88,6 +124,11 @@ def run_turn(
     # total so host telemetry can size a turn without replaying every
     # TOOL_START. Reset per turn (and read defensively in the finally).
     agent._turn_tool_count = 0
+    # Text the model call in flight had shown when a Ctrl+C interrupted its
+    # stream; written by ``run_llm_call`` and consumed by the
+    # ``KeyboardInterrupt`` handler below. Reset per turn so an interrupt that
+    # did not land in a stream finds nothing.
+    agent._interrupted_stream_text = None
     # Turn-level "this turn has no complete model answer" classification
     # (None / "no_output" / "reasoning_only" / "length_truncated" /
     # "doom_loop" / "max_iterations" / "llm_error"), typed Optional[str]. The
@@ -156,7 +197,16 @@ def run_turn(
         # ``[Interrupted]`` marker so the results still follow their own
         # assistant message.
         backfill_orphaned_tool_calls(agent.messages)
-        agent.messages.append({"role": "assistant", "content": "[Interrupted]"})
+        # Keep what the model had already said. Without it the next turn's
+        # model does not know its own half-answer, which the user may have
+        # read and be replying to.
+        agent.messages.append({
+            "role": "assistant",
+            "content": interrupted_content(
+                getattr(agent, "_interrupted_stream_text", None)
+            ),
+        })
+        agent._interrupted_stream_text = None
         final_text = "[Interrupted by user]"
         status = "cancelled"
         error_detail = "user-cancel"

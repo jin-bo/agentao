@@ -138,11 +138,17 @@ def run_llm_call(
     # value as ``duration_ms`` — a stable, intent-named alias for host
     # telemetry consumers.
     first_token_at: Optional[float] = None
+    # The text this call has shown the host, kept only so a Ctrl+C mid-stream
+    # can hand it to ``runtime/turn.py`` — see the ``KeyboardInterrupt``
+    # handler below. Retries happen only while nothing has been shown, so this
+    # is one attempt's text, never two.
+    shown_text: list[str] = []
 
     def _on_text_chunk(chunk: str) -> None:
         nonlocal first_token_at
         if first_token_at is None:
             first_token_at = time.monotonic()
+        shown_text.append(chunk)
         agent.transport.emit(AgentEvent(EventType.LLM_TEXT, {"chunk": chunk}))
 
     def _on_retry(info: Dict[str, Any]) -> None:
@@ -172,6 +178,16 @@ def run_llm_call(
             cache_boundary=tail_count,
             on_retry=_on_retry,
         )
+    except KeyboardInterrupt:
+        # The interactive CLI's Ctrl+C: a ``KeyboardInterrupt`` raised inside
+        # the stream read, which no adapter catches (it is not an
+        # ``Exception``), so the half-built response is lost with the frame.
+        # Leave this call's shown text where the turn's interrupt handler
+        # records it. Set only here — a Ctrl+C in the tool phase or in the
+        # summarizer (which calls ``chat()``, not this) leaves it ``None``, so
+        # text already recorded in history is never written a second time.
+        agent._interrupted_stream_text = "".join(shown_text)
+        raise
     except Exception as exc:
         # `streamed` is attached by LLMClient.chat_stream before raising:
         # True iff at least one delta reached on_text_chunk (and therefore
