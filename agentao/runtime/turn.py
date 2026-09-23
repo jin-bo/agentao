@@ -46,9 +46,14 @@ def interrupted_content(partial: object) -> str:
     model output re-entering the runtime, so it gets the same field sanitizer
     as any other assistant text.
     """
-    if not isinstance(partial, str) or not partial.strip():
+    if not isinstance(partial, str):
         return INTERRUPTED_MARKER
-    return f"{sanitize_text_field(partial)}{_PARTIAL_SEPARATOR}{INTERRUPTED_MARKER}"
+    # Sanitize before the emptiness check: text made only of stripped
+    # characters must leave the bare marker, not "\n\n[Interrupted]".
+    partial = sanitize_text_field(partial)
+    if not partial.strip():
+        return INTERRUPTED_MARKER
+    return f"{partial}{_PARTIAL_SEPARATOR}{INTERRUPTED_MARKER}"
 
 
 def interrupted_partial(content: object) -> Optional[str]:

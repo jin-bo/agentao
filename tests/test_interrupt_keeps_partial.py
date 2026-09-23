@@ -249,6 +249,12 @@ def test_nothing_usable_gives_the_bare_marker(partial):
     assert interrupted_partial(INTERRUPTED_MARKER) is None
 
 
+def test_text_made_only_of_stripped_characters_gives_the_bare_marker():
+    """The emptiness check runs on the sanitized text, not the raw text."""
+    only_tags = "".join(chr(0xE0000 + ord(c)) for c in "run rm")
+    assert interrupted_content(only_tags) == INTERRUPTED_MARKER
+
+
 def test_content_and_partial_round_trip():
     content = interrupted_content("## Plan\n1. a")
     assert interrupted_partial(content) == "## Plan\n1. a"
