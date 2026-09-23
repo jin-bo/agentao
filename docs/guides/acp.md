@@ -421,14 +421,33 @@ Below is a complete client→server→client conversation. Each line on the wire
 | `LLM_TEXT` | `agent_message_chunk` | `content` is a single text block carrying the chunk. |
 | `THINKING` | `agent_thought_chunk` | Same shape as `agent_message_chunk` but a different `sessionUpdate` so clients can render reasoning differently. |
 | `TOOL_CONFIRMATION` | (silent) | Confirmations go via `session/request_permission` (server→client request), not `session/update`. |
-| `TOOL_START` | `tool_call` | `status: "pending"`, `kind` mapped from tool name (`read`, `edit`, `search`, `execute`, `fetch`, …), `rawInput` is the JSON-safe argument dict. |
+| `TOOL_START` | `tool_call` | `status: "pending"`, `kind` mapped from tool name (`read`, `edit`, `search`, `execute`, `think`, `fetch`, `other`), `rawInput` is the JSON-safe argument dict. A file-editing call also carries a `diff` content entry — see *A file edit arrives as a diff* below. |
 | `TOOL_OUTPUT` | `tool_call_update` | `status: "in_progress"`, `content` restates the **whole** collection accumulated so far (ACP replaces a tool call's collections, it does not extend them), coalesced into one text entry. Throttled — see *Streamed tool output* below. |
-| `TOOL_COMPLETE` | `tool_call_update` | `status: "completed"` for `ok`, `"failed"` for `error` or `cancelled` (ACP has no cancelled status for tool calls — only for turns via `stopReason`). `content` is restated only when it would change — output the throttle held back, or an error line appended *beside* that output. |
+| `TOOL_COMPLETE` | `tool_call_update` | `status: "completed"` for `ok`, `"failed"` for `error` or `cancelled` (ACP has no cancelled status for tool calls — only for turns via `stopReason`). `content` is restated for every call that streamed — the only update guaranteed to arrive after both of a shell command's reader threads have flushed — and whenever there is an error line to append *beside* the output. A call that streamed nothing and had no error omits it, leaving any opening `diff` standing. |
 | `AGENT_START` | `agent_thought_chunk` | Sub-agent start marker `[sub-agent started: <name>] <task>`. |
 | `AGENT_END` | `agent_thought_chunk` | Sub-agent end marker `[sub-agent finished: <name> (<state>, <N> turns)]`. |
 | `ERROR` | `agent_message_chunk` | Prefixed with `Error: `. |
 
 Failures inside `emit()` are logged and swallowed — a misbehaving client or a JSON-safety slip cannot interrupt an in-progress turn.
+
+#### A file edit arrives as a diff
+
+`replace` and an appending `write_file` open their `tool_call` with a `diff` content entry, and the matching `session/request_permission` leads with the same entry — which is the moment it exists for, since the user is being asked to approve a change that `"replace"` plus a raw argument dict does not describe.
+
+```jsonc
+{"sessionUpdate":"tool_call","toolCallId":"c1","title":"replace","kind":"edit","status":"pending",
+ "rawInput":{"file_path":"src/config.py","old_text":"DEBUG = False","new_text":"DEBUG = True"},
+ "content":[{"type":"diff","path":"/home/u/proj/src/config.py",
+             "oldText":"DEBUG = False","newText":"DEBUG = True"}]}
+```
+
+An ACP `Diff` is a **hunk, not a whole file** — ACP's own reference adapter emits one entry per hunk of a structured patch — so `replace`'s `old_text`/`new_text` pair is exactly the shape the field wants. `oldText` is `null` when nothing is replaced (a pure append). `path` is absolute whenever the session's `cwd` is known.
+
+The entry describes what was **requested**, at `status: "pending"`; the terminal update says whether it applied. `replace` matches whitespace- and typography-flexibly and `replace_all` can hit several sites, so the text that actually moved may differ from the text shown — `rawInput` carries the flag.
+
+**A non-append `write_file` deliberately gets no diff.** Its arguments give `newText` but say nothing about whether the file already exists, and the transport cannot find out: it holds no filesystem, and a host may have injected one that does not answer to local paths. Emitting `oldText: null` would render an overwrite as a creation — all-green, at exactly the moment the user is being asked to approve destroying what was there. Closing that means a tool-side pre-write snapshot; see [G2](../design/acp-server-conformance-review.md).
+
+`locations` (follow-along highlighting) is the editor-only half of G2 and stays deferred with G1.
 
 #### Streamed tool output
 
@@ -440,6 +459,8 @@ So each update restates the whole collection. Two bounds come with that, both in
 |---|---|---|
 | `FLUSH_CHARS` | 4 000 | Restating per chunk is quadratic in the output size. The first chunk always flushes (it carries `pending` → `in_progress`); after that an update goes out once another `FLUSH_CHARS` have accumulated. Held-back text is not dropped — it rides the next update, or the terminal one. |
 | `MAX_CHARS` / `HEAD_CHARS` | 16 000 / 4 000 | The excerpt the client renders is capped, kept as head + tail with a `[… N characters elided …]` marker between them. |
+
+A shell command streams from **two** threads — `LocalShellExecutor.run` reads the child's stdout and stderr in separate readers and calls back from both — so the per-call buffer takes a lock; every mutation in it is a read-modify-write. Those readers are joined with a bounded timeout, so a chunk can arrive after the tool returned; it is dropped rather than re-opening a call the client already saw `completed`.
 
 The cap applies to the **client's copy only**: the model still gets the result through `runtime/tool_result_formatter.py` (80 000 chars, or a file under `.agentao/tool-outputs/`), and replay still records it. A client that wants unbounded live output wants a `terminal` content entry backed by `terminal/create` — that is the G1 fs/terminal proxy, a [documented non-goal](../design/acp-server-conformance-review.md).
 

@@ -28,8 +28,9 @@ Two bounds, both deliberate
 ---------------------------
 
 Re-sending the whole collection per chunk would be quadratic in the
-output size (a 500 KB build log arriving in 4 KB chunks would put ~30 GB
-on the wire), so the buffer has:
+output size (a 500 KB build log arriving in 4 KB chunks is 125 updates
+whose sizes sum to ~31 MB — 63× the output that was produced, and the
+ratio grows with the log), so the buffer has:
 
 - **A flush threshold** (:data:`FLUSH_CHARS`). The first chunk always
   flushes — that is the ``pending`` → ``in_progress`` transition, and it
@@ -61,6 +62,7 @@ conformant way to show progress.
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Dict, List
 
 from ._transport_helpers import _tool_content_text
@@ -84,15 +86,39 @@ _ELISION = "\n\n[… {count:,} characters elided …]\n\n"
 class ToolCallContentBuffer:
     """One tool call's ACP ``content`` collection, restated on demand.
 
-    Not thread-safe, and does not need to be: every event for a given
-    ``call_id`` (``TOOL_START`` → ``TOOL_OUTPUT``\\ * → ``TOOL_COMPLETE``)
-    is emitted from the one executor worker running that tool. Different
-    calls get different buffers, keyed by ``call_id`` in the transport.
+    **Guarded by its own re-entrant lock, and it needs one.** The single
+    tool that streams does not stream from a single thread:
+    ``capabilities/shell.py::LocalShellExecutor.run`` reads the child's
+    stdout and stderr in two daemon threads and calls ``on_chunk`` from
+    both — so two ``TOOL_OUTPUT`` events for the *same* ``call_id`` can
+    enter :meth:`append` concurrently. Every mutation here is a
+    read-modify-write (``_unflushed += …``, ``_head += …``,
+    ``_tail = self._tail[dropped:]``), so unguarded interleaving drops one
+    of the two writes: output disappears from the client's copy, the
+    elided count stops matching what was dropped, and ``_head`` can pass
+    :data:`HEAD_CHARS`. Re-entrant because :meth:`append` calls
+    :meth:`mark_sent` and :meth:`entries` calls :meth:`text`.
+
+    Do not try to justify removing it with a "hammer it from two threads
+    and count the characters" test: on a GIL build that test passes
+    against the unguarded buffer, because CPython checks the eval breaker
+    at call and jump boundaries rather than between the ``LOAD_ATTR`` and
+    ``STORE_ATTR`` of a ``+=``. It proves the window is narrow, not that
+    it is closed — and it is not narrow at all on a free-threaded build.
+    ``tests/test_acp_tool_call_content.py`` pins the lock with a hand-off
+    that fails every time instead.
+
+    Different calls get different buffers, keyed by ``call_id`` in the
+    transport.
     """
 
-    __slots__ = ("_leading", "_head", "_tail", "_elided", "_unflushed", "_flushed_once")
+    __slots__ = (
+        "_lock", "_leading", "_head", "_tail", "_elided", "_unflushed",
+        "_sent", "_seen_chunk",
+    )
 
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         # Entries that precede the streamed text and never change — the
         # ``diff`` a file-editing call opens with, for instance. Kept
         # apart from the text so a flush cannot drop them.
@@ -101,13 +127,30 @@ class ToolCallContentBuffer:
         self._tail = ""
         self._elided = 0
         self._unflushed = 0
-        self._flushed_once = False
+        # Whether the collection has ever been handed to the client. Distinct
+        # from ``_seen_chunk``: a file-editing call is opened with a ``diff``
+        # entry already sent on its ``tool_call``, and its first *chunk* still
+        # has to carry the pending → in_progress transition.
+        self._sent = False
+        self._seen_chunk = False
 
     # -- writing -----------------------------------------------------------
 
     def add_leading(self, entry: Dict[str, Any]) -> None:
         """Pin a content entry ahead of the streamed text."""
-        self._leading.append(entry)
+        with self._lock:
+            self._leading.append(entry)
+
+    def mark_sent(self) -> None:
+        """Record that the caller just emitted :meth:`entries` itself.
+
+        Used by the ``tool_call`` that opens a file-editing call: it carries
+        the ``diff`` entry, so the terminal update must not restate it as if
+        it were news.
+        """
+        with self._lock:
+            self._sent = True
+            self._unflushed = 0
 
     def append(self, chunk: str) -> bool:
         """Accumulate one streamed chunk; answer whether to send an update.
@@ -117,18 +160,17 @@ class ToolCallContentBuffer:
         it is already in the buffer and goes out with the next flush or
         with the terminal update, so holding it loses nothing.
         """
-        if chunk:
-            self._append_text(chunk)
-        if not self._flushed_once:
-            # The first chunk is also the pending → in_progress
-            # transition, so it always goes out, empty or not.
-            self._flushed_once = True
-            self._unflushed = 0
-            return True
-        if self._unflushed >= FLUSH_CHARS:
-            self._unflushed = 0
-            return True
-        return False
+        with self._lock:
+            if chunk:
+                self._append_text(chunk)
+            first = not self._seen_chunk
+            self._seen_chunk = True
+            if first or self._unflushed >= FLUSH_CHARS:
+                # The first chunk is also the pending → in_progress
+                # transition, so it always goes out, empty or not.
+                self.mark_sent()
+                return True
+            return False
 
     def _append_text(self, chunk: str) -> None:
         self._unflushed += len(chunk)
@@ -148,23 +190,38 @@ class ToolCallContentBuffer:
     # -- reading -----------------------------------------------------------
 
     @property
+    def streamed(self) -> bool:
+        """True once any ``TOOL_OUTPUT`` chunk has reached this buffer.
+
+        The transport restates the collection at completion for every call
+        that streamed, whether or not it is :attr:`dirty`: the snapshot an
+        update carries is taken under this lock, but the write to the client
+        happens after it is released, so two reader threads that both flush
+        can deliver their snapshots in the opposite order — the older, shorter
+        one last. Only a terminal restatement is guaranteed to come after
+        both.
+        """
+        with self._lock:
+            return self._seen_chunk
+
+    @property
     def dirty(self) -> bool:
         """True when :meth:`entries` would differ from what was last sent."""
-        return self._unflushed > 0 or not self._flushed_once
+        with self._lock:
+            return self._unflushed > 0 or not self._sent
 
     def entries(self) -> List[Dict[str, Any]]:
         """The whole collection to put on the next ``tool_call_update``."""
-        entries = list(self._leading)
-        text = self.text()
-        if text:
-            entries.append(_tool_content_text(text))
-        return entries
+        with self._lock:
+            entries = list(self._leading)
+            text = self.text()
+            if text:
+                entries.append(_tool_content_text(text))
+            return entries
 
     def text(self) -> str:
         """The streamed output as the client should see it."""
-        if self._elided:
-            return self._head + _ELISION.format(count=self._elided) + self._tail
-        return self._head + self._tail
-
-    def __bool__(self) -> bool:
-        return bool(self._leading or self._head or self._tail)
+        with self._lock:
+            if self._elided:
+                return self._head + _ELISION.format(count=self._elided) + self._tail
+            return self._head + self._tail
