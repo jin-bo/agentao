@@ -37,6 +37,7 @@ class AgentEvent:
 TURN_BEGIN -> (用户消息到达——turn 开始；携带 user 文本)
 └── TURN_START -> (LLM 调用开始；重置流式 UI)
     ├── LLM_CALL_STARTED        (调用 provider 前的元数据)
+    ├── LLM_RETRY *             (可选：一次失败的调用即将重试)
     ├── THINKING *              (可选，0 或多次)
     ├── LLM_TEXT *              (用户可见的流式 chunk)
     ├── LLM_CALL_DELTA          (本次调用新增的 messages)
@@ -200,6 +201,16 @@ if event.type == EventType.TOOL_COMPLETE:
 | 触发时机 | 每次 provider 调用前后 |
 | `data` | 调用前元数据；调用后的 usage / finish 元数据。`LLM_CALL_COMPLETED` 携带 `duration_ms`、`model_latency_ms`（`duration_ms` 的稳定别名，命名更贴合意图）、`first_token_ms`（首 token 时延，毫秒；当本次调用没有流式文本——例如纯工具调用响应、或首个 delta 之前就失败——为 `null`）、`prompt_tokens`、`completion_tokens`、`finish_reason`，错误路径上还有 `status` / `error_class` / `error_message` / `streamed`。自 0.5.1 起还有 `cache_read_tokens` / `cache_creation_tokens`：`prompt_tokens` **之中** provider 按缓存价格计费的那部分（Anthropic 线路取 `cache_read_input_tokens` / `cache_creation_input_tokens`；Chat Completions 取 `prompt_tokens_details.cached_tokens` / `.cache_write_tokens`，`openai-responses` 取 `input_tokens_details` 下的同名两项 —— 写入计数只在 SDK 给出时才有，即 `openai` 3.x 起）。响应不带 usage 时为 `None`，provider 没给出时为 `0` |
 | 典型用法 | 指标、成本统计、调试模型行为 —— `first_token_ms` 与 `model_latency_ms` 把排队/TTFT 与总生成时间区分开 |
+
+### `LLM_RETRY`
+
+| 字段 | 说明 |
+|------|------|
+| 触发时机 | provider 调用以可重试错误失败、客户端即将等待后再试 —— 在退避等待**之前**发出。只在尚无任何内容显示时发生：已经流出文本的调用不会重试，所以它不会与 `LLM_TEXT` 交错 |
+| `data` | `{"retry": 1, "max_retries": 4, "delay_s": 1.62, "reason": "status=503"}` —— `retry` 从 1 起算（首次请求不算重试）；`reason` 是 `status=<code>` 或异常类名（`RemoteProtocolError`、`ReadTimeout`、`StreamEndedEarlyError` 等），从不含 provider 的报错原文 |
+| 典型用法 | 告诉用户屏幕为什么停住了 —— CLI 打印 `⟳ Reconnecting… 1/4`。自 0.5.4 起 |
+
+重试按次数限制（共 5 次尝试，即 4 次重试），不按墙钟预算。没有 `Retry-After` 时，等待从 7.5 秒起翻倍——7.5、15、30、60 秒，各自再加至多 30% 的抖动，但都不超过 60 秒；`Retry-After` 同样按 60 秒封顶。重试范围：408/409/425/429/5xx/529（表示**额度耗尽**的 429 除外）、响应到达前的连接或超时失败，以及自 0.5.4 起的**读取响应体期间**连接断开，和 `anthropic-messages` / `openai-responses` 上在终止事件之前就结束的流。
 
 ### `LLM_CALL_DELTA`
 

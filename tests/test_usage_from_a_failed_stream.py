@@ -123,9 +123,22 @@ def test_a_stream_that_simply_stops_counts_what_it_had_said():
     Counted before this change too — pinned so the ``finally`` did not move it."""
     llm = _llm()
     attach(llm, Wire(stream_of(message_start(input_tokens=300), text_block(0, "cut")[:2])))
-    response = llm.chat_stream(HELLO)
+    response = llm.chat_stream(HELLO, on_text_chunk=lambda _chunk: None)
     assert response.finish_reason_reported is False
     assert llm.total_prompt_tokens == 300
+
+
+def test_a_truncated_stream_that_is_retried_counts_both_attempts():
+    """Cut off before anything was shown, it is retried — and the attempt that
+    was cut off was still a request of that size."""
+    llm = _llm()
+    wire = attach(llm, Wire(
+        stream_of(message_start(input_tokens=300), text_block(0, "cut")[:2]),
+        _ok(input_tokens=300),
+    ))
+    llm.chat_stream(HELLO)
+    assert len(wire.requests) == 2
+    assert llm.total_prompt_tokens == 600
 
 
 def test_a_cancelled_stream_is_counted_once():

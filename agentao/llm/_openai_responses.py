@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from ._retry import (
     QUOTA_EXHAUSTED_CODES,
+    StreamEndedEarlyError,
     _classify_retry,
     _is_temperature_unsupported,
 )
@@ -506,9 +507,13 @@ class OpenAIResponsesAdapter:
     ) -> Any:
         """One streaming attempt, accumulated into ``acc``.
 
-        A stream that is cancelled or simply stops builds a response with
+        A stream that is cancelled builds a response with
         ``finish_reason_reported`` left False: only a terminal event says the
         response is over, and a partial answer must not read as a finished one.
+        So does one that simply stops *after* text reached the host. One that
+        stops before that raises :class:`StreamEndedEarlyError`, which
+        ``LLMClient`` retries: the terminal event is not optional on this
+        API, so its absence is a dropped connection, not a terse server.
         """
         stream = self._owner.client.responses.create(**kwargs)
         # Output indices whose text arrived as deltas — so the whole-item
@@ -580,6 +585,14 @@ class OpenAIResponsesAdapter:
             close = getattr(stream, "close", None)
             if callable(close):
                 close()
+        if (
+            not acc.finish_reason_reported
+            and not acc.progress_made
+            and not (cancellation_token and cancellation_token.is_cancelled)
+        ):
+            raise StreamEndedEarlyError(
+                "openai-responses stream ended before response.completed"
+            )
         # Whole items only. One without ``encrypted_content`` cannot go back
         # (``_reasoning_items``), and half a carrier is worse than none: it
         # would send the ``fc_`` id its call was paired with.

@@ -55,7 +55,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ._api_format import ANTHROPIC_MESSAGES
 from ._cache_control import apply_cache_control
-from ._retry import RETRYABLE_STATUS_CODES
+from ._retry import (
+    RETRYABLE_STATUS_CODES,
+    StreamEndedEarlyError,
+    _is_dropped_connection,
+)
 from ._stream_response import ANTHROPIC_THINKING_BLOCKS, _StreamAccumulator
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
@@ -659,6 +663,8 @@ class AnthropicMessagesAdapter:
             return (False, status, None)
         if isinstance(exc, (APITimeoutError, APIConnectionError)):
             return (True, None, None)
+        if isinstance(exc, StreamEndedEarlyError) or _is_dropped_connection(exc):
+            return (True, None, None)
         return (False, None, None)
 
     # -- response -----------------------------------------------------------
@@ -684,10 +690,13 @@ class AnthropicMessagesAdapter:
     ) -> Any:
         """One streaming attempt, accumulated into ``acc``.
 
-        A stream that is cancelled or simply ends early still builds a
-        response, with ``finish_reason_reported`` left False — the same
-        honesty the Chat Completions path keeps: a partial answer must not
-        read as a finished one.
+        A cancelled stream still builds a response, with
+        ``finish_reason_reported`` left False — the same honesty the Chat
+        Completions path keeps: a partial answer must not read as a finished
+        one. So does one that ends early *after* text reached the host, which
+        cannot be retried without showing that text twice. One that ends
+        early before that raises :class:`StreamEndedEarlyError`, which
+        ``LLMClient`` retries.
         """
         stream = self._owner.client.messages.create(**kwargs)
         # Per open content block, by index: a thinking block being assembled,
@@ -728,6 +737,18 @@ class AnthropicMessagesAdapter:
             close = getattr(stream, "close", None)
             if callable(close):
                 close()
+        if (
+            not acc.finish_reason_reported
+            and not acc.progress_made
+            and not (cancellation_token and cancellation_token.is_cancelled)
+        ):
+            # No ``stop_reason`` ever came: the body closed under us. What is
+            # in ``acc`` is a fragment — possibly a ``tool_use`` whose input
+            # stops mid-JSON — and none of it has been shown, so it goes back
+            # as a retryable failure rather than out as an answer.
+            raise StreamEndedEarlyError(
+                "anthropic-messages stream ended before a stop_reason"
+            )
         return acc.build()
 
     @staticmethod

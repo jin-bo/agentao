@@ -18,9 +18,9 @@ public + test-patch surface of ``agentao.llm.client`` is unchanged:
 
 Constants are imported (not aliased) so they bind into this module's
 namespace — that's load-bearing for ``monkeypatch.setattr(client_mod,
-"MAX_TOTAL_RETRY_SECONDS", 1.0)`` to affect the deadline reads in
-``chat()`` / ``chat_stream()`` (Python ``LOAD_GLOBAL`` resolves free
-variables against the function's owning module).
+"MAX_RETRY_ATTEMPTS", 2)`` to affect the reads in ``chat()`` /
+``chat_stream()`` (Python ``LOAD_GLOBAL`` resolves free variables against
+the function's owning module).
 """
 
 import copy
@@ -31,7 +31,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from ._api_format import (
     ANTHROPIC_MESSAGES,
@@ -46,7 +46,6 @@ from ._retry import (
     JITTER_FRACTION,
     MAX_BACKOFF_SECONDS,
     MAX_RETRY_ATTEMPTS,
-    MAX_TOTAL_RETRY_SECONDS,
     RETRYABLE_STATUS_CODES,
     _classify_retry,
     _compute_backoff_delay,
@@ -583,6 +582,8 @@ class LLMClient(_LoggingMixin):
         max_tokens: Optional[int] = None,
         *,
         cache_boundary: Optional[int] = None,
+        on_retry: Optional[Callable[[Dict[str, Any]], None]] = None,
+        cancellation_token: Optional[Any] = None,
     ) -> Any:
         """Send chat request to LLM.
 
@@ -593,6 +594,12 @@ class LLMClient(_LoggingMixin):
             cache_boundary: Opt this call into explicit prompt-cache
                 breakpoints, and say how many trailing messages are
                 request-only. See :meth:`_build_request_kwargs`.
+            on_retry: Optional callable told about each retry before its
+                backoff sleep — see :meth:`_notify_retry`.
+            cancellation_token: Optional token polled during a backoff
+                sleep, so a cancel does not wait out a wait of up to
+                :data:`MAX_BACKOFF_SECONDS`. The request itself is not
+                interrupted.
 
         Returns:
             Response from the LLM
@@ -611,7 +618,6 @@ class LLMClient(_LoggingMixin):
         # Log request
         self._log_request(request_id, self._adapter.log_view(kwargs, messages, tools))
 
-        deadline = time.monotonic() + MAX_TOTAL_RETRY_SECONDS
         attempt = 0  # number of retries performed; first try is attempt 0
         while True:
             # Fresh per attempt, like ``chat_stream``'s: it is what the
@@ -643,21 +649,17 @@ class LLMClient(_LoggingMixin):
                     raise
 
                 delay = _compute_backoff_delay(attempt, retry_after)
-                remaining = deadline - time.monotonic()
-                if delay > remaining:
-                    import traceback
-                    self.logger.error(
-                        f"[{request_id}] retry budget exhausted after "
-                        f"{attempt + 1} attempt(s): {str(e)}\n{traceback.format_exc()}"
-                    )
-                    raise
-
                 label = f"status={status}" if status is not None else type(e).__name__
                 self.logger.info(
                     f"[{request_id}] retryable error ({label}); "
                     f"attempt {attempt + 1} sleeping {delay:.2f}s"
                 )
-                time.sleep(delay)
+                self._notify_retry(on_retry, attempt + 1, delay, label)
+                if not _interruptible_sleep(delay, cancellation_token):
+                    self.logger.info(
+                        f"[{request_id}] retry sleep interrupted by cancellation"
+                    )
+                    raise
                 attempt += 1
 
     def _is_gemini(self) -> bool:
@@ -684,6 +686,7 @@ class LLMClient(_LoggingMixin):
         cancellation_token: Optional[Any] = None,
         *,
         cache_boundary: Optional[int] = None,
+        on_retry: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Any:
         """Streaming variant of chat(). Calls on_text_chunk(chunk) for each text delta.
 
@@ -705,6 +708,8 @@ class LLMClient(_LoggingMixin):
             cache_boundary: Opt this call into explicit prompt-cache
                 breakpoints, and say how many trailing messages are
                 request-only. See :meth:`_build_request_kwargs`.
+            on_retry: Optional callable told about each retry before its
+                backoff sleep — see :meth:`_notify_retry`.
 
         Returns:
             ChatCompletion (Pydantic) or duck-type ChatCompletion response compatible with agent.py
@@ -715,7 +720,8 @@ class LLMClient(_LoggingMixin):
         if self.api_format == OPENAI_COMPLETIONS and self._is_gemini():
             return self._emit_nonstreaming(
                 messages, tools, max_tokens, on_text_chunk,
-                cache_boundary=cache_boundary,
+                cache_boundary=cache_boundary, on_retry=on_retry,
+                cancellation_token=cancellation_token,
             )
 
         self.request_count += 1
@@ -745,7 +751,6 @@ class LLMClient(_LoggingMixin):
         # Log without the stream flag (matches non-streaming log format)
         self._log_request(request_id, self._adapter.log_view(kwargs, messages, tools))
 
-        deadline = time.monotonic() + MAX_TOTAL_RETRY_SECONDS
         attempt = 0  # number of retries performed; first try is attempt 0
         while True:
             acc = self._adapter.new_accumulator()
@@ -799,7 +804,8 @@ class LLMClient(_LoggingMixin):
                     try:
                         return self._emit_nonstreaming(
                             messages, tools, max_tokens, on_text_chunk,
-                            cache_boundary=cache_boundary,
+                            cache_boundary=cache_boundary, on_retry=on_retry,
+                            cancellation_token=cancellation_token,
                         )
                     except Exception as fallback_e:
                         import traceback
@@ -836,26 +842,47 @@ class LLMClient(_LoggingMixin):
                     raise
 
                 delay = _compute_backoff_delay(attempt, retry_after)
-                remaining = deadline - time.monotonic()
-                if delay > remaining:
-                    import traceback
-                    self.logger.error(
-                        f"[{request_id}] retry budget exhausted after "
-                        f"{attempt + 1} attempt(s): {str(e)}\n{traceback.format_exc()}"
-                    )
-                    raise
-
                 label = f"status={status}" if status is not None else type(e).__name__
                 self.logger.info(
                     f"[{request_id}] retryable streaming error ({label}); "
                     f"attempt {attempt + 1} sleeping {delay:.2f}s"
                 )
+                self._notify_retry(on_retry, attempt + 1, delay, label)
                 if not _interruptible_sleep(delay, cancellation_token):
                     self.logger.info(
                         f"[{request_id}] retry sleep interrupted by cancellation"
                     )
                     raise
                 attempt += 1
+
+    def _notify_retry(
+        self,
+        on_retry: Optional[Callable[[Dict[str, Any]], None]],
+        retry: int,
+        delay: float,
+        reason: str,
+    ) -> None:
+        """Tell the caller a retry is about to wait — before the sleep, so a
+        UI can say "Reconnecting… 1/4" while it waits rather than after.
+
+        ``retry`` counts from 1 and ``max_retries`` is the number there can
+        be, not the number of attempts: the first request is not a retry.
+        ``reason`` is the log label (``status=503`` or an exception class
+        name), never the provider's message, which is free text. A callback
+        that raises is logged and ignored: a display failure must not turn a
+        request that would have recovered into one that did not.
+        """
+        if on_retry is None:
+            return
+        try:
+            on_retry({
+                "retry": retry,
+                "max_retries": MAX_RETRY_ATTEMPTS - 1,
+                "delay_s": round(delay, 2),
+                "reason": reason,
+            })
+        except Exception:
+            self.logger.warning("on_retry callback raised; ignored", exc_info=True)
 
     def _count_attempt(self, acc: "_StreamAccumulator") -> None:
         """Add one attempt to the session totals — the only place that does.
@@ -959,6 +986,8 @@ class LLMClient(_LoggingMixin):
         on_text_chunk: Optional[Any],
         *,
         cache_boundary: Optional[int] = None,
+        on_retry: Optional[Callable[[Dict[str, Any]], None]] = None,
+        cancellation_token: Optional[Any] = None,
     ) -> Any:
         """Run the non-streaming ``chat()`` and replay its full content
         through ``on_text_chunk`` so streaming callers behave identically.
@@ -967,7 +996,8 @@ class LLMClient(_LoggingMixin):
         """
         response = self.chat(
             messages, tools=tools, max_tokens=max_tokens,
-            cache_boundary=cache_boundary,
+            cache_boundary=cache_boundary, on_retry=on_retry,
+            cancellation_token=cancellation_token,
         )
         if on_text_chunk:
             content = response.choices[0].message.content

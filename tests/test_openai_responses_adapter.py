@@ -258,9 +258,11 @@ def test_an_incomplete_response_is_a_truncation_not_an_answer():
 
 
 def test_a_stream_that_just_stops_does_not_claim_a_finish():
+    """After text was shown: kept, and not called finished. Before it, the
+    same stream is retried — ``test_llm_retry_dropped_stream.py``."""
     llm = _llm()
     attach(llm, Wire(stream_of(created(), text_events(0, "cut")[:3])))
-    response = llm.chat_stream(HELLO)
+    response = llm.chat_stream(HELLO, on_text_chunk=lambda _chunk: None)
     assert response.choices[0].message.content == "cut"
     assert response.finish_reason_reported is False
 

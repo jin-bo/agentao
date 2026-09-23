@@ -145,6 +145,12 @@ def run_llm_call(
             first_token_at = time.monotonic()
         agent.transport.emit(AgentEvent(EventType.LLM_TEXT, {"chunk": chunk}))
 
+    def _on_retry(info: Dict[str, Any]) -> None:
+        # Before the backoff sleep: the only moment a UI can say why the
+        # screen went still. Retries happen only while nothing has been
+        # shown, so this never interleaves with ``LLM_TEXT``.
+        agent.transport.emit(AgentEvent(EventType.LLM_RETRY, dict(info)))
+
     def _first_token_ms() -> Optional[int]:
         if first_token_at is None:
             return None
@@ -164,6 +170,7 @@ def run_llm_call(
             # pass this: a one-shot prompt would pay the cache-write premium
             # for a prefix nothing reads back.
             cache_boundary=tail_count,
+            on_retry=_on_retry,
         )
     except Exception as exc:
         # `streamed` is attached by LLMClient.chat_stream before raising:

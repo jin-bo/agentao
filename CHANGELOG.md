@@ -11,6 +11,19 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`EventType.LLM_RETRY`, and the CLI says `⟳ Reconnecting… 1/4`.** A
+  retryable provider failure used to leave the spinner sitting silently
+  through up to four backoff waits — the retry was written only to
+  `agentao.log`. The event is emitted before each wait, with
+  `{"retry", "max_retries", "delay_s", "reason"}`; `reason` is
+  `status=<code>` or the exception class name, never the provider's message.
+  It fires only while nothing has been shown, so it never interleaves with
+  `LLM_TEXT`. The source is a new keyword-only `on_retry=` callback on
+  `LLMClient.chat()` / `chat_stream()`; a callback that raises is logged and
+  ignored, so a display failure cannot cost the request its retry. ACP, the
+  SDK transport and replay ignore the event. As codex does
+  ("Reconnecting... n/N").
+
 - **`Agentao.set_permission_mode(mode, *, cause="host")`** — the supported way
   for a host to change permission posture, replacing a bare
   `agent.permission_engine.set_mode(...)`. Read-only has **two** switches (the
@@ -22,6 +35,30 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
   engine before construction.
 
 ### Changed
+
+- **Model-request retries are bounded by count only; the 60 s wall-clock
+  budget is gone.** The budget was measured from before the first attempt, so
+  it charged the failed request's own duration to the retries: a request that
+  hung until the SDK's read timeout (600 s by default) had spent it by the time
+  it failed, and was never retried — which is precisely the failure a retry is
+  for. Retries are now capped by `MAX_RETRY_ATTEMPTS` (5 attempts, 4 retries),
+  as codex bounds its own.
+
+  **The backoff is longer, too: 7.5 → 15 → 30 → 60 s** (was 1.5 → 3 → 6 →
+  12 s), each plus up to 30% jitter. `BASE_BACKOFF_SECONDS` is 7.5 (was 1.5)
+  and `MAX_BACKOFF_SECONDS` 60 (was 30, `Retry-After` included), so the last
+  retry waits the full ceiling and the four waits span about two minutes —
+  enough to ride out a gateway restart or a network switch, where the old
+  ~25 s was not. The cost is on the short end: even a momentary blip now waits
+  7.5 s before its first retry. The worst case, with a long `Retry-After` on
+  every attempt, is four 60 s waits plus the attempts themselves. `MAX_TOTAL_RETRY_SECONDS` is removed from
+  `agentao.llm.client` / `agentao.llm._retry`; a host that patched it has
+  nothing left to patch. Because a single wait can now be a minute,
+  `LLMClient.chat()` takes a keyword-only `cancellation_token=` and polls it
+  during the backoff, as `chat_stream()` already did — and `chat_stream()`
+  passes its token through on the Gemini bypass and the
+  streaming-unsupported fallback, which both run `chat()` and used to sleep
+  out every wait regardless of a cancel.
 
 - **ACP: a file edit is sent as a reviewable diff, and `replace` is finally an
   `edit`.** `replace` and an appending `write_file` now open their `tool_call`
@@ -91,6 +128,42 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
   goal record (`.agentao/goal.json`), never the user's files.
 
 ### Fixed
+
+- **A model request whose connection drops mid-stream is retried.** Before
+  the response arrives, both SDKs wrap a transport failure as their own
+  `APIConnectionError`, which was always retried. Once the stream is open they
+  do not: `openai` 2.x lets the raw `httpx` exception out of the iterator and
+  `anthropic` the raw `httpx2` one, and those were classified as permanent — so
+  the everyday `RemoteProtocolError: peer closed connection without sending
+  complete message body` (a gateway closing an idle SSE body), a `ReadError`
+  or a `ReadTimeout` ended the turn even when nothing had been shown. They are
+  now retried under the existing policy (backoff, attempt cap, cancellable
+  sleep), on all three wires. `LocalProtocolError`,
+  `ProxyError` and `UnsupportedProtocol` stay permanent: each says the request
+  or the configuration is wrong.
+
+  The same drop can arrive **cleanly**, as a body that just ends. On
+  `anthropic-messages` and `openai-responses` the terminal event (a
+  `stop_reason`, `response.completed`) is mandatory, so its absence is a
+  truncation — and the fragment accumulated so far used to come back as a
+  finished response, including a tool call whose arguments stopped mid-JSON,
+  which the runtime then executed. It now raises `StreamEndedEarlyError`, which
+  is retried, and raises out of `chat()` if every attempt is cut off. Chat
+  Completions keeps its reported `finish_reason_reported: False` flag instead,
+  since the field is optional in practice there. Both halves follow codex,
+  which retries a stream error and a stream closed before
+  `response.completed`.
+
+  A cancel is now honoured on the way into every retry, too. The backoff
+  sleep checked its deadline before the cancellation token, so a zero delay
+  (`Retry-After: 0`) — or a cancel that landed in the wait's last 100 ms
+  slice — returned "not cancelled", and the loop sent another request the
+  user had already cancelled.
+
+  **Unchanged once text has reached the host**: a retry would show it twice,
+  so a mid-stream failure after that still raises (with `.streamed = True`),
+  and a truncated stream still returns the partial answer marked unfinished. A
+  cancelled stream is never read as a truncation.
 
 - **ACP: a tool call's streamed output is no longer reduced to its last chunk.**
   ACP v1 says a `tool_call_update`'s collections are *overwritten, not extended*
