@@ -32,6 +32,8 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
   per hunk of a structured patch), so `replace`'s argument pair is exactly the
   shape the field wants. The entry describes what was **requested**, at
   `status: "pending"`; the terminal update says whether it applied.
+  `session/load` replays an edit the same way, and the replayed result restates
+  the diff beside its text rather than replacing it.
 
   **A non-append `write_file` deliberately gets no diff.** Its arguments say
   nothing about whether the file exists, and the transport holds no filesystem

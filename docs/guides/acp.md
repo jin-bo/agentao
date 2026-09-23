@@ -473,8 +473,8 @@ When `session/load` runs, `ACPTransport.replay_history` walks the persisted mess
 | `system` | (skipped) |
 | `user` | `user_message_chunk` |
 | `assistant` (text) | `agent_message_chunk` |
-| `assistant` (with `tool_calls`) | one `tool_call` per call, `status: "completed"` |
-| `tool` (result) | `tool_call_update`, `status: "completed"` |
+| `assistant` (with `tool_calls`) | one `tool_call` per call, `status: "completed"`; a file edit carries the same `diff` entry it carried live |
+| `tool` (result) | `tool_call_update`, `status: "completed"`, the result text — preceded by the call's `diff` when it had one, since the update replaces the content collection |
 
 ACP clients that wait for the load response before sending the next prompt will therefore observe the full replayed history before any new turn.
 
