@@ -470,3 +470,40 @@ def test_every_outcome_in_the_vocabulary_is_coloured_for_what_it_means(outcome, 
     from agentao.cli.replay_render._summary import _hook_outcome_color
 
     assert _hook_outcome_color(outcome) == color
+
+
+def test_a_mode_switch_says_which_entry_path_made_it():
+    """``cause`` is the point of the record, and the summary dropped it.
+
+    ``model_changed`` has rendered its cause since the field existed;
+    ``permission_mode_changed`` shared a branch with
+    ``readonly_mode_changed`` and printed only ``previous → current``. So
+    a jump to full-access read identically whether the user typed
+    ``/mode full-access`` or answered "yes to all" at a confirmation
+    prompt — and the second is a privilege escalation granted mid-turn.
+    """
+    summary = _summarize_replay_event({
+        "kind": "permission_mode_changed",
+        "payload": {
+            "previous": "workspace-write",
+            "current": "full-access",
+            "cause": "cli-allow-all",
+        },
+    })
+    assert "workspace-write" in summary
+    assert "full-access" in summary
+    assert "cli-allow-all" in summary
+
+
+def test_the_readonly_flag_row_has_no_empty_parentheses():
+    """``readonly_mode_changed`` reports one boolean switch and has no cause.
+
+    The two kinds share a branch, so rendering the cause unconditionally
+    would put a bare ``()`` on every row of the other one.
+    """
+    summary = _summarize_replay_event({
+        "kind": "readonly_mode_changed",
+        "payload": {"previous": False, "current": True},
+    })
+    assert "False" in summary and "True" in summary
+    assert "(" not in summary

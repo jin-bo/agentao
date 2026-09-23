@@ -75,6 +75,10 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
   and `"cli-plan-implement"`. ACP's client-facing
   `current_mode_update` notification is unchanged, including for a non-preset UI
   `modeId` that changes no posture and therefore emits no agent event.
+  `/replays show` renders `cause` too — the grouped view shared a branch with
+  `readonly_mode_changed` and printed only `previous → current`, so a jump to
+  full-access read identically whether it came from `/mode` or from a
+  yes-to-all answered at a confirmation prompt.
 
 ---
 

@@ -879,6 +879,11 @@ def test_permission_mode_changed_event_round_trip(tmp_path):
     ev = [e for e in events if e["kind"] == "permission_mode_changed"][0]
     assert ev["payload"]["previous"] == "workspace-write"
     assert ev["payload"]["current"] == "read-only"
+    # ``cause`` names the entry path that made the switch, and the JSONL is
+    # where an audit reads it. The adapter copies the payload wholesale, so
+    # nothing drops it today — this pins that, because a field-by-field
+    # projection would be an easy "tidy-up" to make here.
+    assert ev["payload"]["cause"] == "cli"
 
 
 def test_plugin_hook_fired_event_captures_verdict(tmp_path):
