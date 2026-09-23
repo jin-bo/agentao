@@ -418,6 +418,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             )
             messages_with_system, system_prompt = self._maybe_full_compress(
                 messages_with_system, system_prompt, tokens=est_tokens,
+                cancellation_token=token,
             )
             messages_with_system = self._inject_background_notifications(
                 messages_with_system, system_prompt,
@@ -1356,6 +1357,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 # full-history estimates on the path where the context has
                 # already blown up.
                 measure_system_tokens=False,
+                cancellation_token=token,
             )
             if run.outcome.status == "cancelled":
                 # The host said no to the *overflow* question, which is a

@@ -40,7 +40,7 @@ def _arm(tmp_path, monkeypatch, *, circuit_open: bool):
 
     monkeypatch.setattr(cm, "needs_compression", lambda messages, tokens=None: True)
 
-    def _compact(msgs, *, is_auto=True, reason="compression_threshold", decide=None):
+    def _compact(msgs, *, is_auto=True, reason="compression_threshold", decide=None, cancellation_token=None):
         # Stubbed at the seam that produces the outcome, so the closed-breaker
         # case exercises a real success rather than asserting on a no-op that
         # would emit nothing either way.

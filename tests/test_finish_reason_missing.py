@@ -422,7 +422,7 @@ class TestDownstreamCoverage:
 
         cm = agent.context_manager
 
-        def _compact(msgs, *, is_auto=True, reason="compression_threshold", decide=None):
+        def _compact(msgs, *, is_auto=True, reason="compression_threshold", decide=None, cancellation_token=None):
             # What `_summarize_formatted` does when its own provider call ends
             # without a finish_reason. Set *inside* the turn on purpose:
             # `run_turn` clears this attribute at turn start, so seeding it
@@ -455,7 +455,7 @@ class TestDownstreamCoverage:
         cm.needs_compression = lambda *a, **k: True
         cm.needs_microcompaction = lambda *a, **k: False
 
-        def _compact_and_flag(msgs, *, is_auto=True, reason="compression_threshold", decide=None):
+        def _compact_and_flag(msgs, *, is_auto=True, reason="compression_threshold", decide=None, cancellation_token=None):
             cm.last_summary_finish_reason_missing = True
             return _failed_outcome(msgs, reason)
 
@@ -465,7 +465,7 @@ class TestDownstreamCoverage:
 
         # Turn 2 compacts again, but nothing re-summarizes this time.
         cm._run_compaction = (
-            lambda msgs, *, is_auto=True, reason="compression_threshold", decide=None:
+            lambda msgs, *, is_auto=True, reason="compression_threshold", decide=None, cancellation_token=None:
             _failed_outcome(msgs, reason)
         )
         agent.chat("turn two, nothing new to summarize")

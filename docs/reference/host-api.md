@@ -625,7 +625,10 @@ compaction *attempt* and also covers the ones that were vetoed or failed
 (`status` is `success | cancelled | failed`). A `skipped` attempt emits
 **neither**, deliberately: three of the four skipped cases re-trigger on
 every loop iteration, so one event each would be an event storm rather
-than a signal.
+than a signal. An attempt abandoned because **the turn itself was
+cancelled** (since 0.5.5) also emits neither: history is untouched and the
+outcome is the turn's, reported as a cancelled turn. `status: "cancelled"`
+still means only that a hook or `compaction_controller` vetoed the attempt.
 
 Their token fields are **different units and are named apart for that
 reason**. `CONTEXT_COMPRESSED`'s `pre_est_tokens` / `post_est_tokens`

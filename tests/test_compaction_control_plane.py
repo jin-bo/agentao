@@ -333,7 +333,7 @@ def test_the_other_two_kinds_are_cancellable_too(tmp_path, kind, reason):
 def test_a_controller_can_provide_the_summary(tmp_path):
     cm = _make_cm()
     called = []
-    cm._summarize_formatted = lambda _f: called.append(1) or "built-in"
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: called.append(1) or "built-in"
 
     agent, _events = _agent(
         cm, _history(),
@@ -362,7 +362,7 @@ def test_an_invalid_host_summary_degrades_to_the_built_in_one(tmp_path, summary,
     also continuing". A bad controller costs one extra summarization and can
     never disable auto-compaction in three calls."""
     cm = _make_cm()
-    cm._summarize_formatted = lambda _f: "the built-in summary"
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: "the built-in summary"
     agent, _events = _agent(
         cm, _history(),
         controller=lambda ctx: CompactionDecision("provide_summary", summary=summary),
@@ -380,7 +380,7 @@ def test_an_invalid_host_summary_degrades_to_the_built_in_one(tmp_path, summary,
 
 def test_an_invalid_host_summary_and_a_failing_built_in_is_one_failure(tmp_path):
     cm = _make_cm()
-    cm._summarize_formatted = lambda _f: ""
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: ""
     agent, _events = _agent(
         cm, _history(),
         controller=lambda ctx: CompactionDecision("provide_summary", summary=""),
@@ -412,7 +412,7 @@ def test_a_broken_controller_is_treated_as_allow(tmp_path, bad):
     into "the turn crashes" — killing the path this design exists to protect.
     """
     cm = _make_cm()
-    cm._summarize_formatted = lambda _f: "a summary"
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: "a summary"
     agent, _events = _agent(cm, _history(), controller=bad, cwd=tmp_path)
 
     run = agent.compaction_coordinator.run(
@@ -427,7 +427,7 @@ def test_an_async_controller_is_refused_rather_than_awaited(tmp_path):
         return CompactionDecision("cancel")
 
     cm = _make_cm()
-    cm._summarize_formatted = lambda _f: "a summary"
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: "a summary"
     agent, _events = _agent(cm, _history(), controller=_async_controller, cwd=tmp_path)
 
     run = agent.compaction_coordinator.run(
@@ -462,7 +462,7 @@ def test_a_hook_cancel_short_circuits_the_controller(tmp_path):
 
 def test_the_controller_context_carries_counts_not_text(tmp_path):
     cm = _make_cm()
-    cm._summarize_formatted = lambda _f: "a summary"
+    cm._summarize_formatted = lambda _f, *, cancellation_token=None: "a summary"
     seen = []
     agent, _events = _agent(
         cm, _history(),

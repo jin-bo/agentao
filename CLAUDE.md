@@ -176,6 +176,13 @@ public entry.
 **`skipped` emits no event.** Three of its four cases re-trigger on every loop
 iteration; one event each would be a storm. `CONTEXT_COMPRESSED` fires only on
 `success`; `COMPACTION_SETTLED` fires for `success | cancelled | failed`.
+A **turn** cancel is none of those: the in-turn entry points pass the turn's
+token down to the summarizer's `chat()`, `_run_compaction` reads it before
+summarizing and again *before* the empty-summary failure count and the commit,
+and a cancel raises `AgentCancelledError` out of the coordinator with history
+untouched and no event. The second read is load-bearing — a cancelled retry
+wait comes back as an empty summary, which would otherwise charge the breaker.
+Manual `/compact` and `Agentao.compact()` run outside a turn and pass no token.
 
 **The control plane has two layers and one merge rule.** Command hooks first
 (`dispatch_pre_compact_decision`, wire key `hookSpecificOutput.compactionDecision`,

@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from ..cancellation import AgentCancelledError
 from ..replay.observability import (
     emit_context_compressed,
     emit_session_summary_if_new,
@@ -38,6 +39,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..cancellation import CancellationToken
     from ..agent import Agentao
 
 
@@ -121,6 +123,7 @@ class CompactionCoordinator:
         messages_with_system: Optional[List[Dict[str, Any]]] = None,
         measure_system_tokens: bool = False,
         keep_tail: int = 2,
+        cancellation_token: Optional["CancellationToken"] = None,
     ) -> CompactionRun:
         """Gate, dispatch, transform, emit — in that order.
 
@@ -136,6 +139,13 @@ class CompactionCoordinator:
         that fires on every loop iteration does not rebuild it every time.
 
         ``keep_tail`` applies to ``minimal_history`` only.
+
+        ``cancellation_token`` is the turn's, from the in-turn entry points;
+        manual ``/compact`` and :meth:`Agentao.compact` run outside a turn and
+        pass none. Only ``full`` uses it (the other kinds call no model). A
+        cancel raises ``AgentCancelledError`` out of here with history
+        untouched and **no** ``COMPACTION_SETTLED``: this is not an outcome of
+        the compaction but the end of the turn, which ``run_turn`` reports.
         """
         agent = self._agent
         cm = agent.context_manager
@@ -177,11 +187,19 @@ class CompactionCoordinator:
             cm.estimate_tokens(messages_with_system) if measure_system_tokens else None
         )
 
-        outcome = self._transform(
-            request,
-            keep_tail=keep_tail,
-            decide=self._compose_decide(request, hook_result),
-        )
+        try:
+            outcome = self._transform(
+                request,
+                keep_tail=keep_tail,
+                decide=self._compose_decide(request, hook_result),
+                cancellation_token=cancellation_token,
+            )
+        except AgentCancelledError:
+            self._info(
+                f"Compaction abandoned: kind={request.kind} "
+                f"reason={request.reason} (turn cancelled)"
+            )
+            raise
 
         if outcome.status == "cancelled" and request.reason in _LATCHED_REASONS:
             self._cancel_latch.add((request.kind, request.reason))
@@ -339,7 +357,12 @@ class CompactionCoordinator:
     # ------------------------------------------------------------------
 
     def _transform(
-        self, request: CompactionRequest, *, keep_tail: int, decide=None,
+        self,
+        request: CompactionRequest,
+        *,
+        keep_tail: int,
+        decide=None,
+        cancellation_token: Optional["CancellationToken"] = None,
     ) -> CompactionOutcome:
         agent = self._agent
         cm = agent.context_manager
@@ -356,6 +379,7 @@ class CompactionCoordinator:
                 is_auto=(request.trigger == "auto"),
                 reason=request.reason,
                 decide=decide,
+                cancellation_token=cancellation_token,
             )
 
         # The other two kinds call no summarizer, write no SQLite and never

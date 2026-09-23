@@ -1055,7 +1055,7 @@ def test_compress_does_not_microcompact_the_half_it_is_about_to_discard():
     # truncation this test is about. ``_summarize_formatted`` is stubbed only
     # to keep the LLM out of it.
     cm._format_for_summary = _capture  # type: ignore[method-assign]
-    cm._summarize_formatted = lambda _formatted: ""  # type: ignore[method-assign]
+    cm._summarize_formatted = lambda _formatted, *, cancellation_token=None: ""  # type: ignore[method-assign]
     cm.compress_messages(msgs, is_auto=True)
 
     assert "contents" in seen, "microcompaction must still run on the kept half"
