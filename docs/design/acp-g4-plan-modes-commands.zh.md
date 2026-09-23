@@ -149,7 +149,7 @@ server.write_notification(METHOD_SESSION_UPDATE, {
 runtime 内部切换也能冒出来，但 handler 不得依赖它。）
 
 > **⚠️ 2026-09-22 重新标注（0.5.4 周期）。** 上面这条路线已实施，handler 至今仍这么做。
-> 变的是括号里那句：自 0.5.4 周期起，`session/set_mode` 通过
+> 变的是括号里那句：自 0.5.4 版起，`session/set_mode` 通过
 > `runtime/permission_mode.py::apply_permission_mode` 应用预设，该函数在每条入口
 > 路径上都会发 `PERMISSION_MODE_CHANGED`（`cause="acp"`）和 `READONLY_MODE_CHANGED`。
 > 本设计的结论不受影响、依然成立：`current_mode_update` 是面向**客户端**的通知、

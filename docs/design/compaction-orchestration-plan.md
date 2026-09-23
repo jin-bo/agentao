@@ -190,6 +190,10 @@ the client's retry loop (`llm/client.py:451`): `MAX_RETRY_ATTEMPTS = 5` includin
 under a `MAX_TOTAL_RETRY_SECONDS = 60.0` wall-clock budget (`llm/_retry.py:27,30`). A second layer
 multiplies rather than adds.
 
+> **Since 0.5.4 the budget is gone** — retries are bounded by count only, with a 7.5 → 15 → 30 → 60 s
+> backoff (`llm/_retry.py`). The argument is unchanged: the summariser still inherits the client's loop,
+> and a second layer would still multiply it.
+
 ### 3.5 The PreToolUse decision path is the precedent for PR-4
 
 `PluginHookDispatcher.dispatch_pre_tool_use_decision` (`plugins/hooks/_dispatcher.py:90-117`) already

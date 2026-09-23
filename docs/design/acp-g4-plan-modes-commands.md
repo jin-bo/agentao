@@ -170,7 +170,7 @@ handler must not rely on it.)
 
 > **⚠️ Restated 2026-09-22 (0.5.4 cycle).** The route above shipped and is
 > what the handler still does. What changed is the parenthesis: as of the
-> 0.5.4 cycle `session/set_mode` applies the preset through
+> 0.5.4 release `session/set_mode` applies the preset through
 > `runtime/permission_mode.py::apply_permission_mode`, which emits
 > `PERMISSION_MODE_CHANGED` (`cause="acp"`) and `READONLY_MODE_CHANGED`
 > on every entry path. The design's conclusion is unaffected and still

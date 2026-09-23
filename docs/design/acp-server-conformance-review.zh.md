@@ -170,7 +170,7 @@ ACP（Agent Client Protocol，agentclientprotocol.com）是 Zed 发起的、位�
 
 ### G2 —— `tool_call` 更新缺少结构化保真度 *(本地：schema + 发送，高 ROI)*
 
-> **相邻缺陷已于 2026-09-22 修复（0.5.4 周期，未发布）。** 不属于下列三项，是
+> **相邻缺陷已于 2026-09-22 修复，随 0.5.4 发布。** 不属于下列三项，是
 > 盘点它们时在同一段映射里查出来的。ACP v1 规定 `tool_call_update` 的集合字段是
 > **整体替换、而非追加**（`agentclientprotocol/agent-client-protocol@bf6d1ec`，
 > `agent-client-protocol-schema/src/v1/tool_call.rs:167,252,285`），而
@@ -180,7 +180,7 @@ ACP（Agent Client Protocol，agentclientprotocol.com）是 Zed 发起的、位�
 > 累积后的集合，并带一个冲刷阈值与一个体积上限
 > （`agentao/acp/_tool_call_content.py`）。下列三项本身未变。
 >
-> **`diff` 那一半已于 2026-09-22 解决（0.5.4 周期，未发布）。** `replace` 与追加模式的
+> **`diff` 那一半已于 2026-09-22 解决，随 0.5.4 发布。** `replace` 与追加模式的
 > `write_file` 现在会让 `tool_call`——以及与之对应的 `session/request_permission`——
 > 带上一个 `diff` content 条目。冻结的契约先做了加宽：`AcpToolCallContentEntry` 变成
 > `content` 与 `diff` 的判别式联合，`AcpSessionUpdateToolCall` 新增 `content`，`kind`

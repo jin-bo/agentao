@@ -167,6 +167,9 @@ session summary 落库（`:598`）和消息组装（`:606-659`），而 PR-4 要
 （`llm/client.py:451`）：`MAX_RETRY_ATTEMPTS = 5`（含首次）、`MAX_TOTAL_RETRY_SECONDS = 60.0` 墙钟预算
 （`llm/_retry.py:27,30`）。再套一层是相乘，不是相加。
 
+> **自 0.5.4 起墙钟预算已删除** —— 重试只按次数限制，退避为 7.5 → 15 → 30 → 60 秒（`llm/_retry.py`）。
+> 论证不变：摘要仍然继承客户端的重试循环，再套一层仍是相乘。
+
 ### 3.5 PreToolUse 决策路径就是 PR-4 的先例
 
 `PluginHookDispatcher.dispatch_pre_tool_use_decision`（`plugins/hooks/_dispatcher.py:90-117`）今天就实现了
