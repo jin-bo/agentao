@@ -348,7 +348,14 @@ do not disable the engine.
 
 - Modes (`agentao.permissions.PermissionMode`): `read-only`,
   `workspace-write` (default), `full-access`, `plan`. Set with
-  `agent.permission_engine.set_mode(PermissionMode.WORKSPACE_WRITE)`.
+  `agent.set_permission_mode(PermissionMode.WORKSPACE_WRITE)` — **not**
+  `agent.permission_engine.set_mode(...)`, which is half the switch:
+  read-only has two (the engine's preset and `ToolRunner.readonly_mode`),
+  and the engine holds no transport, so a bare `set_mode` also emits
+  neither `READONLY_MODE_CHANGED` nor `PERMISSION_MODE_CHANGED` and a
+  replay file ends up with the denials and no record of the switch.
+  `set_permission_mode` moves both, emits both (`cause="host"`), and
+  returns the previously active mode.
 - **`read-only` is not a rule set — it is a gate, and it covers your tools
   too.** Its preset rule list is empty; enforcement is
   `ToolRunner.readonly_active()`, which denies **every** tool whose

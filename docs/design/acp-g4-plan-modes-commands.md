@@ -112,6 +112,17 @@ AvailableCommandInput   = { hint: string }                 // "all text after th
   /mode /skills /replay /sandbox …` — verified to be **host/CLI subsystem control**,
   not agent-task commands. This is the crux of the G4c recommendation.
 
+> **⚠️ Restated 2026-09-22 (0.5.4 cycle).** The survey above is still an
+> accurate reading of the code it was written against, but it no longer
+> describes `main`: `session/set_mode` now applies the preset through
+> `runtime/permission_mode.py::apply_permission_mode`, which emits
+> `PERMISSION_MODE_CHANGED` (`cause="acp"`) and `READONLY_MODE_CHANGED`
+> on every entry path. The design's conclusion is unaffected and still
+> holds: `current_mode_update` is the **client**-facing notification and is
+> emitted by the handler, not derived from the agent event — the two are
+> not interchangeable, since a non-preset UI `modeId` notifies the client
+> while changing no posture and therefore emitting no agent event.
+
 ---
 
 ## 4. Design
@@ -156,6 +167,17 @@ server.write_notification(METHOD_SESSION_UPDATE, {
 or wrap that one notification in a tiny helper. (Transport *may* also map
 `PERMISSION_MODE_CHANGED` so a future runtime-internal switch surfaces too, but the
 handler must not rely on it.)
+
+> **⚠️ Restated 2026-09-22 (0.5.4 cycle).** The route above shipped and is
+> what the handler still does. What changed is the parenthesis: as of the
+> 0.5.4 cycle `session/set_mode` applies the preset through
+> `runtime/permission_mode.py::apply_permission_mode`, which emits
+> `PERMISSION_MODE_CHANGED` (`cause="acp"`) and `READONLY_MODE_CHANGED`
+> on every entry path. The design's conclusion is unaffected and still
+> holds: `current_mode_update` is the **client**-facing notification and is
+> emitted by the handler, not derived from the agent event — the two are
+> not interchangeable, since a non-preset UI `modeId` notifies the client
+> while changing no posture and therefore emitting no agent event.
 
 **session/set_mode response** (`session_set_mode.py:86`): the ACP standard response
 is empty + change-via-notification. **Keep returning `{modeId}` for DeepChat
@@ -257,7 +279,9 @@ the defensive `todo_write`→`plan` transport mapping.
   all-or-nothing validation; denied/failed → no plan; empty/malformed → fallback
   `tool_call` that completes normally). Optionally also map
   `PERMISSION_MODE_CHANGED`→`current_mode_update` for completeness — but it is not
-  load-bearing for the ACP path (see §4.1).
+  load-bearing for the ACP path (see §4.1). **(Restated 2026-09-22: still not
+  mapped in transport, and now unnecessary — the handler emits
+  `PERMISSION_MODE_CHANGED` itself via `apply_permission_mode`.)**
 - `agentao/acp/_transport_helpers.py`: `_todo_write_plan` (all-or-nothing validate,
   synthesize `priority:"medium"`).
 - `agentao/acp/session_new.py`: emit the typed `modes` in the response.

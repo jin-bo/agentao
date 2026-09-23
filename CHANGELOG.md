@@ -11,6 +11,16 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`Agentao.set_permission_mode(mode, *, cause="host")`** — the supported way
+  for a host to change permission posture, replacing a bare
+  `agent.permission_engine.set_mode(...)`. Read-only has **two** switches (the
+  engine's preset and `ToolRunner.readonly_mode`), and the engine holds no
+  transport by design, so `set_mode` alone moves one of them and emits nothing.
+  The new method moves both, returns the previously active mode, and emits
+  `READONLY_MODE_CHANGED` then `PERMISSION_MODE_CHANGED`. `engine.set_mode` is
+  not deprecated and still works — it remains the right call when configuring an
+  engine before construction.
+
 ### Changed
 
 - Read-only mode now allows `activate_skill` and `todo_write`. Both change only
@@ -45,6 +55,26 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
   rules are evaluated before that preset), or declare `is_read_only` only on a
   tool with no effect outside the session. `docs/guides/embed-for-agents.md`
   §5 carries the same note.
+
+- A permission-mode switch is recorded whichever path made it. ACP
+  `session/set_mode` set the engine's preset and emitted no agent event, so a
+  replay of an ACP session showed the read-only denials with nothing saying when
+  the session became read-only — and, since it never touched the runner's flag,
+  a session that had entered read-only by the flag could not be switched out of
+  it over ACP. `/mode`, ACP `session/set_mode`, `agentao run --permission-mode`
+  and the new `Agentao.set_permission_mode` now all go through one function
+  (`runtime/permission_mode.py::apply_permission_mode`), which moves both
+  switches and emits `READONLY_MODE_CHANGED` (the flag, only on a real flip)
+  then `PERMISSION_MODE_CHANGED` — whose `cause` field names the entry path:
+  `"cli"` as before, and now also `"acp"`, `"run"` and `"host"`. `agentao run`
+  emits it too, so a replay says which posture the run used. Two CLI switches
+  that deliberately bypass `/mode` — answering "2" (yes to all) at the
+  confirmation prompt, which escalates the session to full-access, and
+  `/plan implement` leaving a read-only posture — went through the engine by
+  hand and recorded nothing; they now emit as well, tagged `"cli-allow-all"`
+  and `"cli-plan-implement"`. ACP's client-facing
+  `current_mode_update` notification is unchanged, including for a non-preset UI
+  `modeId` that changes no posture and therefore emits no agent event.
 
 ---
 

@@ -10,9 +10,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Union, TY
 
 from .llm import LLMClient
 from .llm.client import KEEP_BASE_URL as _KEEP_BASE_URL
-from .permissions import PermissionEngine
+from .permissions import PermissionEngine, PermissionMode
 from .runtime import ChatLoopRunner, ToolRunner, run_llm_call, run_turn
 from .runtime import model as _runtime_model
+from .runtime import permission_mode as _runtime_permission_mode
 from .runtime.tool_executor import ASYNC_CANCEL_REASON
 from .tools import ToolRegistry, SaveMemoryTool, TodoWriteTool
 from .tooling import (
@@ -1419,3 +1420,25 @@ class Agentao:
     def list_available_models(self) -> List[str]:
         # Implementation lives in ``agentao.runtime.model``.
         return _runtime_model.list_available_models(self)
+
+    def set_permission_mode(
+        self, mode: PermissionMode, *, cause: str = "host"
+    ) -> Optional[PermissionMode]:
+        """Switch the permission posture, and record the transition.
+
+        Prefer this over ``agent.permission_engine.set_mode(mode)``, which
+        is only half the switch: ``read-only`` has **two** of them — the
+        engine's preset and ``ToolRunner.readonly_mode`` — and the engine
+        holds no transport, so a bare ``set_mode`` also emits neither
+        ``READONLY_MODE_CHANGED`` nor ``PERMISSION_MODE_CHANGED``, leaving a
+        replay file with the resulting denials and no record of the switch.
+
+        ``cause`` labels the entry path in the event payload; the default
+        suits an embedded host. Returns the previously active mode, and
+        raises ``ValueError`` when this runtime has no permission engine.
+
+        Implementation lives in ``agentao.runtime.permission_mode``.
+        """
+        return _runtime_permission_mode.apply_permission_mode(
+            self, mode, cause=cause
+        )

@@ -537,10 +537,15 @@ def _handle_plan_approval(cli: "AgentaoCLI") -> None:
             cli.allow_all_tools = restore_allow_all
             from ..permissions import PermissionMode as _PM
             if cli.current_mode == _PM.READ_ONLY:
+                from ..runtime.permission_mode import apply_permission_mode
                 cli.current_mode = _PM.WORKSPACE_WRITE
-                cli.permission_engine.set_mode(_PM.WORKSPACE_WRITE)
+                # Not ``_apply_mode``: ``allow_all_tools`` was just restored
+                # from before plan mode and must survive. The helper still
+                # moves both switches and records the transition.
+                apply_permission_mode(
+                    cli.agent, _PM.WORKSPACE_WRITE, cause="cli-plan-implement",
+                )
                 cli.readonly_mode = False
-                cli._apply_readonly_mode()
             console.rule("[bold green]Assistant[/bold green]", style="green")
             cli.current_status = console.status("[bold yellow]Thinking...", spinner="dots")
             cli.current_status.start()

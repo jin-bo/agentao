@@ -99,6 +99,14 @@ AvailableCommandInput   = { hint: string }                 // "命令名之后�
   /replay /sandbox …`——已核实是 **host/CLI 子系统控制**，不是 agent-task 命令。这是 G4c 建议的
   关键。
 
+> **⚠️ 2026-09-22 重新标注（0.5.4 周期）。** 上面的盘点对它当时读的代码仍然准确，
+> 但已不再描述 `main`：`session/set_mode` 现在通过
+> `runtime/permission_mode.py::apply_permission_mode` 应用预设，该函数在每条入口
+> 路径上都会发 `PERMISSION_MODE_CHANGED`（`cause="acp"`）和 `READONLY_MODE_CHANGED`。
+> 本设计的结论不受影响、依然成立：`current_mode_update` 是面向**客户端**的通知、
+> 由 handler 发出，不是从 agent 事件推导出来的——两者不可互换，因为一个非预设的 UI
+> `modeId` 会通知客户端却不改变任何姿态，因此不发任何 agent 事件。
+
 ---
 
 ## 4. 设计
@@ -139,6 +147,14 @@ server.write_notification(METHOD_SESSION_UPDATE, {
 ```
 或把这一条通知包成一个很小的 helper。（transport *可以*也映射 `PERMISSION_MODE_CHANGED`，让未来
 runtime 内部切换也能冒出来，但 handler 不得依赖它。）
+
+> **⚠️ 2026-09-22 重新标注（0.5.4 周期）。** 上面这条路线已实施，handler 至今仍这么做。
+> 变的是括号里那句：自 0.5.4 周期起，`session/set_mode` 通过
+> `runtime/permission_mode.py::apply_permission_mode` 应用预设，该函数在每条入口
+> 路径上都会发 `PERMISSION_MODE_CHANGED`（`cause="acp"`）和 `READONLY_MODE_CHANGED`。
+> 本设计的结论不受影响、依然成立：`current_mode_update` 是面向**客户端**的通知、
+> 由 handler 发出，不是从 agent 事件推导出来的——两者不可互换，因为一个非预设的 UI
+> `modeId` 会通知客户端却不改变任何姿态，因此不发任何 agent 事件。
 
 **session/set_mode 响应**（`session_set_mode.py:86`）：ACP 标准响应为空 + 经通知传达变更。
 **为 DeepChat 兼容保留返回 `{modeId}`**（标准 client 读 `current_mode_update`、忽略这个多余字段），
@@ -214,7 +230,9 @@ agentao 的斜杠命令是 host/CLI 子系统控制，在 ACP 上**对 agent run
 - `agentao/acp/transport.py`：`todo_write`→`plan`，**延迟到 `TOOL_COMPLETE`-on-`ok`**（在
   `TOOL_START` 按 `call_id` 暂存；全有或全无校验；被拒/失败 → 不发 plan；空/畸形 → 回落 `tool_call`
   并正常 complete）。可选地也映射 `PERMISSION_MODE_CHANGED`→`current_mode_update` 求完整——但它对
-  ACP 路径不是承重的（见 §4.1）。
+  ACP 路径不是承重的（见 §4.1）。**（2026-09-22 重新标注：transport 里
+  仍未映射，且已无必要——handler 自己经 `apply_permission_mode` 发出
+  `PERMISSION_MODE_CHANGED`。）**
 - `agentao/acp/_transport_helpers.py`：`_todo_write_plan`（全有或全无校验，合成 `priority:"medium"`）。
 - `agentao/acp/session_new.py`：响应里发 typed `modes`。
 - `agentao/acp/session_load.py`：`resume_session_on_new` 同样播报 typed `modes`，让 `--resume` 的
