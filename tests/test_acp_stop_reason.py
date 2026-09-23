@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from agentao.acp.schema import AcpSessionPromptResponse
-from agentao.acp.session_prompt import _stop_reason_for
+from agentao.acp.session_prompt import _llm_error_message, _stop_reason_for
 
 
 def _outcome(reason=None):
@@ -52,18 +52,6 @@ class TestReasonsThatStayEndTurn:
     def test_silent_turns_still_ended_normally(self, reason):
         assert _stop_reason_for(
             cancelled=False, outcome=_outcome(reason), max_iterations_hit=False,
-        ) == "end_turn"
-
-    def test_llm_error_is_end_turn_not_refusal(self):
-        """`refusal` means the agent declined on content grounds.
-
-        Reporting an API outage as a refusal trades a vague answer for a
-        false one. The error text is the turn's content and has already
-        been streamed.
-        """
-        assert _stop_reason_for(
-            cancelled=False, outcome=_outcome("llm_error"),
-            max_iterations_hit=False,
         ) == "end_turn"
 
     def test_healthy_turn(self):
@@ -109,7 +97,6 @@ class TestEveryEmittedValueIsSchemaValid:
         dict(cancelled=False, outcome=_outcome("length_truncated"), max_iterations_hit=False),
         dict(cancelled=False, outcome=_outcome("doom_loop"), max_iterations_hit=False),
         dict(cancelled=False, outcome=_outcome("no_output"), max_iterations_hit=False),
-        dict(cancelled=False, outcome=_outcome("llm_error"), max_iterations_hit=False),
     ])
     def test_validates(self, kwargs):
         AcpSessionPromptResponse(stopReason=_stop_reason_for(**kwargs))
@@ -144,3 +131,48 @@ class TestTransportFlag:
         assert t.max_iterations_hit is False, "must default to False"
         assert t.on_max_iterations(10, []) == {"action": "stop"}
         assert t.max_iterations_hit is True
+
+
+class TestAFailedModelCallIsNotAStopReason:
+    """`llm_error` leaves by the error channel, not the result.
+
+    Until 0.5.4 it mapped to `end_turn`, which told the client the turn
+    ended normally while the provider was down — `agentao run` exits
+    non-zero for the same turn. ACP v1's five-member enum has no "the
+    model call failed" member and `docs/protocol/v1/error.mdx` is still
+    "Documentation coming soon" (spec read at
+    `agentclientprotocol/agent-client-protocol@bf6d1ec`, 2026-09-23), so
+    the spec does not rule on it. gemini-cli draws the line in the same
+    place: a stream error becomes `acp.RequestError`, an abort becomes
+    `cancelled`, and a stream that merely produced nothing stays
+    `end_turn` (`packages/cli/src/acp/acpSession.ts` @ `9450ade79`).
+    """
+
+    def test_the_notice_becomes_the_error_message(self):
+        assert _llm_error_message(
+            SimpleNamespace(
+                incomplete_reason="llm_error",
+                text="[LLM API error: 502 Bad Gateway]",
+            )
+        ) == "[LLM API error: 502 Bad Gateway]"
+
+    @pytest.mark.parametrize(
+        "reason", [None, "no_output", "reasoning_only", "hook_stop",
+                   "doom_loop", "length_truncated", "some_future_reason"],
+    )
+    def test_every_other_reason_keeps_its_stop_reason(self, reason):
+        """Only `llm_error` crosses over — this is the pin that says so."""
+        assert _llm_error_message(
+            SimpleNamespace(incomplete_reason=reason, text="whatever")
+        ) is None
+
+    def test_a_missing_outcome_is_not_an_error(self):
+        assert _llm_error_message(None) is None
+
+    @pytest.mark.parametrize("text", [None, "", "   ", 42])
+    def test_an_empty_notice_still_yields_a_displayable_message(self, text):
+        """An empty `message` is the one shape a client cannot render."""
+        msg = _llm_error_message(
+            SimpleNamespace(incomplete_reason="llm_error", text=text)
+        )
+        assert isinstance(msg, str) and msg.strip()

@@ -630,6 +630,77 @@ def test_stop_reason_reads_last_turn_outcome(session_with_agent):
 
 
 # ---------------------------------------------------------------------------
+# A failed model call leaves by the error channel
+# ---------------------------------------------------------------------------
+
+_LLM_ERROR_NOTICE = "[LLM API error: 502 Bad Gateway]"
+
+
+def _fail_the_model_call(fake):
+    """Make the next turn look like the harness's swallowed-LLM-error path.
+
+    ``status`` is ``"ok"`` there — the exception was caught and the notice
+    returned as the turn's text — so the fact is in ``incomplete_reason``
+    and nowhere else, which is what the handler reads.
+    """
+    fake.reply = _LLM_ERROR_NOTICE
+    fake.last_turn = SimpleNamespace(
+        incomplete_reason="llm_error", text=_LLM_ERROR_NOTICE, status="ok",
+    )
+
+
+def test_a_failed_model_call_is_a_json_rpc_error_not_end_turn(session_with_agent):
+    """Until 0.5.4 this answered ``{"stopReason": "end_turn"}``.
+
+    So an ACP client was told the turn ended normally while the provider
+    was down — the same turn that makes ``agentao run`` exit non-zero.
+    """
+    server, sid, fake = session_with_agent
+    _fail_the_model_call(fake)
+
+    with pytest.raises(JsonRpcHandlerError) as exc:
+        acp_session_prompt.handle_session_prompt(server, _prompt_params(sid))
+
+    assert exc.value.code == INTERNAL_ERROR
+    # The message is the notice the client already received on the stream,
+    # verbatim — not a second, differently-worded account of one failure.
+    assert exc.value.message == _LLM_ERROR_NOTICE
+    # Structured, so a client tells this from any other internal error
+    # without matching on prose.
+    assert exc.value.data == {"reason": "llm_error"}
+
+
+def test_a_cancel_still_wins_over_a_failed_model_call(session_with_agent):
+    """The spec's one MUST about swallowing errors is that an aborted call
+    be reported as ``cancelled`` — and a provider call torn down by the
+    cancellation can surface as a failure on the way out."""
+    server, sid, fake = session_with_agent
+    _fail_the_model_call(fake)
+    fake.side_effect = lambda token: token.cancel("client asked")
+
+    result = acp_session_prompt.handle_session_prompt(server, _prompt_params(sid))
+
+    assert result == {"stopReason": "cancelled"}
+
+
+def test_the_session_is_usable_after_a_failed_model_call(session_with_agent):
+    """The raise happens inside the ``try``, so ``finally`` still releases
+    the turn lock. A provider blip that wedged the session for good would
+    be a worse bug than the one this path fixes."""
+    server, sid, fake = session_with_agent
+    _fail_the_model_call(fake)
+    with pytest.raises(JsonRpcHandlerError):
+        acp_session_prompt.handle_session_prompt(server, _prompt_params(sid))
+
+    fake.reply = "recovered"
+    fake.last_turn = SimpleNamespace(incomplete_reason=None, text="recovered")
+    assert acp_session_prompt.handle_session_prompt(
+        server, _prompt_params(sid, "second turn")
+    ) == {"stopReason": "end_turn"}
+    assert server.sessions.require(sid).cancel_token is None
+
+
+# ---------------------------------------------------------------------------
 # Registration / dispatcher wire
 # ---------------------------------------------------------------------------
 

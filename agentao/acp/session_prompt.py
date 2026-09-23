@@ -49,7 +49,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
-from typing import Any, Dict, List, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from agentao.cancellation import CancellationToken
 
@@ -232,7 +232,9 @@ def _parse_prompt(raw: Any) -> Tuple[str, List[Dict[str, str]]]:
 #: turn *stopped*, not whether it said anything useful — a client that needs
 #: that distinction reads the streamed content, which is empty.
 #:
-#: ``llm_error`` is also absent. See :func:`_stop_reason_for`.
+#: ``llm_error`` is also absent, and it does not fall through to ``end_turn``
+#: either — it is the one outcome that leaves by the error channel. See
+#: :func:`_llm_error_message`.
 #:
 #: ``hook_stop`` is absent **deliberately**, and the rule above is why: a hook
 #: returning ``continue: false`` is an operator decision, not a budget the
@@ -261,15 +263,8 @@ def _stop_reason_for(
     the iteration cap *and* carry a reason, and the cap is the more specific
     account of why it ended.
 
-    ``llm_error`` maps to ``end_turn``, which is the least-bad option rather
-    than a good one: ACP v1's closed enum has no member for "the model call
-    failed". ``refusal`` is the only remaining value and it means the agent
-    declined on content grounds — reporting an API outage as a refusal would
-    trade a vague answer for a false one. The failure is not hidden: the
-    ``[LLM API error: …]`` notice is the turn's text and has already been
-    streamed to the client. Surfacing it as a JSON-RPC error instead would be
-    more truthful, but it changes the response *shape* for a case that
-    currently returns a result, so it needs its own decision.
+    ``llm_error`` never reaches the fallback: the handler raises before
+    calling this on that path. See :func:`_llm_error_message`.
     """
     if cancelled:
         return "cancelled"
@@ -277,6 +272,56 @@ def _stop_reason_for(
         return "max_turn_requests"
     reason = getattr(outcome, "incomplete_reason", None)
     return _INCOMPLETE_TO_STOP_REASON.get(reason, "end_turn")
+
+
+#: ``TurnOutcome.incomplete_reason`` for "the LLM call failed and the harness
+#: swallowed it into a notice" (``runtime/chat_loop/_runner.py``).
+_LLM_ERROR_REASON = "llm_error"
+
+#: ``error.data.reason`` on the JSON-RPC error below, so a client can tell a
+#: failed model call from any other internal error without matching on prose.
+_LLM_ERROR_DATA = {"reason": _LLM_ERROR_REASON}
+
+
+def _llm_error_message(outcome: Any) -> Optional[str]:
+    """The model-call failure to report as a JSON-RPC error, or ``None``.
+
+    **Why an error rather than a stop reason.** ACP v1's ``StopReason`` is a
+    closed five-member enum — ``end_turn``, ``max_tokens``,
+    ``max_turn_requests``, ``refusal``, ``cancelled`` — and none of them means
+    "the model call failed" (spec read at
+    ``agentclientprotocol/agent-client-protocol@bf6d1ec``, 2026-09-23;
+    ``docs/protocol/v1/error.mdx`` is still "Documentation coming soon", so the
+    spec does not rule on it). Until 0.5.4 this mapped to ``end_turn``, which
+    told the client the turn ended normally when the provider was down —
+    ``agentao run`` exits non-zero for the same turn, and the ACP client got a
+    success. ``refusal`` was never an option: it means the agent declined on
+    content grounds, so it would have traded a vague answer for a false one.
+
+    gemini-cli draws the same line (``packages/cli/src/acp/acpSession.ts``
+    @ ``9450ade79``): a stream error becomes ``acp.RequestError``, an abort
+    becomes ``stopReason: "cancelled"``, and a stream that merely produced
+    nothing useful is kept as ``end_turn`` — *"Treat this as a graceful end to
+    the model's turn rather than a crash."* agentao's ``no_output`` /
+    ``reasoning_only`` / ``hook_stop`` stay on that graceful side for exactly
+    that reason; only ``llm_error`` crosses over.
+
+    The message is the turn's own ``[LLM API error: …]`` text, verbatim, so
+    what the client reads in the error is what it already received on the
+    stream rather than a second, differently-worded account of one failure.
+    ``status`` is ``"ok"`` on this path — the harness caught the exception and
+    returned the notice as the turn's text — so the fact lives in
+    ``incomplete_reason`` and nowhere else, and this reads it there.
+    """
+    if getattr(outcome, "incomplete_reason", None) != _LLM_ERROR_REASON:
+        return None
+    text = getattr(outcome, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    # The notice is built by the harness and is never empty in practice; a
+    # stand-in keeps the error well-formed if that ever changes, because an
+    # empty ``message`` would be the one shape a client cannot display.
+    return "the model API call failed"
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +343,9 @@ def handle_session_prompt(server: "AcpServer", params: Any) -> Dict[str, Any]:
       7. Invoke ``agent.chat(user_text, cancellation_token=token,
          images=...)`` (images present only for ``image`` content blocks).
       8. Map the outcome to ``stopReason`` and return
-         ``{"stopReason": ...}``. ``cancel_token`` is cleared and
+         ``{"stopReason": ...}`` — except for a failed model call, which
+         leaves by the error channel instead (``INTERNAL_ERROR``, see
+         :func:`_llm_error_message`). ``cancel_token`` is cleared and
          ``turn_lock`` is released in the ``finally`` block regardless of
          outcome, so a failed turn cannot leave the session stuck.
     """
@@ -363,13 +410,26 @@ def handle_session_prompt(server: "AcpServer", params: Any) -> Dict[str, Any]:
             session_id,
             len(reply) if isinstance(reply, str) else -1,
         )
+        outcome = getattr(session.agent, "last_turn", None)
         stop_reason = _stop_reason_for(
             cancelled=token.is_cancelled,
-            outcome=getattr(session.agent, "last_turn", None),
+            outcome=outcome,
             max_iterations_hit=bool(
                 getattr(_transport, "max_iterations_hit", False)
             ),
         )
+        # After the stop reason, so a cancel still wins: the spec's one MUST
+        # about swallowing errors is that an aborted call be reported as
+        # ``cancelled``, and a provider call torn down by the cancellation can
+        # surface as a failure on the way out.
+        if stop_reason != "cancelled":
+            llm_error = _llm_error_message(outcome)
+            if llm_error is not None:
+                raise JsonRpcHandlerError(
+                    code=INTERNAL_ERROR,
+                    message=llm_error,
+                    data=_LLM_ERROR_DATA,
+                )
     finally:
         session.cancel_token = None
         session.turn_lock.release()
