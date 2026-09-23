@@ -18,7 +18,9 @@ if TYPE_CHECKING:
 from .base import AsyncToolBase, Tool
 from ..capabilities.process import build_child_env
 from ..security.url_policy import (
+    ResponseTooLargeError,
     UrlPolicyError,
+    aread_capped,
     guarded_get_async,
     read_allow_cidrs_setting,
     validate_outbound_url_async,
@@ -172,6 +174,17 @@ _BROWSER_STARTUP_TIMEOUT_S = 30.0
 #: resolution unbounded, which was tolerable only because it blocked its own
 #: thread.
 _HTTP_TIMEOUT_S = 30.0
+#: Whole-fetch ceiling on the httpx path: every hop's resolution, connect and
+#: read, and the body. ``_HTTP_TIMEOUT_S`` is httpx's *per-operation* timeout,
+#: so a server that keeps sending — a byte every few seconds — resets it on each
+#: read and is never cut off by it alone.
+_FETCH_TOTAL_TIMEOUT_S = 60.0
+#: Decoded bytes the httpx and jina paths will hold for one response. The tool
+#: returns at most 10,000 characters, so anything near this is already mostly
+#: discarded; 5 MiB leaves room for a heavy HTML page (a 2.2 MB DOM is the
+#: largest measured below) while keeping a hostile or accidental multi-GB body
+#: — a release asset one redirect behind an auto-allowed domain — out of memory.
+_MAX_BODY_BYTES = 5 * 1024 * 1024
 #: Per-origin budget for the outbound-policy check on an intercepted browser
 #: request. Much tighter than the httpx path's: here the *page* chooses the
 #: hostnames, so a slow-resolving name is an attacker-controlled input rather
@@ -720,7 +733,18 @@ async def _fetch_via_jina(url: str) -> str:
     async with httpx.AsyncClient(
         follow_redirects=True, timeout=_HTTP_TIMEOUT_S
     ) as client:
-        response = await client.get(proxy_url, headers=headers)
+
+        async def _get() -> "httpx.Response":
+            # Streamed and capped like the primary path: the reader's output is
+            # the whole remote document as markdown, and jina does not bound it.
+            response = await client.send(
+                client.build_request("GET", proxy_url, headers=headers),
+                stream=True,
+            )
+            await aread_capped(response, _MAX_BODY_BYTES)
+            return response
+
+        response = await asyncio.wait_for(_get(), timeout=_FETCH_TOTAL_TIMEOUT_S)
         response.raise_for_status()
     return response.text or ""
 
@@ -826,20 +850,27 @@ class WebFetchTool(AsyncToolBase):
             # gate on the original URL; this catches what a string check
             # can't — names that *resolve* to private/loopback addresses and
             # redirects into the internal network.
+            #
+            # The body is read under `_MAX_BODY_BYTES` and the whole chase under
+            # `_FETCH_TOTAL_TIMEOUT_S`; redirect hops are released unread.
             async with httpx.AsyncClient(
                 follow_redirects=False, timeout=_HTTP_TIMEOUT_S
             ) as client:
-                response = await guarded_get_async(
-                    client,
-                    url,
-                    headers=headers,
-                    allow_networks=self._allow_cidrs,
-                    resolve_timeout=_HTTP_TIMEOUT_S,
+                response = await asyncio.wait_for(
+                    guarded_get_async(
+                        client,
+                        url,
+                        headers=headers,
+                        allow_networks=self._allow_cidrs,
+                        resolve_timeout=_HTTP_TIMEOUT_S,
+                        max_body_bytes=_MAX_BODY_BYTES,
+                    ),
+                    timeout=_FETCH_TOTAL_TIMEOUT_S,
                 )
                 response.raise_for_status()
 
-            # Off the loop thread. The body is remote input of unbounded size —
-            # httpx has already read all of it into memory — and decoding it,
+            # Off the loop thread. The body is remote input of up to
+            # `_MAX_BODY_BYTES`, already in memory, and decoding it,
             # parsing it, and walking the tree are all pure-Python CPU work.
             # Measured on a 2.2MB DOM (0.74s to parse): run inline on the loop, a
             # 10ms heartbeat task ticks **0** times; on a worker it ticks 31.
@@ -897,7 +928,14 @@ class WebFetchTool(AsyncToolBase):
             # fallbacks: those would exfiltrate the internal URL through a
             # third party or fetch it via a local headless browser.
             return f"Error: blocked outbound request — {e}"
-        except httpx.TimeoutException:
+        except ResponseTooLargeError as e:
+            # No fallback: both would fetch the same oversized resource again —
+            # jina server-side and back through the same cap, playwright into a
+            # local browser that this limit does not reach.
+            return f"Error: {url} — {e}"
+        except (httpx.TimeoutException, asyncio.TimeoutError):
+            # `asyncio.TimeoutError` is the whole-fetch ceiling; on 3.10 it is
+            # not the builtin `TimeoutError`, and it is not an `httpx.HTTPError`.
             fallback_result, fallback_error = await self._run_fallback(
                 url, reason="httpx timeout", extract_text=extract_text
             )

@@ -15,6 +15,34 @@ _Targeting 0.5.5. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`web_fetch` holds a bounded body, for a bounded time.** The fetch went
+  through `client.get`, which reads the whole response into memory — at every
+  redirect hop, not only the last — and the tool then kept 10,000 characters
+  of it. A localhost server sending 300 MB with no `Content-Length` took the
+  process to 707 MB RSS; after this change the same fetch stops at the limit
+  in 0.1 s at 60 MB. `_HTTP_TIMEOUT_S` is httpx's *per-operation* timeout, so
+  a server that kept sending was never cut off either. It was reachable
+  without a prompt: the default presets auto-allow `.github.com`, and a
+  redirect is re-checked by the SSRF policy, not by the permission rules, so
+  a release-asset link is one hop from a file of any size.
+
+  Now every hop is requested as a stream and a redirect's body is released
+  unread; the final body is read up to **5 MiB decoded** (a declared
+  `Content-Length` over it is refused before any byte, and a compressed body
+  is counted after decoding), and the whole chase has a **60 s** ceiling.
+  An oversized page returns an error and does not fall back — both
+  fallbacks would fetch the same resource again. The Jina fallback reads
+  under the same cap and ceiling. The Playwright fallback is not covered:
+  its page lives in the browser process.
+
+  For hosts: `guarded_get` / `guarded_get_async` take `max_body_bytes=`
+  (default `None`, unbounded as before) and raise the new
+  `agentao.security.ResponseTooLargeError` past it; `read_capped` /
+  `aread_capped` are the shared readers. Both functions now call
+  `client.build_request` + `client.send(stream=True)` instead of
+  `client.get`, so a client stand-in that implements only `get` needs those
+  two; the returned response still has its body loaded.
+
 - **Compaction honours the turn's cancel.** The summarizer called
   `llm_client.chat()` with no cancellation token, so its retry backoff — up to
   60 s a wait since 0.5.4 — ran to the end after the turn was cancelled. That
