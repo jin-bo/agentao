@@ -249,6 +249,20 @@ acceptable but lossy.
 > `max_turn_requests`. `refusal` stays unemitted by design. See
 > `session_prompt.py::_stop_reason_for` and `docs/guides/acp.md`. The analysis
 > below is kept as the record of why.
+>
+> **The one open decision it left is closed in 0.5.4.** `llm_error` mapped to
+> `end_turn` as a stated least-bad choice, with "surfacing it as a JSON-RPC
+> error would be more truthful, but it changes the response shape" left for its
+> own round. That round happened: a failed model call now answers `-32603` with
+> the `[LLM API error: …]` notice as `message` and `data: {"reason":
+> "llm_error"}`. Evidence that settled it — ACP v1's enum is closed and has no
+> such member, and `docs/protocol/v1/error.mdx` is still "Documentation coming
+> soon" (`agentclientprotocol/agent-client-protocol@bf6d1ec`, 2026-09-23), so
+> the spec does not rule on it; gemini-cli draws the same line, turning a stream
+> error into `acp.RequestError` while keeping a stream that merely produced
+> nothing as `end_turn` (`packages/cli/src/acp/acpSession.ts` @ `9450ade79`).
+> `no_output` / `reasoning_only` / `hook_stop` stay on the `end_turn` side for
+> exactly that reason. See `session_prompt.py::_llm_error_message`.
 
 Two layers, not one:
 - **Runtime**: `session_prompt.py:287-291` returns only `end_turn` or `cancelled`.

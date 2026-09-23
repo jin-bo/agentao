@@ -101,7 +101,7 @@ Run one user turn. Returns when the agent stops.
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `stopReason` | `string` | `"end_turn"`, `"max_tokens"`, `"cancelled"`, or other |
+| `stopReason` | `string` | One of ACP v1's five: `"end_turn"`, `"max_tokens"`, `"max_turn_requests"`, `"cancelled"`, `"refusal"` (never emitted). A turn whose model call failed returns a JSON-RPC error instead — `-32603`, `data: {"reason": "llm_error"}`. |
 
 ## C.4 `session/update` ⇠ notification
 

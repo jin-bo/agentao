@@ -199,6 +199,17 @@ schema 拒绝的值。因此实现 G2 意味着：更新 `agentao/acp/schema.py`
 > `cancelled` / `max_tokens` / `max_turn_requests`。`refusal` 按设计不发出。见
 > `session_prompt.py::_stop_reason_for` 与 `docs/guides/acp.md`。下方分析保留为"为什么"
 > 的记录。
+>
+> **它留下的唯一未决项已在 0.5.4 闭合。** 当时 `llm_error` 映射到 `end_turn`，并写明这是
+> "已知的次优解"，而"改为抛 JSON-RPC 错误更诚实，但会改变响应形状"被留作单独一轮。那一轮
+> 已经做了：模型调用失败现在返回 `-32603`，`message` 是 `[LLM API error: …]` 提示，
+> `data: {"reason": "llm_error"}`。定案依据——ACP v1 的枚举是封闭的、没有这样的成员，且
+> `docs/protocol/v1/error.mdx` 至今仍是 "Documentation coming soon"
+> （`agentclientprotocol/agent-client-protocol@bf6d1ec`，2026-09-23），规范并未对此表态；
+> gemini-cli 划的是同一条线：流错误转成 `acp.RequestError`，而仅仅"什么都没产出"的流仍按
+> `end_turn`（`packages/cli/src/acp/acpSession.ts` @ `9450ade79`）。`no_output` /
+> `reasoning_only` / `hook_stop` 正是因此留在 `end_turn` 一侧。见
+> `session_prompt.py::_llm_error_message`。
 
 是两层，不是一层：
 - **运行时**：`session_prompt.py:287-291` 只返回 `end_turn` 或 `cancelled`。代码自己的 TODO

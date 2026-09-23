@@ -177,7 +177,7 @@ In v1, `prompt` array entries may only be `{"type":"text", "text": ...}`.
 }
 ```
 
-`stopReason` values: `end_turn` (normal), `max_tokens`, `cancelled`, `refusal`, `error`, etc.
+`stopReason` values: `end_turn` (normal), `max_tokens`, `max_turn_requests`, `cancelled`, `refusal` — ACP v1's closed five-member enum, so there is no `error` member and no "etc.". A turn whose **model call failed** therefore answers with a JSON-RPC error rather than a result: `-32603`, the `[LLM API error: …]` notice as `message`, and `data: {"reason": "llm_error"}`. `refusal` is accepted by the schema but never emitted — Agentao has no content-refusal detection.
 
 ## Streaming updates `session/update` (notification)
 

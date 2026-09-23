@@ -177,7 +177,7 @@ v1 `prompt` 数组里只能放 `{"type":"text", "text": ...}`。
 }
 ```
 
-`stopReason` 取值：`end_turn`（正常完成）、`max_tokens`、`cancelled`、`refusal`、`error` 等。
+`stopReason` 取值：`end_turn`（正常完成）、`max_tokens`、`max_turn_requests`、`cancelled`、`refusal`——ACP v1 这个五元枚举是封闭的，既没有 `error` 成员，也没有「等」。因此**模型调用失败**的那一轮不会返回 result，而是返回 JSON-RPC 错误：`-32603`、`message` 为 `[LLM API error: …]` 提示、`data: {"reason": "llm_error"}`。`refusal` schema 接受但从不发出——Agentao 没有内容拒答检测。
 
 ## 流式更新 `session/update`（通知）
 
