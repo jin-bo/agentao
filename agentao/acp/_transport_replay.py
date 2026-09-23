@@ -20,6 +20,7 @@ from ._transport_helpers import (
     _todo_write_plan,
     _tool_content_text,
     _tool_kind,
+    proposed_tool_diff,
     write_session_update,
 )
 
@@ -156,6 +157,7 @@ class _ReplayMixin:
         # Reset the per-load set of tool_call_ids that replay as a ``plan``
         # (a session loads once, but clearing keeps a re-load self-consistent).
         self._replay_plan_call_ids.clear()
+        self._replay_diffs.clear()
 
         emitted = 0
         for index, raw in enumerate(messages):
@@ -270,19 +272,25 @@ class _ReplayMixin:
                 self._replay_plan_call_ids.add(tool_call_id)
                 return 1
 
-        self._emit_update(
-            {
-                "sessionUpdate": "tool_call",
-                "toolCallId": tool_call_id,
-                "title": tool_name,
-                "kind": _tool_kind(tool_name),
-                # Replayed tool calls are by definition complete — there
-                # is no live execution to animate, and the matching
-                # ``tool`` message will follow with the result.
-                "status": "completed",
-                "rawInput": _json_safe(args),
-            }
-        )
+        update: Dict[str, Any] = {
+            "sessionUpdate": "tool_call",
+            "toolCallId": tool_call_id,
+            "title": tool_name,
+            "kind": _tool_kind(tool_name),
+            # Replayed tool calls are by definition complete — there
+            # is no live execution to animate, and the matching
+            # ``tool`` message will follow with the result.
+            "status": "completed",
+            "rawInput": _json_safe(args),
+        }
+        # A file edit replays as the diff it showed live, not as a bare
+        # argument dict. Remembered by id, because the result that follows
+        # *replaces* the content collection and has to restate the diff.
+        diff = proposed_tool_diff(self._server, self._session_id, tool_name, args)
+        if diff is not None:
+            update["content"] = [diff]
+            self._replay_diffs[tool_call_id] = diff
+        self._emit_update(update)
         return 1
 
     def _replay_tool_result(self, msg: Dict[str, Any]) -> int:
@@ -304,8 +312,18 @@ class _ReplayMixin:
             "toolCallId": tool_call_id,
             "status": "completed",
         }
+        # ACP replaces the content collection, so the result restates the
+        # call's diff ahead of its own text — sending the text alone would
+        # erase the diff the ``tool_call`` just carried. Popped: each id
+        # answers once.
+        content: List[Dict[str, Any]] = []
+        diff = self._replay_diffs.pop(tool_call_id, None)
+        if diff is not None:
+            content.append(diff)
         if text:
-            update["content"] = [_tool_content_text(text)]
+            content.append(_tool_content_text(text))
+        if content:
+            update["content"] = content
         self._emit_update(update)
         return 1
 

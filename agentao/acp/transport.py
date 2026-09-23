@@ -205,6 +205,10 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
         # during ``session/load`` (see _ReplayMixin), so the matching tool
         # result is skipped — a ``plan`` has no opening ``tool_call`` to close.
         self._replay_plan_call_ids: Set[str] = set()
+        # tool_call_id → the ``diff`` a replayed file edit opened with, held
+        # until its result is replayed so that update can restate it (ACP
+        # replaces the content collection). Cleared per load.
+        self._replay_diffs: Dict[str, Dict[str, Any]] = {}
         # call_id → the ACP ``content`` collection accumulated for an
         # in-flight tool call. ACP replaces the collection on every update
         # rather than extending it, so each update has to restate the whole

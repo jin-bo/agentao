@@ -292,3 +292,70 @@ def test_the_emitted_tool_call_validates_against_the_published_schema(transport)
     _start(t, "replace", {"file_path": "a.py", "old_text": "x", "new_text": "y"})
     for _method, params in server.notifications:
         AcpSessionUpdateParams.model_validate(params)
+
+
+# ---------------------------------------------------------------------------
+# session/load — a reloaded edit looks like the edit it was
+# ---------------------------------------------------------------------------
+
+def _persisted_edit(call_id: str = "call_1", **args: Any) -> List[Dict[str, Any]]:
+    import json
+
+    args = args or {"file_path": "a.py", "old_text": "x = 1", "new_text": "x = 2"}
+    return [
+        {"role": "assistant", "content": "", "tool_calls": [{
+            "id": call_id, "type": "function",
+            "function": {"name": "replace", "arguments": json.dumps(args)},
+        }]},
+        {"role": "tool", "tool_call_id": call_id, "content": "Replaced 1 occurrence(s) in a.py"},
+    ]
+
+
+def test_a_replayed_edit_opens_with_its_diff(transport):
+    t, server, cwd = transport
+    t.replay_history(_persisted_edit())
+    opening = next(u for u in _updates(server) if u["sessionUpdate"] == "tool_call")
+    assert _diffs(opening) == [{
+        "type": "diff", "path": str(cwd / "a.py"),
+        "oldText": "x = 1", "newText": "x = 2",
+    }]
+
+
+def test_the_replayed_result_restates_the_diff_beside_its_text(transport):
+    """Replace semantics again: the result text alone would erase the diff."""
+    t, server, _cwd = transport
+    t.replay_history(_persisted_edit())
+    result = _updates(server)[-1]
+    assert result["sessionUpdate"] == "tool_call_update"
+    assert _diffs(result), "the diff would be wiped by a text-only result"
+    assert result["content"][-1]["content"]["text"].startswith("Replaced 1")
+
+
+def test_a_replayed_whole_file_write_still_gets_no_diff(transport):
+    import json
+
+    t, server, _cwd = transport
+    t.replay_history([
+        {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "w1", "type": "function",
+            "function": {"name": "write_file",
+                         "arguments": json.dumps({"file_path": "a.py", "content": "N"})},
+        }]},
+        {"role": "tool", "tool_call_id": "w1", "content": "Successfully wrote to a.py"},
+    ])
+    assert all(not _diffs(u) for u in _updates(server))
+
+
+def test_replayed_diffs_do_not_outlive_their_load(transport):
+    t, _server, _cwd = transport
+    t.replay_history(_persisted_edit()[:1])      # a call with no result
+    assert t._replay_diffs
+    t.replay_history([])
+    assert t._replay_diffs == {}
+
+
+def test_replayed_updates_validate_against_the_published_schema(transport):
+    t, server, _cwd = transport
+    t.replay_history(_persisted_edit())
+    for _method, params in server.notifications:
+        AcpSessionUpdateParams.model_validate(params)
