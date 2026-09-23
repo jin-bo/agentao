@@ -210,6 +210,18 @@ posture should be *decided and documented*, not left implicit.
 
 ### G2 — `tool_call` updates lack structural fidelity *(local-only: schema + emit, high ROI)*
 
+> **Adjacent defect fixed 2026-09-22 (unreleased, 0.5.4 cycle).** Not one of
+> the three gaps below — found while scoping them, in the same mapping. ACP v1
+> says a `tool_call_update`'s collections are **overwritten, not extended**
+> (`agentclientprotocol/agent-client-protocol@bf6d1ec`,
+> `agent-client-protocol-schema/src/v1/tool_call.rs:167,252,285`), and
+> `transport.py` mapped every streamed `TOOL_OUTPUT` chunk to an update
+> carrying that chunk as the whole collection — so a conformant client kept
+> only the last one, and a failed `run_shell_command` had even that replaced by
+> the bare `Error: …` line. Updates now restate the accumulated collection
+> under a flush threshold and a size cap
+> (`agentao/acp/_tool_call_content.py`). The three gaps below are unchanged.
+
 `transport.py:236-247` emits `tool_call` with `toolCallId`, `title` (= the raw
 tool name), `kind`, `status`, and `rawInput`. Missing, all of which ACP v1
 supports and editor clients render:
