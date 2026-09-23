@@ -101,7 +101,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `stopReason` | `string` | `"end_turn"`、`"max_tokens"`、`"cancelled"` 等 |
+| `stopReason` | `string` | ACP v1 五个取值之一：`"end_turn"`、`"max_tokens"`、`"max_turn_requests"`、`"cancelled"`、`"refusal"`（从不发出）。模型调用失败的那一轮改为返回 JSON-RPC 错误——`-32603`，`data: {"reason": "llm_error"}`。 |
 
 ## C.4 `session/update` ⇠ 通知
 

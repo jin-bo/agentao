@@ -23,6 +23,29 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **ACP: a turn whose model call failed now answers with a JSON-RPC error**
+  instead of `{"stopReason": "end_turn"}` — `-32603`, the turn's own
+  `[LLM API error: …]` notice as `message`, and `data: {"reason": "llm_error"}`
+  so a client can tell it from any other internal error without matching on
+  prose. **This changes the response shape for that case**: a client that read
+  a successful result now sees an error.
+
+  ACP v1's `StopReason` is a closed five-member enum with no "the model call
+  failed" member, and the spec does not rule on the case
+  (`docs/protocol/v1/error.mdx` is still "Documentation coming soon", read at
+  `agentclientprotocol/agent-client-protocol@bf6d1ec`, 2026-09-23). Reporting a
+  provider outage as `end_turn` told the client the turn ended normally — the
+  same turn that makes `agentao run` exit non-zero. `refusal` was never an
+  option: it means the agent declined on content grounds. gemini-cli draws the
+  same line, turning a stream error into `acp.RequestError` while keeping a
+  stream that merely produced nothing as `end_turn`.
+
+  Nothing else moves: `no_output`, `reasoning_only` and `hook_stop` still map
+  to `end_turn`, a cancel still wins over a failure, and the turn lock is
+  released either way so a provider blip cannot wedge the session. This closes
+  the open decision `docs/design/acp-server-conformance-review.md` G3 left in
+  0.4.16.
+
 - Read-only mode now allows `activate_skill` and `todo_write`. Both change only
   the current session (the active-skill set, an in-memory checklist), so a
   read-only session, `agentao run --permission-mode read-only` or a read-only
