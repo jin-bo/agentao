@@ -5,9 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.5.4. Add entries under the relevant heading as work lands._
+## [0.5.4] — 2026-09-23
 
 ### Added
 
@@ -41,7 +39,8 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
   it charged the failed request's own duration to the retries: a request that
   hung until the SDK's read timeout (600 s by default) had spent it by the time
   it failed, and was never retried — which is precisely the failure a retry is
-  for. Retries are now capped by `MAX_RETRY_ATTEMPTS` (5 attempts, 4 retries),
+  for. This supersedes the budget 0.4.3 introduced and its release notes list
+  as a feature. Retries are now capped by `MAX_RETRY_ATTEMPTS` (5 attempts, 4 retries),
   as codex bounds its own.
 
   **The backoff is longer, too: 7.5 → 15 → 30 → 60 s** (was 1.5 → 3 → 6 →
@@ -51,8 +50,8 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
   enough to ride out a gateway restart or a network switch, where the old
   ~25 s was not. The cost is on the short end: even a momentary blip now waits
   7.5 s before its first retry. The worst case, with a long `Retry-After` on
-  every attempt, is four 60 s waits plus the attempts themselves. `MAX_TOTAL_RETRY_SECONDS` is removed from
-  `agentao.llm.client` / `agentao.llm._retry`; a host that patched it has
+  every attempt, is four 60 s waits plus the attempts themselves.
+  `MAX_TOTAL_RETRY_SECONDS` is removed from `agentao.llm.client` / `agentao.llm._retry`; a host that patched it has
   nothing left to patch. Because a single wait can now be a minute,
   `LLMClient.chat()` takes a keyword-only `cancellation_token=` and polls it
   during the backoff, as `chat_stream()` already did — and `chat_stream()`

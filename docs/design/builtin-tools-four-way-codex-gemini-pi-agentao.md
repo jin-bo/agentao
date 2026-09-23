@@ -1,7 +1,7 @@
 # Built-in tools — a four-way comparison: codex · gemini-cli · pi-mono · agentao
 
 > **⚠️ Analysis only, with one exception: finding 3 was decided and implemented on 2026-09-22,
-> targeting 0.5.4 (see the banner in §5).** Nothing else here is authorized for implementation.
+> shipped in 0.5.4 (see the banner in §5).** Nothing else here is authorized for implementation.
 > §1 is a **priority ordering of findings**, not a work schedule. Quote this line whenever you
 > quote the table.
 
@@ -430,7 +430,7 @@ those tools is not a recorded judgment about anything. Treat the context-cost re
 **inference, unmeasured** — the observation that stands is the shape (two harnesses ship a small
 default surface and route general file work through the shell), not a shared motive.
 
-> **⚠️ Decided and implemented (2026-09-22, targeting 0.5.4).** The maintainer made the explicit
+> **⚠️ Decided and implemented (2026-09-22, shipped in 0.5.4).** The maintainer made the explicit
 > decision this finding says was never made. Read-only mode now admits `activate_skill` and
 > `todo_write`: both declare `is_read_only`, which now means "allowed in read-only mode", with
 > no file writes, no commands and no state outside the session. `save_memory` is still denied.

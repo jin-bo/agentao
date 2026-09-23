@@ -210,7 +210,7 @@ posture should be *decided and documented*, not left implicit.
 
 ### G2 — `tool_call` updates lack structural fidelity *(local-only: schema + emit, high ROI)*
 
-> **Adjacent defect fixed 2026-09-22 (unreleased, 0.5.4 cycle).** Not one of
+> **Adjacent defect fixed 2026-09-22, shipped in 0.5.4.** Not one of
 > the three gaps below — found while scoping them, in the same mapping. ACP v1
 > says a `tool_call_update`'s collections are **overwritten, not extended**
 > (`agentclientprotocol/agent-client-protocol@bf6d1ec`,
@@ -222,7 +222,7 @@ posture should be *decided and documented*, not left implicit.
 > under a flush threshold and a size cap
 > (`agentao/acp/_tool_call_content.py`). The three gaps below are unchanged.
 >
-> **`diff` half RESOLVED 2026-09-22 (unreleased, 0.5.4 cycle).** `replace` and
+> **`diff` half RESOLVED 2026-09-22, shipped in 0.5.4.** `replace` and
 > an appending `write_file` now open their `tool_call` — and the matching
 > `session/request_permission` — with a `diff` content entry. The frozen
 > contract was widened first: `AcpToolCallContentEntry` became a discriminated
