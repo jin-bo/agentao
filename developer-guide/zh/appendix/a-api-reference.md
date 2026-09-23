@@ -335,7 +335,7 @@ mgr = MemoryManager(
 | `delete(id)` / `delete_by_title(title)` | 软删除 |
 | `clear(scope=?)` | 整个作用域软删除 |
 | `save_session_summary(...)` / `get_recent_session_summaries(...)` | 压缩流水线用 |
-| `archive_session() / clear_session()` | 会话末尾清理 |
+| `archive_session(session_id=None) / clear_session()` | 会话末尾清理。给 `archive_session` 传会话自己的 id——摘要按它写入，跨会话尾部也只排除它，所以恢复的会话必须沿用自己的 id；不传参数得到一个新的随机 id |
 | `clear_all_session_summaries()` | 清掉所有会话的所有摘要 |
 | `wipe_all()` | 硬清除：两个作用域的记忆（**软**删除，行仍留在库文件里）+ 所有会话摘要。永不抛异常，返回 `MemoryWipeResult`，成功信号是 `ok`。**不清** review queue |
 | `get_stable_entries(...)` | 注入 `<memory-stable>` 系统提示块 |

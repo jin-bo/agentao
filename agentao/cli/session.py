@@ -27,8 +27,11 @@ def on_session_start(cli: AgentaoCLI, *, source: str = "startup") -> None:
     cli.agent._session_id = cli.current_session_id
     cli.agent.tool_runner._session_id = cli.current_session_id
 
+    # Keyed by the conversation id, so a launch-time ``--resume`` (which set
+    # ``current_session_id`` to the loaded session's) adopts the id that
+    # session's summaries were written under. See ``archive_session``.
     try:
-        cli.agent.memory_manager.archive_session()
+        cli.agent.memory_manager.archive_session(cli.current_session_id)
     except Exception:
         pass
 

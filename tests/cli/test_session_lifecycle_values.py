@@ -151,9 +151,11 @@ class _StubToolRunner:
 class _StubMemoryManager:
     def __init__(self):
         self.archived = 0
+        self.archived_ids: list = []
 
-    def archive_session(self):
+    def archive_session(self, session_id=None):
         self.archived += 1
+        self.archived_ids.append(session_id)
 
 
 class _ResumeAgent:
@@ -417,6 +419,8 @@ def test_interactive_resume_archives_the_outgoing_memory_session(resumable):
     cli, _ = resumable
     resume_session(cli)
     assert cli.agent.memory_manager.archived == 1
+    # Under the resumed id — the one its own summaries were written under.
+    assert cli.agent.memory_manager.archived_ids == [cli.current_session_id]
 
 
 def test_a_startup_resume_leaves_the_memory_archive_to_run_loop(resumable):

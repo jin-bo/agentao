@@ -247,9 +247,11 @@ def resume_session(
         # archive here, the hook dispatch last. **The archive is not optional
         # bookkeeping**: it advances ``MemoryManager._session_id``, and without
         # it the abandoned conversation's session summaries stay bound to the
-        # resumed one and keep being injected into its prompts.
+        # resumed one and keep being injected into its prompts. It adopts the
+        # resumed id, so the resumed conversation's *own* summaries — already
+        # in the loaded history — are not read back as an earlier session's.
         try:
-            cli.agent.memory_manager.archive_session()
+            cli.agent.memory_manager.archive_session(cli.current_session_id)
         except Exception:
             pass
         from ..session import _dispatch_session_start_hooks

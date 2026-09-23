@@ -350,6 +350,18 @@ def _instantiate_loaded_session(
                 origin,
                 session_id,
             )
+        # The memory session too: summaries are written and excluded from the
+        # cross-session tail by this id, so a loaded session keyed by the
+        # manager's construction-time random id would read its own summaries
+        # back as an earlier session's. See ``MemoryManager.archive_session``.
+        try:
+            agent.memory_manager.archive_session(session_id)
+        except Exception:
+            logger.exception(
+                "acp: %s could not bind memory session id %s",
+                origin,
+                session_id,
+            )
 
         # Hydrate runtime BEFORE replay so subsequent prompts see the
         # full historical context. We assign through the public

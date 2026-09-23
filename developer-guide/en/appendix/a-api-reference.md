@@ -339,7 +339,7 @@ mgr = MemoryManager(
 | `delete(id)` / `delete_by_title(title)` | Soft delete |
 | `clear(scope=?)` | Soft-delete all in scope |
 | `save_session_summary(...)` / `get_recent_session_summaries(...)` | Used by the compaction pipeline |
-| `archive_session() / clear_session()` | End-of-session house-keeping |
+| `archive_session(session_id=None) / clear_session()` | End-of-session house-keeping. Pass the conversation's id to `archive_session` — summaries are written under it and the cross-session tail excludes only it, so a resumed session must adopt its own id; no argument gives a fresh random id |
 | `clear_all_session_summaries()` | Drop every session summary across all sessions |
 | `wipe_all()` | Hard reset: memories (both scopes, **soft** delete — rows stay in the file) + every session summary. Never raises — returns a `MemoryWipeResult` whose `ok` is the success signal. Does **not** clear the review queue |
 | `get_stable_entries(...)` | Render into `<memory-stable>` system-prompt block |

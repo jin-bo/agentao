@@ -61,6 +61,25 @@ _Targeting 0.5.5. Add entries under the relevant heading as work lands._
   returns `[Interrupted by user]`, which the `/goal` loop reads as a pause.
   In markdown mode the CLI renders the kept text before that notice.
 
+- **A resumed conversation no longer reads its own summaries back as an
+  earlier session's.** Session summaries are written under
+  `MemoryManager._session_id`, and the cross-session tail injects every
+  summary *not* under that id into `<memory-stable>` as a previous session.
+  The id was random per manager and per `archive_session()`, unrelated to
+  the conversation's, so after `--resume`, `/sessions resume` or ACP
+  `session/load` the conversation's own summaries came back through the tail
+  while the same text was already in history as `[Conversation Summary]`.
+
+  `archive_session(session_id=None)` now takes the conversation id, and every
+  path that has one passes it: the CLI's `on_session_start` (which a
+  launch-time `--resume` goes through) and `/sessions resume`, and ACP
+  `session/new` and `session/load`. Summaries are written under the id a
+  later resume will adopt. Summaries written before this change stay under
+  their random ids, so resuming one of those older sessions still shows the
+  duplicate. A host that resumes sessions itself calls
+  `agent.memory_manager.archive_session(session_id)`; anything but a
+  non-empty string still gives a fresh random id.
+
 - **Compaction honours the turn's cancel.** The summarizer called
   `llm_client.chat()` with no cancellation token, so its retry backoff — up to
   60 s a wait since 0.5.4 — ran to the end after the turn was cancelled. That
