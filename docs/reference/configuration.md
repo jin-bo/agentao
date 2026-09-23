@@ -145,7 +145,7 @@ See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each
 - **Provenance.** A file that loads successfully contributes a `loaded_sources` label (`user:<path>`) returned from `PermissionEngine.active_permissions()` and `Agentao.active_permissions()` — see [`docs/reference/host-api.md`](host-api.md).
 - **Public getter.** `PermissionEngine.active_permissions()` returns a cached, JSON-safe `ActivePermissions` snapshot (`mode`, `rules`, `loaded_sources`). Hosts that layer policy on top can call `add_loaded_source("injected:<name>")` so the snapshot reflects their provenance. The cache is invalidated on `set_mode()` and `add_loaded_source()`.
 - **Evaluation order.**
-  - Modes `read-only` / `workspace-write`: `[user rules] → [active mode preset rules]` (first match wins).
+  - Modes `read-only` / `workspace-write`: `[user rules] → [active mode preset rules]` (first match wins). In `read-only` this order applies only to the tools read-only mode admits: any other tool is denied before a rule is consulted, so no rule can allow it.
   - Modes `full-access` / `plan`: `[active mode preset rules] → [user rules]` — presets cannot be overridden.
   - No match → `decide()` returns `None`; the runner falls back to the tool's own `requires_confirmation` attribute.
 

@@ -122,8 +122,11 @@ class _BaseTool(ABC):
         outside the current session: the readers (read_file, glob,
         search_file_content, etc.), and tools whose only effect is session
         state (activate_skill, todo_write). A tool that persists anything,
-        such as save_memory's SQLite write, stays False. Read-only mode
-        denies every tool that returns False.
+        such as save_memory's SQLite write, stays False. The one deliberate
+        exception is update_goal, which the CLI's /goal loop injects: it
+        writes the goal record (.agentao/goal.json), a status signal the
+        host owns, never the user's files. Read-only mode denies every tool
+        that returns False, before any permission rule is consulted.
         """
         return False
 

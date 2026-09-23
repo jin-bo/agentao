@@ -134,8 +134,10 @@ class ToolRunner:
         sub-agent's engine snapshot) got the empty preset alone, so writes
         and shell fell through to ASK and ``save_memory`` ran.
         """
-        # Never raises: ``_apply_updated_input`` calls this inside the try whose
-        # except denies the call, so an error here would pass for a failed
+        # ``getattr`` absorbs a planner or engine without the attribute; an
+        # engine whose ``active_mode`` raises anything else propagates.
+        # ``_apply_updated_input`` calls this inside the try whose except
+        # denies the call, so such an error there reads as a failed
         # re-decision. ``is`` against the member, so only a real READ_ONLY
         # turns the gate on.
         engine = getattr(self._planner, "_permission_engine", None)
@@ -193,7 +195,12 @@ class ToolRunner:
         # --- Phase 1: Planning (sequential, no I/O) ---
         # Doom-loop detection, JSON parse, tool lookup, and the
         # permission decision are all delegated to ToolCallPlanner.
-        planning = self._planner.plan(tool_calls, readonly_mode=self._readonly_active())
+        # Read once for the batch: phase 3 labels a denial "[Readonly mode]"
+        # from this value, and a mode switch during phase 2 (the CLI's "allow
+        # all" answer, a host thread calling ``set_mode``) must not make that
+        # label disagree with the reason phase 1 recorded.
+        readonly = self._readonly_active()
+        planning = self._planner.plan(tool_calls, readonly_mode=readonly)
         result_messages.extend(planning.early_messages)
 
         if planning.doom_loop_triggered:
@@ -283,7 +290,7 @@ class ToolRunner:
         _exec_results = self._executor.execute_batch(
             _plans,
             cancellation_token=cancellation_token,
-            readonly_mode=self._readonly_active(),
+            readonly_mode=readonly,
             hook_rules=self._plugin_hook_rules,
             hook_cwd=self._working_directory,
             hook_session_id=self._session_id,

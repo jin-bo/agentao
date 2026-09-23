@@ -25,8 +25,11 @@ import pytest
 from agentao import Agentao
 from agentao.acp import session_set_mode as acp_set_mode
 from agentao.acp.models import AcpSessionState
+from agentao.agents.tools import AgentToolWrapper
 from agentao.permissions import PermissionEngine, PermissionMode
 from agentao.skills import manager as skills_manager
+from agentao.tools.base import Tool
+from agentao.transport import SdkTransport
 
 from .support.acp_server import make_initialized_server
 
@@ -44,15 +47,19 @@ def agent(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     (tmp_path / "notes.txt").write_text("original\n", encoding="utf-8")
-    logger = logging.getLogger("test.read_only_mode_gate")
-    agent = Agentao(
-        api_key="k", base_url="https://test.local/v1", model="m",
-        working_directory=tmp_path,
-        logger=logger,
-        permission_engine=PermissionEngine(project_root=tmp_path),
-    )
+    agent = _build(tmp_path)
     yield agent
     agent.close()
+
+
+def _build(tmp_path, *, rules=None, **kwargs):
+    return Agentao(
+        api_key="k", base_url="https://test.local/v1", model="m",
+        working_directory=tmp_path,
+        logger=logging.getLogger("test.read_only_mode_gate"),
+        permission_engine=PermissionEngine(project_root=tmp_path, rules=rules),
+        **kwargs,
+    )
 
 
 def _enter_cli(agent):
@@ -121,6 +128,8 @@ def test_read_only_mode_holds_however_it_was_entered(agent, tmp_path, enter):
         assert results[name].startswith(_BLOCKED), (name, results[name])
     assert not (tmp_path / "new.txt").exists()
     assert notes.read_text(encoding="utf-8") == "original\n"
+    # The store itself, not only the message: before the fix this row landed.
+    assert agent._memory_manager.get_all_entries() == []
 
     for name in ("read_file", "todo_write", "activate_skill"):
         assert _BLOCKED not in results[name], (name, results[name])
@@ -147,3 +156,88 @@ def test_which_built_ins_read_only_mode_admits(agent):
     assert tools["todo_write"].is_read_only is True
     # A SQLite write outlives the session, so it stays out.
     assert tools["save_memory"].is_read_only is False
+
+
+class _HostTool(Tool):
+    """A host business tool, like ``examples/ticket-automation``'s ``draft_reply``."""
+
+    def __init__(self, name, *, read_only=False, confirm=False):
+        super().__init__()
+        self._name, self._read_only, self._confirm = name, read_only, confirm
+        self.calls = 0
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def description(self):
+        return "host tool"
+
+    @property
+    def parameters(self):
+        return {"type": "object", "properties": {}}
+
+    @property
+    def is_read_only(self):
+        return self._read_only
+
+    @property
+    def requires_confirmation(self):
+        return self._confirm
+
+    def execute(self, **kwargs):
+        self.calls += 1
+        return "ran"
+
+
+def test_no_rule_can_allow_a_host_tool_that_is_not_read_only(tmp_path):
+    # The behaviour change hosts on the engine-only path meet: the gate runs
+    # before the engine, so an explicit ``allow`` no longer reaches the tool.
+    agent = _build(tmp_path, rules=[{"tool": "draft_reply", "action": "allow"}])
+    try:
+        tool = _HostTool("draft_reply")
+        agent.tools.register(tool)
+        _enter_engine_only(agent)
+        results = _run(agent, [("draft_reply", {})])
+        assert results["draft_reply"].startswith(_BLOCKED)
+        assert tool.calls == 0
+    finally:
+        agent.close()
+
+
+def test_a_mode_switch_while_confirming_keeps_the_read_only_label(tmp_path):
+    # Phase 2 can change the mode (the CLI's "allow all" answer does); a call
+    # phase 1 denied for read-only must still say so in phase 3.
+    def confirm(*_):
+        agent.permission_engine.set_mode(PermissionMode.FULL_ACCESS)
+        return True
+
+    agent = _build(tmp_path, transport=SdkTransport(confirm_tool=confirm))
+    try:
+        asker = _HostTool("lookup", read_only=True, confirm=True)
+        agent.tools.register(asker)
+        _enter_engine_only(agent)
+        results = _run(agent, [
+            ("lookup", {}),
+            ("write_file", {"file_path": str(tmp_path / "new.txt"), "content": "x"}),
+        ])
+        assert asker.calls == 1
+        assert results["write_file"].startswith(_BLOCKED), results["write_file"]
+        assert not (tmp_path / "new.txt").exists()
+    finally:
+        agent.close()
+
+
+def test_a_sub_agent_spawned_from_engine_only_read_only_gets_the_flag(tmp_path):
+    agent = _build(tmp_path, enable_builtin_agents=True)
+    try:
+        wrappers = [
+            t for t in agent.tools.tools.values() if isinstance(t, AgentToolWrapper)
+        ]
+        assert wrappers, "expected at least one built-in agent tool"
+        assert not any(w._readonly_mode_getter() for w in wrappers)
+        _enter_engine_only(agent)
+        assert all(w._readonly_mode_getter() is True for w in wrappers)
+    finally:
+        agent.close()

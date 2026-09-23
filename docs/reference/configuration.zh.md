@@ -131,7 +131,7 @@
 - **来源标记。** 成功加载的文件会贡献 `loaded_sources` 标签（`user:<path>`），由 `PermissionEngine.active_permissions()` 与 `Agentao.active_permissions()` 暴露 —— 详见 [`docs/reference/host-api.md`](host-api.md)。
 - **公共 getter。** `PermissionEngine.active_permissions()` 返回一个缓存的、JSON 安全的 `ActivePermissions` 快照（`mode`、`rules`、`loaded_sources`）。叠加策略的宿主可调用 `add_loaded_source("injected:<name>")` 让快照反映其 provenance。`set_mode()` 与 `add_loaded_source()` 会使缓存失效。
 - **求值顺序。**
-  - `read-only` / `workspace-write` 模式：`[用户规则] → [当前 mode 的 preset 规则]`，首个命中胜出。
+  - `read-only` / `workspace-write` 模式：`[用户规则] → [当前 mode 的 preset 规则]`，首个命中胜出。在 `read-only` 下，这个顺序只作用于只读模式放行的工具：其他工具在查任何规则之前就被拒绝，因此没有规则能放行它们。
   - `full-access` / `plan` 模式：`[当前 mode 的 preset 规则] → [用户规则]`——preset 不可被覆盖。
   - 没有命中 → `decide()` 返回 `None`；runner 退回到工具自身的 `requires_confirmation` 属性。
 

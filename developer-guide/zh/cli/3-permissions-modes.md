@@ -8,7 +8,7 @@ Agentao 共有四种权限模式。三种用户可切；第四种 (`plan`) 由 `
 
 | 模式 | 写 & shell | 网络 | 确认 UI |
 |---|---|---|---|
-| `read-only` | **拒绝** | 拒绝 | 不出现 — 直接拒 |
+| `read-only` | **拒绝** | 问 | 只对网络调用弹 — 写和 shell 直接拒 |
 | `workspace-write` | 安全操作放行 | **按域名问** | 风险操作时弹 |
 | `full-access` | 放行 | 放行 | **永不弹** |
 | `plan` | 拒绝 | 拒绝 | （只读研究模式，见第 4 章） |
@@ -38,15 +38,20 @@ plan 模式激活时不能 `/mode` — 先 `/plan implement` 或 `/plan clear` �
 
 ### `read-only`
 
-不问直接拒：
+不问直接拒（在查任何权限规则之前，所以没有规则能放行它们）：
 
 - `write_file`、`replace` — 任何文件改动
 - `run_shell_command` — 任何命令，包括只读的
-- `web_fetch`、`web_search` — 任何网络
+- `save_memory` — 它写 SQLite，会话结束后仍然存在
 
 不问直接放：
 
 - `read_file`、`list_directory`、`glob`、`search_file_content` — 被动读
+- `activate_skill`、`todo_write` — 只改本会话的状态（已激活的技能、任务清单）
+
+先问再执行：
+
+- `web_fetch`、`web_search` — 只读模式放行它们，而只读 preset 为空，于是交给它们自己的确认设置
 
 什么时候用：让 agent 调查、解释，**绝不**改东西。代码评审、审计、"这个 codebase 在干嘛"的导览。
 

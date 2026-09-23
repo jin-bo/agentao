@@ -20,6 +20,8 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
   it writes SQLite and outlives the session. Plan mode is unchanged and still
   denies `todo_write` through its own rule. `Tool.is_read_only` now reads "allowed
   in read-only mode": no file writes, no commands, no state outside the session.
+  The CLI's injected `update_goal` is the one deliberate exception: it writes the
+  goal record (`.agentao/goal.json`), never the user's files.
 
 ### Fixed
 
@@ -31,6 +33,17 @@ _Targeting 0.5.4. Add entries under the relevant heading as work lands._
   through to ASK, which the default transport approves, and `save_memory` ran
   without asking. Only the CLI and `agentao run`, which also set the runner's
   flag, blocked them. The runner now reads the engine's mode too.
+  **Hosts that set read-only through the engine, check your own tools.** Read-only
+  mode denies every tool whose `is_read_only` is `False` *before* the engine is
+  consulted, as the CLI always did: a `rules=` `allow`, a custom engine's
+  decision, or an ASK the transport would approve no longer runs one. A host
+  that used engine-only read-only to block the built-in writes and shell while
+  still running its own business tools (`examples/ticket-automation`'s
+  `draft_reply` / `send_reply`, `examples/saas-assistant`'s `create_task`) now
+  gets every such call denied. Use `workspace-write` with `deny` rules for
+  `write_file`, `replace` and `run_shell_command` instead (user rules are
+  evaluated before that preset), or declare `is_read_only` only on a tool with
+  no effect outside the session.
 
 ---
 
