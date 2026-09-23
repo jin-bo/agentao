@@ -151,11 +151,18 @@ def confirm_tool_execution(cli: AgentaoCLI, tool_name: str, tool_description: st
                     return True
                 elif key == "2":
                     from ..permissions import PermissionMode
+                    from ..runtime.permission_mode import apply_permission_mode
                     cli.allow_all_tools = True
                     cli.current_mode = PermissionMode.FULL_ACCESS
-                    cli.permission_engine.set_mode(PermissionMode.FULL_ACCESS)
+                    # Deliberately not ``_apply_mode``: that resets
+                    # ``allow_all_tools`` and persists the mode, and this
+                    # grant is for the session only. Still goes through the
+                    # helper, so an escalation to full-access is recorded.
+                    apply_permission_mode(
+                        cli.agent, PermissionMode.FULL_ACCESS,
+                        cause="cli-allow-all",
+                    )
                     cli.readonly_mode = False
-                    cli._apply_readonly_mode()
                     console.print("\n[green]✓ Executing tool (full-access mode enabled for this session)[/green]")
                     return True
                 elif key == "3":

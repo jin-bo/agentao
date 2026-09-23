@@ -625,16 +625,22 @@ def _run_pipeline(
     except AttributeError:  # pragma: no cover - test stubs without the attr
         pass
 
-    # Permission mode + read-only flag, kept in step as the CLI keeps them.
-    # The engine's ``read-only`` preset is empty by design; the runner's
-    # gate (``ToolRunner.readonly_active``) enforces read-only from either
-    # the flag or the engine's mode. The flag is what emits
-    # ``READONLY_MODE_CHANGED`` for replay.
+    # Permission mode + read-only flag, through the one helper the CLI's
+    # ``/mode`` and ACP ``session/set_mode`` also use. The engine's
+    # ``read-only`` preset is empty by design; the runner's gate
+    # (``ToolRunner.readonly_active``) enforces read-only from either the
+    # flag or the engine's mode, and the helper emits both replay events —
+    # here the run's posture differs from the engine's ``workspace-write``
+    # default, so ``--permission-mode`` lands in the replay file as a
+    # transition with ``cause="run"``.
     if agent.permission_engine is not None:
-        agent.permission_engine.set_mode(permission_mode)
-    agent.tool_runner.set_readonly_mode(
-        permission_mode == PermissionMode.READ_ONLY,
-    )
+        from ..runtime.permission_mode import apply_permission_mode
+
+        apply_permission_mode(agent, permission_mode, cause="run")
+    else:
+        agent.tool_runner.set_readonly_mode(
+            permission_mode == PermissionMode.READ_ONLY,
+        )
 
     if agent.permission_engine is not None:
         engine_allow, engine_deny = _spec_engine_rules(spec)

@@ -442,28 +442,18 @@ class AgentaoCLI:
             pass
 
     def _apply_mode(self, mode) -> None:
-        previous_mode = self.permission_engine.active_mode
-        self.current_mode = mode
-        self.permission_engine.set_mode(mode)
         from ..permissions import PermissionMode
+        from ..runtime.permission_mode import apply_permission_mode
+
+        self.current_mode = mode
+        # Owns the engine's preset, the runner's read-only flag, and the
+        # ``READONLY_MODE_CHANGED`` / ``PERMISSION_MODE_CHANGED`` replay
+        # events — shared with ACP ``session/set_mode`` and ``agentao run``.
+        apply_permission_mode(self.agent, mode, cause="cli")
+        # The CLI's own mirror of the flag, read by the status toolbar.
         self.readonly_mode = (mode == PermissionMode.READ_ONLY)
-        self._apply_readonly_mode()
         self.allow_all_tools = False
         self._save_settings()
-        # Step 6 replay event — surface the user-visible mode transition.
-        if previous_mode != mode:
-            try:
-                from ..transport import AgentEvent, EventType
-                self.agent.transport.emit(AgentEvent(
-                    EventType.PERMISSION_MODE_CHANGED,
-                    {
-                        "previous": getattr(previous_mode, "value", str(previous_mode)),
-                        "current": getattr(mode, "value", str(mode)),
-                        "cause": "cli",
-                    },
-                ))
-            except Exception:
-                pass
 
     # ── ACP inbox flush (delegated) ─────────────────────────────────────
 

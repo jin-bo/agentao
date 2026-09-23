@@ -9,8 +9,10 @@ preset. This handler therefore:
     :class:`~agentao.permissions.PermissionMode` (e.g. DeepChat's ``code`` /
     ``ask``) is persisted on the session and echoed back, *without* changing
     permission posture, rather than being rejected;
-  - maps to a permission preset **only on an exact match**, calling
-    ``permission_engine.set_mode(...)``.
+  - maps to a permission preset **only on an exact match**, applying it
+    through :func:`~agentao.runtime.permission_mode.apply_permission_mode`
+    (both of read-only's switches, plus the replay events) rather than
+    ``permission_engine.set_mode`` alone.
 
 ``availableModes`` / ``currentModeId`` (on ``session/new``, see
 ``session_new.py``) and the ``current_mode_update`` notification
@@ -31,6 +33,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from agentao.permissions import PermissionMode
+from agentao.runtime.permission_mode import apply_permission_mode
 
 from ._handler_utils import hold_idle_turn_lock, require_active_session
 from ._transport_helpers import write_session_update
@@ -63,11 +66,13 @@ def _emit_current_mode_update(
     """Emit a ``current_mode_update`` session/update for the mode change.
 
     ACP communicates a mode change via this notification — the standard
-    ``session/set_mode`` response is empty. Nothing else on the ACP path
-    emits it: ``PermissionEngine.set_mode`` is silent and the
-    ``PERMISSION_MODE_CHANGED`` event is CLI-only, so the handler must emit
-    here. ``mode_id`` is echoed verbatim, including non-preset UI modeIds
-    (e.g. DeepChat's ``code``/``ask``) that are not in ``availableModes``.
+    ``session/set_mode`` response is empty, and ``PermissionEngine.set_mode``
+    is silent, so the handler must emit here. This is the **client**-facing
+    half and is not interchangeable with the ``PERMISSION_MODE_CHANGED``
+    agent event that ``apply_permission_mode`` emits for replay: this one
+    fires for every accepted ``modeId``, including a non-preset UI mode that
+    changes no posture, and ``mode_id`` is echoed verbatim (e.g. DeepChat's
+    ``code``/``ask``, which are not in ``availableModes``).
 
     Best-effort: a notification failure must not fail the set_mode request.
     """
@@ -104,7 +109,11 @@ def handle_session_set_mode(server: "AcpServer", params: Any) -> Dict[str, Any]:
                         f"to apply modeId {mode_id!r}"
                     ),
                 )
-            session.agent.permission_engine.set_mode(preset)
+            # Shared with the CLI's ``/mode`` and ``agentao run`` so this
+            # path cannot drift back to setting one switch: it moves the
+            # engine's preset *and* the runner's read-only flag, and emits
+            # the agent events that put the transition in the replay file.
+            apply_permission_mode(session.agent, preset, cause="acp")
         else:
             logger.info(
                 "acp: session %s set non-preset modeId %r (permission posture "

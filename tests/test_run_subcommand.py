@@ -182,6 +182,55 @@ def test_json_spec_loads(monkeypatch, tmp_path, stub_pipeline, capsys):
     assert captured["chat_prompt"] == "via json"
 
 
+def test_permission_mode_lands_in_the_replay_timeline(
+    monkeypatch, tmp_path, stub_pipeline, capsys,
+):
+    """``--permission-mode`` is a transition off the engine's default.
+
+    The stub agent elsewhere in this file has ``permission_engine=None``,
+    which is the fallback branch. With a real engine the run goes through
+    ``runtime/permission_mode.py::apply_permission_mode``, the same helper
+    ``/mode`` and ACP ``session/set_mode`` use, so a replay of the run says
+    which posture it ran under instead of only showing the denials.
+    """
+    captured, StubAgent = stub_pipeline
+    from agentao.permissions import PermissionEngine, PermissionMode
+    from agentao.transport import EventType
+
+    events: list = []
+
+    def _factory(**kwargs):
+        agent = StubAgent(**kwargs)
+        agent.permission_engine = PermissionEngine(project_root=tmp_path)
+        agent.tool_runner = type(
+            "TR", (),
+            {"set_readonly_mode": lambda self_, enabled: captured.__setitem__(
+                "readonly_flag", enabled,
+            )},
+        )()
+        real_emit = agent.transport.emit
+        agent.transport.emit = lambda event: (
+            events.append(event), real_emit(event),
+        )[1]
+        return agent
+
+    monkeypatch.setattr("agentao.embedding.build_from_environment", _factory)
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    args = _build_args(prompt="hi", permission_mode="read-only",
+                       output_format="text")
+    assert run._execute_with_args(args) == 0
+
+    agent = captured["agent"]
+    assert agent.permission_engine.active_mode is PermissionMode.READ_ONLY
+    assert captured["readonly_flag"] is True
+    modes = [e for e in events if e.type is EventType.PERMISSION_MODE_CHANGED]
+    assert [e.data for e in modes] == [
+        {"previous": "workspace-write", "current": "read-only", "cause": "run"},
+    ]
+
+
 def test_invalid_yaml_exits_2(monkeypatch, tmp_path, stub_pipeline, capsys):
     spec_path = tmp_path / "task.yaml"
     spec_path.write_text("prompt: [unterminated\n", encoding="utf-8")

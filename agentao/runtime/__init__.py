@@ -14,12 +14,14 @@ preserved for external users of the library.
 from .chat_loop import ChatLoopRunner
 from .llm_call import run_llm_call
 from .model import list_available_models, set_model, set_provider
+from .permission_mode import apply_permission_mode
 from .tool_runner import ToolRunner
 from .turn import run_turn
 
 __all__ = [
     "ChatLoopRunner",
     "ToolRunner",
+    "apply_permission_mode",
     "list_available_models",
     "set_model",
     "set_provider",
