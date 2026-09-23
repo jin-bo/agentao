@@ -48,10 +48,20 @@ If no rule matches (`decide()` returns `None`), the agent falls back to the tool
 ```python
 from agentao.permissions import PermissionMode
 
-agent.permission_engine.set_mode(PermissionMode.READ_ONLY)
+agent.set_permission_mode(PermissionMode.READ_ONLY)
 ```
 
 Switchable at runtime — takes effect on the next tool call.
+
+Prefer this over `agent.permission_engine.set_mode(...)`, which is only
+half the switch. `read-only` has **two** of them — the engine's preset and
+`ToolRunner.readonly_mode` — and the engine holds no transport, so a bare
+`set_mode` also emits neither `READONLY_MODE_CHANGED` nor
+`PERMISSION_MODE_CHANGED`, leaving a replay file with the resulting denials
+and nothing saying when the posture changed. `set_permission_mode` moves
+both switches, emits both events (tagged `cause="host"`, or `"cli"` /
+`"cli-allow-all"` / `"cli-plan-implement"` / `"acp"` / `"run"` from those
+entry points), and returns the mode that was active before.
 
 ## Rule JSON format
 

@@ -48,10 +48,18 @@ class PermissionDecision(Enum):
 ```python
 from agentao.permissions import PermissionMode
 
-agent.permission_engine.set_mode(PermissionMode.READ_ONLY)
+agent.set_permission_mode(PermissionMode.READ_ONLY)
 ```
 
 运行时可随时切换——下一次工具调用就生效。
+
+优先用它，而不是 `agent.permission_engine.set_mode(...)`——后者只切了一半。
+`read-only` 有**两个**开关：引擎的预设和 `ToolRunner.readonly_mode`；而引擎按设计
+不持有 transport，所以裸调 `set_mode` 既不发 `READONLY_MODE_CHANGED` 也不发
+`PERMISSION_MODE_CHANGED`，回放文件里只剩下由此产生的拒绝，没有任何一条说明姿态是
+什么时候变的。`set_permission_mode` 会同时拨动两个开关、发出两个事件（标记
+`cause="host"`，从其他入口进来则是 `"cli"` / `"cli-allow-all"` /
+`"cli-plan-implement"` / `"acp"` / `"run"`），并返回切换前的模式。
 
 ## 规则 JSON 格式
 
