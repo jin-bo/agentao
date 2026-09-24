@@ -190,6 +190,7 @@ jobs:
           tests/test_powershell_discovery.py tests/test_powershell_launch.py
           tests/test_powershell_floor.py tests/test_powershell_output.py
           tests/test_powershell_lowering.py tests/test_windows_launch_matrix.py
+          tests/test_shell_output_bound.py
 
       # In parallel (pytest-xdist), because this job is the one the whole run
       # waits for: the suite spends most of its time waiting on subprocesses

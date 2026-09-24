@@ -247,7 +247,9 @@ class ShellExecutor(Protocol):
     def run_background(self, request: ShellRequest) -> BackgroundHandle: ...
 ```
 
-Frozen dataclasses: `FileEntry(name, is_dir, is_file, size)`, `FileStat(size, mtime, is_dir, is_file)`, `ShellRequest(launch, timeout, on_chunk)`, `ShellResult(returncode, stdout, stderr, timed_out)`, `BackgroundHandle(pid, pgid, command, cwd)`.
+Frozen dataclasses: `FileEntry(name, is_dir, is_file, size)`, `FileStat(size, mtime, is_dir, is_file)`, `ShellRequest(launch, timeout, on_chunk)`, `ShellResult(returncode, stdout, stderr, timed_out, stdout_omitted_bytes, stderr_omitted_bytes, stdout_omitted_at, stderr_omitted_at)`, `BackgroundHandle(pid, pgid, command, cwd)`.
+
+`ShellResult.stdout_omitted_bytes` / `stderr_omitted_bytes` (default `0`) count the bytes of a stream that were not kept, and `stdout_omitted_at` / `stderr_omitted_at` (default `0`) give the byte offset in `stdout` / `stderr` where they were — `0` meaning the front, so a tail-only executor sets only the count. `LocalShellExecutor` keeps the first and last 512 KiB of each stream; a custom executor that keeps everything leaves all four at `0`.
 
 **A `ShellRequest` carries a launch, not a command** (changed in 0.4.22; it used to hold `command`, `cwd` and `env` directly). `request.launch` is one of two shapes, and an executor picks them apart with `isinstance`:
 

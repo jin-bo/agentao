@@ -15,6 +15,43 @@ _Targeting 0.5.5. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A shell command's output is held as a bounded head and tail, not whole,
+  and the model sees both ends.** `LocalShellExecutor.run` kept every byte of
+  stdout and stderr until the child exited, and the tool then showed the model
+  the last 40,000 characters of it: a command printing 400 MB peaked at about
+  1 GB RSS (about 45 MB now). Each stream now keeps its first and last 512 KiB,
+  1 MiB a stream and so up to 2 MiB a command (codex keeps 1 MiB of one merged
+  transcript, split the same way), and counts what it dropped between; output
+  up to that size is unchanged. What the model sees of a long stream is
+  now its start and its end — a fifth from the start, the rest from the end,
+  the result layer's own split — rather than the end alone, so a compiler's
+  first error is no longer cut away in favour of its last. A gap is marked
+  where it is, `[... N bytes of output not kept ...]`, inside the stream it
+  belongs to, on the timeout path too. A PowerShell CLIXML stream with a gap is
+  shown raw rather than unwrapped, since the scan would join the elements on
+  either side of the hole into one message — so CLIXML stderr over 1 MiB, which
+  was unwrapped at any size before, now reaches the model as raw XML. For hosts: `ShellResult` gains
+  `stdout_omitted_bytes` / `stderr_omitted_bytes` and `stdout_omitted_at` /
+  `stderr_omitted_at` (all default `0`); an offset of `0` means the front was
+  dropped, so a tail-only executor sets only the count, and one that keeps
+  everything needs no change.
+
+- **Every shell result stays within 40,000 characters, and is no longer saved
+  as its own "Full output".** The tool cut each stream to 40,000 characters and
+  then added the `STDOUT:` / `STDERR:` headers, the exit-code line and the
+  truncation notice on top, so a large output came back at about 40,070 —
+  over the result layer's 40,000 threshold, which saved that already-cut tail
+  to `.agentao/tool-outputs/` and told the model it was the command's full
+  output. The budget now covers the whole returned string, notices included,
+  on every path out of the tool: the timeout path, where the echoed command is
+  cut to 2,000 characters before the output is; the background start message,
+  which echoed the command whole; and the macOS sandbox hint, which was
+  appended after the cap and is now reserved for up front. A last check before
+  the tool returns cuts anything else that would pass the cap — a long refusal
+  reason, a start error — keeping its head and tail and any sandbox hint whole. A short stream beside a large one is now
+  kept whole up to half the budget: the proportional split gave a 50-character
+  error next to megabytes of stdout three characters.
+
 - **A shell command that could not be started no longer reads as killed by
   a signal.** `LocalShellExecutor.run` turned a failed `Popen` (a missing
   interpreter, a bad `cwd`) into `returncode=-1` — also what a SIGHUP-killed

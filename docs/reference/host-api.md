@@ -320,7 +320,7 @@ from agentao.host.protocols import (
 | `MCPRegistry` | Protocol for MCP server / tool discovery used by the runtime. |
 | `MemoryStore` | Protocol for persistent memory storage backends. |
 | `FileEntry`, `FileStat` | Value shapes returned by `FileSystem` implementations. |
-| `ShellRequest`, `ShellResult`, `BackgroundHandle` | Value shapes for `ShellExecutor` implementations. |
+| `ShellRequest`, `ShellResult`, `BackgroundHandle` | Value shapes for `ShellExecutor` implementations. `ShellResult.stdout_omitted_bytes` / `stderr_omitted_bytes` (default `0`) say how many bytes of a stream were not kept, and `stdout_omitted_at` / `stderr_omitted_at` (default `0`) the byte offset in `stdout` / `stderr` where they were — `0` meaning the front, so a tail-only executor sets only the count. The local executor keeps the first and last 512 KiB of each stream, and the tool marks the gap where it is. |
 | `LaunchRequest` and its members `LegacyLaunch` / `WindowsLaunch` | What `ShellRequest.launch` carries — see below. |
 | `ShellSpec`, `Exhausted`, `ShellSpecProvider` | The optional interpreter declaration an executor may expose — see below. |
 | `ShellBlock`, `ShellDialect` | The user-level shell configuration and the syntax vocabulary, for a host resolving a spec itself. |
