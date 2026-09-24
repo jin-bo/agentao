@@ -4,9 +4,10 @@ import re
 import shlex
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 IS_WINDOWS = sys.platform == "win32"
 IS_MACOS = sys.platform == "darwin"
@@ -37,29 +38,158 @@ from ..capabilities.shell import (
 from ..sandbox import SandboxProfile
 from ..security import PathPolicy, PathPolicyError
 
-# Maximum combined stdout+stderr before truncation (~10K tokens).
-# Matches Gemini CLI's default threshold of 40,000 characters.
+# Maximum length of the string the tool returns (~10K tokens): output, headers, status
+# line and notices together. Matches Gemini CLI's default threshold of 40,000 characters,
+# and must not exceed the result layer's TOOL_OUTPUT_SAVE_THRESHOLD, past which the
+# already-cut result is saved to disk as the command's "Full output".
 _MAX_OUTPUT_CHARS = 40_000
 
 
-def _decode(raw: bytes) -> str:
-    """Decode bytes to str, flagging binary content."""
-    if not raw:
-        return ""
+def _omitted(result: ShellResult, stream: str) -> int:
+    """Bytes the executor did not keep of *stream*, or 0.
+
+    Read defensively: a host executor may return an object that predates the
+    field, and anything that is not a plain non-negative int is read as 0.
+    """
+    value = getattr(result, f"{stream}_omitted_bytes", 0)
+    if type(value) is not int or value < 0:
+        return 0
+    return value
+
+
+def _omitted_at(result: ShellResult, stream: str) -> int:
+    """Where in *stream*'s bytes the gap is; 0 (the front) for anything unusable."""
+    value = getattr(result, f"{stream}_omitted_at", 0)
+    raw = getattr(result, stream, b"")
+    if type(value) is not int or not 0 <= value <= len(raw):
+        return 0
+    return value
+
+
+# What the model sees of a stream that is too long: this share from its start, the rest
+# from its end — the same split as the result layer's own excerpt. The end carries the
+# outcome (the test summary, the last error); the start carries what the command was
+# doing, and a compiler's first error, which is often the one that matters.
+_HEAD_SHARE = 0.2
+
+
+@dataclass(frozen=True)
+class _Stream:
+    """One stream, ready to show: text before the gap, bytes lost in it, text after.
+
+    ``gap`` is 0 for a stream the executor kept whole, and then ``tail`` is empty.
+    """
+
+    head: str
+    gap: int = 0
+    tail: str = ""
+
+
+def _clean(text: str) -> str:
+    """Collapse progress-bar overwrites and strip ANSI codes before the model sees it.
+
+    Progress bars use \\r to overwrite lines in a terminal; without this, the LLM
+    receives all intermediate states as separate lines of noise.
+    """
+    return _strip_ansi(_collapse_carriage_returns(text))
+
+
+def _stream_of(raw: bytes, omitted: int, at: int, powershell: bool) -> _Stream:
     if _is_binary(raw):
-        return f"[binary output — {len(raw):,} bytes not shown]"
-    return raw.decode("utf-8", errors="replace")
+        return _Stream(f"[binary output — {len(raw) + omitted:,} bytes not shown]")
+    if not omitted:
+        text = raw.decode("utf-8", errors="replace")
+        if powershell:
+            # Windows PowerShell 5.1 serialises a *redirected* error stream as CLIXML,
+            # and agentao always redirects — so without this the model reads an XML
+            # envelope instead of the error.
+            text = ps.extract(text, _MAX_OUTPUT_CHARS)
+        return _Stream(_clean(text))
+    # A gap: the two sides are decoded and cleaned apart and never joined, and a
+    # CLIXML envelope is not unwrapped across one — the scan would read the elements
+    # on either side of the hole as one message. It is shown raw, gap marked.
+    head = raw[:at].decode("utf-8", errors="replace")
+    tail = raw[at:].decode("utf-8", errors="replace")
+    # The cut can land inside an escape sequence. ``_strip_ansi`` only removes whole ones,
+    # so a severed ``\x1b[3`` would reach the model — and a terminal, where the ``[`` of
+    # the gap notice after it completes the sequence. The tail's side of such a cut is
+    # plain characters (``1mRED``) and needs nothing.
+    head = _SEVERED_ESCAPE_RE.sub("", head)
+    return _Stream(_clean(head), omitted, _clean(tail))
 
 
-def _truncate_tail(text: str, max_chars: int) -> str:
-    """Keep the tail of text (most recent output), noting how much was omitted."""
-    if len(text) <= max_chars:
-        return text
-    omitted = len(text) - max_chars
-    return f"[... {omitted:,} chars omitted (showing last {max_chars:,}) ...]\n" + text[-max_chars:]
+def _gap_note(gap: int, cut: int) -> str:
+    if gap and cut:
+        return f"[... {gap:,} bytes of output not kept, and {cut:,} more chars omitted ...]"
+    if gap:
+        return f"[... {gap:,} bytes of output not kept ...]"
+    return f"[... {cut:,} chars omitted ...]"
+
+
+def _around(head: str, note: str, tail: str) -> str:
+    return head + ("\n" if head else "") + note + "\n" + tail
+
+
+def _fit_stream(stream: _Stream, budget: int) -> str:
+    """*stream*'s head and tail, with the notice between, in at most *budget* characters.
+
+    The notice is counted inside the budget, not added on top: the string the tool
+    returns must stay within ``_MAX_OUTPUT_CHARS``, or the result layer saves this
+    excerpt to disk as the command's "Full output". It names both losses when there
+    are two — bytes the executor never kept, and characters this cut removes.
+    """
+    if budget <= 0:
+        return ""
+    head, gap, tail = stream.head, stream.gap, stream.tail
+    if not gap:
+        if len(head) <= budget:
+            return head
+        text, head, tail = head, "", ""
+        # One text: split it here, the head share from its start and the rest from its end.
+        keep = budget - len(_around("x", _gap_note(0, len(text)), ""))
+        if keep <= 0:
+            return _gap_note(0, len(text))[:budget]
+        first = int(keep * _HEAD_SHARE)
+        last = keep - first
+        return _around(text[:first], _gap_note(0, len(text) - keep), text[len(text) - last:])
+    whole = _around(head, _gap_note(gap, 0), tail)
+    if len(whole) <= budget:
+        return whole
+    # The note's numbers can only shrink once the cut is known, so sizing it with the
+    # largest values bounds it from above.
+    keep = budget - len(_around("x", _gap_note(gap, len(head) + len(tail)), ""))
+    if keep <= 0:
+        return _gap_note(gap, 0)[:budget]
+    first = min(len(head), int(keep * _HEAD_SHARE))
+    last = min(len(tail), keep - first)
+    first = min(len(head), keep - last)  # a short tail gives its share back to the head
+    cut = (len(head) - first) + (len(tail) - last)
+    return _around(head[:first], _gap_note(gap, cut), tail[len(tail) - last:])
+
+
+def _stream_need(stream: _Stream) -> int:
+    """Characters *stream* takes shown whole, notice included; 0 for nothing to show."""
+    if not (stream.head or stream.gap or stream.tail):
+        return 0
+    return len(_fit_stream(stream, 1 << 62))
+
+
+# The timeout message echoes the command. The model wrote it and has it already, and a
+# heredoc can run to tens of kilobytes, so the echo is the first thing cut.
+_MAX_COMMAND_ECHO_CHARS = 2_000
+
+
+def _clip_command(command: str) -> str:
+    if len(command) <= _MAX_COMMAND_ECHO_CHARS:
+        return command
+    omitted = len(command) - _MAX_COMMAND_ECHO_CHARS
+    return command[:_MAX_COMMAND_ECHO_CHARS] + f" [... {omitted:,} more chars of the command not shown]"
 
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+# An escape sequence cut short at the end of a text: ESC, optionally ``[`` and the
+# parameter and intermediate bytes, and no final byte.
+_SEVERED_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*)?\Z")
 
 
 def _strip_ansi(text: str) -> str:
@@ -118,6 +248,17 @@ _SANDBOX_DENIAL_MARKERS = (
 )
 
 
+def _sandbox_hint(profile: SandboxProfile) -> str:
+    """The note appended to a result that looks like a sandbox denial."""
+    return (
+        f"\n\n[Sandbox hint] The command ran under macOS sandbox profile "
+        f"'{profile.name}'. If the failure looks like a capability denial "
+        f"(file-write outside workspace, network access, etc.) rather than "
+        f"a real command error, ask the user to run `/sandbox off` or switch "
+        f"profile via `/sandbox profile <name>`."
+    )
+
+
 def _annotate_sandbox_denial(result: str, profile: SandboxProfile) -> str:
     """If the result looks like a sandbox denial, append a hint for the LLM.
 
@@ -129,17 +270,51 @@ def _annotate_sandbox_denial(result: str, profile: SandboxProfile) -> str:
     the wrapped command string is echoed back by the background-start path
     and by the inactivity-timeout path, which would false-positive on every
     successful background launch.
+
+    The hint is kept whole and the result is what gives way, so the two together
+    stay within ``_MAX_OUTPUT_CHARS``. The foreground path reserves the hint's
+    length up front, so this cut is normally a no-op there.
     """
     if any(m in result for m in _SANDBOX_DENIAL_MARKERS):
-        hint = (
-            f"\n\n[Sandbox hint] The command ran under macOS sandbox profile "
-            f"'{profile.name}'. If the failure looks like a capability denial "
-            f"(file-write outside workspace, network access, etc.) rather than "
-            f"a real command error, ask the user to run `/sandbox off` or switch "
-            f"profile via `/sandbox profile <name>`."
-        )
-        return result + hint
-    return result
+        return _cap_result(result, _sandbox_hint(profile))
+    return _cap_result(result)
+
+
+def _cap_result(body: str, suffix: str = "") -> str:
+    """*body* + *suffix* in at most ``_MAX_OUTPUT_CHARS``; the suffix is kept whole.
+
+    The last check before the tool returns. Every path is budgeted on its own
+    already; this covers the ones whose length comes from somewhere else — a
+    refusal reason, a start error — so that no shell result reaches the result
+    layer's threshold, past which it is saved to disk as the command's
+    "Full output".
+    """
+    if len(body) + len(suffix) <= _MAX_OUTPUT_CHARS:
+        return body + suffix
+    # Head and tail, not the tail alone: what reaches this cut is mostly an error, and
+    # its label ("Error: hardline:…") is at the front.
+    return _fit_stream(_Stream(body), _MAX_OUTPUT_CHARS - len(suffix)) + suffix
+
+
+def _split_budget(first: int, second: int, available: int) -> Tuple[int, int]:
+    """Budgets for two streams that need *first* and *second* characters.
+
+    Both whole when they fit. Otherwise the smaller first, whole if it fits in
+    half, and the rest to the larger: a proportional split handed a 50-char
+    error beside megabytes of stdout three characters, which is not the error
+    any more.
+    """
+    if first + second <= available:
+        return first, second
+    if not second:
+        return available, 0
+    if not first:
+        return 0, available
+    if first <= second:
+        first_budget = min(first, available // 2)
+        return first_budget, available - first_budget
+    second_budget = min(second, available // 2)
+    return available - second_budget, second_budget
 
 
 class ShellTool(Tool):
@@ -286,7 +461,7 @@ class ShellTool(Tool):
             # second source for the text, which is a channel that decides one command and
             # launches another through the same plan.
             if isinstance(_decided.verdict, Deny):
-                return f"Error: {_decided.verdict.reason}"
+                return _cap_result(f"Error: {_decided.verdict.reason}")
             command, cwd = _decided.body, Path(_decided.cwd)
             # The spec too. Re-reading the provider down in
             # ``_legacy_launch`` would be that same second source one field over — the launch
@@ -297,7 +472,7 @@ class ShellTool(Tool):
             try:
                 cwd = self.resolve_cwd(working_directory)
             except PathPolicyError as e:
-                return f"Error: {e}"
+                return _cap_result(f"Error: {e}")
             # No frozen record — a host calling ``execute`` directly. Read the provider
             # *here*, once, rather than leaving it to ``_launch``: leaving it there resolved
             # the interpreter for the spawn and left every reader of ``spec`` below holding
@@ -309,13 +484,13 @@ class ShellTool(Tool):
             try:
                 spec = self.shell_spec
             except Exception as e:  # noqa: BLE001 - a provider failure refuses the call
-                return f"Error: shell spec provider raised: {e}"
+                return _cap_result(f"Error: shell spec provider raised: {e}")
         # Only validate cwd against the local filesystem when using the default
         # local executor. An injected ShellExecutor (Docker, remote host, …)
         # may accept a container/remote path that does not exist locally; let
         # that executor validate the cwd itself.
         if isinstance(self._get_shell(), LocalShellExecutor) and not cwd.is_dir():
-            return (
+            return _cap_result(
                 f"Error: working_directory '{working_directory}' does not exist "
                 "or is not a directory."
             )
@@ -328,11 +503,13 @@ class ShellTool(Tool):
         if is_background:
             result = self._run_background(wrapped, cwd, spec)
         else:
-            result = self._run_foreground(wrapped, cwd, timeout, spec)
+            # The hint is appended after formatting, so its room is set aside here.
+            reserve = len(_sandbox_hint(_sandbox_profile)) if _sandbox_profile is not None else 0
+            result = self._run_foreground(wrapped, cwd, timeout, spec, reserve=reserve)
 
         if _sandbox_profile is not None:
-            result = _annotate_sandbox_denial(result, _sandbox_profile)
-        return result
+            return _annotate_sandbox_denial(result, _sandbox_profile)
+        return _cap_result(result)
 
     # ------------------------------------------------------------------
     # The shell spec, and the launch built from it
@@ -502,7 +679,7 @@ class ShellTool(Tool):
             return (
                 f"Background process started.\n"
                 f"PID: {handle.pid}\n"
-                f"Command: {command}\n"
+                f"Command: {_clip_command(command)}\n"
                 f"Working directory: {cwd}\n"
                 f"To stop: taskkill /F /T /PID {handle.pid}"
             )
@@ -510,7 +687,7 @@ class ShellTool(Tool):
             f"Background process started.\n"
             f"PID: {handle.pid}\n"
             f"PGID: {handle.pgid}\n"
-            f"Command: {command}\n"
+            f"Command: {_clip_command(command)}\n"
             f"Working directory: {cwd}\n"
             f"To stop: kill -- -{handle.pgid}"
         )
@@ -521,9 +698,13 @@ class ShellTool(Tool):
 
     def _run_foreground(
         self, command: str, cwd: Path, timeout: float,
-        spec: "ShellSpec | Exhausted | None" = None,
+        spec: "ShellSpec | Exhausted | None" = None, reserve: int = 0,
     ) -> str:
-        """Run command, killing it after `timeout` seconds without any output."""
+        """Run command, killing it after `timeout` seconds without any output.
+
+        ``reserve`` is room left out of ``_MAX_OUTPUT_CHARS`` for what the caller
+        appends afterwards.
+        """
         try:
             result: ShellResult = self._get_shell().run(
                 ShellRequest(
@@ -545,20 +726,42 @@ class ShellTool(Tool):
             # looking for a structure that no longer starts where it starts. Partial output is
             # exactly where the wrapper is unterminated, so this usually reports the truncation
             # rather than unwrapping — which is the honest answer and better than raw XML.
-            parts = [_decode(result.stdout), _decode(result.stderr)]
-            if self._is_powershell(spec):
-                parts = [ps.extract(p, _MAX_OUTPUT_CHARS) for p in parts]
+            powershell = self._is_powershell(spec)
+            streams = [
+                _stream_of(
+                    getattr(result, name), _omitted(result, name), _omitted_at(result, name),
+                    powershell,
+                )
+                for name in ("stdout", "stderr")
+            ]
             # Capped like every other output path. A command that emits megabytes and then
             # stalls is the ordinary shape of a timeout, and this branch used to be the one
-            # place the tool handed all of it straight to the model.
-            partial = _truncate_tail("".join(p for p in parts if p), _MAX_OUTPUT_CHARS)
-            msg = f"Command timed out after {timeout:.0f}s of inactivity.\nCommand: {command}"
-            if partial:
-                msg += f"\n\nPartial output before timeout:\n{partial}"
+            # place the tool handed all of it straight to the model. The cap covers the whole
+            # message, command echo included; the echo is cut first, since the model wrote it.
+            # Each stream is fitted on its own, so each notice sits inside the stream it
+            # belongs to.
+            msg = (
+                f"Command timed out after {timeout:.0f}s of inactivity.\n"
+                f"Command: {_clip_command(command)}"
+            )
+            needs = [_stream_need(st) for st in streams]
+            if any(needs):
+                prefix = "\n\nPartial output before timeout:\n"
+                whole = [_fit_stream(st, n) for st, n in zip(streams, needs)]
+                separator = "\n" if all(whole) and not whole[0].endswith("\n") else ""
+                available = _MAX_OUTPUT_CHARS - reserve - len(msg) - len(prefix) - len(separator)
+                budgets = _split_budget(needs[0], needs[1], available)
+                fitted = [_fit_stream(st, bud) for st, bud in zip(streams, budgets)]
+                msg += prefix + separator.join(f for f in fitted if f)
             return msg
 
         return self._format_result(
             result.returncode, result.stdout, result.stderr, powershell=self._is_powershell(spec),
+            stdout_omitted=_omitted(result, "stdout"),
+            stderr_omitted=_omitted(result, "stderr"),
+            stdout_omitted_at=_omitted_at(result, "stdout"),
+            stderr_omitted_at=_omitted_at(result, "stderr"),
+            reserve=reserve,
         )
 
     # ------------------------------------------------------------------
@@ -567,51 +770,38 @@ class ShellTool(Tool):
 
     def _format_result(
         self, returncode: int, stdout_raw: bytes, stderr_raw: bytes,
-        powershell: bool = False,
+        powershell: bool = False, stdout_omitted: int = 0, stderr_omitted: int = 0,
+        reserve: int = 0, stdout_omitted_at: int = 0, stderr_omitted_at: int = 0,
     ) -> str:
-        stdout_str = _decode(stdout_raw)
-        stderr_str = _decode(stderr_raw)
+        stdout = _stream_of(stdout_raw, stdout_omitted, stdout_omitted_at, powershell)
+        stderr = _stream_of(stderr_raw, stderr_omitted, stderr_omitted_at, powershell)
+        stdout_need = _stream_need(stdout)
+        stderr_need = _stream_need(stderr)
 
-        if powershell:
-            # Windows PowerShell 5.1 serialises a *redirected* error stream as CLIXML, and
-            # agentao always redirects — so without this the model reads an XML envelope
-            # instead of the error. The two streams stay separate: the wrapper appears on
-            # whichever one it appears on, and merging them to find it would lose which was
-            # which.
-            stdout_str = ps.extract(stdout_str, _MAX_OUTPUT_CHARS)
-            stderr_str = ps.extract(stderr_str, _MAX_OUTPUT_CHARS)
+        status = ""
+        if returncode < 0:
+            status = f"Signal: {-returncode}"
+        elif returncode != 0:
+            status = f"Exit code: {returncode}"
 
-        # Clean up carriage-return sequences and ANSI codes before sending to LLM.
-        # Progress bars use \r to overwrite lines in a terminal; without this,
-        # the LLM receives all intermediate states as separate lines of noise.
-        stdout_str = _strip_ansi(_collapse_carriage_returns(stdout_str))
-        stderr_str = _strip_ansi(_collapse_carriage_returns(stderr_str))
-
-        # Truncate: keep tail of each stream proportionally
-        total = len(stdout_str) + len(stderr_str)
-        if total > _MAX_OUTPUT_CHARS:
-            # Allocate budget proportionally; give at least 1 char if non-empty
-            if stdout_str and stderr_str:
-                ratio = len(stdout_str) / total
-                stdout_budget = max(1, int(_MAX_OUTPUT_CHARS * ratio))
-                stderr_budget = max(1, _MAX_OUTPUT_CHARS - stdout_budget)
-            elif stdout_str:
-                stdout_budget, stderr_budget = _MAX_OUTPUT_CHARS, 0
-            else:
-                stdout_budget, stderr_budget = 0, _MAX_OUTPUT_CHARS
-
-            stdout_str = _truncate_tail(stdout_str, stdout_budget)
-            stderr_str = _truncate_tail(stderr_str, stderr_budget)
+        # The cap is on the string returned, not on the streams alone: headers, the status
+        # line and every notice come out of the same budget. Past it, the result layer saves
+        # this already-cut text to disk and calls it the command's "Full output".
+        sections = [h for h in (stdout_need and "STDOUT:\n", stderr_need and "STDERR:\n", status) if h]
+        available = (
+            _MAX_OUTPUT_CHARS - reserve
+            - sum(len(h) for h in sections) - 2 * (len(sections) - 1)
+        )
+        stdout_budget, stderr_budget = _split_budget(stdout_need, stderr_need, available)
+        stdout_str = _fit_stream(stdout, stdout_budget) if stdout_need else ""
+        stderr_str = _fit_stream(stderr, stderr_budget) if stderr_need else ""
 
         parts = []
         if stdout_str:
             parts.append(f"STDOUT:\n{stdout_str}")
         if stderr_str:
             parts.append(f"STDERR:\n{stderr_str}")
-
-        if returncode < 0:
-            parts.append(f"Signal: {-returncode}")
-        elif returncode != 0:
-            parts.append(f"Exit code: {returncode}")
+        if status:
+            parts.append(status)
 
         return "\n\n".join(parts) if parts else "Command completed with no output."

@@ -8,7 +8,9 @@ without monkey-patching subprocess.
 The default :class:`LocalShellExecutor` shells out via ``subprocess.Popen``
 with the same flags (process-group leadership, stdin detach,
 inactivity-timeout reads) as the pre-capability tool, so behavior is
-byte-equivalent.
+byte-equivalent — except that each stream is held to its first and last
+``_MAX_RETAINED_BYTES / 2``, and a longer one comes back with the middle
+dropped and ``ShellResult.*_omitted_bytes`` / ``*_omitted_at`` saying so.
 """
 
 from __future__ import annotations
@@ -19,10 +21,11 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, runtime_checkable
+from typing import Any, Callable, Dict, Optional, Protocol, Tuple, runtime_checkable
 
 from .process import build_child_env, kill_process_tree
 from .shell_spec import (
@@ -135,6 +138,15 @@ class ShellResult:
     stdout: bytes = b""
     stderr: bytes = b""
     timed_out: bool = False
+    # Bytes the child wrote and the executor did not keep, and the offset in
+    # ``stdout`` / ``stderr`` where they were: everything before the offset came
+    # before the gap, everything after it came after. An offset of 0 means the
+    # front was dropped and the stream is a tail. An executor that keeps
+    # everything leaves all four at 0.
+    stdout_omitted_bytes: int = 0
+    stderr_omitted_bytes: int = 0
+    stdout_omitted_at: int = 0
+    stderr_omitted_at: int = 0
 
 
 @dataclass
@@ -185,6 +197,94 @@ class ShellExecutor(Protocol):
 
 def _is_binary(data: bytes) -> bool:
     return b"\x00" in data[:8192]
+
+
+# How much of each stream the local executor holds while the child runs: half for the
+# first bytes, half for the last, as codex's exec buffer does. The tool shows the model
+# 40,000 characters of it, head and tail, so this is a *memory* bound with room for what
+# cleaning removes (a progress bar's overwritten states, ANSI codes): output up to it is
+# kept whole. Past it the middle is dropped as it arrives. It used to be kept anyway, and
+# a command that printed 400 MB held about 1 GB until it exited.
+_MAX_RETAINED_BYTES = 1024 * 1024
+
+
+def _utf8_incomplete_suffix(data: bytes) -> int:
+    """How many bytes at the end of *data* are a character cut short."""
+    for back in range(1, min(4, len(data)) + 1):
+        byte = data[-back]
+        if byte & 0xC0 == 0x80:
+            continue  # a continuation byte; its lead is further back
+        if byte < 0x80:
+            return 0
+        need = 2 if byte >= 0xC0 and byte < 0xE0 else 3 if byte < 0xF0 else 4
+        return back if back < need else 0
+    return 0
+
+
+class _HeadTailBuffer:
+    """The first and last bytes of a stream, and a count of the bytes dropped between.
+
+    The gap's position travels with the result (``ShellResult.*_omitted_at``), so the
+    head and tail are never read as one stream with nothing missing: a reader that
+    stitched them — the PowerShell CLIXML scan, notably — would join the elements on
+    either side of the hole into one message.
+
+    Locked because the reader can outlive the read: ``run`` joins its reader threads with a
+    timeout, and a grandchild that kept the pipe open keeps its reader appending while
+    ``snapshot`` runs. The join itself would not tear under the GIL; the lock is what keeps
+    the bytes and the dropped count a matching pair, which no test here can pin.
+    """
+
+    def __init__(self, limit: int) -> None:
+        self._head_limit = limit // 2
+        self._tail_limit = limit - self._head_limit
+        self._head = bytearray()
+        self._chunks: "deque[bytes]" = deque()
+        self._size = 0
+        self._dropped = 0
+        self._lock = threading.Lock()
+
+    def append(self, chunk: bytes) -> None:
+        with self._lock:
+            room = self._head_limit - len(self._head)
+            if room > 0:
+                self._head += chunk[:room]
+                chunk = chunk[room:]
+                if not chunk:
+                    return
+            self._chunks.append(chunk)
+            self._size += len(chunk)
+            # Whole chunks only while the rest still covers the limit; the partial cut is
+            # made in ``snapshot``.
+            while self._size - len(self._chunks[0]) >= self._tail_limit:
+                dropped = self._chunks.popleft()
+                self._size -= len(dropped)
+                self._dropped += len(dropped)
+
+    def snapshot(self) -> Tuple[bytes, int, int]:
+        """``(data, omitted, at)``: the bytes kept, how many were not, and where the gap is."""
+        with self._lock:
+            head = bytes(self._head)
+            tail = b"".join(self._chunks)
+            omitted = self._dropped
+        excess = len(tail) - self._tail_limit
+        if excess > 0:
+            omitted += excess
+            tail = tail[excess:]
+        if not omitted:
+            return head + tail, 0, 0
+        # Both edges of the gap on a UTF-8 character boundary, so neither side decodes
+        # a severed character as U+FFFD: the head gives up a character cut short, the
+        # tail skips the continuation bytes of one whose lead byte was dropped.
+        cut = _utf8_incomplete_suffix(head)
+        if cut:
+            head = head[:-cut]
+            omitted += cut
+        skip = 0
+        while skip < min(3, len(tail)) and tail[skip] & 0xC0 == 0x80:
+            skip += 1
+        omitted += skip
+        return head + tail[skip:], omitted, len(head)
 
 
 def _popen_target(launch: LaunchRequest) -> Tuple[Any, Dict[str, Any]]:
@@ -260,15 +360,15 @@ class LocalShellExecutor:
         # raise here into ``Error starting command: …``.
         proc = subprocess.Popen(target, **popen_kwargs)
 
-        stdout_chunks: List[bytes] = []
-        stderr_chunks: List[bytes] = []
+        stdout_buf = _HeadTailBuffer(_MAX_RETAINED_BYTES)
+        stderr_buf = _HeadTailBuffer(_MAX_RETAINED_BYTES)
         last_activity = [time.monotonic()]
         timed_out = [False]
         on_chunk = request.on_chunk
 
-        def _read(stream, chunks: List[bytes]) -> None:
+        def _read(stream, buf: _HeadTailBuffer) -> None:
             for chunk in iter(lambda: stream.read(4096), b""):
-                chunks.append(chunk)
+                buf.append(chunk)
                 last_activity[0] = time.monotonic()
                 if on_chunk and not _is_binary(chunk):
                     try:
@@ -276,8 +376,8 @@ class LocalShellExecutor:
                     except Exception:
                         pass
 
-        t_out = threading.Thread(target=_read, args=(proc.stdout, stdout_chunks), daemon=True)
-        t_err = threading.Thread(target=_read, args=(proc.stderr, stderr_chunks), daemon=True)
+        t_out = threading.Thread(target=_read, args=(proc.stdout, stdout_buf), daemon=True)
+        t_err = threading.Thread(target=_read, args=(proc.stderr, stderr_buf), daemon=True)
         t_out.start()
         t_err.start()
 
@@ -296,11 +396,17 @@ class LocalShellExecutor:
         t_out.join(timeout=2)
         t_err.join(timeout=2)
 
+        stdout, stdout_omitted, stdout_at = stdout_buf.snapshot()
+        stderr, stderr_omitted, stderr_at = stderr_buf.snapshot()
         return ShellResult(
             returncode=proc.returncode if proc.returncode is not None else -1,
-            stdout=b"".join(stdout_chunks),
-            stderr=b"".join(stderr_chunks),
+            stdout=stdout,
+            stderr=stderr,
             timed_out=timed_out[0],
+            stdout_omitted_bytes=stdout_omitted,
+            stderr_omitted_bytes=stderr_omitted,
+            stdout_omitted_at=stdout_at,
+            stderr_omitted_at=stderr_at,
         )
 
     def run_background(self, request: ShellRequest) -> BackgroundHandle:
