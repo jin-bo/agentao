@@ -39,7 +39,14 @@ def handle_session_list_models(server: "AcpServer", params: Any) -> Dict[str, An
             e,
         )
         cached = session.last_known_models or []
-        return {"models": list(cached), "warning": f"Could not fetch model list: {e}"}
+        # ``list_available_models`` raises ``RuntimeError`` with a message already
+        # prefixed and free of the endpoint's response body; anything else is
+        # named by type only, so a body cannot reach the client this way either.
+        warning = (
+            str(e) if isinstance(e, RuntimeError)
+            else f"Could not fetch model list: {type(e).__name__}"
+        )
+        return {"models": list(cached), "warning": warning}
 
 
 def register(server: "AcpServer") -> None:

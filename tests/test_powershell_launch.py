@@ -232,11 +232,9 @@ def test_both_delivery_faces_build_the_same_launch(monkeypatch, tmp_path, backgr
     launch = ShellTool()._launch("Get-Date", tmp_path, _spec())
     executor = LocalShellExecutor()
     request = ShellRequest(launch=launch)
-    if background:
-        with pytest.raises(RuntimeError):
-            executor.run_background(request)
-    else:
-        executor.run(request)  # a spawn failure is reported, not raised
+    # A failed start raises on both faces; the tool reports it as a failed start.
+    with pytest.raises(RuntimeError):
+        (executor.run_background if background else executor.run)(request)
     assert seen["kwargs"]["executable"] == PWSH
     assert seen["kwargs"]["shell"] is False
     assert _decoded(seen["target"]) == ps.wrap("Get-Date")

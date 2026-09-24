@@ -130,7 +130,7 @@ Hits the provider's `/models` endpoint. Useful for:
 
 Do **not** call it on every turn — it's network I/O. Cache the result.
 
-On failure (network error, bad key), it **raises** `RuntimeError`. Handle it:
+On failure (network error, bad key), it **raises** `RuntimeError`. The call is bounded — 10 s a try, one retry — and the message names the failure (`HTTP 401`, a timeout, no connection) without repeating the endpoint's response body, which goes to `agentao.log` instead. Handle it:
 
 ```python
 try:
