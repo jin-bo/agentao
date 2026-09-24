@@ -186,6 +186,22 @@ def _clip_command(command: str, what: str = "the command") -> str:
     return command[:_MAX_COMMAND_ECHO_CHARS] + f" [... {omitted:,} more chars of {what} not shown]"
 
 
+def _unusable_working_directory(working_directory: str, error: Exception) -> str:
+    """The refusal for a working directory the OS would not even stat.
+
+    The OS's reason, never ``str(error)``: an ``OSError`` renders the whole path a
+    second time, and the path is what made it fail.
+    """
+    if isinstance(error, OSError):
+        reason = error.strerror or type(error).__name__
+    else:
+        reason = str(error) or type(error).__name__
+    return _cap_result(
+        f"Error: working_directory '{_clip_command(working_directory, 'the path')}' "
+        f"cannot be used: {reason}."
+    )
+
+
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 # An escape sequence cut short at the end of a text: ESC, optionally ``[`` and the
 # parameter and intermediate bytes, and no final byte.
@@ -473,6 +489,10 @@ class ShellTool(Tool):
                 cwd = self.resolve_cwd(working_directory)
             except PathPolicyError as e:
                 return _cap_result(f"Error: {e}")
+            except (OSError, ValueError) as e:
+                # Resolving stats the path, and a path the OS refuses to stat raises: on
+                # Windows a name past its length limit is a ValueError, not an OSError.
+                return _unusable_working_directory(working_directory, e)
             # No frozen record — a host calling ``execute`` directly. Read the provider
             # *here*, once, rather than leaving it to ``_launch``: leaving it there resolved
             # the interpreter for the spawn and left every reader of ``spec`` below holding
@@ -497,11 +517,8 @@ class ShellTool(Tool):
             # the tool as an exception. It is the same refusal, with the OS's reason.
             try:
                 usable = cwd.is_dir()
-            except OSError as e:
-                return _cap_result(
-                    f"Error: working_directory '{shown}' cannot be used: "
-                    f"{e.strerror or type(e).__name__}."
-                )
+            except (OSError, ValueError) as e:
+                return _unusable_working_directory(working_directory, e)
             if not usable:
                 return _cap_result(
                     f"Error: working_directory '{shown}' does not exist "

@@ -18,8 +18,8 @@ _Targeting 0.5.5. Add entries under the relevant heading as work lands._
 - **A shell `working_directory` the OS will not stat is refused, not raised.**
   `Path.is_dir()` answers False only for the errors pathlib ignores (not
   found, not a directory); a parent without search permission (`EACCES`) or a
-  name longer than the OS allows (`ENAMETOOLONG`) raised out of
-  `ShellTool.execute`, and the executor reported it as
+  name longer than the OS allows (`ENAMETOOLONG`, or on Windows a `ValueError`
+  raised already while resolving the path) came out of `ShellTool.execute`, and the executor reported it as
   `Error executing run_shell_command: …` with the whole path in it. The tool
   now answers `Error: working_directory '…' cannot be used: <reason>.`, and
   both refusals echo at most 2,000 characters of the path.
