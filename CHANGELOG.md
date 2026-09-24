@@ -15,6 +15,25 @@ _Targeting 0.5.5. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A shell command that could not be started no longer reads as killed by
+  a signal.** `LocalShellExecutor.run` turned a failed `Popen` (a missing
+  interpreter, a bad `cwd`) into `returncode=-1` — also what a SIGHUP-killed
+  child reports — so the tool answered `Error starting command: …` *and*
+  `Signal: 1` for a command that never ran. The foreground face now raises,
+  as the background face always did, and the tool reports the failed start
+  alone. For hosts: a subclass that called `super().run()` and read `-1`
+  as "did not start" now sees the exception instead.
+
+- **`list_available_models` is bounded and does not echo the endpoint's
+  reply.** The catalog fetch behind `/model` and ACP `session/list_models`
+  ran on the SDK's defaults — 600 s a try, three tries — and its
+  `RuntimeError` carried `str(e)`, which for a status error is the response
+  body: sent verbatim to an ACP client as the `warning`, and printed through
+  Rich markup by the CLI. It now allows 10 s a try and one retry, and the
+  message names the failure (`HTTP 403`, a timeout, no connection) with the
+  body left to `agentao.log`. ACP no longer prefixes the runtime's message a
+  second time, and names any other exception by its type only.
+
 - **`web_fetch` holds a bounded body, for a bounded time.** The fetch went
   through `client.get`, which reads the whole response into memory — at every
   redirect hop, not only the last — and the tool then kept 10,000 characters

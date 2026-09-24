@@ -130,7 +130,7 @@ def list_available_models(self) -> List[str]
 
 **不要**每轮都调——这是网络 IO，结果请缓存。
 
-失败（网络错误、Key 错）时会**抛** `RuntimeError`，自己兜住：
+失败（网络错误、Key 错）时会**抛** `RuntimeError`。调用有上限——每次 10 秒、重试一次；消息只说明失败类型（`HTTP 401`、超时、连不上），不复述端点的响应体，响应体写进 `agentao.log`。自己兜住：
 
 ```python
 try:

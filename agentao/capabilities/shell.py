@@ -158,6 +158,11 @@ class ShellExecutor(Protocol):
     in ``run_background`` — :class:`agentao.tools.shell.ShellTool`
     surfaces it as a normal tool error.
 
+    **A process that cannot be started raises** from either operation (a
+    missing interpreter, a bad ``cwd``); the tool reports it as a failed
+    start. ``run`` must not answer it with a ``ShellResult``: a negative
+    ``returncode`` reads as a signal kill.
+
     **Declaring the interpreter (optional).** An executor may additionally
     implement :class:`~agentao.capabilities.shell_spec.ShellSpecProvider` — a
     ``shell_spec`` property answering ``ShellSpec | Exhausted`` — because it is
@@ -249,15 +254,11 @@ class LocalShellExecutor:
         if not IS_WINDOWS:
             popen_kwargs["start_new_session"] = True
 
-        try:
-            proc = subprocess.Popen(target, **popen_kwargs)
-        except Exception as e:
-            return ShellResult(
-                returncode=-1,
-                stdout=b"",
-                stderr=f"Error starting command: {e}".encode("utf-8"),
-                timed_out=False,
-            )
+        # A failed start raises, as it does on the background face. It used to come back as
+        # ``returncode=-1``, which is also what a SIGHUP-killed child reports, so the tool
+        # appended ``Signal: 1`` to a command that never ran. The caller already turns a
+        # raise here into ``Error starting command: …``.
+        proc = subprocess.Popen(target, **popen_kwargs)
 
         stdout_chunks: List[bytes] = []
         stderr_chunks: List[bytes] = []

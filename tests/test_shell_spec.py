@@ -457,6 +457,30 @@ def test_a_launch_refusal_is_not_reported_as_a_failed_start(tmp_path):
         assert "starting" not in out
 
 
+def test_a_failed_start_is_not_reported_as_a_signal(tmp_path):
+    """An interpreter that cannot be started must read as a failed start, not a kill.
+
+    The foreground face used to return ``returncode=-1`` for it — also what a
+    SIGHUP-killed child reports — so the tool appended ``Signal: 1`` to a command
+    that never ran. Driven through the real ``Popen`` with a missing interpreter.
+    """
+    missing = str(tmp_path / "no-such-shell")
+
+    class MissingInterpreter(LocalShellExecutor):
+        def run(self, request):
+            launch = LegacyLaunch(
+                command="echo hi", cwd=AbsPath(str(tmp_path)),
+                env=MappingProxyType({}), executable=missing,
+            )
+            return super().run(dataclasses.replace(request, launch=launch))
+
+    tool = ShellTool()
+    tool.shell = MissingInterpreter()
+    out = tool._run_foreground("echo hi", tmp_path, 5)
+    assert out.startswith("Error starting command:")
+    assert "Signal" not in out
+
+
 def test_a_legacy_launch_carries_exactly_what_it_needs_and_nothing_else():
     """Four fields, and ``executable`` is the one that changed: the interpreter the user
     named used to stop at the spec and never reach the spawn."""

@@ -231,16 +231,50 @@ def set_model(agent: "Agentao", model: str) -> str:
     return f"Model changed from {old_model} to {model}"
 
 
+# The catalog is fetched while a user waits on ``/model`` or an ACP client waits on
+# ``session/list_models``. Left to the SDK's defaults that wait was 600 s a try, three
+# tries. One retry keeps a single dropped connection from failing the listing.
+_MODEL_LIST_TIMEOUT_S = 10.0
+_MODEL_LIST_MAX_RETRIES = 1
+
+
+def _describe_model_list_failure(e: BaseException) -> str:
+    """Name what failed without repeating what the endpoint said.
+
+    ``str()`` of an SDK status error carries the response body, and this text
+    reaches an ACP client verbatim and the CLI through Rich markup. The body
+    stays in ``agentao.log``, behind its redacting formatter.
+    """
+    status = getattr(e, "status_code", None)
+    if isinstance(status, int) and not isinstance(status, bool):
+        return f"the models endpoint answered HTTP {status}"
+    name = type(e).__name__
+    if name == "APITimeoutError" or isinstance(e, TimeoutError):
+        return (
+            f"the models endpoint did not answer within {_MODEL_LIST_TIMEOUT_S:.0f}s"
+            f" ({1 + _MODEL_LIST_MAX_RETRIES} tries)"
+        )
+    if name == "APIConnectionError":
+        return "could not connect to the models endpoint"
+    return name
+
+
 def list_available_models(agent: "Agentao") -> List[str]:
     """Fetch the model catalog from the configured endpoint.
 
-    Raises ``RuntimeError`` on failure so CLI / ACP callers can
-    surface the underlying reason — the raw exception is also logged
-    to ``agentao.log`` for debugging.
+    Raises ``RuntimeError`` on failure so CLI / ACP callers can surface
+    what went wrong. Its message names the failure (status, timeout,
+    connection) and never carries the response body; the raw exception
+    is logged to ``agentao.log`` for debugging.
     """
     try:
-        models_page = agent.llm.client.models.list()
+        client = agent.llm.client.with_options(
+            timeout=_MODEL_LIST_TIMEOUT_S, max_retries=_MODEL_LIST_MAX_RETRIES,
+        )
+        models_page = client.models.list()
         return sorted([m.id for m in models_page.data])
     except Exception as e:
         agent.llm.logger.warning(f"Failed to fetch models from API: {e}")
-        raise RuntimeError(f"Could not fetch model list: {e}") from e
+        raise RuntimeError(
+            f"Could not fetch model list: {_describe_model_list_failure(e)} (details in agentao.log)"
+        ) from e

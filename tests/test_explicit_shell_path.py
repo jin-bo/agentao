@@ -105,11 +105,9 @@ def test_both_delivery_faces_spawn_the_named_interpreter(monkeypatch, tmp_path, 
             executable=AbsPath("/bin/zsh"),
         )
     )
-    if face == "run":
-        executor.run(request)  # a spawn failure is reported, not raised
-    else:
-        with pytest.raises(RuntimeError):
-            executor.run_background(request)
+    # A failed start raises on both faces; the tool reports it as a failed start.
+    with pytest.raises(RuntimeError):
+        getattr(executor, face)(request)
     assert seen["executable"] == "/bin/zsh"
 
 
