@@ -179,11 +179,11 @@ def _stream_need(stream: _Stream) -> int:
 _MAX_COMMAND_ECHO_CHARS = 2_000
 
 
-def _clip_command(command: str) -> str:
+def _clip_command(command: str, what: str = "the command") -> str:
     if len(command) <= _MAX_COMMAND_ECHO_CHARS:
         return command
     omitted = len(command) - _MAX_COMMAND_ECHO_CHARS
-    return command[:_MAX_COMMAND_ECHO_CHARS] + f" [... {omitted:,} more chars of the command not shown]"
+    return command[:_MAX_COMMAND_ECHO_CHARS] + f" [... {omitted:,} more chars of {what} not shown]"
 
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -489,11 +489,24 @@ class ShellTool(Tool):
         # local executor. An injected ShellExecutor (Docker, remote host, …)
         # may accept a container/remote path that does not exist locally; let
         # that executor validate the cwd itself.
-        if isinstance(self._get_shell(), LocalShellExecutor) and not cwd.is_dir():
-            return _cap_result(
-                f"Error: working_directory '{working_directory}' does not exist "
-                "or is not a directory."
-            )
+        if isinstance(self._get_shell(), LocalShellExecutor):
+            shown = _clip_command(working_directory, "the path")
+            # ``is_dir`` answers False only for the errors pathlib chooses to ignore
+            # (not found, not a directory, …); anything else the stat raises — a path
+            # longer than the OS allows, a permission denied on a parent — came out of
+            # the tool as an exception. It is the same refusal, with the OS's reason.
+            try:
+                usable = cwd.is_dir()
+            except OSError as e:
+                return _cap_result(
+                    f"Error: working_directory '{shown}' cannot be used: "
+                    f"{e.strerror or type(e).__name__}."
+                )
+            if not usable:
+                return _cap_result(
+                    f"Error: working_directory '{shown}' does not exist "
+                    "or is not a directory."
+                )
 
         if _sandbox_profile is not None:
             wrapped = _wrap_with_sandbox(command, _sandbox_profile)

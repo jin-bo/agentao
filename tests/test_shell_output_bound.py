@@ -502,3 +502,47 @@ def test_an_early_error_before_anything_runs_is_capped(tmp_path):
     out = tool.execute(command="echo hi")
     assert out.startswith("Error: shell spec provider raised: provider broke:")
     assert len(out) <= _MAX_OUTPUT_CHARS
+
+
+# ------------------------------------ a working directory the OS will not even stat
+#
+# ``Path.is_dir`` answers False only for the errors pathlib ignores; a name longer than
+# the OS allows (ENAMETOOLONG) or a parent without search permission (EACCES) raised out
+# of ``execute`` instead, and the executor then reported it with the whole path in it.
+
+
+def test_a_working_directory_too_long_to_stat_is_refused_not_raised(tmp_path):
+    tool = ShellTool()
+    tool.working_directory = str(tmp_path)
+    out = tool.execute(command="echo hi", working_directory=str(tmp_path / ("d" * 60_000)))
+    assert out.startswith("Error: working_directory '")
+    assert "more chars of the path not shown" in out
+    assert len(out) < 3_000
+
+
+def test_the_frozen_record_path_is_refused_the_same_way(tmp_path):
+    from agentao.runtime.tool_planning import _decided_call
+
+    tool = ShellTool()
+    tool.working_directory = str(tmp_path)
+    args = {"command": "echo hi", "working_directory": str(tmp_path / ("d" * 60_000))}
+    decided = _decided_call(tool, tool.shell_spec, args)
+    assert decided is not None
+    out = tool.execute(**args, _decided=decided)
+    assert out.startswith("Error: working_directory '")
+    assert len(out) < 3_000
+
+
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="POSIX permissions")
+def test_a_working_directory_under_an_unsearchable_parent_is_refused_not_raised(tmp_path):
+    locked = tmp_path / "locked"
+    (locked / "inner").mkdir(parents=True)
+    locked.chmod(0)
+    try:
+        tool = ShellTool()
+        tool.working_directory = str(tmp_path)
+        out = tool.execute(command="echo hi", working_directory=str(locked / "inner"))
+    finally:
+        locked.chmod(0o755)
+    assert out.startswith("Error: working_directory '")
+    assert "cannot be used" in out or "does not exist" in out
