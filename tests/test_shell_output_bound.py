@@ -502,3 +502,77 @@ def test_an_early_error_before_anything_runs_is_capped(tmp_path):
     out = tool.execute(command="echo hi")
     assert out.startswith("Error: shell spec provider raised: provider broke:")
     assert len(out) <= _MAX_OUTPUT_CHARS
+
+
+# ------------------------------------ a working directory the OS will not even stat
+#
+# ``Path.is_dir`` answers False only for the errors pathlib ignores; a name longer than
+# the OS allows (ENAMETOOLONG) or a parent without search permission (EACCES) raised out
+# of ``execute`` instead, and the executor then reported it with the whole path in it.
+
+
+def test_a_working_directory_too_long_to_stat_is_refused_not_raised(tmp_path):
+    tool = ShellTool()
+    tool.working_directory = str(tmp_path)
+    out = tool.execute(command="echo hi", working_directory=str(tmp_path / ("d" * 60_000)))
+    assert out.startswith("Error: working_directory '")
+    assert "more chars of the path not shown" in out
+    assert len(out) < 3_000
+
+
+def test_the_frozen_record_path_is_refused_the_same_way(tmp_path):
+    from agentao.runtime.tool_planning import _decided_call
+
+    tool = ShellTool()
+    tool.working_directory = str(tmp_path)
+    args = {"command": "echo hi", "working_directory": str(tmp_path / ("d" * 60_000))}
+    # On POSIX the planner freezes a record and ``execute`` refuses at the directory
+    # check. On Windows resolving the path already fails, so no record is frozen and
+    # ``execute`` resolves — and refuses — on its own. Either way: a refusal, not a raise.
+    decided = _decided_call(tool, tool.shell_spec, args)
+    if sys.platform != "win32":
+        assert decided is not None
+    out = tool.execute(**args, _decided=decided)
+    assert out.startswith("Error: working_directory '")
+    assert len(out) < 3_000
+
+
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="POSIX permissions")
+def test_a_working_directory_under_an_unsearchable_parent_is_refused_not_raised(tmp_path):
+    locked = tmp_path / "locked"
+    (locked / "inner").mkdir(parents=True)
+    locked.chmod(0)
+    try:
+        tool = ShellTool()
+        tool.working_directory = str(tmp_path)
+        out = tool.execute(command="echo hi", working_directory=str(locked / "inner"))
+    finally:
+        locked.chmod(0o755)
+    assert out.startswith("Error: working_directory '")
+    assert "cannot be used" in out or "does not exist" in out
+
+
+@pytest.mark.parametrize("stage", ["resolve", "is_dir"])
+def test_a_value_error_from_the_os_is_refused_too(tmp_path, monkeypatch, stage):
+    """Windows raises ``ValueError`` ("path too long for Windows") where POSIX raises
+    ``OSError``, and it can come from resolving the path as well as from ``is_dir``.
+    Simulated here so the branch is exercised on every platform.
+    """
+    tool = ShellTool()
+    tool.working_directory = str(tmp_path)
+
+    class Unstattable(type(tmp_path)):
+        def is_dir(self):
+            raise ValueError("stat: path too long for Windows")
+
+    if stage == "resolve":
+        def resolve_cwd(_wd):
+            raise ValueError("stat: path too long for Windows")
+    else:
+        def resolve_cwd(_wd):
+            return Unstattable(tmp_path)
+    monkeypatch.setattr(tool, "resolve_cwd", resolve_cwd)
+    out = tool.execute(command="echo hi", working_directory="x" * 5_000)
+    assert out.startswith("Error: working_directory '")
+    assert "cannot be used: stat: path too long for Windows." in out
+    assert "more chars of the path not shown" in out
