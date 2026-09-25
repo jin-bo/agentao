@@ -15,6 +15,15 @@ _Targeting 0.5.5. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A rejected confirmation no longer advances a sub-agent's turn label.**
+  After the user rejects a call, `ToolRunner` emits a `TURN_START` that only
+  resets the spinner; a foreground sub-agent's `[agent n/N]` counter counted
+  it as a turn, so the rejected call itself was retitled `n+1` at its
+  `TOOL_START`, every later turn stayed one ahead, and repeated rejections
+  could push the label past `N`. That `TURN_START` now carries
+  `display_reset: True`, and the counter skips it. Display only — the real
+  iteration limit was never affected.
+
 - **ACP: a permission request now names a tool call the client has already
   seen.** `session/request_permission` minted its own `call_<uuid>` and was
   sent before any `tool_call`, so a client saw a prompt for a call it had

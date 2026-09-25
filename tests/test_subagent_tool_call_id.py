@@ -245,3 +245,66 @@ def test_tool_output_carries_call_id():
 
     (out,) = parent.by_type(EventType.TOOL_OUTPUT)
     assert out.data["call_id"] == "call_99"
+
+
+def test_a_rejected_confirmation_does_not_advance_the_turn_label():
+    # A rejection makes ToolRunner emit a TURN_START that only resets the
+    # spinner. Counted as a turn, it retitled the rejected call itself
+    # (1/15 at the prompt, 2/15 at its TOOL_START) and left every later
+    # turn one ahead. Driven through the real ToolRunner, compat transport
+    # and prefixed callbacks, so the flag has to survive every hop.
+    import logging
+
+    from agentao.runtime.tool_runner import ToolRunner
+    from agentao.tools import Tool, ToolRegistry
+
+    class _Asks(Tool):
+        name = "write_thing"
+        description = "write"
+        parameters = {"type": "object"}
+        requires_confirmation = True
+
+        def execute(self, **kwargs) -> str:
+            return "ok"
+
+    starts, confirmations = [], []
+    wrapper = AgentToolWrapper(
+        definition={"name": "r", "description": "d"},
+        all_tools={},
+        llm_config_getter=lambda: {},
+        working_directory=Path("."),
+        step_callback=lambda name, args: starts.append(name),
+        confirmation_event_callback=lambda e: confirmations.append(e.data["tool"]),
+    )
+    counter = [0]
+    answers = iter([False, True, True])
+    sub_transport = build_compat_transport(
+        confirmation_callback=lambda *a: next(answers),
+        step_callback=wrapper._make_prefixed_step_callback(15, counter),
+        confirmation_event_callback=wrapper._make_prefixed_confirmation_event_callback(
+            15, counter
+        ),
+    )
+    registry = ToolRegistry()
+    registry.register(_Asks())
+    runner = ToolRunner(
+        tools=registry, permission_engine=None, transport=sub_transport,
+        logger=logging.getLogger("test.turn_label"),
+    )
+
+    def call(cid):
+        return SimpleNamespace(
+            # Distinct arguments: identical repeats trip the doom-loop guard.
+            id=cid, function=SimpleNamespace(
+                name="write_thing", arguments=f'{{"path": "{cid}"}}',
+            ),
+        )
+
+    sub_transport.emit(AgentEvent(EventType.TURN_START, {}))  # LLM iteration 1
+    runner.execute([call("a"), call("b")])
+    sub_transport.emit(AgentEvent(EventType.TURN_START, {}))  # LLM iteration 2
+    runner.execute([call("c")])
+
+    first, second = "[r 1/15] write_thing", "[r 2/15] write_thing"
+    assert confirmations == [first, first, second]
+    assert [s for s in starts if s is not None] == [first, first, second]

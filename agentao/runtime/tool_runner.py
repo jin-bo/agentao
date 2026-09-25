@@ -309,8 +309,12 @@ class ToolRunner:
                 if not _confirmed:
                     self._logger.info(f"Tool {_fn} execution cancelled by user")
                     _plan.decision = ToolCallDecision.CANCELLED
-                    # No TOOL_START will fire for cancelled tools — reset spinner explicitly.
-                    self._transport.emit(AgentEvent(EventType.TURN_START, {}))
+                    # Reset the spinner the prompt left behind. ``display_reset``
+                    # marks this as no new LLM iteration, so a sub-agent's turn
+                    # counter does not count it.
+                    self._transport.emit(AgentEvent(EventType.TURN_START, {
+                        "display_reset": True,
+                    }))
                 else:
                     self._logger.info(f"Tool {_fn} execution confirmed by user")
                     _plan.decision = ToolCallDecision.ALLOW

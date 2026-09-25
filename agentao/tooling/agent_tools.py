@@ -43,7 +43,10 @@ def register_agent_tools(agent: "Agentao") -> None:
 
     def _agent_step_cb(name, args):
         if name is None:
-            agent.transport.emit(AgentEvent(EventType.TURN_START, {}))
+            agent.transport.emit(AgentEvent(EventType.TURN_START, (
+                {"display_reset": True}
+                if isinstance(args, dict) and args.get("display_reset") else {}
+            )))
         elif name == "__agent_start__":
             agent.transport.emit(AgentEvent(EventType.AGENT_START, {
                 "agent": args.agent_name,

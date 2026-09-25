@@ -210,7 +210,7 @@ def build_compat_transport(
         d = event.data
         if t == EventType.TURN_START:
             if step_callback:
-                step_callback(None, {})
+                step_callback(None, {"display_reset": True} if d.get("display_reset") else {})
         elif t == EventType.TOOL_START:
             if step_callback:
                 # Inject call_id into args under a private key so the parent
