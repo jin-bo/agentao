@@ -153,10 +153,10 @@ if event.type == EventType.LLM_TEXT:
 | 字段 | 说明 |
 |------|------|
 | 触发时机 | 即将调用 `confirm_tool()` 问用户前 |
-| `data` | `{"tool": "run_shell_command", "args": {...}}` |
+| `data` | `{"tool": "run_shell_command", "args": {...}, "call_id": "uuid"}`——`call_id` 与该调用的 `TOOL_START` / `TOOL_COMPLETE` 相同 |
 | 典型用法 | **可选**的 "镜像" 事件——给纯只读的观察者一次看到"要弹确认框了"的机会 |
 
-通常你不需要处理这个事件——真正的确认逻辑走 `confirm_tool()` 方法调用。`TOOL_CONFIRMATION` 更多用于审计/日志"事件流完整性"。
+通常你不需要处理这个事件——真正的确认逻辑走 `confirm_tool()` 方法调用。`TOOL_CONFIRMATION` 更多用于审计/日志"事件流完整性"，以及关联：ACP transport 据它先打开该调用的 `tool_call`，让权限请求指向 client 已经见过的调用。
 
 ### `TOOL_OUTPUT`
 

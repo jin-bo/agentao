@@ -112,6 +112,11 @@ class _InteractionMixin:
         # would create a cycle. Resolved lazily on first call.
         from .session_manager import SessionNotFoundError
 
+        # Consume even when a session override or failure returns early, so a
+        # later direct confirm_tool call cannot inherit this call's id.
+        tool_call_id = getattr(self._confirmation_local, "call_id", None)
+        self._confirmation_local.call_id = None
+
         if self._server is None:
             logger.error(
                 "acp: confirm_tool called with no server bound (session %s, tool %s)",
@@ -147,8 +152,10 @@ class _InteractionMixin:
                 )
                 return decided
 
-        # 2) Build the request payload.
-        tool_call_id = f"call_{uuid.uuid4().hex[:12]}"
+        # 2) Use the id from the immediately preceding confirmation event.
+        # Thread-local pairing keeps concurrent foreground sub-agents apart.
+        if not tool_call_id:
+            tool_call_id = f"call_{uuid.uuid4().hex[:12]}"
         tool_call_payload: Dict[str, Any] = {
             "toolCallId": tool_call_id,
             "title": tool_name,

@@ -187,6 +187,7 @@ def build_compat_transport(
     tool_complete_callback=None,
     llm_text_callback=None,
     on_max_iterations_callback=None,
+    confirmation_event_callback=None,
 ) -> "SdkTransport":
     """Wrap the legacy 8-callback API into a single ``SdkTransport``.
 
@@ -220,6 +221,12 @@ def build_compat_transport(
                 if _call_id:
                     _args["__call_id__"] = _call_id
                 step_callback(d.get("tool"), _args)
+        elif t == EventType.TOOL_CONFIRMATION:
+            # Only beside a step_callback: an ACP parent opens the call from
+            # this event and only the forwarded TOOL_START moves it on, so
+            # forwarding one without the other opens a call nothing closes.
+            if confirmation_event_callback and step_callback:
+                confirmation_event_callback(event)
         elif t == EventType.TOOL_OUTPUT:
             if output_callback:
                 output_callback(
