@@ -100,8 +100,8 @@ Replay recorders pair this with `TURN_BEGIN` to delimit a turn. Drives the runti
 
 | Field | Description |
 |-------|-------------|
-| Trigger | Before **each LLM iteration** inside a turn (a single turn can fire many) |
-| `data` | `{}` empty |
+| Trigger | Before **each LLM iteration** inside a turn (a single turn can fire many) — and once after a rejected confirmation, to reset the display |
+| `data` | `{}` empty; `{"display_reset": true}` for the post-rejection reset, which starts no LLM iteration — don't count it as one |
 | Typical use | Reset UI display, set spinner to "Thinking…" |
 
 ```python

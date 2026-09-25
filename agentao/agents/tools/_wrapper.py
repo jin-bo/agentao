@@ -1561,8 +1561,11 @@ class AgentToolWrapper(Tool):
 
         def prefixed(tool_name: Optional[str], tool_args: dict) -> None:
             if tool_name is None:
-                # Called before each LLM iteration — increment turn counter
-                turn_counter[0] += 1
+                # Called before each LLM iteration — increment turn counter —
+                # and after a rejected confirmation, which only resets the
+                # display and is not a turn.
+                if not (tool_args or {}).get("display_reset"):
+                    turn_counter[0] += 1
                 parent_cb(None, tool_args)  # keep the "Thinking…" reset
             else:
                 label = f"[{agent_name} {turn_counter[0]}/{max_turns}] {tool_name}"

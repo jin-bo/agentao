@@ -72,7 +72,8 @@ class AgentEvent:
     skip one unread field.
 
     Common data payloads:
-        TURN_START    {}
+        TURN_START    {} — or {"display_reset": True} when it only resets the
+                       display after a rejected confirmation (no LLM call follows)
         TURN_BEGIN    {"user_message": "..."}
         TURN_END      {"final_text": "...", "status": "ok"|"error"|"cancelled",
                        "error": None, "tool_count": 3,
