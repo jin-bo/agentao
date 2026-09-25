@@ -301,10 +301,14 @@ def test_on_retry_is_told_each_retry_before_its_sleep(slept):
                      _dies(httpx, _chunk(role="assistant"), httpx.ReadTimeout("t")),
                      _completions_answer("ok"))
     _completions(script).chat_stream(HELLO, on_retry=on_retry)
-    assert [(s["retry"], s["max_retries"], s["reason"], s["slept_before"]) for s in seen] == [
-        (1, MAX_RETRY_ATTEMPTS - 1, "RemoteProtocolError", 0),
-        (2, MAX_RETRY_ATTEMPTS - 1, "ReadTimeout", 1),
+    assert [(s["retry"], s["max_retries"], s["slept_before"]) for s in seen] == [
+        (1, MAX_RETRY_ATTEMPTS - 1, 0),
+        (2, MAX_RETRY_ATTEMPTS - 1, 1),
     ]
+    # The label is the exception class: openai 2.x lets the httpx error out
+    # raw, 3.x wraps it (APIConnectionError / APITimeoutError).
+    assert seen[0]["reason"] in ("RemoteProtocolError", "APIConnectionError")
+    assert seen[1]["reason"] in ("ReadTimeout", "APITimeoutError")
     assert [s["delay_s"] for s in seen] == [round(d, 2) for d in slept]
 
 
@@ -405,6 +409,7 @@ def test_chat_stream_does_not_resend_after_a_cancel_with_zero_retry_after(monkey
             raise httpx.RemoteProtocolError(PEER_CLOSED)
 
     script = _Script(httpx, DiesAndCancels(), _completions_answer("must not be requested"))
-    with pytest.raises(httpx.RemoteProtocolError):
+    # openai 3.x wraps the dropped stream as ``APIConnectionError``.
+    with pytest.raises((httpx.RemoteProtocolError, openai.APIConnectionError)):
         _completions(script).chat_stream(HELLO, cancellation_token=token)
     assert script.requests == 1
