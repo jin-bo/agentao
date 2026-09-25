@@ -156,6 +156,7 @@ class AgentManager:
         tool_origin_getter: Optional[Callable[[str], str]] = None,
         skill_manager_getter: Optional[Callable[[], Any]] = None,
         usage_sink: Optional[Callable[..., None]] = None,
+        confirmation_event_callback: Optional[Callable] = None,
     ) -> List[RegistrableTool]:
         """Create an :class:`AgentToolWrapper` per agent definition.
 
@@ -188,6 +189,7 @@ class AgentManager:
                 working_directory=self.project_root,
                 bg_store=bg_store,
                 confirmation_callback=confirmation_callback,
+                confirmation_event_callback=confirmation_event_callback,
                 step_callback=step_callback,
                 output_callback=output_callback,
                 tool_complete_callback=tool_complete_callback,

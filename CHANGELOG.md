@@ -15,6 +15,19 @@ _Targeting 0.5.5. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **ACP: a permission request now names a tool call the client has already
+  seen.** `session/request_permission` minted its own `call_<uuid>` and was
+  sent before any `tool_call`, so a client saw a prompt for a call it had
+  never been told about, followed by a second, unrelated call under the
+  runtime id. The runtime's `TOOL_CONFIRMATION` now carries `call_id`; the ACP
+  transport opens the call's `tool_call` (status `pending`, diff included)
+  from it, the request reuses that id, and the call's `TOOL_START` becomes a
+  `tool_call_update` (title and content restated, status left `pending`,
+  since a rejected call gets one too) rather than a second `tool_call`. A
+  foreground sub-agent forwards its confirmation under the same
+  `[agent n/N]` label as its `TOOL_START`. Same order as the ACP reference
+  adapter and gemini-cli (#29439); `Transport.confirm_tool` is unchanged.
+
 - **A shell `working_directory` the OS will not stat is refused, not raised.**
   `Path.is_dir()` answers False only for the errors pathlib ignores (not
   found, not a directory); a parent without search permission (`EACCES`) or a

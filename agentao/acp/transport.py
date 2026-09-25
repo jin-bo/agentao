@@ -15,14 +15,15 @@ Internal event         ACP ``session/update.update.sessionUpdate``
 ``TURN_START``         *(no notification — purely internal bookkeeping)*
 ``LLM_TEXT``           ``agent_message_chunk`` with text content
 ``THINKING``           ``agent_thought_chunk`` with text content
-``TOOL_START``         ``tool_call`` (toolCallId, title, kind, status="pending",
-                       rawInput, plus a ``diff`` content entry for a file edit)
+``TOOL_START``         ``tool_call`` for calls without confirmation;
+                       ``tool_call_update`` for calls already opened
 ``TOOL_OUTPUT``        ``tool_call_update`` (status="in_progress", content restated whole)
 ``TOOL_COMPLETE``      ``tool_call_update`` (status="completed" or "failed")
 ``AGENT_START``        ``agent_thought_chunk`` with a "[sub-agent started: …]" marker
 ``AGENT_END``          ``agent_thought_chunk`` with a "[sub-agent finished: …]" marker
 ``ERROR``              ``agent_message_chunk`` with an "Error: …" marker
-``TOOL_CONFIRMATION``  *(no notification — Issue 08's ``session/request_permission``)*
+``TOOL_CONFIRMATION``  ``tool_call`` before ``session/request_permission``
+                       when a call id is present
 =====================  ==============================================
 
 Design notes
@@ -114,6 +115,7 @@ Deterministic failure modes:
 from __future__ import annotations
 
 import logging
+import threading
 from collections import deque
 from typing import TYPE_CHECKING, Any, Deque, Dict, List, Set
 
@@ -227,6 +229,10 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
         # clears it, because the sub-agent path falls back to the tool *name*
         # as the call_id, so ids genuinely do repeat.
         self._closed_tool_calls: Deque[str] = deque(maxlen=_CLOSED_CALL_MEMORY)
+        # The confirmation event and confirm_tool run on the same worker;
+        # foreground sub-agents may use this transport from other workers.
+        self._confirmation_local = threading.local()
+        self._announced_tool_calls: Set[str] = set()
 
     # -- One-way events ----------------------------------------------------
 
@@ -249,9 +255,8 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
                 event.type,
                 self._session_id,
             )
-        # Always notify subscribers (replay recorder, etc.) — including
-        # for events the ACP wire intentionally drops (TURN_START,
-        # TOOL_CONFIRMATION). Subscribers see the full runtime stream.
+        # Always notify subscribers (replay recorder, etc.), including
+        # events the ACP wire drops. Subscribers see the full runtime stream.
         self._broadcast.notify(event)
 
     def subscribe(self, listener):
@@ -288,8 +293,26 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
         if etype == EventType.TURN_START:
             return None
         if etype == EventType.TOOL_CONFIRMATION:
-            # Issue 08 owns tool confirmation via session/request_permission.
-            return None
+            call_id = data.get("call_id")
+            if not call_id:
+                return None
+            self._confirmation_local.call_id = str(call_id)
+            if (
+                str(data.get("tool", "")) == "todo_write"
+                and _todo_write_plan(data.get("args", {})) is not None
+            ):
+                # A valid checklist surfaces as a ``plan`` at TOOL_COMPLETE,
+                # never as a ``tool_call``; opening one here would leave it
+                # pending forever and suppress the plan.
+                return None
+            # Reuse TOOL_START's payload builder so the opening call and the
+            # later execution event have identical input and proposed diff.
+            opening = self._build_update(AgentEvent(EventType.TOOL_START, {
+                **data, "_permission_opening": True,
+            }))
+            if opening is not None:
+                self._announced_tool_calls.add(str(call_id))
+            return opening
 
         if etype == EventType.LLM_TEXT:
             chunk = data.get("chunk", "")
@@ -309,11 +332,29 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
             tool = str(data.get("tool", "unknown"))
             call_id = str(data.get("call_id", ""))
             raw_args = data.get("args", {})
-            # A new call under a reused id (the sub-agent path falls back to
-            # the tool name) is live again, whatever the previous one did.
+            # A new call under a reused id is live again, including one
+            # opened by TOOL_CONFIRMATION before this execution event.
             while call_id in self._closed_tool_calls:
                 self._closed_tool_calls.remove(call_id)
-            if tool == "todo_write":
+            if call_id in self._announced_tool_calls and not data.get("_permission_opening"):
+                self._announced_tool_calls.discard(call_id)
+                # Restate title and content: ``session/request_permission``
+                # carried a ToolCallUpdate for this same id, whose title (a
+                # sub-agent's "[name] tool") and content (the tool's
+                # *description*) the client merged into the call. Content is
+                # the buffer's copy — the opening diff, or empty to clear.
+                # No ``status``: TOOL_START also fires for a call the user
+                # just rejected, so the call stays "pending" (as an
+                # unconfirmed call's opening does) until output or
+                # completion moves it on.
+                buffer = self._tool_call_content.get(call_id)
+                return {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": call_id,
+                    "title": tool,
+                    "content": buffer.entries() if buffer is not None else [],
+                }
+            if tool == "todo_write" and not data.get("_permission_opening"):
                 # Surface the task checklist as a native ACP ``plan`` rather
                 # than a ``tool_call`` — but DEFER it to TOOL_COMPLETE so a
                 # denied (read-only mode) or failed call never renders a plan

@@ -264,9 +264,13 @@ posture should be *decided and documented*, not left implicit.
 > - **`session/request_permission` mints its own `toolCallId`** (`call_<uuid>`
 >   in `_transport_interaction.py`) which never matches the runtime `call_id`
 >   the following `tool_call` carries, so a client sees two unrelated tool
->   calls where the reference adapter deliberately converges them. **Not
->   fixed** — `Transport.confirm_tool(tool_name, description, args)` carries no
->   call id, so closing it is a protocol change across every transport.
+>   calls where the reference adapter deliberately converges them. **Fixed
+>   after this review** — `TOOL_CONFIRMATION` now carries the runtime call id;
+>   ACP opens the call before requesting permission and uses that id for both
+>   the request and subsequent updates. Foreground sub-agents forward the
+>   confirmation event through their compatibility transport, under the same
+>   `[agent n/N]` label their `TOOL_START` carries. The shared
+>   `Transport.confirm_tool` signature did not change.
 
 
 `transport.py:236-247` emits `tool_call` with `toolCallId`, `title` (= the raw

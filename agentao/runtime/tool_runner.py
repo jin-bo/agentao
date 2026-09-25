@@ -299,6 +299,7 @@ class ToolRunner:
                 self._logger.info(f"Tool {_fn} requires confirmation")
                 self._transport.emit(AgentEvent(EventType.TOOL_CONFIRMATION, {
                     "tool": _fn, "args": _plan.function_args,
+                    "call_id": _plan.tool_call_id,
                 }))
                 _confirmed = self._transport.confirm_tool(
                     _fn,

@@ -104,6 +104,7 @@ def register_agent_tools(agent: "Agentao") -> None:
         llm_config_getter=lambda: agent._llm_config,
         bg_store=agent.bg_store,
         confirmation_callback=lambda *a, **kw: agent.transport.confirm_tool(*a, **kw),
+        confirmation_event_callback=lambda event: agent.transport.emit(event),
         step_callback=_agent_step_cb,
         output_callback=_agent_output_cb,
         tool_complete_callback=_agent_tool_complete_cb,

@@ -118,6 +118,83 @@ def test_same_name_parallel_completions_keep_distinct_call_ids():
     assert all("[basic-info-reviewer 1/100] read_file" == e.data["tool"] for e in starts)
 
 
+def test_confirmation_event_keeps_subagent_call_id():
+    cap = _build_bridge_callbacks()
+    parent = cap["_parent_transport"]
+    sub_transport = build_compat_transport(
+        step_callback=cap["step_callback"],
+        confirmation_event_callback=cap["confirmation_event_callback"],
+    )
+    for cid in ("first", "second"):
+        sub_transport.emit(AgentEvent(EventType.TOOL_CONFIRMATION, {
+            "tool": "read_file", "call_id": cid, "args": {"file_path": cid},
+        }))
+    assert [e.data["call_id"] for e in parent.by_type(EventType.TOOL_CONFIRMATION)] == [
+        "first", "second",
+    ]
+
+
+def test_confirmation_is_not_forwarded_without_a_step_callback():
+    # The parent would open an ACP tool_call from the confirmation and never
+    # see the TOOL_START that moves it on: a call left pending forever.
+    cap = _build_bridge_callbacks()
+    parent = cap["_parent_transport"]
+    sub_transport = build_compat_transport(
+        confirmation_event_callback=cap["confirmation_event_callback"],
+    )
+    sub_transport.emit(AgentEvent(EventType.TOOL_CONFIRMATION, {
+        "tool": "read_file", "call_id": "c1", "args": {"file_path": "c1"},
+    }))
+    assert parent.by_type(EventType.TOOL_CONFIRMATION) == []
+
+
+def test_confirmation_opening_carries_the_subagent_label():
+    # ACP opens the call from TOOL_CONFIRMATION and the prefixed TOOL_START
+    # only updates it, so the label has to be on the opening — and be the
+    # same label, turn counter included, that TOOL_START would have used.
+    import io
+    import json
+
+    from agentao.acp.models import AcpSessionState
+    from agentao.acp.server import AcpServer
+    from agentao.acp.transport import ACPTransport
+
+    out = io.StringIO()
+    server = AcpServer(stdin=io.StringIO(), stdout=out)
+    server.sessions.create(AcpSessionState(session_id="s"))
+    acp = ACPTransport(server, "s")
+    started = []
+    wrapper = AgentToolWrapper(
+        definition={"name": "reviewer", "description": "d"},
+        all_tools={},
+        llm_config_getter=lambda: {},
+        working_directory=Path("."),
+        step_callback=lambda name, args: started.append(name),
+        confirmation_event_callback=acp.emit,
+    )
+    counter = [0]
+    step_cb = wrapper._make_prefixed_step_callback(15, counter)
+    sub_transport = build_compat_transport(
+        step_callback=step_cb,
+        confirmation_event_callback=wrapper._make_prefixed_confirmation_event_callback(
+            15, counter
+        ),
+    )
+    sub_transport.emit(AgentEvent(EventType.TURN_START, {}))
+    sub_transport.emit(AgentEvent(EventType.TURN_START, {}))
+    sub_transport.emit(AgentEvent(EventType.TOOL_CONFIRMATION, {
+        "tool": "run_shell_command", "call_id": "c1", "args": {"command": "ls"},
+    }))
+    sub_transport.emit(AgentEvent(EventType.TOOL_START, {
+        "tool": "run_shell_command", "call_id": "c1", "args": {"command": "ls"},
+    }))
+
+    opening = json.loads(out.getvalue().splitlines()[0])["params"]["update"]
+    assert opening["sessionUpdate"] == "tool_call"
+    assert opening["title"] == "[reviewer 2/15] run_shell_command"
+    assert started == [None, None, opening["title"]]
+
+
 def test_completion_forwards_real_status_and_error():
     # A failed sub-agent tool must surface as a failure, not a hardcoded "ok".
     cap = _build_bridge_callbacks()

@@ -80,6 +80,7 @@ class AgentEvent:
                        |"length_truncated"|"doom_loop"|"max_iterations"
                        |"llm_error",
                        "finish_reason_missing": False}
+        TOOL_CONFIRMATION {"tool": "run_shell_command", "args": {...}, "call_id": "uuid"}
         TOOL_START    {"tool": "run_shell_command", "args": {...}, "call_id": "uuid"}
         TOOL_OUTPUT   {"tool": "run_shell_command", "chunk": "hello\\n", "call_id": "uuid"}
         TOOL_COMPLETE {"tool": "run_shell_command", "call_id": "uuid",
@@ -102,7 +103,6 @@ class AgentEvent:
         AGENT_END         {"agent": "codebase-investigator", "state": "completed",
                        "turns": 3, "tool_calls": 5, "tokens": 1200,
                        "duration_ms": 8000, "error": None}
-        TOOL_CONFIRMATION {"tool": "run_shell_command", "args": {...}}
     """
 
     type: EventType

@@ -153,10 +153,10 @@ if event.type == EventType.LLM_TEXT:
 | Field | Description |
 |-------|-------------|
 | Trigger | Just before `confirm_tool()` is called |
-| `data` | `{"tool": "run_shell_command", "args": {...}}` |
+| `data` | `{"tool": "run_shell_command", "args": {...}, "call_id": "uuid"}` — the same `call_id` the call's `TOOL_START` / `TOOL_COMPLETE` carry |
 | Typical use | **Optional** mirror event — lets read-only observers see "a prompt is coming" |
 
-You usually don't handle this — real confirmation flows through `confirm_tool()`. `TOOL_CONFIRMATION` is mostly for audit/log stream completeness.
+You usually don't handle this — real confirmation flows through `confirm_tool()`. `TOOL_CONFIRMATION` is mostly for audit/log stream completeness — and for correlation: the ACP transport opens the call's `tool_call` from it, so the permission request names a call the client has already seen.
 
 ### `TOOL_OUTPUT`
 

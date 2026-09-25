@@ -22,7 +22,7 @@ import logging
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -581,6 +581,7 @@ class AgentToolWrapper(Tool):
         tool_origin_getter: Optional[Callable[[str], str]] = None,
         skill_manager_getter: Optional[Callable[[], Any]] = None,
         usage_sink: Optional[Callable[..., None]] = None,
+        confirmation_event_callback: Optional[Callable] = None,
     ):
         self._definition = definition
         # The parent's live registry: tools it adds or removes between turns
@@ -597,6 +598,7 @@ class AgentToolWrapper(Tool):
         self._working_directory = working_directory
         self._bg_store = bg_store
         self._confirmation_callback = confirmation_callback
+        self._confirmation_event_callback = confirmation_event_callback
         self._step_callback = step_callback
         self._output_callback = output_callback
         self._tool_complete_callback = tool_complete_callback
@@ -966,7 +968,14 @@ class AgentToolWrapper(Tool):
 
         max_turns = self._definition.get("max_turns", 15)
         agent_name = self._definition["name"]
-        step_cb = None if suppress_output else self._make_prefixed_step_callback(max_turns)
+        # One counter for both labels: the ACP ``tool_call`` a confirmation
+        # opens carries this label until the ``TOOL_START`` update restates
+        # it, so the two should name the call identically from the start.
+        turn_counter = [0]
+        step_cb = (
+            None if suppress_output
+            else self._make_prefixed_step_callback(max_turns, turn_counter)
+        )
 
         # A foreground sub-agent asks through the parent: the callback prepends
         # "[agent_name]" to the tool name so the user knows which one is asking.
@@ -997,6 +1006,9 @@ class AgentToolWrapper(Tool):
             # No ``thinking_callback``: a sub-agent's reasoning is not shown.
             transport = build_compat_transport(
                 confirmation_callback=confirm_cb,
+                confirmation_event_callback=self._make_prefixed_confirmation_event_callback(
+                    max_turns, turn_counter
+                ),
                 step_callback=step_cb,
                 output_callback=self._output_callback,
                 tool_complete_callback=self._tool_complete_callback,
@@ -1538,13 +1550,14 @@ class AgentToolWrapper(Tool):
     # ------------------------------------------------------------------
 
     def _make_prefixed_step_callback(
-        self, max_turns: int
+        self, max_turns: int, turn_counter: Optional[List[int]] = None
     ) -> Optional[Callable]:
         parent_cb = self._step_callback
         if not parent_cb:
             return None
         agent_name = self._definition["name"]
-        turn_counter = [0]  # mutable cell
+        if turn_counter is None:
+            turn_counter = [0]  # mutable cell
 
         def prefixed(tool_name: Optional[str], tool_args: dict) -> None:
             if tool_name is None:
@@ -1554,5 +1567,27 @@ class AgentToolWrapper(Tool):
             else:
                 label = f"[{agent_name} {turn_counter[0]}/{max_turns}] {tool_name}"
                 parent_cb(label, tool_args)
+
+        return prefixed
+
+    def _make_prefixed_confirmation_event_callback(
+        self, max_turns: int, turn_counter: List[int]
+    ) -> Optional[Callable]:
+        """Forward a sub-agent's ``TOOL_CONFIRMATION`` under the step label.
+
+        ACP opens the call's ``tool_call`` from this event, before the
+        permission request, so the attribution has to be here or the client
+        shows an unattributed call while the user is being asked about it.
+        """
+        parent_cb = self._confirmation_event_callback
+        if not parent_cb:
+            return None
+        agent_name = self._definition["name"]
+
+        def prefixed(event: Any) -> None:
+            data = dict(event.data)
+            label = f"[{agent_name} {turn_counter[0]}/{max_turns}] {data.get('tool', '')}"
+            data["tool"] = label
+            parent_cb(replace(event, data=data))
 
         return prefixed
