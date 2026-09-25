@@ -7,11 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Targeting 0.5.5. Add entries under the relevant heading as work lands._
+---
+
+## [0.5.5] — 2026-09-24
 
 ### Added
 
-### Changed
+- **Host-visible fields and parameters that came with this release's fixes**
+  (each is described under Fixed): `ShellResult.stdout_omitted_bytes` /
+  `stderr_omitted_bytes` / `stdout_omitted_at` / `stderr_omitted_at` (all
+  default `0`); `guarded_get` / `guarded_get_async` `max_body_bytes=`, with
+  `agentao.security.ResponseTooLargeError` and the
+  `agentao.security.url_policy.read_capped` / `aread_capped` readers; and
+  `MemoryManager.archive_session(session_id=)`.
 
 ### Fixed
 

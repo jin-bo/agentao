@@ -265,7 +265,7 @@ posture should be *decided and documented*, not left implicit.
 >   in `_transport_interaction.py`) which never matches the runtime `call_id`
 >   the following `tool_call` carries, so a client sees two unrelated tool
 >   calls where the reference adapter deliberately converges them. **Fixed
->   after this review** — `TOOL_CONFIRMATION` now carries the runtime call id;
+>   in 0.5.5** — `TOOL_CONFIRMATION` now carries the runtime call id;
 >   ACP opens the call before requesting permission and uses that id for both
 >   the request and subsequent updates. Foreground sub-agents forward the
 >   confirmation event through their compatibility transport, under the same

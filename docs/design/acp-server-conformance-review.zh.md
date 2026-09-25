@@ -213,7 +213,7 @@ ACP（Agent Client Protocol，agentclientprotocol.com）是 Zed 发起的、位�
 > - **`session/request_permission` 自己铸了一个 `toolCallId`**
 >   （`_transport_interaction.py` 里的 `call_<uuid>`），它与随后 `tool_call` 携带的运行时
 >   `call_id` 从不相同，于是 client 看到的是两个互不相干的工具调用，而参考适配器是刻意
->   把这两者合流的。**本评审之后已修**——`TOOL_CONFIRMATION` 现在携带运行时 call id；
+>   把这两者合流的。**已于 0.5.5 修复**——`TOOL_CONFIRMATION` 现在携带运行时 call id；
 >   ACP 在请求权限之前先打开该调用，权限请求和后续更新都用这个 id。前台子代理经兼容
 >   transport 转发确认事件（带上与 `TOOL_START` 相同的 `[agent n/N]` 前缀）。共享的
 >   `Transport.confirm_tool` 签名没有改变。
