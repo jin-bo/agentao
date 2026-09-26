@@ -229,23 +229,33 @@ class ToolExecutor:
             # a fresh ``Context`` per submission — ``Context.run()`` can
             # be invoked at most once per Context object.
             with ThreadPoolExecutor(max_workers=8) as pool:
-                futures = {}
-                for p in plans:
-                    ctx = contextvars.copy_context()
-                    futures[pool.submit(
-                        ctx.run,
-                        self._execute_one,
-                        p,
-                        tool_locks,
-                        cancellation_token=cancellation_token,
-                        readonly_mode=readonly_mode,
-                        hook_rules=hook_rules,
-                        hook_cwd=hook_cwd,
-                        hook_session_id=hook_session_id,
-                    )] = p
-                for future in as_completed(futures):
-                    call_id, info = future.result()
-                    results[call_id] = info
+                try:
+                    futures = {}
+                    for p in plans:
+                        ctx = contextvars.copy_context()
+                        futures[pool.submit(
+                            ctx.run,
+                            self._execute_one,
+                            p,
+                            tool_locks,
+                            cancellation_token=cancellation_token,
+                            readonly_mode=readonly_mode,
+                            hook_rules=hook_rules,
+                            hook_cwd=hook_cwd,
+                            hook_session_id=hook_session_id,
+                        )] = p
+                    for future in as_completed(futures):
+                        call_id, info = future.result()
+                        results[call_id] = info
+                except KeyboardInterrupt:
+                    # Cancel the turn *inside* the pool context: leaving it
+                    # joins every worker, and a worker polling the token (a
+                    # ``check_background_agent`` wait) would otherwise hold
+                    # Ctrl+C for its whole wait. ``turn.py`` cancels too, but
+                    # only after this exit returns.
+                    if cancellation_token is not None:
+                        cancellation_token.cancel("user-cancel")
+                    raise
 
         return results
 

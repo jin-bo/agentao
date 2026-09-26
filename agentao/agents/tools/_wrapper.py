@@ -658,7 +658,8 @@ class AgentToolWrapper(Tool):
                     "Continue other work; do not wait with sleep or repeated status "
                     "checks. If there is nothing else to do, end this turn. "
                     "A background agent update can be read when this session next runs. "
-                    "Use check_background_agent only to inspect status when needed."
+                    "If this turn cannot continue without its result, call "
+                    "check_background_agent with wait_seconds once."
                 ),
             }
         return {
@@ -1547,8 +1548,8 @@ class AgentToolWrapper(Tool):
             "Continue other work; do not wait with sleep or repeated status checks. "
             "If there is nothing else to do, end this turn. "
             "A background agent update can be read when this session next runs. "
-            f"Use check_background_agent(agent_id='{agent_id}') only to inspect "
-            "status when needed."
+            "If this turn cannot continue without its result, call "
+            f"check_background_agent(agent_id='{agent_id}', wait_seconds=N) once."
         )
 
     # ------------------------------------------------------------------

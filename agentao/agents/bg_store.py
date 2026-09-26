@@ -21,6 +21,7 @@ from . import store as persistence
 BgTaskStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 
 _VALID_BG_STATUSES: frozenset = frozenset(get_args(BgTaskStatus))
+_TERMINAL_BG_STATUSES: frozenset = frozenset({"completed", "failed", "cancelled"})
 
 # Cap on pending notifications. If the parent agent never drains (e.g.
 # session abandoned mid-task while subagents are still running), oldest
@@ -93,6 +94,11 @@ class BackgroundTaskStore:
             )
         self._tasks: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
+        # Signalled whenever one of *this* store's records settles or is
+        # deleted, so ``wait_until_settled`` wakes at once for its own tasks.
+        # A sibling store sharing the persistence file cannot signal it; the
+        # wait's periodic ``get()`` is what sees those.
+        self._settled = threading.Condition(self._lock)
         self._tokens: Dict[str, CancellationToken] = {}
         self._token_lock = threading.Lock()
         self._notifications: Deque[str] = deque(maxlen=_NOTIFICATION_CAPACITY)
@@ -439,6 +445,7 @@ class BackgroundTaskStore:
                 rec["duration_ms"] = duration_ms
                 rec["usage"] = dict(usage) if usage is not None else None
                 agent_name = rec["agent_name"]
+                self._settled.notify_all()
 
         if agent_name is None:
             return
@@ -482,6 +489,38 @@ class BackgroundTaskStore:
                 # is still running there). Hide from this project's view.
                 return None
             return _record_copy(rec)
+
+    def wait_until_settled(
+        self,
+        agent_id: str,
+        timeout: float,
+        *,
+        should_stop: Optional[Callable[[], bool]] = None,
+        interval: float = 0.5,
+    ) -> Optional[Dict[str, Any]]:
+        """Block until ``agent_id`` settles, ``timeout`` passes, or ``should_stop()``.
+
+        Returns the latest :meth:`get` copy — terminal if it settled, still
+        ``pending``/``running`` otherwise — or ``None`` at once for an id this
+        store cannot see (unknown, or pinned to another project). The record
+        is re-read through :meth:`get` at least every ``interval`` seconds,
+        outside the lock, so a task settled by a sibling store on the same
+        persistence file is seen within one interval, and ``should_stop`` is
+        polled at the same rate: that is how a cancelled turn ends the wait.
+        Stopping the wait never touches the task itself.
+        """
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            rec = self.get(agent_id)
+            if rec is None or rec["status"] in _TERMINAL_BG_STATUSES:
+                return rec
+            if should_stop is not None and should_stop():
+                return rec
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return rec
+            with self._settled:
+                self._settled.wait(min(interval, remaining))
 
     def list(self) -> List[Dict[str, Any]]:
         self._check_persistence_rebind()
@@ -537,6 +576,7 @@ class BackgroundTaskStore:
                 rec["duration_ms"] = 0
                 rec["usage"] = None
                 cancelled_before_start = True
+                self._settled.notify_all()
 
         if cancelled_before_start:
             self._flush_to_disk()

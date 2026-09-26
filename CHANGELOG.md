@@ -20,6 +20,14 @@ _Targeting 0.5.6. Add entries under the relevant heading as work lands._
   `"background_agents": {"auto_wake": false}` in `.agentao/settings.json`. Embedded hosts get a documented recipe for the same
   continuation (host-api, *Continuing after a background sub-agent*); the
   runtime itself still never starts a turn.
+- `check_background_agent` takes an optional `wait_seconds` (default `0`, at
+  most 1800) so a parent that needs a child's result can wait for it once,
+  inside the same turn — the path ACP clients need, since they cannot be woken.
+  Cancelling the turn ends the wait within half a second without cancelling
+  the child; a wait that times out tells the model not to repeat it; a long
+  wait reports progress once a minute. Ctrl+C during a parallel tool batch now
+  cancels the turn before the batch's workers are joined, so a waiting tool no
+  longer holds the interrupt for its whole wait.
 
 ### Changed
 
