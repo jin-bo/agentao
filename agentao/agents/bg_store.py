@@ -13,7 +13,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Literal, Optional, get_args
+from typing import Any, Callable, Deque, Dict, List, Literal, Optional, Tuple, get_args
 
 from ..cancellation import CancellationToken
 from . import store as persistence
@@ -97,6 +97,13 @@ class BackgroundTaskStore:
         self._token_lock = threading.Lock()
         self._notifications: Deque[str] = deque(maxlen=_NOTIFICATION_CAPACITY)
         self._notify_lock = threading.Lock()
+        # Monotonic count of notices actually queued, guarded by
+        # ``_notify_lock``. Never reset — not by a drain, not by
+        # ``start_new_conversation()`` — so a reader that remembers the last
+        # value it acted on can tell a *new* notice from one it already saw
+        # still sitting in the queue. The interactive CLI's idle wake is the
+        # reader (``_notification_snapshot``).
+        self._push_sequence = 0
 
         # Conversation generation, advanced by ``start_new_conversation()``.
         # A notification is only deliverable into the conversation that
@@ -264,6 +271,7 @@ class BackgroundTaskStore:
     def push_notification(self, msg: str) -> None:
         with self._notify_lock:
             self._notifications.append(msg)
+            self._push_sequence += 1
 
     def drain_notifications(self) -> List[str]:
         """Return all pending completion notifications and clear the queue."""
@@ -327,6 +335,20 @@ class BackgroundTaskStore:
             if generation != self._generation:
                 return
             self._notifications.append(msg)
+            self._push_sequence += 1
+
+    def _notification_snapshot(self) -> Tuple[bool, int]:
+        """``(queue_nonempty, push_sequence)``, read in one step, draining nothing.
+
+        Private to the interactive CLI's idle wake, which polls it once a
+        second from the prompt's ticker; it is not part of the host contract
+        (an embedded host watches ``SubagentLifecycleEvent`` instead). A
+        terminal record in :meth:`list` is not an equivalent signal:
+        ``update()`` settles the status before it queues the notice, and a
+        conversation reset can suppress the notice altogether.
+        """
+        with self._notify_lock:
+            return bool(self._notifications), self._push_sequence
 
     # ------------------------------------------------------------------
     # Task lifecycle

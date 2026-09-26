@@ -11,9 +11,28 @@ _Targeting 0.5.6. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- The interactive CLI now continues on its own when a background sub-agent
+  finishes while it waits at an empty prompt: it prints
+  `⟳ background agent finished — continuing` and runs one turn that reads the
+  queued update, instead of waiting for you to type `continue`. It stays out of
+  the way while you are typing, with images staged, or in plan mode. Turn it
+  off with `"background_agents": {"auto_wake": false}` in
+  `.agentao/settings.json`. Embedded hosts get a documented recipe for the same
+  continuation (host-api, *Continuing after a background sub-agent*); the
+  runtime itself still never starts a turn.
+
 ### Changed
 
+- `agentao run` no longer offers background sub-agents. Its one-shot process
+  could exit while their daemon threads were still running, so background
+  work was not reliable there. No migration is needed; foreground sub-agents
+  still return within the run.
+
 ### Fixed
+
+- Background sub-agent launch guidance now tells the parent to continue other
+  work or end its turn instead of waiting with shell sleeps or repeated status
+  checks. Completion updates arrive when the session next runs.
 
 ---
 

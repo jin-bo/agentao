@@ -653,10 +653,12 @@ class AgentToolWrapper(Tool):
             properties["run_in_background"] = {
                 "type": "boolean",
                 "description": (
-                    "Run the agent asynchronously (fire-and-forget). "
+                    "Run the agent asynchronously. "
                     "Returns immediately with an agent_id. "
-                    "Use check_background_agent to poll for the result. "
-                    "Useful for long-running tasks that should not block."
+                    "Continue other work; do not wait with sleep or repeated status "
+                    "checks. If there is nothing else to do, end this turn. "
+                    "A background agent update can be read when this session next runs. "
+                    "Use check_background_agent only to inspect status when needed."
                 ),
             }
         return {
@@ -1542,7 +1544,11 @@ class AgentToolWrapper(Tool):
         return (
             f"Background agent '{agent_name}' started (ID: {agent_id}). "
             f"Task: {task[:80]}{'…' if len(task) > 80 else ''}. "
-            f"Use check_background_agent(agent_id='{agent_id}') to get the result."
+            "Continue other work; do not wait with sleep or repeated status checks. "
+            "If there is nothing else to do, end this turn. "
+            "A background agent update can be read when this session next runs. "
+            f"Use check_background_agent(agent_id='{agent_id}') only to inspect "
+            "status when needed."
         )
 
     # ------------------------------------------------------------------

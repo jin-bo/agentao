@@ -133,6 +133,25 @@ def _reject_prebound_kwargs(factory) -> None:
         )
 
 
+def _read_auto_wake(settings: dict) -> bool:
+    """``background_agents.auto_wake`` from ``settings.json``; ``True`` when unset.
+
+    Only a JSON boolean is honoured. Anything else — ``"false"``, ``0`` — is
+    reported and read as the default rather than guessed at.
+    """
+    section = settings.get("background_agents")
+    if section is None:
+        return True
+    value = section.get("auto_wake", True) if isinstance(section, dict) else None
+    if isinstance(value, bool):
+        return value
+    console.print(
+        "[warning]Ignoring settings.json background_agents.auto_wake: expected "
+        "true or false; background wake stays on.[/warning]"
+    )
+    return True
+
+
 def _check_agent_postconditions(agent, cli: "AgentaoCLI") -> None:
     """Validate the runtime returned by an ``agent_factory``.
 
@@ -293,8 +312,8 @@ class AgentaoCLI:
 
         from ..permissions import PermissionMode as _PM
 
-        def _load_saved_mode() -> "_PM":
-            saved = self._load_settings().get("mode", "workspace-write")
+        def _load_saved_mode(settings: dict) -> "_PM":
+            saved = settings.get("mode", "workspace-write")
             try:
                 return _PM(saved)
             except ValueError:
@@ -302,8 +321,10 @@ class AgentaoCLI:
 
         # Provisional: the authoritative read happens after the factory returns,
         # once ``_project_root`` is known. Set now so ``current_mode`` exists for
-        # anything the factory triggers through ``transport=self``.
-        self.current_mode: _PM = _load_saved_mode()
+        # anything the factory triggers through ``transport=self``. One read per
+        # root, reused below, so a malformed file is reported once, not twice.
+        _settings = self._load_settings()
+        self.current_mode: _PM = _load_saved_mode(_settings)
 
         # Resolved here rather than in the signature default so the default
         # stays explicit and a replaceable callable is not captured in a
@@ -329,10 +350,16 @@ class AgentaoCLI:
             # read above came from the wrong ``settings.json``. Re-read before
             # anything applies it: otherwise the project's saved posture is
             # ignored at startup and then overwritten on the next ``/mode``.
-            self.current_mode = _load_saved_mode()
+            _settings = self._load_settings()
+            self.current_mode = _load_saved_mode(_settings)
         # Hold a reference so the CLI can switch modes / inspect rules
         # without going through the agent.
         self.permission_engine = self.agent.permission_engine
+        # Idle wake for background sub-agents (``cli/input_loop.py``), read
+        # from the settings of the root just settled. The sequence persists
+        # across prompts so one notice wakes the prompt at most once.
+        self._bg_auto_wake: bool = _read_auto_wake(_settings)
+        self._bg_last_wake_sequence: int = 0
 
         from ..plan import PlanController
         self._plan_controller = PlanController(

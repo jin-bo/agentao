@@ -128,6 +128,7 @@ def stub_pipeline(monkeypatch, tmp_path):
             captured["closed"] = True
 
     def _factory(**kwargs):
+        captured["factory_kwargs"] = kwargs
         return StubAgent(**kwargs)
 
     # ``_run_pipeline`` imports ``build_from_environment`` lazily, so
@@ -162,6 +163,7 @@ def test_yaml_spec_loads(monkeypatch, tmp_path, stub_pipeline, capsys):
     rc = run._execute_with_args(args)
     assert rc == 0
     assert captured["chat_prompt"] == "hello world"
+    assert captured["factory_kwargs"]["bg_store"] is None
     out = capsys.readouterr().out
     assert "stub final text" in out
 

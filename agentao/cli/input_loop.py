@@ -32,6 +32,69 @@ CommandHandler = Callable[["AgentaoCLI", str], None]
 # ── Input / Status bar ──────────────────────────────────────────────
 
 
+#: Returned by :func:`get_user_input` instead of a line of text when the prompt
+#: was closed because a background sub-agent's notice is waiting. An object,
+#: not a string, so no typed input can ever equal it.
+_BG_WAKE = object()
+
+#: The user message of the turn a background wake starts. The notices
+#: themselves arrive the usual way — drained into that turn's first request.
+_BG_WAKE_MESSAGE = "[Background agent finished — review the update and continue]"
+
+
+def _bg_wake_sequence(cli: "AgentaoCLI") -> Optional[int]:
+    """The store's push sequence if an idle prompt should wake now, else ``None``.
+
+    Checks everything but the input buffer, which only the prompt's own
+    thread may read reliably. A ``/goal`` loop needs no check: it drives its
+    turns from inside a command handler, so no prompt is open while it runs.
+
+    Waking needs a *new* notice — a sequence above the last one a wake was
+    taken for — not merely a nonempty queue: a wake turn that ends before it
+    drains (a ``UserPromptSubmit`` hook refusing it) would otherwise leave the
+    same notice to wake the prompt again every second.
+    """
+    if getattr(cli, "_bg_auto_wake", False) is not True:
+        return None
+    if cli._plan_session.is_active or cli._staged_images:
+        return None
+    snapshot = getattr(getattr(cli.agent, "bg_store", None), "_notification_snapshot", None)
+    if snapshot is None:
+        return None
+    try:
+        answer = snapshot()
+    except Exception:
+        return None
+    # Check the answer, not the attribute: a store that merely *has* the
+    # method must also return the documented shape before it can wake anyone.
+    if not (isinstance(answer, tuple) and len(answer) == 2):
+        return None
+    pending, sequence = answer
+    if pending is not True or type(sequence) is not int:
+        return None
+    if sequence <= cli._bg_last_wake_sequence:
+        return None
+    return sequence
+
+
+def _try_bg_wake(cli: "AgentaoCLI", app) -> None:
+    """Close the prompt for a background wake. Runs on the prompt's loop thread.
+
+    Everything is checked again here, immediately before ``app.exit``, because
+    the ticker's check ran on another thread: if the user began typing in
+    between, the prompt stays open and the notice waits for their turn.
+    """
+    sequence = _bg_wake_sequence(cli)
+    if sequence is None or app.current_buffer.text:
+        return
+    try:
+        app.exit(result=_BG_WAKE)
+    except Exception:
+        # Already exiting — the user submitted in the same instant.
+        return
+    cli._bg_last_wake_sequence = sequence
+
+
 def get_user_input(cli: "AgentaoCLI") -> str:
     import threading
     from prompt_toolkit.application.current import get_app_or_none
@@ -55,7 +118,16 @@ def get_user_input(cli: "AgentaoCLI") -> str:
     def _ticker() -> None:
         while not stop.wait(1.0):
             if app_ref:
-                app_ref[0].invalidate()
+                app = app_ref[0]
+                app.invalidate()
+                # ``Application.exit`` is not thread-safe: hand the wake to
+                # the prompt's own loop, which rechecks before exiting.
+                loop = app.loop
+                if loop is not None and _bg_wake_sequence(cli) is not None:
+                    try:
+                        loop.call_soon_threadsafe(_try_bg_wake, cli, app)
+                    except RuntimeError:
+                        pass  # the prompt returned and its loop closed
 
     ticker = threading.Thread(target=_ticker, daemon=True)
     ticker.start()
@@ -275,6 +347,12 @@ def run_loop(cli: "AgentaoCLI") -> None:
         try:
             cli._flush_acp_inbox()
             user_input = cli._get_user_input()
+
+            # Before the blank-input skip: the wake carries no text of its own.
+            if user_input is _BG_WAKE:
+                console.print("[dim]⟳ background agent finished — continuing[/dim]")
+                _run_agent_turn(cli, _BG_WAKE_MESSAGE)
+                continue
 
             # Allow an empty message when images are staged ("here's an
             # image" with no text); otherwise skip blank lines.

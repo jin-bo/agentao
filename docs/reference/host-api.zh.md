@@ -126,6 +126,30 @@ if isinstance(ev, SubagentLifecycleEvent) and ev.phase == "failed":
 同步变化，所以 `check_background_agent` 对"没答出来"同样报 `failed`
 ——并且会把这次跑出来的部分结果一并带上。
 
+### 后台子 Agent 结束后继续
+
+后台子 Agent 的结果以排队通知的形式交给父级，而这个队列只在父级**下一次**
+LLM 请求时才被取出。父级这一轮如果已经结束，在有人开启下一轮之前，没有人
+会读它。运行时自己从不开启一轮——要不要花一轮没人要求的调用，由宿主决定。
+交互式 CLI 的决定是要（`background_agents.auto_wake`，见 configuration.md
+§3）；嵌入宿主想要同样的效果，可以从事件流里做：
+
+- 对 `parent_task_id` 有值的终态 `SubagentLifecycleEvent`（`completed` /
+  `failed` / `cancelled`）作出反应——有这个字段就表示是后台任务。
+- 只有当原会话仍是当前会话、没有正在运行的轮次、且此后跑过的那一轮没有
+  处理过它时，才继续。
+- 在宿主平常驱动轮次的地方（队列、任务）开启这一轮，不要在事件处理函数里
+  直接跑；用一条普通的用户消息，例如
+  `"[Background agent finished — review the update and continue]"`。这一轮
+  的第一次请求会取出所有排队的通知。
+
+在每条后台终态路径上，通知都在终态事件发布**之前**入队。但这只是产生的
+先后：**事件是提示，不证明通知仍在队列里。**正在运行的父级轮次可能已经把它
+取走；会话重置（`clear_history()`、`/new`）会丢弃排队的通知，并让重置前启动
+的任务此后的通知静默，而它们的终态事件照样会到。继续之后什么也没读到，代价
+是一轮调用；请用宿主自己的会话和轮次记录来防范，而不是去读队列——队列不是
+公开 API。
+
 ## 压缩（`Agentao.compact`）
 
 ```python

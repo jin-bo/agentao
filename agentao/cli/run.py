@@ -579,6 +579,7 @@ def _run_pipeline(
         working_directory=cwd,
         transport=transport,
         replay_config=replay_config,
+        bg_store=None,
     )
     if spec.model is not None:
         factory_kwargs["model"] = spec.model

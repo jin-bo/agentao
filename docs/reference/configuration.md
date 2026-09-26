@@ -86,6 +86,7 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 - **Loaders.**
   - `embedding/factory.py::_load_settings` — reads `agents.enable_builtin` / `enable_builtin_agents` to default the constructor's `enable_builtin_agents` flag.
   - `plan/controller.py::_load_settings` — reads `mode` when restoring the active permission mode after a plan-mode session ends.
+  - `cli/app.py::_read_auto_wake` — reads `background_agents.auto_wake` once at interactive CLI startup.
 - **Failure mode.** Missing file → treated as `{}`, silently. Unreadable, not valid UTF-8, or malformed JSON → **a warning naming the path**, then treated as `{}` (still no startup error). Read as `utf-8-sig`, so a BOM'd file loads rather than being discarded. The warning goes to the `agentao` logger: it reaches the terminal only while no handler is attached yet (Python's `lastResort`), which in practice covers the `settings.json` reads but **not** `mcp.json` / `skills_config.json`, both of which are read after the LLM client attaches its file handler — those land in `agentao.log`. `agentao doctor` surfaces all of them.
 - **Important.** The factory does **not** apply `mode` to the engine on startup; the `PermissionEngine` always initializes at `workspace-write`. The `mode` field is the *persisted last-known mode* used for restoration paths and CLI inspection — runtime mode changes go through CLI commands or `PermissionEngine.set_mode()`.
 
@@ -101,6 +102,9 @@ Internal state files (auto-managed; documented for awareness, not for editing):
     "enabled": true,
     "default_max_turns": 25,
     "default_time_budget": "120m"
+  },
+  "background_agents": {
+    "auto_wake": true
   }
 }
 ```
@@ -112,6 +116,7 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 | `goal.enabled` | bool | `true` (when key absent) | — | Master switch for the `/goal` long-task continuation. Set `false` to disable the command. |
 | `goal.default_max_turns` | int | `25` | positive int, or `0` for no turn cap | Turn cap applied when `/goal` is set without `--turns` (and not `--unbounded`). One *turn* = one outer continuation `chat()` — **not** `max_iterations` (which bounds the inner tool loop). Primary runaway guard. |
 | `goal.default_time_budget` | string | `"120m"` | duration `90s` / `30m` / `2h` / `1h30m`; empty/absent → no time cap default | Active wall-clock cap applied when `/goal` is set without `--for`. Sized **above** the turn cap so it guards only wall-clock pathology and does not shadow the turn cap (see `docs/design/codex-goal-mechanism-review.md` §11.1 C). |
+| `background_agents.auto_wake` | bool | `true` (when key absent) | `true`, `false` | Interactive CLI only. When a background sub-agent's update is queued while the CLI waits at an empty prompt, start one turn automatically (`⟳ background agent finished — continuing`) so the update is read without typing `continue`. It does not fire while you are typing, with `/image` attachments staged, or in plan mode. `false` turns it off; any other value is reported and read as `true`. `agentao run`, ACP and embedded hosts never wake on their own (see host-api, *Continuing after a background sub-agent*). |
 
 > `/goal` state itself is **not** stored in `settings.json` — it lives in `.agentao/goal.json` (see §1 file table). Per-goal caps set with `/goal <obj> --for/--turns` or `/goal budget` override these defaults; `--unbounded` opts out of them entirely.
 

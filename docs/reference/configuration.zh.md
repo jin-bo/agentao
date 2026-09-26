@@ -86,6 +86,7 @@
 - **Loaders。**
   - `embedding/factory.py::_load_settings` — 读取 `agents.enable_builtin` / `enable_builtin_agents` 用作构造器的 `enable_builtin_agents` 默认值。
   - `plan/controller.py::_load_settings` — 在 plan-mode 会话结束后**恢复**权限模式时读取 `mode`。
+  - `cli/app.py::_read_auto_wake` — 交互式 CLI 启动时读取一次 `background_agents.auto_wake`。
 - **失败行为。** 文件缺失 → 静默当作 `{}`。文件不可读、不是合法 UTF-8、或 JSON 损坏 → **打一条带路径的 warning**，再当作 `{}`（仍不会启动报错）。按 `utf-8-sig` 读取，因此带 BOM 的文件能正常加载，而不是被整份丢弃。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
 - **重要。** factory 启动时**不会**把 `mode` 应用到引擎；`PermissionEngine` 始终以 `workspace-write` 初始化。`mode` 字段是"上次持久化的模式"，用于恢复路径与 CLI 展示——运行期模式切换走 CLI 命令或 `PermissionEngine.set_mode()`。
 
@@ -96,6 +97,9 @@
   "mode": "workspace-write",
   "agents": {
     "enable_builtin": false
+  },
+  "background_agents": {
+    "auto_wake": true
   }
 }
 ```
@@ -107,6 +111,7 @@
 | `goal.enabled` | bool | `true`（键缺失时） | — | `/goal` 长任务续跑的总开关。设为 `false` 即禁用该命令。 |
 | `goal.default_max_turns` | int | `25` | 正整数，或 `0` 表示不限轮次 | `/goal` 没带 `--turns`（且不是 `--unbounded`）时套用的轮次上限。一个*轮次* = 一次外层续跑的 `chat()` —— **不是** `max_iterations`（那个约束的是内层工具循环）。这是主要的失控护栏。 |
 | `goal.default_time_budget` | string | `"120m"` | 时长 `90s` / `30m` / `2h` / `1h30m`；留空或缺失表示无时间上限默认值 | `/goal` 没带 `--for` 时套用的活动墙钟上限。它被刻意设得**高于**轮次上限，因此只兜住墙钟层面的异常，不会盖过轮次上限（见 `docs/design/codex-goal-mechanism-review.md` §11.1 C）。 |
+| `background_agents.auto_wake` | bool | `true`（键缺失时） | `true`、`false` | 仅交互式 CLI。CLI 停在空提示符上、有后台子代理的更新排队时，自动开一轮（`⟳ background agent finished — continuing`），不必再手动输入 `continue` 才能读到更新。正在输入、有 `/image` 暂存的图片、或处于 plan 模式时不会触发。设为 `false` 关闭；其他值会报告并按 `true` 处理。`agentao run`、ACP 和嵌入宿主不会自行唤醒（见 host-api《后台子 Agent 结束后继续》）。 |
 
 每个 `mode` 的具体放行/拦截语义详见 [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md)。
 
