@@ -197,13 +197,16 @@ Per-server keys under `servers.{name}`:
 
 ### B.3.5 `settings.json`
 
-Project-local runtime settings. Read from `<working_directory>/.agentao/settings.json`. Carries persisted permission mode, the built-in-agents opt-in, and the replay block.
+Project-local runtime settings. Read from `<working_directory>/.agentao/settings.json`. Carries persisted permission mode, the built-in-agents opt-in, the background-wake switch, and the replay block.
 
 ```json
 {
   "mode": "workspace-write",
   "agents": {
     "enable_builtin": false
+  },
+  "background_agents": {
+    "auto_wake": true
   },
   "replay": {
     "enabled": false,
@@ -224,6 +227,7 @@ Top-level keys:
 |-----|------|---------|-------|
 | `mode` | string | `"workspace-write"` (when key absent) | Last-known permission mode used for restoration paths and `/permissions` inspection. Allowed: `"read-only"`, `"workspace-write"`, `"full-access"`. (`"plan"` is internal — set by the `/plan` flow, never written by users.) |
 | `agents.enable_builtin` | bool | `false` | Enables the built-in sub-agent set. Legacy top-level alias `enable_builtin_agents` (bool) is still honored. |
+| `background_agents.auto_wake` | bool | `true` (when key absent) | Interactive CLI only. When a background sub-agent's update is queued while the CLI waits at an empty prompt, run one turn automatically so the update is read without typing `continue`. Not while you are typing, with images staged, or in plan mode; pauses after 3 wakes in a row until you submit a line. `false` turns it off; any other value is reported and read as `true`. |
 
 Replay keys:
 
