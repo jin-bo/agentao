@@ -447,7 +447,7 @@ caller does not override them:
 |---|---|---|
 | `replay_config` | Records every LLM/tool turn and lets you re-run sessions deterministically. Reads `<wd>/.agentao/replay.json`. | Debugging non-deterministic flake; A/B comparing prompt changes; reproducing user-reported issues. |
 | `sandbox_policy` | Restricts file/shell tool side-effects to a project root with explicit allow/deny rules. Reads `<wd>/.agentao/sandbox.json`. | Multi-tenant deployments; running untrusted prompts; CI evaluation harnesses. |
-| `bg_store` | Persists in-flight background tool tasks across restarts so a long-running shell command survives an agent restart. Reads `<wd>/.agentao/bg/`. | Long-lived servers that survive process restarts; production batch workers. |
+| `bg_store` | Enables background **sub-agents**: the `run_in_background` option on agent tools, plus `check_background_agent` / `cancel_background_agent`. Records are kept in `<wd>/.agentao/background_tasks.json`; after a restart, a task that was still running is marked `failed` — the work itself does not survive. A finished task's update reaches the parent on its next turn, and the runtime never starts that turn itself (see host-api, *Continuing after a background sub-agent*). | Long-lived hosts that keep the process up while children run. Leave it `None` for a one-shot process — `agentao run` does — since workers are daemon threads cut off at exit. |
 
 Each is opt-out under the factory and opt-in under bare construction:
 

@@ -488,7 +488,7 @@ unless overridden. Enable deliberately:
 |---|---|---|
 | `sandbox_policy` | untrusted prompts, multi-tenant, CI eval | `<wd>/.agentao/sandbox.json` |
 | `replay_config` | reproducing flake, A/B prompt diffs | `<wd>/.agentao/replay.json` |
-| `bg_store` | long-lived server surviving restarts | `<wd>/.agentao/bg/` |
+| `bg_store` | background sub-agents in a long-lived host (not one-shot: workers die at exit); continuing after one finishes is the host's job | `<wd>/.agentao/background_tasks.json` |
 | `enable_builtin_agents=True` | want `codebase-investigator` / `generalist` delegation tools | `<wd>/.agentao/settings.json :: agents.enable_builtin` |
 
 ---

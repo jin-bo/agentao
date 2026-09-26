@@ -195,13 +195,16 @@ cmd。什么都不配置时，Windows 仍旧是 `%COMSPEC% /c`，与过去完全
 
 ### B.3.5 `settings.json`
 
-项目级运行时设置。从 `<working_directory>/.agentao/settings.json` 读取。包含三块：持久化的权限模式、built-in 子智能体开关、replay 块。
+项目级运行时设置。从 `<working_directory>/.agentao/settings.json` 读取。包含四块：持久化的权限模式、built-in 子智能体开关、后台唤醒开关、replay 块。
 
 ```json
 {
   "mode": "workspace-write",
   "agents": {
     "enable_builtin": false
+  },
+  "background_agents": {
+    "auto_wake": true
   },
   "replay": {
     "enabled": false,
@@ -222,6 +225,7 @@ cmd。什么都不配置时，Windows 仍旧是 `%COMSPEC% /c`，与过去完全
 |----|------|------|------|
 | `mode` | string | `"workspace-write"`（缺省时） | 持久化的最近一次权限模式，用于恢复路径和 `/permissions` 查看。允许值：`"read-only"`、`"workspace-write"`、`"full-access"`。（`"plan"` 为内部模式，由 `/plan` 流程设置，用户不应直接写入。） |
 | `agents.enable_builtin` | bool | `false` | 启用内置子智能体集。历史顶层别名 `enable_builtin_agents`（bool）仍被识别。 |
+| `background_agents.auto_wake` | bool | `true`（缺省时） | 仅交互式 CLI。CLI 停在空提示符上、有后台子代理的更新排队时，自动跑一轮读取更新，不必再手动输入 `continue`。正在输入、有暂存图片、或处于 plan 模式时不触发；连续唤醒 3 次后暂停，直到你提交一行输入。设为 `false` 关闭；其他值会报告并按 `true` 处理。 |
 
 Replay 键：
 
