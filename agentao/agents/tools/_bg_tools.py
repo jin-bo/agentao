@@ -10,10 +10,20 @@ launched via ``run_in_background=True``.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ...tools.base import Tool
-from ..bg_store import BackgroundTaskStore
+from ..bg_store import _TERMINAL_BG_STATUSES, BackgroundTaskStore
+
+#: Upper bound on one ``check_background_agent(wait_seconds=…)`` call. A
+#: candidate: an ACP client's own turn timeout may be shorter, and has to be
+#: checked against the client before this is treated as settled
+#: (``docs/design/background-subagent-wake.md`` §6.2).
+MAX_WAIT_SECONDS = 1800
+
+#: How often a long wait reports that it is still waiting. Every ACP
+#: ``tool_call_update`` resends all the output so far, so this stays sparse.
+_WAIT_PROGRESS_SECONDS = 60
 
 
 class CheckBackgroundAgentTool(Tool):
@@ -22,6 +32,9 @@ class CheckBackgroundAgentTool(Tool):
     def __init__(self, bg_store: BackgroundTaskStore):
         super().__init__()
         self.bg_store = bg_store
+        # The turn's token, set by the tool executor before each call. A wait
+        # polls it, so cancelling the turn ends the wait — never the child.
+        self._cancellation_token: Optional[Any] = None
 
     @property
     def is_read_only(self) -> bool:
@@ -36,7 +49,10 @@ class CheckBackgroundAgentTool(Tool):
         return (
             "Check the status of a background sub-agent previously launched with "
             "run_in_background=true. Returns 'pending', 'running', 'completed' (with result), "
-            "or 'failed' (with error). Pass agent_id='' to list all background agents."
+            "or 'failed' (with error). Pass agent_id='' to list all background agents. "
+            "Only when you need the result before you can continue in this turn, pass "
+            f"wait_seconds (up to {MAX_WAIT_SECONDS}) to wait for it once. If the wait "
+            "times out, do not repeat it: end the turn or cancel the agent."
         )
 
     @property
@@ -50,12 +66,70 @@ class CheckBackgroundAgentTool(Tool):
                         "The agent ID returned when the background agent was launched. "
                         "Pass empty string to list all background agents."
                     ),
-                }
+                },
+                "wait_seconds": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_WAIT_SECONDS,
+                    "description": (
+                        "Seconds to wait for this agent to finish before answering. "
+                        "Default 0 answers at once. Ignored when listing."
+                    ),
+                },
             },
             "required": ["agent_id"],
         }
 
-    def execute(self, agent_id: str) -> str:
+    def execute(self, agent_id: str, wait_seconds: Any = 0) -> str:
+        if agent_id:
+            try:
+                wait = int(wait_seconds or 0)
+            except (TypeError, ValueError):
+                return (
+                    f"Invalid wait_seconds {wait_seconds!r}: expected an integer "
+                    f"from 0 to {MAX_WAIT_SECONDS}."
+                )
+            wait = min(max(wait, 0), MAX_WAIT_SECONDS)
+            if wait:
+                return self._wait_and_report(agent_id, wait)
+        return self._report(agent_id)
+
+    def _wait_and_report(self, agent_id: str, wait: int) -> str:
+        token = self._cancellation_token
+
+        def cancelled() -> bool:
+            return token is not None and token.is_cancelled
+
+        started = time.monotonic()
+        deadline = started + wait
+        while True:
+            chunk = min(_WAIT_PROGRESS_SECONDS, deadline - time.monotonic())
+            rec = self.bg_store.wait_until_settled(
+                agent_id, max(chunk, 0.0), should_stop=cancelled,
+            )
+            if rec is None or rec["status"] in _TERMINAL_BG_STATUSES:
+                return self._report(agent_id, rec)
+            if cancelled():
+                return (
+                    f"Stopped waiting for agent '{rec['agent_name']}' ({agent_id}): "
+                    "this turn was cancelled. The agent itself was not cancelled "
+                    "and is still " + rec["status"] + "."
+                )
+            if time.monotonic() >= deadline:
+                return (
+                    self._report(agent_id, rec)
+                    + f"\nWaited {wait}s without it finishing. Do not repeat the same "
+                    "wait: end this turn (its update is delivered when this session "
+                    "next runs), or stop it with cancel_background_agent."
+                )
+            callback = self.output_callback
+            if callback is not None:
+                callback(
+                    f"Still waiting for agent '{rec['agent_name']}' ({agent_id}): "
+                    f"{time.monotonic() - started:.0f}s of {wait}s\n"
+                )
+
+    def _report(self, agent_id: str, rec: Optional[Dict[str, Any]] = None) -> str:
         if not agent_id:
             tasks = self.bg_store.list()
             if not tasks:
@@ -76,7 +150,8 @@ class CheckBackgroundAgentTool(Tool):
                 )
             return "\n".join(lines)
 
-        rec = self.bg_store.get(agent_id)
+        if rec is None:
+            rec = self.bg_store.get(agent_id)
         if rec is None:
             return f"No background agent found with ID: {agent_id}"
 

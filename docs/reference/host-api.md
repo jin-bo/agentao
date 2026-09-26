@@ -174,6 +174,18 @@ before it, while their terminal events still arrive. A continuation that
 finds nothing costs one turn; guard against that with your own session and
 turn bookkeeping rather than by reading the queue, which is not public API.
 
+**Or the model waits inside the turn.** `check_background_agent` takes an
+optional `wait_seconds` (default `0`, at most 1800): one call blocks until the
+child settles and returns its result in the same turn. This is the path for an
+ACP client, which only starts turns itself. Cancelling the turn — ACP
+`session/cancel`, Ctrl+C, the token passed to `chat()` — ends the wait within
+half a second and leaves the child running; only `cancel_background_agent`
+stops it. A wait that runs out says so and tells the model not to repeat it.
+While waiting, the tool reports progress once a minute through the ordinary
+tool-output stream (`TOOL_OUTPUT`, ACP `tool_call_update`). The 1800-second
+bound is provisional: check your client's own prompt-turn timeout, since a
+wait the client abandons first ends the turn from the outside.
+
 ### Tool injection methods
 
 Tools are injected at construction and, since the runtime dual landed, mutated

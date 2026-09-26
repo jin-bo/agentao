@@ -1,6 +1,6 @@
 # Background sub-agents: wake an idle CLI
 
-**Status:** A, the run-host change and C **implemented** 2026-09-26 (unreleased, 0.5.6 cycle), with the host-api recipe; B remains a separate, unauthorized follow-up.
+**Status:** A, the run-host change and C **implemented** 2026-09-26 (#351, with the consecutive-wake cap in #352); B **implemented** 2026-09-26 with a 1800 s maximum. All unreleased, 0.5.6 cycle. B's ACP gate (§6.2) is still open: the intended client's turn timeout and progress display have not been checked, so the maximum stays provisional.
 **Anchors:** agentao `main@22104ff`; codex `30fc6864cc1` (2026-09-23); goose `9adae14b6`
 (2026-09-25); gemini-cli `87de0b6369` (2026-09-24); pi-mono `d5629e204` (2026-09-24).
 **Related:** `codex-subagent-v2-vs-agentao.zh.md` §4.2 (the polling observation this doc
@@ -201,6 +201,11 @@ instead reads the store the CLI already reads every second for its status bar. T
   timeout the model should end its turn or cancel it, not repeat the same wait until the
   third call trips the guard. This is a bounded wait, not a guarantee that every child
   finishes within one turn.
+- **As implemented:** two waits in one parallel batch run one after the other, not side by
+  side: the executor holds a per-tool-*instance* lock for each call (it guards the
+  instance's `output_callback`), and both calls use the one `check_background_agent`
+  instance. The batch then takes up to the sum of its waits. Accepted; the launch wording
+  asks for a single wait, and waiting on several children is out of scope (§7).
 - **ACP gate:** exercise a long prompt with the intended client to learn its own turn
   timeout and verify how it displays progress. The executor already binds tool
   `output_callback`, and ACP forwards `TOOL_OUTPUT` as throttled `tool_call_update` events.
