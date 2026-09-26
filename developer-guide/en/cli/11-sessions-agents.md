@@ -49,6 +49,8 @@ Sub-agents are predefined capabilities that can run in the foreground or backgro
 | `/agent cancel <id>` | Cancel a background task |
 | `/agent delete <id>` | Remove a background-task record |
 
+When a background task finishes while the REPL is waiting at an empty prompt, the CLI prints `⟳ background agent finished — continuing` and runs one turn so the main agent reads the result — whether the model launched the task or you did with `/agent bg`. It waits while you are typing, have images staged, or are in plan mode. Turn it off with `"background_agents": {"auto_wake": false}` in `.agentao/settings.json`; the result then reaches the agent with your next message.
+
 ## `/todos` — current task list
 
 For complex work, the agent may use the `todo_write` tool to maintain a task list. `/todos` prints that list.

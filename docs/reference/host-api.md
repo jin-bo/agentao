@@ -146,6 +146,34 @@ the background (`run_in_background=True`) worker. The background
 `check_background_agent` reports `failed` for a non-answer too — with
 whatever partial result the run did produce still attached.
 
+### Continuing after a background sub-agent
+
+A background sub-agent's result reaches the parent as a queued notice, and
+the queue is drained only into the parent's **next** LLM request. If the
+parent's turn has already ended, nothing reads it until something starts
+another turn. The runtime never starts one itself — whether to spend a turn
+nobody asked for is the host's decision. The interactive CLI decides yes
+(`background_agents.auto_wake`, see configuration.md §3); an embedded host
+that wants the same can do it from the event stream:
+
+- React to a terminal `SubagentLifecycleEvent` (`completed` / `failed` /
+  `cancelled`) whose `parent_task_id` is set — that marks a background task.
+- Continue only if the original session is still the active one, no turn is
+  running, and the turn that ran since did not already handle it.
+- Start the continuation on your normal turn driver (a queue, a task), not
+  inside the event handler, with an ordinary user message such as
+  `"[Background agent finished — review the update and continue]"`. That
+  turn's first request drains every queued notice.
+
+The notice is queued **before** the terminal event is published, on every
+background terminal path. That is ordering of production only: **the event
+is a cue, not proof that a notice is still queued.** A running parent turn
+may have drained it already, and a conversation reset (`clear_history()`,
+`/new`) drops queued notices and silences later ones from tasks started
+before it, while their terminal events still arrive. A continuation that
+finds nothing costs one turn; guard against that with your own session and
+turn bookkeeping rather than by reading the queue, which is not public API.
+
 ### Tool injection methods
 
 Tools are injected at construction and, since the runtime dual landed, mutated
