@@ -25,6 +25,7 @@ from agentao.cli.app import _read_auto_wake
 from agentao.cli.input_loop import (
     _BG_WAKE,
     _BG_WAKE_MESSAGE,
+    _MAX_CONSECUTIVE_BG_WAKES,
     _bg_wake_sequence,
     _try_bg_wake,
     get_user_input,
@@ -228,10 +229,11 @@ def test_terminal_event_is_a_cue_not_proof_of_a_queued_notice(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _cli(store=None, *, auto_wake=True, plan=False, images=None, last=0):
+def _cli(store=None, *, auto_wake=True, plan=False, images=None, last=0, streak=0):
     return SimpleNamespace(
         _bg_auto_wake=auto_wake,
         _bg_last_wake_sequence=last,
+        _bg_consecutive_wakes=streak,
         _plan_session=SimpleNamespace(is_active=plan),
         _staged_images=images or [],
         agent=SimpleNamespace(bg_store=store),
@@ -390,18 +392,87 @@ def test_real_prompt_is_closed_by_the_ticker():
 # ---------------------------------------------------------------------------
 
 
+def _loop_cli(inputs, *, streak=0):
+    cli = Mock()
+    cli._staged_images = []
+    cli._plan_session.is_active = False
+    cli._bg_consecutive_wakes = streak
+    cli._get_user_input.side_effect = list(inputs)
+    return cli
+
+
 def test_run_loop_runs_exactly_one_turn_for_a_wake(monkeypatch):
     turns: List[str] = []
     monkeypatch.setattr(
         input_loop, "_run_agent_turn", lambda cli, msg, images=None: turns.append(msg)
     )
-    cli = Mock()
-    cli._staged_images = []
-    cli._plan_session.is_active = False
-    cli._get_user_input.side_effect = [_BG_WAKE, "/exit"]
+    cli = _loop_cli([_BG_WAKE, "/exit"])
     run_loop(cli)
     assert turns == [_BG_WAKE_MESSAGE]
     cli.agent.chat.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# CLI: consecutive-wake cap
+# ---------------------------------------------------------------------------
+
+
+def test_wakes_stop_at_the_cap():
+    store = _pending_store()
+    assert _bg_wake_sequence(_cli(store, streak=_MAX_CONSECUTIVE_BG_WAKES - 1)) == 1
+    assert _bg_wake_sequence(_cli(store, streak=_MAX_CONSECUTIVE_BG_WAKES)) is None
+
+
+def test_the_loop_thread_recheck_honours_the_cap():
+    cli, app = _cli(_pending_store(), streak=_MAX_CONSECUTIVE_BG_WAKES), _FakeApp()
+    _try_bg_wake(cli, app)
+    assert app.exits == []
+
+
+def _recording_inputs(cli, inputs):
+    """Feed ``inputs`` to ``run_loop``, recording the streak at each prompt."""
+    seen: List[int] = []
+    it = iter(inputs)
+
+    def next_input():
+        seen.append(cli._bg_consecutive_wakes)
+        return next(it)
+
+    cli._get_user_input.side_effect = next_input
+    return seen
+
+
+def test_each_wake_turn_counts_and_the_last_one_says_so(monkeypatch):
+    monkeypatch.setattr(input_loop, "_run_agent_turn", lambda cli, msg, images=None: None)
+    printed: List[str] = []
+    monkeypatch.setattr(
+        input_loop.console, "print", lambda *a, **k: printed.append(str(a[0]) if a else "")
+    )
+    cli = _loop_cli([])
+    seen = _recording_inputs(cli, [_BG_WAKE] * _MAX_CONSECUTIVE_BG_WAKES + ["/exit"])
+    run_loop(cli)
+    assert seen == list(range(_MAX_CONSECUTIVE_BG_WAKES + 1))
+    assert sum("paused" in line for line in printed) == 1
+
+
+def test_a_wake_turn_that_raises_still_counts(monkeypatch):
+    def boom(cli, msg, images=None):
+        raise RuntimeError("turn failed")
+
+    monkeypatch.setattr(input_loop, "_run_agent_turn", boom)
+    cli = _loop_cli([])
+    seen = _recording_inputs(cli, [_BG_WAKE, _BG_WAKE, "/exit"])
+    run_loop(cli)
+    assert seen == [0, 1, 2]
+
+
+@pytest.mark.parametrize("line", ["hello", "", "/help"], ids=["text", "blank", "command"])
+def test_any_user_line_resets_the_streak(monkeypatch, line):
+    monkeypatch.setattr(input_loop, "_run_agent_turn", lambda cli, msg, images=None: None)
+    cli = _loop_cli([], streak=_MAX_CONSECUTIVE_BG_WAKES)
+    seen = _recording_inputs(cli, [line, "/exit"])
+    run_loop(cli)
+    assert seen == [_MAX_CONSECUTIVE_BG_WAKES, 0]
 
 
 # ---------------------------------------------------------------------------

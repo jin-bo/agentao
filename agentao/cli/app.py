@@ -360,6 +360,8 @@ class AgentaoCLI:
         # across prompts so one notice wakes the prompt at most once.
         self._bg_auto_wake: bool = _read_auto_wake(_settings)
         self._bg_last_wake_sequence: int = 0
+        # Wakes since the user last submitted a line (``_MAX_CONSECUTIVE_BG_WAKES``).
+        self._bg_consecutive_wakes: int = 0
 
         from ..plan import PlanController
         self._plan_controller = PlanController(

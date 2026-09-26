@@ -41,6 +41,13 @@ _BG_WAKE = object()
 #: themselves arrive the usual way — drained into that turn's first request.
 _BG_WAKE_MESSAGE = "[Background agent finished — review the update and continue]"
 
+#: Wakes in a row, with no input from the user between them, before the CLI
+#: stops waking and waits for a person. A wake turn can launch another
+#: background agent whose completion wakes the prompt again; without a bound
+#: an unattended session keeps spending turns for as long as the model keeps
+#: delegating. Any line the user submits — even a blank one — resets it.
+_MAX_CONSECUTIVE_BG_WAKES = 3
+
 
 def _bg_wake_sequence(cli: "AgentaoCLI") -> Optional[int]:
     """The store's push sequence if an idle prompt should wake now, else ``None``.
@@ -53,8 +60,14 @@ def _bg_wake_sequence(cli: "AgentaoCLI") -> Optional[int]:
     taken for — not merely a nonempty queue: a wake turn that ends before it
     drains (a ``UserPromptSubmit`` hook refusing it) would otherwise leave the
     same notice to wake the prompt again every second.
+
+    And it stops after ``_MAX_CONSECUTIVE_BG_WAKES`` wakes with nobody at the
+    keyboard in between; the queued notices then reach the model with the
+    user's next message, as they did before the wake existed.
     """
     if getattr(cli, "_bg_auto_wake", False) is not True:
+        return None
+    if cli._bg_consecutive_wakes >= _MAX_CONSECUTIVE_BG_WAKES:
         return None
     if cli._plan_session.is_active or cli._staged_images:
         return None
@@ -350,9 +363,19 @@ def run_loop(cli: "AgentaoCLI") -> None:
 
             # Before the blank-input skip: the wake carries no text of its own.
             if user_input is _BG_WAKE:
+                # Counted before the turn, so a turn that raises still counts.
+                cli._bg_consecutive_wakes += 1
                 console.print("[dim]⟳ background agent finished — continuing[/dim]")
                 _run_agent_turn(cli, _BG_WAKE_MESSAGE)
+                if cli._bg_consecutive_wakes >= _MAX_CONSECUTIVE_BG_WAKES:
+                    console.print(
+                        f"[dim]Background wake paused after "
+                        f"{_MAX_CONSECUTIVE_BG_WAKES} in a row; further updates "
+                        "will be read with your next message.[/dim]"
+                    )
                 continue
+            # Someone is at the keyboard: the wake budget starts over.
+            cli._bg_consecutive_wakes = 0
 
             # Allow an empty message when images are staged ("here's an
             # image" with no text); otherwise skip blank lines.

@@ -15,9 +15,9 @@ _Targeting 0.5.6. Add entries under the relevant heading as work lands._
   finishes while it waits at an empty prompt: it prints
   `⟳ background agent finished — continuing` and runs one turn that reads the
   queued update, instead of waiting for you to type `continue`. It stays out of
-  the way while you are typing, with images staged, or in plan mode. Turn it
-  off with `"background_agents": {"auto_wake": false}` in
-  `.agentao/settings.json`. Embedded hosts get a documented recipe for the same
+  the way while you are typing, with images staged, or in plan mode, and pauses
+  after 3 wakes in a row until you submit a line. Turn it off with
+  `"background_agents": {"auto_wake": false}` in `.agentao/settings.json`. Embedded hosts get a documented recipe for the same
   continuation (host-api, *Continuing after a background sub-agent*); the
   runtime itself still never starts a turn.
 

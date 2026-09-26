@@ -250,6 +250,12 @@ instead reads the store the CLI already reads every second for its status bar. T
   turn has ended, it can trigger another wake. Completions during a running turn may be
   consumed by that turn or batched into its next wake; there is no one-turn-per-task
   guarantee.
+- **Consecutive-wake cap:** at most 3 wakes in a row with no line submitted by the user in
+  between. A wake turn can launch another background agent whose completion wakes again;
+  the cap stops an unattended session from spending turns for as long as the model keeps
+  delegating. The third wake turn ends with a dim "paused" line; any submitted line,
+  blank included, resets the count. Queued notices then reach the model with the next
+  user message. Added after the first delivery (review follow-up to #351).
 
 **One-shot `agentao run` host** (`cli/run.py`): pass `bg_store=None` in the
 `build_from_environment` call. The factory otherwise creates a store by default
@@ -341,6 +347,7 @@ cut off at process exit. This is a code-derived risk, not reproduced in a one-sh
     cause another wake until a new notice is appended;
   - typing between the ticker check and the event-loop callback wins; the prompt stays open;
   - it doesn't fire while typing, in plan mode, during `/goal`, or with `auto_wake: false`;
+  - it stops after 3 consecutive wakes (a raising wake turn counts) and any user line resets it;
   - `_BG_WAKE` bypasses the blank-input skip and runs exactly one turn.
 - **Run host:** assert its factory receives `bg_store=None` and its agent tool schema omits
   `run_in_background`.

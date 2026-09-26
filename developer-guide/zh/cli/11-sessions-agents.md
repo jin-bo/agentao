@@ -49,7 +49,7 @@ agentao --resume a1b2c3   # 恢复指定前缀
 | `/agent cancel <id>` | 取消后台任务 |
 | `/agent delete <id>` | 从后台任务列表删除记录 |
 
-后台任务结束时，如果 REPL 正停在空提示符上，CLI 会打印 `⟳ background agent finished — continuing` 并自动跑一轮，让主 agent 读到结果——无论任务是模型启动的，还是你用 `/agent bg` 启动的。你正在输入、有暂存的图片、或处于 plan 模式时，它会等着。在 `.agentao/settings.json` 里写 `"background_agents": {"auto_wake": false}` 可以关闭；关闭后，结果会随你的下一条消息交给 agent。
+后台任务结束时，如果 REPL 正停在空提示符上，CLI 会打印 `⟳ background agent finished — continuing` 并自动跑一轮，让主 agent 读到结果——无论任务是模型启动的，还是你用 `/agent bg` 启动的。你正在输入、有暂存的图片、或处于 plan 模式时，它会等着；连续唤醒 3 次后会暂停，直到你输入内容。在 `.agentao/settings.json` 里写 `"background_agents": {"auto_wake": false}` 可以关闭；关闭后，结果会随你的下一条消息交给 agent。
 
 ## `/todos` — 当前任务列表
 
