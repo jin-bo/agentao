@@ -1,6 +1,6 @@
 # Background sub-agents: wake an idle CLI
 
-**Status:** A, the run-host change and C **implemented** 2026-09-26 (#351, with the consecutive-wake cap in #352); B **implemented** 2026-09-26 with a 1800 s maximum. All unreleased, 0.5.6 cycle. B's ACP gate (§6.2) is still open: the intended client's turn timeout and progress display have not been checked, so the maximum stays provisional.
+**Status:** A, the run-host change and C **implemented** 2026-09-26 (#351, with the consecutive-wake cap in #352); B **implemented** 2026-09-26 with a 1800 s maximum. All **shipped in 0.5.6**, with a follow-up there (#355): the status bar, `/agent status`, the dashboard and the model's listing show this conversation's tasks, and finished history is capped at 50 records. B's ACP gate (§6.2) is still open: the intended client's turn timeout and progress display have not been checked, so the maximum stays provisional.
 **Anchors:** agentao `main@22104ff`; codex `30fc6864cc1` (2026-09-23); goose `9adae14b6`
 (2026-09-25); gemini-cli `87de0b6369` (2026-09-24); pi-mono `d5629e204` (2026-09-24).
 **Related:** `codex-subagent-v2-vs-agentao.zh.md` §4.2 (the polling observation this doc

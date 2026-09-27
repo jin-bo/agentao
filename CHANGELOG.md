@@ -7,34 +7,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Targeting 0.5.6. Add entries under the relevant heading as work lands._
+---
+
+## [0.5.6] — 2026-09-26
 
 ### Added
 
 - The interactive CLI now continues on its own when a background sub-agent
   finishes while it waits at an empty prompt: it prints
   `⟳ background agent finished — continuing` and runs one turn that reads the
-  queued update, instead of waiting for you to type `continue`. It stays out of
-  the way while you are typing, with images staged, or in plan mode, and pauses
-  after 3 wakes in a row until you submit a line. Turn it off with
-  `"background_agents": {"auto_wake": false}` in `.agentao/settings.json`. Embedded hosts get a documented recipe for the same
-  continuation (host-api, *Continuing after a background sub-agent*); the
-  runtime itself still never starts a turn.
+  queued update, instead of waiting for you to type `continue`. This applies
+  to agents the model launched and to ones you started with `/agent bg`. It
+  stays out of the way while you are typing, with images staged, or in plan
+  mode, and pauses after 3 wakes in a row until you submit a line. Turn it off
+  with `"background_agents": {"auto_wake": false}` in `.agentao/settings.json`.
+  Embedded hosts get a documented recipe for the same continuation (host-api,
+  *Continuing after a background sub-agent*); the runtime itself still never
+  starts a turn.
 - `check_background_agent` takes an optional `wait_seconds` (default `0`, at
   most 1800) so a parent that needs a child's result can wait for it once,
   inside the same turn — the path ACP clients need, since they cannot be woken.
   Cancelling the turn ends the wait within half a second without cancelling
   the child; a wait that times out tells the model not to repeat it; a long
-  wait reports progress once a minute. Ctrl+C during a parallel tool batch now
-  cancels the turn before the batch's workers are joined, so a waiting tool no
-  longer holds the interrupt for its whole wait.
+  wait reports progress once a minute. The 1800-second bound is provisional
+  until checked against an ACP client's own prompt-turn timeout. Ctrl+C during
+  a parallel tool batch now cancels the turn before the batch's workers are
+  joined, so a waiting tool no longer holds the interrupt for its whole wait.
+- `BackgroundTaskStore.list_current()`: this conversation's background tasks
+  plus any still running — the scope every listing below now uses. `list()`
+  still returns the full history.
 
 ### Changed
 
 - `agentao run` no longer offers background sub-agents. Its one-shot process
   could exit while their daemon threads were still running, so background
   work was not reliable there. No migration is needed; foreground sub-agents
-  still return within the run.
+  still return within the run. This supersedes the 0.5.1 and 0.5.2 notes that
+  a background sub-agent could finish after `agentao run` wrote its envelope:
+  a run now has none, so every sub-agent it delegates to is in its `usage`.
 - `/agent status`, the `/agents` dashboard and the model's
   `check_background_agent(agent_id='')` list this conversation's background
   sub-agents plus any still running, the same scope as the status bar. They
@@ -42,9 +52,7 @@ _Targeting 0.5.6. Add entries under the relevant heading as work lands._
   called that "this session" — so in a new session the model saw the previous
   run's agents, reclassified `failed`, as if it had launched them. Add `--all`
   (`/agent status --all`, `/agents --all`) for the full history; an agent from
-  an earlier conversation is still readable by its ID. The new
-  `BackgroundTaskStore.list_current()` returns the same scope; `list()` is
-  unchanged.
+  an earlier conversation is still readable by its ID.
 - `.agentao/background_tasks.json` no longer grows without bound: at startup
   and at each launch, finished records from earlier conversations and runs
   beyond the newest 50 are dropped. The current conversation's records and any
@@ -54,7 +62,10 @@ _Targeting 0.5.6. Add entries under the relevant heading as work lands._
 
 - Background sub-agent launch guidance now tells the parent to continue other
   work or end its turn instead of waiting with shell sleeps or repeated status
-  checks. Completion updates arrive when the session next runs.
+  checks; if the turn cannot continue without the result, it names a single
+  `check_background_agent(..., wait_seconds=N)` call. In the session that
+  prompted this, the parent's third identical `sleep 300` tripped the
+  doom-loop guard and three finished agents went unread for over two hours.
 - The CLI status bar no longer shows background sub-agents from earlier
   conversations. A task finished before `/new`, `/clear` or a resume stayed on
   the bar, and a fresh CLI showed every task recorded in
