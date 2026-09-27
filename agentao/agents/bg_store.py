@@ -534,6 +534,37 @@ class BackgroundTaskStore:
                 or self._owner_path.get(k) == current_path
             ]
 
+    def _status_bar_tasks(self) -> List[Dict[str, Any]]:
+        """The tasks the interactive CLI's status bar shows, in registration order.
+
+        This conversation's tasks, whatever their status, plus any task of an
+        earlier conversation that is still pending or running in this
+        process. Left out: tasks that finished before the last
+        ``start_new_conversation()`` (``/new``, ``/clear``, a resume), records
+        a restart reloaded from disk — ``recover()`` owns them but never tags
+        them with a conversation — and a sibling store's tasks. :meth:`list`
+        still returns all of them; ``/agent status`` is where history lives.
+
+        Reads memory only, never the persistence file: the status bar calls
+        this once a second.
+        """
+        self._check_persistence_rebind()
+        current_path = self._resolve_persistence_path()
+        with self._notify_lock:
+            generation = self._generation
+            task_generation = dict(self._task_generation)
+        with self._lock:
+            return [
+                _record_copy(rec) | {"id": agent_id}
+                for agent_id, rec in self._tasks.items()
+                if agent_id in self._owned_ids
+                and self._owner_path.get(agent_id) == current_path
+                and (
+                    rec.get("status") in ("pending", "running")
+                    or task_generation.get(agent_id) == generation
+                )
+            ]
+
     def cancel(self, agent_id: str) -> str:
         """Cancel a task. Returns a human-readable result string.
 

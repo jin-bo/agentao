@@ -41,6 +41,13 @@ _Targeting 0.5.6. Add entries under the relevant heading as work lands._
 - Background sub-agent launch guidance now tells the parent to continue other
   work or end its turn instead of waiting with shell sleeps or repeated status
   checks. Completion updates arrive when the session next runs.
+- The CLI status bar no longer shows background sub-agents from earlier
+  conversations. A task finished before `/new`, `/clear` or a resume stayed on
+  the bar, and a fresh CLI showed every task recorded in
+  `.agentao/background_tasks.json` — those cut off by the previous exit as
+  failed. The bar now shows this conversation's tasks plus any still running;
+  `/agent status` still lists them all. It also no longer reads that file once
+  a second.
 
 ---
 

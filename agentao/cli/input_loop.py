@@ -190,10 +190,13 @@ def get_status_toolbar(cli: "AgentaoCLI") -> ANSI:
         ctx_col = "\x1b[37m"
 
     try:
-        if cli.agent.bg_store is None:
+        # This conversation's tasks and any still running — not the history
+        # ``list()`` returns (earlier conversations, records reloaded from
+        # disk at startup), which ``/agent status`` shows instead.
+        status_bar_tasks = getattr(cli.agent.bg_store, "_status_bar_tasks", None)
+        tasks = status_bar_tasks() if status_bar_tasks is not None else []
+        if not isinstance(tasks, list):
             tasks = []
-        else:
-            tasks = cli.agent.bg_store.list()
         if tasks:
             import time as _time
             tokens = []
