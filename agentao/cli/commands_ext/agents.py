@@ -8,6 +8,7 @@ from rich.markdown import Markdown
 from rich.markup import escape as markup_escape
 from rich.panel import Panel
 
+from ...agents.bg_store import BackgroundCapacityError
 from .._globals import console, split_subcommand
 
 if TYPE_CHECKING:
@@ -320,7 +321,17 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
         except KeyError:
             console.print(f"\n[error]Unknown agent: {agent_name}[/error]\n")
             return
-        msg = tool.execute(task=task, run_in_background=True)
+        try:
+            msg = tool.execute(task=task, run_in_background=True)
+        except BackgroundCapacityError as exc:
+            # The exception's own text is written for the model; this one
+            # names what the user can do from here.
+            console.print(
+                f"\n[warning]Not started: {exc.limit} background agents are "
+                f"already running. Wait for one to finish, or stop one with "
+                f"/agent cancel <agent-id>.[/warning]\n"
+            )
+            return
         console.print(f"\n[cyan]{msg}[/cyan]\n")
         return
 

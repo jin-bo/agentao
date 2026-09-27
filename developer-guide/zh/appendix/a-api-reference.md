@@ -75,6 +75,7 @@ Agentao(
 - `sandbox_policy=None` —— `ToolRunner` 跑 shell 时不再走 macOS `sandbox-exec` 包装。
 - `bg_store=None` —— `check_background_agent` / `cancel_background_agent` 不注册，chat loop 后台通知 drain 短路，子 agent 工具定义里 `run_in_background` 字段在 **schema 层被移除**（LLM 看不到、就不会调用一个被禁用的能力）。`/agent bg|dashboard|cancel|delete|logs|result` 这几个 CLI 子命令也会短路，并打印明确的提示。一次性进程应该传它，`agentao run` 就是这样做的（0.5.6）：后台 worker 是 daemon 线程，会随进程一起结束。
 - 有 store 时，后台子代理完成后的更新只会在父级**下一**轮交给它，而运行时从不自己开启这一轮。两种做法任选：在宿主自己驱动轮次的地方，根据终态 `SubagentLifecycleEvent` 续跑（配方见 `docs/reference/host-api.zh.md`《后台子 Agent 结束后继续》）；或者让模型用 `check_background_agent(agent_id, wait_seconds=…)` 在轮次内等待（0.5.6，最多 1800 秒；取消这一轮只结束等待，不取消子代理）。
+- 一个 store 同时最多运行 `max_concurrent` 个后台子代理（keyword-only，默认 `6`；`None` 表示不设上限；0.5.7）。超出时直接拒绝，不排队：`register()` 在记录任何内容之前抛出 `BackgroundCapacityError`，这次工具调用以失败返回，文字告诉模型等一个结束、取消一个，或改为前台运行。只统计这个 store 自己 pending/running 的任务，不算同一个 `background_tasks.json` 里其他进程的记录。
 
 `agentao.embedding.build_from_environment()` 会按 CLI 默认行为构造这三个对象（都锚定到当前 session 的工作目录），然后显式传入，所以 CLI / ACP 行为保持不变。嵌入式 host 不主动启用就不会有任何开销。
 

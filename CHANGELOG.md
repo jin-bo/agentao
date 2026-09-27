@@ -13,6 +13,20 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- At most 6 background sub-agents now run at once per session. Before, every
+  `run_in_background=true` call started another thread with no limit, each
+  making its own LLM requests on the same key. A launch past the limit is
+  refused, not queued: the tool call fails with a message telling the model
+  to wait for one (`check_background_agent` with `wait_seconds`), cancel one,
+  or run the task in the foreground, and `/agent bg` prints a refusal instead
+  of starting it. The sub-agent tool's `run_in_background` description states
+  the limit. Hosts set it with the new keyword-only
+  `BackgroundTaskStore(..., max_concurrent=)` (default `6`, `None` for no
+  limit; anything but a positive `int` raises `ValueError`); the refusal is
+  `agentao.agents.BackgroundCapacityError`, raised by `register()` before
+  anything is recorded. Only the store's own pending and running tasks count,
+  not another process's records in the same `background_tasks.json`.
+
 ### Fixed
 
 ---
