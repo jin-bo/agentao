@@ -650,6 +650,14 @@ class AgentToolWrapper(Tool):
             },
         }
         if self._bg_store is not None:
+            # Read at request time: a host may change the store's cap
+            # after this tool was built.
+            limit = getattr(self._bg_store, "max_concurrent", None)
+            cap_note = (
+                f" At most {limit} background agents run at once; "
+                "a launch beyond that is refused."
+                if type(limit) is int else ""
+            )
             properties["run_in_background"] = {
                 "type": "boolean",
                 "description": (
@@ -660,6 +668,7 @@ class AgentToolWrapper(Tool):
                     "A background agent update can be read when this session next runs. "
                     "If this turn cannot continue without its result, call "
                     "check_background_agent with wait_seconds once."
+                    + cap_note
                 ),
             }
         return {
@@ -1417,6 +1426,10 @@ class AgentToolWrapper(Tool):
     def _launch_background(self, task: str, parent_context: str) -> str:
         agent_id = uuid.uuid4().hex[:8]
         agent_name = self._definition["name"]
+        # First, so a launch refused for capacity (``BackgroundCapacityError``)
+        # leaves nothing behind: no record, no token, no ``spawned`` event
+        # without a terminal one. The executor reports the raise as a failed
+        # tool call whose text tells the model what to do instead.
         self._bg_store.register(agent_id, agent_name, task[:80])
 
         token = CancellationToken()

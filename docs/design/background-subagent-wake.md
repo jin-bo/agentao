@@ -284,8 +284,9 @@ cut off at process exit. This is a code-derived risk, not reproduced in a one-sh
 
 - **Wait-for-any / wait-for-all:** codex V2's mailbox wait. Revisit only if one-id waits
   prove insufficient.
-- **The background concurrency cap:** `codex-subagent-v2-vs-agentao.zh.md` §3 P1, still
-  unauthorized. It is a separate decision.
+- **The background concurrency cap:** `codex-subagent-v2-vs-agentao.zh.md` §3 P1, a
+  separate decision. Implemented 2026-09-27 (0.5.7 cycle): at most 6 in flight per store,
+  and a launch past that is refused, not queued.
 - **Any harness-driven turn:** no auto-continue in the runtime, on any transport (§5).
 - **ACP auto-wake:** a prompt turn starts from the client. It may use the embedded-host
   recipe; this proposal does not add a server-initiated prompt.

@@ -35,6 +35,28 @@ _NOTIFICATION_CAPACITY = 256
 # The current conversation's records and anything in flight are never dropped.
 _MAX_FINISHED_RECORDS = 50
 
+# Default cap on this store's tasks in flight (pending or running). Each one
+# is its own thread making its own LLM requests on the parent's key, and
+# nothing else bounds how many a model starts: the executor's pool limits
+# tool calls running at once, and a launch returns as soon as its thread has
+# started. A launch past the cap is refused, not queued — see ``register``.
+DEFAULT_MAX_CONCURRENT = 6
+
+
+class BackgroundCapacityError(RuntimeError):
+    """``register`` refused a launch: the store already has ``limit`` tasks
+    in flight. Raised before anything is recorded, so the refused launch
+    leaves no record, no token and no lifecycle event behind."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        super().__init__(
+            f"Background agent not started: {limit} background agents are "
+            f"already running, the most this session allows. Wait for one to "
+            f"finish (check_background_agent with wait_seconds), cancel one, "
+            f"or run this task in the foreground (run_in_background=false)."
+        )
+
 # Per-process guard: two Agentao instances anchored to the same project
 # share one persistence file. If both ran recover(), the second would
 # reclassify pending/running tasks owned by the first as "failed" even
@@ -94,11 +116,23 @@ class BackgroundTaskStore:
         persistence_dir: Optional[Path] = None,
         *,
         persistence_dir_provider: Optional[Callable[[], Optional[Path]]] = None,
+        max_concurrent: Optional[int] = DEFAULT_MAX_CONCURRENT,
     ):
         if persistence_dir is not None and persistence_dir_provider is not None:
             raise ValueError(
                 "Pass either persistence_dir or persistence_dir_provider, not both"
             )
+        # ``None`` means no cap. Anything else must be a real positive int:
+        # ``bool`` is an ``int`` subclass, and ``True`` read as a cap of 1
+        # (or ``0`` as "refuse everything") would be a silent misreading.
+        if max_concurrent is not None and (
+            type(max_concurrent) is not int or max_concurrent < 1
+        ):
+            raise ValueError(
+                f"max_concurrent must be a positive int or None, "
+                f"got {max_concurrent!r}"
+            )
+        self.max_concurrent: Optional[int] = max_concurrent
         self._tasks: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
         # Signalled whenever one of *this* store's records settles or is
@@ -368,9 +402,25 @@ class BackgroundTaskStore:
     # ------------------------------------------------------------------
 
     def register(self, agent_id: str, agent_name: str, task_summary: str) -> None:
+        """Record a new pending task.
+
+        Raises ``BackgroundCapacityError`` when ``max_concurrent`` of this
+        store's own tasks are already pending or running. The count and the
+        insert happen under one hold of ``_lock``, so concurrent launches
+        cannot both take the last slot. Only *owned* tasks count: ``_tasks``
+        also holds records a sibling store (another process, or another
+        ``Agentao`` on the same project) persisted to the shared file, and
+        counting those would refuse this store's launches for work it does
+        not run.
+        """
         self._check_persistence_rebind()
         persistence_path = self._resolve_persistence_path()
         with self._lock:
+            if (
+                self.max_concurrent is not None
+                and len(self._in_flight_owned_ids_locked()) >= self.max_concurrent
+            ):
+                raise BackgroundCapacityError(self.max_concurrent)
             self._tasks[agent_id] = {
                 "agent_name": agent_name,
                 "task": task_summary,

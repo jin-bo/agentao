@@ -42,7 +42,7 @@ agentao --resume a1b2c3   # 恢复指定前缀
 |---|---|
 | `/agent` 或 `/agent list` | 列出可用子 agent |
 | `/agent <name> <task>` | 前台运行；当前 REPL 等结果 |
-| `/agent bg <name> <task>` | 后台运行；状态显示在底部 toolbar。toolbar 只显示本次对话的任务和仍在运行的任务（`/new`、`/clear` 之前已结束的、以及之前几次启动 CLI 留下的记录都不显示） |
+| `/agent bg <name> <task>` | 后台运行；状态显示在底部 toolbar。toolbar 只显示本次对话的任务和仍在运行的任务（`/new`、`/clear` 之前已结束的、以及之前几次启动 CLI 留下的记录都不显示）。同时最多运行 6 个；超出时拒绝启动并打印提示，不会排队 |
 | `/agent status` | 列出本次对话的后台任务和仍在运行的任务 |
 | `/agent status --all` | 连同之前的对话和之前几次启动 CLI 的任务一起列出（已结束的最多保留最新 50 条） |
 | `/agent status <id>` | 查看一个后台任务的结果或失败原因。跑起来但没跑完的任务（预算耗尽、无输出）会显示 *Did not finish*，**并且照样打印它的部分结果** |

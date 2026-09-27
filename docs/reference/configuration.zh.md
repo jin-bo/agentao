@@ -31,7 +31,7 @@
 
 | 配置面 | 路径 | 维护者 | 备注 |
 |---|---|---|---|
-| 后台子代理任务状态 | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | 锚定到 `working_directory`；未传 `persistence_dir` 时只在内存中。手改会与运行中的线程脱钩。来自之前对话和之前运行的已结束记录最多保留 50 条（按 `finished_at` 保留最新的），在启动时和每次启动后台子代理时清理；本次对话的记录和仍在运行的记录永远不会被清掉。`status: "failed"` 的记录在"跑完未抛异常但没答出来"时会带 `incomplete_reason`——它的有无用来区分"崩溃"（无 `result`）与"没跑完"（`result` 仍在且值得读）。0.4.15 之前写入的记录没有该字段。自 0.4.24 起，`status: "cancelled"` 的记录在**运行中**被取消时会保留这次跑出来的 `result` 与计数，在**开跑前**被取消时两者都没有；两种情况下 `incomplete_reason` 都是 `None`——status 本身已经说明了原因。**不做密钥扫描**——见下方注记。 |
+| 后台子代理任务状态 | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | 锚定到 `working_directory`；未传 `persistence_dir` 时只在内存中。手改会与运行中的线程脱钩。来自之前对话和之前运行的已结束记录最多保留 50 条（按 `finished_at` 保留最新的），在启动时和每次启动后台子代理时清理；本次对话的记录和仍在运行的记录永远不会被清掉。这个 store 自己 pending 或 running 的任务同时最多 `max_concurrent` 个（构造参数，默认 6，`None` 表示不设上限；0.5.7）——超出时拒绝启动；这个文件里其他进程的记录不计入。`status: "failed"` 的记录在"跑完未抛异常但没答出来"时会带 `incomplete_reason`——它的有无用来区分"崩溃"（无 `result`）与"没跑完"（`result` 仍在且值得读）。0.4.15 之前写入的记录没有该字段。自 0.4.24 起，`status: "cancelled"` 的记录在**运行中**被取消时会保留这次跑出来的 `result` 与计数，在**开跑前**被取消时两者都没有；两种情况下 `incomplete_reason` 都是 `None`——status 本身已经说明了原因。**不做密钥扫描**——见下方注记。 |
 | 回放事件 | `.agentao/replay/*.jsonl` | `replay/` | 见 [session-replay.md](../guides/session-replay.md)。 |
 | 会话 / 计划 | `.agentao/sessions/`、`.agentao/plan-history/` | 多模块 | 单次会话产物。**不做密钥扫描**——见下方注记。 |
 | 工具产物 | `.agentao/tool-outputs/` | `runtime/tool_result_formatter.py::_save_and_truncate` | 超长工具输出溢写到磁盘，由上下文中的摘录引用其路径。**落盘前会做密钥扫描。** |
