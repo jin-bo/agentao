@@ -18,7 +18,7 @@ All commands start with `/`:
   - `/clear all` - Alias for `/clear` (backward compatible)
 - `/new` - Save current session and start a fresh conversation
   - Preserves long-term memories and earlier session summaries (both still reach the prompt); resets permission mode to workspace-write
-- Both: background agents keep running but no longer report into the conversation — check `/agents`
+- Both: background agents keep running but no longer report into the conversation — check `/agents --all` once they finish
 - `/status` - Show conversation status
 - `/sessions [subcommand]` - Manage saved sessions
   - `/sessions` or `/sessions list` - List saved sessions
@@ -111,11 +111,11 @@ All commands start with `/`:
   - `/agent` or `/agent list` - List available sub-agents
   - `/agent <name> <task>` - Run a sub-agent in the foreground
   - `/agent bg <name> <task>` - Run a sub-agent in the background
-  - `/agent status [id]` - Show background agent status or result
-  - `/agent dashboard` - Show a live background-agent dashboard
+  - `/agent status [id|--all]` - Show this conversation's background agents (`--all`: earlier ones too), or one agent's result
+  - `/agent dashboard [--all]` - Show a live background-agent dashboard (`--all`: earlier ones too)
   - `/agent cancel <id>` - Cancel a background agent
   - `/agent delete <id>` - Delete a background-agent record
-- `/agents` - Alias for `/agent dashboard`
+- `/agents [--all]` - Alias for `/agent dashboard`
 - `/todos` - Show the current task list
 - `/tools [name]` - List registered tools or show one tool's schema
 - `/exit` or `/quit` - Exit the program

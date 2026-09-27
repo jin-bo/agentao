@@ -28,6 +28,13 @@ _TERMINAL_BG_STATUSES: frozenset = frozenset({"completed", "failed", "cancelled"
 # entries roll off so memory cannot grow without bound.
 _NOTIFICATION_CAPACITY = 256
 
+# Finished records kept from earlier conversations and earlier runs. The
+# persistence file used to grow for as long as a project was used: nothing
+# removed a record but ``/agent delete``, one id at a time. The oldest beyond
+# this many (by ``finished_at``) are dropped at startup and at each launch.
+# The current conversation's records and anything in flight are never dropped.
+_MAX_FINISHED_RECORDS = 50
+
 # Per-process guard: two Agentao instances anchored to the same project
 # share one persistence file. If both ran recover(), the second would
 # reclassify pending/running tasks owned by the first as "failed" even
@@ -397,6 +404,7 @@ class BackgroundTaskStore:
                 self._owner_path[agent_id] = persistence_path
         with self._notify_lock:
             self._task_generation[agent_id] = self._generation
+        self._prune_finished()
         self._flush_to_disk()
 
     def mark_running(self, agent_id: str) -> bool:
@@ -532,6 +540,81 @@ class BackgroundTaskStore:
                 for k, v in self._tasks.items()
                 if k not in self._owned_ids
                 or self._owner_path.get(k) == current_path
+            ]
+
+    def _prune_finished(self) -> bool:
+        """Drop the oldest finished records beyond ``_MAX_FINISHED_RECORDS``.
+
+        Only owned, terminal records pinned to the current persistence path
+        and not registered in the current conversation are candidates, so a
+        result the model may still read in this conversation is never lost.
+        A pruned id stays in ``_owned_ids``, as after :meth:`delete`, so the
+        caller's next flush removes it from disk (an in-memory store has no
+        disk, so there it is released at once). Returns whether any went.
+        """
+        current_path = self._resolve_persistence_path()
+        with self._notify_lock:
+            generation = self._generation
+            task_generation = dict(self._task_generation)
+        with self._lock:
+            candidates = [
+                agent_id
+                for agent_id in self._owned_ids
+                if (rec := self._tasks.get(agent_id)) is not None
+                and rec.get("status") in _TERMINAL_BG_STATUSES
+                and task_generation.get(agent_id) != generation
+                and self._owner_path.get(agent_id) == current_path
+            ]
+            if len(candidates) <= _MAX_FINISHED_RECORDS:
+                return False
+            candidates.sort(
+                key=lambda aid: self._tasks[aid].get("finished_at") or 0.0,
+                reverse=True,
+            )
+            pruned = candidates[_MAX_FINISHED_RECORDS:]
+            for agent_id in pruned:
+                del self._tasks[agent_id]
+                # No pinned path means no persistence file (in-memory
+                # store): no flush will ever release the id, so release it
+                # here or ``_owned_ids`` grows by one per pruned launch.
+                if self._owner_path.get(agent_id) is None:
+                    self._owned_ids.discard(agent_id)
+        with self._notify_lock:
+            for agent_id in pruned:
+                self._task_generation.pop(agent_id, None)
+        return True
+
+    def list_current(self) -> List[Dict[str, Any]]:
+        """This conversation's tasks, in registration order — :meth:`list` is history.
+
+        This conversation's tasks, whatever their status, plus any task of an
+        earlier conversation that is still pending or running in this
+        process. Left out: tasks that finished before the last
+        ``start_new_conversation()`` (``/new``, ``/clear``, a resume), records
+        a restart reloaded from disk — ``recover()`` owns them but never tags
+        them with a conversation — and a sibling store's tasks. :meth:`list`
+        returns all of them, and :meth:`get` still reads any of them by id.
+
+        What the CLI status bar, ``/agent status``, the dashboard and the
+        model's ``check_background_agent(agent_id='')`` show by default.
+        Reads memory only, never the persistence file: the status bar calls
+        this once a second.
+        """
+        self._check_persistence_rebind()
+        current_path = self._resolve_persistence_path()
+        with self._notify_lock:
+            generation = self._generation
+            task_generation = dict(self._task_generation)
+        with self._lock:
+            return [
+                _record_copy(rec) | {"id": agent_id}
+                for agent_id, rec in self._tasks.items()
+                if agent_id in self._owned_ids
+                and self._owner_path.get(agent_id) == current_path
+                and (
+                    rec.get("status") in ("pending", "running")
+                    or task_generation.get(agent_id) == generation
+                )
             ]
 
     def cancel(self, agent_id: str) -> str:
@@ -733,6 +816,7 @@ class BackgroundTaskStore:
                 # actually removes them from disk.
                 self._owned_ids.add(agent_id)
                 self._owner_path[agent_id] = persistence_path
+        self._prune_finished()
         self._flush_to_disk()
         return True
 

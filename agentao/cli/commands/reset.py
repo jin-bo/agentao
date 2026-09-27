@@ -94,7 +94,7 @@ def _print_detached(count: int, *, memories_wiped: bool) -> None:
         return
     console.print(
         f"[warning]{count} background agent(s) still running from the previous "
-        f"session. They will not report into this one — check /agents.[/warning]"
+        f"session. They will not report into this one — check /agents --all once they finish.[/warning]"
     )
     if memories_wiped:
         console.print(f"[warning]One of them {MEMORY_WIPE_RACE_NOTE}[/warning]")

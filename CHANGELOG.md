@@ -35,12 +35,32 @@ _Targeting 0.5.6. Add entries under the relevant heading as work lands._
   could exit while their daemon threads were still running, so background
   work was not reliable there. No migration is needed; foreground sub-agents
   still return within the run.
+- `/agent status`, the `/agents` dashboard and the model's
+  `check_background_agent(agent_id='')` list this conversation's background
+  sub-agents plus any still running, the same scope as the status bar. They
+  listed every task ever recorded for the project, and the model's listing
+  called that "this session" — so in a new session the model saw the previous
+  run's agents, reclassified `failed`, as if it had launched them. Add `--all`
+  (`/agent status --all`, `/agents --all`) for the full history; an agent from
+  an earlier conversation is still readable by its ID. The new
+  `BackgroundTaskStore.list_current()` returns the same scope; `list()` is
+  unchanged.
+- `.agentao/background_tasks.json` no longer grows without bound: at startup
+  and at each launch, finished records from earlier conversations and runs
+  beyond the newest 50 are dropped. The current conversation's records and any
+  still running are never dropped. Before, only `/agent delete` removed one.
 
 ### Fixed
 
 - Background sub-agent launch guidance now tells the parent to continue other
   work or end its turn instead of waiting with shell sleeps or repeated status
   checks. Completion updates arrive when the session next runs.
+- The CLI status bar no longer shows background sub-agents from earlier
+  conversations. A task finished before `/new`, `/clear` or a resume stayed on
+  the bar, and a fresh CLI showed every task recorded in
+  `.agentao/background_tasks.json` — those cut off by the previous exit as
+  failed. The bar now shows this conversation's tasks plus any still running,
+  and no longer reads that file once a second.
 
 ---
 

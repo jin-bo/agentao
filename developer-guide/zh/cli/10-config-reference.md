@@ -88,7 +88,7 @@ cp examples/personas/daily-driver/AGENTAO.md /path/to/your/project/AGENTAO.md
 
 | 路径 | 用途 |
 |---|---|
-| `.agentao/background_tasks.json` | 子 agent 状态；内存里有镜像 |
+| `.agentao/background_tasks.json` | 子 agent 状态；内存里有镜像。之前对话和之前运行的已结束记录最多保留 50 条 |
 | `.agentao/replay/*.jsonl` | Replay 录制 |
 | `.agentao/sessions/` | 单次会话产物 |
 | `.agentao/plan.md`、`.agentao/plan-history/` | Plan 模式状态 |

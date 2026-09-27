@@ -49,7 +49,8 @@ class CheckBackgroundAgentTool(Tool):
         return (
             "Check the status of a background sub-agent previously launched with "
             "run_in_background=true. Returns 'pending', 'running', 'completed' (with result), "
-            "or 'failed' (with error). Pass agent_id='' to list all background agents. "
+            "or 'failed' (with error). Pass agent_id='' to list this conversation's "
+            "background agents (and any still running). "
             "Only when you need the result before you can continue in this turn, pass "
             f"wait_seconds (up to {MAX_WAIT_SECONDS}) to wait for it once. If the wait "
             "times out, do not repeat it: end the turn or cancel the agent."
@@ -64,7 +65,8 @@ class CheckBackgroundAgentTool(Tool):
                     "type": "string",
                     "description": (
                         "The agent ID returned when the background agent was launched. "
-                        "Pass empty string to list all background agents."
+                        "Pass empty string to list this conversation's background "
+                        "agents."
                     ),
                 },
                 "wait_seconds": {
@@ -131,9 +133,12 @@ class CheckBackgroundAgentTool(Tool):
 
     def _report(self, agent_id: str, rec: Optional[Dict[str, Any]] = None) -> str:
         if not agent_id:
-            tasks = self.bg_store.list()
+            # This conversation's tasks, not the store's history: records from
+            # an earlier run, reloaded from disk and reclassified ``failed``,
+            # would otherwise read to the model as agents it just launched.
+            tasks = self.bg_store.list_current()
             if not tasks:
-                return "No background agents have been launched in this session."
+                return "No background agents in this conversation."
             lines = ["Background agents:"]
             for t in tasks:
                 if t.get("finished_at") and t.get("started_at"):

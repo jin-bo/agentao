@@ -88,7 +88,7 @@ Files that exist under `.agentao/` but you should **not** hand-edit:
 
 | Path | Purpose |
 |------|---------|
-| `.agentao/background_tasks.json` | Sub-agent state; in-memory mirror exists |
+| `.agentao/background_tasks.json` | Sub-agent state; in-memory mirror exists. Keeps at most 50 finished records from earlier conversations and runs |
 | `.agentao/replay/*.jsonl` | Replay recordings |
 | `.agentao/sessions/` | Per-session artifacts |
 | `.agentao/plan.md`, `.agentao/plan-history/` | Plan-mode state |

@@ -40,7 +40,8 @@ def test_dashboard_keeps_live_view_for_pending_tasks(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda *args, **kwargs: None)
 
     cli = AgentaoCLI.__new__(AgentaoCLI)
-    cli.agent = SimpleNamespace(bg_store=SimpleNamespace(list=fake_list))
+    # The default view is this conversation's (``list_current``); ``--all`` reads ``list``.
+    cli.agent = SimpleNamespace(bg_store=SimpleNamespace(list_current=fake_list))
     _show_agents_dashboard(cli)
 
     assert calls["live_started"] is True
