@@ -292,3 +292,15 @@ def test_running_records_are_never_pruned():
     store.start_new_conversation()
     _running(store, "fresh")
     assert store.get("busy")["status"] == "running"
+
+
+def test_an_in_memory_store_releases_pruned_ids():
+    """No persistence file means no flush to release a pruned id; without the
+    release ``_owned_ids`` grew by one per launch in a long-running host."""
+    cap = bg_store_mod._MAX_FINISHED_RECORDS
+    store = BackgroundTaskStore()
+    for i in range(cap + 20):
+        store.start_new_conversation()
+        _settled(store, f"t{i:03d}")
+    assert len(store.list()) <= cap + 1
+    assert len(store._owned_ids) == len(store.list())

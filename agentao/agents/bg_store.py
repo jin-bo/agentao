@@ -549,7 +549,8 @@ class BackgroundTaskStore:
         and not registered in the current conversation are candidates, so a
         result the model may still read in this conversation is never lost.
         A pruned id stays in ``_owned_ids``, as after :meth:`delete`, so the
-        caller's next flush removes it from disk. Returns whether any went.
+        caller's next flush removes it from disk (an in-memory store has no
+        disk, so there it is released at once). Returns whether any went.
         """
         current_path = self._resolve_persistence_path()
         with self._notify_lock:
@@ -573,6 +574,11 @@ class BackgroundTaskStore:
             pruned = candidates[_MAX_FINISHED_RECORDS:]
             for agent_id in pruned:
                 del self._tasks[agent_id]
+                # No pinned path means no persistence file (in-memory
+                # store): no flush will ever release the id, so release it
+                # here or ``_owned_ids`` grows by one per pruned launch.
+                if self._owner_path.get(agent_id) is None:
+                    self._owned_ids.discard(agent_id)
         with self._notify_lock:
             for agent_id in pruned:
                 self._task_generation.pop(agent_id, None)
