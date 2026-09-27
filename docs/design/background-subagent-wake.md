@@ -213,6 +213,22 @@ instead reads the store the CLI already reads every second for its status bar. T
   one line per minute; avoid adding a second progress API. The maximum remains a
   candidate until the client checks pass.
 
+**VS Code client check, 2026-09-27 (gate still open):** The installed
+`formulahendry.acp-client` 0.2.0 already has an Agentao configuration. Using that
+configuration's model environment and this repository's virtual environment,
+`agentao --acp --stdio` completed `initialize` and `session/new` in a temporary
+directory. All 52 tests in `tests/test_background_wait.py` and
+`tests/test_acp_transport.py` passed. The extension's bundled source map shows
+`SessionManager.sendPrompt()` awaiting ACP `prompt()` without an extension-side
+prompt timer, but the `ChatWebviewProvider` branch for `tool_call_update` passes
+only `toolCallId`, `status`, and `title` to `updateToolCall()`; it never reads
+`content`. Agentao's once-per-minute waiting text therefore cannot appear in
+that chat UI branch, though the extension's ACP Traffic log can record the raw
+notification. Source inspection cannot establish whether VS Code and its extension
+host sustain a real 1800-second turn, nor replace a UI test. Fix the client's
+progress rendering or choose another client, then test progress, cancellation, and
+the full wait bound in the real client. The 1800-second maximum remains provisional.
+
 ### 6.3 Step C (host): wake an idle host
 
 **The CLI, in code** (`cli/input_loop.py` plus one private store snapshot):

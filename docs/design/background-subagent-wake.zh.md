@@ -173,6 +173,18 @@ C 改为读取 CLI 本来每秒就在读的 store（状态栏用的就是它）�
   每次更新会重发此前累积的全部内容，因此进度应低频发送，例如每分钟一行；不另造进度 API。
   客户端验证通过前，30 分钟仍是候选上限。
 
+**2026-09-27 的 VS Code 客户端核查（门槛未关闭）：** 本机安装的
+`formulahendry.acp-client` 0.2.0 已配置 Agentao。用同一配置的模型环境和本仓库虚拟环境中的
+`agentao --acp --stdio` 在临时目录完成了 `initialize` 与 `session/new` 握手；
+`tests/test_background_wait.py` 和 `tests/test_acp_transport.py` 共 52 项通过。检查该扩展
+0.2.0 随包 source map：`SessionManager.sendPrompt()` 直接等待 ACP 的 `prompt()` 响应，
+扩展自身未设置 prompt 计时器；`ChatWebviewProvider` 的 `tool_call_update` 分支却只把
+`toolCallId`、`status` 和 `title` 交给 `updateToolCall()`，没有读取 `content`。因此
+Agentao 每分钟发出的等待文字无法经这一分支显示在聊天面板，尽管扩展的 ACP Traffic
+日志仍能记录原始通知。源码核查不能证明 VS Code/扩展宿主可保持 1800 秒的实际长轮次，
+也不能替代界面验收。后续应先修复或更换客户端的进度呈现，再用真实客户端测进度、取消
+和完整等待上限；此前 1800 秒仍为暂定值。
+
 ### 6.3 C（host）：唤醒空闲的宿主
 
 **CLI，写进代码**（`cli/input_loop.py` 加一个私有的 store 快照方法）：
