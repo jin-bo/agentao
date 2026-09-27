@@ -6,7 +6,7 @@
 > **更新（2026-09-26）：** §4.2 的观察已有真实案例并已处理——见 `background-subagent-wake.md`，#351–#353，随 0.5.6 发布。
 > 引用本文时请一并引用这一行——它防止下一个人把排序当排期。
 
-**状态：** 仅分析（分析已收敛，实施未授权）—— §2 例外，已随 0.4.24 发布。2026-08-21 起草并经两轮评审收敛。**第 1 节是全部结论**，其余各节是它的依据。
+**状态：** 分析已收敛；第 1 节列出的可实施项已全部落地——§2 随 0.4.24 发布，§4.2 的最小演进随 0.5.6 发布（#351–#353），§3 于 2026-09-27 合入（#358，0.5.7 周期）。「不建」各项维持不变，§4.1 仍为观察。2026-08-21 起草并经两轮评审收敛。**第 1 节是全部结论**，其余各节是它的依据。
 **锚点：** codex `openai/codex@2151d3a5b7`（增量 `2230d64464..2151d3a5b7`，487 commit）；agentao `main@c06a143`。英文孪生待写。
 **先前记录：** `openworker-borrow-review.zh.md` §1 —— **§2 那条 fail-open 是它首报并已完整定规的 P1，本文不是首报**。另见 `codex-goal-mechanism-review.zh.md`、`subagent-discovery-entrypoint-review.zh.md`。
 **已移出：** 项目级 agent 定义的信任线不一致（与 codex 无关）→ `agent-definition-trust-line.zh.md`。
@@ -82,7 +82,7 @@ for bg in (False, True):
 1. **前台路径不是独立的 fail-open。** 唯一的生产构造点 `tooling/agent_tools.py:89` 恒定注入 `confirmation_callback=lambda *a, **kw: agent.transport.confirm_tool(*a, **kw)`，故 `_wrapper.py:506` 的 `not self._confirmation_callback` 分支**无生产调用方**；前台子 agent 的 ASK 一律回到父方 transport。父方自身放行时子 agent 也放行，那是**继承**不是降级——同一个工具，模型在父 turn 里直接调也一样放行。
 2. **只有后台是降级。** `suppress_output=True` 一律把全部 legacy 回调置空（`_wrapper.py:502-507`）→ `agent.py:790` 的 `_has_legacy` 为假 → 选中 `NullTransport`（`null.py:28` 返回 `True`）→ `runtime/tool_runner.py:214-235` 的 Phase 2 把 `ASK` 抬成 `ALLOW`。**而选择走后台的是模型自己**（`run_in_background` 是它可设的布尔参数，`_wrapper.py:231-252`）。
 
-### 修复形态（已定案，尚未实施）
+### 修复形态（已定案，已随 0.4.24 实施）
 
 > **后台子 agent 无法安全进入交互审批**（后台线程读 stdin 会破坏终端 raw mode），**因此 ASK 固定拒绝**；权限引擎给出的显式 `ALLOW` / `DENY` 不受影响。前台不动——它本就抵达父方。
 
@@ -183,7 +183,7 @@ codex V2 的 actor / 邮箱 / 路径注册表 / residency 逐出，前提是**�
 | 身份 | `task_name` → `AgentPath`，全局注册表预留防重名 | 后台 `uuid4()[:8]`；同步路径无 id |
 | 生命周期 | 完成后仍常驻占槽，仅**有资格**被 LRU 卸载（要 `Completed\|Errored\|Interrupted` + 无 active turn + 邮箱空，`residency.rs:233-239`；V1 是显式 `close_agent`，`multi_agents_spec.rs:329`） | 跑一次 `chat()` 即销毁（`_wrapper.py:513-536`），记录留在 `bg_store` |
 | 结果回传 | 投进父方邮箱，`trigger_turn:false`（`agent/control.rs:565-590`）；回退路径直接 `inject_user_message_without_turn`（`:599`） | `push_notification`（`bg_store.py:241`）→ 父方下一轮由 `_inject_background_notifications` 作为 `role:"user"` 的 `<system-reminder>` 注入（`chat_loop/_runner.py:372,1068-1094`）——**同一个机制**，差别只在有无 park |
-| 等待 | V2 `wait_agent` 只收 `timeout_ms`、park 在邮箱上；V1 才是点名 join 回状态表（`multi_agents/wait.rs:274-284`） | 无等待原语 |
+| 等待 | V2 `wait_agent` 只收 `timeout_ms`、park 在邮箱上；V1 才是点名 join 回状态表（`multi_agents/wait.rs:274-284`） | `check_background_agent(wait_seconds=…)`，可取消、单次上限 1800 秒（`_bg_tools.py:22`，#353）；只等一个子 agent，无邮箱。空闲 CLI 另有自动续跑（`cli/input_loop.py`，#351）。写本文时无等待原语 |
 | 打断 | `interrupt_agent`，**agent 仍存活可再接任务** | `cancel_background_agent` + `CancellationToken`（`_bg_tools.py:116`） |
 | 完成信号 | 子方正常结束一个 turn | 子方**必须**调 `complete_task(result)`（`_complete.py`，控制流走异常） |
 | 技能 | role 可携带 `skills` | `parent.skill_manager.child_view()`：父级目录与禁用集合复制一份，`active_skills` 置空（#254，2026-09-16；`skills/manager.py::child_view`、`agents/tools/_wrapper.py::_child_skill_manager`）。此前是 `SkillManager(skills_dir="/nonexistent")`，一律不继承 |
