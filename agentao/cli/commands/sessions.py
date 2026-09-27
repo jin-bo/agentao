@@ -282,6 +282,6 @@ def resume_session(
     if detached_agents:
         console.print(
             f"[warning]{detached_agents} background agent(s) still running from the "
-            f"previous session. They will not report into this one — check /agents.[/warning]"
+            f"previous session. They will not report into this one — check /agents --all once they finish.[/warning]"
         )
     console.print()

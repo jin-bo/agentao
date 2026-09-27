@@ -193,8 +193,8 @@ def get_status_toolbar(cli: "AgentaoCLI") -> ANSI:
         # This conversation's tasks and any still running — not the history
         # ``list()`` returns (earlier conversations, records reloaded from
         # disk at startup), which ``/agent status`` shows instead.
-        status_bar_tasks = getattr(cli.agent.bg_store, "_status_bar_tasks", None)
-        tasks = status_bar_tasks() if status_bar_tasks is not None else []
+        list_current = getattr(cli.agent.bg_store, "list_current", None)
+        tasks = list_current() if list_current is not None else []
         if not isinstance(tasks, list):
             tasks = []
         if tasks:
@@ -313,7 +313,7 @@ def _build_command_table() -> Dict[str, "CommandHandler"]:
     return {
         "acp": handle_acp_command,
         "agent": handle_agent_command,
-        "agents": lambda cli, args: _show_agents_dashboard(cli),
+        "agents": lambda cli, args: _show_agents_dashboard(cli, show_all=args.strip() == "--all"),
         "clear": handle_clear_command,
         "compact": handle_compact_command,
         "context": handle_context_command,

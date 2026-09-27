@@ -43,9 +43,10 @@ Sub-agents are predefined capabilities that can run in the foreground or backgro
 | `/agent` or `/agent list` | List available sub-agents |
 | `/agent <name> <task>` | Run in the foreground; the REPL waits for the result |
 | `/agent bg <name> <task>` | Run in the background; status appears in the bottom toolbar, which shows this conversation's tasks and any still running (not ones finished before `/new` / `/clear`, nor records from earlier CLI runs) |
-| `/agent status` | List background task status, including earlier conversations and earlier CLI runs |
+| `/agent status` | List this conversation's background tasks and any still running |
+| `/agent status --all` | Also list earlier conversations and earlier CLI runs (the newest 50 finished ones are kept) |
 | `/agent status <id>` | Show one background task's result, or its failure. A task that ran but stopped short (budget exhausted, no output) reports *Did not finish* **and still prints its partial result** |
-| `/agent dashboard` or `/agents` | Open the live dashboard |
+| `/agent dashboard` or `/agents` | Open the live dashboard (same scope as `/agent status`; add `--all` for earlier ones) |
 | `/agent cancel <id>` | Cancel a background task |
 | `/agent delete <id>` | Remove a background-task record |
 

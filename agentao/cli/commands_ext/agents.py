@@ -18,8 +18,22 @@ _BG_REQUIRED_SUBS = frozenset({"bg", "status", "dashboard", "cancel", "delete", 
 
 
 
-def _show_agents_dashboard(cli: AgentaoCLI) -> None:
-    """Render a live auto-refreshing table of all background agents."""
+def _print_no_agents(show_all: bool) -> None:
+    if show_all:
+        console.print("\n[dim]No background agents recorded for this project.[/dim]\n")
+    else:
+        console.print(
+            "\n[dim]No background agents in this conversation. "
+            "Earlier ones: /agent status --all[/dim]\n"
+        )
+
+
+def _show_agents_dashboard(cli: AgentaoCLI, *, show_all: bool = False) -> None:
+    """Render a live auto-refreshing table of background agents.
+
+    This conversation's and any still running by default; ``show_all`` adds
+    earlier conversations and earlier runs (``BackgroundTaskStore.list``).
+    """
     import time as _time
     from rich.live import Live
     from rich.table import Table
@@ -68,8 +82,11 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
             return Text(f"◑  {t['incomplete_reason']}", style="yellow")
         return Text("✗  failed", style="red")
 
+    def _tasks() -> list:
+        return bg_store.list() if show_all else bg_store.list_current()
+
     def _make_panel() -> Panel:
-        tasks = bg_store.list()
+        tasks = _tasks()
 
         n_run    = sum(1 for t in tasks if t["status"] == "running")
         n_ok     = sum(1 for t in tasks if t["status"] == "completed")
@@ -123,9 +140,9 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
         title = f"Background Agents  ·  {summary}"
         return Panel(tbl, title=title, subtitle=footer, border_style="cyan")
 
-    tasks = bg_store.list()
+    tasks = _tasks()
     if not tasks:
-        console.print("\n[dim]No background agents in this session.[/dim]\n")
+        _print_no_agents(show_all)
         return
 
     active_statuses = {"pending", "running"}
@@ -142,7 +159,7 @@ def _show_agents_dashboard(cli: AgentaoCLI) -> None:
             while True:
                 _time.sleep(0.5)
                 live.update(_make_panel())
-                if not any(t["status"] in active_statuses for t in bg_store.list()):
+                if not any(t["status"] in active_statuses for t in _tasks()):
                     _time.sleep(0.3)
                     live.update(_make_panel())
                     break
@@ -183,15 +200,16 @@ def handle_agent_command(cli: AgentaoCLI, args: str) -> None:
         return
 
     if sub in ("dashboard", "dash"):
-        _show_agents_dashboard(cli)
+        _show_agents_dashboard(cli, show_all=rest.strip() == "--all")
         return
 
     if sub == "status":
         agent_id = rest
-        if not agent_id:
-            tasks = bg_store.list()
+        show_all = agent_id.strip() == "--all"
+        if not agent_id or show_all:
+            tasks = bg_store.list() if show_all else bg_store.list_current()
             if not tasks:
-                console.print("\n[dim]No background agents in this session.[/dim]\n")
+                _print_no_agents(show_all)
                 return
             console.print(f"\n[info]Background Agents ({len(tasks)}):[/info]\n")
             for t in tasks:

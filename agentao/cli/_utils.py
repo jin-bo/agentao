@@ -155,7 +155,7 @@ _SLASH_COMMAND_HINTS = {
     '/agent bg': '<agent-name> <task>',
     '/agent cancel': '<agent-id>',
     '/agent delete': '<agent-id>',
-    '/agent status': '[agent-id]',
+    '/agent status': '[agent-id|--all]',
     '/mode': '[read-only|workspace-write|full-access]',
     '/model': '<model-name>',
     '/provider': '<provider-name>',
