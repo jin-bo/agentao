@@ -30,6 +30,8 @@ OVERFLOW_CASES = [
     ("lm_studio", "tokens to keep from the initial prompt is greater than the context length"),
     ("kimi", "Your request exceeded model token limit: 131072 (requested: 200000)"),
     ("ollama", "prompt too long; exceeded max context length by 1200 tokens"),
+    ("zai_glm", "tokens in request more than max tokens allowed"),
+    ("configured_context_size", "Prompt has 5,958,968 tokens, but the configured context size is 256,000 tokens"),
     ("dashscope_range", "Range of input length should be ..."),
     ("dashscope_code", "InternalError.Algo.InvalidParameter: ..."),
     # Broad forms the old substring matcher caught — must not regress to stricter regex.

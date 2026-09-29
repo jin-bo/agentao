@@ -2403,6 +2403,8 @@ _OVERFLOW_PATTERNS = [
         r"greater than the context length",  # LM Studio
         r"exceeded model token limit",  # Kimi For Coding
         r"prompt too long; exceeded (?:max )?context length",  # Ollama
+        r"tokens in request more than max tokens allowed",  # Z.AI (GLM)
+        r"but the configured context size is [\d,]+ tokens?",  # "Prompt has N tokens, but ..." (opencode #37848)
         r"too many tokens",  # generic fallback (guarded below)
         r"token limit exceeded",  # generic fallback
         r"tokens > ",  # Anthropic-style "X tokens > Y maximum"
@@ -2428,7 +2430,7 @@ _NON_OVERFLOW_PATTERNS = [
 
 # Patterns that read the provider's **stated limit** out of an overflow error.
 #
-# This is deliberately not a number scrape. Of the 21 detection patterns above,
+# This is deliberately not a number scrape. Of the detection patterns above,
 # roughly half carry no number at all, and most of the ones that do carry
 # **two** — Anthropic's "213462 tokens > 200000 maximum" has the request size
 # and the limit, and so does OpenAI's. Picking the wrong one permanently
@@ -2466,6 +2468,9 @@ _OBSERVED_LIMIT_PATTERNS = [
         (r"longer than the model'?s context length\s*\(\s*([\d,]+)", "longer_than_model_context_length"),
         # Kimi: "Your request exceeded model token limit: 131072 (requested: ...)"
         (r"exceeded model token limit:\s*([\d,]+)", "exceeded_model_token_limit"),
+        # "Prompt has 5,958,968 tokens, but the configured context size is
+        # 256,000 tokens" — the first number is the request.
+        (r"configured context size is\s+([\d,]+)", "configured_context_size_is"),
     )
 ]
 
