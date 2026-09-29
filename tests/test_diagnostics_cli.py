@@ -155,6 +155,32 @@ class TestCollectProvider:
         serialized = json.dumps(report.to_dict())
         assert "sk-secret-do-not-leak" not in serialized
 
+    @pytest.mark.parametrize("url, secret, shown", [
+        ("https://user:pw-do-not-leak@gw.test/v1", "pw-do-not-leak", "https://***@gw.test/v1"),
+        ("https://gw.test/v1?key=AIza-do-not-leak&region=us", "AIza-do-not-leak",
+         "https://gw.test/v1?key=***&region=us"),
+        ("https://gw.test/v1?api-key=k-do-not-leak&sig=s-do-not-leak", "do-not-leak",
+         "https://gw.test/v1?api-key=***&sig=***"),
+    ], ids=["userinfo", "query-key", "query-api-key-and-sig"])
+    def test_credentials_in_the_base_url_are_masked(
+        self, isolated_wd, monkeypatch, url, secret, shown,
+    ):
+        """Some gateways take the key in the URL; ``--json`` output gets pasted."""
+        monkeypatch.setenv("OPENAI_BASE_URL", url)
+        report = DiagnosticReport()
+        _collect_provider(report)
+
+        assert report.sections["provider"]["base_url"] == shown
+        assert secret not in json.dumps(report.to_dict())
+
+    def test_an_ordinary_base_url_is_shown_as_written(self, isolated_wd, monkeypatch):
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1?api-version=2024-10-21")
+        report = DiagnosticReport()
+        _collect_provider(report)
+        assert report.sections["provider"]["base_url"] == (
+            "https://api.openai.com/v1?api-version=2024-10-21"
+        )
+
     def test_malformed_temperature_is_error(self, isolated_wd, monkeypatch):
         monkeypatch.setenv("LLM_TEMPERATURE", "not-a-float")
         report = DiagnosticReport()
