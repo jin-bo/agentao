@@ -65,6 +65,8 @@ PARSEABLE = [
                 "maximum context length", 32_768),
     ("kimi", "Your request exceeded model token limit: 131072 (requested: 200000)",
      131_072),
+    ("configured_context_size", "Prompt has 5,958,968 tokens, but the configured "
+                                "context size is 256,000 tokens", 256_000),
 ]
 
 
@@ -86,6 +88,7 @@ UNPARSEABLE = [
     ("bedrock", "input is too long for requested model"),
     ("dashscope", "Range of input length should be ..."),
     ("anthropic_413", '413 {"error":{"type":"request_too_large"}}'),
+    ("zai_glm", "tokens in request more than max tokens allowed"),
 ]
 
 

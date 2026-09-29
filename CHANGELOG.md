@@ -29,6 +29,12 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- Two more context-overflow wordings are recognised, so they go through
+  compaction and retry instead of ending the turn as an error: Z.AI GLM's
+  `tokens in request more than max tokens allowed`, and `Prompt has N tokens,
+  but the configured context size is N tokens`. The second also names the
+  window, so it is read as the observed context limit (the configured-size
+  number, never the request's). Both come from opencode's overflow table.
 - On the default `openai-completions` wire, an error that an
   OpenAI-compatible gateway reports *inside* a stream is now retried when it
   is transient, as it already was on the other two wires. The gateway has
