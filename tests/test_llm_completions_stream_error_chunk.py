@@ -229,3 +229,17 @@ def test_a_body_that_answers_is_an_answer_whatever_else_it_carries():
     response = _client(script).chat(HELLO)
     assert response.choices[0].message.content == "fine"
     assert script.requests == 1
+
+
+@pytest.mark.parametrize("body, text", [
+    ({"id": "gen-1", "error": "upstream exploded"}, "upstream exploded"),
+    ({"id": "gen-1"}, "no choices and no error"),
+    ({"id": "gen-1", "object": "chat.completion", "created": 1, "model": "m",
+      "choices": []}, "no choices and no error"),
+], ids=["string-error", "nothing", "empty-choices"])
+def test_any_body_without_choices_raises_instead_of_a_type_error(body, text):
+    """The chat loop indexes ``choices[0]``: no answer has to be an error."""
+    script = _JsonScript(json.dumps(body).encode())
+    with pytest.raises(openai.APIError, match=text):
+        _client(script).chat(HELLO)
+    assert script.requests == 1
