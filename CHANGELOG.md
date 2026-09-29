@@ -29,6 +29,18 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- An MCP server whose `url` redirects to another origin (another host, port
+  or scheme) no longer gets told to try `"type": "sse"`. With `mcp` 2.2 or
+  later — what a fresh install resolves to — the SDK follows a redirect only
+  within the endpoint's origin, so the connect fails with the SDK's own
+  `Redirect to <url> not followed; use that URL as the endpoint…`. agentao
+  used to append its "if this is a legacy SSE endpoint, set `"type": "sse"`"
+  hint to that, which cannot help: the SSE transport applies the same rule.
+  Configure the URL the error names (for an `https` → `http` downgrade, the
+  `https` URL it suggests, not the plain-`http` location). mcp 1.30 applies
+  the same rule on the 1.x line. Earlier SDKs followed the redirect, so such
+  a server connected before an SDK upgrade and fails after it.
+
 ---
 
 ## [0.5.6] — 2026-09-26

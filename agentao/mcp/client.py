@@ -124,6 +124,21 @@ def classify_mcp_error(exc: Exception) -> McpErrorKind:
     return McpErrorKind.OTHER
 
 
+def _is_unfollowed_redirect(exc: Exception) -> bool:
+    """True for mcp>=2.2's refusal to follow a redirect off the endpoint's origin.
+
+    From 2.2 the SDK follows a redirect only within the endpoint's origin (plus
+    an ``http`` → ``https`` upgrade on the same host), whatever the passed
+    client's ``follow_redirects`` says. It exposes no type or code of its own
+    for the refusal — it arrives as a JSON-RPC ``INVALID_REQUEST`` whose
+    message the SDK composes (``streamable_http._unfollowed_redirect``), both
+    variants in the frame ``Redirect to <url> not followed…``. That frame is
+    what is matched. A miss only brings back the "try SSE" hint.
+    """
+    msg = str(exc)
+    return msg.startswith("Redirect to ") and " not followed" in msg
+
+
 class NonMcpEndpointError(ConnectionError):
     """A configured ``url`` resolves to something that is not an MCP endpoint.
 
@@ -462,6 +477,9 @@ class McpClient:
             # a catalog/pagination bound, which is reached only *after*
             # ``initialize`` and a ``tools/list`` both succeeded — the transport
             # is proven working and the fault is the server's cursor or catalog.
+            # Nor for a redirect the SDK would not follow: its message already
+            # names the URL to configure, and the SDK's SSE client applies the
+            # same origin rule (2.2 release notes), so "try SSE" cannot fix it.
             if (
                 transport == "http"
                 and source == "inferred"
@@ -469,6 +487,7 @@ class McpClient:
                     e, (NonMcpEndpointError, McpProtocolEraError, McpCatalogError)
                 )
                 and classify_mcp_error(e) is not McpErrorKind.AUTH
+                and not _is_unfollowed_redirect(e)
             ):
                 message += (
                     "  (tried as Streamable HTTP — the default for a bare "

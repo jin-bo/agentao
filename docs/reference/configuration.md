@@ -332,6 +332,20 @@ the wrong protocol.
 > now-deprecated HTTP+SSE transport). If your server is a legacy SSE endpoint,
 > add `"type": "sse"` to its entry.
 
+> **Redirects (URL transports).** With `mcp` 2.2 or later installed — what a
+> fresh install resolves to, since agentao accepts `mcp>=1.26.0,<3` — or 1.30
+> on the 1.x line, the SDK follows a redirect only when it stays on the
+> endpoint's origin (same scheme,
+> host and port, or `http` → `https` on the same host). Any other redirect,
+> including one to another port, fails the connect with `Redirect to <url> not
+> followed; use that URL as the endpoint…`: put that URL in `url`. A redirect
+> from `https` down to `http` fails with `Redirect to <url> not followed: it
+> would downgrade this HTTPS endpoint…` instead, and names the `https` URL to
+> try — use that one, not the plain-`http` location. Changing `type` does not
+> help, because the SSE transport applies the same rule, so agentao leaves its
+> "set `"type": "sse"`" hint off this error. Earlier SDKs followed the
+> redirect.
+
 **`timeout`** accepts two forms (`mcp/config.py :: resolve_timeouts`):
 
 - **int / float** (legacy) — seconds for the *connect / startup* phase (default `60`): bounds the URL-transport HTTP-connection open **and** the `initialize()` / `list_tools()` handshake (all transports). Per-request tool calls stay **unbounded** (the MCP SDK default). Existing configs keep their behavior.

@@ -284,6 +284,8 @@ PowerShell 上会在它之上再叠一张 Windows 专属的不可恢复类别表
 
 > **迁移（破坏性变更）。** 裸 `url` 的 server 以前表示 SSE，现在默认走 Streamable HTTP 传输（即 MCP 规范中替代已弃用 HTTP+SSE 传输的方案）。如果你的 server 是旧版 SSE 端点，请在其条目中加上 `"type": "sse"`。
 
+> **重定向（URL 传输）。** 安装的 `mcp` 为 2.2 及以上（agentao 接受 `mcp>=1.26.0,<3`，全新安装就会装到它）或 1.x 线的 1.30 时，SDK 只跟随不离开端点源的重定向（协议、主机、端口都相同，或同一主机上 `http` → `https`）。其他重定向——包括只换了端口的——会让连接失败，报错为 `Redirect to <url> not followed; use that URL as the endpoint…`：把报错里的 URL 填进 `url` 即可。从 `https` 降级到 `http` 的重定向则报 `Redirect to <url> not followed: it would downgrade this HTTPS endpoint…`，并给出应尝试的 `https` URL——填那个，不要填明文 `http` 的目标地址。改 `type` 没有用，因为 SSE 传输同样遵守这条规则，所以 agentao 不会给这个错误附加「设 `"type": "sse"`」的提示。更早的 SDK 会跟随这类重定向。
+
 **`timeout`** 接受两种形式（`mcp/config.py :: resolve_timeouts`）：
 
 - **int / float**（旧形式）—— *连接 / 启动*阶段的秒数（默认 `60`）：约束 URL 传输的 HTTP 连接建立**以及** `initialize()` / `list_tools()` 握手（所有传输都生效）。单次工具调用**不设上限**（沿用 MCP SDK 默认值）。现有配置行为不变。

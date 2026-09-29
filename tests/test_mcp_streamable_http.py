@@ -45,6 +45,7 @@ def _installed_http_streams():
 from agentao.mcp.client import (
     _DEFAULT_SSE_READ_TIMEOUT,
     _MCP_USER_AGENT,
+    _is_unfollowed_redirect,
     _with_default_user_agent,
     McpClient,
     NonMcpEndpointError,
@@ -349,6 +350,96 @@ def test_hint_not_appended_on_auth_failure():
     )
     assert client.status == ServerStatus.ERROR
     assert _HINT_MARKER not in (client.error_message or "")
+
+
+# mcp 2.2 and 1.30 follow a redirect only within the endpoint's origin. The
+# probe is the function that composes the refusal, so the tests below take
+# their input from the real producer; on an SDK without it there is nothing to
+# refuse.
+try:
+    from mcp.client.streamable_http import _unfollowed_redirect
+except ImportError:  # mcp < 1.30 on 1.x, < 2.2 on 2.x
+    _unfollowed_redirect = None
+
+_needs_origin_rule = pytest.mark.skipif(
+    _unfollowed_redirect is None, reason="installed mcp follows every redirect"
+)
+
+
+@_needs_origin_rule
+@pytest.mark.parametrize(
+    "endpoint, location",
+    [
+        pytest.param("https://h/mcp", "https://other/mcp", id="cross-origin"),
+        pytest.param("https://h/mcp", "http://h/mcp/", id="https-downgrade"),
+    ],
+)
+def test_unfollowed_redirect_matches_both_sdk_messages(endpoint, location):
+    from agentao.mcp._compat import httpx_for_mcp
+
+    # A client fills in ``next_request``, which is what the SDK reads; a bare
+    # ``Response(...)`` has none and would describe no redirect at all.
+    transport = httpx_for_mcp.MockTransport(
+        lambda request: httpx_for_mcp.Response(307, headers={"location": location})
+    )
+    with httpx_for_mcp.Client(transport=transport, follow_redirects=False) as http:
+        response = http.post(endpoint)
+    message = _unfollowed_redirect(response)
+    assert message is not None
+    assert _is_unfollowed_redirect(RuntimeError(message))
+
+
+def test_unfollowed_redirect_ignores_other_failures():
+    assert not _is_unfollowed_redirect(RuntimeError("connection reset by peer"))
+    assert not _is_unfollowed_redirect(RuntimeError("Session terminated"))
+    # The frame must lead: a server echoing the phrase mid-message is not it.
+    assert not _is_unfollowed_redirect(
+        RuntimeError("upstream said: Redirect to x not followed")
+    )
+
+
+@_needs_origin_rule
+@pytest.mark.xfail(
+    int(md.version("mcp").split(".")[0]) < 2,
+    strict=True,
+    reason=(
+        "known defect on mcp 1.x: an HTTP-level failure of the Streamable HTTP "
+        "connect (a 500 as much as this redirect) cancels the connection owner, "
+        "so connect() ends DISCONNECTED with no error_message and there is no "
+        "message to keep the hint off. Strict, so fixing it flips this test."
+    ),
+)
+def test_hint_not_appended_on_unfollowed_redirect():
+    # Drives the real SDK transport over a mocked socket: the endpoint answers
+    # 307 to another origin, 2.2 refuses to follow it, and connect() must
+    # surface the SDK's "use that URL" message without the SSE hint (the SSE
+    # client applies the same origin rule, so the hint cannot help).
+    from agentao.mcp._compat import httpx_for_mcp
+
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx_for_mcp.Response(307, headers={"location": "https://other/mcp"})
+
+    def mock_client(headers=None, timeout=None, auth=None):
+        return httpx_for_mcp.AsyncClient(
+            headers=headers, timeout=timeout, transport=httpx_for_mcp.MockTransport(handler)
+        )
+
+    async def no_preflight(self, url, headers):
+        return None
+
+    client = McpClient("svr", {"url": "https://h/mcp", "timeout": 5})  # inferred http
+    with patch("agentao.mcp.client.create_mcp_http_client", mock_client), patch.object(
+        McpClient, "_preflight_content_type", no_preflight
+    ):
+        run_async(client.connect())
+
+    assert client.status == ServerStatus.ERROR
+    assert (client.error_message or "").startswith("Redirect to https://other/mcp not followed")
+    assert _HINT_MARKER not in (client.error_message or "")
+    assert seen and all(url.startswith("https://h/") for url in seen)  # never left the origin
 
 
 def test_bad_type_fails_closed_at_connect_no_hint_no_dispatch():
