@@ -587,6 +587,11 @@ class AgentaoCLI:
         try:
             self._run_loop()
         finally:
+            # Any way out of the loop that did not pass ``/exit`` — a
+            # KeyboardInterrupt or error escaping it — still keeps the history.
+            # A no-op after ``/exit``, which has already saved it.
+            from .session import checkpoint_session
+            checkpoint_session(self)
             # Stop ACP server subprocesses before closing the agent.
             if self._acp_manager is not None:
                 try:

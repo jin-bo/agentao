@@ -227,6 +227,10 @@ def resume_session(
     cli.current_session_id = match.get("session_id") or str(_uuid_mod.uuid4())
     cli.agent._session_id = cli.current_session_id
     cli.agent.tool_runner._session_id = cli.current_session_id
+    # The loaded history is already on disk; the outgoing session's
+    # checkpoint file is not this session's to replace.
+    from ..session import reset_session_checkpoint
+    reset_session_checkpoint(cli)
 
     # Restart replay so subsequent turns are recorded under the resumed session.
     try:

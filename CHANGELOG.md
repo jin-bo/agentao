@@ -11,6 +11,16 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- `save_session(..., supersedes=)` and `persist_agent_session(..., supersedes=)`
+  (`agentao.embedding`), keyword-only. They name a file an earlier save of the
+  same session wrote, which is removed once the new file is in place and
+  before rotation runs. So a host that saves one session repeatedly keeps one
+  file for it and does not evict other sessions. The file is removed only if
+  it is in that project's session directory and records the same
+  `session_id`. `save_session` now also writes under a temporary name and
+  renames into place, so a process killed mid-write leaves no half-written
+  `*.json`.
+
 ### Changed
 
 - At most 6 background sub-agents now run at once per session. Before, every
@@ -29,6 +39,16 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- The interactive CLI now saves the session after every turn, not only at
+  `/exit`, `/clear` and `/new`. Before, a closed terminal, a killed process
+  or a crash lost the whole conversation, which then never appeared in
+  `/sessions`. A turn interrupted with Ctrl-C, or one that fails, is saved
+  too, so the prompt survives. Each save replaces the previous file for that
+  session, so a session still takes one file, and the other sessions are not
+  pushed out of the 10-file rotation. The per-turn save is not a session end:
+  it fires no `SessionEnd` hook, closes no replay and prints nothing. One
+  consequence: `/sessions resume` used to discard the unsaved conversation it
+  left, and that conversation now keeps its turns up to its last one.
 - `agentao doctor` and `agentao config validate` mask credentials in the
   provider's base URL, in both text and `--json` output. The API key was
   already reported only as present or absent, but the URL was printed

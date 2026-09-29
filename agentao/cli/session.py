@@ -43,6 +43,7 @@ def on_session_start(cli: AgentaoCLI, *, source: str = "startup") -> None:
     except Exception:
         pass
 
+    reset_session_checkpoint(cli)
     _dispatch_session_start_hooks(cli, source=source)
 
 
@@ -73,11 +74,77 @@ def on_session_end(cli: AgentaoCLI, *, reason: str = "other") -> None:
             cli.agent,
             session_id=cli.current_session_id,
             project_root=cli.agent.working_directory,
+            supersedes=_checkpoint_file(cli),
         )
         cli.current_session_id = sid
+        _record_checkpoint(cli, session_file)
         console.print(f"[dim]Session saved → {sid[:8]} ({session_file.name})[/dim]")
     except Exception:
         pass  # Non-critical
+
+
+# ── Per-turn checkpoint ──────────────────────────────────────────────────
+#
+# ``on_session_end`` was the CLI's only save, so a closed terminal, a kill or
+# a crash lost the whole conversation. ``checkpoint_session`` saves after
+# every turn instead. It is **not** a session end: no ``SessionEnd`` hook, no
+# replay close, no message. Each save replaces the previous file this process
+# wrote for the same session (``supersedes``), so one session keeps one file
+# however many turns it runs.
+#
+# State is ``(session_id, file, marker)``. ``marker`` says what history the
+# file holds, so a save with nothing new is skipped — after ``/exit`` has
+# already saved, and at a Ctrl-C on an idle prompt. It is reset whenever a
+# session begins (``reset_session_checkpoint``), so a new or resumed session
+# never replaces the file of the one before it.
+
+
+def _history_marker(cli: AgentaoCLI) -> tuple:
+    messages = cli.agent.messages
+    return (id(messages), len(messages), id(messages[-1]) if messages else None)
+
+
+def _checkpoint_file(cli: AgentaoCLI):
+    state = getattr(cli, "_session_checkpoint", None)
+    if state is None or state[0] != cli.current_session_id:
+        return None
+    return state[1]
+
+
+def _record_checkpoint(cli: AgentaoCLI, session_file) -> None:
+    cli._session_checkpoint = (cli.current_session_id, session_file, _history_marker(cli))
+
+
+def reset_session_checkpoint(cli: AgentaoCLI) -> None:
+    """Begin tracking a session whose current history is already on disk (or empty)."""
+    cli._session_checkpoint = (cli.current_session_id, None, _history_marker(cli))
+
+
+def checkpoint_session(cli: AgentaoCLI) -> None:
+    """Save the conversation if it changed since the last save. Never raises."""
+    try:
+        if not cli.agent.messages or cli.current_session_id is None:
+            return
+        state = getattr(cli, "_session_checkpoint", None)
+        if (
+            state is not None
+            and state[0] == cli.current_session_id
+            and state[2] == _history_marker(cli)
+        ):
+            return
+        from ..embedding.sessions import persist_agent_session
+        session_file, _sid = persist_agent_session(
+            cli.agent,
+            session_id=cli.current_session_id,
+            project_root=cli.agent.working_directory,
+            supersedes=_checkpoint_file(cli),
+        )
+        _record_checkpoint(cli, session_file)
+    except Exception:
+        try:
+            cli.agent.llm.logger.warning("Session checkpoint failed", exc_info=True)
+        except Exception:
+            pass
 
 
 def dispatch_plugin_session_start(

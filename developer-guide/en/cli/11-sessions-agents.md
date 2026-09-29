@@ -4,7 +4,7 @@ This page covers the REPL commands that behave like a workbench: resume saved se
 
 ## `/sessions` — saved sessions
 
-`/exit`, `/clear`, and `/new` save the current session under `.agentao/sessions/`. The restore entry point is `/sessions`, not replay.
+The current session is saved under `.agentao/sessions/` after every turn, including a turn you interrupt with Ctrl-C or one that fails. So a closed terminal, a killed process, or a crash keeps every turn completed before it. Each save replaces the previous file for the same session, so one session still takes one file. `/exit`, `/clear`, and `/new` save it once more and end it; only those three fire `SessionEnd` hooks, not the per-turn saves. The restore entry point is `/sessions`, not replay.
 
 ```text
 > /sessions

@@ -7,6 +7,7 @@ concern, not part of the inference core.
 
 import json
 import logging
+import os
 import re
 import uuid as _uuid_mod
 from datetime import datetime
@@ -135,12 +136,22 @@ def save_session(
     session_id: Optional[str] = None,
     *,
     project_root: Path,
+    supersedes: Optional[Path] = None,
 ) -> Tuple[Path, str]:
     """Serialize conversation to disk and rotate old sessions.
+
+    The file is written under a temporary name and renamed into place, so a
+    process killed mid-write leaves no half-written ``*.json`` behind.
 
     Args:
         project_root: Project directory whose ``.agentao/sessions`` subdir
             should hold the persisted session files. Required, by keyword.
+        supersedes: A file an earlier save of *this* session wrote, removed
+            once the new one is in place and before rotation runs — so saving
+            one session repeatedly keeps one file for it instead of one per
+            save, and does not evict other sessions to make room. Ignored
+            unless it is in this project's session directory and records
+            the same ``session_id``.
 
     Returns:
         ``(path, session_id)`` — path of the saved file and the stable session UUID.
@@ -176,11 +187,30 @@ def save_session(
         "active_skills": active_skills or [],
         "messages": messages,
     }
-    with open(session_file, "w", encoding="utf-8") as f:
+    partial = session_file.with_name(session_file.name + ".tmp")
+    with open(partial, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(partial, session_file)
 
+    if supersedes is not None and _is_earlier_save(session_dir, Path(supersedes), sid, session_file):
+        try:
+            Path(supersedes).unlink()
+        except FileNotFoundError:
+            pass  # rotated out already
     _rotate_sessions(session_dir)
     return session_file, sid
+
+
+def _is_earlier_save(session_dir: Path, path: Path, sid: str, written: Path) -> bool:
+    """Whether ``path`` is another file in ``session_dir`` that saved ``sid``."""
+    try:
+        if path.resolve().parent != session_dir.resolve() or path.resolve() == written.resolve():
+            return False
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("session_id") == sid
 
 
 def persist_agent_session(
@@ -188,6 +218,7 @@ def persist_agent_session(
     session_id: Optional[str] = None,
     *,
     project_root: Path,
+    supersedes: Optional[Path] = None,
 ) -> Tuple[Path, str]:
     """Persist ``agent``'s conversation, deriving model + active skills from it.
 
@@ -203,6 +234,7 @@ def persist_agent_session(
         active_skills=active_skills,
         session_id=session_id,
         project_root=project_root,
+        supersedes=supersedes,
     )
 
 
