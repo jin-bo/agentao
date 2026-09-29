@@ -49,8 +49,11 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
   the same `openai.APIError` a stream's error chunk becomes, so a transient
   one is retried by the rule above and a context-length message still
   reaches overflow recovery. This path is `chat()`: the summarizer, Gemini's
-  turns and the streaming-unsupported fallback. A body that has `choices`
-  is an answer whatever else it carries.
+  turns and the streaming-unsupported fallback. Any other body without
+  `choices` is raised as well, not just one with an `error` object. A string
+  `error` becomes the message, and a body with nothing in it gets a message
+  saying so. None of these are retried. A body that has `choices` is an
+  answer whatever else it carries.
 - An oversized tool result's full copy is now saved under the session's
   `working_directory` (`<working_directory>/.agentao/tool-outputs/`), not the
   process's current directory. The excerpt tells the model to `read_file` that

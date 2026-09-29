@@ -351,7 +351,7 @@ class OpenAICompletionsAdapter:
 
 
 def _body_error(response: Any) -> Optional[Dict[str, Any]]:
-    """The ``error`` object of a 200 body that carries no answer, else ``None``.
+    """What to raise for a 200 body that carries no answer, else ``None``.
 
     A gateway that has sent ``200 OK`` before the upstream failed reports the
     failure in the body instead — OpenRouter documents it for non-streaming
@@ -359,14 +359,24 @@ def _body_error(response: Any) -> Optional[Dict[str, Any]]:
     The SDK parses that into a ``ChatCompletion`` with ``choices=None`` and the
     error in ``model_extra``, and nothing raises: the chat loop then failed on
     ``response.choices[0]`` with a ``TypeError`` that named neither the
-    provider nor its message. Only when ``choices`` is empty — a body that
-    answers is an answer, whatever else it carries.
+    provider nor its message.
+
+    Any body without ``choices`` is raised, not only one with an ``error``
+    object — the chat loop and the summarizer index ``choices[0]`` and have no
+    other way to fail. An ``error`` object is raised as given (so a transient
+    one keeps its status); a bare string becomes its message; nothing at all
+    gets a message that says so. A body that answers is an answer, whatever
+    else it carries.
     """
     if getattr(response, "choices", None):
         return None
     extra = getattr(response, "model_extra", None)
     error = extra.get("error") if isinstance(extra, dict) else None
-    return error if isinstance(error, dict) else None
+    if isinstance(error, dict):
+        return error
+    if isinstance(error, str) and error:
+        return {"message": error}
+    return {"message": "The provider returned a response with no choices and no error"}
 
 
 def _api_error(error: Dict[str, Any], request: Any) -> Exception:
