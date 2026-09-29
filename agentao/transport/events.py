@@ -92,7 +92,7 @@ class AgentEvent:
                        "content_hash": "sha256:abcd…",
                        "original_chars": 12345,
                        "saved_to_disk": True|False,
-                       "disk_path": ".agentao/tool-outputs/…"|None,
+                       "disk_path": "<working_directory>/.agentao/tool-outputs/…"|None,
                        "status": "ok"|"error"|"cancelled",
                        "duration_ms": 123}
         THINKING      {"text": "Let me think..."}

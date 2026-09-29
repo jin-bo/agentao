@@ -29,6 +29,19 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- An oversized tool result's full copy is now saved under the session's
+  `working_directory` (`<working_directory>/.agentao/tool-outputs/`), not the
+  process's current directory. The excerpt tells the model to `read_file` that
+  copy, and `read_file` resolves against `working_directory`, so wherever the
+  two differed — an ACP session or an embedded `Agentao(working_directory=…)`
+  whose directory is not the host's — the model was handed a path its own
+  `read_file` answered "does not exist" for, and every session's outputs
+  collected in the host's directory. The interactive CLI was unaffected (the
+  two directories are the same there). The excerpt and the replay's
+  `disk_path` now name the absolute path. The directory is also pruned for the
+  first time: a session's first spill deletes saved outputs whose mtime is
+  more than 7 days old (`TOOL_OUTPUT_RETENTION_S`); before, nothing ever
+  removed them. `ToolRunner` takes a keyword-only `working_directory=`.
 - An MCP server whose `url` redirects to another origin (another host, port
   or scheme) no longer gets told to try `"type": "sse"`. With `mcp` 2.2 or
   later — what a fresh install resolves to — the SDK follows a redirect only

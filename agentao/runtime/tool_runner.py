@@ -71,6 +71,7 @@ class ToolRunner:
         *,
         host_tool_emitter: Optional["HostToolEmitter"] = None,
         host_permission_emitter: Optional["HostPermissionEmitter"] = None,
+        working_directory: Optional[Path] = None,
     ):
         self._tools = tools
         self._permission_engine = permission_engine
@@ -84,7 +85,9 @@ class ToolRunner:
             transport, logger, sandbox_policy,
             host_tool_emitter=host_tool_emitter,
         )
-        self._formatter = ToolResultFormatter(transport, logger)
+        self._formatter = ToolResultFormatter(
+            transport, logger, working_directory=working_directory,
+        )
         self.readonly_mode: bool = False
         #: The ``continue: false`` a ``PreToolUse`` / ``PostToolUse*`` hook
         #: returned for the batch that just ran, in **plan order**, or ``None``.
