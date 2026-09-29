@@ -197,6 +197,23 @@ def stream_of(*parts: Union[Event, List[Event]]) -> bytes:
     )
 
 
+def stream_without(field: str, *parts: Union[Event, List[Event]]) -> bytes:
+    """``stream_of``, then ``field`` deleted from every event that has it.
+
+    For a server that breaks the protocol in one known way — llama.cpp omits
+    ``output_index`` (pi-mono #9974). Every event is validated *before* the
+    deletion, so the scripted deviation is the only one the fixture carries.
+    """
+    flat: List[Event] = []
+    for part in parts:
+        flat.extend(part if isinstance(part, list) else [part])
+    return b"".join(
+        f"event: {event['type']}\ndata: "
+        f"{json.dumps({k: v for k, v in event.items() if k != field})}\n\n".encode("utf-8")
+        for event in validated(flat)
+    )
+
+
 class ChunkedBody(httpx.SyncByteStream):
     """A response body delivered piece by piece, with a log of when."""
 

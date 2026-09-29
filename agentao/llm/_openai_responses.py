@@ -91,6 +91,46 @@ class ResponsesStreamError(Exception):
         super().__init__(f"{self.code or 'error'}: {self.message}")
 
 
+class ResponsesProtocolError(ResponsesStreamError):
+    """A stream that broke the protocol's rules for function calls.
+
+    Two shapes, both found by pi-mono (#9974) and refused here before any
+    call reaches the runtime: an event about a function call that names no
+    ``output_index`` (llama.cpp), and a ``response.completed`` that arrives
+    while a call it opened never got its ``output_item.done``. Either way
+    the calls' arguments cannot be told apart or trusted to be whole — and
+    the first shape, left to the terminal-output backfill, turns two
+    parallel calls into three with a repeated id.
+
+    Never retried (``code`` is in no retry table): the server that omitted
+    an index will omit it again.
+    """
+
+    CODE = "stream_protocol_error"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(self.CODE, message)
+
+
+def _output_index(event: Any) -> int:
+    """``event.output_index``, or :class:`ResponsesProtocolError`.
+
+    The index is the only key that ties a call's deltas and its ``done`` to
+    one call; ``bool`` is excluded because it is an ``int`` to Python.
+    """
+    index = getattr(event, "output_index", None)
+    if not isinstance(index, int) or isinstance(index, bool):
+        raise ResponsesProtocolError(
+            f"{getattr(event, 'type', 'event')} for a function call has no "
+            f"output_index; its calls cannot be told apart, so none is run"
+        )
+    return index
+
+
+def _is_function_call(item: Any) -> bool:
+    return getattr(item, "type", None) == "function_call"
+
+
 # -- request translation ------------------------------------------------------
 
 
@@ -521,6 +561,8 @@ class OpenAIResponsesAdapter:
         streamed_text: set = set()
         # Reasoning items by id, as the item events stated them.
         reasoning: Dict[str, Dict[str, Any]] = {}
+        # Function calls ``added`` whose ``done`` has not arrived, by index.
+        unfinished: Dict[int, str] = {}
         try:
             for event in stream:
                 if cancellation_token and cancellation_token.is_cancelled:
@@ -552,17 +594,33 @@ class OpenAIResponsesAdapter:
                     if acc.reasoning_parts:
                         acc.reasoning_parts.append("\n\n")
                 elif kind == "response.output_item.added":
+                    if _is_function_call(event.item):
+                        unfinished[_output_index(event)] = event.item.name
                     self._open_item(acc, event.output_index, event.item)
                 elif kind == "response.function_call_arguments.delta":
-                    call = acc.tool_calls_data.get(event.output_index)
+                    call = acc.tool_calls_data.get(_output_index(event))
                     if call is not None and event.delta:
                         call["arguments"] += event.delta
                 elif kind == "response.output_item.done":
+                    if _is_function_call(event.item):
+                        unfinished.pop(_output_index(event), None)
                     self._note_reasoning(reasoning, event.item)
                     self._close_item(
                         acc, event.output_index, event.item, streamed_text, on_text_chunk,
                     )
                 elif kind in ("response.completed", "response.incomplete"):
+                    # A call still open at completion may hold cut-off
+                    # arguments; the terminal output restating it does not
+                    # say which ones arrived. ``incomplete`` is left alone:
+                    # it ends as ``length``, whose calls the runtime already
+                    # records without running.
+                    if kind == "response.completed" and unfinished:
+                        index, name = min(unfinished.items())
+                        raise ResponsesProtocolError(
+                            f"response.completed arrived while function call "
+                            f"{name!r} (output_index {index}) never got its "
+                            f"output_item.done; no call is run"
+                        )
                     # The terminal response restates every item, and is the
                     # only place some servers state ``encrypted_content`` at
                     # all (Azure, per pi-mono) — so it is read after the item
@@ -678,8 +736,9 @@ class OpenAIResponsesAdapter:
         self._record_usage(acc, response)
         # Anything the item events did not deliver is in the terminal output.
         # A call the item events already closed is stated again with the same
-        # values; one they only *opened* (``added`` and nothing after it) gets
-        # its arguments here rather than going out as ``""``.
+        # values; one they only *opened* never gets here on ``completed``
+        # (``ResponsesProtocolError``), so this fills only a gateway that
+        # sends no item events for a call at all.
         for index, item in enumerate(getattr(response, "output", None) or []):
             self._close_item(acc, index, item, streamed_text, on_text_chunk)
         details = getattr(response, "incomplete_details", None)

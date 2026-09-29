@@ -29,6 +29,19 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- On the `openai-responses` wire, a stream that never finished a function
+  call is refused instead of run. Two shapes are affected. In the first, a
+  server omits `output_index` from function-call events, as llama.cpp does
+  per pi-mono #9974. The turn used to end in a `TypeError` from `sorted()`
+  that named no protocol, and that crash was the only thing standing between
+  it and running three calls, two with the same id. In the second,
+  `response.completed` arrives while a call opened by `output_item.added`
+  never got its `output_item.done`. agentao used to fill such a call from the
+  terminal output and run it. Both now raise `ResponsesProtocolError` (code
+  `stream_protocol_error`, a subclass of `ResponsesStreamError`), which is not
+  retried. No call in that response is run, including finished siblings. A
+  `response.incomplete` with an open call is unchanged: it still ends as
+  `length`, whose calls were never run.
 - `agentao doctor` and `agentao config validate` mask credentials in the
   provider's base URL, in both text and `--json` output. The API key was
   already reported only as present or absent, but the URL was printed
