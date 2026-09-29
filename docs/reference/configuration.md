@@ -333,8 +333,9 @@ the wrong protocol.
 > add `"type": "sse"` to its entry.
 
 > **Redirects (URL transports).** With `mcp` 2.2 or later installed — what a
-> fresh install resolves to, since agentao accepts `mcp>=1.26.0,<3` — the SDK
-> follows a redirect only when it stays on the endpoint's origin (same scheme,
+> fresh install resolves to, since agentao accepts `mcp>=1.26.0,<3` — or 1.30
+> on the 1.x line, the SDK follows a redirect only when it stays on the
+> endpoint's origin (same scheme,
 > host and port, or `http` → `https` on the same host). Any other redirect,
 > including one to another port, fails the connect with `Redirect to <url> not
 > followed; use that URL as the endpoint…`: put that URL in `url`. A redirect

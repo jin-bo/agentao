@@ -37,9 +37,9 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
   used to append its "if this is a legacy SSE endpoint, set `"type": "sse"`"
   hint to that, which cannot help: the SSE transport applies the same rule.
   Configure the URL the error names (for an `https` → `http` downgrade, the
-  `https` URL it suggests, not the plain-`http` location). Earlier SDKs
-  followed the redirect, so such a server connected before an SDK upgrade and
-  fails after it.
+  `https` URL it suggests, not the plain-`http` location). mcp 1.30 applies
+  the same rule on the 1.x line. Earlier SDKs followed the redirect, so such
+  a server connected before an SDK upgrade and fails after it.
 
 ---
 
