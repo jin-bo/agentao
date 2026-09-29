@@ -48,7 +48,10 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
   pushed out of the 10-file rotation. The per-turn save is not a session end:
   it fires no `SessionEnd` hook, closes no replay and prints nothing. One
   consequence: `/sessions resume` used to discard the unsaved conversation it
-  left, and that conversation now keeps its turns up to its last one.
+  left, and that conversation now keeps its turns up to its last one. A
+  resumed session's first save, after `/sessions resume` or `--resume`,
+  replaces the file it was loaded from. Before, resuming and then exiting
+  added a second file for the same session, and every repeat added another.
 - `agentao doctor` and `agentao config validate` mask credentials in the
   provider's base URL, in both text and `--json` output. The API key was
   already reported only as present or absent, but the URL was printed

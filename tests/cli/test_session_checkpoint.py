@@ -205,8 +205,39 @@ def test_resume_never_replaces_the_session_it_leaves(cli):
     assert ids.count(left[0]) == 1           # the checkpoint of the session left
     mine = next(f for f in _files(cli) if f["session_id"] == left[0])
     assert [m["content"] for m in mine["messages"]] == ["mine", "re: mine"]
-    resumed = [f for f in _files(cli) if f["session_id"] == "older"]
-    assert max(len(f["messages"]) for f in resumed) == 3
+    (resumed,) = [f for f in _files(cli) if f["session_id"] == "older"]
+    assert len(resumed["messages"]) == 3
+
+
+def test_a_resumed_sessions_turn_replaces_the_file_it_was_loaded_from(cli):
+    """Codex review of #371: a resumed session is not a new one. Its first save
+    replaces the loaded file, so resuming and chatting N times leaves one file
+    for it — not N+1, each pushing another session out of the rotation."""
+    project = cli.agent.working_directory
+    save_session([{"role": "user", "content": "from yesterday"}], "m",
+                 session_id="older", project_root=project)
+    _answering(cli)
+    from agentao.cli.commands import resume_session
+    resume = lambda: resume_session(cli, "older")  # noqa: E731
+    _drive(cli, resume, "one", resume, "two", resume, "three")
+    older = [f for f in _files(cli) if f["session_id"] == "older"]
+    assert len(older) == 1
+    # Each resume loads the newest file, so every turn is kept: 1 + 3 × 2.
+    assert len(older[0]["messages"]) == 7
+
+
+def test_a_launch_resume_is_tracked_through_the_session_start(cli):
+    """``--resume`` records the file before ``run_loop`` dispatches the session
+    start; that start must not drop the record."""
+    project = cli.agent.working_directory
+    save_session([{"role": "user", "content": "from yesterday"}], "m",
+                 session_id="older", project_root=project)
+    from agentao.cli.commands import resume_session
+    resume_session(cli, "older", at_launch=True)
+    _answering(cli)
+    _drive(cli, "again")
+    (only,) = _files(cli)
+    assert only["session_id"] == "older" and len(only["messages"]) == 3
 
 
 # -- save_session's own contract -------------------------------------------------

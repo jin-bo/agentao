@@ -43,7 +43,7 @@ def on_session_start(cli: AgentaoCLI, *, source: str = "startup") -> None:
     except Exception:
         pass
 
-    reset_session_checkpoint(cli)
+    _begin_session_checkpoint(cli)
     _dispatch_session_start_hooks(cli, source=source)
 
 
@@ -115,9 +115,28 @@ def _record_checkpoint(cli: AgentaoCLI, session_file) -> None:
     cli._session_checkpoint = (cli.current_session_id, session_file, _history_marker(cli))
 
 
-def reset_session_checkpoint(cli: AgentaoCLI) -> None:
-    """Begin tracking a session whose current history is already on disk (or empty)."""
-    cli._session_checkpoint = (cli.current_session_id, None, _history_marker(cli))
+def reset_session_checkpoint(cli: AgentaoCLI, file=None) -> None:
+    """Begin tracking a session whose current history is already on disk (or empty).
+
+    ``file`` is the file that history was loaded from, for a resumed session:
+    the next save replaces it (``supersedes``) instead of adding a second file
+    for the same session, which every resume would otherwise do — and each
+    extra file is one more that the 10-file rotation evicts another session
+    for. ``save_session`` still removes it only if it records this session id.
+    """
+    cli._session_checkpoint = (cli.current_session_id, file, _history_marker(cli))
+
+
+def _begin_session_checkpoint(cli: AgentaoCLI) -> None:
+    """``on_session_start``'s reset, which keeps a launch-time ``--resume``'s file.
+
+    ``resume_session(at_launch=True)`` records the loaded file before
+    ``run_loop`` dispatches the session start; the same session id means that
+    record is this session's, so only the marker is refreshed.
+    """
+    state = getattr(cli, "_session_checkpoint", None)
+    keep = state[1] if state is not None and state[0] == cli.current_session_id else None
+    reset_session_checkpoint(cli, keep)
 
 
 def checkpoint_session(cli: AgentaoCLI) -> None:
