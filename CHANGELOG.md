@@ -29,6 +29,19 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- A tool call that sends `null` for an optional parameter now gets the tool's
+  default instead of failing. Models trained on strict schemas send
+  `"offset": null` to mean "not given". `read_file(offset=None, limit=None)`
+  used to answer `Error reading file: '>' not supported between instances of
+  'NoneType' and 'int'`, and other built-ins with defaulted parameters had
+  the same exposure. The planner now drops such a `None` before the
+  permission decision, so hooks, permission rules, replay and the tool all
+  see the same arguments. The drop is logged at INFO with the parameter
+  names. This applies to every tool, MCP tools included, with two
+  exceptions: a **required** parameter's `null` is passed through and fails
+  as before, and so is one whose schema allows `null` (`type` including
+  `"null"`, an `anyOf` / `oneOf` branch that does, or `nullable: true`),
+  where `null` may carry meaning.
 - `agentao doctor` and `agentao config validate` mask credentials in the
   provider's base URL, in both text and `--json` output. The API key was
   already reported only as present or absent, but the URL was printed
