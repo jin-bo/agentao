@@ -5,6 +5,7 @@ import concurrent.futures
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from contextlib import AsyncExitStack
@@ -22,6 +23,11 @@ from mcp.types import METHOD_NOT_FOUND, PaginatedRequestParams
 from mcp.types import Tool as McpToolDef
 
 from .. import __version__
+
+try:
+    _BaseExceptionGroup = BaseExceptionGroup  # Python 3.11+
+except NameError:  # pragma: no cover - 3.10: anyio depends on the backport there
+    from exceptiongroup import BaseExceptionGroup as _BaseExceptionGroup
 from ..capabilities.process import build_child_env
 from ._compat import (
     SUPPORTS_INPUT_REQUIRED,
@@ -137,6 +143,25 @@ def _is_unfollowed_redirect(exc: Exception) -> bool:
     """
     msg = str(exc)
     return msg.startswith("Redirect to ") and " not followed" in msg
+
+
+def _first_failure(exc: BaseException) -> Optional[Exception]:
+    """The first real failure inside an (arbitrarily nested) exception group.
+
+    A task group raises every child failure as a group, and the one-line
+    ``error_message`` wants the failure itself, not "unhandled errors in a
+    TaskGroup (1 sub-exception)". Cancellations inside the group are the
+    fallout of that failure, not a cause, so they are skipped.
+    """
+    if isinstance(exc, _BaseExceptionGroup):
+        for inner in exc.exceptions:
+            found = _first_failure(inner)
+            if found is not None:
+                return found
+        return None
+    if isinstance(exc, Exception):
+        return exc
+    return None
 
 
 class NonMcpEndpointError(ConnectionError):
@@ -462,53 +487,113 @@ class McpClient:
                 f"{len(self._tools)} tools"
             )
 
+        except asyncio.CancelledError:
+            cause = await self._unwind_transport_cancel()
+            if cause is None:
+                raise
+            await self._fail_connect(cause, transport, source)
         except Exception as e:
-            self.status = ServerStatus.ERROR
-            message = str(e)
-            # A bare ``url`` now defaults to Streamable HTTP. If such an
-            # *inferred* http connect fails the handshake, the server may
-            # actually be a legacy SSE endpoint — surface the one-token fix.
-            # Skip it for: an explicit ``type: "http"`` (SSE isn't the likely
-            # intent); a NonMcpEndpointError (its own verdict already says the
-            # URL isn't MCP at all); an auth failure (switching to SSE won't fix
-            # a 401/403 — it would send the user down a wrong path); and a
-            # protocol-era mismatch, where the transport was fine and only the
-            # version wasn't, so "try SSE" earns a second identical failure; and
-            # a catalog/pagination bound, which is reached only *after*
-            # ``initialize`` and a ``tools/list`` both succeeded — the transport
-            # is proven working and the fault is the server's cursor or catalog.
-            # Nor for a redirect the SDK would not follow: its message already
-            # names the URL to configure, and the SDK's SSE client applies the
-            # same origin rule (2.2 release notes), so "try SSE" cannot fix it.
-            if (
-                transport == "http"
-                and source == "inferred"
-                and not isinstance(
-                    e, (NonMcpEndpointError, McpProtocolEraError, McpCatalogError)
-                )
-                and classify_mcp_error(e) is not McpErrorKind.AUTH
-                and not _is_unfollowed_redirect(e)
-            ):
-                message += (
-                    "  (tried as Streamable HTTP — the default for a bare "
-                    "'url'; if this is a legacy SSE endpoint, set "
-                    '"type": "sse".)'
-                )
-            self.error_message = message
-            logger.error(f"Failed to connect to MCP server '{self.name}': {message}")
-            # Cleanup on failure. The session and the negotiated version belong
-            # to the transport being torn down here: a connect that got as far
-            # as ``initialize`` and then failed would otherwise leave a version
-            # hanging off an ERROR server (and ``call_tool``'s reconnect leg
-            # would call into a dead session object).
-            self._session = None
-            self._protocol_version = None
-            if self._exit_stack:
-                try:
-                    await self._exit_stack.__aexit__(None, None, None)
-                except Exception:
-                    pass
-                self._exit_stack = None
+            await self._fail_connect(e, transport, source)
+
+    async def _unwind_transport_cancel(self) -> Optional[Exception]:
+        """Recover the real failure behind a cancel the transport raised itself.
+
+        On mcp 1.x the Streamable HTTP transport runs its reader and writer in
+        an anyio task group entered in *this* task. When one of them
+        fails — a 500 on the ``initialize`` POST, a refused redirect — the
+        group cancels its scope, so the handshake here receives a bare
+        ``CancelledError`` and the failure itself stays inside the group until
+        the group is exited. Left to the owner's ``finally``, that exit logged
+        the failure as a *disconnect* warning and the connect ended
+        ``DISCONNECTED`` with no ``error_message``: ``call_tool`` could say
+        only "reconnect failed". (2.x reports the failure to the handshake
+        instead, and never gets here.)
+
+        Exiting the stack here, with the cancel passed in, lets the scope sort
+        it out: anyio absorbs only a cancel it delivered itself, and the group
+        then raises the child's failure, which is returned. A cancel from
+        outside — ``_stop_owner`` aborting a connect, the loop shutting down —
+        comes back out of the exit as ``CancelledError``, and ``None`` tells
+        the caller to re-raise it. Must be called from the ``except`` that
+        caught the cancel: ``sys.exc_info()`` is what reaches the scope.
+        """
+        stack, self._exit_stack = self._exit_stack, None
+        if stack is None:
+            return None
+        # Out of CONNECTING before the (possibly slow) transport close below:
+        # ``_stop_owner`` reads CONNECTING as "abort the open" and would cancel
+        # this task in the middle of that close — the interruption its own
+        # first-request-only rule exists to prevent. The session and version
+        # die with the transport either way; ``_fail_connect`` sets ERROR.
+        self.status = ServerStatus.DISCONNECTED
+        self._session = None
+        self._protocol_version = None
+        try:
+            suppressed = await stack.__aexit__(*sys.exc_info())
+        except asyncio.CancelledError:
+            return None
+        except Exception as e:
+            return e
+        if not suppressed:
+            return None
+        # Absorbed with no failure to show for it — still not a connect.
+        return ConnectionError("the MCP transport closed during the handshake")
+
+    async def _fail_connect(self, e: Exception, transport: str, source: str) -> None:
+        """Record a failed connect: status, message (with the SSE hint), cleanup.
+
+        A failure raised out of a task group arrives as a group; the message
+        and the hint's checks below are about the failure inside it (1.x's
+        ``sse_client`` otherwise reported a 500 as "unhandled errors in a
+        TaskGroup (1 sub-exception)").
+        """
+        e = _first_failure(e) or e
+        self.status = ServerStatus.ERROR
+        message = str(e)
+        # A bare ``url`` now defaults to Streamable HTTP. If such an
+        # *inferred* http connect fails the handshake, the server may
+        # actually be a legacy SSE endpoint — surface the one-token fix.
+        # Skip it for: an explicit ``type: "http"`` (SSE isn't the likely
+        # intent); a NonMcpEndpointError (its own verdict already says the
+        # URL isn't MCP at all); an auth failure (switching to SSE won't fix
+        # a 401/403 — it would send the user down a wrong path); and a
+        # protocol-era mismatch, where the transport was fine and only the
+        # version wasn't, so "try SSE" earns a second identical failure; and
+        # a catalog/pagination bound, which is reached only *after*
+        # ``initialize`` and a ``tools/list`` both succeeded — the transport
+        # is proven working and the fault is the server's cursor or catalog.
+        # Nor for a redirect the SDK would not follow: its message already
+        # names the URL to configure, and the SDK's SSE client applies the
+        # same origin rule (2.2 and 1.30 release notes), so "try SSE" cannot fix it.
+        if (
+            transport == "http"
+            and source == "inferred"
+            and not isinstance(
+                e, (NonMcpEndpointError, McpProtocolEraError, McpCatalogError)
+            )
+            and classify_mcp_error(e) is not McpErrorKind.AUTH
+            and not _is_unfollowed_redirect(e)
+        ):
+            message += (
+                "  (tried as Streamable HTTP — the default for a bare "
+                "'url'; if this is a legacy SSE endpoint, set "
+                '"type": "sse".)'
+            )
+        self.error_message = message
+        logger.error(f"Failed to connect to MCP server '{self.name}': {message}")
+        # Cleanup on failure. The session and the negotiated version belong
+        # to the transport being torn down here: a connect that got as far
+        # as ``initialize`` and then failed would otherwise leave a version
+        # hanging off an ERROR server (and ``call_tool``'s reconnect leg
+        # would call into a dead session object).
+        self._session = None
+        self._protocol_version = None
+        if self._exit_stack:
+            try:
+                await self._exit_stack.__aexit__(None, None, None)
+            except Exception:
+                pass
+            self._exit_stack = None
 
     async def _handshake(self) -> List[McpToolDef]:
         """Settle the protocol era, then collect every ``tools/list`` page.
