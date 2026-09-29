@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .._globals import _plugin_inline_dirs
 from .loaders import _load_json_object
@@ -42,6 +44,42 @@ def _collect_settings(wd: Path, report: DiagnosticReport) -> Optional[Dict[str, 
     return data
 
 
+# A query parameter whose *name* says it carries a credential. Some gateways
+# take the key in the URL (``?key=…``, ``?api-key=…``, a signed ``sig=``), and a
+# base URL is otherwise printed verbatim — in text, and in ``--json`` output a
+# user pastes into an issue.
+_CREDENTIAL_PARAM = re.compile(r"key|token|secret|pass|sig|auth|credential", re.IGNORECASE)
+
+
+def _mask_url_credentials(url: Optional[str]) -> Optional[str]:
+    """``url`` with its userinfo and credential-named query values masked.
+
+    Everything else is left as written, so the report still shows which
+    endpoint is configured. A value that does not parse as a URL is returned
+    unchanged: it holds no userinfo or query to mask, and the diagnostic is
+    more useful showing what was set.
+    """
+    if not url:
+        return url
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = "***@" + netloc.rsplit("@", 1)[1]
+    query = parts.query
+    if query:
+        pairs = parse_qsl(query, keep_blank_values=True)
+        query = urlencode(
+            [(k, "***" if _CREDENTIAL_PARAM.search(k) else v) for k, v in pairs],
+            safe="*",
+        )
+    if netloc == parts.netloc and query == parts.query:
+        return url
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+
+
 def _collect_provider(report: DiagnosticReport) -> None:
     """Report which LLM provider env vars are present (no secret values)."""
     from ...embedding.factory import resolve_provider_name
@@ -53,7 +91,7 @@ def _collect_provider(report: DiagnosticReport) -> None:
     section: Dict[str, Any] = {
         "provider": provider,
         "api_key_present": bool(api_key),
-        "base_url": base_url,
+        "base_url": _mask_url_credentials(base_url),
         "model": model,
     }
     temperature_raw = os.getenv("LLM_TEMPERATURE")

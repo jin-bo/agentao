@@ -29,6 +29,12 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- `agentao doctor` and `agentao config validate` mask credentials in the
+  provider's base URL, in both text and `--json` output. The API key was
+  already reported only as present or absent, but the URL was printed
+  verbatim. Userinfo (`https://user:pass@host`) becomes `***@host`. Query
+  values whose names look like credentials (`key`, `api-key`, `token`, `sig`,
+  …) become `***`. The rest of the URL is shown as written.
 - Two more context-overflow wordings are recognised, so they go through
   compaction and retry instead of ending the turn as an error: Z.AI GLM's
   `tokens in request more than max tokens allowed`, and `Prompt has N tokens,
