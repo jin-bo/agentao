@@ -24,13 +24,33 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from ._cache_control import apply_cache_control
 from ._tool_ids import split_tool_id
-from ._retry import _classify_retry, _is_temperature_unsupported
+from ._retry import (
+    QUOTA_EXHAUSTED_CODES,
+    RETRYABLE_STATUS_CODES,
+    _classify_retry,
+    _is_temperature_unsupported,
+)
 from ._stream_response import _StreamAccumulator
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
     from .client import LLMClient
 
 API_FORMAT = "openai-completions"
+
+#: A chunk ``{"error": {...}}`` *inside* a 200 stream — what OpenAI-compatible
+#: gateways send when the upstream fails after the stream opened. The ``openai``
+#: SDK raises it as a bare ``APIError`` (not ``APIStatusError``: there is no
+#: failing status), with the chunk's ``error`` object as ``body`` and its
+#: ``code`` / ``type`` copied onto the exception, so a status-only classifier
+#: calls it permanent. Mapped to the status the same error carries when it is
+#: returned up front — the same repair the other two wires make
+#: (``_anthropic_messages.py`` / ``_openai_responses.py`` ``_STREAM_ERROR_STATUS``).
+#: OpenAI's own vocabulary only: ``server_error`` is its 500 ``type``,
+#: ``rate_limit_exceeded`` its 429 ``code``.
+_STREAM_ERROR_STATUS = {
+    "server_error": 500,
+    "rate_limit_exceeded": 429,
+}
 
 #: OpenAI's Chat Completions refuses a ``tool_calls[*].id`` longer than this.
 #: Observed on api.openai.com, 2026-09-19: ``string_above_max_length``,
@@ -314,4 +334,47 @@ class OpenAICompletionsAdapter:
         return False
 
     def classify_retry(self, exc: BaseException) -> Tuple[bool, Optional[int], Optional[str]]:
+        """``(retryable, status, retry_after)``.
+
+        HTTP failures go to the shared table. What it cannot see is an error
+        chunk inside a 200 stream (:data:`_STREAM_ERROR_STATUS`), mapped here.
+        The client retries only while nothing has reached the host, so a
+        mapping here never re-shows text.
+        """
+        status = _stream_error_status(exc)
+        if status is not None:
+            return (True, status, None)
         return _classify_retry(exc)
+
+
+def _stream_error_status(exc: BaseException) -> Optional[int]:
+    """The retryable status an in-stream error chunk stands for, else ``None``."""
+    try:
+        from openai import APIConnectionError, APIError, APIStatusError
+    except ImportError:  # pragma: no cover - openai is a core dependency
+        return None
+    # Only the bare ``APIError`` the stream raises: its subclasses carry a
+    # real status or a transport failure, and the shared table reads those.
+    if not isinstance(exc, APIError) or isinstance(exc, (APIStatusError, APIConnectionError)):
+        return None
+    # Strings only: the SDK copies ``code`` off the chunk without coercing a
+    # non-string, and an unhashable one (a gateway's nested object) would make
+    # the ``in`` test raise ``TypeError`` from inside the client's ``except``,
+    # replacing the provider's error with ours.
+    words = [v for v in (getattr(exc, "code", None), getattr(exc, "type", None))
+             if isinstance(v, str)]
+    # A balance does not refill while we wait — same codes, and the same
+    # exact match, as the shared table applies to a 429.
+    if any(v in QUOTA_EXHAUSTED_CODES for v in words):
+        return None
+    for value in words:
+        if value in _STREAM_ERROR_STATUS:
+            return _STREAM_ERROR_STATUS[value]
+    # OpenRouter's documented mid-stream error puts the HTTP status in
+    # ``code``, as a number. Read from ``body``: openai 2.x copies it onto
+    # ``exc.code`` as given, 3.x coerces it to the string ``"503"``.
+    body = getattr(exc, "body", None)
+    raw = body.get("code") if isinstance(body, dict) else None
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw in RETRYABLE_STATUS_CODES:
+        return raw
+    return None
