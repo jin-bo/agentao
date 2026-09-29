@@ -29,6 +29,17 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- On the default `openai-completions` wire, an error that an
+  OpenAI-compatible gateway reports *inside* a stream is now retried when it
+  is transient, as it already was on the other two wires. The gateway has
+  sent `200 OK` by the time the upstream fails, so the failure arrives as a
+  `{"error": {...}}` chunk, which the `openai` SDK raises as a bare `APIError`
+  with no status. agentao treated that as permanent and ended the turn on an
+  overload. Now `server_error` is retried as a 500, `rate_limit_exceeded` as
+  a 429, and a numeric `code` (OpenRouter's documented mid-stream shape) as
+  that HTTP status when it is retryable. Quota codes and non-transient
+  errors, such as `context_length_exceeded`, stay permanent. As always, it
+  retries only while nothing has reached the host.
 - An oversized tool result's full copy is now saved under the session's
   `working_directory` (`<working_directory>/.agentao/tool-outputs/`), not the
   process's current directory. The excerpt tells the model to `read_file` that
