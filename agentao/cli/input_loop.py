@@ -20,6 +20,7 @@ from rich.markup import escape as markup_escape
 
 from ..capabilities.process import build_child_env, kill_process_tree
 from ._globals import console, split_subcommand
+from .session import checkpoint_session
 
 if TYPE_CHECKING:
     from .app import AgentaoCLI
@@ -449,6 +450,8 @@ def run_loop(cli: "AgentaoCLI") -> None:
                 if cli.current_status:
                     cli.current_status.stop()
                 cli.current_status = None
+                # A failed or interrupted turn still has the prompt in history.
+                checkpoint_session(cli)
 
             if cli._streaming_started:
                 import sys
@@ -481,6 +484,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
             if cli.current_status:
                 cli.current_status.stop()
                 cli.current_status = None
+            checkpoint_session(cli)
             console.print("\n\n[warning]Interrupted. Type '/exit' to quit.[/warning]")
             continue
 
@@ -657,6 +661,7 @@ def _handle_plan_approval(cli: "AgentaoCLI") -> None:
                 if cli.current_status:
                     cli.current_status.stop()
                 cli.current_status = None
+                checkpoint_session(cli)
             console.print()
             _print_final_response(cli, _exec_response)
             _pf = cli._plan_session.current_plan_path
@@ -782,6 +787,7 @@ def _run_agent_turn(cli: "AgentaoCLI", message: str, images=None) -> str:
         if cli.current_status:
             cli.current_status.stop()
         cli.current_status = None
+        checkpoint_session(cli)
 
     if cli._streaming_started:
         import sys

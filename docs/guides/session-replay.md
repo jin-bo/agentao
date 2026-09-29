@@ -82,8 +82,8 @@ Built-in and MCP tools share the same event kinds; `tool_source` on
 Explicitly reserved but **not emitted in v1**:
 
 - `session_saved` — reserved for a future explicit save entrypoint. The
-  auto-save triggered by `/clear`, `/new`, or process exit does not emit
-  this event.
+  auto-save triggered by `/clear`, `/new`, or process exit, and the CLI's
+  per-turn save, do not emit this event.
 
 ## Privacy and truncation
 

@@ -227,6 +227,14 @@ def resume_session(
     cli.current_session_id = match.get("session_id") or str(_uuid_mod.uuid4())
     cli.agent._session_id = cli.current_session_id
     cli.agent.tool_runner._session_id = cli.current_session_id
+    # The loaded history is already on disk, in ``match["path"]``: the next
+    # save replaces that file rather than adding a second one for this
+    # session. The outgoing session's checkpoint is not this session's to
+    # replace, and ``save_session`` refuses a file of another session id.
+    from pathlib import Path
+
+    from ..session import reset_session_checkpoint
+    reset_session_checkpoint(cli, Path(match["path"]) if match.get("path") else None)
 
     # Restart replay so subsequent turns are recorded under the resumed session.
     try:

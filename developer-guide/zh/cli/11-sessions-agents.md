@@ -4,7 +4,7 @@
 
 ## `/sessions` — 已保存会话
 
-`/exit`、`/clear`、`/new` 都会把当前会话保存到 `.agentao/sessions/`。恢复入口是 `/sessions`，不是 replay。
+当前会话在每一轮结束后都会保存到 `.agentao/sessions/`，用 Ctrl-C 中断的轮次和失败的轮次也包括在内。所以关掉终端、进程被杀或崩溃时，之前已完成的轮次都还在。每次保存都会替换同一会话的上一个文件，一个会话仍只占一个文件。`/exit`、`/clear`、`/new` 会再保存一次并结束会话；只有这三者会触发 `SessionEnd` hook，每轮保存不会。恢复入口是 `/sessions`，不是 replay。
 
 ```text
 > /sessions
