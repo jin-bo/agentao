@@ -233,7 +233,13 @@ jobs:
         run: uv sync --python 3.12 --extra cli --extra web --extra i18n
 
       - name: Override the locked MCP SDK
-        run: uv pip install --python 3.12 "${{ matrix.mcp-spec }}"
+        # `--upgrade-package mcp` is load-bearing: without it uv keeps any
+        # installed version that already satisfies the spec, and the locked
+        # 2.x does satisfy `>=2,<3` — so that leg silently re-tested the lock
+        # and never saw 2.1 or 2.2. Scoped to mcp: everything else stays at the
+        # lock unless the new mcp requires otherwise (2.x moves `mcp-types`
+        # in step with it).
+        run: uv pip install --python 3.12 --upgrade-package mcp "${{ matrix.mcp-spec }}"
 
       - name: Report the resolved version
         # Printed so a failure log says which release actually broke.
