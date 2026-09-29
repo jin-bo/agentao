@@ -160,3 +160,72 @@ def test_an_error_chunk_that_never_clears_spends_the_attempts_and_raises():
         _client(script).chat_stream(HELLO, on_text_chunk=lambda _c: None)
     assert script.requests == MAX_RETRY_ATTEMPTS
 
+
+
+# -- the same error in a non-streaming 200 body ----------------------------------
+#
+# OpenRouter documents it for non-streaming requests: once headers are sent, a
+# failure arrives as a 200 whose JSON body holds only an ``error`` object. The
+# SDK parses it into a ``ChatCompletion`` with ``choices=None`` and raises
+# nothing, and the chat loop then died on ``response.choices[0]`` with a
+# ``TypeError`` naming neither the provider nor its message. ``chat()`` is the
+# summarizer's path, Gemini's, and the streaming-unsupported fallback's.
+
+
+class _JsonScript(_Script):
+    def __call__(self, request: Any) -> Any:
+        self.requests += 1
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, content=self.bodies.pop(0),
+        )
+
+
+def _json_answer(text: str) -> bytes:
+    return json.dumps({
+        "id": "c", "object": "chat.completion", "created": 1, "model": "m",
+        "choices": [{"index": 0, "finish_reason": "stop",
+                     "message": {"role": "assistant", "content": text}}],
+    }).encode()
+
+
+def _json_error(error: dict) -> bytes:
+    return json.dumps({"id": "gen-1", "error": error}).encode()
+
+
+def test_a_transient_error_body_on_a_200_is_retried(slept):
+    script = _JsonScript(
+        _json_error({"code": 502, "message": "upstream down",
+                     "metadata": {"error_type": "provider_unavailable"}}),
+        _json_answer("recovered"),
+    )
+    retries: List[Any] = []
+    response = _client(script).chat(HELLO, on_retry=lambda *a: retries.append(a))
+    assert response.choices[0].message.content == "recovered"
+    assert script.requests == 2
+    assert [r[0]["reason"] for r in retries] == ["status=502"]
+
+
+def test_a_permanent_error_body_raises_the_providers_message():
+    message = "This model's maximum context length is 8192 tokens"
+    script = _JsonScript(_json_error({"code": 400, "message": message}))
+    with pytest.raises(openai.APIError) as raised:
+        _client(script).chat(HELLO)
+    assert type(raised.value) is openai.APIError
+    # The runtime's overflow detection reads the text, so it has to survive.
+    assert message in str(raised.value)
+    assert script.requests == 1
+
+
+def test_an_error_body_with_no_message_still_raises():
+    script = _JsonScript(_json_error({"code": 400}))
+    with pytest.raises(openai.APIError, match="no answer"):
+        _client(script).chat(HELLO)
+
+
+def test_a_body_that_answers_is_an_answer_whatever_else_it_carries():
+    body = json.loads(_json_answer("fine"))
+    body["error"] = {"code": 502, "message": "stale"}
+    script = _JsonScript(json.dumps(body).encode())
+    response = _client(script).chat(HELLO)
+    assert response.choices[0].message.content == "fine"
+    assert script.requests == 1

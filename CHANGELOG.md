@@ -40,6 +40,17 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
   that HTTP status when it is retryable. Quota codes and non-transient
   errors, such as `context_length_exceeded`, stay permanent. As always, it
   retries only while nothing has reached the host.
+- The same failure arriving as a non-streaming `200` body — only an
+  `{"error": {...}}` object and no `choices`, as OpenRouter documents for
+  non-streaming requests — now raises the provider's error instead of ending
+  the turn in a `TypeError` (`'NoneType' object is not subscriptable`) that
+  named neither the provider nor its message. The SDK parsed that body into
+  a `ChatCompletion` with `choices=None` and raised nothing. It is raised as
+  the same `openai.APIError` a stream's error chunk becomes, so a transient
+  one is retried by the rule above and a context-length message still
+  reaches overflow recovery. This path is `chat()`: the summarizer, Gemini's
+  turns and the streaming-unsupported fallback. A body that has `choices`
+  is an answer whatever else it carries.
 - An oversized tool result's full copy is now saved under the session's
   `working_directory` (`<working_directory>/.agentao/tool-outputs/`), not the
   process's current directory. The excerpt tells the model to `read_file` that
