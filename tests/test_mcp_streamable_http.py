@@ -14,6 +14,7 @@ Covers the design in ``docs/design/mcp-streamable-http.md``:
   :data:`_HTTP_STREAM_SHAPES`.
 """
 
+import asyncio
 import importlib.metadata as md
 from unittest.mock import patch
 
@@ -45,6 +46,7 @@ def _installed_http_streams():
 from agentao.mcp.client import (
     _DEFAULT_SSE_READ_TIMEOUT,
     _MCP_USER_AGENT,
+    _first_failure,
     _is_unfollowed_redirect,
     _with_default_user_agent,
     McpClient,
@@ -399,19 +401,9 @@ def test_unfollowed_redirect_ignores_other_failures():
 
 
 @_needs_origin_rule
-@pytest.mark.xfail(
-    int(md.version("mcp").split(".")[0]) < 2,
-    strict=True,
-    reason=(
-        "known defect on mcp 1.x: an HTTP-level failure of the Streamable HTTP "
-        "connect (a 500 as much as this redirect) cancels the connection owner, "
-        "so connect() ends DISCONNECTED with no error_message and there is no "
-        "message to keep the hint off. Strict, so fixing it flips this test."
-    ),
-)
 def test_hint_not_appended_on_unfollowed_redirect():
     # Drives the real SDK transport over a mocked socket: the endpoint answers
-    # 307 to another origin, 2.2 refuses to follow it, and connect() must
+    # 307 to another origin, 2.2 / 1.30 refuse to follow it, and connect() must
     # surface the SDK's "use that URL" message without the SSE hint (the SSE
     # client applies the same origin rule, so the hint cannot help).
     from agentao.mcp._compat import httpx_for_mcp
@@ -440,6 +432,124 @@ def test_hint_not_appended_on_unfollowed_redirect():
     assert (client.error_message or "").startswith("Redirect to https://other/mcp not followed")
     assert _HINT_MARKER not in (client.error_message or "")
     assert seen and all(url.startswith("https://h/") for url in seen)  # never left the origin
+
+
+def _connect_over_mock_socket(handler, config=None):
+    """Run ``connect()`` through the real SDK transport over a mocked socket.
+
+    Only the socket is replaced (and the preflight skipped): the SDK's
+    Streamable HTTP client, its task group and ``ClientSession`` are the real
+    ones, which is where 1.x and 2.x differ in how a failed request surfaces.
+    """
+    from agentao.mcp._compat import httpx_for_mcp
+
+    def mock_client(headers=None, timeout=None, auth=None):
+        return httpx_for_mcp.AsyncClient(
+            headers=headers, timeout=timeout, transport=httpx_for_mcp.MockTransport(handler)
+        )
+
+    async def no_preflight(self, url, headers):
+        return None
+
+    return (
+        patch("agentao.mcp.client.create_mcp_http_client", mock_client),
+        patch.object(McpClient, "_preflight_content_type", no_preflight),
+        McpClient("svr", config or {"url": "https://h/mcp", "timeout": 5}),
+    )
+
+
+def test_an_http_error_on_the_handshake_is_reported_not_swallowed():
+    # On mcp 1.x the transport's task group cancelled the handshake and kept
+    # the 500 to itself, so connect() ended DISCONNECTED with no message and
+    # call_tool could say only "reconnect failed". Every SDK must now report it.
+    from agentao.mcp._compat import httpx_for_mcp
+
+    def handler(request):
+        return httpx_for_mcp.Response(500, text="boom")
+
+    client_patch, preflight_patch, client = _connect_over_mock_socket(handler)
+
+    async def run():
+        await client.connect()
+        return await client.call_tool("anything", {})
+
+    with client_patch, preflight_patch:
+        result = run_async(run())
+
+    assert client.status == ServerStatus.ERROR
+    assert client.error_message
+    if int(md.version("mcp").split(".")[0]) < 2:
+        assert "500" in client.error_message  # the transport's own HTTPStatusError
+    assert "reconnect failed" not in result
+    assert client.error_message.splitlines()[0] in result
+    assert client._exit_stack is None
+
+
+def test_cancelling_a_connect_in_flight_is_still_a_cancel():
+    # The recovery above exits the transport with the cancel passed in and
+    # relies on anyio absorbing only a cancel its own scope delivered. A
+    # cancel from outside — ``_stop_owner`` aborting a connect — must come
+    # back out as a cancel, not be reported as a failed connect.
+    from agentao.mcp._compat import httpx_for_mcp
+
+    async def handler(request):
+        await asyncio.Event().wait()  # the server never answers
+        return httpx_for_mcp.Response(200)
+
+    client_patch, preflight_patch, client = _connect_over_mock_socket(handler)
+
+    async def run():
+        connecting = asyncio.create_task(client.connect())
+        for _ in range(200):
+            if client.status == ServerStatus.CONNECTING and client._exit_stack is not None:
+                break
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.1)  # let the POST reach the handler
+        owner = client._owner
+        owner.cancel()
+        await asyncio.wait({owner}, timeout=5)
+        await asyncio.wait_for(connecting, 5)
+        return owner
+
+    with client_patch, preflight_patch:
+        owner = run_async(run())
+
+    assert owner.done() and owner.cancelled()
+    assert client.status == ServerStatus.DISCONNECTED
+    assert client.error_message is None
+
+
+# The group type anyio raises: the builtin from 3.11, the backport on 3.10.
+try:
+    _ExceptionGroup = ExceptionGroup
+except NameError:  # pragma: no cover - Python 3.10
+    from exceptiongroup import ExceptionGroup as _ExceptionGroup
+
+
+def test_first_failure_digs_through_nested_groups_past_cancellations():
+    cause = RuntimeError("Server error '500 Internal Server Error'")
+    group = _ExceptionGroup(
+        "outer", [_ExceptionGroup("inner", [cause]), ValueError("later")]
+    )
+    assert _first_failure(group) is cause
+    assert _first_failure(cause) is cause
+    assert _first_failure(asyncio.CancelledError()) is None
+
+
+def test_a_failure_raised_as_a_group_is_reported_by_its_cause():
+    # mcp 1.x's ``sse_client`` raises a failed open as a task-group error; the
+    # message used to be "unhandled errors in a TaskGroup (1 sub-exception)".
+    cause = RuntimeError("Server error '500 Internal Server Error' for url 'https://h/sse'")
+
+    async def failing_sse(self, startup_timeout, request_timeout):
+        raise _ExceptionGroup("unhandled errors in a TaskGroup", [cause])
+
+    client = McpClient("svr", {"type": "sse", "url": "https://h/sse"})
+    with patch.object(McpClient, "_connect_sse", failing_sse):
+        run_async(client.connect())
+
+    assert client.status == ServerStatus.ERROR
+    assert client.error_message == str(cause)
 
 
 def test_bad_type_fails_closed_at_connect_no_hint_no_dispatch():

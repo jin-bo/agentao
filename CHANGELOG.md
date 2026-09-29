@@ -40,6 +40,17 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
   `https` URL it suggests, not the plain-`http` location). mcp 1.30 applies
   the same rule on the 1.x line. Earlier SDKs followed the redirect, so such
   a server connected before an SDK upgrade and fails after it.
+- With `mcp` 1.x installed, a Streamable HTTP server that answers the
+  handshake with an HTTP error — a 500, a refused redirect — now fails to
+  connect with that error. Before, the connect ended as *disconnected* with
+  no message at all, and a tool call on that server said only `reconnect
+  failed`. 1.x's transport cancels the handshake when a request fails and
+  keeps the failure itself until it is shut down, where agentao logged it as
+  a disconnect warning. Cancelling a connect in flight (a `disconnect()`
+  during it, say) still ends it as disconnected, as before. Relatedly, a
+  failed connect raised as a task-group error — 1.x's SSE transport does this
+  — is now reported by the error inside it, not as `unhandled errors in a
+  TaskGroup (1 sub-exception)`. `mcp` 2.x was not affected by either.
 
 ---
 
