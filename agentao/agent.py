@@ -672,6 +672,7 @@ class Agentao:
             sandbox_policy=self.sandbox_policy,
             host_tool_emitter=self._host_tool_emitter,
             host_permission_emitter=self._host_permission_emitter,
+            working_directory=self._working_directory,
         )
 
     def _init_host_emitters(self) -> None:

@@ -29,18 +29,57 @@ from .tool_planning import ToolCallPlan
 TOOL_OUTPUT_SAVE_THRESHOLD = 40_000   # chars  (~10K tokens)
 # Fraction of the threshold kept from the beginning of the output (error context, args)
 TOOL_OUTPUT_HEAD_RATIO = 0.2          # 20% head, 80% tail (errors/results tend to be at end)
-# Directory for saved full outputs (relative to cwd)
+# Directory for saved full outputs, relative to the session's working
+# directory — the directory ``read_file`` resolves a relative path against.
+# Never the process cwd: an ACP server or embedded host runs sessions whose
+# working directory is not its own, and the excerpt would then name a file
+# the model's ``read_file`` cannot find.
 _TOOL_OUTPUT_DIR = Path(".agentao") / "tool-outputs"
+# Saved outputs whose mtime is older than this are pruned (by mtime, not by
+# the timestamp in the name, so a copied or restored file is judged by when it
+# was last written). A session resumed after this long finds its excerpts'
+# files gone and gets ``read_file``'s not-found error, which is honest.
+TOOL_OUTPUT_RETENTION_S = 7 * 24 * 60 * 60
 
 # Legacy hard cap for results that fail the file-save path (e.g. write errors)
 MAX_TOOL_RESULT_CHARS = 80_000
 
 
+def _prune_tool_outputs(out_dir: Path, logger=None, *, now: Optional[float] = None) -> int:
+    """Delete saved outputs in *out_dir* older than ``TOOL_OUTPUT_RETENTION_S``.
+
+    Best-effort: every failure (a file another process just removed, a
+    permission error) is skipped, because pruning must never cost the tool
+    result it runs beside. Returns the number of files removed.
+    """
+    cutoff = (time.time() if now is None else now) - TOOL_OUTPUT_RETENTION_S
+    removed = 0
+    try:
+        entries = list(out_dir.glob("*.txt"))
+    except OSError:
+        return 0
+    for entry in entries:
+        try:
+            if entry.stat().st_mtime < cutoff:
+                entry.unlink()
+                removed += 1
+        except OSError:
+            continue
+    if removed and logger:
+        logger.info("Pruned %d saved tool output(s) older than 7 days from %s", removed, out_dir)
+    return removed
+
+
 def _save_and_truncate(
     content: str, tool_name: str, logger=None,
+    *, output_dir: Optional[Path] = None,
 ) -> Tuple[str, Optional[str]]:
-    """Save large tool output to ``.agentao/tool-outputs/`` and return
+    """Save large tool output to *output_dir* and return
     ``(excerpt, disk_path_or_None)``.
+
+    *output_dir* is ``<working_directory>/.agentao/tool-outputs`` when the
+    caller knows the session's working directory; ``None`` falls back to
+    ``_TOOL_OUTPUT_DIR`` as given (relative to the process cwd).
 
     The full content is preserved on disk so the LLM can ``read_file`` it
     later. In context only the first 20% and last 80% of
@@ -56,11 +95,12 @@ def _save_and_truncate(
     file_ref = ""
     disk_path: Optional[str] = None
     try:
-        _TOOL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        out_dir = _TOOL_OUTPUT_DIR if output_dir is None else output_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
         ts = int(time.time())
         uid = uuid.uuid4().hex[:6]
         safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in tool_name)
-        out_file = _TOOL_OUTPUT_DIR / f"{safe_name}_{ts}_{uid}.txt"
+        out_file = out_dir / f"{safe_name}_{ts}_{uid}.txt"
         # Redact before the bytes land on disk. The in-context excerpt below
         # is built from the *unredacted* ``content`` on purpose: pattern
         # matching cannot distinguish a live credential from a test fixture,
@@ -106,9 +146,21 @@ def _save_and_truncate(
 class ToolResultFormatter:
     """Phase 4: emit TOOL_RESULT events and build OpenAI tool messages."""
 
-    def __init__(self, transport, logger):
+    def __init__(self, transport, logger, working_directory: Optional[Path] = None):
         self._transport = transport
         self._logger = logger
+        self._working_directory = working_directory
+        # Pruning runs once per formatter, on its first spill: often enough
+        # for a long-lived host (every session and sub-agent builds one), and
+        # never on a turn that writes nothing.
+        self._pruned = False
+
+    def _output_dir(self) -> Optional[Path]:
+        if self._working_directory is None:
+            return None
+        # Read at call time so a test patching ``_TOOL_OUTPUT_DIR`` to an
+        # absolute path still wins (``Path / absolute`` is the absolute path).
+        return Path(self._working_directory) / _TOOL_OUTPUT_DIR
 
     def format_batch(
         self,
@@ -182,7 +234,15 @@ class ToolResultFormatter:
                 f"Tool result from {fn_name} is {len(result):,} chars — "
                 f"saving to file and truncating context copy"
             )
-            result, disk_path = _save_and_truncate(result, fn_name, self._logger)
+            out_dir = self._output_dir()
+            result, disk_path = _save_and_truncate(
+                result, fn_name, self._logger, output_dir=out_dir,
+            )
+            if not self._pruned:
+                self._pruned = True
+                _prune_tool_outputs(
+                    _TOOL_OUTPUT_DIR if out_dir is None else out_dir, self._logger,
+                )
             saved_to_disk = disk_path is not None
         elif isinstance(result, str) and len(result) > MAX_TOOL_RESULT_CHARS:
             # Fallback hard cap (should rarely be reached after file-save path)
