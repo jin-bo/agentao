@@ -162,7 +162,18 @@ def save_session(
     now = datetime.now().astimezone()
     sid = session_id or str(_uuid_mod.uuid4())
 
-    created_at = _find_created_at(session_dir, sid) or now.isoformat()
+    # A valid ``supersedes`` is this session's own earlier save and already
+    # carries its ``created_at``; reading it spares the scan of every session
+    # file, which a per-turn save would otherwise pay on each turn.
+    earlier = (
+        _earlier_save(session_dir, Path(supersedes), sid)
+        if supersedes is not None else None
+    )
+    created_at = (
+        (earlier or {}).get("created_at")
+        or _find_created_at(session_dir, sid)
+        or now.isoformat()
+    )
     updated_at = now.isoformat()
 
     # The name is the clock, and the clock is not a guarantee of uniqueness. Windows
@@ -188,11 +199,21 @@ def save_session(
         "messages": messages,
     }
     partial = session_file.with_name(session_file.name + ".tmp")
-    with open(partial, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(partial, session_file)
+    try:
+        with open(partial, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(partial, session_file)
+    except BaseException:
+        # A failed dump (unserializable content, a full disk, a Ctrl-C) must
+        # not strand the partial file — nothing globs ``*.tmp``, so nothing
+        # would ever remove it.
+        try:
+            partial.unlink()
+        except OSError:
+            pass
+        raise
 
-    if supersedes is not None and _is_earlier_save(session_dir, Path(supersedes), sid, session_file):
+    if earlier is not None and Path(supersedes).resolve() != session_file.resolve():
         try:
             Path(supersedes).unlink()
         except FileNotFoundError:
@@ -201,16 +222,18 @@ def save_session(
     return session_file, sid
 
 
-def _is_earlier_save(session_dir: Path, path: Path, sid: str, written: Path) -> bool:
-    """Whether ``path`` is another file in ``session_dir`` that saved ``sid``."""
+def _earlier_save(session_dir: Path, path: Path, sid: str) -> Optional[dict]:
+    """``path``'s contents if it is a file in ``session_dir`` that saved ``sid``, else ``None``."""
     try:
-        if path.resolve().parent != session_dir.resolve() or path.resolve() == written.resolve():
-            return False
+        if path.resolve().parent != session_dir.resolve():
+            return None
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
-        return False
-    return isinstance(data, dict) and data.get("session_id") == sid
+        return None
+    if isinstance(data, dict) and data.get("session_id") == sid:
+        return data
+    return None
 
 
 def persist_agent_session(

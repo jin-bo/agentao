@@ -19,7 +19,7 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
   it is in that project's session directory and records the same
   `session_id`. `save_session` now also writes under a temporary name and
   renames into place, so a process killed mid-write leaves no half-written
-  `*.json`.
+  `*.json`, and a failed write removes its temporary file.
 
 ### Changed
 

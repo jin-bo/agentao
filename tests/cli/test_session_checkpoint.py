@@ -228,3 +228,18 @@ def test_supersedes_removes_only_an_earlier_save_of_the_same_session(tmp_path):
 def test_a_save_leaves_no_partial_file(tmp_path):
     path, _ = save_session([{"role": "user", "content": "x"}], "m", project_root=tmp_path)
     assert [p.name for p in path.parent.iterdir()] == [path.name]
+
+
+def test_a_failed_save_leaves_no_partial_file(tmp_path):
+    """An unserializable message fails the dump; the ``.tmp`` must not stay."""
+    with pytest.raises(TypeError):
+        save_session([{"role": "user", "content": object()}], "m", project_root=tmp_path)
+    assert list((tmp_path / ".agentao" / "sessions").iterdir()) == []
+
+
+def test_supersedes_carries_created_at(tmp_path):
+    first, sid = save_session([{"role": "user", "content": "1"}], "m", project_root=tmp_path)
+    created = json.loads(first.read_text(encoding="utf-8"))["created_at"]
+    second, _ = save_session([{"role": "user", "content": "2"}], "m", session_id=sid,
+                             project_root=tmp_path, supersedes=first)
+    assert json.loads(second.read_text(encoding="utf-8"))["created_at"] == created
