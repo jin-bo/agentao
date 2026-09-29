@@ -39,7 +39,6 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
-<<<<<<< HEAD
 - The interactive CLI now saves the session after every turn, not only at
   `/exit`, `/clear` and `/new`. Before, a closed terminal, a killed process
   or a crash lost the whole conversation, which then never appeared in
@@ -53,7 +52,6 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
   resumed session's first save, after `/sessions resume` or `--resume`,
   replaces the file it was loaded from. Before, resuming and then exiting
   added a second file for the same session, and every repeat added another.
-=======
 - A tool call that sends `null` for an optional parameter now gets the tool's
   default instead of failing. Models trained on strict schemas send
   `"offset": null` to mean "not given". `read_file(offset=None, limit=None)`
@@ -80,7 +78,6 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
   retried. No call in that response is run, including finished siblings. A
   `response.incomplete` with an open call is unchanged: it still ends as
   `length`, whose calls were never run.
->>>>>>> origin/main
 - `agentao doctor` and `agentao config validate` mask credentials in the
   provider's base URL, in both text and `--json` output. The API key was
   already reported only as present or absent, but the URL was printed
