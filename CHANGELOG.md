@@ -39,6 +39,7 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+<<<<<<< HEAD
 - The interactive CLI now saves the session after every turn, not only at
   `/exit`, `/clear` and `/new`. Before, a closed terminal, a killed process
   or a crash lost the whole conversation, which then never appeared in
@@ -52,6 +53,34 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
   resumed session's first save, after `/sessions resume` or `--resume`,
   replaces the file it was loaded from. Before, resuming and then exiting
   added a second file for the same session, and every repeat added another.
+=======
+- A tool call that sends `null` for an optional parameter now gets the tool's
+  default instead of failing. Models trained on strict schemas send
+  `"offset": null` to mean "not given". `read_file(offset=None, limit=None)`
+  used to answer `Error reading file: '>' not supported between instances of
+  'NoneType' and 'int'`, and other built-ins with defaulted parameters had
+  the same exposure. The planner now drops such a `None` before the
+  permission decision, so hooks, permission rules, replay and the tool all
+  see the same arguments. The drop is logged at INFO with the parameter
+  names. This applies to every tool, MCP tools included, with two
+  exceptions: a **required** parameter's `null` is passed through and fails
+  as before, and so is one whose schema allows `null` (`type` including
+  `"null"`, an `anyOf` / `oneOf` branch that does, or `nullable: true`),
+  where `null` may carry meaning.
+- On the `openai-responses` wire, a stream that never finished a function
+  call is refused instead of run. Two shapes are affected. In the first, a
+  server omits `output_index` from function-call events, as llama.cpp does
+  per pi-mono #9974. The turn used to end in a `TypeError` from `sorted()`
+  that named no protocol, and that crash was the only thing standing between
+  it and running three calls, two with the same id. In the second,
+  `response.completed` arrives while a call opened by `output_item.added`
+  never got its `output_item.done`. agentao used to fill such a call from the
+  terminal output and run it. Both now raise `ResponsesProtocolError` (code
+  `stream_protocol_error`, a subclass of `ResponsesStreamError`), which is not
+  retried. No call in that response is run, including finished siblings. A
+  `response.incomplete` with an open call is unchanged: it still ends as
+  `length`, whose calls were never run.
+>>>>>>> origin/main
 - `agentao doctor` and `agentao config validate` mask credentials in the
   provider's base URL, in both text and `--json` output. The API key was
   already reported only as present or absent, but the URL was printed

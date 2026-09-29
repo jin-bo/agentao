@@ -21,13 +21,14 @@ from agentao import Agentao
 from agentao.cancellation import CancellationToken
 from agentao.llm._api_format import API_FORMATS, resolve_api_format
 from agentao.llm._openai_responses import (
-    ResponsesStreamError, compose_tool_id, split_tool_id, translate_messages,
+    ResponsesProtocolError, ResponsesStreamError, compose_tool_id, split_tool_id,
+    translate_messages,
 )
 from agentao.llm.client import LLMClient
 from tests.support.openai_responses_wire import (
     ChunkedBody, Wire, attach, completed, created, error_event, failed,
     function_call_events, function_call_item, incomplete, message_item,
-    reasoning_events, reasoning_item, stream_of, text_events, usage,
+    reasoning_events, reasoning_item, stream_of, stream_without, text_events, usage,
 )
 
 # ``LLMClient`` opens ``agentao.log`` in the process cwd: see ``isolated_cwd``.
@@ -292,16 +293,100 @@ def test_two_summary_parts_are_not_run_together():
     assert llm.chat_stream(HELLO).choices[0].message.reasoning_content == "Plan\n\nCheck"
 
 
-def test_a_call_that_was_only_opened_takes_its_arguments_from_the_terminal_output():
-    """``added`` and then nothing: the terminal response is the only place the
-    arguments are stated, and an opened call must not shadow it."""
+# -- calls the stream never finished (pi-mono #9974) ---------------------------
+
+_ECHO = [{"type": "function", "function": {
+    "name": "sh", "parameters": {"type": "object", "properties": {"c": {"type": "string"}}},
+}}]
+_A = function_call_item("call_a", "sh", '{"c": "echo a"}', item_id="fc_a")
+_B = function_call_item("call_b", "sh", '{"c": "echo b"}', item_id="fc_b")
+
+
+def _parallel_calls():
+    return [created(),
+            function_call_events(0, "call_a", "sh", '{"c": ', '"echo a"}', item_id="fc_a"),
+            function_call_events(1, "call_b", "sh", '{"c": ', '"echo b"}', item_id="fc_b"),
+            completed([_A, _B])]
+
+
+def test_parallel_calls_with_their_indices_are_both_run():
+    """The conforming twin of the next test: same events, indices kept."""
     llm = _llm()
-    opened = function_call_events(0, "call_1", "read_file", '{"a": 1}')[:1]
-    attach(llm, Wire(stream_of(created(), opened, completed([
-        function_call_item("call_1", "read_file", '{"a": 1}'),
-    ]))))
-    call = llm.chat_stream(HELLO, tools=READ_FILE).choices[0].message.tool_calls[0]
-    assert (call.id, call.function.arguments) == ("call_1|fc_1", '{"a": 1}')
+    attach(llm, Wire(stream_of(*_parallel_calls())))
+    calls = llm.chat_stream(HELLO, tools=_ECHO).choices[0].message.tool_calls
+    assert [(c.id, c.function.arguments) for c in calls] == [
+        ("call_a|fc_a", '{"c": "echo a"}'), ("call_b|fc_b", '{"c": "echo b"}')]
+
+
+def test_parallel_calls_without_an_output_index_are_refused_not_run():
+    """llama.cpp's shape. Before, the index-less deltas shared one ``None`` key
+    and the terminal backfill added keys 0 and 1 beside it — three calls, two
+    with one id — and only a ``TypeError`` in ``sorted()`` stopped them. The
+    error must name the protocol, and a server that omits the index will omit
+    it again, so the request is not retried."""
+    llm = _llm()
+    wire = attach(llm, Wire(*[stream_without("output_index", *_parallel_calls())] * 3))
+    with pytest.raises(ResponsesProtocolError, match="no output_index") as raised:
+        llm.chat_stream(HELLO, tools=_ECHO)
+    assert raised.value.code == "stream_protocol_error"
+    assert len(wire.requests) == 1
+
+
+def test_a_call_that_was_only_opened_is_refused_though_the_terminal_restates_it():
+    """``added`` and then nothing: the terminal output restating the call does
+    not say which of its arguments ever arrived. (#318 filled it from there;
+    no server was recorded sending this shape.)"""
+    llm = _llm()
+    opened = function_call_events(0, "call_a", "sh", '{"c": "echo a"}', item_id="fc_a")[:1]
+    wire = attach(llm, Wire(stream_of(created(), opened, completed([_A]))))
+    with pytest.raises(ResponsesProtocolError, match=r"'sh' \(output_index 0\)"):
+        llm.chat_stream(HELLO, tools=_ECHO)
+    assert len(wire.requests) == 1
+
+
+def test_a_call_cut_off_mid_arguments_is_refused_with_its_finished_sibling():
+    """The unfinished call is absent from the terminal output, so nothing would
+    fill it; its finished sibling is not run either — the batch is refused."""
+    llm = _llm()
+    cut = function_call_events(1, "call_b", "sh", '{"c": ', '"ec', item_id="fc_b")[:2]
+    attach(llm, Wire(stream_of(
+        created(), function_call_events(0, "call_a", "sh", '{"c": "echo a"}', item_id="fc_a"),
+        cut, completed([_A]),
+    )))
+    with pytest.raises(ResponsesProtocolError, match="output_index 1"):
+        llm.chat_stream(HELLO, tools=_ECHO)
+
+
+def test_an_open_call_in_an_incomplete_response_stays_a_truncation():
+    """``incomplete`` already ends as ``length``, whose calls the runtime
+    records without running; it is not turned into an error."""
+    llm = _llm()
+    opened = function_call_events(0, "call_a", "sh", '{"c": ', item_id="fc_a")[:2]
+    attach(llm, Wire(stream_of(created(), opened, incomplete([]))))
+    response = llm.chat_stream(HELLO, tools=_ECHO)
+    assert response.choices[0].finish_reason == "length"
+
+
+@pytest.mark.parametrize("shape", ["only_added", "no_output_index"])
+def test_a_refused_stream_runs_no_tool_in_a_real_turn(tmp_path, shape):
+    """End to end, with a tool whose effect is visible: before the fix the
+    ``only_added`` stream wrote the file."""
+    target = tmp_path / "written.txt"
+    arguments = json.dumps({"file_path": str(target), "content": "x"})
+    finished = function_call_item("call_w", "write_file", arguments, item_id="fc_w")
+    events = function_call_events(0, "call_w", "write_file", arguments, item_id="fc_w")
+    body = (stream_of(created(), events[:2], completed([finished])) if shape == "only_added"
+            else stream_without("output_index", created(), events, completed([finished])))
+    agent = Agentao(api_key="k", base_url="http://wire.test/v1", model="gpt-test",
+                    api_format="openai-responses", working_directory=tmp_path)
+    try:
+        attach(agent.llm, Wire(body))
+        answer = agent.chat("write it")
+        assert answer.startswith("[LLM API error: stream_protocol_error:")
+        assert not target.exists()
+        assert not any(m.get("role") == "tool" for m in agent.messages)
+    finally:
+        agent.close()
 
 
 def test_usage_is_the_whole_input_with_the_cached_part_beside_it():

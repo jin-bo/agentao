@@ -24,7 +24,7 @@ from ..permissions import PermissionDecision, PermissionDecisionDetail, Permissi
 from ..tools import RegistrableTool, ToolRegistry
 from ..tools.base import SHELL_TOOL_NAME
 from . import identity as _identity
-from .arg_repair import parse_tool_arguments
+from .arg_repair import drop_null_optionals, parse_tool_arguments
 from .name_repair import repair_tool_name
 
 # Module-level, for the two module-level helpers below: the planner's own ``self._logger`` is
@@ -552,6 +552,19 @@ class ToolCallPlanner:
                         normalized_id, function_name, str(exc),
                     ))
                     continue
+
+            # Before the permission decision, so the args it judges are the
+            # args that run.
+            try:
+                schema = tool.parameters
+            except Exception:
+                schema = None
+            function_args, dropped = drop_null_optionals(function_args, schema)
+            if dropped:
+                self._logger.info(
+                    "Tool '%s': dropped null optional argument(s): %s",
+                    function_name, ", ".join(dropped),
+                )
 
             # Read the provider once for this call. Once, because two reads can
             # answer differently — re-resolution swaps the reference between them — and the
