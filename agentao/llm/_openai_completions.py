@@ -234,6 +234,9 @@ class OpenAICompletionsAdapter:
         raw = self._owner.client.chat.completions.with_raw_response.create(**kwargs)
         response = raw.parse()
         acc.usage_data = getattr(response, "usage", None)
+        error = _body_error(response)
+        if error is not None:
+            raise _api_error(error, raw.http_response.request)
         return response
 
     def new_accumulator(self) -> _StreamAccumulator:
@@ -345,6 +348,40 @@ class OpenAICompletionsAdapter:
         if status is not None:
             return (True, status, None)
         return _classify_retry(exc)
+
+
+def _body_error(response: Any) -> Optional[Dict[str, Any]]:
+    """The ``error`` object of a 200 body that carries no answer, else ``None``.
+
+    A gateway that has sent ``200 OK`` before the upstream failed reports the
+    failure in the body instead — OpenRouter documents it for non-streaming
+    requests: a JSON body holding only an ``error`` object and no ``choices``.
+    The SDK parses that into a ``ChatCompletion`` with ``choices=None`` and the
+    error in ``model_extra``, and nothing raises: the chat loop then failed on
+    ``response.choices[0]`` with a ``TypeError`` that named neither the
+    provider nor its message. Only when ``choices`` is empty — a body that
+    answers is an answer, whatever else it carries.
+    """
+    if getattr(response, "choices", None):
+        return None
+    extra = getattr(response, "model_extra", None)
+    error = extra.get("error") if isinstance(extra, dict) else None
+    return error if isinstance(error, dict) else None
+
+
+def _api_error(error: Dict[str, Any], request: Any) -> Exception:
+    """The exception the SDK raises for the same ``error`` object in a stream.
+
+    One shape for both entry points, so :func:`_stream_error_status` maps a
+    transient one to its status on either — the summarizer and Gemini's turns
+    come through ``chat()``, not ``chat_stream()``.
+    """
+    from openai import APIError
+
+    message = error.get("message")
+    if not isinstance(message, str) or not message:
+        message = "The provider returned an error with no answer"
+    return APIError(message, request, body=error)
 
 
 def _stream_error_status(exc: BaseException) -> Optional[int]:
