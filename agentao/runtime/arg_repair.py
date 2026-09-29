@@ -217,3 +217,59 @@ def parse_tool_arguments(
         )
 
     return parsed, tags
+
+
+def _schema_allows_null(prop: Any) -> bool:
+    """Whether a property schema names ``null`` as a value it takes.
+
+    Where it does, ``null`` can mean something ("clear this field"), so it is
+    passed through. ``type: "null"`` / ``type: [..., "null"]``, an
+    ``anyOf`` / ``oneOf`` branch that allows it, and OpenAPI's
+    ``nullable: true`` all count.
+    """
+    if not isinstance(prop, dict):
+        return False
+    if prop.get("nullable") is True:
+        return True
+    kind = prop.get("type")
+    if kind == "null" or (isinstance(kind, list) and "null" in kind):
+        return True
+    for key in ("anyOf", "oneOf"):
+        branches = prop.get(key)
+        if isinstance(branches, list) and any(_schema_allows_null(b) for b in branches):
+            return True
+    return False
+
+
+def drop_null_optionals(args: dict, schema: Any) -> Tuple[dict, List[str]]:
+    """``args`` without the ``None`` values of parameters that are not required.
+
+    A model that sends ``null`` for an optional parameter means "not given"
+    (strict-schema habits carry over even with ``strict: false``). Passed
+    through, it reaches ``execute(offset=None)`` and fails a comparison the
+    tool's own default would have avoided. So a ``None`` is dropped
+    and the default applies, unless one of two things holds:
+
+    - the parameter is ``required``: a required ``null`` is left to fail as
+      it did, since omitting it would only move the error;
+    - the property schema allows ``null``: it may then carry meaning.
+
+    A schema that is not a dict, or whose ``required`` is not a list, leaves
+    ``args`` untouched — the rule needs to know what is required. Returns
+    ``(args, dropped_names)``; ``args`` is the same object when nothing was
+    dropped.
+    """
+    if not isinstance(schema, dict):
+        return args, []
+    required = schema.get("required", [])
+    if not isinstance(required, list):
+        return args, []
+    props = schema.get("properties")
+    props = props if isinstance(props, dict) else {}
+    dropped = [
+        key for key, value in args.items()
+        if value is None and key not in required and not _schema_allows_null(props.get(key))
+    ]
+    if not dropped:
+        return args, []
+    return {k: v for k, v in args.items() if k not in dropped}, dropped
