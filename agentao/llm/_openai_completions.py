@@ -357,14 +357,18 @@ def _stream_error_status(exc: BaseException) -> Optional[int]:
     # real status or a transport failure, and the shared table reads those.
     if not isinstance(exc, APIError) or isinstance(exc, (APIStatusError, APIConnectionError)):
         return None
-    code = getattr(exc, "code", None)
-    kind = getattr(exc, "type", None)
+    # Strings only: the SDK copies ``code`` off the chunk without coercing a
+    # non-string, and an unhashable one (a gateway's nested object) would make
+    # the ``in`` test raise ``TypeError`` from inside the client's ``except``,
+    # replacing the provider's error with ours.
+    words = [v for v in (getattr(exc, "code", None), getattr(exc, "type", None))
+             if isinstance(v, str)]
     # A balance does not refill while we wait — same codes, and the same
     # exact match, as the shared table applies to a 429.
-    if code in QUOTA_EXHAUSTED_CODES or kind in QUOTA_EXHAUSTED_CODES:
+    if any(v in QUOTA_EXHAUSTED_CODES for v in words):
         return None
-    for value in (code, kind):
-        if isinstance(value, str) and value in _STREAM_ERROR_STATUS:
+    for value in words:
+        if value in _STREAM_ERROR_STATUS:
             return _STREAM_ERROR_STATUS[value]
     # OpenRouter's documented mid-stream error puts the HTTP status in
     # ``code``, as a number. Read from ``body``: openai 2.x copies it onto

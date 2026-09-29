@@ -110,6 +110,7 @@ def test_an_error_chunk_before_any_text_is_retried(body, status, slept):
     assert response.choices[0].message.content == "recovered"
     assert script.requests == 2
     assert len(slept) == 1
+    assert [r[0]["reason"] for r in retries] == [f"status={status}"]
 
 
 def test_the_classifier_reports_the_mapped_status():
@@ -127,7 +128,9 @@ def test_the_classifier_reports_the_mapped_status():
     {"code": 400, "message": "bad"},
     {"code": 402, "message": "no credits"},
     {"message": "no code at all"},
-], ids=["context-length", "quota", "openrouter-400", "openrouter-402", "bare"])
+    {"code": {"nested": "object"}, "message": "odd gateway"},
+], ids=["context-length", "quota", "openrouter-400", "openrouter-402", "bare",
+        "unhashable-code"])
 def test_an_error_chunk_that_is_not_transient_is_still_permanent(error):
     script = _Script(_error_chunk(error), _answer("must not be requested"))
     with pytest.raises(openai.APIError):
