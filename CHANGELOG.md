@@ -23,6 +23,33 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **Security:** `workspace-write` and `plan` no longer run every command
+  their "read-only" shell list matched without asking. `env` ran its argument
+  (`env sh -c ...`), `file -C` writes, `git diff|log|show --output=<path>`
+  writes anywhere, `--ext-diff` / `--textconv` run configured programs, and
+  quoting (`--out""put`), backslashes and globs (`git diff *` beside a file
+  named `--output=x`) hand git an option the pattern never saw. `env` and
+  `file` are off the list; a command using shell quoting, backslashes,
+  parentheses (a PowerShell subexpression runs as a command) or
+  `* ? [ ] { }`, or git's `--output` / `--ext-diff` / `--textconv` (or an
+  abbreviation), now asks in `workspace-write` and is denied in `plan`, as
+  does a name that merely starts with a listed one (`cat-tool`,
+  `git statusx`). This includes everyday forms such as `ls *.md` and
+  `grep "a b" f`. The list is one constant shared by both presets.
+- **Security:** in `workspace-write`, `write_file` / `replace` into a `.git`
+  or `.agentao` directory, or a `.git` file, at any depth, now asks. A
+  `core.fsmonitor` written to `.git/config` ran on the next auto-allowed
+  `git status`, and `.agentao/` holds MCP servers, hooks and plugins. A user
+  `allow` rule still overrides it; `plan` still denies every write. Drivers
+  already present in git configuration can still run from `git status` /
+  `git diff`; this change stops the model from adding one.
+- **Security:** a `deny` or `ask` rule on `file_path` for `read_file` /
+  `write_file` / `replace` is now matched against the raw path, its resolved
+  absolute path and its resolved project-relative path. Before, `^secrets/`
+  denied `secrets/k` and allowed `./secrets/k`, `sub/../secrets/k` and the
+  absolute path. `allow` rules are unchanged and still see only the raw
+  string, so no existing rule grants more than it did. `PermissionEngine`
+  resolves relative paths against its `project_root`.
 - At most 6 background sub-agents now run at once per session. Before, every
   `run_in_background=true` call started another thread with no limit, each
   making its own LLM requests on the same key. A launch past the limit is
