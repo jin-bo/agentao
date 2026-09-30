@@ -23,6 +23,17 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- `Agentao.arun()` no longer re-raises a host's `CancelledError` while the
+  turn is still unwinding. It cancels the token, then waits up to 5 s for the
+  worker to finish the turn (orphaned tool results backfilled, `TURN_END`
+  emitted) before re-raising; past that it logs a warning and re-raises
+  anyway. Before, a host that saw the cancel and started the next `arun` ran
+  it against the `agent.messages` the first turn was still writing.
+- A turn on an agent whose previous turn is still running now raises
+  `TurnInProgressError` (`agentao.runtime.turn`, a `RuntimeError`) before
+  touching any turn state, for `chat()` and `arun()` alike. Two turns on one
+  agent never worked — they shared history and every per-turn counter — but
+  nothing refused the second one.
 - **Security:** `workspace-write` and `plan` no longer run every command
   their "read-only" shell list matched without asking. `env` ran its argument
   (`env sh -c ...`), `file -C` writes, `git diff|log|show --output=<path>`

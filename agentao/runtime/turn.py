@@ -68,7 +68,44 @@ def interrupted_partial(content: object) -> Optional[str]:
     return None
 
 
+class TurnInProgressError(RuntimeError):
+    """Raised when a turn starts on an agent whose previous turn has not ended.
+
+    Two turns on one ``Agentao`` share ``agent.messages`` and every per-turn
+    counter, so an overlap corrupts history rather than failing. The usual way
+    to reach it is an ``arun`` cancelled past its cleanup wait, followed at
+    once by the next ``arun``; a host that sees it should retry after the
+    previous turn's ``TURN_END``.
+    """
+
+
 def run_turn(
+    agent: "Agentao",
+    user_message: str,
+    max_iterations: int = 100,
+    cancellation_token: Optional[CancellationToken] = None,
+    images: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """Run one turn, refusing to start while another is running on ``agent``.
+
+    The guard is taken before any turn state is touched and released only
+    after ``TURN_END``, so it covers sync ``chat()`` callers as well as
+    ``arun``. It never waits: a turn is minutes long, and queueing a second
+    one behind it is the host's decision, not the runtime's.
+    """
+    lock = agent._turn_lock
+    if not lock.acquire(blocking=False):
+        raise TurnInProgressError(
+            "a turn is already running on this agent; wait for it to end"
+        )
+    try:
+        return _run_turn(agent, user_message, max_iterations,
+                         cancellation_token, images)
+    finally:
+        lock.release()
+
+
+def _run_turn(
     agent: "Agentao",
     user_message: str,
     max_iterations: int = 100,
