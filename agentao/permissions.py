@@ -428,41 +428,78 @@ def _domain_matches(hostname: str, patterns: List[str]) -> bool:
     return False
 
 
+# Tools whose ``file_path`` argument names a file, so a ``deny`` / ``ask``
+# ``file_path`` rule on them is matched against the path's resolved spellings
+# as well as the raw string (:meth:`PermissionEngine._path_candidates`).
+_PATH_ARG_TOOLS = frozenset({"read_file", "write_file", "replace"})
+
+
+def _arg_matches(pattern: str, value: str) -> bool:
+    try:
+        return re.search(pattern, value) is not None
+    except re.error:
+        return pattern == value
+
+
+# Shell commands both ``workspace-write`` and ``plan`` run without asking.
+# Anything that does not match falls through to the mode's own ASK / DENY,
+# so leaving a command out costs a prompt, never access. Every clause below
+# closes a way a "read-only" command was made to run or write something:
+#
+#  - Command names end at a space or the end of the string, not ``\b``:
+#    ``\b`` lets ``cat-tool`` and ``git statusx`` through. The lookahead
+#    consumes nothing, so the newline ban in the tail still applies.
+#  - No shell operators, substitution, redirects or newlines (``; & | ` $ < >``),
+#    no parentheses (PowerShell runs ``echo (Set-Content x y)``'s argument
+#    as a command), and no quotes, backslashes or glob/brace characters: ``--out""put=x``
+#    and ``--out\put=x`` reach git as ``--output=x``, and ``git diff *``
+#    picks up a file the model named ``--output=x``. A command using any
+#    of them asks.
+#  - git: subcommands that cannot mutate state, and none of ``--output``
+#    (writes anywhere), ``--ext-diff`` / ``--textconv`` (run configured
+#    programs). The lookahead matches prefixes because git accepts a unique
+#    abbreviation of a long option (``--ext`` runs the external diff).
+#  - ``env`` runs its argument (``env sh -c ...``) and ``file -C`` writes a
+#    magic file, so neither is here. ``find`` is not either (``-delete``,
+#    ``-exec``).
+#
+# Drivers already present in git configuration can still run from
+# ``git status`` / ``git diff`` (a clean filter, a textconv on ``git log -p``);
+# this list keeps the model from *adding* one, through the protected-path
+# rules below, and does not claim more.
+_SHELL_READ_ONLY_ALLOW_RE = (
+    r"^(?:"
+    r"git[ \t]+(?:status|log|diff|show|stash[ \t]+list|shortlog|describe|blame"
+    r"|ls-files|ls-tree|rev-parse|config[ \t]+--get[a-z-]*)(?=[ \t]|$)"
+    r"(?![^\n]*--(?:ext|textc|out))"
+    r"|(?:ls|cat|echo|pwd|which|head|tail|wc|diff|grep|du|df|ps)(?=[ \t]|$)"
+    r")"
+    r"[^;&|`$<>()\n\r'\"\\*?\[\]{}]*\Z"
+)
+
+# Write targets that ask in ``workspace-write``: a ``.git`` directory or file
+# (submodules and worktrees included) and ``.agentao``, at any depth.
+# Case-insensitive: on macOS's and Windows' default filesystems ``.GIT/config``
+# is ``.git/config``, and resolving a path does not fold its case.
+_PROTECTED_WRITE_PATH_RE = r"(?i)(?:^|/)\.(?:git|agentao)(?:/|$)"
+
+
 # Preset rule lists for each mode. Evaluated after project/user JSON rules.
 _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
     "read-only": [],  # ToolRunner handles this via is_read_only check; no extra rules needed
     "workspace-write": [
+        # Writes into git metadata or agentao's own config ask even here: a
+        # ``core.fsmonitor`` in ``.git/config`` runs on the next auto-allowed
+        # ``git status``, and ``.agentao/`` holds MCP servers, hooks and
+        # plugins that run next session. The runtime writes its own state
+        # there (memory.db, replays, tool-outputs) without going through the
+        # engine, so the model has no ordinary reason to. Matched against
+        # the raw path and its resolved forms — see ``_PATH_ARG_TOOLS``.
+        {"tool": "write_file", "args": {"file_path": _PROTECTED_WRITE_PATH_RE}, "action": "ask"},
+        {"tool": "replace", "args": {"file_path": _PROTECTED_WRITE_PATH_RE}, "action": "ask"},
         {"tool": "write_file", "action": "allow"},
         {"tool": "replace", "action": "allow"},
-        {
-            "tool": "run_shell_command",
-            "args": {
-                # Allowlist of genuinely read-only shell commands.
-                # Rules:
-                #  - No shell operators (&&, ||, ;, |, $(...), backticks,
-                #    redirects, newlines) so command smuggling is impossible.
-                #  - git: only subcommands that cannot mutate state. Excluded:
-                #    branch/tag/remote (accept -D/-d/add flags), push, reset,
-                #    clean, checkout. Allowed: status, log, diff, show,
-                #    stash list, shortlog, describe, blame, ls-files, ls-tree,
-                #    rev-parse, config --get*.
-                #  - find excluded (find . -delete is destructive).
-                #  - ls, cat, echo, pwd, which, file, head, tail, wc, diff,
-                #    grep, du, df, ps, env are safe read-only metadata commands.
-                # Use \b (word boundary) so bare commands like `ls` or `env`
-                # match in addition to commands with arguments like `ls -la`.
-                "command": (
-                    r"^("
-                    r"git (status|log|diff|show|stash list"
-                    r"|shortlog|describe|blame|ls-files|ls-tree|rev-parse|config --get)"
-                    r"|ls\b|cat\b|echo\b|pwd\b|which\b|file\b|head\b|tail\b"
-                    r"|wc\b|diff\b|grep\b|du\b|df\b|ps\b|env\b"
-                    r")"
-                    r"(?:[^;&|`$<>\n\r])*$"
-                )
-            },
-            "action": "allow",
-        },
+        {"tool": "run_shell_command", "args": {"command": _SHELL_READ_ONLY_ALLOW_RE}, "action": "allow"},
         {
             "tool": "run_shell_command",
             "args": {"command": r"rm\s+-rf|sudo\s|mkfs|dd\s+if="},
@@ -507,21 +544,7 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
         # Deny memory writes and task mutations — plan mode is research-only.
         {"tool": "save_memory", "action": "deny"},
         {"tool": "todo_write", "action": "deny"},
-        {
-            "tool": "run_shell_command",
-            "args": {
-                "command": (
-                    r"^("
-                    r"git (status|log|diff|show|stash list"
-                    r"|shortlog|describe|blame|ls-files|ls-tree|rev-parse|config --get)"
-                    r"|ls\b|cat\b|echo\b|pwd\b|which\b|file\b|head\b|tail\b"
-                    r"|wc\b|diff\b|grep\b|du\b|df\b|ps\b|env\b"
-                    r")"
-                    r"(?:[^;&|`$<>\n\r])*$"
-                )
-            },
-            "action": "allow",
-        },
+        {"tool": "run_shell_command", "args": {"command": _SHELL_READ_ONLY_ALLOW_RE}, "action": "allow"},
         {"tool": "run_shell_command", "args": {"command": r"rm\s+-rf|sudo\s|mkfs|dd\s+if="}, "action": "deny"},
         {"tool": "run_shell_command", "action": "deny"},
         # Domain-tiered web_fetch (same as workspace-write)
@@ -625,6 +648,9 @@ class PermissionEngine:
                 "PermissionEngine requires a project_root keyword argument."
             )
         self._user_root: Optional[Path] = user_root
+        # The root a relative ``file_path`` resolves against — the same
+        # working directory the file tools resolve it against.
+        self._project_root: Path = Path(project_root).expanduser().resolve()
         self._enable_hardline: bool = enable_hardline
         self._mode_rules: List[Dict[str, Any]] = []
         self.active_mode: PermissionMode = PermissionMode.WORKSPACE_WRITE
@@ -858,13 +884,48 @@ class PermissionEngine:
         # Regex-based arg matching
         for arg_key, arg_pattern in rule.get("args", {}).items():
             arg_value = str(tool_args.get(arg_key, ""))
-            try:
-                if not re.search(arg_pattern, arg_value):
-                    return False
-            except re.error:
-                if arg_pattern != arg_value:
-                    return False
+            # Only a rule that restricts reads the resolved spellings: an
+            # ``allow`` pattern matched against more strings grants more, and
+            # a negative lookahead (``^(?!secrets/)``) matches the absolute
+            # spelling of the very file it excludes.
+            if (
+                arg_key == "file_path"
+                and tool_name in _PATH_ARG_TOOLS
+                and str(rule.get("action", "ask")).lower() != "allow"
+            ):
+                candidates = self._path_candidates(arg_value)
+            else:
+                candidates = [arg_value]
+            if not any(_arg_matches(arg_pattern, c) for c in candidates):
+                return False
         return True
+
+    def _path_candidates(self, raw: str) -> List[str]:
+        """The spellings a ``file_path`` rule is matched against.
+
+        The raw argument, its resolved absolute path, and — inside the
+        project — its resolved path relative to the project root, in POSIX
+        form. A ``deny`` or ``ask`` rule matching any of them matches: before
+        this, ``^secrets/`` denied ``secrets/k`` and allowed ``./secrets/k``,
+        ``sub/../secrets/k`` and the absolute path, all the same file. An
+        ``allow`` rule still sees only the raw string. The raw form stays
+        because it is the only one that still carries a symlinked
+        directory's own name.
+        """
+        candidates = [raw]
+        if not raw:
+            return candidates
+        try:
+            path = Path(raw).expanduser()
+            if not path.is_absolute():
+                path = self._project_root / path
+            resolved = path.resolve(strict=False)
+        except (OSError, RuntimeError, ValueError):
+            return candidates
+        candidates.append(str(resolved))
+        if resolved.is_relative_to(self._project_root):
+            candidates.append(resolved.relative_to(self._project_root).as_posix())
+        return candidates
 
     def _match_pattern(self, pattern: str, value: str) -> bool:
         try:

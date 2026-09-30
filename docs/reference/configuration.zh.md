@@ -162,7 +162,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `tool` | string | 是 | 工具名；通过 `re.fullmatch` 当作 regex 匹配（`"*"` 表示通配）。 |
-| `args` | object | 否 | `<arg_name>` → regex 的映射；**所有**条目都需 `re.search` 命中规则才生效。坏 regex 会回退为字面相等比较。 |
+| `args` | object | 否 | `<arg_name>` → regex 的映射；**所有**条目都需 `re.search` 命中规则才生效。坏 regex 会回退为字面相等比较。对 `read_file` / `write_file` / `replace` 的 `file_path`，`deny` 或 `ask` 的 pattern 会分别对原始参数、resolve 后的绝对路径、（项目内时）resolve 后的项目相对 POSIX 路径做匹配，任一命中即算命中 —— 因此 `^secrets/` 也覆盖 `./secrets/k`、`sub/../secrets/k`、绝对路径写法和符号链接别名。`allow` 的 pattern 只匹配原始参数：匹配的写法越多放行得越多，而且像 `^(?!secrets/)` 这样的负向前瞻会命中它本想排除的那个文件的绝对路径写法。 |
 | `domain` | object | 否 | URL 类工具专用（如 `web_fetch`）。键：`url_arg`（默认 `"url"`）、`allowlist`、`blocklist`。以 `.` 开头的 pattern 做后缀匹配（如 `.github.com` 同时匹配 `github.com` 与 `api.github.com`）；否则做精确匹配。带 `domain` 的规则**只有**当 hostname 命中其中一个列表时才匹配。 |
 | `action` | string | 是 | `"allow"` \| `"deny"` \| `"ask"`。大小写不敏感。**未知值一律拒绝**（0.4.20 变更）—— 此前按 `"ask"` 处理，正是这一点让 `{"action": "alow"}` 静静躺在配置里什么也不做，而 `/permissions` 还把它原样打印成 `[? ALOW]`。 |
 
@@ -170,7 +170,7 @@
 
 **内置 preset** 在 `permissions.py::_PRESET_RULES`，按上述顺序追加在自定义规则之后（或在 `full-access` / `plan` 下放在前面）：
 
-- `workspace-write` —— 自动放行 `write_file` / `replace`；放行约 16 条只读 shell（`ls`、`cat`、`grep`、`git status|log|diff|show|…`…）；拒绝 `rm -rf` / `sudo` / `mkfs` / `dd if=`；放行受信任文档站点（`.github.com`、`.docs.python.org`、`.wikipedia.org`、`.pypi.org`、`.readthedocs.io`、`r.jina.ai`）；屏蔽 SSRF 目标（`localhost`、`127.0.0.1`、`0.0.0.0`、`169.254.169.254`、`.internal`、`.local`、`::1`）；其余 → ask。
+- `workspace-write` —— 自动放行 `write_file` / `replace`，但目标位于任意层级的 `.git` 或 `.agentao` 目录下（或是 `.git` 文件）时改为 ask：`.git/config` 能让下一次 `git status` 执行命令（`core.fsmonitor`），`.agentao/` 里有 MCP server、hook 和插件。只读 shell（`ls`、`cat`、`grep`、`head`、`tail`、`wc`、`diff`、`du`、`df`、`ps`、`pwd`、`which`、`echo`、`git status|log|diff|show|…`）仅在命令不含 shell 运算符、引号、反斜杠、括号、glob/花括号字符，且 git 命令不带 `--output`、`--ext-diff`、`--textconv`（含其缩写）时才放行，其余 ask。git 配置中已有的驱动仍可能由这些 git 命令触发；拒绝 `rm -rf` / `sudo` / `mkfs` / `dd if=`；放行受信任文档站点（`.github.com`、`.docs.python.org`、`.wikipedia.org`、`.pypi.org`、`.readthedocs.io`、`r.jina.ai`）；屏蔽 SSRF 目标（`localhost`、`127.0.0.1`、`0.0.0.0`、`169.254.169.254`、`.internal`、`.local`、`::1`）；其余 → ask。
 - `read-only` —— preset 为空；`ToolRunner` 用 `tool.is_read_only` 直接短路，拒绝所有非只读工具。无论模式来自 runner 的标志（CLI、`agentao run`），还是只设了引擎（ACP 的 `session/set_mode`、嵌入宿主调用 `set_mode`），都会生效。只读工具是各读取类工具，外加只改会话状态的 `activate_skill` 和 `todo_write`；`save_memory` 会写 SQLite，因此被拒绝。
 - `full-access` —— 单条 `{"tool": "*", "action": "allow"}`。
 - `plan` —— 拒绝所有写入与记忆改动；放行只读 shell allowlist；web 规则与 `workspace-write` 相同。
