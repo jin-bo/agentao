@@ -41,7 +41,7 @@ def _regex_match_full(pattern: str, value: str) -> bool:
         return False
     try:
         return re.fullmatch(pattern, value) is not None
-    except re.error:
+    except (re.error, OverflowError, RecursionError):
         # A malformed pattern degrades to exact-equality so the rule is
         # not silently dropped at runtime.
         return pattern == value

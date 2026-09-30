@@ -77,6 +77,17 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- A hook matcher that is not a valid regular expression — a profile
+  `matcher` string, or an `agentao-v1` PreCompact `trigger` — is now reported
+  as a plugin warning when the hooks file loads. Dispatch is unchanged: the
+  pattern is still compared as literal text, so `Read|Write(` matches no tool
+  and a deny hook written with it never runs; before, nothing said so. `*` and
+  `""` stay wildcards for a profile matcher. An `agentao-v1` `trigger` has no
+  wildcards, so `*` and `""` there are reported too: neither ever matches
+  `manual` or `auto`.
+- A `Retry-After` HTTP date that has already passed now means "retry now", as
+  `Retry-After: 0` does. It used to be discarded, falling back to the ~9.5 s
+  local backoff. The 60 s ceiling on a server's advice is unchanged.
 - The interactive CLI now saves the session after every turn, not only at
   `/exit`, `/clear` and `/new`. Before, a closed terminal, a killed process
   or a crash lost the whole conversation, which then never appeared in

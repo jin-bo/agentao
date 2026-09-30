@@ -603,7 +603,7 @@ detection; an unknown value disables the file.
 | Key | Required | Default | Notes |
 |---|---|---|---|
 | *(event name)* | yes | — | One of `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `SessionStart`, `SessionEnd`, `PreCompact`. Any other event is not in the profile |
-| `matcher` | no | match all | A **string**. `re.fullmatch` semantics, with `*` and `""` as wildcards — `ead` does **not** match `Read`. Compared against the tool name on the tool events, `source` on `SessionStart`, `reason` on `SessionEnd`, `trigger` on `PreCompact` |
+| `matcher` | no | match all | A **string**. `re.fullmatch` semantics, with `*` and `""` as wildcards — `ead` does **not** match `Read`. Compared against the tool name on the tool events, `source` on `SessionStart`, `reason` on `SessionEnd`, `trigger` on `PreCompact`. A pattern that is not a valid regex is compared as literal text and reported as a plugin warning when the file loads |
 | `hooks[].type` | yes | — | `command` only. `prompt`, `agent`, `mcp_tool`, `http` are skipped with a warning (agentao's `prompt` hook is a different feature wearing the same name) |
 | `hooks[].command` | yes¹ | — | Shell string, run under `/bin/sh` |
 | `hooks[].args` | no | — | Exec form; use instead of `command` to skip the shell |

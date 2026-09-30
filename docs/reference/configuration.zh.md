@@ -524,7 +524,7 @@ handler，单独告警，所以一处笔误不会让一份能用的文件整体�
 | 键 | 必填 | 默认 | 说明 |
 |---|---|---|---|
 | *（事件名）* | 是 | — | 取 `PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`UserPromptSubmit`、`Stop`、`SessionStart`、`SessionEnd`、`PreCompact` 之一。其余事件不在 profile 内 |
-| `matcher` | 否 | 全匹配 | 一个**字符串**。`re.fullmatch` 语义，`*` 与 `""` 是通配符 —— `ead` **匹配不上** `Read`。工具事件上比工具名，`SessionStart` 比 `source`，`SessionEnd` 比 `reason`，`PreCompact` 比 `trigger` |
+| `matcher` | 否 | 全匹配 | 一个**字符串**。`re.fullmatch` 语义，`*` 与 `""` 是通配符 —— `ead` **匹配不上** `Read`。工具事件上比工具名，`SessionStart` 比 `source`，`SessionEnd` 比 `reason`，`PreCompact` 比 `trigger`。不是合法正则的 pattern 按字面文本比较，并在文件加载时报一条插件警告 |
 | `hooks[].type` | 是 | — | 只支持 `command`。`prompt`、`agent`、`mcp_tool`、`http` 会被跳过并告警（agentao 的 `prompt` hook 是同名的另一个特性） |
 | `hooks[].command` | 是¹ | — | shell 字符串，在 `/bin/sh` 下执行 |
 | `hooks[].args` | 否 | — | exec 形式；用它代替 `command` 可绕过 shell |
