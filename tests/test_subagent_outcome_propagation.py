@@ -20,11 +20,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from agentao.agents.tools._wrapper import (
+from agentao.agents.tools._outcome import (
     _MAX_ITERATIONS_REASON,
-    AgentToolWrapper,
     _classify_subagent_outcome,
 )
+from agentao.agents.tools._wrapper import AgentToolWrapper
 from agentao.runtime.outcome import TurnOutcome
 
 
@@ -161,7 +161,7 @@ class TestTaskCompleteDetection:
     """
 
     def test_finds_the_payload_from_history(self):
-        from agentao.agents.tools._wrapper import _find_task_complete_result
+        from agentao.agents.tools._outcome import _find_task_complete_result
 
         agent = SimpleNamespace(messages=[
             {"role": "user", "content": "go"},
@@ -172,7 +172,7 @@ class TestTaskCompleteDetection:
         assert _find_task_complete_result(agent) == "the finished analysis"
 
     def test_returns_none_when_never_called(self):
-        from agentao.agents.tools._wrapper import _find_task_complete_result
+        from agentao.agents.tools._outcome import _find_task_complete_result
 
         agent = SimpleNamespace(messages=[
             {"role": "tool", "tool_call_id": "c1", "name": "read_file",
@@ -181,7 +181,7 @@ class TestTaskCompleteDetection:
         assert _find_task_complete_result(agent) is None
 
     def test_takes_the_last_call(self):
-        from agentao.agents.tools._wrapper import _find_task_complete_result
+        from agentao.agents.tools._outcome import _find_task_complete_result
 
         agent = SimpleNamespace(messages=[
             {"role": "tool", "tool_call_id": "c1", "name": "complete_task",
@@ -192,7 +192,7 @@ class TestTaskCompleteDetection:
         assert _find_task_complete_result(agent) == "second"
 
     def test_survives_malformed_history(self):
-        from agentao.agents.tools._wrapper import _find_task_complete_result
+        from agentao.agents.tools._outcome import _find_task_complete_result
 
         assert _find_task_complete_result(SimpleNamespace(messages=None)) is None
         assert _find_task_complete_result(SimpleNamespace()) is None

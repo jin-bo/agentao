@@ -24,7 +24,7 @@ import pytest
 
 from agentao.agent import Agentao
 from agentao.agents.bg_store import BackgroundTaskStore
-from agentao.agents.tools._wrapper import (
+from agentao.agents.tools._outcome import (
     _MAX_ITERATIONS_REASON,
     _classify_subagent_outcome,
     _IncompleteOutcome,

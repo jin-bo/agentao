@@ -338,7 +338,7 @@ def test_a_failing_close_is_logged_and_does_not_replace_the_outcome(
     _replace_chat(monkeypatch, lambda agent: "done")
     wrapper = parent.tools.tools["agent_generalist"]
     try:
-        with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+        with caplog.at_level(logging.WARNING, logger="agentao.agents.tools"):
             result, _ = wrapper._run_sync("x")
             assert result == "done"
 
