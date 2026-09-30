@@ -40,7 +40,7 @@ from openai.types.chat import ChatCompletionMessageToolCall
 
 from agentao.agent import Agentao
 from agentao.agents.bg_store import BackgroundTaskStore
-from agentao.agents.tools._wrapper import _bind_parent_memory_target
+from agentao.agents.tools._inherit import _bind_parent_memory_target
 from agentao.memory import MemoryManager
 from agentao.memory.storage import SQLiteMemoryStore
 from agentao.tools import SaveMemoryTool
@@ -415,7 +415,7 @@ class TestTheRebindFailsClosed:
         def _break(tool):
             del tool.memory_manager
 
-        with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+        with caplog.at_level(logging.WARNING, logger="agentao.agents.tools"):
             results, sub_agents = self._run_with_broken_parent_tool(
                 tmp_path, monkeypatch, _break,
             )
@@ -430,7 +430,7 @@ class TestTheRebindFailsClosed:
         def _break(tool):
             tool.memory_manager = None
 
-        with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+        with caplog.at_level(logging.WARNING, logger="agentao.agents.tools"):
             results, sub_agents = self._run_with_broken_parent_tool(
                 tmp_path, monkeypatch, _break,
             )

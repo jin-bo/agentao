@@ -159,7 +159,7 @@ def _completed(sub_agent, **kw):
 
 
 def _incomplete(sub_agent, **kw):
-    from agentao.agents.tools._wrapper import _IncompleteOutcome
+    from agentao.agents.tools._outcome import _IncompleteOutcome
     return "partial", _stats(_IncompleteOutcome("max_iterations", "ran out"))
 
 

@@ -17,7 +17,7 @@ Agentao 使用 SQLite 作为唯一的持久化后端，管理三类不同性质�
 
 ### 子 agent 的记忆边界
 
-子 agent 的 `MemoryManager` 建在 **transient（`:memory:`）store** 上，随子 agent `close()` 一起丢弃（`agents/tools/_wrapper.py::_child_memory_manager`，#234）。
+子 agent 的 `MemoryManager` 建在 **transient（`:memory:`）store** 上，随子 agent `close()` 一起丢弃（`agents/tools/_inherit.py::_child_memory_manager`，#234）。
 
 | 方向 | 落点 | 原因 |
 |------|------|------|

@@ -370,7 +370,7 @@ def test_a_copy_that_raises_leaves_the_tool_absent(tmp_path, monkeypatch, caplog
     results, sub_agents = _sub_agents_call(
         monkeypatch, _call("read_file", file_path=str(target)),
     )
-    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools"):
         try:
             _run(parent)
             (sub_agent,) = sub_agents
@@ -389,7 +389,7 @@ def test_a_copy_that_raises_leaves_the_tool_absent(tmp_path, monkeypatch, caplog
 def test_a_declaration_that_raises_fails_closed(tmp_path, monkeypatch, caplog):
     parent = _parent(tmp_path, extra_tools=[UndeclarableTool()])
     results, sub_agents = _sub_agents_call(monkeypatch, _call("deploy"))
-    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools"):
         try:
             _run(parent)
             (sub_agent,) = sub_agents
@@ -409,7 +409,7 @@ def test_a_declaration_that_is_a_method_fails_closed(tmp_path, monkeypatch, capl
     host_tool = MethodDeclaringTool()
     parent = _parent(tmp_path, extra_tools=[host_tool])
     results, sub_agents = _sub_agents_call(monkeypatch, _call("deploy"))
-    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools"):
         try:
             _run(parent)
             (sub_agent,) = sub_agents
@@ -430,7 +430,7 @@ def test_a_copy_that_answers_with_the_original_is_refused(tmp_path, monkeypatch,
     host_tool = SelfCopyingTool()
     parent = _parent(tmp_path, extra_tools=[host_tool])
     results, sub_agents = _sub_agents_call(monkeypatch, _call("deploy"))
-    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools"):
         try:
             _run(parent)
             (sub_agent,) = sub_agents
@@ -452,7 +452,7 @@ def test_a_copy_under_another_name_is_refused(tmp_path, monkeypatch, caplog):
     results, sub_agents = _sub_agents_call(
         monkeypatch, _call("deploy"), _call("read_file", file_path=str(target)),
     )
-    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+    with caplog.at_level(logging.WARNING, logger="agentao.agents.tools"):
         try:
             _run(parent)
             (sub_agent,) = sub_agents

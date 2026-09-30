@@ -9,6 +9,8 @@ Layout (each row only depends on rows above):
     _progress   ← SubagentProgress (lifecycle event dataclass)
     _complete   ← TaskComplete + CompleteTaskTool (terminal signal)
     _bg_tools   ← CheckBackgroundAgentTool + CancelBackgroundAgentTool
+    _inherit    ← what a sub-agent takes from its parent at spawn
+    _outcome    ← classifying a finished sub-agent run
     _wrapper    ← AgentToolWrapper (the agent-as-tool driver)
 """
 

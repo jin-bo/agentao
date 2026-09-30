@@ -343,7 +343,7 @@ def test_a_left_out_tool_warns_only_when_the_definition_lists_it(
     parent = _parent(tmp_path, extra_tools=[_Counting("read_file")])
     _sub_agents_call(monkeypatch)
     try:
-        with caplog.at_level(logging.DEBUG, logger="agentao.agents.tools._wrapper"):
+        with caplog.at_level(logging.DEBUG, logger="agentao.agents.tools"):
             _run(parent, agent)
     finally:
         parent.close()
@@ -549,7 +549,7 @@ def test_a_child_view_that_answers_with_nothing_leaves_the_sub_agent_skill_less(
     parent.skill_manager.child_view = lambda: None
     _, _, sub_agents = _sub_agent_turn(monkeypatch)
     try:
-        with caplog.at_level(logging.WARNING, logger="agentao.agents.tools._wrapper"):
+        with caplog.at_level(logging.WARNING, logger="agentao.agents.tools"):
             _run(parent)
         (sub_agent,) = sub_agents
     finally:
