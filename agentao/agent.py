@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import concurrent.futures
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -88,6 +89,58 @@ def _get_arun_pool() -> ThreadPoolExecutor:
                 thread_name_prefix="agentao-arun",
             )
         return _arun_pool
+
+
+#: How long a cancelled ``arun`` waits for its worker to finish the turn
+#: (orphaned-tool backfill, TURN_END) before re-raising. Matches the async-tool
+#: cancel ack budget: past it the worker is stuck in something that does not
+#: poll the token, and the turn lock keeps the next turn from overlapping it.
+_ARUN_CANCEL_CLEANUP_TIMEOUT_S = 5.0
+
+
+async def _await_turn_cleanup(
+    future: "asyncio.Future[str]", work: "concurrent.futures.Future[str]",
+) -> None:
+    """Wait, bounded, for a cancelled turn's worker to finish.
+
+    ``asyncio.wait`` never cancels what it waits on, so a timeout leaves the
+    worker running. Its outcome is then logged from ``work`` — the executor's
+    own future — because the host may close its loop as soon as it has its
+    ``CancelledError`` (``asyncio.run`` does), and a result arriving after
+    that never reaches the loop-bound ``future``. The host's own
+    ``CancelledError`` is what the caller re-raises either way.
+    """
+    try:
+        done, _ = await asyncio.wait({future}, timeout=_ARUN_CANCEL_CLEANUP_TIMEOUT_S)
+    except asyncio.CancelledError:
+        # Cancelled again while waiting: stop waiting, keep the first cancel.
+        done = set()
+    # ``future`` holds its own copy of any exception; reading it here (or when
+    # it lands, if the loop is still open) keeps asyncio from also reporting
+    # "Future exception was never retrieved" for an error already logged.
+    if future in done:
+        _retrieve(future)
+        _log_turn_cleanup_outcome(work)
+    else:
+        _logger.warning(
+            "arun cancelled; the turn did not finish within %.0fs and is still "
+            "running in the background", _ARUN_CANCEL_CLEANUP_TIMEOUT_S,
+        )
+        future.add_done_callback(_retrieve)
+        work.add_done_callback(_log_turn_cleanup_outcome)
+
+
+def _retrieve(future: "asyncio.Future[str]") -> None:
+    if not future.cancelled():
+        future.exception()
+
+
+def _log_turn_cleanup_outcome(work: "concurrent.futures.Future[str]") -> None:
+    if work.cancelled():
+        return
+    exc = work.exception()
+    if exc is not None:
+        _logger.warning("cancelled turn raised during cleanup: %r", exc)
 
 
 class Agentao:
@@ -557,6 +610,9 @@ class Agentao:
 
         # Per-turn cancellation token (set at the start of each chat() call)
         self._current_token: Optional[CancellationToken] = None
+        # Held for the whole of a turn by ``runtime.turn.run_turn``; a second
+        # turn on this agent fails fast instead of sharing ``messages``.
+        self._turn_lock = threading.Lock()
 
         # Structured outcome of the most recent turn (see the ``last_turn``
         # property). Populated in ``runtime/turn.py``'s finally; None until the
@@ -1290,18 +1346,25 @@ class Agentao:
         # test/host stubs that patch ``chat`` with a 3-arg signature stay
         # working, while async hosts can still send multimodal input.
         pool = _get_arun_pool()
+        # Submitted directly, not through ``run_in_executor``, to hold the
+        # ``concurrent.futures.Future``: a turn still queued behind a busy
+        # pool has to be cancellable outright (see the handler below).
         if images:
-            future = loop.run_in_executor(
-                pool, self.chat, user_message, max_iterations, token, images
-            )
+            work = pool.submit(self.chat, user_message, max_iterations, token, images)
         else:
-            future = loop.run_in_executor(
-                pool, self.chat, user_message, max_iterations, token
-            )
+            work = pool.submit(self.chat, user_message, max_iterations, token)
+        future = asyncio.wrap_future(work, loop=loop)
+        # Shielded so a cancel of this task does not cancel ``future`` with it:
+        # a turn that has started is still unwinding (backfilling orphaned tool
+        # results, emitting TURN_END), and waiting on it below needs it alive.
         try:
-            return await future
+            return await asyncio.shield(future)
         except asyncio.CancelledError:
             token.cancel(ASYNC_CANCEL_REASON)
+            # A turn that never started is dropped here; left queued, it would
+            # run later and write a user message nobody is waiting for.
+            if not work.cancel():
+                await _await_turn_cleanup(future, work)
             raise
 
     def _chat_inner(self, user_message: str, max_iterations: int,

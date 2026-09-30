@@ -162,6 +162,8 @@ async def chat_with_timeout(agent, msg: str, seconds: float) -> str:
 Notes:
 
 - `wait_for` cancels the awaiting coroutine, **not** the underlying thread. That's why we also call `token.cancel()` — otherwise the thread runs to completion and leaks CPU
+- `await agent.arun(...)` does this for you, and more: cancelling the task that awaits it cancels the token, then waits up to 5 s for the turn to finish (history backfilled, `TURN_END` emitted) before re-raising `CancelledError`. The thread-based pattern above returns before the thread is done
+- One turn at a time per agent: `chat()` / `arun()` on an agent whose previous turn is still running raises `agentao.runtime.turn.TurnInProgressError` instead of sharing `agent.messages` with it. After a `wait_for` timeout, wait for that turn's `TURN_END` before starting the next
 - For true hard SLAs (e.g. 30s), use the above pattern. For soft SLAs, just use `max_iterations`
 
 ## 2.6.6 `max_iterations` — the structural cap

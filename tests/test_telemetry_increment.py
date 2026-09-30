@@ -14,6 +14,7 @@ fields on payloads host/replay consumers already drain.
 
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -126,6 +127,7 @@ def test_turn_end_carries_tool_count():
         memory_manager=None,
         messages=[],
         _chat_inner=_chat_inner,
+        _turn_lock=threading.Lock(),
     )
     run_turn(agent, "hello")
 
@@ -141,6 +143,7 @@ def test_turn_end_tool_count_zero_when_no_tools():
         memory_manager=None,
         messages=[],
         _chat_inner=lambda *a, **k: "no tools here",
+        _turn_lock=threading.Lock(),
     )
     run_turn(agent, "hello")
 

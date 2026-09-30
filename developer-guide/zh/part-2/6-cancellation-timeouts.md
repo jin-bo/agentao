@@ -160,6 +160,8 @@ async def chat_with_timeout(agent, msg: str, seconds: float) -> str:
 注意：
 
 - `wait_for` 取消的是**等待协程**，**不是**底下那个线程。所以还要 `token.cancel()`——不然线程跑到结束，白烧 CPU
+- `await agent.arun(...)` 会替你做这件事，而且更多：取消等待它的任务时，它先取消 token，再最多等 5 秒让这一轮收尾（补齐历史、发出 `TURN_END`），然后才重抛 `CancelledError`。上面基于线程的写法会在线程结束前就返回
+- 每个 agent 同一时间只跑一轮：上一轮还在跑时调用 `chat()` / `arun()` 会抛 `agentao.runtime.turn.TurnInProgressError`，而不是和它共用 `agent.messages`。`wait_for` 超时后，等上一轮的 `TURN_END` 再开始下一轮
 - 真正硬 SLA（比如 30s）用这套；软 SLA 用 `max_iterations` 就够了
 
 ## 2.6.6 `max_iterations` — 结构上限
