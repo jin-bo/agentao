@@ -434,10 +434,17 @@ def _domain_matches(hostname: str, patterns: List[str]) -> bool:
 _PATH_ARG_TOOLS = frozenset({"read_file", "write_file", "replace"})
 
 
+# What a pattern that cannot be compiled raises. ``re.error`` alone missed two:
+# ``a{99999999999}`` raises OverflowError and deep nesting RecursionError, and
+# either one escaped ``decide()`` and ended every turn that called the tool.
+# All three take the documented fallback, literal equality.
+_BAD_PATTERN_ERRORS = (re.error, OverflowError, RecursionError)
+
+
 def _arg_matches(pattern: str, value: str) -> bool:
     try:
         return re.search(pattern, value) is not None
-    except re.error:
+    except _BAD_PATTERN_ERRORS:
         return pattern == value
 
 
@@ -930,7 +937,7 @@ class PermissionEngine:
     def _match_pattern(self, pattern: str, value: str) -> bool:
         try:
             return bool(re.fullmatch(pattern, value))
-        except re.error:
+        except _BAD_PATTERN_ERRORS:
             return pattern == value
 
     def active_permissions(self) -> "ActivePermissions":
