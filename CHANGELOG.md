@@ -77,6 +77,12 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- A permission rule whose `tool` or `args` pattern overflows or nests too
+  deeply to compile (`a{99999999999}`) now falls back to literal equality,
+  as a pattern with a syntax error always did. It passed the rule validator
+  and then raised `OverflowError` / `RecursionError` out of
+  `PermissionEngine.decide()`, so every turn that called the tool ended with
+  that exception.
 - A hook matcher that is not a valid regular expression — a profile
   `matcher` string, or an `agentao-v1` PreCompact `trigger` — is now reported
   as a plugin warning when the hooks file loads. Dispatch is unchanged: the
