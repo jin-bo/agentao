@@ -336,6 +336,12 @@ class TestParseRetryAfter:
         assert seconds is not None
         assert 25 < seconds <= 30  # allow some slack for test latency
 
+    def test_http_date_in_past_means_retry_now(self):
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+        past = datetime.now(timezone.utc) - timedelta(seconds=30)
+        assert _parse_retry_after(format_datetime(past, usegmt=True)) == 0.0
+
     def test_garbage_string(self):
         assert _parse_retry_after("not a date") is None
 

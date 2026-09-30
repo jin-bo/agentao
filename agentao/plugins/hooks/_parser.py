@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,35 @@ _PROFILE_TIMEOUT_DEFAULT = 600
 _LEGACY_TIMEOUT_DEFAULT = 60
 
 logger = logging.getLogger(__name__)
+
+
+def _warn_if_not_a_regex(
+    pattern: Any, where: str, warn, *, wildcards: tuple[str, ...] = ("*", ""),
+) -> None:
+    """Report, at load, a matcher the dispatcher will not read as a regex.
+
+    Dispatch keeps its behaviour — a pattern that does not compile is compared
+    as a literal (``_matchers._regex_match_full``) — because the contracts
+    treat what they cannot use as a diagnostic, never an error. What changes
+    is that it is no longer silent: ``Read|Write(`` matches no tool at all, so
+    a deny hook written with it never runs, and until now nothing said so.
+    ``wildcards`` are the spellings the caller's matcher treats as "match
+    all" and are skipped: ``*`` and ``""`` for a profile matcher, none for an
+    ``agentao-v1`` trigger, which is a plain full-match regex.
+    """
+    if not isinstance(pattern, str) or pattern in wildcards:
+        return
+    try:
+        re.compile(pattern)
+    # ``re.compile`` raises more than ``re.error``: ``a{99999999999}`` is an
+    # OverflowError and deep nesting a RecursionError. Either one escaping
+    # here would abort loading the whole hooks file.
+    except (re.error, OverflowError, RecursionError) as exc:
+        warn(
+            f"{where} is not a valid regular expression ({exc}): {pattern!r} is "
+            f"compared as literal text, so it matches only a value spelled "
+            f"exactly like it."
+        )
 
 
 def _detect_entry_shape(entry: dict[str, Any]) -> str:
@@ -273,6 +303,18 @@ class ClaudeHooksParser:
             )
             return None
 
+        # Only PreCompact reads ``trigger`` (``_dispatcher._matches``), with a
+        # plain full match: ``*`` is not a wildcard there, and ``""`` matches
+        # only an empty trigger, so neither fires for ``manual`` / ``auto``.
+        if event_name == "PreCompact" and isinstance(matcher, dict):
+            trigger = matcher.get("trigger")
+            where = f"Hook matcher 'trigger' under '{event_name}'"
+            if trigger == "":
+                warn(f"{where} is empty: it matches only an empty trigger, never "
+                     f"'manual' or 'auto'. Omit 'trigger' to match both.")
+            else:
+                _warn_if_not_a_regex(trigger, where, warn, wildcards=())
+
         return ParsedHookRule(
             event=event_name,
             hook_type=hook_type,
@@ -297,6 +339,8 @@ class ClaudeHooksParser:
                 f"{PROFILE_ID}; got {type(matcher).__name__} — group skipped."
             )
             return []
+
+        _warn_if_not_a_regex(matcher, f"Hook matcher under '{event_name}'", warn)
 
         handlers = entry.get("hooks")
         if not handlers:

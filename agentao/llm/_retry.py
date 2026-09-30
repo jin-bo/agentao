@@ -205,9 +205,9 @@ def _parse_retry_after(header: Optional[str]) -> Optional[float]:
         target = parsedate_to_datetime(header)
         if target.tzinfo is None:
             target = target.replace(tzinfo=timezone.utc)
-        delta = (target - datetime.now(timezone.utc)).total_seconds()
-        if delta > 0:
-            return delta
+        # A date already past means "retry now", the same as ``0``; dropping
+        # it fell back to the ~9.5 s local backoff instead.
+        return max(0.0, (target - datetime.now(timezone.utc)).total_seconds())
     except (TypeError, ValueError):
         pass
     return None
