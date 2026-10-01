@@ -73,7 +73,13 @@ class _LoggingMixin:
 
         # Log basic info
         self.logger.info(f"Model: {kwargs.get('model')}")
-        self.logger.info(f"Temperature: {kwargs.get('temperature')}")
+        # Read off the request, so "not sent" covers every reason it is
+        # absent: unset, ``/temperature off``, a latched rejection, a wire
+        # that has no such field.
+        temperature = kwargs.get("temperature")
+        self.logger.info(
+            f"Temperature: {'(not sent)' if temperature is None else temperature}"
+        )
         if kwargs.get('max_tokens'):
             self.logger.info(f"Max Tokens: {kwargs.get('max_tokens')}")
 

@@ -122,3 +122,24 @@ def test_an_unset_request_is_not_repaired_for_a_field_it_never_sent(api_format):
         assert agent.llm.omit_temperature is False
     finally:
         agent.close()
+
+
+def test_the_request_log_says_not_sent_rather_than_none():
+    import logging
+
+    agent = _agent()
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    agent.llm.logger.addHandler(handler)
+    try:
+        kwargs = agent.llm._build_request_kwargs(MESSAGES, None, 100, stream=False)
+        agent.llm._log_request("r1", kwargs)
+        agent.llm.temperature = 0.0
+        kwargs = agent.llm._build_request_kwargs(MESSAGES, None, 100, stream=False)
+        agent.llm._log_request("r2", kwargs)
+    finally:
+        agent.llm.logger.removeHandler(handler)
+        agent.close()
+    lines = [r.getMessage() for r in records if r.getMessage().startswith("Temperature:")]
+    assert lines == ["Temperature: (not sent)", "Temperature: 0.0"]
