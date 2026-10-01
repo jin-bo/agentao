@@ -867,3 +867,34 @@ def test_status_does_not_show_a_dead_server_as_ready(tmp_path, managers, capsys)
 
     assert "State:        ready" not in out
     assert "server closed its output" in out
+
+
+def test_another_setup_failure_clears_needs_login(managers, agent, capsys):
+    # After a login that worked, a different failure must not be reported
+    # as "needs login": that would send the user back to the login and hide
+    # the real error.
+    mgr = _new(managers, agent)
+    with pytest.raises(AcpRpcError):
+        mgr.connect_server(NAME, timeout=TIMEOUT)
+    assert mgr.needs_login(NAME) is True
+
+    agent.cred_file.write_text("broken\n", encoding="utf-8")
+    mgr.restart_server(NAME)
+    with pytest.raises(AcpRpcError) as info:
+        mgr.connect_server(NAME, timeout=TIMEOUT)
+
+    assert not is_auth_required(info.value)
+    assert mgr.needs_login(NAME) is False
+    capsys.readouterr()
+    out = _list_and_status(mgr, capsys)
+    assert "needs login" not in out and "Internal error: broken" in out
+
+
+def test_a_server_in_transition_is_not_labelled_needs_login():
+    from agentao.cli.commands_ext import acp as acp_mod
+
+    mgr = SimpleNamespace(needs_login=lambda name: True)
+    for state in ("starting", "initializing", "stopping", "ready", "busy"):
+        assert acp_mod._state_label(mgr, NAME, state) == state
+    for state in ("configured", "stopped", "failed"):
+        assert acp_mod._state_label(mgr, NAME, state) == "needs login"

@@ -331,7 +331,7 @@ Full error taxonomy (including the `AcpRpcError` contract and the `details["unde
 
 ### Authentication (`auth_required`)
 
-An agent without credentials answers `session/new` with `auth_required` — an `AcpRpcError` with `rpc_code == -32000`. The manager stamps `details["auth_required"] = True` and `details["auth_methods"]` (what the agent advertised), and does **not** count it toward the handshake-failure streak, so retrying never turns the server fatal. `mgr.auth_methods(name)` returns the same list at any time after the first `initialize`, and `mgr.needs_login(name)` stays true until a session opens (a restart does not clear it), so a host can show "needs login" rather than `failed`.
+An agent without credentials answers `session/new` with `auth_required` — an `AcpRpcError` with `rpc_code == -32000`. The manager stamps `details["auth_required"] = True` and `details["auth_methods"]` (what the agent advertised), and does **not** count it toward the handshake-failure streak, so retrying never turns the server fatal. `mgr.auth_methods(name)` returns the same list at any time after the first `initialize`, and `mgr.needs_login(name)` stays true until a session opens or setup fails for another reason (a restart does not clear it), so a host can show "needs login" rather than `failed`.
 
 ```python
 from agentao.acp_client import ACPManager, AcpRpcError

@@ -60,8 +60,9 @@ class AuthMixin:
     def needs_login(self, name: str) -> bool:
         """Whether *name*'s last session setup answered ``auth_required``.
 
-        Stays ``True`` across restarts until a session opens, so a host can
-        show "needs login" rather than a bare ``failed`` / ``stopped``.
+        Stays ``True`` across restarts until a session opens or a setup fails
+        for another reason, so a host can show "needs login" rather than a
+        bare ``failed`` / ``stopped``.
 
         Raises:
             AcpServerNotFound: If *name* is not configured.

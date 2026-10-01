@@ -119,7 +119,7 @@ _Targeting 0.5.8. Add entries under the relevant heading as work lands._
 - **`/acp` after `auth_required` and after a crash.** A server waiting for a
   login is listed as `needs login` instead of `failed`; the new
   `ACPManager.needs_login(name)` reports it and stays true until a session
-  opens. A successful `/acp login` clears the recorded `auth_required` error,
+  opens or setup fails for another reason. A successful `/acp login` clears the recorded `auth_required` error,
   which `/acp status` used to keep showing. `/acp status` also reads the
   status snapshot, which re-checks the process, so a server that died
   mid-turn is no longer shown `ready`.

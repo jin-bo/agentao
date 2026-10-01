@@ -299,6 +299,12 @@ class RecoveryMixin:
         In every branch ``details["phase"] = "handshake"`` is the
         canonical cross-subclass signal.
         """
+        if isinstance(exc, AcpClientError) and not is_auth_required(exc):
+            # The last setup failed for another reason (often right after a
+            # login): "needs login" would hide that error behind a login
+            # that already worked.
+            with self._auth_lock:
+                self._needs_login.discard(name)
         if isinstance(exc, AcpInteractionRequiredError):
             return False
         if is_auth_required(exc):

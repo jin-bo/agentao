@@ -164,14 +164,17 @@ def _acp_list(cli: AgentaoCLI) -> None:
     console.print()
 
 
-_LIVE_STATES = ("ready", "busy", "waiting_for_user")
+# Only an idle server is relabelled: one that is starting, initializing or
+# stopping is mid-transition (e.g. the reconnect after a login), and calling it
+# "needs login" there would tell the user to log in again.
+_IDLE_STATES = ("configured", "stopped", "failed")
 
 
 def _state_label(mgr, name: str, state: str) -> str:
     """*state*, or ``needs login`` for a server stopped by ``auth_required``."""
     from ...acp_client.client import AcpServerNotFound
 
-    if state in _LIVE_STATES:
+    if state not in _IDLE_STATES:
         return state
     try:
         return "needs login" if mgr.needs_login(name) else state
