@@ -26,6 +26,7 @@
 | 8 | 记忆库 | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
 | 9 | Run spec（`agentao run`） | `--spec` 传入的任意路径（或 stdin） | — | `cli/run_models.py::RunSpec`、`cli/run_template.py::render_spec` | [run-spec-parameters.zh.md](../design/run-spec-parameters.zh.md) |
 | 10 | 插件 hooks | `<plugin>/hooks/hooks.json`，或经插件 manifest 的 `hooks` 声明/内联 | — *（随插件走）* | `embedding/plugins/manager.py`（发现）→ `plugins/hooks/_parser.py`（解析） | 见下文 §11；Developer Guide §5.7 |
+| 11 | LLM 登录配置（ACP session） | — | `~/.agentao/llm.json` *（由 `agentao --login` 写入）* | `embedding/llm_config.py::resolve_session_llm_config` | 见下文 §2a；[acp.md](../guides/acp.md#provider-configuration-and-login-acp-registry-installs) |
 
 **内部状态文件**（自动管理；列出仅为告知，请勿手动编辑）：
 
@@ -52,7 +53,7 @@
 
 ## 2. `.env` — LLM provider 配置
 
-- **路径。** `<cwd>/.env`。在 `embedding/factory.py::build_from_environment` 的最前面通过 `dotenv.load_dotenv()` 加载。
+- **路径。** `<cwd>/.env`。在 `embedding/factory.py::build_from_environment` 的最前面通过 `dotenv.load_dotenv()` 加载。**ACP 服务端的 session 路径例外**（0.5.8）：那里只读取、不加载进进程环境，且只使用其中的 LLM 变量——见 §2a。
 - **Loader。** `embedding/factory.py::discover_llm_kwargs`。
 - **机制。** Provider 前缀化：`LLM_PROVIDER`（缺省 `OPENAI`）选定要读哪一组 `{PROVIDER}_API_KEY` / `{PROVIDER}_BASE_URL` / `{PROVIDER}_MODEL`，外加该块可选的 `{PROVIDER}_API_FORMAT`。
 
@@ -77,6 +78,26 @@
 | `AGENTAO_SCRUB_CHILD_ENV` | 否 | 开启 | shell 与 MCP 子进程是否继承 agentao **自己的** provider 凭据。默认（除 `0`/`false`/`no`/`off` 之外的任何值）会把 `HARNESS_ENV_KEYS` —— `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`LLM_EXTRA_BODY`…… —— 从子进程环境里剔除，这样被 prompt 注入的 `run_shell_command("env")` 捞不到任何值钱的东西。agent 与运行它的人是**两个不同的主体**，LLM 决定要跑的东西没有一个需要那把给 LLM 付费的 key。**设为 `0` 可恢复完整继承** —— 如果你要在 agent 自己的 shell 里跑 `agentao run`、或任何会调用 provider 的脚本，就需要这么做。只有 agentao 自己的 key 会被剔除；用户的其他密钥（AWS、GitHub、`DATABASE_URL`）原样保留 —— 要不要连它们一起扫是 host 的决定，想要更严格环境的 host 在自己的 `ShellExecutor` 里决定（请求携带完整的 `launch.env`，宿主执行器决定真正传给 `Popen` 的是什么）。这是纵深防御，不是密封：`cat .env` 依然有效。见 `agentao/capabilities/process.py::build_child_env`。 |
 
 > 标准范例：仓库根目录的 `.env.example`。
+
+### 2a. `~/.agentao/llm.json` 与 ACP session 的配置解析（0.5.8）
+
+`agentao --login`（手动运行，或由 ACP 客户端的 Terminal Auth 启动）把一组 provider 配置写入 `~/.agentao/llm.json`，权限为 `0600`：
+
+```json
+{"provider": "DEEPSEEK", "api_key": "sk-…", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat", "api_format": "openai-completions"}
+```
+
+`api_format` 取值同 `{PROVIDER}_API_FORMAT`。登录时总会写入它（ANTHROPIC 默认 `anthropic-messages`，其他默认 `openai-completions`；替换同一 provider 的旧配置时，默认沿用旧文件里的值）；手写的文件可以省略，省略即默认传输格式。未知字段忽略；字段不是字符串或 JSON 非法属于配置错误。
+
+只有 ACP 服务端（`agentao --acp`）的默认 session 路径读取这个文件；交互式 CLI、`agentao run` 和 `build_from_environment()` 都不读。每次 `session/new` / `session/load` 都会重新解析该 session 的 LLM 配置（`embedding/llm_config.py::resolve_session_llm_config`）：
+
+1. **三层，优先级从高到低：** 服务端的启动环境（启动时快照）→ session 的 `<cwd>/.env`（不向 `cwd` 上层查找；其中的 `${VAR}` 引用按启动环境快照展开，而不是当前的进程环境）→ `~/.agentao/llm.json`。任何一层里，空值或仅含空白的值都视为未设置。
+2. **先选 provider：** 取最高一层里显式指定的（`LLM_PROVIDER`，或文件中的 `provider`），都没有则为 `OPENAI`。某一层是否有 API key 不参与选择。
+3. **再读字段：** 只针对选定的 provider，逐层读取 `{PROVIDER}_MODEL` 以及共用的 `LLM_*` 变量。文件只有在其 `provider` 与选定的一致时才参与。
+4. **key、base URL 与传输格式一起取：** `{PROVIDER}_API_KEY`、`{PROVIDER}_BASE_URL` 和 `{PROVIDER}_API_FORMAT` 都取自设置了 key 的最高一层。那一层没有 base URL 时视为缺失（`auth_required`），不从下层借用——这样给别的工具导出的 `OPENAI_API_KEY` 不会被发到你登录时填的网关地址；那一层没有格式时用默认传输格式——登录文件里的 `anthropic-messages` 不会套到项目的 OpenAI 兼容网关上。key、URL 和格式要放在同一处。
+5. **快照：** 解析结果固定在 session 上。`session/set_config_option` 切换 provider 时按这份快照解析；之后重新登录也不会改变它。
+
+不会向 `os.environ` 写入任何内容。**此路径只从项目 `.env` 读取 LLM 变量**——MCP `${VAR}` 展开、`JINA_API_KEY` / `BOCHA_API_KEY`、`GITHUB_TOKEN`、`AGENTAO_WEB_FETCH_*` 等须由启动环境提供（即 ACP 客户端配置里的 `env`）。三层都缺 `api_key`、`base_url` 或 `model` 时返回 `auth_required`（`-32000`）；某个来源存在但不可用时返回 `-32603`，消息只写文件或变量名，不含其值。宿主注入了自己的 `agent_factory` 或 `provider_resolver` 时，以上都不适用，沿用上文的环境变量行为。
 
 ---
 

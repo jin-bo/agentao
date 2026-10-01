@@ -22,9 +22,12 @@ Value rules (Decision in ``docs/design/deepchat-acp-patch-revision.md``):
   - **Same model on different endpoints** = distinct catalog entries
     (``openai/gpt-4o`` vs ``azure-openai/gpt-4o``).
 
-The default ``provider_resolver`` resolves **only** the current
-``LLM_PROVIDER`` from the existing factory env (``{PROVIDER}_API_KEY`` /
-``_BASE_URL``); any other provider id raises ``INVALID_REQUEST``. It does
+The default ``provider_resolver`` resolves **only** the session's own
+provider; any other provider id raises ``INVALID_REQUEST``. A session built by
+the default factory resolves against the configuration it was created with
+(:class:`agentao.embedding.llm_config.ResolvedLLMConfig`); one from a
+host-injected factory reads the current ``LLM_PROVIDER`` block
+(``{PROVIDER}_API_KEY`` / ``_BASE_URL``) from the process environment. It does
 **not** scan the environment for a provider list. Multi-provider switching
 requires a host-injected resolver paired with a host-injected catalog
 (``AcpServer(provider_resolver=..., model_catalog=...)``).
@@ -116,6 +119,20 @@ def default_provider_resolver(provider_id: str) -> Dict[str, Optional[str]]:
         # and re-selecting the configured provider would leave its protocol.
         "api_format": os.getenv(f"{prefix}_API_FORMAT"),
     }
+
+
+def _session_default_resolver(session: "AcpSessionState"):
+    """The resolver used when the host injected none.
+
+    A session built by the default factory carries the configuration it was
+    created with, and resolves against that — never the process environment,
+    which in a multi-project server may hold another session's values. A
+    session from a host-injected factory has no snapshot and keeps the
+    environment resolver.
+    """
+    if session.llm_config is not None:
+        return session.llm_config.resolve_provider
+    return default_provider_resolver
 
 
 def _current_provider_id(session: "AcpSessionState") -> str:
@@ -230,7 +247,7 @@ def handle_session_set_config_option(
                     f"{METHOD_SESSION_SET_CONFIG_OPTION}.value 'provider/model' "
                     "must have a non-empty provider and model"
                 )
-            resolver = server.provider_resolver or default_provider_resolver
+            resolver = server.provider_resolver or _session_default_resolver(session)
             try:
                 creds = resolver(provider_id)
             except Exception as e:

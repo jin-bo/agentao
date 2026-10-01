@@ -25,9 +25,12 @@ Capability advertisement policy:
   client imports ``stdio_client``, ``sse_client`` and
   ``streamable_http_client`` from the mcp SDK, so both ``sse: True`` and
   ``http: True``.
-- ``authMethods``: Agentao performs no ACP-level auth in v1, so an empty
-  list. Agentao's own API credentials (OPENAI_API_KEY, etc.) are handled
-  out of band via environment variables; they are not ACP auth methods.
+- ``authMethods``: one ``terminal`` method (``agentao --login``) when the
+  client declared Terminal Auth support, otherwise an empty list — the spec
+  lets an agent advertise a terminal method only to a client that can run
+  one. ``initialize`` never needs credentials; a missing provider
+  configuration surfaces later, as ``auth_required`` from ``session/new`` /
+  ``session/load``. See :mod:`agentao.acp.llm_auth`.
 
 This module is deliberately thin: it parses request params, updates
 ``server.state``, and returns the response dict. All JSON-RPC framing is
@@ -40,6 +43,7 @@ from typing import Any, Dict, TYPE_CHECKING
 
 from agentao import __version__ as AGENTAO_VERSION
 
+from .llm_auth import auth_methods_for
 from .protocol import ACP_PROTOCOL_VERSION, METHOD_ASK_USER, METHOD_INITIALIZE
 
 if TYPE_CHECKING:
@@ -86,11 +90,6 @@ AGENT_INFO: Dict[str, str] = {
     "title": "Agentao",
     "version": AGENTAO_VERSION,
 }
-
-#: No ACP-level auth in v1. Agentao provider credentials (OPENAI_API_KEY,
-#: etc.) are environment-sourced and are not part of the ACP handshake.
-AUTH_METHODS: list = []
-
 
 # ---------------------------------------------------------------------------
 # Handler
@@ -139,7 +138,7 @@ def handle_initialize(server: "AcpServer", params: Any) -> Dict[str, Any]:
     return {
         "protocolVersion": negotiated_version,
         "agentCapabilities": AGENT_CAPABILITIES,
-        "authMethods": AUTH_METHODS,
+        "authMethods": auth_methods_for(client_capabilities),
         "agentInfo": AGENT_INFO,
         # ACP advertises extensions through ``_meta`` rather than a top-level
         # ``extensions`` array (the standard fields are protocolVersion /

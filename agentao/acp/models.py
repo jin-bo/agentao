@@ -248,6 +248,12 @@ class AcpSessionState:
     #: provider" (``LLM_PROVIDER`` env). A ``provider/model`` switch sets it;
     #: model-only switches leave it untouched (the provider is preserved).
     provider_id: Optional[str] = None
+    #: The LLM configuration this session was created with
+    #: (:class:`agentao.embedding.llm_config.ResolvedLLMConfig`), set only on
+    #: the default session path. A ``provider/model`` switch resolves
+    #: credentials against it instead of the process environment, and a later
+    #: login does not change it. ``None`` for a host-injected ``agent_factory``.
+    llm_config: Optional[Any] = None
     #: The ACP ``modeId`` the client last set (``session/set_mode``). Persisted
     #: even when it does not map to an Agentao permission preset, so a client
     #: UI mode that has no permission meaning (e.g. DeepChat's ``code`` /

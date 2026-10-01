@@ -121,12 +121,15 @@ from .session_new import (
     AgentFactory,
     _parse_cwd,
     _parse_mcp_servers,
+    bind_llm_config,
     default_agent_factory,
+    default_factory_llm_config,
 )
 from .session_set_config_option import config_options_for_session
 from .transport import ACPTransport
 
 if TYPE_CHECKING:
+    from agentao.embedding.llm_config import ResolvedLLMConfig
     from .server import AcpServer
 
 logger = logging.getLogger(__name__)
@@ -215,6 +218,11 @@ def handle_session_load(
             ),
         )
 
+    # The same per-session LLM resolution as ``session/new``: re-read now, so a
+    # login completed while this server runs is seen, and ``auth_required``
+    # when nothing is configured.
+    llm_config = default_factory_llm_config(server, cwd, agent_factory)
+
     # 4) Pull the persisted history off disk. ``OSError`` covers the missing
     #    /unreadable file, ``ValueError`` the corrupt or not-an-object one —
     #    the same pair ``resume_session_on_new`` catches, and for the same
@@ -248,6 +256,7 @@ def handle_session_load(
         active_skills=active_skills,
         agent_factory=agent_factory,
         origin="session/load",
+        llm_config=llm_config,
     )
 
     # 9) ACP spec returns an (otherwise) empty result for session/load. We
@@ -271,6 +280,7 @@ def _instantiate_loaded_session(
     active_skills: Any,
     agent_factory: AgentFactory,
     origin: str,
+    llm_config: Optional["ResolvedLLMConfig"] = None,
 ) -> AcpSessionState:
     """Build, replay, and register a session from persisted history.
 
@@ -300,6 +310,10 @@ def _instantiate_loaded_session(
     consistent; the saved name remains available in ``session/list`` for
     reference.
 
+    ``llm_config`` is the session's resolved LLM configuration from
+    :func:`~agentao.acp.session_new.default_factory_llm_config` — ``None``
+    for a host-injected factory, which is called without it.
+
     ``origin`` is a label used only in log lines (e.g. ``"session/load"`` vs
     ``"resume"``). On any failure the partially-built runtime is closed so
     MCP subprocesses do not leak, then the error re-raises.
@@ -327,6 +341,10 @@ def _instantiate_loaded_session(
     # path as session/new — translation is total and never raises.
     mcp_servers_internal = translate_acp_mcp_servers(mcp_servers)
 
+    factory_kwargs: Dict[str, Any] = {}
+    if llm_config is not None:
+        factory_kwargs["llm_config"] = llm_config
+
     agent = None
     try:
         agent = agent_factory(
@@ -336,6 +354,7 @@ def _instantiate_loaded_session(
             permission_engine=permission_engine,
             mcp_servers=mcp_servers_internal,
             model=None,  # use process-default model — persisted model not restored
+            **factory_kwargs,
         )
 
         # Bind the persisted ACP session id onto the agent so subsequent
@@ -438,6 +457,7 @@ def _instantiate_loaded_session(
             client_capabilities=client_capabilities_snapshot,
             cancel_token=None,
         )
+        bind_llm_config(state, llm_config)
         try:
             server.sessions.create(
                 state,
@@ -491,6 +511,7 @@ def resume_session_on_new(
     mcp_servers: List[Dict[str, Any]],
     directive: ResumeDirective,
     agent_factory: AgentFactory,
+    llm_config: Optional["ResolvedLLMConfig"] = None,
 ) -> Optional[Dict[str, Any]]:
     """Resume a persisted session in place of a fresh ``session/new``.
 
@@ -556,6 +577,7 @@ def resume_session_on_new(
         active_skills=active_skills,
         agent_factory=agent_factory,
         origin="resume",
+        llm_config=llm_config,
     )
 
     # Advertise the permission presets as ACP session modes, exactly as a
