@@ -16,11 +16,10 @@ if TYPE_CHECKING:
     # Type checkers and IDEs see explicit names; the runtime path uses __getattr__.
     from .app import AgentaoCLI
     from ._globals import console
+    from ._light import _build_parser, run_acp_mode
+    from ._llm_prompts import _PROVIDER_DEFAULTS
     from .entrypoints import (
-        _build_parser,
-        _PROVIDER_DEFAULTS,
         main,
-        run_acp_mode,
         run_init_wizard,
         run_print_mode,
     )
@@ -50,10 +49,10 @@ def _names(mod: str, *names: str) -> dict[str, tuple[str, str]]:
 _LAZY_NAMES: dict[str, tuple[str, str]] = {
     "AgentaoCLI": (".app", "AgentaoCLI"),
     "console":    ("._globals", "console"),
-    **_names(".entrypoints",
-        "main", "run_print_mode", "run_init_wizard", "run_acp_mode",
-        "_build_parser", "_PROVIDER_DEFAULTS",
-    ),
+    **_names(".entrypoints", "main", "run_print_mode", "run_init_wizard"),
+    # Light modules: ``--acp`` / ``--login`` resolve these without [cli].
+    **_names("._light", "run_acp_mode", "_build_parser"),
+    "_PROVIDER_DEFAULTS": ("._llm_prompts", "_PROVIDER_DEFAULTS"),
     "run_login": (".login", "run_login"),
     **_names(".subcommands",
         "handle_skill_subcommand", "handle_plugin_subcommand",
@@ -93,6 +92,15 @@ def entrypoint() -> None:
     present, prompt_toolkit missing) would otherwise bypass this guard.
     """
     import importlib.util
+
+    # ``--acp`` and ``--login`` need none of the [cli] extras, and an ACP
+    # Registry client runs them from a bare ``uvx agentao@<version>``.
+    argv = sys.argv[1:]
+    if "--acp" in argv or "--login" in argv:
+        from ._light import run_light
+
+        if run_light(argv):
+            return
 
     for name in _CLI_EXTRA_PACKAGES:
         try:

@@ -82,9 +82,9 @@ def login_command() -> str:
 
     A Registry install runs through ``uvx``, so the user has no ``agentao``
     executable to type; this is the same package spec the Registry entry
-    launches.
+    launches. ``--login`` needs none of the ``[cli]`` extras.
     """
-    return f"uvx 'agentao[cli]@{AGENTAO_VERSION}' {LOGIN_FLAG}"
+    return f"uvx agentao@{AGENTAO_VERSION} {LOGIN_FLAG}"
 
 
 def _auth_required_message(

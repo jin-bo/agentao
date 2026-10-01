@@ -18,9 +18,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional
 
-from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
-
 from agentao.embedding.llm_config import (
     LLMConfigError,
     load_user_llm_config,
@@ -28,7 +25,17 @@ from agentao.embedding.llm_config import (
     user_llm_config_path,
 )
 
-from ._globals import console
+from . import _llm_prompts
+
+# An ACP Registry client runs ``uvx agentao@<version> --login`` from a bare
+# install, so the login must work without the [cli] extras.
+try:
+    from rich.panel import Panel
+    from rich.prompt import Confirm, Prompt
+
+    from ._globals import console
+except ImportError:
+    from ._plain_tty import Confirm, Panel, Prompt, console  # type: ignore[assignment]
 
 #: Providers whose own API is not Chat Completions; every other provider
 #: defaults to the OpenAI-compatible wire.
@@ -100,8 +107,6 @@ def run_login(config_path: Optional[Path] = None) -> int:
     (Ctrl+C, end of input), a failed save, or declining to replace an
     incomplete file is non-zero, with a one-line message and no traceback.
     """
-    from .entrypoints import _prompt_llm_settings
-
     path = config_path or user_llm_config_path()
     try:
         console.print()
@@ -117,7 +122,7 @@ def run_login(config_path: Optional[Path] = None) -> int:
             kept = _keep_existing(path, existing)
             if kept is not None:
                 return kept
-        provider, api_key, base_url, model = _prompt_llm_settings(hide_key=True)
+        provider, api_key, base_url, model = _llm_prompts._prompt_llm_settings(hide_key=True)
         api_format = _prompt_api_format(provider, existing)
     except KeyboardInterrupt:
         console.print("\n[error]Login cancelled. No changes made.[/error]")
