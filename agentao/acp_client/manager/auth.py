@@ -57,6 +57,20 @@ class AuthMixin:
         with self._auth_lock:
             return [dict(m) for m in self._auth_methods.get(name, [])]
 
+    def needs_login(self, name: str) -> bool:
+        """Whether *name*'s last session setup answered ``auth_required``.
+
+        Stays ``True`` across restarts until a session opens, so a host can
+        show "needs login" rather than a bare ``failed`` / ``stopped``.
+
+        Raises:
+            AcpServerNotFound: If *name* is not configured.
+        """
+        if name not in self._handles:
+            raise AcpServerNotFound(name)
+        with self._auth_lock:
+            return name in self._needs_login
+
     @property
     def terminal_auth(self) -> bool:
         """Whether this manager declares Terminal Auth to its servers."""

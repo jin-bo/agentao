@@ -422,6 +422,8 @@ def acp_login(cli: "AgentaoCLI", rest: str) -> None:
                         f"{_shown(str(exc))}[/error]\n"
                     )
                 return
+            # The login fixed what the recorded ``auth_required`` reported.
+            mgr.reset_last_error(name)
     except AcpServerNotFound:
         console.print(f"\n[error]Unknown ACP server: {_shown(name)}[/error]\n")
         return

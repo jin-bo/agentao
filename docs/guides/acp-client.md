@@ -136,6 +136,10 @@ restarted. After a success Agentao restarts the server, initializes again and
 opens a session. If the agent still requires authentication, that is
 reported once; the login is not run again.
 
+Until a session opens, `/acp` and `/acp status` show such a server as
+`needs login` rather than `failed`, and a successful login clears the
+recorded `auth_required` error.
+
 While a login runs, the server is reserved. A turn on it, or a second login,
 gets `SERVER_BUSY`; a login is refused while a turn is active. Other servers
 are not affected.

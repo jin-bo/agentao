@@ -72,6 +72,9 @@ class ACPManager(
         # login reservations (server → owning thread id); see ``auth.py``.
         self._auth_methods: Dict[str, List[Dict[str, Any]]] = {}
         self._login_reservations: Dict[str, int] = {}
+        # Servers whose last session setup answered ``auth_required``; cleared
+        # by the next successful handshake. Guarded by ``_auth_lock``.
+        self._needs_login: Set[str] = set()
         self._auth_lock = threading.Lock()
         # Serializes ``add_server`` registrations against each other.
         self._add_server_lock = threading.Lock()

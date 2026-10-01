@@ -425,6 +425,7 @@ token 被取消时在 agent 循环里抛出。`chat()` 会捕获并返回 `[Canc
 | `from_project` | `@classmethod from_project(project_root=None, *, terminal_auth=False) -> ACPManager` | 读 `.agentao/acp.json`。`terminal_auth=True` 声明 ACP Terminal Auth——仅当宿主能运行终端登录时传 |
 | `add_server(name, config)` | | 向运行中的 manager 登记新 server，保持停止；不影响运行中的 server |
 | `auth_methods(name)` | `-> list[dict]` | 该 server 最近一次 `initialize` 返回的 `authMethods` |
+| `needs_login(name)` | `-> bool` | 该 server 最近一次建会话回了 `auth_required`；重启后仍为真，直到成功打开会话 |
 | `reserve_for_login(name)` | 上下文管理器 | 登录 → 重启 → 连接期间，阻止其他线程在 `name` 上开 turn / 连接（`SERVER_BUSY`） |
 | `server_names` | `-> list[str]` | 已声明的服务器 |
 | `start_all` | `start_all(only_auto=True)` | 启动所有 auto-start 服务器 |
