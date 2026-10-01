@@ -37,7 +37,7 @@ def _answers(monkeypatch, *, settings=_SETTINGS, replace=None):
             raise settings
         return settings
 
-    monkeypatch.setattr("agentao.cli.entrypoints._prompt_llm_settings", prompt)
+    monkeypatch.setattr("agentao.cli._llm_prompts._prompt_llm_settings", prompt)
 
     def prompt_format(provider, previous):
         calls["previous"] = previous
@@ -246,3 +246,21 @@ def test_the_replaced_configuration_is_offered_to_the_format_prompt(monkeypatch,
 
     assert login_mod.run_login(config_path) == 0
     assert calls["previous"]["api_format"] == "openai-responses"
+
+
+def test_custom_provider_reasks_an_empty_url_and_model(monkeypatch):
+    # rich's Prompt.ask answers an empty reply with ``default`` itself, and a
+    # CUSTOM provider has none: that ``None`` used to crash on ``.strip()``.
+    from agentao.cli import _llm_prompts
+
+    answers = iter(["CUSTOM", "MYAPI", "sk-x", None, "https://x.test/v1", None, "m1"])
+    asked = []
+
+    def ask(prompt, **kwargs):
+        asked.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr(_llm_prompts.Prompt, "ask", staticmethod(ask))
+
+    assert _llm_prompts._prompt_llm_settings() == ("MYAPI", "sk-x", "https://x.test/v1", "m1")
+    assert asked.count("MYAPI_BASE_URL") == 2 and asked.count("MYAPI_MODEL") == 2

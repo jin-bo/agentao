@@ -189,7 +189,7 @@ def test_without_terminal_auth_the_error_names_a_runnable_uvx_command(home, tmp_
 
     assert info.value.code == AUTH_REQUIRED
     assert login_command() in info.value.message
-    assert login_command().startswith("uvx 'agentao[cli]@")
+    assert login_command().startswith("uvx agentao@")
 
 
 def test_session_load_without_configuration_is_auth_required(home, tmp_path):

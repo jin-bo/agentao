@@ -13,7 +13,22 @@ _Targeting 0.5.9. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **`agentao --acp` and `agentao --login` run from a bare `pip install
+  agentao`**, without the `[cli]` extras. The ACP Registry's tooling cannot
+  look up a package spec with extras (it queries PyPI for `agentao[cli]`), so
+  a Registry entry has to launch `uvx agentao@<version>`, which used to stop
+  at "agentao CLI requires extra packages (missing: rich)". Both modes are now
+  dispatched before that check; the login uses `rich` when it is installed
+  and plain terminal prompts when it is not. Every other command still needs
+  `[cli]`. The login command an `auth_required` error names is now
+  `uvx agentao@<version> --login`.
+
 ### Fixed
+
+- **`agentao init` / `agentao --login` no longer crash on an empty base URL or
+  model for a CUSTOM provider.** `rich` answers an empty reply with the
+  default, `None` there, and `.strip()` raised `AttributeError`; the
+  question is now asked again.
 
 ---
 
