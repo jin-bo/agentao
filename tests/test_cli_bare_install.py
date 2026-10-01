@@ -104,3 +104,19 @@ def test_other_commands_still_require_the_extras(tmp_path):
 
         assert proc.returncode == 2, args
         assert "requires extra packages" in proc.stderr, args
+
+
+def test_a_hidden_answer_is_read_from_stdin_when_it_is_not_a_terminal(monkeypatch):
+    # getpass reads /dev/tty (or the Windows console), never stdin: with
+    # stdin piped from a client, a hidden prompt must not wait on a terminal.
+    import io
+
+    from agentao.cli import _plain_tty
+
+    def no_terminal(*_a, **_k):
+        raise AssertionError("getpass would read the terminal, not the piped stdin")
+
+    monkeypatch.setattr(_plain_tty.getpass, "getpass", no_terminal)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("sk-piped\n"))
+
+    assert _plain_tty.Prompt.ask("KEY", password=True) == "sk-piped"

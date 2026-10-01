@@ -47,7 +47,10 @@ class Panel:
 
 
 def _read(prompt: str, password: bool) -> str:
-    if password:
+    # ``getpass`` reads the terminal itself (``/dev/tty``, or the Windows
+    # console), not stdin. When stdin is not a terminal there is nothing to
+    # hide and the answer is on stdin, so read it there.
+    if password and sys.stdin.isatty():
         return getpass.getpass(prompt)
     return input(prompt)
 
