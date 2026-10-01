@@ -76,7 +76,7 @@ agent = Agentao(
 | Param | Type | Default | What it does |
 |-------|------|---------|--------------|
 | `base_url` | `str` | OpenAI's | Switch to any OpenAI-compatible endpoint |
-| `temperature` | `float` | `0.2` | Sampling temperature |
+| `temperature` | `float \| None` | `None` | Sampling temperature. `None` sends no `temperature`, so the provider's default applies (0.5.7; was `0.2`) |
 | `extra_body` | `Dict[str,Any]` | `None` | Forwarded verbatim to the LLM `.create()` as the SDK's `extra_body` — the escape hatch for params the closed request build does not expose (`reasoning_effort` / `top_p` / `seed` / `response_format` / provider-specific fields). **Keyword-only.** Sub-agents inherit it; logged with credential keys redacted. **Mutually exclusive** with `llm_client`. See below |
 | `api_format` | `str` | `"openai-completions"` | The wire protocol spoken to `base_url` (0.5.0): `"openai-completions"`, `"anthropic-messages"` (Anthropic's Messages API over the official SDK) or `"openai-responses"` (OpenAI's Responses API, 0.5.3). **Keyword-only**, configured and never inferred from the URL or the model name, changed afterwards only by `set_provider(..., api_format=)`, inherited by sub-agents, and **mutually exclusive with `llm_client=`**. An unknown value raises `ValueError`. On `anthropic-messages`, `base_url` is the API root, `temperature` is not sent, and extended thinking goes through `extra_body`. Env equivalent: `{PROVIDER}_API_FORMAT` — see [Appendix B](/en/appendix/b-config-keys) |
 | `transport` | `Transport` | `NullTransport()` | UI bridge: events + confirm + ask_user + max-iter fallback. See [Part 4](/en/part-4/) |

@@ -299,7 +299,7 @@ agent = Agentao(working_directory=".", transport=SdkTransport(on_event=on_event)
 | 属性 | 来源事件 | 载荷键 |
 |---|---|---|
 | `gen_ai.system` | —— | 按 provider 自己填 |
-| `gen_ai.request.model` / `.temperature` / `.max_tokens` | `LLM_CALL_STARTED` | `model` / `temperature` / `max_tokens` |
+| `gen_ai.request.model` / `.temperature` / `.max_tokens` | `LLM_CALL_STARTED` | `model` / `temperature`（未设置时为 `None` —— 请求里没发，跳过该属性即可）/ `max_tokens` |
 | `gen_ai.usage.prompt_tokens` / `completion_tokens` | `LLM_CALL_COMPLETED` | 同名 |
 | `gen_ai.response.finish_reason` | `LLM_CALL_COMPLETED` | `finish_reason`（失败时为 `None`） |
 | 工具 span 名 / span id / 起止时间 | `ToolLifecycleEvent` | `tool_name` / `tool_call_id` / `started_at`、`completed_at` |

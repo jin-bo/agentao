@@ -109,12 +109,12 @@ Some providers expose Claude models behind OpenAI-compatible APIs. If `/model` l
 
 ```text
 > /temperature        # show current
-Temperature: 1.0
+Temperature: provider default (not sent)
 > /temperature 0.2    # set
-Temperature changed from 1.0 to 0.2
+Temperature changed from provider default to 0.2
 ```
 
-Range: `0.0` to `2.0`. Lower = more deterministic, higher = more creative. Defaults are provider-specific (typically 1.0 for chat).
+Range: `0.0` to `2.0`. Lower = more deterministic, higher = more creative. By default no temperature is set and none is sent, so the provider's own default applies (typically 1.0 for chat; 0.5.7 — before, `0.2` was sent). `/temperature off` keeps a set value but stops sending it; `on` sends it again, and says so when there is no value to send.
 
 The change is **per session**. Restarting the CLI resets to the provider default. If you want a persistent default, set it in `.env`:
 

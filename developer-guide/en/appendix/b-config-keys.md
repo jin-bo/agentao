@@ -22,7 +22,7 @@ Every knob Agentao reads — environment variables first, then on-disk JSON. All
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `LLM_TEMPERATURE` | `0.2` | Sampling temperature (0.0–2.0). Malformed value **raises** at startup |
+| `LLM_TEMPERATURE` | unset | Sampling temperature (0.0–2.0). Unset = not sent; the provider's default applies (0.5.7; was `0.2`). Malformed value **raises** at startup |
 | `LLM_MAX_TOKENS` | unset | Hard cap on LLM completion tokens per call. Malformed value **raises** at startup |
 | `LLM_EXTRA_BODY` | unset | JSON **object** forwarded verbatim to the LLM `.create()` as the SDK's `extra_body` — the escape hatch for `reasoning_effort` / `top_p` / `seed` / `response_format` / provider-specific fields. Equivalent to the constructor `extra_body=`. Example: `LLM_EXTRA_BODY='{"reasoning_effort":"high"}'`. Unlike the two above, a malformed *or* valid-but-non-object value is **warned and skipped** (not fatal); empty/whitespace is treated as unset (silent). Logged with credential keys redacted |
 | `LLM_PROMPT_CACHE` | off | Explicit prompt-cache breakpoints (0.4.26): `anthropic`, or `off` / empty / unset. When on, each agent-turn request carries at most 3 Anthropic-style `cache_control` markers — system message, last tool definition, end of stable history. **Opt-in, never inferred from a base URL or model name**: set it only for an endpoint you have verified forwards the key. An unknown value **raises** at startup. Equivalent to the constructor `prompt_cache=`. What to verify on the endpoint first: `docs/reference/configuration.md` §2 |

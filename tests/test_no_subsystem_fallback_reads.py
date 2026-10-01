@@ -115,7 +115,7 @@ class TestNoImplicitReads:
         assert client.api_key == "explicit-key"
         assert client.base_url == "https://explicit.local/v1"
         assert client.model == "explicit-model"
-        assert client.temperature == 0.2  # in-code default, not env-derived
+        assert client.temperature is None  # in-code default (unset), not env-derived
         assert client.max_tokens == 65536  # in-code default, not env-derived
 
     def test_permission_engine_no_user_root_skips_user_scope(

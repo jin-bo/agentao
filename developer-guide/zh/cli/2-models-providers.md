@@ -109,12 +109,12 @@ Available Models:
 
 ```text
 > /temperature        # 看当前值
-Temperature: 1.0
+Temperature: provider default (not sent)
 > /temperature 0.2    # 设置
-Temperature changed from 1.0 to 0.2
+Temperature changed from provider default to 0.2
 ```
 
-范围：`0.0` 到 `2.0`。低 = 更确定，高 = 更发散。各 provider 默认值不同（聊天典型为 1.0）。
+范围：`0.0` 到 `2.0`。低 = 更确定，高 = 更发散。默认不设值、也不发送，由 provider 自己的默认值决定（聊天典型为 1.0；0.5.7 起 —— 此前会发送 `0.2`）。`/temperature off` 保留已设的值但不再发送；`on` 重新发送，没有值可发时会直接说明。
 
 修改是**会话级**。重启 CLI 会回到 provider 默认值。要持久化默认温度，写到 `.env`：
 

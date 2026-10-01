@@ -211,7 +211,7 @@ def run_init_wizard() -> None:
     ]
     lines += [
         "\n",
-        "# LLM Temperature (0.0-2.0, default: 0.2)\n",
+        "# LLM Temperature (0.0-2.0). Unset = not sent; the provider's default applies\n",
         "# LLM_TEMPERATURE=0.2\n",
     ]
 

@@ -22,7 +22,7 @@ Agentao 读取的所有开关——先看环境变量，再看磁盘上的 JSON�
 
 | 键 | 默认 | 含义 |
 |----|------|------|
-| `LLM_TEMPERATURE` | `0.2` | 采样温度（0.0–2.0）。畸形值在启动时**抛错** |
+| `LLM_TEMPERATURE` | 不设 | 采样温度（0.0–2.0）。不设 = 不发送，由 provider 默认值决定（0.5.7；此前为 `0.2`）。畸形值在启动时**抛错** |
 | `LLM_MAX_TOKENS` | 未设 | 单次调用的 LLM completion tokens 上限。畸形值在启动时**抛错** |
 | `LLM_EXTRA_BODY` | 未设 | JSON **对象**，原样转发给 LLM `.create()` 的 SDK `extra_body` —— `reasoning_effort` / `top_p` / `seed` / `response_format` / provider 专有字段的逃生舱。等价于构造参数 `extra_body=`。例：`LLM_EXTRA_BODY='{"reasoning_effort":"high"}'`。与上面两个不同，畸形*或*合法但非对象的值会**告警并跳过**（不致命）；空/纯空白当未设（静默）。日志中凭据键脱敏 |
 | `LLM_PROMPT_CACHE` | 关闭 | 显式 prompt 缓存断点（0.4.26）：`anthropic`，或 `off` / 空 / 未设。开启后，每个 agent 回合的请求最多带 3 个 Anthropic 风格的 `cache_control` 标记 —— system 消息、最后一个工具定义、稳定历史的末尾。**需显式开启，绝不从 base URL 或模型名推断**：只对你已确认会转发这个键的端点设置。未知值在启动时**抛错**。等价于构造参数 `prompt_cache=`。开启前要在端点上确认的事项见 `docs/reference/configuration.zh.md` §2 |

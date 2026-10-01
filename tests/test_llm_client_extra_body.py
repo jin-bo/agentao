@@ -123,7 +123,7 @@ def test_no_extra_body_key_absent_both_paths():
 
 def test_back_compat_request_kwargs_golden():
     """The non-streaming request dict is unchanged when extra_body is unset."""
-    client = _make_client()
+    client = _make_client(temperature=0.2)
     kwargs = client._build_request_kwargs(
         [{"role": "user", "content": "hi"}], None, 100, stream=False
     )

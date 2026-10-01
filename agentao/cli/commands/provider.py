@@ -240,6 +240,10 @@ _TEMPERATURE_UNSENT = (
 )
 
 
+#: How ``/temperature`` names an unset value — nothing is sent.
+_UNSET_LABEL = "provider default"
+
+
 def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /temperature command — show or set LLM temperature.
 
@@ -247,11 +251,19 @@ def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
     ``llm/_anthropic_messages.py``). The value is still stored there — it is
     the client's, and a ``/provider`` switch back to Chat Completions sends it
     — but every answer says it is not going out, instead of "sending 0.7".
+
+    No value (``None``, the default) means nothing is sent and the provider's
+    own default applies; ``on`` cannot turn that into a value, so it says so.
     """
     args = args.strip()
     unsent = getattr(cli.agent.llm, "api_format", None) == "anthropic-messages"
     if not args:
-        if unsent:
+        if cli.agent.llm.temperature is None:
+            console.print(
+                f"\n[info]Temperature:[/info] [cyan]{_UNSET_LABEL}[/cyan] "
+                "[dim](not sent)[/dim]"
+            )
+        elif unsent:
             console.print(
                 f"\n[info]Temperature:[/info] [cyan]{cli.agent.llm.temperature}[/cyan] "
                 f"[warning](not sent — {_TEMPERATURE_UNSENT})[/warning]"
@@ -270,6 +282,12 @@ def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
         return
     if lowered == "on":
         cli.agent.llm.omit_temperature = False
+        if cli.agent.llm.temperature is None:
+            console.print(
+                f"\n[warning]No temperature is set ({_UNSET_LABEL}), so nothing is "
+                "sent — use /temperature <value> to send one[/warning]\n"
+            )
+            return
         if unsent:
             console.print(
                 f"\n[warning]Temperature on ({cli.agent.llm.temperature}), but not sent — "
@@ -288,6 +306,8 @@ def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
         console.print("\n[error]Temperature must be between 0.0 and 2.0[/error]\n")
         return
     old = cli.agent.llm.temperature
+    if old is None:
+        old = _UNSET_LABEL
     cli.agent.llm.temperature = value
     cli.agent.llm.omit_temperature = False
     if unsent:

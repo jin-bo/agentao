@@ -463,7 +463,10 @@ class OpenAIResponsesAdapter:
             # reasoning items and the field costs nothing, and there is no
             # way to know which kind this is — a model name is never read.
             kwargs["include"] = [_ENCRYPTED_REASONING]
-        if not owner.omit_temperature:
+        # Unset (``None``) is the default and sends nothing: the provider's
+        # own default applies, and a model that rejects the field is never
+        # asked to repair a request it did not need.
+        if owner.temperature is not None and not owner.omit_temperature:
             kwargs["temperature"] = owner.temperature
         if tools:
             kwargs["tools"] = translate_tools(tools)
@@ -493,7 +496,13 @@ class OpenAIResponsesAdapter:
     def repair_request(self, err_text: str, kwargs: Dict[str, Any], *, stream: bool) -> bool:
         """One-shot fix-up of a rejected request. True → re-send now."""
         owner = self._owner
-        if not owner.omit_temperature and _is_temperature_unsupported(err_text):
+        # Only a request that carried the field can have been rejected for it;
+        # resending an unset one unchanged would spend a call on nothing.
+        if (
+            "temperature" in kwargs
+            and not owner.omit_temperature
+            and _is_temperature_unsupported(err_text)
+        ):
             owner.omit_temperature = True
             owner.logger.info("Model rejects temperature; omitting it for this client")
             kwargs.pop("temperature", None)
