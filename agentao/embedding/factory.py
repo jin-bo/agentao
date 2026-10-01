@@ -24,7 +24,7 @@ import os
 import sqlite3
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional
 
 from .._env import safe_load_dotenv
 
@@ -62,7 +62,7 @@ def _builtin_agents_enabled(settings: Dict[str, Any]) -> bool:
     return False
 
 
-def resolve_provider_name() -> str:
+def resolve_provider_name(env: Optional[Mapping[str, str]] = None) -> str:
     """The configured LLM provider id, normalized.
 
     Reads ``LLM_PROVIDER`` (default ``OPENAI``) and applies the canonical
@@ -71,11 +71,16 @@ def resolve_provider_name() -> str:
     that need the provider id should call this rather than re-implementing
     the default literal + casing; :func:`discover_llm_kwargs` builds the
     value extraction on top of it.
+
+    ``env`` is the mapping to read instead of ``os.environ`` — how the ACP
+    server resolves a session's configuration without writing it into the
+    process environment (:mod:`agentao.embedding.llm_config`).
     """
-    return os.getenv("LLM_PROVIDER", "OPENAI").strip().upper()
+    source = os.environ if env is None else env
+    return source.get("LLM_PROVIDER", "OPENAI").strip().upper()
 
 
-def discover_llm_kwargs() -> Dict[str, Any]:
+def discover_llm_kwargs(env: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """Resolve the LLM kwargs from environment variables.
 
     Reads ``LLM_PROVIDER`` (default ``OPENAI``) and the provider-prefixed
@@ -118,26 +123,30 @@ def discover_llm_kwargs() -> Dict[str, Any]:
     Test code that wants to mirror the factory's contract (e.g. the
     suite's autouse credential-stub fixture) should call this rather
     than re-implementing the prefix scheme.
+
+    ``env`` is the mapping to read instead of ``os.environ``; see
+    :func:`resolve_provider_name`.
     """
-    provider = resolve_provider_name()
+    source = os.environ if env is None else env
+    provider = resolve_provider_name(source)
     out: Dict[str, Any] = {}
-    if (v := os.getenv(f"{provider}_API_KEY")) is not None:
+    if (v := source.get(f"{provider}_API_KEY")) is not None:
         out["api_key"] = v
-    if (v := os.getenv(f"{provider}_BASE_URL")) is not None:
+    if (v := source.get(f"{provider}_BASE_URL")) is not None:
         out["base_url"] = v
-    if (v := os.getenv(f"{provider}_MODEL")) is not None:
+    if (v := source.get(f"{provider}_MODEL")) is not None:
         out["model"] = v
-    if (v := os.getenv(f"{provider}_API_FORMAT")) is not None and v.strip():
+    if (v := source.get(f"{provider}_API_FORMAT")) is not None and v.strip():
         out["api_format"] = v.strip()
-    if (v := os.getenv("LLM_TEMPERATURE")) is not None:
+    if (v := source.get("LLM_TEMPERATURE")) is not None:
         out["temperature"] = float(v)
-    if (v := os.getenv("LLM_MAX_TOKENS")) is not None:
+    if (v := source.get("LLM_MAX_TOKENS")) is not None:
         out["max_tokens"] = int(v)
-    if (v := os.getenv("LLM_PROMPT_CACHE")) is not None and v.strip():
+    if (v := source.get("LLM_PROMPT_CACHE")) is not None and v.strip():
         out["prompt_cache"] = v.strip()
-    if (v := os.getenv("LLM_PROMPT_CACHE_TTL")) is not None and v.strip():
+    if (v := source.get("LLM_PROMPT_CACHE_TTL")) is not None and v.strip():
         out["prompt_cache_ttl"] = v.strip()
-    if (v := os.getenv("LLM_EXTRA_BODY")) is not None and v.strip():
+    if (v := source.get("LLM_EXTRA_BODY")) is not None and v.strip():
         try:
             parsed = json.loads(v)
         except (ValueError, TypeError):
@@ -157,6 +166,8 @@ def discover_llm_kwargs() -> Dict[str, Any]:
 
 def build_from_environment(
     working_directory: Optional[Path] = None,
+    *,
+    resolved_llm: Optional[Mapping[str, Any]] = None,
     **overrides: Any,
 ) -> "Agentao":
     """Build an :class:`Agentao` instance from the surrounding environment.
@@ -174,6 +185,14 @@ def build_from_environment(
             ``filesystem``, ``shell``, ``transport``, ``logger``,
             ``temperature``, ``max_context_tokens``, ``plan_session``
             are all valid here.
+        resolved_llm: LLM kwargs the caller already resolved (the
+            :func:`discover_llm_kwargs` shape). When given, the factory
+            neither loads a ``.env`` into ``os.environ`` nor reads LLM
+            settings from the process environment — the ACP server's path,
+            where one process serves sessions from several projects and a
+            write to the shared environment would carry one project's
+            credentials into the next (see
+            :mod:`agentao.embedding.llm_config`). ``overrides`` still win.
 
     Returns:
         A fully-constructed :class:`Agentao` instance bound to
@@ -195,19 +214,23 @@ def build_from_environment(
     wd = (working_directory or Path.cwd()).expanduser().resolve()
     settings = _load_settings(wd)
 
-    dotenv_path = wd / ".env"
-    if dotenv_path.is_file():
-        safe_load_dotenv(dotenv_path)
-    else:
-        safe_load_dotenv()
+    if resolved_llm is None:
+        dotenv_path = wd / ".env"
+        if dotenv_path.is_file():
+            safe_load_dotenv(dotenv_path)
+        else:
+            safe_load_dotenv()
 
     # Skip env-driven LLM discovery when the caller supplies a pre-built
     # ``llm_client``: those env values are unused on that path, and a
     # malformed ``LLM_TEMPERATURE`` / ``LLM_MAX_TOKENS`` would otherwise
     # raise here even though the values are about to be discarded.
-    discovered_llm = (
-        discover_llm_kwargs() if "llm_client" not in overrides else {}
-    )
+    if "llm_client" in overrides:
+        discovered_llm: Dict[str, Any] = {}
+    elif resolved_llm is not None:
+        discovered_llm = dict(resolved_llm)
+    else:
+        discovered_llm = discover_llm_kwargs()
 
     permission_engine = overrides.pop("permission_engine", None)
     ur = user_root()

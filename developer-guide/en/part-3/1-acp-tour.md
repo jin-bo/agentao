@@ -177,7 +177,7 @@ Explicit v1 limits (Agentao's capability block reflects them faithfully):
 
 - `promptCapabilities.image = true` (0.4.8+, inline `{data, mimeType}` blocks only), `audio = false`, `embeddedContext = false`
 - `mcpCapabilities.http = true`, `sse = true` — MCP transports are stdio, Streamable HTTP, and SSE
-- `authMethods = []` — no protocol-level auth; credentials flow via env vars
+- `authMethods` — one `terminal` login method (`--login`) when the client declares Terminal Auth (`clientCapabilities.auth.terminal`, or the legacy `_meta["terminal-auth"]`), otherwise `[]`. Credentials never cross the wire: they come from the launch environment, the project `.env`, or `~/.agentao/llm.json` written by `agentao --login`, and a session with none gets `auth_required` (`-32000`) from `session/new` / `session/load` (0.5.8+)
 
 Future versions will expand these. **Clients should inspect the handshake response** before deciding what prompt format to send.
 

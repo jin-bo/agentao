@@ -25,7 +25,7 @@ Handshake. MUST be first call.
 |-------|------|-------|
 | `protocolVersion` | `int` | Negotiated — usually echoes request; never errors on mismatch |
 | `agentCapabilities` | `object` | See below |
-| `authMethods` | `[]` | Empty in v1 — Agentao does no ACP-level auth |
+| `authMethods` | `[object]` | One `{id: "agentao-login", type: "terminal", args: ["--login"], …}` when the client declared Terminal Auth (`clientCapabilities.auth.terminal` or legacy `_meta["terminal-auth"]`, boolean `true`); otherwise `[]`. Agentao has no `authenticate` handler — the login runs as a separate process (0.5.8+) |
 | `agentInfo` | `object` | `{name: "agentao", title: "Agentao", version}` |
 | `_meta["_agentao.cn/extensions"]` | `[{method, description}]` | Vendor methods advertised under `_meta` (ACP's standard extension channel); includes `_agentao.cn/ask_user` |
 
@@ -307,6 +307,7 @@ If the user is unavailable, clients may return the sentinel `"(user unavailable)
 | `-32602` | Invalid params | Invalid method parameter(s) |
 | `-32603` | Internal error | Internal JSON-RPC error |
 | `-32002` | Server not initialized | Session method called before `initialize` |
+| `-32000` | Auth required | `session/new` / `session/load` with no LLM provider configured (0.5.8+); run the advertised terminal login, then reconnect |
 
 Map these to `AcpErrorCode` per [Appendix D.2](./d-error-codes#d-2-json-rpc-numeric-codes-vs-acperrorcode).
 

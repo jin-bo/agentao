@@ -25,7 +25,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 |------|------|------|
 | `protocolVersion` | `int` | 协商后——通常回显请求值；版本不匹配也不报错 |
 | `agentCapabilities` | `object` | 见下 |
-| `authMethods` | `[]` | v1 为空——Agentao 不做 ACP 级认证 |
+| `authMethods` | `[object]` | client 声明 Terminal Auth（`clientCapabilities.auth.terminal` 或旧式 `_meta["terminal-auth"]`，布尔 `true`）时为一个 `{id: "agentao-login", type: "terminal", args: ["--login"], …}`；否则为 `[]`。Agentao 没有 `authenticate` handler——登录在独立进程中完成（0.5.8+） |
 | `agentInfo` | `object` | `{name: "agentao", title: "Agentao", version}` |
 | `_meta["_agentao.cn/extensions"]` | `[{method, description}]` | 扩展方法，放在 `_meta` 下（ACP 标准的扩展通道）；含 `_agentao.cn/ask_user` |
 
@@ -307,6 +307,7 @@ Agentao 独有，服务器向用户问一个自由文本问题。
 | `-32602` | Invalid params | 方法参数非法 |
 | `-32603` | Internal error | 内部 JSON-RPC 错 |
 | `-32002` | Server not initialized | `initialize` 之前调了 session 方法 |
+| `-32000` | Auth required | 未配置 LLM provider 时调用 `session/new` / `session/load`（0.5.8+）；执行广告的终端登录后重连 |
 
 对照 `AcpErrorCode` 见 [附录 D.2](./d-error-codes#d-2-json-rpc-数值码-vs-acperrorcode)。
 

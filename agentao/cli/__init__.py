@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         run_init_wizard,
         run_print_mode,
     )
+    from .login import run_login
     from .subcommands import (
         _handle_plugins_interactive,
         _load_and_register_plugins,
@@ -53,6 +54,7 @@ _LAZY_NAMES: dict[str, tuple[str, str]] = {
         "main", "run_print_mode", "run_init_wizard", "run_acp_mode",
         "_build_parser", "_PROVIDER_DEFAULTS",
     ),
+    "run_login": (".login", "run_login"),
     **_names(".subcommands",
         "handle_skill_subcommand", "handle_plugin_subcommand",
         "_skill_list", "_skill_remove", "_skill_install", "_skill_update",

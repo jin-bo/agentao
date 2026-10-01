@@ -73,7 +73,24 @@ A reference Zed configuration (`<home>/.config/zed/settings.json`):
 }
 ```
 
-The same shape works for any client that launches an ACP agent over stdio: pass `--acp --stdio` and an environment with whatever provider key Agentao needs (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.).
+The same shape works for any client that launches an ACP agent over stdio: pass `--acp --stdio` and an environment with whatever provider key Agentao needs (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) — or leave the key out and log in once (next section).
+
+### Provider configuration and login (ACP Registry installs)
+
+A client that installs Agentao from the [ACP Registry](https://agentclientprotocol.com/registry) launches it through `uvx` (`uvx 'agentao[cli]@<version>' --acp`), so there is no `.env` to edit and no `agentao` on `PATH`. Agentao supports ACP **Terminal Auth** for that case:
+
+1. When the client declares Terminal Auth in `initialize` — `clientCapabilities.auth.terminal: true`, or the legacy `clientCapabilities._meta["terminal-auth"]: true` (either counts, and only as the boolean `true`) — `authMethods` carries one `terminal` method whose `args` are `["--login"]`. Clients that declare neither get `authMethods: []`.
+2. `initialize` never needs credentials. `session/new` and `session/load` answer `auth_required` (`-32000`) when no provider is configured; the message names the missing fields and, for a client without Terminal Auth, a login command that works without `agentao` on `PATH`: `uvx 'agentao[cli]@<version>' --login`.
+3. The client runs the login as a separate terminal process — appending `--login` to its launch args (ACP spec) or replacing them (Registry docs); both work and both take precedence over `--acp`. The login asks for provider, API key (hidden), base URL, model and wire protocol (`api_format`; `anthropic-messages` is the default for ANTHROPIC, `openai-completions` otherwise), writes `~/.agentao/llm.json` with mode `0600`, and exits `0`. Cancelling (Ctrl-C → `130`, end of input → `1`), a failed save, or declining to replace an incomplete file all exit non-zero.
+4. The next `session/new` reads the new file — on a reconnect (DeepChat) or on the same process (Brokk retries there). A session that already exists keeps the configuration it was created with.
+
+`agentao --login` works from any terminal too. Unknown arguments are refused in `--acp` and `--login` mode (exit `2`) instead of being ignored.
+
+**Where a session's LLM settings come from.** Each `session/new` / `session/load` resolves them afresh from three layers, highest first: the server's **launch environment**, the session's **project `<cwd>/.env`**, and the **login file**. An empty value counts as unset. The provider is chosen first — the highest layer that names one (`LLM_PROVIDER` in the two env layers, `provider` in the file), else `OPENAI` — and an API key's presence plays no part in that choice: a shell that exports `OPENAI_API_KEY` for another tool does not turn a DeepSeek login into an OpenAI session. Fields are then read only under that provider's prefix, and the login file contributes only when its `provider` matches. The API key, base URL and wire format are taken **together** from the highest layer that sets the key; a key with no URL beside it leaves the URL missing rather than borrowing the login's, so a key exported for another tool is never sent to the endpoint you logged in with, and a layer with no format gets the default wire rather than the login's. A `session/set_config_option` provider switch resolves against the session's own snapshot, never the process environment.
+
+> **Changed in 0.5.8 — the project `.env` supplies only LLM settings on this path.** One ACP process serves sessions from several projects, and loading a project's `.env` into the shared environment carried its credentials into every later session. The default session path no longer writes anything into `os.environ` and no longer searches for a `.env` above `cwd`. Settings other code reads from the environment — MCP `${VAR}` expansion in `mcp.json`, web-tool keys (`JINA_API_KEY`, `BOCHA_API_KEY`), `GITHUB_TOKEN`, the URL-policy allowlist — must now come from the **launch environment** (the client's `env` block). A host that injects its own `agent_factory` / `provider_resolver` keeps the previous behaviour.
+
+**Client notes.** DeepChat's Registry support handles `uvx` entries and Terminal Auth (per its source at `4e119dd65d`; it is the client this flow is accepted against). Zed (as of `e8c6c67fad`) skips Registry entries whose only distribution is `uvx`; configure Agentao there as a custom agent server (above). Agentao provides baseline ACP interop — it does not use the client's `fs/*` / `terminal/*` (unsaved buffers, editor diff review); see [Client-host capability routing](#client-host-capability-routing).
 
 ---
 
@@ -119,7 +136,7 @@ Source: `agentao/acp/initialize.py`.
 }
 ```
 
-`authMethods` is `[]` — Agentao does not implement ACP-level auth in v1. Provider credentials (`OPENAI_API_KEY`, etc.) are read from the launch environment and never travel through the ACP wire.
+`authMethods` is one `terminal` login method when the client declared Terminal Auth, otherwise `[]` — see [Provider configuration and login](#provider-configuration-and-login-acp-registry-installs). Provider credentials never travel through the ACP wire.
 
 ---
 
@@ -531,6 +548,9 @@ After cancellation, the still-running `session/prompt` returns `{"stopReason": "
 |---|---|---|
 | Client never sees a response to `initialize` | Client is sending pretty-printed JSON across multiple lines | NDJSON requires one compact JSON object per line. Each newline ends a message. |
 | `session/new` returns `SERVER_NOT_INITIALIZED` (-32002) | `initialize` was not called, or returned an error | Send `initialize` first and check the response for an `error` field. |
+| `session/new` / `session/load` returns `-32000` (`auth_required`) | No provider is configured for the session's project: no API key, base URL or model in the launch environment, the project `.env`, or `~/.agentao/llm.json` | Run the client's Terminal Auth login, or `uvx 'agentao[cli]@<version>' --login` in a terminal, then reconnect. The message names the missing fields. |
+| `session/new` returns `INTERNAL_ERROR` (-32603) "LLM configuration error" | `~/.agentao/llm.json` or the project `.env` exists but is unusable (bad JSON, a non-string field, `LLM_TEMPERATURE` that is not a number) | Fix or delete the named file; logging in again rewrites `llm.json`. |
+| A tool, MCP `${VAR}` or `GITHUB_TOKEN` setting in the project `.env` has no effect under ACP | Since 0.5.8 the ACP session path reads only LLM settings from the project `.env` | Put the variable in the client's launch `env` block instead. |
 | `session/new` returns `INVALID_PARAMS` (-32602) for `cwd` | `cwd` is not absolute, doesn't exist, or is a file | Pass an absolute path to an existing directory. The check is in `session_new.py::_parse_cwd`. |
 | `session/prompt` returns `INVALID_REQUEST` "session already has an active turn" | A second `session/prompt` arrived while the first is still running | Wait for the first turn's response before sending the next, or use a different session id. |
 | `session/prompt` with an `image` block returns `INVALID_PARAMS` | The block carries a by-reference `uri`, a non-`image/*` `mimeType`, invalid/oversized base64 `data`, or exceeds the per-prompt image count | Send inline `{data, mimeType}` only (no `uri`), with `image/*` and base64 within the size/count caps. |

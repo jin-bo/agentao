@@ -46,12 +46,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
 import traceback
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Callable, Dict, IO, List, Optional
+from typing import Any, Callable, Dict, IO, List, Mapping, Optional
 
 from .models import (
     AcpConnectionState,
@@ -188,6 +189,7 @@ class AcpServer:
         provider_resolver: Optional[Callable[[str], Dict[str, Optional[str]]]] = None,
         model_catalog: Optional[List[Dict[str, Any]]] = None,
         resume_directive: Optional[ResumeDirective] = None,
+        launch_env: Optional[Mapping[str, str]] = None,
     ) -> None:
         # Capture the *real* stdout BEFORE any swap so responses keep flowing.
         self._in: IO[str] = stdin if stdin is not None else sys.stdin
@@ -213,6 +215,15 @@ class AcpServer:
         # starting blank. ``None`` means "always start fresh". See
         # ``session_new.handle_session_new`` and :class:`ResumeDirective`.
         self.resume_directive: Optional[ResumeDirective] = resume_directive
+
+        # The environment the server was launched with, snapshotted once. The
+        # default session path resolves each session's LLM configuration from
+        # this, the session's project ``.env`` and the user's login file —
+        # never from the live ``os.environ``, which other code may write to.
+        # See :mod:`agentao.embedding.llm_config`.
+        self.launch_env: Dict[str, str] = dict(
+            os.environ if launch_env is None else launch_env
+        )
 
         # Connection-scoped state populated by the `initialize` handshake
         # (Issue 02). Handlers read/write this via ``server.state``.

@@ -26,6 +26,7 @@ User-facing configuration files (the surfaces you may hand-edit):
 | 8 | Memory store | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
 | 9 | Run spec (`agentao run`) | any path passed to `--spec` (or stdin) | — | `cli/run_models.py::RunSpec`, `cli/run_template.py::render_spec` | [run-spec-parameters.md](../design/run-spec-parameters.md) |
 | 10 | Plugin hooks | `<plugin>/hooks/hooks.json`, or inline/declared via the plugin manifest's `hooks` | — *(travels with the plugin)* | `embedding/plugins/manager.py` (discovery) → `plugins/hooks/_parser.py` (parse) | §11 below; Developer Guide §5.7 |
+| 11 | LLM login (ACP sessions) | — | `~/.agentao/llm.json` *(written by `agentao --login`)* | `embedding/llm_config.py::resolve_session_llm_config` | §2a below; [acp.md](../guides/acp.md#provider-configuration-and-login-acp-registry-installs) |
 
 Internal state files (auto-managed; documented for awareness, not for editing):
 
@@ -52,7 +53,7 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 
 ## 2. `.env` — LLM provider configuration
 
-- **Path.** `<cwd>/.env`. Loaded by `dotenv.load_dotenv()` at the top of `embedding/factory.py::build_from_environment`.
+- **Path.** `<cwd>/.env`. Loaded by `dotenv.load_dotenv()` at the top of `embedding/factory.py::build_from_environment`. **Not on the ACP server's session path** (0.5.8): there it is read, never loaded into the process environment, and only its LLM variables are used — see §2a.
 - **Loader.** `embedding/factory.py::discover_llm_kwargs`.
 - **Mechanism.** Provider-prefixed: `LLM_PROVIDER` (default `OPENAI`) selects which `{PROVIDER}_API_KEY` / `{PROVIDER}_BASE_URL` / `{PROVIDER}_MODEL` triple is read, plus that block's optional `{PROVIDER}_API_FORMAT`.
 
@@ -77,6 +78,26 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 | `AGENTAO_SCRUB_CHILD_ENV` | no | on | Whether shell and MCP child processes inherit agentao's **own** provider credentials. Default (any value other than `0`/`false`/`no`/`off`) drops `HARNESS_ENV_KEYS` — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LLM_EXTRA_BODY`, … — from the child environment, so a prompt-injected `run_shell_command("env")` finds nothing worth stealing. The agent is a distinct principal from the user, and nothing the LLM decides to run needs the key that pays for the LLM. **Set to `0` to restore full inheritance** — required if you run `agentao run`, or any script that calls the provider, from inside the agent's own shell. Only agentao's keys are dropped; the user's other secrets (AWS, GitHub, `DATABASE_URL`) are untouched — scrubbing those is the host's call, and a host wanting a tighter environment supplies it from its own `ShellExecutor` (the request carries a complete `launch.env`, so a host executor decides what it actually passes to `Popen`). Defense in depth, not a seal: `cat .env` still works. See `agentao/capabilities/process.py::build_child_env`. |
 
 > Canonical example: `.env.example` in the repo root.
+
+### 2a. `~/.agentao/llm.json` and ACP session resolution (0.5.8)
+
+`agentao --login` — run by hand or by an ACP client's Terminal Auth — writes one provider block to `~/.agentao/llm.json` with mode `0600`:
+
+```json
+{"provider": "DEEPSEEK", "api_key": "sk-…", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat", "api_format": "openai-completions"}
+```
+
+`api_format` takes the same values as `{PROVIDER}_API_FORMAT`. The login always writes it (default `anthropic-messages` for ANTHROPIC, `openai-completions` otherwise, or the replaced file's own value for the same provider); a hand-written file may omit it, which means the default wire. Unknown keys are ignored; a non-string field or invalid JSON is a configuration error.
+
+The file is read only by the ACP server's default session path (`agentao --acp`). The interactive CLI, `agentao run` and `build_from_environment()` do not read it. Each `session/new` / `session/load` resolves the session's LLM settings afresh (`embedding/llm_config.py::resolve_session_llm_config`):
+
+1. **Layers, highest first:** the server's launch environment (snapshotted at startup) → the session's `<cwd>/.env` (no search above `cwd`; `${VAR}` references expand against the launch snapshot, not the live environment) → `~/.agentao/llm.json`. An empty or whitespace-only value is unset in every layer.
+2. **Provider first:** the highest layer that names one (`LLM_PROVIDER`, or the file's `provider`), else `OPENAI`. Whether a layer holds an API key plays no part in the choice.
+3. **Fields second:** `{PROVIDER}_MODEL` and the shared `LLM_*` variables, layer by layer, for the chosen provider only. The file contributes only when its `provider` matches.
+4. **Key, base URL and wire format together:** `{PROVIDER}_API_KEY`, `{PROVIDER}_BASE_URL` and `{PROVIDER}_API_FORMAT` come from the highest layer that sets the key. If that layer has no base URL, the URL is missing (`auth_required`), not borrowed from a lower layer — so an `OPENAI_API_KEY` exported for another tool is never sent to the gateway URL you logged in with. If it has no format, the default wire applies — a login's `anthropic-messages` never reaches a project's OpenAI-compatible gateway. Put a key, its URL and its format in the same place.
+5. **Snapshot:** the result is fixed on the session. A `session/set_config_option` provider switch resolves against it, and a later login does not change it.
+
+Nothing is written into `os.environ`. **Only LLM variables are taken from the project `.env` on this path** — MCP `${VAR}` expansion, `JINA_API_KEY` / `BOCHA_API_KEY`, `GITHUB_TOKEN`, `AGENTAO_WEB_FETCH_*` and the like must come from the launch environment (the ACP client's `env` block). Missing `api_key`, `base_url` or `model` after all three layers is `auth_required` (`-32000`); an unusable source is `-32603` naming the file or variable, never its value. A host-injected `agent_factory` or `provider_resolver` bypasses all of this and keeps the environment behaviour above.
 
 ---
 

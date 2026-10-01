@@ -45,6 +45,7 @@ from .transport import ACPTransport
 
 if TYPE_CHECKING:
     from agentao.agent import Agentao
+    from agentao.embedding.llm_config import ResolvedLLMConfig
     from .server import AcpServer
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ def default_agent_factory(
     permission_engine: Any,
     mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None,
     model: Optional[str] = None,
+    llm_config: Optional["ResolvedLLMConfig"] = None,
 ) -> "Agentao":
     """Default factory — constructs a real :class:`Agentao` runtime bound
     to the session's working directory (Issue 05) and any session-scoped
@@ -143,6 +145,12 @@ def default_agent_factory(
     and ``session/load`` pass ``None`` — the loader deliberately does not
     restore a session's persisted model (only its name is on disk, never
     its provider), so a reloaded session keeps the process-default model.
+
+    ``llm_config`` is the session's resolved LLM configuration (see
+    :func:`default_factory_llm_config`). Given it, the runtime is built from
+    it alone — no ``.env`` is loaded into the shared process environment and
+    no LLM setting is read from it. ``None`` keeps the legacy environment
+    discovery, for a caller that invokes this factory directly.
     """
     # Local import avoids pulling openai/tools/llm into the ACP package
     # at import time — handler modules stay lightweight for testing.
@@ -156,7 +164,38 @@ def default_agent_factory(
     if model:  # empty string / None → use default discovered by factory
         overrides["model"] = model
 
-    return build_from_environment(working_directory=cwd, **overrides)
+    resolved_llm = llm_config.llm_kwargs() if llm_config is not None else None
+    return build_from_environment(
+        working_directory=cwd, resolved_llm=resolved_llm, **overrides
+    )
+
+
+def default_factory_llm_config(
+    server: "AcpServer", cwd: Path, agent_factory: AgentFactory
+) -> Optional["ResolvedLLMConfig"]:
+    """Resolve a session's LLM configuration when the default factory builds it.
+
+    Re-reads the project ``.env`` and the user's login file on every call, so
+    a login completed while this server is running is seen by the next
+    ``session/new`` on the same connection — a client such as Brokk retries
+    there instead of reconnecting. Raises ``auth_required`` when nothing is
+    configured (:func:`agentao.acp.llm_auth.resolve_session_llm`).
+
+    Returns ``None`` for a host-injected ``agent_factory``: that host owns its
+    credentials, and this server neither checks nor replaces them.
+    """
+    if agent_factory is not default_agent_factory:
+        return None
+    from .llm_auth import resolve_session_llm
+
+    return resolve_session_llm(server, cwd)
+
+
+def bind_llm_config(state: AcpSessionState, llm_config: Optional["ResolvedLLMConfig"]) -> None:
+    """Record the session's LLM configuration so a model switch uses it."""
+    if llm_config is not None:
+        state.llm_config = llm_config
+        state.provider_id = llm_config.provider_id
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +366,10 @@ def handle_session_new(
     cwd = _parse_cwd(params.get("cwd"))
     mcp_servers = _parse_mcp_servers(params.get("mcpServers"))
 
+    # Before the resume directive is consumed: an ``auth_required`` here must
+    # leave it pending, so the retry after a login still resumes.
+    llm_config = default_factory_llm_config(server, cwd, agent_factory)
+
     # Startup-resume seam: if the server was launched with ``--resume`` and
     # the one-shot directive is still pending, the *first* session/new
     # resumes the persisted session (hydrate + replay) instead of starting
@@ -343,6 +386,7 @@ def handle_session_new(
             mcp_servers=mcp_servers,
             directive=directive,
             agent_factory=agent_factory,
+            llm_config=llm_config,
         )
         if resumed is not None:
             return resumed
@@ -383,6 +427,10 @@ def handle_session_new(
     # session/new.
     mcp_servers_internal = translate_acp_mcp_servers(mcp_servers)
 
+    factory_kwargs: Dict[str, Any] = {}
+    if llm_config is not None:
+        factory_kwargs["llm_config"] = llm_config
+
     agent = None
     try:
         agent = agent_factory(
@@ -391,6 +439,7 @@ def handle_session_new(
             transport=transport,
             permission_engine=permission_engine,
             mcp_servers=mcp_servers_internal,
+            **factory_kwargs,
         )
 
         # Bind the persisted ACP session id onto the agent so harness
@@ -436,6 +485,7 @@ def handle_session_new(
             client_capabilities=client_capabilities_snapshot,
             cancel_token=None,  # populated per-turn by Issue 06
         )
+        bind_llm_config(state, llm_config)
 
         try:
             # `startup`: this is the fresh-session path. The startup `--resume`

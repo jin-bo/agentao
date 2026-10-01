@@ -38,6 +38,12 @@ INTERNAL_ERROR = -32603
 #: mirror that convention so existing JSON-RPC tooling interprets it correctly.
 SERVER_NOT_INITIALIZED = -32002
 
+#: ACP ``auth_required``: the request needs authentication the agent does not
+#: have. Agentao returns it from ``session/new`` / ``session/load`` when no LLM
+#: provider is configured — the code a client keys its login prompt on (Brokk
+#: offers its Terminal Auth flow only on this code).
+AUTH_REQUIRED = -32000
+
 
 # ---------------------------------------------------------------------------
 # ACP method names

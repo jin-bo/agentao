@@ -11,9 +11,69 @@ _Targeting 0.5.8. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **ACP Terminal Auth and `agentao --login`** (#380), so an ACP client can
+  install Agentao from the ACP Registry through `uvx` and configure it with
+  no `.env` to edit. `agentao --login` asks for provider, API key (hidden),
+  base URL, model and wire protocol, and writes `~/.agentao/llm.json` with
+  mode `0600`. The wire protocol defaults to `anthropic-messages` for
+  ANTHROPIC and `openai-completions` otherwise, and is always saved, since an
+  unset one would send Chat Completions to a native Anthropic endpoint. It
+  exits `0` only when a complete configuration is on disk afterwards;
+  Ctrl-C exits `130`, end of input or a failed save exits `1`. `--login`
+  takes precedence over `--acp`, so it works whether a client appends it to
+  its launch args or replaces them. `initialize` now advertises one
+  `terminal` auth method (`args: ["--login"]`) to a client that declares
+  `clientCapabilities.auth.terminal` or the legacy
+  `_meta["terminal-auth"]`, each counted only as the boolean `true`. Other
+  clients still get `authMethods: []`. `session/new` and `session/load`
+  answer `auth_required` (`-32000`) when no provider is configured, naming
+  the missing fields and, for a client without Terminal Auth, a login
+  command that runs without `agentao` on `PATH`. A broken `llm.json` or a
+  malformed `LLM_*` value is `-32603` naming the source, never its value.
+  The ACP server reads the file on every `session/new`, so a login done
+  while it runs takes effect without a restart.
+
 ### Changed
 
+- **On the ACP server, a project's `.env` now supplies only LLM settings,
+  and nothing is written into the process environment.** Each
+  `session/new` / `session/load` resolves its LLM configuration from the
+  launch environment, then `<cwd>/.env`, then `~/.agentao/llm.json`. An
+  empty value counts as unset. The provider is chosen first: the highest
+  layer that names one, else `OPENAI`. Only that provider's variables are
+  read after that. An API key's presence never chooses the provider, so an
+  `OPENAI_API_KEY` exported for another tool does not override a DeepSeek
+  login. The API key, base URL and wire format are taken together from the
+  highest layer that sets the key. A key with no base URL in the same layer
+  leaves the URL missing (`auth_required`) rather than borrowing a lower
+  layer's, so such a key is never sent to the gateway a login named. A layer
+  with no format uses the default wire, so a login's `anthropic-messages`
+  never reaches a project's OpenAI-compatible gateway. **Migration:** non-LLM variables an ACP session used to pick up
+  from the project `.env` must now be set in the ACP client's launch `env`
+  block. These include MCP `${VAR}` expansion in `mcp.json`,
+  `JINA_API_KEY` / `BOCHA_API_KEY`, `GITHUB_TOKEN` and
+  `AGENTAO_WEB_FETCH_*`. The interactive CLI, `agentao run`,
+  `build_from_environment()` and a host-injected `agent_factory` /
+  `provider_resolver` are unchanged.
+- `agentao --acp` and `agentao --login` refuse unrecognized arguments
+  (exit `2`). They used to be ignored, so a mistyped flag started a server
+  that read stdin to end of input and exited `0`.
+- `build_from_environment(resolved_llm=)`, keyword-only: LLM kwargs the
+  caller already resolved. Given it, the factory loads no `.env` and reads
+  no LLM setting from `os.environ`. `discover_llm_kwargs()` and
+  `resolve_provider_name()` take an optional `env` mapping to read instead
+  of `os.environ`.
+
 ### Fixed
+
+- **An ACP server no longer carries one project's credentials into another
+  project's session.** Loading `<cwd>/.env` into the shared `os.environ`
+  without overriding meant the first session's keys, model and endpoint
+  stuck for every later session whose `.env` set the same variables. A
+  `session/set_config_option` provider switch also read them back from the
+  process environment. A switch now resolves against the session's own
+  snapshot. The fallback that searched for a `.env` upward from the
+  *process* cwd is gone from this path too.
 
 ---
 
