@@ -74,7 +74,13 @@ def test_the_login_inherits_the_terminal_and_process_group(tmp_path, monkeypatch
         def wait(self):
             return 0
 
+    from agentao.cli.commands_ext import _win_job
+
     monkeypatch.setattr(login_mod.subprocess, "Popen", Recorder)
+    monkeypatch.setattr(login_mod, "_foreground_terminal", lambda: None)
+    # The Windows job (CREATE_SUSPENDED) has its own tests; this one is about
+    # the flags every platform must leave off.
+    monkeypatch.setattr(_win_job.LoginJob, "create", classmethod(lambda cls: None))
 
     login_mod.run_terminal_login(_command(["agent", "--login"], tmp_path))
 
