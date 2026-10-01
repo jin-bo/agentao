@@ -617,6 +617,7 @@ class TestChatRetry:
         monkeypatch.setattr(client_mod.time, "sleep", lambda *_a, **_k: None)
 
         client = _make_client()
+        client.temperature = 0.2  # unset sends nothing, so nothing to reject
         ok_raw = MagicMock()
         ok_raw.parse.return_value = _make_completion("after-omit")
 
@@ -638,6 +639,7 @@ class TestChatRetry:
     def test_omit_temperature_drops_param_from_request(self):
         # Explicit /temperature off → first request never includes temperature.
         client = _make_client()
+        client.temperature = 0.2  # set, so only the latch can keep it off the wire
         client.omit_temperature = True
         ok_raw = MagicMock()
         ok_raw.parse.return_value = _make_completion("ok")
@@ -716,6 +718,7 @@ class TestChatStreamRetry:
         monkeypatch.setattr(client_mod.time, "sleep", lambda *_a, **_k: None)
 
         client = _make_client()
+        client.temperature = 0.2  # unset sends nothing, so nothing to reject
         temp_err = ValueError("'temperature' is not supported with this model")
         ok_chunks = iter([_make_chunk(content="hi", finish_reason="stop")])
         create = MagicMock(side_effect=[temp_err, ok_chunks])

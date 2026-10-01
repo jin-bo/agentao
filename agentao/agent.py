@@ -1418,7 +1418,8 @@ class Agentao:
 
         summary += f"Model: {self.llm.model}\n"
         summary += (
-            "Temperature: off (omitted)\n" if getattr(self.llm, "omit_temperature", False)
+            "Temperature: provider default (not sent)\n" if self.llm.temperature is None
+            else "Temperature: off (omitted)\n" if getattr(self.llm, "omit_temperature", False)
             else f"Temperature: {self.llm.temperature}\n"
         )
         summary += f"Active skills: {len(self.skill_manager.get_active_skills())}\n"

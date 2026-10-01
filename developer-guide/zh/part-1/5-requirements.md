@@ -45,7 +45,7 @@ Agentao 通过 OpenAI 兼容接口调用 LLM。你至少需要**一组凭据**�
 | `OPENAI_API_KEY` | API Key（**必填**） | `sk-...` |
 | `OPENAI_BASE_URL` | API 端点（**必填**） | `https://api.openai.com/v1` |
 | `OPENAI_MODEL` | 模型名（**必填**） | `gpt-5.4` |
-| `LLM_TEMPERATURE` | 采样温度（可选，默认 0.2） | `0.3` |
+| `LLM_TEMPERATURE` | 采样温度（可选；不设 = 不发送，用 provider 默认值） | `0.3` |
 | `LLM_PROVIDER` | 厂商标签（可选，默认 OPENAI） | `ANTHROPIC` |
 
 > **`{PROVIDER}_API_KEY`、`{PROVIDER}_BASE_URL` 和 `{PROVIDER}_MODEL` 三者均为必填。** 若任一缺失且未通过构造器参数传入，`LLMClient.__init__` 在启动时立即抛出 `ValueError`。以编程方式嵌入时，构造器参数 `api_key=`、`base_url=` 和 `model=` 可代替环境变量。

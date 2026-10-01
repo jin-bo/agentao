@@ -23,6 +23,21 @@ _Targeting 0.5.7. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **`temperature` is no longer sent unless you set one.** `LLMClient` /
+  `Agentao(temperature=)` now default to `None`, and an unset value puts no
+  `temperature` in the request, so the provider's own default applies
+  (often `1.0` for chat models). Before, every request carried `0.2`. A
+  reasoning model then rejected the first request with a 400 that the
+  repair latch had to recognise, and a gateway whose wording it did not
+  recognise ended the turn. A value set through `LLM_TEMPERATURE`,
+  `temperature=`, `/temperature <value>` or a sub-agent's `temperature:` is
+  sent exactly as before, `0.0` included. To keep the old sampling, set
+  `LLM_TEMPERATURE=0.2`. `/temperature` and `/status` show an unset value as
+  `provider default (not sent)`. `/temperature on` with no value set says
+  there is nothing to send. `LLM_CALL_STARTED`'s `temperature` is `None`
+  when unset. A rejection that names `temperature` no longer triggers the
+  omit-and-resend repair for a request that did not carry the field. The
+  `anthropic-messages` wire never sent it and is unchanged.
 - `Agentao.arun()` no longer re-raises a host's `CancelledError` while the
   turn is still unwinding. It cancels the token, then waits up to 5 s for the
   worker to finish the turn (orphaned tool results backfilled, `TURN_END`

@@ -82,7 +82,7 @@ def test_the_request_is_stateless_streamed_and_posted_to_responses():
     assert wire.urls == ["http://wire.test/v1/responses"]
     assert body["store"] is False and body["stream"] is True
     assert "previous_response_id" not in body
-    assert body["max_output_tokens"] == 4000 and body["temperature"] == llm.temperature
+    assert body["max_output_tokens"] == 4000 and "temperature" not in body
     # ``system`` stays an item in place; nothing is hoisted into ``instructions``.
     assert "instructions" not in body
     assert body["input"] == [{"role": "system", "content": "be brief"},
@@ -481,8 +481,15 @@ def test_a_failure_after_text_was_shown_is_not_retried():
     assert raised.value.streamed is True and len(wire.requests) == 1
 
 
+def test_a_set_temperature_is_sent():
+    llm = _llm(temperature=0.0)
+    wire = attach(llm, Wire(_says()))
+    llm.chat_stream(HELLO)
+    assert wire.requests[0]["temperature"] == 0.0
+
+
 def test_a_model_that_rejects_temperature_is_asked_once_without_it():
-    llm = _llm()
+    llm = _llm(temperature=0.2)
     wire = attach(llm, Wire(
         (400, {"error": {"message": "Unsupported parameter: 'temperature' is not supported "
                                     "with this model.", "type": "invalid_request_error",

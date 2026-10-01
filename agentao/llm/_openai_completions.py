@@ -202,7 +202,10 @@ class OpenAICompletionsAdapter:
         if stream:
             kwargs["stream"] = True
             kwargs["stream_options"] = {"include_usage": True}
-        if not owner.omit_temperature:
+        # Unset (``None``) is the default and sends nothing: the provider's
+        # own default applies, and a model that rejects the field is never
+        # asked to repair a request it did not need.
+        if owner.temperature is not None and not owner.omit_temperature:
             kwargs["temperature"] = owner.temperature
         if tools:
             kwargs["tools"] = tools
@@ -326,8 +329,13 @@ class OpenAICompletionsAdapter:
             if "max_tokens" in kwargs:
                 kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
             return True
-        # temperature unsupported (reasoning models: o1/o3/gpt-5, …).
-        if not owner.omit_temperature and _is_temperature_unsupported(err_text):
+        # temperature unsupported (reasoning models: o1/o3/gpt-5, …). Only a
+        # request that carried it can have been rejected for it.
+        if (
+            "temperature" in kwargs
+            and not owner.omit_temperature
+            and _is_temperature_unsupported(err_text)
+        ):
             owner.omit_temperature = True
             owner.logger.info(
                 f"Model rejects 'temperature'; omitting it for this client{note}"

@@ -38,6 +38,10 @@ TOOLS = [{"type": "function", "function": {
 
 
 def _client(**kwargs) -> LLMClient:
+    # The capture was taken when 0.2 was the default. Pinned here rather
+    # than regenerated: the golden is the pre-extraction bytes, and the
+    # unset default is pinned in tests/test_temperature_default_unset.py.
+    kwargs.setdefault("temperature", 0.2)
     return LLMClient(
         api_key="k", base_url="http://x/v1", model="m",
         logger=logging.getLogger("test.extraction"), **kwargs,

@@ -302,7 +302,7 @@ agent = Agentao(working_directory=".", transport=SdkTransport(on_event=on_event)
 | Attribute | Source event | Payload key |
 |---|---|---|
 | `gen_ai.system` | — | set it yourself, per provider |
-| `gen_ai.request.model` / `.temperature` / `.max_tokens` | `LLM_CALL_STARTED` | `model` / `temperature` / `max_tokens` |
+| `gen_ai.request.model` / `.temperature` / `.max_tokens` | `LLM_CALL_STARTED` | `model` / `temperature` (`None` when unset — none was sent; skip the attribute) / `max_tokens` |
 | `gen_ai.usage.prompt_tokens` / `completion_tokens` | `LLM_CALL_COMPLETED` | same names |
 | `gen_ai.response.finish_reason` | `LLM_CALL_COMPLETED` | `finish_reason` (`None` on failure) |
 | Tool span name / span id / start-end | `ToolLifecycleEvent` | `tool_name` / `tool_call_id` / `started_at`, `completed_at` |

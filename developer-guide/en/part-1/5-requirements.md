@@ -46,7 +46,7 @@ Agentao calls LLMs through an OpenAI-compatible interface. Configure at least on
 | `OPENAI_API_KEY` | API key (**required**) | `sk-...` |
 | `OPENAI_BASE_URL` | API endpoint (**required**) | `https://api.openai.com/v1` |
 | `OPENAI_MODEL` | Model id (**required**) | `gpt-5.4` |
-| `LLM_TEMPERATURE` | Sampling temp (optional, default 0.2) | `0.3` |
+| `LLM_TEMPERATURE` | Sampling temp (optional; unset = not sent, provider default) | `0.3` |
 | `LLM_PROVIDER` | Vendor tag (optional, default OPENAI) | `ANTHROPIC` |
 
 > **All three — `{PROVIDER}_API_KEY`, `{PROVIDER}_BASE_URL`, and `{PROVIDER}_MODEL` — are required.** `LLMClient.__init__` raises `ValueError` immediately at startup if any is missing. Constructor args `api_key=`, `base_url=`, and `model=` can substitute for the env vars when embedding programmatically.

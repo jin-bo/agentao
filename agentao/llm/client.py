@@ -141,7 +141,7 @@ class LLMClient(_LoggingMixin):
         api_key: str,
         base_url: str,
         model: str,
-        temperature: float = 0.2,
+        temperature: Optional[float] = None,
         max_tokens: int = 65536,
         extra_body: Optional[Dict[str, Any]] = None,
         prompt_cache: Optional[str] = None,
@@ -165,7 +165,9 @@ class LLMClient(_LoggingMixin):
             api_key: API key for the LLM service.
             base_url: Base URL for the API endpoint.
             model: Model name to use.
-            temperature: Sampling temperature (default 0.2).
+            temperature: Sampling temperature. ``None`` (the default) sends
+                no ``temperature`` at all, so the provider's own default
+                applies; a float is sent as given.
             max_tokens: Default per-call output token cap (default 65536).
             extra_body: Optional host-supplied request-body passthrough,
                 forwarded verbatim to ``.create()`` as the SDK's
@@ -213,7 +215,7 @@ class LLMClient(_LoggingMixin):
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
-        self.temperature = temperature
+        self.temperature: Optional[float] = temperature
         self.max_tokens: int = max_tokens
 
         # Host-supplied request-body passthrough, forwarded verbatim to
