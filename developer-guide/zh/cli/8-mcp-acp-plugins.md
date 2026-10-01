@@ -111,8 +111,17 @@ MCP 工具注册成 `mcp_{server}_{tool}`。所以 `filesystem.read_file` 在 ag
 > /acp send <name> <prompt>     # 发一轮，权限/输入内联处理
 > /acp cancel <name>            # 取消进行中的一轮
 > /acp status <name>            # 详细状态
-> /acp logs <name> [lines]      # 看 stderr 尾部（默认最后 20 行）
+> /acp logs <name> [lines]      # 看 stderr 尾部（默认最后 50 行）
+> /acp login <name> [method-id] # 运行服务器的终端登录，然后重启并重连
+> /acp registry search <keyword>  # 搜索官方 ACP Registry
+> /acp registry add <id> [name]   # 把 Registry 里的 agent（npx / uvx）加入 acp.json
 ```
+
+### 从 ACP Registry 添加 agent（0.5.8+）
+
+`/acp registry add <id>` 会显示 agent、钉住的版本和启动命令，确认之后才把一条 `npx` / `uvx` 条目写入 `.agentao/acp.json`。在第一次 `/acp send` 或 `/acp start` 之前什么都不会启动，那一次会下载包（需事先装好 Node.js 或 uv）。只有二进制分发的条目会被拒绝。
+
+没有凭据的 agent 会回 `auth_required`，`/acp` 随即把它列为 `needs login`。如果它提供 `terminal` 登录方法，`/acp login <name>` 会在你的终端里运行登录，退出码为 `0` 时重启服务器并重新连接。其他登录方法请在 Agentao 之外完成，再 `/acp restart <name>`。
 
 状态机：
 
@@ -139,6 +148,7 @@ Pending interactions: 1
 - `starting`/`initializing`/`stopping`（黄）
 - `configured`/`stopped`（暗）
 - `failed`（红）
+- `needs login`（黄）——服务器回了 `auth_required`；在打开会话之前代替 `failed` / `stopped` 显示
 
 ### ACP 还是 MCP
 
