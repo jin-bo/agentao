@@ -132,6 +132,7 @@ def _acp_list(cli: AgentaoCLI) -> None:
         "stopping": "yellow",
         "stopped": "dim",
         "failed": "red",
+        "needs login": "yellow",
     }
 
     for s in statuses:
@@ -148,7 +149,8 @@ def _acp_list(cli: AgentaoCLI) -> None:
             last_error = handle.info.last_error
         interactions_pending = s.interaction_pending
 
-        color = _STATE_COLORS.get(s.state, "dim")
+        state = _state_label(mgr, s.server, s.state)
+        color = _STATE_COLORS.get(state, "dim")
         desc = f"  [dim]{description}[/dim]" if description else ""
         pid_str = f" pid={s.pid}" if s.pid else ""
         err = f"  [red]{last_error}[/red]" if last_error else ""
@@ -157,9 +159,27 @@ def _acp_list(cli: AgentaoCLI) -> None:
             interact_str = f"  [magenta]⏳ {interactions_pending} interaction(s)[/magenta]"
         console.print(
             f"  [{color}]●[/{color}] [cyan]{s.server}[/cyan] "
-            f"[{color}]{s.state}[/{color}]{pid_str}{desc}{interact_str}{err}"
+            f"[{color}]{state}[/{color}]{pid_str}{desc}{interact_str}{err}"
         )
     console.print()
+
+
+# Only an idle server is relabelled: one that is starting, initializing or
+# stopping is mid-transition (e.g. the reconnect after a login), and calling it
+# "needs login" there would tell the user to log in again.
+_IDLE_STATES = ("configured", "stopped", "failed")
+
+
+def _state_label(mgr, name: str, state: str) -> str:
+    """*state*, or ``needs login`` for a server stopped by ``auth_required``."""
+    from ...acp_client.client import AcpServerNotFound
+
+    if state not in _IDLE_STATES:
+        return state
+    try:
+        return "needs login" if mgr.needs_login(name) else state
+    except AcpServerNotFound:
+        return state
 
 
 def _acp_start(cli: AgentaoCLI, name: str) -> None:
@@ -523,13 +543,22 @@ def _acp_status(cli: AgentaoCLI, name: str) -> None:
         console.print(f"\n[error]Unknown ACP server: {name}[/error]\n")
         return
 
+    # The snapshot, not ``handle.info``: ``get_status`` re-checks that the
+    # process is alive, so a server that died mid-turn is not shown "ready".
+    snap = next((s for s in mgr.get_status() if s.server == name), None)
     info = handle.info
+    state = _state_label(mgr, name, snap.state if snap else info.state.value)
+    pid = snap.pid if snap else info.pid
+    last_error = (snap.last_error if snap else None) or info.last_error
     console.print(f"\n[info]ACP Server: {name}[/info]")
-    console.print(f"  State:        {info.state.value}")
-    console.print(f"  PID:          {info.pid or '—'}")
+    if state == "needs login":
+        console.print(f"  State:        needs login (run /acp login {name})")
+    else:
+        console.print(f"  State:        {state}")
+    console.print(f"  PID:          {pid or '—'}")
     console.print(f"  Description:  {handle.config.description or '—'}")
-    if info.last_error:
-        console.print(f"  [red]Last error:  {info.last_error}[/red]")
+    if last_error:
+        console.print(f"  [red]Last error:  {last_error}[/red]")
     if info.last_activity:
         elapsed = _time.time() - info.last_activity
         console.print(f"  Last activity: {elapsed:.0f}s ago")

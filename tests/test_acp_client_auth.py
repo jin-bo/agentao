@@ -775,3 +775,126 @@ def test_choosing_among_terminal_methods_shows_only_numbers_to_the_prompt(monkey
     out = capsys.readouterr().out
     assert "1." in out and "2." in out
     assert not any(c in out for c in ("\x1b", "‮", "⁦"))
+
+
+# ---------------------------------------------------------------------------
+# What /acp shows around a login
+# ---------------------------------------------------------------------------
+
+
+def _list_and_status(mgr, capsys):
+    from agentao.cli.commands_ext import acp as acp_mod
+
+    acp_mod._acp_list(_cli(mgr))
+    acp_mod._acp_status(_cli(mgr), NAME)
+    return capsys.readouterr().out
+
+
+def test_needs_login_lasts_until_a_session_opens(managers, agent, piped_login):
+    mgr = _new(managers, agent)
+    assert mgr.needs_login(NAME) is False
+    with pytest.raises(AcpRpcError):
+        mgr.connect_server(NAME, timeout=TIMEOUT)
+    assert mgr.needs_login(NAME) is True
+    mgr.restart_server(NAME)
+    assert mgr.needs_login(NAME) is True  # a restart alone logs nobody in
+
+    login_mod.acp_login(_cli(mgr), NAME)
+
+    assert mgr.needs_login(NAME) is False
+    with pytest.raises(Exception):
+        mgr.needs_login("nope")
+
+
+def test_acp_shows_needs_login_rather_than_failed(managers, agent, capsys):
+    mgr = _new(managers, agent)
+    with pytest.raises(AcpRpcError):
+        mgr.connect_server(NAME, timeout=TIMEOUT)
+    capsys.readouterr()
+
+    out = _list_and_status(mgr, capsys)
+
+    assert "mock needs login" in out
+    assert "State:        needs login (run /acp login mock)" in out
+    assert " failed" not in out
+
+
+def test_a_login_clears_the_auth_required_error(managers, agent, piped_login, capsys):
+    mgr = _new(managers, agent)
+    with pytest.raises(AcpRpcError):
+        mgr.connect_server(NAME, timeout=TIMEOUT)
+    assert "Authentication required" in _list_and_status(mgr, capsys)
+
+    login_mod.acp_login(_cli(mgr), NAME)
+    capsys.readouterr()
+    out = _list_and_status(mgr, capsys)
+
+    assert "State:        ready" in out
+    assert "Last error" not in out and "Authentication required" not in out
+
+
+def test_status_does_not_show_a_dead_server_as_ready(tmp_path, managers, capsys):
+    import sys
+
+    script = tmp_path / "srv.py"
+    script.write_text(
+        "import json, sys\n"
+        "for line in sys.stdin:\n"
+        "    m = json.loads(line)\n"
+        "    if m.get('method') == 'session/prompt':\n"
+        "        sys.exit(3)\n"
+        "    r = {'initialize': {'protocolVersion': 1, 'agentCapabilities': {}},\n"
+        "         'session/new': {'sessionId': 's1'}}.get(m.get('method'))\n"
+        "    if r is not None and 'id' in m:\n"
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': m['id'], 'result': r}), flush=True)\n",
+        encoding="utf-8",
+    )
+    mgr = ACPManager(AcpClientConfig(servers={NAME: AcpServerConfig(
+        command=sys.executable, args=[str(script)], env={}, cwd=str(tmp_path),
+    )}))
+    managers.append(mgr)
+    mgr.connect_server(NAME, timeout=TIMEOUT)
+    with pytest.raises(AcpClientError):
+        mgr.send_prompt(NAME, "hi", timeout=TIMEOUT)
+    mgr.get_handle(NAME)._proc.wait(timeout=TIMEOUT)
+    assert mgr.get_handle(NAME).info.state is ServerState.READY  # the raw field lags
+    capsys.readouterr()
+
+    from agentao.cli.commands_ext import acp as acp_mod
+
+    acp_mod._acp_status(_cli(mgr), NAME)
+    out = capsys.readouterr().out
+
+    assert "State:        ready" not in out
+    assert "server closed its output" in out
+
+
+def test_another_setup_failure_clears_needs_login(managers, agent, capsys):
+    # After a login that worked, a different failure must not be reported
+    # as "needs login": that would send the user back to the login and hide
+    # the real error.
+    mgr = _new(managers, agent)
+    with pytest.raises(AcpRpcError):
+        mgr.connect_server(NAME, timeout=TIMEOUT)
+    assert mgr.needs_login(NAME) is True
+
+    agent.cred_file.write_text("broken\n", encoding="utf-8")
+    mgr.restart_server(NAME)
+    with pytest.raises(AcpRpcError) as info:
+        mgr.connect_server(NAME, timeout=TIMEOUT)
+
+    assert not is_auth_required(info.value)
+    assert mgr.needs_login(NAME) is False
+    capsys.readouterr()
+    out = _list_and_status(mgr, capsys)
+    assert "needs login" not in out and "Internal error: broken" in out
+
+
+def test_a_server_in_transition_is_not_labelled_needs_login():
+    from agentao.cli.commands_ext import acp as acp_mod
+
+    mgr = SimpleNamespace(needs_login=lambda name: True)
+    for state in ("starting", "initializing", "stopping", "ready", "busy"):
+        assert acp_mod._state_label(mgr, NAME, state) == state
+    for state in ("configured", "stopped", "failed"):
+        assert acp_mod._state_label(mgr, NAME, state) == "needs login"

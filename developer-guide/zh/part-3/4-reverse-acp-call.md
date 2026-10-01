@@ -330,7 +330,7 @@ except AcpClientError as e:
 
 ### 认证（`auth_required`）
 
-没有凭据的 agent 会对 `session/new` 回 `auth_required`——即 `rpc_code == -32000` 的 `AcpRpcError`。manager 会打上 `details["auth_required"] = True` 和 `details["auth_methods"]`（agent 声明的方法），并且**不**计入握手失败连击，所以重试永远不会把 server 变成 fatal。首次 `initialize` 之后，随时可用 `mgr.auth_methods(name)` 取到同一份列表。
+没有凭据的 agent 会对 `session/new` 回 `auth_required`——即 `rpc_code == -32000` 的 `AcpRpcError`。manager 会打上 `details["auth_required"] = True` 和 `details["auth_methods"]`（agent 声明的方法），并且**不**计入握手失败连击，所以重试永远不会把 server 变成 fatal。首次 `initialize` 之后，随时可用 `mgr.auth_methods(name)` 取到同一份列表；`mgr.needs_login(name)` 在成功打开会话或建会话因其他原因失败之前一直为真（重启也不清除），可用来显示「需要登录」而不是 `failed`。
 
 ```python
 from agentao.acp_client import ACPManager, AcpRpcError

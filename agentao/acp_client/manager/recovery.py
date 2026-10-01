@@ -184,6 +184,8 @@ class RecoveryMixin:
         """
         with self._recovery_lock:
             self._handshake_fail_streak[name] = 0
+        with self._auth_lock:
+            self._needs_login.discard(name)
 
     def _note_handshake_failure_and_maybe_fatal(self, name: str) -> None:
         """Single source of truth for the "2 consecutive handshakes ⇒ fatal" rule.
@@ -297,6 +299,12 @@ class RecoveryMixin:
         In every branch ``details["phase"] = "handshake"`` is the
         canonical cross-subclass signal.
         """
+        if isinstance(exc, AcpClientError) and not is_auth_required(exc):
+            # The last setup failed for another reason (often right after a
+            # login): "needs login" would hide that error behind a login
+            # that already worked.
+            with self._auth_lock:
+                self._needs_login.discard(name)
         if isinstance(exc, AcpInteractionRequiredError):
             return False
         if is_auth_required(exc):
@@ -310,6 +318,7 @@ class RecoveryMixin:
             exc.details["auth_required"] = True
             with self._auth_lock:
                 methods = [dict(m) for m in self._auth_methods.get(name, [])]
+                self._needs_login.add(name)
             exc.details["auth_methods"] = methods
             return False
         if isinstance(exc, AcpRpcError):

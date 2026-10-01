@@ -429,6 +429,7 @@ In unattended environments (CI / workers / cron / queue consumers), this same ob
 | `from_project` | `@classmethod from_project(project_root=None, *, terminal_auth=False) -> ACPManager` | Read `.agentao/acp.json`. `terminal_auth=True` declares ACP Terminal Auth — only when the host can run a terminal login |
 | `add_server(name, config)` | | Register a new server with a running manager, stopped; running servers untouched |
 | `auth_methods(name)` | `-> list[dict]` | `authMethods` from the server's last `initialize` |
+| `needs_login(name)` | `-> bool` | The server's last session setup answered `auth_required`; stays true across restarts until a session opens or setup fails for another reason |
 | `reserve_for_login(name)` | context manager | Keeps turns / connects from other threads off `name` (`SERVER_BUSY`) during a login → restart → connect |
 | `server_names` | `-> list[str]` | Declared servers |
 | `start_all` | `start_all(only_auto=True)` | Spawn all auto-start servers |

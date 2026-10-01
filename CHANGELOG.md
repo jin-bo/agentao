@@ -116,6 +116,14 @@ _Targeting 0.5.8. Add entries under the relevant heading as work lands._
   "server closed its output while waiting for '<method>'"
   (`TRANSPORT_DISCONNECT`); `/acp logs <name>` shows why it exited.
 
+- **`/acp` after `auth_required` and after a crash.** A server waiting for a
+  login is listed as `needs login` instead of `failed`; the new
+  `ACPManager.needs_login(name)` reports it and stays true until a session
+  opens or setup fails for another reason. A successful `/acp login` clears the recorded `auth_required` error,
+  which `/acp status` used to keep showing. `/acp status` also reads the
+  status snapshot, which re-checks the process, so a server that died
+  mid-turn is no longer shown `ready`.
+
 - **An ACP server no longer carries one project's credentials into another
   project's session.** Loading `<cwd>/.env` into the shared `os.environ`
   without overriding meant the first session's keys, model and endpoint

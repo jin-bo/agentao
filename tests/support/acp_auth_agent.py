@@ -105,6 +105,10 @@ AUTH_AGENT_SCRIPT = textwrap.dedent("""\
                 send({"jsonrpc": "2.0", "id": rid, "error": {
                     "code": -32000, "message": "Authentication required",
                 }})
+            elif token == "broken":  # credentials fine, agent broken otherwise
+                send({"jsonrpc": "2.0", "id": rid, "error": {
+                    "code": -32603, "message": "Internal error: broken",
+                }})
             else:
                 send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": "s-" + token}})
         elif method == "session/prompt":
